@@ -39,7 +39,7 @@ public partial interface IPergaKernel : IAsyncDisposable
     JsonElement InspectTemplate(string? templateId);
     Task<JsonElement> InspectCurrentTemplateAsync(string trackId, string sessionId, CancellationToken ct = default);
     Task<TemplateSetResult> SetTrackTemplateWithOptionsAsync(string trackId, string sessionId, string? templateId,
-        string? source, string generation, JsonElement? inputs, bool dryRun, bool clear, CancellationToken ct = default, bool resetData = false);
+        string? source, string generation, JsonElement? inputs, bool dryRun, bool clear, CancellationToken ct = default, bool resetData = false, string? path = null);
     Task<TrackDto> UpdateTemplateInputsAsync(string trackId, string sessionId, JsonElement inputs, string generation, CancellationToken ct = default);
     Task<TrackDto> SetTrackTemplateAsync(string trackId, string callerSessionId, string? templateId, string? source, string expectedPolicyGeneration, JsonElement? inputs = null, CancellationToken ct = default, bool resetData = false);
     Task<BootReconcileResult> ReconcileOnBootAsync(CancellationToken ct = default);
@@ -76,6 +76,9 @@ public partial interface IPergaKernel : IAsyncDisposable
     // Report & Revisions
     Task<ReportReadResult> ReadReportAsync(string trackId, string? callerSessionId = null, CancellationToken ct = default);
     Task<TemplateViewsProjection> GetTrackViewsAsync(string trackId, CancellationToken ct = default);
+    Task<FlowSnapshotDto> GetTrackFlowAsync(string trackId, CancellationToken ct = default);
+    Task<FlowCommitResultDto> CommitTrackFlowAsync(string trackId, bool dryRun, long? expectedFlowRev, InteropPrincipal caller, CancellationToken ct = default);
+    Task<FlowCommitResultDto> CancelTrackFlowNodeAsync(string trackId, string nodeId, InteropPrincipal caller, CancellationToken ct = default);
     Task<TrackDataPatchResult> PatchTrackDataAsync(string trackId, JsonElement patch, string source, string? callerSessionId = null, CancellationToken ct = default, long? expectedDataRev = null);
     Task<IReadOnlyList<ReportBlock>> GetReportRevisionBlocksAsync(string trackId, int docRev, CancellationToken ct = default);
     Task<ReportReadResult> UpdateReportBlockByHumanAsync(string trackId, string blockId, HumanBlockUpdateRequest req, CancellationToken ct = default);
@@ -87,7 +90,7 @@ public partial interface IPergaKernel : IAsyncDisposable
     Task<TaskDto> CancelTaskAsync(string trackId, string? callerSessionId, string taskKeyOrId, string? reason = null, CancellationToken ct = default);
     Task<TaskDto> AcceptTaskAsync(string trackId, string? callerSessionId, string taskKeyOrId, string? note = null, CancellationToken ct = default);
     Task<TaskDto> RejectTaskAsync(string trackId, string? callerSessionId, string taskKeyOrId, string note, bool reQueue = false, CancellationToken ct = default);
-    Task<TaskDto> CompleteTaskDoneAsync(string trackId, string callerSessionId, JsonElement? workerResult = null, CancellationToken ct = default, WorkerCompletionOrigin? origin = null);
+    Task<TaskDto> CompleteTaskDoneAsync(string trackId, string callerSessionId, JsonElement? workerResult = null, CancellationToken ct = default, WorkerCompletionOrigin? origin = null, FlowOutcome outcome = FlowOutcome.Ok, string? summary = null);
     Task<TaskDto> CompleteTaskFailAsync(string trackId, string callerSessionId, string reason, JsonElement? workerResult = null, CancellationToken ct = default, WorkerCompletionOrigin? origin = null);
 
     // Sessions, Messages & Epoch Compaction
@@ -172,7 +175,8 @@ public sealed partial class PergaKernelService : IPergaKernel
         TimeProvider? timeProvider = null,
         ISystemUpgradeController? systemUpgradeController = null,
         ISystemUpgradeReceiptSource? upgradeReceiptSource = null,
-        IScheduleCronEvaluator? scheduleCronEvaluator = null)
+        IScheduleCronEvaluator? scheduleCronEvaluator = null,
+        IGitHubForgeService? gitHubForgeService = null)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _reportEngine = reportEngine ?? throw new ArgumentNullException(nameof(reportEngine));
@@ -203,7 +207,9 @@ public sealed partial class PergaKernelService : IPergaKernel
             _commandRunner,
             _eventHub,
             _options,
-            _timeProvider, _scheduleCronEvaluator);
+            _timeProvider,
+            _scheduleCronEvaluator,
+            gitHubForgeService);
         UpgradeReceipts = new SystemUpgrade.UpgradeReceiptConsumer(_store, upgradeReceiptSource, Actors, _eventHub, DispatchAdmission);
         BootReconciler = new BootReconciler(_store, _workspaceDrivers, Actors, UpgradeReceipts);
         DispatchAdmission.Changed += PublishUpgradeStatus;
@@ -542,8 +548,8 @@ public sealed partial class PergaKernelService : IPergaKernel
         Actors.GetOrActivate(trackId).InspectCurrentTemplateAsync(sessionId, ct);
 
     public Task<TemplateSetResult> SetTrackTemplateWithOptionsAsync(string trackId, string sessionId, string? templateId,
-        string? source, string generation, JsonElement? inputs, bool dryRun, bool clear, CancellationToken ct = default, bool resetData = false) =>
-        Actors.GetOrActivate(trackId).SetTemplateWithOptionsAsync(sessionId, templateId, source, generation, inputs, dryRun, clear, ct, resetData);
+        string? source, string generation, JsonElement? inputs, bool dryRun, bool clear, CancellationToken ct = default, bool resetData = false, string? path = null) =>
+        Actors.GetOrActivate(trackId).SetTemplateWithOptionsAsync(sessionId, templateId, source, generation, inputs, dryRun, clear, ct, resetData, path);
 
     public Task<TrackDto> UpdateTemplateInputsAsync(string trackId, string sessionId, JsonElement inputs, string generation, CancellationToken ct = default) =>
         Actors.GetOrActivate(trackId).UpdateTemplateInputsAsync(sessionId, inputs, generation, ct);
@@ -1151,8 +1157,11 @@ public sealed partial class PergaKernelService : IPergaKernel
         string trackId,
         string callerSessionId,
         JsonElement? workerResult = null,
-        CancellationToken ct = default, WorkerCompletionOrigin? origin = null) =>
-        Actors.GetOrActivate(trackId).CompleteTaskDoneAsync(callerSessionId, workerResult, ct, origin);
+        CancellationToken ct = default,
+        WorkerCompletionOrigin? origin = null,
+        FlowOutcome outcome = FlowOutcome.Ok,
+        string? summary = null) =>
+        Actors.GetOrActivate(trackId).CompleteTaskDoneAsync(callerSessionId, workerResult, ct, origin, outcome, summary);
 
     public Task<TaskDto> CompleteTaskFailAsync(
         string trackId,

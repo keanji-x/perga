@@ -67,6 +67,8 @@ public sealed class TemplateV2BundleAndSchemaTests
                   eventList: (data, kernel) => ({
                     items: data.events.map((e) => ({
                       id: e.id,
+                      title: e.id,
+                      status: "pending",
                       date: e.date,
                       verdict: e.verdict,
                       model: e.taskRef && kernel.tasks[e.taskRef] ? kernel.tasks[e.taskRef].model : null
@@ -235,7 +237,7 @@ public sealed class TemplateV2BundleAndSchemaTests
                         }),
                         initial: () => ({}),
                       },
-                      report: { template: "./report.md", views: { v: (d) => d } },
+                      report: { template: "./report.md", views: { v: () => ({ items: [] }) } },
                     };
                   },
                 });

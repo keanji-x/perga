@@ -138,6 +138,8 @@ public interface IGitHubForgeService
 {
     Task<PrInfo> PublishPrAsync(PrPublishRequest req, CancellationToken ct);
     Task<PrChecksStatus> GetPrChecksAsync(string repoOrPath, int prNumber, CancellationToken ct);
+    Task<PrChecksStatus> GetPrChecksSnapshotAsync(string repoOrPath, int prNumber, CancellationToken ct) =>
+        GetPrChecksAsync(repoOrPath, prNumber, ct);
     Task<CiFailureEvidence> GetCiFailureEvidenceAsync(string repoOrPath, int prNumber, string headSha, CancellationToken ct);
     Task MergePrAsync(string repoOrPath, int prNumber, string expectedHeadSha, CancellationToken ct);
     Task<IssueInfo> ViewIssueAsync(string repoOrPath, int issueNumber, CancellationToken ct);

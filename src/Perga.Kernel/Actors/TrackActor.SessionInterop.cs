@@ -41,7 +41,7 @@ public sealed partial class TrackActor
     {
         if (_track.ClosedAtMs is not null || session.ArchivedAtMs is not null)
             throw KernelException.PreconditionFailed("Reopen the conversation before modifying it.");
-        if (TryGetOwningTaskCore(session.Id) is { } task)
+        if (TryGetActiveOwningTaskCore(session.Id) is { } task)
         {
             if (!_activeTasks.TryGetValue(task.Id, out var active) || active.Settling || task.Status != TaskRunStatus.Running)
                 throw KernelException.Conflict("The task is no longer running. Refresh the task before sending a command.");
@@ -53,12 +53,10 @@ public sealed partial class TrackActor
     {
         if (session.ArchivedAtMs is not null) return "archived";
         if (_track.ClosedAtMs is not null) return "track_closed";
-        var task = TryGetOwningTaskCore(session.Id);
+        var task = TryGetActiveOwningTaskCore(session.Id);
         if (task?.Status == TaskRunStatus.Pending) return "waiting_task";
-        if (task?.Status == TaskRunStatus.Verifying) return "task_finished";
-        return task is not null && !_activeTasks.ContainsKey(task.Id) &&
-            task.Status is TaskRunStatus.Done or TaskRunStatus.Failed or TaskRunStatus.Canceled
-            ? "task_finished" : null;
+        if (task?.Status == TaskRunStatus.Verifying) return "task_verifying";
+        return null;
     }
 
     public Task<IReadOnlyList<SessionSummaryDto>> ListSessionsAsync(SessionListFilter filter, InteropPrincipal caller, CancellationToken ct) =>
@@ -72,7 +70,7 @@ public sealed partial class TrackActor
                          (filter.ParentSessionId is null || s.ParentSessionId == filter.ParentSessionId)))
             {
                 var last = (await _store.ListSessionTurnsAsync(session.Id, ct).ConfigureAwait(false)).MaxBy(t => t.TurnIndex);
-                var owningTask = TryGetOwningTaskCore(session.Id);
+                var owningTask = TryGetActiveOwningTaskCore(session.Id);
                 var activeTask = owningTask is not null && _activeTasks.TryGetValue(owningTask.Id, out var found) ? found : null;
                 var state = session.Status == "queued" ? "running" : session.Status;
                 var readonlyReason = ReadSessionReadonlyReasonCore(session);
@@ -116,7 +114,7 @@ public sealed partial class TrackActor
         var session = RequireSessionCore(sessionId);
         RequireInteropCore(caller, session, write: true, destructive: request.Archived == true || request.Provider is not null);
         if (_track.ClosedAtMs is not null) throw KernelException.PreconditionFailed("The Track is closed.");
-        if (TryGetOwningTaskCore(sessionId) is { Status: not TaskRunStatus.Pending } task)
+        if (TryGetActiveOwningTaskCore(sessionId) is { Status: not TaskRunStatus.Pending } task)
         {
             if (!_activeTasks.TryGetValue(task.Id, out var active) || active.Settling || task.Status != TaskRunStatus.Running)
                 throw KernelException.Conflict("The task is no longer running. Refresh the task before updating it.");

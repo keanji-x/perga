@@ -12,7 +12,7 @@ public sealed partial class SqliteTrackStore
         await using var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);
         return await conn.QuerySingleOrDefaultAsync<StoredWorkerDispatch>(new CommandDefinition("""
             SELECT r.request_hash AS RequestHash, t.id AS TaskId FROM creation_receipts r
-            LEFT JOIN tasks t ON t.session_id = r.resource_id
+            LEFT JOIN tasks t ON t.session_id = r.resource_id AND t.track_id = @TrackId AND t.task_key = @TaskKey
             WHERE author_id = @AuthorId AND operation = 'session-create' AND scope_id = @TrackId AND request_key = @RequestKey;
             """, dispatch, cancellationToken: ct)).ConfigureAwait(false);
     }

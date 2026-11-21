@@ -469,7 +469,8 @@ public sealed partial class TrackActor
                 isLead = currentSession.IsLead, boundTaskId = actor.TryGetActiveTaskForSessionCore(sessionId)?.Task.Id
             }), CancellationToken.None).ConfigureAwait(false);
             actor._scheduler.RemoveActive(sessionId);
-            if (actor.TryGetOwningTaskCore(sessionId) is { Status: TaskRunStatus.Pending })
+            if (actor.TryGetActiveOwningTaskCore(sessionId) is { Status: TaskRunStatus.Pending } ||
+                actor.HasPendingFlowTaskForSessionCore(sessionId))
                 await actor.ScheduleEligibleTasksCoreAsync(CancellationToken.None).ConfigureAwait(false);
             await actor.NotifyParentCoreAsync(updatedSession, "turn_end", "turn:" + completedTurn.Id,
                 $"Child session '{sessionId}' turn '{completedTurn.Id}' ended as {completedTurn.Status}.").ConfigureAwait(false);

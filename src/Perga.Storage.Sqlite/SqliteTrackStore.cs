@@ -333,6 +333,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                             id, area_id, parent_track_id, parent_attempt_id, title, cwd,
                             workspace_driver, workspace_spec_json, lead_session_id,
                             template_id, template_snapshot, template_inputs_json, template_state_json, data_json, data_rev,
+                            flow_spec_json, flow_rev, flow_file_sha256,
                             enabled_plugins_json, closed_at_ms, pinned_at_ms, sort_order,
                             created_at_ms, updated_at_ms
                         )
@@ -340,6 +341,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                             @Id, @AreaId, @ParentTrackId, @ParentAttemptId, @Title, @Cwd,
                             @WorkspaceDriver, @WorkspaceSpecJson, @LeadSessionId,
                             @TemplateId, @TemplateSnapshot, @TemplateInputsJson, @TemplateStateJson, @DataJson, @DataRev,
+                            @FlowSpecJson, @FlowRev, @FlowFileSha256,
                             @EnabledPluginsJson, @ClosedAtMs, @PinnedAtMs, @SortOrder,
                             @CreatedAtMs, @UpdatedAtMs
                         );
@@ -361,6 +363,9 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                             TemplateStateJson = templateStateJson,
                             DataJson = dataJson,
                             track.DataRev,
+                            FlowSpecJson = string.IsNullOrWhiteSpace(track.FlowSpecJson) ? """{"rev":0,"nodes":[]}""" : track.FlowSpecJson,
+                            track.FlowRev,
+                            track.FlowFileSha256,
                             EnabledPluginsJson = enabledPluginsJson,
                             track.ClosedAtMs,
                             track.PinnedAtMs,
@@ -458,6 +463,9 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                    template_state_json AS TemplateStateJson,
                    data_json AS DataJson,
                    data_rev AS DataRev,
+                   flow_spec_json AS FlowSpecJson,
+                   flow_rev AS FlowRev,
+                   flow_file_sha256 AS FlowFileSha256,
                    enabled_plugins_json AS EnabledPluginsJson,
                    closed_at_ms AS ClosedAtMs,
                    pinned_at_ms AS PinnedAtMs,
@@ -568,6 +576,10 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                        gate_verdict_json AS GateVerdictJson,
                        started_at_ms AS StartedAtMs,
                        finished_at_ms AS FinishedAtMs,
+                       outcome AS Outcome,
+                       outcome_summary AS OutcomeSummary,
+                       trigger_run_key AS TriggerRunKey,
+                       archived_at_ms AS ArchivedAtMs,
                        created_at_ms AS CreatedAtMs,
                        updated_at_ms AS UpdatedAtMs
                 FROM tasks
@@ -639,13 +651,108 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
             TemplateSnapshotSource: trackRow.TemplateSnapshot);
     }
 
-    public Task UpdateTrackAndEmitAsync(TrackDto track, EventEnvelopeDto? evt, CancellationToken ct, bool writeData = false) =>
-        UpdateTrackCoreAsync(track, null, evt, ct, writeData: writeData);
+    public Task UpdateTrackAndEmitAsync(TrackDto track, EventEnvelopeDto? evt, CancellationToken ct, bool writeData = false, bool writeFlow = false, long? expectedFlowRev = null) =>
+        UpdateTrackCoreAsync(track, null, evt, ct, writeData: writeData, writeFlow: writeFlow, expectedFlowRev: expectedFlowRev);
 
     public Task UpdateTrackTemplateAndEmitAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto evt, CancellationToken ct, IReadOnlyList<TrackScheduleDto>? templateSchedules = null, bool refreshPromptsOnly = false, bool writeData = false) =>
         UpdateTrackCoreAsync(track, templateSnapshot, evt, ct, replaceTemplateSnapshot: true, templateSchedules, refreshPromptsOnly, writeData);
 
-    private Task UpdateTrackCoreAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto? evt, CancellationToken ct, bool replaceTemplateSnapshot = false, IReadOnlyList<TrackScheduleDto>? templateSchedules = null, bool refreshPromptsOnly = false, bool writeData = false)
+    public Task RecordFlowFileHashAsync(string trackId, long flowRev, string sha256, CancellationToken ct)
+    {
+        EnsureInitialized();
+        return _writer.EnqueueAsync(async (conn, tx, token) =>
+        {
+            await conn.ExecuteAsync(new CommandDefinition(
+                "UPDATE tracks SET flow_file_sha256=@Sha256 WHERE id=@TrackId AND flow_rev=@FlowRev;",
+                new { TrackId = trackId, FlowRev = flowRev, Sha256 = sha256 }, tx, cancellationToken: token))
+                .ConfigureAwait(false);
+        }, ct);
+    }
+
+    public Task CommitTrackFlowAsync(
+        TrackDto track,
+        long expectedFlowRev,
+        IReadOnlyList<TaskDto> upsertedTasks,
+        IReadOnlyList<TrackScheduleDto> activeFlowSchedules,
+        IReadOnlyList<string> canceledFlowScheduleIds,
+        IReadOnlyList<EventEnvelopeDto> events,
+        CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(track);
+        ArgumentNullException.ThrowIfNull(upsertedTasks);
+        ArgumentNullException.ThrowIfNull(activeFlowSchedules);
+        ArgumentNullException.ThrowIfNull(canceledFlowScheduleIds);
+        ArgumentNullException.ThrowIfNull(events);
+        EnsureInitialized();
+
+        var flowSpecJson = string.IsNullOrWhiteSpace(track.FlowSpecJson) ? """{"rev":0,"nodes":[]}""" : track.FlowSpecJson;
+
+        return _writer.EnqueueAsync(
+            async (conn, tx, innerCt) =>
+            {
+                var updated = await conn.ExecuteAsync(new CommandDefinition(
+                    """
+                    UPDATE tracks
+                    SET flow_spec_json = @FlowSpecJson,
+                        flow_rev = @FlowRev,
+                        flow_file_sha256 = @FlowFileSha256,
+                        updated_at_ms = @UpdatedAtMs
+                    WHERE id = @Id AND flow_rev = @ExpectedFlowRev;
+                    """,
+                    new
+                    {
+                        FlowSpecJson = flowSpecJson,
+                        track.FlowRev,
+                        track.FlowFileSha256,
+                        track.UpdatedAtMs,
+                        track.Id,
+                        ExpectedFlowRev = expectedFlowRev
+                    },
+                    transaction: tx,
+                    cancellationToken: innerCt)).ConfigureAwait(false);
+                if (updated == 0)
+                {
+                    throw KernelException.Conflict(
+                        $"Flow revision conflict: expected {expectedFlowRev}, but the track flow was modified concurrently.");
+                }
+
+                foreach (var task in upsertedTasks)
+                {
+                    await UpsertTaskInternalAsync(conn, tx, task, innerCt).ConfigureAwait(false);
+                }
+
+                foreach (var schedule in activeFlowSchedules)
+                {
+                    await UpsertFlowScheduleInternalAsync(conn, tx, schedule, innerCt).ConfigureAwait(false);
+                }
+
+                foreach (var scheduleId in canceledFlowScheduleIds)
+                {
+                    await conn.ExecuteAsync(new CommandDefinition(
+                        $"""
+                        UPDATE track_schedules
+                        SET state = '{TrackScheduleStates.Canceled}', next_fire_at_ms = NULL, updated_at_ms = @Now
+                        WHERE track_id = @TrackId AND id = @ScheduleId AND node_key IS NOT NULL AND state = '{TrackScheduleStates.Active}';
+                        """,
+                        new { TrackId = track.Id, ScheduleId = scheduleId, Now = track.UpdatedAtMs },
+                        transaction: tx,
+                        cancellationToken: innerCt)).ConfigureAwait(false);
+                }
+
+                if (activeFlowSchedules.Count > 0 || canceledFlowScheduleIds.Count > 0)
+                {
+                    await InsertSchedulesEventAsync(conn, tx, track.Id, track.UpdatedAtMs, innerCt).ConfigureAwait(false);
+                }
+
+                foreach (var evt in events)
+                {
+                    await InsertEventInternalAsync(conn, tx, evt, innerCt).ConfigureAwait(false);
+                }
+            },
+            ct);
+    }
+
+    private Task UpdateTrackCoreAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto? evt, CancellationToken ct, bool replaceTemplateSnapshot = false, IReadOnlyList<TrackScheduleDto>? templateSchedules = null, bool refreshPromptsOnly = false, bool writeData = false, bool writeFlow = false, long? expectedFlowRev = null)
     {
         ArgumentNullException.ThrowIfNull(track);
         EnsureInitialized();
@@ -654,6 +761,9 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
         var templateInputsJson = SqliteJsonUpcaster.SerializeElement(track.TemplateInputs);
         var templateStateJson = SqliteJsonUpcaster.SerializeElement(track.TemplateState);
         var dataJson = writeData ? SqliteJsonUpcaster.SerializeElement(track.Data) : null;
+        var flowSpecJson = writeFlow
+            ? (string.IsNullOrWhiteSpace(track.FlowSpecJson) ? """{"rev":0,"nodes":[]}""" : track.FlowSpecJson)
+            : null;
         var enabledPluginsJson = SqliteJsonUpcaster.SerializeStringList(track.EnabledPlugins);
 
         return _writer.EnqueueAsync(
@@ -667,6 +777,16 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                         new { DataJson = dataJson, track.DataRev, track.Id, ExpectedDataRev = expectedRev }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
                     if (updated == 0)
                         throw KernelException.Conflict($"Data revision conflict: expected {expectedRev}, but the track data was modified concurrently.");
+                }
+
+                if (writeFlow)
+                {
+                    var expectedFlow = expectedFlowRev ?? checked(track.FlowRev - 1);
+                    var updatedFlow = await conn.ExecuteAsync(new CommandDefinition(
+                        "UPDATE tracks SET flow_spec_json = @FlowSpecJson, flow_rev = @FlowRev, flow_file_sha256 = @FlowFileSha256 WHERE id = @Id AND flow_rev = @ExpectedFlowRev;",
+                        new { FlowSpecJson = flowSpecJson, track.FlowRev, track.FlowFileSha256, track.Id, ExpectedFlowRev = expectedFlow }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
+                    if (updatedFlow == 0)
+                        throw KernelException.Conflict($"Flow revision conflict: expected {expectedFlow}, but the track flow was modified concurrently.");
                 }
 
                 await conn.ExecuteAsync(
@@ -964,7 +1084,8 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
         EventEnvelopeDto? sessionEvent = null,
         string? wakePrompt = null,
         SessionMessage? initialMessage = null,
-        bool writeNewRunBoundary = false)
+        bool writeNewRunBoundary = false,
+        bool suppressDefaultWake = false)
     {
         ArgumentNullException.ThrowIfNull(task);
         EnsureInitialized();
@@ -1021,7 +1142,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                             cancellationToken: innerCt)).ConfigureAwait(false);
                 }
 
-                if (task.FinishedAtMs is not null)
+                if (task.FinishedAtMs is not null && !suppressDefaultWake)
                 {
                     var child = task.SessionId is null ? null : await conn.QuerySingleOrDefaultAsync<(string? Parent, string Notify)?>(new CommandDefinition(
                         "SELECT parent_session_id, notify_parent FROM agent_sessions WHERE id=@Id;", new { Id = task.SessionId }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
@@ -1726,7 +1847,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                CASE WHEN EXISTS (
                    SELECT 1 FROM agent_sessions s WHERE s.track_id = tr.id AND s.archived_at_ms IS NULL
                    AND LOWER(s.status) = 'unknown' AND (
-                       NOT EXISTS (SELECT 1 FROM tasks tk WHERE tk.session_id = s.id)
+                       NOT EXISTS (SELECT 1 FROM tasks tk WHERE tk.session_id = s.id AND (tk.kind <> 'flow_wake' OR tk.block_id <> 'flow:' || tk.task_key OR json_type(tk.context_json, '$.flowNode') IS NOT 'true') AND LOWER(tk.status) IN ('pending', 'running', 'verifying'))
                        OR EXISTS (SELECT 1 FROM tasks tk WHERE tk.session_id = s.id AND LOWER(tk.status) IN ('running', 'verifying'))
                    )
                ) THEN 1 ELSE 0 END AS HasBlockedSession,
@@ -1762,7 +1883,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
             SELECT s.track_id AS TrackId, s.id AS SessionId, MAX(t.completed_at_ms) AS LastNotifiableTurnAtMs
             FROM agent_sessions s JOIN session_turns t ON t.session_id = s.id
             JOIN tracks tr ON tr.id = s.track_id
-            WHERE s.archived_at_ms IS NULL AND NOT EXISTS (SELECT 1 FROM tasks tk WHERE tk.session_id = s.id)
+            WHERE s.archived_at_ms IS NULL AND NOT EXISTS (SELECT 1 FROM tasks tk WHERE tk.session_id = s.id AND (tk.kind <> 'flow_wake' OR tk.block_id <> 'flow:' || tk.task_key OR json_type(tk.context_json, '$.flowNode') IS NOT 'true') AND LOWER(tk.status) IN ('pending', 'running', 'verifying'))
               AND LOWER(t.status) IN ('completed', 'failed') AND t.completed_at_ms IS NOT NULL
               AND (@IncludeClosed = 1 OR tr.closed_at_ms IS NULL)
             GROUP BY s.track_id, s.id ORDER BY s.id;
@@ -1835,13 +1956,16 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                             status = CASE WHEN status IN ('queued', 'running') THEN 'idle' ELSE status END
                         WHERE id IN (
                             SELECT session_id FROM tasks WHERE status IN ('running', 'verifying') AND session_id IS NOT NULL
+                                AND NOT (block_id = 'flow:' || task_key AND json_type(context_json, '$.flowNode') IS 'true' AND (kind = 'flow_wake' OR json_type(context_json, '$.reuseSession') IS 'true'))
                         );
                         UPDATE tasks
                         SET status = 'failed',
                             status_detail = 'The host stopped during this task.',
+                            outcome = CASE WHEN block_id = 'flow:' || task_key AND json_type(context_json, '$.flowNode') IS 'true' THEN 'blocked' ELSE outcome END,
+                            outcome_summary = CASE WHEN block_id = 'flow:' || task_key AND json_type(context_json, '$.flowNode') IS 'true' THEN 'The host stopped during this task.' ELSE outcome_summary END,
                             finished_at_ms = COALESCE(finished_at_ms, @NowMs),
                             updated_at_ms = @NowMs
-                        WHERE status IN ('running', 'verifying');
+                        WHERE status IN ('running', 'verifying') AND NOT (kind = 'flow_watch' AND block_id = 'flow:' || task_key AND json_type(context_json, '$.flowNode') IS 'true');
                         """,
                         new { NowMs = nowMs },
                         transaction: tx,
@@ -1910,6 +2034,9 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                        template_state_json AS TemplateStateJson,
                        data_json AS DataJson,
                        data_rev AS DataRev,
+                       flow_spec_json AS FlowSpecJson,
+                       flow_rev AS FlowRev,
+                       flow_file_sha256 AS FlowFileSha256,
                        enabled_plugins_json AS EnabledPluginsJson,
                        closed_at_ms AS ClosedAtMs,
                        pinned_at_ms AS PinnedAtMs,
@@ -1946,14 +2073,18 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                     access_mode, ready, depends_on_json, goal_or_cmd, context_json,
                     acceptance, gate_json, status, status_detail, semantic_verdict,
                     semantic_note, session_id, run_count, worker_result_json, meta_json,
-                    gate_verdict_json, started_at_ms, finished_at_ms, created_at_ms, updated_at_ms
+                    gate_verdict_json, started_at_ms, finished_at_ms,
+                    outcome, outcome_summary, trigger_run_key, archived_at_ms,
+                    created_at_ms, updated_at_ms
                 )
                 VALUES (
                     @Id, @TrackId, @BlockId, @TaskKey, @Generation, @Kind, @Provider, @Role,
                     @AccessMode, @Ready, @DependsOnJson, @GoalOrCmd, @ContextJson,
                     @Acceptance, @GateJson, @Status, @StatusDetail, @SemanticVerdict,
                     @SemanticNote, @SessionId, @RunCount, @WorkerResultJson, @MetaJson,
-                    @GateVerdictJson, @StartedAtMs, @FinishedAtMs, @CreatedAtMs, @UpdatedAtMs
+                    @GateVerdictJson, @StartedAtMs, @FinishedAtMs,
+                    @Outcome, @OutcomeSummary, @TriggerRunKey, @ArchivedAtMs,
+                    @CreatedAtMs, @UpdatedAtMs
                 )
                 ON CONFLICT(id) DO UPDATE SET
                     block_id = excluded.block_id,
@@ -1980,6 +2111,10 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                     gate_verdict_json = excluded.gate_verdict_json,
                     started_at_ms = excluded.started_at_ms,
                     finished_at_ms = excluded.finished_at_ms,
+                    outcome = excluded.outcome,
+                    outcome_summary = excluded.outcome_summary,
+                    trigger_run_key = excluded.trigger_run_key,
+                    archived_at_ms = excluded.archived_at_ms,
                     updated_at_ms = excluded.updated_at_ms;
                 """,
                 new
@@ -2010,6 +2145,10 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                     GateVerdictJson = _coldBlobStore.StoreOrInlineNullable(task.TrackId, task.GateVerdict),
                     task.StartedAtMs,
                     task.FinishedAtMs,
+                    Outcome = SqliteJsonUpcaster.FormatFlowOutcome(task.Outcome),
+                    task.OutcomeSummary,
+                    task.TriggerRunKey,
+                    task.ArchivedAtMs,
                     task.CreatedAtMs,
                     task.UpdatedAtMs
                 },
@@ -2167,6 +2306,9 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
             TemplateState: _upcaster.UpcastObjectOrElement(r.TemplateStateJson, "tracks.template_state_json"),
             Data: _upcaster.UpcastObjectOrElement(r.DataJson, "tracks.data_json"),
             DataRev: r.DataRev,
+            FlowRev: r.FlowRev,
+            FlowSpecJson: r.FlowSpecJson,
+            FlowFileSha256: r.FlowFileSha256,
             EnabledPlugins: SqliteJsonUpcaster.DeserializeStringList(r.EnabledPluginsJson),
             ClosedAtMs: r.ClosedAtMs,
             PinnedAtMs: r.PinnedAtMs,
@@ -2202,6 +2344,10 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
             GateVerdict: _coldBlobStore.HydrateNullable(r.GateVerdictJson, "tasks.gate_verdict_json"),
             StartedAtMs: r.StartedAtMs,
             FinishedAtMs: r.FinishedAtMs,
+            Outcome: SqliteJsonUpcaster.ParseFlowOutcome(r.Outcome),
+            OutcomeSummary: r.OutcomeSummary,
+            TriggerRunKey: r.TriggerRunKey,
+            ArchivedAtMs: r.ArchivedAtMs,
             CreatedAtMs: r.CreatedAtMs,
             UpdatedAtMs: r.UpdatedAtMs);
 
@@ -2349,6 +2495,9 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
         public string TemplateStateJson { get; init; } = "{}";
         public string DataJson { get; init; } = "{}";
         public long DataRev { get; init; }
+        public string FlowSpecJson { get; init; } = """{"rev":0,"nodes":[]}""";
+        public long FlowRev { get; init; }
+        public string? FlowFileSha256 { get; init; }
         public string EnabledPluginsJson { get; init; } = "[]";
         public long? ClosedAtMs { get; init; }
         public long? PinnedAtMs { get; init; }
@@ -2396,6 +2545,10 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
         public string? GateVerdictJson { get; init; }
         public long? StartedAtMs { get; init; }
         public long? FinishedAtMs { get; init; }
+        public string Outcome { get; init; } = "none";
+        public string? OutcomeSummary { get; init; }
+        public string? TriggerRunKey { get; init; }
+        public long? ArchivedAtMs { get; init; }
         public long CreatedAtMs { get; init; }
         public long UpdatedAtMs { get; init; }
     }

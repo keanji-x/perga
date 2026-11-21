@@ -352,6 +352,7 @@ public sealed partial class PolicyVm
         bool skipCrossFileChecks = false)
     {
         // 1. Verify every `perga-block widget` in report.md references a declared view & existing widget asset.
+        var widgetBindingsByView = new Dictionary<string, List<string>>(StringComparer.Ordinal);
         if (!skipCrossFileChecks)
         {
             var viewSet = new HashSet<string>(viewNames, StringComparer.Ordinal);
@@ -391,19 +392,36 @@ public sealed partial class PolicyVm
                     }
                 }
 
-                if (payload.TryGetProperty("view", out var viewEl) && viewEl.ValueKind == JsonValueKind.String)
+                var viewName = payload.TryGetProperty("view", out var viewEl) && viewEl.ValueKind == JsonValueKind.String
+                    ? viewEl.GetString() : null;
+                if (TemplateViewsValidator.IsBuiltin(use))
+                    TemplateViewsValidator.ValidateDeclaration(use, viewName);
+
+                if (viewName is not null)
                 {
-                    var viewName = viewEl.GetString() ?? string.Empty;
-                    if (!string.IsNullOrWhiteSpace(viewName) && !viewSet.Contains(viewName))
+                    var isKernelFlowBuiltin = string.Equals(use, "builtin:flow", StringComparison.Ordinal) &&
+                                              string.Equals(viewName, "flow", StringComparison.Ordinal);
+                    if (!string.IsNullOrWhiteSpace(viewName) && !isKernelFlowBuiltin && !viewSet.Contains(viewName))
                     {
                         throw new InvalidOperationException(
                             $"perga-block widget references view '{viewName}', which is not declared in report.views.");
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(viewName))
+                    {
+                        if (!widgetBindingsByView.TryGetValue(viewName, out var list))
+                        {
+                            list = [];
+                            widgetBindingsByView[viewName] = list;
+                        }
+
+                        list.Add(use);
                     }
                 }
             }
         }
 
-        // 2. Validate data.initial() against data.schema(t), and trial-run every declared view against initial data.
+        // 2. Validate data.initial() against data.schema(t), and trial-run every declared view against initial data + empty flow.
         JsValue initialDataJs = ParseJsJson(engine, "{}");
         if (TryGetOptionalObject(def, "data", "template.data", out var dataObj))
         {
@@ -430,11 +448,19 @@ public sealed partial class PolicyVm
             TryGetOptionalObject(def, "report", "template.report", out var reportObj) &&
             TryGetOptionalObject(reportObj, "views", "template.report.views", out var viewsObj))
         {
-            var emptyKernel = ParseJsJson(engine, "{\"tasks\":{},\"sessions\":{}}");
+            var emptyKernel = ParseJsJson(engine, "{\"tasks\":{},\"sessions\":{},\"flow\":{\"rev\":0,\"nodes\":[],\"archived\":[]}}");
             foreach (var name in viewNames)
             {
                 var fn = (Function)viewsObj.Get(name);
-                engine.Call(fn, viewsObj, [initialDataJs, emptyKernel]);
+                var result = engine.Call(fn, viewsObj, [initialDataJs, emptyKernel]);
+                if (widgetBindingsByView.TryGetValue(name, out var boundUses))
+                {
+                    var outputJson = JsValueToJsonElement(engine, result, "null");
+                    foreach (var widgetUse in boundUses)
+                    {
+                        TemplateViewsValidator.ValidateViewOutput(widgetUse, name, outputJson);
+                    }
+                }
             }
         }
     }

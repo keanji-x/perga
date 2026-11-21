@@ -5,6 +5,7 @@ using System.Threading.Channels;
 using Perga.AgentKit;
 using Perga.Contracts;
 using Perga.Kernel.Events;
+using Perga.Kernel.Flow;
 using Perga.Kernel.Internal;
 using Perga.Kernel.Mcp;
 using Perga.Kernel.Ports;
@@ -80,13 +81,17 @@ public sealed partial class TrackActor : IAsyncDisposable
         IShellCommandRunner commandRunner,
         EventHub eventHub,
         KernelOptions options,
-        TimeProvider timeProvider, IScheduleCronEvaluator? scheduleCronEvaluator)
+        TimeProvider timeProvider,
+        IScheduleCronEvaluator? scheduleCronEvaluator,
+        IGitHubForgeService? gitHubForgeService = null)
     {
         TrackId = trackId;
         _scheduler = new SessionTurnScheduler(this);
         _turnRunner = new SessionTurnRunner(this);
         _store = store;
         _scheduleCronEvaluator = scheduleCronEvaluator;
+        _gitHubForgeService = gitHubForgeService;
+        _flowFileStore = new TrackFlowFileStore(options);
         _reportEngine = reportEngine;
         _policyVm = policyVm;
         _templateCatalog = templateCatalog;
@@ -118,13 +123,14 @@ public sealed partial class TrackActor : IAsyncDisposable
 
     public bool HasActiveWork =>
         Volatile.Read(ref _activeTaskCount) > 0 ||
+        _activeWatches.Count > 0 ||
         Volatile.Read(ref _queuedMailboxOps) > 0 ||
         Volatile.Read(ref _inFlightExternalOps) > 0 ||
         !_backgroundJobs.IsEmpty ||
         _scheduler.HasActiveWork;
 
     public bool IsSessionOrTaskRunning =>
-        _scheduler.HasActiveTurns || _activeTasks.Count > 0 || _scheduler.HasDispatchingInputs;
+        _scheduler.HasActiveTurns || _activeTasks.Count > 0 || _activeWatches.Count > 0 || _scheduler.HasDispatchingInputs;
 
     public async Task<T> EnqueueAsync<T>(Func<TrackActor, Task<T>> work, CancellationToken ct = default)
     {
@@ -307,7 +313,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         (await SetTemplateWithOptionsAsync(callerSessionId, templateId, source, expectedPolicyGeneration, inputs, false, false, ct, resetData).ConfigureAwait(false)).Track;
 
     public Task<TemplateSetResult> SetTemplateWithOptionsAsync(string callerSessionId, string? templateId,
-        string? source, string expectedPolicyGeneration, JsonElement? inputs, bool dryRun, bool clear, CancellationToken ct = default, bool resetData = false)
+        string? source, string expectedPolicyGeneration, JsonElement? inputs, bool dryRun, bool clear, CancellationToken ct = default, bool resetData = false, string? path = null)
     {
         return EnqueueAsync(async _ =>
         {
@@ -317,17 +323,19 @@ public sealed partial class TrackActor : IAsyncDisposable
                 throw KernelException.PolicyDenied("Active policy changed after template application was authorized.");
             if (_track.ClosedAtMs is not null)
                 throw KernelException.Conflict("Cannot set a template on a closed track.");
-            if (clear && (templateId is not null || source is not null || inputs is not null || resetData))
-                throw KernelException.InvalidArgument("clear cannot be combined with a template, inputs, or resetData.");
+            if (clear && (templateId is not null || source is not null || path is not null || inputs is not null || resetData))
+                throw KernelException.InvalidArgument("clear cannot be combined with a template, path, inputs, or resetData.");
             if (clear)
             {
                 return new TemplateSetResult(await DetachTemplateCoreAsync(dryRun, ct).ConfigureAwait(false), [], dryRun);
             }
 
-            if ((templateId is null) == (source is null) ||
+            var targetCount = (templateId is not null ? 1 : 0) + (source is not null ? 1 : 0) + (path is not null ? 1 : 0);
+            if (targetCount != 1 ||
                 templateId is not null && string.IsNullOrWhiteSpace(templateId) ||
-                source is not null && string.IsNullOrWhiteSpace(source))
-                throw KernelException.InvalidArgument("Specify exactly one non-empty 'templateId' or 'source'.");
+                source is not null && string.IsNullOrWhiteSpace(source) ||
+                path is not null && string.IsNullOrWhiteSpace(path))
+                throw KernelException.InvalidArgument("Specify exactly one non-empty 'templateId', 'source', or 'path'.");
             if (inputs is { ValueKind: not JsonValueKind.Object })
                 throw KernelException.InvalidArgument("'inputs' must be an object.");
 
@@ -338,6 +346,8 @@ public sealed partial class TrackActor : IAsyncDisposable
             {
                 if (templateId is not null)
                     policy = _templateCatalog.GetRequiredPolicy(templateId);
+                else if (path is not null)
+                    policy = _templateCatalog.CompileSource(LoadTemplateSourceFromLocalPathCore(path));
                 else if (_templateSnapshotSource is { } existing && source == _presentedTemplateSnapshotSource)
                     policy = _templateCatalog.GetOrCompileSnapshot(existing);
                 else
@@ -734,6 +744,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                     .Sum(b => b.Markdown?.Length ?? 0);
 
                 ValidateManifestReportRulesCore(editorRole, touchedSections, nextProseChars);
+                ValidateTemplateReportSkeletonLockCore(editorRole, _report, preview, effectiveReq.Ops);
                 // Parse and validate the complete prospective task set before any approval is persisted.
                 var taskPreview = TaskBlockSynchronizer.SyncTasksFromReport(TrackId, preview.NextDocument, _tasks,
                     _policy?.Manifest.RequireGateForReadWrite ?? false, NowMs());
@@ -822,6 +833,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                 TaskBlockSynchronizer.ValidatePostCommitBoundTaskFence(boundTaskId, _report, preview);
                 ValidateManifestReportRulesCore(editorRole, CollectTouchedSections(_report, preview, request.Ops),
                     preview.NextDocument.Blocks.Where(b => b.Kind == ReportBlockKind.Prose).Sum(b => b.Markdown?.Length ?? 0));
+                ValidateTemplateReportSkeletonLockCore(editorRole, _report, preview, request.Ops);
                 var sync = TaskBlockSynchronizer.SyncTasksFromReport(TrackId, preview.NextDocument, _tasks,
                     _policy?.Manifest.RequireGateForReadWrite ?? false, NowMs());
                 var activeRuns = _activeTasks.Values.Where(a => sync.SupersededOrRemovedActiveTaskIds.Contains(a.TaskId)).ToArray();
@@ -851,6 +863,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                     editorRole,
                     CollectTouchedSections(_report, verifiedCommit, effectiveReq.Ops),
                     verifiedCommit.NextDocument.Blocks.Where(b => b.Kind == ReportBlockKind.Prose).Sum(b => b.Markdown?.Length ?? 0));
+                ValidateTemplateReportSkeletonLockCore(editorRole, _report, verifiedCommit, effectiveReq.Ops);
 
                 return await FinalizeReportCommitCoreAsync(
                     verifiedCommit,
@@ -994,7 +1007,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         var target = task.SessionId is { } sid && _sessions.TryGetValue(sid, out var found) ? found : null;
         if (target is not null)
             SessionPolicy.RequireAccess(new InteropPrincipal.Session(TrackId, caller.Id, caller.IsLead,
-                TryGetOwningTaskCore(caller.Id)?.Id, caller.SpawnDepth, "", null), target, caller, write: true,
+                TryGetActiveOwningTaskCore(caller.Id)?.Id, caller.SpawnDepth, "", null), target, caller, write: true,
                 activeTurn: _scheduler.HasActive(target.Id), destructive: true);
         else if (!caller.IsLead || caller.ArchivedAtMs is not null)
             throw KernelException.Forbidden("Only the Track Lead can govern a task without a session.");
@@ -1025,6 +1038,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             }));
             await PersistAndEmitTaskUpdatedCoreAsync(updatedTask, after.NextState, now, CancellationToken.None, after.Output).ConfigureAwait(false);
             await ScheduleEligibleTasksCoreAsync(CancellationToken.None).ConfigureAwait(false);
+            await OnTaskSettledFlowHookCoreAsync(updatedTask, CancellationToken.None).ConfigureAwait(false);
             return updatedTask;
         }
 
@@ -1033,6 +1047,8 @@ public sealed partial class TrackActor : IAsyncDisposable
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
             var task = RequireTaskCore(taskKeyOrId);
             RequireTaskOwnershipCore(callerSessionId, task);
+            if (FlowConstants.IsFlowTask(task))
+                throw KernelException.Conflict("Cancel flow nodes through the flow definition or the Flow cancel endpoint.");
             var active = _activeTasks.TryGetValue(task.Id, out var found) ? found : null;
             ct.ThrowIfCancellationRequested();
             // A pending task must be canceled atomically, before another mailbox operation can start it.
@@ -1058,10 +1074,13 @@ public sealed partial class TrackActor : IAsyncDisposable
             {
                 SemanticVerdict = SemanticVerdict.Accepted,
                 SemanticNote = note,
+                Outcome = FlowOutcome.Ok,
+                OutcomeSummary = string.IsNullOrWhiteSpace(note) ? task.OutcomeSummary : note.Trim(),
                 UpdatedAtMs = now
             };
             ReplaceTaskInMemoryCore(updated);
             await PersistAndEmitTaskUpdatedCoreAsync(updated, nextTemplateState: null, now, ct).ConfigureAwait(false);
+            await OnTaskSettledFlowHookCoreAsync(updated, ct).ConfigureAwait(false);
             return updated;
         }, ct);
     }
@@ -1088,6 +1107,8 @@ public sealed partial class TrackActor : IAsyncDisposable
             {
                 SemanticVerdict = reQueue ? SemanticVerdict.None : SemanticVerdict.Rejected,
                 SemanticNote = effectiveNote,
+                Outcome = reQueue ? FlowOutcome.None : FlowOutcome.Attention,
+                OutcomeSummary = reQueue ? null : effectiveNote,
                 Status = nextStatus,
                 StatusDetail = $"Rejected: {effectiveNote}",
                 FinishedAtMs = nextStatus == TaskRunStatus.Pending ? null : task.FinishedAtMs ?? now,
@@ -1100,6 +1121,10 @@ public sealed partial class TrackActor : IAsyncDisposable
             {
                 await ScheduleEligibleTasksCoreAsync(ct).ConfigureAwait(false);
             }
+            else
+            {
+                await OnTaskSettledFlowHookCoreAsync(updated, ct).ConfigureAwait(false);
+            }
 
             return updated;
         }, ct);
@@ -1108,7 +1133,10 @@ public sealed partial class TrackActor : IAsyncDisposable
     public async Task<TaskDto> CompleteTaskDoneAsync(
         string callerSessionId,
         JsonElement? workerResult = null,
-        CancellationToken ct = default, WorkerCompletionOrigin? origin = null)
+        CancellationToken ct = default,
+        WorkerCompletionOrigin? origin = null,
+        FlowOutcome outcome = FlowOutcome.Ok,
+        string? summary = null)
     {
         var taskId = await EnqueueAsync(async _ =>
         {
@@ -1117,7 +1145,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             return active.TaskId;
         }, ct).ConfigureAwait(false);
 
-        return await CompleteTaskDoneByTaskIdAsync(taskId, workerResult, ct, origin).ConfigureAwait(false);
+        return await CompleteTaskDoneByTaskIdAsync(taskId, workerResult, ct, origin, outcome, summary).ConfigureAwait(false);
     }
 
     public async Task<TaskDto> CompleteTaskFailAsync(
@@ -1591,6 +1619,9 @@ public sealed partial class TrackActor : IAsyncDisposable
                 var previewOnly = providerDiscovery;
                 if (mcpServer == "perga" && toolName == KernelMcpToolNames.TrackSet)
                     previewOnly = ValidateTemplateSetArguments(arguments);
+                if (mcpServer == "perga" && toolName == KernelMcpToolNames.FlowCommit &&
+                    arguments.ValueKind == JsonValueKind.Object && arguments.TryGetProperty("dryRun", out var dryRun))
+                    previewOnly = dryRun.ValueKind == JsonValueKind.True;
                 if (!(mcpServer == "perga" && toolName == KernelMcpToolNames.TrackSet))
                     RequirePolicyAvailableCore();
                 if (_policy is null)
@@ -1726,6 +1757,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         }
 
         _workspacePreparation = await _store.GetWorkspacePreparationAsync(TrackId, ct).ConfigureAwait(false);
+        await HydrateFlowCoreAsync(ct).ConfigureAwait(false);
         _hydrated = true;
     }
 
@@ -1888,7 +1920,9 @@ public sealed partial class TrackActor : IAsyncDisposable
         return EnqueueAsync(async _ =>
         {
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
+            await EvaluateFlowAfterTriggersCoreAsync(ct).ConfigureAwait(false);
             await ScheduleEligibleTasksCoreAsync(ct).ConfigureAwait(false);
+            await TryRunFlowGcCoreAsync(ct).ConfigureAwait(false);
         }, ct);
     }
 
@@ -1899,14 +1933,35 @@ public sealed partial class TrackActor : IAsyncDisposable
             return;
         }
 
+        if (_activeTasks.Values.Any(run => run.Settling &&
+            _tasks.Any(t => t.Id == run.TaskId && t.Status == TaskRunStatus.Canceled)))
+            return;
+
         var mounted = await EnsureWorkspaceMountedCoreAsync(ct).ConfigureAwait(false);
+        foreach (var watch in _tasks.Where(t => t.Kind == "flow_watch" && FlowConstants.IsFlowTask(t) && t.Status == TaskRunStatus.Running &&
+            !_activeWatches.ContainsKey(t.Id)).ToArray())
+            await StartFlowWatchRunCoreAsync(watch, mounted, ct).ConfigureAwait(false);
         bool preparationFailed;
         do
         {
             preparationFailed = false;
-            var schedulable = TaskGraphScheduler.ComputeSchedulable(_tasks);
+            var schedulable = TaskGraphScheduler.ComputeSchedulable(_tasks, flowSpec: _flowSpec);
             foreach (var task in schedulable)
             {
+                if (task.Kind == "flow_wake" && FlowConstants.IsFlowTask(task))
+                {
+                    if (!await StartFlowWakeRunCoreAsync(task, ct).ConfigureAwait(false))
+                        preparationFailed = true;
+                    continue;
+                }
+
+                if (task.Kind == "flow_watch" && FlowConstants.IsFlowTask(task))
+                {
+                    if (!await StartFlowWatchRunCoreAsync(task, mounted, ct).ConfigureAwait(false))
+                        preparationFailed = true;
+                    continue;
+                }
+
                 PolicyTaskRoute route;
                 try
                 {
@@ -1930,9 +1985,20 @@ public sealed partial class TrackActor : IAsyncDisposable
                 }
                 catch (Exception ex) when (!ct.IsCancellationRequested)
                 {
-                    var failed = task with { Status = TaskRunStatus.Failed, StatusDetail = ex.Message, FinishedAtMs = NowMs(), UpdatedAtMs = NowMs() };
+                    var failed = task with
+                    {
+                        Status = TaskRunStatus.Failed,
+                        RunCount = FlowConstants.IsFlowTask(task) ? checked(task.RunCount + 1) : task.RunCount,
+                        Outcome = FlowOutcome.Attention,
+                        OutcomeSummary = ex.Message,
+                        StatusDetail = ex.Message,
+                        FinishedAtMs = NowMs(),
+                        UpdatedAtMs = NowMs()
+                    };
                     await PersistAndEmitTaskUpdatedCoreAsync(failed, null, failed.UpdatedAtMs, ct).ConfigureAwait(false);
                     ReplaceTaskInMemoryCore(failed);
+                    preparationFailed |= await EvaluateFlowAfterTriggersCoreAsync(ct).ConfigureAwait(false);
+                    await TryRunFlowGcCoreAsync(ct).ConfigureAwait(false);
                     continue;
                 }
                 if (!await StartTaskRunCoreAsync(task, route, mounted, ct).ConfigureAwait(false))
@@ -1960,12 +2026,16 @@ public sealed partial class TrackActor : IAsyncDisposable
                                 string.Equals(task.Kind, "shell", StringComparison.OrdinalIgnoreCase) ||
                                 string.Equals(task.Kind, "terminal", StringComparison.OrdinalIgnoreCase);
             var workerProvider = route.Provider ?? GetDefaultProviderCore();
-            var previousSession = task.SessionId is { } prevSid && _sessions.TryGetValue(prevSid, out var prev) ? prev : null;
+            var previousSession = ReadTaskDispatchSessionCore(task);
+            var preserveSessionContext = IsFlowSessionReuse(task) && previousSession is not null;
+            if (preserveSessionContext && TryGetActiveOwningTaskCore(previousSession!.Id) is { } owningTask &&
+                owningTask.Id != task.Id)
+                return true;
             // Orphaned task sessions can be rebound after live provider ownership is closed.
-            var orphaned = previousSession is not null && !_activeTasks.ContainsKey(task.Id);
+            var orphaned = !preserveSessionContext && previousSession is not null && !_activeTasks.ContainsKey(task.Id);
             if (previousSession is not null && _scheduler.IsOccupied(
                 orphaned ? previousSession with { Status = "idle" } : previousSession)) return true;
-            if (previousSession is not null && task.RunCount > 0)
+            if (previousSession is not null && (task.RunCount > 0 || preserveSessionContext))
             {
                 _mcpBridge.RevokeSession(previousSession.Id);
                 if (_runtimes.TryGetOpen(previousSession.Id, out _))
@@ -1997,14 +2067,20 @@ public sealed partial class TrackActor : IAsyncDisposable
                 }
                 _scheduler.Clear(previousSession.Id);
             }
-            var subagent = isCommandTask ? null : previousSession is not null ? previousSession with
+            var subagent = isCommandTask ? null : previousSession is not null ? (preserveSessionContext ? previousSession with
+            {
+                Status = "idle",
+                ArchivedAtMs = null,
+                UnknownReason = null, UnknownTurnId = null, UnknownLastError = null, ReconnectInvalidated = false,
+                UpdatedAtMs = now
+            } : previousSession with
             {
                 Status = "idle", NativeThreadId = null, ContextUsage = null,
                 ArchivedAtMs = null,
                 UnknownReason = null, UnknownTurnId = null, UnknownLastError = null, ReconnectInvalidated = false,
                 Epoch = task.RunCount == 0 ? previousSession.Epoch : checked(previousSession.Epoch + 1),
                 UpdatedAtMs = now
-            } : new AgentSessionDto(
+            }) : new AgentSessionDto(
                 Id: $"ses_{Guid.NewGuid():N}",
                 TrackId: TrackId,
                 IsLead: false,
@@ -2019,12 +2095,15 @@ public sealed partial class TrackActor : IAsyncDisposable
                 UpdatedAtMs: now,
                 PermissionMode: RuntimePermissionModes.Resolve(workerProvider, null));
 
+            var effectiveTask = InterpolateFlowTaskForExecutionCore(task);
             var runningTask = task with
             {
                 SessionId = subagent?.Id,
                 RunCount = nextRunCount,
                 Status = TaskRunStatus.Running,
                 StatusDetail = null,
+                Outcome = FlowOutcome.None,
+                OutcomeSummary = null,
                 WorkerResult = null,
                 Meta = JsonHelpers.EmptyObject,
                 GateVerdict = null,
@@ -2033,7 +2112,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                 UpdatedAtMs = now
             };
             var sessionEvent = subagent is null ? null : SessionUpdatedEvent(subagent);
-            var prompt = subagent is null ? null : BuildContractSubagentPrompt(runningTask);
+            var prompt = subagent is null ? null : BuildContractSubagentPrompt(effectiveTask with { SessionId = subagent.Id, RunCount = nextRunCount });
             var initial = subagent is null ? null : new SessionMessage(
                 $"inp_{task.Id}_{nextRunCount}",
                 subagent.Id,
@@ -2050,12 +2129,12 @@ public sealed partial class TrackActor : IAsyncDisposable
             {
                 var taskEvent = CreateTaskUpdatedEventCore(now);
                 await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
-                await _store.UpsertTaskAsync(runningTask, null, taskEvent, ct, subagent, sessionEvent, initialMessage: initial, writeNewRunBoundary: previousSession is not null && task.RunCount > 0).ConfigureAwait(false);
+                await _store.UpsertTaskAsync(runningTask, null, taskEvent, ct, subagent, sessionEvent, initialMessage: initial, writeNewRunBoundary: previousSession is not null && task.RunCount > 0 && !preserveSessionContext).ConfigureAwait(false);
             }
             catch (Exception ex) when (!ct.IsCancellationRequested)
             {
                 var failedAt = NowMs();
-                var failed = task with { Status = TaskRunStatus.Failed, StatusDetail = ex.Message, FinishedAtMs = failedAt, UpdatedAtMs = failedAt };
+                var failed = task with { Status = TaskRunStatus.Failed, Outcome = FlowOutcome.Attention, OutcomeSummary = ex.Message, StatusDetail = ex.Message, FinishedAtMs = failedAt, UpdatedAtMs = failedAt };
                 await PersistAndEmitTaskUpdatedCoreAsync(failed, null, failed.UpdatedAtMs, CancellationToken.None).ConfigureAwait(false);
                 ReplaceTaskInMemoryCore(failed);
                 return false;
@@ -2073,9 +2152,9 @@ public sealed partial class TrackActor : IAsyncDisposable
             Volatile.Write(ref _activeTaskCount, _activeTasks.Count);
             var runToken = runCts.Token;
             if (subagent is null)
-                _ = TrackBackgroundJob(async () =>
+                _activeTasks[task.Id].Execution = TrackBackgroundJob(async () =>
                 {
-                    using (admission) await RunCommandTaskInBackgroundAsync(task.Id, runningTask, mounted.MergedCwd, runToken).ConfigureAwait(false);
+                    using (admission) await RunCommandTaskInBackgroundAsync(task.Id, effectiveTask with { RunCount = nextRunCount }, mounted.MergedCwd, runToken).ConfigureAwait(false);
                 });
             else
             {
@@ -2122,7 +2201,26 @@ public sealed partial class TrackActor : IAsyncDisposable
                 durationMs = cmdRes.DurationMs
             });
 
-            if (cmdRes.ExitCode == 0 && !cmdRes.TimedOut)
+            if (FlowConstants.IsFlowTask(task))
+            {
+                var tail = FlowConstants.ExtractTailLine(cmdRes.Stdout, cmdRes.Stderr);
+                if (cmdRes.TimedOut)
+                {
+                    await CompleteTaskDoneByTaskIdAsync(taskId, payload, ct, outcome: FlowOutcome.Blocked,
+                        summary: $"Command timed out after {timeoutSecs}s.").ConfigureAwait(false);
+                }
+                else if (cmdRes.ExitCode == 0)
+                {
+                    await CompleteTaskDoneByTaskIdAsync(taskId, payload, ct, outcome: FlowOutcome.Ok,
+                        summary: tail).ConfigureAwait(false);
+                }
+                else
+                {
+                    await CompleteTaskDoneByTaskIdAsync(taskId, payload, ct, outcome: FlowOutcome.Attention,
+                        summary: tail ?? $"Command exited with code {cmdRes.ExitCode}.").ConfigureAwait(false);
+                }
+            }
+            else if (cmdRes.ExitCode == 0 && !cmdRes.TimedOut)
             {
                 await CompleteTaskDoneByTaskIdAsync(taskId, payload, ct).ConfigureAwait(false);
             }
@@ -2198,7 +2296,10 @@ public sealed partial class TrackActor : IAsyncDisposable
     private async Task<TaskDto> CompleteTaskDoneByTaskIdAsync(
         string taskId,
         JsonElement? workerResult,
-        CancellationToken ct, WorkerCompletionOrigin? origin = null)
+        CancellationToken ct,
+        WorkerCompletionOrigin? origin = null,
+        FlowOutcome outcome = FlowOutcome.Ok,
+        string? summary = null)
     {
         Interlocked.Increment(ref _inFlightExternalOps);
         try
@@ -2231,7 +2332,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                 await PersistAndEmitTaskUpdatedCoreAsync(verifyingTask, nextTemplateState: null, now, verificationToken)
                     .ConfigureAwait(false);
 
-                return (verifyingTask, active, mounted.MergedCwd, _policy?.Manifest.AfterWorkerDoneCmd);
+                return (InterpolateFlowTaskForExecutionCore(verifyingTask), active, mounted.MergedCwd, _policy?.Manifest.AfterWorkerDoneCmd);
             }, verificationToken).ConfigureAwait(false);
 
             var mergedMeta = prep.Task.Meta ?? JsonHelpers.EmptyObject;
@@ -2329,10 +2430,19 @@ public sealed partial class TrackActor : IAsyncDisposable
                 await InterruptSessionQueueForTaskSettlementCoreAsync(current.SessionId, verificationToken).ConfigureAwait(false);
                 var now = NowMs();
 
+                var resolvedOutcome = gatePassed
+                    ? (outcome == FlowOutcome.None ? FlowOutcome.Ok : outcome)
+                    : FlowOutcome.Attention;
+                var resolvedSummary = gatePassed
+                    ? (!string.IsNullOrWhiteSpace(summary) ? summary.Trim() : ExtractSummaryFromWorkerResult(currentTask.WorkerResult))
+                    : failedStepReason;
+
                 var settledTask = currentTask with
                 {
                     Status = gatePassed ? TaskRunStatus.Done : TaskRunStatus.Failed,
                     StatusDetail = gatePassed ? null : failedStepReason,
+                    Outcome = resolvedOutcome,
+                    OutcomeSummary = resolvedSummary,
                     Meta = mergedMeta,
                     GateVerdict = gateVerdict,
                     FinishedAtMs = now,
@@ -2343,17 +2453,22 @@ public sealed partial class TrackActor : IAsyncDisposable
                 var statusLabel = gatePassed ? "done" : "failed";
                 var after = EvaluateAfterPolicyEventCore("task.settled", JsonHelpers.ToElement(new {
                     taskKey = currentTask.TaskKey, accessMode = FormatAccessModeForPolicy(currentTask.Access),
-                    status = statusLabel, workerResult = settledTask.WorkerResult,
+                    status = statusLabel, outcome = FlowConstants.FormatOutcome(resolvedOutcome),
+                    outcomeSummary = resolvedSummary, workerResult = settledTask.WorkerResult,
                     meta = mergedMeta, gateVerdict
                 }));
                 var nextTemplateState = after.NextState;
                 var policyNote = after.Output;
 
                 var summarySb = new StringBuilder();
-                summarySb.Append($"Task '{settledTask.TaskKey}' (run #{settledTask.RunCount}) settled as {settledTask.Status}.");
+                summarySb.Append($"Task '{settledTask.TaskKey}' (run #{settledTask.RunCount}) settled as {settledTask.Status} (outcome={FlowConstants.FormatOutcome(resolvedOutcome)}).");
                 if (!string.IsNullOrWhiteSpace(failedStepReason))
                 {
                     summarySb.Append($" Reason: {failedStepReason}");
+                }
+                else if (!string.IsNullOrWhiteSpace(resolvedSummary))
+                {
+                    summarySb.Append($" Summary: {resolvedSummary}");
                 }
 
                 if (!string.IsNullOrWhiteSpace(policyNote))
@@ -2364,7 +2479,9 @@ public sealed partial class TrackActor : IAsyncDisposable
                 await PersistAndEmitTaskUpdatedCoreAsync(settledTask, nextTemplateState, now, verificationToken, summarySb.ToString())
                     .ConfigureAwait(false);
 
+                await EvaluateFlowAfterTriggersCoreAsync(verificationToken).ConfigureAwait(false);
                 await ScheduleEligibleTasksCoreAsync(verificationToken).ConfigureAwait(false);
+                await TryRunFlowGcCoreAsync(verificationToken).ConfigureAwait(false);
 
                 return (settledTask, summarySb.ToString());
             }, verificationToken).ConfigureAwait(false);
@@ -2419,6 +2536,8 @@ public sealed partial class TrackActor : IAsyncDisposable
                 {
                     Status = TaskRunStatus.Failed,
                     StatusDetail = reason,
+                    Outcome = FlowOutcome.Attention,
+                    OutcomeSummary = reason,
                     WorkerResult = clonedWorkerResult,
                     FinishedAtMs = now,
                     UpdatedAtMs = now
@@ -2427,7 +2546,7 @@ public sealed partial class TrackActor : IAsyncDisposable
 
                 var after = EvaluateAfterPolicyEventCore("task.settled", JsonHelpers.ToElement(new {
                     taskKey = currentTask.TaskKey, accessMode = FormatAccessModeForPolicy(currentTask.Access),
-                    status = "failed", workerResult = clonedWorkerResult,
+                    status = "failed", outcome = "attention", outcomeSummary = reason, workerResult = clonedWorkerResult,
                     meta = currentTask.Meta ?? JsonHelpers.EmptyObject, gateVerdict = (JsonElement?)null
                 }));
                 var nextTemplateState = after.NextState;
@@ -2439,6 +2558,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                 await PersistAndEmitTaskUpdatedCoreAsync(updatedTask, nextTemplateState, now, ct, msg)
                     .ConfigureAwait(false);
                 await ScheduleEligibleTasksCoreAsync(ct).ConfigureAwait(false);
+                await OnTaskSettledFlowHookCoreAsync(updatedTask, ct).ConfigureAwait(false);
 
                 return (updatedTask, msg);
             }, ct).ConfigureAwait(false);
@@ -2452,14 +2572,41 @@ public sealed partial class TrackActor : IAsyncDisposable
         }
     }
 
-    private TaskDto? TryGetOwningTaskCore(string sessionId) =>
-        _tasks.FirstOrDefault(t => string.Equals(t.SessionId, sessionId, StringComparison.Ordinal));
+    private TaskDto? TryGetActiveOwningTaskCore(string sessionId)
+    {
+        TaskDto? pending = null;
+        foreach (var task in _tasks)
+        {
+            if (!string.Equals(task.SessionId, sessionId, StringComparison.Ordinal) ||
+                (task.Kind == "flow_wake" && FlowConstants.IsFlowTask(task)))
+            {
+                continue;
+            }
 
-    private bool IsTaskOwnedSessionCore(string sessionId) => TryGetOwningTaskCore(sessionId) is not null;
+            if (_activeTasks.ContainsKey(task.Id))
+            {
+                return task;
+            }
+
+            if (task.Status is TaskRunStatus.Running or TaskRunStatus.Verifying)
+            {
+                return task;
+            }
+
+            if (task.Status == TaskRunStatus.Pending && !IsFlowSessionReuse(task))
+            {
+                pending ??= task;
+            }
+        }
+
+        return pending;
+    }
+
+    private bool IsTaskOwnedSessionCore(string sessionId) => TryGetActiveOwningTaskCore(sessionId) is not null;
 
     private (TaskDto Task, ActiveTaskRunState Active)? TryGetActiveTaskForSessionCore(string sessionId)
     {
-        if (TryGetOwningTaskCore(sessionId) is not { } task) return null;
+        if (TryGetActiveOwningTaskCore(sessionId) is not { } task) return null;
         return _activeTasks.TryGetValue(task.Id, out var active) && active.SessionId == sessionId
             ? (task, active)
             : null;
@@ -2468,7 +2615,7 @@ public sealed partial class TrackActor : IAsyncDisposable
     private bool IsSessionFrozenForDispatchCore(AgentSessionDto session)
     {
         if (session.ArchivedAtMs is not null || _track.ClosedAtMs is not null) return true;
-        if (TryGetOwningTaskCore(session.Id) is not { } task) return false;
+        if (TryGetActiveOwningTaskCore(session.Id) is not { } task) return false;
         return !_activeTasks.TryGetValue(task.Id, out var active) || active.SessionId != session.Id || active.Settling || task.Status != TaskRunStatus.Running;
     }
 
@@ -2491,9 +2638,26 @@ public sealed partial class TrackActor : IAsyncDisposable
 
     private void RequireDispatchWorkspace(AgentSessionDto session)
     {
-        if (TryGetOwningTaskCore(session.Id) is { } task &&
+        if (TryGetActiveOwningTaskCore(session.Id) is { } task &&
             (!_activeTasks.TryGetValue(task.Id, out var active) || active.SessionId != session.Id || active.Settling || task.Status != TaskRunStatus.Running))
             throw KernelException.Conflict("The task workspace is no longer available.");
+    }
+
+    private static string? ExtractSummaryFromWorkerResult(JsonElement? workerResult)
+    {
+        if (workerResult is not { ValueKind: JsonValueKind.Object } obj)
+        {
+            return null;
+        }
+
+        if (JsonHelpers.TryGetPropertyIgnoreCase(obj, ["summary", "message", "note"], out var el) &&
+            el.ValueKind == JsonValueKind.String &&
+            !string.IsNullOrWhiteSpace(el.GetString()))
+        {
+            return el.GetString()!.Trim();
+        }
+
+        return null;
     }
 
     private static SessionItemDto CreateWakeUserItem(SessionTurnDto turn, string prompt, string? inputId, string? deliveryError = null, string? presentation = null) =>
@@ -2835,7 +2999,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             throw KernelException.NotFound($"Session '{newLeadSessionId}' does not exist on track '{TrackId}'.");
         }
 
-        if (TryGetOwningTaskCore(newLeadSessionId) is { } owningTask)
+        if (TryGetActiveOwningTaskCore(newLeadSessionId) is { } owningTask)
         {
             throw KernelException.Forbidden(
                 $"Contract subagent session '{newLeadSessionId}' bound to task '{owningTask.Id}' cannot become Lead.");
@@ -2923,7 +3087,12 @@ public sealed partial class TrackActor : IAsyncDisposable
     // The provider may call back into the actor during shutdown, so never await it in the mailbox.
     private async Task CloseCanceledWorkerAsync(ActiveTaskRunState active)
     {
-        if (active.SessionId is not { } sessionId) return;
+        if (active.SessionId is not { } sessionId)
+        {
+            if (active.Execution is { } execution)
+                await execution.WaitAsync(_options.SessionStartupTimeout).ConfigureAwait(false);
+            return;
+        }
         try
         {
             await _runtimes.Get(sessionId).CloseAsync(_options.SessionStartupTimeout, CancellationToken.None).ConfigureAwait(false);
@@ -2954,13 +3123,27 @@ public sealed partial class TrackActor : IAsyncDisposable
 
     private async Task CancelAllInFlightTasksAsync(string reason, CancellationToken ct)
     {
-        var runs = await EnqueueAsync(_ =>
+        var runs = await EnqueueAsync(async _ =>
         {
             RequireTasksOutsideVerification(_activeTasks.Values);
             var activeRuns = _activeTasks.Values.ToArray();
             ct.ThrowIfCancellationRequested();
+            foreach (var watch in _activeWatches.Values.ToArray())
+            {
+                var task = RequireTaskCore(watch.TaskId);
+                var now = NowMs();
+                var canceled = task with
+                {
+                    Status = TaskRunStatus.Canceled, Ready = false, StatusDetail = reason,
+                    FinishedAtMs = now, UpdatedAtMs = now
+                };
+                await PersistAndEmitTaskUpdatedCoreAsync(canceled, null, now, CancellationToken.None, suppressDefaultWake: true)
+                    .ConfigureAwait(false);
+                ReplaceTaskInMemoryCore(canceled);
+                CancelWatchForNodeCore(watch.NodeId);
+            }
             foreach (var active in activeRuns) BeginTaskCancellationCore(active);
-            return Task.FromResult(activeRuns);
+            return activeRuns;
         }, CancellationToken.None).ConfigureAwait(false);
         foreach (var active in runs)
         {
@@ -3008,6 +3191,200 @@ public sealed partial class TrackActor : IAsyncDisposable
                 }
             }
         }
+    }
+
+    private void ValidateTemplateReportSkeletonLockCore(
+        string editorRole,
+        ReportDocument previous,
+        ReportCommitResult commitResult,
+        IReadOnlyList<BlockOp> ops)
+    {
+        if (_policy is null)
+        {
+            return;
+        }
+
+        // Only enforce skeleton lock on non-system AI actors (lead / subagent).
+        if (!string.Equals(editorRole, "lead", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(editorRole, "subagent", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        // 1. Deny inserting or modifying ad-hoc `perga-block html` blocks when an active template exists.
+        var prevHtmlById = previous.Blocks
+            .Where(b => b.Kind == ReportBlockKind.Html)
+            .ToDictionary(b => b.Id, StringComparer.Ordinal);
+        foreach (var nextBlock in commitResult.NextDocument.Blocks)
+        {
+            if (nextBlock.Kind != ReportBlockKind.Html)
+            {
+                continue;
+            }
+
+            if (!prevHtmlById.TryGetValue(nextBlock.Id, out var prevHtml) ||
+                !string.Equals(prevHtml.Markdown, nextBlock.Markdown, StringComparison.Ordinal) ||
+                !JsonHelpers.JsonEquals(prevHtml.Payload, nextBlock.Payload))
+            {
+                throw KernelException.PolicyDenied(
+                    $"Active template '{_policy.TemplateId}' forbids inserting or modifying ad-hoc 'perga-block html' blocks. Use declared template widgets and 'data_patch' instead.");
+            }
+        }
+
+        // 2. If the active template declares `widget` blocks in InitialReportMarkdown, lock them against delete/move/modify.
+        if (string.IsNullOrWhiteSpace(_policy.Manifest.InitialReportMarkdown))
+        {
+            return;
+        }
+
+        var templateDoc = _reportEngine.Parse(_policy.Manifest.InitialReportMarkdown, docRev: 0, summary: string.Empty);
+        var templateWidgets = templateDoc.Blocks.Where(b => b.Kind == ReportBlockKind.Widget).ToArray();
+        if (templateWidgets.Length == 0)
+        {
+            return;
+        }
+
+        var templateWidgetSigs = templateWidgets
+            .Select(WidgetSignature)
+            .ToHashSet(StringComparer.Ordinal);
+
+        var protectedPrevWidgets = previous.Blocks
+            .Where(b => b.Kind == ReportBlockKind.Widget && templateWidgetSigs.Contains(WidgetSignature(b)))
+            .ToArray();
+        if (protectedPrevWidgets.Length == 0)
+        {
+            return;
+        }
+
+        var protectedIds = protectedPrevWidgets.Select(b => b.Id).ToHashSet(StringComparer.Ordinal);
+        foreach (var op in ops)
+        {
+            if (op is BlockOp.MoveBlockOp move && protectedIds.Contains(move.Id))
+            {
+                throw KernelException.PolicyDenied(
+                    $"Active template '{_policy.TemplateId}' locks template-declared widget block '{move.Id}'; moving it is not permitted.");
+            }
+
+            if (op is BlockOp.DeleteBlockOp del && protectedIds.Contains(del.Id))
+            {
+                throw KernelException.PolicyDenied(
+                    $"Active template '{_policy.TemplateId}' locks template-declared widget block '{del.Id}'; deleting it is not permitted.");
+            }
+        }
+
+        var nextById = commitResult.NextDocument.Blocks.ToDictionary(b => b.Id, StringComparer.Ordinal);
+        var nextIndices = new Dictionary<string, int>(StringComparer.Ordinal);
+        for (var i = 0; i < commitResult.NextDocument.Blocks.Count; i++)
+        {
+            nextIndices[commitResult.NextDocument.Blocks[i].Id] = i;
+        }
+
+        foreach (var block in commitResult.NextDocument.Blocks)
+        {
+            if (block.Kind == ReportBlockKind.Widget && !protectedIds.Contains(block.Id) &&
+                templateWidgetSigs.Contains(WidgetSignature(block)))
+                throw KernelException.PolicyDenied($"Active template '{_policy.TemplateId}' forbids duplicating a template widget.");
+        }
+
+        var commonBefore = previous.Blocks.Where(b => nextIndices.ContainsKey(b.Id)).Select(b => b.Id).ToArray();
+        var previousIds = commonBefore.ToHashSet(StringComparer.Ordinal);
+        var commonAfter = commitResult.NextDocument.Blocks.Where(b => previousIds.Contains(b.Id))
+            .Select(b => b.Id).ToArray();
+        var replacedSections = ops.OfType<BlockOp.ReplaceSectionOp>()
+            .Select(op => op.SectionH1.Trim().TrimStart('#').Trim()).ToHashSet(StringComparer.Ordinal);
+        foreach (var prevWidget in protectedPrevWidgets)
+        {
+            if (!nextById.TryGetValue(prevWidget.Id, out var nextWidget))
+            {
+                throw KernelException.PolicyDenied(
+                    $"Active template '{_policy.TemplateId}' locks template-declared widget block '{prevWidget.Id}'; deleting or omitting it in replace_section is not permitted.");
+            }
+
+            if (nextWidget.Kind != ReportBlockKind.Widget ||
+                !string.Equals(prevWidget.SectionH1, nextWidget.SectionH1, StringComparison.Ordinal) ||
+                !string.Equals(prevWidget.Markdown, nextWidget.Markdown, StringComparison.Ordinal) ||
+                !JsonHelpers.JsonEquals(prevWidget.Payload, nextWidget.Payload))
+            {
+                throw KernelException.PolicyDenied(
+                    $"Active template '{_policy.TemplateId}' locks template-declared widget block '{prevWidget.Id}'; modifying it is not permitted. Use 'data_patch' to update widget data.");
+            }
+
+            var oldIndex = Array.IndexOf(commonBefore, prevWidget.Id);
+            var sharedPrefix = commonBefore.Take(oldIndex).ToHashSet(StringComparer.Ordinal);
+            var sharedPrefixAfter = commonAfter.TakeWhile(id => id != prevWidget.Id);
+            if (!sharedPrefix.SetEquals(sharedPrefixAfter) ||
+                (prevWidget.SectionH1 is { } section && replacedSections.Contains(section) &&
+                 SectionIndex(previous, prevWidget) != SectionIndex(commitResult.NextDocument, nextWidget)))
+            {
+                throw KernelException.PolicyDenied(
+                    $"Active template '{_policy.TemplateId}' locks the position of template widget '{prevWidget.Id}'.");
+            }
+        }
+
+        static int SectionIndex(ReportDocument doc, ReportBlock widget) =>
+            doc.Blocks.TakeWhile(b => b.Id != widget.Id).Count(b => b.SectionH1 == widget.SectionH1 &&
+                (b.Kind != ReportBlockKind.Prose || !IsSectionHeading(b.Markdown, widget.SectionH1)));
+
+        static bool IsSectionHeading(string? markdown, string? section)
+        {
+            var heading = markdown?.Trim();
+            if (heading is null || heading.Contains('\n') || !heading.StartsWith("# ", StringComparison.Ordinal))
+                return false;
+            var title = heading[2..].Trim();
+            return title == section || title.TrimEnd('#').TrimEnd() == section;
+        }
+    }
+
+    private static string WidgetSignature(ReportBlock block)
+    {
+        if (block.Payload is { ValueKind: JsonValueKind.Object } obj)
+        {
+            var use = obj.TryGetProperty("use", out var u) && u.ValueKind == JsonValueKind.String ? u.GetString() : string.Empty;
+            var view = obj.TryGetProperty("view", out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : string.Empty;
+            var sel = obj.TryGetProperty("selectionKey", out var s) && s.ValueKind == JsonValueKind.String ? s.GetString() : string.Empty;
+            return $"{use}|{view}|{sel}";
+        }
+
+        return block.Markdown?.Trim() ?? string.Empty;
+    }
+
+    private string LoadTemplateSourceFromLocalPathCore(string rawPath)
+    {
+        var trimmed = rawPath.Trim();
+        string resolvedPath;
+        try
+        {
+            resolvedPath = Path.IsPathRooted(trimmed)
+                ? Path.GetFullPath(trimmed)
+                : Path.GetFullPath(Path.Combine(ExtractWorkspaceSpec(_track).MergedCwd, trimmed));
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            throw KernelException.InvalidArgument($"Invalid template path '{rawPath}': {ex.Message}");
+        }
+
+        if (Directory.Exists(resolvedPath))
+        {
+            return TemplateBundle.PackDirectory(resolvedPath);
+        }
+
+        if (File.Exists(resolvedPath))
+        {
+            var info = new FileInfo(resolvedPath);
+            if (info.LinkTarget is not null || (info.Attributes & FileAttributes.ReparsePoint) != 0)
+            {
+                throw KernelException.InvalidArgument($"Template file '{rawPath}' cannot be a symlink.");
+            }
+
+            if (info.Length > 512 * 1024)
+            {
+                throw KernelException.InvalidArgument($"Template file '{rawPath}' exceeds maximum single-file size (512 KB).");
+            }
+
+            return File.ReadAllText(resolvedPath, Encoding.UTF8);
+        }
+
+        throw KernelException.NotFound($"Template path '{rawPath}' was not found.");
     }
 
     private static IReadOnlyList<string> CollectTouchedSections(
@@ -3060,7 +3437,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         if (!string.IsNullOrEmpty(callerSessionId))
         {
             var session = RequireSessionCore(callerSessionId);
-            return (session.IsLead ? "lead" : "subagent", TryGetOwningTaskCore(session.Id)?.Id);
+            return (session.IsLead ? "lead" : "subagent", TryGetActiveOwningTaskCore(session.Id)?.Id);
         }
 
         return ("system", null);
@@ -3079,7 +3456,7 @@ public sealed partial class TrackActor : IAsyncDisposable
     private AgentSessionDto RequireGovernanceSessionCore(string callerSessionId, string toolName)
     {
         var session = RequireSessionCore(callerSessionId);
-        if (TryGetOwningTaskCore(callerSessionId) is { } task)
+        if (TryGetActiveOwningTaskCore(callerSessionId) is { } task)
         {
             throw KernelException.Forbidden(
                 $"Governance tool '{toolName}' requires an unbound session, but session '{callerSessionId}' is bound to task '{task.Id}'.");
@@ -3175,11 +3552,11 @@ public sealed partial class TrackActor : IAsyncDisposable
         TaskDto task,
         JsonElement? nextTemplateState,
         long now,
-        CancellationToken ct, string? wakePrompt = null)
+        CancellationToken ct, string? wakePrompt = null, bool suppressDefaultWake = false)
     {
         var evt = CreateTaskUpdatedEventCore(now);
         await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
-        await _store.UpsertTaskAsync(task, nextTemplateState, evt, ct, wakePrompt: wakePrompt).ConfigureAwait(false);
+        await _store.UpsertTaskAsync(task, nextTemplateState, evt, ct, wakePrompt: wakePrompt, suppressDefaultWake: suppressDefaultWake).ConfigureAwait(false);
         if (task.FinishedAtMs is not null && task.SessionId is { } childId && _sessions.TryGetValue(childId, out var child) &&
             child.NotifyParent == "task_settled" && child.ParentSessionId is { } parentId)
             await PokeSessionCoreAsync(parentId).ConfigureAwait(false);
@@ -3259,7 +3636,7 @@ public sealed partial class TrackActor : IAsyncDisposable
     private string BuildDefaultSystemPromptCore(AgentSessionDto session)
     {
         var reportMd = _reportEngine.RenderMarkdown(_report, withMarkers: true);
-        var boundTask = TryGetOwningTaskCore(session.Id);
+        var boundTask = TryGetActiveOwningTaskCore(session.Id);
         var role = session.IsLead
             ? "Lead Session (Primary Track Representative)"
             : boundTask is not null
@@ -3267,7 +3644,10 @@ public sealed partial class TrackActor : IAsyncDisposable
                 : "Collaborative Subagent (Unbound)";
 
         var templateNote = session.IsLead
-            ? "\n\nTemplates are optional and implicit. If useful, discover them with template_list, inspect a template or the authoring contract with template_read, inspect the active snapshot with template_read(__current__), apply or preview with track_set (templateId or JSON/.perga.js source, inputs, dryRun), detach with clear, and update inputs with template_update_inputs (preserves state)."
+            ? "\n\nTemplates are optional and implicit. If useful, discover them with template_list, inspect a template or the authoring contract with template_read, inspect the active snapshot with template_read(__current__), apply or preview with track_set (templateId, path, or JSON/.perga.js source, inputs, dryRun), detach with clear, and update inputs with template_update_inputs (preserves state)."
+            : string.Empty;
+        var flowGuide = session.IsLead
+            ? $"\n\n## Track Flow Orchestration\n- Source of truth: `{_flowFileStore.GetFlowFilePath(TrackId)}` (current `flowRev`: {_track.FlowRev}).\n- Edit `flow.json` directly with `when` (`after` / `cron` / `at`) × `do` (`run` / `wake` / `watch`), then validate via `flow_commit(dryRun: true)` before calling `flow_commit()`.\n- Never silently delete active/running/cron nodes from `flow.json` — set `\"canceled\": true` explicitly instead.\n- Terminal orphan one-shot nodes are archived automatically by background GC without touching dirty drafts."
             : string.Empty;
         const string unboundGovernanceNote =
             "Use session_list/create/read/update/send/withdraw/control/respond to manage child conversations. Create accepts an optional task contract; reuse requestKey for retries. Use provider_list to discover available providers, models, reasoning efforts, and permission modes. Only control your direct children; the Lead can also manage other sessions. Never stop, reset or archive yourself. Answer delegated asks and approvals with session_respond; the human can always take over.";
@@ -3275,9 +3655,9 @@ public sealed partial class TrackActor : IAsyncDisposable
             ? session.IsLead
                 ? unboundGovernanceNote
                 : unboundGovernanceNote + " If blocked by missing permissions or sandbox restrictions (such as EPERM, blocked local ports/network, or denied actions), do not loop or silently skip checks: report the exact permission gap in your reply so your parent/Lead can adjust permissionMode via session_update (takes effect on the next turn) or run the restricted step; only call user_ask when pausing for explicit human/parent input (it does not auto-wake an idle parent)."
-            : "Use session_list/read to observe conversations. Submit your task with task_done or task_fail; bound Workers cannot spawn or control sessions. If blocked by missing permissions or sandbox restrictions (such as EPERM, blocked local ports/network, or denied actions), do not loop or silently skip required checks: either finish the turn without calling task_done/task_fail and report the exact permission gap so the Lead can update permissionMode via session_update for the next turn while the task remains active, or call task_fail (which settles the task) so the Lead can run the restricted check or re-dispatch; only call user_ask when waiting for explicit human/parent input (it does not auto-wake an idle parent).";
+            : "Use session_list/read to observe conversations. Submit your task with task_done (optional outcome: ok|attention|blocked, summary) or task_fail; bound Workers cannot spawn or control sessions. If blocked by missing permissions or sandbox restrictions (such as EPERM, blocked local ports/network, or denied actions), do not loop or silently skip required checks: either finish the turn without calling task_done/task_fail and report the exact permission gap so the Lead can update permissionMode via session_update for the next turn while the task remains active, or call task_fail (which settles the task) so the Lead can run the restricted check or re-dispatch; only call user_ask when waiting for explicit human/parent input (it does not auto-wake an idle parent).";
         var templateDataSection = BuildActiveTemplateDataSectionCore();
-        return $"You are operating in Perga Track '{_track.Title}' ({TrackId}) as {role}.{templateNote}\n\n{sessionNote}\n\n## Current Report\n{reportMd}{templateDataSection}";
+        return $"You are operating in Perga Track '{_track.Title}' ({TrackId}) as {role}.{templateNote}{flowGuide}\n\n{sessionNote}\n\n## Current Report\n{reportMd}{templateDataSection}";
     }
 
     private string BuildEpochSeedSystemPrompt(
@@ -3285,7 +3665,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         string latestReportMarkdown,
         string handoverSummary)
     {
-        var boundTask = TryGetOwningTaskCore(compactedSession.Id);
+        var boundTask = TryGetActiveOwningTaskCore(compactedSession.Id);
         var role = compactedSession.IsLead
             ? "Lead Session"
             : boundTask is not null
@@ -3419,6 +3799,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             // Ignore shutdown cancellation.
         }
 
+        CancelAllActiveWatchesCore();
         await _runtimes.DisposeAllAsync(_options.SessionStartupTimeout).ConfigureAwait(false);
 
         _actorShutdownCts.Dispose();
@@ -3466,6 +3847,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         CancellationTokenSource cts)
     {
         public string TaskId { get; } = taskId;
+        public Task? Execution { get; set; }
         public int RunCount { get; } = runCount;
         public string? SessionId { get; } = sessionId;
         public CancellationTokenSource Cts { get; } = cts;

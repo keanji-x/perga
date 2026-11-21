@@ -57,9 +57,22 @@ public sealed partial class TrackActor
         RequirePolicyAvailableCore();
         var model = task.Context is { ValueKind: JsonValueKind.Object } context &&
             context.TryGetProperty("initialModel", out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
-        var route = _policy is null ? new PolicyTaskRoute(task.Provider, model) : _policyVm.RouteTaskDispatch(_policy,
-            task.Role, FormatAccessModeForPolicy(task.Access), task.Provider, model, _track.TemplateInputs);
-        var session = task.SessionId is { } sid && _sessions.TryGetValue(sid, out var found) ? found : null;
+        var session = ReadTaskDispatchSessionCore(task);
+        var provider = task.Provider;
+        if (IsFlowSessionReuse(task))
+        {
+            if (session is null || session.ArchivedAtMs is not null || session.IsLead)
+                throw KernelException.PolicyDenied("The flow task's reuse session is unavailable.");
+            if ((provider is not null && provider != session.Provider) || (model is not null && model != session.Model))
+                throw KernelException.PolicyDenied("Requested provider/model differ from the reuse session.");
+            provider = session.Provider;
+            model = session.Model;
+        }
+
+        var route = _policy is null ? new PolicyTaskRoute(provider, model) : _policyVm.RouteTaskDispatch(_policy,
+            task.Role, FormatAccessModeForPolicy(task.Access), provider, model, _track.TemplateInputs);
+        if (IsFlowSessionReuse(task) && route.Denial is null && route.Model != model)
+            throw KernelException.PolicyDenied($"Template routing requires model '{route.Model}' on the reuse session.");
         if (session is null) return (route, false);
         // A preallocated session can carry a Track default that the catalog does not list.
         var usesPreparedDefault = route.Model is null && task.RunCount == 0 &&

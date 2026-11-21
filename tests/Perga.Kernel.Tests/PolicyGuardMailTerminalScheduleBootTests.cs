@@ -118,7 +118,8 @@ public sealed class PolicyGuardMailTerminalScheduleBootTests
             "API Schema Ready",
             "All 18 MCP tools landed.");
 
-        // Receiver track LeadSessionId was automatically woken!
+        // Delivery can complete after the durable mail write returns.
+        await ctx.Kernel.WaitForTrackIdleAsync(receiverTrackId);
         var receiverTurns = ctx.Store.GetTurnsForSession(receiverLeadId);
         Assert.Single(receiverTurns);
         Assert.Equal("wake", receiverTurns[0].TriggerKind);
@@ -183,8 +184,9 @@ public sealed class PolicyGuardMailTerminalScheduleBootTests
         Assert.Equal(turnsBeforeHumanEdit + 1, ctx.Store.GetTurnsForSession(leadId).Count);
 
         // 4. Independent sessions get unified controls; bound Workers retain observation and completion.
-        Assert.Equal(38, KernelMcpToolNames.All.Count);
+        Assert.Equal(39, KernelMcpToolNames.All.Count);
         Assert.Contains(KernelMcpCatalog.GetToolsForSession(boundTaskId: null, isLead: true), tool => tool.Name == KernelMcpToolNames.SessionSend);
+        Assert.Contains(KernelMcpCatalog.GetToolsForSession(boundTaskId: null, isLead: true), tool => tool.Name == KernelMcpToolNames.FlowCommit);
         Assert.Equal(33, KernelMcpCatalog.GetToolsForSession(boundTaskId: null).Count);
         Assert.Contains(KernelMcpCatalog.GetToolsForSession(boundTaskId: null), tool => tool.Name == KernelMcpToolNames.SessionCreate);
         var workerTools = KernelMcpCatalog.GetToolsForSession(boundTaskId: "att_1");

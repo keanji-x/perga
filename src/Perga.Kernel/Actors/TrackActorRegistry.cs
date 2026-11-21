@@ -26,6 +26,7 @@ public sealed class TrackActorRegistry : IAsyncDisposable
     private readonly KernelOptions _options;
     private readonly TimeProvider _timeProvider;
     private readonly IScheduleCronEvaluator? _scheduleCronEvaluator;
+    private readonly IGitHubForgeService? _gitHubForgeService;
     private readonly ITimer? _evictionTimer;
     private int _evicting;
     private bool _disposed;
@@ -42,10 +43,13 @@ public sealed class TrackActorRegistry : IAsyncDisposable
         IShellCommandRunner commandRunner,
         EventHub eventHub,
         KernelOptions options,
-        TimeProvider? timeProvider = null, IScheduleCronEvaluator? scheduleCronEvaluator = null)
+        TimeProvider? timeProvider = null,
+        IScheduleCronEvaluator? scheduleCronEvaluator = null,
+        IGitHubForgeService? gitHubForgeService = null)
     {
         _store = store;
         _scheduleCronEvaluator = scheduleCronEvaluator;
+        _gitHubForgeService = gitHubForgeService;
         _reportEngine = reportEngine;
         _policyVm = policyVm;
         _templateCatalog = templateCatalog;
@@ -172,7 +176,9 @@ public sealed class TrackActorRegistry : IAsyncDisposable
             _commandRunner,
             _eventHub,
             _options,
-            _timeProvider, _scheduleCronEvaluator);
+            _timeProvider,
+            _scheduleCronEvaluator,
+            _gitHubForgeService);
     }
 
     public async ValueTask DisposeAsync()

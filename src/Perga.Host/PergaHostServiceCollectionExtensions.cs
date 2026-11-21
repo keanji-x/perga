@@ -166,6 +166,7 @@ public static class PergaHostServiceCollectionExtensions
             {
                 Version = opts.Version,
                 TemplatesDirectory = opts.TemplatesDirectory,
+                DataDir = paths.DataDir,
                 WorkspacesRootDirectory = paths.WorkspacesRootDir,
                 DefaultProvider = opts.DefaultProvider,
                 DefaultModel = opts.DefaultModel,
@@ -197,7 +198,8 @@ public static class PergaHostServiceCollectionExtensions
                 timeProvider: sp.GetRequiredService<TimeProvider>(),
                 systemUpgradeController: sp.GetRequiredService<ISystemUpgradeController>(),
                 upgradeReceiptSource: sp.GetRequiredService<ISystemUpgradeReceiptSource>(),
-                scheduleCronEvaluator: sp.GetRequiredService<IScheduleCronEvaluator>());
+                scheduleCronEvaluator: sp.GetRequiredService<IScheduleCronEvaluator>(),
+                gitHubForgeService: sp.GetService<IGitHubForgeService>());
         });
 
         services.TryAddSingleton<KernelMcpBackend>();

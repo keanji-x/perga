@@ -96,7 +96,7 @@ public sealed class TrackWakeSchedulingTests
         };
         var dispatch = await ctx.Kernel.CreateSessionAsync(snapshot.Track.Id, new(Prompt: "Inspect report", Task: new()), "worker", new InteropPrincipal.Human(), default);
         await ctx.Kernel.WaitForTrackIdleAsync(snapshot.Track.Id);
-        var worker = Assert.Single(await ctx.Kernel.ListSessionsAsync(snapshot.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default), s => s.TaskId == dispatch.Receipt.Task!.Id).Session;
+        var worker = Assert.Single(await ctx.Kernel.ListSessionsAsync(snapshot.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default), s => s.Session.Id == dispatch.Receipt.Session.Id).Session;
         Assert.Empty(ctx.Store.GetTurnsForSession(worker.Id));
         Assert.Empty(await ctx.Store.ListSessionItemsAsync(worker.Id));
     }

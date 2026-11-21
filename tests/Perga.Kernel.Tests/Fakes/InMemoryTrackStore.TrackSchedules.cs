@@ -166,6 +166,12 @@ internal sealed partial class InMemoryTrackStore : ITrackScheduleStore, ITodayRe
                 if (s.NextFireAtMs is null || s.NextFireAtMs > nowMs)
                     continue;
 
+                if (s.NodeKey is not null)
+                {
+                    fired.Add(new FiredTrackSchedule(s.TrackId, s.Id, s.NodeKey, s.NextFireAtMs));
+                    continue;
+                }
+
                 var nextCount = s.FiredCount + 1;
                 long? nextFire = null;
                 var nextState = TrackScheduleStates.Done;
@@ -184,10 +190,29 @@ internal sealed partial class InMemoryTrackStore : ITrackScheduleStore, ITodayRe
                     State = nextState,
                     UpdatedAtMs = nowMs
                 };
-                EnqueueWakeLocked(TrackWakeRequests.DynamicSchedule(s.TrackId, s.Id, s.Prompt, s.SourceKind));
-                fired.Add(new FiredTrackSchedule(s.TrackId, s.Id));
+                if (string.IsNullOrWhiteSpace(s.NodeKey))
+                {
+                    EnqueueWakeLocked(TrackWakeRequests.DynamicSchedule(s.TrackId, s.Id, s.Prompt, s.SourceKind));
+                }
+                fired.Add(new FiredTrackSchedule(s.TrackId, s.Id, s.NodeKey));
             }
             return Task.FromResult<IReadOnlyList<FiredTrackSchedule>>(fired);
+        }
+    }
+
+    public Task<bool> CommitFlowFireAsync(TrackScheduleDto nextClock, long expectedDueAtMs, TaskDto? armedTask,
+        EventEnvelopeDto taskEvent, CancellationToken ct)
+    {
+        lock (_gate)
+        {
+            var idx = _trackSchedules.FindIndex(s => s.TrackId == nextClock.TrackId && s.Id == nextClock.Id &&
+                s.NodeKey == nextClock.NodeKey && s.State == TrackScheduleStates.Active && s.NextFireAtMs == expectedDueAtMs);
+            if (idx < 0)
+                return Task.FromResult(false);
+            if (armedTask is not null)
+                UpsertTaskAsync(armedTask, null, taskEvent, ct).GetAwaiter().GetResult();
+            _trackSchedules[idx] = nextClock;
+            return Task.FromResult(true);
         }
     }
 

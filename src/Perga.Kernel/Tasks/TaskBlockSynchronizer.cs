@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Perga.Contracts;
+using Perga.Kernel.Flow;
 using Perga.Kernel.Internal;
 using Perga.ReportDoc;
 
@@ -132,6 +133,10 @@ internal static class TaskBlockSynchronizer
             }
 
             var parsed = ParseTaskBlock(trackId, block, nowMs, diagnostics);
+            if (FlowConstants.IsFlowBlockId(block.Id) &&
+                (FlowConstants.IsFlowTask(parsed) || !existingByKey.TryGetValue(parsed.TaskKey, out var existingBlock) ||
+                 existingBlock.BlockId != block.Id))
+                throw KernelException.InvalidArgument("New Report task block IDs cannot start with 'flow:'.");
             if (!seenKeys.Add(parsed.TaskKey))
             {
                 throw KernelException.InvalidArgument($"Duplicate task_key '{parsed.TaskKey}' in report.");
@@ -153,6 +158,9 @@ internal static class TaskBlockSynchronizer
                 changed.Add(created);
                 continue;
             }
+
+            if (FlowConstants.IsFlowTask(oldTask))
+                throw KernelException.Conflict($"Task key '{parsed.TaskKey}' belongs to Track Flow.");
 
             var contractChanged =
                 !string.Equals(oldTask.GoalOrCmd, parsed.GoalOrCmd, StringComparison.Ordinal) ||
@@ -239,10 +247,17 @@ internal static class TaskBlockSynchronizer
         }
 
         // Handle previously existing tasks whose blocks were deleted from the report.
+        // Flow-owned tasks are governed exclusively by flow.json and preserved intact.
         foreach (var oldTask in existingTasks)
         {
             if (seenKeys.Contains(oldTask.TaskKey))
             {
+                continue;
+            }
+
+            if (FlowConstants.IsFlowTask(oldTask))
+            {
+                synced.Add(oldTask);
                 continue;
             }
 

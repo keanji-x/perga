@@ -83,7 +83,13 @@ public sealed partial class GitHubForgeService : IGitHubForgeService
             $"Failed to parse pull request JSON returned by 'gh pr view': {viewRes.StandardOutput}");
     }
 
-    public async Task<PrChecksStatus> GetPrChecksAsync(string repoOrPath, int prNumber, CancellationToken ct)
+    public Task<PrChecksStatus> GetPrChecksAsync(string repoOrPath, int prNumber, CancellationToken ct) =>
+        ReadPrChecksAsync(repoOrPath, prNumber, snapshot: false, ct);
+
+    public Task<PrChecksStatus> GetPrChecksSnapshotAsync(string repoOrPath, int prNumber, CancellationToken ct) =>
+        ReadPrChecksAsync(repoOrPath, prNumber, snapshot: true, ct);
+
+    private async Task<PrChecksStatus> ReadPrChecksAsync(string repoOrPath, int prNumber, bool snapshot, CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(repoOrPath);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(prNumber);
@@ -98,6 +104,14 @@ public sealed partial class GitHubForgeService : IGitHubForgeService
         var root = viewDoc.RootElement;
         var resolvedNumber = GetIntOrDefault(root, "number", prNumber);
         var headSha = GetStringOrDefault(root, "headRefOid", string.Empty);
+
+        if (snapshot)
+        {
+            var checksAtHead = root.TryGetProperty("statusCheckRollup", out var rollup) && rollup.ValueKind == JsonValueKind.Array
+                ? ParseStatusCheckRollup(rollup) : [];
+            var complete = checksAtHead.Count > 0 && checksAtHead.All(IsCheckCompleted);
+            return new PrChecksStatus(resolvedNumber, headSha, complete, complete && checksAtHead.All(IsCheckPassing), checksAtHead);
+        }
 
         var checksArgs = BuildGhArgs(repoFlags, "pr", "checks", prStr, "--json", "name,state,bucket,link");
         var checksRes = await RunGhAsync(workingDir, checksArgs, ct).ConfigureAwait(false);
