@@ -119,9 +119,9 @@ it.each([320, 390])('switches four sidebar views using current history and real 
   const failed = { ...current, id: 'failed', areaId: 'other-area', title: 'Failed report' };
   const working = { ...current, id: 'working', title: 'Working report' };
   const overlays = { tracks: [
-    { trackId: current.id, areaId: current.areaId, isWorking: false, openAskCount: 1, hasFailedTask: false, unreadMailCount: 0, updatedAtMs: 3 },
-    { trackId: failed.id, areaId: failed.areaId, isWorking: false, openAskCount: 0, hasFailedTask: true, unreadMailCount: 0, updatedAtMs: 3 },
-    { trackId: working.id, areaId: working.areaId, isWorking: true, openAskCount: 0, hasFailedTask: false, unreadMailCount: 0, updatedAtMs: 3 },
+    { trackId: current.id, areaId: current.areaId, isWorking: false, openAskCount: 1, hasBlockedSession: false, unreadMailCount: 0, updatedAtMs: 3 },
+    { trackId: failed.id, areaId: failed.areaId, isWorking: false, openAskCount: 0, hasBlockedSession: true, unreadMailCount: 0, updatedAtMs: 3 },
+    { trackId: working.id, areaId: working.areaId, isWorking: true, openAskCount: 0, hasBlockedSession: false, unreadMailCount: 0, updatedAtMs: 3 },
   ] };
   const { router, requests } = renderDailyFixture({ initial: '/track/project', receipts, reply: (request) => {
     if (request.path === '/api/v1/areas') return ok([
@@ -177,8 +177,8 @@ it('opens a pinned current report by closing its existing chat without sending i
 it('keeps activity read failures distinct from an empty unhandled list and can retry', async () => {
   await page.viewport(390, 844);
   let failed = true;
-  renderDailyFixture({ reply: request => request.path.startsWith('/api/v1/overlays?') && failed
-    ? { status: 500, statusText: 'Error', body: { error: 'Activity unavailable' } } : undefined });
+  renderDailyFixture({ reply: request => request.path.startsWith('/api/v1/overlays?')
+    ? failed ? { status: 500, statusText: 'Error', body: { error: 'Activity unavailable' } } : ok({ tracks: [] }) : undefined });
   await page.getByRole('button', { name: 'Open conversation history', exact: true }).click();
   await page.getByRole('button', { name: '未处理', exact: true }).click();
   const sidebar = page.getByRole('dialog', { name: '未处理', exact: true });

@@ -2,106 +2,72 @@ import '../../styles/entry.css';
 import { cleanup } from '@testing-library/react';
 import { afterEach, expect, it } from 'vitest';
 import { page } from 'vitest/browser';
-import { createUiPreferences } from '../providers/ui-preferences.tsx';
+import { createReadReceiptsKernel } from '../providers/read-receipts-fixture.tsx';
 import { sessionPage } from './conversation-session-data.ts';
 import { renderDailyFixture } from './daily-planner-fixture.tsx';
 import { fixtureReport, fixtureSession, fixtureSnapshot, fixtureTrack } from './session-contract-fixture.ts';
 
 afterEach(cleanup);
 
-it.each([1200, 390])('shows and remembers the read state of each notification at %ipx', async (width) => {
+it.each([1200, 390])('acknowledges a conversation update through the status entry and retains its receipt at %ipx', async width => {
   await page.viewport(width, 844);
-  const values = new Map<string, string>();
-  const storage = {
-    getItem: (key: string) => values.get(key) ?? null,
-    setItem: (key: string, value: string) => { values.set(key, value); },
-  };
+  const receipts = createReadReceiptsKernel({ baselineMs: 0 });
   const track = fixtureTrack('project', { areaId: 'project-area', leadSessionId: 'project-planner' });
-  const planner = fixtureSession('project-planner', track.id, { isLead: true });
-  const snapshot = {
-    ...fixtureSnapshot(track, [planner]),
-    openAsks: [{
-      id: 'ask-1', trackId: track.id, status: 'open', delivery: 'wake', createdAtMs: 1,
-      questions: [{ question: 'Review the report?', options: ['Yes', 'No'] }],
-    }],
-    pendingApprovals: [{
-      id: 'approval-1', executionId: 'execution-1', sessionId: planner.id, createdAtMs: 2,
-      title: 'Publish the update?',
-      options: [
-        { id: 'approve', label: 'Yes', isApproval: true },
-        { id: 'deny', label: 'No', isApproval: false },
-      ],
-    }],
-  };
-  const mount = () => renderDailyFixture({ pergaMode: true, initial: '/track/project', uiPreferences: createUiPreferences(storage),
-    reply: request => {
-      if (request.path === '/api/v1/tracks/project') return { status: 200, statusText: 'OK', body: snapshot };
-      if (request.path.startsWith('/api/v1/sessions/project-planner/items?')) return { status: 200, statusText: 'OK', body: sessionPage(planner) };
-      return undefined;
-    } });
-  const openMobile = async () => {
-    if (width === 390) await page.getByRole('button', { name: 'Open 2 notifications' }).click();
-  };
-  const unread = page.getByRole('button', { name: 'Unread, mark as read: Review the report?' });
-  const read = page.getByRole('button', { name: 'Read, mark as unread: Review the report?' });
-  const second = page.getByRole('button', { name: 'Unread, mark as read: Publish the update?' });
-
+  const planner = fixtureSession('project-planner', track.id, { isLead: true, title: 'Project conversation', lastNotifiableTurnAtMs: 20 });
+  const mount = () => renderDailyFixture({ pergaMode: true, initial: '/track/project', receipts, reply: request => {
+    if (request.path === '/api/v1/tracks/project') return { status: 200, statusText: 'OK', body: fixtureSnapshot(track, [planner]) };
+    if (request.path.includes('/project-planner/items?')) return { status: 200, statusText: 'OK', body: sessionPage(planner) };
+    return undefined;
+  } });
+  const entry = page.getByRole('button', { name: width === 390 ? 'Open conversation' : '讨论这项工作', exact: true });
+  const activity = () => entry.element().querySelector('[data-nc-activity]')?.getAttribute('data-nc-activity');
   mount();
-  await openMobile();
-  await expect.element(unread).toBeVisible();
-  if (width === 390) {
-    const header = document.querySelector('[data-nc-workspace-header] header');
-    const notice = await page.getByRole('region', { name: 'Notifications', exact: true }).findElement();
-    expect(header).not.toBeNull();
-    expect(notice.getBoundingClientRect().top).toBeGreaterThanOrEqual(header!.getBoundingClientRect().bottom);
-  }
-  await unread.click();
-  await expect.element(read).toBeVisible();
-  await expect.element(second).toBeVisible();
-  await page.getByRole('button', { name: 'Collapse notifications' }).click();
-  const launcher = page.getByRole('button', { name: 'Open 2 notifications' });
-  await expect.element(launcher).toHaveAccessibleDescription('1 unread');
-
+  await expect.element(entry).toHaveAccessibleDescription('Unread updates');
+  expect(activity()).toBe('unread');
+  expect(document.querySelector('[data-nc-notification-launcher]')).toBeNull();
+  expect(page.getByRole('region', { name: 'Notifications', exact: true }).query()).toBeNull();
+  await entry.click();
+  await expect.element(page.getByRole('combobox', { name: 'Message', exact: true })).toBeVisible();
+  await expect.poll(() => receipts.requests.filter(request => request.path.endsWith('/project-planner/read')).length).toBe(1);
+  await page.getByRole('button', { name: 'Close conversation', exact: true }).click();
+  await expect.element(entry).toBeVisible();
+  await expect.poll(activity).not.toBe('unread');
   cleanup();
   mount();
-  await openMobile();
-  await expect.element(read).toBeVisible();
-  await read.click();
-  await expect.element(unread).toBeVisible();
-  await page.getByRole('button', { name: 'Answer the Planner: Review the report?' }).click();
-  if (width === 390) await page.getByRole('button', { name: 'Close conversation', exact: true }).click();
-  await expect.element(launcher).toHaveAccessibleDescription('1 unread');
-  await launcher.click();
-  await expect.element(read).toBeVisible();
+  await expect.element(entry).toBeVisible();
+  await expect.poll(activity).not.toBe('unread');
+  // Completion acknowledgements retain their watermark on a new visit; #103
+  // avoids redundant track-view writes when there is no manual unread.
+  await entry.click();
+  await expect.element(page.getByRole('combobox', { name: 'Message', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Close conversation', exact: true }).click();
+  await expect.element(entry).toBeVisible();
+  expect(receipts.requests.filter(request => request.path.endsWith('/project-planner/read')).map(request => request.body))
+    .toEqual([{ readThroughMs: 20 }, { readThroughMs: 20 }]);
+  expect(receipts.requests.filter(request => request.path.endsWith('/project/read'))).toHaveLength(0);
 });
 
-it.each(['payload', 'fenced Markdown'])('shows recorded failures for current tasks declared in %s', async (declaration) => {
+it.each(['payload', 'fenced Markdown'])('keeps historical task failures out of header attention and exposes task details from %s', async declaration => {
   await page.viewport(1200, 844);
-  const track = fixtureTrack('project', { areaId: 'project-area' });
+  const track = fixtureTrack('project', { areaId: 'project-area', leadSessionId: 'project-planner' });
+  const planner = fixtureSession('project-planner', track.id, { isLead: true });
   const description = { kind: 'agent', goal: 'Verify the fix' };
   const task = declaration === 'payload'
     ? { markdown: '', payload: { ...description, id: 'verify-fix' } }
-    : { markdown: ['```json', JSON.stringify({ ...description, task_key: 'verify-fix', key: 'stale-replaced' }), '```'].join('\n'), payload: null };
-  const report = { ...fixtureReport(), blocks: [
-    { id: 'b_9065', kind: 'task', rev: 1, ...task },
-    { id: 'withdrawn', kind: 'task', rev: 2, markdown: '', payload: { key: 'stale-withdrawn', declared_by: 'spec', tombstoned_by: 'user', tombstone: {} } },
-  ] };
-  const failed = { trackId: track.id, kind: 'agent', status: 'failed', createdAtMs: 1, updatedAtMs: 2 };
+    : { markdown: ['```json', JSON.stringify({ ...description, task_key: 'verify-fix' }), '```'].join('\n'), payload: null };
+  const report = { ...fixtureReport(), blocks: [{ id: 'b_9065', kind: 'task', rev: 1, ...task }] };
   renderDailyFixture({ pergaMode: true, initial: '/track/project', reply: request => {
-    if (request.path !== '/api/v1/tracks/project') return undefined;
-    return { status: 200, statusText: 'OK', body: { ...fixtureSnapshot(track, [], report), tasks: [
-      { ...failed, id: 'worker-task', blockId: 'b_9065', taskKey: 'verify-fix', statusDetail: 'The host stopped during this attempt.' },
-      { ...failed, id: 'removed-task', blockId: 'removed', taskKey: 'stale-removed' },
-      { ...failed, id: 'withdrawn-task', blockId: 'withdrawn', taskKey: 'stale-withdrawn' },
-      { ...failed, id: 'replaced-task', blockId: 'b_9065', taskKey: 'stale-replaced' },
-    ] } };
+    if (request.path !== '/api/v1/tracks/project' && request.path !== '/api/v1/tracks/project/report') return undefined;
+    return { status: 200, statusText: 'OK', body: { ...fixtureSnapshot(track, [planner], report), tasks: [{
+      trackId: track.id, kind: 'agent', status: 'failed', createdAtMs: 1, updatedAtMs: 2,
+      id: 'worker-task', blockId: 'b_9065', taskKey: 'verify-fix', statusDetail: 'The host stopped during this attempt.',
+    }] } };
   } });
-
-  const notice = page.getByRole('region', { name: 'Notifications', exact: true });
-  await expect.element(notice.getByText(/The host stopped during this attempt\./)).toBeVisible();
-  expect(notice.getByText(/stale-removed/).query()).toBeNull();
-  expect(notice.getByText(/stale-withdrawn/).query()).toBeNull();
-  expect(notice.getByText(/stale-replaced/).query()).toBeNull();
-  await notice.getByRole('button', { name: /^Open task: verify-fix:/ }).click();
-  await expect.element(notice.getByRole('button', { name: /^Read, mark as unread:/ })).toBeVisible();
+  const entry = page.getByRole('button', { name: '讨论这项工作', exact: true });
+  await expect.element(entry).toBeVisible();
+  expect(entry.element().querySelector('[data-nc-activity="failed"]')).toBeNull();
+  expect(page.getByRole('region', { name: 'Notifications', exact: true }).query()).toBeNull();
+  await page.getByRole('button', { name: 'Progress', exact: true }).click();
+  await expect.element(page.getByText('Failed', { exact: true })).toBeVisible();
+  await expect.element(page.getByRole('button', { name: /verify-fix/ })).toHaveAccessibleDescription('failed — The host stopped during this attempt.');
 });

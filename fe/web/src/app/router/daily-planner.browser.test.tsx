@@ -314,7 +314,8 @@ it.each([false, true])('focuses every explicit Today Reply without replacing the
   const editor = field.element();
   for (let index = 0; index < 2; index++) {
     if (subview) await page.getByRole('button', { name: 'Report changes', exact: true }).click();
-    await page.getByRole('button', { name: 'Answer the Planner: Choose the release branch', exact: true }).click();
+    if (subview) await page.getByRole('button', { name: 'Back to Today Assistant', exact: true }).click();
+    await page.getByRole('button', { name: /Conversation Daily Planner conversation/ }).click();
     await expect.element(field).toHaveFocus();
     expect(field.element()).toBe(editor);
     expect(window.getSelection()?.anchorOffset).toBe(caret);

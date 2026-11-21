@@ -70,6 +70,7 @@ export function renderDailyFixture({ history, identity, routeProbe, withTranspor
       : ok({ date: '2026-10-03', timezone: 'Asia/Shanghai', through_event_id: 42, next_cursor: null, changes: [{ track_id: project.id, track_title: project.title, area_id: projectArea.id, area_name: projectArea.name, edit_count: 2, first_event_id: 10, last_event_id: 42, summary_before: 'In progress', summary_after: 'Ready', patch: '--- a/report.md\n+++ b/report.md\n@@ -1 +1 @@\n-Building\n+Release is ready.\n', patch_truncated: false }] });
     if (request.path.startsWith('/api/today/report-edits')) return ok({ next_cursor: null, edits: [{ event_id: 42, at: Date.parse('2026-10-03T01:00:00Z'), edit: { track_id: project.id, edit_id: 'edit-42', summary_before: 'In progress', summary_after: 'Ready', body_before: '# Before release\n\nBuilding', body_after: '# After release\n\nRelease is ready.' } }] });
     if (request.path.includes('/sessions/') && request.path.includes('/items?')) return ok(sessionPage(sessions.find(session => session.id === conversationCardId(request.path)) ?? card));
+    if (request.path.startsWith('/api/v1/overlays?')) return ok({ tracks: [] });
     if (request.path === '/api/plugins') return ok([]);
     if (request.path === '/api/settings') return ok({});
     return ok([]);

@@ -407,10 +407,15 @@ function useConversationPanel(
   const mainTarget = [surfaceTarget, savedTarget[1]] as const;
   const parentId = logicalTarget?.kind === 'row' ? logicalTarget.id : null;
   const lastMainRow = useRef<string | null>(null);
-  useEffect(() => { if (parentId !== null) lastMainRow.current = parentId; }, [parentId]);
-  const dockOwnerId = parentId ?? (compact && options.reportComposer !== undefined
-    ? source.rows.find((row) => row.id === lastMainRow.current)?.id ?? source.planner?.cardId ?? source.rows[0]?.id ?? null
-    : null);
+  const selectedRowId = savedTarget[0]?.kind === 'row' ? savedTarget[0].id : null;
+  useEffect(() => { if (selectedRowId !== null) lastMainRow.current = selectedRowId; }, [selectedRowId]);
+  const receipts = useReadReceipts();
+  const preferredConversation = priorityConversation(source.rows, source.cards,
+    row => receipts.isUnread('conversation', row.id, row.lastTurnCompletedAt ?? null));
+  const dockOwnerId = compact && options.reportComposer !== undefined
+    ? selectedRowId ?? source.rows.find(row => row.id === lastMainRow.current)?.id
+      ?? preferredConversation?.id ?? source.planner?.cardId ?? source.rows[0]?.id ?? null
+    : parentId;
   const mainReportComposer = options.reportComposer === undefined ? undefined : { ...options.reportComposer, conversationId: dockOwnerId };
   const capabilities = useQuery({ queryKey: ['server-version'],
     queryFn: () => runOperation(transport, serverVersionOperation(), unauthorized), enabled: parentId !== null && !compact, retry: false });
@@ -497,9 +502,9 @@ function useConversationPane(
   const compactViewport = useCompactViewport();
   const compactComposer = options?.reportComposer !== undefined && compactViewport && options?.enabled !== false && options?.inline !== true;
   const receipts = useReadReceipts();
-  const preferredConversation = priorityConversation(source.rows, source.cards,
-    row => receipts.isUnread('conversation', row.id, row.lastTurnCompletedAt ?? null));
-  const dockRowId = compactComposer ? preferredConversation?.id ?? options?.reportComposer?.conversationId ?? null : null;
+  // Keep the selected conversation and its draft together when its sheet closes.
+  // Status priority chooses a destination only when there is no retained owner.
+  const dockRowId = compactComposer ? options?.reportComposer?.conversationId ?? null : null;
   const composerRowId = openRowId ?? dockRowId;
   const managed = useManagedProviders(transport, unauthorized, openTarget?.kind === 'draft');
   // The app owns provider metadata reads (permission modes and capabilities).

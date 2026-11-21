@@ -1,4 +1,4 @@
-import { fixtureBootstrap, fixtureSession } from './session-contract-fixture.ts';
+import { fixtureBootstrap, fixtureSession, fixtureTrack, fixtureSnapshot } from './session-contract-fixture.ts';
 import { sessionPage, sessionItem } from './conversation-session-data.ts';
 import type { ModelSelection } from '../../../../core/domain/conversation.ts';
 import '../../styles/entry.css';
@@ -157,4 +157,31 @@ it('saves and reads back null effort on an existing session without materializin
   await expect.element(page.getByRole('slider')).toHaveAttribute('aria-valuetext', 'Default');
   expect(saved.reasoning_effort).toBeNull();
   expect(fixture.requests.filter(request => request.method === 'PATCH')).toHaveLength(1);
+});
+
+
+it('uses status priority initially and keeps an explicitly selected mobile draft with its session', async () => {
+  await page.viewport(390, 844);
+  const lead = fixtureSession('daily-planner', 'daily', { isLead: true, title: 'Daily Planner conversation' });
+  const blocked = fixtureSession('second-planner', 'daily', { title: 'Other conversation', status: 'unknown' });
+  renderPlannerSwitchFixture({ initial: '/track/daily', reply: request => {
+    const ok = (body: unknown) => ({ status: 200, statusText: 'OK', body });
+    if (request.path === '/api/v1/tracks/daily') return ok(fixtureSnapshot(
+      fixtureTrack('daily', { leadSessionId: lead.id }), [lead, blocked]));
+    if (request.path === '/api/v1/tracks/daily/sessions') return ok([lead, blocked]);
+    if (request.path.includes('/second-planner/items?')) return ok(sessionPage(blocked, [], null, 'unknown'));
+    return undefined;
+  } });
+  const dock = page.getByRole('textbox', { name: 'Chat message', exact: true });
+  await dock.click();
+  await expect.element(page.getByRole('dialog', { name: 'Other conversation', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Close conversation', exact: true }).click();
+  await page.getByRole('button', { name: 'Open conversation history', exact: true }).click();
+  await page.getByRole('button', { name: /Daily Planner conversation$/ }).click();
+  await page.getByRole('combobox', { name: 'Message', exact: true }).fill('Retain the selected Lead draft');
+  await page.getByRole('button', { name: 'Close conversation', exact: true }).click();
+  await expect.element(dock).toHaveValue('Retain the selected Lead draft');
+  await expect.element(page.getByRole('button', { name: 'Send chat message', exact: true })).toBeEnabled();
+  await dock.click();
+  await expect.element(page.getByRole('dialog', { name: 'Daily Planner conversation', exact: true })).toBeVisible();
 });

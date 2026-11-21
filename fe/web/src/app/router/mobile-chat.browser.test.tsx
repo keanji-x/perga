@@ -19,7 +19,11 @@ it.each([320, 390])('aligns the left circular controls and keeps chat usable at 
   const { requests } = renderDailyFixture({ emptyWorkspace: true });
   const field = await page.getByRole('textbox', { name: 'Chat message', exact: true }).findElement();
   const bar = field.closest('form')!;
-  const closedBarLeft = bar.getBoundingClientRect().left;
+  // The compact row includes a status entry before its input (#102). The
+  // expanded editor uses that whole row so typing retains the available width.
+  const statusEntry = page.getByRole('button', { name: 'Open conversation', exact: true }).element();
+  const closedRowLeft = statusEntry.getBoundingClientRect().left;
+  expect(bar.getBoundingClientRect().left).toBeGreaterThan(statusEntry.getBoundingClientRect().right);
   expect(bar.getBoundingClientRect().left).toBeGreaterThan(0);
   expect(bar.getBoundingClientRect().right).toBeLessThan(width);
   expect(getComputedStyle(bar).borderRadius).toBe('999px');
@@ -81,7 +85,7 @@ it.each([320, 390])('aligns the left circular controls and keeps chat usable at 
   await expect.poll(() => document.activeElement === message).toBe(true);
   const expandedBar = message.closest('[class*="vendorComposer"]')?.firstElementChild;
   expect(expandedBar).toBeTruthy();
-  expect(Math.round(expandedBar!.getBoundingClientRect().left)).toBe(Math.round(closedBarLeft));
+  expect(Math.round(expandedBar!.getBoundingClientRect().left)).toBe(Math.round(closedRowLeft));
   await page.getByRole('button', { name: 'Close conversation', exact: true }).click();
   await expect.poll(() => document.querySelector('dialog[open]')).toBeNull();
   await expect.element(page.getByRole('textbox', { name: 'Chat message', exact: true })).toBeVisible();

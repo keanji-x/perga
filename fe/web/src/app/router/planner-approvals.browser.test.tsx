@@ -98,7 +98,7 @@ it('decides a live approval through its execution and structured optionId', asyn
   await expect.element(drawer).not.toBeInTheDocument();
 });
 
-it('isolates subagent approvals to their owning session and routes approval notifications there', async () => {
+it('isolates subagent approvals to their owning session and routes the status entry there', async () => {
   await page.viewport(1280, 844);
   let answered = false;
   const decisionPath = '/api/v1/sessions/second-planner/interactions/apr-sub/respond';
@@ -132,9 +132,9 @@ it('isolates subagent approvals to their owning session and routes approval noti
   await page.getByRole('button', { name: /Conversation Daily Planner conversation/ }).click();
   expect(page.getByRole('group', { name: 'Approval required' }).query()).toBeNull();
 
-  // Clicking the approval notification opens the owning subagent session directly.
-  await page.getByRole('button', { name: 'Open 1 notification', exact: true }).click();
-  await page.getByRole('button', { name: 'Answer the Planner: Approve subagent shell command?' }).click();
+  // The header status entry chooses the session that needs input.
+  await page.getByRole('button', { name: 'Close conversation', exact: true }).click();
+  await page.getByRole('button', { name: '讨论这项工作', exact: true }).click();
   await expect.element(page.getByRole('complementary', { name: 'Other conversation', exact: true })).toBeVisible();
   const drawer = page.getByRole('group', { name: 'Approval required' });
   await expect.element(drawer.getByRole('heading', { name: 'Approve subagent shell command?' })).toBeVisible();
@@ -144,7 +144,7 @@ it('isolates subagent approvals to their owning session and routes approval noti
   await expect.element(drawer).not.toBeInTheDocument();
 });
 
-it('opens Today Assistant for a subagent approval notification from Report changes', async () => {
+it('opens Today Assistant for a subagent approval from Report changes', async () => {
   await page.viewport(1280, 844);
   let answered = false;
   const decisionPath = '/api/v1/sessions/second-planner/interactions/apr-sub/respond';
@@ -180,9 +180,8 @@ it('opens Today Assistant for a subagent approval notification from Report chang
   await expect.element(page.getByRole('heading', { name: /Report changes ·/ })).toBeVisible();
   await expect.element(assistant).not.toBeInTheDocument();
 
-  await page.getByRole('button', { name: 'Collapse notifications', exact: true }).click();
-  await page.getByRole('button', { name: 'Open 1 notification', exact: true }).click();
-  await page.getByRole('button', { name: 'Answer the Planner: Approve subagent shell command?' }).click();
+  await page.getByRole('button', { name: 'Back to Today Assistant', exact: true }).click();
+  await page.getByRole('button', { name: /Conversation Other conversation/ }).click();
   await expect.element(assistant).toBeVisible();
   const drawer = assistant.getByRole('group', { name: 'Approval required' });
   await expect.element(drawer.getByRole('heading', { name: 'Approve subagent shell command?' })).toBeVisible();
