@@ -1540,12 +1540,16 @@ internal sealed class ScriptableFakeAgentSession : IAgentSession
         return Task.FromResult(SteerResult);
     }
 
-    public bool ShutdownConfirmed { get; set; } = true;
+    private bool? _shutdownConfirmed;
+    public bool ShutdownConfirmed { get => _shutdownConfirmed ?? Disposed; set => _shutdownConfirmed = value; }
     public bool FailDisposal { get; set; }
     public Func<Task>? DisposeHandler { get; set; }
     public int DisposeCalls { get; private set; }
 
-    public async ValueTask DisposeAsync()
+    public Task? DisposeTask { get; private set; }
+    public ValueTask DisposeAsync() => new(DisposeTask = DisposeCoreAsync());
+
+    private async Task DisposeCoreAsync()
     {
         DisposeCalls++;
         if (FailDisposal) throw new IOException("shutdown failed");

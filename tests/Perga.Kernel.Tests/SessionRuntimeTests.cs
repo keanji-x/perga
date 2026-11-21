@@ -61,7 +61,11 @@ public sealed class SessionRuntimeTests
         var provider = new ScriptableFakeAgentRuntime();
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         provider.BeforeOpenAsync = () => { entered.TrySetResult(); return new TaskCompletionSource().Task; };
-        provider.OnOpenedSession = agent => agent.ShutdownConfirmed = confirmed;
+        provider.OnOpenedSession = agent =>
+        {
+            agent.ShutdownConfirmed = false;
+            agent.DisposeHandler = () => { agent.ShutdownConfirmed = confirmed; return Task.CompletedTask; };
+        };
         var launch = runtime.BeginLaunch(default, "turn");
         var opening = Open(runtime, provider, launch.Token);
         await entered.Task.WaitAsync(Timeout);
@@ -81,7 +85,7 @@ public sealed class SessionRuntimeTests
             Assert.Equal(KernelErrorCode.SessionRecoveryRequired, error.Code);
             agent.ShutdownConfirmed = true;
             await runtime.CloseAsync(Timeout, default);
-            Assert.Equal(2, agent.DisposeCalls);
+            Assert.Equal(1, agent.DisposeCalls);
             Assert.Null(runtime.Snapshot);
             Assert.False(runtime.HasActiveWork);
         }
@@ -179,6 +183,42 @@ public sealed class SessionRuntimeTests
         {
             runtime.EndLaunch(launch);
             await runtime.CloseAsync(Timeout, default);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ConfirmedBackgroundCloseClearsSlotWithoutDisposingAgain(bool disposeRuntime)
+    {
+        var runtime = new SessionRuntime();
+        var provider = new ScriptableFakeAgentRuntime();
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        provider.OnOpenedSession = agent => agent.DisposeHandler = () => release.Task;
+        await Open(runtime, provider, default);
+        var agent = Assert.Single(provider.OpenedSessions);
+        try
+        {
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+                runtime.CloseAsync(TimeSpan.FromMilliseconds(50), default));
+            Assert.True(runtime.IsShutdownUnconfirmed);
+            Assert.Same(agent, runtime.Snapshot!.Agent);
+            release.SetResult();
+            // Join the actual provider disposal, so shutdown has finished before the next caller.
+            await agent.DisposeTask!.WaitAsync(Timeout);
+            Assert.True(agent.ShutdownConfirmed);
+            Assert.True(runtime.IsShutdownUnconfirmed);
+            if (disposeRuntime) await runtime.DisposeAsync(Timeout);
+            else await runtime.CloseAsync(Timeout, default);
+            Assert.Equal(1, agent.DisposeCalls);
+            Assert.Null(runtime.Snapshot);
+            Assert.False(runtime.IsShutdownUnconfirmed);
+            Assert.False(runtime.HasActiveWork);
+        }
+        finally
+        {
+            release.TrySetResult();
+            await runtime.DisposeAsync(Timeout);
         }
     }
 

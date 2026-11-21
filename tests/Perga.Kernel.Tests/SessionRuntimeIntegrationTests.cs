@@ -108,7 +108,7 @@ public sealed class SessionRuntimeIntegrationTests
         Task? stopping = null;
         ctx.AgentRuntime.OnOpenedSession = agent => agent.OnAttachIdleContextUsage = () =>
         {
-            stopping ??= ctx.Kernel.ControlSessionAsync(id, new("stop", TurnId: ctx.Store.GetTurnsForSession(id).Single().Id), Human, default);
+            stopping ??= ctx.Kernel.Actors.GetOrActivate(snapshot.Track.Id).ControlSessionAsync(id, new("stop", TurnId: ctx.Store.GetTurnsForSession(id).Single().Id), Human, default);
         };
         await ctx.Kernel.SendSessionMessageAsync(id, new(Content: "stop before activation", RequestKey: "stop"), Human, default);
         await ctx.Kernel.WaitForTrackIdleAsync(snapshot.Track.Id).WaitAsync(TimeSpan.FromSeconds(3));
@@ -145,7 +145,12 @@ public sealed class SessionRuntimeIntegrationTests
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
         var id = snapshot.Track.LeadSessionId!;
         await ctx.SendAndWaitForTurnAsync(id, new("before reset", "before"));
-        ctx.AgentRuntime.OpenedSessions.Single().DisposeHandler = () => throw new IOException("deliberate cleanup failure");
+        var agent = ctx.AgentRuntime.OpenedSessions.Single();
+        agent.DisposeHandler = () =>
+        {
+            agent.ShutdownConfirmed = true;
+            throw new IOException("deliberate cleanup failure");
+        };
         await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.ControlSessionAsync(id, new("reset_context"), Human, default));
         var page = await ctx.Kernel.GetSessionItemsAsync(id, new(), Human, default);
         Assert.Equal("idle", page.State);
@@ -192,7 +197,11 @@ public sealed class SessionRuntimeIntegrationTests
         var initializing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         ctx.AgentRuntime.BeforeOpenAsync = () => { initializing.SetResult(); return release.Task; };
-        ctx.AgentRuntime.OnOpenedSession = agent => agent.ShutdownConfirmed = confirmed;
+        ctx.AgentRuntime.OnOpenedSession = agent =>
+        {
+            agent.ShutdownConfirmed = false;
+            agent.DisposeHandler = () => { agent.ShutdownConfirmed = confirmed; return Task.CompletedTask; };
+        };
         var receipt = await ctx.Kernel.SendSessionMessageAsync(id, new(Content: "cancel me", RequestKey: "cancel"), Human, default);
         await initializing.Task.WaitAsync(TimeSpan.FromSeconds(3));
         await ctx.Kernel.ControlSessionAsync(id, new("stop", TurnId: receipt.TurnId), Human, default);

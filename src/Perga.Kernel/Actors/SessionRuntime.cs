@@ -180,11 +180,13 @@ internal sealed class SessionRuntime
         {
             try
             {
-                // A timed-out caller joins the same shutdown, while a completed unconfirmed
-                // attempt can be retried on the retained OS child.
-                if (_closeTask is null || _closeTask.IsCompleted && (_shutdownUnconfirmed || !_closeTask.IsCompletedSuccessfully || !agent.ShutdownConfirmed))
-                    _closeTask = agent.DisposeAsync().AsTask();
-                await _closeTask.WaitAsync(deadline.Token).ConfigureAwait(false);
+                if (!agent.ShutdownConfirmed)
+                {
+                    // Join an in-flight shutdown; retry only a completed unconfirmed attempt.
+                    if (_closeTask is null || _closeTask.IsCompleted)
+                        _closeTask = agent.DisposeAsync().AsTask();
+                    await _closeTask.WaitAsync(deadline.Token).ConfigureAwait(false);
+                }
             }
             finally
             {
@@ -291,26 +293,6 @@ internal sealed class SessionRuntime
         await _gate.WaitAsync().ConfigureAwait(false);
         try
         {
-            if (_closeTask is { IsCompleted: false })
-            {
-                using var deadline = new CancellationTokenSource(timeout);
-                try
-                {
-                    await _closeTask.WaitAsync(deadline.Token).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException) when (deadline.IsCancellationRequested)
-                {
-                    throw;
-                }
-                catch
-                {
-                    // A completed failed shutdown can be retried by CloseLockedAsync.
-                }
-            }
-            lock (_sync)
-            {
-                if (_agent?.ShutdownConfirmed == true) _shutdownUnconfirmed = false;
-            }
             await CloseLockedAsync(timeout, CancellationToken.None).ConfigureAwait(false);
         }
         finally

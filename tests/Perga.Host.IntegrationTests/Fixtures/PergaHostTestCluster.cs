@@ -190,7 +190,7 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
             ], "gpt-5.4", "low")
             : null;
         public bool SupportsSessionResume => true;
-        public bool ShutdownConfirmed => _owner.ShutdownConfirmed;
+        public bool ShutdownConfirmed => _disposed && _owner.ShutdownConfirmed;
         public bool CanReuseContextWindow => true;
         public bool SupportsScopedClose => _owner.CloseHandler is not null;
 

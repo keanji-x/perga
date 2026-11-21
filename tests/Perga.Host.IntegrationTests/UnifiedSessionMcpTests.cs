@@ -448,7 +448,7 @@ public sealed class UnifiedSessionMcpTests
     private static async Task<string> StartCaller(PergaHostTestCluster host, IPergaKernel kernel, string sessionId, CancellationToken ct)
     {
         await kernel.SendSessionMessageAsync(sessionId, new(Content: "hold:" + sessionId, RequestKey: Guid.NewGuid().ToString("N")), Human, ct);
-        var page = await WaitPage(kernel, sessionId, p => p.ActiveTurn is not null, ct);
+        var page = await WaitPage(kernel, sessionId, p => p.ActiveTurn is not null && p.Activity is { Sequence: > 0 }, ct);
         return kernel.McpSessionBridge.RegisterSession(page.Session.TrackId, sessionId, page.Session.IsLead,
             page.Session.BoundTaskId, page.Session.BoundAttemptId, []).Principal.Token;
     }
