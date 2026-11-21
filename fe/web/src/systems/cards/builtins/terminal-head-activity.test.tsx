@@ -9,7 +9,7 @@ import { BoardHost } from '../ui/board-host.tsx';
 import { partitionTrackCards } from './headless-filter.ts';
 import { registerAvailableBuiltinCards } from './register.ts';
 
-// The real surface never connects under jsdom (no socket, no `ServerHello`), so this file replaces
+// The real surface never connects under jsdom (no socket or binary output), so this file replaces
 // it with one that reports `connected` on mount.
 vi.mock('../../terminal/surface.tsx', async () => {
   const { createElement, useEffect } = await import('react');

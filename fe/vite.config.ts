@@ -34,11 +34,8 @@ try {
   // Not a git checkout (a tarball build); 'dev' is the documented fallback.
 }
 
-// What each platform's build delivers. The Tauri Android client bundles this
-// same frontend but ships only index.html and assets/
-// (mobile/scripts/bundle-frontend.mjs), so web/public (the PWA manifest and its
-// icons) and the manifest link belong to the web build alone.
-type Platform = 'web' | 'android';
+// This repository builds the web client.
+type Platform = 'web';
 interface PlatformDelivery {
   /** Relative to `root`; `false` copies no public files. */
   readonly publicDir: string | false;
@@ -56,23 +53,12 @@ const PLATFORMS: Readonly<Record<Platform, PlatformDelivery>> = Object.freeze({
     bundled: false,
     version: () => version,
   }),
-  android: Object.freeze({
-    publicDir: false,
-    plugins: () => [react()],
-    target: 'chrome111',
-    bundled: true,
-    version: () => (JSON.parse(readFileSync(new URL('../mobile/package.json', import.meta.url), 'utf8')) as { version: string }).version,
-  }),
 });
 
-// Every mode this config is loaded with: Vite's defaults (`development` for
-// `vite`, `production` for `vite build` and `vite preview`) and the Android
-// packagers' `--mode android`. Vitest reads vitest.config.ts instead of this
-// file. Any other mode is refused rather than defaulting to a platform.
+// Refuse unsupported build modes explicitly.
 const PLATFORM_BY_MODE: Readonly<Record<string, Platform>> = Object.freeze({
   development: 'web',
   production: 'web',
-  android: 'android',
 });
 function platformFor(mode: string): PlatformDelivery {
   if (!Object.hasOwn(PLATFORM_BY_MODE, mode)) {

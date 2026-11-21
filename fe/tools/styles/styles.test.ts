@@ -1,7 +1,6 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
-import stylelint from 'stylelint';
 import { parse } from 'yaml';
 import { describe, expect, it } from 'vitest';
 import { auditLayeredCss, auditRuntimeStyles, compareGlobalClassManifest, CSS_NODE_SOURCES, extractGlobalClasses, layerOrder, STYLE_RULES, type RuntimeDocument } from './audit';
@@ -23,21 +22,6 @@ it('real theme tokens E2E-CAP-AXE-005 keeps the dark page ground darker than the
   expect(Number.isFinite(dark)).toBe(true);
   expect(dark).toBeLessThan(light);
 });
-
-async function lintCss(code: string, filename: string, exceptions: string[] = []) {
-  return stylelint.lint({
-    code,
-    codeFilename: resolve(import.meta.dirname, '../..', filename),
-    config: {
-      plugins: ['./tools/styles/stylelint-plugin.mjs'],
-      rules: {
-        'neige-calm/unlayered-cm-scope': [true, {
-          unlayeredExceptions: exceptions,
-        }],
-      },
-    },
-  });
-}
 
 describe('CSS AST fixtures', () => {
   it('covers the complete layer source x form x position surface in both directions', () => {
@@ -234,19 +218,6 @@ describe('CSS AST fixtures', () => {
       { rule: 'global-class-manifest', message: 'CSS-only class: beta' },
       { rule: 'global-class-manifest', message: 'manifest-only class: stale' },
     ]);
-  });
-});
-
-describe('stylelint layer-boundary rule', () => {
-  it('does not treat ordinary files as named unlayered exceptions', async () => {
-    const result = await lintCss('.loose {}', 'ordinary.css');
-    expect(result.errored).toBe(false);
-  });
-
-  it('limits named exception files to real rightmost .cm- classes', async () => {
-    const filename = 'exception.css';
-    expect((await lintCss('.editor > .cm-editor {}', filename, [filename])).errored).toBe(false);
-    expect((await lintCss('.panel:not(.cm-editor) {}', filename, [filename])).errored).toBe(true);
   });
 });
 
@@ -468,4 +439,10 @@ describe('P8b2 forward style gates', () => {
   it('audits the real repository manifests and forward gates', () => {
     expect(auditStyleRepository(resolve(import.meta.dirname, '../..'))).toEqual([]);
   });
+});
+
+it.each(['vendor', 'astryx-theme'])('inspects %s aggregate rules without adding an outer layer', name => {
+  expect(auditStyleRepository(resolve(fixtures, `repository/${name}-aggregate-positive`))).toEqual([]);
+  expect(auditStyleRepository(resolve(fixtures, `repository/${name}-aggregate-negative`)))
+    .toContain('web/src/styles/entry.css: unlayered selector: button');
 });

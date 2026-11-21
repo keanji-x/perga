@@ -6,8 +6,6 @@ import { FitAddon } from '@xterm/addon-fit';
 import { useState } from '../../ui/state/public.ts';
 import type { RecoveryAccess } from '../../../../core/domain/recovery/access.ts';
 import { ErrorBox } from '../../ui/error-box/public.tsx';
-import { dlog } from './debug.ts';
-import { makeUuid } from './uuid.ts';
 import { MONO_STACK } from './font-stack.ts';
 import {
   createXtermWheelTarget,
@@ -18,13 +16,6 @@ import {
   createOsc52Handler,
   osc52HostMayWrite,
 } from './osc52.ts';
-import type {
-  ClientMsg,
-  DaemonMsg,
-  ProtocolErrorCode,
-  Role,
-} from './generated-terminal.ts';
-import { LIGHT_THEME_RGB, DARK_THEME_RGB } from './theme-rgb.ts';
 import {
   decodeTerminalServerFrame,
   encodeTerminalInputFrame,
@@ -32,7 +23,6 @@ import {
   terminalWsUrl,
 } from './protocol.ts';
 import { LIGHT_TERMINAL_THEME as LIGHT_THEME, DARK_TERMINAL_THEME as DARK_THEME, TERMINAL_FONT_SIZE } from '../../styles/theme-values.ts';
-
 
 /** Child exit info from the daemon; `exit_code` and `signal_killed` are mutually exclusive at the source. `null` clears a prior badge. */
 export interface ExitChange {
@@ -45,11 +35,11 @@ interface XtermViewProps {
   terminalId: string;
   theme?: 'light' | 'dark';
   /** The daemon-assigned role, or `null` on reconnect/disconnect so the parent can clear a badge. */
-  onRoleChange?: (role: Role | null) => void;
-  /** Child-exit info lifted to the parent; idempotent — the same payload may arrive twice (JSON frame, then WS close). `null` on reconnect. */
+  onRoleChange?: (role: 'Owner' | null) => void;
+  /** Child-exit info lifted to the parent; idempotent across the exit frame and WS close. `null` on reconnect. */
   onExitChange?: (exit: ExitChange | null) => void;
   onStatusChange?: (status: TerminalConnectionStatus) => void;
-  /** The view stays mounted after first open; hidden cards must not ResizeCommit or accept OSC 52. */
+  /** The view stays mounted after first open; hidden cards must not resize or accept OSC 52. */
   visible?: boolean;
   focused?: boolean;
 }
@@ -69,7 +59,7 @@ interface CloseInfo {
 // bootstrapping against a collapsed card body.
 const MIN_MOUNT_WIDTH_PX = 80;
 const MIN_MOUNT_HEIGHT_PX = 24;
-// Below 8x4 is not a usable PTY viewport; suppress owner-claim commits
+// Below 8x4 is not a usable PTY viewport; suppress resize frames
 // from transient or failed fits so they cannot poison the shared model.
 const MIN_COMMIT_COLS = 8;
 const MIN_COMMIT_ROWS = 4;
@@ -81,22 +71,11 @@ function isNonDegenerateMountSize(width: number, height: number): boolean {
 /** UI status for the terminal protocol. */
 export type TerminalConnectionStatus =
   | 'connecting'
-  | 'handshaking'
   | 'connected'
   | 'closed'
-  | 'exited'
-  | 'protocol-error';
+  | 'exited';
 
-interface ProtocolError {
-  code: ProtocolErrorCode;
-  message: string;
-}
-
-interface ExitInfo {
-  code: number | null;
-}
-
-/** Bridge to calm-server's `/api/terminals/:id` WS endpoint; frames are JSON `ClientMsg`/`DaemonMsg` from `calm-session`, `Vec<u8>` riding as `Array<number>`. */
+/** Perga binary terminal WebSocket bridge. */
 export const XtermView = forwardRef<XtermViewHandle, XtermViewProps>(function XtermView({
   terminalId,
   recovery = null,
@@ -143,16 +122,10 @@ export const XtermView = forwardRef<XtermViewHandle, XtermViewProps>(function Xt
   onStatusChangeRef.current = onStatusChange;
   useEffect(() => { onStatusChangeRef.current?.(status); }, [status]);
   const [closeInfo, setCloseInfo] = useState<CloseInfo | null>(null);
-  const [protocolError, setProtocolError] = useState<ProtocolError | null>(null);
-  const [exitInfo, setExitInfo] = useState<ExitInfo | null>(null);
-  void exitInfo;
-  // Synchronous mirror of `exitInfo` so the `ws.onclose` backstop can skip when a `TerminalExited` frame already delivered the code.
-  const exitInfoRef = useRef<ExitInfo | null>(null);
+  const exitedRef = useRef(false);
   // Captured in a ref so a callback identity flip from the parent does not tear down the WebSocket.
   const onRoleChangeRef = useRef<XtermViewProps['onRoleChange']>(onRoleChange);
   onRoleChangeRef.current = onRoleChange;
-  // Matches the hardcoded `role_hint: 'Owner'` in ClientHello.
-  const wantedOwnerRef = useRef<boolean>(true);
   const onExitChangeRef = useRef<XtermViewProps['onExitChange']>(onExitChange);
   onExitChangeRef.current = onExitChange;
   // Reconnect only the browser transport. The mounted xterm and its output
@@ -178,25 +151,11 @@ export const XtermView = forwardRef<XtermViewHandle, XtermViewProps>(function Xt
   const [geometryDeferred, setGeometryDeferred] = useState(false);
   const lastFailedMountSizeRef = useRef<{ w: number; h: number } | null>(null);
 
-  // Live `send` from the WS-mount effect so the theme effect can post without owning the socket.
-  const sendRef = useRef<((msg: ClientMsg) => void) | null>(null);
-  // A `TerminalThemeUpdate` produced before the WS effect installed `sendRef`; drained there.
-  const pendingThemeRef = useRef<ClientMsg | null>(null);
-
-  // Live-apply theme without rebuilding the Terminal + WS. The `TerminalThemeUpdate` dispatch is deliberately unconditional: a remount resets any per-component bookkeeping, and suppression lives on the daemon side.
+  // Apply themes locally without reconnecting the transport.
   useEffect(() => {
     const term = termRef.current;
     if (term) {
       term.options.theme = theme === 'dark' ? DARK_THEME : LIGHT_THEME;
-    }
-    const rgb = theme === 'dark' ? DARK_THEME_RGB : LIGHT_THEME_RGB;
-    const msg: ClientMsg = {
-      TerminalThemeUpdate: { fg: [...rgb.fg], bg: [...rgb.bg] },
-    };
-    if (sendRef.current) {
-      sendRef.current(msg);
-    } else {
-      pendingThemeRef.current = msg;
     }
   }, [theme]);
 
@@ -235,19 +194,10 @@ export const XtermView = forwardRef<XtermViewHandle, XtermViewProps>(function Xt
     const mountWidth = container.offsetWidth;
     const mountHeight = container.offsetHeight;
     if (!isNonDegenerateMountSize(mountWidth, mountHeight)) {
-      dlog('XtermView', 'mount DEFERRED tiny container', {
-        w: mountWidth,
-        h: mountHeight,
-      });
       lastFailedMountSizeRef.current = { w: mountWidth, h: mountHeight };
       return deferUntilUsableGeometry();
     }
     setGeometryDeferred(false);
-    dlog('XtermView', 'mount START', {
-      terminalId,
-      containerW: mountWidth,
-      containerH: mountHeight,
-    });
 
     const term = new Terminal({
       theme:
@@ -343,21 +293,10 @@ export const XtermView = forwardRef<XtermViewHandle, XtermViewProps>(function Xt
     }
     try {
       fit.fit();
-      dlog('XtermView', 'fit DONE (initial)', {
-        cols: term.cols,
-        rows: term.rows,
-        containerW: container.offsetWidth,
-        containerH: container.offsetHeight,
-      });
-    } catch (e) {
-      dlog('XtermView', 'fit FAILED (initial)', e);
+    } catch {
       /* container may not be laid out yet on first frame */
     }
     if (term.cols < MIN_COMMIT_COLS || term.rows < MIN_COMMIT_ROWS) {
-      dlog('XtermView', 'mount DEFERRED post-fit degenerate', {
-        cols: term.cols,
-        rows: term.rows,
-      });
       lastFailedMountSizeRef.current = {
         w: container.offsetWidth,
         h: container.offsetHeight,
@@ -376,9 +315,7 @@ export const XtermView = forwardRef<XtermViewHandle, XtermViewProps>(function Xt
     const connect = () => {
       setStatus(permitted() ? 'connecting' : 'closed');
       setCloseInfo(null);
-      setProtocolError(null);
-      setExitInfo(null);
-      exitInfoRef.current = null;
+      exitedRef.current = false;
       onExitChangeRef.current?.(null);
       term.options.disableStdin = true;
       if (!permitted()) return () => {};
@@ -386,7 +323,6 @@ export const XtermView = forwardRef<XtermViewHandle, XtermViewProps>(function Xt
       let live = true;
       const current = () => live && permitted() && generation === recovery?.read().generation;
       let connectionReady = false;
-      let awaitingOwner = false;
       const share = parseShareBasePath(window.location.pathname);
       const scopedUrl = terminalWsUrl(terminalId, location, share?.shareId);
       const ws = new WebSocket(scopedUrl);
@@ -403,30 +339,15 @@ export const XtermView = forwardRef<XtermViewHandle, XtermViewProps>(function Xt
         }
       };
 
-      // Frames produced between `new WebSocket(…)` and `ws.onopen` are queued.
-      const pendingFrames: ClientMsg[] = [];
-      const send: (msg: ClientMsg) => void = () => {
-        if (!current()) { pendingFrames.length = 0; }
-      };
-      sendRef.current = send;
-      if (pendingThemeRef.current) {
-        pendingThemeRef.current = null;
-      }
-
-      const clientId = makeUuid();
-      let resizeEpoch = 0;
       const mountDesired = { cols: term.cols, rows: term.rows };
       let lastCols = term.cols;
       let lastRows = term.rows;
-      let renderRev = 0;
-      let ptySeq = 0;
 
       ws.onopen = () => {
         if (!current()) { ws.close(); return; }
         if (handshakeTimer !== null) clearTimeout(handshakeTimer);
         onRoleChangeRef.current?.('Owner');
         setStatus('connected');
-        awaitingOwner = false;
         connectionReady = true;
         retryDelay = 500;
         term.options.disableStdin = false;
@@ -448,10 +369,8 @@ export const XtermView = forwardRef<XtermViewHandle, XtermViewProps>(function Xt
           }
           if (frame.kind === 'exit') {
             automaticAllowed = false;
-            exitInfoRef.current = { code: frame.exitCode };
-            setExitInfo({ code: frame.exitCode });
+            exitedRef.current = true;
             setStatus('exited');
-            awaitingOwner = false;
             connectionReady = false;
             term.options.disableStdin = true;
             onExitChangeRef.current?.({
@@ -464,213 +383,15 @@ export const XtermView = forwardRef<XtermViewHandle, XtermViewProps>(function Xt
               }]\x1b[0m`,
             );
           }
-          return;
-        }
-        let msg: DaemonMsg;
-        try {
-          msg = JSON.parse(typeof e.data === 'string' ? e.data : '') as DaemonMsg;
-        } catch {
-          return;
-        }
-        if ('ProtocolError' in msg || 'TerminalExited' in msg) automaticAllowed = false;
-        if ('ServerHello' in msg) {
-          if (handshakeTimer !== null) clearTimeout(handshakeTimer);
-          const sh = msg.ServerHello;
-          onRoleChangeRef.current?.(sh.client_role);
-          setStatus('connected');
-          awaitingOwner = false;
-          connectionReady = true;
-          retryDelay = 500;
-          term.options.disableStdin = false;
-          // A full replay replaces the retained view; do not append it twice.
-          term.reset();
-          if (wantedOwnerRef.current && sh.client_role === 'Observer') {
-            // Previous owner's pump may not have released yet; claim eagerly
-            // instead of waiting for the first owner-gated frame to fail.
-            send('OwnerClaim');
-          }
-          // Resize the local terminal to the snapshot before writing the replay so the cursor lines up.
-          if (sh.snapshot.cols !== term.cols || sh.snapshot.rows !== term.rows) {
-            term.resize(sh.snapshot.cols, sh.snapshot.rows);
-            lastCols = sh.snapshot.cols;
-            lastRows = sh.snapshot.rows;
-          }
-          if (sh.snapshot.scrollback) {
-            term.write(Uint8Array.from(sh.snapshot.scrollback));
-            // snapshot.data leads with ED 2 (`\x1b[2J`); flush the viewport into the scrollback ring first or it erases the replayed tail.
-            term.write('\r\n'.repeat(term.rows));
-          }
-          term.write(Uint8Array.from(sh.snapshot.data), () => {
-            if (current() && termRef.current === term) term.scrollToBottom();
-          });
-          // A pure expansion cannot clip the recovery model; a shrink or mixed-axis change can destroy history and must wait for stable ResizeObserver intent.
-          const mountIsPureExpansion =
-            mountDesired.cols >= sh.pty_size.cols &&
-            mountDesired.rows >= sh.pty_size.rows &&
-            (mountDesired.cols > sh.pty_size.cols ||
-              mountDesired.rows > sh.pty_size.rows);
-          if (sh.client_role === 'Owner' && mountIsPureExpansion) {
-            resizeEpoch += 1;
-            send({
-              ResizeCommit: {
-                epoch: resizeEpoch,
-                cols: mountDesired.cols,
-                rows: mountDesired.rows,
-              },
-            });
-          }
-          renderRev = sh.snapshot.render_rev;
-          ptySeq = sh.snapshot.pty_seq;
-          return;
-        }
-        if ('RenderPatch' in msg) {
-          const p = msg.RenderPatch;
-          if (p.encoding === 'Vt') {
-            term.write(Uint8Array.from(p.data));
-          }
-          renderRev = p.render_rev;
-          ptySeq = p.pty_seq;
-          return;
-        }
-        if ('RenderSnapshot' in msg) {
-          // Standalone snapshot: the daemon decided we need a hard re-sync.
-          const s = msg.RenderSnapshot;
-          if (s.cols !== term.cols || s.rows !== term.rows) {
-            term.resize(s.cols, s.rows);
-            lastCols = s.cols;
-            lastRows = s.rows;
-          }
-          if (s.scrollback) {
-            term.clear();
-            // `clear()` keeps the cursor column; restored history must start at column 0.
-            term.write('\x1b[H');
-            term.write(Uint8Array.from(s.scrollback));
-            // Same ED 2 erasure guard as ServerHello.
-            term.write('\r\n'.repeat(term.rows));
-          }
-          term.write(Uint8Array.from(s.data), () => {
-            if (current() && termRef.current === term) term.scrollToBottom();
-          });
-          renderRev = s.render_rev;
-          ptySeq = s.pty_seq;
-          return;
-        }
-        if ('ResizeApplied' in msg) {
-          const r = msg.ResizeApplied;
-          // Stale-epoch guard: an out-of-order `ResizeApplied` must not clobber newer local geometry.
-          if (r.epoch < resizeEpoch) return;
-          lastCols = r.cols;
-          lastRows = r.rows;
-          renderRev = r.render_rev;
-          ptySeq = r.pty_seq;
-          return;
-        }
-        if ('SnapshotRequired' in msg) {
-          term.clear();
-          return;
-        }
-        if ('TerminalExited' in msg) {
-          const t = msg.TerminalExited;
-          exitInfoRef.current = { code: t.code };
-          setExitInfo({ code: t.code });
-          setStatus('exited');
-          awaitingOwner = false;
-          connectionReady = false;
-          term.options.disableStdin = true;
-          // The JSON frame carries no signal flag (`code` is 128+sig for a signal-killed child); the reliable `signal_killed` arrives via the REST seed. Idempotent against the duplicate `onclose` fire.
-          onExitChangeRef.current?.({
-            exit_code: t.code,
-            signal_killed: false,
-          });
-          term.writeln(
-            `\r\n\x1b[2m[process exited${
-              t.code != null ? ` (code ${t.code})` : ''
-            }]\x1b[0m`,
-          );
-          return;
-        }
-        if ('ProtocolError' in msg) {
-          // NotOwner rejects an operation without closing the established
-          // connection. Only an owner acknowledgement may restore its input.
-          awaitingOwner = msg.ProtocolError.code === 'NotOwner'
-            && (connectionReady || awaitingOwner) && ws.readyState === WebSocket.OPEN;
-          setProtocolError({
-            code: msg.ProtocolError.code,
-            message: msg.ProtocolError.message,
-          });
-          setStatus('protocol-error');
-          connectionReady = false;
-          term.options.disableStdin = true;
-          return;
-        }
-        if ('OwnerChanged' in msg) {
-          // Late ownership events cannot recover fatal errors, exits or a
-          // closed transport, even when they name this client.
-          if ((!connectionReady && !awaitingOwner) || ws.readyState !== WebSocket.OPEN) return;
-          const { owner_client_id: newOwnerId } = msg.OwnerChanged;
-          dlog('XtermView', 'OwnerChanged', msg.OwnerChanged);
-          if (newOwnerId === null) {
-            if (wantedOwnerRef.current) {
-              send('OwnerClaim');
-            }
-            return;
-          }
-          if (newOwnerId === clientId) {
-            onRoleChangeRef.current?.('Owner');
-            if (awaitingOwner) {
-              awaitingOwner = false;
-              connectionReady = true;
-              automaticAllowed = true;
-              retryDelay = 500;
-              term.options.disableStdin = false;
-              setStatus('connected');
-              setProtocolError(null);
-            }
-            // A ResizeCommit sent while Observer may have been rejected; resend the fitted geometry on ownership transfer.
-            if (term.cols >= MIN_COMMIT_COLS && term.rows >= MIN_COMMIT_ROWS) {
-              resizeEpoch += 1;
-              send({
-                ResizeCommit: {
-                  epoch: resizeEpoch,
-                  cols: term.cols,
-                  rows: term.rows,
-                },
-              });
-            } else {
-              dlog(
-                'XtermView',
-                'OwnerChanged ResizeCommit suppressed: degenerate geometry',
-                {
-                  cols: term.cols,
-                  rows: term.rows,
-                },
-              );
-            }
-          } else {
-            onRoleChangeRef.current?.('Observer');
-          }
-          return;
-        }
-        if ('Backpressure' in msg) {
-          // The daemon never emits this yet; logged for debugging.
-          dlog('XtermView', 'Backpressure', msg.Backpressure);
-          return;
         }
       };
 
       ws.onclose = (e) => {
         if (handshakeTimer !== null) clearTimeout(handshakeTimer);
-        const wasAwaitingOwner = awaitingOwner;
-        awaitingOwner = false;
         connectionReady = false;
         term.options.disableStdin = true;
-        // 1000 + `child-exited` = daemon's clean child-exit close (mapped to `exited` even if the `TerminalExited` frame was dropped); 1006 abnormal; 1011 server heartbeat trip; 1001 going away.
+        // 1000 + `child-exited` = daemon's clean child-exit close (mapped to `exited` even if the exit frame was dropped); 1006 abnormal; 1011 server heartbeat trip; 1001 going away.
         setCloseInfo({ code: e.code, reason: e.reason || '' });
-        dlog('XtermView', 'WS close', {
-          code: e.code,
-          reason: e.reason,
-          wasClean: e.wasClean,
-        });
         const isChildExitClose =
           e.code === 1000 && e.reason === 'child-exited';
         const transientClose = [1001, 1006, 1011].includes(e.code)
@@ -680,14 +401,14 @@ export const XtermView = forwardRef<XtermViewHandle, XtermViewProps>(function Xt
           retryTimer = setTimeout(() => { retryTimer = null; if (automaticAllowed && permitted()) reconnect(); }, retryDelay * (0.75 + Math.random() * 0.5));
           retryDelay = Math.min(8000, retryDelay * 2);
         }
-        // Don't clobber a more-specific state (`exited`, `protocol-error`); a `child-exited` close promotes to `exited`.
+        // Don't clobber a more-specific state (`exited`); a `child-exited` close promotes to `exited`.
         setStatus((prev) => {
-          if (prev === 'exited' || (prev === 'protocol-error' && !wasAwaitingOwner)) return prev;
+          if (prev === 'exited') return prev;
           if (isChildExitClose) return 'exited';
           return 'closed';
         });
-        // Backstop for the parent's exit badge, only when no `TerminalExited` frame delivered a code: the parent's callback is a plain setState and would be clobbered back to `null`.
-        if (isChildExitClose && exitInfoRef.current === null) {
+        // Backstop for the parent's exit badge, only when no exit frame delivered a code: the parent's callback is a plain setState and would be clobbered back to `null`.
+        if (isChildExitClose && !exitedRef.current) {
           onExitChangeRef.current?.({
             exit_code: null,
             signal_killed: false,
@@ -696,14 +417,11 @@ export const XtermView = forwardRef<XtermViewHandle, XtermViewProps>(function Xt
         // Role is undefined once the WS is gone — parent clears any pill.
         onRoleChangeRef.current?.(null);
       };
-      ws.onerror = (e) => {
-        const wasAwaitingOwner = awaitingOwner;
-        awaitingOwner = false;
+      ws.onerror = () => {
         connectionReady = false;
         term.options.disableStdin = true;
-        dlog('XtermView', 'WS error', e);
         setStatus((prev) =>
-          prev === 'exited' || (prev === 'protocol-error' && !wasAwaitingOwner) ? prev : 'closed',
+          prev === 'exited' ? prev : 'closed',
         );
         onRoleChangeRef.current?.(null);
       };
@@ -718,7 +436,7 @@ export const XtermView = forwardRef<XtermViewHandle, XtermViewProps>(function Xt
       let resizeFrame: number | null = null;
       let sawInitialResizeObservation = false;
       const onResize = () => {
-        // ResizeObserver always delivers an initial observation; treating it as user intent would narrow the PTY that ServerHello just restored.
+        // ResizeObserver always delivers an initial observation; treating it as user intent would narrow the PTY that the connection just restored.
         if (!sawInitialResizeObservation) {
           sawInitialResizeObservation = true;
           return;
@@ -730,16 +448,10 @@ export const XtermView = forwardRef<XtermViewHandle, XtermViewProps>(function Xt
           pending = false;
           if (!connectionReady) return;
           if (!visibleRef.current) return;
-          // fit() mutates the local xterm in place, so a collapsed container would leave the buffer at e.g. 2x1 interpreting RenderPatch bytes at the wrong geometry.
+          // fit() mutates the local xterm in place, so a collapsed container would leave the buffer at e.g. 2x1 interpreting PTY bytes at the wrong geometry.
           if (
             !isNonDegenerateMountSize(container.offsetWidth, container.offsetHeight)
           ) {
-            dlog('XtermView', 'resize → skip fit (container degenerate)', {
-              containerW: container.offsetWidth,
-              containerH: container.offsetHeight,
-              lastCols,
-              lastRows,
-            });
             return;
           }
           try {
@@ -747,29 +459,16 @@ export const XtermView = forwardRef<XtermViewHandle, XtermViewProps>(function Xt
           } catch {
             return;
           }
-          // fit() can still land on a marginal grid; restore last-known-good so RenderPatch bytes don't render against it.
+          // fit() can still land on a marginal grid; restore last-known-good so PTY bytes don't render against it.
           if (term.cols < MIN_COMMIT_COLS || term.rows < MIN_COMMIT_ROWS) {
-            dlog('XtermView', 'resize → fit DEGENERATE — restore last good', {
-              cols: term.cols,
-              rows: term.rows,
-              lastCols,
-              lastRows,
-            });
             if (term.cols !== lastCols || term.rows !== lastRows) {
               term.resize(lastCols, lastRows);
             }
             return;
           }
           if (term.cols !== lastCols || term.rows !== lastRows) {
-            dlog('XtermView', 'resize → fit', {
-              from: { cols: lastCols, rows: lastRows },
-              to: { cols: term.cols, rows: term.rows },
-              containerW: container.offsetWidth,
-              containerH: container.offsetHeight,
-            });
             lastCols = term.cols;
             lastRows = term.rows;
-            resizeEpoch += 1;
             sendBinary(encodeTerminalResizeFrame(term.cols, term.rows));
           }
         });
@@ -777,9 +476,6 @@ export const XtermView = forwardRef<XtermViewHandle, XtermViewProps>(function Xt
       flushResizeRef.current = onResize;
       const ro = new ResizeObserver(onResize);
       ro.observe(container);
-
-      void renderRev;
-      void ptySeq;
 
       return () => {
         live = false;
@@ -797,13 +493,9 @@ export const XtermView = forwardRef<XtermViewHandle, XtermViewProps>(function Xt
         } catch {
           /* already closed */
         }
-        // Strict-mode double-invoke: a teardown that runs after the next mount installed its own `send` must not null it out.
-        if (sendRef.current === send) {
-          sendRef.current = null;
-        }
         // Sync here rather than via onclose so a strict-mode unmount or `terminalId` change clears the parent even with no close frame.
         onRoleChangeRef.current?.(null);
-        // Revoking the transport does not revoke authoritative exit/error facts.
+        // Revoking the transport does not revoke authoritative exit facts.
         // A new attach resets them in connect(); disposal clears the parent below.
       };
     };
@@ -819,7 +511,7 @@ export const XtermView = forwardRef<XtermViewHandle, XtermViewProps>(function Xt
         if (retryTimer !== null) clearTimeout(retryTimer);
         retryTimer = null; disconnect(); disconnect = () => {};
         term.options.disableStdin = true;
-        setStatus(previous => previous === 'exited' || previous === 'protocol-error' ? previous : 'closed');
+        setStatus(previous => previous === 'exited' ? previous : 'closed');
       } else if (!wasPermitted && automaticAllowed) reconnect();
       wasPermitted = now;
     });
@@ -835,7 +527,7 @@ export const XtermView = forwardRef<XtermViewHandle, XtermViewProps>(function Xt
       unsubscribeRecovery?.();
       if (retryTimer !== null) clearTimeout(retryTimer);
       disconnect();
-      exitInfoRef.current = null;
+      exitedRef.current = false;
       onExitChangeRef.current?.(null);
       term.dispose();
       removeTestDumpHook();
@@ -861,9 +553,7 @@ export const XtermView = forwardRef<XtermViewHandle, XtermViewProps>(function Xt
       {!geometryDeferred && status === 'connecting' && (
         <div className="xterm-status">connecting…</div>
       )}
-      {!geometryDeferred && status === 'handshaking' && (
-        <div className="xterm-status">handshaking…</div>
-      )}
+
       {status === 'closed' && (
         <ErrorBox
           message="Connection lost."
@@ -874,27 +564,7 @@ export const XtermView = forwardRef<XtermViewHandle, XtermViewProps>(function Xt
           floating
         />
       )}
-      {status === 'protocol-error' && protocolError && (
-        <div
-          className="xterm-status xterm-status-closed"
-          role="alert"
-          aria-live="assertive"
-        >
-          <span>
-            protocol error: {protocolError.code}
-            {protocolError.message ? ` — ${protocolError.message}` : ''}
-            {protocolError.code === 'UnsupportedVersion'
-              ? ' (refresh required for protocol v4)'
-              : ''}
-          </span>
-          <button
-            onClick={() => location.reload()}
-            className="xterm-restart"
-          >
-            Refresh
-          </button>
-        </div>
-      )}
+
     </div>
   );
 });

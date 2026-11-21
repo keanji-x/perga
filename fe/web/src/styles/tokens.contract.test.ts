@@ -7,7 +7,7 @@ import { GENERATED_TOKEN_INVENTORY, GENERATED_TOKEN_CATEGORIES } from './typogra
 
 import { describe, expect, it } from 'vitest';
 
-import { MONO_STACK } from './font-stack.js';
+import { MONO_STACK } from './theme-values.js';
 
 /* Comments are stripped before any declaration is read; `contrast-matrix.browser.test.ts` uses the same definition and the two must agree. */
 const css = readFileSync(new URL('./tokens.css', import.meta.url), 'utf8').replace(

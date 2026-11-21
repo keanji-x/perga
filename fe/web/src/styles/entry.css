@@ -3,10 +3,9 @@
 @import "./reset.css" layer(reset);
 @import "./tokens.css" layer(tokens);
 @import "./base.css" layer(base);
-/* vendor.css must precede astryx-theme.css: both land in the `astryx`
-   layer, and sublayer precedence follows first appearance. */
-@import "./vendor.css" layer(astryx);
-@import "./astryx-theme.css" layer(astryx);
+/* Aggregate files already declare their top-level layers. */
+@import "./vendor.css";
+@import "./astryx-theme.css";
 /* The frozen dialog primitive's hard-coded global class names (§0.4 CR-4). */
 @import "./dialog.css" layer(ui);
 @import "./track-grid.css" layer(overrides);

@@ -8,7 +8,6 @@ export const OPTIMIZED_DEPENDENCIES = Object.freeze([
   '@codemirror/commands',
   '@codemirror/state',
   '@codemirror/view',
-  'temporal-polyfill',
   'motion',
   'react-grid-layout/core',
   '@astryxdesign/core/Switch',

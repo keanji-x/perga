@@ -2,7 +2,7 @@ import { cleanup, render } from '@testing-library/react';
 import { afterEach, expect, it } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import '../../../styles/entry.css';
-import { CardMotionPreview } from './motion-preview.tsx';
+import { CardMotionPreview } from '../../../../../tools/preview/pages/card-motion-preview.tsx';
 afterEach(cleanup);
 it('uses real card removal, native compaction and reset in the preview', async () => {
   await page.viewport(1200, 900); render(<CardMotionPreview />);

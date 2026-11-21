@@ -4,9 +4,9 @@ module.exports = {
     { name: 'core-no-web-layers', severity: 'error', from: { path: '^core/' }, to: { path: '^web/src/(app|features|styles|systems|ui)/' } },
     // UI may consume branded/a11y primitives and core/state infrastructure types only;
     // business-field domain types remain forbidden regardless of type-only imports.
-    { name: 'ui-only-core-type-whitelist', severity: 'error', from: { path: '^web/src/ui/', pathNot: '^web/src/ui/markdown/' }, to: { path: '^(web/src/(app|features|systems)/|core/(?!(types/(ids|a11y)|state/types)\\.ts$))' } },
+    { name: 'ui-only-core-type-whitelist', severity: 'error', from: { path: '^web/src/ui/', pathNot: '^web/src/ui/markdown/' }, to: { path: '^(web/src/(app|features|systems)/|core/(?!(state/types)\\.ts$))' } },
     // Markdown presentation may consume its syntax contract; business-domain imports remain forbidden.
-    { name: 'ui-markdown-core-whitelist', severity: 'error', from: { path: '^web/src/ui/markdown/' }, to: { path: '^(web/src/(app|features|systems)/|core/(?!(markdown/public|types/(ids|a11y)|state/types)\\.ts$))' } },
+    { name: 'ui-markdown-core-whitelist', severity: 'error', from: { path: '^web/src/ui/markdown/' }, to: { path: '^(web/src/(app|features|systems)/|core/(?!(markdown/public|state/types)\\.ts$))' } },
     { name: 'ui-markdown-type-only', severity: 'error', from: { path: '^web/src/ui/markdown/' }, to: { path: '^core/markdown/public\\.ts$', dependencyTypesNot: ['type-only'] } },
     { name: 'systems-no-features-or-app', severity: 'error', from: { path: '^web/src/systems/' }, to: { path: '^web/src/(features|app)/' } },
     { name: 'features-no-app', severity: 'error', from: { path: '^web/src/features/' }, to: { path: '^web/src/app/' } },

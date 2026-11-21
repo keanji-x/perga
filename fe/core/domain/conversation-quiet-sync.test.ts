@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  TASK_LIST_TOOL, REPORT_DELETE_TOOL, REPORT_READ_TOOLS, REPORT_TOOL_PREFIX,
+  TASK_LIST_TOOL, REPORT_READ_TOOLS, REPORT_TOOL_PREFIX,
   REPORT_WRITE_TOOLS, TRACK_TOOL_PREFIX, USER_ASK_TOOL,
 } from '../keys/mcp-tools.js';
 import {
@@ -57,7 +57,7 @@ function activity(id: string, overrides: Partial<ConversationActivity> = {}): Co
 
 /** A completed `neige_report_commit` row. */
 function wrote(id: string, overrides: Partial<ConversationActivity> = {}): ConversationActivity {
-  return activity(id, { verb: 'Wrote report', tool: REPORT_WRITE_TOOLS[2] ?? null, ...overrides });
+  return activity(id, { verb: 'Wrote report', tool: REPORT_WRITE_TOOLS[0] ?? null, ...overrides });
 }
 
 function outcome(id: string, status: ConversationTurnOutcome['status'] = 'completed'): ConversationTurnOutcome {
@@ -166,7 +166,7 @@ describe('foldQuietSyncs outcome', () => {
   it('is updated when a report write landed in the turn', () => {
     const blocks = foldQuietSyncs([reportEdited('s1'), activity('act1'), wrote('w1'), outcome('o1')]);
     expect(group(blocks[0]).outcome).toBe('updated');
-    for (const tool of [...REPORT_WRITE_TOOLS, REPORT_DELETE_TOOL]) {
+    for (const tool of REPORT_WRITE_TOOLS) {
       const one = foldQuietSyncs([reportEdited('s1'), wrote('w1', { tool }), outcome('o1')]);
       expect(group(one[0]).outcome, tool).toBe('updated');
     }

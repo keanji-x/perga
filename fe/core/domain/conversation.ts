@@ -20,7 +20,6 @@ import type {
 import type { ApiFailure, ApiOperation } from '../api/types.js';
 
 import { classifyFailure, failureReason, refusedText, type FailureTable, type WriteFailure, type WriteText } from './failure-class.js';
-import { sha256Hex } from './sha256.js';
 
 /** A frozen discussion source; does not name a provider session. */
 export type SideConversation = Readonly<{ source_card_id: string; context: string }>;
@@ -685,11 +684,6 @@ export function createTrackConversationOperation(
           sessionInput: result.firstInput!,
         })),
   };
-}
-
-/** Mirror of the server's `derive_track_conversation_keys`; its golden is asserted in `conversation.test.ts`. */
-export function trackConversationCardId(trackId: string, idempotencyKey: string): string {
-  return `conv-${sha256Hex(`wave-conversation:${trackId}:${idempotencyKey}`).slice(0, 32)}`;
 }
 
 /** What a failed create means for the draft; a 409 here is four distinguishable situations. */

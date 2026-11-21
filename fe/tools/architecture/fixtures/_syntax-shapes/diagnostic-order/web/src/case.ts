@@ -1,8 +1,7 @@
-Forms.SchemaForm;
+Forms.TrackRow;
 import * as Forms from './wrong';
-import { SchemaForm as LocalForm } from './other';
-export const FormField = 1, CalmSelect = 2;
+import { TrackRow as LocalForm } from './other';
 import remark from 'remark-gfm';
-const { SchemaForm: DynamicForm } = await import('./dynamic');
-const Required = require('./required').SchemaForm;
-export { LocalForm as SchemaForm };
+const { TrackRow: DynamicForm } = await import('./dynamic');
+const Required = require('./required').TrackRow;
+export { LocalForm as TrackRow };

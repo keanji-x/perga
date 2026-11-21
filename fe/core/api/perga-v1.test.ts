@@ -61,7 +61,6 @@ import {
   taskEvidence,
   rejectTaskOperation,
 } from '../domain/task-recovery.js';
-import { templateDetailOperation } from '../domain/template.js';
 import { compilePergaTemplateInputs, parsePergaInputsSchema } from '../domain/template-input.js';
 import {
   createTerminalCardOperation,
@@ -77,7 +76,6 @@ import {
   trackTemplatesOperation,
   updateTrackOperation,
 } from '../domain/track.js';
-import { parsePergaMarkdownBlocks } from '../markdown/public.js';
 
 describe('Perga /api/v1 protocol contracts', () => {
   it('preserves template presentation metadata without badge or metric count caps', () => {
@@ -176,9 +174,6 @@ describe('Perga /api/v1 protocol contracts', () => {
     expect(templatesOp.path).toBe('/api/v1/templates');
     const templates = templatesOp.responseSchema.parse(sampleBootstrap.templates);
     expect(templates[0]).toMatchObject({ id: 'feature-dev', title: 'Feature Development' });
-
-    const detail = templateDetailOperation('feature-dev').responseSchema.parse(sampleBootstrap.templates);
-    expect(detail.body).toContain('# Plan');
   });
 
   it('preserves rich provider model metadata and selects the advertised default', () => {
@@ -641,26 +636,6 @@ describe('Perga /api/v1 protocol contracts', () => {
         },
       },
     });
-
-    const blocks = parsePergaMarkdownBlocks([
-      '<!-- perga:b_1001 -->',
-      '# Overview',
-      '',
-      '<!-- perga:b_1002 -->',
-      '```perga-block task',
-      '{"task_key":"verify","kind":"terminal","cmd":"npm test"}',
-      '```',
-    ].join('\n'));
-    expect(blocks).toEqual([
-      { id: 'b_1001', rev: 1, kind: 'prose', markdown: '# Overview', payload: { markdown: '# Overview' } },
-      {
-        id: 'b_1002',
-        rev: 1,
-        kind: 'task',
-        markdown: '{"task_key":"verify","kind":"terminal","cmd":"npm test"}',
-        payload: { task_key: 'verify', kind: 'terminal', cmd: 'npm test' },
-      },
-    ]);
   });
 
   it('covers user-journey audit fixes across CHAT, CARD, and SHELL contracts', () => {

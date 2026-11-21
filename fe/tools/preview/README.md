@@ -17,6 +17,9 @@ Each session has a separate build directory, so a failed occupied-port launch ca
 
 `forwarding: not-verified` is intentional. The desktop/gateway owns forwarding and does not expose its lease/status through this CLI. Request the desktop to open the URL separately, report queued separately from verified client navigation, and stop/unregister its forwarding through that owner's API before archival. Expiry and gateway coordination remain in #2267; this tool owns only the process, host readiness and explicit shutdown contract.
 
+Development-only entry points live under `tools/preview/pages`, outside the production app.
+Their separate TypeScript project is checked by the normal build.
+
 The motion route includes actual chat/disclosure/progress components and Cards-owned local registration with the production BoardHost/CardHead. Preview cards have no kernel mapping, backend write, terminal or iframe connection. Use delete/reset and interrupt compaction with real pointer drag or southeast resize. No preview-only trajectory or grid implementation is used.
 
 ## Track presentation profiling

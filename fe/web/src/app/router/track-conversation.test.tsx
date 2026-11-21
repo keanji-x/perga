@@ -28,7 +28,7 @@ import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts'
 import { queryKeys } from '../providers/queries.ts';
 import type { Conversation, TranscriptEntry } from '../../../../core/domain/conversation.ts';
 import {
-  CONVERSATION_CREATE_TEXT, trackConversationCardId,
+  CONVERSATION_CREATE_TEXT,
 } from '../../../../core/domain/conversation.ts';
 import { ConversationProvider, useConversationCommands, useConversationComposerText, useConversationRememberedTurns, useConversationSendOps, useRememberedConversations } from '../conversations/public.tsx';
 import { createUiPreferences, type UiPreferenceStorage } from '../providers/ui-preferences.tsx';
@@ -153,7 +153,7 @@ const creates = (requests: readonly ApiRequest[], path: string) =>
 /* The row the POST would mint: the panel looks for the id derived from
  * `(trackId, key)`, not for "a row that was not there before". */
 const derivedRow = (trackId: string, request: ApiRequest): Row => fixtureSession(
-  trackConversationCardId(trackId, request.headers?.['Idempotency-Key'] ?? ''), trackId, { updatedAtMs: 99 },
+  fixtureConversationCardId(trackId, request.headers?.['Idempotency-Key'] ?? ''), trackId, { updatedAtMs: 99 },
 );
 
 /* The open drawer, reached by the control only it has: an adopted assistant row
@@ -1896,3 +1896,5 @@ it('keeps a visible conversation without output manually unread after receipt re
   expect(receipts.posts()).toHaveLength(before);
   expect(receipts.stored('conversation', ASSISTANT_CARD.id)?.manualUnread).toBe(true);
 });
+
+function fixtureConversationCardId(trackId: string, key: string): string { return `conv-${trackId}-${key}`; }

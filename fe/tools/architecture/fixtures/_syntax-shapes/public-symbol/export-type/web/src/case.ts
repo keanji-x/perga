@@ -1,1 +1,1 @@
-export type SchemaForm = string;
+export type TrackRow = string;

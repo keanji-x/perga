@@ -65,7 +65,6 @@ export function TerminalCardView({
   const statusText = ended ? message
     : !attached ? null
       : status === 'closed' ? 'Disconnected'
-        : status === 'protocol-error' ? 'Connection error'
           : status === 'connected' ? null : 'Connecting…';
   return (
     <CardFrame

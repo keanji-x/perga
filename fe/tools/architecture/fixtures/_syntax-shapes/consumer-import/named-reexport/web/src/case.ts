@@ -1,1 +1,1 @@
-export { SchemaForm as LocalForm } from './other';
+export { TrackRow as LocalForm } from './other';

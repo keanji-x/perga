@@ -220,9 +220,6 @@ describe('architecture fixtures', () => {
     expect(breakpointMismatches('@custom-media --wide (width >= 30em); @media (--wide) {}')).toHaveLength(1);
   });
   const expectedViolation = new Map<string, string>([
-    ['dup-inv-001', 'INV-DUP-001'],
-    ['dup-inv-002', 'INV-DUP-002'],
-    ['dup-inv-003', 'INV-DUP-003'],
     ['dup-inv-004', 'INV-DUP-004'],
     ['dup-inv-005', 'INV-DUP-005'],
     ['dup-inv-006', 'INV-DUP-006'],
@@ -230,8 +227,6 @@ describe('architecture fixtures', () => {
     ['dup-inv-008', 'INV-DUP-008'],
     ['dup-inv-009', 'INV-DUP-009'],
     ['dup-inv-010', 'INV-DUP-010'],
-    ['dup-consumer-import', 'INV-DUP-001'],
-    ['dup-export-alias', 'INV-DUP-001'],
     ['dup-import-fence-symbol', 'INV-DUP-005'],
     ['core-markdown-node-import', 'node:fs'],
     ['markdown-micromark-import', 'no-restricted-syntax'],
@@ -320,14 +315,12 @@ describe('architecture fixtures', () => {
 describe('duplication manifest on the application tree', () => {
   it('retains every diagnostic in phase and source order within one file', () => {
     expect(checkDuplicationManifest(resolve(shapeFixtures, 'diagnostic-order'))).toEqual([
-      'INV-DUP-003: FormField must be defined only in web/src/ui/schema-form/fields/public.tsx; found web/src/case.ts',
-      'INV-DUP-002: CalmSelect must be defined only in web/src/ui/calm-select/public.tsx; found web/src/case.ts',
-      'INV-DUP-001: SchemaForm must be defined only in web/src/ui/schema-form/public.tsx; found web/src/case.ts',
+      'INV-DUP-009: TrackRow must be defined only in web/src/features/track/row/public.tsx; found web/src/case.ts',
       'INV-DUP-004: remark-gfm may only be imported by core/markdown/public.ts; found web/src/case.ts',
-      'INV-DUP-001: SchemaForm consumers must import web/src/ui/schema-form/public.tsx; found ./other in web/src/case.ts',
-      'INV-DUP-001: SchemaForm consumers must import web/src/ui/schema-form/public.tsx; found ./wrong in web/src/case.ts',
-      'INV-DUP-001: SchemaForm consumers must import web/src/ui/schema-form/public.tsx; found ./dynamic in web/src/case.ts',
-      'INV-DUP-001: SchemaForm consumers must import web/src/ui/schema-form/public.tsx; found ./required in web/src/case.ts',
+      'INV-DUP-009: TrackRow consumers must import web/src/features/track/row/public.tsx; found ./other in web/src/case.ts',
+      'INV-DUP-009: TrackRow consumers must import web/src/features/track/row/public.tsx; found ./wrong in web/src/case.ts',
+      'INV-DUP-009: TrackRow consumers must import web/src/features/track/row/public.tsx; found ./dynamic in web/src/case.ts',
+      'INV-DUP-009: TrackRow consumers must import web/src/features/track/row/public.tsx; found ./required in web/src/case.ts',
     ]);
   });
   it('covers exactly the independently enumerated public-symbol syntax fixtures', () => {
@@ -339,7 +332,7 @@ describe('duplication manifest on the application tree', () => {
       expect(errors.some((error) => error.includes('must be defined only in')), shape).toBe(mustReject);
       if (!mustReject) {
         const fixtureSource = sourceFilesUnder(fixtureRoot).map((file) => readFileSync(file, 'utf8')).join('\n');
-        expect(fixtureSource, `${shape} must contain the managed symbol`).toMatch(/\bSchemaForm\b/);
+        expect(fixtureSource, `${shape} must contain the managed symbol`).toMatch(/\bTrackRow\b/);
       }
     }
   });
@@ -360,7 +353,7 @@ describe('duplication manifest on the application tree', () => {
       expect(errors.some((error) => error.includes('consumers must import')), shape).toBe(mustReject);
       if (!mustReject) {
         const fixtureSource = sourceFilesUnder(fixtureRoot).map((file) => readFileSync(file, 'utf8')).join('\n');
-        expect(fixtureSource, `${shape} must contain the managed symbol`).toMatch(/\bSchemaForm\b/);
+        expect(fixtureSource, `${shape} must contain the managed symbol`).toMatch(/\bTrackRow\b/);
       }
     }
   });
@@ -383,7 +376,7 @@ describe('duplication manifest on the application tree', () => {
       expect(duplicationManifest.find((entry) => entry.id === id)?.mergeObligations?.length, id).toBeGreaterThan(0);
     }
   });
-  it('keeps INV-DUP-001..010 implementations and consumers canonical', () => {
+  it('keeps active implementations and consumers canonical', () => {
     expect(checkDuplicationManifest(resolve(import.meta.dirname, '../..'))).toEqual([]);
   }, 30_000);
 });

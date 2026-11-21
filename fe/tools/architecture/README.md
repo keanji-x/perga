@@ -98,20 +98,8 @@ The consumer-import syntax table is exhaustive over these enumerated forms:
 Computed module sources and computed namespace properties are registered escapes:
 proving their values would require constant folding or data-flow analysis.
 
-The local mutation harness first runs the named sentinel, then reruns its whole
-Vitest file without `-t`. Its report lists every failed test and the full-suite
-failure count; multiple failures are expected when one shared checker branch
-guards several independently enumerated shapes or contracts.
-The harness publishes its restore target only after the temporary backup copy
-succeeds, so an early signal cannot restore an empty file. Bash may defer a
-SIGTERM trap until the foreground Vitest process exits; restoration then runs
-before the harness terminates.
-
 | Contract | Constraint type | Rule/check | Fixture directory |
 | --- | --- | --- | --- |
-| INV-DUP-001 | unique implementation | duplication manifest | `dup-inv-001` |
-| INV-DUP-002 | unique implementation | duplication manifest | `dup-inv-002` |
-| INV-DUP-003 | unique implementation | duplication manifest | `dup-inv-003` |
 | INV-DUP-004 | markdown import fence | duplication manifest + markdown public entry | `dup-inv-004` |
 | INV-DUP-005 | markdown import fence | duplication manifest + markdown public entry | `dup-inv-005` |
 | INV-DUP-006 | unique implementation | duplication manifest | `dup-inv-006` |

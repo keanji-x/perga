@@ -177,7 +177,7 @@ export function auditStyleRepository(feRoot) {
   const allFiles = [...filesUnder(resolve(feRoot, 'core')), ...filesUnder(webRoot)];
   const cssFiles = allFiles.filter((path) => extname(path) === '.css');
   const globalManifest = readYamlArray(resolve(stylesRoot, 'global-classes.yaml'));
-  const exceptions = readYamlArray(resolve(stylesRoot, 'unlayered-exceptions.yaml'));
+  const exceptions = [];
   const violations = [];
   if (order.join(',') !== EXPECTED_LAYER_ORDER.join(',')) {
     violations.push(`web/src/styles/entry.css: layer order must be ${EXPECTED_LAYER_ORDER.join(' → ')}`);
@@ -210,7 +210,10 @@ export function auditStyleRepository(feRoot) {
     violations.push(...auditCssImports(css, file));
     if (path.endsWith('.module.css')) violations.push(...auditModuleLayer(css, file));
     if (!exceptionPaths.includes(file)) {
-      violations.push(...auditLayeredCss(css, order).map(({ message }) => `${file}: ${message}`));
+      const auditedCss = file === 'web/src/styles/entry.css'
+        ? css.replace(/@import "\.\/(vendor|astryx-theme)\.css"\s*;/g, (_match, name) =>
+          readFileSync(resolve(stylesRoot, `${name}.css`), 'utf8')) : css;
+      violations.push(...auditLayeredCss(auditedCss, order).map(({ message }) => `${file}: ${message}`));
     }
   }
   for (const path of allFiles.filter((candidate) => SOURCE_EXTENSIONS.has(extname(candidate))

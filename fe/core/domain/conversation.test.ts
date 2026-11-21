@@ -15,7 +15,6 @@ import {
   plannerQueueWriteFailure,
   retireFollowedThoughts,
   sendPlannerInputOperation,
-  trackConversationCardId,
   type Conversation, type ConversationTurn, type OptimisticConversationTurn,
   type TranscriptEntry
 } from './conversation.js';
@@ -186,12 +185,7 @@ describe('track conversations', () => {
       .toStrictEqual({ content: 'hello', mode: 'default' });
   });
 
-  /* A golden: the value is copied from the server's own test of `conversation_keys.rs`. */
-  it('derives the same card id the server does, from its own namespace', () => {
-    expect(trackConversationCardId('track-1', 'key-a')).toBe('conv-55cef7267426fe78493bdd46ca6b1220');
-    expect(trackConversationCardId('track-1', 'key-b')).not.toBe(trackConversationCardId('track-1', 'key-a'));
-    expect(trackConversationCardId('track-2', 'key-a')).not.toBe(trackConversationCardId('track-1', 'key-a'));
-  });
+
 });
 
 describe('mergeTranscript', () => {
