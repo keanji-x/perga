@@ -48,10 +48,25 @@ public sealed class OarAgentSession : IAgentSession
     private long _nextContextPromptId;
     private int _poisoned;
     private int _disposed;
+    private readonly object _disposeSync = new();
+    private Task? _prepareDisposeTask;
+    private int _unregistered;
+    private readonly HarnessLaunchSpec _launchSpec;
+    private readonly string _runtimeId;
+    private readonly string? _executableOverride;
+    private readonly TimeSpan _handshakeTimeout;
+    private readonly Action<OarAgentSession>? _onInitialized;
 
-    private OarAgentSession(StdioSubprocess process, string? initialSessionId, Action<IAgentSession>? onDispose)
+    private OarAgentSession(StdioSubprocess process, HarnessLaunchSpec spec, string runtimeId,
+        string? executableOverride, TimeSpan handshakeTimeout, Action<IAgentSession>? onDispose,
+        Action<OarAgentSession>? onInitialized)
     {
-        _nativeThreadId = initialSessionId;
+        _launchSpec = spec;
+        _runtimeId = runtimeId;
+        _executableOverride = executableOverride;
+        _handshakeTimeout = handshakeTimeout;
+        _onInitialized = onInitialized;
+        _nativeThreadId = spec.ResumeNativeThreadId;
         _onDispose = onDispose;
         _rpc = new JsonRpcStdioConnection(process, OnNotification, OnServerRequest, OnDisconnected);
     }
@@ -63,34 +78,33 @@ public sealed class OarAgentSession : IAgentSession
     public long? ContextUsageRevision => Interlocked.Read(ref _contextUsageRevision);
     public WorkerProviderConfiguration? WorkerConfiguration => Volatile.Read(ref _workerConfiguration);
     public bool ShutdownConfirmed => _rpc.ShutdownConfirmed;
+    internal StdioSubprocess Subprocess => _rpc.Process;
     public bool SupportsSessionResume => Volatile.Read(ref _supportsSessionResume);
     public bool RequiresTerminalStop => true;
     public bool SupportsScopedClose => true;
     public SessionConfigurationCapabilities ConfigurationCapabilities => SessionConfigurationCapabilities.LaunchOnly;
     public ConfirmedConfiguration? ConfigurationState => Volatile.Read(ref _configurationState);
 
-    internal static async Task<OarAgentSession> OpenAsync(
+    internal static OarAgentSession Create(
         CommandInvocation invocation,
         HarnessLaunchSpec spec,
         string oarRuntimeId,
         string? executableOverride,
         TimeSpan handshakeTimeout,
         Action<IAgentSession>? onDispose,
-        CancellationToken ct)
+        Action<OarAgentSession>? onInitialized = null)
     {
-        var session = new OarAgentSession(StdioSubprocess.Start(invocation), spec.ResumeNativeThreadId, onDispose);
-        try
-        {
-            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            cts.CancelAfter(handshakeTimeout > TimeSpan.Zero ? handshakeTimeout : TimeSpan.FromSeconds(30));
-            await session.InitializeSessionAsync(spec, oarRuntimeId, executableOverride, cts.Token).ConfigureAwait(false);
-            return session;
-        }
-        catch
-        {
-            await session.DisposeAsync().ConfigureAwait(false);
-            throw;
-        }
+        return new OarAgentSession(StdioSubprocess.Start(invocation), spec, oarRuntimeId,
+            executableOverride, handshakeTimeout, onDispose, onInitialized);
+    }
+
+    public async Task InitializeAsync(CancellationToken ct)
+    {
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        cts.CancelAfter(_handshakeTimeout > TimeSpan.Zero ? _handshakeTimeout : TimeSpan.FromSeconds(30));
+        await InitializeSessionAsync(_launchSpec, _runtimeId, _executableOverride, cts.Token).ConfigureAwait(false);
+        _onInitialized?.Invoke(this);
     }
 
     public async ValueTask<bool> ResolveNativeCompactSupportAsync(CancellationToken ct)
@@ -307,21 +321,25 @@ public sealed class OarAgentSession : IAgentSession
 
     public async ValueTask DisposeAsync()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+        Task preparation;
+        lock (_disposeSync) preparation = _prepareDisposeTask ??= PrepareDisposeAsync();
+        await preparation.ConfigureAwait(false);
+        await _rpc.DisposeAsync().ConfigureAwait(false);
+        if (ShutdownConfirmed && Interlocked.Exchange(ref _unregistered, 1) == 0)
+            _onDispose?.Invoke(this);
+    }
 
+    private async Task PrepareDisposeAsync()
+    {
+        Interlocked.Exchange(ref _disposed, 1);
         lock (_idleUsageLock) { _idleUsageHandler = null; _pendingIdleUsage = null; }
-        _onDispose?.Invoke(this);
         Interlocked.Exchange(ref _currentTurn, null)?.CompleteQuietly();
-
         try
         {
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(1));
             await _rpc.SendRequestAsync("session/close", new { }, cts.Token).ConfigureAwait(false);
         }
         catch { }
-
-        await _rpc.DisposeAsync().ConfigureAwait(false);
-        _turnLock.Dispose();
     }
 
     private async Task InitializeSessionAsync(

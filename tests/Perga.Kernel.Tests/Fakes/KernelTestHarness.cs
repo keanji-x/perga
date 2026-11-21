@@ -1401,6 +1401,9 @@ internal sealed class ScriptableFakeAgentSession : IAgentSession
     private readonly HashSet<string> _pendingApprovalRequests = new(StringComparer.Ordinal);
     private bool _approvalsActive;
 
+    internal Func<CancellationToken, Task>? InitializeHandler { get; set; }
+    public Task InitializeAsync(CancellationToken ct) => InitializeHandler?.Invoke(ct) ?? Task.CompletedTask;
+
     public HarnessLaunchSpec LaunchSpec { get; }
     public IReadOnlyList<PermissionModeOption> AvailablePermissionModes { get; set; } = [];
     public string? NativeThreadId { get; set; }
@@ -1592,9 +1595,8 @@ internal sealed class ScriptableFakeAgentRuntime : IAgentRuntime
         return ProbeScript?.Invoke(ct) ?? Task.FromResult(Providers);
     }
 
-    public async Task<IAgentSession> OpenSessionAsync(HarnessLaunchSpec spec, CancellationToken ct)
+    public IAgentSession CreateSession(HarnessLaunchSpec spec)
     {
-        if (BeforeOpenAsync is not null) await BeforeOpenAsync();
         OnBeforeOpenSession?.Invoke(spec);
         var threadId = spec.ResumeNativeThreadId ?? $"thr_{Interlocked.Increment(ref _threadCounter)}";
         var session = new ScriptableFakeAgentSession(
@@ -1602,6 +1604,10 @@ internal sealed class ScriptableFakeAgentRuntime : IAgentRuntime
             threadId,
             (s, inp, token) => (TurnScript ?? DefaultTurnScript)(s, inp, token));
         session.SupportsSessionResume = SupportsSessionResume;
+        session.InitializeHandler = async ct =>
+        {
+            if (BeforeOpenAsync is not null) await BeforeOpenAsync();
+        };
         OpenedSessions.Enqueue(session);
         OnOpenedSession?.Invoke(session);
         return session;

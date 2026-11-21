@@ -72,7 +72,7 @@ public sealed class SessionLivenessTests
         {
             await opening.Task.WaitAsync(TimeSpan.FromSeconds(5));
             shutdown = ctx.Kernel.Actors.GetOrActivate(snap.Track.Id).DisposeAsync().AsTask();
-            // Keep OpenSessionAsync pending while shutdown has time to drain the mailbox.
+            // Keep InitializeAsync pending while shutdown has time to drain the mailbox.
             Assert.NotSame(shutdown, await Task.WhenAny(shutdown, Task.Delay(100)));
             releaseOpen.Set();
             launch.TrySetResult();

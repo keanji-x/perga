@@ -81,29 +81,66 @@ public sealed partial class TrackActor
         // including providers that block synchronously before returning their Task.
         _pendingSessionLaunches[sessionId] = new(launched.Task, cleanup);
         ObserveTaskFault(cleanup);
-        async Task LaunchAsync()
+        async Task<IAgentSession> LaunchAsync()
         {
-            try { launched.TrySetResult(await _agentRuntime.OpenSessionAsync(spec, deadline.Token).ConfigureAwait(false)); }
-            catch (Exception error) { launched.TrySetException(error); }
+            IAgentSession agent;
+            try
+            {
+                agent = _agentRuntime.CreateSession(spec);
+                launched.TrySetResult(agent);
+            }
+            catch (Exception error)
+            {
+                launched.TrySetException(error);
+                throw;
+            }
+            await agent.InitializeAsync(deadline.Token).ConfigureAwait(false);
+            return agent;
         }
-        _ = LaunchAsync();
+        var initialized = LaunchAsync();
+        ObserveTaskFault(initialized);
         try
         {
-            var agent = await launched.Task.WaitAsync(deadline.Token).ConfigureAwait(false);
+            var agent = await initialized.WaitAsync(deadline.Token).ConfigureAwait(false);
             needsCleanup.TrySetResult(false);
             // The caller removes the pending entry only after installing the open handle.
             return agent;
         }
         catch (OperationCanceledException)
         {
-            _sessionShutdownPending.TryAdd(sessionId, 0);
-            needsCleanup.TrySetResult(true);
+            if (launched.Task.IsCompletedSuccessfully)
+            {
+                _sessionShutdownPending.TryAdd(sessionId, 0);
+                needsCleanup.TrySetResult(true);
+            }
+            else
+            {
+                needsCleanup.TrySetResult(false);
+                _pendingSessionLaunches.TryRemove(sessionId, out _);
+                ObserveTaskFault(launched.Task);
+            }
             throw;
         }
         catch
         {
-            needsCleanup.TrySetResult(false);
-            _pendingSessionLaunches.TryRemove(sessionId, out _);
+            if (launched.Task.IsCompletedSuccessfully)
+            {
+                _sessionShutdownPending.TryAdd(sessionId, 0);
+                needsCleanup.TrySetResult(true);
+                try { await cleanup.ConfigureAwait(false); }
+                catch { /* Retain the failed launch for a later shutdown retry. */ }
+                if (launched.Task.Result.ShutdownConfirmed)
+                {
+                    _pendingSessionLaunches.TryRemove(sessionId, out _);
+                    _sessionShutdownPending.TryRemove(sessionId, out _);
+                }
+            }
+            else
+            {
+                needsCleanup.TrySetResult(false);
+                _pendingSessionLaunches.TryRemove(sessionId, out _);
+                ObserveTaskFault(launched.Task);
+            }
             throw;
         }
     }
