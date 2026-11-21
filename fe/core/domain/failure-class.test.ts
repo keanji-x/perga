@@ -39,7 +39,7 @@ const cases: ReadonlyArray<readonly [string, FailureTable<string>, ReadonlyArray
     /* Answered before handling, for a reason that can pass: the same send may be tried again. */
     [http(429), 'rejected'], [unauthorized, 'rejected'],
     /* #2192: a refusal whose way out is a fresh session, told apart by its code. */
-    [http(409, 'planner_harness_dormant'), 'dormant'], [http(409, 'planner_harness_runtime_superseded'), 'refused'],
+    [http(409, 'session_recovery_required'), 'refused'], [http(409, 'planner_harness_dormant'), 'dormant'], [http(409, 'planner_harness_runtime_superseded'), 'refused'],
     /* An Edit's replace refused before any write (#2043): final, the server's reason is shown. */
     [http(409, 'planner_turn_not_replaceable'), 'refused'],
     /* A key bound to another message can never be stored or replayed (#2068): final. */

@@ -6,7 +6,7 @@ import type { PlannerAttachment } from '../../../../core/api/generated/wire.ts';
 import {
   type SentPlannerInput, type TranscriptEntry
 } from '../../../../core/domain/conversation.ts';
-import { KeyedSendFailure, retryUnknownSend, SEND_FAILURES, SEND_RETRIES } from '../../../../core/domain/conversation-delivery.ts';
+import { KeyedSendFailure, retryUnknownSend, sendFailureMessage, SEND_FAILURES, SEND_RETRIES } from '../../../../core/domain/conversation-delivery.ts';
 import {
   outboxFacts,
   queueDisplayAccounting,
@@ -114,7 +114,7 @@ export function useConversationOutbox({
     }, (error: unknown) => {
       if (!current()) return;
       const failed = error instanceof KeyedSendFailure ? error : new KeyedSendFailure(error, 'unknown');
-      const message = failed.cause instanceof Error && failed.cause.message !== '' ? failed.cause.message : 'Could not send the message.';
+      const message = sendFailureMessage(failed.cause);
       /* `message` is shown only for an op that was not sent: an unknown op's footer says no more than that it is unconfirmed. */
       settle({ key, target, echo, fromComposer, phase: 'failed', delivery: failed.delivery, message });
     });

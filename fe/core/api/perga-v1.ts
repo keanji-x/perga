@@ -684,6 +684,7 @@ export const pergaTransientEventKindSchema = z.enum([
   'session.thinking_delta',
   'session.tool_progress',
   'approval.changed',
+  'session.state_changed',
   'read_receipt.updated',
 ]);
 export type PergaTransientEventKind = z.infer<typeof pergaTransientEventKindSchema>;
@@ -745,6 +746,7 @@ export type PergaPersistentEvent =
 
 export type PergaEventDecodeResult =
   | Readonly<{ status: 'ready'; kind: 'read-receipt'; payload: z.infer<typeof readReceiptDtoSchema> }>
+  | Readonly<{ status: 'ready'; kind: 'session-state'; trackId: string; sessionId: string }>
   | Readonly<{ status: 'ready'; kind: 'approvals'; trackId: string; sessionId: string }>
   | Readonly<{ status: 'ready'; kind: 'approval-audit' }>
   | Readonly<{ status: 'ready'; kind: 'upgrade-status'; payload: SystemUpgradeStatusPayload }>
@@ -774,6 +776,11 @@ export function decodePergaEventEnvelope(input: unknown): PergaEventDecodeResult
     const parsed = readReceiptDtoSchema.safeParse(payload);
     if (!parsed.success) return { status: 'failed', error: { kind: 'decode', message: 'Invalid read receipt', cause: parsed.error } };
     return { status: 'ready', kind: 'read-receipt', payload: parsed.data };
+  }
+  if (kind === 'session.state_changed') {
+    const parsed = z.object({ sessionId: z.string() }).safeParse(payload);
+    if (trackId == null || !parsed.success) return { status: 'failed', error: { kind: 'decode', message: 'Invalid session state change' } };
+    return { status: 'ready', kind: 'session-state', trackId, sessionId: parsed.data.sessionId };
   }
   if (kind === 'approval.changed') {
     const parsed = z.object({ sessionId: z.string() }).safeParse(payload);

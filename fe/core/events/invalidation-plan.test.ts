@@ -294,3 +294,19 @@ it('decodes receipt events with no persistent event ID and rejects malformed rec
     .toEqual({ status: 'ready', value: { ev: 'read_receipt.updated', data } });
   expect(decodeWireEvent({ kind: 'read_receipt.updated', payload: { ...data, kind: 'area' } }).status).toBe('failed');
 });
+
+it('decodes transient session state changes and refreshes overlays and the session run', () => {
+  const decoded = decodeWireEvent({ kind: 'session.state_changed', eventId: null, trackId: 't', payload: { sessionId: 's' } });
+  expect(decoded).toEqual({ status: 'ready', value: { ev: 'session.state_changed', data: { trackId: 't', sessionId: 's' } } });
+  if (decoded.status !== 'ready') throw new Error('Expected a decoded event');
+  expect(wireEventSchema.parse(decoded.value)).toEqual(decoded.value);
+  expect(invalidationPlanFor(decoded.value).invalidate).toEqual([['overlays', 'track'], ['planner-run', 's']]);
+});
+
+it.each([
+  { trackId: 't', payload: {} },
+  { trackId: 't', payload: { sessionId: 1 } },
+  { payload: { sessionId: 's' } },
+])('rejects malformed transient session state changes: %j', data => {
+  expect(decodeWireEvent({ kind: 'session.state_changed', eventId: null, ...data }).status).toBe('failed');
+});

@@ -2,6 +2,9 @@ import '../../styles/entry.css';
 import { cleanup } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { page } from 'vitest/browser';
+import { decodeEventFrame } from '../../../../core/events/protocol.ts';
+import { initialEventState, reduceEventFrame } from '../../../../core/events/reducer.ts';
+import { applyEventEffects } from '../events/query-invalidation-adapter.ts';
 import { renderSessionFixture } from './conversation-session-fixture.tsx';
 import { sessionItem, sessionPage, sessionReply } from './conversation-session-data.ts';
 
@@ -29,7 +32,15 @@ it.each([
   const field = page.getByRole('combobox', { name: 'Message' });
   await field.fill('保留草稿');
   unknown = true;
-  await view.client.invalidateQueries();
+  const invalidations = vi.spyOn(view.client, 'invalidateQueries');
+  const frame = decodeEventFrame({ kind: 'session.state_changed', eventId: null, trackId: 'daily', payload: { sessionId: 'daily-planner' } });
+  if (frame.status !== 'ready') throw new Error('Expected a decoded state change');
+  const reduction = reduceEventFrame(initialEventState(3, 42), frame.frame);
+  applyEventEffects(view.client, reduction.effects);
+  await expect.poll(() => invalidations.mock.calls.map(([filters]) => filters?.queryKey)).toContainEqual(['overlays', 'track']);
+  expect(invalidations.mock.calls.map(([filters]) => filters?.queryKey)).toContainEqual(['planner-run', 'daily-planner']);
+  expect(reduction.effects.some(effect => effect.type === 'persist-cursor')).toBe(false);
+  invalidations.mockRestore();
   await expect.element(field).toHaveAttribute('contenteditable', 'false');
   expect(document.querySelectorAll('[data-nc-conversation-action]')).toHaveLength(1);
   await page.getByRole('button', { name: '重置上下文并继续', exact: true }).click();
@@ -86,4 +97,21 @@ it('withdraws an unknown queue entry while the session is unknown', async () => 
   await page.getByRole('button', { name: '撤回', exact: true }).click();
   await expect.poll(() => withdrawn).toBe(true);
   await expect.element(page.getByText('Paused original', { exact: true })).not.toBeInTheDocument();
+});
+
+it.each([390, 1280])('shows a localized recovery refusal after one send (%ipx)', async width => {
+  await page.viewport(width, 844);
+  const view = renderSessionFixture({ initial: '/track/daily?panel=conversations', reply: request => {
+    if (request.method === 'POST' && request.path.endsWith('/messages')) return {
+      status: 409, statusText: 'Conflict', body: { code: 'session_recovery_required', error: 'Recover the provider session before sending more input.' },
+    };
+    return undefined;
+  } });
+  await page.getByRole('button', { name: /Conversation Daily Planner conversation/ }).click();
+  await page.getByRole('combobox', { name: 'Message' }).fill('保留这条消息');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await expect.element(page.getByText('消息未发送。会话需要恢复，请先恢复会话后再发送。', { exact: true })).toBeVisible();
+  expect(view.requests.filter(request => request.method === 'POST' && request.path.endsWith('/messages'))).toHaveLength(1);
+  expect(document.body.textContent).not.toContain('Recover the provider session');
+  expect(document.body.textContent).not.toContain('Not sent.');
 });
