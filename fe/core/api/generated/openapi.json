@@ -14616,6 +14616,105 @@
         }
       }
     },
+    "/api/v1/tracks/{trackId}/views": {
+      "parameters": [
+        {
+          "name": "trackId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["templateId", "views", "widgets", "triggers", "diagnostics"],
+                  "properties": {
+                    "templateId": { "type": "string" },
+                    "views": { "type": "object", "additionalProperties": true },
+                    "widgets": { "type": "object", "additionalProperties": { "type": "string" } },
+                    "triggers": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": ["id", "label", "onKind", "actionKind"],
+                        "properties": {
+                          "id": { "type": "string" },
+                          "label": { "type": "string" },
+                          "onKind": { "type": "string" },
+                          "onSummary": { "type": ["string", "null"] },
+                          "actionKind": { "type": "string" },
+                          "assign": { "type": ["string", "null"] },
+                          "assignKind": { "type": ["string", "null"] }
+                        }
+                      }
+                    },
+                    "diagnostics": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": ["view", "message"],
+                        "properties": {
+                          "view": { "type": "string" },
+                          "message": { "type": "string" }
+                        }
+                      }
+                    },
+                    "humanReadOnly": { "type": "boolean" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tracks/{trackId}/data": {
+      "parameters": [
+        {
+          "name": "trackId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "patch": {
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "type": "object", "additionalProperties": true }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["ok", "data"],
+                  "properties": {
+                    "ok": { "type": "boolean" },
+                    "data": { "type": "object", "additionalProperties": true }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "description": "Schema validation or patch argument error" },
+          "409": { "description": "Track is closed or has no active template" }
+        }
+      }
+    },
     "/api/v1/tracks/{trackId}/report/blocks/{blockId}": {
       "parameters": [
         {
@@ -24929,6 +25028,25 @@
               "string",
               "null"
             ]
+          },
+          "humanReadOnly": {
+            "type": "boolean"
+          },
+          "viewNames": {
+            "type": ["array", "null"],
+            "items": { "type": "string" }
+          },
+          "routing": {
+            "type": ["array", "null"],
+            "items": { "type": "object" }
+          },
+          "checkpoints": {
+            "type": ["array", "null"],
+            "items": { "type": "object" }
+          },
+          "triggers": {
+            "type": ["array", "null"],
+            "items": { "type": "object" }
           }
         }
       },

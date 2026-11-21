@@ -1,0 +1,549 @@
+using System.Text.Json;
+using System.Text.RegularExpressions;
+using Jint;
+using Jint.Native;
+using Jint.Native.Function;
+using Jint.Native.Object;
+using Jint.Runtime;
+
+namespace Perga.PolicyVm;
+
+public sealed partial class PolicyVm
+{
+    private static readonly Regex WidgetFenceRegex = new(
+        @"```perga-block\s+widget\s*\r?\n(?<body>[\s\S]*?)\r?\n```",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    public IReadOnlyList<TaskRoutingRule> ResolveRoutingRules(CompiledPolicy policy, JsonElement inputs)
+    {
+        ArgumentNullException.ThrowIfNull(policy);
+
+        return ExecuteSandboxed("ResolveRoutingRules", () =>
+        {
+            var bundle = TemplateBundle.Parse(policy.JsSource);
+            using var engine = CreateSandboxedEngine(ExecutionTimeoutMs, bundle);
+            var rawDef = LoadDefaultTemplateObject(engine, bundle);
+            var jsInputs = BuildEffectiveJsInputs(engine, rawDef, inputs);
+            var def = ResolveEffectiveDefinition(engine, rawDef, jsInputs);
+
+            return ReadRoutingRules(engine, def);
+        });
+    }
+
+    private static IReadOnlyList<CheckpointSpec> ParseCheckpoints(ObjectInstance def)
+    {
+        var val = def.Get("checkpoints");
+        if (val.IsUndefined() || val.IsNull())
+        {
+            return [];
+        }
+
+        if (!val.IsArray())
+        {
+            throw new InvalidOperationException("template.checkpoints must be an array.");
+        }
+
+        var arr = val.AsArray();
+        var list = new List<CheckpointSpec>((int)arr.Length);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        for (uint i = 0; i < arr.Length; i++)
+        {
+            var item = arr.Get(i);
+            if (item is not ObjectInstance obj || item.IsArray())
+            {
+                throw new InvalidOperationException($"template.checkpoints[{i}] must be an object.");
+            }
+
+            var id = ReadRequiredNonEmptyString(obj, "id", $"template.checkpoints[{i}].id");
+            if (!seen.Add(id))
+            {
+                throw new InvalidOperationException($"Duplicate checkpoint id '{id}' in template.checkpoints.");
+            }
+
+            var title = ReadRequiredNonEmptyString(obj, "title", $"template.checkpoints[{i}].title");
+            var role = ReadOptionalString(obj, "role", $"template.checkpoints[{i}].role");
+            var access = ReadOptionalString(obj, "access", $"template.checkpoints[{i}].access");
+            if (access is not (null or "read_only" or "read_write"))
+            {
+                throw new InvalidOperationException($"template.checkpoints[{i}].access must be read_only or read_write.");
+            }
+
+            var dependsOn = ReadOptionalStringList(obj, "dependsOn", $"template.checkpoints[{i}].dependsOn");
+            var docPath = ReadOptionalString(obj, "docPath", $"template.checkpoints[{i}].docPath");
+            list.Add(new CheckpointSpec(id, title, role, access, dependsOn.Count > 0 ? dependsOn : null, docPath));
+        }
+
+        return list;
+    }
+
+    public DataPatchValidationResult ValidateAndPatchData(
+        CompiledPolicy policy,
+        JsonElement inputs,
+        JsonElement currentData,
+        JsonElement patch,
+        IReadOnlyList<string>? knownTaskKeys,
+        string nowIso,
+        string source)
+    {
+        ArgumentNullException.ThrowIfNull(policy);
+
+        if (patch.ValueKind != JsonValueKind.Object)
+        {
+            return new DataPatchValidationResult(
+                false,
+                NormalizeStateJson(currentData),
+                [new DataValidationError("$", "Patch payload must be a JSON object.")]);
+        }
+
+        return ExecuteSandboxed("ValidateAndPatchData", () =>
+        {
+            var bundle = TemplateBundle.Parse(policy.JsSource);
+            using var engine = CreateSandboxedEngine(ExecutionTimeoutMs, bundle);
+            var tHelper = engine.GetValue("t");
+
+            var rawDef = LoadDefaultTemplateObject(engine, bundle);
+            var jsInputs = BuildEffectiveJsInputs(engine, rawDef, inputs);
+            var def = ResolveEffectiveDefinition(engine, rawDef, jsInputs);
+
+            var normalizedCurrent = NormalizeStateJson(currentData);
+            var (ok, mergedJson, safetyErrors) = TemplateDataValidator.MergeAndStamp(
+                normalizedCurrent,
+                patch,
+                nowIso,
+                source);
+            if (!ok)
+            {
+                return new DataPatchValidationResult(false, normalizedCurrent, safetyErrors);
+            }
+
+            var schemaNode = ExtractTemplateSchemaNode(engine, def, tHelper);
+            var errors = TemplateDataValidator.ValidateRoot(schemaNode, mergedJson, knownTaskKeys);
+            if (errors.Count > 0)
+            {
+                return new DataPatchValidationResult(false, normalizedCurrent, errors);
+            }
+
+            return new DataPatchValidationResult(true, mergedJson, []);
+        });
+    }
+
+    public TemplateViewsProjection ProjectViews(
+        CompiledPolicy policy,
+        JsonElement inputs,
+        JsonElement currentData,
+        JsonElement kernelSnapshot)
+    {
+        ArgumentNullException.ThrowIfNull(policy);
+
+        return ExecuteSandboxed("ProjectViews", () =>
+        {
+            var bundle = TemplateBundle.Parse(policy.JsSource);
+            using var engine = CreateSandboxedEngine(ExecutionTimeoutMs, bundle);
+            var rawDef = LoadDefaultTemplateObject(engine, bundle);
+            var jsInputs = BuildEffectiveJsInputs(engine, rawDef, inputs);
+            var def = ResolveEffectiveDefinition(engine, rawDef, jsInputs);
+
+            var views = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+            var diagnostics = new List<TemplateViewDiagnostic>();
+            var widgets = ExtractBundledHtmlWidgets(bundle);
+            var triggers = ParseTriggers(engine, def);
+
+            if (TryGetOptionalObject(def, "report", "template.report", out var reportObj) &&
+                TryGetOptionalObject(reportObj, "views", "template.report.views", out var viewsObj))
+            {
+                var dataJs = ParseJsJson(engine, NormalizeStateJson(currentData).GetRawText());
+                var kernelJs = ParseJsJson(engine, NormalizeStateJson(kernelSnapshot).GetRawText());
+
+                foreach (var prop in viewsObj.GetOwnProperties())
+                {
+                    var viewName = prop.Key.AsString();
+                    var fnVal = prop.Value.Value;
+                    if (fnVal is not Function fn)
+                    {
+                        diagnostics.Add(new TemplateViewDiagnostic(viewName, $"report.views.{viewName} is not a function."));
+                        continue;
+                    }
+
+                    try
+                    {
+                        var projected = engine.Call(fn, viewsObj, [dataJs, kernelJs]);
+                        views[viewName] = JsValueToJsonElement(engine, projected, "{}");
+                    }
+                    catch (Exception ex) when (ex is not TimeoutException
+                        and not MemoryLimitExceededException
+                        and not StatementsCountOverflowException
+                        and not RecursionDepthOverflowException)
+                    {
+                        diagnostics.Add(new TemplateViewDiagnostic(viewName, ex.Message));
+                    }
+                }
+            }
+
+            return new TemplateViewsProjection(
+                TemplateId: policy.TemplateId,
+                Views: views,
+                Widgets: widgets,
+                Triggers: triggers,
+                Diagnostics: diagnostics,
+                HumanReadOnly: policy.Manifest.HumanReadOnly);
+        });
+    }
+
+    private static ObjectInstance ResolveEffectiveDefinition(Engine engine, ObjectInstance rawDef, JsValue jsInputs)
+    {
+        var setupVal = rawDef.Get("setup");
+        if (setupVal.IsUndefined() || setupVal.IsNull())
+        {
+            return rawDef;
+        }
+
+        if (setupVal is not Function setupFn)
+        {
+            throw new InvalidOperationException("template.setup must be a function receiving (inputs).");
+        }
+
+        var setupResult = engine.Call(setupFn, rawDef, [jsInputs]);
+        if (setupResult is not ObjectInstance resolved || setupResult.IsArray())
+        {
+            throw new InvalidOperationException("template.setup(inputs) must return a configuration object.");
+        }
+
+        RejectLegacyHooks(resolved);
+
+        var mergedVal = engine.Invoke("__mergeTemplateStatic", rawDef, resolved);
+        if (mergedVal is ObjectInstance mergedObj)
+        {
+            mergedObj.Delete("setup");
+        }
+
+        var adapted = engine.Invoke("__adaptTemplate", mergedVal);
+        return adapted as ObjectInstance ?? (mergedVal as ObjectInstance ?? rawDef);
+    }
+
+    private static string ResolveInitialReportMarkdown(ObjectInstance def, TemplateBundle bundle)
+    {
+        if (TryGetOptionalObject(def, "report", "template.report", out var reportObj))
+        {
+            var templatePath = ReadOptionalString(reportObj, "template", "template.report.template");
+            if (!string.IsNullOrWhiteSpace(templatePath))
+            {
+                if (!bundle.TryGetFile(templatePath, out var mdContent))
+                {
+                    throw new InvalidOperationException(
+                        $"template.report.template '{templatePath}' was not found in the template package.");
+                }
+
+                return mdContent;
+            }
+
+            var reportInitial = ReadOptionalString(reportObj, "initialMarkdown", "template.report.initialMarkdown");
+            if (!string.IsNullOrWhiteSpace(reportInitial))
+            {
+                return reportInitial;
+            }
+        }
+
+        return ReadOptionalString(def, "initialMarkdown", "template.initialMarkdown") ?? string.Empty;
+    }
+
+    private static List<string> CollectViewNames(ObjectInstance def)
+    {
+        var names = new List<string>();
+        if (TryGetOptionalObject(def, "report", "template.report", out var reportObj) &&
+            TryGetOptionalObject(reportObj, "views", "template.report.views", out var viewsObj))
+        {
+            foreach (var prop in viewsObj.GetOwnProperties())
+            {
+                var name = prop.Key.AsString();
+                if (prop.Value.Value is not Function)
+                {
+                    throw new InvalidOperationException($"template.report.views.{name} must be a function.");
+                }
+
+                names.Add(name);
+            }
+        }
+
+        return names;
+    }
+
+    private static List<CompiledTriggerSpec> ParseTriggers(Engine engine, ObjectInstance def)
+    {
+        var val = def.Get("triggers");
+        if (val.IsUndefined() || val.IsNull())
+        {
+            return [];
+        }
+
+        if (!val.IsArray())
+        {
+            throw new InvalidOperationException("template.triggers must be an array.");
+        }
+
+        var routing = ReadRoutingRules(engine, def);
+
+        var arr = val.AsArray();
+        var result = new List<CompiledTriggerSpec>((int)arr.Length);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+
+        for (uint i = 0; i < arr.Length; i++)
+        {
+            var item = arr.Get(i);
+            if (item is not ObjectInstance obj || item.IsArray())
+            {
+                throw new InvalidOperationException($"template.triggers[{i}] must be an object.");
+            }
+
+            var id = ReadRequiredNonEmptyString(obj, "id", $"template.triggers[{i}].id");
+            if (!seen.Add(id))
+            {
+                throw new InvalidOperationException($"template.triggers[{i}].id duplicates '{id}'.");
+            }
+
+            var label = ReadRequiredNonEmptyString(obj, "label", $"template.triggers[{i}].label");
+            if (!TryGetOptionalObject(obj, "on", $"template.triggers[{i}].on", out var onObj))
+            {
+                throw new InvalidOperationException($"template.triggers[{i}].on is required.");
+            }
+
+            var onKind = ReadRequiredNonEmptyString(onObj, "kind", $"template.triggers[{i}].on.kind");
+            var onSummary = onKind switch
+            {
+                "cron" => $"cron {ReadRequiredNonEmptyString(onObj, "expr", $"template.triggers[{i}].on.expr")}",
+                "data_change" => $"data_change {ReadRequiredNonEmptyString(onObj, "path", $"template.triggers[{i}].on.path")}",
+                "task_settled" => ReadOptionalString(onObj, "taskKey", $"template.triggers[{i}].on.taskKey")
+                    ?? ReadOptionalString(onObj, "role", $"template.triggers[{i}].on.role")
+                    ?? "task_settled",
+                "schedule_at" => $"schedule_at {ReadRequiredNonEmptyString(onObj, "dataPath", $"template.triggers[{i}].on.dataPath")}.{ReadRequiredNonEmptyString(onObj, "dateField", $"template.triggers[{i}].on.dateField")}",
+                _ => throw new InvalidOperationException(
+                    $"template.triggers[{i}].on.kind '{onKind}' is unsupported. Allowed: cron, data_change, task_settled, schedule_at.")
+            };
+
+            if (!TryGetOptionalObject(obj, "action", $"template.triggers[{i}].action", out var actionObj))
+            {
+                throw new InvalidOperationException($"template.triggers[{i}].action is required.");
+            }
+
+            var actionKind = ReadRequiredNonEmptyString(actionObj, "kind", $"template.triggers[{i}].action.kind");
+            string? assign = null;
+            string? assignKind = null;
+            switch (actionKind)
+            {
+                case "run_cli":
+                    assign = ReadRequiredNonEmptyString(actionObj, "command", $"template.triggers[{i}].action.command");
+                    assignKind = "cli";
+                    break;
+                case "dispatch_worker":
+                    var role = ReadOptionalString(actionObj, "role", $"template.triggers[{i}].action.role");
+                    var matchedRoute = routing.FirstOrDefault(r =>
+                        !string.IsNullOrWhiteSpace(role) &&
+                        string.Equals(r.When.Role, role, StringComparison.OrdinalIgnoreCase));
+                    assign = matchedRoute?.Model ?? role ?? "worker";
+                    assignKind = "model";
+                    break;
+                case "wake_lead":
+                    assign = "Lead";
+                    assignKind = "model";
+                    break;
+                default:
+                    throw new InvalidOperationException(
+                        $"template.triggers[{i}].action.kind '{actionKind}' is unsupported. Allowed: run_cli, dispatch_worker, wake_lead.");
+            }
+
+            EnsureOptionalFunction(obj, "when", $"template.triggers[{i}].when");
+            result.Add(new CompiledTriggerSpec(id, label, onKind, onSummary, actionKind, assign, assignKind));
+        }
+
+        return result;
+    }
+
+    private static TemplateSchemaNode? ExtractTemplateSchemaNode(Engine engine, ObjectInstance def, JsValue tHelper)
+    {
+        if (!TryGetOptionalObject(def, "data", "template.data", out var dataObj))
+        {
+            return null;
+        }
+
+        var schemaVal = dataObj.Get("schema");
+        if (schemaVal.IsUndefined() || schemaVal.IsNull())
+        {
+            return null;
+        }
+
+        JsValue schemaObj;
+        if (schemaVal is Function schemaFn)
+        {
+            schemaObj = engine.Call(schemaFn, dataObj, [tHelper]);
+        }
+        else if (schemaVal is ObjectInstance)
+        {
+            schemaObj = schemaVal;
+        }
+        else
+        {
+            throw new InvalidOperationException("template.data.schema must be a function (t) => ({ ... }) or a schema object.");
+        }
+
+        return TemplateDataValidator.ExtractSchemaNode(schemaObj);
+    }
+
+    private static JsonElement InitializeAndValidateData(
+        Engine engine,
+        ObjectInstance def,
+        ObjectInstance dataObj,
+        JsValue jsInputs,
+        IReadOnlyList<string>? knownTaskKeys,
+        JsValue tHelper)
+    {
+        var initialVal = dataObj.Get("initial");
+        JsValue rawInitialJs;
+        if (initialVal is Function initFn)
+        {
+            rawInitialJs = engine.Call(initFn, dataObj, [jsInputs]);
+        }
+        else if (initialVal is ObjectInstance && !initialVal.IsArray() && !initialVal.IsNull())
+        {
+            rawInitialJs = initialVal;
+        }
+        else
+        {
+            throw new InvalidOperationException("template.data.initial must be a function or a plain object.");
+        }
+
+        var rawInitialJson = TemplateDataValidator.ExtractDataElement(rawInitialJs);
+        var (ok, stampedJson, safetyErrs) = TemplateDataValidator.MergeAndStamp(
+            ParseJsonObject("{}"),
+            rawInitialJson,
+            DateTimeOffset.UtcNow.ToString("O"),
+            "template:initial");
+        if (!ok)
+        {
+            var safetyDetail = string.Join("; ", safetyErrs.Select(e => $"{(string.IsNullOrEmpty(e.Path) ? "$" : e.Path)}: {e.Message}"));
+            throw new InvalidOperationException($"template.data.initial failed safety validation: {safetyDetail}");
+        }
+
+        var schemaNode = ExtractTemplateSchemaNode(engine, def, tHelper);
+        var errors = TemplateDataValidator.ValidateRoot(schemaNode, stampedJson, knownTaskKeys);
+        if (errors.Count > 0)
+        {
+            var detail = string.Join("; ", errors.Select(e => $"{(string.IsNullOrEmpty(e.Path) ? "$" : e.Path)}: {e.Message}"));
+            throw new InvalidOperationException($"template.data.initial failed schema validation: {detail}");
+        }
+
+        return stampedJson;
+    }
+
+    private static void ValidateCrossFileReferencesAndInitialData(
+        Engine engine,
+        ObjectInstance def,
+        JsValue jsInputs,
+        TemplateBundle bundle,
+        string initialReportMarkdown,
+        IReadOnlyList<string> viewNames,
+        JsValue tHelper,
+        bool skipCrossFileChecks = false)
+    {
+        // 1. Verify every `perga-block widget` in report.md references a declared view & existing widget asset.
+        if (!skipCrossFileChecks)
+        {
+            var viewSet = new HashSet<string>(viewNames, StringComparer.Ordinal);
+            foreach (Match match in WidgetFenceRegex.Matches(initialReportMarkdown))
+            {
+                var body = match.Groups["body"].Value.Trim();
+                JsonElement payload;
+                try
+                {
+                    using var doc = JsonDocument.Parse(body);
+                    payload = doc.RootElement.Clone();
+                }
+                catch (JsonException ex)
+                {
+                    throw new InvalidOperationException($"Invalid JSON in perga-block widget inside report template: {ex.Message}", ex);
+                }
+
+                if (payload.ValueKind != JsonValueKind.Object)
+                {
+                    throw new InvalidOperationException("perga-block widget payload must be a JSON object.");
+                }
+
+                var use = payload.TryGetProperty("use", out var useEl) && useEl.ValueKind == JsonValueKind.String
+                    ? useEl.GetString() ?? string.Empty
+                    : string.Empty;
+                if (string.IsNullOrWhiteSpace(use))
+                {
+                    throw new InvalidOperationException("perga-block widget requires a non-empty 'use' field.");
+                }
+
+                if (!use.StartsWith("builtin:", StringComparison.Ordinal))
+                {
+                    if (!bundle.TryGetFile(use, out _))
+                    {
+                        throw new InvalidOperationException(
+                            $"perga-block widget references '{use}', which was not found in the template package.");
+                    }
+                }
+
+                if (payload.TryGetProperty("view", out var viewEl) && viewEl.ValueKind == JsonValueKind.String)
+                {
+                    var viewName = viewEl.GetString() ?? string.Empty;
+                    if (!string.IsNullOrWhiteSpace(viewName) && !viewSet.Contains(viewName))
+                    {
+                        throw new InvalidOperationException(
+                            $"perga-block widget references view '{viewName}', which is not declared in report.views.");
+                    }
+                }
+            }
+        }
+
+        // 2. Validate data.initial() against data.schema(t), and trial-run every declared view against initial data.
+        JsValue initialDataJs = ParseJsJson(engine, "{}");
+        if (TryGetOptionalObject(def, "data", "template.data", out var dataObj))
+        {
+            var initialVal = dataObj.Get("initial");
+            if (!initialVal.IsUndefined() && !initialVal.IsNull())
+            {
+                var validatedJson = InitializeAndValidateData(
+                    engine,
+                    def,
+                    dataObj,
+                    jsInputs,
+                    knownTaskKeys: null,
+                    tHelper);
+                initialDataJs = ParseJsJson(engine, validatedJson.GetRawText());
+            }
+            else
+            {
+                // Still validate schema shape at compile time even when data.initial is omitted.
+                _ = ExtractTemplateSchemaNode(engine, def, tHelper);
+            }
+        }
+
+        if (viewNames.Count > 0 &&
+            TryGetOptionalObject(def, "report", "template.report", out var reportObj) &&
+            TryGetOptionalObject(reportObj, "views", "template.report.views", out var viewsObj))
+        {
+            var emptyKernel = ParseJsJson(engine, "{\"tasks\":{},\"sessions\":{}}");
+            foreach (var name in viewNames)
+            {
+                var fn = (Function)viewsObj.Get(name);
+                engine.Call(fn, viewsObj, [initialDataJs, emptyKernel]);
+            }
+        }
+    }
+
+    private static Dictionary<string, string> ExtractBundledHtmlWidgets(TemplateBundle bundle)
+    {
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var kv in bundle.Files)
+        {
+            if (kv.Key.EndsWith(".html", StringComparison.OrdinalIgnoreCase) ||
+                kv.Key.EndsWith(".htm", StringComparison.OrdinalIgnoreCase))
+            {
+                result[kv.Key] = kv.Value;
+                result["./" + kv.Key] = kv.Value;
+            }
+        }
+
+        return result;
+    }
+}

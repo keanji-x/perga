@@ -23,6 +23,44 @@ public sealed record ScheduleSpec(
 
 public sealed record WorkerDispatchDefaults(string? Section, string? Access, string? GateInput);
 
+public sealed record CheckpointSpec(
+    string Id,
+    string Title,
+    string? Role = null,
+    string? Access = null,
+    IReadOnlyList<string>? DependsOn = null,
+    string? DocPath = null);
+
+public sealed record CompiledTriggerSpec(
+    string Id,
+    string Label,
+    string OnKind,
+    string? OnSummary,
+    string ActionKind,
+    string? Assign = null,
+    string? AssignKind = null);
+
+public sealed record DataValidationError(
+    string Path,
+    string Message);
+
+public sealed record DataPatchValidationResult(
+    bool Valid,
+    JsonElement NextData,
+    IReadOnlyList<DataValidationError> Errors);
+
+public sealed record TemplateViewDiagnostic(
+    string View,
+    string Message);
+
+public sealed record TemplateViewsProjection(
+    string TemplateId,
+    IReadOnlyDictionary<string, JsonElement> Views,
+    IReadOnlyDictionary<string, string> Widgets,
+    IReadOnlyList<CompiledTriggerSpec> Triggers,
+    IReadOnlyList<TemplateViewDiagnostic> Diagnostics,
+    bool HumanReadOnly = false);
+
 public sealed record CompiledTemplateManifest(
     string Id,
     string Title,
@@ -41,7 +79,12 @@ public sealed record CompiledTemplateManifest(
     IReadOnlyList<TaskRoutingRule> Routing,
     WorkerDispatchDefaults? WorkerDispatch = null,
     string? Extends = null,
-    bool HasHeaderView = false);
+    bool HasHeaderView = false,
+    string InitialReportMarkdown = "",
+    IReadOnlyList<CheckpointSpec>? Checkpoints = null,
+    IReadOnlyList<CompiledTriggerSpec>? Triggers = null,
+    IReadOnlyList<string>? ViewNames = null,
+    bool HumanReadOnly = false);
 
 public sealed record CompiledPolicy(
     string TemplateId,
@@ -78,9 +121,9 @@ public sealed record PolicyTurnContext(
     JsonElement Inputs);
 
 public sealed record TaskRoutingWhen(string? Role, string? Access);
-public sealed record TaskRoutingRule(TaskRoutingWhen When, string? Provider, string? Model, bool Enforce);
+public sealed record TaskRoutingRule(TaskRoutingWhen When, string? Provider, string? Model, bool Enforce, string? TargetAccess = null);
 
-public sealed record PolicyTaskRoute(string? Provider, string? Model, string? Denial = null);
+public sealed record PolicyTaskRoute(string? Provider, string? Model, string? Denial = null, string? Access = null);
 
 public interface IPolicyVm
 {
@@ -94,4 +137,17 @@ public interface IPolicyVm
     IReadOnlyList<PolicyTaskRoute> ResolveRoutingTargets(CompiledPolicy policy, JsonElement inputs);
     void ValidateInputs(CompiledPolicy policy, JsonElement inputs);
     string InterpolateInputs(CompiledPolicy policy, string text, JsonElement inputs);
+    DataPatchValidationResult ValidateAndPatchData(
+        CompiledPolicy policy,
+        JsonElement inputs,
+        JsonElement currentData,
+        JsonElement patch,
+        IReadOnlyList<string>? knownTaskKeys,
+        string nowIso,
+        string source);
+    TemplateViewsProjection ProjectViews(
+        CompiledPolicy policy,
+        JsonElement inputs,
+        JsonElement currentData,
+        JsonElement kernelSnapshot);
 }

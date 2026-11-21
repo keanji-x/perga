@@ -144,6 +144,7 @@ function policies(): PolicyMap {
     eventKeys.overlaysByKind('track'),
     eventKeys.tracksInArea(event.data.area_id), eventKeys.trackDetail(event.data.id), eventKeys.trackTemplate(event.data.id),
     eventKeys.trackReportPrefix(),
+    eventKeys.trackViews(event.data.id),
   ])),
   'track.schedules.updated': plan((event) => result([eventKeys.trackSchedules(event.data.trackId)])),
   'track.deleted': plan((event) => result(
@@ -151,7 +152,7 @@ function policies(): PolicyMap {
       eventKeys.tracksInArea(event.data.area_id), eventKeys.overlaysByKind('track'),
       eventKeys.trackReportPrefix(),
     ],
-    [eventKeys.trackDetail(event.data.id), eventKeys.trackReport(event.data.id)],
+    [eventKeys.trackDetail(event.data.id), eventKeys.trackReport(event.data.id), eventKeys.trackViews(event.data.id)],
   )),
   'card.added': plan((event) => result([
     eventKeys.trackDetail(event.data.track_id),
@@ -275,14 +276,16 @@ function policies(): PolicyMap {
   'task.regate_requested': plan((event, context) => result(taskVerdicts(derivedTrackId(event.data, context)))),
   'report.updated': plan((event) => result([
     ...taskVerdicts(event.data.track_id ?? null),
-    ...(event.data.track_id ? [eventKeys.trackDetail(event.data.track_id)] : []),
+    ...(event.data.track_id
+      ? [eventKeys.trackDetail(event.data.track_id), eventKeys.trackViews(event.data.track_id)]
+      : [eventKeys.trackViewsPrefix()]),
   ])),
   'task.updated': plan((event) => result([
     eventKeys.overlaysByKind('track'),
     ...taskVerdicts(event.data.track_id ?? null),
     ...(event.data.track_id
-      ? [eventKeys.trackDetail(event.data.track_id), eventKeys.taskAttemptsPrefix(event.data.track_id)]
-      : []),
+      ? [eventKeys.trackDetail(event.data.track_id), eventKeys.taskAttemptsPrefix(event.data.track_id), eventKeys.trackViews(event.data.track_id)]
+      : [eventKeys.trackViewsPrefix()]),
   ])),
   'system.upgrade_status': noop('The upgrade store consumes system status independently of query caches.'),
   'session.updated': plan((event) => {

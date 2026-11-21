@@ -44,6 +44,7 @@ describe('invalidation plan behavior', () => {
       invalidate: [
         ['overlays', 'track'], ['tracks', 'c1'], ['track', 'w1'], ['track-template', 'w1'],
         ['track-report'],
+        ['track-views', 'w1'],
       ],
       remove: [],
       writeThrough: [],
@@ -55,9 +56,16 @@ describe('invalidation plan behavior', () => {
       invalidate: [
         ['tracks', 'c1'], ['overlays', 'track'], ['track-report'],
       ],
-      remove: [['track', 'w1'], ['track-report', 'w1']],
+      remove: [['track', 'w1'], ['track-report', 'w1'], ['track-views', 'w1']],
       writeThrough: [],
     });
+  });
+
+  it('invalidates track-views on report.updated and task.updated', () => {
+    expect(invalidationPlanFor(event({ ev: 'report.updated', data: { track_id: 'w1' } })).invalidate)
+      .toContainEqual(['track-views', 'w1']);
+    expect(invalidationPlanFor(event({ ev: 'task.updated', data: { track_id: 'w1' } })).invalidate)
+      .toContainEqual(['track-views', 'w1']);
   });
 
   it('refreshes the deleted card’s track and diagnostics without removing cached resources', () => {

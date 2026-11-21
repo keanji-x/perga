@@ -1,0 +1,386 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>一维价格区间轴</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #fdfcfa;
+      --paper: #fdfcfa;
+      --text: #1e2026;
+      --text-2: #525763;
+      --text-3: #868b98;
+      --hairline: #d8d4cb;
+      --accent: #3955b8;
+      --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", sans-serif;
+      --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #24272e;
+        --paper: #24272e;
+        --text: #eef0f4;
+        --text-2: #b5bac7;
+        --text-3: #828898;
+        --hairline: #404654;
+        --accent: #86a0ff;
+      }
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      width: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-sans);
+      -webkit-font-smoothing: antialiased;
+      overflow: hidden;
+    }
+
+    .wrap {
+      padding: 6px 2px 4px;
+    }
+
+    .track-area {
+      position: relative;
+      height: 82px;
+      margin: 0 18px;
+    }
+
+    .rail {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 42px;
+      height: 1.5px;
+      background: var(--hairline);
+    }
+
+    .span-fill {
+      position: absolute;
+      top: 41.25px;
+      height: 3px;
+      border-radius: 2px;
+      background: var(--text-3);
+      opacity: 0.32;
+    }
+
+    .current-pin {
+      position: absolute;
+      top: 4px;
+      transform: translateX(-50%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      pointer-events: none;
+    }
+
+    .current-tag {
+      font-family: var(--font-mono);
+      font-size: 12.5px;
+      font-weight: 650;
+      color: var(--accent);
+      white-space: nowrap;
+      line-height: 1.1;
+    }
+
+    .current-sub {
+      font-size: 10px;
+      color: var(--text-3);
+      margin-top: 1px;
+    }
+
+    .current-stem {
+      width: 1.5px;
+      height: 11px;
+      background: var(--accent);
+      margin-top: 2px;
+    }
+
+    .current-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--accent);
+      margin-top: -4px;
+    }
+
+    .target-btn {
+      position: absolute;
+      top: 37px;
+      transform: translateX(-50%);
+      appearance: none;
+      border: none;
+      background: transparent;
+      padding: 0 6px 2px;
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      color: var(--text-2);
+      transition: color 120ms ease;
+    }
+
+    .target-btn:hover,
+    .target-btn[aria-pressed="true"] {
+      color: var(--text);
+    }
+
+    .target-btn:focus-visible,
+    .note-link:focus-visible {
+      color: var(--text);
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+      border-radius: 4px;
+    }
+
+    .target-tick {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      border: 1.6px solid var(--text-2);
+      background: var(--bg);
+      transition: transform 120ms ease, border-color 120ms ease, background 120ms ease;
+    }
+
+    .target-btn.is-emphasis .target-tick {
+      border-width: 2px;
+      border-color: var(--text);
+    }
+
+    .target-btn[aria-pressed="true"] .target-tick,
+    .target-btn:hover .target-tick {
+      transform: scale(1.2);
+      border-color: var(--text);
+      background: var(--text);
+    }
+
+    .target-price {
+      font-family: var(--font-mono);
+      font-size: 12.5px;
+      font-weight: 500;
+      white-space: nowrap;
+    }
+
+    .target-btn.is-emphasis .target-price,
+    .target-btn[aria-pressed="true"] .target-price {
+      font-weight: 680;
+      color: var(--text);
+    }
+
+    .note-row {
+      min-height: 22px;
+      margin-top: 6px;
+      font-size: 12.5px;
+      line-height: 1.5;
+      color: var(--text-2);
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+    }
+
+    .note-price {
+      font-family: var(--font-mono);
+      font-weight: 620;
+      color: var(--text);
+      flex: 0 0 auto;
+    }
+
+    .note-link {
+      appearance: none;
+      border: none;
+      background: transparent;
+      color: var(--accent);
+      font-size: 12px;
+      cursor: pointer;
+      padding: 0;
+      margin-left: 6px;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap" id="app"></div>
+  <script>
+    (function () {
+      const root = document.documentElement;
+      const app = document.getElementById("app");
+      let currentData = null;
+      let activeIndex = -1;
+
+      function reportHeight() {
+        const rect = app.getBoundingClientRect();
+        const h = Math.ceil(rect.height || document.body.scrollHeight);
+        window.parent.postMessage({ type: "perga:resize", height: Math.max(h, 96) }, "*");
+      }
+
+      function applyTheme(msg) {
+        const t = msg.tokens || {};
+        if (msg.scheme === "dark" || msg.scheme === "light") {
+          root.style.colorScheme = msg.scheme;
+        }
+        if (t.bg) root.style.setProperty("--bg", t.bg);
+        if (t.paper) root.style.setProperty("--paper", t.paper);
+        if (t.text) root.style.setProperty("--text", t.text);
+        if (t.text2) root.style.setProperty("--text-2", t.text2);
+        if (t.text3) root.style.setProperty("--text-3", t.text3);
+        if (t.hairline) root.style.setProperty("--hairline", t.hairline);
+        if (t.accent) root.style.setProperty("--accent", t.accent);
+        if (t.fontSans) root.style.setProperty("--font-sans", t.fontSans);
+        if (t.fontMono) root.style.setProperty("--font-mono", t.fontMono);
+      }
+
+      function render() {
+        const rawPoints = currentData && Array.isArray(currentData.points) ? currentData.points : [];
+        const points = rawPoints.filter((p) => p && typeof p.value === "number" && Number.isFinite(p.value));
+        if (points.length === 0) {
+          app.textContent = "";
+          reportHeight();
+          return;
+        }
+
+        if (activeIndex < 0 || activeIndex >= points.length) {
+          const emph = points.findIndex((p) => p.emphasis);
+          activeIndex = emph >= 0 ? emph : 0;
+        }
+
+        const cur = currentData.current;
+        const hasCur = Boolean(cur && typeof cur.value === "number" && Number.isFinite(cur.value));
+        const allVals = points.map((p) => p.value);
+        if (hasCur) allVals.push(cur.value);
+        const rawMin = Math.min(...allVals);
+        const rawMax = Math.max(...allVals);
+        const span = Math.max(rawMax - rawMin, 1);
+        const minV = rawMin - span * 0.08;
+        const maxV = rawMax + span * 0.08;
+        const pct = (v) => ((v - minV) / (maxV - minV)) * 100;
+
+        const targetMinPct = pct(Math.min(...points.map((p) => p.value)));
+        const targetMaxPct = pct(Math.max(...points.map((p) => p.value)));
+
+        app.textContent = "";
+
+        const track = document.createElement("div");
+        track.className = "track-area";
+
+        const rail = document.createElement("div");
+        rail.className = "rail";
+        track.appendChild(rail);
+
+        const fill = document.createElement("div");
+        fill.className = "span-fill";
+        fill.style.left = targetMinPct + "%";
+        fill.style.width = Math.max(targetMaxPct - targetMinPct, 1) + "%";
+        track.appendChild(fill);
+
+        if (hasCur) {
+          const pin = document.createElement("div");
+          pin.className = "current-pin";
+          pin.style.left = pct(cur.value) + "%";
+
+          const tag = document.createElement("span");
+          tag.className = "current-tag";
+          tag.textContent = cur.display || String(cur.value);
+
+          const sub = document.createElement("span");
+          sub.className = "current-sub";
+          sub.textContent = cur.label || "现价";
+
+          const stem = document.createElement("span");
+          stem.className = "current-stem";
+
+          const dot = document.createElement("span");
+          dot.className = "current-dot";
+
+          pin.append(tag, sub, stem, dot);
+          track.appendChild(pin);
+        }
+
+        const noteRow = document.createElement("div");
+        noteRow.className = "note-row";
+        noteRow.setAttribute("aria-live", "polite");
+
+        function updateNote(idx) {
+          const pt = points[idx];
+          noteRow.textContent = "";
+          if (!pt) return;
+          const pEl = document.createElement("span");
+          pEl.className = "note-price";
+          pEl.textContent = pt.display || String(pt.value);
+          noteRow.appendChild(pEl);
+
+          const txt = document.createElement("span");
+          txt.textContent = pt.note || "";
+          noteRow.appendChild(txt);
+
+          if (pt.docRef) {
+            const link = document.createElement("button");
+            link.type = "button";
+            link.className = "note-link";
+            link.textContent = "查看估值底稿";
+            link.addEventListener("click", () => {
+              window.parent.postMessage({ type: "perga:intent", kind: "open_file", path: pt.docRef }, "*");
+            });
+            noteRow.appendChild(link);
+          }
+        }
+
+        points.forEach((pt, idx) => {
+          const display = pt.display || String(pt.value);
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "target-btn" + (pt.emphasis ? " is-emphasis" : "");
+          btn.style.left = pct(pt.value) + "%";
+          btn.setAttribute("aria-pressed", String(idx === activeIndex));
+          btn.setAttribute("aria-label", pt.note ? display + "：" + pt.note : display);
+
+          const tick = document.createElement("span");
+          tick.className = "target-tick";
+          const price = document.createElement("span");
+          price.className = "target-price";
+          price.textContent = display;
+          btn.append(tick, price);
+
+          const select = () => {
+            activeIndex = idx;
+            track.querySelectorAll(".target-btn").forEach((el, i) => {
+              el.setAttribute("aria-pressed", String(i === activeIndex));
+            });
+            updateNote(activeIndex);
+            reportHeight();
+          };
+          btn.addEventListener("mouseenter", select);
+          btn.addEventListener("focus", select);
+          btn.addEventListener("click", select);
+          track.appendChild(btn);
+        });
+
+        app.appendChild(track);
+        app.appendChild(noteRow);
+        updateNote(activeIndex);
+        requestAnimationFrame(reportHeight);
+      }
+
+      window.addEventListener("message", (ev) => {
+        if (ev.source !== window.parent) return;
+        const msg = ev.data;
+        if (!msg || typeof msg !== "object") return;
+        if (msg.type === "perga:theme") {
+          applyTheme(msg);
+          render();
+        } else if (msg.type === "perga:data") {
+          currentData = msg.data;
+          render();
+        }
+      });
+
+      window.addEventListener("resize", reportHeight);
+      window.parent.postMessage({ type: "perga:ready" }, "*");
+    })();
+  </script>
+</body>
+</html>

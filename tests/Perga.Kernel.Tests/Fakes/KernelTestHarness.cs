@@ -1272,6 +1272,8 @@ internal sealed class InMemoryReportDocEngine : IReportDocEngine
         "html" => ReportBlockKind.Html,
         "table" => ReportBlockKind.Table,
         "view" => ReportBlockKind.View,
+        "checkpoints" => ReportBlockKind.Checkpoints,
+        "widget" => ReportBlockKind.Widget,
         _ => ReportBlockKind.Prose
     };
 }
@@ -1364,6 +1366,28 @@ internal sealed class ConfigurableFakePolicyVm : IPolicyVm
     public void ValidateInputs(CompiledPolicy policy, JsonElement inputs) => new PolicyVm.PolicyVm().ValidateInputs(policy, inputs);
     public string InterpolateInputs(CompiledPolicy policy, string text, JsonElement inputs) => new PolicyVm.PolicyVm().InterpolateInputs(policy, text, inputs);
 
+    public DataPatchValidationResult ValidateAndPatchData(
+        CompiledPolicy policy,
+        JsonElement inputs,
+        JsonElement currentData,
+        JsonElement patch,
+        IReadOnlyList<string>? knownTaskKeys,
+        string nowIso,
+        string source) =>
+        new(true, patch.Clone(), []);
+
+    public TemplateViewsProjection ProjectViews(
+        CompiledPolicy policy,
+        JsonElement inputs,
+        JsonElement currentData,
+        JsonElement kernelSnapshot) =>
+        new(
+            policy.TemplateId,
+            new Dictionary<string, JsonElement>(StringComparer.Ordinal),
+            new Dictionary<string, string>(StringComparer.Ordinal),
+            policy.Manifest.Triggers ?? [],
+            [],
+            policy.Manifest.HumanReadOnly);
 }
 
 internal sealed class ScriptableFakeAgentSession : IAgentSession

@@ -75,6 +75,8 @@ public partial interface IPergaKernel : IAsyncDisposable
 
     // Report & Revisions
     Task<ReportReadResult> ReadReportAsync(string trackId, string? callerSessionId = null, CancellationToken ct = default);
+    Task<TemplateViewsProjection> GetTrackViewsAsync(string trackId, CancellationToken ct = default);
+    Task<JsonElement> PatchTrackDataAsync(string trackId, JsonElement patch, string source, string? callerSessionId = null, CancellationToken ct = default);
     Task<IReadOnlyList<ReportBlock>> GetReportRevisionBlocksAsync(string trackId, int docRev, CancellationToken ct = default);
     Task<ReportReadResult> UpdateReportBlockByHumanAsync(string trackId, string blockId, HumanBlockUpdateRequest req, CancellationToken ct = default);
     Task<ReportReadResult> CommitReportAsync(string trackId, string callerSessionId, ReportCommitRequest req,
@@ -726,7 +728,10 @@ public sealed partial class PergaKernelService : IPergaKernel
                 : initEval.NextState.Clone();
         }
 
-        var initialReport = _reportEngine.Parse(string.Empty, docRev: 0, summary: string.Empty);
+        var initialReport = _reportEngine.Parse(
+            policy?.Manifest.InitialReportMarkdown ?? string.Empty,
+            docRev: 0,
+            summary: string.Empty);
 
         var enabledPlugins = req.EnabledPlugins?.ToArray()
                              ?? policy?.Manifest.DefaultPlugins.ToArray()

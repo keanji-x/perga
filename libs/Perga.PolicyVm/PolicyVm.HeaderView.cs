@@ -13,8 +13,11 @@ public sealed partial class PolicyVm
     {
         try
         {
-            using var engine = CreateSandboxedEngine();
-            var def = LoadDefaultTemplateObject(engine, policy.JsSource);
+            var bundle = TemplateBundle.Parse(policy.JsSource);
+            using var engine = CreateSandboxedEngine(ExecutionTimeoutMs, bundle);
+            var rawDef = LoadDefaultTemplateObject(engine, bundle);
+            var jsInputs = BuildEffectiveJsInputs(engine, rawDef, ctx.Inputs);
+            var def = ResolveEffectiveDefinition(engine, rawDef, jsInputs);
             if (def.Get("headerView") is not Function hook)
                 return null;
             var context = BuildTemplateContextObject(engine, def, ctx.TrackId, ctx.Inputs, state);

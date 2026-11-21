@@ -225,40 +225,30 @@ public static class PergaHostServiceCollectionExtensions
         string? templatesDirectory)
     {
         EnsurePolicyVmJitWarmedUp(policyVm);
-        var catalog = new Perga.Kernel.Templates.TemplateCatalog(policyVm, initialTemplatesDirectory: null);
         if (string.IsNullOrWhiteSpace(templatesDirectory) || !Directory.Exists(templatesDirectory))
         {
-            return catalog;
+            return new Perga.Kernel.Templates.TemplateCatalog(policyVm, initialTemplatesDirectory: null);
         }
 
-        var files = Directory.EnumerateFiles(templatesDirectory, "*", SearchOption.TopDirectoryOnly)
-            .Where(static file => file.EndsWith(".perga.js", StringComparison.Ordinal) ||
-                file.EndsWith(".perga.json", StringComparison.Ordinal))
-            .OrderBy(static f => f, StringComparer.Ordinal)
-            .ToArray();
-
-        foreach (var file in files)
+        for (var attempt = 0; attempt < 3; attempt++)
         {
-            var source = File.ReadAllText(file, System.Text.Encoding.UTF8);
-            for (var attempt = 0; attempt < 3; attempt++)
+            var catalog = new Perga.Kernel.Templates.TemplateCatalog(policyVm, initialTemplatesDirectory: null);
+            try
             {
-                try
+                lock (PolicyVmWarmupLock)
                 {
-                    lock (PolicyVmWarmupLock)
-                    {
-                        catalog.RegisterFileSource(source);
-                    }
+                    catalog.LoadFromDirectory(templatesDirectory, includePlainJson: false);
+                }
 
-                    break;
-                }
-                catch (InvalidOperationException) when (attempt < 2)
-                {
-                    // Retry once if OS thread preemption tripped Jint's 50ms wall-clock budget during startup.
-                }
+                return catalog;
+            }
+            catch (InvalidOperationException) when (attempt < 2)
+            {
+                // Retry once if OS thread preemption tripped Jint's wall-clock budget during startup.
             }
         }
 
-        return catalog;
+        return new Perga.Kernel.Templates.TemplateCatalog(policyVm, initialTemplatesDirectory: null);
     }
 
     private static void EnsurePolicyVmJitWarmedUp(IPolicyVm policyVm)

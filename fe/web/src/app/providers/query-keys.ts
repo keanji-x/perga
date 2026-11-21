@@ -1,7 +1,7 @@
 import {
   areas, readReceipts,
   trackLists, tracksInArea, trackDetail, trackBacklinksPrefix,
-  trackBacklinks, trackReport, trackReportPrefix, overlaysByKind,
+  trackBacklinks, trackReport, trackReportPrefix, trackViews, trackViewsPrefix, overlaysByKind,
   plugins, pluginDataPrefix, trackTemplates,
   transcriptPrefix, transcript as harnessItems, plannerRun, modelCatalog, modelCatalogForCard,
   modelCatalogPrefix, trackDetailPrefix,
@@ -21,6 +21,8 @@ export const queryKeys = Object.freeze({
   trackBacklinks,
   /* The track's registered previews (#1780). Registrations emit no event; `trackPreviewsQueryOptions` polls. */
   trackPreviews: (trackId: string) => ['track-previews', trackId] as const,
+  trackViews,
+  trackViewsPrefix,
   /* Report instances and event prefixes share the core resource address. */
   trackReport,
   /**

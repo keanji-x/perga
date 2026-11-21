@@ -32,7 +32,7 @@ internal static class KernelMcpReportSupport
             },
             "includeContract": {
               "type": "boolean",
-              "description": "When true, includes concise authoring contracts and minimal examples for perga-block fences (task, table, view, html)."
+              "description": "When true, includes concise authoring contracts and minimal examples for perga-block fences (task, table, view, html, checkpoints, widget)."
             }
           }
         }
@@ -76,7 +76,7 @@ internal static class KernelMcpReportSupport
                     "properties": {
                       "op": { "type": "string", "enum": ["upsert", "upsert_block"] },
                       "id": { "type": "string" },
-                      "blockKind": { "type": "string", "enum": ["prose", "task", "html", "table", "view"] },
+                      "blockKind": { "type": "string", "enum": ["prose", "task", "html", "table", "view", "checkpoints", "widget"] },
                       "markdown": { "type": "string" },
                       "payload": {},
                       "position": { "type": "integer", "minimum": 0 }
@@ -165,15 +165,19 @@ internal static class KernelMcpReportSupport
         }
         """;
 
-    internal static JsonElement FormatReportReadResponse(ReportReadResult res, JsonElement args)
+    internal static JsonElement FormatReportReadResponse(
+        ReportReadResult res,
+        JsonElement args,
+        Perga.PolicyVm.TemplateViewsProjection? templateViews = null)
     {
         var format = ParseReadFormat(args);
         var sectionFilter = ParseOptionalSectionFilter(args);
         var blockIdFilter = ParseOptionalBlockIdFilter(args);
         var includeContract = ParseOptionalBool(args, ["includeContract", "include_contract"]);
+        var projectedViews = templateViews is { Views.Count: > 0 } ? templateViews.Views : null;
 
         var isScoped = sectionFilter is not null || blockIdFilter is not null;
-        if (!isScoped && format == "full" && !includeContract)
+        if (!isScoped && format == "full" && !includeContract && projectedViews is null)
         {
             return JsonHelpers.ToElement(res);
         }
@@ -216,7 +220,8 @@ internal static class KernelMcpReportSupport
             Tasks: res.Tasks,
             Anchor: anchor,
             Diagnostics: res.Diagnostics,
-            BlockContract: includeContract ? CachedBlockContract : null));
+            BlockContract: includeContract ? CachedBlockContract : null,
+            TemplateViews: format == "outline" ? null : projectedViews));
     }
 
     internal static bool ParseIncludeDocumentArg(JsonElement args) =>
@@ -362,7 +367,7 @@ internal static class KernelMcpReportSupport
           "fenceSyntax": "```perga-block <kind>\n<json or html>\n```",
           "ops": {
             "replace_section": { "op": "replace_section", "sectionH1": "Overview", "markdown": "Section body" },
-            "upsert": { "op": "upsert", "id": "b_1234", "blockKind": "prose|task|table|view|html", "markdown": "...", "payload": {}, "position": 0 },
+            "upsert": { "op": "upsert", "id": "b_1234", "blockKind": "prose|task|table|view|html|checkpoints|widget", "markdown": "...", "payload": {}, "position": 0 },
             "delete": { "op": "delete", "id": "b_1234" },
             "move": { "op": "move", "id": "b_1234", "toIndex": 0 }
           },
@@ -435,6 +440,28 @@ internal static class KernelMcpReportSupport
                 "title": "Architecture diagram",
                 "height": 480
               }
+            },
+            "checkpoints": {
+              "required": ["items"],
+              "notes": "Native circular stage stepper with per-stage deliverables, workspace doc links, Worker session links, and collapsible scheduling rules.",
+              "example": {
+                "tier": "AGENTS.md · L2",
+                "rules": [{ "label": "Review 模型锁", "text": "role=review 强制使用指定模型" }],
+                "items": [
+                  { "id": "design", "title": "设计", "status": "done", "statusLabel": "已对齐", "docPath": "docs/design/overview.md", "summary": "已对齐目标与边界。" },
+                  { "id": "review-l2", "title": "L2 Review", "status": "pending", "statusLabel": "预注册", "role": "review", "dependsOn": ["设计"], "constraint": "role=review · 强制模型" }
+                ]
+              }
+            },
+            "widget": {
+              "required": ["use", "view"],
+              "notes": "Template v2 data-bound view block. use is 'builtin:stepper', 'builtin:list', 'builtin:table', 'builtin:detail', or a package-relative './widgets/*.html' path (optional height, chrome: 'seamless'|'framed', showTriggers, selectionKey, title).",
+              "example": {
+                "use": "./widgets/range-axis.html",
+                "view": "rangeAxis",
+                "height": 210,
+                "chrome": "seamless"
+              }
             }
           }
         }
@@ -456,7 +483,8 @@ internal static class KernelMcpReportSupport
         IReadOnlyList<TaskDto> Tasks,
         ReadAnchor Anchor,
         IReadOnlyList<ReportDiagnosticDto> Diagnostics,
-        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] JsonElement? BlockContract);
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] JsonElement? BlockContract,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyDictionary<string, JsonElement>? TemplateViews = null);
 
     private sealed record McpReportCommitReceipt(
         int DocRev,

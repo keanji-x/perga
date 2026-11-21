@@ -699,6 +699,14 @@ public sealed partial class TrackActor : IAsyncDisposable
                     dispatch = dispatch with { Session = prepareWorker!(providers!) };
 
                 var (editorRole, boundAttemptId) = ResolveEditorIdentityCore(actorKind, callerSessionId);
+                if (dispatch is null &&
+                    string.Equals(editorRole, "human", StringComparison.OrdinalIgnoreCase) &&
+                    _policy?.Manifest.HumanReadOnly == true)
+                {
+                    throw KernelException.PolicyDenied(
+                        "This track template marks the report as read-only for humans; ask the Lead or a Worker to update it.");
+                }
+
                 var effectiveReq = buildOps(_report);
                 TaskBlockSynchronizer.ValidatePreCommitBoundAttemptFence(boundAttemptId, _report, effectiveReq.Ops);
                 var preview = _reportEngine.ApplyCommit(_report, effectiveReq.Anchor, effectiveReq.Ops, effectiveReq.Summary);
@@ -3215,7 +3223,8 @@ public sealed partial class TrackActor : IAsyncDisposable
         var sessionNote = session.BoundAttemptId is null
             ? "Use session_list/create/read/update/send/withdraw/control/respond to manage child conversations. Create accepts an optional task contract; reuse requestKey for retries. Use provider_list to discover available providers, models, reasoning efforts, and permission modes. Only control your direct children; the Lead can also manage other sessions. Never stop, reset or archive yourself. Answer delegated asks and approvals with session_respond; the human can always take over."
             : "Use session_list/read to observe conversations. Submit your task with task_done or task_fail; bound Workers cannot spawn or control sessions.";
-        return $"You are operating in Perga Track '{_track.Title}' ({TrackId}) as {role}.{templateNote}\n\n{sessionNote}\n\n## Current Report\n{reportMd}";
+        var templateDataSection = BuildActiveTemplateDataSectionCore();
+        return $"You are operating in Perga Track '{_track.Title}' ({TrackId}) as {role}.{templateNote}\n\n{sessionNote}\n\n## Current Report\n{reportMd}{templateDataSection}";
     }
 
     private string BuildEpochSeedSystemPrompt(
@@ -3228,16 +3237,58 @@ public sealed partial class TrackActor : IAsyncDisposable
             : compactedSession.BoundAttemptId is not null
                 ? $"Contract Subagent (BoundAttemptId={compactedSession.BoundAttemptId})"
                 : "Collaborative Subagent";
+        var templateDataSection = BuildActiveTemplateDataSectionCore();
 
         return $"""
                 You are resuming Perga Track '{_track.Title}' ({TrackId}) as {role} in Epoch {compactedSession.Epoch}.
 
                 ## Latest Track Report
-                {latestReportMarkdown}
+                {latestReportMarkdown}{templateDataSection}
 
                 ## Epoch {compactedSession.Epoch - 1} Handover Summary
                 {handoverSummary}
                 """;
+    }
+
+    private string BuildActiveTemplateDataSectionCore()
+    {
+        if (_policy is null)
+        {
+            return string.Empty;
+        }
+
+        var hasViews = _policy.Manifest.ViewNames is { Count: > 0 };
+        var hasState = _track.TemplateState.ValueKind == JsonValueKind.Object &&
+                       _track.TemplateState.EnumerateObject().Any();
+        if (!hasViews && !hasState)
+        {
+            return string.Empty;
+        }
+
+        const int maxChars = 16 * 1024;
+        var sb = new StringBuilder();
+        sb.AppendLine();
+        sb.AppendLine();
+        sb.AppendLine($"## Active Template Data ({_policy.TemplateId})");
+        if (hasViews)
+        {
+            sb.AppendLine("Report `perga-block widget` blocks render live from this structured template data (and Track kernel facts). Call `data_patch` to update structured fields, or `report_read` to inspect the latest projected views.");
+        }
+
+        if (hasState)
+        {
+            var rawJson = _track.TemplateState.GetRawText();
+            if (rawJson.Length > maxChars)
+            {
+                rawJson = rawJson[..maxChars] + "\n... (truncated; call perga_report_read for latest projected views)";
+            }
+
+            sb.AppendLine("```json");
+            sb.AppendLine(rawJson);
+            sb.Append("```");
+        }
+
+        return sb.ToString();
     }
 
     private static string BuildContractSubagentPrompt(TaskDto task)

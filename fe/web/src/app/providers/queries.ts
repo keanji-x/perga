@@ -11,7 +11,7 @@ import type { ConversationCursor, ConversationLiveReplies } from '../../../../co
 
 import { conversationInputMetadata } from '../../../../core/events/invalidation-plan.ts';
 import {
-  useQueries, useQuery, useQueryClient, type QueryClient, type UseQueryResult,
+  keepPreviousData, useQueries, useQuery, useQueryClient, type QueryClient, type UseQueryResult,
 } from '@tanstack/react-query';
 import { hasReadFailure } from './query-read-feedback.ts';
 import { useMemo, useRef } from 'react';
@@ -29,9 +29,9 @@ import {
   type Area, type AreaPatchBody, type FolderConflict, type NewAreaBody,
 } from '../../../../core/domain/area.ts';
 import {
-  deriveReportTasks, hasLiveTaskRun, trackBacklinksOperation, trackPreviewsOperation, trackTaskVerdictsOperation,
+  deriveReportTasks, hasLiveTaskRun, readTrackViewsOperation, trackBacklinksOperation, trackPreviewsOperation, trackTaskVerdictsOperation,
   updateTrackReportBlockOperation,
-  type HumanReportBlockUpdateBody, type ReportBlock, type TaskVerdict, type TrackBacklinks, type TrackPreviews,
+  type HumanReportBlockUpdateBody, type ReportBlock, type TaskVerdict, type TemplateViewsProjection, type TrackBacklinks, type TrackPreviews,
 } from '../../../../core/domain/report.ts';
 import {
   staleRevBodySchema, trackReportSeriesOperation, type ResolvedSeries, type SeriesDetail,
@@ -503,6 +503,22 @@ export function trackPreviewsQueryOptions(
     queryFn: ({ signal }: { signal: AbortSignal }): Promise<TrackPreviews> =>
       runOperation(transport, { ...trackPreviewsOperation(trackId), signal }, unauthorized),
     refetchInterval: TRACK_PREVIEWS_POLL_MS,
+    ...(options?.enabled !== undefined ? { enabled: options.enabled } : {}),
+  };
+}
+
+export function trackViewsQueryOptions(
+  transport: ApiTransportPort,
+  trackId: string,
+  unauthorized: UnauthorizedChannel,
+  options?: Readonly<{ enabled?: boolean }>,
+) {
+  return {
+    queryKey: queryKeys.trackViews(trackId),
+    queryFn: ({ signal }: { signal: AbortSignal }): Promise<TemplateViewsProjection> =>
+      runOperation(transport, { ...readTrackViewsOperation(trackId), signal }, unauthorized),
+    staleTime: 5_000,
+    placeholderData: keepPreviousData,
     ...(options?.enabled !== undefined ? { enabled: options.enabled } : {}),
   };
 }

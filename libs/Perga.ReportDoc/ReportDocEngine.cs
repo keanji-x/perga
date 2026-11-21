@@ -22,7 +22,7 @@ public sealed partial class ReportDocEngine : IReportDocEngine
     [GeneratedRegex(@"^#\s+(.+?)\s*$", RegexOptions.CultureInvariant)]
     private static partial Regex H1HeadingRegex();
 
-    [GeneratedRegex(@"^\s*(`{3,})perga-block\s+(task|html|table|view)\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"^\s*(`{3,})perga-block\s+(task|html|table|view|checkpoints|widget)\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex PergaBlockOpenRegex();
 
     [GeneratedRegex(@"^\s*(`{3,}|~{3,})", RegexOptions.CultureInvariant)]
@@ -830,6 +830,8 @@ public sealed partial class ReportDocEngine : IReportDocEngine
             "html" => ReportBlockKind.Html,
             "table" => ReportBlockKind.Table,
             "view" => ReportBlockKind.View,
+            "checkpoints" => ReportBlockKind.Checkpoints,
+            "widget" => ReportBlockKind.Widget,
             _ => ReportBlockKind.Prose
         };
 
