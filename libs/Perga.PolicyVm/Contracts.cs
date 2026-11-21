@@ -50,7 +50,9 @@ public sealed record TemplateViewsProjection(
     IReadOnlyDictionary<string, string> Widgets,
     IReadOnlyList<TemplateViewDiagnostic> Diagnostics,
     bool HumanReadOnly = false,
-    long DataRev = 0);
+    long DataRev = 0,
+    long FlowRev = 0,
+    JsonElement? Flow = null);
 
 public sealed record CompiledTemplateManifest(
     string Id,

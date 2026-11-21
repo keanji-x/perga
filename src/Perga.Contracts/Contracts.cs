@@ -55,7 +55,10 @@ public sealed record TrackDto(
     string? TemplateTitle = null,
     TemplateHeaderViewDto? TemplateHeaderView = null,
     JsonElement Data = default,
-    long DataRev = 0)
+    long DataRev = 0,
+    long FlowRev = 0,
+    string? FlowSpecJson = null,
+    string? FlowFileSha256 = null)
 {
     private static readonly JsonElement EmptyData = JsonSerializer.SerializeToElement(new { });
 
@@ -178,7 +181,11 @@ public sealed record TaskDto(
     JsonElement? Meta = null,
     JsonElement? GateVerdict = null,
     long? StartedAtMs = null,
-    long? FinishedAtMs = null);
+    long? FinishedAtMs = null,
+    FlowOutcome Outcome = FlowOutcome.None,
+    string? OutcomeSummary = null,
+    string? TriggerRunKey = null,
+    long? ArchivedAtMs = null);
 
 public sealed record AskQuestionDto(
     string Question,

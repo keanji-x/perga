@@ -21,6 +21,27 @@ export { inlineTableBlockPayloadSchema } from './report-table.js';
 export { isCalendarDate } from './report-date.js';
 export type { CheckpointsBlockPayload, CheckpointItem, CheckpointRule, CheckpointCheck, CheckpointStatus } from './report-checkpoints.js';
 export type { WidgetBlockPayload, TemplateViewsProjection, TemplateViewsState } from './report-widget.js';
+export {
+  flowProjectionSchema,
+  flowNodeProjectionSchema,
+  flowArchivedNodeProjectionSchema,
+  flowCommitResultSchema,
+  cancelFlowNodeOperation,
+  type FlowProjection,
+  type FlowNodeProjection,
+  type FlowArchivedNodeProjection,
+  type FlowWatchProgress,
+  type FlowGateCheckProjection,
+  type FlowDependencyProjection,
+  type FlowOutcome,
+  type FlowOutcomeCondition,
+  type FlowNodeStatus,
+  type FlowDoKind,
+  type FlowWhenKind,
+  type FlowCommitResult,
+  type FlowPlanDiff,
+  type FlowValidationError,
+} from './report-flow.js';
 
 import type { CurrentTaskExecution } from './task-execution.js';
 import type { ApiFailure, ApiOperation } from '../api/types.js';

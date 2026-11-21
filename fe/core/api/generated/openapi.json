@@ -14542,6 +14542,16 @@
                     "views": { "type": "object", "additionalProperties": true },
                     "widgets": { "type": "object", "additionalProperties": { "type": "string" } },
                     "dataRev": { "type": "integer", "format": "int64", "minimum": 0 },
+                    "flowRev": { "type": "integer", "format": "int64", "minimum": 0 },
+                    "flow": {
+                      "type": ["object", "null"],
+                      "properties": {
+                        "rev": { "type": "integer", "format": "int64", "minimum": 0 },
+                        "filePath": { "type": ["string", "null"] },
+                        "nodes": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+                        "archived": { "type": "array", "items": { "type": "object", "additionalProperties": true } }
+                      }
+                    },
                     "diagnostics": {
                       "type": "array",
                       "items": {
@@ -14554,6 +14564,121 @@
                       }
                     },
                     "humanReadOnly": { "type": "boolean" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tracks/{trackId}/flow": {
+      "parameters": [
+        {
+          "name": "trackId",
+          "in": "path",
+          "required": true,
+          "schema": { "type": "string" }
+        }
+      ],
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["flowRev", "spec", "projection"],
+                  "properties": {
+                    "flowRev": { "type": "integer", "format": "int64", "minimum": 0 },
+                    "filePath": { "type": ["string", "null"] },
+                    "spec": { "type": "object", "additionalProperties": true },
+                    "projection": { "type": "object", "additionalProperties": true }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tracks/{trackId}/flow/commit": {
+      "parameters": [
+        {
+          "name": "trackId",
+          "in": "path",
+          "required": true,
+          "schema": { "type": "string" }
+        }
+      ],
+      "post": {
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "dryRun": { "type": "boolean" },
+                  "expectedFlowRev": { "type": "integer", "format": "int64", "minimum": 0 }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["ok", "dryRun", "flowRev", "plan", "diagnostics", "flow"],
+                  "properties": {
+                    "ok": { "type": "boolean" },
+                    "dryRun": { "type": "boolean" },
+                    "flowRev": { "type": "integer", "format": "int64", "minimum": 0 },
+                    "plan": { "type": "object", "additionalProperties": true },
+                    "diagnostics": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+                    "flow": { "type": "object", "additionalProperties": true }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tracks/{trackId}/flow/nodes/{nodeId}/cancel": {
+      "parameters": [
+        {
+          "name": "trackId",
+          "in": "path",
+          "required": true,
+          "schema": { "type": "string" }
+        },
+        {
+          "name": "nodeId",
+          "in": "path",
+          "required": true,
+          "schema": { "type": "string" }
+        }
+      ],
+      "put": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["ok", "dryRun", "flowRev", "plan", "diagnostics", "flow"],
+                  "properties": {
+                    "ok": { "type": "boolean" },
+                    "dryRun": { "type": "boolean" },
+                    "flowRev": { "type": "integer", "format": "int64", "minimum": 0 },
+                    "plan": { "type": "object", "additionalProperties": true },
+                    "diagnostics": { "type": "array", "items": { "type": "object", "additionalProperties": true } },
+                    "flow": { "type": "object", "additionalProperties": true }
                   }
                 }
               }
