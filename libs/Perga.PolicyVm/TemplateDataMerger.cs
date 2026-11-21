@@ -164,6 +164,7 @@ internal static partial class TemplateDataValidator
                 entries.Add((key, record, null));
             }
         }
+        var prevKeys = entries.Select(e => e.Key).ToList();
 
         var deletes = new HashSet<string>(StringComparer.Ordinal);
         if (delta.TryGetProperty("$delete", out var delete))
@@ -192,7 +193,7 @@ internal static partial class TemplateDataValidator
                     string.IsNullOrWhiteSpace(key) || !upserted.Add(key))
                     return (false, null, false, "$upsert requires records with unique non-empty id or code keys.");
 
-                // Deleting then re-inserting the same key starts a new record.
+                // Deleting then re-inserting the same key starts a new record (preserving _meta if identical).
                 if (indexes.TryGetValue(key, out var index) && !deletes.Contains(key))
                 {
                     var prevRecord = entries[index].PrevRaw!.Value;
@@ -212,27 +213,60 @@ internal static partial class TemplateDataValidator
                 }
                 else
                 {
+                    deletes.Remove(key);
+                    if (indexes.TryGetValue(key, out index))
+                    {
+                        var prevRecord = entries[index].PrevRaw!.Value;
+                        entries[index] = (string.Empty, null, null);
+                        if (string.Equals(
+                                CanonicalJsonWithoutMeta(prevRecord, ref budget),
+                                CanonicalJsonWithoutMeta(record, ref budget),
+                                StringComparison.Ordinal))
+                        {
+                            entries.Add((key, prevRecord, null));
+                            continue;
+                        }
+                    }
+
                     var fresh = CopySafeObject(record, ref budget);
                     fresh["_meta"] = BuildMetaObject(nowIso, source);
                     entries.Add((key, null, fresh));
-                    deletes.Remove(key);
-                    if (indexes.TryGetValue(key, out index)) entries[index] = (string.Empty, null, null);
                     changed = true;
                 }
             }
         }
 
-        if (!changed && !deletes.Any(indexes.ContainsKey))
+        var surviving = new List<(string Key, JsonElement? PrevRaw, JsonObject? Updated)>(entries.Count);
+        foreach (var entry in entries)
+        {
+            if (string.IsNullOrEmpty(entry.Key) || deletes.Contains(entry.Key)) continue;
+            surviving.Add(entry);
+        }
+
+        var structureChanged = previous.ValueKind == JsonValueKind.Undefined || surviving.Count != prevKeys.Count;
+        if (!structureChanged)
+        {
+            for (var i = 0; i < surviving.Count; i++)
+            {
+                if (!string.Equals(surviving[i].Key, prevKeys[i], StringComparison.Ordinal))
+                {
+                    structureChanged = true;
+                    break;
+                }
+            }
+        }
+
+        if (!changed && !structureChanged)
             return (true, null, false, null);
 
+        if (surviving.Count > MaxArrayLength)
+            return (false, null, false, "Keyed array exceeds maximum length.");
+
         var result = new JsonArray();
-        foreach (var (key, prevRaw, updated) in entries)
+        foreach (var (_, prevRaw, updated) in surviving)
         {
-            if (string.IsNullOrEmpty(key) || deletes.Contains(key)) continue;
             result.Add(updated ?? JsonNode.Parse(prevRaw!.Value.GetRawText()));
         }
-        if (result.Count > MaxArrayLength)
-            return (false, null, false, "Keyed array exceeds maximum length.");
         return (true, result, true, null);
     }
 

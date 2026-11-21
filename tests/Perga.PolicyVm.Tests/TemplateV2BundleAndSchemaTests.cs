@@ -766,4 +766,57 @@ public sealed class TemplateV2BundleAndSchemaTests
         Assert.True(noop.Valid);
         Assert.True(JsonElement.DeepEquals(updated.NextData, noop.NextData));
     }
+
+    [Fact]
+    public void KeyedDeltaReplacementIdempotencyEmptyInitAndSchemaLessDocumentBudget()
+    {
+        const string keyedSource = """
+            export default defineTemplate({
+              id: "keyed-edge",
+              title: "Keyed Edge",
+              data: {
+                schema: (t) => ({ records: t.array(t.object({ code: t.id(), title: t.string() })) }),
+              },
+            });
+            """;
+        var keyed = _vm.Compile(keyedSource);
+        var inputs = JsonDocument.Parse("{}").RootElement;
+        var empty = JsonDocument.Parse("{}").RootElement;
+
+        // Empty keyed delta initializes missing array field.
+        var initialized = _vm.ValidateAndPatchData(
+            keyed, inputs, empty, JsonDocument.Parse("""{"records":{"$upsert":[]}}""").RootElement,
+            [], "2026-11-26T00:00:00Z", "session:ai");
+        Assert.True(initialized.Valid);
+        Assert.Empty(initialized.NextData.GetProperty("records").EnumerateArray());
+
+        // Delete + reinsert retry with same value and order is idempotent.
+        var replacePatch = JsonDocument.Parse("""{"records":{"$delete":["a"],"$upsert":[{"code":"a","title":"v2"}]}}""").RootElement;
+        var first = _vm.ValidateAndPatchData(keyed, inputs, initialized.NextData, replacePatch, [], "2026-11-26T00:00:01Z", "session:ai");
+        Assert.True(first.Valid);
+        var retry = _vm.ValidateAndPatchData(keyed, inputs, first.NextData, replacePatch, [], "2026-11-26T00:00:02Z", "session:ai");
+        Assert.True(retry.Valid);
+        Assert.True(JsonElement.DeepEquals(first.NextData, retry.NextData));
+
+        // Schema-less tracks enforce the document-wide host node budget across patches.
+        var schemaLess = _vm.Compile("export default defineTemplate({ id: 'free', title: 'Free' });");
+        var state = JsonDocument.Parse("{}").RootElement;
+        var exceeded = false;
+        for (var batch = 0; batch < 4; batch++)
+        {
+            var props = string.Join(",", Enumerable.Range(batch * 2000, 2000).Select(i => $"\"k{i}\":{i}"));
+            try
+            {
+                var res = _vm.ValidateAndPatchData(schemaLess, inputs, state, JsonDocument.Parse("{" + props + "}").RootElement,
+                    [], "2026-11-26T00:00:03Z", "session:ai");
+                state = res.NextData;
+            }
+            catch (InvalidOperationException ex) when (ex.Message.Contains("node budget", StringComparison.OrdinalIgnoreCase))
+            {
+                exceeded = true;
+                break;
+            }
+        }
+        Assert.True(exceeded, "Expected schema-less document growth to hit the host node budget.");
+    }
 }

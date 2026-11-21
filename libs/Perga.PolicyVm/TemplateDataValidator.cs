@@ -33,17 +33,46 @@ internal static partial class TemplateDataValidator
         IReadOnlyList<string>? knownTaskKeys)
     {
         var errors = new List<DataValidationError>();
+        var budget = ResourceBudget.Create();
         if (rootSchema is null)
         {
+            CountNodesBounded(data, depth: 0, ref budget);
             return errors;
         }
 
-        var budget = ResourceBudget.Create();
         var taskSet = knownTaskKeys is not null
             ? new HashSet<string>(knownTaskKeys, StringComparer.Ordinal)
             : null;
         ValidateNode(rootSchema, data, exists: true, string.Empty, taskSet, errors, depth: 0, ref budget);
         return errors;
+    }
+
+    private static void CountNodesBounded(JsonElement val, int depth, ref ResourceBudget budget)
+    {
+        budget.ConsumeNode("validation");
+        if (depth > MaxDepth)
+            throw new InvalidOperationException("Template data nesting exceeds maximum depth.");
+
+        switch (val.ValueKind)
+        {
+            case JsonValueKind.Object:
+                foreach (var prop in val.EnumerateObject())
+                {
+                    budget.ConsumeNode("validation");
+                    budget.ConsumeChars(prop.Name.Length, "validation");
+                    CountNodesBounded(prop.Value, depth + 1, ref budget);
+                }
+                break;
+            case JsonValueKind.Array:
+                if (val.GetArrayLength() > MaxArrayLength)
+                    throw new InvalidOperationException($"Template data array length ({val.GetArrayLength()}) exceeds maximum allowed ({MaxArrayLength}).");
+                foreach (var item in val.EnumerateArray())
+                    CountNodesBounded(item, depth + 1, ref budget);
+                break;
+            case JsonValueKind.String:
+                budget.ConsumeChars(val.GetString()!.Length, "validation");
+                break;
+        }
     }
 
     private static void ScanPatchSafety(JsonElement val, string path, List<DataValidationError> errors, int depth, ref ResourceBudget budget)
