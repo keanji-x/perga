@@ -21,7 +21,7 @@ public sealed class ReportWakeIntegrationTests
         var store = host.Services.GetRequiredService<ITrackStore>();
         kernel.DispatchAdmission.SetDraining(true);
 
-        await kernel.DispatchWorkerAsync(trackId, new("Inspect the report"), "report-wake", null, ct);
+        await kernel.CreateSessionAsync(trackId, new(Prompt: "Inspect the report", Task: new()), "report-wake", new InteropPrincipal.Human(), ct);
         Assert.DoesNotContain(await store.TrackWakes.ListAsync(trackId, ct), wake => wake.Kind == "report_edited");
 
         var report = await kernel.ReadReportAsync(trackId, ct: ct);

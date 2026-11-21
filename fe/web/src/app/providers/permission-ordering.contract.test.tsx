@@ -29,7 +29,7 @@ it('publishes only the latest serialized permission ACK and cancels a stale run 
   let puts = 0;
   let oldSignal: { readonly aborted: boolean } | undefined;
   const transport: ApiTransportPort = { send: request => {
-    if (request.method === 'PUT') return writes[puts++].promise;
+    if (request.method === 'PATCH') return writes[puts++].promise;
     oldSignal = request.signal;
     return stale.promise;
   } };
@@ -62,7 +62,7 @@ it.each([false, true])('holds a production store send behind permission writes a
   const write = deferred<ApiTransportResponse>();
   let posts = 0;
   const transport: ApiTransportPort = { send: async request => {
-    if (request.method === 'PUT') return write.promise;
+    if (request.method === 'PATCH') return write.promise;
     if (request.method === 'POST') { posts++; return sessionReply(sessionInput('a')); }
     if (request.path.includes('/items?')) return sessionReply(sessionPage(fixtureSession('a', 't', { permissionMode: 'ask' }), [], running ? {
       id: 'turn', sessionId: 'a', turnIndex: 1, epoch: 1, triggerKind: 'user', status: 'running', startedAtMs: 1, completedAtMs: null,
@@ -95,7 +95,7 @@ it.each([false, true])('holds a production store send behind permission writes a
 it('scopes delayed ACKs to their original card across switching and unmounting', async () => {
   const writes = [deferred<ApiTransportResponse>(), deferred<ApiTransportResponse>()];
   let count = 0;
-  const transport: ApiTransportPort = { send: request => request.method === 'PUT' ? writes[count++].promise
+  const transport: ApiTransportPort = { send: request => request.method === 'PATCH' ? writes[count++].promise
     : Promise.resolve(sessionReply(sessionPage(fixtureSession('a', 't', { permissionMode: 'ask' })))) };
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   for (const id of ['a', 'b']) {
@@ -122,7 +122,7 @@ it('keeps an unknown retry and its key when a permission prerequisite fails', as
   const write = deferred<ApiTransportResponse>();
   const posts: string[] = [];
   const transport: ApiTransportPort = { send: async request => {
-    if (request.method === 'PUT') return write.promise;
+    if (request.method === 'PATCH') return write.promise;
     if (request.method === 'POST') { posts.push(request.headers?.['Idempotency-Key'] ?? ''); return sessionReply(sessionInput('a')); }
     if (request.path.includes('/items?')) return sessionReply(sessionPage(fixtureSession('a', 't', { permissionMode: 'ask' })));
     return sessionReply([]);
@@ -148,7 +148,7 @@ it.each([false, true])('protects a newer confirmed GET from an old ACK across A 
   const writes = [deferred<ApiTransportResponse>(), deferred<ApiTransportResponse>()];
   let puts = 0;
   let holdReads = false;
-  const transport: ApiTransportPort = { send: request => request.method === 'PUT' ? writes[puts++].promise
+  const transport: ApiTransportPort = { send: request => request.method === 'PATCH' ? writes[puts++].promise
     : holdReads ? new Promise(() => undefined) : Promise.resolve(sessionReply(sessionPage(fixtureSession('a', 't', { permissionMode: 'never' })))) };
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const { result, rerender } = renderHook(({ id }) => ({ store: useConversationStore(transport, unauthorized, {

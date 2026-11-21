@@ -1,9 +1,8 @@
 import { conversationStopTurn } from '../../../../core/domain/conversation-action.ts';
 import { sessionContextUsage } from '../../../../core/domain/session-context-usage.ts';
 import { NotSentError } from '../../../../core/domain/failure-class.ts';
-import { withTaskMessageFailures, workerModelCatalog } from '../../../../core/domain/worker-session.ts';
-import type { PermissionModeOptionDto, WorkerSettings } from '../../../../core/api/perga-v1.ts';
-import { pendingQueueWithCurrentHumanVersions, pendingQueueOwnsHumanEntry } from '../../../../core/domain/conversation-queue-controls.ts';
+import { sessionModelCatalog } from '../../../../core/domain/worker-session.ts';
+import { sessionSteeringOutcome, pendingQueueWithCurrentHumanVersions, pendingQueueOwnsHumanEntry } from '../../../../core/domain/conversation-queue-controls.ts';
 import { useCurrentUser } from '../auth/current-user.tsx';
 import { buildConversationTranscript, conversationPendingQueue, conversationRunPhase, nativeDisplayRows } from '../../../../core/domain/conversation-display.ts';
 import { useEffect, useMemo, useRef } from 'react';
@@ -30,11 +29,6 @@ import type { ConversationRouteIntent, ConversationStore, PlannerConversationSco
 /* A stable identity for "no queue page", so the memo below is not recomputed on
    every render by a fresh array literal. */
 const EMPTY_PENDING_QUEUE: readonly PendingQueueEntry[] = Object.freeze([]);
-
-const TASK_APPROVAL_OPTIONS: readonly PermissionModeOptionDto[] = Object.freeze([
-  Object.freeze({ id: 'ask', label: 'Ask a person', description: 'Allows the session to request approval.', tone: 'warning', isDefault: true }),
-  Object.freeze({ id: 'deny', label: 'Deny requests', description: 'Denies future approval requests.', tone: 'neutral', isDefault: false }),
-]);
 
 export function useConversationStore(
   transport: ApiTransportPort,
@@ -85,32 +79,26 @@ export function useConversationStore(
     }, [transport, cardId, unauthorized, registry],
   );
   const run = useQuery({ ...runQuery, enabled: scope !== null, refetchInterval: query =>
-    query.state.data?.worker?.phase === 'running' || query.state.data?.worker?.phase === 'interrupting' ? 1000 : false });
+    query.state.data?.state === 'running' || query.state.data?.state === 'stopping' ? 1000 : false });
   const [readFailure, setReadFailure] = useState(() => ({ cardId, error: run.error }));
   const runReadError = run.error ?? (run.isFetching && readFailure.cardId === cardId ? readFailure.error : null);
   if (readFailure.cardId !== cardId || (run.error !== readFailure.error && (run.error !== null || !run.isFetching)))
     setReadFailure({ cardId, error: run.error });
-  const worker = run.data?.worker ?? null;
-  const workerSession = worker !== null || run.data?.session.boundTaskId != null || run.data?.session.boundAttemptId != null;
-  const workerTurn = worker === null ? undefined : (run.data?.activeTurn?.status === 'running' ? run.data.activeTurn.id : undefined);
-  const workerEditable = worker?.phase === 'running' || worker?.phase === 'paused';
-  const workerCatalog = useMemo(() => worker === null ? null : workerModelCatalog(worker), [worker]);
+  const capabilities = run.data?.capabilities;
+  const sessionCatalog = useMemo(() => capabilities == null || capabilities.models.length === 0 ? null : sessionModelCatalog(capabilities), [capabilities]);
   /* The catalog rides alongside the run query: the trigger has to render the chosen
        model's name, and `planner-run` gives only its slug. */
   const modelCatalog = useQuery({
-    ...modelCatalogQueryOptions(transport, { kind: 'card', cardId, provider: provider ?? 'codex' }, unauthorized), enabled: scope !== null && worker === null,
+    ...modelCatalogQueryOptions(transport, { kind: 'card', cardId, provider: provider ?? 'codex' }, unauthorized), enabled: scope !== null && (capabilities == null || capabilities.models.length === 0),
   });
   const displayItems = history.loadedRows;
   const items = useMemo(() => nativeDisplayRows(displayItems), [displayItems]);
   const rememberedSource = useConversationRememberedTurns(history.data === undefined && scope !== null ? cardId : null);
   const rememberedEntries = history.data === undefined ? rememberedSource : null;
   const queueWriteOut = useConversationQueueWriteOut(scope === null ? null : cardId);
-  const taskMessages = worker?.messages;
   const viewerId = currentUser?.userId ?? null;
-  const historyEntries = useMemo(() => {
-    const entries = rememberedEntries ?? buildConversationTranscript(displayItems, viewerId);
-    return taskMessages === undefined ? entries : withTaskMessageFailures(entries, taskMessages, viewerId);
-  }, [displayItems, rememberedEntries, taskMessages, viewerId]);
+  const historyEntries = useMemo(() => rememberedEntries ?? buildConversationTranscript(displayItems, viewerId),
+    [displayItems, rememberedEntries, viewerId]);
   const serverTurns = useMemo(() => historyEntries.filter(isConversationMessage), [historyEntries]);
   const servedQueue = useMemo(() => run.data === undefined ? EMPTY_PENDING_QUEUE : conversationPendingQueue(run.data), [run.data]);
   const queueOps = useConversationSendOps(scope === null ? null : cardId);
@@ -144,8 +132,6 @@ export function useConversationStore(
   const mutations = usePlannerMutations(transport, cardId, scope === null ? null : scope.id, unauthorized, registry);
   /** What went wrong with an action of the card it names; another card's is never this one's. */
   const [compactPending, setCompactPending] = useState<ReadonlySet<string>>(() => new Set());
-  const [settingsPending, setSettingsPending] = useState<ReadonlySet<string>>(() => new Set());
-  const settingsLeases = useRef(new Set<string>());
   const compactLeases = useRef(new Set<string>());
   const recoveryLeases = useRef(new Set<string>());
   const [recoveryPending, setRecoveryPending] = useState<ReadonlySet<string>>(() => new Set());
@@ -166,7 +152,7 @@ export function useConversationStore(
   const liveReplies = useLiveReplies({
     transport, unauthorized, cardId, enabled: scope !== null && run.data !== undefined, phase,
     runningTurnId: run.data?.activeTurn?.status === 'running' ? run.data.activeTurn.id : null, nextRead: registry.nextRead,
-    transcriptKey: transcriptQuery.queryKey, transcriptReads, items, worker,
+    transcriptKey: transcriptQuery.queryKey, transcriptReads, items, activity: run.data?.activity?.turnId === run.data?.activeTurn?.id ? run.data?.activity : null,
   });
   const acceptedTurnId = useConversationAcceptedTurn(cardId);
   const startupTurn = run.data?.lastTurn;
@@ -189,17 +175,14 @@ export function useConversationStore(
     completedRowId: items.reduce<number | null>((latest, row) => !row.outcome
       ? latest : Math.max(latest ?? 0, row.id), null),
     requestStop: () => {
-      if (worker !== null && workerTurn !== undefined)
-        return mutations.interrupt({ attemptId: worker.attemptId, turnId: workerTurn });
       return stopTurnId == null ? Promise.reject(new NotSentError()) : mutations.interrupt({ turnId: stopTurnId });
     },
   });
   const canQueueWhileRunning = phase === 'turn_running' && working && runReadError === null;
-  const target = worker === null ? undefined : { attemptId: worker.attemptId, queue: worker.phase === 'running' && working };
   const steeringTarget = run.data?.activeTurn?.status === 'running' ? run.data.activeTurn.id : null;
   const outbox = useConversationOutbox({
     cardId, transport, send: mutations.send, serverEntries, liveReplies,
-    stalled: false, target, queuesInput: kernelQueuesInput(phase), queueIfBusy: canQueueWhileRunning,
+    stalled: false, target: run.data?.taskBinding?.attemptId == null ? undefined : { attemptId: run.data.taskBinding.attemptId, queue: canQueueWhileRunning }, queuesInput: kernelQueuesInput(phase), queueIfBusy: canQueueWhileRunning,
     pressed: () => { setActionError(null); stop.clearFeedback(); },
   });
   const { view, accountQueueDisplay } = outbox;
@@ -264,10 +247,8 @@ export function useConversationStore(
   const conversations = useMemo(() => conversation === null
     ? serverRows
     : serverRows.map((row) => row.id === conversation.id ? { ...conversation, archivedAt: row.archivedAt } : row), [conversation, serverRows]);
-  const model = useMemo(() => worker !== null
-    ? { model: worker.nextSettings.model ?? null, reasoning_effort: worker.nextSettings.reasoningEffort ?? null }
-    : run.data === undefined ? FOLLOW_INSTALLATION_DEFAULT
-      : { model: run.data.session.model ?? null, reasoning_effort: run.data.session.reasoningEffort ?? null }, [run.data, worker]);
+  const model = useMemo(() => run.data === undefined ? FOLLOW_INSTALLATION_DEFAULT
+    : { model: run.data.session.model ?? null, reasoning_effort: run.data.session.reasoningEffort ?? null }, [run.data]);
 
   /* Held in the registry, so a strip remounted on the way back still sees its conversation's write out (#2068). */
   const deleteQueuedEntry = (entry: PendingQueueEntry) =>
@@ -280,32 +261,23 @@ export function useConversationStore(
     && steeringTarget !== null && run.data?.canSteer === true
     ? (entry: PendingQueueEntry) => registry.holdQueueWrite<PlannerQueueWriteOutcome>(cardId, async () => {
       const result = await mutations.steerQueuedSessionMessage(entry.entry_id, steeringTarget);
-      if (result.delivery === 'queued' || result.delivery === 'rejected') return { kind: 'not_running' };
-      if (result.delivery === 'unconfirmed') return { kind: 'unanswered' };
-      return { kind: 'done' };
+      return sessionSteeringOutcome(result.delivery);
     }) : undefined;
 
-  const updateTaskSettings = async (changes: Partial<Omit<WorkerSettings, 'version'>>, authorization?: string) => {
-    if (!workerEditable || worker === null || settingsLeases.current.has(cardId)) {
-      throw new Error('Settings are unavailable. Refresh the conversation and try again.');
-    }
-    settingsLeases.current.add(cardId);
-    setSettingsPending(current => new Set([...current, cardId]));
-    try {
-      await mutations.updateWorkerSettings({ ...worker.nextSettings, ...changes, attemptId: worker.attemptId }, authorization);
-    } finally {
-      settingsLeases.current.delete(cardId);
-      setSettingsPending(current => new Set([...current].filter(id => id !== cardId)));
-    }
-  };
-  const taskApprovalsDenied = worker?.nextSettings.approvalMode === 'deny';
-  const canAuthorize = worker?.approvalAuthorizationConfigured === true && globalThis.location?.protocol === 'https:';
   const sessionBlocksComposer = recoveryHoldsSend || readonlyReason !== null || sessionState === null || sessionState === 'stopping'
     || sessionState === 'compacting' || history.error !== null || runReadError !== null;
   const sendBlocked = sessionBlocksComposer || view.blocked;
   const composerBlocked = sessionBlocksComposer || view.sending || view.failed?.delivery === 'unknown';
   return {
-    pendingApprovals: worker?.pendingApprovals ?? null,
+    pendingApprovals: run.data?.pendingInteractions?.flatMap(interaction => interaction.kind === 'approval' && interaction.canRespond && interaction.executionId != null && interaction.options != null
+      ? [{ ...interaction, executionId: interaction.executionId, options: interaction.options }] : []) ?? null,
+    pendingInteractions: run.data?.pendingInteractions ?? null,
+    answerAsk: (askId, answers) => {
+      const interaction = run.data?.pendingInteractions?.find(item => item.id === String(askId) && item.kind === 'ask' && item.canRespond);
+      if (interaction === undefined) return Promise.reject(new NotSentError());
+      return mutations.answerInteraction(interaction.sessionId, askId, answers,
+        interaction.questions?.map(question => ({ title: question.question, options: question.options })) ?? []);
+    },
     session: run.data?.session ?? null,
     sessionState, readonlyReason,
     canReopen: run.data?.canReopen ?? false,
@@ -316,7 +288,7 @@ export function useConversationStore(
     dismissActionError: () => { setActionError(null); stop.clearFeedback(); },
     recover: (mode: 'reconnect' | 'reset_context') => {
       const detail = run.data?.unknownDetail;
-      if (workerSession || readonlyReason !== null || recoveryLeases.current.has(cardId) || detail?.recovering === true
+      if (readonlyReason !== null || recoveryLeases.current.has(cardId) || detail?.recovering === true
         || (mode === 'reconnect' ? sessionState !== 'unknown' || !detail?.canReconnect
           : sessionState !== 'idle' && !(sessionState === 'unknown' && detail?.canResetContext))) return;
       const id = cardId;
@@ -368,15 +340,14 @@ export function useConversationStore(
     dismissFailedSend: outbox.dismissFailedSend,
     send: (id, content, attachments, fromComposer, key) => {
       if (sendBlocked) return null;
-      if (worker !== null && (!workerEditable || attachments.length > 0)) return null;
       return outbox.send(id, content, attachments, fromComposer, key);
     },
-    manualCompactSupported: sessionState === 'idle' && readonlyReason === null && !workerSession,
+    manualCompactSupported: sessionState === 'idle' && readonlyReason === null && capabilities?.supportsCompact === true,
     contextUsage: run.data === undefined ? null : sessionContextUsage(run.data.session),
     uploadAttachment: mutations.uploadAttachment,
     compacting: compactPending.has(cardId) || phase === 'compacting',
     compact: () => {
-      if (workerSession || sessionState !== 'idle' || readonlyReason !== null || compactLeases.current.has(cardId) || cardId === '') return;
+      if (!capabilities?.supportsCompact || sessionState !== 'idle' || readonlyReason !== null || compactLeases.current.has(cardId) || cardId === '') return;
       const compactFor = cardId;
       compactLeases.current.add(compactFor);
       setCompactPending((current) => new Set([...current, compactFor]));
@@ -400,41 +371,32 @@ export function useConversationStore(
     /* Before the first answer the conversation is following the default, which is
            what a card with no selection really does. */
     model,
-    modelCatalog: worker === null ? modelCatalog.data ?? null : workerCatalog,
-    modelDefaultAvailable: worker === null || worker.nextSettings.model == null || worker.providerConfiguration?.defaultModel != null,
-    modelChangeDisabled: run.data === undefined || recoveryHoldsSend || (worker !== null && (!workerEditable || workerCatalog === null || settingsPending.has(cardId))),
+    modelCatalog: sessionCatalog ?? modelCatalog.data ?? null,
+    modelDefaultAvailable: true,
+    modelChangeDisabled: run.data === undefined || recoveryHoldsSend || readonlyReason !== null,
     setModel: (selection) => {
       if (recoveryHoldsSend) return;
       const setFor = cardId;
       setActionError(null);
       /* Dropped when it settles while another conversation is shown: kept, it would show for one commit on the way back (#2068). */
       const fail = (message: string) => { if (shownCardId.current === setFor) setActionError({ cardId: setFor, message }); };
-      const save = worker === null ? mutations.setModel(selection)
-        : updateTaskSettings({ model: selection.model, reasoningEffort: selection.reasoning_effort });
+      const save = mutations.setModel(selection);
       void save.catch((error: unknown) => {
-        fail(worker !== null && error instanceof Error ? error.message
-          : refusalText(writeFailureOf(error), PLANNER_MODEL_FAILURES, MODEL_CHANGE_TEXT.refused) ?? MODEL_CHANGE_TEXT.unknown);
+        fail(refusalText(writeFailureOf(error), PLANNER_MODEL_FAILURES, MODEL_CHANGE_TEXT.refused) ?? MODEL_CHANGE_TEXT.unknown);
       });
     },
-    permissionMode: worker?.nextSettings.approvalMode ?? run.data?.session.permissionMode ?? null,
-    permissionOptions: worker === null ? run.data?.permissionModes ?? null : TASK_APPROVAL_OPTIONS,
-    permissionChangeDisabled: run.data === undefined || (worker !== null && (!workerEditable || settingsPending.has(cardId))),
-    permissionAuthorizationMode: taskApprovalsDenied && canAuthorize ? 'ask' : null,
-    unavailablePermissionMode: taskApprovalsDenied && !canAuthorize ? 'ask' : null,
-    setPermissionMode: async (mode, authorization) => {
+    permissionMode: run.data?.session.permissionMode ?? null,
+    permissionOptions: capabilities?.permissionModes.length ? capabilities.permissionModes
+      : run.data?.permissionModes?.length ? run.data.permissionModes : null,
+    permissionChangeDisabled: run.data === undefined || recoveryHoldsSend || readonlyReason !== null,
+    setPermissionMode: async (mode) => {
       const setFor = cardId;
       setActionError(null);
-      try {
-        if (worker === null) await mutations.setPermissionMode(mode);
-        else if (mode === 'ask' || mode === 'deny') {
-          await registry.holdPermissionWrite(cardId, updateTaskSettings({ approvalMode: mode }, authorization));
-        }
-      } catch (error: unknown) {
-        if (authorization !== undefined) throw error;
+      try { await mutations.setPermissionMode(mode); }
+      catch (error: unknown) {
         if (shownCardId.current !== setFor) return;
-        setActionError({ cardId: setFor, message: worker !== null && error instanceof Error ? error.message
-          : refusalText(writeFailureOf(error), PLANNER_PERMISSION_MODE_FAILURES,
-            PERMISSION_MODE_CHANGE_TEXT.refused) ?? PERMISSION_MODE_CHANGE_TEXT.unknown });
+        setActionError({ cardId: setFor, message: refusalText(writeFailureOf(error), PLANNER_PERMISSION_MODE_FAILURES,
+          PERMISSION_MODE_CHANGE_TEXT.refused) ?? PERMISSION_MODE_CHANGE_TEXT.unknown });
       }
     },
   };

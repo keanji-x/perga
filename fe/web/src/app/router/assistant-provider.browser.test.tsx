@@ -35,7 +35,7 @@ it.each([1280, 390])('selects a dynamically registered backend through the keybo
   await expect.element(model).toBeDisabled();
   const posts = () => fixture.requests.filter(request => request.method === 'POST' && request.path.endsWith('/sessions'));
   expect(posts()).toHaveLength(1);
-  expect(posts()[0].body).toMatchObject({ provider: 'claude', model: 'selected', text: 'Frozen first message' });
+  expect(posts()[0].body).toMatchObject({ provider: 'claude', model: 'selected', prompt: 'Frozen first message' });
   bootstrap.providers[0] = { ...bootstrap.providers[0], available: false, reason: 'Now unavailable' };
   await fixture.client.invalidateQueries({ queryKey: ['managed-providers'] });
   if (width < 600) await page.getByLabelText('对话选项').click();
@@ -60,7 +60,7 @@ it('creates the declared Codex default despite auth/read and catalog unavailabil
   const field = page.getByRole('combobox', { name: 'Message' });
   await field.fill('Follow the backend default'); await userEvent.keyboard('{Enter}');
   await expect.poll(() => fixture.requests.filter(request => request.method === 'POST' && request.path.endsWith('/sessions')).length).toBe(1);
-  expect(fixture.requests.find(request => request.method === 'POST' && request.path.endsWith('/sessions'))?.body).toMatchObject({ provider: 'codex', text: 'Follow the backend default' });
+  expect(fixture.requests.find(request => request.method === 'POST' && request.path.endsWith('/sessions'))?.body).toMatchObject({ provider: 'codex', prompt: 'Follow the backend default' });
 });
 
 

@@ -40,7 +40,7 @@ internal sealed partial class InMemoryTrackStore : ITrackWakeStore
             var claimed = new List<TrackWake>();
             for (var i = 0; i < _trackWakes.Count && claimed.Count < Math.Clamp(limit, 1, 32); i++)
                 if (_trackWakes[i] is { State: TrackWakeStates.Pending } w && w.TrackId == trackId &&
-                    _tracks[trackId].ClosedAtMs is null && (w.TargetSessionId is null || w.TargetSessionId == targetSessionId))
+                    _tracks[trackId].ClosedAtMs is null && (w.TargetSessionId == targetSessionId || (w.TargetSessionId is null && _tracks[trackId].LeadSessionId == targetSessionId)))
                 { w = w with { State = TrackWakeStates.Delivering, Attempts = w.Attempts + 1, UpdatedAtMs = now }; _trackWakes[i] = w; claimed.Add(w); }
             return Task.FromResult<IReadOnlyList<TrackWake>>(claimed);
         }

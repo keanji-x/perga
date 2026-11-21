@@ -30,7 +30,7 @@ export function renderCommandFixture(options: Readonly<{
       const id = conversationCardId(request.path);
       return ok(sessionPage(fixtureSession(id, 'daily'), [sessionItem(id, 1, 'Ready for commands')], options.running ? sessionTurn(id) : null));
     }
-    if (request.path.endsWith('/interrupt')) return ok({ card_id: 'daily-planner', worker_session_id: 'runtime', stopped: true });
+    if (request.path.endsWith('/control')) return ok(fixtureSession('daily-planner', 'daily'));
     if (request.path.endsWith('/messages')) return ok(sessionInput('daily-planner'));
     return undefined;
   } });

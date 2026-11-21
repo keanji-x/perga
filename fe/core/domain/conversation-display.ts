@@ -166,10 +166,10 @@ export function sessionItemsPageDtoToConversationPage(
 }
 
 export function conversationItemsOperation(card: string, cursor: ConversationCursor | null): ApiOperation<ConversationPage> {
-  const cursorSuffix = cursor === null ? '' : `&cursor=${encodeURIComponent(JSON.stringify(cursor))}&beforeId=${cursor.position}`;
+  const cursorSuffix = cursor === null ? '' : `&beforeId=${cursor.position}`;
   return {
     method: 'GET',
-    path: `/api/v1/sessions/${encodeURIComponent(card)}/items?afterId=0&limit=500&latest=true${cursorSuffix}`,
+    path: `/api/v1/sessions/${encodeURIComponent(card)}/items?afterId=0&limit=60&latest=true${cursorSuffix}`,
     responseSchema: sessionItemsPageDtoSchema.transform(page => sessionItemsPageDtoToConversationPage(card, page, cursor)),
   };
 }
@@ -203,7 +203,7 @@ export type ConversationRun = SessionItemsPageDto;
 export function conversationRunOperation(sessionId: string): ApiOperation<ConversationRun> {
   return {
     method: 'GET',
-    path: `/api/v1/sessions/${encodeURIComponent(sessionId)}/items?afterId=0&limit=1&view=run`,
+    path: `/api/v1/sessions/${encodeURIComponent(sessionId)}/items?afterId=0&limit=1`,
     responseSchema: sessionItemsPageDtoSchema,
   };
 }

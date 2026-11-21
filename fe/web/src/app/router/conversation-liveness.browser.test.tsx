@@ -23,8 +23,8 @@ it.each(['button', 'slash'] as const)('stops accepted startup immediately throug
     if (request.path.endsWith('/messages') && request.method === 'POST') {
       accepted = true; return sessionReply(sessionInput('daily-planner'));
     }
-    if (request.path.endsWith('/interrupt')) return sessionReply({ stopped: true });
-    if (accepted && request.path.includes('view=run')) return new Promise(() => {});
+    if (request.path.endsWith('/control')) return sessionReply(view.sessions[0]);
+    if (accepted && request.path.includes('limit=1')) return new Promise(() => {});
     return undefined;
   } });
   await page.getByRole('button', { name: /Conversation Daily Planner conversation/ }).click();
@@ -38,14 +38,14 @@ it.each(['button', 'slash'] as const)('stops accepted startup immediately throug
     await expect.element(page.getByRole('option', { name: /^stop/ })).toBeVisible();
     await userEvent.keyboard('{Enter}'); await userEvent.keyboard('{Enter}');
   }
-  await expect.poll(() => view.requests.filter(request => request.path.endsWith('/interrupt')).map(request => request.body)).toEqual([{ turnId: 'turn-1' }]);
+  await expect.poll(() => view.requests.filter(request => request.path.endsWith('/control')).map(request => request.body)).toEqual([{ action: 'stop', turnId: 'turn-1' }]);
   view.client.clear();
 });
 
 it.each(['queued', 'starting'])('stops reloaded %s lastTurn startup without an activeTurn', async status => {
   await page.viewport(1280, 850);
   const view = renderSessionFixture({ initial: '/track/daily?panel=conversations', reply: request => {
-    if (request.path.endsWith('/interrupt')) return sessionReply({ stopped: true });
+    if (request.path.endsWith('/control')) return sessionReply(view.sessions[0]);
     if (request.path.includes('/daily-planner/items?')) return sessionReply({
       ...sessionPage({ ...view.sessions[0], status }, [], null, 'running'), lastTurn: sessionTurn('daily-planner', 'startup-turn', status),
     });
@@ -53,7 +53,7 @@ it.each(['queued', 'starting'])('stops reloaded %s lastTurn startup without an a
   } });
   await page.getByRole('button', { name: /Conversation Daily Planner conversation/ }).click();
   await page.getByRole('button', { name: 'Stop', exact: true }).click();
-  await expect.poll(() => view.requests.filter(request => request.path.endsWith('/interrupt')).map(request => request.body)).toEqual([{ turnId: 'startup-turn' }]);
+  await expect.poll(() => view.requests.filter(request => request.path.endsWith('/control')).map(request => request.body)).toEqual([{ action: 'stop', turnId: 'startup-turn' }]);
 });
 
 it.each([['permission', false], ['retry', false], ['permission', true], ['retry', true]] as const)('reset cancels a %s deferred send and restores its draft (external=%s)', async (defer, external) => {
@@ -71,7 +71,7 @@ it.each([['permission', false], ['retry', false], ['permission', true], ['retry'
     if (request.path.endsWith('/messages') && request.method === 'POST') {
       messageEpochs.push(view.sessions[0].epoch); throw new Error('response lost');
     }
-    if (request.path.endsWith('/recover')) { view.sessions[0].epoch += 1; return sessionReply(view.sessions[0]); }
+    if (request.path.endsWith('/control')) { view.sessions[0].epoch += 1; return sessionReply(view.sessions[0]); }
     return undefined;
   } });
   await page.getByRole('button', { name: /Conversation Daily Planner conversation/ }).click();
@@ -84,7 +84,7 @@ it.each([['permission', false], ['retry', false], ['permission', true], ['retry'
   else {
     await page.getByRole('button', { name: '会话操作', exact: true }).click();
     await page.getByRole('menuitem', { name: '重置上下文 /reset', exact: true }).click();
-    await expect.poll(() => view.requests.some(request => request.path.endsWith('/recover'))).toBe(true);
+    await expect.poll(() => view.requests.some(request => request.path.endsWith('/control'))).toBe(true);
   }
   const attemptsBeforeRelease = messageEpochs.length;
   release();
@@ -95,24 +95,22 @@ it.each([['permission', false], ['retry', false], ['permission', true], ['retry'
   await expect.element(field).toHaveTextContent('Keep pre-reset intent');
 });
 
-it('denies Worker compact/reset discovery and execution in both menus', async () => {
+it('allows Worker reset and follows the runtime compact capability', async () => {
   await page.viewport(1280, 850);
-  const view = renderSessionFixture({ initial: '/track/daily?panel=conversations' });
+  const view = renderSessionFixture({ initial: '/track/daily?panel=conversations', reply: request => {
+    if (!request.path.includes('/items?')) return undefined;
+    const result = sessionPage(view.sessions[0]);
+    return sessionReply({ ...result, capabilities: { ...result.capabilities!, supportsCompact: false } });
+  } });
   view.sessions[0].boundTaskId = 'task'; view.sessions[0].boundAttemptId = 'attempt';
   await page.getByRole('button', { name: /Conversation Daily Planner conversation/ }).click();
   await page.getByRole('button', { name: '会话操作', exact: true }).click();
   await expect.element(page.getByRole('menuitem', { name: '压缩上下文 /compact' })).toHaveAttribute('aria-disabled', 'true');
-  await expect.element(page.getByRole('menuitem', { name: '重置上下文 /reset' })).toHaveAttribute('aria-disabled', 'true');
+  await expect.element(page.getByRole('menuitem', { name: '重置上下文 /reset' })).not.toHaveAttribute('aria-disabled', 'true');
   await userEvent.keyboard('{Escape}');
-  const field = page.getByRole('combobox', { name: 'Message' });
-  await field.fill('/');
+  await page.getByRole('combobox', { name: 'Message' }).fill('/');
   await expect.element(page.getByRole('option', { name: /^compact/ })).not.toBeInTheDocument();
-  await expect.element(page.getByRole('option', { name: /^reset/ })).not.toBeInTheDocument();
-  for (const command of ['compact', 'reset']) {
-    await field.fill(`/${command}`);
-    await userEvent.keyboard('{Enter}');
-    await expect.element(field).toHaveTextContent(`/${command}`);
-  }
+  await expect.element(page.getByRole('option', { name: /^reset/ })).toBeVisible();
   expect(view.requests.filter(request => request.method === 'POST')).toEqual([]);
 });
 
@@ -125,10 +123,10 @@ it('keeps a fresh post-reset send across a stale skipped-turn read and hung post
   const runReady = new Promise<void>(resolve => { releaseRun = resolve; });
   const sendReady = new Promise<void>(resolve => { releaseSend = resolve; });
   const view = renderSessionFixture({ initial: '/track/daily?panel=conversations', reply: async request => {
-    if (request.path.endsWith('/recover')) {
+    if (request.path.endsWith('/control')) {
       reset = true; view.sessions[0].epoch += 1; return sessionReply(view.sessions[0]);
     }
-    if (reset && request.path.includes('view=run')) {
+    if (reset && request.path.includes('limit=1')) {
       if (acknowledged) return new Promise(() => {});
       await runReady;
       return sessionReply({ ...sessionPage(view.sessions[0]), lastTurn: sessionTurn('daily-planner', 'older-turn-2', 'completed') });
@@ -163,7 +161,7 @@ it.each(['idle', 'unknown'] as const)('retires accepted Stop after skipped-turn 
     if (request.path.endsWith('/messages') && request.method === 'POST') {
       accepted = true; return sessionReply(sessionInput('daily-planner'));
     }
-    if (accepted && request.path.includes('view=run')) {
+    if (accepted && request.path.includes('limit=1')) {
       await ready;
       return sessionReply({ ...sessionPage(view.sessions[0], [], null, state),
         lastTurn: { ...sessionTurn('daily-planner', 'turn-2', 'completed'), turnIndex: 2 } });
@@ -181,7 +179,7 @@ it.each(['idle', 'unknown'] as const)('retires accepted Stop after skipped-turn 
       await field.fill('Next idle message');
       await expect.element(page.getByRole('button', { name: 'Send', exact: true })).toBeEnabled();
     }
-    expect(view.requests.filter(request => request.path.endsWith('/interrupt'))).toEqual([]);
+    expect(view.requests.filter(request => request.path.endsWith('/control'))).toEqual([]);
   } finally { release(); view.client.clear(); }
 });
 

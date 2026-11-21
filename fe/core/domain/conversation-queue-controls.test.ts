@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { editQueuedMessageOperation, withdrawQueuedMessageOperation, steerQueuedMessageOperation, unlistedPendingInputCount, pendingQueueWithCurrentHumanVersions, pendingQueueOwnsHumanEntry } from './conversation-queue-controls.js';
+import { sessionSteeringOutcome, unlistedPendingInputCount, pendingQueueWithCurrentHumanVersions, pendingQueueOwnsHumanEntry } from './conversation-queue-controls.js';
 
 describe('canonical queued message controls', () => {
   it('reconciles only listed own Human identities and preserves queue position', () => {
@@ -14,22 +14,16 @@ describe('canonical queued message controls', () => {
     expect(pendingQueueOwnsHumanEntry(source,versions)).toBe(true);
     expect(pendingQueueOwnsHumanEntry({...source,human:{...source.human,revision:3}},versions)).toBe(false);
   });
-  it('binds edits, withdrawal and steering to their actual carrier, revision and native turn', () => {
-    expect(editQueuedMessageOperation('card','carrier','message',3,'new text')).toMatchObject({
-      method:'PATCH',path:'/api/cards/card/conversation/messages/message',body:{carrier_id:'carrier',if_revision:3,text:'new text'},
-    });
-    expect(withdrawQueuedMessageOperation('card','carrier','message',3)).toMatchObject({
-      method:'DELETE',body:{carrier_id:'carrier',if_revision:3},
-    });
-    const steer=steerQueuedMessageOperation('card','carrier','message',3,'original-turn');
-    expect(steer.body).toEqual({carrier_id:'carrier',if_revision:3,turn_id:'original-turn'});
-    expect(steer.responseSchema.safeParse({submission_id:'submission',turn_id:'later-turn',delivery:'accepted'}).success).toBe(false);
-    expect(steer.responseSchema.safeParse({submission_id:'submission',turn_id:'original-turn',delivery:'unknown'}).success).toBe(true);
-  });
   it('counts Human and System pending input once by kind and exact revision', () => {
     const inputs=[{kind:'human' as const,message_id:'same',revision:2,queue_position:0,queued_at_ms:1},
       {kind:'system' as const,observation_id:'same',queue_position:1,queued_at_ms:2}];
     expect(unlistedPendingInputCount(inputs,[{entry_id:'same',rev:2,text:'queued',queued_at_ms:1}])).toBe(1);
     expect(unlistedPendingInputCount(inputs,[{entry_id:'same',rev:1,text:'old',queued_at_ms:1}])).toBe(2);
   });
+});
+
+it.each([
+  ['delivered', 'done'], ['queued', 'not_running'], ['rejected', 'not_running'], ['unknown', 'unanswered'],
+])('presents a unified %s steering receipt as %s', (delivery, kind) => {
+  expect(sessionSteeringOutcome(delivery)).toEqual({ kind });
 });

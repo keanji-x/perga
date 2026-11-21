@@ -43,7 +43,10 @@ public sealed record TrackCreation(TrackDto Track, ReportDocument Report, string
     public IReadOnlyList<TrackScheduleDto> TemplateSchedules { get; init; } = [];
 }
 
-public sealed record WorkerDispatchIntent(string TrackId, string AuthorId, string RequestKey, string RequestHash, string TaskKey);
+public sealed record WorkerDispatchIntent(string TrackId, string AuthorId, string RequestKey, string RequestHash, string TaskKey, AgentSessionDto? Session = null, InteropPrincipal? Principal = null)
+{
+    public InteropPrincipal Caller => Principal ?? new InteropPrincipal.Human();
+}
 public sealed record StoredWorkerDispatch(string RequestHash, string TaskId);
 public sealed record ProviderSessionResumeFence(string SessionId, string TurnId, string NativeId, bool Quiescent);
 
@@ -129,7 +132,7 @@ public interface ITrackStore : ITrackReadStore
         Task.FromResult<IReadOnlyList<string>>([]);
 
     Task UpsertTaskAndAttemptAsync(TaskDto task, TaskAttemptDto? attempt, JsonElement? nextTemplateState, EventEnvelopeDto? evt, CancellationToken ct,
-        AgentSessionDto? session = null, EventEnvelopeDto? sessionEvent = null, string? wakePrompt = null);
+        AgentSessionDto? session = null, EventEnvelopeDto? sessionEvent = null, string? wakePrompt = null, SessionMessage? initialMessage = null);
     Task<bool> HasSessionTurnAsync(string sessionId, string turnId, CancellationToken ct);
     Task<IReadOnlyList<SessionTurnDto>> ListSessionTurnsAsync(string sessionId, CancellationToken ct) =>
         Task.FromResult<IReadOnlyList<SessionTurnDto>>([]);
@@ -138,7 +141,6 @@ public interface ITrackStore : ITrackReadStore
     ITrackWakeStore TrackWakes { get; }
     ITrackScheduleStore? TrackSchedules => null;
     ISessionMessageStore? SessionMessages => null;
-    IWorkerSettingsStore? WorkerSettings => null;
     Task<IReadOnlyList<(string TrackId, PersistedSessionInput Input)>> RecoverSessionInputsAsync(CancellationToken ct);
     Task UpsertSessionAsync(AgentSessionDto session, EventEnvelopeDto? evt, CancellationToken ct);
     Task SaveSessionResumeFenceAsync(ProviderSessionResumeFence fence, CancellationToken ct);

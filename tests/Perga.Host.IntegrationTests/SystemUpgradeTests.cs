@@ -28,17 +28,17 @@ public sealed class SystemUpgradeTests
         await using var host = new PergaHostTestCluster();
         var (track, lead) = await host.CreateTrackAsync();
         var kernel = host.Services.GetRequiredService<IPergaKernel>();
-        await kernel.PatchSessionAsync(lead, new(Provider: "acp:antigravity"));
+        await kernel.UpdateSessionAsync(lead, new(Provider: "acp:antigravity"), new InteropPrincipal.Human(), default);
         var areaId = (await kernel.ListTracksAsync()).Single(t => t.Id == track).AreaId;
         var probes = host.AgentRuntime.ProbeCount;
         kernel.DispatchAdmission.SetDraining(true);
         if (createTrack)
         {
             var created = await kernel.CreateTrackAsync(new(areaId, Cwd: host.DataDir, Provider: "acp:antigravity", PermissionMode: "act")).WaitAsync(Deadline);
-            Assert.Equal("act", Assert.Single(await kernel.ListSessionsAsync(created.Track.Id)).PermissionMode);
+            Assert.Equal("act", Assert.Single((await kernel.ListSessionsAsync(created.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray()).PermissionMode);
         }
         else
-            Assert.Equal("act", (await kernel.SetSessionPermissionModeAsync(lead, "act").WaitAsync(Deadline)).PermissionMode);
+            Assert.Equal("act", (await kernel.UpdateSessionAsync(lead, new(PermissionMode: new("act")), new InteropPrincipal.Human(), default).WaitAsync(Deadline)).PermissionMode);
         Assert.Equal(probes, host.AgentRuntime.ProbeCount);
         Assert.Equal(0, kernel.DispatchAdmission.ActiveDispatches);
         Assert.Empty(host.AgentRuntime.OpenedSessions);
@@ -51,17 +51,17 @@ public sealed class SystemUpgradeTests
         await using var host = new PergaHostTestCluster();
         var (track, lead) = await host.CreateTrackAsync();
         var kernel = host.Services.GetRequiredService<IPergaKernel>();
-        await kernel.AcceptMessageAsync(lead, new SendMessageRequest("prime cache", "model-cache"), default);
+        await kernel.SendSessionMessageAsync(lead, new(Content: "prime cache", RequestKey: "model-cache"), new InteropPrincipal.Human(), default);
         await kernel.WaitForTrackIdleAsync(track).WaitAsync(Deadline);
         var opened = host.AgentRuntime.OpenedSessions.Count;
         Assert.True(opened > 0);
         kernel.DispatchAdmission.SetDraining(true);
-        var updated = await kernel.UpdateSessionModelAsync(lead, new("new-model", "high")).WaitAsync(Deadline);
+        var updated = await kernel.UpdateSessionAsync(lead, new(Model: new("new-model"), ReasoningEffort: new("high")), new InteropPrincipal.Human(), default).WaitAsync(Deadline);
         Assert.Equal("new-model", updated.Model);
         Assert.Equal(0, kernel.DispatchAdmission.ActiveDispatches);
         Assert.Equal(opened, host.AgentRuntime.OpenedSessions.Count);
         kernel.DispatchAdmission.SetDraining(false);
-        await kernel.AcceptMessageAsync(lead, new SendMessageRequest("reuse cache", "model-reuse"), default);
+        await kernel.SendSessionMessageAsync(lead, new(Content: "reuse cache", RequestKey: "model-reuse"), new InteropPrincipal.Human(), default);
         await kernel.WaitForTrackIdleAsync(track).WaitAsync(Deadline);
         Assert.Equal(opened + 1, host.AgentRuntime.OpenedSessions.Count);
         Assert.Equal("new-model", host.AgentRuntime.OpenedSessions.Last().Spec.Model);
@@ -187,7 +187,11 @@ public sealed class SystemUpgradeTests
     public async Task ClosingTrackAfterNotificationKeepsReceiptNotified()
     {
         await using var host = new PergaHostTestCluster(configureExtraServices: services =>
-            services.AddSingleton<ISystemUpgradeReceiptSource>(new MutableReceipt()));
+        {
+            services.AddSingleton<ISystemUpgradeReceiptSource>(new MutableReceipt());
+            // This test drives imports explicitly; the timer must not retry seeded receipts.
+            services.Remove(services.Single(d => d.ImplementationType == typeof(UpgradeReceiptHostedService)));
+        });
         var (track, lead) = await host.CreateTrackAsync();
         var store = host.Services.GetRequiredService<ITrackStore>();
         var upgrades = host.Services.GetRequiredService<ISystemUpgradeStore>();
@@ -214,7 +218,11 @@ public sealed class SystemUpgradeTests
     public async Task DeletingTrackMarksUndeliveredReceiptsUnavailableAndKeepsNotified()
     {
         await using var host = new PergaHostTestCluster(configureExtraServices: services =>
-            services.AddSingleton<ISystemUpgradeReceiptSource>(new MutableReceipt()));
+        {
+            services.AddSingleton<ISystemUpgradeReceiptSource>(new MutableReceipt());
+            // This test drives imports explicitly; the timer must not retry seeded receipts.
+            services.Remove(services.Single(d => d.ImplementationType == typeof(UpgradeReceiptHostedService)));
+        });
         var (track, lead) = await host.CreateTrackAsync();
         var store = host.Services.GetRequiredService<ITrackStore>();
         var upgrades = host.Services.GetRequiredService<ISystemUpgradeStore>();
@@ -253,12 +261,12 @@ public sealed class SystemUpgradeTests
         using var infoResponse = await host.Client.GetAsync("/api/v1/system/info");
         Assert.Equal("no-store", infoResponse.Headers.CacheControl!.ToString());
         var info = (await infoResponse.Content.ReadFromJsonAsync<SystemInfoDto>(PergaJsonDefaults.ApiOptions))!;
-        Assert.Equal(20, info.SchemaVersion);
+        Assert.Equal(21, info.SchemaVersion);
         Assert.False(info.Draining);
         using var draining = await host.Client.PostAsJsonAsync("/api/v1/system/drain", new { draining = true });
         Assert.Equal(HttpStatusCode.Accepted, draining.StatusCode);
-        var accepted = await kernel.AcceptMessageAsync(lead, new SendMessageRequest("during drain", IdempotencyKey: "drain-input"), default);
-        Assert.Equal("accepted", accepted.Receipt!.DeliveryState);
+        var accepted = await kernel.SendSessionMessageAsync(lead, new(Content: "during drain", RequestKey: "drain-input"), new InteropPrincipal.Human(), default);
+        Assert.Equal("accepted", accepted.Delivery);
         Assert.Empty(host.AgentRuntime.OpenedSessions);
         Assert.Equal(0, (await Info(host)).ActiveDispatches);
         Assert.True((await Info(host)).Draining);
@@ -290,7 +298,7 @@ public sealed class SystemUpgradeTests
             yield return new UnifiedAgentEvent.TurnCompleted(new TokenUsage(1, 1, 0, 100000));
         }
         var kernel = host.Services.GetRequiredService<IPergaKernel>();
-        await kernel.AcceptMessageAsync(lead, new SendMessageRequest("work", IdempotencyKey: "busy"), default);
+        await kernel.SendSessionMessageAsync(lead, new(Content: "work", RequestKey: "busy"), new InteropPrincipal.Human(), default);
         await started.Task.WaitAsync(Deadline);
         using var response = await host.Client.PostAsJsonAsync("/api/v1/system/drain", new { draining = true }).WaitAsync(Deadline);
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
@@ -313,7 +321,7 @@ public sealed class SystemUpgradeTests
                 (track, lead) = await host.CreateTrackAsync();
                 var kernel = host.Services.GetRequiredService<IPergaKernel>();
                 kernel.DispatchAdmission.SetDraining(true);
-                await kernel.AcceptMessageAsync(lead, new SendMessageRequest("durable", IdempotencyKey: "restart-drain"), default);
+                await kernel.SendSessionMessageAsync(lead, new(Content: "durable", RequestKey: "restart-drain"), new InteropPrincipal.Human(), default);
                 Assert.Empty(host.AgentRuntime.ExecutedTurns);
             }
             await using var restarted = new PergaHostTestCluster(directory.FullName);
@@ -354,7 +362,7 @@ public sealed class SystemUpgradeTests
         host.Services.GetRequiredService<Perga.Host.Configuration.PergaHostOptions>().InstallationRoot = host.DataDir;
         var kernel = host.Services.GetRequiredService<IPergaKernel>();
         var principal = new McpSessionPrincipal("test", track, lead, false, null, null, []);
-        var subagent = await kernel.CreateSubagentSessionAsync(track, new CreateSessionRequest(), default);
+        var subagent = (await kernel.CreateSessionAsync(track, new CreateSessionRequest(), Guid.NewGuid().ToString("N"), new InteropPrincipal.Human(), default)).Receipt.Session;
         foreach (var name in new[] { KernelMcpToolNames.SystemUpgradeCheck, KernelMcpToolNames.SystemUpgradeApply, KernelMcpToolNames.SystemUpgradeRollback })
         {
             var args = JsonSerializer.SerializeToElement(name == KernelMcpToolNames.SystemUpgradeApply ? new { sourceId = "trusted" } : (object)new { });
@@ -422,7 +430,7 @@ public sealed class SystemUpgradeTests
             returned.SetResult();
             yield return new UnifiedAgentEvent.TurnCompleted(new TokenUsage(1, 1, 0, 100000));
         }
-        await kernel.AcceptMessageAsync(lead, new SendMessageRequest("upgrade", "upgrade-from-provider"), default);
+        await kernel.SendSessionMessageAsync(lead, new(Content: "upgrade", RequestKey: "upgrade-from-provider"), new InteropPrincipal.Human(), default);
         await returned.Task.WaitAsync(Deadline);
         await kernel.WaitForTrackIdleAsync(track).WaitAsync(Deadline);
         Assert.True(kernel.DispatchAdmission.Draining);
@@ -436,8 +444,8 @@ public sealed class SystemUpgradeTests
         var (track, _) = await host.CreateTrackAsync();
         var kernel = host.Services.GetRequiredService<IPergaKernel>();
         kernel.DispatchAdmission.SetDraining(true);
-        var dispatched = await kernel.DispatchWorkerAsync(track, new("Inspect the report"), "drained-worker", null, default);
-        Assert.Equal(TaskRunStatus.Pending, dispatched.Task.Status);
+        var dispatched = await kernel.CreateSessionAsync(track, new(Prompt: "Inspect the report", Task: new()), "drained-worker", new InteropPrincipal.Human(), default);
+        Assert.Equal(TaskRunStatus.Pending, dispatched.Receipt.Task!.Status);
         Assert.Empty(host.AgentRuntime.OpenedSessions);
         Assert.Equal(0, kernel.DispatchAdmission.ActiveDispatches);
         kernel.DispatchAdmission.SetDraining(false);
@@ -505,7 +513,7 @@ public sealed class SystemUpgradeTests
             yield return new UnifiedAgentEvent.TurnCompleted(new TokenUsage(1, 1, 0, 100000));
         }
         var kernel = host.Services.GetRequiredService<IPergaKernel>();
-        await kernel.AcceptMessageAsync(lead, new SendMessageRequest("busy", "receipt-busy"), default);
+        await kernel.SendSessionMessageAsync(lead, new(Content: "busy", RequestKey: "receipt-busy"), new InteropPrincipal.Human(), default);
         await started.Task.WaitAsync(Deadline);
         source.Value = new("busy-receipt", "old", "new", "succeeded", null, null, track, 1234, ["templates"]);
         for (var i = 0; i < 5; i++) await kernel.UpgradeReceipts.ImportAsync(default);

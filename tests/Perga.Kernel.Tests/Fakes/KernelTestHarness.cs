@@ -500,6 +500,15 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
         lock (_gate)
         {
             _reports[trackId] = report;
+            if (dispatch?.Session is { } allocated)
+            {
+                var task = syncedTasks.Single(t => t.TaskKey == dispatch.TaskKey);
+                var parent = authorSessionId is null ? null : _sessions[authorSessionId];
+                allocated = allocated with { BoundTaskId = task.Id, ParentSessionId = parent?.Id,
+                    SpawnDepth = parent is null ? 0 : parent.SpawnDepth + 1 };
+                _sessions[allocated.Id] = allocated;
+                _sessionCreations[(trackId, dispatch.AuthorId, dispatch.RequestKey)] = new(dispatch.RequestHash, allocated, null);
+            }
             if (authorSessionId is null && dispatch is null) EnqueueWakeLocked(TrackWakeRequests.Report(trackId, report.DocRev, evt.Payload));
             _revisions[(trackId, report.DocRev)] = compressedRevisionBlocks.ToArray();
             _tasksByTrack[trackId] = syncedTasks.ToList();
@@ -521,7 +530,7 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
         EventEnvelopeDto? evt,
         CancellationToken ct,
         AgentSessionDto? session = null,
-        EventEnvelopeDto? sessionEvent = null, string? wakePrompt = null)
+        EventEnvelopeDto? sessionEvent = null, string? wakePrompt = null, SessionMessage? initialMessage = null)
     {
         lock (_gate)
         {
@@ -529,6 +538,7 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
                 _sessions[session.Id] = session;
             if (sessionEvent is not null)
                 AppendEventLocked(sessionEvent);
+            if (initialMessage is not null) _messages.Add(Key(initialMessage), initialMessage);
             if (!_tasksByTrack.TryGetValue(task.TrackId, out var list))
             {
                 list = [];
@@ -545,7 +555,16 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
                 list.Add(task);
             }
 
-            if (attempt?.FinishedAtMs is not null) EnqueueWakeLocked(TrackWakeRequests.TaskSettled(task, attempt, wakePrompt), once: true);
+            if (attempt?.FinishedAtMs is not null)
+            {
+                var child = attempt.SessionId is { } childId ? _sessions.GetValueOrDefault(childId) : null;
+                if (child?.ParentSessionId is { } parentId)
+                {
+                    if (child.NotifyParent == "task_settled" && _sessions.GetValueOrDefault(parentId)?.ArchivedAtMs is null)
+                        EnqueueWakeLocked(TrackWakeRequests.TaskSettled(task, attempt, wakePrompt) with { TargetSessionId = parentId }, once: true);
+                }
+                else EnqueueWakeLocked(TrackWakeRequests.TaskSettled(task, attempt, wakePrompt), once: true);
+            }
             if (attempt is not null)
             {
                 if (!_attemptsByTask.TryGetValue(task.Id, out var attList))
@@ -847,12 +866,14 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
         }
     }
 
-    public Task AppendEventAsync(EventEnvelopeDto evt, CancellationToken ct)
+    public Func<EventEnvelopeDto, Task>? BeforeEventAppend { get; set; }
+
+    public async Task AppendEventAsync(EventEnvelopeDto evt, CancellationToken ct)
     {
+        if (BeforeEventAppend is { } before) await before(evt);
         lock (_gate)
         {
             AppendEventLocked(evt);
-            return Task.CompletedTask;
         }
     }
 
@@ -1517,13 +1538,15 @@ internal sealed class ScriptableFakeAgentSession : IAgentSession
             : Task.FromResult(new NativeCompactResult(null, "Context compacted."));
     }
 
+    public SteerDelivery SteerResult { get; set; } = SteerDelivery.Accepted;
+
     public Task<SteerDelivery> SteerAsync(string turnCorrelationId, string message, CancellationToken ct)
     {
         if (!SupportsNativeSteer)
             return Task.FromResult(SteerDelivery.Declined);
 
         SteeredMessages.Enqueue(message);
-        return Task.FromResult(SteerDelivery.Accepted);
+        return Task.FromResult(SteerResult);
     }
 
     public bool ShutdownConfirmed { get; set; } = true;
@@ -1614,6 +1637,7 @@ internal sealed class SpyWorkspaceDriver : IWorkspaceDriver
     public string? OverrideMountedMergedCwd { get; set; }
     public bool VerifyMountOnAccess { get; set; }
     public bool CreateLeaseDirectories { get; set; }
+    public Task? ProvisionGate { get; set; }
 
     public ConcurrentQueue<WorkspaceProvisionRequest> ProvisionCalls { get; } = new();
     public ConcurrentQueue<WorkspaceSpec> EnsureMountedCalls { get; } = new();
@@ -1622,19 +1646,20 @@ internal sealed class SpyWorkspaceDriver : IWorkspaceDriver
     public ConcurrentQueue<WorkspaceSpec> TeardownCalls { get; } = new();
     public ConcurrentQueue<string> LifecycleTimeline { get; } = new();
 
-    public Task<WorkspaceSpec> ProvisionTrackAsync(WorkspaceProvisionRequest req, CancellationToken ct = default)
+    public async Task<WorkspaceSpec> ProvisionTrackAsync(WorkspaceProvisionRequest req, CancellationToken ct = default)
     {
         ProvisionCalls.Enqueue(req);
+        if (ProvisionGate is { } gate) await gate.WaitAsync(ct);
         LifecycleTimeline.Enqueue($"provision:{req.TrackId}");
         var merged = OverrideMountedMergedCwd ?? req.SourcePath;
-        return Task.FromResult(new WorkspaceSpec(
+        return new WorkspaceSpec(
             DriverId: DriverId,
             LogicalRoot: req.SourcePath,
             LowerDirs: req.LowerCacheDirs,
             UpperDir: null,
             WorkDir: null,
             MergedCwd: merged,
-            Metadata: TestJson.Parse("{}")));
+            Metadata: TestJson.Parse("{}"));
     }
 
     public Task<MountedWorkspace> EnsureMountedAsync(WorkspaceSpec spec, CancellationToken ct = default)

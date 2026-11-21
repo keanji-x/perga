@@ -374,7 +374,7 @@ public sealed class ApiV1AuditFixesIntegrationTests
         };
         msgReq.Headers.Add("Idempotency-Key", "idem-msg-1");
         using var msgResp = await client.SendAsync(msgReq);
-        Assert.Equal(HttpStatusCode.Accepted, msgResp.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, msgResp.StatusCode);
 
         // Wait for background firstMessage turn to enter StreamTurnAsync -> verify 409 Conflict on PATCH model while running!
         await turnStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -439,16 +439,16 @@ public sealed class ApiV1AuditFixesIntegrationTests
         var sub2 = (await subResp2.Content.ReadFromJsonAsync<SessionCreationReceipt>(PergaJsonDefaults.ApiOptions))!;
         Assert.Equal(sub1.Session.Id, sub2.Session.Id);
 
-        // 5. Generate additional durable items (202 Accepted SessionInputReceipt) and test ?beforeId=...&limit=...
+        // 5. Generate additional durable items (unified message receipts) and test ?beforeId=...&limit=...
         using var msg2Req = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/sessions/{leadSessionId}/messages")
         {
             Content = JsonContent.Create(new { content = "Turn 2" })
         };
         msg2Req.Headers.Add("Idempotency-Key", "idem-msg-2");
         using var msg2 = await client.SendAsync(msg2Req);
-        Assert.Equal(HttpStatusCode.Accepted, msg2.StatusCode);
-        var receipt2 = (await msg2.Content.ReadFromJsonAsync<SessionInputReceipt>(PergaJsonDefaults.ApiOptions))!;
-        Assert.False(string.IsNullOrWhiteSpace(receipt2.InputId));
+        Assert.Equal(HttpStatusCode.OK, msg2.StatusCode);
+        var receipt2 = (await msg2.Content.ReadFromJsonAsync<SessionMessageReceipt>(PergaJsonDefaults.ApiOptions))!;
+        Assert.False(string.IsNullOrWhiteSpace(receipt2.MessageId));
         await kernel.WaitForTrackIdleAsync(trackId);
 
         using var msg3Req = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/sessions/{leadSessionId}/messages")
@@ -457,7 +457,7 @@ public sealed class ApiV1AuditFixesIntegrationTests
         };
         msg3Req.Headers.Add("Idempotency-Key", "idem-msg-3");
         using var msg3 = await client.SendAsync(msg3Req);
-        Assert.Equal(HttpStatusCode.Accepted, msg3.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, msg3.StatusCode);
         await kernel.WaitForTrackIdleAsync(trackId);
 
         // Also verify durable turn conclusive error persists `turn_outcome` item in /items!
@@ -468,7 +468,7 @@ public sealed class ApiV1AuditFixesIntegrationTests
         };
         msgFailReq.Headers.Add("Idempotency-Key", "idem-msg-4-fail");
         using var msgFail = await client.SendAsync(msgFailReq);
-        Assert.Equal(HttpStatusCode.Accepted, msgFail.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, msgFail.StatusCode);
         await kernel.WaitForTrackIdleAsync(trackId);
 
         using var fullPageResp = await client.GetAsync($"/api/v1/sessions/{leadSessionId}/items?limit=100");

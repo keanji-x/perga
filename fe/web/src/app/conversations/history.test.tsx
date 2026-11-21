@@ -1,6 +1,5 @@
 import { fixtureSession } from '../router/session-contract-fixture.ts';
 import { sessionPage, sessionItem } from '../router/conversation-session-data.ts';
-import { conversationCursorSchema } from '../../../../core/api/schemas.ts';
 // @vitest-environment jsdom
 import { createElement, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -43,10 +42,10 @@ function setup() {
   let held: ReturnType<typeof deferred<Row[]>> | null = null;
   const options = pageOptions({ send: async request => {
     paths.push(request.path);
-    if (earlierFails && new URL(request.path, 'http://fixture').searchParams.has('cursor')) {
+    if (earlierFails && new URL(request.path, 'http://fixture').searchParams.has('beforeId')) {
       return { status: 503, statusText: 'Unavailable', body: { error: 'history expired' } };
     }
-    const body = !new URL(request.path, 'http://fixture').searchParams.has('cursor') ? newest : await (held?.promise ?? earlier);
+    const body = !new URL(request.path, 'http://fixture').searchParams.has('beforeId') ? newest : await (held?.promise ?? earlier);
     return { status: 200, statusText: 'OK', body: sessionPage(fixtureSession('card', 'track'),
       [...(body.length === 60 ? [sessionItem('card', body[0].cursor.position - 1, '')] : []),
         ...body.map(row => sessionItem('card', row.cursor.position, ''))]) };
@@ -77,7 +76,7 @@ it('refreshes latest facts with two cached windows without replaying old HTTP an
   await act(async () => { await view.client.invalidateQueries({ queryKey: view.key }); });
   await waitFor(() => expect(historyRows(view.result.current.history.data).map(row => row.cursor.position)).toEqual(rows(1, 121).map(row => row.cursor.position)));
   expect(historyRows(view.result.current.history.data)[0]).toBe(older[0]);
-  expect(view.paths.map(path => { const value = new URL(path, 'http://test').searchParams.get('cursor'); return value === null ? null : conversationCursorSchema.parse(JSON.parse(value)); })).toEqual([null, cursor(61), null]);
+  expect(view.paths.map(path => { const value = new URL(path, 'http://test').searchParams.get('beforeId'); return value === null ? null : cursor(Number(value)); })).toEqual([null, cursor(61), null]);
   expect(view.result.current.reads.startOf(view.result.current.history.data)).toBeGreaterThan(before);
   view.client.clear();
 });
@@ -206,7 +205,7 @@ it('retires an old cursor error when a real latest read supersedes it without re
   await waitFor(() => expect(view.result.current.history.earlier.cursor).toBe(181));
   expect(view.result.current.history.error).toBeNull();
   expect(view.result.current.history.earlier.failed).toBe(false);
-  expect(view.paths.map(path => { const value = new URL(path, 'http://test').searchParams.get('cursor'); return value === null ? null : conversationCursorSchema.parse(JSON.parse(value)); })).toEqual([null, cursor(61), null]);
+  expect(view.paths.map(path => { const value = new URL(path, 'http://test').searchParams.get('beforeId'); return value === null ? null : cursor(Number(value)); })).toEqual([null, cursor(61), null]);
   view.client.clear();
 });
 
@@ -223,7 +222,7 @@ it('keeps a remounted owner’s equal latest read ahead of an earlier response f
   act(() => { held.resolve(rows(1)); });
   await waitFor(() => expect(view.client.isMutating()).toBe(0));
   expect(historyRows(reopened.result.current.history.data)).toHaveLength(60);
-  expect(view.paths.map(path => { const value = new URL(path, 'http://test').searchParams.get('cursor'); return value === null ? null : conversationCursorSchema.parse(JSON.parse(value)); })).toEqual([null, cursor(61), null]);
+  expect(view.paths.map(path => { const value = new URL(path, 'http://test').searchParams.get('beforeId'); return value === null ? null : cursor(Number(value)); })).toEqual([null, cursor(61), null]);
   reopened.unmount(); view.client.clear();
 });
 

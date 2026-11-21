@@ -292,7 +292,7 @@ public sealed class ApiV1RestIntegrationTests
         Assert.Null(subSession.BoundAttemptId);
 
         using var listSessionsResp = await client.GetAsync($"/api/v1/tracks/{trackId}/sessions");
-        var sessions = (await listSessionsResp.Content.ReadFromJsonAsync<List<AgentSessionDto>>(PergaJsonDefaults.ApiOptions))!;
+        var sessions = (await listSessionsResp.Content.ReadFromJsonAsync<List<SessionSummaryDto>>(PergaJsonDefaults.ApiOptions))!;
         Assert.Equal(2, sessions.Count);
 
         // 2. POST /api/v1/sessions/{sessionId}/messages requires Idempotency-Key -> 400 when missing!
@@ -301,7 +301,7 @@ public sealed class ApiV1RestIntegrationTests
             new { content = "Hello without header" });
         Assert.Equal(HttpStatusCode.BadRequest, missingIdemResp.StatusCode);
         using var missingIdemDoc = JsonDocument.Parse(await missingIdemResp.Content.ReadAsStringAsync());
-        Assert.Equal("missing_idempotency_key", missingIdemDoc.RootElement.GetProperty("code").GetString());
+        Assert.Equal("invalid_argument", missingIdemDoc.RootElement.GetProperty("code").GetString());
 
         // Valid message with Idempotency-Key + duplicate Idempotency-Key deduplication
         using var msgReq1 = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/sessions/{leadSessionId}/messages")
@@ -310,9 +310,9 @@ public sealed class ApiV1RestIntegrationTests
         };
         msgReq1.Headers.Add("Idempotency-Key", "idem-turn-1");
         using var msgResp1 = await client.SendAsync(msgReq1);
-        Assert.Equal(HttpStatusCode.Accepted, msgResp1.StatusCode);
-        var turn1 = (await msgResp1.Content.ReadFromJsonAsync<SessionInputReceipt>(PergaJsonDefaults.ApiOptions))!;
-        Assert.Equal("queued", turn1.TurnStatus);
+        Assert.Equal(HttpStatusCode.OK, msgResp1.StatusCode);
+        var turn1 = (await msgResp1.Content.ReadFromJsonAsync<SessionMessageReceipt>(PergaJsonDefaults.ApiOptions))!;
+        Assert.Equal("accepted", turn1.Delivery);
         await cluster.Services.GetRequiredService<IPergaKernel>().WaitForTrackIdleAsync(trackId);
 
         using var msgReqDup = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/sessions/{leadSessionId}/messages")
@@ -321,9 +321,9 @@ public sealed class ApiV1RestIntegrationTests
         };
         msgReqDup.Headers.Add("Idempotency-Key", "idem-turn-1");
         using var msgRespDup = await client.SendAsync(msgReqDup);
-        var turnDup = (await msgRespDup.Content.ReadFromJsonAsync<SessionInputReceipt>(PergaJsonDefaults.ApiOptions))!;
+        var turnDup = (await msgRespDup.Content.ReadFromJsonAsync<SessionMessageReceipt>(PergaJsonDefaults.ApiOptions))!;
         Assert.Equal(turn1.TurnId, turnDup.TurnId);
-        Assert.Equal("completed", turnDup.TurnStatus);
+        Assert.Equal("delivered", turnDup.Delivery);
 
         // GET /api/v1/sessions/{sessionId}/items?afterId=0&limit=100
         using var itemsResp = await client.GetAsync($"/api/v1/sessions/{leadSessionId}/items?afterId=0&limit=100");
@@ -360,15 +360,15 @@ public sealed class ApiV1RestIntegrationTests
         };
         inFlightReq.Headers.Add("Idempotency-Key", "idem-slow-1");
         using var inFlightResponse = await client.SendAsync(inFlightReq);
-        Assert.Equal(HttpStatusCode.Accepted, inFlightResponse.StatusCode);
-        var inFlight = (await inFlightResponse.Content.ReadFromJsonAsync<SessionInputReceipt>(PergaJsonDefaults.ApiOptions))!;
+        Assert.Equal(HttpStatusCode.OK, inFlightResponse.StatusCode);
+        var inFlight = (await inFlightResponse.Content.ReadFromJsonAsync<SessionMessageReceipt>(PergaJsonDefaults.ApiOptions))!;
 
         await turnEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
-        // Concurrent without steerIfRunning -> 409 Conflict
+        // Concurrent default send -> 409 Conflict
         using var busyReq = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/sessions/{subSession.Id}/messages")
         {
-            Content = JsonContent.Create(new { content = "Concurrent conflict", steerIfRunning = false })
+            Content = JsonContent.Create(new { content = "Concurrent conflict", mode = "default" })
         };
         busyReq.Headers.Add("Idempotency-Key", "idem-busy");
         using var busyResp = await client.SendAsync(busyReq);
@@ -376,56 +376,55 @@ public sealed class ApiV1RestIntegrationTests
 
         using var queueReq = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/sessions/{subSession.Id}/messages")
         {
-            Content = JsonContent.Create(new { content = "Queue while running", queueIfBusy = true })
+            Content = JsonContent.Create(new { content = "Queue while running", mode = "queue" })
         };
         queueReq.Headers.Add("Idempotency-Key", "idem-queue");
         using var queueResp = await client.SendAsync(queueReq);
-        Assert.Equal(HttpStatusCode.Accepted, queueResp.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, queueResp.StatusCode);
         Assert.DoesNotContain("Queue while running", steeredPrompts);
-        var queued = (await queueResp.Content.ReadFromJsonAsync<QueuedMessageReceipt>(PergaJsonDefaults.ApiOptions))!;
-        Assert.True(queued.Queued);
+        var queued = (await queueResp.Content.ReadFromJsonAsync<SessionMessageReceipt>(PergaJsonDefaults.ApiOptions))!;
+        Assert.Equal("queued", queued.Delivery);
         var pending = await client.GetFromJsonAsync<SessionItemsPageDto>($"/api/v1/sessions/{subSession.Id}/items", PergaJsonDefaults.ApiOptions);
-        Assert.Contains(pending!.QueuedMessages, message => message.Id == queued.InputId && message.State == "waiting");
+        Assert.Contains(pending!.QueuedMessages, message => message.Id == queued.MessageId && message.State == "waiting");
         Assert.True(pending.CanSteer);
 
         using var sendNow = await client.PostAsJsonAsync(
-            $"/api/v1/sessions/{subSession.Id}/messages/queue/{queued.InputId}/steer",
-            new { turnId = inFlight.TurnId });
+            $"/api/v1/sessions/{subSession.Id}/messages",
+            new { messageId = queued.MessageId, mode = "steer", turnId = inFlight.TurnId });
         Assert.Equal(HttpStatusCode.OK, sendNow.StatusCode);
-        var sentNow = (await sendNow.Content.ReadFromJsonAsync<SteeringResult>(PergaJsonDefaults.ApiOptions))!;
-        Assert.Equal("accepted", sentNow.Delivery);
+        var sentNow = (await sendNow.Content.ReadFromJsonAsync<SessionMessageReceipt>(PergaJsonDefaults.ApiOptions))!;
+        Assert.Equal("delivered", sentNow.Delivery);
         Assert.Single(steeredPrompts, text => text == "Queue while running");
         var afterSteer = await client.GetFromJsonAsync<SessionItemsPageDto>($"/api/v1/sessions/{subSession.Id}/items", PergaJsonDefaults.ApiOptions);
-        Assert.DoesNotContain(afterSteer!.QueuedMessages, message => message.Id == queued.InputId);
+        Assert.DoesNotContain(afterSteer!.QueuedMessages, message => message.Id == queued.MessageId);
         Assert.Equal("processing", Assert.Single(afterSteer.Items, item => item.Kind == "user" &&
             item.Payload.TryGetProperty("inputId", out var id) && id.GetString() == queued.MessageId).MessageStatus);
 
 
-        // Concurrent WITH steerIfRunning: true -> 200 steers active turn!
+        // Explicit steer -> 200 steers active turn!
         using var steerReq = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/sessions/{subSession.Id}/messages")
         {
-            Content = JsonContent.Create(new { content = "Adjust course now", steerIfRunning = true })
+            Content = JsonContent.Create(new { content = "Adjust course now", mode = "steer", turnId = inFlight.TurnId })
         };
         steerReq.Headers.Add("Idempotency-Key", "idem-steer");
         using var steerResp = await client.SendAsync(steerReq);
         Assert.Equal(HttpStatusCode.OK, steerResp.StatusCode);
         Assert.Contains("Adjust course now", steeredPrompts);
 
-        using var supplement = await client.PostAsJsonAsync($"/api/v1/sessions/{subSession.Id}/messages/steer",
-            new { turnId = inFlight.TurnId, content = "Supplement the running turn" });
+        using var supplement = await SendMessageAsync(client, $"/api/v1/sessions/{subSession.Id}/messages", new { mode = "steer", turnId = inFlight.TurnId, content = "Supplement the running turn" });
         Assert.Equal(HttpStatusCode.OK, supplement.StatusCode);
         Assert.Contains("Supplement the running turn", steeredPrompts);
 
-        // POST /api/v1/sessions/{sessionId}/interrupt -> cancels slow turn!
-        using var interruptResp = await client.PostAsJsonAsync($"/api/v1/sessions/{subSession.Id}/interrupt", new { turnId = inFlight.TurnId });
+        // POST /api/v1/sessions/{sessionId}/control -> cancels slow turn!
+        using var interruptResp = await client.PostAsJsonAsync($"/api/v1/sessions/{subSession.Id}/control", new { action = "stop", turnId = inFlight.TurnId });
         Assert.Equal(HttpStatusCode.OK, interruptResp.StatusCode);
 
         await cluster.Services.GetRequiredService<IPergaKernel>().WaitForTrackIdleAsync(trackId);
-        var interruptedTurn = await client.GetFromJsonAsync<SessionInputReceipt>(inFlight.StatusUrl, PergaJsonDefaults.ApiOptions);
-        Assert.Equal("unknown", interruptedTurn!.TurnStatus);
-        Assert.Equal("delivered", interruptedTurn.DeliveryState);
+        var interruptedTurn = await client.GetFromJsonAsync<SessionItemsPageDto>($"/api/v1/sessions/{subSession.Id}/items", PergaJsonDefaults.ApiOptions);
+        Assert.Equal("unknown", interruptedTurn!.LastTurn!.Status);
+        Assert.Equal(inFlight.TurnId, interruptedTurn.LastTurn!.Id);
 
-        // Restore fast handler & test POST /api/v1/sessions/{sessionId}/compact (Epoch 1 -> 2)
+        // Restore fast handler & test POST /api/v1/sessions/{sessionId}/control (Epoch 1 -> 2)
         cluster.AgentRuntime.SetTurnHandler(StreamHandoverTurnAsync);
 
         static async IAsyncEnumerable<UnifiedAgentEvent> StreamHandoverTurnAsync(
@@ -440,13 +439,13 @@ public sealed class ApiV1RestIntegrationTests
             yield return new UnifiedAgentEvent.TurnCompleted(new TokenUsage(50, 20, 0, 100_000));
         }
 
-        using var compactResp = await client.PostAsync($"/api/v1/sessions/{leadSessionId}/compact", null);
+        using var compactResp = await client.PostAsJsonAsync($"/api/v1/sessions/{leadSessionId}/control", new { action = "compact" });
         Assert.Equal(HttpStatusCode.OK, compactResp.StatusCode);
         var compacted = (await compactResp.Content.ReadFromJsonAsync<AgentSessionDto>(PergaJsonDefaults.ApiOptions))!;
         Assert.Equal(2, compacted.Epoch);
         Assert.Null(compacted.ContextUsage);
 
-        // 4. POST /api/v1/tracks/{trackId}/asks/{askId}/answer ({ answers: [...] } AND { answer: "..." })
+        // 4. POST /api/v1/sessions/{sessionId}/interactions/{askId}/respond ({ answers: [...] } AND { answer: "..." })
         var kernel = cluster.Services.GetRequiredService<IPergaKernel>();
         var askWaitTask = kernel.AskUserAsync(
             trackId,
@@ -469,14 +468,14 @@ public sealed class ApiV1RestIntegrationTests
         Assert.Equal(AskStatus.Open, openAsk!.Status);
 
         using var answerResp = await client.PostAsJsonAsync(
-            $"/api/v1/tracks/{trackId}/asks/{openAsk.Id}/answer",
+            $"/api/v1/sessions/{openAsk.SessionId}/interactions/{openAsk.Id}/respond",
             new { answers = new[] { "SQLite" } });
         Assert.Equal(HttpStatusCode.OK, answerResp.StatusCode);
         using var answeredDoc = JsonDocument.Parse(await answerResp.Content.ReadAsStringAsync());
-        Assert.Equal("answered", answeredDoc.RootElement.GetProperty("status").GetString());
+        Assert.Equal("ask", answeredDoc.RootElement.GetProperty("kind").GetString());
 
         var askResult = await askWaitTask.WaitAsync(TimeSpan.FromSeconds(5));
-        Assert.Equal("SQLite", askResult.GetProperty("answers")[0].GetString());
+        Assert.Equal("SQLite", askResult[0].GetString());
     }
 
     [Fact]
@@ -672,13 +671,13 @@ public sealed class ApiV1RestIntegrationTests
         var trackId = trackEl.GetProperty("id").GetString()!;
         var leadSessionId = trackEl.GetProperty("leadSessionId").GetString()!;
 
-        using var retiredAlias = await client.PutAsJsonAsync(
-            $"/api/v1/sessions/{leadSessionId}/permission-mode", new { permission_mode = "full" }, PergaJsonDefaults.ApiOptions);
+        using var retiredAlias = await client.PatchAsJsonAsync(
+            $"/api/v1/sessions/{leadSessionId}", new { permission_mode = "full" }, PergaJsonDefaults.ApiOptions);
         Assert.Equal(HttpStatusCode.BadRequest, retiredAlias.StatusCode);
 
         // 1. Lead session defaults to provider's default ("never" for codex) and can switch to "full".
-        using var putLeadFull = await client.PutAsJsonAsync(
-            $"/api/v1/sessions/{leadSessionId}/permission-mode",
+        using var putLeadFull = await client.PatchAsJsonAsync(
+            $"/api/v1/sessions/{leadSessionId}",
             new { permissionMode = "full" },
             PergaJsonDefaults.ApiOptions);
         Assert.Equal(HttpStatusCode.OK, putLeadFull.StatusCode);
@@ -697,22 +696,22 @@ public sealed class ApiV1RestIntegrationTests
         Assert.Equal("acceptEdits", createdSub.Session.PermissionMode);
 
         // 3. Switch Assistant session to "bypassPermissions" and verify persistence in GET /sessions.
-        using var putSubBypass = await client.PutAsJsonAsync(
-            $"/api/v1/sessions/{createdSub.Session.Id}/permission-mode",
+        using var putSubBypass = await client.PatchAsJsonAsync(
+            $"/api/v1/sessions/{createdSub.Session.Id}",
             new { permissionMode = "bypassPermissions" },
             PergaJsonDefaults.ApiOptions);
         Assert.Equal(HttpStatusCode.OK, putSubBypass.StatusCode);
         var updatedSub = (await putSubBypass.Content.ReadFromJsonAsync<AgentSessionDto>(PergaJsonDefaults.ApiOptions))!;
         Assert.Equal("bypassPermissions", updatedSub.PermissionMode);
 
-        var sessions = (await client.GetFromJsonAsync<List<AgentSessionDto>>(
+        var sessions = (await client.GetFromJsonAsync<List<SessionSummaryDto>>(
             $"/api/v1/tracks/{trackId}/sessions", PergaJsonDefaults.ApiOptions))!;
-        Assert.Equal("full", sessions.Single(s => s.Id == leadSessionId).PermissionMode);
-        Assert.Equal("bypassPermissions", sessions.Single(s => s.Id == createdSub.Session.Id).PermissionMode);
+        Assert.Equal("full", sessions.Single(s => s.Session.Id == leadSessionId).Session.PermissionMode);
+        Assert.Equal("bypassPermissions", sessions.Single(s => s.Session.Id == createdSub.Session.Id).Session.PermissionMode);
 
         // 4. Unsupported mode for provider returns 400.
-        using var putInvalid = await client.PutAsJsonAsync(
-            $"/api/v1/sessions/{leadSessionId}/permission-mode",
+        using var putInvalid = await client.PatchAsJsonAsync(
+            $"/api/v1/sessions/{leadSessionId}",
             new { permissionMode = "bypassPermissions" },
             PergaJsonDefaults.ApiOptions);
         Assert.Equal(HttpStatusCode.BadRequest, putInvalid.StatusCode);
@@ -726,4 +725,11 @@ public sealed class ApiV1RestIntegrationTests
         using var conflictSubResp = await client.SendAsync(conflictSubReq);
         Assert.Equal(HttpStatusCode.Conflict, conflictSubResp.StatusCode);
     }
+    private static async Task<HttpResponseMessage> SendMessageAsync(HttpClient client, string path, object body)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, path) { Content = JsonContent.Create(body) };
+        request.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString("N"));
+        return await client.SendAsync(request);
+    }
+
 }

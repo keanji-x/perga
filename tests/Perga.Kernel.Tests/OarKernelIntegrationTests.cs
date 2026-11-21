@@ -56,7 +56,7 @@ public sealed class OarKernelIntegrationTests : IDisposable
 
             var turn = await ctx.SendAndWaitForTurnAsync(
                 snap.Track.LeadSessionId!,
-                new SendMessageRequest($"Hello {provider}", $"corr-{provider}"));
+                new SendSessionMessageRequest($"Hello {provider}", $"corr-{provider}"));
             Assert.Equal("completed", turn.Status);
         }
 
@@ -93,12 +93,12 @@ public sealed class OarKernelIntegrationTests : IDisposable
         await ctx.Kernel.Actors.GetOrActivate(snap.Track.Id).EnsureMountedAsync();
         var leadId = snap.Track.LeadSessionId!;
 
-        var firstTurn = await ctx.SendAndWaitForTurnAsync(leadId, new SendMessageRequest("turn 1", "turn-1"));
+        var firstTurn = await ctx.SendAndWaitForTurnAsync(leadId, new SendSessionMessageRequest("turn 1", "turn-1"));
         Assert.Equal("completed", firstTurn.Status);
 
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => ctx.Kernel.CompactSessionAsync(leadId));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => ctx.Kernel.ControlSessionAsync(leadId, new("compact"), new InteropPrincipal.Human(), default));
 
-        var recoveredTurn = await ctx.SendAndWaitForTurnAsync(leadId, new SendMessageRequest("turn 2 after cancel", "turn-2"));
+        var recoveredTurn = await ctx.SendAndWaitForTurnAsync(leadId, new SendSessionMessageRequest("turn 2 after cancel", "turn-2"));
         Assert.Equal("completed", recoveredTurn.Status);
 
         var openLines = (await File.ReadAllLinesAsync(_logPath))
@@ -131,48 +131,35 @@ public sealed class OarKernelIntegrationTests : IDisposable
             Provider: "codex"));
         await ctx.Kernel.Actors.GetOrActivate(snap.Track.Id).EnsureMountedAsync();
 
-        var dispatched = await ctx.Kernel.DispatchWorkerAsync(
-            snap.Track.Id,
-            new DispatchWorkerRequest("Run initial worker turn", Provider: "codex"),
-            "worker-settings-dispatch",
-            null,
-            CancellationToken.None);
+        var dispatched = await ctx.Kernel.CreateSessionAsync(snap.Track.Id, new(Prompt: "Run initial worker turn", Task: new(), Provider: "codex"), "worker-settings-dispatch", new InteropPrincipal.Human(), CancellationToken.None);
         await ctx.Kernel.WaitForTrackIdleAsync(snap.Track.Id);
 
-        var worker = Assert.Single(await ctx.Kernel.ListSessionsAsync(snap.Track.Id), s => s.BoundTaskId == dispatched.Task.Id);
+        var worker = Assert.Single((await ctx.Kernel.ListSessionsAsync(snap.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray(), s => s.BoundTaskId == dispatched.Receipt.Task!.Id);
         var attemptId = worker.BoundAttemptId!;
 
-        var itemsPage = await ctx.Kernel.GetSessionItemsAsync(worker.Id);
-        var workerConfig = Assert.IsType<WorkerProviderConfiguration>(itemsPage.Worker?.ProviderConfiguration);
+        var itemsPage = await ctx.Kernel.GetSessionItemsAsync(worker.Id, new(), new InteropPrincipal.Human(), default);
+        var workerConfig = Assert.IsType<SessionCapabilitiesDto>(itemsPage.Capabilities);
         Assert.Equal("gpt-5.4", workerConfig.DefaultModel);
         Assert.Equal("low", workerConfig.DefaultReasoningEffort);
         Assert.Contains(workerConfig.Models, m => m.Id == "gpt-5.4-mini");
 
         // Switch Worker to gpt-5.4-mini / low and verify next turn reopens OAR session with those exact selections.
-        var updated = await ctx.Kernel.UpdateWorkerSettingsAsync(
-            worker.Id,
-            new UpdateWorkerSettingsRequest(attemptId, 0, "gpt-5.4-mini", "low", "ask"),
-            null,
-            CancellationToken.None);
+        var updated = await ctx.Kernel.UpdateSessionAsync(worker.Id, new(ExpectedConfigVersion: 0, Model: new("gpt-5.4-mini"), ReasoningEffort: new("low"), ExpectedAttemptId: attemptId), new InteropPrincipal.Human(), CancellationToken.None);
         Assert.Equal("gpt-5.4-mini", updated.Model);
         Assert.Equal("low", updated.ReasoningEffort);
 
-        await ctx.Kernel.SendWorkerMessageAsync(worker.Id, new WorkerMessageRequest(attemptId, "Second worker turn", "worker-turn-2"), null, CancellationToken.None);
+        await ctx.Kernel.SendSessionMessageAsync(worker.Id, new(Content: "Second worker turn", RequestKey: "worker-turn-2", Mode: "default", TurnId: null, ExpectedAttemptId: attemptId), new InteropPrincipal.Human(), CancellationToken.None);
         await ctx.Kernel.WaitForTrackIdleAsync(snap.Track.Id);
         var turnsAfterSwitch = ctx.Store.GetTurnsForSession(worker.Id);
         Assert.Equal(2, turnsAfterSwitch.Count);
         Assert.All(turnsAfterSwitch, t => Assert.Equal("completed", t.Status));
 
         // Reset Worker back to provider defaults (null/null) and verify OAR session reopens on gpt-5.4 / low.
-        var restored = await ctx.Kernel.UpdateWorkerSettingsAsync(
-            worker.Id,
-            new UpdateWorkerSettingsRequest(attemptId, 1, null, null, "ask"),
-            null,
-            CancellationToken.None);
+        var restored = await ctx.Kernel.UpdateSessionAsync(worker.Id, new(ExpectedConfigVersion: 1, Model: new(null), ReasoningEffort: new(null), ExpectedAttemptId: attemptId), new InteropPrincipal.Human(), CancellationToken.None);
         Assert.Null(restored.Model);
         Assert.Null(restored.ReasoningEffort);
 
-        await ctx.Kernel.SendWorkerMessageAsync(worker.Id, new WorkerMessageRequest(attemptId, "Third worker turn", "worker-turn-3"), null, CancellationToken.None);
+        await ctx.Kernel.SendSessionMessageAsync(worker.Id, new(Content: "Third worker turn", RequestKey: "worker-turn-3", Mode: "default", TurnId: null, ExpectedAttemptId: attemptId), new InteropPrincipal.Human(), CancellationToken.None);
         await ctx.Kernel.WaitForTrackIdleAsync(snap.Track.Id);
         var turnsAfterRestore = ctx.Store.GetTurnsForSession(worker.Id);
         Assert.Equal(3, turnsAfterRestore.Count);
@@ -182,17 +169,17 @@ public sealed class OarKernelIntegrationTests : IDisposable
             .Where(l => l.Contains("\"method\":\"session/open\"", StringComparison.Ordinal))
             .ToArray();
         Assert.Equal(3, openLines.Length);
-        Assert.Contains("\"configureWorker\":true", openLines[0], StringComparison.Ordinal);
+        Assert.DoesNotContain("configureWorker", openLines[0], StringComparison.Ordinal);
         Assert.Contains("\"resume\":\"codex-sess-1\"", openLines[1], StringComparison.Ordinal);
         Assert.Contains("\"model\":\"gpt-5.4-mini\"", openLines[1], StringComparison.Ordinal);
         Assert.Contains("\"effort\":\"low\"", openLines[1], StringComparison.Ordinal);
         Assert.Contains("\"resume\":\"codex-sess-1\"", openLines[2], StringComparison.Ordinal);
-        Assert.Contains("\"model\":\"gpt-5.4\"", openLines[2], StringComparison.Ordinal);
-        Assert.Contains("\"effort\":\"low\"", openLines[2], StringComparison.Ordinal);
+        Assert.Contains("\"model\":null", openLines[2], StringComparison.Ordinal);
+        Assert.Contains("\"effort\":null", openLines[2], StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task WorkerFirstTurnReconcilesNullNativeEffortAgainstDiscoveredCatalogDefault()
+    public async Task WorkerFirstTurnUsesTheSharedProviderDefaultConfiguration()
     {
         await using var runtime = new AgentRuntime(new AgentRuntimeOptions
         {
@@ -218,26 +205,19 @@ public sealed class OarKernelIntegrationTests : IDisposable
             Provider: "codex"));
         await ctx.Kernel.Actors.GetOrActivate(snap.Track.Id).EnsureMountedAsync();
 
-        var dispatched = await ctx.Kernel.DispatchWorkerAsync(
-            snap.Track.Id,
-            new DispatchWorkerRequest("Run turn with null native effort", Provider: "codex"),
-            "worker-null-effort-dispatch",
-            null,
-            CancellationToken.None);
+        var dispatched = await ctx.Kernel.CreateSessionAsync(snap.Track.Id, new(Prompt: "Run turn with null native effort", Task: new(), Provider: "codex"), "worker-null-effort-dispatch", new InteropPrincipal.Human(), CancellationToken.None);
         await ctx.Kernel.WaitForTrackIdleAsync(snap.Track.Id);
 
-        var worker = Assert.Single(await ctx.Kernel.ListSessionsAsync(snap.Track.Id), s => s.BoundTaskId == dispatched.Task.Id);
+        var worker = Assert.Single((await ctx.Kernel.ListSessionsAsync(snap.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray(), s => s.BoundTaskId == dispatched.Receipt.Task!.Id);
         var turn = Assert.Single(ctx.Store.GetTurnsForSession(worker.Id));
         Assert.Equal("completed", turn.Status);
 
         var logLines = await File.ReadAllLinesAsync(_logPath);
         var openLines = logLines.Where(l => l.Contains("\"method\":\"session/open\"", StringComparison.Ordinal)).ToArray();
         var promptLines = logLines.Where(l => l.Contains("\"method\":\"session/prompt\"", StringComparison.Ordinal)).ToArray();
-        Assert.Equal(2, openLines.Length);
+        Assert.Single(openLines);
         Assert.Single(promptLines);
-        Assert.Contains("\"resume\":\"codex-sess-1\"", openLines[1], StringComparison.Ordinal);
-        Assert.Contains("\"model\":\"gpt-5.4\"", openLines[1], StringComparison.Ordinal);
-        Assert.Contains("\"effort\":\"low\"", openLines[1], StringComparison.Ordinal);
+        Assert.Contains("\"effort\":null", openLines[0], StringComparison.Ordinal);
     }
 
     private const string MockBridgeScript = """
@@ -275,14 +255,14 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
     const sessionId = req.params.resume ?? `${openRuntime}-sess-1`;
     const resolvedModel = req.params.model ?? (openRuntime === 'codex' ? 'gpt-5.4' : `${openRuntime}-default`);
     const resolvedEffort = req.params.effort ?? (openRuntime === 'codex' && process.env.MOCK_NULL_INITIAL_EFFORT !== '1' ? 'low' : null);
-    const workerConfiguration = req.params.configureWorker === true ? {
+    const sessionConfiguration = {
       models: [
         { id: 'gpt-5.4', name: 'GPT 5.4', reasoningEfforts: ['low', 'high'], defaultReasoningEffort: 'low' },
         { id: 'gpt-5.4-mini', name: 'GPT 5.4 Mini', reasoningEfforts: ['low'], defaultReasoningEffort: 'low' }
       ],
       defaultModel: 'gpt-5.4',
       defaultReasoningEffort: 'low'
-    } : undefined;
+    };
     send({
       jsonrpc: '2.0',
       id: req.id,
@@ -294,7 +274,7 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
         supportsNativeCompact: true,
         supportsSessionResume: true,
         contextUsage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, contextWindowTokens: 200000, usedTokens: 0 },
-        ...(workerConfiguration ? { workerConfiguration } : {})
+        sessionConfiguration
       }
     });
     return;

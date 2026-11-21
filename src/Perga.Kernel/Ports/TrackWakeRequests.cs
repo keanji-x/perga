@@ -41,7 +41,7 @@ public static class TrackWakeRequests
         prompt ?? $"Task '{task.TaskKey}' (attempt '{attempt.AttemptId}') settled as {task.Status}. {task.StatusDetail}",
         task.Status == TaskRunStatus.Done ? TrackWakePresentations.SystemTaskCompleted : TrackWakePresentations.SystemTaskFailed);
     public static TrackWakeRequest Ask(AskDto ask) => Prompt(ask.TrackId, TrackWakeKinds.AskAnswered, "ask:" + ask.Id,
-        $"User answered ask '{ask.Id}': {ask.Answer?.GetRawText()}");
+        $"User answered ask '{ask.Id}': {ask.Answer?.GetRawText()}") with { TargetSessionId = ask.SessionId };
     public static TrackWakeRequest Report(string trackId, int docRev, JsonElement changes)
     {
         var subject = "report";

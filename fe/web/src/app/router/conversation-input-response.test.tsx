@@ -49,8 +49,8 @@ function mount({ phase = 'idle', input }: { phase?: string; input?: Promise<ApiT
   return renderDailyFixture({ initial: '/track/daily?panel=conversations', extraPlanner: true, reply: request => {
     if (request.path === '/api/v1/bootstrap') return ok(fixtureBootstrap());
     if (request.path.startsWith('/api/v1/bootstrap?scope=managed')) return ok({ version: 'test', providers: [{ provider: 'codex', available: true, version: null, reason: null, models: [] }], templates: [], areas: [] });
-    if (request.path === '/api/v1/sessions/second-planner/items?afterId=0&limit=1&view=run') return ok(sessionPage(fixtureSession('second-planner', 'daily'), [], phase === 'turn_running' ? sessionTurn('second-planner') : null));
-    if (request.path.includes('/second-planner/items') && !request.path.includes('view=')) return ok(sessionPage(fixtureSession('second-planner', 'daily'), Array.from({ length: 120 }, (_, index) => ({ id: index + 1, sessionId: 'second-planner', turnId: 'turn', kind: 'assistant_text', payload: { text: `Stored reply ${index}. **Evidence** remains readable.` }, createdAtMs: index + 1 }))));
+    if (request.path === '/api/v1/sessions/second-planner/items?afterId=0&limit=1') return ok(sessionPage(fixtureSession('second-planner', 'daily'), [], phase === 'turn_running' ? sessionTurn('second-planner') : null));
+    if (request.path.includes('/second-planner/items') && !request.path.includes('limit=1')) return ok(sessionPage(fixtureSession('second-planner', 'daily'), Array.from({ length: 120 }, (_, index) => ({ id: index + 1, sessionId: 'second-planner', turnId: 'turn', kind: 'assistant_text', payload: { text: `Stored reply ${index}. **Evidence** remains readable.` }, createdAtMs: index + 1 }))));
     if (input !== undefined && request.path.endsWith('/messages')) return input;
     if (input !== undefined && request.method === 'POST' && request.path.endsWith('/sessions')) return input;
     return undefined;

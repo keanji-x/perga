@@ -26,13 +26,13 @@ public sealed class AcpPermissionSwitchTests
         original.AvailablePermissionModes = Modes;
         original.ConfigureHandler = configuration => new SessionConfigurationOutcome.Applied(new(configuration));
         original.SupportsNativeCompact = true;
-        await ctx.Kernel.SetSessionPermissionModeAsync(id, "act");
+        await ctx.Kernel.UpdateSessionAsync(id, new(PermissionMode: new("act")), new InteropPrincipal.Human(), default);
         Assert.Empty(original.Configurations);
-        if (operation == "compact") await ctx.Kernel.CompactSessionAsync(id);
+        if (operation == "compact") await ctx.Kernel.ControlSessionAsync(id, new("compact"), new InteropPrincipal.Human(), default);
         else if (operation == "wake")
         {
             await ctx.Store.TrackWakes.EnqueueAsync(TrackWakeRequests.Prompt(snap.Track.Id, "mail", "mail:test", "notice"), default);
-            await ctx.Kernel.Actors.GetOrActivate(snap.Track.Id).PokeLeadAsync();
+            await ctx.Kernel.Actors.GetOrActivate(snap.Track.Id).PokePendingWakesAsync();
             await ctx.Kernel.WaitForTrackIdleAsync(snap.Track.Id).WaitAsync(TimeSpan.FromSeconds(10));
         }
         else await ctx.SendAndWaitForTurnAsync(id, new("next", "next"));
@@ -54,7 +54,7 @@ public sealed class AcpPermissionSwitchTests
         var id = snap.Track.LeadSessionId!;
         await ctx.SendAndWaitForTurnAsync(id, new("first", "first"));
         var original = Assert.Single(ctx.AgentRuntime.OpenedSessions);
-        await ctx.Kernel.SetSessionPermissionModeAsync(id, mode);
+        await ctx.Kernel.UpdateSessionAsync(id, new(PermissionMode: new(mode)), new InteropPrincipal.Human(), default);
         Assert.False(original.Disposed);
         await ctx.SendAndWaitForTurnAsync(id, new("next", "next"));
         Assert.True(original.Disposed);
@@ -76,13 +76,13 @@ public sealed class AcpPermissionSwitchTests
         var original = Assert.Single(ctx.AgentRuntime.OpenedSessions);
         original.AvailablePermissionModes = Modes;
         original.ConfigureHandler = _ => throws ? throw new ArgumentException("invalid mode") : new SessionConfigurationOutcome.RequiresReopen("mode");
-        await ctx.Kernel.SetSessionPermissionModeAsync(id, "act");
+        await ctx.Kernel.UpdateSessionAsync(id, new(PermissionMode: new("act")), new InteropPrincipal.Human(), default);
         ctx.AgentRuntime.OnBeforeOpenSession = _ => throw new IOException("open failed");
         Assert.Equal("failed", (await ctx.SendAndWaitForTurnAsync(id, new("failure", "failure"))).Status);
         Assert.True(original.Disposed);
         Assert.Single(original.RecordedInputs);
         // The old catalogue must disappear with the agent, allowing cold correction.
-        await ctx.Kernel.SetSessionPermissionModeAsync(id, "new-catalogue-mode");
+        await ctx.Kernel.UpdateSessionAsync(id, new(PermissionMode: new("new-catalogue-mode")), new InteropPrincipal.Human(), default);
         ctx.AgentRuntime.OnBeforeOpenSession = null;
         await ctx.SendAndWaitForTurnAsync(id, new("retry", "retry"));
         Assert.Equal("new-catalogue-mode", ctx.AgentRuntime.OpenedSessions.Last().LaunchSpec.PermissionMode);
@@ -120,18 +120,18 @@ public sealed class AcpPermissionSwitchTests
         var probes = ctx.AgentRuntime.ProviderProbeCalls;
         try
         {
-            await ctx.Kernel.SetSessionPermissionModeAsync(id, "act");
-            await ctx.Kernel.SetSessionPermissionModeAsync(id, "plan");
-            await ctx.Kernel.SetSessionPermissionModeAsync(id, " act ");
-            var error = await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.SetSessionPermissionModeAsync(id, "invented"));
+            await ctx.Kernel.UpdateSessionAsync(id, new(PermissionMode: new("act")), new InteropPrincipal.Human(), default);
+            await ctx.Kernel.UpdateSessionAsync(id, new(PermissionMode: new("plan")), new InteropPrincipal.Human(), default);
+            await ctx.Kernel.UpdateSessionAsync(id, new(PermissionMode: new(" act ")), new InteropPrincipal.Human(), default);
+            var error = await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.UpdateSessionAsync(id, new(PermissionMode: new("invented")), new InteropPrincipal.Human(), default));
             Assert.Equal(KernelErrorCode.InvalidArgument, error.Code);
-            Assert.Equal("act", (await ctx.Kernel.ListSessionsAsync(snap.Track.Id)).Single().PermissionMode);
+            Assert.Equal("act", ((await ctx.Kernel.ListSessionsAsync(snap.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray()).Single().PermissionMode);
             Assert.Equal("act", (await ctx.Store.LoadTrackAggregateAsync(snap.Track.Id, default))!.Sessions.Single().PermissionMode);
             Assert.Equal(probes, ctx.AgentRuntime.ProviderProbeCalls);
             Assert.False(original.Disposed);
             Assert.False(original.CancelCalled);
             Assert.Single(ctx.AgentRuntime.OpenedSessions);
-            if (active) await ctx.Kernel.AcceptMessageAsync(id, new("queued", "queued", QueueIfBusy: true), default);
+            if (active) await ctx.Kernel.SendSessionMessageAsync(id, new(Content: "queued", RequestKey: "queued", Mode: "queue"), new InteropPrincipal.Human(), default);
         }
         finally { release.TrySetResult(); }
         await first;
@@ -166,7 +166,7 @@ public sealed class AcpPermissionSwitchTests
         await ctx.SendAndWaitForTurnAsync(id, new("first", "first"));
         var original = Assert.Single(ctx.AgentRuntime.OpenedSessions);
         original.AvailablePermissionModes = [..Modes, new("bypassPermissions", "Full access", "", "danger")];
-        await ctx.Kernel.SetSessionPermissionModeAsync(id, "bypassPermissions");
+        await ctx.Kernel.UpdateSessionAsync(id, new(PermissionMode: new("bypassPermissions")), new InteropPrincipal.Human(), default);
         Assert.False(original.Disposed);
         ctx.AgentRuntime.OnBeforeOpenSession = spec =>
         {
@@ -177,16 +177,16 @@ public sealed class AcpPermissionSwitchTests
         if (operation == "message")
             Assert.Equal("failed", (await ctx.SendAndWaitForTurnAsync(id, new("rejected", "rejected"))).Status);
         else if (operation == "compact")
-            await Assert.ThrowsAsync<InvalidOperationException>(() => ctx.Kernel.CompactSessionAsync(id));
+            await Assert.ThrowsAsync<InvalidOperationException>(() => ctx.Kernel.ControlSessionAsync(id, new("compact"), new InteropPrincipal.Human(), default));
         else
         {
             await ctx.Store.TrackWakes.EnqueueAsync(TrackWakeRequests.Prompt(snap.Track.Id, "mail", "mail:test", "notice"), default);
-            await Assert.ThrowsAsync<InvalidOperationException>(() => ctx.Kernel.Actors.GetOrActivate(snap.Track.Id).PokeLeadAsync());
+            await Assert.ThrowsAsync<InvalidOperationException>(() => ctx.Kernel.Actors.GetOrActivate(snap.Track.Id).PokePendingWakesAsync());
         }
         Assert.True(original.Disposed);
         Assert.Single(original.RecordedInputs);
         Assert.Single(ctx.AgentRuntime.OpenedSessions);
-        Assert.Equal("bypassPermissions", (await ctx.Kernel.ListSessionsAsync(snap.Track.Id)).Single().PermissionMode);
+        Assert.Equal("bypassPermissions", ((await ctx.Kernel.ListSessionsAsync(snap.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray()).Single().PermissionMode);
         ctx.AgentRuntime.OnBeforeOpenSession = null;
         await ctx.SendAndWaitForTurnAsync(id, new("retry", "retry"));
         Assert.Equal("bypassPermissions", ctx.AgentRuntime.OpenedSessions.Last().LaunchSpec.PermissionMode);
@@ -214,11 +214,11 @@ public sealed class AcpPermissionSwitchTests
         {
             case "missing": original.AvailablePermissionModes = []; break;
             case "provider":
-                await ctx.Kernel.PatchSessionAsync(id, new(Provider: "acp:other"));
+                await ctx.Kernel.UpdateSessionAsync(id, new(Provider: "acp:other"), new InteropPrincipal.Human(), default);
                 Assert.True(original.Disposed);
                 break;
             case "session":
-                id = (await ctx.Kernel.CreateSubagentSessionAsync(snap.Track.Id, new(Provider: "acp:custom"))).Id;
+                id = ((await ctx.Kernel.CreateSessionAsync(snap.Track.Id, new(Provider: "acp:custom"), Guid.NewGuid().ToString("N"), new InteropPrincipal.Human(), default)).Receipt.Session).Id;
                 break;
             case "cwd":
                 ctx.DirectDriver.VerifyMountOnAccess = true;
@@ -228,11 +228,11 @@ public sealed class AcpPermissionSwitchTests
         ctx.Kernel.DispatchAdmission.SetDraining(true);
         try
         {
-            await ctx.Kernel.SetSessionPermissionModeAsync(id, "plan");
+            await ctx.Kernel.UpdateSessionAsync(id, new(PermissionMode: new("plan")), new InteropPrincipal.Human(), default);
             Assert.Equal(0, ctx.AgentRuntime.ProviderProbeCalls);
         }
         finally { ctx.Kernel.DispatchAdmission.SetDraining(false); }
-        await ctx.Kernel.SetSessionPermissionModeAsync(id, "plan");
+        await ctx.Kernel.UpdateSessionAsync(id, new(PermissionMode: new("plan")), new InteropPrincipal.Human(), default);
         Assert.Equal(0, ctx.AgentRuntime.ProviderProbeCalls);
     }
 
@@ -249,16 +249,16 @@ public sealed class AcpPermissionSwitchTests
         ctx.Kernel.DispatchAdmission.SetDraining(true);
         try
         {
-            await ctx.Kernel.AcceptMessageAsync(id, new("queued", "queued"), default);
+            await ctx.Kernel.SendSessionMessageAsync(id, new(Content: "queued", RequestKey: "queued"), new InteropPrincipal.Human(), default);
             await ctx.Store.TrackWakes.EnqueueAsync(TrackWakeRequests.Prompt(snap.Track.Id, "mail", "mail:test", "notice"), default);
-            await ctx.Kernel.SetSessionPermissionModeAsync(id, "plan");
-            await ctx.Kernel.SetSessionPermissionModeAsync(id, "act");
+            await ctx.Kernel.UpdateSessionAsync(id, new(PermissionMode: new("plan")), new InteropPrincipal.Human(), default);
+            await ctx.Kernel.UpdateSessionAsync(id, new(PermissionMode: new("act")), new InteropPrincipal.Human(), default);
             Assert.False(original.Disposed);
             Assert.Single(original.RecordedInputs);
             Assert.Equal(0, ctx.AgentRuntime.ProviderProbeCalls);
         }
         finally { ctx.Kernel.DispatchAdmission.SetDraining(false); }
-        await ctx.Kernel.Actors.GetOrActivate(snap.Track.Id).PokeLeadAsync();
+        await ctx.Kernel.Actors.GetOrActivate(snap.Track.Id).PokePendingWakesAsync();
         await ctx.Kernel.WaitForTrackIdleAsync(snap.Track.Id).WaitAsync(TimeSpan.FromSeconds(10));
         Assert.True(original.Disposed);
         var next = ctx.AgentRuntime.OpenedSessions.Last();
@@ -289,16 +289,16 @@ public sealed class AcpPermissionSwitchTests
         var original = Assert.Single(ctx.AgentRuntime.OpenedSessions);
         original.SupportsScopedClose = true;
         original.AvailablePermissionModes = Modes;
-        await ctx.Kernel.SetSessionPermissionModeAsync(id, "act");
+        await ctx.Kernel.UpdateSessionAsync(id, new(PermissionMode: new("act")), new InteropPrincipal.Human(), default);
         Assert.False(original.Disposed);
         var closing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseClose = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         original.CloseSessionHandler = ct => { closing.TrySetResult(); return releaseClose.Task.WaitAsync(ct); };
-        var resume = ctx.Kernel.RecoverSessionAsync(id, new("reconnect"), default);
+        var resume = ctx.Kernel.ControlSessionAsync(id, new("reconnect"), new InteropPrincipal.Human(), default);
         await closing.Task.WaitAsync(TimeSpan.FromSeconds(10));
         try
         {
-            await ctx.Kernel.SetSessionPermissionModeAsync(id, "during-hold");
+            await ctx.Kernel.UpdateSessionAsync(id, new(PermissionMode: new("during-hold")), new InteropPrincipal.Human(), default);
             Assert.False(original.Disposed);
         }
         finally { releaseClose.TrySetResult(true); }
@@ -309,9 +309,9 @@ public sealed class AcpPermissionSwitchTests
         Assert.Equal(original.NativeThreadId, restored.LaunchSpec.ResumeNativeThreadId);
         Assert.Empty(restored.RecordedInputs);
         restored.AvailablePermissionModes = [new("restored-only", "Restored", "", "neutral")];
-        var stale = await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.SetSessionPermissionModeAsync(id, "plan"));
+        var stale = await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.UpdateSessionAsync(id, new(PermissionMode: new("plan")), new InteropPrincipal.Human(), default));
         Assert.Equal(KernelErrorCode.InvalidArgument, stale.Code);
-        await ctx.Kernel.SetSessionPermissionModeAsync(id, "restored-only");
+        await ctx.Kernel.UpdateSessionAsync(id, new(PermissionMode: new("restored-only")), new InteropPrincipal.Human(), default);
         Assert.False(restored.Disposed);
         Assert.Equal(0, ctx.AgentRuntime.ProviderProbeCalls);
     }
@@ -327,13 +327,13 @@ public sealed class AcpPermissionSwitchTests
         var original = Assert.Single(ctx.AgentRuntime.OpenedSessions);
         original.AvailablePermissionModes = Modes;
         var probes = ctx.AgentRuntime.ProviderProbeCalls;
-        await ctx.Kernel.SetSessionPermissionModeAsync(id, "act");
-        await ctx.Kernel.SetSessionPermissionModeAsync(id, "plan");
+        await ctx.Kernel.UpdateSessionAsync(id, new(PermissionMode: new("act")), new InteropPrincipal.Human(), default);
+        await ctx.Kernel.UpdateSessionAsync(id, new(PermissionMode: new("plan")), new InteropPrincipal.Human(), default);
         await ctx.SendAndWaitForTurnAsync(id, new("same mode", "same"));
         Assert.Single(ctx.AgentRuntime.OpenedSessions);
         Assert.False(original.Disposed);
-        await ctx.Kernel.SetSessionPermissionModeAsync(id, "act");
-        await ctx.Kernel.CompactSessionAsync(id);
+        await ctx.Kernel.UpdateSessionAsync(id, new(PermissionMode: new("act")), new InteropPrincipal.Human(), default);
+        await ctx.Kernel.ControlSessionAsync(id, new("compact"), new InteropPrincipal.Human(), default);
         Assert.True(original.Disposed);
         Assert.All(ctx.AgentRuntime.OpenedSessions.Skip(1), session => Assert.Equal("act", session.LaunchSpec.PermissionMode));
         Assert.Equal(probes, ctx.AgentRuntime.ProviderProbeCalls);

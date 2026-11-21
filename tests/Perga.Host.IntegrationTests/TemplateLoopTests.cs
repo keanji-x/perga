@@ -133,23 +133,21 @@ public sealed class TemplateLoopTests
             "tasks":{"routing":[{"when":{"role":"review","access":"read_only"},"provider":"claude","model":"${inputs.model}","enforce":true}]}}
             """;
         await KernelMcpDispatcher.ExecuteGuardedAsync(kernel, caller, KernelMcpToolNames.TrackSet, JsonSerializer.SerializeToElement(new { source }));
-        var receipt = await kernel.DispatchWorkerAsync(trackId, new("Review this", Role: "review"), "route", null, default);
+        var receipt = await kernel.CreateSessionAsync(trackId, new(Prompt: "Review this", Task: new(), Role: "review"), "route", new InteropPrincipal.Human(), default);
         await kernel.WaitForTrackIdleAsync(trackId);
-        Assert.Equal("review", receipt.Task.Role);
-        var worker = Assert.Single(await kernel.ListSessionsAsync(trackId), s => s.BoundTaskId == receipt.Task.Id);
+        Assert.Equal("review", receipt.Receipt.Task!.Role);
+        var worker = Assert.Single((await kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray(), s => s.BoundTaskId == receipt.Receipt.Task!.Id);
         Assert.Equal("claude", worker.Provider);
         Assert.Equal("claude-sonnet-4-6", worker.Model);
-        var repeated = await kernel.DispatchWorkerAsync(trackId, new("Review this", Role: "review"), "route", null, default);
-        Assert.Equal(receipt.Task.Id, repeated.Task.Id);
+        var repeated = await kernel.CreateSessionAsync(trackId, new(Prompt: "Review this", Task: new(), Role: "review"), "route", new InteropPrincipal.Human(), default);
+        Assert.Equal(receipt.Receipt.Task!.Id, repeated.Receipt.Task!.Id);
         var before = await kernel.ReadReportAsync(trackId);
-        var denied = await Assert.ThrowsAsync<KernelException>(() => kernel.DispatchWorkerAsync(trackId,
-            new("Conflict", Model: "gpt-5.4", Role: "review"), "conflict", null, default));
+        var denied = await Assert.ThrowsAsync<KernelException>(() => kernel.CreateSessionAsync(trackId, new(Prompt: "Conflict", Task: new(), Model: "gpt-5.4", Role: "review"), "conflict", new InteropPrincipal.Human(), default));
         Assert.Equal(KernelErrorCode.PolicyDenied, denied.Code);
         Assert.Equal(before.DocRev, (await kernel.ReadReportAsync(trackId)).DocRev);
         await KernelMcpDispatcher.ExecuteGuardedAsync(kernel, caller, KernelMcpToolNames.TemplateUpdateInputs,
             JsonSerializer.SerializeToElement(new { inputs = new { model = "missing-model" } }));
-        var unavailable = await Assert.ThrowsAsync<KernelException>(() => kernel.DispatchWorkerAsync(trackId,
-            new("Unavailable", Role: "review"), "unavailable", null, default));
+        var unavailable = await Assert.ThrowsAsync<KernelException>(() => kernel.CreateSessionAsync(trackId, new(Prompt: "Unavailable", Task: new(), Role: "review"), "unavailable", new InteropPrincipal.Human(), default));
         Assert.Equal(KernelErrorCode.InvalidArgument, unavailable.Code);
         Assert.Equal(before.DocRev, (await kernel.ReadReportAsync(trackId)).DocRev);
         await KernelMcpDispatcher.ExecuteGuardedAsync(kernel, caller, KernelMcpToolNames.TemplateUpdateInputs,
@@ -162,7 +160,7 @@ public sealed class TemplateLoopTests
         var authored = Assert.Single(await kernel.ListTasksAsync(trackId), t => t.TaskKey == "authored");
         Assert.Equal("review", authored.Role);
         Assert.Null(authored.Provider);
-        var authoredWorker = Assert.Single(await kernel.ListSessionsAsync(trackId), s => s.BoundTaskId == authored.Id);
+        var authoredWorker = Assert.Single((await kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray(), s => s.BoundTaskId == authored.Id);
         Assert.Equal("claude", authoredWorker.Provider);
         Assert.Equal("claude-sonnet-4-6", authoredWorker.Model);
         var authoredBlock = Assert.Single((await kernel.ReadReportAsync(trackId)).Blocks, b => b.Id == authored.BlockId);

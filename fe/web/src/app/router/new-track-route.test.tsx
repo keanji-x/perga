@@ -180,7 +180,7 @@ function harness(options: {
       if (request.path === '/api/v1/bootstrap?card_id=card-planner' && options.plannerProvider === 'claude') {
         return Promise.resolve({ status: 200, statusText: 'OK', body: CLAUDE_CATALOG });
       }
-      if (request.method === 'PUT' && request.path === '/api/v1/sessions/card-planner/model') {
+      if (request.method === 'PATCH' && request.path === '/api/v1/sessions/card-planner') {
         const { model } = request.body as { model: string | null };
         return Promise.resolve({ status: 200, statusText: 'OK', body: {
           id: 'card-planner', trackId: 'w-new', provider: options.plannerProvider ?? 'codex', model, createdAtMs: 1, updatedAtMs: 2,
@@ -205,10 +205,10 @@ function harness(options: {
           ? options.heldDetail.then(() => detail)
           : Promise.resolve(detail);
       }
-      if (request.method === 'GET' && request.path === '/api/v1/sessions/card-planner/items?afterId=0&limit=1&view=run') {
+      if (request.method === 'GET' && request.path === '/api/v1/sessions/card-planner/items?afterId=0&limit=1') {
         return Promise.resolve({ status: 200, statusText: 'OK', body: sessionPage(fixtureSession('card-planner', TRACK_ROW.id)) });
       }
-      if (request.method === 'GET' && request.path.includes('/items') && !request.path.includes('view=')) {
+      if (request.method === 'GET' && request.path.includes('/items') && !request.path.includes('limit=1')) {
         return Promise.resolve({ status: 200, statusText: 'OK', body: sessionPage(fixtureSession(conversationCardId(request.path), TRACK_ROW.id), [...(options.plannerItems ?? [])]) });
       }
       if (request.path === '/api/v1/areas' && options.areasFail) {
@@ -445,8 +445,8 @@ describe('New track model selection', () => {
     expect(within(dialog).queryByRole('radio', { name: 'Codex' })).toBeNull();
     await userEvent.click(within(models).getByRole('radio', { name: /^haiku/ }));
     await userEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
-    await waitFor(() => expect(sent.filter((request) => request.method === 'PUT'
-      && request.path === '/api/v1/sessions/card-planner/model').map((request) => request.body))
+    await waitFor(() => expect(sent.filter((request) => request.method === 'PATCH'
+      && request.path === '/api/v1/sessions/card-planner').map((request) => request.body))
       .toEqual([{ model: 'haiku', reasoningEffort: null }]));
     expect(sent.some((request) => request.path === '/api/v1/bootstrap?card_id=card-planner')).toBe(true);
   });
@@ -614,7 +614,7 @@ function composerText(): string {
 /** The text of every first message delivered to the planner card. */
 function plannerInputTexts(sent: readonly ApiRequest[]): unknown[] {
   return sent.filter((request) => request.method === 'POST' && request.path.endsWith('/messages'))
-    .map((request) => (request.body as { text?: unknown } | undefined)?.text);
+    .map((request) => (request.body as { content?: unknown } | undefined)?.content);
 }
 
 function createdTrackBodies(sent: readonly ApiRequest[]): unknown[] {
@@ -1119,7 +1119,7 @@ describe('the sentence is delivered by the create, and the track opens on it', (
       [...drawer.querySelectorAll('[data-nc-turn="human"]')].map((turn) => turn.textContent),
     ).toEqual(['Read it']));
     expect(drawer.querySelector('[data-nc-thread-empty]')).toBeNull();
-    const items = sent.filter((request) => request.path.includes('/items') && !request.path.includes('view='));
+    const items = sent.filter((request) => request.path.includes('/items') && !request.path.includes('limit=1'));
     expect(items.length).toBeGreaterThan(0);
     expect(plannerInputTexts(sent)).toEqual(['Read it']);
   });

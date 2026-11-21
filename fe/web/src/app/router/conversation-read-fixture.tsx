@@ -13,11 +13,11 @@ export function renderConversationReadFixture(initialFailure = true) {
   const failure: ApiTransportResponse = { status: 503, statusText: 'Unavailable',
     body: { error: 'internal', message: 'private transport diagnostic' } };
   const fixture = renderDailyFixture({ initial: '/track/daily?panel=conversations', reply: async (request) => {
-    if (request.path.includes('&view=run')) {
+    if (request.path.includes('limit=1')) {
       await runGate;
       return unavailable ? failure : { status: 200, statusText: 'OK', body: run };
     }
-    if (request.path.includes('/items?') && !request.path.includes('&view=')) return historyUnavailable ? failure : { status: 200, statusText: 'OK', body: sessionPage(session, [{ id: 1, sessionId: session.id, turnId: 'turn', kind: 'assistant_text', payload: { text: 'Retained reply.' }, createdAtMs: 1 }]) };
+    if (request.path.includes('/items?') && !request.path.includes('limit=1')) return historyUnavailable ? failure : { status: 200, statusText: 'OK', body: sessionPage(session, [{ id: 1, sessionId: session.id, turnId: 'turn', kind: 'assistant_text', payload: { text: 'Retained reply.' }, createdAtMs: 1 }]) };
     return undefined;
   } });
   return { ...fixture, pauseRun: () => {

@@ -96,37 +96,14 @@ public sealed record CreateSessionRequest(
     string? Title = null,
     string? Provider = null,
     string? Model = null,
-    string? Text = null,
     string? ReasoningEffort = null,
-    string? IdempotencyKey = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? PermissionMode = null);
-
-public sealed record PatchSessionRequest(
-    string? Title = null,
-    string? Provider = null,
-    string? Model = null,
-    bool ClearModel = false,
-    bool? Archived = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? PermissionMode = null,
+    string? SystemPrompt = null, string? Prompt = null, string? NotifyParent = null,
+    SessionTaskRequest? Task = null, string? Role = null);
 
 public sealed record SteeringResult(string InputId, string Delivery);
 
-public sealed record UpdateSessionModelRequest(string? Model, string? ReasoningEffort = null);
-
-public sealed record SendMessageRequest(
-    string Content,
-    string IdempotencyKey,
-    bool SteerIfRunning = false,
-    bool QueueIfBusy = false);
-
-public sealed record QueuedMessageReceipt(string SessionId, string InputId, bool Queued = true, string? Delivery = null)
-{
-    public string MessageId => InputId;
-}
 public sealed record QueuedSessionMessageDto(string Id, string Text, long QueuedAtMs, string State);
-public sealed record MessageAcceptance(SessionInputReceipt? Receipt, SessionTurnDto? SteeredTurn, bool Replay, QueuedMessageReceipt? QueueReceipt = null);
-
-public sealed record RecoverSessionRequest(string Mode);
-
 public sealed record SessionUnknownDetailDto(string Reason, string Detail, bool CanReconnect,
     bool CanResetContext, bool Recovering, string? LastError);
 
@@ -144,49 +121,16 @@ public sealed record SessionItemsPageDto(
     bool WorkerPaused,
     SessionTurnDto? LastTurn,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] SessionUnknownDetailDto? UnknownDetail,
-    WorkerActivityDto? Worker = null,
-    IReadOnlyList<PermissionModeOption>? PermissionModes = null);
+    IReadOnlyList<PermissionModeOption>? PermissionModes = null,
+    SessionActivityDto? Activity = null, SessionTaskBindingDto? TaskBinding = null,
+    SessionCapabilitiesDto? Capabilities = null, IReadOnlyList<PendingInteractionDto>? PendingInteractions = null);
 
 public sealed record WorkerActivityEvent(long Sequence, string Kind, JsonElement Payload, long CreatedAtMs);
 
-public sealed record WorkerActivityDto(
-    TaskDto Task, string AttemptId, string Phase, bool NativeSteer,
-    IReadOnlyList<ApprovalDto> PendingApprovals, long Sequence, bool Reset,
-    IReadOnlyList<WorkerActivityEvent> Events, IReadOnlyList<WorkerMessageActivity> Messages,
-    string Text, bool TextTruncated, WorkerSettings NextSettings, WorkerSettings? ActiveSettings,
-    bool CanChangeModel, IReadOnlyList<string> ReasoningEfforts, string? LastError,
-    WorkerProviderConfiguration? ProviderConfiguration = null, bool ApprovalAuthorizationConfigured = false);
-
-public sealed record WorkerSettings(long Version, string? Model, string? ReasoningEffort, string ApprovalMode);
-
-public sealed record UpdateWorkerSettingsRequest(
-    [property: System.Text.Json.Serialization.JsonRequired] string AttemptId,
-    [property: System.Text.Json.Serialization.JsonRequired] long Version,
-    [property: System.Text.Json.Serialization.JsonRequired] string? Model,
-    [property: System.Text.Json.Serialization.JsonRequired] string? ReasoningEffort,
-    [property: System.Text.Json.Serialization.JsonRequired] string ApprovalMode);
-
-public sealed record WorkerMessageActivity(string Id, string Author, string Content, string? TurnId, string Delivery, long CreatedAtMs);
-
-public enum WorkerMessageMode { Steer, Queue }
-
-public sealed record WorkerMessageRequest(
-    string AttemptId, string Content, string RequestKey, string? TurnId = null, bool AllowQueue = false,
-    WorkerMessageMode? Mode = null);
 
 public sealed record WorkerCompletionOrigin(string Token, string TurnId);
 
-public sealed record WorkerMessageReceipt(string? TurnId, string Delivery, string InputId)
-{
-    public string MessageId => InputId;
-}
-
-public sealed record DispatchWorkerRequest(string Goal, string? Access = null, string? Acceptance = null,
-    IReadOnlyList<string>? DependsOn = null, string? Gate = null, string? Provider = null, string? Model = null, string? Role = null);
-
 public sealed record TemplateSetResult(TrackDto Track, IReadOnlyList<string> Warnings, bool DryRun);
-
-public sealed record WorkerDispatchReceipt(TaskDto Task, string? SessionId, string RequestKey);
 
 public sealed record OpenTerminalRequest(
     string? Title = null,

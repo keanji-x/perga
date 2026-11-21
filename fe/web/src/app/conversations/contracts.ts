@@ -4,10 +4,12 @@ import type { Conversation, CreatedConversation, SideConversation, ConversationK
 import type { FailedSendOp, PendingQueueSend, QueueDisplayAccounting } from '../../../../core/domain/conversation-outbox.ts';
 import type { ConversationStopFeedback } from '../../../../core/domain/conversation-stop.ts';
 import type { UploadAttachment } from '../../features/planner/attachments.tsx';
-import type { PermissionModeOptionDto, ApprovalDto } from '../../../../core/api/perga-v1.ts';
+import type { PermissionModeOptionDto } from '../../../../core/api/perga-v1.ts';
 
 export type ConversationStore = Readonly<{
-  pendingApprovals: readonly ApprovalDto[] | null;
+  answerAsk: (askId: import('../../../../core/domain/activity.ts').AskId, answers: readonly import('../../../../core/api/generated/wire.ts').AskAnswer[]) => Promise<void>;
+  pendingInteractions: readonly import('../../../../core/api/perga-v1.ts').PendingInteraction[] | null;
+  pendingApprovals: readonly import('../../../../core/domain/approval.ts').PendingApproval[] | null;
   session: import('../../../../core/api/perga-v1.ts').AgentSessionDto | null;
   sessionState: import('../../../../core/api/perga-v1.ts').SessionItemsPageDto['state'] | null;
   readonlyReason: import('../../../../core/api/perga-v1.ts').SessionItemsPageDto['readonlyReason'];
@@ -94,10 +96,8 @@ export type ConversationStore = Readonly<{
   /** Overrides the provider menu when the session exposes its own approval policy. */
   permissionOptions: readonly PermissionModeOptionDto[] | null;
   permissionChangeDisabled: boolean;
-  permissionAuthorizationMode: string | null;
-  unavailablePermissionMode: string | null;
   /** A verified change can surface failures in the authorization dialog. */
-  setPermissionMode: (mode: PlannerPermissionMode, authorization?: string) => Promise<void>;
+  setPermissionMode: (mode: PlannerPermissionMode) => Promise<void>;
 }>;
 
 /** A server-backed list and the real Track whose rows may enter the tab registry. */

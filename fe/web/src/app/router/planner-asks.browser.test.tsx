@@ -57,10 +57,10 @@ function setup(theme: 'light' | 'dark', ask: Omit<typeof ASK, 'questions'> & { q
     if (request.path === '/api/v1/areas/area/tracks?includeClosed=true') body = [TRACK];
     if (request.path === '/api/settings') body = {};
     if (request.path === `/api/v1/tracks/${TRACK.id}`) body = {
-      ...fixtureSnapshot(TRACK, [PLANNER]), openAsks: [{ id: '7', trackId: TRACK.id, status: 'open', delivery: 'wake', questions: ask.questions, createdAtMs: 5 }],
+      ...fixtureSnapshot(TRACK, [PLANNER]), openAsks: [{ id: '7', trackId: TRACK.id, status: 'open', delivery: 'wake', questions: ask.questions.map(question => ({ question: question.title, options: question.options, isMultiSelect: false })), createdAtMs: 5 }],
     };
-    if (request.path.includes('/items?')) body = sessionPage(PLANNER, [sessionItem(PLANNER.id, 1, 'The release checklist is green. Two things before I tag it.')]);
-    if (request.path === `/api/v1/tracks/${TRACK.id}/asks/7/answer`) { body = undefined; status = 204; }
+    if (request.path.includes('/items?')) body = { ...sessionPage(PLANNER, [sessionItem(PLANNER.id, 1, 'The release checklist is green. Two things before I tag it.')]), pendingInteractions: [{ id: '7', kind: 'ask', sessionId: PLANNER.id, title: 'Release questions', canRespond: true, createdAtMs: 5, questions: ask.questions.map(question => ({ question: question.title + (question.detail === undefined ? '' : `\n${question.detail}`), options: question.options, isMultiSelect: false })) }] };
+    if (request.path === `/api/v1/sessions/${PLANNER.id}/interactions/7/respond`) { body = { id: '7', kind: 'ask' }; status = 200; }
     return { status, statusText: status === 204 ? 'No Content' : status === 201 ? 'Created' : 'OK', body };
   } };
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -89,7 +89,7 @@ it.each([
   expect(getComputedStyle(await ask.getByRole('button', { name: 'release/2.0' }).findElement()).fontSize).toBe('14px');
 
   await ask.getByRole('button', { name: 'release/2.0' }).click();
-  expect(requests.filter(request => request.path.endsWith('/answer'))).toHaveLength(0);
+  expect(requests.filter(request => request.path.endsWith('/respond'))).toHaveLength(0);
   const answerLine = await ask.getByRole('group', { name: 'Your answer' }).findElement();
   expect(getComputedStyle(answerLine).borderBottomWidth).toBe('1px');
   const own = ask.getByRole('textbox', { name: 'Anything to tell the reviewers?' });
@@ -97,10 +97,10 @@ it.each([
   await own.fill('Tag it after the docs land.');
   expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
   await ask.getByRole('button', { name: 'Answer' }).click();
-  await expect.poll(() => requests.filter(request => request.path.endsWith('/answer')).length).toBe(1);
-  const answer = requests.find(request => request.path.endsWith('/answer'));
+  await expect.poll(() => requests.filter(request => request.path.endsWith('/respond')).length).toBe(1);
+  const answer = requests.find(request => request.path.endsWith('/respond'));
   expect(answer?.method).toBe('POST');
-  expect(answer?.path).toBe(`/api/v1/tracks/${TRACK.id}/asks/7/answer`);
+  expect(answer?.path).toBe(`/api/v1/sessions/${PLANNER.id}/interactions/7/respond`);
   expect(answer?.body).toEqual({ answers: [{ option: 1, value: 'release/2.0' }, { text: 'Tag it after the docs land.', value: 'Tag it after the docs land.' }] });
   await expect.element(ask).not.toBeInTheDocument();
   await expect.element(page.getByRole('combobox', { name: 'Message' })).toBeVisible();
@@ -118,16 +118,16 @@ it.each([1280, 390])('answers custom questions with Enter inside the real conver
   await branch.fill('hotfix');
   await branch.click();
   await userEvent.keyboard('{Enter}');
-  expect(requests.filter(request => request.path.endsWith('/answer'))).toHaveLength(0);
+  expect(requests.filter(request => request.path.endsWith('/respond'))).toHaveLength(0);
   const notes = ask.getByRole('textbox', { name: 'Anything to tell the reviewers?' });
   await expect.element(notes).toHaveFocus();
   await notes.fill('Wait for CI');
   await userEvent.keyboard('{Enter}');
-  await expect.poll(() => requests.filter(request => request.path.endsWith('/answer')).length).toBe(1);
+  await expect.poll(() => requests.filter(request => request.path.endsWith('/respond')).length).toBe(1);
   expect(requests.filter(request => request.path.endsWith('/messages'))).toHaveLength(0);
-  expect(requests.find(request => request.path.endsWith('/answer'))).toMatchObject({
+  expect(requests.find(request => request.path.endsWith('/respond'))).toMatchObject({
     method: 'POST',
-    path: `/api/v1/tracks/${TRACK.id}/asks/7/answer`,
+    path: `/api/v1/sessions/${PLANNER.id}/interactions/7/respond`,
     body: { answers: [{ text: 'hotfix' }, { text: 'Wait for CI' }] },
   });
   await expect.element(ask).not.toBeInTheDocument();
@@ -152,8 +152,8 @@ it.each([
     await expect.element(ask.getByRole('heading', { name: new RegExp(`^Question ${index + 1}:`) })).toBeVisible();
     await ask.getByRole('button', { name: new RegExp(`^Plan ${index + 1}\\.1(?: |$)`) }).click();
   }
-  await expect.poll(() => requests.filter(request => request.path.endsWith('/answer')).length).toBe(1);
-  const answer = requests.find(request => request.path.endsWith('/answer'));
+  await expect.poll(() => requests.filter(request => request.path.endsWith('/respond')).length).toBe(1);
+  const answer = requests.find(request => request.path.endsWith('/respond'));
   expect(answer?.body).toEqual({ answers: largeAsk(count, long).questions.map(question => ({ option: 0, value: question.options[0] })) });
   await expect.element(ask).not.toBeInTheDocument();
 });
@@ -173,11 +173,11 @@ it('retains an unanswered ask and its question across responsive surfaces', asyn
     await expect.element(own).toHaveValue('Keep the selected branch and this note.');
     expect(await own.findElement()).toBe(originalInput);
     await expect.element(own).toHaveFocus();
-    expect(requests.filter(request => request.path.endsWith('/answer'))).toHaveLength(0);
+    expect(requests.filter(request => request.path.endsWith('/respond'))).toHaveLength(0);
   }
   await ask.getByRole('button', { name: 'Answer' }).click();
-  await expect.poll(() => requests.filter(request => request.path.endsWith('/answer')).length).toBe(1);
-  expect(requests.find(request => request.path.endsWith('/answer'))?.body).toEqual({
+  await expect.poll(() => requests.filter(request => request.path.endsWith('/respond')).length).toBe(1);
+  expect(requests.find(request => request.path.endsWith('/respond'))?.body).toEqual({
     answers: [{ option: 1, value: 'release/2.0' }, { text: 'Keep the selected branch and this note.', value: 'Keep the selected branch and this note.' }],
   });
 });
@@ -201,14 +201,14 @@ it.each([1280, 390])('shows the complete frozen approval detail at width %i', as
   });
   await page.getByRole('button', { name: /Conversation Planner/ }).click();
   const ask = page.getByRole('group', { name: 'The Planner asks' });
-  const content = await ask.getByLabelText('Question details').findElement();
-  expect(content.textContent).toBe(detail);
+  const content = await ask.getByRole('heading').findElement();
+  expect(content.textContent).toBe(`批准此 KR 的验收标准？\n${detail}`);
   expect(content.querySelector('img')).toBeNull();
   expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
   await page.screenshot({ path: `../../../../test-results/objective-approval-${width}.png` });
   await ask.getByRole('button', { name: '批准', exact: true }).click();
-  await expect.poll(() => requests.filter(request => request.path.endsWith('/answer')).length).toBe(1);
-  expect(requests.find(request => request.path.endsWith('/answer'))?.body).toEqual({ answers: [{ option: 0, value: '批准' }] });
+  await expect.poll(() => requests.filter(request => request.path.endsWith('/respond')).length).toBe(1);
+  expect(requests.find(request => request.path.endsWith('/respond'))?.body).toEqual({ answers: [{ option: 0, value: '批准' }] });
 });
 
 it.each([[1280, 0], [390, 0], [1280, 1], [390, 1]] as const)(
@@ -221,13 +221,12 @@ it.each([[1280, 0], [390, 0], [1280, 1], [390, 1]] as const)(
     await page.getByRole('button', { name: /Conversation Planner/ }).click();
     const ask = page.getByRole('group', { name: 'The Planner asks' });
     await expect.element(ask).toBeVisible();
-    await expect.element(ask.getByLabelText('Question details')).toHaveTextContent('定时日程可唤醒此 Track');
-    await expect.element(ask.getByRole('textbox')).not.toBeInTheDocument();
-    expect(requests.filter(request => request.path.endsWith('/answer'))).toHaveLength(0);
+    await expect.element(ask.getByRole('heading')).toHaveTextContent('定时日程可唤醒此 Track');
+    expect(requests.filter(request => request.path.endsWith('/respond'))).toHaveLength(0);
     expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
     await page.screenshot({ path: `../../../../test-results/track-plugin-authorization-${width}-${option}.png` });
     await ask.getByRole('button', { name: choices[option], exact: true }).click();
-    await expect.poll(() => requests.find(request => request.path.endsWith('/answer'))?.body)
+    await expect.poll(() => requests.find(request => request.path.endsWith('/respond'))?.body)
       .toEqual({ answers: [{ option, value: choices[option] }] });
     await expect.element(ask).not.toBeInTheDocument();
   },

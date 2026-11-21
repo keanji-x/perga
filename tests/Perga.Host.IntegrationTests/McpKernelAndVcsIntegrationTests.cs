@@ -170,7 +170,7 @@ public sealed class McpKernelAndVcsIntegrationTests
     }
 
     [Fact]
-    public async Task McpKernel_All21PergaTools_DynamicToolsList_And_BoundAttemptFences_WorkEndToEnd()
+    public async Task McpKernel_ToolVisibility_And_BoundAttemptFences_WorkEndToEnd()
     {
         await using var cluster = new PergaHostTestCluster();
         var client = cluster.Client;
@@ -226,9 +226,9 @@ public sealed class McpKernelAndVcsIntegrationTests
         var leadToken = hostBridge.GetTokenForSession(trackALeadId)!;
         var peerLeadToken = hostBridge.GetTokenForSession(trackBLeadId)!;
 
-        // 1. Lead gets the shared, governance and Worker control tools.
+        // 1. Lead gets shared, governance and unified session tools.
         var leadTools = await ListToolNamesAsync(cluster, "/mcp/kernel", leadToken, ct);
-        Assert.Equal(33, leadTools.Count);
+        Assert.Equal(34, leadTools.Count);
         Assert.Contains(KernelMcpToolNames.TaskAccept, leadTools);
         Assert.Contains(KernelMcpToolNames.TrackClose, leadTools);
         Assert.Contains(KernelMcpToolNames.TemplateLs, leadTools);
@@ -325,17 +325,19 @@ public sealed class McpKernelAndVcsIntegrationTests
         Assert.False(statusErr);
         Assert.Contains(trackAId, statusText, StringComparison.Ordinal);
 
-        // 3. Wait for Contract Subagent (BoundAttemptId != null) to start & inspect its 12-tool fence!
+        // Bound Workers observe sessions and submit their own task results.
         var contractToken = await contractSubagentTokenTcs.Task.WaitAsync(ct);
         var subTools = await ListToolNamesAsync(cluster, "/mcp/kernel", contractToken, ct);
-        Assert.Equal(13, subTools.Count);
+        Assert.Equal(15, subTools.Count);
         Assert.Contains(KernelMcpToolNames.TaskDone, subTools);
         Assert.Contains(KernelMcpToolNames.TaskFail, subTools);
         Assert.DoesNotContain(KernelMcpToolNames.TaskAccept, subTools);
         Assert.DoesNotContain(KernelMcpToolNames.TaskCancel, subTools);
+        Assert.Contains(KernelMcpToolNames.SessionList, subTools);
+        Assert.Contains(KernelMcpToolNames.SessionRead, subTools);
         Assert.DoesNotContain(KernelMcpToolNames.TrackClose, subTools);
 
-        // Contract Subagent calling ALL 9 governance tools -> all fenced with isError: true!
+        // Bound Workers cannot invoke governance even when bypassing tools/list.
         foreach (var (govTool, govArgs) in new (string, object)[]
                  {
                      (KernelMcpToolNames.TaskCancel, new { taskKey = "work-cancel" }),
@@ -486,8 +488,8 @@ public sealed class McpKernelAndVcsIntegrationTests
 
         Assert.NotNull(pendingAsk);
         using var ansResp = await client.PostAsJsonAsync(
-            $"/api/v1/tracks/{trackAId}/asks/{pendingAsk!.Id}/answer",
-            new { answer = "Yes" },
+            $"/api/v1/sessions/{pendingAsk!.SessionId}/interactions/{pendingAsk.Id}/respond",
+            new { answers = new { answer = "Yes" } },
             ct);
         ansResp.EnsureSuccessStatusCode();
         var (askOutText, askOutErr) = await userAskCallTask;

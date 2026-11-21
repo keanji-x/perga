@@ -18,7 +18,7 @@ public sealed class EventHubAndTemplateTests
         var leadId = snap.Track.LeadSessionId!;
 
         // Send a message to trigger transient text/thinking deltas AND persistent turn.completed + session.updated
-        await ctx.SendAndWaitForTurnAsync(leadId, new SendMessageRequest("Hello Perga", "idem-1"));
+        await ctx.SendAndWaitForTurnAsync(leadId, new SendSessionMessageRequest("Hello Perga", "idem-1"));
 
         var receivedAll = new List<EventEnvelopeDto>();
         while (allSub.Reader.TryRead(out var evt))

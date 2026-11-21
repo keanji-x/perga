@@ -1,3 +1,4 @@
+import hostPayloads from './fixtures/unified-host-payloads.json';
 import { sessionContextUsage } from '../domain/session-context-usage.js';
 import { describe, expect, it } from 'vitest';
 
@@ -7,6 +8,7 @@ import {
   decodePergaEventEnvelope,
   trackAggregateSnapshotDtoSchema,
   agentSessionDtoSchema,
+  sessionCreationReceiptSchema,
   trackDtoSchema,
 } from './perga-v1.js';
 import { decodeWireEvent } from './schemas.js';
@@ -232,8 +234,8 @@ describe('Perga /api/v1 protocol contracts', () => {
 
   it('updates a session model with the v1 request and session response', () => {
     const operation = setPlannerModelOperation('session/a', { model: 'chosen', reasoning_effort: null });
-    expect(operation.method).toBe('PUT');
-    expect(operation.path).toBe('/api/v1/sessions/session%2Fa/model');
+    expect(operation.method).toBe('PATCH');
+    expect(operation.path).toBe('/api/v1/sessions/session%2Fa');
     expect(operation.body).toEqual({ model: 'chosen', reasoningEffort: null });
     expect(operation.responseSchema.parse({
       id: 'session/a', trackId: 'track', provider: 'codex', model: 'chosen', contextUsage: null, createdAtMs: 1, updatedAtMs: 2,
@@ -413,7 +415,7 @@ describe('Perga /api/v1 protocol contracts', () => {
     const answerOp = answerAskOperation('trk_1', 'ask_abc123', [{ option: 0 }], asks[0]?.questions);
     expect(answerOp).toMatchObject({
       method: 'POST',
-      path: '/api/v1/tracks/trk_1/asks/ask_abc123/answer',
+      path: '/api/v1/sessions/trk_1/interactions/ask_abc123/respond',
       body: { answers: [{ option: 0, value: 'Approve' }] },
     });
 
@@ -520,7 +522,7 @@ describe('Perga /api/v1 protocol contracts', () => {
     };
 
     const itemsOp = conversationItemsOperation('ses_lead', null);
-    expect(itemsOp.path).toBe('/api/v1/sessions/ses_lead/items?afterId=0&limit=500&latest=true');
+    expect(itemsOp.path).toBe('/api/v1/sessions/ses_lead/items?afterId=0&limit=60&latest=true');
     const page = itemsOp.responseSchema.parse(pageDto);
     const transcript = buildConversationTranscript(page.items, 'local-owner');
     expect(transcript.map((e) => (e.author === 'activity' ? `${e.author}:${e.verb}` : `${e.author}:${e.text}`))).toEqual([
@@ -532,7 +534,7 @@ describe('Perga /api/v1 protocol contracts', () => {
 
     const run = conversationRunOperation('ses_lead').responseSchema.parse(pageDto);
     expect(sessionContextUsage(run.session)).toEqual({ used_tokens: 166_400, context_window: 256_000, percent: 65, at_ms: 1250 });
-    expect(run.worker == null).toBe(true);
+    expect(run.taskBinding == null).toBe(true);
 
     const acpConversations = [
       { ...pageDto.session, id: 'ses_acp1', isLead: false, provider: 'acp:opencode', title: 'ACP Assistant' },
@@ -555,9 +557,9 @@ describe('Perga /api/v1 protocol contracts', () => {
       path: '/api/v1/sessions/ses_lead/messages',
       headers: { 'Idempotency-Key': 'idem-m1' },
     });
-    expect(msgOp.body).toMatchObject({ content: 'Ship it', steerIfRunning: true });
-    expect(interruptPlannerOperation('ses_lead').path).toBe('/api/v1/sessions/ses_lead/interrupt');
-    expect(compactPlannerOperation('ses_lead').path).toBe('/api/v1/sessions/ses_lead/compact');
+    expect(msgOp.body).toMatchObject({ content: 'Ship it', mode: 'steer' });
+    expect(interruptPlannerOperation('ses_lead').path).toBe('/api/v1/sessions/ses_lead/control');
+    expect(compactPlannerOperation('ses_lead').path).toBe('/api/v1/sessions/ses_lead/control');
 
     expect(listTrackTerminalsOperation('trk_1').path).toBe('/api/v1/tracks/trk_1/terminals');
     expect(createTerminalCardOperation('trk_1', { theme: { fg: [0, 0, 0], bg: [0, 0, 0] } }, 'idem-term').path)
@@ -662,14 +664,13 @@ describe('Perga /api/v1 protocol contracts', () => {
     expect(sendOp.timeoutMs).toBe(600_000);
     expect(compactPlannerOperation('ses_lead').timeoutMs).toBe(600_000);
     expect(sendOp.responseSchema.parse({
-      inputId: 'inp_77',
+      messageId: 'inp_77', delivery: 'accepted',
       turnId: 'turn_9',
       sessionId: 'ses_lead',
       deliveryState: 'accepted',
       turnStatus: 'queued',
-      statusUrl: '/api/v1/sessions/ses_lead/inputs/inp_77',
       resolvedAtMs: null,
-    })).toEqual({ card_id: 'ses_lead', worker_session_id: 'ses_lead', entry_id: 'inp_77', turnId: 'turn_9' });
+    })).toEqual({ card_id: 'ses_lead', worker_session_id: 'ses_lead', entry_id: 'inp_77', delivery: 'accepted', turnId: 'turn_9', queued: false });
 
 
 
@@ -726,8 +727,8 @@ describe('Perga /api/v1 protocol contracts', () => {
 
     const setModelOp = setPlannerModelOperation('ses_lead', { model: null, reasoning_effort: null });
     expect(setModelOp).toMatchObject({
-      method: 'PUT',
-      path: '/api/v1/sessions/ses_lead/model',
+      method: 'PATCH',
+      path: '/api/v1/sessions/ses_lead',
       body: { model: null, reasoningEffort: null },
     });
     const archiveOp = setConversationArchiveOperation('trk_1', 'ses_sub1', true);
@@ -876,4 +877,16 @@ describe('Perga /api/v1 protocol contracts', () => {
     expect(trackAct?.working).toBe(true);
     expect(trackAct?.attention).toBe('input');
   });
+});
+
+// Captured from the C# DTOs using PergaJsonDefaults.ApiOptions (Never omits nulls).
+it('decodes the Host creation receipt without a legacy status URL', () => {
+  expect(sessionCreationReceiptSchema.parse(hostPayloads.creation)).toEqual(hostPayloads.creation);
+  const operation = createTrackConversationOperation('track', 'Hello', 'create', 'codex', {
+    model: null, reasoning_effort: null,
+  });
+  expect(operation.responseSchema.parse(hostPayloads.creation)).toMatchObject({
+    session: hostPayloads.creation.session, sessionInput: hostPayloads.creation.firstInput,
+  });
+  expect(sessionCreationReceiptSchema.parse(hostPayloads.emptyCreation)).toEqual(hostPayloads.emptyCreation);
 });

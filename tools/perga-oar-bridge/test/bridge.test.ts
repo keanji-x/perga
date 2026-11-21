@@ -200,7 +200,7 @@ test("OarBridgeServer streams prompt events and completes turns with scriptedRun
   assert.deepEqual(transport.responseFor(3).result, { closed: true });
 });
 
-test("OarBridgeServer returns workerConfiguration from listModels and session readback when configureWorker is true", async () => {
+test("OarBridgeServer returns sessionConfiguration from listModels and session readback for every session", async () => {
   const baseRuntime = scriptedRuntime({
     turn: async ({ say }) => { say("ok"); },
   });
@@ -233,12 +233,12 @@ test("OarBridgeServer returns workerConfiguration from listModels and session re
     jsonrpc: "2.0",
     id: 1,
     method: "session/open",
-    params: { runtime: "codex", cwd: process.cwd(), configureWorker: true },
+    params: { runtime: "codex", cwd: process.cwd() },
   });
 
   const opened = transport.responseFor(1).result as Record<string, unknown>;
-  const workerConfig = opened.workerConfiguration as Record<string, unknown>;
-  assert.ok(workerConfig, "Expected workerConfiguration when configureWorker=true");
+  const workerConfig = opened.sessionConfiguration as Record<string, unknown>;
+  assert.ok(workerConfig, "Expected sessionConfiguration for every session");
   assert.equal(workerConfig.defaultModel, "gpt-5.4");
   assert.equal(workerConfig.defaultReasoningEffort, "low");
   assert.deepEqual(workerConfig.models, [
@@ -255,10 +255,10 @@ test("OarBridgeServer returns workerConfiguration from listModels and session re
     jsonrpc: "2.0",
     id: 2,
     method: "session/open",
-    params: { runtime: "codex", cwd: process.cwd(), model: "gpt-5.4-mini", configureWorker: true },
+    params: { runtime: "codex", cwd: process.cwd(), model: "gpt-5.4-mini" },
   });
   const overrideOpened = overrideTransport.responseFor(2).result as Record<string, unknown>;
-  const overrideConfig = overrideOpened.workerConfiguration as Record<string, unknown>;
+  const overrideConfig = overrideOpened.sessionConfiguration as Record<string, unknown>;
   assert.equal(overrideConfig.defaultModel, "gpt-5.4");
   assert.equal(overrideConfig.defaultReasoningEffort, "low");
   await overrideBridge.dispose();
@@ -282,10 +282,10 @@ test("OarBridgeServer returns workerConfiguration from listModels and session re
     jsonrpc: "2.0",
     id: 3,
     method: "session/open",
-    params: { runtime: "codex", cwd: process.cwd(), configureWorker: true },
+    params: { runtime: "codex", cwd: process.cwd() },
   });
   const nativeOpened = nativeTransport.responseFor(3).result as Record<string, unknown>;
-  const nativeConfig = nativeOpened.workerConfiguration as Record<string, unknown>;
+  const nativeConfig = nativeOpened.sessionConfiguration as Record<string, unknown>;
   assert.equal(nativeOpened.effort, "high");
   assert.equal(nativeConfig.defaultModel, "gpt-5.4");
   assert.equal(nativeConfig.defaultReasoningEffort, "high");
@@ -414,7 +414,7 @@ test("OarBridgeServer propagates OAR_CODEX_SANDBOX to real codexRuntime process.
   const argvLogPath = path.join(tmpDir, "argv.txt");
   fs.writeFileSync(
     stubPath,
-    `#!/bin/sh\nprintf '%s\\n' "$@" > "${argvLogPath}"\nexit 1\n`,
+    `#!/bin/sh\nif [ ! -f "${argvLogPath}" ]; then printf '%s\\n' "$@" > "${argvLogPath}"; fi\nexit 1\n`,
     { mode: 0o755 },
   );
 

@@ -55,10 +55,10 @@ describe('decideApprovalOperation', () => {
   it('posts structured optionId to the execution approval decision endpoint', () => {
     const op = decideApprovalOperation('track/1', 'exec/2', 'apr/3', 'allow_once');
     expect(op.method).toBe('POST');
-    expect(op.path).toBe('/api/v1/tracks/track%2F1/executions/exec%2F2/approvals/apr%2F3/decision');
-    expect(op.body).toEqual({ optionId: 'allow_once' });
-    expect(op.responseSchema.safeParse(LEAD_APPROVAL).success).toBe(true);
-    expect(op.responseSchema.safeParse(undefined).success).toBe(true);
+    expect(op.path).toBe('/api/v1/sessions/track%2F1/interactions/apr%2F3/respond');
+    expect(op.body).toEqual({ executionId: 'exec/2', optionId: 'allow_once' });
+    expect(op.responseSchema.safeParse({ id: LEAD_APPROVAL.id, kind: 'approval' }).success).toBe(true);
+    expect(op.responseSchema.safeParse(undefined).success).toBe(false);
   });
 });
 

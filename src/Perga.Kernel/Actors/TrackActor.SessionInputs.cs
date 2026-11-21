@@ -8,90 +8,23 @@ namespace Perga.Kernel.Actors;
 
 public sealed partial class TrackActor
 {
-    public async Task<MessageAcceptance> AcceptMessageAsync(
-        string sessionId, SendMessageRequest request, CancellationToken ct)
-    {
-        ValidateRequestKey(request.IdempotencyKey);
-        var hash = RequestIdentity.Hash(new { version = 1, request.Content, request.SteerIfRunning });
-        var result = await EnqueueAsync<MessageAcceptance>(async _ =>
-        {
-            var existing = await _store.SessionInputs.FindByKeyAsync(sessionId, request.IdempotencyKey, ct).ConfigureAwait(false);
-            if (existing is not null)
-            {
-                RequireMatchingHash(existing.RequestHash, hash);
-                return new(await ReplayInputCoreAsync(existing, ct).ConfigureAwait(false), null, true);
-            }
-
-            await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
-            var session = RequireSessionCore(sessionId);
-            if (session.BoundAttemptId is not null)
-                throw KernelException.InvalidArgument("Worker messages require attemptId and the active turnId when steering.");
-            var prior = await Messages.FindAsync(sessionId, worker: false, InstallationAuthor, request.IdempotencyKey, ct)
-                .ConfigureAwait(false);
-            if (prior is not null)
-            {
-                RequireMatchingHash(prior.RequestHash, hash);
-                if (prior.Kind == "queue" && request.QueueIfBusy && !request.SteerIfRunning)
-                    return new(null, null, true, new(sessionId, prior.Id, Delivery: prior.Delivery));
-                if (prior.Kind == "steer" && prior.TargetTurnId is { } targetId)
-                {
-                    var turn = _scheduler.TryGetActive(sessionId, out var current) && current.TurnDto.Id == targetId
-                        ? current.TurnDto : (await _store.ListSessionTurnsAsync(sessionId, ct).ConfigureAwait(false))
-                            .SingleOrDefault(turn => turn.Id == targetId);
-                    return new(null, turn ?? throw KernelException.Conflict("The target turn is no longer available."), true);
-                }
-                throw KernelException.Conflict("This request key was already used by another message operation.");
-            }
-
-            RequireSessionDispatchAvailableCore(sessionId);
-            if (request.SteerIfRunning && _scheduler.TryGetActive(sessionId, out var active))
-                return new(null, active.TurnDto, false);
-            if (_scheduler.IsOccupied(session) || await _scheduler.HasQueuedMessageAsync(session, ct).ConfigureAwait(false))
-            {
-                if (!request.QueueIfBusy || session.Status == "unknown")
-                    throw KernelException.Conflict($"Session '{sessionId}' already has an active or unresolved turn.");
-
-                RequireWorkspaceReadyCore();
-                RequireDispatchWorkspace(session);
-                var message = new SessionMessage($"inp_{Guid.NewGuid():N}", sessionId, null, InstallationAuthor,
-                    request.IdempotencyKey, hash, null, null, request.Content, "queued", NowMs(), "queue");
-                await Messages.InsertAsync(message, ct).ConfigureAwait(false);
-                await PokeSessionCoreAsync(sessionId).ConfigureAwait(false);
-                NotifyQueueChangedCore(sessionId);
-                return new(null, null, false, new(sessionId, message.Id, Delivery: message.Delivery));
-            }
-
-            session = session with { Status = "queued", UpdatedAtMs = NowMs() };
-            var sessionEvent = SessionUpdatedEvent(session);
-            await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
-            var input = await _store.SessionInputs.AcceptAsync(session,
-                new(request.IdempotencyKey, hash, request.Content), sessionEvent, ct).ConfigureAwait(false);
-            RegisterAcceptedInput(session, input);
-            await PublishInputEventAsync(sessionEvent).ConfigureAwait(false);
-            return new(input.Receipt, null, false);
-        }, ct).ConfigureAwait(false);
-
-        if (!result.Replay && result.SteeredTurn is { } turn)
-            await AcceptSteeringAsync(sessionId, turn.Id, request.Content, request.IdempotencyKey, ct, hash).ConfigureAwait(false);
-        return result;
-    }
-
-    public Task<(SessionCreationReceipt Receipt, bool Replay)> CreateSessionWithReceiptAsync(
-        CreateSessionRequest request, string key, CancellationToken ct)
+    private Task<(SessionCreationReceipt Receipt, bool Replay)> CreateConversationAsync(
+        CreateSessionRequest request, string key, CancellationToken ct, InteropPrincipal? principal = null)
     {
         ValidateRequestKey(key);
-        if (request.Text is { } text && string.IsNullOrWhiteSpace(text))
+        if (request.Prompt is { } prompt && string.IsNullOrWhiteSpace(prompt))
             throw KernelException.InvalidArgument("First message cannot be empty.");
-
-        // Keep main's persisted receipt layout when effort is absent.
-        var hash = string.IsNullOrWhiteSpace(request.ReasoningEffort)
-            ? (string.IsNullOrWhiteSpace(request.PermissionMode)
-                ? RequestIdentity.Hash(new { version = 1, request.Title, request.Provider, request.Model, request.Text })
-                : RequestIdentity.Hash(new { version = 1, request.Title, request.Provider, request.Model, request.Text, request.PermissionMode }))
-            : RequestIdentity.Hash(new { version = 1, request.Title, request.Provider, request.Model, ReasoningEffort = request.ReasoningEffort.Trim(), request.Text, request.PermissionMode });
-        var intent = new SessionCreateIntent(TrackId, key, hash);
+        request = request with { ReasoningEffort = string.IsNullOrWhiteSpace(request.ReasoningEffort) ? null : request.ReasoningEffort.Trim() };
+        var hash = RequestIdentity.Hash(request);
+        var intent = new SessionCreateIntent(TrackId, key, hash,
+            principal is InteropPrincipal.Session identity ? identity.SessionId : InstallationAuthor);
         return EnqueueAsync<(SessionCreationReceipt, bool)>(async _ =>
         {
+            if (principal is InteropPrincipal.Session)
+            {
+                await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
+                RequireInteropCore(principal, write: true);
+            }
             var existing = await _store.SessionInputs.FindCreationAsync(intent, ct).ConfigureAwait(false);
             if (existing is not null)
             {
@@ -100,16 +33,22 @@ public sealed partial class TrackActor
                 var replayedInput = existing.FirstInput is { } originalInput
                     ? await ReplayInputCoreAsync(originalInput, ct).ConfigureAwait(false)
                     : null;
-                return (new(created, replayedInput), true);
+                return (new(created, replayedInput, RequestKey: key), true);
             }
 
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
-            var session = await NewSubagentSessionCoreAsync(request, ct).ConfigureAwait(false);
+            var parent = RequireInteropCore(principal ?? new InteropPrincipal.Human(), write: true);
+            SessionPolicy.RequireCreate(principal ?? new InteropPrincipal.Human(), parent, TrackId, _options.MaxSessionSpawnDepth);
+            var session = await NewSubagentSessionCoreAsync(parent is null ? request : request with
+            { Provider = request.Provider ?? parent.Provider, Model = request.Model ?? parent.Model,
+                ReasoningEffort = request.ReasoningEffort ?? parent.ReasoningEffort,
+                PermissionMode = request.PermissionMode ?? parent.PermissionMode }, ct).ConfigureAwait(false);
+            session = session with { ParentSessionId = parent?.Id, SpawnDepth = parent is null ? 0 : parent.SpawnDepth + 1 };
             SessionInputRequest? first = null;
-            if (request.Text is { } content)
+            if (request.Prompt is { } content)
             {
-                var firstHash = RequestIdentity.Hash(new { version = 1, Content = content, SteerIfRunning = false });
-                first = new(key, firstHash, content);
+                var firstHash = RequestIdentity.Hash(new { version = 3, Content = content, Mode = "default", TurnId = (string?)null, ExpectedAttemptId = (string?)null });
+                first = new(key, firstHash, content, intent.AuthorId);
                 session = session with { Status = "queued" };
             }
 
@@ -121,7 +60,7 @@ public sealed partial class TrackActor
             else
                 RegisterAcceptedInput(session, input);
             await PublishInputEventAsync(sessionEvent).ConfigureAwait(false);
-            return (new(session, input?.Receipt), false);
+            return (new(session, input?.Receipt, RequestKey: key), false);
         }, ct);
     }
 
@@ -160,7 +99,7 @@ public sealed partial class TrackActor
                     var work = new SessionInputBatchWorkItem(this, input);
                     var running = session with { Status = "running", UpdatedAtMs = NowMs() };
                     if (await work.ClaimCoreAsync(session, running, SessionUpdatedEvent(running), CancellationToken.None).ConfigureAwait(false) is null) return;
-                    var turn = work.CreateTurnCore(session, input.Content, null, NowMs());
+                    var turn = work.CreateTurnCore(session, input.Content, NowMs());
                     await work.TrySettleSetupFailureCoreAsync(error, turn, running).ConfigureAwait(false);
                 }, CancellationToken.None).ConfigureAwait(false);
             }

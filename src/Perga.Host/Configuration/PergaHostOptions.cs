@@ -28,7 +28,6 @@ public sealed class PergaHostOptions
     public Dictionary<string, string> ProviderExecutables { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public string? OarNodeExecutablePath { get; set; }
     public string? OarBridgeScriptPath { get; set; }
-    public string? WorkerApprovalAuthorizationSha256 { get; set; }
     public string DefaultWorkspaceDriver { get; set; } = "direct";
     public bool DispatchWakesInBackground { get; set; } = true;
 

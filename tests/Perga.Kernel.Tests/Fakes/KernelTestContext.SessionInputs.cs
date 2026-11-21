@@ -4,11 +4,11 @@ namespace Perga.Kernel.Tests.Fakes;
 
 internal sealed partial class KernelTestContext
 {
-    public async Task<SessionTurnDto> SendAndWaitForTurnAsync(string sessionId, SendMessageRequest request, CancellationToken ct = default)
+    public async Task<SessionTurnDto> SendAndWaitForTurnAsync(string sessionId, SendSessionMessageRequest request, CancellationToken ct = default)
     {
-        var accepted = await Kernel.AcceptMessageAsync(sessionId, request, ct);
-        if (accepted.SteeredTurn is { } steered) return steered;
-        var receipt = accepted.Receipt ?? throw new InvalidOperationException("Expected an accepted input.");
+        var accepted = await Kernel.SendSessionMessageAsync(sessionId, request, new InteropPrincipal.Human(), ct);
+        var receipt = accepted;
+        if (request.Mode == "steer") return Store.GetTurnsForSession(sessionId).Single(t => t.Id == receipt.TurnId);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
         deadline.CancelAfter(TimeSpan.FromSeconds(15));
         while (true)

@@ -36,7 +36,7 @@ public sealed class AttemptExecutionAndGateTests
                 task_key = "guarded", ready = true, access = "read_write", goal_or_cmd = "Implement", gate = "verify"
             }))]), ct);
         await ctx.Kernel.WaitForTrackIdleAsync(track.Id, ct);
-        var worker = Assert.Single(await ctx.Kernel.ListSessionsAsync(track.Id, ct), session => session.BoundAttemptId is not null);
+        var worker = Assert.Single((await ctx.Kernel.ListSessionsAsync(track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), ct)).Select(summary => summary.Session).ToArray(), session => session.BoundAttemptId is not null);
         var finish = ctx.Kernel.CompleteAttemptDoneAsync(track.Id, worker.Id, ct: ct);
         try
         {
@@ -134,7 +134,7 @@ public sealed class AttemptExecutionAndGateTests
         Assert.NotNull(attempt1.WorkspaceLease);
         var expectedLeaseCwd = $"/repo/main/leases/{attempt1.AttemptId}";
 
-        var subagent1 = Assert.Single(await ctx.Kernel.ListSessionsAsync(trackId), s => s.BoundAttemptId == attempt1.AttemptId);
+        var subagent1 = Assert.Single((await ctx.Kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray(), s => s.BoundAttemptId == attempt1.AttemptId);
         var subagentLaunch = ctx.AgentRuntime.OpenedSessions.Single(s => s.LaunchSpec.Cwd == expectedLeaseCwd);
         Assert.Equal(expectedLeaseCwd, subagentLaunch.LaunchSpec.Cwd);
 
@@ -222,7 +222,7 @@ public sealed class AttemptExecutionAndGateTests
 
         await ctx.Kernel.WaitForTrackIdleAsync(trackId);
 
-        var subagent = Assert.Single(await ctx.Kernel.ListSessionsAsync(trackId), s => s.BoundAttemptId is not null);
+        var subagent = Assert.Single((await ctx.Kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray(), s => s.BoundAttemptId is not null);
         var leadTurnsBefore = ctx.Store.GetTurnsForSession(leadId).Count;
 
         var settled = await ctx.Kernel.CompleteAttemptDoneAsync(trackId, subagent.Id, TestJson.FromObject(new { ok = true }));
@@ -291,7 +291,7 @@ public sealed class AttemptExecutionAndGateTests
         Assert.Equal(TaskRunStatus.Done, tasks.Single(t => t.TaskKey == "cmd-task").Status);
 
         // Fail parallel-rw-1 via perga_task_fail -> discards lease & wakes Lead!
-        var sessions = await ctx.Kernel.ListSessionsAsync(trackId);
+        var sessions = (await ctx.Kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray();
         var rw1Id = tasks.Single(t => t.TaskKey == "parallel-rw-1").Id;
         var sub1 = sessions.Single(s => s.BoundTaskId == rw1Id);
 

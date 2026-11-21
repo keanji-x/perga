@@ -53,19 +53,21 @@ public sealed class SessionInputBatchRecoveryTests
                     Assert.Equal("First prompt\n\nSecond prompt", execution.Input.Prompt);
                     Assert.Equal(turnId, execution.Input.CorrelationId);
                 }
-                var bubbles = (await kernel.GetSessionItemsAsync(sessionId)).Items.Where(i => i.Kind == "user").ToArray();
+                var bubbles = (await kernel.GetSessionItemsAsync(sessionId, new(), new InteropPrincipal.Human(), default)).Items.Where(i => i.Kind == "user").ToArray();
                 Assert.Equal(["First prompt", "Second prompt"], bubbles.Select(i => i.Payload.GetProperty("content").GetString()));
                 Assert.All(bubbles, bubble => Assert.Equal(turnId, bubble.TurnId));
                 Assert.Single(await store.ListSessionTurnsAsync(sessionId, default));
                 Assert.Single(await store.ListEventsSinceAsync(0, trackId), e => e.Kind == KernelEventKinds.TurnCompleted);
                 foreach (var id in new[] { "first", "second" })
                 {
-                    var receipt = await reopened.Client.GetFromJsonAsync<SessionInputReceipt>($"/api/v1/sessions/{sessionId}/inputs/{id}", PergaJsonDefaults.ApiOptions);
-                    Assert.Equal((id, turnId, interrupted ? "unknown" : "completed"), (receipt!.InputId, receipt.TurnId, receipt.TurnStatus));
+                    var page = (await reopened.Client.GetFromJsonAsync<SessionItemsPageDto>($"/api/v1/sessions/{sessionId}/items", PergaJsonDefaults.ApiOptions))!;
+                    var item = Assert.Single(page.Items, i => i.Kind == "user" && i.Payload.GetProperty("inputId").GetString() == id);
+                    Assert.Equal(turnId, item.TurnId);
+                    Assert.Equal(interrupted ? "unconfirmed" : "completed", item.MessageStatus);
                 }
                 if (interrupted)
                 {
-                    using var unlock = await reopened.Client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/recover", new { mode = "reset_context" });
+                    using var unlock = await reopened.Client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/control", new { action = "reset_context" });
                     Assert.Equal(HttpStatusCode.OK, unlock.StatusCode);
                     foreach (var id in new[] { "first", "second" })
                         Assert.NotNull((await store.SessionInputs.FindByIdAsync(sessionId, id, default))!.Receipt.ResolvedAtMs);
@@ -74,7 +76,7 @@ public sealed class SessionInputBatchRecoveryTests
                     { Content = JsonContent.Create(new { content = "After unlock" }) };
                     request.Headers.Add("Idempotency-Key", "after-unlock");
                     using var response = await reopened.Client.SendAsync(request);
-                    Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+                    Assert.Equal(HttpStatusCode.OK, response.StatusCode);
                     await kernel.WaitForTrackIdleAsync(trackId);
                     Assert.Equal("After unlock", Assert.Single(reopened.AgentRuntime.ExecutedTurns).Input.Prompt);
                 }

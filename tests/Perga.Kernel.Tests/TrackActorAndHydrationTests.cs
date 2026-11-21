@@ -72,7 +72,7 @@ public sealed class TrackActorAndHydrationTests
         };
 
         // 1. Trigger session turn on uncached track -> must run EnsureMountedAsync BEFORE OpenSessionAsync
-        await ctx.SendAndWaitForTurnAsync("ses_lead_cold", new SendMessageRequest("Check mount", "idem-cold-1"));
+        await ctx.SendAndWaitForTurnAsync("ses_lead_cold", new SendSessionMessageRequest("Check mount", "idem-cold-1"));
         Assert.True(ensureMountedSeenBeforeSessionOpen);
         Assert.Single(ctx.DirectDriver.EnsureMountedCalls);
 
@@ -190,7 +190,7 @@ public sealed class TrackActorAndHydrationTests
         Assert.True(created.Track.TemplateState.GetProperty("initialized").GetBoolean());
 
         // Create a free Subagent and switch LeadSessionId to it
-        var subagent = await ctx.Kernel.CreateSubagentSessionAsync(trackId, new CreateSessionRequest(Title: "Co-Lead"));
+        var subagent = (await ctx.Kernel.CreateSessionAsync(trackId, new CreateSessionRequest(Title: "Co-Lead"), Guid.NewGuid().ToString("N"), new InteropPrincipal.Human(), default)).Receipt.Session;
         Assert.False(subagent.IsLead);
 
         var patched = await ctx.Kernel.PatchTrackAsync(trackId, new PatchTrackRequest(
@@ -203,7 +203,7 @@ public sealed class TrackActorAndHydrationTests
         Assert.NotNull(patched.PinnedAtMs);
         Assert.Equal(subagent.Id, patched.LeadSessionId);
 
-        var sessions = await ctx.Kernel.ListSessionsAsync(trackId);
+        var sessions = (await ctx.Kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray();
         Assert.True(sessions.Single(s => s.Id == subagent.Id).IsLead);
         Assert.False(sessions.Single(s => s.Id == initialLeadId).IsLead);
 

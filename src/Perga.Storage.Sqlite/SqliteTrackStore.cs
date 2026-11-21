@@ -590,7 +590,9 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                        unknown_reason AS UnknownReason, unknown_turn_id AS UnknownTurnId,
                        (SELECT MAX(t.completed_at_ms) FROM session_turns t WHERE t.session_id = agent_sessions.id
                         AND LOWER(t.status) IN ('completed', 'failed') AND t.completed_at_ms IS NOT NULL) AS LastNotifiableTurnAtMs,
-                       unknown_last_error AS UnknownLastError, reconnect_invalidated AS ReconnectInvalidated
+                       unknown_last_error AS UnknownLastError, reconnect_invalidated AS ReconnectInvalidated,
+                       parent_session_id AS ParentSessionId, spawn_depth AS SpawnDepth,
+                       config_version AS ConfigVersion, notify_parent AS NotifyParent, system_prompt AS SystemPrompt
                 FROM agent_sessions
                 WHERE track_id = @TrackId
                 ORDER BY created_at_ms ASC, id ASC;
@@ -609,7 +611,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                        answer_json AS AnswerJson,
                        created_at_ms AS CreatedAtMs,
                        answered_at_ms AS AnsweredAtMs,
-                       delivery AS Delivery, session_id AS SessionId, turn_id AS TurnId
+                       delivery AS Delivery, session_id AS SessionId, turn_id AS TurnId, target_session_id AS TargetSessionId
                 FROM asks
                 WHERE track_id = @TrackId AND LOWER(status) = 'open'
                 ORDER BY created_at_ms ASC, id ASC;
@@ -882,10 +884,18 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                 if (dispatch is not null)
                 {
                     var dispatched = syncedTasks.Single(task => task.TaskKey == dispatch.TaskKey);
+                    if (dispatch.Session is { } session)
+                    {
+                        var parentDepth = authorSessionId is null ? (int?)null : await conn.ExecuteScalarAsync<int?>(new CommandDefinition(
+                            "SELECT spawn_depth FROM agent_sessions WHERE id=@Id;", new { Id = authorSessionId }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
+                        await UpsertSessionInternalAsync(conn, tx, session with { BoundTaskId = dispatched.Id,
+                            ParentSessionId = authorSessionId, SpawnDepth = parentDepth is null ? 0 : parentDepth.Value + 1,
+                            NotifyParent = session.NotifyParent }, innerCt).ConfigureAwait(false);
+                    }
                     await conn.ExecuteAsync(new CommandDefinition("""
                         INSERT INTO creation_receipts (author_id, operation, scope_id, request_key, request_hash, resource_id, created_at_ms)
-                        VALUES (@AuthorId, 'worker-dispatch', @TrackId, @RequestKey, @RequestHash, @TaskId, @Now);
-                        """, new { dispatch.AuthorId, dispatch.TrackId, dispatch.RequestKey, dispatch.RequestHash, TaskId = dispatched.Id, Now = nowMs },
+                        VALUES (@AuthorId, 'session-create', @TrackId, @RequestKey, @RequestHash, @SessionId, @Now);
+                        """, new { dispatch.AuthorId, dispatch.TrackId, dispatch.RequestKey, dispatch.RequestHash, SessionId = dispatch.Session!.Id, Now = nowMs },
                         tx, cancellationToken: innerCt)).ConfigureAwait(false);
                 }
             },
@@ -925,7 +935,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
         EventEnvelopeDto? evt,
         CancellationToken ct,
         AgentSessionDto? session = null,
-        EventEnvelopeDto? sessionEvent = null, string? wakePrompt = null)
+        EventEnvelopeDto? sessionEvent = null, string? wakePrompt = null, SessionMessage? initialMessage = null)
     {
         ArgumentNullException.ThrowIfNull(task);
         EnsureInitialized();
@@ -939,9 +949,18 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
             {
                 await UpsertTaskInternalAsync(conn, tx, task, innerCt).ConfigureAwait(false);
                 if (session is not null)
+                {
+                    if (session.BoundAttemptId is not null && await conn.ExecuteScalarAsync<bool>(new CommandDefinition(
+                        "SELECT EXISTS(SELECT 1 FROM agent_sessions WHERE id=@Id AND bound_attempt_id IS NOT NULL AND bound_attempt_id<>@BoundAttemptId);",
+                        session, tx, cancellationToken: innerCt)).ConfigureAwait(false))
+                        await InsertSessionItemsAsync(conn, tx, session.TrackId, [new SessionItemDto(0, session.Id, null,
+                            "epoch_boundary", System.Text.Json.JsonSerializer.SerializeToElement(new { epoch = session.Epoch, reason = "new_attempt" }), session.UpdatedAtMs)], innerCt).ConfigureAwait(false);
                     await UpsertSessionInternalAsync(conn, tx, session, innerCt).ConfigureAwait(false);
+                }
                 if (sessionEvent is not null)
                     await InsertEventInternalAsync(conn, tx, sessionEvent, innerCt).ConfigureAwait(false);
+                if (initialMessage is not null)
+                    await InsertSessionMessageAsync(conn, tx, initialMessage, innerCt).ConfigureAwait(false);
 
                 if (attempt is not null)
                 {
@@ -1012,7 +1031,16 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                 }
 
                 if (attempt?.FinishedAtMs is not null)
-                    await EnqueueWakeOnceInternalAsync(conn, tx, TrackWakeRequests.TaskSettled(task, attempt, wakePrompt), task.UpdatedAtMs, innerCt).ConfigureAwait(false);
+                {
+                    var child = await conn.QuerySingleOrDefaultAsync<(string? Parent, string Notify)?> (new CommandDefinition(
+                        "SELECT parent_session_id, notify_parent FROM agent_sessions WHERE id=@Id;", new { Id = attempt.SessionId }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
+                    if (child?.Parent is { } parentId && child.Value.Notify == "task_settled" &&
+                        await conn.ExecuteScalarAsync<bool>(new CommandDefinition(
+                            "SELECT EXISTS(SELECT 1 FROM agent_sessions WHERE id=@Id AND archived_at_ms IS NULL);", new { Id = parentId }, tx, cancellationToken: innerCt)).ConfigureAwait(false))
+                        await EnqueueWakeOnceInternalAsync(conn, tx, TrackWakeRequests.TaskSettled(task, attempt, wakePrompt) with { TargetSessionId = parentId }, task.UpdatedAtMs, innerCt).ConfigureAwait(false);
+                    else if (child is null || child.Value.Parent is null)
+                        await EnqueueWakeOnceInternalAsync(conn, tx, TrackWakeRequests.TaskSettled(task, attempt, wakePrompt), task.UpdatedAtMs, innerCt).ConfigureAwait(false);
+                }
                 if (evt is not null)
                 {
                     await InsertEventInternalAsync(conn, tx, evt, innerCt).ConfigureAwait(false);
@@ -1368,8 +1396,8 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                 await conn.ExecuteAsync(
                     new CommandDefinition(
                         """
-                        INSERT INTO asks (id, track_id, status, questions_json, answer_json, created_at_ms, answered_at_ms, delivery, session_id, turn_id)
-                        VALUES (@Id, @TrackId, @Status, @QuestionsJson, @AnswerJson, @CreatedAtMs, @AnsweredAtMs, @Delivery, @SessionId, @TurnId)
+                        INSERT INTO asks (id, track_id, status, questions_json, answer_json, created_at_ms, answered_at_ms, delivery, session_id, turn_id, target_session_id)
+                        VALUES (@Id, @TrackId, @Status, @QuestionsJson, @AnswerJson, @CreatedAtMs, @AnsweredAtMs, @Delivery, @SessionId, @TurnId, @TargetSessionId)
                         ON CONFLICT(id) DO UPDATE SET
                             status = excluded.status,
                             questions_json = excluded.questions_json,
@@ -1387,7 +1415,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                             ask.AnsweredAtMs,
                             Delivery = ask.Delivery.ToString().ToLowerInvariant(),
                             ask.SessionId,
-                            ask.TurnId
+                            ask.TurnId, ask.TargetSessionId
                         },
                         transaction: tx,
                         cancellationToken: innerCt)).ConfigureAwait(false);
@@ -1415,7 +1443,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                        answer_json AS AnswerJson,
                        created_at_ms AS CreatedAtMs,
                        answered_at_ms AS AnsweredAtMs,
-                       delivery AS Delivery, session_id AS SessionId, turn_id AS TurnId
+                       delivery AS Delivery, session_id AS SessionId, turn_id AS TurnId, target_session_id AS TargetSessionId
                 FROM asks
                 WHERE id = @AskId;
                 """,
@@ -2060,14 +2088,16 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                     provider, model, reasoning_effort, native_thread_id, epoch, status,
                     context_used_tokens, context_window_tokens, context_usage_at_ms,
                     archived_at_ms, created_at_ms, updated_at_ms, permission_mode,
-                    unknown_reason, unknown_turn_id, unknown_last_error, reconnect_invalidated
+                    unknown_reason, unknown_turn_id, unknown_last_error, reconnect_invalidated,
+                    parent_session_id, spawn_depth, config_version, notify_parent, system_prompt
                 )
                 VALUES (
                     @Id, @TrackId, @BoundTaskId, @BoundAttemptId, @Title,
                     @Provider, @Model, @ReasoningEffort, @NativeThreadId, @Epoch, @Status,
                     @ContextUsedTokens, @ContextWindowTokens, @ContextUsageAtMs,
                     @ArchivedAtMs, @CreatedAtMs, @UpdatedAtMs, @PermissionMode,
-                    @UnknownReason, @UnknownTurnId, @UnknownLastError, @ReconnectInvalidated
+                    @UnknownReason, @UnknownTurnId, @UnknownLastError, @ReconnectInvalidated,
+                    @ParentSessionId, @SpawnDepth, @ConfigVersion, @NotifyParent, @SystemPrompt
                 )
                 ON CONFLICT(id) DO UPDATE SET
                     bound_task_id = excluded.bound_task_id,
@@ -2086,7 +2116,9 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                     updated_at_ms = excluded.updated_at_ms,
                     permission_mode = excluded.permission_mode,
                     unknown_reason = excluded.unknown_reason, unknown_turn_id = excluded.unknown_turn_id,
-                    unknown_last_error = excluded.unknown_last_error, reconnect_invalidated = excluded.reconnect_invalidated;
+                    unknown_last_error = excluded.unknown_last_error, reconnect_invalidated = excluded.reconnect_invalidated,
+                    parent_session_id = excluded.parent_session_id, spawn_depth = excluded.spawn_depth,
+                    config_version = excluded.config_version, notify_parent = excluded.notify_parent, system_prompt = excluded.system_prompt;
                 """,
                 new
                 {
@@ -2108,7 +2140,8 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                     session.CreatedAtMs,
                     session.UpdatedAtMs,
                     session.PermissionMode, session.UnknownReason, session.UnknownTurnId,
-                    session.UnknownLastError, session.ReconnectInvalidated
+                    session.UnknownLastError, session.ReconnectInvalidated, session.ParentSessionId,
+                    session.SpawnDepth, session.ConfigVersion, session.NotifyParent, session.SystemPrompt
                 },
                 transaction: tx,
                 cancellationToken: ct));
@@ -2261,7 +2294,9 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
             UpdatedAtMs: r.UpdatedAtMs,
             ReasoningEffort: r.ReasoningEffort,
             PermissionMode: r.PermissionMode, UnknownReason: r.UnknownReason, UnknownTurnId: r.UnknownTurnId,
-            UnknownLastError: r.UnknownLastError, ReconnectInvalidated: r.ReconnectInvalidated, LastNotifiableTurnAtMs: r.LastNotifiableTurnAtMs);
+            UnknownLastError: r.UnknownLastError, ReconnectInvalidated: r.ReconnectInvalidated,
+            ParentSessionId: r.ParentSessionId, SpawnDepth: r.SpawnDepth, ConfigVersion: r.ConfigVersion,
+            NotifyParent: r.NotifyParent, SystemPrompt: r.SystemPrompt, LastNotifiableTurnAtMs: r.LastNotifiableTurnAtMs);
 
     private static SessionTurnDto MapTurn(SessionTurnRow r) =>
         new(
@@ -2297,7 +2332,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
             AnsweredAtMs: r.AnsweredAtMs,
             Delivery: r.Delivery switch { "hold" => AskDelivery.Hold, "wake" => AskDelivery.Wake, _ => throw new InvalidOperationException("Invalid ask delivery.") },
             SessionId: r.SessionId,
-            TurnId: r.TurnId);
+            TurnId: r.TurnId, TargetSessionId: r.TargetSessionId);
 
     private static MailDto MapMail(MailRow r) =>
         new(
@@ -2444,6 +2479,11 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
     private sealed class SessionRow
     {
         public long? LastNotifiableTurnAtMs { get; init; }
+        public string? ParentSessionId { get; init; }
+        public int SpawnDepth { get; init; }
+        public long ConfigVersion { get; init; }
+        public string NotifyParent { get; init; } = "none";
+        public string? SystemPrompt { get; init; }
         public string? UnknownReason { get; init; }
         public string? UnknownTurnId { get; init; }
         public string? UnknownLastError { get; init; }
@@ -2497,6 +2537,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
 
     private sealed class AskRow
     {
+        public string? TargetSessionId { get; init; }
         public string Delivery { get; init; } = string.Empty;
         public string? SessionId { get; init; }
         public string? TurnId { get; init; }

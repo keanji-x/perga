@@ -1418,4 +1418,5 @@ export function decodeWireEvent(input: unknown): WireEventDecodeResult {
   return { status: 'ready', value: parsed.data };
 }
 
+// Unified session DTOs are defined once in perga-v1.ts for HTTP and event consumers.
 export * from './perga-v1.js';

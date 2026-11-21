@@ -10,7 +10,6 @@ import {
   conversationCreateFailure,
   conversationName, conversationNameFrom,
   createSerialWriter, createTrackConversationOperation,
-  editPlannerInputOperation,
   isOptimisticConversationTurn, isQueuedConversationTurn, kernelQueuesInput,
   mergeTranscript,
   plannerQueueWriteFailure,
@@ -165,10 +164,10 @@ describe('track conversations', () => {
     const operation = createTrackConversationOperation('track 1', 'hello', 'key-a', 'claude', { model: null, reasoning_effort: null });
     expect(operation.method).toBe('POST');
     expect(operation.path).toBe('/api/v1/tracks/track%201/sessions');
-    expect(operation.body).toEqual({ title: 'hello', text: 'hello', provider: 'claude' });
+    expect(operation.body).toEqual({ title: 'hello', prompt: 'hello', provider: 'claude' });
     expect(operation.headers).toEqual({ 'Idempotency-Key': 'key-a' });
     const firstInput = { inputId: 'input', turnId: 'turn', sessionId: row.id,
-      deliveryState: 'accepted', turnStatus: 'queued', statusUrl: '/input' };
+      deliveryState: 'accepted', turnStatus: 'queued' };
     expect(operation.responseSchema.parse({ session: { ...row, trackId: 'track 1' }, firstInput }).conversation.kind).toBe('agent');
     expect(operation.responseSchema.safeParse({ session: row }).success).toBe(false);
     expect(operation.responseSchema.safeParse({ session: row, firstInput }).success).toBe(false);
@@ -181,10 +180,10 @@ describe('track conversations', () => {
     }).success).toBe(false);
     expect(operation.method).toBe('POST');
     expect(operation.path).toBe('/api/v1/sessions/card%201/messages');
-    expect(operation.body).toStrictEqual({ content: 'hello', steerIfRunning: false, text: 'hello', attachments: ['image.png'] });
+    expect(operation.body).toStrictEqual({ content: 'hello', mode: 'default' });
     expect(operation.headers).toEqual({ 'Idempotency-Key': 'key-a' });
     expect(sendPlannerInputOperation('card 1', 'hello', [], 'key-a').body)
-      .toStrictEqual({ content: 'hello', steerIfRunning: false, text: 'hello' });
+      .toStrictEqual({ content: 'hello', mode: 'default' });
   });
 
   /* A golden: the value is copied from the server's own test of `conversation_keys.rs`. */
@@ -416,15 +415,6 @@ describe('createSerialWriter', () => {
   });
 });
 
-
-it('edits the same queued entry with the exact observed revision and requires stored text in the receipt', () => {
-  const operation = editPlannerInputOperation('card/a', 'entry/b', 'revised middle message', 7);
-  expect(operation.method).toBe('PATCH');
-  expect(operation.path).toBe('/api/cards/card%2Fa/planner/input/entry%2Fb');
-  expect(operation.body).toEqual({ text: 'revised middle message', if_entry_rev: 7 });
-  expect(operation.responseSchema.safeParse({ card_id: 'card/a', entry_id: 'entry/b', rev: 8, text: null }).success).toBe(false);
-  expect(operation.responseSchema.safeParse({ card_id: 'card/a', entry_id: 'entry/b', rev: 8, text: 'revised middle message' }).success).toBe(true);
-});
 
 it('retains session archive metadata in the conversation', () => {
   const row = agentSessionDtoSchema.parse({ id: 'card', trackId: 'track', isLead: false,

@@ -30,7 +30,7 @@ it('submits prose containing /close with real Enter without changing approvals',
   await userEvent.keyboard('{End}');
   await userEvent.keyboard('{Enter}');
   await expect.poll(() => fixture.requests.filter(request => request.path.endsWith('/messages')).map(request => request.body))
-    .toEqual([expect.objectContaining({ text: 'Explain /close' })]);
+    .toEqual([expect.objectContaining({ content: 'Explain /close' })]);
   expect(fixture.requests.filter(request => request.method === 'PATCH' || request.method === 'PUT')).toHaveLength(0);
 });
 

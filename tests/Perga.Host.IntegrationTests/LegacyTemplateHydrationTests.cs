@@ -147,7 +147,7 @@ public sealed class LegacyTemplateHydrationTests
 
             Assert.Equal(HttpStatusCode.OK, (await reopened.Client.GetAsync($"/api/v1/tracks/{legacyTrackId}")).StatusCode);
             var dispatchError = await Assert.ThrowsAsync<KernelException>(() =>
-                restarted.DispatchWorkerAsync(legacyTrackId, new("Must not dispatch"), "plain", null, default));
+                restarted.CreateSessionAsync(legacyTrackId, new(Prompt: "Must not dispatch", Task: new()), "plain", new InteropPrincipal.Human(), default));
             Assert.Contains("guardToolCall", dispatchError.Message);
             var persisted = await reopened.Services.GetRequiredService<ITrackStore>().LoadTrackAggregateAsync(legacyTrackId, default);
             Assert.Empty(persisted!.Tasks);
@@ -203,14 +203,14 @@ public sealed class LegacyTemplateHydrationTests
             var aggregate = await restarted.GetTrackAggregateAsync(trackId);
             Assert.Equal(HttpStatusCode.OK, (await reopened.Client.GetAsync($"/api/v1/tracks/{trackId}")).StatusCode);
             var dispatchError = await Assert.ThrowsAsync<KernelException>(() =>
-                restarted.DispatchWorkerAsync(trackId, new("Must not dispatch"), "plain", null, default));
+                restarted.CreateSessionAsync(trackId, new(Prompt: "Must not dispatch", Task: new()), "plain", new InteropPrincipal.Human(), default));
             Assert.Equal(KernelErrorCode.PolicyDenied, dispatchError.Code);
             Assert.Contains(key, dispatchError.Message);
             var caller = new McpSessionPrincipal("token", trackId, aggregate.Track.LeadSessionId!, true, null, null, []);
             var commandError = await Assert.ThrowsAsync<KernelException>(() => KernelMcpDispatcher.ExecuteGuardedAsync(restarted,
                 caller, KernelMcpToolNames.TrackRename, JsonSerializer.SerializeToElement(new { title = "Forbidden rename" })));
             Assert.Equal(KernelErrorCode.PolicyDenied, commandError.Code);
-            await restarted.AcceptMessageAsync(caller.SessionId, new("Must not reach provider", "blocked-turn"), default);
+            await restarted.SendSessionMessageAsync(caller.SessionId, new(Content: "Must not reach provider", RequestKey: "blocked-turn"), new InteropPrincipal.Human(), default);
             await restarted.WaitForTrackIdleAsync(trackId).WaitAsync(TimeSpan.FromSeconds(10));
             Assert.Empty(reopened.AgentRuntime.ExecutedTurns);
             var persisted = await reopened.Services.GetRequiredService<ITrackStore>().LoadTrackAggregateAsync(trackId, default);

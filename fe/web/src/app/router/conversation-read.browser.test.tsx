@@ -14,7 +14,7 @@ it.each([390, 1280])('retains history and draft through a failed v1 status read 
   let release: (() => void) | undefined;
   const responseGate: { held?: Promise<void> } = {};
   const fixture = renderSessionFixture({ initial: '/track/daily?panel=conversations', reply: async request => {
-    if (!request.path.endsWith('&view=run')) return undefined;
+    if (!request.path.endsWith('limit=1')) return undefined;
     await responseGate.held;
     return unavailable ? { status: 503, statusText: 'Unavailable', body: { code: 'unavailable', error: 'private transport diagnostic' } } : undefined;
   } });
@@ -33,7 +33,7 @@ it.each([390, 1280])('retains history and draft through a failed v1 status read 
   try {
     await page.getByRole('button', { name: '刷新' }).click();
     await expect.element(page.getByRole('button', { name: '刷新' })).toHaveAttribute('aria-busy', 'true');
-    expect(fixture.requests.slice(before).filter(request => request.path.endsWith('&view=run'))).toHaveLength(1);
+    expect(fixture.requests.slice(before).filter(request => request.path.endsWith('limit=1'))).toHaveLength(1);
     await expect.element(field).toHaveTextContent('Keep this draft.');
   } finally { release?.(); }
   await expect.element(page.getByText('无法同步最新对话状态', { exact: true })).not.toBeInTheDocument();
@@ -55,7 +55,7 @@ it.each([
           defaultReasoningEffort: 'low', supportedReasoningEfforts: ['low', 'high'].map(reasoningEffort => ({ reasoningEffort, description: '' })) }],
       }],
     });
-    if (request.method === 'PUT' && request.path === '/api/v1/sessions/daily-planner/model') {
+    if (request.method === 'PATCH' && request.path === '/api/v1/sessions/daily-planner') {
       const selected = request.body as { model: string | null; reasoningEffort: string | null };
       Object.assign(fixture.sessions[0], selected);
       return sessionReply(fixture.sessions[0]);
@@ -70,7 +70,7 @@ it.each([
   (slider as HTMLElement).focus();
   await userEvent.keyboard('{End}');
   await page.getByRole('button', { name: 'Save', exact: true }).click();
-  await expect.poll(() => fixture.requests.filter(request => request.method === 'PUT' && request.path.endsWith('/model')).length).toBe(1);
+  await expect.poll(() => fixture.requests.filter(request => request.method === 'PATCH' && request.method === 'PATCH' && /\/api\/v1\/sessions\/[^/]+$/.test(request.path)).length).toBe(1);
   expect(fixture.sessions[0]).toMatchObject({ model, reasoningEffort: 'high' });
   await act(async () => { await fixture.client.invalidateQueries({ queryKey: queryKeys.plannerRun('daily-planner') }); });
   await expect.element(page.getByRole('button', { name: /^Model:.*high/ })).toBeVisible();

@@ -44,7 +44,7 @@ public sealed class UpgradeReceiptConsumer(ITrackStore store, ISystemUpgradeRece
             var pendingTracks = await upgrades.PrepareUpgradeNotificationRetriesAsync(ct).ConfigureAwait(false);
             if (dispatch)
                 foreach (var trackId in pendingTracks)
-                    await actors.GetOrActivate(trackId).PokeLeadAsync(ct, allowInline: false).ConfigureAwait(false);
+                    await actors.GetOrActivate(trackId).PokePendingWakesAsync(ct, allowInline: false).ConfigureAwait(false);
         }
         finally
         {

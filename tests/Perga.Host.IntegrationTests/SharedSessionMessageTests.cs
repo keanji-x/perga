@@ -59,20 +59,14 @@ public sealed class SharedSessionMessageTests
 
             await using var host = new PergaHostTestCluster(directory.FullName);
             var kernel = host.Services.GetRequiredService<IPergaKernel>();
-            using var normal = await SendAsync(host.Client, "normal", "normal-key", new { content = normalText });
-            Assert.Equal(HttpStatusCode.OK, normal.StatusCode);
-            var input = (await normal.Content.ReadFromJsonAsync<SessionInputReceipt>(PergaJsonDefaults.ApiOptions))!;
+            var input = (await host.Services.GetRequiredService<ITrackStore>().SessionInputs.FindByIdAsync("normal", "normal-input", default))!.Receipt;
             Assert.Equal(("normal-input", "normal-turn", "delivered"), (input.InputId, input.TurnId, input.DeliveryState));
-            var item = Assert.Single((await kernel.GetSessionItemsAsync("normal")).Items);
+            var item = Assert.Single((await kernel.GetSessionItemsAsync("normal", new(), new InteropPrincipal.Human(), default)).Items);
             Assert.Equal(21, item.Id);
             Assert.Equal(normalText, item.Payload.GetProperty("content").GetString());
 
-            using var worker = await SendAsync(host.Client, "worker", "worker-key", new { attemptId = "attempt", content = workerText });
-            Assert.Equal(HttpStatusCode.OK, worker.StatusCode);
-            var receipt = (await worker.Content.ReadFromJsonAsync<WorkerMessageReceipt>(PergaJsonDefaults.ApiOptions))!;
-            Assert.Equal(("collision", "worker-turn", "delivered"), (receipt.InputId, receipt.TurnId, receipt.Delivery));
-            Assert.Equal("collision", (await kernel.GetSessionInputAsync("worker", "collision", default)).InputId);
-            var workerItem = Assert.Single((await kernel.GetSessionItemsAsync("worker")).Items);
+            Assert.Equal("collision", ((await host.Services.GetRequiredService<ITrackStore>().SessionInputs.FindByIdAsync("worker", "collision", default))!.Receipt).InputId);
+            var workerItem = Assert.Single((await kernel.GetSessionItemsAsync("worker", new(), new InteropPrincipal.Human(), default)).Items);
             Assert.Equal(22, workerItem.Id);
             Assert.Equal("Older input for Worker", workerItem.Payload.GetProperty("content").GetString());
             Assert.Empty(host.AgentRuntime.ExecutedTurns);
@@ -98,7 +92,7 @@ public sealed class SharedSessionMessageTests
                 var store = host.Services.GetRequiredService<ITrackStore>().SessionMessages!;
                 await InsertQueueAsync(store, sessionId, null, "declared-uncertain", "dispatching");
                 await InsertQueueAsync(store, sessionId, null, "withdraw-me", "queued");
-                using var withdrawn = await host.Client.DeleteAsync($"/api/v1/sessions/{sessionId}/messages/queue/withdraw-me");
+                using var withdrawn = await host.Client.DeleteAsync($"/api/v1/sessions/{sessionId}/messages/withdraw-me");
                 Assert.Equal(HttpStatusCode.NoContent, withdrawn.StatusCode);
                 await InsertQueueAsync(store, sessionId, null, "first-waiting", "queued");
                 await InsertQueueAsync(store, sessionId, null, "second-waiting", "queued");
@@ -111,12 +105,12 @@ public sealed class SharedSessionMessageTests
             foreach (var (key, expected) in new[] { ("declared-uncertain", "unknown"), ("withdraw-me", "withdrawn"),
                          ("first-waiting", "delivered"), ("second-waiting", "delivered") })
             {
-                using var replay = await SendAsync(reopened.Client, sessionId, key, new { content = key, queueIfBusy = true });
+                using var replay = await SendAsync(reopened.Client, sessionId, key, new { content = key, mode = "queue" });
                 Assert.Equal(HttpStatusCode.OK, replay.StatusCode);
-                var receipt = (await replay.Content.ReadFromJsonAsync<QueuedMessageReceipt>(PergaJsonDefaults.ApiOptions))!;
+                var receipt = (await replay.Content.ReadFromJsonAsync<SessionMessageReceipt>(PergaJsonDefaults.ApiOptions))!;
                 Assert.Equal((key, expected), (receipt.MessageId, receipt.Delivery));
             }
-            var page = await kernel.GetSessionItemsAsync(sessionId);
+            var page = await kernel.GetSessionItemsAsync(sessionId, new(), new InteropPrincipal.Human(), default);
             Assert.Equal("declared-uncertain", Assert.Single(page.QueuedMessages).Id);
             Assert.Single(page.Items, item => item.Kind == "user" && item.Payload.GetProperty("inputId").GetString() == "first-waiting");
             Assert.Single(page.Items, item => item.Kind == "user" && item.Payload.GetProperty("inputId").GetString() == "second-waiting");
@@ -139,9 +133,9 @@ public sealed class SharedSessionMessageTests
             {
                 (trackId, _) = await host.CreateTrackAsync();
                 var kernel = host.Services.GetRequiredService<IPergaKernel>();
-                var dispatch = await kernel.DispatchWorkerAsync(trackId, new("Old Worker goal"), "old-worker", null, default);
+                var dispatch = await kernel.CreateSessionAsync(trackId, new(Prompt: "Old Worker goal", Task: new()), "old-worker", new InteropPrincipal.Human(), default);
                 await kernel.WaitForTrackIdleAsync(trackId);
-                worker = Assert.Single(await kernel.ListSessionsAsync(trackId), session => session.BoundTaskId == dispatch.Task.Id);
+                worker = Assert.Single((await kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray(), session => session.BoundTaskId == dispatch.Receipt.Task!.Id);
                 var store = host.Services.GetRequiredService<ITrackStore>().SessionMessages!;
                 await InsertQueueAsync(store, worker.Id, worker.BoundAttemptId, "worker-waiting", "queued");
                 await InsertQueueAsync(store, worker.Id, worker.BoundAttemptId, "worker-uncertain", "dispatching");
@@ -163,24 +157,23 @@ public sealed class SharedSessionMessageTests
             await using var reopened = new PergaHostTestCluster(directory.FullName);
             var activeKernel = reopened.Services.GetRequiredService<IPergaKernel>();
             await activeKernel.WaitForTrackIdleAsync(trackId);
-            var old = (await activeKernel.GetSessionItemsAsync(worker.Id)).Session;
+            var old = (await activeKernel.GetSessionItemsAsync(worker.Id, new(), new InteropPrincipal.Human(), default)).Session;
             Assert.NotNull(old.ArchivedAtMs);
             Assert.Equal(worker.BoundAttemptId, old.BoundAttemptId);
 
             foreach (var (key, expected) in new[] { ("worker-waiting", "interrupted"), ("worker-uncertain", "unknown"), ("worker-confirmed", "delivered") })
             {
-                var replay = await activeKernel.SendWorkerMessageAsync(worker.Id,
-                    new(worker.BoundAttemptId!, key, key, Mode: WorkerMessageMode.Queue), null, default);
+                var replay = await activeKernel.SendSessionMessageAsync(worker.Id, new(Content: key, RequestKey: key, Mode: "queue", TurnId: null, ExpectedAttemptId: worker.BoundAttemptId!), new InteropPrincipal.Human(), default);
                 Assert.Equal((key, expected), (replay.MessageId, replay.Delivery));
             }
             Assert.DoesNotContain(reopened.AgentRuntime.ExecutedTurns, execution => execution.Input.Prompt.StartsWith("worker-", StringComparison.Ordinal));
 
-            var next = await activeKernel.DispatchWorkerAsync(trackId, new("New Worker goal"), "fresh-worker", null, default);
+            var next = await activeKernel.CreateSessionAsync(trackId, new(Prompt: "New Worker goal", Task: new()), "fresh-worker", new InteropPrincipal.Human(), default);
             await activeKernel.WaitForTrackIdleAsync(trackId);
-            var replacement = Assert.Single(await activeKernel.ListSessionsAsync(trackId), session => session.BoundTaskId == next.Task.Id);
+            var replacement = Assert.Single((await activeKernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray(), session => session.BoundTaskId == next.Receipt.Task!.Id);
             Assert.NotEqual(old.Id, replacement.Id);
             Assert.NotEqual(old.BoundAttemptId, replacement.BoundAttemptId);
-            Assert.Empty((await activeKernel.GetSessionItemsAsync(replacement.Id)).Worker!.Messages);
+            Assert.Empty((await activeKernel.GetSessionItemsAsync(replacement.Id, new(), new InteropPrincipal.Human(), default)).QueuedMessages);
         }
         finally
         {
@@ -207,19 +200,20 @@ public sealed class SharedSessionMessageTests
         try
         {
             using var admitted = await SendAsync(host.Client, sessionId, "first", new { content = "first" });
-            Assert.Equal(HttpStatusCode.Accepted, admitted.StatusCode);
+            Assert.Equal(HttpStatusCode.OK, admitted.StatusCode);
             var firstTurn = await first.Task.WaitAsync(ct);
-            using var follower = await SendAsync(host.Client, sessionId, "second", new { content = "second", queueIfBusy = true });
-            Assert.Equal(HttpStatusCode.Accepted, follower.StatusCode);
-            using var pending = await SendAsync(host.Client, sessionId, "content", new { content = "content", queueIfBusy = true });
-            var message = (await pending.Content.ReadFromJsonAsync<QueuedMessageReceipt>(PergaJsonDefaults.ApiOptions, ct))!;
+            using var follower = await SendAsync(host.Client, sessionId, "second", new { content = "second", mode = "queue" });
+            Assert.Equal(HttpStatusCode.OK, follower.StatusCode);
+            using var pending = await SendAsync(host.Client, sessionId, "content", new { content = "content", mode = "queue" });
+            var message = (await pending.Content.ReadFromJsonAsync<SessionMessageReceipt>(PergaJsonDefaults.ApiOptions, ct))!;
 
-            var path = $"/api/v1/sessions/{sessionId}/messages/queue/{message.InputId}/steer";
-            async Task<SteeringResult> SteerAsync(string turnId)
+            var messageId = message.MessageId;
+            var path = $"/api/v1/sessions/{sessionId}/messages";
+            async Task<SessionMessageReceipt> SteerAsync(string turnId)
             {
-                using var response = await host.Client.PostAsJsonAsync(path, new { turnId }, ct);
+                using var response = await host.Client.PostAsJsonAsync(path, new { messageId, mode = "steer", turnId }, ct);
                 Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-                return (await response.Content.ReadFromJsonAsync<SteeringResult>(PergaJsonDefaults.ApiOptions, ct))!;
+                return (await response.Content.ReadFromJsonAsync<SessionMessageReceipt>(PergaJsonDefaults.ApiOptions, ct))!;
             }
 
             Assert.Equal("queued", (await SteerAsync(firstTurn)).Delivery);
@@ -230,16 +224,16 @@ public sealed class SharedSessionMessageTests
             // Both waiting messages were promoted into the second turn. A fresh
             // queued message can still be steered while that batch is running.
             Assert.Equal("queued", (await SteerAsync(firstTurn)).Delivery);
-            using var fresh = await SendAsync(host.Client, sessionId, "fresh", new { content = "fresh", queueIfBusy = true });
-            var freshMessage = (await fresh.Content.ReadFromJsonAsync<QueuedMessageReceipt>(PergaJsonDefaults.ApiOptions, ct))!;
-            path = $"/api/v1/sessions/{sessionId}/messages/queue/{freshMessage.InputId}/steer";
-            Assert.Equal("accepted", (await SteerAsync(secondTurn)).Delivery);
-            Assert.Equal("accepted", (await SteerAsync(secondTurn)).Delivery);
+            using var fresh = await SendAsync(host.Client, sessionId, "fresh", new { content = "fresh", mode = "queue" });
+            var freshMessage = (await fresh.Content.ReadFromJsonAsync<SessionMessageReceipt>(PergaJsonDefaults.ApiOptions, ct))!;
+            messageId = freshMessage.MessageId;
+            Assert.Equal("delivered", (await SteerAsync(secondTurn)).Delivery);
+            Assert.Equal("delivered", (await SteerAsync(secondTurn)).Delivery);
             Assert.Equal(2, steers);
 
-            var page = await kernel.GetSessionItemsAsync(sessionId, ct: ct);
-            Assert.DoesNotContain(page.QueuedMessages, entry => entry.Id == message.InputId);
-            var item = Assert.Single(page.Items, entry => entry.Kind == "user" && entry.Payload.GetProperty("inputId").GetString() == freshMessage.InputId);
+            var page = await kernel.GetSessionItemsAsync(sessionId, new(), new InteropPrincipal.Human(), ct);
+            Assert.DoesNotContain(page.QueuedMessages, entry => entry.Id == message.MessageId);
+            var item = Assert.Single(page.Items, entry => entry.Kind == "user" && entry.Payload.GetProperty("inputId").GetString() == freshMessage.MessageId);
             Assert.Equal(secondTurn, item.TurnId);
             Assert.Equal("delivered", item.InputDelivery);
             Assert.True(item.Payload.GetProperty("steered").GetBoolean());
@@ -273,8 +267,7 @@ public sealed class SharedSessionMessageTests
 
     private static Task InsertQueueAsync(ISessionMessageStore store, string sessionId, string? attemptId, string key, string delivery)
     {
-        var hash = attemptId is null ? Hash(new { version = 1, Content = key, SteerIfRunning = false })
-            : Hash(new { version = 2, AttemptId = attemptId, TurnId = (string?)null, Content = key, Mode = (WorkerMessageMode?)WorkerMessageMode.Queue });
+        var hash = Hash(new { version = 3, Content = key, Mode = "queue", TurnId = (string?)null, ExpectedAttemptId = attemptId });
         return store.InsertAsync(new(key, sessionId, attemptId, "owner:installation", key, hash, null, null, key, delivery, 1,
             attemptId is null ? "queue" : "worker"), default);
     }

@@ -158,7 +158,7 @@ public sealed partial class PergaKernelService
         if (triggered)
         {
             await PublishScheduleEventsAsync(trackId).ConfigureAwait(false);
-            await Actors.GetOrActivate(trackId).PokeLeadAsync(ct).ConfigureAwait(false);
+            await Actors.GetOrActivate(trackId).PokePendingWakesAsync(ct).ConfigureAwait(false);
         }
         return triggered;
     }

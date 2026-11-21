@@ -8,7 +8,7 @@ import type { HarnessLiveReplies, HarnessPhaseTag } from '../../../../core/api/g
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import type { ConversationActivity, TranscriptEntry } from '../../../../core/domain/conversation.ts';
 import {
-  LIVE_REPLY_POLL_MS, awaitsSettling, liveReplyTurns, reconcileLiveReplies, replyMayStream,
+  LIVE_REPLY_POLL_MS, sessionActivityItemId, awaitsSettling, liveReplyTurns, reconcileLiveReplies, replyMayStream,
   type LiveReplyCopy, type LiveReplyObservation, type LiveReplyTranscriptRow,
 } from '../../../../core/domain/conversation-live.ts';
 import { cancelThenInvalidate } from '../events/query-refresh.ts';
@@ -28,7 +28,7 @@ type HeldCopies = Readonly<{ cardId: string; read: number; copies: readonly Live
  * layer's recovery gating applies as it does to every read. The copies are held per card, so a
  * switch never shows one card's text in another.
  */
-export function useLiveReplies({ transport, unauthorized, cardId, enabled, phase, runningTurnId, nextRead, transcriptKey, transcriptReads, items, worker }: {
+export function useLiveReplies({ transport, unauthorized, cardId, enabled, phase, runningTurnId, nextRead, transcriptKey, transcriptReads, items, activity }: {
   transport: ApiTransportPort;
   unauthorized: UnauthorizedChannel;
   cardId: string;
@@ -44,7 +44,7 @@ export function useLiveReplies({ transport, unauthorized, cardId, enabled, phase
   transcriptReads: TranscriptReads;
   /** Every loaded transcript row. */
   items: readonly LiveReplyTranscriptRow[];
-  worker?: import('../../../../core/api/perga-v1.ts').WorkerActivity | null;
+  activity?: import('../../../../core/api/perga-v1.ts').SessionActivity | null;
 }): readonly TranscriptEntry[] {
   const client = useQueryClient();
   const wsConnected = useConnectionStatus()?.connected === true;
@@ -130,17 +130,17 @@ export function useLiveReplies({ transport, unauthorized, cardId, enabled, phase
   const visible = useMemo(
     () => {
       let current = copies;
-      const recent = worker?.events.filter(event => event.kind === 'session.text_delta') ?? [];
-      const snapshot = worker?.textTruncated === true ? `…\n${worker.text}` : worker?.text ?? '';
-      const tail = wsLive?.turnId === scope.turnId ? wsLive?.parts?.filter(part => part.sequence > (worker?.sequence ?? 0)) : undefined;
-      const liveText = worker == null || scope.turnId === null ? wsLive?.text ?? '' : snapshot + (tail?.map(part => part.delta).join('') ?? '');
-      const liveTurn = worker == null ? wsLive?.turnId : scope.turnId;
+      const recent = activity?.events.filter(event => event.kind === 'session.text_delta') ?? [];
+      const snapshot = activity?.truncated === true ? `…\n${activity.text}` : activity?.text ?? '';
+      const tail = wsLive?.turnId === scope.turnId ? wsLive?.parts?.filter(part => part.sequence > (activity?.sequence ?? 0)) : undefined;
+      const liveText = activity == null || scope.turnId === null ? wsLive?.text ?? '' : snapshot + (tail?.map(part => part.delta).join('') ?? '');
+      const liveTurn = activity == null ? wsLive?.turnId : scope.turnId;
       if (liveTurn != null && liveText.trim() !== '' && !wsPersistedInTranscript) {
         current = reconcileLiveReplies(current, {
           kind: 'poll',
           reply: {
             turn_id: liveTurn,
-            items: [{ item_id: `ws-${liveTurn}`, text: liveText }],
+            items: [{ item_id: sessionActivityItemId(liveTurn), text: liveText }],
           },
           atMs: Math.max(wsLive?.updatedAtMs ?? 0, recent.at(-1)?.createdAtMs ?? 0),
           activeTurnId: null,
@@ -148,7 +148,7 @@ export function useLiveReplies({ transport, unauthorized, cardId, enabled, phase
       }
       return reconcileLiveReplies(current, { kind: 'transcript', items, readStart: transcriptStart });
     },
-    [copies, items, transcriptStart, scope.turnId, wsLive, wsPersistedInTranscript, worker],
+    [copies, items, transcriptStart, scope.turnId, wsLive, wsPersistedInTranscript, activity],
   );
 
   const wsActivities = useMemo((): readonly ConversationActivity[] => {
@@ -171,7 +171,7 @@ export function useLiveReplies({ transport, unauthorized, cardId, enabled, phase
         atMs: stream.updatedAtMs,
       });
     }
-    const tools = workerToolActivity(scope.turnId === turnId ? worker?.events ?? [] : []);
+    const tools = workerToolActivity(scope.turnId === turnId ? activity?.events ?? [] : []);
     for (const update of stream?.tools ?? []) {
       const prior = tools.get(update.callId);
       const useStreamState = prior?.phase !== 'completed' || update.phase === 'completed';
@@ -209,7 +209,7 @@ export function useLiveReplies({ transport, unauthorized, cardId, enabled, phase
       });
     }
     return activities;
-  }, [items, scope.turnId, worker?.events, wsLive, wsPersistedInTranscript]);
+  }, [items, scope.turnId, activity?.events, wsLive, wsPersistedInTranscript]);
 
   /* Only a read started after this point stands for the phase, however late an earlier one lands.
      The transcript is re-read here so that one always starts; the cancel comes first because the

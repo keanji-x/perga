@@ -88,6 +88,8 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
     public int ProbeCount => Volatile.Read(ref _probeCount);
     public int ForceRefreshProbeCount => Volatile.Read(ref _forceRefreshProbeCount);
 
+    public Func<TurnInput, CancellationToken, Task>? BeforeTurn { get; set; }
+
     public void SetTurnHandler(
         Func<HarnessLaunchSpec, TurnInput, CancellationToken, IAsyncEnumerable<UnifiedAgentEvent>> handler)
     {
@@ -139,6 +141,7 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
         [EnumeratorCancellation] CancellationToken ct)
     {
         _executedTurns.Enqueue(new RecordedTurnExecution(spec, input));
+        if (BeforeTurn is { } before) await before(input, ct);
 
         if (_turnHandler is not null)
         {
@@ -182,7 +185,7 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
         public Task<NativeCompactResult> CompactAsync(CancellationToken ct) => _owner.CompactHandler!(ct);
         public IReadOnlyList<PermissionModeOption> AvailablePermissionModes =>
             _spec.Provider.StartsWith("acp:", StringComparison.Ordinal) ? _owner.AcpPermissionModes ?? [] : [];
-        public WorkerProviderConfiguration? WorkerConfiguration => _spec.ConfigureWorker && _spec.Provider == "codex"
+        public WorkerProviderConfiguration? WorkerConfiguration => _spec.Provider == "codex"
             ? new([
                 new WorkerModelOption("gpt-5.4", "GPT 5.4", ["low", "high"], "low"),
                 new WorkerModelOption("gpt-5.4-mini", "GPT 5.4 Mini", ["low"], "low"),

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { HarnessLiveReplies, HarnessPhaseTag } from '../api/generated/wire.js';
 import {
-  awaitsSettling, harnessLiveOperation, liveReplyTurns, reconcileLiveReplies, replyMayStream,
+  awaitsSettling, conversationLiveOperation, liveReplyTurns, reconcileLiveReplies, replyMayStream,
   type LiveReplyCopy, type LiveReplyObservation, type LiveReplyTranscriptRow,
 } from './conversation-live.js';
 
@@ -117,12 +117,19 @@ describe('replyMayStream', () => {
   });
 });
 
-describe('harnessLiveOperation', () => {
-  it('reads the card\'s live replies and decodes the wire shape', () => {
-    const operation = harnessLiveOperation('card/1');
-    expect(operation).toMatchObject({ method: 'GET', path: '/api/v1/sessions/card%2F1/items?afterId=0&limit=1&view=live-legacy' });
-    expect(operation.responseSchema.parse({ turn_id: null, items: [] })).toEqual({ turn_id: null, items: [] });
-    expect(operation.responseSchema.safeParse({ turn_id: 'T', items: [{ item_id: 'x' }] }).success).toBe(false);
+describe('conversationLiveOperation', () => {
+  it('reads top-level activity through the unified items resource and rejects old live shapes', () => {
+    const operation = conversationLiveOperation('card/1');
+    expect(operation.path).toBe('/api/v1/sessions/card%2F1/items?afterId=0&limit=1');
+    expect(operation.responseSchema.safeParse({ turn_id: 'T', items: [] }).success).toBe(false);
+    const result = operation.responseSchema.parse({
+      session: { id: 'card/1', trackId: 'track', provider: 'codex', contextUsage: null, createdAtMs: 0, updatedAtMs: 0 },
+      items: [], state: 'running', readonlyReason: null, canReopen: false, workerPaused: false, unknownDetail: null,
+      activity: { turnId: 'T', sequence: 1, reset: false, text: 'Live reply', truncated: false, events: [] },
+    });
+    expect(result.turn).toEqual({ thread_id: 'epoch-1', turn_id: 'T', items: [{ item_id: 'ws-T', text: 'Live reply' }] });
+    const copies = run({ kind: 'native-poll', reply: result, atMs: 1 }, poll('T', { 'ws-T': 'Live reply' }, 2));
+    expect(liveReplyTurns(copies)).toHaveLength(1);
   });
 });
 

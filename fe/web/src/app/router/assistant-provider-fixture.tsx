@@ -70,7 +70,7 @@ export function renderAssistantProviderFixture(options: {
       const session = rows.find(row => row.id === cardId) ?? fixtureSession(cardId, track.id);
       body = sessionPage({ ...session, model: selectedModel }, cardId === 'dormant' ? [sessionItem(cardId, 1, 'Saved reply')] : []);
     }
-    if (request.path.endsWith('/model')) {
+    if (request.method === 'PATCH' && /\/api\/v1\/sessions\/[^/]+$/.test(request.path)) {
       const input = request.body as { model: string | null; reasoning_effort: string | null };
       selectedModel = input.model;
       body = { id: cardId, trackId: track.id, provider: options.existingProvider ?? 'codex', model: input.model, createdAtMs: 1, updatedAtMs: 2 };

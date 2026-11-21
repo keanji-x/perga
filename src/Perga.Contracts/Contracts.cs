@@ -88,7 +88,12 @@ public sealed record AgentSessionDto(
     string? UnknownTurnId = null,
     string? UnknownLastError = null,
     bool ReconnectInvalidated = false,
-    long? LastNotifiableTurnAtMs = null);
+    long? LastNotifiableTurnAtMs = null,
+    string? ParentSessionId = null,
+    int SpawnDepth = 0,
+    long ConfigVersion = 0,
+    string NotifyParent = "none",
+    string? SystemPrompt = null);
 
 public sealed record SessionTurnDto(
     string Id,
@@ -113,10 +118,9 @@ public sealed record SessionInputReceipt(
     long? ResolvedAtMs)
 {
     public string MessageId => InputId;
-    public string StatusUrl => $"/api/v1/sessions/{SessionId}/inputs/{InputId}";
 }
 
-public sealed record SessionCreationReceipt(AgentSessionDto Session, SessionInputReceipt? FirstInput);
+public sealed record SessionCreationReceipt(AgentSessionDto Session, SessionInputReceipt? FirstInput, TaskDto? Task = null, string? RequestKey = null);
 
 public sealed record SessionItemDto(
     long Id,
@@ -193,7 +197,8 @@ public sealed record AskDto(
     long? AnsweredAtMs,
     AskDelivery Delivery,
     string? SessionId = null,
-    string? TurnId = null);
+    string? TurnId = null,
+    string? TargetSessionId = null);
 
 public sealed record ApprovalChoiceDto(
     string Id,
@@ -207,9 +212,12 @@ public sealed record ApprovalDto(
     string? TurnId,
     string Title,
     IReadOnlyList<ApprovalChoiceDto> Options,
-    long CreatedAtMs);
+    long CreatedAtMs,
+    string Source = "policy",
+    string? ToolName = null,
+    JsonElement? Arguments = null,
+    string? DelegateSessionId = null);
 
-public sealed record ApprovalDecisionRequest(string OptionId);
 
 public sealed record MailDto(
     string Id,

@@ -7,7 +7,7 @@ export function fixtureTrack(id: string, overrides: Partial<TrackDto> = {}): Tra
 
 export function fixtureSession(id: string, trackId: string, overrides: Partial<AgentSessionDto> = {}): AgentSessionDto {
   return { id, trackId, isLead: false, provider: 'codex', title: null, model: null, nativeThreadId: null, epoch: 1,
-    status: 'idle', lastNotifiableTurnAtMs: null, contextUsage: null, archivedAtMs: null, createdAtMs: 1, updatedAtMs: 2, ...overrides };
+    spawnDepth: 0, configVersion: 0, notifyParent: 'none', reconnectInvalidated: false, status: 'idle', lastNotifiableTurnAtMs: null, contextUsage: null, archivedAtMs: null, createdAtMs: 1, updatedAtMs: 2, ...overrides };
 }
 
 export function fixtureReport(markdown = '', docRev = 1): ReportDocumentDto {
@@ -20,7 +20,7 @@ export function fixtureSnapshot(track: TrackDto, sessions: AgentSessionDto[] = [
 
 export function fixtureCreation(session: AgentSessionDto): SessionCreationReceipt {
   return { session, firstInput: { inputId: 'first-input', turnId: 'first-turn', sessionId: session.id,
-    deliveryState: 'accepted', turnStatus: 'queued', statusUrl: `/api/v1/sessions/${session.id}/inputs/first-input` } };
+    deliveryState: 'accepted', turnStatus: 'queued' } };
 }
 
 export function fixtureBootstrap(providers = ['codex'], models: string[] = []): BootstrapDto {

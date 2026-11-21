@@ -19,7 +19,11 @@ it.each([320, 390])('aligns the left circular controls and keeps chat usable at 
   const { requests } = renderDailyFixture({ emptyWorkspace: true });
   const field = await page.getByRole('textbox', { name: 'Chat message', exact: true }).findElement();
   const bar = field.closest('form')!;
-  const closedBarLeft = bar.getBoundingClientRect().left;
+  // The compact row includes a status entry before its input (#102). The
+  // expanded editor uses that whole row so typing retains the available width.
+  const statusEntry = page.getByRole('button', { name: 'Open conversation', exact: true }).element();
+  const closedRowLeft = statusEntry.getBoundingClientRect().left;
+  expect(bar.getBoundingClientRect().left).toBeGreaterThan(statusEntry.getBoundingClientRect().right);
   expect(bar.getBoundingClientRect().left).toBeGreaterThan(0);
   expect(bar.getBoundingClientRect().right).toBeLessThan(width);
   expect(getComputedStyle(bar).borderRadius).toBe('999px');
@@ -81,7 +85,7 @@ it.each([320, 390])('aligns the left circular controls and keeps chat usable at 
   await expect.poll(() => document.activeElement === message).toBe(true);
   const expandedBar = message.closest('[class*="vendorComposer"]')?.firstElementChild;
   expect(expandedBar).toBeTruthy();
-  expect(Math.round(expandedBar!.getBoundingClientRect().left)).toBe(Math.round(closedBarLeft));
+  expect(Math.round(expandedBar!.getBoundingClientRect().left)).toBe(Math.round(closedRowLeft));
   await page.getByRole('button', { name: 'Close conversation', exact: true }).click();
   await expect.poll(() => document.querySelector('dialog[open]')).toBeNull();
   await expect.element(page.getByRole('textbox', { name: 'Chat message', exact: true })).toBeVisible();
@@ -108,7 +112,7 @@ it('keeps draft words across closing and sends the same Planner before reopening
   await expect.poll(() => requests.filter((request) => request.path.endsWith('/messages')).length).toBe(1);
   const sent = requests.find((request) => request.path.endsWith('/messages'))!;
   expect(sent.path).toBe('/api/v1/sessions/daily-planner/messages');
-  expect(sent.body).toMatchObject({ text: '整理今天的计划\n保留这行' });
+  expect(sent.body).toMatchObject({ content: '整理今天的计划\n保留这行' });
   expect(sent.headers?.['Idempotency-Key']).toBeTruthy();
   await expect.element(page.getByRole('dialog', { name: 'Daily Planner conversation', exact: true })).toBeVisible();
   answered = true;
@@ -459,7 +463,7 @@ it('interrupts the current working conversation from its portalled mobile editor
   await page.viewport(390, 844);
   const { requests } = renderDailyFixture({ emptyWorkspace: true, reply: request => {
     if (request.path.includes('/items?')) return ok(sessionPage(fixtureSession('daily-planner', 'daily'), [], sessionTurn('daily-planner')));
-    if (request.path.endsWith('/interrupt')) return ok({ card_id: 'daily-planner', worker_session_id: 'runtime', stopped: true });
+    if (request.path.endsWith('/control')) return ok({ card_id: 'daily-planner', worker_session_id: 'runtime', stopped: true });
     return undefined;
   } });
   await page.getByRole('button', { name: 'Open conversation history', exact: true }).click();
@@ -467,7 +471,7 @@ it('interrupts the current working conversation from its portalled mobile editor
   await expect.element(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible();
   page.getByRole('button', { name: 'Stop', exact: true }).element().focus();
   await userEvent.keyboard('{Escape}');
-  await expect.poll(() => requests.filter(request => request.path === '/api/v1/sessions/daily-planner/interrupt')).toHaveLength(1);
+  await expect.poll(() => requests.filter(request => request.path === '/api/v1/sessions/daily-planner/control')).toHaveLength(1);
   await expect.element(page.getByRole('dialog', { name: 'Daily Planner conversation', exact: true })).toBeVisible();
 });
 

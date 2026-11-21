@@ -61,6 +61,7 @@ public sealed partial class TrackActor
         public Func<ApprovalChoiceDto, Func<Task>?> ClaimDelivery { get; } = claimDelivery;
         public Action Expire { get; } = expire;
         public bool RecordingDecision { get; set; }
+        public bool NotificationScheduled { get; set; }
         public CancellationTokenRegistration Cancellation { get; set; }
     }
 
@@ -73,10 +74,11 @@ public sealed partial class TrackActor
 
     private PendingApproval? RegisterApproval(
         string executionId, string sessionId, string? turnId, string title, IReadOnlyList<ApprovalChoiceDto> options,
-        ExecutionControl control, Func<ApprovalChoiceDto, Func<Task>?> claimDelivery, Action expire, CancellationToken ct = default)
+        ExecutionControl control, Func<ApprovalChoiceDto, Func<Task>?> claimDelivery, Action expire, CancellationToken ct = default,
+        string source = "policy", string? toolName = null, JsonElement? arguments = null)
     {
         var dto = new ApprovalDto($"apr_{Guid.NewGuid():N}", executionId, sessionId, turnId,
-            title, options, NowMs());
+            title, options, NowMs(), source, toolName, ApprovalArguments(arguments), ApprovalDelegateCore(sessionId));
         var pending = new PendingApproval(dto, control, claimDelivery, expire);
         // An already canceled token can run its callback inline during registration.
         pending.Cancellation = ct.UnsafeRegister(_ => ExpireApproval(pending), null);
@@ -96,7 +98,33 @@ public sealed partial class TrackActor
         }
 
         NotifyApprovalsChanged(sessionId);
+        if (dto.DelegateSessionId is { } target)
+            _ = TrackBackgroundJob(() => EnqueueAsync(_ => PokeSessionCoreAsync(target), CancellationToken.None));
         return pending;
+    }
+
+    private string? ApprovalDelegateCore(string sessionId)
+    {
+        var session = RequireSessionCore(sessionId);
+        if (session.IsLead) return null;
+        return session.ParentSessionId is { } parentId && _sessions.TryGetValue(parentId, out var parent) && parent.ArchivedAtMs is null
+            ? parentId : _track.LeadSessionId;
+    }
+
+    private static JsonElement? ApprovalArguments(JsonElement? arguments)
+    {
+        if (arguments is not { } value) return null;
+        var text = value.GetRawText();
+        // Keep structured JSON when it fits; oversized payloads become a bounded JSON string.
+        if (text.Length <= 4096) return value.Clone();
+        var length = 4094;
+        while (true)
+        {
+            var truncated = JsonHelpers.ToElement(text[..length]);
+            var excess = truncated.GetRawText().Length - 4096;
+            if (excess <= 0) return truncated;
+            length -= Math.Max(1, excess / 6);
+        }
     }
 
     private bool TryDetachApprovalLocked(PendingApproval approval)
@@ -179,8 +207,8 @@ public sealed partial class TrackActor
         _eventHub.PublishTransient(_track.AreaId, TrackId, KernelEventKinds.ApprovalsChanged,
             JsonHelpers.ToElement(new { sessionId }), NowMs());
 
-    internal async Task<ApprovalDto> DecideApprovalAsync(
-        string executionId, string approvalId, string optionId, CancellationToken ct)
+    private async Task<ApprovalDto> DecideApprovalAsync(
+        string executionId, string approvalId, string optionId, CancellationToken ct, InteropPrincipal? principal = null, string? sessionId = null)
     {
         ct.ThrowIfCancellationRequested();
         if (string.IsNullOrWhiteSpace(optionId))
@@ -188,6 +216,13 @@ public sealed partial class TrackActor
         if (!_approvals.TryGetValue(approvalId, out var pending) || pending.Dto.ExecutionId != executionId)
             throw KernelException.Conflict("This approval is no longer pending.");
 
+        if (principal is not null)
+            await EnqueueAsync(async _ =>
+            {
+                await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
+                if (pending.Dto.SessionId != sessionId) throw KernelException.NotFound("Approval does not belong to this session.");
+                RequireInteropCore(principal, RequireSessionCore(sessionId!), write: true);
+            }, ct).ConfigureAwait(false);
         var normalizedOptionId = optionId.Trim();
         var choice = pending.Dto.Options.FirstOrDefault(
             option => string.Equals(option.Id, normalizedOptionId, StringComparison.Ordinal))
@@ -218,6 +253,16 @@ public sealed partial class TrackActor
         string delivery = "expired";
         try
         {
+            if (principal is InteropPrincipal.Session)
+            {
+                delivery = "aborted";
+                await EnqueueAsync(_ =>
+                {
+                    RequireInteropCore(principal, write: true);
+                    return Task.CompletedTask;
+                }, ct).ConfigureAwait(false);
+                delivery = "expired";
+            }
             Func<Task>? send;
             lock (_approvalAdmission)
             lock (pending.Control.Sync)
@@ -241,6 +286,8 @@ public sealed partial class TrackActor
         }
         finally
         {
+            if (delivery == "aborted")
+                lock (pending.Control.Sync) pending.RecordingDecision = false;
             _ = TrackBackgroundJob(() => RecordApprovalDeliveryAsync(pending.Dto, delivery));
         }
         return pending.Dto;
@@ -270,8 +317,7 @@ public sealed partial class TrackActor
         var choices = hasProviderOptions
             ? approval.Options!.Select(option => new ApprovalChoiceDto(option.OptionId, option.Label, option.IsApproval)).ToArray()
             : DefaultBinaryChoices;
-        if (turn.Settings?.ApprovalMode != "deny" &&
-            RegisterApproval(turn.TurnDto.Id, turn.SessionId, turn.TurnDto.Id, $"Approve tool '{approval.ToolName}'?",
+        if (RegisterApproval(turn.TurnDto.Id, turn.SessionId, turn.TurnDto.Id, $"Approve tool '{approval.ToolName}'?",
                 choices, turn.Control, choice =>
                 {
                     var send = turn.AgentSession.TryClaimApprovalResponse(
@@ -295,7 +341,7 @@ public sealed partial class TrackActor
                             throw;
                         }
                     };
-                }, static () => { }) is not null)
+                }, static () => { }, source: "provider", toolName: approval.ToolName, arguments: approval.Args) is not null)
             return;
 
         _ = TrackBackgroundJob(async () =>
@@ -321,7 +367,8 @@ public sealed partial class TrackActor
             throw KernelException.Conflict("The approval's originating execution has ended.");
     }
 
-    private PolicyApproval? ApplyGuardDecisionCore(GuardDecision decision, string? sessionId, ActiveTurnState? turn, CancellationToken ct)
+    private PolicyApproval? ApplyGuardDecisionCore(GuardDecision decision, string? sessionId, ActiveTurnState? turn, CancellationToken ct,
+        string? toolName = null, JsonElement? arguments = null)
     {
         if (decision is GuardDecision.Allow)
             return null;
@@ -339,7 +386,7 @@ public sealed partial class TrackActor
             {
                 waiter.TrySetResult(choice);
                 return static () => Task.CompletedTask;
-            }, () => waiter.TrySetCanceled(), ct);
+            }, () => waiter.TrySetCanceled(), ct, toolName: toolName, arguments: arguments);
         return new PolicyApproval(pending ?? throw KernelException.Conflict("The turn is stopping."), waiter.Task);
     }
 

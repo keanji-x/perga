@@ -46,15 +46,15 @@ public sealed class ActiveTurnContextUsageBindingTests
         try
         {
             await sampled.Task.WaitAsync(TimeSpan.FromSeconds(10));
-            var before = Assert.Single(await ctx.Kernel.ListSessionsAsync(snap.Track.Id));
+            var before = Assert.Single((await ctx.Kernel.ListSessionsAsync(snap.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray());
             Assert.Equal(initialTokens, before.ContextUsage?.UsedTokens);
             if (loseConfirmation)
                 Assert.Single(ctx.AgentRuntime.OpenedSessions).ConfigurationState = null;
             else
-                await ctx.Kernel.SetSessionPermissionModeAsync(id, "full");
+                await ctx.Kernel.UpdateSessionAsync(id, new(PermissionMode: new("full")), new InteropPrincipal.Human(), default);
             release.TrySetResult();
             await streamed.Task.WaitAsync(TimeSpan.FromSeconds(10));
-            var live = Assert.Single(await ctx.Kernel.ListSessionsAsync(snap.Track.Id));
+            var live = Assert.Single((await ctx.Kernel.ListSessionsAsync(snap.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray());
             Assert.Equal(before.ContextUsage, live.ContextUsage);
         }
         finally
@@ -64,7 +64,7 @@ public sealed class ActiveTurnContextUsageBindingTests
             await turn;
         }
 
-        var completed = Assert.Single(await ctx.Kernel.ListSessionsAsync(snap.Track.Id));
+        var completed = Assert.Single((await ctx.Kernel.ListSessionsAsync(snap.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray());
         var durable = Assert.Single((await ctx.Store.LoadTrackAggregateAsync(snap.Track.Id, default))!.Sessions);
         Assert.DoesNotContain(ctx.Store.PersistedEvents, e => e.Kind == KernelEventKinds.SessionUpdated &&
             e.Payload.GetProperty("id").GetString() == id &&

@@ -29,7 +29,6 @@ function setup(receiptChange?: (receipt: SessionCreationReceipt) => SessionCreat
     if (request.path.startsWith(`/api/v1/sessions/${session.id}/items?`)) return ok(sessionPage(session, [
       { ...sessionItem(session.id, 1, FIRST_MESSAGE, 'user', 'first-turn'), payload: { content: FIRST_MESSAGE, inputId: 'first-input' } },
     ]));
-    if (request.path === fixtureCreation(session).firstInput!.statusUrl) return ok(fixtureCreation(session).firstInput);
     return undefined;
   } });
   const creates = () => fixture.requests.filter(request => request.method === 'POST' && request.path.endsWith('/sessions'));
@@ -55,7 +54,7 @@ it('adopts the server session identity and reads the first message without anoth
   await screen.findByRole('complementary', { name: 'Assistant' });
   await waitFor(() => expect(document.querySelectorAll('[data-nc-turn="you"], [data-nc-turn="unknown"], [data-nc-turn="human"]')).toHaveLength(1));
   expect(screen.getByText(FIRST_MESSAGE)).toBeTruthy();
-  expect(fixture.creates()[0].body).toMatchObject({ text: FIRST_MESSAGE });
+  expect(fixture.creates()[0].body).toMatchObject({ prompt: FIRST_MESSAGE });
   expect(fixture.requests.some(request => request.path.includes(`/${fixture.session.id}/items`))).toBe(true);
   expect(fixture.requests.some(request => request.path.endsWith('/initial-input') || request.path.endsWith('/messages'))).toBe(false);
   fireEvent.click(screen.getByRole('button', { name: 'Close conversation' }));

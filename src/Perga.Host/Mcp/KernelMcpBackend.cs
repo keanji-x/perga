@@ -50,6 +50,23 @@ public sealed class KernelMcpBackend : IMcpToolBackend
         {
             throw;
         }
+        catch (KernelException ex)
+        {
+            var status = ex.Code switch
+            {
+                KernelErrorCode.Forbidden or KernelErrorCode.PolicyDenied or KernelErrorCode.SystemUpgradeLeadRequired => 403,
+                KernelErrorCode.NotFound => 404,
+                KernelErrorCode.Gone or KernelErrorCode.IdempotencyKeyExhausted => 410,
+                KernelErrorCode.PreconditionFailed => 412,
+                KernelErrorCode.Conflict or KernelErrorCode.IdempotencyKeyReused or KernelErrorCode.WorkerTurnChanged => 409,
+                _ => 400
+            };
+            return McpToolResultFormatter.Error(JsonSerializer.Serialize(new
+            {
+                code = JsonNamingPolicy.SnakeCaseLower.ConvertName(ex.Code.ToString()), status,
+                error = ex.Message, nextStep = ex.NextStep
+            }));
+        }
         catch (Exception ex)
         {
             return McpToolResultFormatter.FromException(ex);

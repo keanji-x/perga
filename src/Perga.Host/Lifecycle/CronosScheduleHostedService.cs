@@ -120,7 +120,7 @@ public sealed class CronosScheduleHostedService : BackgroundService
                 break;
             try
             {
-                await _kernel.Actors.GetOrActivate(trackId).PokeLeadAsync(ct).ConfigureAwait(false);
+                await _kernel.Actors.GetOrActivate(trackId).PokePendingWakesAsync(ct).ConfigureAwait(false);
                 _tracksNeedingPoke.Remove(trackId);
             }
             catch (KernelException ex) when (ex.Code == KernelErrorCode.NotFound)

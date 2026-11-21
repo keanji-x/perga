@@ -13,8 +13,8 @@ it.each([
   await page.viewport(width, 844);
   let unknown = false;
   const view = renderSessionFixture({ initial: '/track/daily?panel=conversations', reply: request => {
-    if (request.path === '/api/v1/sessions/daily-planner/recover') {
-      expect(request.body).toEqual({ mode: 'reset_context' });
+    if (request.path === '/api/v1/sessions/daily-planner/control') {
+      expect(request.body).toEqual({ action: 'reset_context' });
       unknown = false;
       view.sessions[0].epoch += 1;
       return sessionReply(view.sessions[0]);
@@ -36,7 +36,7 @@ it.each([
   await expect.element(field).toHaveAttribute('contenteditable', 'true');
   await expect.element(field).toHaveTextContent('保留草稿');
   await expect.element(page.getByText('保留这条回复', { exact: true })).toBeVisible();
-  expect(view.requests.filter(request => request.method === 'POST').map(request => request.path)).toEqual(['/api/v1/sessions/daily-planner/recover']);
+  expect(view.requests.filter(request => request.method === 'POST').map(request => request.path)).toEqual(['/api/v1/sessions/daily-planner/control']);
 });
 
 it.each([390, 1280])('reads and copies interrupted inputs above the epoch boundary (%ipx)', async width => {
@@ -72,7 +72,7 @@ it('withdraws an unknown queue entry while the session is unknown', async () => 
   await page.viewport(1280, 844);
   let withdrawn = false;
   const view = renderSessionFixture({ initial: '/track/daily?panel=conversations', reply: request => {
-    if (request.method === 'DELETE' && request.path === '/api/v1/sessions/daily-planner/messages/queue/unknown-input') {
+    if (request.method === 'DELETE' && request.path === '/api/v1/sessions/daily-planner/messages/unknown-input') {
       withdrawn = true; return { status: 204, statusText: 'No Content', body: undefined };
     }
     if (!request.path.startsWith('/api/v1/sessions/daily-planner/items?')) return undefined;

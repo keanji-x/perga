@@ -1557,7 +1557,7 @@
         "tags": [
           "auth"
         ],
-        "summary": "POST /api/auth/login — verify credentials, mint a session, set cookie.",
+        "summary": "POST /api/auth/login \u2014 verify credentials, mint a session, set cookie.",
         "operationId": "login_handler",
         "requestBody": {
           "content": {
@@ -3211,7 +3211,7 @@
           }
         ],
         "requestBody": {
-          "description": "Raw image bytes. The declared Content-Type is not the judgement — the file's magic number is.",
+          "description": "Raw image bytes. The declared Content-Type is not the judgement \u2014 the file's magic number is.",
           "content": {
             "application/octet-stream": {
               "schema": {
@@ -3516,7 +3516,7 @@
           {
             "name": "Idempotency-Key",
             "in": "header",
-            "description": "Required immutable key (1–128 visible ASCII bytes); canonical bindings include the verified author.",
+            "description": "Required immutable key (1\u2013128 visible ASCII bytes); canonical bindings include the verified author.",
             "required": true,
             "schema": {
               "type": "string"
@@ -3715,7 +3715,7 @@
             }
           },
           "404": {
-            "description": "Card not found, or the entry is no longer in the pending queue — it may already have been delivered. Not retryable: a re-issued DELETE can answer 200 if the batch was rebuffered.",
+            "description": "Card not found, or the entry is no longer in the pending queue \u2014 it may already have been delivered. Not retryable: a re-issued DELETE can answer 200 if the batch was rebuffered.",
             "content": {
               "application/json": {
                 "schema": {
@@ -3775,7 +3775,7 @@
             }
           },
           "503": {
-            "description": "Harness command channel saturated — retry shortly",
+            "description": "Harness command channel saturated \u2014 retry shortly",
             "content": {
               "application/json": {
                 "schema": {
@@ -3923,7 +3923,7 @@
             }
           },
           "503": {
-            "description": "Harness command channel saturated — retry shortly",
+            "description": "Harness command channel saturated \u2014 retry shortly",
             "content": {
               "application/json": {
                 "schema": {
@@ -4074,7 +4074,7 @@
             }
           },
           "503": {
-            "description": "Harness command channel saturated — retry shortly",
+            "description": "Harness command channel saturated \u2014 retry shortly",
             "content": {
               "application/json": {
                 "schema": {
@@ -4106,7 +4106,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Interrupt dispatched at the running turn (`stopped: true`); `stopped: false` when no turn was running (graceful no-op) or a turn was still being issued (best-effort dispatch only — press Stop again once the turn is running)",
+            "description": "Interrupt dispatched at the running turn (`stopped: true`); `stopped: false` when no turn was running (graceful no-op) or a turn was still being issued (best-effort dispatch only \u2014 press Stop again once the turn is running)",
             "content": {
               "application/json": {
                 "schema": {
@@ -5067,7 +5067,7 @@
           {
             "name": "path",
             "in": "query",
-            "description": "Absolute path to list; omitted → $HOME",
+            "description": "Absolute path to list; omitted \u2192 $HOME",
             "required": false,
             "schema": {
               "type": "string"
@@ -6425,7 +6425,7 @@
             }
           },
           "400": {
-            "description": "`bad_request`: the device name is not 1–80 printable bytes",
+            "description": "`bad_request`: the device name is not 1\u201380 printable bytes",
             "content": {
               "application/json": {
                 "schema": {
@@ -7723,7 +7723,7 @@
         "tags": [
           "plugins"
         ],
-        "summary": "PATCH semantics: absent keys keep their stored value, an explicit `null` deletes the\nkey. Stored keys the schema no longer declares are kept in the row but excluded from\nvalidation. `required` is enforced at consumption, not here. Gate order is\n`404 → 409 → 400`. Taking effect needs an explicit `POST /api/plugins/{id}/reload`.",
+        "summary": "PATCH semantics: absent keys keep their stored value, an explicit `null` deletes the\nkey. Stored keys the schema no longer declares are kept in the row but excluded from\nvalidation. `required` is enforced at consumption, not here. Gate order is\n`404 \u2192 409 \u2192 400`. Taking effect needs an explicit `POST /api/plugins/{id}/reload`.",
         "operationId": "patch_plugin_config",
         "parameters": [
           {
@@ -8551,235 +8551,6 @@
         }
       }
     },
-    "/api/v1/read-receipts": {
-      "get": {
-        "tags": [
-          "read_receipts"
-        ],
-        "summary": "The cutover baseline (activity at or before it is read) and every stored receipt.",
-        "operationId": "list_read_receipts",
-        "responses": {
-          "200": {
-            "description": "The baseline and every receipt",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ReadReceiptsResponseDto"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "`unauthorized`: no valid session cookie.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/read-receipts/{kind}/{targetId}/read": {
-      "post": {
-        "tags": [
-          "read_receipts"
-        ],
-        "summary": "Mark a target read through `readThroughMs`: the stored instant is the larger of the two, and a\nmanual unread is cleared. Idempotent.",
-        "operationId": "mark_read",
-        "parameters": [
-          {
-            "name": "kind",
-            "in": "path",
-            "description": "`track` or `conversation`",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "targetId",
-            "in": "path",
-            "description": "The track or conversation id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/MarkReadRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "The stored receipt",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ReadReceiptDto"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid kind, target ID, JSON body or negative readThroughMs"
-          },
-          "401": {
-            "description": "`unauthorized`: no valid session cookie.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "The actor is not the authenticated user",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "413": {
-            "description": "`payload_too_large`: the body is over the request size limit.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "415": {
-            "description": "`unsupported_media_type`: the request does not say `Content-Type: application/json`.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "`invalid_body`: the JSON is not the body's shape (a field missing or of the wrong type).",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/read-receipts/{kind}/{targetId}/unread": {
-      "post": {
-        "tags": [
-          "read_receipts"
-        ],
-        "summary": "Mark a target unread by hand; the next mark read clears it. Idempotent.",
-        "operationId": "mark_unread",
-        "parameters": [
-          {
-            "name": "kind",
-            "in": "path",
-            "description": "`track` or `conversation`",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "targetId",
-            "in": "path",
-            "description": "The track or conversation id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "The stored receipt",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ReadReceiptDto"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid kind, target ID, JSON body or negative readThroughMs"
-          },
-          "401": {
-            "description": "`unauthorized`: no valid session cookie.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "The actor is not the authenticated user",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/settings": {
       "get": {
         "tags": [
@@ -8788,7 +8559,7 @@
         "operationId": "get_settings",
         "responses": {
           "200": {
-            "description": "Current settings map (string→string)",
+            "description": "Current settings map (string\u2192string)",
             "content": {
               "application/json": {
                 "schema": {
@@ -9443,11 +9214,11 @@
         "tags": [
           "tracks"
         ],
-        "summary": "The read-only resolve the Today page load uses. Must never reach the harness: it\nreads two rows and returns. No launchpad track is the ordinary state of a fresh\nworkspace, so it is `200` with `null`, not a 404 — this is the landing route and\nbrowsers log every 404 as a console error.",
+        "summary": "The read-only resolve the Today page load uses. Must never reach the harness: it\nreads two rows and returns. No launchpad track is the ordinary state of a fresh\nworkspace, so it is `200` with `null`, not a 404 \u2014 this is the landing route and\nbrowsers log every 404 as a console error.",
         "operationId": "resolve_today_launchpad",
         "responses": {
           "200": {
-            "description": "The launchpad track and whether its report has been written, or `null` when no launchpad track exists yet — the ordinary state of a fresh workspace, which the page renders as an empty state.",
+            "description": "The launchpad track and whether its report has been written, or `null` when no launchpad track exists yet \u2014 the ordinary state of a fresh workspace, which the page renders as an empty state.",
             "content": {
               "application/json": {
                 "schema": {
@@ -9571,7 +9342,7 @@
         "tags": [
           "tracks"
         ],
-        "summary": "`POST /api/today/launchpad/report/reset` — put today's report back to the canonical\nempty document. The kernel calls `TrackReportPayload::initial()` itself; nothing\ncrosses the wire. Data blocks go too, each as if deleted by id: the task projection\ndrops a removed task's pending row and marks a claimed one stale, in the same write.\nConversations are untouched. The revision anchor is read here, so an edit landing in\nbetween yields the ordinary CRDT 409 and writes nothing.",
+        "summary": "`POST /api/today/launchpad/report/reset` \u2014 put today's report back to the canonical\nempty document. The kernel calls `TrackReportPayload::initial()` itself; nothing\ncrosses the wire. Data blocks go too, each as if deleted by id: the task projection\ndrops a removed task's pending row and marks a claimed one stale, in the same write.\nConversations are untouched. The revision anchor is read here, so an edit landing in\nbetween yields the ordinary CRDT 409 and writes nothing.",
         "operationId": "reset_today_launchpad_report",
         "responses": {
           "200": {
@@ -11785,7 +11556,7 @@
         "tags": [
           "tracks"
         ],
-        "summary": "`POST /api/tracks/:id/report` — user-driven track-report edit; only `ActorId::User`\nis allowed (403 otherwise). The response is the CRDT-projected payload, not the\nrequest body verbatim.",
+        "summary": "`POST /api/tracks/:id/report` \u2014 user-driven track-report edit; only `ActorId::User`\nis allowed (403 otherwise). The response is the CRDT-projected payload, not the\nrequest body verbatim.",
         "operationId": "update_track_report",
         "parameters": [
           {
@@ -13670,7 +13441,7 @@
             }
           },
           "400": {
-            "description": "Missing `Idempotency-Key`, one that is blank, not visible ASCII or over 128 bytes (code `idempotency_key_invalid`), or empty/over-long text. A `BadRequest` raised by `PlannerHarnessStartAdapter::validate` also lands here — the operation-failure mapping keeps `bad_request` a 400.",
+            "description": "Missing `Idempotency-Key`, one that is blank, not visible ASCII or over 128 bytes (code `idempotency_key_invalid`), or empty/over-long text. A `BadRequest` raised by `PlannerHarnessStartAdapter::validate` also lands here \u2014 the operation-failure mapping keeps `bad_request` a 400.",
             "content": {
               "application/json": {
                 "schema": {
@@ -13710,7 +13481,7 @@
             }
           },
           "409": {
-            "description": "Distinguished by the body's `code`:\n* `conflict` — the derived card already exists, or the conversation's provider cannot start now (Claude not configured, or its version cannot be confirmed).\n* `idempotency_key_reused` — this `Idempotency-Key` was already used for a request whose first-message text differed (the text is bound into the operation payload, and its hash is what `submit` compares); final for this key.\n* `idempotency_key_exhausted` — the key used up its 64 retry slots; retry under a NEW `Idempotency-Key`.",
+            "description": "Distinguished by the body's `code`:\n* `conflict` \u2014 the derived card already exists, or the conversation's provider cannot start now (Claude not configured, or its version cannot be confirmed).\n* `idempotency_key_reused` \u2014 this `Idempotency-Key` was already used for a request whose first-message text differed (the text is bound into the operation payload, and its hash is what `submit` compares); final for this key.\n* `idempotency_key_exhausted` \u2014 the key used up its 64 retry slots; retry under a NEW `Idempotency-Key`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -14926,14 +14697,31 @@
         }
       ],
       "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "includeArchived",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "parentSessionId",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
+            "description": "Sessions",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/AgentSessionDto"
+                    "$ref": "#/components/schemas/SessionSummaryDto"
                   }
                 }
               }
@@ -14942,59 +14730,51 @@
         }
       },
       "post": {
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionCreationReceipt"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "conflict or precondition_failed"
+          },
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionCreationReceipt"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSessionRequest"
+              }
+            }
+          }
+        },
         "parameters": [
           {
             "name": "Idempotency-Key",
             "in": "header",
             "required": true,
             "schema": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 256
+              "type": "string"
             }
           }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreatePergaSessionRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Original session and first input",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SessionCreationReceipt"
-                }
-              }
-            }
-          },
-          "201": {
-            "description": "Session created",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SessionCreationReceipt"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Missing or invalid request key or body"
-          },
-          "409": {
-            "description": "Conflicting request key"
-          },
-          "410": {
-            "description": "Created session was deleted"
-          }
-        }
+        ]
       }
     },
     "/api/v1/sessions/{sessionId}/items": {
@@ -15011,6 +14791,7 @@
       "get": {
         "responses": {
           "200": {
+            "description": "Success",
             "content": {
               "application/json": {
                 "schema": {
@@ -15018,6 +14799,9 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": "conflict or precondition_failed"
           }
         },
         "parameters": [
@@ -15025,21 +14809,26 @@
             "name": "afterId",
             "in": "query",
             "schema": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0
             }
           },
           {
             "name": "beforeId",
             "in": "query",
             "schema": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0
             }
           },
           {
             "name": "limit",
             "in": "query",
             "schema": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
             }
           },
           {
@@ -15060,7 +14849,8 @@
             "name": "afterSequence",
             "in": "query",
             "schema": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0
             }
           },
           {
@@ -15069,7 +14859,8 @@
             "schema": {
               "type": "integer",
               "minimum": 0,
-              "maximum": 10000
+              "maximum": 10000,
+              "default": 0
             }
           }
         ]
@@ -15087,521 +14878,42 @@
         }
       ],
       "post": {
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionMessageReceipt"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "conflict or precondition_failed"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SendSessionMessageRequest"
+              }
+            }
+          }
+        },
         "parameters": [
           {
             "name": "Idempotency-Key",
             "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 256
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": [
-                  "content"
-                ],
-                "properties": {
-                  "content": {
-                    "type": "string"
-                  },
-                  "steerIfRunning": {
-                    "type": "boolean",
-                    "default": false
-                  },
-                  "queueIfBusy": {
-                    "type": "boolean",
-                    "default": false,
-                    "description": "Allow volatile FIFO admission while the session is busy."
-                  },
-                  "attemptId": {
-                    "type": "string",
-                    "description": "Required for a bound Worker."
-                  },
-                  "turnId": {
-                    "type": "string",
-                    "description": "The expected current turn when steering a Worker."
-                  },
-                  "allowQueue": {
-                    "type": "boolean",
-                    "default": false,
-                    "description": "Legacy fallback for a Worker without native steering. Use mode for explicit delivery."
-                  },
-                  "mode": {
-                    "type": "string",
-                    "enum": [
-                      "steer",
-                      "queue"
-                    ],
-                    "description": "Worker delivery mode. Steer requires the expected current turnId. Queue takes no turnId and leaves a paused Worker paused. Omit mode and turnId to send to an idle Worker or resume a paused Worker."
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Replayed input or live steering result",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "oneOf": [
-                    {
-                      "$ref": "#/components/schemas/SessionInputReceipt"
-                    },
-                    {
-                      "$ref": "#/components/schemas/SessionTurnDto"
-                    },
-                    {
-                      "$ref": "#/components/schemas/QueuedMessageReceipt"
-                    },
-                    {
-                      "$ref": "#/components/schemas/WorkerMessageReceipt"
-                    }
-                  ]
-                }
-              }
-            }
-          },
-          "202": {
-            "description": "Input committed, admitted to the session queue, or queued for the Worker's next turn.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "oneOf": [
-                    {
-                      "$ref": "#/components/schemas/SessionInputReceipt"
-                    },
-                    {
-                      "$ref": "#/components/schemas/QueuedMessageReceipt"
-                    },
-                    {
-                      "$ref": "#/components/schemas/WorkerMessageReceipt"
-                    }
-                  ]
-                }
-              }
-            },
-            "headers": {
-              "Location": {
-                "schema": {
-                  "type": "string"
-                },
-                "description": "Present for SessionInputReceipt responses."
-              }
-            }
-          },
-          "409": {
-            "description": "Session busy, conflicting request key, or changed Worker turn. Explicit stale steering returns worker_turn_changed when no matching receipt exists."
-          }
-        }
-      }
-    },
-    "/api/v1/sessions/{sessionId}/messages/steer": {
-      "post": {
-        "summary": "Deliver supplemental text to an observed turn",
-        "parameters": [
-          {
-            "name": "sessionId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "description": "Replay the original steering request with its content and target turn.",
-            "schema": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 256
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": [
-                  "turnId",
-                  "content"
-                ],
-                "properties": {
-                  "turnId": {
-                    "type": "string"
-                  },
-                  "content": {
-                    "type": "string"
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Steering delivery outcome",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "required": [
-                    "inputId",
-                    "delivery"
-                  ],
-                  "properties": {
-                    "inputId": {
-                      "type": "string"
-                    },
-                    "delivery": {
-                      "type": "string",
-                      "enum": [
-                        "accepted",
-                        "queued",
-                        "unconfirmed",
-                        "rejected"
-                      ]
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Missing turn or content"
-          },
-          "404": {
-            "description": "Session not found"
-          },
-          "409": {
-            "description": "An unresolved turn holds the session"
-          }
-        }
-      }
-    },
-    "/api/v1/sessions/{sessionId}/messages/queue/{inputId}": {
-      "delete": {
-        "summary": "Withdraw a waiting message from a conversation or Worker queue",
-        "parameters": [
-          {
-            "name": "sessionId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "inputId",
-            "in": "path",
-            "required": true,
+            "required": false,
+            "description": "Required when content is present.",
             "schema": {
               "type": "string"
             }
           }
-        ],
-        "responses": {
-          "204": {
-            "description": "Withdrawn or already withdrawn"
-          },
-          "404": {
-            "description": "Session or message not found"
-          },
-          "409": {
-            "description": "Message has been claimed or is no longer waiting"
-          }
-        }
-      }
-    },
-    "/api/v1/sessions/{sessionId}/messages/queue/{inputId}/steer": {
-      "post": {
-        "summary": "Attempt to deliver an existing queued message to the observed running turn",
-        "parameters": [
-          {
-            "name": "sessionId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "inputId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": [
-                  "turnId"
-                ],
-                "properties": {
-                  "turnId": {
-                    "type": "string"
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Steering delivery outcome",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "required": [
-                    "inputId",
-                    "delivery"
-                  ],
-                  "properties": {
-                    "inputId": {
-                      "type": "string"
-                    },
-                    "delivery": {
-                      "type": "string",
-                      "enum": [
-                        "accepted",
-                        "queued",
-                        "unconfirmed",
-                        "rejected"
-                      ]
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Missing target turn"
-          },
-          "404": {
-            "description": "Session or waiting message not found"
-          },
-          "409": {
-            "description": "Message or session cannot be steered"
-          }
-        }
-      }
-    },
-    "/api/v1/sessions/{sessionId}/inputs/{inputId}": {
-      "parameters": [
-        {
-          "name": "sessionId",
-          "in": "path",
-          "required": true,
-          "schema": {
-            "type": "string"
-          }
-        },
-        {
-          "name": "inputId",
-          "in": "path",
-          "required": true,
-          "schema": {
-            "type": "string"
-          }
-        }
-      ],
-      "get": {
-        "responses": {
-          "200": {
-            "description": "Current receipt",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SessionInputReceipt"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Input missing"
-          }
-        }
-      }
-    },
-    "/api/v1/sessions/{sessionId}/interrupt": {
-      "parameters": [
-        {
-          "name": "sessionId",
-          "in": "path",
-          "required": true,
-          "schema": {
-            "type": "string"
-          }
-        }
-      ],
-      "post": {
-        "responses": {
-          "200": {
-            "description": "Interrupted"
-          },
-          "409": {
-            "description": "The turn changed or the provider could not confirm that it stopped."
-          },
-          "400": {
-            "description": "A target turn is required."
-          }
-        },
-        "requestBody": {
-          "description": "The observed turn is required. Bound Worker turns also require attemptId.",
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": [
-                  "turnId"
-                ],
-                "properties": {
-                  "attemptId": {
-                    "type": "string"
-                  },
-                  "turnId": {
-                    "type": "string"
-                  }
-                }
-              }
-            }
-          },
-          "required": true
-        }
-      }
-    },
-    "/api/v1/sessions/{sessionId}/compact": {
-      "parameters": [
-        {
-          "name": "sessionId",
-          "in": "path",
-          "required": true,
-          "schema": {
-            "type": "string"
-          }
-        }
-      ],
-      "post": {
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AgentSessionDto"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/tracks/{trackId}/asks/{askId}/answer": {
-      "parameters": [
-        {
-          "name": "trackId",
-          "in": "path",
-          "required": true,
-          "schema": {
-            "type": "string"
-          }
-        },
-        {
-          "name": "askId",
-          "in": "path",
-          "required": true,
-          "schema": {
-            "type": "string"
-          }
-        }
-      ],
-      "post": {
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AskDto"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/tracks/{trackId}/executions/{executionId}/approvals/{approvalId}/decision": {
-      "parameters": [
-        {
-          "name": "trackId",
-          "in": "path",
-          "required": true,
-          "schema": {
-            "type": "string"
-          }
-        },
-        {
-          "name": "executionId",
-          "in": "path",
-          "required": true,
-          "schema": {
-            "type": "string"
-          }
-        },
-        {
-          "name": "approvalId",
-          "in": "path",
-          "required": true,
-          "schema": {
-            "type": "string"
-          }
-        }
-      ],
-      "post": {
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApprovalDto"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Missing or unknown approval optionId."
-          },
-          "409": {
-            "description": "The execution no longer accepts this approval decision."
-          }
-        },
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ApprovalDecisionRequest"
-              }
-            }
-          }
-        }
+        ]
       }
     },
     "/api/v1/tracks/{trackId}/terminals": {
@@ -15868,274 +15180,27 @@
         }
       ],
       "patch": {
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UpdatePergaSessionRequest"
-              }
-            }
-          }
-        },
         "responses": {
           "200": {
+            "description": "Success",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/AgentSessionDto"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/sessions/{sessionId}/settings": {
-      "parameters": [
-        {
-          "name": "sessionId",
-          "in": "path",
-          "required": true,
-          "schema": {
-            "type": "string"
-          }
-        }
-      ],
-      "patch": {
-        "parameters": [
-          {
-            "name": "X-Perga-Worker-Approval-Key",
-            "in": "header",
-            "description": "Installation owner proof required to restore approval requests after deny. Accepted over HTTPS.",
-            "schema": {
-              "type": "string",
-              "pattern": "^[a-fA-F0-9]{64}$"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": [
-                  "attemptId",
-                  "version",
-                  "model",
-                  "reasoningEffort",
-                  "approvalMode"
-                ],
-                "properties": {
-                  "attemptId": {
-                    "type": "string"
-                  },
-                  "version": {
-                    "type": "integer",
-                    "minimum": 0
-                  },
-                  "model": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "reasoningEffort": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "approvalMode": {
-                    "enum": [
-                      "ask",
-                      "deny"
-                    ]
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "403": {
-            "description": "Restoring approval requests requires verified authorization from the installation owner."
-          },
-          "200": {
-            "description": "Settings saved for the next Worker turn.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/WorkerSettings"
                 }
               }
             }
           },
           "409": {
-            "description": "The attempt changed or the settings version was superseded."
+            "description": "conflict or precondition_failed"
           }
-        }
-      }
-    },
-    "/api/v1/tracks/{trackId}/tasks/dispatch": {
-      "parameters": [
-        {
-          "name": "trackId",
-          "in": "path",
-          "required": true,
-          "schema": {
-            "type": "string"
-          }
-        }
-      ],
-      "post": {
-        "parameters": [
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "schema": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 256
-            }
-          }
-        ],
+        },
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "type": "object",
-                "required": [
-                  "goal"
-                ],
-                "properties": {
-                  "goal": {
-                    "type": "string"
-                  },
-                  "access": {
-                    "enum": [
-                      "read_only",
-                      "read_write"
-                    ]
-                  },
-                  "acceptance": {
-                    "type": "string"
-                  },
-                  "dependsOn": {
-                    "type": "array",
-                    "items": {
-                      "type": "string"
-                    }
-                  },
-                  "gate": {
-                    "type": "string"
-                  },
-                  "provider": {
-                    "type": "string"
-                  },
-                  "model": {
-                    "type": "string"
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "202": {
-            "description": "The Worker task was committed.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/WorkerDispatchReceipt"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "The Track is closed or the request key conflicts."
-          }
-        }
-      }
-    },
-    "/api/v1/sessions/{sessionId}/model": {
-      "parameters": [
-        {
-          "name": "sessionId",
-          "in": "path",
-          "required": true,
-          "schema": {
-            "type": "string"
-          }
-        }
-      ],
-      "put": {
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UpdateSessionModelRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Persisted session model; active turns reconcile before their next turn.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AgentSessionDto"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Session not found"
-          }
-        }
-      }
-    },
-    "/api/v1/sessions/{sessionId}/permission-mode": {
-      "parameters": [
-        {
-          "name": "sessionId",
-          "in": "path",
-          "required": true,
-          "schema": {
-            "type": "string"
-          }
-        }
-      ],
-      "put": {
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": [
-                  "permissionMode"
-                ],
-                "properties": {
-                  "permissionMode": {
-                    "type": "string"
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AgentSessionDto"
-                }
+                "$ref": "#/components/schemas/UpdateSessionRequest"
               }
             }
           }
@@ -16390,32 +15455,57 @@
         }
       }
     },
-    "/api/v1/sessions/{sessionId}/recover": {
-      "post": {
-        "summary": "Recover an unknown session or reset idle context",
+    "/api/v1/sessions/{sessionId}/messages/{messageId}": {
+      "parameters": [
+        {
+          "name": "sessionId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "messageId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "delete": {
         "parameters": [
           {
-            "name": "sessionId",
-            "in": "path",
-            "required": true,
+            "name": "expectedAttemptId",
+            "in": "query",
             "schema": {
               "type": "string"
             }
           }
         ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RecoverSessionRequest"
-              }
-            }
+        "responses": {
+          "204": {
+            "description": "Withdrawn"
           }
-        },
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionId}/control": {
+      "parameters": [
+        {
+          "name": "sessionId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
         "responses": {
           "200": {
-            "description": "Session recovered",
+            "description": "Success",
             "content": {
               "application/json": {
                 "schema": {
@@ -16424,17 +15514,296 @@
               }
             }
           },
-          "400": {
-            "description": "Invalid recovery mode"
-          },
-          "404": {
-            "description": "Session not found"
-          },
           "409": {
-            "description": "Session state forbids recovery, recovery is busy, or provider recovery failed"
+            "description": "conflict or precondition_failed"
           }
         },
-        "description": "reset_context atomically archives unresolved queued/dispatching/unknown messages as interrupted and drops pending/delivering wakes before an epoch_boundary. It clears scheduler slots and never automatically dispatches into the new epoch. Reconnect is unavailable for session_lost."
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionControlRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionId}/interactions/{interactionId}/respond": {
+      "parameters": [
+        {
+          "name": "sessionId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "interactionId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionInteractionResult"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "conflict or precondition_failed"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RespondInteractionRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/read-receipts": {
+      "get": {
+        "tags": [
+          "read_receipts"
+        ],
+        "summary": "The cutover baseline (activity at or before it is read) and every stored receipt.",
+        "operationId": "list_read_receipts",
+        "responses": {
+          "200": {
+            "description": "The baseline and every receipt",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadReceiptsResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`: no valid session cookie.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/read-receipts/{kind}/{targetId}/read": {
+      "post": {
+        "tags": [
+          "read_receipts"
+        ],
+        "summary": "Mark a target read through `readThroughMs`: the stored instant is the larger of the two, and a\nmanual unread is cleared. Idempotent.",
+        "operationId": "mark_read",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "description": "`track` or `conversation`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "targetId",
+            "in": "path",
+            "description": "The track or conversation id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MarkReadRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The stored receipt",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadReceiptDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid kind, target ID, JSON body or negative readThroughMs"
+          },
+          "401": {
+            "description": "`unauthorized`: no valid session cookie.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The actor is not the authenticated user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "`payload_too_large`: the body is over the request size limit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "`unsupported_media_type`: the request does not say `Content-Type: application/json`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`invalid_body`: the JSON is not the body's shape (a field missing or of the wrong type).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/read-receipts/{kind}/{targetId}/unread": {
+      "post": {
+        "tags": [
+          "read_receipts"
+        ],
+        "summary": "Mark a target unread by hand; the next mark read clears it. Idempotent.",
+        "operationId": "mark_unread",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "description": "`track` or `conversation`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "targetId",
+            "in": "path",
+            "description": "The track or conversation id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The stored receipt",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadReceiptDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid kind, target ID, JSON body or negative readThroughMs"
+          },
+          "401": {
+            "description": "`unauthorized`: no valid session cookie.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The actor is not the authenticated user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
       }
     }
   },
@@ -16692,7 +16061,7 @@
       },
       "AttachmentId": {
         "type": "string",
-        "description": "`<uuid-v4>.<ext>` — an attachment's id *and* its file name. The only constructor is\n[`AttachmentId::parse`] and `Deserialize` goes through the same gate."
+        "description": "`<uuid-v4>.<ext>` \u2014 an attachment's id *and* its file name. The only constructor is\n[`AttachmentId::parse`] and `Deserialize` goes through the same gate."
       },
       "AuthenticationNotice": {
         "type": "object",
@@ -17225,7 +16594,7 @@
               "string",
               "null"
             ],
-            "description": "The credential. Absent or empty ⇒ an unauthenticated connector. Never echoed;\nit reaches disk in `secrets.json` and nowhere else."
+            "description": "The credential. Absent or empty \u21d2 an unauthenticated connector. Never echoed;\nit reaches disk in `secrets.json` and nowhere else."
           },
           "api_key_in": {
             "type": [
@@ -17275,7 +16644,7 @@
           },
           "tools_all": {
             "type": "boolean",
-            "description": "Explicit all-tools mode; omitted ⇒ the strict (possibly empty) allowlist."
+            "description": "Explicit all-tools mode; omitted \u21d2 the strict (possibly empty) allowlist."
           },
           "tools_allow": {
             "type": "array",
@@ -19054,7 +18423,7 @@
       },
       "ErrorBody": {
         "type": "object",
-        "description": "JSON shape returned for every error response — `{error, code}`, plus `field` when the refusal\nnames one field of the request.",
+        "description": "JSON shape returned for every error response \u2014 `{error, code}`, plus `field` when the refusal\nnames one field of the request.",
         "required": [
           "error",
           "code"
@@ -20004,7 +19373,7 @@
           },
           "stopped": {
             "type": "boolean",
-            "description": "True when a turn was running and an interrupt was dispatched at it; false when idle or a `turn/start` was still in flight. Means the interrupt was *issued* — completion is asynchronous."
+            "description": "True when a turn was running and an interrupt was dispatched at it; false when idle or a `turn/start` was still in flight. Means the interrupt was *issued* \u2014 completion is asynchronous."
           },
           "worker_session_id": {
             "type": "string"
@@ -20505,7 +19874,7 @@
               "string",
               "null"
             ],
-            "description": "Working directory codex runs in. Empty string or missing → `$HOME`\n(then `cwd` of server)."
+            "description": "Working directory codex runs in. Empty string or missing \u2192 `$HOME`\n(then `cwd` of server)."
           },
           "icon_bg": {
             "type": [
@@ -20585,7 +19954,7 @@
         "properties": {
           "cwd": {
             "type": "string",
-            "description": "Empty string or missing → the track's workspace path."
+            "description": "Empty string or missing \u2192 the track's workspace path."
           },
           "env": {
             "type": "object",
@@ -20593,7 +19962,7 @@
           },
           "program": {
             "type": "string",
-            "description": "Empty string or missing → `$SHELL` (then `/bin/sh`)."
+            "description": "Empty string or missing \u2192 `$SHELL` (then `/bin/sh`)."
           },
           "sort": {
             "type": [
@@ -20605,7 +19974,7 @@
           },
           "theme": {
             "$ref": "#/components/schemas/RequestTheme",
-            "description": "Host browser's current theme RGB. Required — written onto the terminal row in the\nsame transaction that mints the card; every spawn reads it for `--terminal-fg/-bg`."
+            "description": "Host browser's current theme RGB. Required \u2014 written onto the terminal row in the\nsame transaction that mints the card; every spawn reads it for `--terminal-fg/-bg`."
           },
           "title": {
             "type": [
@@ -20938,7 +20307,7 @@
           },
           "text": {
             "type": "string",
-            "description": "The complete text. Never truncated — an entry that would not fit the page budget is left out entirely."
+            "description": "The complete text. Never truncated \u2014 an entry that would not fit the page budget is left out entirely."
           }
         }
       },
@@ -21027,7 +20396,7 @@
           "rev": {
             "type": "integer",
             "format": "int32",
-            "description": "The entry's current rev — resend with this to overwrite deliberately.",
+            "description": "The entry's current rev \u2014 resend with this to overwrite deliberately.",
             "minimum": 0
           },
           "text": {
@@ -21289,7 +20658,7 @@
               "null"
             ],
             "format": "double",
-            "description": "Context occupancy as a whole percentage, `0.0..=100.0`. Null when no percentage can honestly be stated (no window, window at or below baseline, or usage above the window — deliberately NOT clamped)."
+            "description": "Context occupancy as a whole percentage, `0.0..=100.0`. Null when no percentage can honestly be stated (no window, window at or below baseline, or usage above the window \u2014 deliberately NOT clamped)."
           },
           "used_tokens": {
             "type": "integer",
@@ -21375,7 +20744,7 @@
           },
           "turn_id": {
             "type": "string",
-            "description": "The turn that took the message — the one that was running."
+            "description": "The turn that took the message \u2014 the one that was running."
           },
           "worker_session_id": {
             "type": "string"
@@ -21504,11 +20873,11 @@
         "properties": {
           "config_schema": {
             "type": "object",
-            "description": "The schema the config form renders from, read from the registry — authoritative\nover `manifest.config_schema`, which is the persisted blob and may be stale.\n`None` means no schema is in force."
+            "description": "The schema the config form renders from, read from the registry \u2014 authoritative\nover `manifest.config_schema`, which is the persisted blob and may be stale.\n`None` means no schema is in force."
           },
           "effective_config": {
             "type": "object",
-            "description": "`defaults ⊕ user_config`, i.e. what the plugin runs with. Carried alongside\n`user_config` so a form can tell an operator's choice from a manifest default and\nnever posts defaults back to be persisted."
+            "description": "`defaults \u2295 user_config`, i.e. what the plugin runs with. Carried alongside\n`user_config` so a form can tell an operator's choice from a manifest default and\nnever posts defaults back to be persisted."
           },
           "enabled": {
             "type": "boolean"
@@ -21539,7 +20908,7 @@
           },
           "user_config": {
             "type": "object",
-            "description": "What the operator has actually **set** — the persisted row, verbatim,\nwith no defaults folded in."
+            "description": "What the operator has actually **set** \u2014 the persisted row, verbatim,\nwith no defaults folded in."
           },
           "version": {
             "type": "string"
@@ -22023,7 +21392,7 @@
       },
       "ReportSeriesEntry": {
         "type": "object",
-        "description": "One series inside `ReportSeriesResolved.series` — the stored summary\n(`summary::SeriesSummary`, verbatim) plus `points` on a `full` read.",
+        "description": "One series inside `ReportSeriesResolved.series` \u2014 the stored summary\n(`summary::SeriesSummary`, verbatim) plus `points` on a `full` read.",
         "required": [
           "asset",
           "status"
@@ -22092,7 +21461,7 @@
                 "format": "double"
               }
             },
-            "description": "`full` only: `[[ts_ms, value], …]`, or `[[ts_ms, open, high, low,\nclose, volume], …]` for `view: candles`. `ts_ms` is UTC midnight."
+            "description": "`full` only: `[[ts_ms, value], \u2026]`, or `[[ts_ms, open, high, low,\nclose, volume], \u2026]` for `view: candles`. `ts_ms` is UTC midnight."
           },
           "reason": {
             "type": [
@@ -22108,7 +21477,7 @@
       },
       "ReportSeriesResolved": {
         "type": "object",
-        "description": "The flattened `resolved` object — the same shape `neige_report_read`\nattaches to a `chart.series` block, with the block's presentation\nfields (`view` / `field` / `period` / `range`) alongside.",
+        "description": "The flattened `resolved` object \u2014 the same shape `neige_report_read`\nattaches to a `chart.series` block, with the block's presentation\nfields (`view` / `field` / `period` / `range`) alongside.",
         "required": [
           "status",
           "view",
@@ -22122,7 +21491,7 @@
               "string",
               "null"
             ],
-            "description": "`ok`: the cutoff the data runs through (`YYYY-MM-DD`) — the payload's\n`as_of` for a frozen block, yesterday UTC at resolution for a live one."
+            "description": "`ok`: the cutoff the data runs through (`YYYY-MM-DD`) \u2014 the payload's\n`as_of` for a frozen block, yesterday UTC at resolution for a live one."
           },
           "field": {
             "type": "string"
@@ -22166,7 +21535,7 @@
           },
           "status": {
             "type": "string",
-            "description": "`pending` (no row yet — the read just queued one), `unavailable`\n(the last resolution failed; see `reason`) or `ok`."
+            "description": "`pending` (no row yet \u2014 the read just queued one), `unavailable`\n(the last resolution failed; see `reason`) or `ok`."
           },
           "view": {
             "type": "string"
@@ -22937,7 +22306,7 @@
       },
       "SteerPlannerInputBody": {
         "type": "object",
-        "description": "Body of `POST …/{entry_id}/steer`: the same compare-and-swap token as the delete.",
+        "description": "Body of `POST \u2026/{entry_id}/steer`: the same compare-and-swap token as the delete.",
         "required": [
           "if_entry_rev"
         ],
@@ -23567,7 +22936,7 @@
         "properties": {
           "report_has_noninitial_content": {
             "type": "boolean",
-            "description": "Whether this report holds content right now beyond the empty skeleton — a statement\nabout CURRENT content, not history: restoring the canonical text flips it back to\n`false`, and a user hand-edit flips it exactly as a summary agent would. The frontend\nmust not re-derive this from the report body."
+            "description": "Whether this report holds content right now beyond the empty skeleton \u2014 a statement\nabout CURRENT content, not history: restoring the canonical text flips it back to\n`false`, and a user hand-edit flips it exactly as a summary agent would. The frontend\nmust not re-derive this from the report body."
           },
           "track_id": {
             "type": "string"
@@ -23594,7 +22963,7 @@
       },
       "ToolCallBody": {
         "type": "object",
-        "description": "AppBridge → kernel tool-call wire body, mirroring the JSON-RPC `tools/call` params\nshape. `call_id` is threaded into every event written while servicing the call as\n`correlation = \"user_tool_call:<call_id>\"`.",
+        "description": "AppBridge \u2192 kernel tool-call wire body, mirroring the JSON-RPC `tools/call` params\nshape. `call_id` is threaded into every event written while servicing the call as\n`correlation = \"user_tool_call:<call_id>\"`.",
         "required": [
           "name"
         ],
@@ -23607,7 +22976,7 @@
               "string",
               "null"
             ],
-            "description": "Optional caller-supplied tracing id; absent ⇒ `correlation = NULL`."
+            "description": "Optional caller-supplied tracing id; absent \u21d2 `correlation = NULL`."
           },
           "name": {
             "type": "string"
@@ -24497,7 +23866,7 @@
           "updated_at": {
             "type": "integer",
             "format": "int64",
-            "description": "Display only — never a lock anchor. See `revision`."
+            "description": "Display only \u2014 never a lock anchor. See `revision`."
           }
         }
       },
@@ -24899,7 +24268,7 @@
               "null"
             ],
             "format": "int64",
-            "description": "One-shot, monotonic. `Some` ⇒ neither `path` nor `kind` may change again. The system-area\nlaunchpad stays unfrozen because it is repointed."
+            "description": "One-shot, monotonic. `Some` \u21d2 neither `path` nor `kind` may change again. The system-area\nlaunchpad stays unfrozen because it is repointed."
           },
           "kind": {
             "$ref": "#/components/schemas/TrackWorkspaceKind"
@@ -24927,7 +24296,7 @@
       },
       "TrackWorkspacePatch": {
         "type": "object",
-        "description": "Increase workspace isolation: managed → attached → attached with a worktree.",
+        "description": "Increase workspace isolation: managed \u2192 attached \u2192 attached with a worktree.",
         "required": [
           "kind",
           "path"
@@ -25049,7 +24418,7 @@
           "if_revision": {
             "type": "integer",
             "format": "int64",
-            "description": "The `revision` the caller read. A mismatch is 409 — never a silent overwrite."
+            "description": "The `revision` the caller read. A mismatch is 409 \u2014 never a silent overwrite."
           },
           "title": {
             "type": "string"
@@ -25158,7 +24527,7 @@
         "properties": {
           "apiVersion": {
             "type": "string",
-            "description": "REST contract version. Diagnostic-only on the wire — the frontend gates on\n`min_web_compat_version` and `sync_event_version`."
+            "description": "REST contract version. Diagnostic-only on the wire \u2014 the frontend gates on\n`min_web_compat_version` and `sync_event_version`."
           },
           "areaCreateIdempotency": {
             "type": "boolean",
@@ -25274,7 +24643,7 @@
           },
           "scope": {
             "type": "string",
-            "description": "`\"card\"` — track/area are banned."
+            "description": "`\"card\"` \u2014 track/area are banned."
           },
           "title": {
             "type": "string"
@@ -26191,6 +25560,27 @@
           "reconnectInvalidated": {
             "type": "boolean"
           },
+          "parentSessionId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "systemPrompt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "spawnDepth": {
+            "type": "integer"
+          },
+          "configVersion": {
+            "type": "integer"
+          },
+          "notifyParent": {
+            "type": "string"
+          },
           "lastNotifiableTurnAtMs": {
             "type": [
               "integer",
@@ -26283,7 +25673,6 @@
           "inputId",
           "turnId",
           "sessionId",
-          "statusUrl",
           "deliveryState",
           "turnStatus",
           "resolvedAtMs"
@@ -26300,9 +25689,6 @@
             "type": "string"
           },
           "sessionId": {
-            "type": "string"
-          },
-          "statusUrl": {
             "type": "string"
           },
           "deliveryState": {
@@ -26353,43 +25739,18 @@
                 "type": "null"
               }
             ]
-          }
-        }
-      },
-      "CreatePergaSessionRequest": {
-        "type": "object",
-        "properties": {
-          "title": {
-            "type": [
-              "string",
-              "null"
+          },
+          "task": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TaskDto"
+              },
+              {
+                "type": "null"
+              }
             ]
           },
-          "provider": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "model": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "text": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "reasoningEffort": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "permissionMode": {
+          "requestKey": {
             "type": [
               "string",
               "null"
@@ -26440,44 +25801,6 @@
           },
           "createdAtMs": {
             "type": "integer"
-          }
-        }
-      },
-      "QueuedMessageReceipt": {
-        "type": "object",
-        "required": [
-          "sessionId",
-          "inputId",
-          "queued"
-        ],
-        "properties": {
-          "sessionId": {
-            "type": "string"
-          },
-          "messageId": {
-            "type": "string",
-            "description": "Stable identity shared with the submitted user message."
-          },
-          "inputId": {
-            "type": "string"
-          },
-          "queued": {
-            "enum": [
-              true
-            ]
-          },
-          "delivery": {
-            "type": "string",
-            "description": "Current persisted delivery. The queued flag identifies the original submission response.",
-            "enum": [
-              "queued",
-              "dispatching",
-              "delivered",
-              "rejected",
-              "unknown",
-              "interrupted",
-              "withdrawn"
-            ]
           }
         }
       },
@@ -26572,16 +25895,6 @@
             },
             "description": "Permission options reported by this conversation's open provider session, when known."
           },
-          "worker": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/WorkerActivityDto"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
           "state": {
             "type": "string",
             "enum": [
@@ -26629,6 +25942,45 @@
                 "type": "null"
               }
             ]
+          },
+          "activity": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SessionActivityDto"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "taskBinding": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SessionTaskBindingDto"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "capabilities": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SessionCapabilitiesDto"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pendingInteractions": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/PendingInteractionDto"
+            }
           }
         }
       },
@@ -26652,7 +26004,12 @@
           "status": {
             "type": "string"
           },
-          "questions": {},
+          "questions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AskQuestionDto"
+            }
+          },
           "answer": {},
           "createdAtMs": {
             "type": "integer"
@@ -26677,6 +26034,12 @@
             ]
           },
           "turnId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "targetSessionId": {
             "type": [
               "string",
               "null"
@@ -26933,38 +26296,6 @@
           }
         }
       },
-      "UpdatePergaSessionRequest": {
-        "type": "object",
-        "properties": {
-          "title": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "provider": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "model": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "clearModel": {
-            "type": "boolean"
-          },
-          "archived": {
-            "type": [
-              "boolean",
-              "null"
-            ]
-          }
-        }
-      },
       "HostDirEntryDto": {
         "type": "object",
         "required": [
@@ -27127,316 +26458,6 @@
           "payload": {},
           "createdAtMs": {
             "type": "integer"
-          }
-        }
-      },
-      "WorkerMessageActivity": {
-        "type": "object",
-        "required": [
-          "id",
-          "author",
-          "content",
-          "delivery",
-          "createdAtMs"
-        ],
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "author": {
-            "type": "string"
-          },
-          "content": {
-            "type": "string"
-          },
-          "turnId": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "delivery": {
-            "type": "string",
-            "enum": [
-              "queued",
-              "dispatching",
-              "delivered",
-              "rejected",
-              "unknown",
-              "interrupted"
-            ]
-          },
-          "createdAtMs": {
-            "type": "integer"
-          }
-        }
-      },
-      "WorkerProviderConfiguration": {
-        "type": "object",
-        "required": [
-          "models"
-        ],
-        "properties": {
-          "models": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "required": [
-                "id",
-                "name",
-                "reasoningEfforts"
-              ],
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "name": {
-                  "type": "string"
-                },
-                "reasoningEfforts": {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
-                },
-                "defaultReasoningEffort": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                }
-              }
-            }
-          },
-          "defaultModel": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "defaultReasoningEffort": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "sessionReasoningEfforts": {
-            "type": [
-              "array",
-              "null"
-            ],
-            "items": {
-              "type": "string"
-            }
-          }
-        }
-      },
-      "WorkerActivityDto": {
-        "type": "object",
-        "required": [
-          "task",
-          "attemptId",
-          "phase",
-          "nativeSteer",
-          "pendingApprovals",
-          "sequence",
-          "reset",
-          "events",
-          "messages",
-          "text",
-          "textTruncated",
-          "nextSettings",
-          "canChangeModel",
-          "reasoningEfforts"
-        ],
-        "properties": {
-          "approvalAuthorizationConfigured": {
-            "type": "boolean"
-          },
-          "providerConfiguration": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/WorkerProviderConfiguration"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "task": {
-            "$ref": "#/components/schemas/TaskDto"
-          },
-          "attemptId": {
-            "type": "string"
-          },
-          "phase": {
-            "type": "string"
-          },
-          "nativeSteer": {
-            "type": "boolean"
-          },
-          "sequence": {
-            "type": "integer"
-          },
-          "reset": {
-            "type": "boolean"
-          },
-          "events": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/WorkerActivityEvent"
-            }
-          },
-          "messages": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/WorkerMessageActivity"
-            }
-          },
-          "text": {
-            "type": "string"
-          },
-          "textTruncated": {
-            "type": "boolean"
-          },
-          "nextSettings": {
-            "$ref": "#/components/schemas/WorkerSettings"
-          },
-          "activeSettings": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/WorkerSettings"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "canChangeModel": {
-            "type": "boolean"
-          },
-          "reasoningEfforts": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "lastError": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "pendingApprovals": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ApprovalDto"
-            }
-          }
-        }
-      },
-      "WorkerMessageReceipt": {
-        "type": "object",
-        "required": [
-          "delivery",
-          "inputId"
-        ],
-        "properties": {
-          "turnId": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "delivery": {
-            "type": "string",
-            "enum": [
-              "queued",
-              "dispatching",
-              "delivered",
-              "rejected",
-              "unknown",
-              "interrupted",
-              "withdrawn"
-            ]
-          },
-          "messageId": {
-            "type": "string",
-            "description": "Stable identity shared with the pending message and its transcript item."
-          },
-          "inputId": {
-            "type": "string"
-          }
-        }
-      },
-      "WorkerSettings": {
-        "type": "object",
-        "required": [
-          "version",
-          "model",
-          "reasoningEffort",
-          "approvalMode"
-        ],
-        "properties": {
-          "version": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "model": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "reasoningEffort": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "approvalMode": {
-            "enum": [
-              "ask",
-              "deny"
-            ]
-          }
-        }
-      },
-      "WorkerDispatchReceipt": {
-        "type": "object",
-        "required": [
-          "task",
-          "requestKey"
-        ],
-        "properties": {
-          "task": {
-            "$ref": "#/components/schemas/TaskDto"
-          },
-          "sessionId": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "requestKey": {
-            "type": "string"
-          }
-        }
-      },
-      "UpdateSessionModelRequest": {
-        "type": "object",
-        "properties": {
-          "model": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "reasoningEffort": {
-            "type": [
-              "string",
-              "null"
-            ]
           }
         }
       },
@@ -27692,17 +26713,6 @@
           }
         }
       },
-      "ApprovalDecisionRequest": {
-        "type": "object",
-        "required": [
-          "optionId"
-        ],
-        "properties": {
-          "optionId": {
-            "type": "string"
-          }
-        }
-      },
       "ApprovalDto": {
         "type": "object",
         "required": [
@@ -27739,6 +26749,22 @@
           "createdAtMs": {
             "type": "integer",
             "format": "int64"
+          },
+          "source": {
+            "type": "string"
+          },
+          "toolName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "arguments": {},
+          "delegateSessionId": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -28171,21 +27197,6 @@
           }
         }
       },
-      "RecoverSessionRequest": {
-        "type": "object",
-        "required": [
-          "mode"
-        ],
-        "properties": {
-          "mode": {
-            "type": "string",
-            "enum": [
-              "reconnect",
-              "reset_context"
-            ]
-          }
-        }
-      },
       "SessionUnknownDetailDto": {
         "type": "object",
         "required": [
@@ -28226,6 +27237,560 @@
             ]
           }
         }
+      },
+      "SessionTaskRequest": {
+        "type": "object",
+        "properties": {
+          "access": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "acceptance": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "gate": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "dependsOn": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "CreateSessionRequest": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "provider": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reasoningEffort": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "permissionMode": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "systemPrompt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "prompt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "notifyParent": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "role": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "task": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SessionTaskRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "UpdateSessionRequest": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "provider": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reasoningEffort": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "permissionMode": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expectedAttemptId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expectedConfigVersion": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "archived": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        }
+      },
+      "SendSessionMessageRequest": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "turnId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "messageId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expectedAttemptId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "default",
+              "steer",
+              "queue"
+            ],
+            "default": "default"
+          }
+        }
+      },
+      "SessionMessageReceipt": {
+        "type": "object",
+        "properties": {
+          "messageId": {
+            "type": "string"
+          },
+          "sessionId": {
+            "type": "string"
+          },
+          "turnId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "delivery": {
+            "type": "string"
+          },
+          "replay": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "messageId",
+          "sessionId",
+          "delivery",
+          "replay"
+        ]
+      },
+      "SessionControlRequest": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "stop",
+              "reconnect",
+              "reset_context",
+              "compact"
+            ]
+          },
+          "turnId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expectedEpoch": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "expectedAttemptId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "action"
+        ]
+      },
+      "RespondInteractionRequest": {
+        "type": "object",
+        "properties": {
+          "executionId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "optionId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "answers": {}
+        }
+      },
+      "SessionInteractionResult": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind"
+        ]
+      },
+      "SessionActivityDto": {
+        "type": "object",
+        "properties": {
+          "turnId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sequence": {
+            "type": "integer"
+          },
+          "reset": {
+            "type": "boolean"
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkerActivityEvent"
+            }
+          },
+          "text": {
+            "type": "string"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "sequence",
+          "reset",
+          "events",
+          "text",
+          "truncated"
+        ]
+      },
+      "SessionTaskBindingDto": {
+        "type": "object",
+        "properties": {
+          "task": {
+            "$ref": "#/components/schemas/TaskDto"
+          },
+          "attemptId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "attemptPhase": {
+            "type": "string"
+          },
+          "waitingReason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "task",
+          "attemptPhase"
+        ]
+      },
+      "WorkerModelOption": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "reasoningEfforts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "defaultReasoningEffort": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "reasoningEfforts"
+        ]
+      },
+      "SessionCapabilitiesDto": {
+        "type": "object",
+        "properties": {
+          "models": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkerModelOption"
+            }
+          },
+          "defaultModel": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "defaultReasoningEffort": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "permissionModes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PermissionModeOptionDto"
+            }
+          },
+          "supportsNativeSteer": {
+            "type": "boolean"
+          },
+          "supportsSessionResume": {
+            "type": "boolean"
+          },
+          "supportsCompact": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "models",
+          "permissionModes",
+          "supportsNativeSteer",
+          "supportsSessionResume",
+          "supportsCompact"
+        ]
+      },
+      "AskQuestionDto": {
+        "type": "object",
+        "properties": {
+          "question": {
+            "type": "string"
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "isMultiSelect": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "question",
+          "options",
+          "isMultiSelect"
+        ]
+      },
+      "PendingInteractionDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "sessionId": {
+            "type": "string"
+          },
+          "turnId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "executionId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "options": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/ApprovalChoiceDto"
+            }
+          },
+          "questions": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/AskQuestionDto"
+            }
+          },
+          "canRespond": {
+            "type": "boolean"
+          },
+          "createdAtMs": {
+            "type": "integer"
+          },
+          "toolName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "arguments": {}
+        },
+        "required": [
+          "id",
+          "kind",
+          "sessionId",
+          "title",
+          "canRespond",
+          "createdAtMs"
+        ]
+      },
+      "SessionSummaryDto": {
+        "type": "object",
+        "properties": {
+          "session": {
+            "$ref": "#/components/schemas/AgentSessionDto"
+          },
+          "state": {
+            "type": "string"
+          },
+          "readonlyReason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "workerPaused": {
+            "type": "boolean"
+          },
+          "lastTurn": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SessionTurnDto"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pendingInteractionCount": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "session",
+          "state",
+          "workerPaused",
+          "pendingInteractionCount"
+        ]
       },
       "NotifiableSessionWatermarkDto": {
         "type": "object",
@@ -28346,7 +27911,7 @@
     },
     {
       "name": "area_folders",
-      "description": "Area ↔ folder mapping: claim filesystem paths for an area, resolve a cwd to its owning area"
+      "description": "Area \u2194 folder mapping: claim filesystem paths for an area, resolve a cwd to its owning area"
     },
     {
       "name": "tracks",
@@ -28366,7 +27931,7 @@
     },
     {
       "name": "codex",
-      "description": "Codex (OpenAI) agent cards — hook-driven event stream"
+      "description": "Codex (OpenAI) agent cards \u2014 hook-driven event stream"
     },
     {
       "name": "threads",
@@ -28374,7 +27939,7 @@
     },
     {
       "name": "claude",
-      "description": "Claude worker cards — hook-driven event stream"
+      "description": "Claude worker cards \u2014 hook-driven event stream"
     },
     {
       "name": "fs",

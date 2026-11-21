@@ -67,7 +67,7 @@ public sealed class TurnWorkItemDeliveryTests
         var send = kernel.SendMailAsync(sender, senderLead, target, "Notice", "Body");
         await started.Task.WaitAsync(Deadline);
         Assert.Single(await store.TrackWakes.ListAsync(target, default), w => w.Kind == "mail" && w.State is "pending" or "delivering");
-        await kernel.InterruptSessionAsync(lead);
+        await kernel.ControlSessionAsync(lead, new("stop", TurnId: (await kernel.GetSessionItemsAsync(lead, new(), new InteropPrincipal.Human(), default)).ActiveTurn!.Id), new InteropPrincipal.Human(), default);
         await send.WaitAsync(Deadline);
         Assert.DoesNotContain(await store.TrackWakes.ListAsync(target, default), w => w.Kind == "mail" && w.State is "pending" or "delivering");
     }

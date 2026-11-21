@@ -76,7 +76,7 @@ public sealed class PolicyGuardMailTerminalScheduleBootTests
         Assert.Equal(["拒绝", "Approve"], openAsk.Options.Select(o => o.Label));
         Assert.Equal([true, false], openAsk.Options.Select(o => o.IsApproval));
 
-        await ctx.Kernel.DecideApprovalAsync(trackId, openAsk!.ExecutionId, openAsk!.Id, "approve");
+        await ctx.Kernel.RespondInteractionAsync(openAsk!.SessionId, openAsk!.Id, new(ExecutionId: openAsk!.ExecutionId, OptionId: "approve"), new InteropPrincipal.Human(), default);
         await guardTask; // Completes cleanly!
 
         // Now verify human rejection throws PolicyDenied
@@ -92,7 +92,7 @@ public sealed class PolicyGuardMailTerminalScheduleBootTests
         }
 
         Assert.NotNull(rejectAsk);
-        await ctx.Kernel.DecideApprovalAsync(trackId, rejectAsk!.ExecutionId, rejectAsk!.Id, "deny");
+        await ctx.Kernel.RespondInteractionAsync(rejectAsk!.SessionId, rejectAsk!.Id, new(ExecutionId: rejectAsk!.ExecutionId, OptionId: "deny"), new InteropPrincipal.Human(), default);
         var humanRejectEx = await Assert.ThrowsAsync<KernelException>(() => rejectGuardTask);
         Assert.Equal(KernelErrorCode.PolicyDenied, humanRejectEx.Code);
     }
@@ -182,11 +182,12 @@ public sealed class PolicyGuardMailTerminalScheduleBootTests
         Assert.Equal(reportBefore.DocRev + 1, afterHuman.DocRev);
         Assert.Equal(turnsBeforeHumanEdit + 1, ctx.Store.GetTurnsForSession(leadId).Count);
 
-        // 4. Verify the catalog exposes Worker controls only to Lead.
-        Assert.Equal(35, KernelMcpToolNames.All.Count);
+        // 4. Independent sessions get unified controls; bound Workers retain observation and completion.
+        Assert.Equal(36, KernelMcpToolNames.All.Count);
         Assert.Contains(KernelMcpCatalog.GetToolsForSession(boundAttemptId: null, isLead: true), tool => tool.Name == KernelMcpToolNames.SessionSend);
-        Assert.Equal(23, KernelMcpCatalog.GetToolsForSession(boundAttemptId: null).Count);
-        Assert.Equal(13, KernelMcpCatalog.GetToolsForSession(boundAttemptId: "att_1").Count);
+        Assert.Equal(31, KernelMcpCatalog.GetToolsForSession(boundAttemptId: null).Count);
+        Assert.Contains(KernelMcpCatalog.GetToolsForSession(boundAttemptId: null), tool => tool.Name == KernelMcpToolNames.SessionCreate);
+        Assert.Equal(15, KernelMcpCatalog.GetToolsForSession(boundAttemptId: "att_1").Count);
 
         var reg = ctx.Kernel.McpSessionBridge.RegisterSession(trackId, leadId, isLead: true, null, null, ["market"]);
         var statusJson = await ctx.Kernel.InvokeKernelMcpToolAsync(reg.Principal, KernelMcpToolNames.TrackStatus, TestJson.Parse("{}"));
@@ -271,9 +272,9 @@ public sealed class PolicyGuardMailTerminalScheduleBootTests
             var (_, snap) = await ctx.CreateDefaultTrackAsync(cwd: tempWs);
             var trackId = snap.Track.Id;
             var leadId = snap.Track.LeadSessionId!;
-            var sub = await ctx.Kernel.CreateSubagentSessionAsync(trackId, new CreateSessionRequest(Title: "Worker"));
+            var sub = (await ctx.Kernel.CreateSessionAsync(trackId, new CreateSessionRequest(Title: "Worker"), Guid.NewGuid().ToString("N"), new InteropPrincipal.Human(), default)).Receipt.Session;
 
-            // 1. Subagent calls AskUserAsync -> suspends -> AnswerAskAsync unblocks waiter AND wakes LeadSessionId!
+            // The durable answer wakes the asking session.
             var askTask = ctx.Kernel.AskUserAsync(
                 trackId,
                 sub.Id,
@@ -290,12 +291,13 @@ public sealed class PolicyGuardMailTerminalScheduleBootTests
             }
 
             Assert.NotNull(pendingAsk);
-            var leadTurnsBefore = ctx.Store.GetTurnsForSession(leadId).Count;
+            var askingTurnsBefore = ctx.Store.GetTurnsForSession(sub.Id).Count;
 
-            await ctx.Kernel.AnswerAskAsync(trackId, pendingAsk!.Id, TestJson.FromObject(new { choice = "staging" }));
+            await ctx.Kernel.RespondInteractionAsync(pendingAsk!.SessionId!, pendingAsk!.Id, new(Answers: TestJson.FromObject(new { choice = "staging" })), new InteropPrincipal.Human(), default);
             var resolvedAnswer = await askTask;
             Assert.Equal("staging", resolvedAnswer.GetProperty("choice").GetString());
-            Assert.Equal(leadTurnsBefore + 1, ctx.Store.GetTurnsForSession(leadId).Count);
+            await ctx.Kernel.WaitForTrackIdleAsync(trackId);
+            Assert.Equal(askingTurnsBefore + 1, ctx.Store.GetTurnsForSession(sub.Id).Count);
 
             // 2. Safe workspace file browse/read works, path traversal outside workspace root is strictly blocked!
             var fileRes = await ctx.Kernel.BrowseOrReadWorkspaceFileAsync(trackId, "hello.txt");

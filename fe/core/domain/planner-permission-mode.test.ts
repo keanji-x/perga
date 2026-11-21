@@ -16,7 +16,7 @@ describe('session permission mode', () => {
   it('writes the mode to the unified /api/v1/sessions/{sessionId}/permission-mode endpoint', () => {
     const op = setPlannerPermissionModeOperation('ses/1', 'ask');
     expect(op).toMatchObject({
-      method: 'PUT', path: '/api/v1/sessions/ses%2F1/permission-mode', body: { permissionMode: 'ask' },
+      method: 'PATCH', path: '/api/v1/sessions/ses%2F1', body: { permissionMode: 'ask' },
     });
     expect(op.responseSchema.parse({
       id: 'ses/1', trackId: 'trk_1', isLead: false, provider: 'claude',

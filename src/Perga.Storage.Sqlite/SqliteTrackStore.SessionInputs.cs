@@ -52,12 +52,12 @@ public sealed partial class SqliteTrackStore : ISessionInputStore
             new { SessionId = sessionId, Author = OwnerAuthor, Key = key }, ct);
 
     public Task<PersistedSessionInput?> FindByIdAsync(string sessionId, string inputId, CancellationToken ct) =>
-        FindInputAsync("WHERE i.session_id = @SessionId AND i.source = 'session' AND i.author_id = @Author AND i.id = @InputId",
+        FindInputAsync("WHERE i.session_id = @SessionId AND i.source = 'session' AND i.id = @InputId",
             new { SessionId = sessionId, Author = OwnerAuthor, InputId = inputId }, ct);
 
     public Task<PersistedSessionInput?> FindUnresolvedAsync(string sessionId, CancellationToken ct) =>
         FindInputAsync("""
-            WHERE i.session_id = @SessionId AND i.source = 'session' AND i.author_id = @Author AND i.resolved_at_ms IS NULL
+            WHERE i.session_id = @SessionId AND i.source = 'session' AND i.resolved_at_ms IS NULL
               AND t.status = 'unknown' ORDER BY t.turn_index DESC, i.ordinal ASC LIMIT 1
             """, new { SessionId = sessionId, Author = OwnerAuthor }, ct);
 
@@ -88,8 +88,8 @@ public sealed partial class SqliteTrackStore : ISessionInputStore
             """
             SELECT resource_id AS ResourceId, request_hash AS RequestHash, first_input_id AS FirstInputId
             FROM creation_receipts
-            WHERE author_id = @Author AND operation = 'session' AND scope_id = @TrackId AND request_key = @Key;
-            """, new { Author = OwnerAuthor, intent.TrackId, intent.Key }, cancellationToken: ct)).ConfigureAwait(false);
+            WHERE author_id = @Author AND operation = 'session-create' AND scope_id = @TrackId AND request_key = @Key;
+            """, new { Author = intent.AuthorId, intent.TrackId, intent.Key }, cancellationToken: ct)).ConfigureAwait(false);
         if (receipt is null) return null;
         var snapshot = await LoadTrackAggregateAsync(intent.TrackId, ct).ConfigureAwait(false);
         var session = snapshot?.Sessions.FirstOrDefault(candidate => candidate.Id == receipt.ResourceId);
@@ -169,8 +169,8 @@ public sealed partial class SqliteTrackStore : ISessionInputStore
                 """
                 INSERT INTO creation_receipts (author_id, operation, scope_id, request_key, request_hash,
                                                resource_id, first_input_id, created_at_ms)
-                VALUES (@Author, 'session', @TrackId, @Key, @Hash, @Id, @InputId, @CreatedAtMs);
-                """, new { Author = OwnerAuthor, intent.TrackId, intent.Key, intent.Hash, session.Id,
+                VALUES (@Author, 'session-create', @TrackId, @Key, @Hash, @Id, @InputId, @CreatedAtMs);
+                """, new { Author = intent.AuthorId, intent.TrackId, intent.Key, intent.Hash, session.Id,
                     InputId = input?.Receipt.InputId, session.CreatedAtMs }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
             await InsertEventInternalAsync(conn, tx, sessionEvent, innerCt).ConfigureAwait(false);
             return input;
@@ -194,7 +194,7 @@ public sealed partial class SqliteTrackStore : ISessionInputStore
     private static async Task<PersistedSessionInput> InsertInputAsync(
         SqliteConnection conn, SqliteTransaction tx, AgentSessionDto session, SessionInputRequest request, CancellationToken ct)
     {
-        var message = new SessionMessage($"inp_{Guid.NewGuid():N}", session.Id, null, OwnerAuthor, request.Key, request.Hash,
+        var message = new SessionMessage($"inp_{Guid.NewGuid():N}", session.Id, null, request.AuthorId, request.Key, request.Hash,
             null, null, request.Content, "queued", session.UpdatedAtMs, "input");
         var (turnId, turnIndex) = await CreateInputTurnAsync(conn, tx, session, ct).ConfigureAwait(false);
         var ordinal = await InsertSessionMessageAsync(conn, tx, message with { TurnId = turnId }, ct).ConfigureAwait(false);

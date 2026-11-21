@@ -23,7 +23,6 @@ public sealed record HarnessLaunchSpec(
     IReadOnlyDictionary<string, McpServerConfig> McpServers,
     string? ReasoningEffort = null,
     string? StateKey = null,
-    bool ConfigureWorker = false,
     string? PermissionMode = null);
 
 public sealed record TurnInput(

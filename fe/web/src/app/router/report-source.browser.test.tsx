@@ -474,22 +474,22 @@ describe('the source panel on the track page', () => {
 
   it('does not let an Escape inside the source card interrupt a running planner turn', async () => {
     const { requests } = setup((request) => {
-      if (request.path.includes('&view=run')) return ok(sessionPage(true));
+      if (request.path.includes('limit=1')) return ok(sessionPage(true));
       return undefined;
     });
     fireEvent.click(await screen.findByRole('button', { name: /Conversation Planner chat/ }));
     await screen.findByRole('complementary', { name: 'Planner chat' });
-    await waitFor(() => expect(requests.some((request) => request.path.includes('&view=run'))).toBe(true));
+    await waitFor(() => expect(requests.some((request) => request.path.includes('limit=1'))).toBe(true));
     fireEvent.click(await screen.findByRole('button', { name: 'Mikko 日志' }, { timeout: 5_000 }));
     const source = await screen.findByRole('region', { name: SOURCE_ROW.title });
     fireEvent.keyDown(source, { key: 'Escape' });
     await waitFor(() => expect(source.isConnected).toBe(false));
-    expect(requests.filter((request) => request.path.endsWith('/interrupt'))).toHaveLength(0);
+    expect(requests.filter((request) => request.path.endsWith('/control'))).toHaveLength(0);
     const conversation = screen.getByRole('complementary', { name: 'Planner chat' });
     expect(conversation.hasAttribute('data-nc-escape-layer')).toBe(true);
     /* The premise, checked after rather than before so it cannot have used up the running turn. */
     fireEvent.keyDown(conversation, { key: 'Escape' });
-    await waitFor(() => expect(requests.filter((request) => request.path.endsWith('/interrupt'))).toHaveLength(1));
+    await waitFor(() => expect(requests.filter((request) => request.path.endsWith('/control'))).toHaveLength(1));
     expect(conversation.hasAttribute('data-nc-escape-layer')).toBe(true);
   });
 });

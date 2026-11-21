@@ -1,5 +1,5 @@
-import type { ConversationSendTarget } from '../../../../core/domain/conversation-outbox.ts';
 import { KeyedSendFailure } from '../../../../core/domain/conversation-delivery.ts';
+import type { ConversationSendTarget } from '../../../../core/domain/conversation-outbox.ts';
 import { retireAreaQueries } from './area-query-lifecycle.ts';
 import { queryKeys } from './query-keys.ts';
 export { queryKeys } from './query-keys.ts';
@@ -72,7 +72,6 @@ import {
   type ModelCatalogScope, type ModelSelection, type ModelSelectionResult,
 } from '../../../../core/domain/conversation.ts';
 import { setPlannerPermissionModeOperation, type SetPlannerPermissionModeResponse } from '../../../../core/domain/planner-permission-mode.ts';
-import { sendWorkerMessageOperation, updateWorkerSettingsOperation } from '../../../../core/domain/worker-session.ts';
 import {
   ApiError, classifyFailure, DELETE_FAILURES, DELETE_TEXT, refusalText, writeFailureOf, writeFailureText,
 } from '../../../../core/domain/failure-class.ts';
@@ -249,22 +248,14 @@ export function usePlannerMutations(transport: ApiTransportPort, cardId: string,
   return {
     send: (text: string, attachments: readonly string[], idempotencyKey: string,
       admitted: ApiTransportPort, queueIfBusy = false, target?: ConversationSendTarget) => {
-      const sent = target === undefined
-        ? runOperation(admitted, sendPlannerInputOperation(cardId, text, attachments, idempotencyKey, false, queueIfBusy), unauthorized)
-        : runOperation(admitted, sendWorkerMessageOperation(cardId, idempotencyKey, {
-          attemptId: target.attemptId, content: text, ...(target.queue ? { mode: 'queue' as const } : {}),
-        }), unauthorized).then(receipt => {
-          if (receipt.delivery === 'unknown' || receipt.delivery === 'dispatching') {
-            throw new Error('Message delivery is unconfirmed.');
-          }
-          if (receipt.turnId == null && (receipt.delivery === 'rejected' || receipt.delivery === 'interrupted')) {
-            throw new KeyedSendFailure(new Error(receipt.delivery === 'rejected'
-              ? 'The message was rejected.' : 'The message was interrupted.'), 'refused');
-          }
-          return { card_id: cardId, worker_session_id: cardId, entry_id: receipt.messageId ?? receipt.inputId,
-            queued: receipt.delivery === 'queued' };
-        });
-      return sent.then((receipt) => refreshAfterInput(receipt, false), (error: unknown) => {
+      const sent = runOperation(admitted, sendPlannerInputOperation(cardId, text, attachments, idempotencyKey, false, queueIfBusy || target?.queue === true, target?.attemptId), unauthorized);
+      return sent.then(receipt => {
+        if (receipt.delivery === 'unknown' || receipt.delivery === 'dispatching')
+          throw new KeyedSendFailure(new Error('Message delivery is unconfirmed.'), 'unknown');
+        if (receipt.delivery === 'rejected' || receipt.delivery === 'interrupted' || receipt.delivery === 'withdrawn')
+          throw new KeyedSendFailure(new Error('The message was not delivered.'), 'refused');
+        return receipt;
+      }).then(receipt => refreshAfterInput(receipt, false), (error: unknown) => {
         refreshInputMetadata(admitted, error);
         if (target !== undefined) refreshAfter(undefined);
         throw error;
@@ -286,17 +277,10 @@ export function usePlannerMutations(transport: ApiTransportPort, cardId: string,
       .then((admitted) => runOperation(admitted, compactPlannerOperation(cardId), unauthorized)).then(refreshAfter),
     interrupt: (worker?: { attemptId?: string; turnId: string }) => Promise.resolve().then(() => admitTransport(transport))
       .then((admitted) => runOperation(admitted, interruptPlannerOperation(cardId, worker), unauthorized)).then(refreshAfter),
-    updateWorkerSettings: (settings: Parameters<typeof updateWorkerSettingsOperation>[1], approvalKey?: string) =>
+    answerInteraction: (sessionId: string, askId: AskId, answers: readonly AskAnswer[], questions: readonly AskQuestion[]) =>
       Promise.resolve().then(() => admitTransport(transport))
-        .then(admitted => runOperation(admitted, updateWorkerSettingsOperation(cardId, settings, approvalKey), unauthorized))
-        .finally(() => cancelThenInvalidate(client, queryKeys.plannerRun(cardId))),
-    answerWorkerAsk: (trackId: string, askId: AskId, answers: readonly AskAnswer[], questions: readonly AskQuestion[]) =>
-      Promise.resolve().then(() => admitTransport(transport))
-        .then(admitted => runOperation(admitted, answerAskOperation(trackId, askId, answers, questions), unauthorized))
-        .finally(() => {
-          refreshAfter(undefined);
-          void client.invalidateQueries({ queryKey: queryKeys.trackDetail(trackId) });
-        }),
+        .then(admitted => runOperation(admitted, answerAskOperation(sessionId, askId, answers, questions), unauthorized))
+        .finally(() => { refreshAfterInput(undefined, false); }),
     /* The stored selection is read back from `planner-run`; the catalog goes with it because the default
      * this card follows is part of that answer. */
     setModel: (selection: ModelSelection): Promise<ModelSelectionResult> =>
@@ -961,15 +945,20 @@ export function useTrackMutations(transport: ApiTransportPort, unauthorized: Una
    * The projector's overlay remains authoritative for removing the question itself. */
   const answerAsk = useRecoveryMutation(transport, {
     mutationFn: ({ trackId, askId, answers, questions }: { trackId: string; askId: AskId; answers: readonly AskAnswer[]; questions?: readonly AskQuestion[] }, transport: ApiTransportPort) =>
-      runOperation(transport, answerAskOperation(trackId, askId, answers, questions), unauthorized),
+      Promise.resolve().then(() => {
+        const snapshot = client.getQueryData<import('../../../../core/api/perga-v1.ts').TrackAggregateSnapshotDto>(queryKeys.trackDetail(trackId));
+        const sessionId = snapshot?.openAsks?.find(ask => ask.id === String(askId))?.sessionId;
+        if (sessionId == null) throw new Error('Refresh the question before answering.');
+        return runOperation(transport, answerAskOperation(sessionId, askId, answers, questions), unauthorized);
+      }),
     onSettled: (_answer, _error, { trackId }) => {
       void client.invalidateQueries({ queryKey: queryKeys.trackDetail(trackId) });
       void client.invalidateQueries({ queryKey: queryKeys.trackLists() });
     },
   });
   const decideApproval = useRecoveryMutation(transport, {
-    mutationFn: ({ trackId, approval, optionId }: { trackId: string; approval: PendingApproval; optionId: string }, transport: ApiTransportPort) =>
-      runOperation(transport, decideApprovalOperation(trackId, approval.executionId, approval.id, optionId), unauthorized),
+    mutationFn: ({ approval, optionId }: { trackId: string; approval: PendingApproval; optionId: string }, transport: ApiTransportPort) =>
+      runOperation(transport, decideApprovalOperation(approval.sessionId, approval.executionId, approval.id, optionId), unauthorized),
     onSettled: (_answer, _error, { trackId, approval }) => {
       void client.invalidateQueries({ queryKey: queryKeys.trackDetail(trackId) });
       void client.invalidateQueries({ queryKey: queryKeys.trackLists() });

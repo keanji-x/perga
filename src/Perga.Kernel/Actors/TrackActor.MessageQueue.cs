@@ -71,18 +71,12 @@ public sealed partial class TrackActor
         }, ct));
     }
 
-    internal Task<SteeringResult> SteerQueuedMessageAsync(string sessionId, string inputId, string turnId, CancellationToken ct,
-        string? callerSessionId = null, string? attemptId = null) =>
-        AcceptSteeringAsync(sessionId, turnId, null, inputId, ct, callerSessionId: callerSessionId, attemptId: attemptId);
-
-    internal Task RemoveQueuedMessageAsync(string sessionId, string inputId, CancellationToken ct, string? callerSessionId = null, string? attemptId = null) =>
+    private Task RemoveQueuedMessageAsync(string sessionId, string inputId, CancellationToken ct, string? attemptId, InteropPrincipal principal) =>
         EnqueueAsync(async _ =>
         {
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
-            RequireWorkerOperatorCore(callerSessionId);
             var session = RequireSessionCore(sessionId);
-            if (callerSessionId is not null && session.BoundAttemptId is null)
-                throw KernelException.Forbidden("This tool withdraws Worker messages on the current Track.");
+            RequireSessionMutationCore(session, principal, attemptId);
             var worker = session.BoundAttemptId is not null;
             var message = await Messages.GetAsync(sessionId, worker, inputId, ct).ConfigureAwait(false)
                 ?? throw KernelException.NotFound("Message not found in this session.");

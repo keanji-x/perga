@@ -34,7 +34,7 @@ it('opens below the conversation, retains real xterm through hide and reopen, an
   const inputBytes = sockets[0].sent.flatMap(frame => frame[0] === 0x01 ? [...frame.subarray(1)] : []);
   expect(inputBytes).toContain(27);
   expect(inputBytes).toContain(3);
-  expect(fixture.requests.some(request => request.path.endsWith('/interrupt'))).toBe(false);
+  expect(fixture.requests.some(request => request.path.endsWith('/control'))).toBe(false);
   await userEvent.keyboard('{Shift>}{Tab}{/Shift}');
   expect(document.activeElement).not.toBe(textarea);
   await userEvent.keyboard('{Tab}');

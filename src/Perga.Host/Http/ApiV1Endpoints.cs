@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
@@ -12,22 +13,6 @@ using Perga.TermClient;
 
 namespace Perga.Host.Http;
 
-public sealed record SendMessageHttpBody(
-    string Content,
-    bool? SteerIfRunning = null,
-    bool? QueueIfBusy = null,
-    string? AttemptId = null,
-    string? TurnId = null,
-    bool AllowQueue = false,
-    WorkerMessageMode? Mode = null);
-
-public sealed record InterruptTurnHttpBody(string? AttemptId, string TurnId);
-
-
-public sealed record SteerQueuedMessageHttpBody(string TurnId);
-
-public sealed record SteerMessageHttpBody(string TurnId, string Content);
-
 public sealed record CancelTaskHttpBody(
     string? Reason = null);
 
@@ -40,6 +25,9 @@ public sealed record RejectTaskHttpBody(
 
 public static class ApiV1Endpoints
 {
+    private static readonly JsonSerializerOptions SessionJsonOptions = new(PergaJsonDefaults.ApiOptions)
+    { UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow };
+
     private static readonly FileExtensionContentTypeProvider RawMimeProvider = CreateMimeProvider();
 
     public static IEndpointRouteBuilder MapPergaApiV1(this IEndpointRouteBuilder endpoints)
@@ -253,17 +241,6 @@ public static class ApiV1Endpoints
             return Results.Json(attempts, PergaJsonDefaults.ApiOptions);
         });
 
-        v1.MapPost("/tracks/{trackId}/tasks/dispatch", async (string trackId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
-        {
-            var keys = ctx.Request.Headers["Idempotency-Key"];
-            if (keys.Count > 1)
-                return HttpErrorHandling.BadRequest("invalid_argument", "Exactly one Idempotency-Key is allowed.");
-            var request = await ReadRequiredJsonBodyAsync<DispatchWorkerRequest>(ctx, ct).ConfigureAwait(false);
-            var receipt = await kernel.DispatchWorkerAsync(trackId, request, keys.Count == 0 ? null : keys.ToString().Trim(), caller: null, ct)
-                .ConfigureAwait(false);
-            return Results.Json(receipt, PergaJsonDefaults.ApiOptions, statusCode: StatusCodes.Status202Accepted);
-        });
-
         v1.MapPost("/tracks/{trackId}/tasks/{taskKey}/cancel", async (string trackId, string taskKey, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
         {
             var body = await ReadOptionalJsonBodyAsync(ctx, () => new CancelTaskHttpBody(), ct).ConfigureAwait(false);
@@ -286,223 +263,66 @@ public static class ApiV1Endpoints
             return Results.Json(task, PergaJsonDefaults.ApiOptions);
         });
 
-        // ------------------- Sessions -------------------
-        v1.MapGet("/tracks/{trackId}/sessions", async (string trackId, IPergaKernel kernel, CancellationToken ct) =>
-        {
-            var sessions = await kernel.ListSessionsAsync(trackId, ct).ConfigureAwait(false);
-            return Results.Json(sessions, PergaJsonDefaults.ApiOptions);
-        });
+        // ------------------- Unified sessions -------------------
+        v1.MapGet("/tracks/{trackId}/sessions", async (string trackId, bool? includeArchived, string? parentSessionId,
+            IPergaKernel kernel, CancellationToken ct) =>
+            Results.Json(await kernel.ListSessionsAsync(trackId, new(includeArchived ?? false, parentSessionId),
+                new InteropPrincipal.Human(), ct).ConfigureAwait(false), PergaJsonDefaults.ApiOptions));
 
         v1.MapPost("/tracks/{trackId}/sessions", async (string trackId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
         {
-            if (!ctx.Request.Headers.TryGetValue("Idempotency-Key", out var key) ||
-                string.IsNullOrWhiteSpace(key.ToString()))
-            {
-                return HttpErrorHandling.BadRequest("missing_idempotency_key", "Idempotency-Key HTTP header is required.");
-            }
-
-            if (key.Count != 1)
-            {
-                return HttpErrorHandling.BadRequest("invalid_argument", "Exactly one Idempotency-Key is allowed.");
-            }
-
-            var req = await ReadOptionalJsonBodyAsync(ctx, () => new CreateSessionRequest(), ct).ConfigureAwait(false);
-            var (receipt, replay) = await kernel.CreateSessionWithReceiptAsync(trackId, req, key.ToString().Trim(), ct)
-                .ConfigureAwait(false);
-            return Results.Json(
-                receipt,
-                PergaJsonDefaults.ApiOptions,
+            var key = RequiredMessageKey(ctx);
+            var request = await ReadOptionalJsonBodyAsync(ctx, () => new CreateSessionRequest(), ct, SessionJsonOptions).ConfigureAwait(false);
+            var (receipt, replay) = await kernel.CreateSessionAsync(trackId, request, key, new InteropPrincipal.Human(), ct).ConfigureAwait(false);
+            return Results.Json(receipt, PergaJsonDefaults.ApiOptions,
                 statusCode: replay ? StatusCodes.Status200OK : StatusCodes.Status201Created);
+        });
+
+        v1.MapGet("/sessions/{sessionId}/items", async (string sessionId, long? afterId, long? beforeId, int? limit,
+            bool? latest, string? activityTurnId, long? afterSequence, int? waitMs, IPergaKernel kernel, CancellationToken ct) =>
+        {
+            if (limit is < 1 or > 100 || waitMs is < 0 or > 10000 || afterId is < 0 || beforeId is < 0 || afterSequence is < 0)
+                throw KernelException.InvalidArgument("Invalid session read range.");
+            return Results.Json(await kernel.GetSessionItemsAsync(sessionId,
+                new(afterId ?? 0, beforeId, limit ?? 20, latest ?? false, activityTurnId, afterSequence, waitMs ?? 0),
+                new InteropPrincipal.Human(), ct).ConfigureAwait(false), PergaJsonDefaults.ApiOptions);
         });
 
         v1.MapPatch("/sessions/{sessionId}", async (string sessionId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
         {
-            var req = await ReadPatchSessionRequestAsync(ctx, ct).ConfigureAwait(false);
-            var patched = await kernel.PatchSessionAsync(sessionId, req, ct).ConfigureAwait(false);
-            return Results.Json(patched, PergaJsonDefaults.ApiOptions);
-        });
-
-        v1.MapGet("/sessions/{sessionId}/items", async (string sessionId, long? afterId, int? limit, bool? latest,
-            long? beforeId, string? activityTurnId, long? afterSequence, int? waitMs, IPergaKernel kernel, CancellationToken ct) =>
-        {
-            var page = await kernel.GetSessionItemsAsync(
-                sessionId,
-                afterId ?? 0,
-                limit ?? 100,
-                ct, latest ?? false, beforeId, activityTurnId: activityTurnId, afterSequence: afterSequence, waitMs: waitMs ?? 0).ConfigureAwait(false);
-            return Results.Json(page, PergaJsonDefaults.ApiOptions);
+            var request = await ReadRequiredJsonBodyAsync<UpdateSessionRequest>(ctx, ct, SessionJsonOptions).ConfigureAwait(false);
+            return Results.Json(await kernel.UpdateSessionAsync(sessionId, request, new InteropPrincipal.Human(), ct).ConfigureAwait(false),
+                PergaJsonDefaults.ApiOptions);
         });
 
         v1.MapPost("/sessions/{sessionId}/messages", async (string sessionId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
         {
-            if (!ctx.Request.Headers.TryGetValue("Idempotency-Key", out var idemValues) ||
-                string.IsNullOrWhiteSpace(idemValues.ToString()))
-            {
-                return HttpErrorHandling.BadRequest(
-                    "missing_idempotency_key",
-                    "Idempotency-Key HTTP header is required.");
-            }
-
-            if (idemValues.Count != 1)
-            {
-                return HttpErrorHandling.BadRequest("invalid_argument", "Exactly one Idempotency-Key is allowed.");
-            }
-
-            var idempotencyKey = idemValues.ToString().Trim();
-            var body = await ReadRequiredJsonBodyAsync<SendMessageHttpBody>(ctx, ct).ConfigureAwait(false);
-            if (string.IsNullOrWhiteSpace(body.Content))
-            {
-                return HttpErrorHandling.BadRequest("invalid_argument", "Message content cannot be empty.");
-            }
-
-            if (body.AttemptId is not null)
-            {
-                var result = await kernel.SendWorkerMessageAsync(sessionId,
-                    new WorkerMessageRequest(body.AttemptId, body.Content, idempotencyKey, body.TurnId, body.AllowQueue, body.Mode),
-                    caller: null, ct).ConfigureAwait(false);
-                return Results.Json(result, PergaJsonDefaults.ApiOptions,
-                    statusCode: result.Delivery == "queued" ? StatusCodes.Status202Accepted : StatusCodes.Status200OK);
-            }
-
-            if (body.Mode is not null)
-                return HttpErrorHandling.BadRequest("invalid_argument", "Worker delivery mode requires attemptId.");
-
-            if (body.SteerIfRunning == true && body.QueueIfBusy == true)
-                return HttpErrorHandling.BadRequest("invalid_argument", "Choose either queuing or steering.");
-
-            var (receipt, steered, replay, queued) = await kernel.AcceptMessageAsync(
-                sessionId, new SendMessageRequest(body.Content, idempotencyKey, body.SteerIfRunning ?? false, body.QueueIfBusy ?? false), ct)
-                .ConfigureAwait(false);
-            if (queued is not null)
-                return Results.Json(queued, PergaJsonDefaults.ApiOptions,
-                    statusCode: replay ? StatusCodes.Status200OK : StatusCodes.Status202Accepted);
-            if (receipt is null)
-            {
-                return Results.Json(steered, PergaJsonDefaults.ApiOptions);
-            }
-
-            ctx.Response.Headers.Location = receipt.StatusUrl;
-            return Results.Json(
-                receipt,
-                PergaJsonDefaults.ApiOptions,
-                statusCode: replay ? StatusCodes.Status200OK : StatusCodes.Status202Accepted);
+            var request = await ReadRequiredJsonBodyAsync<SendSessionMessageRequest>(ctx, ct, SessionJsonOptions).ConfigureAwait(false);
+            request = request with { RequestKey = request.Content is not null ? RequiredMessageKey(ctx) : null };
+            return Results.Json(await kernel.SendSessionMessageAsync(sessionId, request, new InteropPrincipal.Human(), ct).ConfigureAwait(false),
+                PergaJsonDefaults.ApiOptions);
         });
 
-        v1.MapPost("/sessions/{sessionId}/messages/steer", async (
-            string sessionId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
+        v1.MapDelete("/sessions/{sessionId}/messages/{messageId}", async (string sessionId, string messageId,
+            string? expectedAttemptId, IPergaKernel kernel, CancellationToken ct) =>
         {
-            var body = await ReadRequiredJsonBodyAsync<SteerMessageHttpBody>(ctx, ct).ConfigureAwait(false);
-            if (string.IsNullOrWhiteSpace(body.Content) || string.IsNullOrWhiteSpace(body.TurnId))
-                return HttpErrorHandling.BadRequest("invalid_argument", "A target turn and message are required.");
-
-            var keys = ctx.Request.Headers["Idempotency-Key"];
-            if (keys.Count > 1)
-                return HttpErrorHandling.BadRequest("invalid_argument", "Only one Idempotency-Key is allowed.");
-            var result = await kernel.SteerMessageAsync(sessionId, body.TurnId, body.Content, ct,
-                keys.Count == 0 ? null : keys.ToString().Trim()).ConfigureAwait(false);
-            return Results.Json(result, PergaJsonDefaults.ApiOptions);
-        });
-
-        v1.MapPost("/sessions/{sessionId}/messages/queue/{inputId}/steer", async (
-            string sessionId, string inputId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
-        {
-            var body = await ReadRequiredJsonBodyAsync<SteerQueuedMessageHttpBody>(ctx, ct).ConfigureAwait(false);
-            if (string.IsNullOrWhiteSpace(body.TurnId))
-                return HttpErrorHandling.BadRequest("invalid_argument", "A target turn is required.");
-            var result = await kernel.SteerQueuedMessageAsync(sessionId, inputId, body.TurnId, ct).ConfigureAwait(false);
-            return Results.Json(result, PergaJsonDefaults.ApiOptions);
-        });
-
-        v1.MapDelete("/sessions/{sessionId}/messages/queue/{inputId}", async (
-            string sessionId, string inputId, IPergaKernel kernel, CancellationToken ct) =>
-        {
-            await kernel.RemoveQueuedMessageAsync(sessionId, inputId, ct).ConfigureAwait(false);
+            await kernel.WithdrawSessionMessageAsync(sessionId, messageId, expectedAttemptId, new InteropPrincipal.Human(), ct).ConfigureAwait(false);
             return Results.NoContent();
         });
 
-        v1.MapGet("/sessions/{sessionId}/inputs/{inputId}", async (
-            string sessionId, string inputId, IPergaKernel kernel, CancellationToken ct) =>
+        v1.MapPost("/sessions/{sessionId}/control", async (string sessionId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
         {
-            var receipt = await kernel.GetSessionInputAsync(sessionId, inputId, ct).ConfigureAwait(false);
-            return Results.Json(receipt, PergaJsonDefaults.ApiOptions);
+            var request = await ReadRequiredJsonBodyAsync<SessionControlRequest>(ctx, ct, SessionJsonOptions).ConfigureAwait(false);
+            return Results.Json(await kernel.ControlSessionAsync(sessionId, request, new InteropPrincipal.Human(), ct).ConfigureAwait(false),
+                PergaJsonDefaults.ApiOptions);
         });
 
-        v1.MapPut("/sessions/{sessionId}/model", async (
-            string sessionId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
+        v1.MapPost("/sessions/{sessionId}/interactions/{interactionId}/respond", async (string sessionId, string interactionId,
+            HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
         {
-            var req = await ReadRequiredJsonBodyAsync<UpdateSessionModelRequest>(ctx, ct).ConfigureAwait(false);
-            var session = await kernel.UpdateSessionModelAsync(sessionId, req, ct).ConfigureAwait(false);
-            return Results.Json(session, PergaJsonDefaults.ApiOptions);
-        });
-
-        v1.MapPost("/sessions/{sessionId}/recover", async (
-            string sessionId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
-        {
-            var body = await ReadRequiredJsonBodyAsync<RecoverSessionRequest>(ctx, ct).ConfigureAwait(false);
-            var session = await kernel.RecoverSessionAsync(sessionId, body, ct).ConfigureAwait(false);
-            return Results.Json(session, PergaJsonDefaults.ApiOptions);
-        });
-
-        v1.MapPost("/sessions/{sessionId}/interrupt", async (string sessionId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
-        {
-            var target = await ReadOptionalJsonBodyAsync<InterruptTurnHttpBody?>(ctx, () => null, ct).ConfigureAwait(false);
-            if (string.IsNullOrWhiteSpace(target?.TurnId))
-                return HttpErrorHandling.BadRequest("invalid_argument", "A target turn is required.");
-            if (target.AttemptId is null)
-                await kernel.InterruptSessionAsync(sessionId, ct, target.TurnId).ConfigureAwait(false);
-            else
-                await kernel.InterruptWorkerAsync(sessionId, target.AttemptId, target.TurnId, caller: null, ct).ConfigureAwait(false);
-            return Results.Json(new { ok = true }, PergaJsonDefaults.ApiOptions);
-        });
-
-        v1.MapPost("/sessions/{sessionId}/compact", async (string sessionId, IPergaKernel kernel, CancellationToken ct) =>
-        {
-            var compacted = await kernel.CompactSessionAsync(sessionId, ct).ConfigureAwait(false);
-            return Results.Json(compacted, PergaJsonDefaults.ApiOptions);
-        });
-
-        v1.MapPatch("/sessions/{sessionId}/settings", async (string sessionId, HttpContext ctx, IPergaKernel kernel,
-            WorkerApprovalAuthorization approval, CancellationToken ct) =>
-        {
-            var request = await ReadRequiredJsonBodyAsync<UpdateWorkerSettingsRequest>(ctx, ct).ConfigureAwait(false);
-            var settings = await kernel.UpdateWorkerSettingsAsync(sessionId, request, caller: null, ct,
-                verifiedApprovalOwner: approval.Verify(ctx)).ConfigureAwait(false);
-            return Results.Json(settings, PergaJsonDefaults.ApiOptions);
-        });
-
-        v1.MapPut("/sessions/{sessionId}/permission-mode", async (string sessionId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
-        {
-            var body = await ReadRequiredJsonBodyAsync<SetPermissionModeHttpBody>(ctx, ct).ConfigureAwait(false);
-            var mode = body.PermissionMode;
-            if (string.IsNullOrWhiteSpace(mode))
-            {
-                return HttpErrorHandling.BadRequest("invalid_argument", "permissionMode is required.");
-            }
-
-            var updated = await kernel.SetSessionPermissionModeAsync(sessionId, mode, ct).ConfigureAwait(false);
-            return Results.Json(updated, PergaJsonDefaults.ApiOptions);
-        });
-
-        // ------------------- Asks -------------------
-        v1.MapPost("/tracks/{trackId}/asks/{askId}/answer", async (string trackId, string askId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
-        {
-            using var doc = await JsonDocument.ParseAsync(ctx.Request.Body, cancellationToken: ct).ConfigureAwait(false);
-            var root = doc.RootElement;
-            if (root.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
-            {
-                return HttpErrorHandling.BadRequest("invalid_argument", "Ask answer payload cannot be null.");
-            }
-
-            var answered = await kernel.AnswerAskAsync(trackId, askId, root.Clone(), ct).ConfigureAwait(false);
-            return Results.Json(answered, PergaJsonDefaults.ApiOptions);
-        });
-
-        v1.MapPost("/tracks/{trackId}/executions/{executionId}/approvals/{approvalId}/decision", async (
-            string trackId, string executionId, string approvalId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
-        {
-            var body = await ReadRequiredJsonBodyAsync<ApprovalDecisionRequest>(ctx, ct).ConfigureAwait(false);
-            var approval = await kernel.DecideApprovalAsync(trackId, executionId, approvalId, body.OptionId, ct).ConfigureAwait(false);
-            return Results.Json(approval, PergaJsonDefaults.ApiOptions);
+            var request = await ReadRequiredJsonBodyAsync<RespondInteractionRequest>(ctx, ct, SessionJsonOptions).ConfigureAwait(false);
+            return Results.Json(await kernel.RespondInteractionAsync(sessionId, interactionId, request, new InteropPrincipal.Human(), ct).ConfigureAwait(false),
+                PergaJsonDefaults.ApiOptions);
         });
 
         // ------------------- Terminals -------------------
@@ -551,9 +371,9 @@ public static class ApiV1Endpoints
         return values[0] ?? string.Empty;
     }
 
-    private static async Task<T> ReadRequiredJsonBodyAsync<T>(HttpContext ctx, CancellationToken ct)
+    private static async Task<T> ReadRequiredJsonBodyAsync<T>(HttpContext ctx, CancellationToken ct, JsonSerializerOptions? options = null)
     {
-        var value = await JsonSerializer.DeserializeAsync<T>(ctx.Request.Body, PergaJsonDefaults.ApiOptions, ct)
+        var value = await JsonSerializer.DeserializeAsync<T>(ctx.Request.Body, options ?? PergaJsonDefaults.ApiOptions, ct)
             .ConfigureAwait(false);
         if (value is null)
         {
@@ -563,7 +383,7 @@ public static class ApiV1Endpoints
         return value;
     }
 
-    private static async Task<T> ReadOptionalJsonBodyAsync<T>(HttpContext ctx, Func<T> factory, CancellationToken ct)
+    private static async Task<T> ReadOptionalJsonBodyAsync<T>(HttpContext ctx, Func<T> factory, CancellationToken ct, JsonSerializerOptions? options = null)
     {
         if (ctx.Request.ContentLength == 0)
         {
@@ -594,36 +414,17 @@ public static class ApiV1Endpoints
         }
 
         ms.Position = 0;
-        var parsed = await JsonSerializer.DeserializeAsync<T>(ms, PergaJsonDefaults.ApiOptions, ct)
+        var parsed = await JsonSerializer.DeserializeAsync<T>(ms, options ?? PergaJsonDefaults.ApiOptions, ct)
             .ConfigureAwait(false);
         return parsed ?? factory();
     }
 
-    private static async Task<PatchSessionRequest> ReadPatchSessionRequestAsync(HttpContext ctx, CancellationToken ct)
+    private static string RequiredMessageKey(HttpContext ctx)
     {
-        using var doc = await JsonDocument.ParseAsync(ctx.Request.Body, cancellationToken: ct).ConfigureAwait(false);
-        var root = doc.RootElement;
-        if (root.ValueKind != JsonValueKind.Object)
-        {
-            throw KernelException.InvalidArgument("PATCH /sessions/{sessionId} body must be a JSON object.");
-        }
-
-        var parsed = root.Deserialize<PatchSessionRequest>(PergaJsonDefaults.ApiOptions) ?? new PatchSessionRequest();
-        foreach (var prop in root.EnumerateObject())
-        {
-            if (string.Equals(prop.Name, "model", StringComparison.OrdinalIgnoreCase))
-            {
-                if (prop.Value.ValueKind == JsonValueKind.Null ||
-                    (prop.Value.ValueKind == JsonValueKind.String && string.IsNullOrWhiteSpace(prop.Value.GetString())))
-                {
-                    parsed = parsed with { Model = null, ClearModel = true };
-                }
-
-                break;
-            }
-        }
-
-        return parsed;
+        var key = OptionalCreationKey(ctx);
+        if (string.IsNullOrWhiteSpace(key))
+            throw KernelException.InvalidArgument("Idempotency-Key HTTP header is required.");
+        return key.Trim();
     }
 
     private static FileExtensionContentTypeProvider CreateMimeProvider()
@@ -656,6 +457,4 @@ public static class ApiV1Endpoints
                ext.Equals(".xml", StringComparison.OrdinalIgnoreCase);
     }
 
-    private sealed record SetPermissionModeHttpBody(
-        string? PermissionMode);
 }

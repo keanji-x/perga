@@ -36,7 +36,7 @@ public sealed class BoundAttemptFenceAndGovernanceTests
 
         await ctx.Kernel.WaitForTrackIdleAsync(trackId);
 
-        var sessions = await ctx.Kernel.ListSessionsAsync(trackId);
+        var sessions = (await ctx.Kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray();
         var contractSubagent = Assert.Single(sessions, s => s.BoundAttemptId is not null);
 
         // 1. Contract Subagent CAN append/edit Prose blocks
@@ -93,7 +93,7 @@ public sealed class BoundAttemptFenceAndGovernanceTests
 
         var trackId = snap1.Track.Id;
         var leadId = snap1.Track.LeadSessionId!;
-        var freeSubagent = await ctx.Kernel.CreateSubagentSessionAsync(trackId, new CreateSessionRequest(Title: "Free Helper"));
+        var freeSubagent = (await ctx.Kernel.CreateSessionAsync(trackId, new CreateSessionRequest(Title: "Free Helper"), Guid.NewGuid().ToString("N"), new InteropPrincipal.Human(), default)).Receipt.Session;
 
         // Add a task so a bound contract subagent is spawned
         var r0 = await ctx.Kernel.ReadReportAsync(trackId, leadId);
@@ -102,7 +102,7 @@ public sealed class BoundAttemptFenceAndGovernanceTests
             [new BlockOp.UpsertBlockOp("b_t1", ReportBlockKind.Task, null, TestJson.Parse("""{"task_key":"t1","ready":true,"goal_or_cmd":"work"}"""))]));
         await ctx.Kernel.WaitForTrackIdleAsync(trackId);
 
-        var boundSubagent = Assert.Single(await ctx.Kernel.ListSessionsAsync(trackId), s => s.BoundAttemptId is not null);
+        var boundSubagent = Assert.Single((await ctx.Kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray(), s => s.BoundAttemptId is not null);
 
         // A. Unbound sessions (Lead & free Subagent) CANNOT call perga_task_done or perga_task_fail
         foreach (var unboundId in new[] { leadId, freeSubagent.Id })
@@ -230,7 +230,7 @@ public sealed class BoundAttemptFenceAndGovernanceTests
         Assert.NotNull(openAsk);
         Assert.False(suspendedCommitTask.IsCompleted);
 
-        await ctx.Kernel.DecideApprovalAsync(trackId, openAsk!.ExecutionId, openAsk!.Id, openAsk.Options[0].Id);
+        await ctx.Kernel.RespondInteractionAsync(openAsk!.SessionId, openAsk!.Id, new(ExecutionId: openAsk!.ExecutionId, OptionId: openAsk.Options[0].Id), new InteropPrincipal.Human(), default);
         var approvedCommit = await suspendedCommitTask;
         Assert.Equal(1, approvedCommit.DocRev);
     }

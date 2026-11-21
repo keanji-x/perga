@@ -24,7 +24,7 @@ public sealed class SessionRecoveryTests
         var path = $"/api/v1/sessions/{id}";
         using var before = await host.Client.GetFromJsonAsync<JsonDocument>(path + "/items");
         Assert.Equal("idle", before!.RootElement.GetProperty("state").GetString());
-        using var reset = await host.Client.PostAsJsonAsync(path + "/recover", new { mode = "reset_context" });
+        using var reset = await host.Client.PostAsJsonAsync(path + "/control", new { action = "reset_context" });
         Assert.Equal(HttpStatusCode.OK, reset.StatusCode);
         using var after = await host.Client.GetFromJsonAsync<JsonDocument>(path + "/items");
         Assert.Equal("idle", after!.RootElement.GetProperty("state").GetString());
@@ -46,19 +46,19 @@ public sealed class SessionRecoveryTests
                 id = session;
                 var kernel = host.Services.GetRequiredService<IPergaKernel>();
                 host.AgentRuntime.SetTurnHandler(Unknown);
-                await kernel.AcceptMessageAsync(id, new("unknown", "unknown"), default);
+                await kernel.SendSessionMessageAsync(id, new(Content: "unknown", RequestKey: "unknown"), new InteropPrincipal.Human(), default);
                 await kernel.WaitForTrackIdleAsync(track);
                 host.AgentRuntime.OpenError = _ => new ProviderSessionNotFoundException("Original thread not found");
-                using var fail = await host.Client.PostAsJsonAsync($"/api/v1/sessions/{id}/recover", new { mode = "reconnect" });
+                using var fail = await host.Client.PostAsJsonAsync($"/api/v1/sessions/{id}/control", new { action = "reconnect" });
                 Assert.Equal(HttpStatusCode.Conflict, fail.StatusCode);
-                var page = await kernel.GetSessionItemsAsync(id);
+                var page = await kernel.GetSessionItemsAsync(id, new(), new InteropPrincipal.Human(), default);
                 Assert.False(page.UnknownDetail?.CanReconnect);
                 Assert.Equal("Original thread not found", page.UnknownDetail?.LastError);
             }
             await using (var host = new PergaHostTestCluster(dir.FullName))
             {
                 var kernel = host.Services.GetRequiredService<IPergaKernel>();
-                var page = await kernel.GetSessionItemsAsync(id);
+                var page = await kernel.GetSessionItemsAsync(id, new(), new InteropPrincipal.Human(), default);
                 Assert.Equal("unknown", page.State);
                 Assert.False(page.UnknownDetail?.CanReconnect);
                 Assert.Equal("Original thread not found", page.UnknownDetail?.LastError);
@@ -68,13 +68,13 @@ public sealed class SessionRecoveryTests
             await using (var host = new PergaHostTestCluster(dir.FullName))
             {
                 var kernel = host.Services.GetRequiredService<IPergaKernel>();
-                Assert.False((await kernel.GetSessionItemsAsync(id)).UnknownDetail?.CanReconnect);
-                using var fail = await host.Client.PostAsJsonAsync($"/api/v1/sessions/{id}/recover", new { mode = "reconnect" });
+                Assert.False((await kernel.GetSessionItemsAsync(id, new(), new InteropPrincipal.Human(), default)).UnknownDetail?.CanReconnect);
+                using var fail = await host.Client.PostAsJsonAsync($"/api/v1/sessions/{id}/control", new { action = "reconnect" });
                 Assert.Equal(HttpStatusCode.Conflict, fail.StatusCode);
-                Assert.True((await kernel.GetSessionItemsAsync(id)).Session.ReconnectInvalidated);
-                using var reset = await host.Client.PostAsJsonAsync($"/api/v1/sessions/{id}/recover", new { mode = "reset_context" });
+                Assert.True((await kernel.GetSessionItemsAsync(id, new(), new InteropPrincipal.Human(), default)).Session.ReconnectInvalidated);
+                using var reset = await host.Client.PostAsJsonAsync($"/api/v1/sessions/{id}/control", new { action = "reset_context" });
                 reset.EnsureSuccessStatusCode();
-                Assert.Equal("idle", (await kernel.GetSessionItemsAsync(id)).State);
+                Assert.Equal("idle", (await kernel.GetSessionItemsAsync(id, new(), new InteropPrincipal.Human(), default)).State);
             }
         }
         finally { dir.Delete(true); }
@@ -87,21 +87,21 @@ public sealed class SessionRecoveryTests
         var (track, id) = await host.CreateTrackAsync();
         var kernel = host.Services.GetRequiredService<IPergaKernel>();
         host.AgentRuntime.SetTurnHandler(Unknown);
-        await kernel.AcceptMessageAsync(id, new("unknown", "unknown"), default);
+        await kernel.SendSessionMessageAsync(id, new(Content: "unknown", RequestKey: "unknown"), new InteropPrincipal.Human(), default);
         await kernel.WaitForTrackIdleAsync(track);
-        var before = await kernel.GetSessionItemsAsync(id);
+        var before = await kernel.GetSessionItemsAsync(id, new(), new InteropPrincipal.Human(), default);
         host.AgentRuntime.ShutdownConfirmed = false;
-        using var failed = await host.Client.PostAsJsonAsync($"/api/v1/sessions/{id}/recover", new { mode = "reset_context" });
+        using var failed = await host.Client.PostAsJsonAsync($"/api/v1/sessions/{id}/control", new { action = "reset_context" });
         Assert.Equal(HttpStatusCode.Conflict, failed.StatusCode);
-        var after = await kernel.GetSessionItemsAsync(id);
+        var after = await kernel.GetSessionItemsAsync(id, new(), new InteropPrincipal.Human(), default);
         Assert.Equal("unknown", after.State);
         Assert.Equal(before.Session.Epoch, after.Session.Epoch);
         Assert.Equal(before.Session.NativeThreadId, after.Session.NativeThreadId);
         Assert.DoesNotContain(after.Items, item => item.Kind == "epoch_boundary");
         host.AgentRuntime.ShutdownConfirmed = true;
-        using var retry = await host.Client.PostAsJsonAsync($"/api/v1/sessions/{id}/recover", new { mode = "reset_context" });
+        using var retry = await host.Client.PostAsJsonAsync($"/api/v1/sessions/{id}/control", new { action = "reset_context" });
         retry.EnsureSuccessStatusCode();
-        Assert.Null((await kernel.GetSessionItemsAsync(id)).Session.NativeThreadId);
+        Assert.Null((await kernel.GetSessionItemsAsync(id, new(), new InteropPrincipal.Human(), default)).Session.NativeThreadId);
     }
 
     [Fact]
@@ -125,11 +125,11 @@ public sealed class SessionRecoveryTests
             started.TrySetResult();
             await Task.Delay(Timeout.InfiniteTimeSpan, ct);
         }
-        await kernel.AcceptMessageAsync(id, new("running", "running"), default);
+        await kernel.SendSessionMessageAsync(id, new(Content: "running", RequestKey: "running"), new InteropPrincipal.Human(), default);
         await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        await Assert.ThrowsAsync<KernelException>(() => kernel.InterruptSessionAsync(id));
+        await Assert.ThrowsAsync<KernelException>(async () => await kernel.ControlSessionAsync(id, new("stop", TurnId: (await kernel.GetSessionItemsAsync(id, new(), new InteropPrincipal.Human(), default)).ActiveTurn!.Id), new InteropPrincipal.Human(), default));
         await kernel.WaitForTrackIdleAsync(track).WaitAsync(TimeSpan.FromSeconds(5));
-        var page = await kernel.GetSessionItemsAsync(id);
+        var page = await kernel.GetSessionItemsAsync(id, new(), new InteropPrincipal.Human(), default);
         Assert.Equal("unknown", page.State);
         Assert.Equal("unknown", page.LastTurn?.Status);
         Assert.Equal("stop_timeout", page.UnknownDetail?.Reason);
@@ -147,29 +147,29 @@ public sealed class SessionRecoveryTests
         var (track, id) = await host.CreateTrackAsync();
         var kernel = host.Services.GetRequiredService<IPergaKernel>();
         host.AgentRuntime.SetTurnHandler(Unknown);
-        var accepted = await kernel.AcceptMessageAsync(id, new("unknown", "unknown"), default);
+        var accepted = await kernel.SendSessionMessageAsync(id, new(Content: "unknown", RequestKey: "unknown"), new InteropPrincipal.Human(), default);
         await kernel.WaitForTrackIdleAsync(track);
-        var before = await kernel.GetSessionItemsAsync(id);
+        var before = await kernel.GetSessionItemsAsync(id, new(), new InteropPrincipal.Human(), default);
         var oldMcp = Assert.IsType<McpServerConfig.HttpMcpServer>(host.AgentRuntime.OpenedSessions.Last().Spec.McpServers["perga"]);
         await using var db = new SqliteConnection($"Data Source={Path.Combine(host.DataDir, "perga.db")};Pooling=False");
         await db.OpenAsync();
         await db.ExecuteAsync("CREATE TRIGGER reject_boundary BEFORE INSERT ON session_items WHEN NEW.kind = 'epoch_boundary' BEGIN SELECT RAISE(ABORT, 'injected boundary failure'); END;");
-        using var failed = await host.Client.PostAsJsonAsync($"/api/v1/sessions/{id}/recover", new { mode = "reset_context" });
+        using var failed = await host.Client.PostAsJsonAsync($"/api/v1/sessions/{id}/control", new { action = "reset_context" });
         Assert.Equal(HttpStatusCode.Conflict, failed.StatusCode);
-        var after = await kernel.GetSessionItemsAsync(id);
+        var after = await kernel.GetSessionItemsAsync(id, new(), new InteropPrincipal.Human(), default);
         Assert.Equal("unknown", after.State);
         Assert.Equal(before.Session.Epoch, after.Session.Epoch);
         Assert.Equal(before.Session.NativeThreadId, after.Session.NativeThreadId);
-        Assert.Null((await kernel.GetSessionInputAsync(id, accepted.Receipt!.InputId, default)).ResolvedAtMs);
+        Assert.Null(((await host.Services.GetRequiredService<ITrackStore>().SessionInputs.FindByIdAsync(id, accepted.MessageId, default))!.Receipt).ResolvedAtMs);
         Assert.DoesNotContain(after.Items, item => item.Kind == "epoch_boundary");
         Assert.Null(kernel.McpSessionBridge.ResolveToken(oldMcp.Headers["Authorization"]["Bearer ".Length..]));
         await db.ExecuteAsync("DROP TRIGGER reject_boundary;");
-        using var retry = await host.Client.PostAsJsonAsync($"/api/v1/sessions/{id}/recover", new { mode = "reset_context" });
+        using var retry = await host.Client.PostAsJsonAsync($"/api/v1/sessions/{id}/control", new { action = "reset_context" });
         retry.EnsureSuccessStatusCode();
-        var restored = await kernel.GetSessionItemsAsync(id);
+        var restored = await kernel.GetSessionItemsAsync(id, new(), new InteropPrincipal.Human(), default);
         Assert.Equal(before.Session.Epoch + 1, restored.Session.Epoch);
         Assert.Single(restored.Items, item => item.Kind == "epoch_boundary");
-        Assert.NotNull((await kernel.GetSessionInputAsync(id, accepted.Receipt.InputId, default)).ResolvedAtMs);
+        Assert.NotNull(((await host.Services.GetRequiredService<ITrackStore>().SessionInputs.FindByIdAsync(id, accepted.MessageId, default))!.Receipt).ResolvedAtMs);
     }
 
     [Fact]
@@ -181,12 +181,12 @@ public sealed class SessionRecoveryTests
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var finish = new TaskCompletionSource<NativeCompactResult>(TaskCreationOptions.RunContinuationsAsynchronously);
         host.AgentRuntime.CompactHandler = ct => { entered.TrySetResult(); return finish.Task.WaitAsync(ct); };
-        var compact = kernel.CompactSessionAsync(id);
+        var compact = kernel.ControlSessionAsync(id, new("compact"), new InteropPrincipal.Human(), default);
         await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        Assert.Equal("compacting", (await kernel.GetSessionItemsAsync(id)).State);
+        Assert.Equal("compacting", (await kernel.GetSessionItemsAsync(id, new(), new InteropPrincipal.Human(), default)).State);
         finish.TrySetResult(new());
         await compact;
-        var page = await kernel.GetSessionItemsAsync(id);
+        var page = await kernel.GetSessionItemsAsync(id, new(), new InteropPrincipal.Human(), default);
         Assert.Equal("idle", page.State);
         Assert.Equal("completed", page.LastTurn?.Status);
         Assert.Null(page.ActiveTurn);
@@ -198,7 +198,7 @@ public sealed class SessionRecoveryTests
     }
 
     [Fact]
-    public async Task WorkerUnknownCannotResetContext()
+    public async Task FinishedWorkerCannotResetContextWithoutItsLease()
     {
         var dir = Directory.CreateTempSubdirectory("perga-worker-recover-");
         try
@@ -208,22 +208,22 @@ public sealed class SessionRecoveryTests
             {
                 var (track, _) = await host.CreateTrackAsync();
                 var kernel = host.Services.GetRequiredService<IPergaKernel>();
-                var dispatched = await kernel.DispatchWorkerAsync(track, new("Inspect"), "recover-worker", null, default);
+                var dispatched = await kernel.CreateSessionAsync(track, new(Prompt: "Inspect", Task: new()), "recover-worker", new InteropPrincipal.Human(), default);
                 await kernel.WaitForTrackIdleAsync(track);
-                worker = Assert.Single(await kernel.ListSessionsAsync(track), session => session.BoundTaskId == dispatched.Task.Id);
+                worker = Assert.Single((await kernel.ListSessionsAsync(track, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray(), session => session.BoundTaskId == dispatched.Receipt.Task!.Id);
                 await host.Services.GetRequiredService<ITrackStore>().UpsertSessionAsync(worker with
                     { Status = "unknown", UnknownReason = "host_restarted" }, null, default);
             }
             await using (var host = new PergaHostTestCluster(dir.FullName))
             {
                 var kernel = host.Services.GetRequiredService<IPergaKernel>();
-                var page = await kernel.GetSessionItemsAsync(worker.Id);
+                var page = await kernel.GetSessionItemsAsync(worker.Id, new(), new InteropPrincipal.Human(), default);
                 Assert.Equal("unknown", page.State);
                 Assert.False(page.UnknownDetail?.CanResetContext);
                 Assert.False(page.UnknownDetail?.CanReconnect);
-                using var reset = await host.Client.PostAsJsonAsync($"/api/v1/sessions/{worker.Id}/recover", new { mode = "reset_context" });
-                Assert.Equal(HttpStatusCode.BadRequest, reset.StatusCode);
-                Assert.Equal(worker.Epoch, (await kernel.GetSessionItemsAsync(worker.Id)).Session.Epoch);
+                using var reset = await host.Client.PostAsJsonAsync($"/api/v1/sessions/{worker.Id}/control", new { action = "reset_context" });
+                Assert.Equal(HttpStatusCode.Conflict, reset.StatusCode);
+                Assert.Equal(worker.Epoch, (await kernel.GetSessionItemsAsync(worker.Id, new(), new InteropPrincipal.Human(), default)).Session.Epoch);
             }
         }
         finally { dir.Delete(true); }

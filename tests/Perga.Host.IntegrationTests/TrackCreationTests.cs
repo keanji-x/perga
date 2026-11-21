@@ -27,7 +27,7 @@ public sealed class TrackCreationTests
             new { areaId, provider = "acp:antigravity", permissionMode = "plan" });
         response.EnsureSuccessStatusCode();
         var trackId = (await ReadAsync(response)).GetProperty("track").GetProperty("id").GetString()!;
-        Assert.Equal("plan", Assert.Single(await host.Services.GetRequiredService<IPergaKernel>().ListSessionsAsync(trackId)).PermissionMode);
+        Assert.Equal("plan", Assert.Single((await host.Services.GetRequiredService<IPergaKernel>().ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray()).PermissionMode);
         Assert.Equal(probes, host.AgentRuntime.ProbeCount);
         Assert.Empty(host.AgentRuntime.OpenedSessions);
     }
@@ -57,13 +57,13 @@ public sealed class TrackCreationTests
         await kernel.WaitForTrackIdleAsync(trackId).WaitAsync(Deadline);
         using var first = await PostAsync(host, path + "/messages", "acp-live-input",
             new { content = "Start the conversation." });
-        Assert.Equal(HttpStatusCode.Accepted, first.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
         await kernel.WaitForTrackIdleAsync(trackId).WaitAsync(Deadline);
         var open = await ReadPageAsync();
         Assert.Equal(host.AgentRuntime.AcpPermissionModes, open.PermissionModes);
         Assert.Single(host.AgentRuntime.OpenedSessions);
 
-        using var update = await host.Client.PutAsJsonAsync(path + "/permission-mode", new { permissionMode = "act" });
+        using var update = await host.Client.PatchAsJsonAsync(path, new { permissionMode = "act" });
         update.EnsureSuccessStatusCode();
         var updated = await ReadPageAsync();
         Assert.Equal("act", updated.Session.PermissionMode);
@@ -94,7 +94,7 @@ public sealed class TrackCreationTests
         var created = await ReadAsync(response);
         var trackId = created.GetProperty("track").GetProperty("id").GetString()!;
         var kernel = host.Services.GetRequiredService<IPergaKernel>();
-        Assert.Equal(expected, Assert.Single(await kernel.ListSessionsAsync(trackId)).PermissionMode);
+        Assert.Equal(expected, Assert.Single((await kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray()).PermissionMode);
     }
 
     [Fact]
@@ -113,10 +113,10 @@ public sealed class TrackCreationTests
         {
             using var firstMsg = await PostAsync(host, $"/api/v1/sessions/{sessionId}/messages", "frozen-input",
                 new { content = "frozen input" });
-            Assert.Equal(HttpStatusCode.Accepted, firstMsg.StatusCode);
-            using var update = await host.Client.PutAsJsonAsync($"/api/v1/sessions/{sessionId}/model", new { model = "B", reasoningEffort = "high" });
+            Assert.Equal(HttpStatusCode.OK, firstMsg.StatusCode);
+            using var update = await host.Client.PatchAsJsonAsync($"/api/v1/sessions/{sessionId}", new { model = "B", reasoningEffort = "high" });
             update.EnsureSuccessStatusCode();
-            using var permission = await host.Client.PutAsJsonAsync($"/api/v1/sessions/{sessionId}/permission-mode", new { permissionMode = "full" });
+            using var permission = await host.Client.PatchAsJsonAsync($"/api/v1/sessions/{sessionId}", new { permissionMode = "full" });
             permission.EnsureSuccessStatusCode();
             Assert.Empty(host.AgentRuntime.ExecutedTurns);
         }
@@ -127,10 +127,10 @@ public sealed class TrackCreationTests
         Assert.Equal("A", execution.Spec.Model);
         Assert.Equal("low", execution.Spec.ReasoningEffort);
         Assert.Equal("full", execution.Spec.PermissionMode);
-        var desired = Assert.Single(await kernel.ListSessionsAsync(trackId));
+        var desired = Assert.Single((await kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray());
         Assert.Equal("B", desired.Model);
         Assert.Equal("high", desired.ReasoningEffort);
-        await kernel.AcceptMessageAsync(sessionId, new("next input", "next-selection"), default);
+        await kernel.SendSessionMessageAsync(sessionId, new(Content: "next input", RequestKey: "next-selection"), new InteropPrincipal.Human(), default);
         await kernel.WaitForTrackIdleAsync(trackId).WaitAsync(Deadline);
         var next = host.AgentRuntime.ExecutedTurns.Last();
         Assert.Equal("B", next.Spec.Model);
@@ -246,8 +246,8 @@ public sealed class TrackCreationTests
             Assert.Empty(beforePage.GetProperty("items").EnumerateArray());
             Assert.Empty(beforePage.GetProperty("queuedMessages").EnumerateArray());
             using var followUp = await PostAsync(host, $"/api/v1/sessions/{leadId}/messages", "while-preparing",
-                new { content = "Follow-up during setup", queueIfBusy = true });
-            Assert.Equal(HttpStatusCode.Accepted, followUp.StatusCode);
+                new { content = "Follow-up during setup", mode = "default" });
+            Assert.Equal(HttpStatusCode.OK, followUp.StatusCode);
             Assert.Empty(host.AgentRuntime.ExecutedTurns);
 
             using var conflict = await PostAsync(host, "/api/v1/tracks", "track-draft",
@@ -299,7 +299,7 @@ public sealed class TrackCreationTests
         Assert.Equal(2, runner.Invocations);
         using var msg = await PostAsync(host, $"/api/v1/sessions/{leadId}/messages", "after-retry",
             new { content = "Run after retry" });
-        Assert.Equal(HttpStatusCode.Accepted, msg.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, msg.StatusCode);
         await kernel.WaitForTrackIdleAsync(trackId).WaitAsync(Deadline);
         Assert.Single(host.AgentRuntime.ExecutedTurns);
     }
@@ -320,7 +320,7 @@ public sealed class TrackCreationTests
         await runner.Entered.Task.WaitAsync(Deadline);
         using var queued = await PostAsync(host, $"/api/v1/sessions/{leadId}/messages", "defer-while-closed",
             new { content = "Wait until this Track is open" });
-        Assert.Equal(HttpStatusCode.Accepted, queued.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, queued.StatusCode);
         using var closed = await host.Client.PatchAsJsonAsync(url, new { closed = true });
         closed.EnsureSuccessStatusCode();
         runner.Release.TrySetResult(0);
