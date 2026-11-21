@@ -18,16 +18,27 @@ internal static partial class TemplateDataValidator
             return (false, prevData, [new DataValidationError("$", "Patch payload must be a JSON object.")]);
         }
 
-        var budget = ResourceBudget.Create();
+        var safetyBudget = ResourceBudget.Create();
         var safetyErrors = new List<DataValidationError>();
-        ScanPatchSafety(patch, string.Empty, safetyErrors, depth: 0, ref budget);
+        ScanPatchSafety(patch, string.Empty, safetyErrors, depth: 0, ref safetyBudget);
         if (safetyErrors.Count > 0)
         {
             return (false, prevData, safetyErrors);
         }
 
-        var nextObj = CopySafeObject(prevData.ValueKind == JsonValueKind.Object ? prevData : default, ref budget);
+        var budget = ResourceBudget.Create();
+
+        var nextObj = new JsonObject();
+        if (prevData.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var prop in prevData.EnumerateObject())
+            {
+                if (ForbiddenKeys.Contains(prop.Name)) continue;
+                nextObj[prop.Name] = JsonNode.Parse(prop.Value.GetRawText());
+            }
+        }
         var touchedKeys = new HashSet<string>(StringComparer.Ordinal);
+        var mutated = false;
 
         foreach (var prop in patch.EnumerateObject())
         {
@@ -37,20 +48,23 @@ internal static partial class TemplateDataValidator
             {
                 continue;
             }
-            touchedKeys.Add(prop.Name);
 
             if (prop.Value.ValueKind == JsonValueKind.Object &&
                 (prop.Value.TryGetProperty("$upsert", out _) || prop.Value.TryGetProperty("$delete", out _)))
             {
                 JsonElement previous = default;
                 if (prevData.ValueKind == JsonValueKind.Object) prevData.TryGetProperty(prop.Name, out previous);
-                var (valid, records, error) = MergeKeyedArray(previous, prop.Value, ref budget);
+                var (valid, records, changed, error) = MergeKeyedArray(previous, prop.Value, nowIso, source, ref budget);
                 if (!valid) return (false, prevData, [new DataValidationError(prop.Name, error!)]);
-                nextObj[prop.Name] = StampItemMeta(previous.ValueKind == JsonValueKind.Array ? previous : null,
-                    records, nowIso, source, ref budget);
+                if (changed)
+                {
+                    nextObj[prop.Name] = records;
+                    mutated = true;
+                }
             }
             else if (prop.Value.ValueKind == JsonValueKind.Array)
             {
+                touchedKeys.Add(prop.Name);
                 JsonElement? prevArr = prevData.ValueKind == JsonValueKind.Object &&
                                        prevData.TryGetProperty(prop.Name, out var existing) &&
                                        existing.ValueKind == JsonValueKind.Array
@@ -60,6 +74,7 @@ internal static partial class TemplateDataValidator
             }
             else if (prop.Value.ValueKind == JsonValueKind.Object)
             {
+                touchedKeys.Add(prop.Name);
                 JsonObject mergedNested;
                 if (prevData.ValueKind == JsonValueKind.Object &&
                     prevData.TryGetProperty(prop.Name, out var existing) &&
@@ -88,12 +103,13 @@ internal static partial class TemplateDataValidator
             }
             else
             {
+                touchedKeys.Add(prop.Name);
                 nextObj[prop.Name] = ToSafeJsonNode(prop.Value, ref budget);
             }
         }
 
         // Empty and idempotent writes preserve both metadata and the durable revision.
-        if (!stampUnchanged)
+        if (!stampUnchanged && !mutated)
         {
             var compareBudget = ResourceBudget.Create();
             if (!AnyTouchedKeyChanged(prevData, nextObj, touchedKeys, ref compareBudget))
@@ -128,71 +144,96 @@ internal static partial class TemplateDataValidator
         return false;
     }
 
-    private static (bool Valid, JsonElement Records, string? Error) MergeKeyedArray(
-        JsonElement previous, JsonElement delta, ref ResourceBudget budget)
+    private static (bool Valid, JsonArray? Records, bool Changed, string? Error) MergeKeyedArray(
+        JsonElement previous, JsonElement delta, string nowIso, string source, ref ResourceBudget budget)
     {
         if (previous.ValueKind is not (JsonValueKind.Array or JsonValueKind.Undefined))
-            return (false, default, "Keyed array delta must target an array.");
+            return (false, null, false, "Keyed array delta must target an array.");
         if (delta.EnumerateObject().Any(p => p.Name is not ("$upsert" or "$delete")))
-            return (false, default, "Array delta accepts only $upsert and $delete.");
-        var records = new List<JsonElement>();
+            return (false, null, false, "Array delta accepts only $upsert and $delete.");
+
+        var entries = new List<(string Key, JsonElement? PrevRaw, JsonObject? Updated)>();
         var indexes = new Dictionary<string, int>(StringComparer.Ordinal);
         if (previous.ValueKind == JsonValueKind.Array)
         {
             foreach (var record in previous.EnumerateArray())
             {
-                budget.ConsumeNode("keyed merge");
                 if (record.ValueKind != JsonValueKind.Object || !TryGetItemKey(record, out var key) ||
-                    string.IsNullOrWhiteSpace(key) || !indexes.TryAdd(key, records.Count))
-                    return (false, default, "Existing array records must have unique non-empty id or code keys.");
-                records.Add(record);
+                    string.IsNullOrWhiteSpace(key) || !indexes.TryAdd(key, entries.Count))
+                    return (false, null, false, "Existing array records must have unique non-empty id or code keys.");
+                entries.Add((key, record, null));
             }
         }
+
         var deletes = new HashSet<string>(StringComparer.Ordinal);
         if (delta.TryGetProperty("$delete", out var delete))
         {
             if (delete.ValueKind != JsonValueKind.Array)
-                return (false, default, "$delete must be an array of string keys.");
+                return (false, null, false, "$delete must be an array of string keys.");
             foreach (var key in delete.EnumerateArray())
             {
                 budget.ConsumeNode("keyed merge");
                 if (key.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(key.GetString()))
-                    return (false, default, "$delete requires non-empty string keys.");
+                    return (false, null, false, "$delete requires non-empty string keys.");
                 deletes.Add(key.GetString()!);
             }
         }
+
+        var changed = false;
         var upserted = new HashSet<string>(StringComparer.Ordinal);
         if (delta.TryGetProperty("$upsert", out var upsert))
         {
             if (upsert.ValueKind != JsonValueKind.Array)
-                return (false, default, "$upsert must be an array of records.");
+                return (false, null, false, "$upsert must be an array of records.");
             foreach (var record in upsert.EnumerateArray())
             {
                 budget.ConsumeNode("keyed merge");
                 if (record.ValueKind != JsonValueKind.Object || !TryGetItemKey(record, out var key) ||
                     string.IsNullOrWhiteSpace(key) || !upserted.Add(key))
-                    return (false, default, "$upsert requires records with unique non-empty id or code keys.");
+                    return (false, null, false, "$upsert requires records with unique non-empty id or code keys.");
+
                 // Deleting then re-inserting the same key starts a new record.
                 if (indexes.TryGetValue(key, out var index) && !deletes.Contains(key))
                 {
-                    var merged = CopySafeObject(records[index], ref budget);
+                    var prevRecord = entries[index].PrevRaw!.Value;
+                    var merged = CopySafeObject(prevRecord, ref budget);
                     foreach (var field in record.EnumerateObject())
                         merged[field.Name] = ToSafeJsonNode(field.Value, ref budget);
-                    records[index] = JsonSerializer.SerializeToElement(merged);
+                    using var mergedDoc = JsonDocument.Parse(merged.ToJsonString());
+                    if (!string.Equals(
+                            CanonicalJsonWithoutMeta(prevRecord, ref budget),
+                            CanonicalJsonWithoutMeta(mergedDoc.RootElement, ref budget),
+                            StringComparison.Ordinal))
+                    {
+                        merged["_meta"] = BuildMetaObject(nowIso, source);
+                        entries[index] = (key, prevRecord, merged);
+                        changed = true;
+                    }
                 }
                 else
                 {
-                    records.Add(record);
+                    var fresh = CopySafeObject(record, ref budget);
+                    fresh["_meta"] = BuildMetaObject(nowIso, source);
+                    entries.Add((key, null, fresh));
                     deletes.Remove(key);
-                    if (indexes.TryGetValue(key, out index)) records[index] = default;
+                    if (indexes.TryGetValue(key, out index)) entries[index] = (string.Empty, null, null);
+                    changed = true;
                 }
             }
         }
-        var result = records.Where(r => r.ValueKind == JsonValueKind.Object &&
-            TryGetItemKey(r, out var key) && !deletes.Contains(key)).ToArray();
-        if (result.Length > MaxArrayLength)
-            return (false, default, "Keyed array exceeds maximum length.");
-        return (true, JsonSerializer.SerializeToElement(result), null);
+
+        if (!changed && !deletes.Any(indexes.ContainsKey))
+            return (true, null, false, null);
+
+        var result = new JsonArray();
+        foreach (var (key, prevRaw, updated) in entries)
+        {
+            if (string.IsNullOrEmpty(key) || deletes.Contains(key)) continue;
+            result.Add(updated ?? JsonNode.Parse(prevRaw!.Value.GetRawText()));
+        }
+        if (result.Count > MaxArrayLength)
+            return (false, null, false, "Keyed array exceeds maximum length.");
+        return (true, result, true, null);
     }
 
     private static JsonArray StampItemMeta(JsonElement? prevArr, JsonElement nextArr, string nowIso, string source, ref ResourceBudget budget)

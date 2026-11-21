@@ -80,10 +80,9 @@ public sealed partial class TrackActor
         }
         var next = _track with { TemplateInputs = JsonHelpers.ParseClone(merged.ToJsonString()), UpdatedAtMs = NowMs() };
         TemplateSchedules.ValidateInputs(_policyVm, _policy, next.TemplateInputs);
-        if (HasBusinessDataFields(_track.Data))
-            ValidateTrackDataCompatibilityCore(_policy, next.TemplateInputs, _track.Data,
-                "Existing track data is incompatible with the updated template inputs",
-                ". Migrate data before changing inputs.");
+        ValidateTrackDataCompatibilityCore(_policy, next.TemplateInputs, _track.Data,
+            "Existing track data is incompatible with the updated template inputs",
+            ". Migrate data before changing inputs.");
         var schedules = TemplateSchedules.Materialize(_policy, next.TemplateInputs, TrackId, next.UpdatedAtMs, _policyVm, _scheduleCronEvaluator);
         var evt = new EventEnvelopeDto(null, next.AreaId, TrackId, KernelEventKinds.TrackUpdated,
             JsonHelpers.ToElement(Templates.TemplatePresentation.Project(next, _policy, _policyVm)), next.UpdatedAtMs);
