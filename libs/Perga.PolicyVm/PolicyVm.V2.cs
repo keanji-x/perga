@@ -146,7 +146,6 @@ public sealed partial class PolicyVm
             var views = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
             var diagnostics = new List<TemplateViewDiagnostic>();
             var widgets = ExtractBundledHtmlWidgets(bundle);
-            var triggers = ParseTriggers(engine, def);
 
             if (TryGetOptionalObject(def, "report", "template.report", out var reportObj) &&
                 TryGetOptionalObject(reportObj, "views", "template.report.views", out var viewsObj))
@@ -183,7 +182,6 @@ public sealed partial class PolicyVm
                 TemplateId: policy.TemplateId,
                 Views: views,
                 Widgets: widgets,
-                Triggers: triggers,
                 Diagnostics: diagnostics,
                 HumanReadOnly: policy.Manifest.HumanReadOnly);
         });
@@ -267,96 +265,6 @@ public sealed partial class PolicyVm
         return names;
     }
 
-    private static List<CompiledTriggerSpec> ParseTriggers(Engine engine, ObjectInstance def)
-    {
-        var val = def.Get("triggers");
-        if (val.IsUndefined() || val.IsNull())
-        {
-            return [];
-        }
-
-        if (!val.IsArray())
-        {
-            throw new InvalidOperationException("template.triggers must be an array.");
-        }
-
-        var routing = ReadRoutingRules(engine, def);
-
-        var arr = val.AsArray();
-        var result = new List<CompiledTriggerSpec>((int)arr.Length);
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-
-        for (uint i = 0; i < arr.Length; i++)
-        {
-            var item = arr.Get(i);
-            if (item is not ObjectInstance obj || item.IsArray())
-            {
-                throw new InvalidOperationException($"template.triggers[{i}] must be an object.");
-            }
-
-            var id = ReadRequiredNonEmptyString(obj, "id", $"template.triggers[{i}].id");
-            if (!seen.Add(id))
-            {
-                throw new InvalidOperationException($"template.triggers[{i}].id duplicates '{id}'.");
-            }
-
-            var label = ReadRequiredNonEmptyString(obj, "label", $"template.triggers[{i}].label");
-            if (!TryGetOptionalObject(obj, "on", $"template.triggers[{i}].on", out var onObj))
-            {
-                throw new InvalidOperationException($"template.triggers[{i}].on is required.");
-            }
-
-            var onKind = ReadRequiredNonEmptyString(onObj, "kind", $"template.triggers[{i}].on.kind");
-            var onSummary = onKind switch
-            {
-                "cron" => $"cron {ReadRequiredNonEmptyString(onObj, "expr", $"template.triggers[{i}].on.expr")}",
-                "data_change" => $"data_change {ReadRequiredNonEmptyString(onObj, "path", $"template.triggers[{i}].on.path")}",
-                "task_settled" => ReadOptionalString(onObj, "taskKey", $"template.triggers[{i}].on.taskKey")
-                    ?? ReadOptionalString(onObj, "role", $"template.triggers[{i}].on.role")
-                    ?? "task_settled",
-                "schedule_at" => $"schedule_at {ReadRequiredNonEmptyString(onObj, "dataPath", $"template.triggers[{i}].on.dataPath")}.{ReadRequiredNonEmptyString(onObj, "dateField", $"template.triggers[{i}].on.dateField")}",
-                _ => throw new InvalidOperationException(
-                    $"template.triggers[{i}].on.kind '{onKind}' is unsupported. Allowed: cron, data_change, task_settled, schedule_at.")
-            };
-
-            if (!TryGetOptionalObject(obj, "action", $"template.triggers[{i}].action", out var actionObj))
-            {
-                throw new InvalidOperationException($"template.triggers[{i}].action is required.");
-            }
-
-            var actionKind = ReadRequiredNonEmptyString(actionObj, "kind", $"template.triggers[{i}].action.kind");
-            string? assign = null;
-            string? assignKind = null;
-            switch (actionKind)
-            {
-                case "run_cli":
-                    assign = ReadRequiredNonEmptyString(actionObj, "command", $"template.triggers[{i}].action.command");
-                    assignKind = "cli";
-                    break;
-                case "dispatch_worker":
-                    var role = ReadOptionalString(actionObj, "role", $"template.triggers[{i}].action.role");
-                    var matchedRoute = routing.FirstOrDefault(r =>
-                        !string.IsNullOrWhiteSpace(role) &&
-                        string.Equals(r.When.Role, role, StringComparison.OrdinalIgnoreCase));
-                    assign = matchedRoute?.Model ?? role ?? "worker";
-                    assignKind = "model";
-                    break;
-                case "wake_lead":
-                    assign = "Lead";
-                    assignKind = "model";
-                    break;
-                default:
-                    throw new InvalidOperationException(
-                        $"template.triggers[{i}].action.kind '{actionKind}' is unsupported. Allowed: run_cli, dispatch_worker, wake_lead.");
-            }
-
-            EnsureOptionalFunction(obj, "when", $"template.triggers[{i}].when");
-            result.Add(new CompiledTriggerSpec(id, label, onKind, onSummary, actionKind, assign, assignKind));
-        }
-
-        return result;
-    }
-
     private static TemplateSchemaNode? ExtractTemplateSchemaNode(Engine engine, ObjectInstance def, JsValue tHelper)
     {
         if (!TryGetOptionalObject(def, "data", "template.data", out var dataObj))
@@ -384,7 +292,7 @@ public sealed partial class PolicyVm
             throw new InvalidOperationException("template.data.schema must be a function (t) => ({ ... }) or a schema object.");
         }
 
-        return TemplateDataValidator.ExtractSchemaNode(schemaObj);
+        return TemplateSchemaExtractor.ExtractSchemaNode(schemaObj);
     }
 
     private static JsonElement InitializeAndValidateData(
@@ -410,12 +318,12 @@ public sealed partial class PolicyVm
             throw new InvalidOperationException("template.data.initial must be a function or a plain object.");
         }
 
-        var rawInitialJson = TemplateDataValidator.ExtractDataElement(rawInitialJs);
+        var rawInitialJson = TemplateSchemaExtractor.ExtractDataElement(rawInitialJs);
         var (ok, stampedJson, safetyErrs) = TemplateDataValidator.MergeAndStamp(
             ParseJsonObject("{}"),
             rawInitialJson,
             DateTimeOffset.UtcNow.ToString("O"),
-            "template:initial");
+            "template:initial", stampUnchanged: true);
         if (!ok)
         {
             var safetyDetail = string.Join("; ", safetyErrs.Select(e => $"{(string.IsNullOrEmpty(e.Path) ? "$" : e.Path)}: {e.Message}"));

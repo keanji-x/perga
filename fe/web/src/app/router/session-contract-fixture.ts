@@ -2,7 +2,7 @@ import type { BootstrapDto, AgentSessionDto, ReportDocumentDto, SessionCreationR
 
 export function fixtureTrack(id: string, overrides: Partial<TrackDto> = {}): TrackDto {
   return { id, areaId: 'daily-area', title: 'Track', cwd: '/tmp', workspaceDriver: 'direct', workspaceSpec: {},
-    templateInputs: {}, templateState: {}, enabledPlugins: [], sortOrder: 0, createdAtMs: 1, updatedAtMs: 2, ...overrides };
+    templateInputs: {}, templateState: {}, data: {}, dataRev: 0, enabledPlugins: [], sortOrder: 0, createdAtMs: 1, updatedAtMs: 2, ...overrides };
 }
 
 export function fixtureSession(id: string, trackId: string, overrides: Partial<AgentSessionDto> = {}): AgentSessionDto {

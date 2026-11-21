@@ -94,49 +94,17 @@ export interface KernelFactsSnapshot {
   }>;
 }
 
-export interface TriggerEventContext<TState = Record<string, any>> {
-  data: TState;
-  event: Record<string, any>;
-  kernel: KernelFactsSnapshot;
-}
-
-export interface TriggerSpec<TState = Record<string, any>> {
-  id: string;
-  label: string;
-  on:
-    | { kind: "cron"; expr: string; timezone?: string; summary?: string }
-    | { kind: "task_settled"; taskKey?: string; role?: string; summary?: string }
-    | { kind: "data_change"; path: string; summary?: string }
-    | { kind: "schedule_at"; dataPath: string; dateField: string; summary?: string }
-    | { kind: "event"; event: string; filter?: Record<string, unknown>; summary?: string }
-    | { kind: "manual"; summary?: string };
-  when?: (ctx: TriggerEventContext<TState>) => boolean;
-  action:
-    | { kind: "run_cli"; command: string; writeDataPath?: string; then?: string }
-    | {
-        kind: "dispatch_worker";
-        taskKey?: string;
-        bindRef?: string;
-        role?: string;
-        model?: string;
-        access?: "read_only" | "read_write";
-        goal?: string | ((ctx: TriggerEventContext<TState>) => string);
-      }
-    | { kind: "wake_lead"; prompt?: string | ((ctx: TriggerEventContext<TState>) => string) };
-}
-
-export interface PergaTemplateSetupResult<TState = Record<string, any>, TInputs = Record<string, any>> {
+export interface PergaTemplateSetupResult<TState = Record<string, any>, TInputs = Record<string, any>, TData = Record<string, any>> {
   plugins?: string[];
   data?: {
     schema?: ((t: SchemaBuilder) => Record<string, SchemaNode>) | SchemaNode;
-    initial?: (inputs: TInputs) => TState;
+    initial?: TData | ((inputs: TInputs) => TData);
   };
   initialState?: (inputs: TInputs) => TState;
   headerView?: (ctx: TemplateContext<TState, TInputs>) => TemplateHeaderView;
   before?: (action: { type: string; role?: string; access?: string; provider?: string; model?: string; arguments?: Record<string, any>; [key: string]: any }, ctx: TemplateContext<TState, TInputs>) => GuardDecision;
   after?: (event: { type: string; [key: string]: any }, ctx: TemplateContext<TState, TInputs>) => string | null | void;
   checkpoints?: CheckpointSpec[];
-  triggers?: TriggerSpec<TState>[];
   workspace?: {
     driver?: string;
     lowerCacheDirs?: string[];
@@ -146,7 +114,7 @@ export interface PergaTemplateSetupResult<TState = Record<string, any>, TInputs 
   report?: {
     humanReadOnly?: boolean;
     template?: string;
-    views?: Record<string, (data: TState, kernel: KernelFactsSnapshot) => unknown>;
+    views?: Record<string, (data: TData, kernel: KernelFactsSnapshot) => unknown>;
     maxProseChars?: number;
     sections?: SectionSpec[];
   };
@@ -174,8 +142,8 @@ export interface PergaTemplateSetupResult<TState = Record<string, any>, TInputs 
   }>;
 }
 
-export interface PergaTemplateDefinition<TState = Record<string, any>, TInputs = Record<string, any>>
-  extends PergaTemplateSetupResult<TState, TInputs> {
+export interface PergaTemplateDefinition<TState = Record<string, any>, TInputs = Record<string, any>, TData = Record<string, any>>
+  extends PergaTemplateSetupResult<TState, TInputs, TData> {
   id: string;
   title: string;
   description?: string;
@@ -185,14 +153,14 @@ export interface PergaTemplateDefinition<TState = Record<string, any>, TInputs =
   /** Catalog base; snapshots freeze its complete source. Child keyed declarations take precedence. */
   extends?: string;
   inputs?: Record<string, { type: "string" | "number" | "boolean" | "enum"; values?: string[]; default?: any; optional?: boolean; label?: string }>;
-  setup?: (inputs: TInputs) => PergaTemplateSetupResult<TState, TInputs>;
+  setup?: (inputs: TInputs) => PergaTemplateSetupResult<TState, TInputs, TData>;
 }
 
 declare global {
   function Allow(): GuardDecision;
   function Deny(reason: string): GuardDecision;
   function AskHuman(title: string, labels?: { approve?: string; deny?: string }): GuardDecision;
-  function defineTemplate<TState = Record<string, any>, TInputs = Record<string, any>>(
-    def: PergaTemplateDefinition<TState, TInputs>
-  ): PergaTemplateDefinition<TState, TInputs>;
+  function defineTemplate<TState = Record<string, any>, TInputs = Record<string, any>, TData = Record<string, any>>(
+    def: PergaTemplateDefinition<TState, TInputs, TData>
+  ): PergaTemplateDefinition<TState, TInputs, TData>;
 }

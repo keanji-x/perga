@@ -5,7 +5,7 @@ import type {
   CheckpointMetricStatus,
 } from '../../../../../core/domain/report-checkpoints.ts';
 import { Icon } from '../../../ui/icon/public.tsx';
-import styles from './checkpoints.module.css';
+import styles from './editorial.module.css';
 
 function formatMetricValue(value: number, unit: string | null | undefined): string {
   const formatted = Number.isInteger(value) ? String(value) : value.toFixed(1);
@@ -31,7 +31,7 @@ function statusClass(status: CheckpointMetricStatus | null | undefined): string 
   }
 }
 
-export function CheckpointMetricsStrip({
+export function EditorialMetricsStrip({
   metrics,
   renderText,
   renderMarkdown,

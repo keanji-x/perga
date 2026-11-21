@@ -80,6 +80,10 @@ public sealed partial class TrackActor
         }
         var next = _track with { TemplateInputs = JsonHelpers.ParseClone(merged.ToJsonString()), UpdatedAtMs = NowMs() };
         TemplateSchedules.ValidateInputs(_policyVm, _policy, next.TemplateInputs);
+        if (HasBusinessDataFields(_track.Data))
+            ValidateTrackDataCompatibilityCore(_policy, next.TemplateInputs, _track.Data,
+                "Existing track data is incompatible with the updated template inputs",
+                ". Migrate data before changing inputs.");
         var schedules = TemplateSchedules.Materialize(_policy, next.TemplateInputs, TrackId, next.UpdatedAtMs, _policyVm, _scheduleCronEvaluator);
         var evt = new EventEnvelopeDto(null, next.AreaId, TrackId, KernelEventKinds.TrackUpdated,
             JsonHelpers.ToElement(Templates.TemplatePresentation.Project(next, _policy, _policyVm)), next.UpdatedAtMs);
@@ -161,11 +165,32 @@ public sealed partial class TrackActor
         }
     }
 
+    private static bool HasBusinessDataFields(JsonElement data) =>
+        data.ValueKind == JsonValueKind.Object && data.EnumerateObject().Any(p => p.Name != "_meta");
+
+    private void ValidateTrackDataCompatibilityCore(
+        CompiledPolicy policy, JsonElement inputs, JsonElement data, string prefix, string suffix)
+    {
+        IReadOnlyList<DataValidationError> errors;
+        try
+        {
+            errors = _policyVm.ValidateData(policy, inputs, data, _tasks.Select(t => t.TaskKey).ToArray());
+        }
+        catch (InvalidOperationException ex)
+        {
+            throw KernelException.InvalidArgument($"Template data schema evaluation failed: {ex.Message}");
+        }
+
+        if (errors.Count > 0)
+            throw KernelException.Conflict(prefix + ": " +
+                string.Join("; ", errors.Select(e => $"{(string.IsNullOrEmpty(e.Path) ? "$" : e.Path)}: {e.Message}")) + suffix);
+    }
+
     private static bool ValidateTemplateSetArguments(JsonElement arguments)
     {
         if (arguments.ValueKind != JsonValueKind.Object)
             throw KernelException.InvalidArgument("Template arguments must be an object.");
-        foreach (var flag in new[] { "dryRun", "clear" })
+        foreach (var flag in new[] { "dryRun", "clear", "resetData" })
             if (arguments.TryGetProperty(flag, out var value) && value.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
                 throw KernelException.InvalidArgument(flag + " must be a boolean.");
         return arguments.TryGetProperty("dryRun", out var dryRun) && dryRun.ValueKind == JsonValueKind.True;

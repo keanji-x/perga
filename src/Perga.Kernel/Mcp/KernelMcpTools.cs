@@ -152,8 +152,8 @@ public static class KernelMcpCatalog
                 Schema(KernelMcpReportSupport.ReportReadSchemaJson)),
             new(KernelMcpToolNames.ReportCommit, "Atomically apply block operations (replace_section, upsert, delete, move) to the track report using a ReadAnchor. Returns a compact commit receipt by default; set includeDocument=true for full renderedMarkdown and blocks.",
                 Schema(KernelMcpReportSupport.ReportCommitSchemaJson)),
-            new(KernelMcpToolNames.DataPatch, "Patch the track's structured template data (validated Fail-Closed against template data.schema and stamped with _meta.updatedAt/_meta.updatedBy).",
-                Schema("""{"type":"object","required":["patch"],"properties":{"patch":{"type":"object","description":"Partial JSON object merged into the track's structured template data."}}}""")),
+            new(KernelMcpToolNames.DataPatch, "Patch the track's structured template data (validated Fail-Closed against template data.schema and stamped with _meta.updatedAt/source).",
+                Schema("""{"type":"object","required":["patch"],"properties":{"patch":{"type":"object","description":"Partial JSON object; array fields accept {$upsert: [{id|code, ...}], $delete: [key]}."},"expectedDataRev":{"type":"integer","minimum":0}}}""")),
             new(KernelMcpToolNames.TaskList, "List all tasks declared in the track.",
                 Schema("""{"type":"object","properties":{}}""")),
             new(KernelMcpToolNames.UserAsk, "Suspend and ask the human user one or more structured multiple-choice questions.",
@@ -202,7 +202,7 @@ public static class KernelMcpCatalog
             new(KernelMcpToolNames.TemplateUpdateInputs, "Merge inputs into the active template, preserving state (governance only).",
                 Schema("""{"type":"object","required":["inputs"],"properties":{"inputs":{"type":"object"}}}""")),
             new(KernelMcpToolNames.TrackSet, "Apply a templateId or JSON/.perga.js source with inputs. Use dryRun to preview or clear to detach while keeping the report (governance only).",
-                Schema("""{"type":"object","properties":{"templateId":{"type":"string","minLength":1},"source":{"type":"string","minLength":1},"inputs":{"type":"object"},"dryRun":{"type":"boolean"},"clear":{"type":"boolean"}}}""")),
+                Schema("""{"type":"object","properties":{"templateId":{"type":"string","minLength":1},"source":{"type":"string","minLength":1},"inputs":{"type":"object"},"dryRun":{"type":"boolean"},"clear":{"type":"boolean"},"resetData":{"type":"boolean"}}}""")),
             new(KernelMcpToolNames.TrackClose, "Close the current track and cancel active attempts (governance only).",
                 Schema("""{"type":"object","properties":{}}""")),
             new(KernelMcpToolNames.TaskDone, "Submit completed work for the bound task attempt and trigger gate verification (contract subagent only).",
@@ -376,13 +376,20 @@ public static class KernelMcpDispatcher
                     throw KernelException.InvalidArgument("data_patch requires a JSON object 'patch' property.");
                 }
 
+                long? expectedDataRev = null;
+                if (args.TryGetProperty("expectedDataRev", out var rev))
+                {
+                    if (rev.ValueKind != JsonValueKind.Number || !rev.TryGetInt64(out var value) || value < 0)
+                        throw KernelException.InvalidArgument("expectedDataRev must be a non-negative integer.");
+                    expectedDataRev = value;
+                }
                 var nextData = await kernel.PatchTrackDataAsync(
                     caller.TrackId,
                     patchEl,
                     source: $"session:{caller.SessionId}",
                     callerSessionId: caller.SessionId,
-                    ct: ct).ConfigureAwait(false);
-                return JsonHelpers.ToElement(new { ok = true, data = nextData });
+                    ct: ct, expectedDataRev: expectedDataRev).ConfigureAwait(false);
+                return JsonHelpers.ToElement(nextData);
             }
 
             case KernelMcpToolNames.TaskList:
@@ -586,7 +593,8 @@ public static class KernelMcpDispatcher
                 var result = await kernel.SetTrackTemplateWithOptionsAsync(caller.TrackId, caller.SessionId,
                     templateId, source, expectedPolicyGeneration, inputs,
                     args.TryGetProperty("dryRun", out var dry) && dry.GetBoolean(),
-                    args.TryGetProperty("clear", out var clear) && clear.GetBoolean(), ct).ConfigureAwait(false);
+                    args.TryGetProperty("clear", out var clear) && clear.GetBoolean(), ct,
+                    args.TryGetProperty("resetData", out var reset) && reset.GetBoolean()).ConfigureAwait(false);
                 var response = System.Text.Json.Nodes.JsonNode.Parse(JsonHelpers.ToElement(result.Track).GetRawText())!.AsObject();
                 response["dryRun"] = result.DryRun;
                 response["warnings"] = System.Text.Json.Nodes.JsonNode.Parse(JsonHelpers.ToElement(result.Warnings).GetRawText());

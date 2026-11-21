@@ -7,7 +7,7 @@
 # 事件时间线
 
 ```perga-block widget
-{"use":"builtin:list","view":"eventChronicle","showTriggers":true}
+{"use":"builtin:list","view":"eventChronicle"}
 ```
 
 # 深度分析正文

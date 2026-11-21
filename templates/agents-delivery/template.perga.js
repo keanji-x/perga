@@ -1,6 +1,5 @@
 import { schema, initial } from "./schema.js";
 import { createViews } from "./views.js";
-import { createTriggers } from "./triggers.js";
 
 export default defineTemplate({
   id: "agents-delivery",
@@ -11,7 +10,6 @@ export default defineTemplate({
     testCmd: { type: "string", default: "dotnet test Perga.sln", label: "全量回归门禁命令" },
   },
   setup(inputs) {
-    const triggers = createTriggers(inputs);
     return {
       data: {
         schema,
@@ -20,7 +18,7 @@ export default defineTemplate({
       report: {
         humanReadOnly: true,
         template: "./report.md",
-        views: createViews(triggers),
+        views: createViews(),
       },
       tasks: {
         requireGateForReadWrite: true,
@@ -29,7 +27,6 @@ export default defineTemplate({
           { when: { role: "impl" }, access: "read_write" },
         ],
       },
-      triggers,
     };
   },
 });

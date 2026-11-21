@@ -7,17 +7,15 @@ import type {
 import type { ReportTaskRow } from '../../../../../core/domain/report.ts';
 import { useState } from '../../../ui/state/public.ts';
 import { ReportCheckpointsChronicle } from './chronicle.tsx';
-export { CheckpointMetricsStrip } from './metrics-strip.tsx';
-export { CheckpointByline, CheckpointGateStrip, CheckpointTriggersTable } from './shared.tsx';
 import {
-  CheckpointByline,
-  CheckpointGateStrip,
+  EditorialByline,
+  EditorialGateStrip,
   CheckpointProseBody,
-  CheckpointTriggersTable,
+  EditorialTriggersTable,
   defaultStatusLabel,
   deriveFallbackTriggers,
-  markerToneClass,
-} from './shared.tsx';
+} from '../editorial/primitives.tsx';
+import { markerToneClass } from './marker.ts';
 import styles from './checkpoints.module.css';
 
 function connectorToneClass(status: CheckpointStatus): string {
@@ -149,7 +147,7 @@ function ReportCheckpointsStepper({
       <article className={styles.article} role="tabpanel" aria-label={selected.title}>
         <header className={styles.articleHeader}>
           <h3 className={styles.articleTitle}>{articleHeadline}</h3>
-          <CheckpointByline item={selected} taskRows={taskRows} onOpenWorker={onOpenWorker} />
+          <EditorialByline item={selected} taskRows={taskRows} onOpenWorker={onOpenWorker} />
         </header>
 
         {selected.blockedReason != null && selected.blockedReason.trim() !== '' && (
@@ -164,13 +162,13 @@ function ReportCheckpointsStepper({
           renderMarkdown={renderMarkdown}
         />
 
-        <CheckpointTriggersTable
+        <EditorialTriggersTable
           keyPrefix={selected.id}
           triggers={triggers}
           renderText={renderText}
         />
 
-        <CheckpointGateStrip
+        <EditorialGateStrip
           itemId={selected.id}
           checks={checks}
           activeGateKey={activeGateKey}

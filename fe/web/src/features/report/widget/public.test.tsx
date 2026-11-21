@@ -21,7 +21,7 @@ describe('ReportWidgetBlock (Scheme B Unified VO)', () => {
         },
       },
       widgets: {},
-      triggers: [],
+      dataRev: 0,
       diagnostics: [],
       humanReadOnly: false,
     };
@@ -58,7 +58,7 @@ describe('ReportWidgetBlock (Scheme B Unified VO)', () => {
       widgets: {
         './widgets/range-axis.html': '<!doctype html><html><body>axis</body></html>',
       },
-      triggers: [],
+      dataRev: 0,
       diagnostics: [],
       humanReadOnly: true,
     };
@@ -108,7 +108,7 @@ describe('ReportWidgetBlock (Scheme B Unified VO)', () => {
     expect(onOpenWorker).toHaveBeenCalledWith('ses_nvda_1');
   });
 
-  it('renders empty builtin:list gracefully with standing triggers and surfaces schema/loading/error states', () => {
+  it('renders empty builtin:list gracefully and surfaces schema/loading/error states', () => {
     const emptyProjection: TemplateViewsProjection = {
       templateId: 'equity-research',
       views: {
@@ -117,22 +117,19 @@ describe('ReportWidgetBlock (Scheme B Unified VO)', () => {
         badLedger: { metrics: [{ label: 123 }] },
       },
       widgets: {},
-      triggers: [
-        { id: 't1', label: '盘后更新现价', onKind: 'cron', onSummary: '每个交易日 16:30', actionKind: 'run_cli', assign: 'python fetch.py', assignKind: 'cli' },
-      ],
+      dataRev: 4,
       diagnostics: [{ view: 'brokenView', message: 'boom' }],
       humanReadOnly: true,
     };
 
     const { rerender } = render(
       <ReportWidgetBlock
-        payload={{ use: 'builtin:list', view: 'chronicle', showTriggers: true, title: '事件跟踪' }}
+        payload={{ use: 'builtin:list', view: 'chronicle', title: '事件跟踪' }}
         projection={{ status: 'ready', projection: emptyProjection }}
         renderText={(text) => <span>{text}</span>}
       />,
     );
     expect(screen.getByText('当前暂无记录。')).toBeTruthy();
-    expect(screen.getByText('盘后更新现价')).toBeTruthy();
 
     rerender(
       <ReportWidgetBlock
@@ -186,14 +183,14 @@ describe('ReportWidgetBlock (Scheme B Unified VO)', () => {
               title: 'Review B · 前端与契约',
               status: 'blocked',
               summary: '拦截 2 项边界问题',
-              blockers: ['空态需先判空再校验'],
-              rounds: [{ round: 1, outcome: 'changes_requested', summary: '首轮打回' }],
+              callouts: { title: '待处理', items: ['空态需先判空再校验'] },
+              entries: { title: '处理日志', items: [{ tag: 'Review', status: 'warn', statusLabel: '待修订', actor: 'Riley', summary: '首轮打回' }] },
             },
           ],
         },
       },
       widgets: { './widgets/delivery-flow.html': '<!doctype html><html><body>dag</body></html>' },
-      triggers: [],
+      dataRev: 0,
       diagnostics: [],
       humanReadOnly: true,
     };
@@ -216,7 +213,10 @@ describe('ReportWidgetBlock (Scheme B Unified VO)', () => {
     );
 
     expect(screen.getByTestId('native-md').textContent).toContain('拦截 2 项边界问题');
-    expect(screen.getByText(/空态需先判空再校验/)).toBeTruthy();
+    expect(screen.getByRole('region', { name: '待处理' }).textContent).toContain('空态需先判空再校验');
+    const entries = screen.getByRole('region', { name: '处理日志' });
+    expect(entries.textContent).toContain('Review');
+    expect(entries.textContent).toContain('[Riley] 首轮打回');
 
     const iframe = screen.getByTitle<HTMLIFrameElement>('deliveryFlow');
     fireEvent(window, new MessageEvent('message', {
@@ -235,5 +235,34 @@ describe('ReportWidgetBlock (Scheme B Unified VO)', () => {
       />,
     );
     expect(screen.getByTestId('native-md').textContent).toContain('[架构文档](docs/arch.md)');
+
+    const blankFallbackProjection: TemplateViewsProjection = {
+      ...projection,
+      views: {
+        deliveryFlow: {
+          items: [{
+            id: 'node-blank',
+            title: '空白回退校验',
+            status: 'done',
+            triggers: [{ trigger: '不应展示', action: 'legacy', assign: 'cli' }],
+            callouts: { title: '   ', items: ['保留有效提示'] },
+            entries: { title: '', items: [{ tag: 'E1', status: 'warn', statusLabel: '   ', actor: '  ', summary: '无参与者记录' }] },
+          }],
+        },
+      },
+    };
+    rerender(
+      <ReportWidgetBlock
+        payload={{ use: 'builtin:detail', view: 'deliveryFlow', selectionKey: 'node' }}
+        projection={blankFallbackProjection}
+        renderText={(text) => <span>{text}</span>}
+      />,
+    );
+    expect(screen.queryByText('不应展示')).toBeNull();
+    expect(screen.getByRole('region', { name: '关注事项' }).textContent).toContain('保留有效提示');
+    const fallbackEntries = screen.getByRole('region', { name: '记录' });
+    expect(fallbackEntries.textContent).toContain('待关注');
+    expect(fallbackEntries.textContent).not.toContain('[]');
+    expect(fallbackEntries.textContent).toContain('无参与者记录');
   });
 });

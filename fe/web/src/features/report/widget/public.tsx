@@ -10,7 +10,6 @@ import {
   checkpointItemSchema,
   checkpointsBlockPayloadSchema,
   type CheckpointMetric,
-  type CheckpointTrigger,
 } from '../../../../../core/domain/report-checkpoints.ts';
 import type { ReportTaskRow } from '../../../../../core/domain/report.ts';
 import type {
@@ -19,13 +18,9 @@ import type {
   WidgetBlockPayload,
 } from '../../../../../core/domain/report-widget.ts';
 import { useState } from '../../../ui/state/public.ts';
-import {
-  CheckpointByline,
-  CheckpointGateStrip,
-  CheckpointMetricsStrip,
-  CheckpointTriggersTable,
-  ReportCheckpointsBlock,
-} from '../checkpoints/public.tsx';
+import { ReportCheckpointsBlock } from '../checkpoints/public.tsx';
+import { composeItemMarkdown, EditorialByline, EditorialGateStrip } from '../editorial/primitives.tsx';
+import { EditorialMetricsStrip } from '../editorial/metrics.tsx';
 import { SeamlessHtmlWidget } from './seamless-html.tsx';
 import styles from './widget.module.css';
 
@@ -36,43 +31,50 @@ function isTemplateViewsState(
     && (value.status === 'loading' || value.status === 'error' || value.status === 'ready');
 }
 
-function triggersFromProjection(projection: TemplateViewsProjection | undefined): readonly CheckpointTrigger[] | undefined {
-  if (projection === undefined || projection.triggers.length === 0) return undefined;
-  return projection.triggers.map((tr) => ({
-    trigger: tr.onSummary ?? tr.onKind,
-    action: tr.label,
-    assign: tr.assign ?? '—',
-    assignKind: tr.assignKind === 'cli' ? 'command' : 'model',
-  }));
-}
-
-type DetailRound = Readonly<{
-  round: number;
-  label?: string;
-  outcome: 'pass' | 'changes_requested' | 'running';
-  outcomeLabel?: string;
-  triggeredBy?: string;
+type DetailEntry = Readonly<{
+  tag: string;
+  status: 'pass' | 'warn' | 'fail' | 'running' | 'neutral';
+  statusLabel?: string;
+  actor?: string;
   summary: string;
 }>;
 
-function parseRounds(raw: unknown): readonly DetailRound[] {
+function nonEmptyString(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined;
+  const trimmed = raw.trim();
+  return trimmed !== '' ? trimmed : undefined;
+}
+
+function parseEntries(raw: unknown): readonly DetailEntry[] {
   if (!Array.isArray(raw)) return [];
-  const out: DetailRound[] = [];
+  const out: DetailEntry[] = [];
   for (const entry of raw) {
     if (entry === null || typeof entry !== 'object') continue;
     const rec = entry as Record<string, unknown>;
-    if (typeof rec.round !== 'number' || typeof rec.summary !== 'string') continue;
-    const outcome = rec.outcome === 'pass' || rec.outcome === 'changes_requested' ? rec.outcome : 'running';
-    out.push({
-      round: rec.round,
-      label: typeof rec.label === 'string' ? rec.label : undefined,
-      outcome,
-      outcomeLabel: typeof rec.outcomeLabel === 'string' && rec.outcomeLabel.trim() !== '' ? rec.outcomeLabel : undefined,
-      triggeredBy: typeof rec.triggeredBy === 'string' ? rec.triggeredBy : undefined,
-      summary: rec.summary,
-    });
+    const tag = nonEmptyString(rec.tag);
+    const summary = nonEmptyString(rec.summary);
+    if (tag === undefined || summary === undefined) continue;
+    const status = rec.status === 'pass' || rec.status === 'warn' || rec.status === 'fail' || rec.status === 'running'
+      ? rec.status : 'neutral';
+    out.push({ tag, status, summary,
+      statusLabel: nonEmptyString(rec.statusLabel),
+      actor: nonEmptyString(rec.actor) });
   }
   return out;
+}
+
+function detailSection(raw: unknown): Record<string, unknown> {
+  return raw !== null && typeof raw === 'object' ? raw as Record<string, unknown> : {};
+}
+
+function entryStatus(status: DetailEntry['status']): { label: string; className: string } {
+  switch (status) {
+    case 'pass': return { label: '通过', className: styles.detailEntryPass };
+    case 'fail': return { label: '失败', className: styles.detailEntryFail };
+    case 'running': return { label: '进行中', className: styles.detailEntryRun };
+    case 'warn': return { label: '待关注', className: styles.detailEntryWarn };
+    case 'neutral': return { label: '记录', className: styles.detailEntryNeutral };
+  }
 }
 
 function NativeDetailWidget({
@@ -113,7 +115,7 @@ function NativeDetailWidget({
     'id', 'title', 'status', 'statusLabel', 'role', 'taskKey', 'sessionId',
     'model', 'assign', 'assignKind', 'workerLabel', 'summary', 'bullets',
     'triggerAt', 'docLabel', 'docPath', 'blockedReason', 'dependsOn',
-    'constraint', 'checks', 'triggers', 'expectations',
+    'constraint', 'checks', 'expectations',
   ]) {
     if (pickRecord[key] !== undefined) knownItemFields[key] = pickRecord[key];
   }
@@ -129,26 +131,20 @@ function NativeDetailWidget({
   }
 
   const item = parsedItem.data;
-  const blockers = Array.isArray(pickRecord.blockers)
-    ? pickRecord.blockers.filter((b): b is string => typeof b === 'string' && b.trim() !== '')
-    : [];
-  const blockersTitle = typeof pickRecord.blockersTitle === 'string' && pickRecord.blockersTitle.trim() !== ''
-    ? pickRecord.blockersTitle
-    : (typeof rawObj.blockersTitle === 'string' && rawObj.blockersTitle.trim() !== '' ? rawObj.blockersTitle : '关注事项');
-  const rounds = parseRounds(pickRecord.rounds);
-  const roundsTitle = typeof pickRecord.roundsTitle === 'string' && pickRecord.roundsTitle.trim() !== ''
-    ? pickRecord.roundsTitle
-    : (typeof rawObj.roundsTitle === 'string' && rawObj.roundsTitle.trim() !== '' ? rawObj.roundsTitle : '迭代记录');
-  const bodyMarkdown = [
-    item.summary?.trim() ?? '',
-    ...(item.bullets != null && item.bullets.length > 0 ? [item.bullets.map((b) => `- ${b}`).join('\n')] : []),
-  ].filter(Boolean).join('\n\n');
+  const calloutSection = detailSection(pickRecord.callouts);
+  const callouts = Array.isArray(calloutSection.items)
+    ? calloutSection.items.filter((entry): entry is string => typeof entry === 'string' && entry.trim() !== '') : [];
+  const calloutsTitle = nonEmptyString(calloutSection.title) ?? '关注事项';
+  const entrySection = detailSection(pickRecord.entries);
+  const entries = parseEntries(entrySection.items);
+  const entriesTitle = nonEmptyString(entrySection.title) ?? '记录';
+  const bodyMarkdown = composeItemMarkdown(item);
 
   return (
     <article className={styles.detailArticle} aria-live="polite" aria-label={item.title}>
       <header className={styles.detailHeader}>
         <h3 className={styles.detailTitle}>{item.docLabel ?? item.title}</h3>
-        <CheckpointByline item={item} taskRows={taskRows} onOpenWorker={onOpenWorker} />
+        <EditorialByline item={item} taskRows={taskRows} onOpenWorker={onOpenWorker} />
       </header>
 
       {bodyMarkdown !== '' && (
@@ -159,41 +155,33 @@ function NativeDetailWidget({
         </div>
       )}
 
-      {blockers.length > 0 && (
-        <div className={styles.detailBlockers} role="region" aria-label={blockersTitle}>
-          <div className={styles.detailBlockersTitle}>{blockersTitle}</div>
-          {blockers.map((blocker, idx) => (
-            <div key={`${item.id}-blk-${idx}`}>• {renderText(blocker)}</div>
+      {callouts.length > 0 && (
+        <div className={styles.detailCallouts} role="region" aria-label={calloutsTitle}>
+          <div className={styles.detailCalloutsTitle}>{calloutsTitle}</div>
+          {callouts.map((callout, idx) => (
+            <div key={`${item.id}-co-${idx}`}>• {renderText(callout)}</div>
           ))}
         </div>
       )}
 
-      {rounds.length > 0 && (
-        <div className={styles.detailRounds} role="region" aria-label={roundsTitle}>
-          <div className={styles.detailRoundsHead}>{roundsTitle}（{rounds.length}）</div>
-          {rounds.map((rd) => (
-            <div key={`${item.id}-rd-${rd.round}`} className={styles.detailRoundRow}>
-              <span className={styles.detailRoundTag}>R{rd.round}</span>
-              <span className={rd.outcome === 'pass'
-                ? styles.detailRoundPass
-                : rd.outcome === 'changes_requested'
-                  ? styles.detailRoundFail
-                  : styles.detailRoundRun}
-              >
-                {rd.outcomeLabel ?? (rd.outcome === 'pass' ? '通过' : rd.outcome === 'changes_requested' ? '待修订' : '进行中')}
-              </span>
-              <span>{rd.triggeredBy !== undefined ? `[${rd.triggeredBy}] ` : ''}{renderText(rd.summary)}</span>
-            </div>
-          ))}
+      {entries.length > 0 && (
+        <div className={styles.detailEntries} role="region" aria-label={entriesTitle}>
+          <div className={styles.detailEntriesHead}>{entriesTitle}（{entries.length}）</div>
+          {entries.map((entry, index) => {
+            const status = entryStatus(entry.status);
+            return (
+              <div key={`${entry.tag}-${index}`} className={styles.detailEntryRow}>
+                <span className={styles.detailEntryTag}>{entry.tag}</span>
+                <span className={status.className}>{entry.statusLabel ?? status.label}</span>
+                <span>{entry.actor !== undefined ? `[${entry.actor}] ` : ''}{renderText(entry.summary)}</span>
+              </div>
+            );
+          })}
         </div>
-      )}
-
-      {item.triggers != null && item.triggers.length > 0 && (
-        <CheckpointTriggersTable keyPrefix={`detail-${item.id}`} triggers={item.triggers} renderText={renderText} />
       )}
 
       {item.checks != null && item.checks.length > 0 && (
-        <CheckpointGateStrip
+        <EditorialGateStrip
           itemId={`detail-${item.id}`}
           checks={item.checks}
           activeGateKey={activeGateKey}
@@ -294,31 +282,20 @@ export function ReportWidgetBlock({
 
   if (payload.use === 'builtin:stepper' || payload.use === 'builtin:list') {
     const rawObj = viewData !== null && typeof viewData === 'object' ? (viewData as Record<string, unknown>) : {};
-    const standingTriggers = rawObj.triggers ?? (payload.showTriggers ? triggersFromProjection(projection) : undefined);
-
     if (Array.isArray(rawObj.items) && rawObj.items.length === 0) {
-      const parsedEmpty = checkpointsBlockPayloadSchema.safeParse({
-        items: [{ id: '_empty', title: '_empty', status: 'pending' }],
-        triggers: standingTriggers,
-      });
-      const safeTriggers = parsedEmpty.success ? (parsedEmpty.data.triggers ?? []) : [];
       return (
-        <div>
-          <div className={styles.diagnostic} role="note">
-            <div className={styles.diagnosticTitle}>{payload.title ?? payload.view}</div>
-            <div>当前暂无记录。</div>
-          </div>
-          {safeTriggers.length > 0 && (
-            <CheckpointTriggersTable keyPrefix={payload.view} triggers={safeTriggers} renderText={renderText} />
-          )}
+        <div className={styles.diagnostic} role="note">
+          <div className={styles.diagnosticTitle}>{payload.title ?? payload.view}</div>
+          <div>当前暂无记录。</div>
         </div>
       );
     }
 
+    // Schedules are shown from persisted track schedules, not widget declarations.
     const mergedPayload = {
       ...rawObj,
       layout: payload.use === 'builtin:stepper' ? 'stepper' : 'chronicle',
-      triggers: standingTriggers,
+      triggers: undefined,
     };
     const parsed = checkpointsBlockPayloadSchema.safeParse(mergedPayload);
     if (!parsed.success) {
@@ -373,7 +350,7 @@ export function ReportWidgetBlock({
     }
     const parsedMetrics: readonly CheckpointMetric[] = parsed.data.metrics ?? [];
 
-    return <CheckpointMetricsStrip metrics={parsedMetrics} renderText={renderText} renderMarkdown={renderMarkdown} />;
+    return <EditorialMetricsStrip metrics={parsedMetrics} renderText={renderText} renderMarkdown={renderMarkdown} />;
   }
 
   // Track 2: Seamless Data-Bound HTML Graphic Widget (`./widgets/*.html`)

@@ -30,12 +30,11 @@ public sealed class TemplateV2BundleAndSchemaTests
                         template: "./report.md",
                         views
                       },
-                      triggers: [
+                      schedules: [
                         {
                           id: "daily-check",
-                          label: "Daily check for " + inputs.ticker,
-                          on: { kind: "cron", expr: "0 9 * * *" },
-                          action: { kind: "run_cli", command: "python check.py --ticker " + inputs.ticker }
+                          cron: "0 9 * * *",
+                          prompt: "Daily check for " + inputs.ticker
                         }
                       ]
                     };
@@ -104,11 +103,10 @@ public sealed class TemplateV2BundleAndSchemaTests
         Assert.True(compiled.Manifest.HumanReadOnly);
         Assert.Contains("perga-block widget", compiled.Manifest.InitialReportMarkdown);
         Assert.Equal(["priceAxis", "eventList"], compiled.Manifest.ViewNames);
-        Assert.Single(compiled.Manifest.Triggers!);
-        Assert.Equal("Daily check for NVDA", compiled.Manifest.Triggers![0].Label);
+        Assert.Equal("Daily check for NVDA", Assert.Single(compiled.Manifest.Schedules).Prompt);
 
         var inputs = JsonDocument.Parse("""{"ticker":"NVDA"}""").RootElement;
-        var init = _vm.InitState(compiled, inputs);
+        var init = _vm.InitData(compiled, inputs);
 
         var patch = JsonDocument.Parse("""
             {
@@ -120,7 +118,7 @@ public sealed class TemplateV2BundleAndSchemaTests
             """).RootElement;
 
         var patched = _vm.ValidateAndPatchData(
-            compiled, inputs, init.NextState, patch,
+            compiled, inputs, init, patch,
             knownTaskKeys: ["task-q4"],
             nowIso: "2026-11-26T22:00:00Z",
             source: "session:ses_1");
@@ -148,7 +146,7 @@ public sealed class TemplateV2BundleAndSchemaTests
     {
         var compiled = _vm.Compile(BuildSampleBundle());
         var inputs = JsonDocument.Parse("{}").RootElement;
-        var init = _vm.InitState(compiled, inputs);
+        var init = _vm.InitData(compiled, inputs);
 
         var badPatch = JsonDocument.Parse("""
             {
@@ -159,7 +157,7 @@ public sealed class TemplateV2BundleAndSchemaTests
             """).RootElement;
 
         var res = _vm.ValidateAndPatchData(
-            compiled, inputs, init.NextState, badPatch,
+            compiled, inputs, init, badPatch,
             knownTaskKeys: null,
             nowIso: "2026-11-26T22:00:00Z",
             source: "session:ai");
@@ -207,9 +205,9 @@ public sealed class TemplateV2BundleAndSchemaTests
         Assert.Equal(packageName, compiled.TemplateId);
 
         var inputs = JsonDocument.Parse("{}").RootElement;
-        var init = _vm.InitState(compiled, inputs);
+        var init = _vm.InitData(compiled, inputs);
         var emptyKernel = JsonDocument.Parse("""{"tasks":{},"sessions":{}}""").RootElement;
-        var projection = _vm.ProjectViews(compiled, inputs, init.NextState, emptyKernel);
+        var projection = _vm.ProjectViews(compiled, inputs, init, emptyKernel);
 
         Assert.Empty(projection.Diagnostics);
         Assert.NotEmpty(projection.Views);
@@ -247,41 +245,41 @@ public sealed class TemplateV2BundleAndSchemaTests
         var bundle = TemplateBundle.BundleHeader + JsonSerializer.Serialize(new { entry = "template.perga.js", files });
         var compiled = _vm.Compile(bundle);
         var inputs = JsonDocument.Parse("{}").RootElement;
-        var init = _vm.InitState(compiled, inputs);
+        var init = _vm.InitData(compiled, inputs);
 
         // 1. Nested _meta tampering rejected
         var metaPatch = JsonDocument.Parse("""{"nested":{"_meta":{"updatedAt":"1999-01-01"}}}""").RootElement;
-        var rMeta = _vm.ValidateAndPatchData(compiled, inputs, init.NextState, metaPatch, [], "2026-11-26T00:00:00Z", "session:ai");
+        var rMeta = _vm.ValidateAndPatchData(compiled, inputs, init, metaPatch, [], "2026-11-26T00:00:00Z", "session:ai");
         Assert.False(rMeta.Valid);
         Assert.Contains(rMeta.Errors, e => e.Message.Contains("_meta"));
 
         // 2. Prototype pollution keys rejected
         var protoPatch = JsonDocument.Parse("""{"nested":{"__proto__":{"polluted":true}}}""").RootElement;
-        var rProto = _vm.ValidateAndPatchData(compiled, inputs, init.NextState, protoPatch, [], "2026-11-26T00:00:00Z", "session:ai");
+        var rProto = _vm.ValidateAndPatchData(compiled, inputs, init, protoPatch, [], "2026-11-26T00:00:00Z", "session:ai");
         Assert.False(rProto.Valid);
         Assert.Contains(rProto.Errors, e => e.Message.Contains("__proto__"));
 
         // 3. Impossible calendar date rejected
         var datePatch = JsonDocument.Parse("""{"day":"2026-02-31"}""").RootElement;
-        var rDate = _vm.ValidateAndPatchData(compiled, inputs, init.NextState, datePatch, [], "2026-11-26T00:00:00Z", "session:ai");
+        var rDate = _vm.ValidateAndPatchData(compiled, inputs, init, datePatch, [], "2026-11-26T00:00:00Z", "session:ai");
         Assert.False(rDate.Valid);
 
         // 4. File ref traversal / scheme / query rejected
         foreach (var badFile in new[] { "../etc/passwd", " /etc/passwd", "file:///etc/passwd", "C:/secret.txt", "docs/a.md?x=1", "docs/a.md#frag" })
         {
             var filePatch = JsonDocument.Parse(JsonSerializer.Serialize(new { doc = badFile })).RootElement;
-            var rFile = _vm.ValidateAndPatchData(compiled, inputs, init.NextState, filePatch, [], "2026-11-26T00:00:00Z", "session:ai");
+            var rFile = _vm.ValidateAndPatchData(compiled, inputs, init, filePatch, [], "2026-11-26T00:00:00Z", "session:ai");
             Assert.False(rFile.Valid, $"Expected '{badFile}' to be rejected");
         }
 
         // 5. Task ref on 0-task track fails closed (empty list is NOT bypassed)
         var taskPatch = JsonDocument.Parse("""{"task":"nonexistent-task"}""").RootElement;
-        var rTask = _vm.ValidateAndPatchData(compiled, inputs, init.NextState, taskPatch, knownTaskKeys: [], "2026-11-26T00:00:00Z", "session:ai");
+        var rTask = _vm.ValidateAndPatchData(compiled, inputs, init, taskPatch, knownTaskKeys: [], "2026-11-26T00:00:00Z", "session:ai");
         Assert.False(rTask.Valid);
 
         // 6. Non-object patch returns structured validation error instead of crashing
         var arrayPatch = JsonDocument.Parse("""[1,2,3]""").RootElement;
-        var rArray = _vm.ValidateAndPatchData(compiled, inputs, init.NextState, arrayPatch, [], "2026-11-26T00:00:00Z", "session:ai");
+        var rArray = _vm.ValidateAndPatchData(compiled, inputs, init, arrayPatch, [], "2026-11-26T00:00:00Z", "session:ai");
         Assert.False(rArray.Valid);
     }
 
@@ -498,12 +496,12 @@ public sealed class TemplateV2BundleAndSchemaTests
 
         var compiled = _vm.Compile(hostileSource);
         var inputs = JsonDocument.Parse("{}").RootElement;
-        var init = _vm.InitState(compiled, inputs);
+        var init = _vm.InitData(compiled, inputs);
 
         var badType = _vm.ValidateAndPatchData(
             compiled,
             inputs,
-            init.NextState,
+            init,
             JsonDocument.Parse("""{"price":"not-a-number"}""").RootElement,
             knownTaskKeys: [],
             nowIso: "2026-11-26T00:00:00Z",
@@ -514,7 +512,7 @@ public sealed class TemplateV2BundleAndSchemaTests
         var badMeta = _vm.ValidateAndPatchData(
             compiled,
             inputs,
-            init.NextState,
+            init,
             JsonDocument.Parse("""{"_meta":{"updatedAt":"1999-01-01"}}""").RootElement,
             knownTaskKeys: [],
             nowIso: "2026-11-26T00:00:00Z",
@@ -524,7 +522,7 @@ public sealed class TemplateV2BundleAndSchemaTests
         var badProto = _vm.ValidateAndPatchData(
             compiled,
             inputs,
-            init.NextState,
+            init,
             JsonDocument.Parse("""{"__proto__":{"polluted":true}}""").RootElement,
             knownTaskKeys: [],
             nowIso: "2026-11-26T00:00:00Z",
@@ -534,7 +532,7 @@ public sealed class TemplateV2BundleAndSchemaTests
         var badTask = _vm.ValidateAndPatchData(
             compiled,
             inputs,
-            init.NextState,
+            init,
             JsonDocument.Parse("""{"task":"ghost-task"}""").RootElement,
             knownTaskKeys: [],
             nowIso: "2026-11-26T00:00:00Z",
@@ -544,7 +542,7 @@ public sealed class TemplateV2BundleAndSchemaTests
         var ok = _vm.ValidateAndPatchData(
             compiled,
             inputs,
-            init.NextState,
+            init,
             JsonDocument.Parse("""{"price":42}""").RootElement,
             knownTaskKeys: [],
             nowIso: "2026-11-26T00:00:00Z",
@@ -555,7 +553,7 @@ public sealed class TemplateV2BundleAndSchemaTests
     }
 
     [Fact]
-    public void InitState_ValidatesAndStampsActualRuntimeInputs_FailClosed()
+    public void InitData_ValidatesAndStampsActualRuntimeInputs_FailClosed()
     {
         const string source = """
             export default defineTemplate({
@@ -582,21 +580,21 @@ public sealed class TemplateV2BundleAndSchemaTests
         var compiled = _vm.Compile(source);
 
         var invalidTypeErr = Assert.Throws<InvalidOperationException>(() =>
-            _vm.InitState(compiled, JsonDocument.Parse("""{"count":2}""").RootElement));
+            _vm.InitData(compiled, JsonDocument.Parse("""{"count":2}""").RootElement));
         Assert.Contains("schema validation", invalidTypeErr.Message);
 
         var metaErr = Assert.Throws<InvalidOperationException>(() =>
-            _vm.InitState(compiled, JsonDocument.Parse("""{"count":3}""").RootElement));
+            _vm.InitData(compiled, JsonDocument.Parse("""{"count":3}""").RootElement));
         Assert.Contains("_meta", metaErr.Message);
 
         var taskRefErr = Assert.Throws<InvalidOperationException>(() =>
-            _vm.InitState(compiled, JsonDocument.Parse("""{"count":4}""").RootElement));
+            _vm.InitData(compiled, JsonDocument.Parse("""{"count":4}""").RootElement));
         Assert.Contains("ghost-task", taskRefErr.Message);
 
-        var valid = _vm.InitState(compiled, JsonDocument.Parse("""{"count":5}""").RootElement);
-        Assert.Equal(5, valid.NextState.GetProperty("count").GetInt32());
-        Assert.Equal("template:initial", valid.NextState.GetProperty("_meta").GetProperty("source").GetString());
-        Assert.False(string.IsNullOrWhiteSpace(valid.NextState.GetProperty("_meta").GetProperty("updatedAt").GetString()));
+        var valid = _vm.InitData(compiled, JsonDocument.Parse("""{"count":5}""").RootElement);
+        Assert.Equal(5, valid.GetProperty("count").GetInt32());
+        Assert.Equal("template:initial", valid.GetProperty("_meta").GetProperty("source").GetString());
+        Assert.False(string.IsNullOrWhiteSpace(valid.GetProperty("_meta").GetProperty("updatedAt").GetString()));
     }
 
     [Fact]
@@ -727,11 +725,45 @@ public sealed class TemplateV2BundleAndSchemaTests
             """;
         var simple = _vm.Compile(simpleSource);
         var inputs = JsonDocument.Parse("{}").RootElement;
-        var init = _vm.InitState(simple, inputs);
+        var init = _vm.InitData(simple, inputs);
         var repeatedMetaJson = "{" + string.Join(",", Enumerable.Repeat("\"_meta\":0", 20_000)) + "}";
         var repeatedPatch = JsonDocument.Parse(repeatedMetaJson).RootElement;
-        var boundedResult = _vm.ValidateAndPatchData(simple, inputs, init.NextState, repeatedPatch, [], "2026-11-26T00:00:00Z", "session:ai");
+        var boundedResult = _vm.ValidateAndPatchData(simple, inputs, init, repeatedPatch, [], "2026-11-26T00:00:00Z", "session:ai");
         Assert.False(boundedResult.Valid);
         Assert.True(boundedResult.Errors.Count <= 64, $"Expected bounded errors (<= 64), got {boundedResult.Errors.Count}");
+    }
+
+    [Fact]
+    public void LargeAcceptedInitialData_SupportsScalarPatchAndIdempotentRetryWithinBudget()
+    {
+        const string source = """
+            export default defineTemplate({
+              id: "wide-initial",
+              title: "Wide Initial",
+              data: {
+                initial: () => {
+                  const flags = {};
+                  for (let i = 0; i < 1800; i += 1) flags["k" + i] = true;
+                  return { flags, note: "init" };
+                },
+              },
+            });
+            """;
+
+        var compiled = _vm.Compile(source);
+        var inputs = JsonDocument.Parse("{}").RootElement;
+        var init = _vm.InitData(compiled, inputs);
+
+        var updated = _vm.ValidateAndPatchData(
+            compiled, inputs, init, JsonDocument.Parse("""{"note":"updated"}""").RootElement,
+            [], "2026-11-26T00:00:01Z", "session:ai");
+        Assert.True(updated.Valid);
+        Assert.Equal("updated", updated.NextData.GetProperty("note").GetString());
+
+        var noop = _vm.ValidateAndPatchData(
+            compiled, inputs, updated.NextData, JsonDocument.Parse("""{"note":"updated"}""").RootElement,
+            [], "2026-11-26T00:00:02Z", "session:ai");
+        Assert.True(noop.Valid);
+        Assert.True(JsonElement.DeepEquals(updated.NextData, noop.NextData));
     }
 }

@@ -99,15 +99,6 @@ describe('ReportCheckpointsBlock', () => {
       <ReportCheckpointsBlock
         payload={{
           layout: 'chronicle',
-          range: {
-            unit: '$',
-            current: { value: 137.5, display: '$137.50', label: '现价', note: '当前市场参考价' },
-            points: [
-              { value: 118, display: '$118', note: '云厂 CapEx 放缓至 <15%' },
-              { value: 172, display: '$172', note: 'Blackwell/Rubin 按期迭代', emphasis: true },
-              { value: 225, display: '$225', note: '推理需求指数级扩张' },
-            ],
-          },
           triggers: [
             { trigger: 'SEC 10-Q 发布', action: '生成财报拆解', assignKind: 'model', assign: 'Claude Opus' },
             { trigger: '每周一 08:30', action: '刷新指标快照', assignKind: 'command', assign: 'python snapshot.py' },
@@ -150,12 +141,6 @@ describe('ReportCheckpointsBlock', () => {
         onOpenWorker={onOpenWorker}
       />,
     );
-
-    // Hovering a price point on the 1D range axis reveals its assumption without Bear/Base/Bull labels
-    await user.hover(screen.getByRole('button', { name: /\$118/ }));
-    expect(screen.getByText('云厂 CapEx 放缓至 <15%')).toBeTruthy();
-    await user.hover(screen.getByRole('button', { name: /\$172/ }));
-    expect(screen.getByText('Blackwell/Rubin 按期迭代')).toBeTruthy();
 
     // 7 items -> first 6 visible, 7th behind progressive disclosure
     expect(screen.queryByText('FY25 Q4 财报')).toBeNull();

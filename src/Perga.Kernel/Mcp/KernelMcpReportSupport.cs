@@ -177,7 +177,7 @@ internal static class KernelMcpReportSupport
         var projectedViews = templateViews is { Views.Count: > 0 } ? templateViews.Views : null;
 
         var isScoped = sectionFilter is not null || blockIdFilter is not null;
-        if (!isScoped && format == "full" && !includeContract && projectedViews is null)
+        if (!isScoped && format == "full" && !includeContract && templateViews is null)
         {
             return JsonHelpers.ToElement(res);
         }
@@ -221,7 +221,8 @@ internal static class KernelMcpReportSupport
             Anchor: anchor,
             Diagnostics: res.Diagnostics,
             BlockContract: includeContract ? CachedBlockContract : null,
-            TemplateViews: format == "outline" ? null : projectedViews));
+            TemplateViews: format == "outline" ? null : projectedViews,
+            DataRev: templateViews?.DataRev ?? res.DataRev));
     }
 
     internal static bool ParseIncludeDocumentArg(JsonElement args) =>
@@ -455,7 +456,7 @@ internal static class KernelMcpReportSupport
             },
             "widget": {
               "required": ["use", "view"],
-              "notes": "Template v2 data-bound view block. use is 'builtin:stepper', 'builtin:list', 'builtin:table', 'builtin:detail', or a package-relative './widgets/*.html' path (optional height, chrome: 'seamless'|'framed', showTriggers, selectionKey, title).",
+              "notes": "Template v2 data-bound view block. use is 'builtin:stepper', 'builtin:list', 'builtin:table', 'builtin:detail', or a package-relative './widgets/*.html' path (optional height, chrome: 'seamless'|'framed', selectionKey, title).",
               "example": {
                 "use": "./widgets/range-axis.html",
                 "view": "rangeAxis",
@@ -484,7 +485,8 @@ internal static class KernelMcpReportSupport
         ReadAnchor Anchor,
         IReadOnlyList<ReportDiagnosticDto> Diagnostics,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] JsonElement? BlockContract,
-        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyDictionary<string, JsonElement>? TemplateViews = null);
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyDictionary<string, JsonElement>? TemplateViews = null,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? DataRev = null);
 
     private sealed record McpReportCommitReceipt(
         int DocRev,

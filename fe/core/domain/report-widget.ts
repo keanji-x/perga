@@ -11,7 +11,6 @@ export const widgetBlockPayloadSchema = z.strictObject({
   view: max2048CodePoints(z.string().min(1)),
   /** Default `seamless` for HTML widgets (zero white box, transparent bg, auto-height). */
   chrome: z.enum(['seamless', 'framed']).optional(),
-  showTriggers: z.boolean().optional(),
   /** Optional report-scoped key linking a graphic widget's `select` intent to a native `builtin:detail` block. */
   selectionKey: max2048CodePoints(z.string().min(1)).optional(),
   title: max2048CodePoints(z.string()).nullish(),
@@ -19,16 +18,6 @@ export const widgetBlockPayloadSchema = z.strictObject({
 });
 
 export type WidgetBlockPayload = z.infer<typeof widgetBlockPayloadSchema>;
-
-export const compiledTriggerSpecSchema = z.object({
-  id: z.string(),
-  label: z.string(),
-  onKind: z.enum(['cron', 'event', 'manual', 'condition']).or(z.string().min(1)),
-  onSummary: z.string().nullish(),
-  actionKind: z.enum(['run_cli', 'dispatch_worker', 'wake_lead']).or(z.string().min(1)),
-  assign: z.string().nullish(),
-  assignKind: z.enum(['cli', 'model', 'command']).or(z.string()).nullish(),
-});
 
 export const templateViewDiagnosticSchema = z.object({
   view: z.string(),
@@ -39,7 +28,7 @@ export const templateViewsProjectionSchema = z.object({
   templateId: z.string().default(''),
   views: z.record(z.string(), z.unknown()).default({}),
   widgets: z.record(z.string(), z.string()).default({}),
-  triggers: z.array(compiledTriggerSpecSchema).default([]),
+  dataRev: z.number().int().nonnegative().default(0),
   diagnostics: z.array(templateViewDiagnosticSchema).default([]),
   humanReadOnly: z.boolean().default(false),
 });

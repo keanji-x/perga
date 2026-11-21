@@ -125,7 +125,6 @@ public sealed partial class PolicyVm : IPolicyVm
 
             var initialReportMarkdown = ResolveInitialReportMarkdown(def, bundle);
             var checkpoints = ParseCheckpoints(def);
-            var triggers = ParseTriggers(engine, def);
             ValidateCrossFileReferencesAndInitialData(
                 engine, def, defaultInputsJs, bundle, initialReportMarkdown, viewNames, tHelper, skipCrossFileChecks: !string.IsNullOrWhiteSpace(extendsId));
 
@@ -172,7 +171,6 @@ public sealed partial class PolicyVm : IPolicyVm
                 HasHeaderView: !def.Get("headerView").IsUndefined(),
                 InitialReportMarkdown: initialReportMarkdown,
                 Checkpoints: checkpoints.Count > 0 ? checkpoints : null,
-                Triggers: triggers.Count > 0 ? triggers : null,
                 ViewNames: viewNames.Count > 0 ? viewNames : null,
                 HumanReadOnly: humanReadOnly);
 
@@ -189,26 +187,9 @@ public sealed partial class PolicyVm : IPolicyVm
         {
             var bundle = TemplateBundle.Parse(policy.JsSource);
             using var engine = CreateSandboxedEngine(ExecutionTimeoutMs, bundle);
-            var tHelper = engine.GetValue("t");
             var rawDef = LoadDefaultTemplateObject(engine, bundle);
             var jsInputs = BuildEffectiveJsInputs(engine, rawDef, inputs);
             var def = ResolveEffectiveDefinition(engine, rawDef, jsInputs);
-
-            if (TryGetOptionalObject(def, "data", "template.data", out var dataObj))
-            {
-                var dataInit = dataObj.Get("initial");
-                if (!dataInit.IsUndefined() && !dataInit.IsNull())
-                {
-                    var validated = InitializeAndValidateData(
-                        engine,
-                        def,
-                        dataObj,
-                        jsInputs,
-                        knownTaskKeys: [],
-                        tHelper);
-                    return new PolicyEvalResult<JsonElement>(validated, validated.Clone());
-                }
-            }
 
             var initialStateFn = def.Get("initialState");
             if (initialStateFn.IsUndefined() || initialStateFn.IsNull())

@@ -3,6 +3,7 @@ using System.Text.Json;
 using Dapper;
 using Microsoft.Data.Sqlite;
 using Perga.Contracts;
+using Perga.Kernel;
 using Perga.Kernel.Ports;
 using Perga.ReportDoc;
 
@@ -300,6 +301,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
         var workspaceSpecJson = SqliteJsonUpcaster.SerializeElement(track.WorkspaceSpec);
         var templateInputsJson = SqliteJsonUpcaster.SerializeElement(track.TemplateInputs);
         var templateStateJson = SqliteJsonUpcaster.SerializeElement(track.TemplateState);
+        var dataJson = SqliteJsonUpcaster.SerializeElement(track.Data);
         var enabledPluginsJson = SqliteJsonUpcaster.SerializeStringList(track.EnabledPlugins);
         var blocksJson = SqliteJsonUpcaster.SerializeReportBlocks(initialReport.Blocks);
         var initialBlocksZstd = SqliteJsonUpcaster.CompressReportBlocksZstd(initialReport.Blocks);
@@ -330,14 +332,14 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                         INSERT INTO tracks (
                             id, area_id, parent_track_id, parent_attempt_id, title, cwd,
                             workspace_driver, workspace_spec_json, lead_session_id,
-                            template_id, template_snapshot, template_inputs_json, template_state_json,
+                            template_id, template_snapshot, template_inputs_json, template_state_json, data_json, data_rev,
                             enabled_plugins_json, closed_at_ms, pinned_at_ms, sort_order,
                             created_at_ms, updated_at_ms
                         )
                         VALUES (
                             @Id, @AreaId, @ParentTrackId, @ParentAttemptId, @Title, @Cwd,
                             @WorkspaceDriver, @WorkspaceSpecJson, @LeadSessionId,
-                            @TemplateId, @TemplateSnapshot, @TemplateInputsJson, @TemplateStateJson,
+                            @TemplateId, @TemplateSnapshot, @TemplateInputsJson, @TemplateStateJson, @DataJson, @DataRev,
                             @EnabledPluginsJson, @ClosedAtMs, @PinnedAtMs, @SortOrder,
                             @CreatedAtMs, @UpdatedAtMs
                         );
@@ -357,6 +359,8 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                             TemplateSnapshot = templateSnapshot,
                             TemplateInputsJson = templateInputsJson,
                             TemplateStateJson = templateStateJson,
+                            DataJson = dataJson,
+                            track.DataRev,
                             EnabledPluginsJson = enabledPluginsJson,
                             track.ClosedAtMs,
                             track.PinnedAtMs,
@@ -452,6 +456,8 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                    template_snapshot AS TemplateSnapshot,
                    template_inputs_json AS TemplateInputsJson,
                    template_state_json AS TemplateStateJson,
+                   data_json AS DataJson,
+                   data_rev AS DataRev,
                    enabled_plugins_json AS EnabledPluginsJson,
                    closed_at_ms AS ClosedAtMs,
                    pinned_at_ms AS PinnedAtMs,
@@ -629,13 +635,13 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
             TemplateSnapshotSource: trackRow.TemplateSnapshot);
     }
 
-    public Task UpdateTrackAndEmitAsync(TrackDto track, EventEnvelopeDto? evt, CancellationToken ct) =>
-        UpdateTrackCoreAsync(track, null, evt, ct);
+    public Task UpdateTrackAndEmitAsync(TrackDto track, EventEnvelopeDto? evt, CancellationToken ct, bool writeData = false) =>
+        UpdateTrackCoreAsync(track, null, evt, ct, writeData: writeData);
 
-    public Task UpdateTrackTemplateAndEmitAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto evt, CancellationToken ct, IReadOnlyList<TrackScheduleDto>? templateSchedules = null, bool refreshPromptsOnly = false) =>
-        UpdateTrackCoreAsync(track, templateSnapshot, evt, ct, replaceTemplateSnapshot: true, templateSchedules, refreshPromptsOnly);
+    public Task UpdateTrackTemplateAndEmitAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto evt, CancellationToken ct, IReadOnlyList<TrackScheduleDto>? templateSchedules = null, bool refreshPromptsOnly = false, bool writeData = false) =>
+        UpdateTrackCoreAsync(track, templateSnapshot, evt, ct, replaceTemplateSnapshot: true, templateSchedules, refreshPromptsOnly, writeData);
 
-    private Task UpdateTrackCoreAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto? evt, CancellationToken ct, bool replaceTemplateSnapshot = false, IReadOnlyList<TrackScheduleDto>? templateSchedules = null, bool refreshPromptsOnly = false)
+    private Task UpdateTrackCoreAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto? evt, CancellationToken ct, bool replaceTemplateSnapshot = false, IReadOnlyList<TrackScheduleDto>? templateSchedules = null, bool refreshPromptsOnly = false, bool writeData = false)
     {
         ArgumentNullException.ThrowIfNull(track);
         EnsureInitialized();
@@ -643,11 +649,22 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
         var workspaceSpecJson = SqliteJsonUpcaster.SerializeElement(track.WorkspaceSpec);
         var templateInputsJson = SqliteJsonUpcaster.SerializeElement(track.TemplateInputs);
         var templateStateJson = SqliteJsonUpcaster.SerializeElement(track.TemplateState);
+        var dataJson = writeData ? SqliteJsonUpcaster.SerializeElement(track.Data) : null;
         var enabledPluginsJson = SqliteJsonUpcaster.SerializeStringList(track.EnabledPlugins);
 
         return _writer.EnqueueAsync(
             async (conn, tx, innerCt) =>
             {
+                if (writeData)
+                {
+                    var expectedRev = checked(track.DataRev - 1);
+                    var updated = await conn.ExecuteAsync(new CommandDefinition(
+                        "UPDATE tracks SET data_json = @DataJson, data_rev = @DataRev WHERE id = @Id AND data_rev = @ExpectedDataRev;",
+                        new { DataJson = dataJson, track.DataRev, track.Id, ExpectedDataRev = expectedRev }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
+                    if (updated == 0)
+                        throw KernelException.Conflict($"Data revision conflict: expected {expectedRev}, but the track data was modified concurrently.");
+                }
+
                 await conn.ExecuteAsync(
                     new CommandDefinition(
                         """
@@ -1981,6 +1998,8 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                        template_snapshot AS TemplateSnapshot,
                        template_inputs_json AS TemplateInputsJson,
                        template_state_json AS TemplateStateJson,
+                       data_json AS DataJson,
+                       data_rev AS DataRev,
                        enabled_plugins_json AS EnabledPluginsJson,
                        closed_at_ms AS ClosedAtMs,
                        pinned_at_ms AS PinnedAtMs,
@@ -2226,6 +2245,8 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
             TemplateId: r.TemplateId,
             TemplateInputs: _upcaster.UpcastObjectOrElement(r.TemplateInputsJson, "tracks.template_inputs_json"),
             TemplateState: _upcaster.UpcastObjectOrElement(r.TemplateStateJson, "tracks.template_state_json"),
+            Data: _upcaster.UpcastObjectOrElement(r.DataJson, "tracks.data_json"),
+            DataRev: r.DataRev,
             EnabledPlugins: SqliteJsonUpcaster.DeserializeStringList(r.EnabledPluginsJson),
             ClosedAtMs: r.ClosedAtMs,
             PinnedAtMs: r.PinnedAtMs,
@@ -2416,6 +2437,8 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
         public string? TemplateSnapshot { get; init; }
         public string TemplateInputsJson { get; init; } = "{}";
         public string TemplateStateJson { get; init; } = "{}";
+        public string DataJson { get; init; } = "{}";
+        public long DataRev { get; init; }
         public string EnabledPluginsJson { get; init; } = "[]";
         public long? ClosedAtMs { get; init; }
         public long? PinnedAtMs { get; init; }
