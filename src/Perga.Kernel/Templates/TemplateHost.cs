@@ -21,7 +21,6 @@ public interface ITemplateCatalog
 
 public class TemplateHost : ITemplateCatalog
 {
-    private const string CanonicalFileMarker = "// perga:tool-names-v2";
     private readonly IPolicyVm _policyVm;
     private readonly ConcurrentDictionary<string, CompiledPolicy> _policiesById = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, CompiledPolicy> _snapshotCacheByHash = new(StringComparer.Ordinal);
@@ -108,15 +107,11 @@ public class TemplateHost : ITemplateCatalog
     public CompiledPolicy RegisterTemplate(string jsModuleSource) =>
         Register(ResolveInheritance(_policyVm.Compile(Vm.WithToolNameVersion(jsModuleSource, legacy: false))));
 
-    public CompiledPolicy RegisterFileSource(string source) => Register(ResolveInheritance(_policyVm.Compile(VersionFileSource(source))));
+    public CompiledPolicy RegisterFileSource(string source) =>
+        Register(ResolveInheritance(CompileFileSource(source)));
 
-    private static string VersionFileSource(string source)
-    {
-        // Files can predate the upgrade. The marker opts a disk module into canonical names.
-        using var reader = new StringReader(source.TrimStart());
-        var legacy = reader.ReadLine()?.TrimEnd() != CanonicalFileMarker;
-        return Vm.WithToolNameVersion(source, legacy);
-    }
+    private CompiledPolicy CompileFileSource(string source) =>
+        _policyVm.Compile(Vm.WithToolNameVersion(source, legacy: true));
 
     private CompiledPolicy Register(CompiledPolicy compiled)
     {
@@ -137,8 +132,7 @@ public class TemplateHost : ITemplateCatalog
             .OrderBy(f => f, StringComparer.Ordinal)
             .ToArray();
 
-        var pending = files.Select(file => VersionFileSource(File.ReadAllText(file, Encoding.UTF8)))
-            .Select(_policyVm.Compile).ToList();
+        var pending = files.Select(file => CompileFileSource(File.ReadAllText(file, Encoding.UTF8))).ToList();
         var count = 0;
         while (pending.Count > 0)
         {

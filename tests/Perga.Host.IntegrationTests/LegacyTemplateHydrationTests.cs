@@ -37,16 +37,22 @@ public sealed class LegacyTemplateHydrationTests
                 };
                 """);
             await File.WriteAllTextAsync(Path.Combine(directory.FullName, "b-current.perga.js"), """
-                // perga:tool-names-v2
+                // @ts-check
                 export default {
                   id: "current", title: "Updated catalog template", extends: "legacy",
+                  toolNameVersion: 2,
                   before: call => call.toolName === "pr_merge" ? Deny("Canonical guard") : Allow()
                 };
                 """);
+            await File.WriteAllTextAsync(Path.Combine(directory.FullName, "declarative.perga.json"), """
+                {"id":"declarative","title":"JSON template","toolNameVersion":2}
+                """);
+            await File.WriteAllTextAsync(Path.Combine(directory.FullName, "settings.json"), "{}");
             await using var host = new PergaHostTestCluster(configureHostOptions: options => options.TemplatesDirectory = directory.FullName);
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
             var ct = deadline.Token;
             var kernel = host.Services.GetRequiredService<IPergaKernel>();
+            Assert.False(kernel.Templates.GetRequiredPolicy("declarative").UsesLegacyBeforeToolNames);
             var bridge = host.Services.GetRequiredService<IMcpSessionBridge>();
             var area = await kernel.CreateAreaAsync(new("Custom catalog", DefaultCwd: host.DataDir), ct);
 
@@ -63,7 +69,7 @@ public sealed class LegacyTemplateHydrationTests
                 Assert.Equal("legacy", state.GetProperty("received").GetString());
 
                 var templateId = template == "legacy" ? "legacy" : "__current__";
-                var (inspection, inspectError) = await CallToolAsync(host, "/mcp/kernel", token, "template_cat", new { templateId }, ct);
+                var (inspection, inspectError) = await CallToolAsync(host, "/mcp/kernel", token, "template_read", new { templateId }, ct);
                 Assert.False(inspectError, inspection);
                 using var templateDocument = JsonDocument.Parse(inspection);
                 var result = templateDocument.RootElement;
@@ -96,7 +102,8 @@ public sealed class LegacyTemplateHydrationTests
                 const close = "perga_track_close";
                 export default defineTemplate({
                   id: "legacy-tools", title: "Legacy tools",
-                  before(call) {
+                  before(call, ctx) {
+                    if (call.type === "tool.perga_task_ls" && call.toolName === "perga_task_ls") ctx.state.taskListBefore = true;
                     if (call.type === "tool." + merge && call.toolName === merge)
                       return Deny("Frozen merge guard");
                     if (call.type === "tool." + close && call.toolName === close)
@@ -104,6 +111,7 @@ public sealed class LegacyTemplateHydrationTests
                     return Allow();
                   },
                   after(event, ctx) {
+                    if (event.type === "tool.perga_task_ls") ctx.state.taskListAfter = true;
                     if (event.type === ["tool.perga", "track", "status"].join("_")) ctx.state.pergaDelivered = true;
                     if (event.type === ["tool.vcs", "pr", "checks"].join("_")) ctx.state.vcsDelivered = true;
                   }
@@ -171,12 +179,16 @@ public sealed class LegacyTemplateHydrationTests
             var kernelTools = await ListToolNamesAsync(restored, "/mcp/kernel", token, ct);
             var vcsTools = await ListToolNamesAsync(restored, "/mcp/vcs", token, ct);
             Assert.Contains("report_read", kernelTools);
-            Assert.Contains("provider_ls", kernelTools);
+            Assert.Contains("provider_list", kernelTools);
+            Assert.Contains("task_list", kernelTools);
             Assert.Contains("status", vcsTools);
             Assert.DoesNotContain(kernelTools, name => name.StartsWith("perga_", StringComparison.Ordinal));
             Assert.DoesNotContain(vcsTools, name => name.StartsWith("vcs_", StringComparison.Ordinal));
 
-            foreach (var (path, legacyTool) in new[] { ("/mcp/kernel", "perga_track_status"), ("/mcp/vcs", "vcs_pr_checks") })
+            foreach (var (path, legacyTool) in new[]
+            {
+                ("/mcp/kernel", "perga_track_status"), ("/mcp/vcs", "vcs_pr_checks"), ("/mcp/kernel", "task_ls")
+            })
             {
                 var (unknown, isError) = await CallToolAsync(restored, path, token, legacyTool, new { prNumber = 42 }, ct);
                 Assert.True(isError, unknown);
@@ -186,11 +198,15 @@ public sealed class LegacyTemplateHydrationTests
 
             var (status, statusError) = await CallToolAsync(restored, "/mcp/kernel", token, "track_status", new { }, ct);
             Assert.False(statusError, status);
+            var (tasks, tasksError) = await CallToolAsync(restored, "/mcp/kernel", token, "task_list", new { }, ct);
+            Assert.False(tasksError, tasks);
             var (checks, checksError) = await CallToolAsync(restored, "/mcp/vcs", token, "pr_checks", new { prNumber = 42 }, ct);
             Assert.False(checksError, checks);
             var track = await restoredKernel.GetTrackAggregateAsync(trackId, ct);
             Assert.Equal(legacySnapshot, track.TemplateSnapshotSource);
             var state = track.Track.TemplateState;
+            Assert.True(state.GetProperty("taskListBefore").GetBoolean());
+            Assert.True(state.GetProperty("taskListAfter").GetBoolean());
             Assert.True(state.GetProperty("pergaDelivered").GetBoolean());
             Assert.True(state.GetProperty("vcsDelivered").GetBoolean());
 

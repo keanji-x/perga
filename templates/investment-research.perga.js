@@ -1,4 +1,3 @@
-// perga:tool-names-v2
 // @ts-check
 /// <reference path="./perga-template.d.ts" />
 
@@ -21,6 +20,7 @@
 /** @type {import("./perga-template.d.ts").PergaTemplateDefinition<InvestmentResearchState, InvestmentResearchInputs>} */
 const investmentResearchTemplate = {
   id: "investment-research",
+  toolNameVersion: 2,
   title: "Investment & Factor Research Track",
   description:
     "Institutional equity, macro, and Barra factor research workflow with primary-source archival, risk attribution, and gated paper-trading execution.",

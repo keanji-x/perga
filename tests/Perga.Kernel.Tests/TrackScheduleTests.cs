@@ -177,7 +177,7 @@ public sealed class TrackScheduleTests
 
         // Non-object JSON arguments fail fast on schedule tools.
         var exNonObj = await Assert.ThrowsAsync<KernelException>(() =>
-            KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller, KernelMcpToolNames.ScheduleLs,
+            KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller, KernelMcpToolNames.ScheduleList,
                 JsonSerializer.SerializeToElement(new[] { "bad" })));
         Assert.Equal(KernelErrorCode.InvalidArgument, exNonObj.Code);
 
@@ -195,7 +195,7 @@ public sealed class TrackScheduleTests
         Assert.Equal(KernelErrorCode.InvalidArgument, exCron.Code);
 
         var exInclude = await Assert.ThrowsAsync<KernelException>(() =>
-            KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller, KernelMcpToolNames.ScheduleLs,
+            KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller, KernelMcpToolNames.ScheduleList,
                 JsonSerializer.SerializeToElement(new { includeTerminal = "yes" })));
         Assert.Equal(KernelErrorCode.InvalidArgument, exInclude.Code);
     }

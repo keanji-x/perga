@@ -1,4 +1,3 @@
-// perga:tool-names-v2
 // @ts-check
 /// <reference path="./perga-template.d.ts" />
 
@@ -24,6 +23,7 @@
 /** @type {import("./perga-template.d.ts").PergaTemplateDefinition<DevState, DevInputs>} */
 const devTemplate = {
   id: "dev",
+  toolNameVersion: 2,
   title: "Software Engineering Track",
   description:
     "End-to-end engineering workflow with isolated Jujutsu/Git workspaces, mandatory read-write verification gates, and PR merge safeguards.",

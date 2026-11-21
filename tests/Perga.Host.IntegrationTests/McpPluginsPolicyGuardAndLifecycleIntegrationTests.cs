@@ -302,11 +302,11 @@ public sealed class McpPluginsPolicyGuardAndLifecycleIntegrationTests
                 cluster,
                 "/mcp/kernel",
                 token,
-                "task_ls",
+                "task_list",
                 new { mode = "deny" },
                 ct);
             Assert.True(denyKernelErr);
-            Assert.Contains("Policy blocked perga:task_ls", denyKernelText, StringComparison.Ordinal);
+            Assert.Contains("Policy blocked perga:task_list", denyKernelText, StringComparison.Ordinal);
 
             // 6. Test PolicyVm.GuardToolCall -> AskHuman live HTTP suspension + WS approval.changed and the decision route!
             using var eventsWs = await cluster.ConnectEventsWebSocketAsync($"?since=0&trackId={trackId}", ct);

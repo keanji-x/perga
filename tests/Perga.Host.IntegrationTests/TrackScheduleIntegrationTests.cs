@@ -152,7 +152,7 @@ public sealed class TrackScheduleIntegrationTests
         Assert.Equal(KernelErrorCode.Forbidden, setErr.Code);
 
         var rmErr = await Assert.ThrowsAsync<KernelException>(() =>
-            KernelMcpDispatcher.ExecuteGuardedAsync(kernel, workerCaller, KernelMcpToolNames.ScheduleRm,
+            KernelMcpDispatcher.ExecuteGuardedAsync(kernel, workerCaller, KernelMcpToolNames.ScheduleCancel,
                 JsonSerializer.SerializeToElement(new { scheduleId = "sch_x" })));
         Assert.Equal(KernelErrorCode.Forbidden, rmErr.Code);
 
@@ -179,7 +179,7 @@ public sealed class TrackScheduleIntegrationTests
             }));
         Assert.Equal("cron", cronJson.GetProperty("scheduleKind").GetString());
 
-        var listed = await KernelMcpDispatcher.ExecuteGuardedAsync(kernel, workerCaller, KernelMcpToolNames.ScheduleLs,
+        var listed = await KernelMcpDispatcher.ExecuteGuardedAsync(kernel, workerCaller, KernelMcpToolNames.ScheduleList,
             JsonSerializer.SerializeToElement(new { }));
         Assert.Equal(2, listed.GetProperty("schedules").GetArrayLength());
 
@@ -200,11 +200,11 @@ public sealed class TrackScheduleIntegrationTests
             turn => turn.Input.Prompt.Contains("CRON_MINUTE_CHECK", StringComparison.Ordinal));
 
         // Cancel recurring cron and confirm it no longer appears active.
-        var rm = await KernelMcpDispatcher.ExecuteGuardedAsync(kernel, leadCaller, KernelMcpToolNames.ScheduleRm,
+        var rm = await KernelMcpDispatcher.ExecuteGuardedAsync(kernel, leadCaller, KernelMcpToolNames.ScheduleCancel,
             JsonSerializer.SerializeToElement(new { scheduleId = "sch_cron_1" }));
         Assert.True(rm.GetProperty("canceled").GetBoolean());
 
-        var activeAfter = await KernelMcpDispatcher.ExecuteGuardedAsync(kernel, leadCaller, KernelMcpToolNames.ScheduleLs,
+        var activeAfter = await KernelMcpDispatcher.ExecuteGuardedAsync(kernel, leadCaller, KernelMcpToolNames.ScheduleList,
             JsonSerializer.SerializeToElement(new { }));
         Assert.Equal(0, activeAfter.GetProperty("schedules").GetArrayLength());
     }

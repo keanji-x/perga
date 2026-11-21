@@ -76,7 +76,17 @@ public sealed partial class PolicyVm
             var definition = engine.Modules.Import(name).Get("default");
             // Validate every source before merging: a child must not hide a legacy base hook.
             RejectLegacyHooks(definition);
-            if (definition is ObjectInstance sourceDefinition) ParseSchedules(sourceDefinition);
+            if (definition is ObjectInstance sourceDefinition)
+            {
+                if (sourceDefinition.HasProperty("toolNameVersion"))
+                {
+                    var version = sourceDefinition.Get("toolNameVersion");
+                    if (!version.IsNumber() || version.AsNumber() is not (1 or 2))
+                        throw new InvalidOperationException("template.toolNameVersion must be the integer 1 or 2.");
+                    legacyToolNames = version.AsNumber() == 1;
+                }
+                ParseSchedules(sourceDefinition);
+            }
             return new(definition, legacyToolNames, legacyToolNames);
         }
         var loaded = Load(source);

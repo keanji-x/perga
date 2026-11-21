@@ -7,6 +7,13 @@ internal static class SessionLaunchValidator
     internal static string NormalizeProvider(string provider) =>
         AgentRuntime.NormalizeProviderName(provider).ToLowerInvariant();
 
+    internal static string? NormalizeRequestedModel(string? model)
+    {
+        var trimmed = model?.Trim();
+        if (trimmed is { Length: 0 }) throw KernelException.InvalidArgument("Model must not be blank.");
+        return trimmed;
+    }
+
     internal static string? DefaultModel(ProviderStatus? status) =>
         status?.ModelCatalog?.FirstOrDefault(model => model.IsDefault)?.Model ?? status?.Models.FirstOrDefault();
 
@@ -16,7 +23,7 @@ internal static class SessionLaunchValidator
     internal static KernelException UnknownProvider(string provider, IReadOnlyList<ProviderStatus> providers) =>
         KernelException.InvalidArgument(
             $"Unknown provider '{provider}'. Available providers: {AvailableProviders(providers)}.",
-            "Call provider_ls to inspect available providers.");
+            "Call provider_list to inspect available providers.");
 
     internal static ProviderStatus? ValidateProvider(IReadOnlyList<ProviderStatus> providers, string provider,
         bool explicitlySelected, bool requireAvailable)
@@ -27,14 +34,14 @@ internal static class SessionLaunchValidator
         if (status is { Available: false } && requireAvailable)
             throw KernelException.PreconditionFailed(
                 $"Provider '{provider}' is unavailable: {status.Reason ?? "No diagnostic was reported"}. Available providers: {AvailableProviders(providers)}.",
-                "Choose an available provider or call provider_ls(refresh=true) to retry discovery.");
+                "Choose an available provider or call provider_list(refresh=true) to retry discovery.");
         return status;
     }
 
     internal static void ValidateModelAndEffort(string provider, ProviderStatus? status,
         string? requestedModel, string? effectiveModel, string? requestedEffort)
     {
-        var nextStep = $"Call provider_ls(provider='{provider}') to inspect valid models and reasoning efforts.";
+        var nextStep = $"Call provider_list(provider='{provider}') to inspect valid models and reasoning efforts.";
         if (requestedModel is not null && status is { Models.Count: > 0 } &&
             !status.Models.Contains(requestedModel, StringComparer.Ordinal))
             throw KernelException.InvalidArgument(

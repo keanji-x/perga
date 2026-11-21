@@ -26,20 +26,20 @@ public sealed class PolicyAdmissionRegressionTests
             export default {
               id: 'discovery', title: 'Discovery',
               before(call, ctx) {
-                if (call.type !== 'tool.provider_ls') return Allow();
+                if (call.type !== 'tool.provider_list') return Allow();
                 ctx.state.before = true;
                 if (call.arguments.refresh) return AskHuman('Refresh?', {approve: 'Yes', deny: 'No'});
                 return Allow();
               },
               after(event, ctx) {
-                if (event.type === 'tool.provider_ls') ctx.state.after = true;
+                if (event.type === 'tool.provider_list') ctx.state.after = true;
               }
             };
             """);
         var before = (await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId)).Track.TemplateState.GetRawText();
-        await KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller, KernelMcpToolNames.ProviderLs, TestJson.FromObject(new { }));
+        await KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller, KernelMcpToolNames.ProviderList, TestJson.FromObject(new { }));
         var error = await Assert.ThrowsAsync<KernelException>(() => KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller,
-            KernelMcpToolNames.ProviderLs, TestJson.FromObject(new { refresh = true })));
+            KernelMcpToolNames.ProviderList, TestJson.FromObject(new { refresh = true })));
         Assert.Equal(KernelErrorCode.PolicyDenied, error.Code);
         var after = await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId);
         Assert.Equal(before, after.Track.TemplateState.GetRawText());

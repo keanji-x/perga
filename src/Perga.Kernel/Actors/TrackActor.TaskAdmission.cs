@@ -33,14 +33,19 @@ public sealed partial class TrackActor
     {
         var asks = new List<GuardDecision.AskHuman>();
         var approvedKeys = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var (task, route) in declarations)
+        foreach (var (task, declaredRoute) in declarations)
         {
+            var isDispatch = task.TaskKey == dispatch?.TaskKey;
+            // For a declared model, authorize the ID that the preallocated Worker will launch with.
+            var route = isDispatch && declaredRoute.Model is not null && dispatch?.Session is { } session
+                ? declaredRoute with { Model = session.Model }
+                : declaredRoute;
             if (route.Denial is { } denial) throw KernelException.PolicyDenied(denial);
             var eval = EvaluateTaskDispatchCore(task, route);
             await UpdateTemplateStateIfChangedCoreAsync(eval.NextState, ct).ConfigureAwait(false);
             if (eval.Output is GuardDecision.Deny denied) throw KernelException.PolicyDenied(denied.Reason);
             if (eval.Output is GuardDecision.AskHuman ask) asks.Add(ask);
-            if (task.TaskKey != dispatch?.TaskKey && NeedsTaskProviderCatalog(route))
+            if (!isDispatch && NeedsTaskProviderCatalog(route))
                 ValidateTaskProviderModelCore(route, providers!);
             approvedKeys.Add(task.TaskKey);
         }
@@ -143,7 +148,7 @@ public sealed partial class TrackActor
         catch (Exception ex) when (!ct.IsCancellationRequested)
         {
             throw new KernelException(failureCode, "The provider probe is temporarily unavailable.",
-                "Retry discovery with provider_ls(refresh=true).", ex);
+                "Retry discovery with provider_list(refresh=true).", ex);
         }
     }
 

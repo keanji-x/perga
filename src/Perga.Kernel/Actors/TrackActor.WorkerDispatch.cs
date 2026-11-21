@@ -47,15 +47,16 @@ public sealed partial class TrackActor
     private AgentSessionDto PrepareWorkerSessionCore(CreateSessionRequest request,
         IReadOnlyList<ProviderStatus> providers, string sessionId)
     {
-        var route = _policy is null ? new PolicyTaskRoute(request.Provider, request.Model) :
+        var requestedModel = SessionLaunchValidator.NormalizeRequestedModel(request.Model);
+        var route = _policy is null ? new PolicyTaskRoute(request.Provider, requestedModel) :
             _policyVm.RouteTaskDispatch(_policy, request.Role,
                 request.Task!.Access ?? _policy.Manifest.WorkerDispatch?.Access ?? "read_only",
-                request.Provider, request.Model, _track.TemplateInputs);
+                request.Provider, requestedModel, _track.TemplateInputs);
         if (route.Denial is { } denial) throw KernelException.PolicyDenied(denial);
         return NewSubagentSessionCore(request with
         {
             Provider = request.Provider ?? route.Provider,
-            Model = request.Model ?? route.Model,
+            Model = requestedModel ?? route.Model,
             NotifyParent = request.NotifyParent ?? "task_settled"
         }, providers, requireAvailable: true, sessionId: sessionId);
     }
@@ -111,7 +112,7 @@ public sealed partial class TrackActor
             task_key = taskKey, kind = "agent", ready = true, goal_or_cmd = request.Prompt,
             provider = request.Provider, role = request.Role, access, acceptance = request.Task!.Acceptance,
             depends_on = request.Task!.DependsOn, gate,
-            context = new { workerDispatch = true, initialModel = request.Model }
+            context = new { workerDispatch = true, initialModel = request.Model?.Trim() }
         });
         var position = report.Blocks.Count;
         var ops = new List<BlockOp>();

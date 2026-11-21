@@ -44,7 +44,7 @@ public sealed class TemplateLoopTests
                       tasks:{routing:[{when:{role:'missing'},provider:'missing',model:'unavailable'}]}}
                     """;
                 kernel.Templates.RegisterTemplate(source);
-                var summaries = await Call(KernelMcpToolNames.TemplateLs, new { });
+                var summaries = await Call(KernelMcpToolNames.TemplateList, new { });
                 var summary = Assert.Single(summaries.EnumerateArray(), p => p.GetProperty("id").GetString() == "loop");
                 Assert.Equal(7, summary.EnumerateObject().Count());
                 Assert.True(summary.GetProperty("hasHeaderView").GetBoolean());
@@ -55,7 +55,7 @@ public sealed class TemplateLoopTests
                 var applied = await Call(KernelMcpToolNames.TrackSet, new { templateId = "loop", inputs = new { unit = "km", keep = "retained" } });
                 Assert.Equal("loop", applied.GetProperty("templateId").GetString());
                 await Call(KernelMcpToolNames.TemplateUpdateInputs, new { inputs = new { unit = "m" } });
-                var current = await Call(KernelMcpToolNames.TemplateCat, new { templateId = "__current__" });
+                var current = await Call(KernelMcpToolNames.TemplateRead, new { templateId = "__current__" });
                 Assert.Equal(source, current.GetProperty("snapshot").GetString());
                 Assert.Equal("retained", current.GetProperty("inputs").GetProperty("keep").GetString());
                 Assert.Equal(7, current.GetProperty("state").GetProperty("count").GetInt32());

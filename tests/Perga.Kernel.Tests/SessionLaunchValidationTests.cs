@@ -10,8 +10,52 @@ public sealed class SessionLaunchValidationTests
     private static readonly InteropPrincipal Human = new InteropPrincipal.Human();
 
     [Theory]
+    [InlineData(null)]
+    [InlineData("Inspect workspace")]
+    public async Task SessionCreationTrimsExplicitModelAndRejectsBlankModel(string? prompt)
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
+        var trackId = snapshot.Track.Id;
+        var request = new CreateSessionRequest(Provider: "codex", Prompt: prompt, Task: prompt is null ? null : new());
+
+        var error = await Assert.ThrowsAsync<KernelException>(() =>
+            ctx.Kernel.CreateSessionAsync(trackId, request with { Model = " \t " }, "blank", Human, default));
+        Assert.Equal(KernelErrorCode.InvalidArgument, error.Code);
+        Assert.Equal("Model must not be blank.", error.Message);
+
+        var created = await ctx.Kernel.CreateSessionAsync(trackId, request with { Model = " gpt-5 " }, "trimmed", Human, default);
+        Assert.Equal("gpt-5", created.Receipt.Session.Model);
+    }
+
+    [Fact]
+    public async Task WorkerAdmissionChecksTheModelThatWillLaunch()
+    {
+        await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
+        ctx.AgentRuntime.Providers = [new("codex", true, "1", null, ["gpt-5"])];
+        ctx.Kernel.Templates.RegisterTemplate("""
+            export default defineTemplate({
+              id: "guarded", title: "Guarded",
+              tasks: { routing: [{ when: {}, model: " gpt-5 " }] },
+              before: call => call.type === "task.dispatch" && call.model === "gpt-5" ? Deny("Model blocked") : Allow()
+            });
+            """);
+        var (_, snapshot) = await ctx.CreateDefaultTrackAsync(templateId: "guarded");
+        var trackId = snapshot.Track.Id;
+
+        var error = await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.CreateSessionAsync(trackId,
+            new(Prompt: "Inspect workspace", Task: new()), "blocked", Human, default));
+
+        Assert.Equal(KernelErrorCode.PolicyDenied, error.Code);
+        Assert.Equal("Model blocked", error.Message);
+        Assert.Empty(await ctx.Kernel.ListTasksAsync(trackId));
+        Assert.Single(await ctx.Kernel.ListSessionsAsync(trackId, new(), Human, default));
+    }
+
+    [Theory]
     [InlineData(null, "ultra")]
     [InlineData("gpt-6.2-sol", "ultra")]
+    [InlineData(" gpt-6.2-sol ", "ultra")]
     [InlineData("gpt-5.6-luna", null)]
     public async Task ChildOnlyInheritsReasoningEffortForTheParentsModel(string? model, string? expectedEffort)
     {
@@ -43,7 +87,7 @@ public sealed class SessionLaunchValidationTests
             TestJson.FromObject(model is null ? new { requestKey = "child" } : (object)new { requestKey = "child", model }), ct);
         var session = receipt.GetProperty("session");
 
-        Assert.Equal(model ?? "gpt-6.2-sol", session.GetProperty("model").GetString());
+        Assert.Equal(model?.Trim() ?? "gpt-6.2-sol", session.GetProperty("model").GetString());
         Assert.Equal(expectedEffort, session.TryGetProperty("reasoningEffort", out var effort) ? effort.GetString() : null);
 
         async IAsyncEnumerable<UnifiedAgentEvent> HoldTurnAsync(

@@ -1,6 +1,7 @@
 /** Normalize session item names recorded by built-in MCP servers and OAR. */
 export function normalizeMcpToolName(tool: string): string {
-  return tool.replace(/^(?:perga|vcs):/, '').replace(/^(?:perga|vcs)_/, '');
+  const name = tool.replace(/^(?:perga|vcs):/, '').replace(/^(?:perga|vcs)_/, '');
+  return name === 'task_ls' ? TASK_LIST_TOOL : name;
 }
 
 /** Everything that changes the report. `report_commit` is the canonical Perga batch/block writer. */
@@ -18,7 +19,7 @@ export const TASK_REJECT_TOOL = 'task_reject';
 export const TASK_CANCEL_TOOL = 'task_cancel';
 export const TASK_DONE_TOOL = 'task_done';
 export const TASK_FAIL_TOOL = 'task_fail';
-export const TASK_LS_TOOL = 'task_ls';
+export const TASK_LIST_TOOL = 'task_list';
 
 /** Reads of the report. */
 export const REPORT_READ_TOOLS: readonly string[] = Object.freeze([

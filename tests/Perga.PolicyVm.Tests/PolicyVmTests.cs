@@ -384,13 +384,13 @@ public sealed class PolicyVmTests
             """);
 
         var loopEx = Assert.Throws<InvalidOperationException>(() =>
-            _vm.Before(loopPolicy, "tool.task_ls", "t1",
+            _vm.Before(loopPolicy, "tool.task_list", "t1",
                 JsonSerializer.SerializeToElement(new {
                     sessionId = "s1",
                     isLead = true,
                     boundAttemptId = (object?)null,
                     mcpServer = "perga",
-                    toolName = "task_ls",
+                    toolName = "task_list",
                     arguments = ParseJson("{}")
                 }), ParseJson("{}"), ParseJson("{}")));
         Assert.Contains("sandbox", loopEx.Message, StringComparison.OrdinalIgnoreCase);

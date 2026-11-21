@@ -123,27 +123,27 @@ public sealed class UnifiedSessionMcpTests
         host.AgentRuntime.ProviderStatuses = LaunchTestCatalog;
         host.AgentRuntime.SetTurnHandler(HoldTurns);
         var token = await StartCaller(host, kernel, lead, ct);
-        Assert.Contains(KernelMcpToolNames.ProviderLs, await ListToolNamesAsync(host, "/mcp/kernel", token, ct));
+        Assert.Contains(KernelMcpToolNames.ProviderList, await ListToolNamesAsync(host, "/mcp/kernel", token, ct));
 
         await kernel.GetBootstrapAsync(ct);
         var probes = host.AgentRuntime.ProbeCount;
-        var first = await Success<TrackProvidersDto>(host, token, KernelMcpToolNames.ProviderLs, new { }, ct);
+        var first = await Success<TrackProvidersDto>(host, token, KernelMcpToolNames.ProviderList, new { }, ct);
         Assert.Equal("codex", first.DefaultProvider);
         Assert.Equal(new[] { "codex", "acp:antigravity" }, first.Providers.Select(provider => provider.Provider));
-        var all = await Success<TrackProvidersDto>(host, token, KernelMcpToolNames.ProviderLs, new { includeUnavailable = true }, ct);
+        var all = await Success<TrackProvidersDto>(host, token, KernelMcpToolNames.ProviderList, new { includeUnavailable = true }, ct);
         Assert.Equal("missing binary", Assert.Single(all.Providers, provider => !provider.Available).Reason);
-        var filtered = await Success<TrackProvidersDto>(host, token, KernelMcpToolNames.ProviderLs, new { provider = "agy" }, ct);
+        var filtered = await Success<TrackProvidersDto>(host, token, KernelMcpToolNames.ProviderList, new { provider = "agy" }, ct);
         Assert.Equal("acp:antigravity", Assert.Single(filtered.Providers).Provider);
-        var unavailable = await Success<TrackProvidersDto>(host, token, KernelMcpToolNames.ProviderLs, new { provider = "opencode" }, ct);
+        var unavailable = await Success<TrackProvidersDto>(host, token, KernelMcpToolNames.ProviderList, new { provider = "opencode" }, ct);
         Assert.False(Assert.Single(unavailable.Providers).Available);
         Assert.Equal(first.ObservedAtMs, filtered.ObservedAtMs);
         Assert.Equal(probes, host.AgentRuntime.ProbeCount);
 
-        await AssertLaunchValidationError(host, token, KernelMcpToolNames.ProviderLs, new { provider = "missing" }, "invalid_argument", "codex", ct);
-        await Error(host, token, KernelMcpToolNames.ProviderLs, new { extra = true }, "invalid_argument", ct);
+        await AssertLaunchValidationError(host, token, KernelMcpToolNames.ProviderList, new { provider = "missing" }, "invalid_argument", "codex", ct);
+        await Error(host, token, KernelMcpToolNames.ProviderList, new { extra = true }, "invalid_argument", ct);
         var refreshes = host.AgentRuntime.ForceRefreshProbeCount;
         host.TimeProvider.Advance(TimeSpan.FromSeconds(1));
-        var refreshed = await Success<TrackProvidersDto>(host, token, KernelMcpToolNames.ProviderLs, new { refresh = true }, ct);
+        var refreshed = await Success<TrackProvidersDto>(host, token, KernelMcpToolNames.ProviderList, new { refresh = true }, ct);
         Assert.True(refreshed.ObservedAtMs > first.ObservedAtMs);
         Assert.Equal(probes + 1, host.AgentRuntime.ProbeCount);
         Assert.Equal(refreshes + 1, host.AgentRuntime.ForceRefreshProbeCount);
@@ -202,7 +202,7 @@ public sealed class UnifiedSessionMcpTests
         using var document = JsonDocument.Parse(text);
         Assert.Equal(code, document.RootElement.GetProperty("code").GetString());
         Assert.Contains(choice, document.RootElement.GetProperty("error").GetString());
-        Assert.Contains(KernelMcpToolNames.ProviderLs, document.RootElement.GetProperty("nextStep").GetString());
+        Assert.Contains(KernelMcpToolNames.ProviderList, document.RootElement.GetProperty("nextStep").GetString());
     }
 
     [Theory]

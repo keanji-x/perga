@@ -189,7 +189,7 @@ public sealed class PolicyGuardMailTerminalScheduleBootTests
         Assert.Contains(KernelMcpCatalog.GetToolsForSession(boundAttemptId: null), tool => tool.Name == KernelMcpToolNames.SessionCreate);
         var workerTools = KernelMcpCatalog.GetToolsForSession(boundAttemptId: "att_1");
         Assert.Equal(16, workerTools.Count);
-        Assert.Contains(workerTools, tool => tool.Name == KernelMcpToolNames.ProviderLs);
+        Assert.Contains(workerTools, tool => tool.Name == KernelMcpToolNames.ProviderList);
 
         var reg = ctx.Kernel.McpSessionBridge.RegisterSession(trackId, leadId, isLead: true, null, null, ["market"]);
         var statusJson = await ctx.Kernel.InvokeKernelMcpToolAsync(reg.Principal, KernelMcpToolNames.TrackStatus, TestJson.Parse("{}"));

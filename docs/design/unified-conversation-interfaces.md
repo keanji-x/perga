@@ -32,8 +32,8 @@
 
 ### 1.2 已实现的 MCP `perga_*` 工具盘点（`KernelMcpTools.cs`，共 35 个）
 
-- **共享只读/工作工具（11 个，保留）**：`perga_report_read`、`perga_report_commit`、`perga_task_ls`、`perga_user_ask`、`perga_mail_ls`、`perga_mail_cat`、`perga_track_status`、`perga_terminal_open`、`perga_terminal_read`、`perga_terminal_input`、`perga_schedule_ls`。
-- **Track 治理工具（12 个，保留）**：`perga_task_cancel`、`perga_task_accept`、`perga_task_reject`、`perga_mail_send`、`perga_track_rename`、`perga_track_close`、`perga_template_ls`、`perga_template_cat`、`perga_template_update_inputs`、`perga_track_set`、`perga_schedule_set`、`perga_schedule_rm`（注：`task_cancel / accept / reject` 放宽为“Track Lead 或该 Task 的 `parentSessionId`”均可调用）。
+- **共享只读/工作工具（11 个，保留）**：`perga_report_read`、`perga_report_commit`、`task_list`、`perga_user_ask`、`mail_list`、`mail_read`、`perga_track_status`、`perga_terminal_open`、`perga_terminal_read`、`perga_terminal_input`、`schedule_list`。
+- **Track 治理工具（12 个，保留）**：`perga_task_cancel`、`perga_task_accept`、`perga_task_reject`、`perga_mail_send`、`perga_track_rename`、`perga_track_close`、`template_list`、`template_read`、`perga_template_update_inputs`、`perga_track_set`、`perga_schedule_set`、`schedule_cancel`（注：`task_cancel / accept / reject` 放宽为“Track Lead 或该 Task 的 `parentSessionId`”均可调用）。
 - **契约 Worker 交卷工具（2 个，保留）**：`perga_task_done`、`perga_task_fail`。
 - **系统升级工具（3 个，保留 Lead-only）**：`perga_system_upgrade_check`、`perga_system_upgrade_apply`、`perga_system_upgrade_rollback`。
 - **现有会话操作工具（7 个，全部仅限 Lead 且强绑 Worker `attemptId`，将被替换为统一 8 原语）**：
@@ -293,7 +293,7 @@
 仅当对话创建时挂载了 `task` 契约时，才涉及以下任务层原语（保持职责正交，不混入对话原语）：
 - **子对话交卷（`BoundAttemptId != null` 专有）**：`perga_task_done`、`perga_task_fail`；
 - **父方/人类任务治理**：
-  - `GET /tracks/{trackId}/tasks/{taskKey}/attempts` & `perga_task_ls`
+  - `GET /tracks/{trackId}/tasks/{taskKey}/attempts` & `task_list`
   - `POST /tracks/{trackId}/tasks/{taskKey}/cancel` & `perga_task_cancel`
   - `POST /tracks/{trackId}/tasks/{taskKey}/accept` & `perga_task_accept`
   - `POST /tracks/{trackId}/tasks/{taskKey}/reject` & `perga_task_reject`（`reQueue: true` 时复用同一 `session.id` 升 `Epoch + 1` 绑定新 Attempt）

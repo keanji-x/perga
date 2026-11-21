@@ -231,7 +231,9 @@ public static class PergaHostServiceCollectionExtensions
             return catalog;
         }
 
-        var files = Directory.GetFiles(templatesDirectory, "*.perga.js", SearchOption.TopDirectoryOnly)
+        var files = Directory.EnumerateFiles(templatesDirectory, "*", SearchOption.TopDirectoryOnly)
+            .Where(static file => file.EndsWith(".perga.js", StringComparison.Ordinal) ||
+                file.EndsWith(".perga.json", StringComparison.Ordinal))
             .OrderBy(static f => f, StringComparer.Ordinal)
             .ToArray();
 

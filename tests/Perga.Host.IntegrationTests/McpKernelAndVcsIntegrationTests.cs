@@ -229,11 +229,11 @@ public sealed class McpKernelAndVcsIntegrationTests
         // 1. Lead gets shared, governance and unified session tools.
         var leadTools = await ListToolNamesAsync(cluster, "/mcp/kernel", leadToken, ct);
         Assert.Equal(35, leadTools.Count);
-        Assert.Contains(KernelMcpToolNames.ProviderLs, leadTools);
+        Assert.Contains(KernelMcpToolNames.ProviderList, leadTools);
         Assert.Contains(KernelMcpToolNames.TaskAccept, leadTools);
         Assert.Contains(KernelMcpToolNames.TrackClose, leadTools);
-        Assert.Contains(KernelMcpToolNames.TemplateLs, leadTools);
-        Assert.Contains(KernelMcpToolNames.TemplateCat, leadTools);
+        Assert.Contains(KernelMcpToolNames.TemplateList, leadTools);
+        Assert.Contains(KernelMcpToolNames.TemplateRead, leadTools);
         Assert.Contains(KernelMcpToolNames.TrackSet, leadTools);
         Assert.DoesNotContain(KernelMcpToolNames.TaskDone, leadTools);
         Assert.DoesNotContain(KernelMcpToolNames.TaskFail, leadTools);
@@ -244,7 +244,7 @@ public sealed class McpKernelAndVcsIntegrationTests
         var (_, failByLeadErr) = await CallToolAsync(cluster, "/mcp/kernel", leadToken, KernelMcpToolNames.TaskFail, new { reason = "nope" }, ct);
         Assert.True(failByLeadErr);
 
-        // 2. Exercise shared tools on Lead: report_read, report_commit, task_ls, track_status
+        // 2. Exercise shared tools on Lead: report_read, report_commit, task_list, track_status
         var (readText, readErr) = await CallToolAsync(cluster, "/mcp/kernel", leadToken, KernelMcpToolNames.ReportRead, new { }, ct);
         Assert.False(readErr);
         using var reportReadDoc = JsonDocument.Parse(readText);
@@ -318,9 +318,9 @@ public sealed class McpKernelAndVcsIntegrationTests
             ct);
         Assert.False(commitErr, commitText);
 
-        var (taskLsText, taskLsErr) = await CallToolAsync(cluster, "/mcp/kernel", leadToken, KernelMcpToolNames.TaskLs, new { }, ct);
-        Assert.False(taskLsErr);
-        Assert.Contains("\"access\":\"read_write\"", taskLsText, StringComparison.Ordinal);
+        var (taskListText, taskListErr) = await CallToolAsync(cluster, "/mcp/kernel", leadToken, KernelMcpToolNames.TaskList, new { }, ct);
+        Assert.False(taskListErr);
+        Assert.Contains("\"access\":\"read_write\"", taskListText, StringComparison.Ordinal);
 
         var (statusText, statusErr) = await CallToolAsync(cluster, "/mcp/kernel", leadToken, KernelMcpToolNames.TrackStatus, new { }, ct);
         Assert.False(statusErr);
@@ -330,7 +330,7 @@ public sealed class McpKernelAndVcsIntegrationTests
         var contractToken = await contractSubagentTokenTcs.Task.WaitAsync(ct);
         var subTools = await ListToolNamesAsync(cluster, "/mcp/kernel", contractToken, ct);
         Assert.Equal(16, subTools.Count);
-        Assert.Contains(KernelMcpToolNames.ProviderLs, subTools);
+        Assert.Contains(KernelMcpToolNames.ProviderList, subTools);
         Assert.Contains(KernelMcpToolNames.TaskDone, subTools);
         Assert.Contains(KernelMcpToolNames.TaskFail, subTools);
         Assert.DoesNotContain(KernelMcpToolNames.TaskAccept, subTools);
@@ -348,8 +348,8 @@ public sealed class McpKernelAndVcsIntegrationTests
                      (KernelMcpToolNames.MailSend, new { toTrackId = trackBId, summary = "hi", body = "hi" }),
                      (KernelMcpToolNames.TrackRename, new { title = "Hijack" }),
                      (KernelMcpToolNames.TrackClose, new { }),
-                     (KernelMcpToolNames.TemplateLs, new { }),
-                     (KernelMcpToolNames.TemplateCat, new { }),
+                     (KernelMcpToolNames.TemplateList, new { }),
+                     (KernelMcpToolNames.TemplateRead, new { }),
                      (KernelMcpToolNames.TrackSet, new { templateId = "dev" })
                  })
         {
@@ -529,7 +529,7 @@ public sealed class McpKernelAndVcsIntegrationTests
         Assert.False(termReadErr, termReadText);
         Assert.Contains("MCP_PTY_777", termReadText, StringComparison.Ordinal);
 
-        // mail_send (Track A -> Track B) + mail_ls & mail_cat on Track B!
+        // mail_send (Track A -> Track B) + mail_list & mail_read on Track B!
         var (mailSendText, mailSendErr) = await CallToolAsync(
             cluster,
             "/mcp/kernel",
@@ -541,25 +541,25 @@ public sealed class McpKernelAndVcsIntegrationTests
         using var sentMailDoc = JsonDocument.Parse(mailSendText);
         var mailId = sentMailDoc.RootElement.GetProperty("id").GetString()!;
 
-        var (mailLsText, mailLsErr) = await CallToolAsync(
+        var (mailListText, mailListErr) = await CallToolAsync(
             cluster,
             "/mcp/kernel",
             peerLeadToken,
-            KernelMcpToolNames.MailLs,
+            KernelMcpToolNames.MailList,
             new { unreadOnly = true },
             ct);
-        Assert.False(mailLsErr);
-        Assert.Contains(mailId, mailLsText, StringComparison.Ordinal);
+        Assert.False(mailListErr);
+        Assert.Contains(mailId, mailListText, StringComparison.Ordinal);
 
-        var (mailCatText, mailCatErr) = await CallToolAsync(
+        var (mailReadText, mailReadErr) = await CallToolAsync(
             cluster,
             "/mcp/kernel",
             peerLeadToken,
-            KernelMcpToolNames.MailCat,
+            KernelMcpToolNames.MailRead,
             new { mailId },
             ct);
-        Assert.False(mailCatErr);
-        Assert.Contains("All 24 routes are live.", mailCatText, StringComparison.Ordinal);
+        Assert.False(mailReadErr);
+        Assert.Contains("All 24 routes are live.", mailReadText, StringComparison.Ordinal);
 
         var (replyText, replyError) = await CallToolAsync(cluster, "/mcp/kernel", peerLeadToken,
             KernelMcpToolNames.MailSend, new { replyToMailId = mailId, summary = "Received", body = "Review underway" }, ct);

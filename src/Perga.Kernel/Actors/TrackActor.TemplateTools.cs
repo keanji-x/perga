@@ -14,7 +14,7 @@ public sealed partial class TrackActor
     public Task<JsonElement> InspectCurrentTemplateAsync(string sessionId, CancellationToken ct) => EnqueueAsync(async _ =>
     {
         await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
-        RequireGovernanceSessionCore(sessionId, KernelMcpToolNames.TemplateCat);
+        RequireGovernanceSessionCore(sessionId, KernelMcpToolNames.TemplateRead);
         return InspectCurrentTemplateCore(TemplateHost.LegacyReapplySource(_policy));
     }, ct);
 
@@ -91,10 +91,25 @@ public sealed partial class TrackActor
         return PresentTrackCore();
     }, ct);
 
-    private static string GetPolicyToolName(string mcpServer, string toolName, bool useLegacyToolNames) =>
-        useLegacyToolNames && mcpServer is "perga" or "vcs"
-            ? mcpServer + "_" + toolName
-            : toolName;
+    private static string GetPolicyToolName(string mcpServer, string toolName, bool useLegacyToolNames)
+    {
+        if (!useLegacyToolNames || mcpServer is not ("perga" or "vcs")) return toolName;
+        if (mcpServer == "perga")
+        {
+            toolName = toolName switch
+            {
+                KernelMcpToolNames.TaskList => "task_ls",
+                KernelMcpToolNames.MailList => "mail_ls",
+                KernelMcpToolNames.MailRead => "mail_cat",
+                KernelMcpToolNames.ScheduleList => "schedule_ls",
+                KernelMcpToolNames.ScheduleCancel => "schedule_rm",
+                KernelMcpToolNames.TemplateList => "template_ls",
+                KernelMcpToolNames.TemplateRead => "template_cat",
+                _ => toolName
+            };
+        }
+        return mcpServer + "_" + toolName;
+    }
 
     public async Task AfterMcpToolCallAsync(string mcpServer, string toolName, JsonElement data, CancellationToken ct)
     {
@@ -168,8 +183,10 @@ public sealed partial class TrackActor
             foreach (var route in _policyVm.ResolveRoutingTargets(policy, inputs))
             {
                 var provider = route.Provider ?? GetDefaultProviderCore();
+                var normalizedProvider = SessionLaunchValidator.NormalizeProvider(provider);
                 var model = route.Model;
-                if (!providers.Any(p => p.Available && string.Equals(p.Provider, provider, StringComparison.OrdinalIgnoreCase) && (model is null || p.Models.Contains(model, StringComparer.Ordinal))))
+                if (!providers.Any(p => p.Available && SessionLaunchValidator.NormalizeProvider(p.Provider) == normalizedProvider &&
+                    (model is null || p.Models.Contains(model, StringComparer.Ordinal))))
                     warnings.Add($"Template provider/model is unavailable: {provider}/{model}.");
             }
         }

@@ -1,4 +1,3 @@
-// perga:tool-names-v2
 // @ts-check
 /// <reference path="./perga-template.d.ts" />
 
@@ -21,6 +20,7 @@
 /** @type {import("./perga-template.d.ts").PergaTemplateDefinition<LongTermGoalState, LongTermGoalInputs>} */
 const longTermGoalTemplate = {
   id: "long-term-goal",
+  toolNameVersion: 2,
   title: "Long-Term Goal & Milestone Track",
   description:
     "Sustained multi-week goal execution with scheduled check-ins, milestone tracking, failure circuit-breakers, and structured retrospectives.",

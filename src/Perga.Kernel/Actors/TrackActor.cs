@@ -859,12 +859,13 @@ public sealed partial class TrackActor : IAsyncDisposable
         var now = NowMs();
         var provider = SessionLaunchValidator.NormalizeProvider(request.Provider ?? parent?.Provider ?? GetDefaultProviderCore());
         var switchesParentProvider = parent is not null && provider != SessionLaunchValidator.NormalizeProvider(parent.Provider);
-        var model = request.Model ?? (switchesParentProvider ? null : parent?.Model ?? GetDefaultModelCore(provider));
+        var requestedModel = SessionLaunchValidator.NormalizeRequestedModel(request.Model);
+        var model = requestedModel ?? (switchesParentProvider ? null : parent?.Model ?? GetDefaultModelCore(provider));
         var canInheritReasoningEffort = !switchesParentProvider &&
-            (request.Model is null || string.Equals(request.Model, parent?.Model, StringComparison.Ordinal));
+            (requestedModel is null || string.Equals(requestedModel, parent?.Model, StringComparison.Ordinal));
         var effort = string.IsNullOrWhiteSpace(request.ReasoningEffort) ? null : request.ReasoningEffort.Trim();
         var status = SessionLaunchValidator.ValidateProvider(providers, provider, request.Provider is not null, requireAvailable);
-        SessionLaunchValidator.ValidateModelAndEffort(provider, status, request.Model, model, effort);
+        SessionLaunchValidator.ValidateModelAndEffort(provider, status, requestedModel, model, effort);
         var permissionMode = request.PermissionMode is null && !switchesParentProvider && parent?.PermissionMode is { } inherited
             ? inherited
             : RuntimePermissionModes.Resolve(provider, request.PermissionMode, request.PermissionMode is null ? null :
@@ -1564,7 +1565,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                         throw KernelException.Forbidden("Only the current Track Lead can use this tool.");
                 }
 
-                var providerDiscovery = mcpServer == "perga" && toolName == KernelMcpToolNames.ProviderLs;
+                var providerDiscovery = mcpServer == "perga" && toolName == KernelMcpToolNames.ProviderList;
                 var previewOnly = providerDiscovery;
                 if (mcpServer == "perga" && toolName == KernelMcpToolNames.TrackSet)
                     previewOnly = ValidateTemplateSetArguments(arguments);
@@ -3209,10 +3210,10 @@ public sealed partial class TrackActor : IAsyncDisposable
                 : "Collaborative Subagent (Unbound)";
 
         var templateNote = session.IsLead
-            ? "\n\nTemplates are optional and implicit. If useful, discover them with template_ls, inspect a template or the authoring contract with template_cat, inspect the active snapshot with template_cat(__current__), apply or preview with track_set (templateId or JSON/.perga.js source, inputs, dryRun), detach with clear, and update inputs with template_update_inputs (preserves state)."
+            ? "\n\nTemplates are optional and implicit. If useful, discover them with template_list, inspect a template or the authoring contract with template_read, inspect the active snapshot with template_read(__current__), apply or preview with track_set (templateId or JSON/.perga.js source, inputs, dryRun), detach with clear, and update inputs with template_update_inputs (preserves state)."
             : string.Empty;
         var sessionNote = session.BoundAttemptId is null
-            ? "Use session_list/create/read/update/send/withdraw/control/respond to manage child conversations. Create accepts an optional task contract; reuse requestKey for retries. Use provider_ls to discover available providers, models, reasoning efforts, and permission modes. Only control your direct children; the Lead can also manage other sessions. Never stop, reset or archive yourself. Answer delegated asks and approvals with session_respond; the human can always take over."
+            ? "Use session_list/create/read/update/send/withdraw/control/respond to manage child conversations. Create accepts an optional task contract; reuse requestKey for retries. Use provider_list to discover available providers, models, reasoning efforts, and permission modes. Only control your direct children; the Lead can also manage other sessions. Never stop, reset or archive yourself. Answer delegated asks and approvals with session_respond; the human can always take over."
             : "Use session_list/read to observe conversations. Submit your task with task_done or task_fail; bound Workers cannot spawn or control sessions.";
         return $"You are operating in Perga Track '{_track.Title}' ({TrackId}) as {role}.{templateNote}\n\n{sessionNote}\n\n## Current Report\n{reportMd}";
     }

@@ -153,6 +153,16 @@ it.each(['publish_pr', 'vcs_publish_pr', 'vcs:publish_pr', 'vcs:vcs_publish_pr']
   },
 );
 
+it.each(['task_list', 'task_ls', 'perga_task_ls', 'perga:perga_task_ls'])('renders %s as reading the plan', (name) => {
+  const page = conversationItemsOperation('session', null).responseSchema.parse(pergaPage([
+    item(1, 'tool_call', { callId: 'tasks', name }),
+    item(2, 'tool_result', { callId: 'tasks', output: [], isError: false }),
+  ]));
+  expect(buildConversationTranscript(page.items, null)).toMatchObject([
+    { author: 'activity', verb: 'Read plan', state: 'done', tool: name },
+  ]);
+});
+
 it('bounds thinking and tool disclosures without losing failure evidence', () => {
   const rows = [item(1, 'thinking', { text: 'x'.repeat(40_000) }),
     item(2, 'tool_call', { callId: 'call', name: 'custom' }), item(3, 'tool_result', { callId: 'call', isError: true, output: 'y'.repeat(40_000) })];

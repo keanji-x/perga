@@ -4,7 +4,7 @@ import {
     normalizeMcpToolName,
     REPORT_DELETE_TOOL, REPORT_READ_TOOLS, REPORT_WRITE_TOOLS,
     TASK_ACCEPT_TOOL,
-    TASK_LS_TOOL,
+    TASK_LIST_TOOL,
     TASK_REJECT_TOOL,
     TRACK_RENAME_TOOL, TRACK_TOOL_PREFIX,
     USER_ASK_TOOL,
@@ -42,7 +42,7 @@ export function conversationToolShape(recordedTool: string, args: unknown): Acti
   if (tool === TASK_REJECT_TOOL) {
     return { running: 'Rejecting task', done: 'Rejected task', target: null };
   }
-  if (tool === TASK_LS_TOOL) {
+  if (tool === TASK_LIST_TOOL) {
     return { running: 'Reading plan', done: 'Read plan', target: null };
   }
   // Recognize track writes before the track prefix fallback.
