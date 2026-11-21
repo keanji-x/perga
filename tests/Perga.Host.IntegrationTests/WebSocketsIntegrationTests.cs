@@ -169,7 +169,7 @@ public sealed class WebSocketsIntegrationTests
             innerCt.ThrowIfCancellationRequested();
             using var argsDoc = JsonDocument.Parse("""{"q":"perga"}""");
             yield return new UnifiedAgentEvent.ThinkingDelta("step-1-thinking");
-            yield return new UnifiedAgentEvent.ToolCallStarted("call_1", "perga_task_ls", argsDoc.RootElement.Clone());
+            yield return new UnifiedAgentEvent.ToolCallStarted("call_1", "task_ls", argsDoc.RootElement.Clone());
             yield return new UnifiedAgentEvent.ToolCallCompleted("call_1", "[]", IsError: false);
             yield return new UnifiedAgentEvent.TextDelta("live-text-chunk");
             yield return new UnifiedAgentEvent.TurnCompleted(new TokenUsage(100, 30, 0, 100_000));
@@ -212,7 +212,7 @@ public sealed class WebSocketsIntegrationTests
             {
                 Assert.Equal("started", started.GetProperty("phase").GetString());
                 Assert.Equal("call_1", started.GetProperty("callId").GetString());
-                Assert.Equal("perga_task_ls", started.GetProperty("name").GetString());
+                Assert.Equal("task_ls", started.GetProperty("name").GetString());
                 Assert.Equal("perga", started.GetProperty("args").GetProperty("q").GetString());
             },
             completed =>

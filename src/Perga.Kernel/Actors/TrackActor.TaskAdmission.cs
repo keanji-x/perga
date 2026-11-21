@@ -143,7 +143,7 @@ public sealed partial class TrackActor
         catch (Exception ex) when (!ct.IsCancellationRequested)
         {
             throw new KernelException(failureCode, "The provider probe is temporarily unavailable.",
-                "Retry discovery with perga_provider_ls(refresh=true).", ex);
+                "Retry discovery with provider_ls(refresh=true).", ex);
         }
     }
 

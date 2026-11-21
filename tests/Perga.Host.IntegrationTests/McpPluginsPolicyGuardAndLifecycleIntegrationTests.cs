@@ -292,21 +292,21 @@ public sealed class McpPluginsPolicyGuardAndLifecycleIntegrationTests
                 cluster,
                 "/mcp/vcs",
                 token,
-                "vcs_status",
+                "status",
                 new { mode = "deny" },
                 ct);
             Assert.True(denyVcsErr);
-            Assert.Contains("Policy blocked vcs:vcs_status", denyVcsText, StringComparison.Ordinal);
+            Assert.Contains("Policy blocked vcs:status", denyVcsText, StringComparison.Ordinal);
 
             var (denyKernelText, denyKernelErr) = await McpKernelAndVcsIntegrationTests.CallToolAsync(
                 cluster,
                 "/mcp/kernel",
                 token,
-                "perga_task_ls",
+                "task_ls",
                 new { mode = "deny" },
                 ct);
             Assert.True(denyKernelErr);
-            Assert.Contains("Policy blocked perga:perga_task_ls", denyKernelText, StringComparison.Ordinal);
+            Assert.Contains("Policy blocked perga:task_ls", denyKernelText, StringComparison.Ordinal);
 
             // 6. Test PolicyVm.GuardToolCall -> AskHuman live HTTP suspension + WS approval.changed and the decision route!
             using var eventsWs = await cluster.ConnectEventsWebSocketAsync($"?since=0&trackId={trackId}", ct);

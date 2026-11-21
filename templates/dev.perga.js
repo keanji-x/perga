@@ -1,3 +1,4 @@
+// perga:tool-names-v2
 // @ts-check
 /// <reference path="./perga-template.d.ts" />
 
@@ -164,7 +165,7 @@ const devTemplate = {
     }
     if (!action.type.startsWith("tool.")) return Allow();
     const call = action;
-    if (call.mcpServer === "vcs" && call.toolName === "vcs_pr_merge") {
+    if (call.mcpServer === "vcs" && call.toolName === "pr_merge") {
       if (!ctx.state.ciVerified) {
         return Deny(
           "Cannot merge PR before at least one read-write task gate has passed verification (ciVerified=false)."
@@ -179,7 +180,7 @@ const devTemplate = {
       return Allow();
     }
 
-    if (call.mcpServer === "vcs" && call.toolName === "vcs_publish_pr") {
+    if (call.mcpServer === "vcs" && call.toolName === "publish_pr") {
       if (ctx.inputs.riskLevel === "high" && !ctx.state.prPublished) {
         ctx.state.prPublished = true;
         return AskHuman(

@@ -1,3 +1,4 @@
+// perga:tool-names-v2
 // @ts-check
 /// <reference path="./perga-template.d.ts" />
 

@@ -9,49 +9,49 @@ namespace Perga.Kernel.Mcp;
 
 public static class KernelMcpToolNames
 {
-    public const string SystemUpgradeCheck = "perga_system_upgrade_check";
-    public const string SystemUpgradeApply = "perga_system_upgrade_apply";
-    public const string SystemUpgradeRollback = "perga_system_upgrade_rollback";
+    public const string SystemUpgradeCheck = "system_upgrade_check";
+    public const string SystemUpgradeApply = "system_upgrade_apply";
+    public const string SystemUpgradeRollback = "system_upgrade_rollback";
 
     // Shared across all sessions (Lead, free Subagent, contract Subagent)
-    public const string ReportRead = "perga_report_read";
-    public const string ReportCommit = "perga_report_commit";
-    public const string TaskLs = "perga_task_ls";
-    public const string UserAsk = "perga_user_ask";
-    public const string MailLs = "perga_mail_ls";
-    public const string MailCat = "perga_mail_cat";
-    public const string ProviderLs = "perga_provider_ls";
-    public const string TrackStatus = "perga_track_status";
-    public const string TerminalOpen = "perga_terminal_open";
-    public const string TerminalRead = "perga_terminal_read";
-    public const string TerminalInput = "perga_terminal_input";
-    public const string ScheduleLs = "perga_schedule_ls";
+    public const string ReportRead = "report_read";
+    public const string ReportCommit = "report_commit";
+    public const string TaskLs = "task_ls";
+    public const string UserAsk = "user_ask";
+    public const string MailLs = "mail_ls";
+    public const string MailCat = "mail_cat";
+    public const string ProviderLs = "provider_ls";
+    public const string TrackStatus = "track_status";
+    public const string TerminalOpen = "terminal_open";
+    public const string TerminalRead = "terminal_read";
+    public const string TerminalInput = "terminal_input";
+    public const string ScheduleLs = "schedule_ls";
 
     // Governance tools (BoundAttemptId == null ONLY)
-    public const string TaskCancel = "perga_task_cancel";
-    public const string TaskAccept = "perga_task_accept";
-    public const string TaskReject = "perga_task_reject";
-    public const string MailSend = "perga_mail_send";
-    public const string TrackRename = "perga_track_rename";
-    public const string TemplateLs = "perga_template_ls";
-    public const string TemplateCat = "perga_template_cat";
-    public const string TemplateUpdateInputs = "perga_template_update_inputs";
-    public const string TrackSet = "perga_track_set";
-    public const string TrackClose = "perga_track_close";
-    public const string ScheduleSet = "perga_schedule_set";
-    public const string ScheduleRm = "perga_schedule_rm";
+    public const string TaskCancel = "task_cancel";
+    public const string TaskAccept = "task_accept";
+    public const string TaskReject = "task_reject";
+    public const string MailSend = "mail_send";
+    public const string TrackRename = "track_rename";
+    public const string TemplateLs = "template_ls";
+    public const string TemplateCat = "template_cat";
+    public const string TemplateUpdateInputs = "template_update_inputs";
+    public const string TrackSet = "track_set";
+    public const string TrackClose = "track_close";
+    public const string ScheduleSet = "schedule_set";
+    public const string ScheduleRm = "schedule_rm";
 
     // Contract completion tools (BoundAttemptId != null ONLY)
-    public const string TaskDone = "perga_task_done";
-    public const string TaskFail = "perga_task_fail";
-    public const string SessionRespond = "perga_session_respond";
-    public const string SessionRead = "perga_session_read";
-    public const string SessionSend = "perga_session_send";
-    public const string SessionWithdraw = "perga_session_withdraw";
-    public const string SessionList = "perga_session_list";
-    public const string SessionCreate = "perga_session_create";
-    public const string SessionUpdate = "perga_session_update";
-    public const string SessionControl = "perga_session_control";
+    public const string TaskDone = "task_done";
+    public const string TaskFail = "task_fail";
+    public const string SessionRespond = "session_respond";
+    public const string SessionRead = "session_read";
+    public const string SessionSend = "session_send";
+    public const string SessionWithdraw = "session_withdraw";
+    public const string SessionList = "session_list";
+    public const string SessionCreate = "session_create";
+    public const string SessionUpdate = "session_update";
+    public const string SessionControl = "session_control";
 
     public static readonly IReadOnlyList<string> All =
     [
@@ -192,7 +192,7 @@ public static class KernelMcpCatalog
                 Schema("""{"type":"object","required":["title"],"properties":{"title":{"type":"string"}}}""")),
             new(KernelMcpToolNames.TemplateLs, "List concise template summaries (governance only).",
                 Schema("""{"type":"object","properties":{}}""")),
-            new(KernelMcpToolNames.TemplateCat, "Inspect a template manifest and source; use __current__ for the active snapshot, inputs, state and headerView; omit templateId or use __contract__ for the authoring contract (governance only).",
+            new(KernelMcpToolNames.TemplateCat, "Inspect a template manifest and source; use __current__ for the active snapshot, inputs, state and headerView; omit templateId or use __contract__ for the authoring contract. For a legacy template, pass jsSource or snapshot unchanged to track_set to preserve tool naming; editableSource is the underlying template (governance only).",
                 Schema("""{"type":"object","properties":{"templateId":{"type":"string"}}}""")),
             new(KernelMcpToolNames.TemplateUpdateInputs, "Merge inputs into the active template, preserving state (governance only).",
                 Schema("""{"type":"object","required":["inputs"],"properties":{"inputs":{"type":"object"}}}""")),
@@ -209,15 +209,15 @@ public static class KernelMcpCatalog
             new(KernelMcpToolNames.SessionCreate,
                 "Create a child conversation. Omit task for a lightweight multi-turn collaborator sharing the Track workspace. Avoid concurrent writers. " +
                 "Provide task for a formal Task Worker with a Report block, read_only isolation or a read_write lease, dependsOn scheduling, " +
-                "perga_task_done/perga_task_fail completion, gate verification, and perga_task_accept/perga_task_reject review. " +
-                "Call perga_provider_ls if unsure of provider, model, reasoningEffort, or permissionMode. Reuse requestKey to retry safely.",
+                "task_done/task_fail completion, gate verification, and task_accept/task_reject review. " +
+                "Call provider_ls if unsure of provider, model, reasoningEffort, or permissionMode. Reuse requestKey to retry safely.",
                 Schema("""
                 {"type":"object","additionalProperties":false,"properties":{
                   "title":{"type":"string","description":"Human-readable conversation title."},
-                  "provider":{"type":"string","description":"Provider ID from perga_provider_ls. Omit to use the parent provider for a plain child or the routed Track default for a Worker."},
+                  "provider":{"type":"string","description":"Provider ID from provider_ls. Omit to use the parent provider for a plain child or the routed Track default for a Worker."},
                   "model":{"type":"string","description":"Model ID for the target provider. Omit to use inherited or default settings."},
                   "reasoningEffort":{"type":"string","description":"Reasoning effort supported by the selected model. Omit to use inherited or default settings."},
-                  "permissionMode":{"type":"string","description":"Native permission mode ID from perga_provider_ls. Omit to use inherited or default settings. Task workspace isolation is controlled by task.access."},
+                  "permissionMode":{"type":"string","description":"Native permission mode ID from provider_ls. Omit to use inherited or default settings. Task workspace isolation is controlled by task.access."},
                   "role":{"type":"string","description":"Worker role used for Track template routing."},
                   "systemPrompt":{"type":"string","description":"Additional system instructions for this conversation."},
                   "prompt":{"type":"string","description":"Initial instruction. Omit to create an idle plain child. Required for a Task Worker."},
@@ -234,7 +234,7 @@ public static class KernelMcpCatalog
             new(KernelMcpToolNames.SessionRead, "Read conversation state, history, progress and pending interactions.",
                 Schema("""{"type":"object","additionalProperties":false,"properties":{"sessionId":{"type":"string"},"beforeId":{"type":"integer"},"afterId":{"type":"integer"},"limit":{"type":"integer","minimum":1,"maximum":100},"activityTurnId":{"type":"string"},"afterSequence":{"type":"integer","minimum":0},"waitMs":{"type":"integer","minimum":0,"maximum":10000}},"required":["sessionId"]}""")),
             new(KernelMcpToolNames.SessionUpdate,
-                "Update a child conversation. Configuration changes require expectedConfigVersion. Use perga_provider_ls to discover supported values.",
+                "Update a child conversation. Configuration changes require expectedConfigVersion. Use provider_ls to discover supported values.",
                 Schema("""
                 {"type":"object","additionalProperties":false,"properties":{
                   "sessionId":{"type":"string","description":"ID of the conversation to update."},
@@ -270,6 +270,8 @@ public static class KernelMcpDispatcher
         CancellationToken ct = default)
     {
         var args = arguments.ValueKind == JsonValueKind.Undefined ? JsonHelpers.EmptyObject : arguments;
+        if (!KernelMcpToolNames.All.Contains(toolName))
+            throw KernelException.NotFound($"Unknown kernel MCP tool '{toolName}'.");
         if (toolName is KernelMcpToolNames.SystemUpgradeCheck or KernelMcpToolNames.SystemUpgradeApply or KernelMcpToolNames.SystemUpgradeRollback)
         {
             return await kernel.InvokeSystemUpgradeAsync(caller,
@@ -284,7 +286,7 @@ public static class KernelMcpDispatcher
         var result = await ExecuteAuthorizedAsync(kernel, caller, toolName, args, expectedPolicyGeneration, origin, ct).ConfigureAwait(false);
         if (toolName != KernelMcpToolNames.ProviderLs &&
             !(toolName == KernelMcpToolNames.TrackSet && args.TryGetProperty("dryRun", out var dry) && dry.ValueKind == JsonValueKind.True))
-            await kernel.Actors.GetOrActivate(caller.TrackId).AfterPolicyEventAsync("tool." + toolName,
+            await kernel.Actors.GetOrActivate(caller.TrackId).AfterMcpToolCallAsync("perga", toolName,
                 JsonHelpers.ToElement(new { arguments = args, result }), ct).ConfigureAwait(false);
         return result;
     }
@@ -675,7 +677,7 @@ public static class KernelMcpDispatcher
             anchorElem.ValueKind != JsonValueKind.Object)
         {
             throw KernelException.InvalidArgument(
-                "Missing 'anchor' object. Pass the ReadAnchor returned by perga_report_read, e.g. {\"docRev\":0,\"knownBlockRevs\":{\"b_1234\":1},\"wholeDocumentRead\":true}.");
+                "Missing 'anchor' object. Pass the ReadAnchor returned by report_read, e.g. {\"docRev\":0,\"knownBlockRevs\":{\"b_1234\":1},\"wholeDocumentRead\":true}.");
         }
 
         var anchor = JsonHelpers.Deserialize<ReadAnchor>(anchorElem)

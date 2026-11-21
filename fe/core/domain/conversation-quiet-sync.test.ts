@@ -206,6 +206,13 @@ describe('foldQuietSyncs outcome', () => {
     expect(isReportWriteTool(`${REPORT_TOOL_PREFIX.slice(0, -1)}ing.x`)).toBe(false);
   });
 
+  it.each(['', 'perga_', 'perga:', 'perga:perga_'])('classifies report activity with prefix %s', (prefix) => {
+    const read = activity('r1', { tool: `${prefix}report_read` });
+    const write = wrote('w1', { tool: `${prefix}report_commit` });
+    expect(group(foldQuietSyncs([reportEdited('s1'), read, outcome('o1')])[0]).outcome).toBe('accepted');
+    expect(group(foldQuietSyncs([reportEdited('s1'), write, outcome('o1')])[0]).outcome).toBe('updated');
+  });
+
 });
 
 describe('reportEditAuthor', () => {

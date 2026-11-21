@@ -16,7 +16,7 @@ internal static class SessionLaunchValidator
     internal static KernelException UnknownProvider(string provider, IReadOnlyList<ProviderStatus> providers) =>
         KernelException.InvalidArgument(
             $"Unknown provider '{provider}'. Available providers: {AvailableProviders(providers)}.",
-            "Call perga_provider_ls to inspect available providers.");
+            "Call provider_ls to inspect available providers.");
 
     internal static ProviderStatus? ValidateProvider(IReadOnlyList<ProviderStatus> providers, string provider,
         bool explicitlySelected, bool requireAvailable)
@@ -27,14 +27,14 @@ internal static class SessionLaunchValidator
         if (status is { Available: false } && requireAvailable)
             throw KernelException.PreconditionFailed(
                 $"Provider '{provider}' is unavailable: {status.Reason ?? "No diagnostic was reported"}. Available providers: {AvailableProviders(providers)}.",
-                "Choose an available provider or call perga_provider_ls(refresh=true) to retry discovery.");
+                "Choose an available provider or call provider_ls(refresh=true) to retry discovery.");
         return status;
     }
 
     internal static void ValidateModelAndEffort(string provider, ProviderStatus? status,
         string? requestedModel, string? effectiveModel, string? requestedEffort)
     {
-        var nextStep = $"Call perga_provider_ls(provider='{provider}') to inspect valid models and reasoning efforts.";
+        var nextStep = $"Call provider_ls(provider='{provider}') to inspect valid models and reasoning efforts.";
         if (requestedModel is not null && status is { Models.Count: > 0 } &&
             !status.Models.Contains(requestedModel, StringComparer.Ordinal))
             throw KernelException.InvalidArgument(

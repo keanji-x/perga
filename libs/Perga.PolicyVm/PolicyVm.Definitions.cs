@@ -8,27 +8,68 @@ namespace Perga.PolicyVm;
 
 public sealed partial class PolicyVm
 {
+    private const string VersionedSnapshotFormat = "perga.snapshot.v2";
+
+    public static string WithToolNameVersion(string source, bool legacy) =>
+        ReadToolNameVersion(source) is not null
+            ? source
+            : JsonSerializer.Serialize(new { format = VersionedSnapshotFormat, toolNameVersion = legacy ? 1 : 2, source });
+
+    public static (string Source, bool Legacy)? ReadToolNameVersion(string source)
+    {
+        if (!source.AsSpan().TrimStart().StartsWith("{", StringComparison.Ordinal))
+            return null;
+        using var document = JsonDocument.Parse(source);
+        return ReadToolNameVersion(document.RootElement);
+    }
+
+    private static (string Source, bool Legacy)? ReadToolNameVersion(JsonElement root)
+    {
+        if (!root.TryGetProperty("format", out var format) || format.ValueKind != JsonValueKind.String ||
+            format.GetString() != VersionedSnapshotFormat)
+            return null;
+        if (!root.TryGetProperty("source", out var source) || source.ValueKind != JsonValueKind.String ||
+            string.IsNullOrWhiteSpace(source.GetString()) || !root.TryGetProperty("toolNameVersion", out var version) ||
+            version.ValueKind != JsonValueKind.Number || !version.TryGetInt32(out var number) || number is not (1 or 2))
+            throw new InvalidOperationException("Invalid template snapshot tool-name version or source.");
+        return (source.GetString()!, number == 1);
+    }
+
     // Snapshots contain source modules rather than serialized functions. Every base is frozen.
     public static string Inherit(CompiledPolicy parent, string childSource) =>
         System.Text.Json.JsonSerializer.Serialize(new { format = "perga.snapshot.v1", sources = new[] { parent.JsSource, childSource } });
 
-    private static JsValue LoadDefinition(Engine engine, string source)
+    private readonly record struct LoadedDefinition(JsValue Definition, bool LegacyBefore, bool LegacyAfter);
+
+    private static LoadedDefinition LoadDefinition(Engine engine, string source)
     {
         engine.Execute(DefinitionHelpers);
         var index = 0;
-        JsValue Load(string text, int depth = 0)
+        LoadedDefinition Load(string text, int depth = 0, bool legacyToolNames = false)
         {
             if (depth > MaxRecursionDepth) throw new InvalidOperationException("Template inheritance exceeds the maximum depth.");
-            if (text.TrimStart().StartsWith('{'))
+            while (text.AsSpan().TrimStart().StartsWith("{", StringComparison.Ordinal))
             {
                 using var doc = JsonDocument.Parse(text);
+                if (ReadToolNameVersion(doc.RootElement) is { } versioned)
+                {
+                    text = versioned.Source;
+                    legacyToolNames = versioned.Legacy;
+                    continue;
+                }
                 if (doc.RootElement.TryGetProperty("format", out var format) && format.GetString() == "perga.snapshot.v1")
                 {
                     var sources = doc.RootElement.GetProperty("sources").EnumerateArray().ToArray();
                     if (sources.Length != 2) throw new InvalidOperationException("Invalid template snapshot.");
-                    return engine.Invoke("__mergeTemplate", Load(sources[0].GetString()!, depth + 1), Load(sources[1].GetString()!, depth + 1));
+                    var parent = Load(sources[0].GetString()!, depth + 1, legacyToolNames);
+                    var child = Load(sources[1].GetString()!, depth + 1, legacyToolNames);
+                    var merged = engine.Invoke("__mergeTemplate", parent.Definition, child.Definition);
+                    return new(merged.Get("definition"),
+                        merged.Get("beforeFromChild").AsBoolean() ? child.LegacyBefore : parent.LegacyBefore,
+                        merged.Get("afterFromChild").AsBoolean() ? child.LegacyAfter : parent.LegacyAfter);
                 }
                 text = "export default " + text + ";";
+                break;
             }
             var name = $"template-{index++}.perga.js";
             engine.Modules.Add(name, text);
@@ -36,9 +77,10 @@ public sealed partial class PolicyVm
             // Validate every source before merging: a child must not hide a legacy base hook.
             RejectLegacyHooks(definition);
             if (definition is ObjectInstance sourceDefinition) ParseSchedules(sourceDefinition);
-            return definition;
+            return new(definition, legacyToolNames, legacyToolNames);
         }
-        return engine.Invoke("__adaptTemplate", Load(source));
+        var loaded = Load(source);
+        return loaded with { Definition = engine.Invoke("__adaptTemplate", loaded.Definition) };
     }
 
     private static void RejectLegacyHooks(JsValue definition)
@@ -155,13 +197,19 @@ public sealed partial class PolicyVm
           const routeKey = x => JSON.stringify([x.when?.role ?? null,x.when?.access ?? null]);
           const childRoutes = child.tasks?.routing || [];
           const overriddenRoutes = new Set(childRoutes.map(routeKey));
-          return { ...base, ...child, extends: undefined,
+          const baseFields = { ...base };
+          const childFields = { ...child };
+          const definition = { ...baseFields, ...childFields, extends: undefined,
             inputs: { ...base.inputs, ...child.inputs },
             plugins: [...new Set([...(base.plugins||[]),...(child.plugins||[])])],
             schedules: keyed(base.schedules, child.schedules, x => x.id),
             report: { ...base.report, ...child.report, sections: keyed(base.report?.sections, child.report?.sections, x => x.h1) },
             tasks: { ...base.tasks, ...child.tasks,
               routing: [...childRoutes, ...(base.tasks?.routing || []).filter(x => !overriddenRoutes.has(routeKey(x)))] }
+          };
+          return { definition,
+            beforeFromChild: Object.hasOwn(childFields, "before"),
+            afterFromChild: Object.hasOwn(childFields, "after")
           };
         };
         globalThis.__beforeTemplate = (def, type, data, ctx) => def.before?.(__templateAction(type,data),ctx) ?? Allow();

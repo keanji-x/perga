@@ -1,4 +1,4 @@
-// Answering the Planner's durable questions (`perga_user_ask`).
+// Answering the Planner's durable questions (`user_ask`).
 // Live execution-scoped approvals belong to `approval.ts`, never here.
 
 import { z } from 'zod';

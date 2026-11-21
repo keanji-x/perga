@@ -45,8 +45,8 @@ public sealed class UnifiedSessionMcpTests
         var childToken = await StartCaller(host, kernel, child.Session.Id, ct);
         await Error(host, childToken, KernelMcpToolNames.SessionCreate, new { }, "forbidden", ct);
         var tools = await ListToolNamesAsync(host, "/mcp/kernel", parentToken, ct);
-        Assert.Equal(8, tools.Count(t => t.StartsWith("perga_session_", StringComparison.Ordinal)));
-        Assert.DoesNotContain("perga_task_dispatch", tools);
+        Assert.Equal(8, tools.Count(t => t.StartsWith("session_", StringComparison.Ordinal)));
+        Assert.DoesNotContain("task_dispatch", tools);
         Assert.DoesNotContain(KernelMcpToolNames.SystemUpgradeApply, tools);
         Assert.Contains(KernelMcpToolNames.TaskAccept, tools);
         Assert.DoesNotContain(KernelMcpToolNames.TaskDone, tools);
@@ -446,7 +446,7 @@ public sealed class UnifiedSessionMcpTests
         var kernel = host.Services.GetRequiredService<IPergaKernel>();
         kernel.Templates.RegisterTemplate("""
             export default defineTemplate({id:"slow-approval",title:"Slow approval",
-              before(call) { return call.toolName === "perga_session_list" ? AskHuman("Allow list?") : Allow(); }
+              before(call) { return call.toolName === "session_list" ? AskHuman("Allow list?") : Allow(); }
             });
             """);
         var area = await kernel.CreateAreaAsync(new("Approvals", DefaultCwd: host.DataDir));
@@ -514,7 +514,7 @@ public sealed class UnifiedSessionMcpTests
         var kernel = host.Services.GetRequiredService<IPergaKernel>();
         kernel.Templates.RegisterTemplate("""
             export default defineTemplate({id:"approval-routing",title:"Approval routing",
-              before(call) { return call.toolName === "perga_session_list" ? AskHuman("Allow list?") : Allow(); }
+              before(call) { return call.toolName === "session_list" ? AskHuman("Allow list?") : Allow(); }
             });
             """);
         var area = await kernel.CreateAreaAsync(new("Approvals", DefaultCwd: host.DataDir));

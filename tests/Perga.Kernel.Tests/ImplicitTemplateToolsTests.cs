@@ -75,7 +75,7 @@ public sealed class ImplicitTemplateToolsTests
             : (object)new { source = Source, inputs = new { marker = "initialized" } });
         Assert.Equal("authored", result.GetProperty("templateId").GetString());
         var persisted = (await ctx.Store.LoadTrackAggregateAsync(snap.Track.Id, default))!;
-        Assert.Equal(Source, persisted.TemplateSnapshotSource);
+        Assert.Equal(Source, TestJson.Parse(persisted.TemplateSnapshotSource!).GetProperty("source").GetString());
         Assert.Equal("initialized", persisted.Track.TemplateInputs.GetProperty("marker").GetString());
         Assert.Equal("initialized", persisted.Track.TemplateState.GetProperty("marker").GetString());
         Assert.Equal(["existing", "search", "new-plugin"], persisted.Track.EnabledPlugins);
@@ -131,7 +131,7 @@ public sealed class ImplicitTemplateToolsTests
         Assert.Equal(KernelErrorCode.PolicyDenied, ex.Code);
         var persisted = (await ctx.Store.LoadTrackAggregateAsync(snap.Track.Id, default))!;
         Assert.Equal("replacement", persisted.Track.TemplateId);
-        Assert.Equal(replacement, persisted.TemplateSnapshotSource);
+        Assert.Equal(replacement, TestJson.Parse(persisted.TemplateSnapshotSource!).GetProperty("source").GetString());
         Assert.Equal(events, ctx.Store.PersistedEvents.Count(e => e.Kind == "track.updated"));
     }
 
@@ -312,9 +312,9 @@ public sealed class ImplicitTemplateToolsTests
         await ctx.SendAndWaitForTurnAsync(snap.Track.LeadSessionId!, new SendSessionMessageRequest("hello", "hint"));
         var prompt = Assert.Single(ctx.AgentRuntime.OpenedSessions).LaunchSpec.SystemPrompt;
         Assert.Contains("Templates are optional and implicit", prompt);
-        Assert.Contains("perga_template_ls", prompt);
-        Assert.Contains("perga_template_cat", prompt);
-        Assert.Contains("perga_track_set", prompt);
+        Assert.Contains("template_ls", prompt);
+        Assert.Contains("template_cat", prompt);
+        Assert.Contains("track_set", prompt);
         Assert.Contains(".perga.js source", prompt);
     }
 }

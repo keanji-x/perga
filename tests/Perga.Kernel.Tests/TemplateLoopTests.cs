@@ -140,7 +140,7 @@ public sealed class TemplateLoopTests
         await KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller, KernelMcpToolNames.TrackRename, TestJson.FromObject(new { title = "Original" }));
         var current = await ctx.Kernel.GetTrackAggregateAsync(snap.Track.Id);
         Assert.Equal("Original", current.Track.Title);
-        Assert.Equal("tool.perga_track_rename", current.Track.TemplateState.GetProperty("last").GetString());
+        Assert.Equal("tool.track_rename", current.Track.TemplateState.GetProperty("last").GetString());
         var before = current.Track.TemplateState.GetRawText();
         await KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller, KernelMcpToolNames.TrackSet, TestJson.FromObject(new { source, dryRun = true }));
         Assert.Equal(before, (await ctx.Kernel.GetTrackAggregateAsync(snap.Track.Id)).Track.TemplateState.GetRawText());

@@ -1,7 +1,9 @@
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using Perga.PolicyVm;
+using Vm = Perga.PolicyVm.PolicyVm;
 
 namespace Perga.Kernel.Templates;
 
@@ -12,12 +14,14 @@ public interface ITemplateCatalog
     CompiledPolicy? TryGetPolicy(string templateId);
     CompiledPolicy GetRequiredPolicy(string templateId);
     CompiledPolicy GetOrCompileSnapshot(string templateSnapshotSource);
+    CompiledPolicy CompileSource(string source);
     CompiledPolicy RegisterTemplate(string jsModuleSource);
     int LoadFromDirectory(string directoryPath);
 }
 
 public class TemplateHost : ITemplateCatalog
 {
+    private const string CanonicalFileMarker = "// perga:tool-names-v2";
     private readonly IPolicyVm _policyVm;
     private readonly ConcurrentDictionary<string, CompiledPolicy> _policiesById = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, CompiledPolicy> _snapshotCacheByHash = new(StringComparer.Ordinal);
@@ -77,24 +81,47 @@ public class TemplateHost : ITemplateCatalog
         var hash = ComputeSha256Hex(templateSnapshotSource);
         return _snapshotCacheByHash.GetOrAdd(hash, _ =>
         {
-            var policy = _policyVm.Compile(templateSnapshotSource);
-            return policy.Manifest.Extends is { } baseId
-                ? _policyVm.Compile(global::Perga.PolicyVm.PolicyVm.Inherit(GetRequiredPolicy(baseId), templateSnapshotSource)) : policy;
+            var source = Vm.WithToolNameVersion(templateSnapshotSource, legacy: true);
+            return ResolveInheritance(_policyVm.Compile(source));
         });
     }
 
-    public CompiledPolicy RegisterTemplate(string jsModuleSource)
-    {
-        if (string.IsNullOrWhiteSpace(jsModuleSource))
-        {
-            throw KernelException.InvalidArgument("Template JS module source cannot be empty.");
-        }
+    public CompiledPolicy CompileSource(string source) => GetOrCompileSnapshot(Vm.WithToolNameVersion(source, legacy: false));
 
-        var compiled = _policyVm.Compile(jsModuleSource);
-        if (compiled.Manifest.Extends is { } baseId)
-            compiled = _policyVm.Compile(global::Perga.PolicyVm.PolicyVm.Inherit(GetRequiredPolicy(baseId), jsModuleSource));
+    internal static string Freeze(CompiledPolicy policy) => Vm.WithToolNameVersion(policy.JsSource, legacy: false);
+
+    internal static string? LegacyReapplySource(CompiledPolicy? policy) =>
+        policy is { UsesLegacyBeforeToolNames: true } or { UsesLegacyAfterToolNames: true } ? Freeze(policy) : null;
+
+    internal static string? InspectSource(string? snapshot)
+    {
+        if (snapshot is null) return null;
+        try { return Vm.ReadToolNameVersion(snapshot)?.Source ?? snapshot; }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException) { return snapshot; }
+    }
+
+    private CompiledPolicy ResolveInheritance(CompiledPolicy policy) =>
+        policy.Manifest.Extends is { } baseId
+            ? _policyVm.Compile(Vm.Inherit(GetRequiredPolicy(baseId), policy.JsSource))
+            : policy;
+
+    public CompiledPolicy RegisterTemplate(string jsModuleSource) =>
+        Register(ResolveInheritance(_policyVm.Compile(Vm.WithToolNameVersion(jsModuleSource, legacy: false))));
+
+    public CompiledPolicy RegisterFileSource(string source) => Register(ResolveInheritance(_policyVm.Compile(VersionFileSource(source))));
+
+    private static string VersionFileSource(string source)
+    {
+        // Files can predate the upgrade. The marker opts a disk module into canonical names.
+        using var reader = new StringReader(source.TrimStart());
+        var legacy = reader.ReadLine()?.TrimEnd() != CanonicalFileMarker;
+        return Vm.WithToolNameVersion(source, legacy);
+    }
+
+    private CompiledPolicy Register(CompiledPolicy compiled)
+    {
         _policiesById[compiled.TemplateId] = compiled;
-        _snapshotCacheByHash[ComputeSha256Hex(jsModuleSource)] = compiled;
+        _snapshotCacheByHash[ComputeSha256Hex(Freeze(compiled))] = compiled;
         return compiled;
     }
 
@@ -110,21 +137,17 @@ public class TemplateHost : ITemplateCatalog
             .OrderBy(f => f, StringComparer.Ordinal)
             .ToArray();
 
-        var pending = files.Select(file => File.ReadAllText(file, Encoding.UTF8))
-            .Select(source => (Source: source, Policy: _policyVm.Compile(source))).ToList();
+        var pending = files.Select(file => VersionFileSource(File.ReadAllText(file, Encoding.UTF8)))
+            .Select(_policyVm.Compile).ToList();
         var count = 0;
         while (pending.Count > 0)
         {
             var progressed = false;
-            foreach (var entry in pending.ToArray())
+            foreach (var definition in pending.ToArray())
             {
-                var definition = entry.Policy;
                 if (definition.Manifest.Extends is { } baseId && TryGetPolicy(baseId) is null) continue;
-                var compiled = definition.Manifest.Extends is { } parentId
-                    ? _policyVm.Compile(global::Perga.PolicyVm.PolicyVm.Inherit(GetRequiredPolicy(parentId), entry.Source)) : definition;
-                _policiesById[compiled.TemplateId] = compiled;
-                _snapshotCacheByHash[ComputeSha256Hex(compiled.JsSource)] = compiled;
-                pending.Remove(entry);
+                Register(ResolveInheritance(definition));
+                pending.Remove(definition);
                 count++;
                 progressed = true;
             }

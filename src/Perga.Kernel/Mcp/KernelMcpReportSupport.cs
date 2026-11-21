@@ -54,7 +54,7 @@ internal static class KernelMcpReportSupport
                 },
                 "wholeDocumentRead": { "type": "boolean" }
               },
-              "description": "ReadAnchor returned by perga_report_read or the previous perga_report_commit."
+              "description": "ReadAnchor returned by report_read or the previous report_commit."
             },
             "ops": {
               "type": "array",

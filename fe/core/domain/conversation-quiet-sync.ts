@@ -4,7 +4,7 @@
  * are lifted out after the fold.
  */
 
-import { REPORT_READ_TOOLS, REPORT_TOOL_PREFIX } from '../keys/mcp-tools.js';
+import { normalizeMcpToolName, REPORT_READ_TOOLS, REPORT_TOOL_PREFIX } from '../keys/mcp-tools.js';
 import {
   SYSTEM_PRESENTATION_LABELS, isUserConversationTurn,
   isPlannerTurnContext,
@@ -71,7 +71,8 @@ function closesGroup(entry: TranscriptEntry): boolean {
 }
 
 /** Fail-closed on purpose: an unknown report tool is a change, never a look. */
-export function isReportWriteTool(tool: string): boolean {
+export function isReportWriteTool(recordedTool: string): boolean {
+  const tool = normalizeMcpToolName(recordedTool);
   return tool.startsWith(REPORT_TOOL_PREFIX) && !REPORT_READ_TOOLS.includes(tool);
 }
 

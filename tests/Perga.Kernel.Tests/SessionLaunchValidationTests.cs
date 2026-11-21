@@ -1,4 +1,5 @@
 using Perga.AgentKit;
+using Perga.Kernel.Mcp;
 using Perga.Kernel.Ports;
 using Perga.Kernel.Tests.Fakes;
 
@@ -7,6 +8,52 @@ namespace Perga.Kernel.Tests;
 public sealed class SessionLaunchValidationTests
 {
     private static readonly InteropPrincipal Human = new InteropPrincipal.Human();
+
+    [Theory]
+    [InlineData(null, "ultra")]
+    [InlineData("gpt-6.2-sol", "ultra")]
+    [InlineData("gpt-5.6-luna", null)]
+    public async Task ChildOnlyInheritsReasoningEffortForTheParentsModel(string? model, string? expectedEffort)
+    {
+        await using var ctx = new KernelTestContext();
+        ctx.AgentRuntime.Providers =
+        [
+            new("codex", true, "1", null, ["gpt-6.2-sol", "gpt-5.6-luna"],
+                ModelCatalog:
+                [
+                    new("gpt-6.2-sol", "Sol", "", true, "ultra", [new("ultra", "")]),
+                    new("gpt-5.6-luna", "Luna", "", false, "medium", [new("medium", "")])
+                ])
+        ];
+        var area = await ctx.Kernel.CreateAreaAsync(new("Effort inheritance"));
+        var track = (await ctx.Kernel.CreateTrackAsync(new(AreaId: area.Id, Provider: "codex",
+            Model: "gpt-6.2-sol", ReasoningEffort: "ultra"))).Track;
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var ct = deadline.Token;
+        var leadId = track.LeadSessionId!;
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        ctx.AgentRuntime.TurnScript = (_, _, token) => HoldTurnAsync(token);
+        await ctx.Kernel.SendSessionMessageAsync(leadId, new("hold", "hold"), Human, ct);
+        await started.Task.WaitAsync(ct);
+        var lead = await ctx.Kernel.GetSessionItemsAsync(leadId, new(), Human, ct);
+        var parent = ctx.Kernel.McpSessionBridge.RegisterSession(track.Id, leadId, true, null, null, []).Principal
+            with { ExecutionOrigin = new(lead.ActiveTurn!.Id) };
+
+        var receipt = await ctx.Kernel.InvokeKernelMcpToolAsync(parent, KernelMcpToolNames.SessionCreate,
+            TestJson.FromObject(model is null ? new { requestKey = "child" } : (object)new { requestKey = "child", model }), ct);
+        var session = receipt.GetProperty("session");
+
+        Assert.Equal(model ?? "gpt-6.2-sol", session.GetProperty("model").GetString());
+        Assert.Equal(expectedEffort, session.TryGetProperty("reasoningEffort", out var effort) ? effort.GetString() : null);
+
+        async IAsyncEnumerable<UnifiedAgentEvent> HoldTurnAsync(
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken token)
+        {
+            started.TrySetResult();
+            await Task.Delay(Timeout.Infinite, token);
+            yield break;
+        }
+    }
 
     [Fact]
     public async Task DiscoveryUsesProbeModesUntilRuntimeFinishesInitializing()

@@ -46,7 +46,9 @@ public sealed record CompiledTemplateManifest(
 public sealed record CompiledPolicy(
     string TemplateId,
     string JsSource,
-    CompiledTemplateManifest Manifest);
+    CompiledTemplateManifest Manifest,
+    bool UsesLegacyBeforeToolNames = false,
+    bool UsesLegacyAfterToolNames = false);
 
 public sealed record PolicyTurnPreparation(string? Context, GuardDecision Decision);
 

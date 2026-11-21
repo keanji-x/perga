@@ -1,3 +1,4 @@
+// perga:tool-names-v2
 // @ts-check
 /// <reference path="./perga-template.d.ts" />
 
@@ -135,11 +136,11 @@ const longTermGoalTemplate = {
     }
     if (!action.type.startsWith("tool.")) return Allow();
     const call = action;
-    if (ctx.state.pausedForHuman && call.mcpServer === "perga" && call.toolName === "perga_mail_send") {
+    if (ctx.state.pausedForHuman && call.mcpServer === "perga" && call.toolName === "mail_send") {
       return Deny("Track is paused after repeated task failures; resolve blockers with the user before sending cross-track mail.");
     }
 
-    if (call.mcpServer === "perga" && call.toolName === "perga_track_close") {
+    if (call.mcpServer === "perga" && call.toolName === "track_close") {
       if (ctx.state.milestonesCompleted === 0) {
         return AskHuman(
           "Close long-term goal track before any milestone task has completed?",

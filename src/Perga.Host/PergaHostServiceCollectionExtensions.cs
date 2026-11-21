@@ -244,7 +244,7 @@ public static class PergaHostServiceCollectionExtensions
                 {
                     lock (PolicyVmWarmupLock)
                     {
-                        catalog.RegisterTemplate(source);
+                        catalog.RegisterFileSource(source);
                     }
 
                     break;

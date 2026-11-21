@@ -26,13 +26,13 @@ public sealed class PolicyAdmissionRegressionTests
             export default {
               id: 'discovery', title: 'Discovery',
               before(call, ctx) {
-                if (call.type !== 'tool.perga_provider_ls') return Allow();
+                if (call.type !== 'tool.provider_ls') return Allow();
                 ctx.state.before = true;
                 if (call.arguments.refresh) return AskHuman('Refresh?', {approve: 'Yes', deny: 'No'});
                 return Allow();
               },
               after(event, ctx) {
-                if (event.type === 'tool.perga_provider_ls') ctx.state.after = true;
+                if (event.type === 'tool.provider_ls') ctx.state.after = true;
               }
             };
             """);
@@ -443,7 +443,7 @@ public sealed class PolicyAdmissionRegressionTests
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
         var caller = Caller(snapshot);
-        await SetPolicy(ctx, caller, "export default {id:'ask',title:'Ask',before(a,ctx){if(a.type==='tool.perga_track_set'){ctx.state.changed=true;return AskHuman('Approve?',{approve:'Approve',deny:'Reject'});}return Allow();}};");
+        await SetPolicy(ctx, caller, "export default {id:'ask',title:'Ask',before(a,ctx){if(a.type==='tool.track_set'){ctx.state.changed=true;return AskHuman('Approve?',{approve:'Approve',deny:'Reject'});}return Allow();}};");
         var before = (await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId)).Track.TemplateState.GetRawText();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
         var error = await Assert.ThrowsAsync<KernelException>(() => KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller,
@@ -462,7 +462,7 @@ public sealed class PolicyAdmissionRegressionTests
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
         var caller = Caller(snapshot);
-        await SetPolicy(ctx, caller, "export default {id:'bool',title:'Bool',before(a,ctx){if(a.type==='tool.perga_track_set')ctx.state.changed=true;return Allow();}};");
+        await SetPolicy(ctx, caller, "export default {id:'bool',title:'Bool',before(a,ctx){if(a.type==='tool.track_set')ctx.state.changed=true;return Allow();}};");
         var before = (await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId)).Track.TemplateState.GetRawText();
         var error = await Assert.ThrowsAsync<KernelException>(() => KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller,
             KernelMcpToolNames.TrackSet, TestJson.FromObject(new Dictionary<string, object> { [name] = "true", ["clear"] = name == "clear" ? "true" : false })));
@@ -555,7 +555,7 @@ public sealed class PolicyAdmissionRegressionTests
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
         var caller = Caller(snapshot);
-        await SetPolicy(ctx, caller, "export default {id:'preview',title:'Preview',before:a=>a.type==='tool.perga_track_set'?Rewrite({arguments:{clear:true,dryRun:false}}):Allow()};");
+        await SetPolicy(ctx, caller, "export default {id:'preview',title:'Preview',before:a=>a.type==='tool.track_set'?Rewrite({arguments:{clear:true,dryRun:false}}):Allow()};");
         await Assert.ThrowsAsync<InvalidOperationException>(() => KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller, KernelMcpToolNames.TrackSet,
             TestJson.FromObject(new { clear = true, dryRun = true })));
         Assert.Equal("preview", (await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId)).Track.TemplateId);

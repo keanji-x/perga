@@ -32,9 +32,11 @@ export interface PergaTemplateDefinition<TState = Record<string, any>, TInputs =
   description?: string;
   /** Catalog base; snapshots freeze its complete source. Child keyed declarations take precedence. */
   extends?: string;
-  /** Child hooks replace the inherited slot; omitted hooks inherit. */
+  /** Child hooks replace the inherited slot; omitted hooks inherit. Built-in MCP actions use
+   * unprefixed tool names, e.g. type "tool.pr_merge", mcpServer "vcs", toolName "pr_merge". */
   before?: (action: { type: string; role?: string; access?: string; provider?: string; model?: string; arguments?: Record<string, any>; [key: string]: any }, ctx: TemplateContext<TState, TInputs>) => GuardDecision;
-  /** Events include schedule.fired ({scheduleId, sourceKind, prompt}), task.settled, report.commit, turn.after, and tool.<name>. */
+  /** Events include schedule.fired ({scheduleId, sourceKind, prompt}), task.settled, report.commit,
+   * turn.after, and tool.<name> using the same tool name as before. */
   after?: (event: { type: string; [key: string]: any }, ctx: TemplateContext<TState, TInputs>) => string | null | void;
   plugins?: string[];
   inputs?: Record<string, { type: "string" | "number" | "boolean" | "enum"; values?: string[]; default?: any; optional?: boolean; label?: string }>;

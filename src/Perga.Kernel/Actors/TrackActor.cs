@@ -46,6 +46,7 @@ public sealed partial class TrackActor : IAsyncDisposable
     private string? _policyUnavailableReason;
     private string _policyGeneration = Guid.NewGuid().ToString("N");
     private string? _templateSnapshotSource;
+    private string? _presentedTemplateSnapshotSource;
     private MountedWorkspace? _mountedWorkspace;
     private readonly List<TaskDto> _tasks = [];
     private readonly Dictionary<string, AgentSessionDto> _sessions = new(StringComparer.Ordinal);
@@ -292,7 +293,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         return EnqueueAsync(async _ =>
         {
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
-            RequireGovernanceSessionCore(callerSessionId, "perga_track_rename");
+            RequireGovernanceSessionCore(callerSessionId, "track_rename");
 
             var now = NowMs();
             _track = _track with { Title = newTitle, UpdatedAtMs = now };
@@ -335,9 +336,12 @@ public sealed partial class TrackActor : IAsyncDisposable
             JsonElement state;
             try
             {
-                policy = templateId is not null
-                    ? _templateCatalog.GetRequiredPolicy(templateId)
-                    : _templateCatalog.GetOrCompileSnapshot(source!);
+                if (templateId is not null)
+                    policy = _templateCatalog.GetRequiredPolicy(templateId);
+                else if (_templateSnapshotSource is { } existing && source == _presentedTemplateSnapshotSource)
+                    policy = _templateCatalog.GetOrCompileSnapshot(existing);
+                else
+                    policy = _templateCatalog.CompileSource(source!);
                 TemplateSchedules.ValidateInputs(_policyVm, policy, nextInputs);
                 var init = _policyVm.InitState(policy, nextInputs);
                 state = (init.Output.ValueKind != JsonValueKind.Undefined ? init.Output : init.NextState).Clone();
@@ -363,11 +367,13 @@ public sealed partial class TrackActor : IAsyncDisposable
             var evt = new EventEnvelopeDto(null, nextTrack.AreaId, TrackId, KernelEventKinds.TrackUpdated,
                 JsonHelpers.ToElement(TemplatePresentation.Project(nextTrack, policy, _policyVm)), now);
             await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
-            await _store.UpdateTrackTemplateAndEmitAsync(nextTrack, policy.JsSource, evt, ct, schedules).ConfigureAwait(false);
+            var snapshotSource = TemplateHost.Freeze(policy);
+            await _store.UpdateTrackTemplateAndEmitAsync(nextTrack, snapshotSource, evt, ct, schedules).ConfigureAwait(false);
             _policy = policy;
             _policyUnavailableReason = null;
             _policyGeneration = Guid.NewGuid().ToString("N");
-            _templateSnapshotSource = policy.JsSource;
+            _templateSnapshotSource = snapshotSource;
+            _presentedTemplateSnapshotSource = TemplateHost.InspectSource(snapshotSource);
             var pluginsChanged = !_track.EnabledPlugins.SequenceEqual(nextTrack.EnabledPlugins, StringComparer.Ordinal);
             _track = nextTrack;
             if (pluginsChanged)
@@ -396,7 +402,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             reserve: async () =>
             {
                 await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
-                RequireGovernanceSessionCore(callerSessionId, "perga_track_close");
+                RequireGovernanceSessionCore(callerSessionId, "track_close");
                 if (_closingTrack || _deletingTrack) throw KernelException.Conflict("Track teardown is already in progress.");
                 ct.ThrowIfCancellationRequested();
                 _closingTrack = true;
@@ -854,6 +860,8 @@ public sealed partial class TrackActor : IAsyncDisposable
         var provider = SessionLaunchValidator.NormalizeProvider(request.Provider ?? parent?.Provider ?? GetDefaultProviderCore());
         var switchesParentProvider = parent is not null && provider != SessionLaunchValidator.NormalizeProvider(parent.Provider);
         var model = request.Model ?? (switchesParentProvider ? null : parent?.Model ?? GetDefaultModelCore(provider));
+        var canInheritReasoningEffort = !switchesParentProvider &&
+            (request.Model is null || string.Equals(request.Model, parent?.Model, StringComparison.Ordinal));
         var effort = string.IsNullOrWhiteSpace(request.ReasoningEffort) ? null : request.ReasoningEffort.Trim();
         var status = SessionLaunchValidator.ValidateProvider(providers, provider, request.Provider is not null, requireAvailable);
         SessionLaunchValidator.ValidateModelAndEffort(provider, status, request.Model, model, effort);
@@ -877,7 +885,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             ArchivedAtMs: null,
             CreatedAtMs: now,
             UpdatedAtMs: now,
-            ReasoningEffort: effort ?? (switchesParentProvider ? null : parent?.ReasoningEffort),
+            ReasoningEffort: effort ?? (canInheritReasoningEffort ? parent?.ReasoningEffort : null),
             ParentSessionId: parent?.Id, SpawnDepth: parent is null ? 0 : parent.SpawnDepth + 1,
             PermissionMode: permissionMode, SystemPrompt: request.SystemPrompt, NotifyParent: request.NotifyParent ?? "none");
     }
@@ -1074,7 +1082,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         var attemptId = await EnqueueAsync(async _ =>
         {
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
-            var caller = RequireBoundAttemptSessionCore(callerSessionId, "perga_task_done");
+            var caller = RequireBoundAttemptSessionCore(callerSessionId, "task_done");
             return caller.BoundAttemptId!;
         }, ct).ConfigureAwait(false);
 
@@ -1090,7 +1098,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         var attemptId = await EnqueueAsync(async _ =>
         {
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
-            var caller = RequireBoundAttemptSessionCore(callerSessionId, "perga_task_fail");
+            var caller = RequireBoundAttemptSessionCore(callerSessionId, "task_fail");
             return caller.BoundAttemptId!;
         }, ct).ConfigureAwait(false);
 
@@ -1106,11 +1114,11 @@ public sealed partial class TrackActor : IAsyncDisposable
     {
         if (questions.Count == 0)
         {
-            throw KernelException.InvalidArgument("At least one question is required for perga_user_ask.");
+            throw KernelException.InvalidArgument("At least one question is required for user_ask.");
         }
 
         if (questions.Any(question => question.IsMultiSelect))
-            throw KernelException.InvalidArgument("perga_user_ask does not support isMultiSelect: true.");
+            throw KernelException.InvalidArgument("user_ask does not support isMultiSelect: true.");
 
         Interlocked.Increment(ref _inFlightExternalOps);
         try
@@ -1220,7 +1228,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         var mail = await EnqueueAsync(async _ =>
         {
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
-            RequireGovernanceSessionCore(callerSessionId, "perga_mail_send");
+            RequireGovernanceSessionCore(callerSessionId, "mail_send");
             if ((toTrackId is null) == (replyToMailId is null) ||
                 string.IsNullOrWhiteSpace(toTrackId ?? replyToMailId))
                 throw KernelException.InvalidArgument("Specify exactly one of toTrackId and replyToMailId.");
@@ -1567,9 +1575,10 @@ public sealed partial class TrackActor : IAsyncDisposable
                     return null;
                 }
 
-                var eval = _policyVm.Before(_policy, "tool." + toolName, TrackId, JsonHelpers.ToElement(new {
+                var policyToolName = GetPolicyToolName(mcpServer, toolName, _policy.UsesLegacyBeforeToolNames);
+                var eval = _policyVm.Before(_policy, "tool." + policyToolName, TrackId, JsonHelpers.ToElement(new {
                     sessionId = caller.Id, isLead = caller.IsLead, boundAttemptId = caller.BoundAttemptId,
-                    mcpServer, toolName, arguments = arguments.ValueKind == JsonValueKind.Undefined ? JsonHelpers.EmptyObject : arguments
+                    mcpServer, toolName = policyToolName, arguments = arguments.ValueKind == JsonValueKind.Undefined ? JsonHelpers.EmptyObject : arguments
                 }), _track.TemplateInputs, _track.TemplateState);
                 if (providerDiscovery && eval.Output is GuardDecision.AskHuman)
                     throw KernelException.PolicyDenied("Provider discovery is read-only and cannot request approval.");
@@ -1647,6 +1656,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         _track = snapshot.Track;
         _report = snapshot.Report;
         _templateSnapshotSource = snapshot.TemplateSnapshotSource;
+        _presentedTemplateSnapshotSource = TemplateHost.InspectSource(_templateSnapshotSource);
 
         try
         {
@@ -3144,7 +3154,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             Tasks: _tasks.ToArray(),
             Sessions: OrderedSessionsCore(),
             OpenAsks: _asks.Values.Where(a => a.Status == AskStatus.Open).OrderBy(a => a.CreatedAtMs).ToArray(),
-            TemplateSnapshotSource: _templateSnapshotSource,
+            TemplateSnapshotSource: _presentedTemplateSnapshotSource,
             WorkspacePreparation: WorkspacePreparationStatus) { PendingApprovals = ReadPendingApprovals() };
     }
 
@@ -3199,11 +3209,11 @@ public sealed partial class TrackActor : IAsyncDisposable
                 : "Collaborative Subagent (Unbound)";
 
         var templateNote = session.IsLead
-            ? "\n\nTemplates are optional and implicit. If useful, discover them with perga_template_ls, inspect a template or the authoring contract with perga_template_cat, inspect the active snapshot with perga_template_cat(__current__), apply or preview with perga_track_set (templateId or JSON/.perga.js source, inputs, dryRun), detach with clear, and update inputs with perga_template_update_inputs (preserves state)."
+            ? "\n\nTemplates are optional and implicit. If useful, discover them with template_ls, inspect a template or the authoring contract with template_cat, inspect the active snapshot with template_cat(__current__), apply or preview with track_set (templateId or JSON/.perga.js source, inputs, dryRun), detach with clear, and update inputs with template_update_inputs (preserves state)."
             : string.Empty;
         var sessionNote = session.BoundAttemptId is null
-            ? "Use perga_session_list/create/read/update/send/withdraw/control/respond to manage child conversations. Create accepts an optional task contract; reuse requestKey for retries. Use perga_provider_ls to discover available providers, models, reasoning efforts, and permission modes. Only control your direct children; the Lead can also manage other sessions. Never stop, reset or archive yourself. Answer delegated asks and approvals with session_respond; the human can always take over."
-            : "Use perga_session_list/read to observe conversations. Submit your task with perga_task_done or perga_task_fail; bound Workers cannot spawn or control sessions.";
+            ? "Use session_list/create/read/update/send/withdraw/control/respond to manage child conversations. Create accepts an optional task contract; reuse requestKey for retries. Use provider_ls to discover available providers, models, reasoning efforts, and permission modes. Only control your direct children; the Lead can also manage other sessions. Never stop, reset or archive yourself. Answer delegated asks and approvals with session_respond; the human can always take over."
+            : "Use session_list/read to observe conversations. Submit your task with task_done or task_fail; bound Workers cannot spawn or control sessions.";
         return $"You are operating in Perga Track '{_track.Title}' ({TrackId}) as {role}.{templateNote}\n\n{sessionNote}\n\n## Current Report\n{reportMd}";
     }
 
@@ -3252,7 +3262,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         }
 
         sb.AppendLine();
-        sb.AppendLine("When finished, call `perga_task_done` with your structured result, or `perga_task_fail` if blocked.");
+        sb.AppendLine("When finished, call `task_done` with your structured result, or `task_fail` if blocked.");
         return sb.ToString();
     }
 

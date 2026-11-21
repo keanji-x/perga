@@ -7,15 +7,15 @@ namespace Perga.Host.Mcp;
 
 public static class VcsMcpToolNames
 {
-    public const string Status = "vcs_status";
-    public const string Diff = "vcs_diff";
-    public const string RestoreOp = "vcs_restore_op";
-    public const string RebaseUpstream = "vcs_rebase_upstream";
-    public const string PublishPr = "vcs_publish_pr";
-    public const string PrChecks = "vcs_pr_checks";
-    public const string CiEvidence = "vcs_ci_evidence";
-    public const string PrMerge = "vcs_pr_merge";
-    public const string IssueView = "vcs_issue_view";
+    public const string Status = "status";
+    public const string Diff = "diff";
+    public const string RestoreOp = "restore_op";
+    public const string RebaseUpstream = "rebase_upstream";
+    public const string PublishPr = "publish_pr";
+    public const string PrChecks = "pr_checks";
+    public const string CiEvidence = "ci_evidence";
+    public const string PrMerge = "pr_merge";
+    public const string IssueView = "issue_view";
 
     public static readonly IReadOnlyList<string> All =
     [
@@ -61,26 +61,28 @@ public sealed class VcsMcpBackend : IMcpToolBackend
     public async Task<McpCallToolResult> CallToolAsync(McpSessionPrincipal caller, string toolName,
         JsonElement arguments, CancellationToken ct)
     {
-        var result = await CallToolCoreAsync(caller, toolName, arguments, ct).ConfigureAwait(false);
+        var args = arguments.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null
+            ? McpToolResultFormatter.EmptyObject
+            : arguments;
+        var result = await CallToolCoreAsync(caller, toolName, args, ct).ConfigureAwait(false);
         if (!result.IsError)
-            await _kernel.Actors.GetOrActivate(caller.TrackId).AfterPolicyEventAsync("tool." + toolName,
-                JsonSerializer.SerializeToElement(new { mcpServer = "vcs", arguments, result }), ct).ConfigureAwait(false);
+            await _kernel.Actors.GetOrActivate(caller.TrackId).AfterMcpToolCallAsync(ServerName, toolName,
+                JsonSerializer.SerializeToElement(new { mcpServer = ServerName, arguments = args, result }), ct).ConfigureAwait(false);
         return result;
     }
 
     private async Task<McpCallToolResult> CallToolCoreAsync(
         McpSessionPrincipal caller,
         string toolName,
-        JsonElement arguments,
+        JsonElement args,
         CancellationToken ct)
     {
-        var args = arguments.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null
-            ? McpToolResultFormatter.EmptyObject
-            : arguments;
-
         try
         {
-            await _kernel.GuardMcpToolCallAsync(caller.TrackId, caller.SessionId, "vcs", toolName, args, ct, caller.ExecutionOrigin)
+            if (!VcsMcpToolNames.All.Contains(toolName))
+                throw KernelException.NotFound($"Unknown VCS MCP tool '{toolName}'.");
+
+            await _kernel.GuardMcpToolCallAsync(caller.TrackId, caller.SessionId, ServerName, toolName, args, ct, caller.ExecutionOrigin)
                 .ConfigureAwait(false);
 
             var workspaceCwd = await ResolveCallerWorkspaceCwdAsync(caller, ct).ConfigureAwait(false);

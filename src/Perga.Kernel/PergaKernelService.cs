@@ -532,7 +532,9 @@ public sealed partial class PergaKernelService : IPergaKernel
             return JsonHelpers.ToElement(new { contract });
         }
         var policy = Templates.GetRequiredPolicy(templateId);
-        return JsonHelpers.ToElement(new { policy.Manifest, policy.JsSource });
+        var source = TemplateHost.InspectSource(policy.JsSource);
+        var reapply = TemplateHost.LegacyReapplySource(policy);
+        return JsonHelpers.ToElement(new { policy.Manifest, JsSource = reapply ?? source, EditableSource = reapply is null ? null : source });
     }
 
     public Task<JsonElement> InspectCurrentTemplateAsync(string trackId, string sessionId, CancellationToken ct = default) =>
@@ -786,7 +788,9 @@ public sealed partial class PergaKernelService : IPergaKernel
 
         await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
         var id = await _store.CreateTrackAsync(
-            new(track, initialReport, policy?.JsSource, leadSession, initialTasks, null, preparation, events, dailyDate, systemArea) { TemplateSchedules = TemplateSchedules.Materialize(policy, templateInputs, trackId, now, _policyVm, _scheduleCronEvaluator) },
+            new(track, initialReport, policy is null ? null : TemplateHost.Freeze(policy), leadSession,
+                initialTasks, null, preparation, events, dailyDate, systemArea)
+            { TemplateSchedules = TemplateSchedules.Materialize(policy, templateInputs, trackId, now, _policyVm, _scheduleCronEvaluator) },
             key, ct).ConfigureAwait(false);
         var snapshot = await ReadCreatedTrackAsync(id, CancellationToken.None).ConfigureAwait(false);
         if (id == track.Id)

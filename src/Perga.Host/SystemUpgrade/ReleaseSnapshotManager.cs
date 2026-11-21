@@ -149,6 +149,7 @@ public sealed class ReleaseSnapshotManager : ITemplateCatalog, IFileProvider, ID
     public CompiledPolicy? TryGetPolicy(string id) => Volatile.Read(ref _snapshot).Templates.TryGetPolicy(id);
     public CompiledPolicy GetRequiredPolicy(string id) => Volatile.Read(ref _snapshot).Templates.GetRequiredPolicy(id);
     public CompiledPolicy GetOrCompileSnapshot(string source) => Volatile.Read(ref _snapshot).Templates.GetOrCompileSnapshot(source);
+    public CompiledPolicy CompileSource(string source) => Volatile.Read(ref _snapshot).Templates.CompileSource(source);
     public CompiledPolicy RegisterTemplate(string source) => Volatile.Read(ref _snapshot).Templates.RegisterTemplate(source);
     public int LoadFromDirectory(string path) => Volatile.Read(ref _snapshot).Templates.LoadFromDirectory(path);
     public void Dispose()

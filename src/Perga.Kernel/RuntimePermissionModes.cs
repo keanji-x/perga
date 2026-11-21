@@ -24,7 +24,7 @@ internal static class RuntimePermissionModes
                 mode => $"{mode.Id} ({mode.Label}{(mode.Id == defaultMode ? ", default" : "")})"));
             throw KernelException.InvalidArgument(
                 $"Unsupported permission mode '{requested}' for provider '{provider}'. Supported modes: {choices}.",
-                $"Call perga_provider_ls(provider='{provider}') to inspect valid modes.");
+                $"Call provider_ls(provider='{provider}') to inspect valid modes.");
         }
 
         return selected;
