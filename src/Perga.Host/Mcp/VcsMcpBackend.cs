@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Perga.Kernel;
+using Perga.Kernel.Mcp;
 using Perga.Kernel.Ports;
 using Perga.VcsKit;
 
@@ -205,26 +206,31 @@ public sealed class VcsMcpBackend : IMcpToolBackend
     {
         static JsonElement Schema(string json) => McpToolResultFormatter.ParseClone(json);
 
+        var readOnlyOpenWorld = new McpToolAnnotations(ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: true);
+        var localWrite = new McpToolAnnotations(ReadOnlyHint: false, DestructiveHint: false, IdempotentHint: false, OpenWorldHint: false);
+        var localDestructive = new McpToolAnnotations(ReadOnlyHint: false, DestructiveHint: true, IdempotentHint: false, OpenWorldHint: false);
+        var openWorldDestructive = new McpToolAnnotations(ReadOnlyHint: false, DestructiveHint: true, IdempotentHint: false, OpenWorldHint: true);
+
         return
         [
             new(VcsMcpToolNames.Status, "Inspect current workspace VCS snapshot (JJ ChangeId/CommitId/OpId/conflicts or Git HEAD/branch).",
-                Schema("""{"type":"object","properties":{"commitMessageIfGit":{"type":"string"}}}""")),
+                Schema("""{"type":"object","properties":{"commitMessageIfGit":{"type":"string"}}}"""), localWrite),
             new(VcsMcpToolNames.Diff, "Compute workspace diff summary and changed files between revisions.",
-                Schema("""{"type":"object","properties":{"fromRev":{"type":"string"},"toRev":{"type":"string"}}}""")),
+                Schema("""{"type":"object","properties":{"fromRev":{"type":"string"},"toRev":{"type":"string"}}}"""), localWrite),
             new(VcsMcpToolNames.RestoreOp, "Restore Jujutsu operation log state (`jj op restore <opId>`).",
-                Schema("""{"type":"object","required":["opId"],"properties":{"opId":{"type":"string"}}}""")),
+                Schema("""{"type":"object","required":["opId"],"properties":{"opId":{"type":"string"}}}"""), localDestructive),
             new(VcsMcpToolNames.RebaseUpstream, "Fetch and rebase working copy onto upstream branch.",
-                Schema("""{"type":"object","properties":{"upstreamBranch":{"type":"string"}}}""")),
+                Schema("""{"type":"object","properties":{"upstreamBranch":{"type":"string"}}}"""), openWorldDestructive),
             new(VcsMcpToolNames.PublishPr, "Publish a pull request via GitHub Forge.",
-                Schema("""{"type":"object","required":["headBranch","title"],"properties":{"headBranch":{"type":"string"},"baseBranch":{"type":"string"},"title":{"type":"string"},"body":{"type":"string"},"push":{"type":"boolean"}}}""")),
+                Schema("""{"type":"object","required":["headBranch","title"],"properties":{"headBranch":{"type":"string"},"baseBranch":{"type":"string"},"title":{"type":"string"},"body":{"type":"string"},"push":{"type":"boolean"}}}"""), openWorldDestructive),
             new(VcsMcpToolNames.PrChecks, "Inspect CI check runs and completion status for a pull request.",
-                Schema("""{"type":"object","required":["prNumber"],"properties":{"prNumber":{"type":"integer"},"repo":{"type":"string"}}}""")),
+                Schema("""{"type":"object","required":["prNumber"],"properties":{"prNumber":{"type":"integer"},"repo":{"type":"string"}}}"""), readOnlyOpenWorld),
             new(VcsMcpToolNames.CiEvidence, "Fetch CI failure summary and log tail for a pull request SHA.",
-                Schema("""{"type":"object","required":["prNumber","headSha"],"properties":{"prNumber":{"type":"integer"},"headSha":{"type":"string"},"repo":{"type":"string"}}}""")),
+                Schema("""{"type":"object","required":["prNumber","headSha"],"properties":{"prNumber":{"type":"integer"},"headSha":{"type":"string"},"repo":{"type":"string"}}}"""), readOnlyOpenWorld),
             new(VcsMcpToolNames.PrMerge, "Merge a pull request matching the expected head SHA.",
-                Schema("""{"type":"object","required":["prNumber","expectedHeadSha"],"properties":{"prNumber":{"type":"integer"},"expectedHeadSha":{"type":"string"},"repo":{"type":"string"}}}""")),
+                Schema("""{"type":"object","required":["prNumber","expectedHeadSha"],"properties":{"prNumber":{"type":"integer"},"expectedHeadSha":{"type":"string"},"repo":{"type":"string"}}}"""), openWorldDestructive),
             new(VcsMcpToolNames.IssueView, "Fetch issue metadata, body, and labels from GitHub Forge.",
-                Schema("""{"type":"object","required":["issueNumber"],"properties":{"issueNumber":{"type":"integer"},"repo":{"type":"string"}}}"""))
+                Schema("""{"type":"object","required":["issueNumber"],"properties":{"issueNumber":{"type":"integer"},"repo":{"type":"string"}}}"""), readOnlyOpenWorld)
         ];
     }
 }
