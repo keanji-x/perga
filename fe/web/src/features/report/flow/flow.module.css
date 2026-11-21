@@ -36,6 +36,57 @@
     color: var(--text-3);
   }
 
+  .headerMeta {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-3);
+  }
+
+  .railControls {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+  }
+
+  .layerCountHint {
+    font-family: var(--font-mono);
+    font-size: 0.6875rem;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-3);
+    margin-inline-end: var(--space-1);
+  }
+
+  .railStepButton {
+    appearance: none;
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-2);
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    line-height: 1;
+    inline-size: 1.375rem;
+    block-size: 1.375rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: border-color var(--motion-quick) var(--ease-feedback),
+      color var(--motion-quick) var(--ease-feedback),
+      background-color var(--motion-quick) var(--ease-feedback);
+  }
+
+  .railStepButton:hover {
+    border-color: var(--hairline-strong);
+    color: var(--text);
+    background: var(--overlay-hover-faint);
+  }
+
+  .railStepButton:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
   .cycleNotice {
     font-family: var(--font-mono);
     font-size: 0.72rem;
@@ -47,6 +98,12 @@
     padding-block: var(--space-4) var(--space-3);
     border-block-end: 1px solid var(--hairline);
     overflow-x: auto;
+  }
+
+  .graphRailScrollable {
+    scrollbar-width: thin;
+    scrollbar-color: var(--hairline-strong) transparent;
+    padding-block-end: var(--space-3);
   }
 
   .layers {
@@ -265,6 +322,19 @@
     color: var(--error-text);
   }
 
+  .nodeScheduleLine {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0 var(--space-1);
+    font-family: var(--font-mono);
+    font-size: 0.6875rem;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.35;
+    color: var(--text-3);
+    overflow-wrap: anywhere;
+  }
+
   .nodeCaption {
     font-family: var(--font-mono);
     font-size: 0.72rem;
@@ -480,14 +550,22 @@
     color: var(--text-2);
   }
 
-  /* 3. Quiet periodic cron footnote strip */
+  /* 2. First-class multi-column grid for standalone periodic rules */
   .cronSection {
     padding-block: var(--space-3);
-    border-block-start: 1px solid var(--hairline);
+    border-block-end: 1px solid var(--hairline);
+  }
+
+  .cronHeaderRow {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-2);
+    margin-block-end: var(--space-2);
   }
 
   .footnoteHeading {
-    margin: 0 0 var(--space-2);
+    margin: 0;
     font-family: var(--font-sans);
     font-size: 0.6875rem;
     font-weight: var(--weight-semibold);
@@ -496,57 +574,20 @@
     color: var(--text-3);
   }
 
-  .cronList {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-1);
+  .periodicGrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+    gap: var(--space-3);
+    min-inline-size: 0;
   }
 
-  .cronRowButton {
-    appearance: none;
-    border: 0;
-    background: transparent;
-    padding: var(--space-1) 0;
-    inline-size: 100%;
-    text-align: start;
-    cursor: pointer;
-    display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    gap: var(--space-1) var(--space-2);
-    font-family: var(--font-mono);
-    font-size: 0.75rem;
-    font-variant-numeric: tabular-nums;
-    color: var(--text-3);
-    line-height: 1.45;
-  }
-
-  .cronTitle {
-    font-family: var(--font-sans);
-    font-size: var(--font-step-2-size);
-    color: var(--text-2);
-  }
-
-  .cronRowSelected .cronTitle {
-    color: var(--text);
-    font-weight: var(--weight-semibold);
-  }
-
-  .cronRowButton:hover .cronTitle {
-    color: var(--text);
-    font-weight: var(--weight-semibold);
-  }
-
-  .cronRowButton:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
+  .periodicCard {
+    border-block-start: 1px solid var(--hairline);
+    padding-block-start: var(--space-2);
   }
 
   .cronExpr {
-    color: var(--text);
+    color: var(--text-2);
   }
 
   /* 4. Collapsible archived history drawer */

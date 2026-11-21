@@ -2,7 +2,7 @@
 // Renders topologically layered DAG steps, watch probe progress, an interactive editorial detail
 // panel, a quiet periodic cron footnote strip, and a collapsible archived history drawer.
 
-import { useMemo, type ReactNode } from 'react';
+import { useMemo, useRef, type ReactNode } from 'react';
 import type { CheckpointCheck } from '../../../../../core/domain/report-checkpoints.ts';
 import type {
   FlowArchivedNodeProjection,
@@ -187,6 +187,70 @@ function FlowDagNodeCard({
         </span>
       )}
 
+      {node.whenKind === 'cron' && node.cron != null && node.cron.trim() !== '' && (
+        <span className={styles.nodeScheduleLine}>
+          <span className={styles.cronExpr}>{node.cron}</span>
+          <span className={styles.metaSep} aria-hidden="true">·</span>
+          <span>已执行 {node.firedCount} 次</span>
+        </span>
+      )}
+
+      <span className={`${styles.nodeCaption} ${captionToneClass(visual)}`}>{caption}</span>
+
+      {showSummaryPreview && (
+        <span className={styles.nodeSummaryPreview}>{node.outcomeSummary}</span>
+      )}
+    </button>
+  );
+}
+
+function FlowPeriodicNodeCard({
+  node,
+  isSelected,
+  titleById,
+  onSelect,
+}: Readonly<{
+  node: FlowNodeProjection;
+  isSelected: boolean;
+  titleById: ReadonlyMap<string, string>;
+  onSelect: (nodeId: string) => void;
+}>) {
+  const visual = classifyFlowNodeState(node);
+  const nextFire = formatFlowTimestamp(node.nextFireAtMs);
+  const caption = formatNodeCaption(node, titleById);
+  const showSummaryPreview = (visual === 'attention' || visual === 'blocked' || visual === 'failed')
+    && node.outcomeSummary != null
+    && node.outcomeSummary.trim() !== '';
+
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={isSelected}
+      className={`${styles.nodeButton} ${styles.periodicCard} ${isSelected ? styles.nodeSelected : ''} ${nodeAccentClass(visual)}`}
+      onClick={() => { onSelect(node.id); }}
+    >
+      <span className={styles.nodeTopLine}>
+        <NodeStateMarker state={visual} />
+        <span className={styles.nodeTitle}>{node.title}</span>
+      </span>
+
+      <span className={styles.nodeScheduleLine}>
+        {node.cron != null && node.cron.trim() !== '' && (
+          <>
+            <span className={styles.cronExpr}>{node.cron}</span>
+            <span className={styles.metaSep} aria-hidden="true">·</span>
+          </>
+        )}
+        <span>已执行 {node.firedCount} 次</span>
+        {!(node.canceled || node.status === 'canceled') && nextFire !== null && (
+          <>
+            <span className={styles.metaSep} aria-hidden="true">·</span>
+            <span>下次 {nextFire}</span>
+          </>
+        )}
+      </span>
+
       <span className={`${styles.nodeCaption} ${captionToneClass(visual)}`}>{caption}</span>
 
       {showSummaryPreview && (
@@ -254,23 +318,56 @@ export function ReportFlowBlock({
   };
 
   const headingLabel = title != null && title.trim() !== '' ? title : '调度流程';
+  const railRef = useRef<HTMLElement | null>(null);
+  const isScrollableRail = layout.layers.length > 4;
+
+  const scrollRailBy = (delta: number) => {
+    railRef.current?.scrollBy({ left: delta, behavior: 'smooth' });
+  };
 
   return (
     <section className={styles.root} aria-label={headingLabel}>
       <header className={styles.header}>
         <h2 className={styles.heading}>{headingLabel}</h2>
-        {layout.hasCycle && (
-          <span className={styles.cycleNotice} role="status">
-            检测到依赖环，已按降级层展示
-          </span>
-        )}
+        <div className={styles.headerMeta}>
+          {isScrollableRail && (
+            <div className={styles.railControls} aria-label="流程列导航">
+              <span className={styles.layerCountHint}>共 {layout.layers.length} 层</span>
+              <button
+                type="button"
+                className={styles.railStepButton}
+                aria-label="向左滚动流程"
+                onClick={() => { scrollRailBy(-260); }}
+              >
+                ‹
+              </button>
+              <button
+                type="button"
+                className={styles.railStepButton}
+                aria-label="向右滚动流程"
+                onClick={() => { scrollRailBy(260); }}
+              >
+                ›
+              </button>
+            </div>
+          )}
+          {layout.hasCycle && (
+            <span className={styles.cycleNotice} role="status">
+              检测到依赖环，已按降级层展示
+            </span>
+          )}
+        </div>
       </header>
 
       {/* 1. Topologically layered DAG canvas */}
       {layout.layers.length > 0 && (
-        <nav className={styles.graphRail} aria-label="调度步骤图">
+        <nav
+          ref={railRef}
+          className={`${styles.graphRail} ${isScrollableRail ? styles.graphRailScrollable : ''}`}
+          aria-label="调度步骤图"
+        >
           <div
-            className={`${styles.layers} ${layout.layers.length > 4 ? styles.layersScrollable : ''}`}
+            className={`${styles.layers} ${isScrollableRail ? styles.layersScrollable : ''}`}
             role="tablist"
             aria-label="流程节点"
           >
@@ -298,6 +395,27 @@ export function ReportFlowBlock({
             ))}
           </div>
         </nav>
+      )}
+
+      {/* 2. First-class multi-column grid for standalone periodic rules */}
+      {layout.standaloneCronNodes.length > 0 && (
+        <section className={styles.cronSection} aria-label="周期巡检规则">
+          <div className={styles.cronHeaderRow}>
+            <h3 className={styles.footnoteHeading}>周期巡检</h3>
+            <span className={styles.layerCountHint}>{layout.standaloneCronNodes.length} 项常驻</span>
+          </div>
+          <div className={styles.periodicGrid} role="tablist" aria-label="周期巡检节点">
+            {layout.standaloneCronNodes.map((cronNode) => (
+              <FlowPeriodicNodeCard
+                key={cronNode.id}
+                node={cronNode}
+                isSelected={activeNode?.id === cronNode.id}
+                titleById={titleById}
+                onSelect={handleSelectNode}
+              />
+            ))}
+          </div>
+        </section>
       )}
 
       {/* 2. Calm editorial detail panel for the selected node */}
@@ -422,49 +540,6 @@ export function ReportFlowBlock({
           </article>
         );
       })()}
-
-      {/* 3. Quiet periodic cron schedule footnote strip */}
-      {layout.cronNodes.length > 0 && (
-        <section className={styles.cronSection} aria-label="周期巡检规则">
-          <h3 className={styles.footnoteHeading}>周期巡检</h3>
-          <ul className={styles.cronList}>
-            {layout.cronNodes.map((cronNode) => {
-              const nextFire = formatFlowTimestamp(cronNode.nextFireAtMs);
-              const isSelected = activeNode?.id === cronNode.id;
-              return (
-                <li key={cronNode.id}>
-                  <button
-                    type="button"
-                    className={`${styles.cronRowButton} ${isSelected ? styles.cronRowSelected : ''}`}
-                    onClick={() => { handleSelectNode(cronNode.id); }}
-                  >
-                    <span className={styles.cronTitle}>{cronNode.title}</span>
-                    {cronNode.cron != null && cronNode.cron.trim() !== '' && (
-                      <>
-                        <span className={styles.metaSep} aria-hidden="true">·</span>
-                        <span className={styles.cronExpr}>{cronNode.cron}</span>
-                      </>
-                    )}
-                    <span className={styles.metaSep} aria-hidden="true">·</span>
-                    <span>已执行 {cronNode.firedCount} 次</span>
-                    {cronNode.canceled || cronNode.status === 'canceled' ? (
-                      <>
-                        <span className={styles.metaSep} aria-hidden="true">·</span>
-                        <span>已取消</span>
-                      </>
-                    ) : nextFire !== null && (
-                      <>
-                        <span className={styles.metaSep} aria-hidden="true">·</span>
-                        <span>下次触发 {nextFire}</span>
-                      </>
-                    )}
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        </section>
-      )}
 
       {/* 4. Collapsible archived history drawer */}
       {flow.archived.length > 0 && (

@@ -31,12 +31,13 @@ export type FlowLayer = Readonly<{
 export type FlowLayout = Readonly<{
   layers: readonly FlowLayer[];
   cronNodes: readonly FlowNodeProjection[];
+  standaloneCronNodes: readonly FlowNodeProjection[];
   hasCycle: boolean;
 }>;
 
 export function buildFlowLayout(nodes: readonly FlowNodeProjection[]): FlowLayout {
   if (nodes.length === 0) {
-    return { layers: [], cronNodes: [], hasCycle: false };
+    return { layers: [], cronNodes: [], standaloneCronNodes: [], hasCycle: false };
   }
 
   const cronNodes: FlowNodeProjection[] = [];
@@ -53,13 +54,17 @@ export function buildFlowLayout(nodes: readonly FlowNodeProjection[]): FlowLayou
     }
   }
 
+  // Standalone periodic rules (not referenced as upstream in any DAG chain) render in a unified
+  // first-class card grid right below the DAG rail so they never look downgraded or duplicated.
+  const standaloneCronNodes = cronNodes.filter((node) => !referencedAsDependency.has(node.id));
+
   // Include all non-cron nodes in the DAG, plus any cron node that triggers downstream `after` dependents.
   const graphNodes = nodes.filter(
     (node) => node.whenKind !== 'cron' || referencedAsDependency.has(node.id),
   );
 
   if (graphNodes.length === 0) {
-    return { layers: [], cronNodes, hasCycle: false };
+    return { layers: [], cronNodes, standaloneCronNodes, hasCycle: false };
   }
 
   const byId = new Map<string, FlowNodeProjection>();
@@ -166,5 +171,5 @@ export function buildFlowLayout(nodes: readonly FlowNodeProjection[]): FlowLayou
     layers.push({ index: fallbackIndex, nodes: fallbackItems, isCycleFallback: true });
   }
 
-  return { layers, cronNodes, hasCycle };
+  return { layers, cronNodes, standaloneCronNodes, hasCycle };
 }
