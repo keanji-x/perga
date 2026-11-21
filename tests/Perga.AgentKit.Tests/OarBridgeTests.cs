@@ -283,9 +283,9 @@ public sealed class OarBridgeTests : IDisposable
 
             var statuses = await runtime.ProbeProvidersAsync(CancellationToken.None);
             Assert.Contains(statuses, status => status.Provider == "codex" && status.Available);
-            await using var session = await runtime.OpenSessionAsync(
-                new HarnessLaunchSpec("codex", null, _workspaceDir, null, null, new Dictionary<string, McpServerConfig>()),
-                CancellationToken.None);
+            await using var session = runtime.CreateSession(
+                new HarnessLaunchSpec("codex", null, _workspaceDir, null, null, new Dictionary<string, McpServerConfig>()));
+            await session.InitializeAsync(CancellationToken.None);
 
             var calls = new List<(string? Method, string? Runtime)>();
             foreach (var line in await File.ReadAllLinesAsync(_logPath))
