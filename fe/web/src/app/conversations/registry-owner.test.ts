@@ -4,11 +4,80 @@ import type { ConversationDraft } from './registry-model.ts';
 import type { Conversation } from '../../../../core/domain/conversation.ts';
 
 import { EMPTY_COMPOSER, isComposerEmpty } from '../../../../core/domain/conversation-composer.ts';
+import { createStorageKey } from '../../../../core/keys/storage.ts';
+import { createMemoryStorage } from '../router/share-reuse-fixture.ts';
 
 const card = 'opaque:card';
 const draft: ConversationDraft = { scopeId: 'opaque:scope', provider: 'codex', model: { model: null, reasoning_effort: null },
   key: 'attempt', text: 'Hello', submitted: null, creating: false, error: null, remedy: null };
 const conversation: Conversation = { id: card, trackId: 'track', title: null, kind: 'agent', isLead: false, provider: 'codex', state: 'idle', updatedAt: 1 };
+it.each([false, true])('preserves unread first sends while queuing another track (consumed before recovery: %s)', (consumed) => {
+  const storage = createMemoryStorage();
+  const storageKey = createStorageKey('pending-track-initial-sends-v1');
+  const saved = { first: { text: 'Saved message', key: 'first:init' } };
+  const queued = { text: 'New message', key: 'second:init' };
+  storage.setItem(storageKey, JSON.stringify(saved));
+  const getItem = storage.getItem.bind(storage);
+  const read = vi.spyOn(storage, 'getItem').mockImplementation(() => { throw new Error('Storage unavailable'); });
+  const owner = createConversationOwner(() => storage);
+  const registry = owner.commands;
+  expect(registry.queueTrackInitialSend('second', queued.text, queued.key)).toBe(false);
+  expect(owner.getSnapshot().pendingTrackInitialSends).toEqual({ second: queued });
+  expect(getItem(storageKey)).toBe(JSON.stringify(saved));
+
+  if (consumed) {
+    registry.queueTrackInitialSend('first', saved.first.text, saved.first.key);
+    registry.consumeTrackInitialSend('first');
+    expect(getItem(storageKey)).toBe(JSON.stringify(saved));
+  }
+  read.mockRestore();
+  expect(registry.hydratePendingTrackInitialSends()).toBe(true);
+  const recovered = consumed ? { second: queued } : { ...saved, second: queued };
+  expect(owner.getSnapshot().pendingTrackInitialSends).toEqual(recovered);
+  expect(storage.getItem(storageKey)).toBe(JSON.stringify(recovered));
+});
+
+it('retries a failed initial-send write so a fresh owner can restore the entry', () => {
+  const storage = createMemoryStorage();
+  const storageKey = createStorageKey('pending-track-initial-sends-v1');
+  const { commands } = createConversationOwner(() => storage);
+  vi.spyOn(storage, 'setItem').mockImplementationOnce(() => { throw new Error('Storage unavailable'); });
+
+  expect(commands.queueTrackInitialSend('track', 'First message', 'create:init')).toBe(false);
+  expect(storage.getItem(storageKey)).toBeNull();
+  expect(commands.hydratePendingTrackInitialSends()).toBe(true);
+  expect(createConversationOwner(() => storage).getSnapshot().pendingTrackInitialSends).toEqual({
+    track: { text: 'First message', key: 'create:init' },
+  });
+});
+
+it('retries a failed write of the merged initial-send queue after hydration', () => {
+  const storage = createMemoryStorage();
+  const storageKey = createStorageKey('pending-track-initial-sends-v1');
+  const saved = { first: { text: 'Saved message', key: 'first:init' } };
+  storage.setItem(storageKey, JSON.stringify(saved));
+  const read = vi.spyOn(storage, 'getItem').mockImplementation(() => { throw new Error('Storage unreadable'); });
+  const owner = createConversationOwner(() => storage);
+  expect(owner.commands.queueTrackInitialSend('second', 'New message', 'second:init')).toBe(false);
+  read.mockRestore();
+  vi.spyOn(storage, 'setItem').mockImplementationOnce(() => { throw new Error('Storage unavailable'); });
+
+  const merged = { ...saved, second: { text: 'New message', key: 'second:init' } };
+  expect(owner.commands.hydratePendingTrackInitialSends()).toBe(false);
+  expect(owner.getSnapshot().pendingTrackInitialSends).toEqual(merged);
+  expect(storage.getItem(storageKey)).toBe(JSON.stringify(saved));
+  expect(owner.commands.hydratePendingTrackInitialSends()).toBe(true);
+  expect(createConversationOwner(() => storage).getSnapshot().pendingTrackInitialSends).toEqual(merged);
+});
+
+it('treats malformed initial-send JSON as an empty queue', () => {
+  const storage = createMemoryStorage();
+  const storageKey = createStorageKey('pending-track-initial-sends-v1');
+  storage.setItem(storageKey, '{');
+  const registry = createConversationOwner(() => storage).commands;
+  expect(registry.queueTrackInitialSend('track', 'New message', 'create:init')).toBe(true);
+  expect(storage.getItem(storageKey)).toBe(JSON.stringify({ track: { text: 'New message', key: 'create:init' } }));
+});
 it('notifies only changed selected facts and preserves no-op, empty and summary snapshots', () => {
   const owner = createConversationOwner();
   const registry = owner.commands;

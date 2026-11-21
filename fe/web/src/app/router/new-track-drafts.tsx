@@ -15,6 +15,8 @@ import { TRACK_CREATE_TEXT } from '../../../../core/domain/track.ts';
 /** One create's wire body, its key, and any initial message held for post-create send. */
 export type TrackCreationRequest = Readonly<{ body: NewTrackBody; key: string; message?: string }>;
 
+type SubmittedTrackDraft = Readonly<{ request: TrackCreationRequest; createdTrackId: string | null }>;
+
 export type NewTrackDraftArea = Pick<Area, 'id' | 'name' | 'defaultCwd'> & Readonly<{
   defaultTemplateId?: string | null;
 }>;
@@ -42,25 +44,28 @@ export type NewTrackSession = Readonly<{
 
 function createDraftStore(submittedStorage?: () => Storage, userId?: string) {
   const keyOf = (areaId: string) => createStorageKey('track-create-v1', encodeURIComponent(userId ?? ''), encodeURIComponent(areaId));
-  const readRequest = (areaId: string): TrackCreationRequest | null => {
+  const readSubmittedDraft = (areaId: string): SubmittedTrackDraft | null => {
     if (submittedStorage === undefined || !userId) return null;
     try {
       const value: unknown = JSON.parse(submittedStorage().getItem(keyOf(areaId)) ?? 'null');
       if (typeof value !== 'object' || value === null) return null;
-      const request = value as Partial<TrackCreationRequest>;
-      return typeof request.key === 'string' && request.body?.area_id === areaId
-        && (request.message === undefined || typeof request.message === 'string')
-        ? { key: request.key, body: request.body, ...(request.message === undefined ? {} : { message: request.message }) } : null;
+      const { key, body, message, createdTrackId } = value as Partial<TrackCreationRequest> & { createdTrackId?: unknown };
+      if (typeof key !== 'string' || body?.area_id !== areaId
+        || (message !== undefined && typeof message !== 'string')) return null;
+      return {
+        request: { key, body, ...(message === undefined ? {} : { message }) },
+        createdTrackId: typeof createdTrackId === 'string' && createdTrackId.trim() !== '' ? createdTrackId : null,
+      };
     } catch {
       return null;
     }
   };
-  const remember = (areaId: string, request: TrackCreationRequest | null) => {
+  const remember = (areaId: string, request: TrackCreationRequest | null, createdTrackId: string | null) => {
     if (submittedStorage === undefined || !userId) return;
     try {
       const storage = submittedStorage();
       if (request === null) storage.removeItem(keyOf(areaId));
-      else storage.setItem(keyOf(areaId), JSON.stringify(request));
+      else storage.setItem(keyOf(areaId), JSON.stringify({ ...request, ...(createdTrackId === null ? {} : { createdTrackId }) }));
     } catch { /* Keep the in-memory draft when browser storage is unavailable. */ }
   };
   const drafts = new Map<string, NewTrackSession>();
@@ -71,7 +76,7 @@ function createDraftStore(submittedStorage?: () => Storage, userId?: string) {
     get: (areaId: string) => drafts.get(areaId) ?? null,
     ensure: (area: Area) => {
       if (drafts.has(area.id)) return;
-      const request = readRequest(area.id);
+      const { request, createdTrackId } = readSubmittedDraft(area.id) ?? { request: null, createdTrackId: null };
       drafts.set(area.id, {
         area: { id: area.id, name: area.name, defaultCwd: area.defaultCwd, defaultTemplateId: area.defaultTemplateId },
         form: request === null ? null : {
@@ -88,23 +93,28 @@ function createDraftStore(submittedStorage?: () => Storage, userId?: string) {
           model: request.body.model ?? null, reasoning_effort: request.body.reasoning_effort ?? null,
         },
         role: request?.body.admin ? 'admin' : 'member',
-        key: request?.key ?? mintIdempotencyKey(), creating: false, request, createdTrackId: null,
-        error: request === null ? null : TRACK_CREATE_TEXT.unknown, canRetryAsNewTrack: false, folderConflict: null,
+        key: request?.key ?? mintIdempotencyKey(), creating: false, request, createdTrackId,
+        error: request === null || createdTrackId !== null ? null : TRACK_CREATE_TEXT.unknown, canRetryAsNewTrack: false, folderConflict: null,
       });
       notify();
     },
-    update: (areaId: string, patch: Partial<NewTrackSession>) => {
+    update: (areaId: string, patch: Partial<NewTrackSession>, { persistConfirmation = true } = {}) => {
       const current = drafts.get(areaId);
       if (current === undefined) return;
       const nextProvider = patch.provider ?? current.provider;
       const nextPermissionMode = patch.provider !== undefined
         ? permissionModeAfterProviderChange(current.provider, nextProvider, patch.permissionMode ?? current.permissionMode)
         : (patch.permissionMode !== undefined ? patch.permissionMode : current.permissionMode);
-      drafts.set(areaId, { ...current, ...patch, permissionMode: nextPermissionMode });
-      if (patch.request !== undefined) remember(areaId, patch.request);
+      const request = patch.request === undefined ? current.request : patch.request;
+      const createdTrackId = request === null ? null
+        : patch.createdTrackId === undefined ? (request === current.request ? current.createdTrackId : null) : patch.createdTrackId;
+      drafts.set(areaId, { ...current, ...patch, permissionMode: nextPermissionMode, request, createdTrackId });
+      if (patch.request !== undefined || (patch.createdTrackId !== undefined && persistConfirmation)) {
+        remember(areaId, request, persistConfirmation ? createdTrackId : null);
+      }
       notify();
     },
-    forget: (areaId: string) => { drafts.delete(areaId); remember(areaId, null); notify(); },
+    forget: (areaId: string) => { drafts.delete(areaId); remember(areaId, null, null); notify(); },
   };
 }
 

@@ -99,7 +99,16 @@ function NewTrackEditor({ transport, unauthorized, pergaMode = false, workspace,
   const saveForm = useCallback((form: NewTrackFormState) => { store.update(areaId, { form }); }, [areaId, store]);
 
   const openCreated = (trackId: string) => {
-    store.forget(areaId);
+    const synced = conversationRegistry.hydratePendingTrackInitialSends();
+    const message = store.get(areaId)?.request?.message;
+    const hasMessage = message !== undefined && !isBlankForKernel(message);
+    const canForget = !hasMessage || synced;
+    if (!canForget && !conversationRegistry.hasPendingTrackInitialSend(trackId)) {
+      store.update(areaId, { error: 'Your track was created, but its saved first message is unavailable. Try opening the track again.' });
+      return;
+    }
+    // Keep the saved request as a recovery copy while the first message is only in memory.
+    if (canForget) store.forget(areaId);
     go({ name: 'track', trackId, openPlanner: true });
   };
 
@@ -136,12 +145,12 @@ function NewTrackEditor({ transport, unauthorized, pergaMode = false, workspace,
     store.update(areaId, { creating: true, request, error: null, canRetryAsNewTrack: false, folderConflict: null });
     const creation = trackMutations.create(request.body, request.key);
     void creation.then((track) => {
-      if (request.message !== undefined && !isBlankForKernel(request.message)) {
-        conversationRegistry.queueTrackInitialSend(track.id, request.message, `${request.key}:init`);
-      }
+      const persistConfirmation = request.message === undefined || isBlankForKernel(request.message)
+        || conversationRegistry.queueTrackInitialSend(track.id, request.message, `${request.key}:init`);
       // A late acknowledgement belongs to its draft; it never steals the
       // navigation the reader made while waiting. Returning offers Open track.
-      store.update(areaId, { createdTrackId: track.id });
+      // If saving the first send failed, the saved request can still replay both keys after reload.
+      store.update(areaId, { createdTrackId: track.id }, { persistConfirmation });
       if (liveRef.current) openCreated(track.id);
     }).catch((failure: unknown) => {
       const conflict = folderConflictOf(failure);
@@ -246,7 +255,7 @@ function NewTrackEditor({ transport, unauthorized, pergaMode = false, workspace,
     submitBlocked={!available || createdTrackId !== null || session.canRetryAsNewTrack}
     locked={session.request !== null}
     submitting={session.creating}
-    error={areaFailure ?? (createdTrackId !== null ? 'Your track was created while you were away.' : session.error)}
+    error={areaFailure ?? session.error ?? (createdTrackId !== null ? 'Your track was created while you were away.' : null)}
     errorAction={createdTrackId !== null && session.request !== null
       ? { label: 'Open track', onClick: () => { openCreated(createdTrackId); } }
       : folderConflict !== null

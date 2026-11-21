@@ -17,27 +17,14 @@ import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts'
 import { APP_BASEPATH, createAppRouter } from './public.tsx';
 import { bootTestCardRuntime } from './test-card-runtime.ts';
 import { ThemeProvider } from '../theme/public.tsx';
+import { CurrentUserScope } from '../auth/current-user.tsx';
+import { createStorageKey } from '../../../../core/keys/storage.ts';
+import { PLANNER_OPEN_STATE_KEY } from './navigation.ts';
+import { createMemoryStorage } from './share-reuse-fixture.ts';
 
-const restored = vi.hoisted(() => ({ request: null as import('./new-track-drafts.tsx').TrackCreationRequest | null }));
-
-vi.mock('./new-track-drafts.tsx', async importOriginal => {
-  const original = await importOriginal<typeof import('./new-track-drafts.tsx')>();
-  const { useLayoutEffect, useMemo } = await import('react');
-  return { ...original, useNewTrackSession: (...args: Parameters<typeof original.useNewTrackSession>) => {
-    const value = original.useNewTrackSession(...args);
-    const request = value.session === null ? null : restored.request;
-    const session = useMemo(() => request === null || value.session === null ? value.session : {
-      ...value.session, request, form: { message: request.message ?? '', cwd: request.body.cwd ?? '' },
-    }, [request, value.session]);
-    useLayoutEffect(() => {
-      if (request === null || session === null) return;
-      restored.request = null;
-      value.store.update(args[0], { request, form: session.form });
-    }, [request, session, value.store, args]);
-    return { ...value, session };
-  } };
-
-});
+const IDENTITY = { userId: 'track-create-owner', displayName: 'Owner', role: 'owner', sessionId: 'one' } as const;
+const DRAFT_KEY = createStorageKey('track-create-v1', IDENTITY.userId, 'c1');
+const FIRST_SEND_KEY = createStorageKey('pending-track-initial-sends-v1');
 
 /** The fixed unknown state of a create whose answer was lost (#2131): never the transport's text. */
 const UNCONFIRMED_TRACK = 'The track creation is unconfirmed. Try again to check the same track.';
@@ -125,8 +112,11 @@ function harness(options: {
   areasFail?: boolean;
   /** Where the browser starts, under the basepath; deep-linking is the only entry that reaches a stale area id. */
   path?: string;
+  /** Recreate app providers on the current history entry, as a reload would. */
+  reload?: boolean;
   /** Rows the planner card's item read answers with; defaults to `[]`, what the kernel answers before the queue drains. */
   plannerItems?: readonly SessionItemDto[];
+  submittedStorage?: Storage;
 } = {}) {
   const sent: ApiRequest[] = [];
   let trackCreateIndex = 0;
@@ -154,10 +144,14 @@ function harness(options: {
       }
       if (request.method === 'POST' && request.path === '/api/v1/tracks' && options.heldCreate) {
         return options.heldCreate.then(() => ({
-          status: 200,
-          statusText: 'OK',
+          status: 201,
+          statusText: 'Created',
           body: { ...TRACK_ROW, area_id: posted?.area_id ?? 'c1' },
         }));
+      }
+      if (options.submittedStorage !== undefined && request.method === 'POST' && request.path === '/api/v1/sessions/card-planner/messages') {
+        return Promise.resolve({ status: 202, statusText: 'Accepted',
+          body: { sessionId: 'card-planner', messageId: 'initial-message', turnId: 'turn-initial', delivery: 'accepted', replay: false } });
       }
       /* What `routes/agent_providers.rs` answers (#1817): Codex ready; Claude ready, unavailable with a
          reason, or `not_configured` on a server without the Claude Planner. */
@@ -227,23 +221,24 @@ function harness(options: {
       return Promise.resolve({ status: 200, statusText: 'OK', body });
     },
   };
-  window.history.pushState({}, '', `${APP_BASEPATH}${options.path ?? '/'}`);
+  if (!options.reload) window.history.pushState({}, '', `${APP_BASEPATH}${options.path ?? '/'}`);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const router = createAppRouter({ prepareReport: prepareReportDocument,
     transport, unauthorized, client, cards: bootTestCardRuntime(), onSignOut: vi.fn(), pergaMode: options.pergaMode,
+    submittedStorage: options.submittedStorage === undefined ? undefined : () => options.submittedStorage!,
   });
   /* `StrictMode`, because production runs it: its double-invoked effects are what
        catch a `useRef` latch written only in the cleanup arm. */
-  render(
+  const { unmount } = render(
     <StrictMode>
       <QueryClientProvider client={client}>
         <ThemeProvider storage={memoryStorage()}>
-          <RouterProvider router={router} />
+          <CurrentUserScope value={IDENTITY}><RouterProvider router={router} /></CurrentUserScope>
         </ThemeProvider>
       </QueryClientProvider>
     </StrictMode>,
   );
-  return { sent, client, router };
+  return { sent, client, router, unmount };
 }
 
 describe('New track model selection', () => {
@@ -593,6 +588,209 @@ describe('Track creation drafts survive navigation', () => {
     expect(createdTrackRequests(sent)).toHaveLength(1);
   });
 });
+
+it.each([false, true])('opens the confirmed draft after reload with initial message already delivered=%s', async (deliveredBeforeReload) => {
+  let release!: () => void;
+  const heldCreate = new Promise<void>((resolve) => { release = resolve; });
+  const submittedStorage = createMemoryStorage();
+  const original = harness({ path: '/area/c1/new', heldCreate, submittedStorage });
+  const message = 'Create while away';
+  await userEvent.type(await findComposer(), message);
+  await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
+  await waitFor(() => expect(createdTrackRequests(original.sent)).toHaveLength(1));
+  await userEvent.click(screen.getByRole('button', { name: 'Go to Today' }));
+  await waitFor(() => expect(screen.queryByLabelText(TASK_LABEL)).toBeNull());
+  release();
+  await userEvent.click(screen.getByRole('button', { name: 'New track in Work' }));
+  await screen.findByRole('button', { name: 'Open track' });
+
+  if (deliveredBeforeReload) {
+    await act(async () => {
+      await original.router.navigate({ to: '/track/w-new', state: { [PLANNER_OPEN_STATE_KEY]: true } });
+    });
+    await waitFor(() => expect(plannerInputTexts(original.sent)).toEqual([message]));
+    await waitFor(() => expect(submittedStorage.getItem(FIRST_SEND_KEY)).toBeNull());
+    await userEvent.click(screen.getByRole('button', { name: 'New track in Work' }));
+    await screen.findByRole('button', { name: 'Open track' });
+  } else {
+    expect(plannerInputTexts(original.sent)).toEqual([]);
+    expect(submittedStorage.getItem(FIRST_SEND_KEY)).not.toBeNull();
+  }
+
+  original.unmount();
+  original.client.clear();
+  const reopened = harness({ path: '/area/c1/new', submittedStorage });
+  const openTrack = await screen.findByRole('button', { name: 'Open track' });
+  expect(screen.queryByText(UNCONFIRMED_TRACK)).toBeNull();
+  await userEvent.click(openTrack);
+  await waitFor(() => expect(window.location.pathname).toBe(`${APP_BASEPATH}/track/w-new`));
+  await screen.findByRole('complementary', { name: 'Planner' });
+  expect(submittedStorage.getItem(DRAFT_KEY)).toBeNull();
+  await waitFor(() => expect(submittedStorage.getItem(FIRST_SEND_KEY)).toBeNull());
+  expect(plannerInputTexts(reopened.sent)).toEqual(deliveredBeforeReload ? [] : [message]);
+  expect(createdTrackRequests([...original.sent, ...reopened.sent])).toHaveLength(1);
+  await userEvent.click(screen.getByRole('button', { name: 'New track in Work' }));
+  await findComposer();
+  expect(composerText()).toBe('');
+  expect(screen.queryByRole('button', { name: 'Open track' })).toBeNull();
+});
+
+it.each([false, true])('recovers an unread first message after reload (still unreadable on first click: %s)', async (stillUnreadable) => {
+  const submittedStorage = createMemoryStorage();
+  const createKey = 'confirmed-create';
+  const message = 'Open after storage recovers';
+  const draft = JSON.stringify({ key: createKey, body: { area_id: 'c1', planner_provider: 'codex' }, message, createdTrackId: 'w-new' });
+  const firstSend = JSON.stringify({ 'w-new': { text: message, key: `${createKey}:init` } });
+  submittedStorage.setItem(DRAFT_KEY, draft);
+  submittedStorage.setItem(FIRST_SEND_KEY, firstSend);
+  const getItem = submittedStorage.getItem.bind(submittedStorage);
+  let unreadable = true;
+  const read = vi.spyOn(submittedStorage, 'getItem').mockImplementation((key) => {
+    if (key === FIRST_SEND_KEY && unreadable) throw new DOMException('Storage unavailable', 'SecurityError');
+    return getItem(key);
+  });
+  const { sent } = harness({ path: '/area/c1/new', submittedStorage });
+  const openTrack = await screen.findByRole('button', { name: 'Open track' });
+  expect(read).toHaveBeenCalledWith(FIRST_SEND_KEY);
+
+  if (stillUnreadable) {
+    await userEvent.click(openTrack);
+    expect(await screen.findByText(/its saved first message is unavailable/)).toBeTruthy();
+    expect(window.location.pathname).toBe(`${APP_BASEPATH}/area/c1/new`);
+    expect(getItem(DRAFT_KEY)).toBe(draft);
+    expect(getItem(FIRST_SEND_KEY)).toBe(firstSend);
+    expect(plannerInputTexts(sent)).toEqual([]);
+    expect(createdTrackRequests(sent)).toEqual([]);
+  }
+
+  unreadable = false;
+  await userEvent.click(screen.getByRole('button', { name: 'Open track' }));
+  await screen.findByRole('complementary', { name: 'Planner' });
+  expect(window.location.pathname).toBe(`${APP_BASEPATH}/track/w-new`);
+  await waitFor(() => expect(plannerInputTexts(sent)).toEqual([message]));
+  await waitFor(() => expect(getItem(FIRST_SEND_KEY)).toBeNull());
+  const sends = sent.filter(({ method, path }) => method === 'POST' && path === '/api/v1/sessions/card-planner/messages');
+  expect(sends.map(({ headers }) => headers?.['Idempotency-Key'])).toEqual([`${createKey}:init`]);
+  expect(getItem(DRAFT_KEY)).toBeNull();
+  expect(createdTrackRequests(sent)).toEqual([]);
+});
+
+it('replays the create after reload when the first message could not be saved', async () => {
+  let confirm!: () => void;
+  const heldCreate = new Promise<void>((resolve) => { confirm = resolve; });
+  const submittedStorage = createMemoryStorage();
+  const setItem = submittedStorage.setItem.bind(submittedStorage);
+  let queueWriteFailed = false;
+  vi.spyOn(submittedStorage, 'setItem').mockImplementation((key, value) => {
+    if (key === FIRST_SEND_KEY && !queueWriteFailed) {
+      queueWriteFailed = true;
+      throw new DOMException('Storage quota reached', 'QuotaExceededError');
+    }
+    setItem(key, value);
+  });
+  const original = harness({ path: '/area/c1/new', heldCreate, submittedStorage });
+  const message = 'Send after recovery';
+  await userEvent.type(await findComposer(), message);
+  await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
+  await waitFor(() => expect(createdTrackRequests(original.sent)).toHaveLength(1));
+  const [first] = createdTrackRequests(original.sent);
+  const createKey = first?.headers?.['Idempotency-Key'];
+  expect(createKey).toBeTruthy();
+  const savedRequest = submittedStorage.getItem(DRAFT_KEY);
+  expect(savedRequest).not.toBeNull();
+  await userEvent.click(screen.getByRole('button', { name: 'Go to Today' }));
+  await waitFor(() => expect(screen.queryByLabelText(TASK_LABEL)).toBeNull());
+  confirm();
+  await userEvent.click(screen.getByRole('button', { name: 'New track in Work' }));
+  await screen.findByRole('button', { name: 'Open track' });
+  expect(queueWriteFailed).toBe(true);
+  expect(submittedStorage.getItem(FIRST_SEND_KEY)).toBeNull();
+  expect(plannerInputTexts(original.sent)).toEqual([]);
+
+  original.unmount();
+  original.client.clear();
+  const reopened = harness({ path: '/area/c1/new', heldCreate, submittedStorage });
+  await screen.findByText(UNCONFIRMED_TRACK);
+  expect(submittedStorage.getItem(DRAFT_KEY)).toBe(savedRequest);
+  await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
+  await screen.findByRole('complementary', { name: 'Planner' });
+  expect(createdTrackRequests(reopened.sent)).toEqual([first]);
+  await waitFor(() => expect(submittedStorage.getItem(FIRST_SEND_KEY)).toBeNull());
+  expect(plannerInputTexts(reopened.sent)).toEqual([message]);
+  const sends = reopened.sent.filter(({ method, path }) => method === 'POST' && path === '/api/v1/sessions/card-planner/messages');
+  expect(sends.map(({ headers }) => headers?.['Idempotency-Key'])).toEqual([`${createKey}:init`]);
+  expect(submittedStorage.getItem(DRAFT_KEY)).toBeNull();
+});
+
+it.each(['one-shot reload', 'persistent reload', 'persistent in tab'] as const)(
+  'keeps the first message recoverable when opening with a failed queue write (%s)',
+  async (scenario) => {
+    let confirm!: () => void;
+    let releaseDetail!: () => void;
+    const heldCreate = new Promise<void>((resolve) => { confirm = resolve; });
+    const heldDetail = new Promise<void>((resolve) => { releaseDetail = resolve; });
+    const submittedStorage = createMemoryStorage();
+    const setItem = submittedStorage.setItem.bind(submittedStorage);
+    let queueWrites = 0;
+    const persistentlyFailing = scenario !== 'one-shot reload';
+    const write = vi.spyOn(submittedStorage, 'setItem').mockImplementation((key, value) => {
+      if (key === FIRST_SEND_KEY && (++queueWrites === 1 || persistentlyFailing)) {
+        throw new DOMException('Storage quota reached', 'QuotaExceededError');
+      }
+      setItem(key, value);
+    });
+    const original = harness({ path: '/area/c1/new', heldCreate, heldDetail, submittedStorage });
+    const message = 'Keep the first message on open';
+    await userEvent.type(await findComposer(), message);
+    await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
+    await waitFor(() => expect(createdTrackRequests(original.sent)).toHaveLength(1));
+    const [first] = createdTrackRequests(original.sent);
+    const createKey = first?.headers?.['Idempotency-Key'];
+    expect(createKey).toBeTruthy();
+    const savedRequest = submittedStorage.getItem(DRAFT_KEY);
+    expect(savedRequest).not.toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Go to Today' }));
+    await waitFor(() => expect(screen.queryByLabelText(TASK_LABEL)).toBeNull());
+    confirm();
+    await userEvent.click(screen.getByRole('button', { name: 'New track in Work' }));
+    const openTrack = await screen.findByRole('button', { name: 'Open track' });
+    expect(queueWrites).toBe(1);
+    expect(submittedStorage.getItem(FIRST_SEND_KEY)).toBeNull();
+
+    await userEvent.click(openTrack);
+    await waitFor(() => expect(window.location.pathname).toBe(`${APP_BASEPATH}/track/w-new`));
+    await waitFor(() => expect(original.sent).toContainEqual(expect.objectContaining({ method: 'GET', path: '/api/v1/tracks/w-new' })));
+    expect(plannerInputTexts(original.sent)).toEqual([]);
+    expect(submittedStorage.getItem(DRAFT_KEY)).toBe(persistentlyFailing ? savedRequest : null);
+    expect(submittedStorage.getItem(FIRST_SEND_KEY)).toBe(persistentlyFailing ? null
+      : JSON.stringify({ 'w-new': { text: message, key: `${createKey}:init` } }));
+
+    let delivery = original;
+    if (scenario === 'persistent in tab') {
+      releaseDetail();
+    } else {
+      original.unmount();
+      original.client.clear();
+      releaseDetail();
+      if (scenario === 'persistent reload') {
+        write.mockRestore();
+        delivery = harness({ path: '/area/c1/new', heldCreate, submittedStorage });
+        await screen.findByText(UNCONFIRMED_TRACK);
+        await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
+        expect(createdTrackRequests(delivery.sent)).toEqual([first]);
+      } else {
+        delivery = harness({ reload: true, submittedStorage });
+      }
+    }
+    await screen.findByRole('complementary', { name: 'Planner' });
+    await waitFor(() => expect(plannerInputTexts(delivery.sent)).toEqual([message]));
+    const sent = delivery === original ? original.sent : [...original.sent, ...delivery.sent];
+    const sends = sent.filter(({ method, path }) => method === 'POST' && path === '/api/v1/sessions/card-planner/messages');
+    expect(sends.map(({ headers }) => headers?.['Idempotency-Key'])).toEqual([`${createKey}:init`]);
+    expect(createdTrackRequests(sent)).toHaveLength(scenario === 'persistent reload' ? 2 : 1);
+    if (!persistentlyFailing) await waitFor(() => expect(submittedStorage.getItem(FIRST_SEND_KEY)).toBeNull());
+  },
+);
 
 /* No click promises the next screen synchronously, so every role query waits on the field itself. */
 async function findComposer(): Promise<HTMLElement> {
@@ -1340,8 +1538,9 @@ it.each([
     area_id: 'c1', planner_provider: 'codex' as const,
     theme: { fg: [12, 34, 56] as [number, number, number], bg: [255, 255, 255] as [number, number, number] }, ...startingPoint,
   } };
-  restored.request = request;
-  const { sent } = harness();
+  const submittedStorage = createMemoryStorage();
+  submittedStorage.setItem(DRAFT_KEY, JSON.stringify(request));
+  const { sent } = harness({ submittedStorage });
   await userEvent.click(await screen.findByRole('button', { name: 'New track in Work' }));
   await findComposer();
   await waitFor(() => expect(screen.getByLabelText(TASK_LABEL).getAttribute('contenteditable')).toBe('false'));
