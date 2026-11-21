@@ -163,18 +163,19 @@ public sealed class SessionStreamingAndCompactionTests
     }
 
     [Fact]
-    public async Task ColdPermissionUpdatesPersistWithoutDiscoveryMountOrAdmission()
+    public async Task ColdPermissionUpdatesPersistWithoutAdditionalDiscoveryMountOrAdmission()
     {
         await using var ctx = new KernelTestContext();
         var area = await ctx.Kernel.CreateAreaAsync(new("Modes"));
         ctx.Kernel.DispatchAdmission.SetDraining(true);
         var snap = await ctx.Kernel.CreateTrackAsync(new(AreaId: area.Id, Provider: "acp:custom", PermissionMode: " unknown "));
         var sub = (await ctx.Kernel.CreateSessionAsync(snap.Track.Id, new(Provider: "acp:custom", PermissionMode: "unknown"), Guid.NewGuid().ToString("N"), new InteropPrincipal.Human(), default)).Receipt.Session;
+        var probesAfterCreate = ctx.AgentRuntime.ProviderProbeCalls;
         await ctx.Kernel.UpdateSessionAsync(sub.Id, new(PermissionMode: new(" another ")), new InteropPrincipal.Human(), default);
         Assert.Equal("unknown", ((await ctx.Kernel.ListSessionsAsync(snap.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray()).Single(s => s.IsLead).PermissionMode);
         Assert.Equal("another", ((await ctx.Kernel.ListSessionsAsync(snap.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray()).Single(s => s.Id == sub.Id).PermissionMode);
         Assert.Empty(ctx.AgentRuntime.OpenedSessions);
-        Assert.Equal(0, ctx.AgentRuntime.ProviderProbeCalls);
+        Assert.Equal(probesAfterCreate, ctx.AgentRuntime.ProviderProbeCalls);
         Assert.Equal(0, ctx.Kernel.DispatchAdmission.ActiveDispatches);
         ctx.Kernel.DispatchAdmission.SetDraining(false);
     }
@@ -183,8 +184,12 @@ public sealed class SessionStreamingAndCompactionTests
     public async Task RuntimePermissionModesApplyBeforeBootstrapToTracksSessionsAndLaunch()
     {
         await using var ctx = new KernelTestContext();
-        ctx.AgentRuntime.Providers = [new("acp:custom", true, "1", null, [], PermissionModes:
-            [new("inspect", "Inspect", "", "neutral"), new("act", "Act", "", "warning", IsDefault: true)])];
+        ctx.AgentRuntime.Providers =
+        [
+            new("acp:custom", true, "1", null, [], PermissionModes:
+                [new("inspect", "Inspect", "", "neutral"), new("act", "Act", "", "warning", IsDefault: true)]),
+            new("codex", true, "1", null, [])
+        ];
         var area = await ctx.Kernel.CreateAreaAsync(new("Modes"));
         var snap = await ctx.Kernel.CreateTrackAsync(new(AreaId: area.Id, Provider: "acp:custom"));
         var lead = ((await ctx.Kernel.ListSessionsAsync(snap.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray()).Single();
@@ -199,10 +204,11 @@ public sealed class SessionStreamingAndCompactionTests
         await ctx.Kernel.UpdateSessionAsync(lead.Id, new(PermissionMode: new("inspect")), new InteropPrincipal.Human(), default);
         await ctx.SendAndWaitForTurnAsync(lead.Id, new("go", "mode-input"));
         Assert.Equal("inspect", ctx.AgentRuntime.OpenedSessions.Last().LaunchSpec.PermissionMode);
-        ctx.AgentRuntime.OpenedSessions.Last().AvailablePermissionModes = ctx.AgentRuntime.Providers.Single().PermissionModes!;
+        ctx.AgentRuntime.OpenedSessions.Last().AvailablePermissionModes = ctx.AgentRuntime.Providers[0].PermissionModes!;
         await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.UpdateSessionAsync(lead.Id, new(PermissionMode: new("invented")), new InteropPrincipal.Human(), default));
         await ctx.Kernel.CreateTrackAsync(new(AreaId: area.Id, Provider: "acp:custom", PermissionMode: "invented"));
-        await ctx.Kernel.CreateSessionAsync(snap.Track.Id, new(Provider: "acp:custom", PermissionMode: "invented"), Guid.NewGuid().ToString("N"), new InteropPrincipal.Human(), default);
+        await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.CreateSessionAsync(snap.Track.Id,
+            new(Provider: "acp:custom", PermissionMode: "invented"), Guid.NewGuid().ToString("N"), new InteropPrincipal.Human(), default));
     }
 
     [Fact]
@@ -249,7 +255,7 @@ public sealed class SessionStreamingAndCompactionTests
             Assert.Equal(original.NativeThreadId, ctx.AgentRuntime.OpenedSessions.Last().LaunchSpec.ResumeNativeThreadId);
         await ctx.Kernel.ControlSessionAsync(id, new("compact"), new InteropPrincipal.Human(), default);
         Assert.Equal("project-plan", ctx.AgentRuntime.OpenedSessions.Last().LaunchSpec.PermissionMode);
-        Assert.Equal(probes, ctx.AgentRuntime.ProviderProbeCalls);
+        Assert.Equal(probes + 1, ctx.AgentRuntime.ProviderProbeCalls);
     }
 
     [Theory]

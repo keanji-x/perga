@@ -1,3 +1,4 @@
+using Perga.AgentKit;
 using Perga.Contracts;
 using Perga.Kernel.Internal;
 using Perga.Kernel.Ports;
@@ -17,34 +18,18 @@ public sealed partial class TrackActor
         ValidateRequestKey(requestKey);
         var authorId = caller is InteropPrincipal.Session identity ? identity.SessionId : InstallationAuthor;
         var taskKey = "worker-" + RequestIdentity.Hash(new { TrackId, authorId, key = requestKey })[..24].ToLowerInvariant();
-        var session = await EnqueueAsync(async _ =>
-        {
-            await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
-            RequirePolicyAvailableCore();
-            var route = _policy is null ? new PolicyTaskRoute(request.Provider, request.Model) :
-                _policyVm.RouteTaskDispatch(_policy, request.Role,
-                    request.Task.Access ?? _policy.Manifest.WorkerDispatch?.Access ?? "read_only",
-                    request.Provider, request.Model, _track.TemplateInputs);
-            if (route.Denial is { } denial) throw KernelException.PolicyDenied(denial);
-            return await NewSubagentSessionCoreAsync(request with
-            {
-                Provider = request.Provider ?? route.Provider,
-                Model = request.Model ?? route.Model,
-                NotifyParent = request.NotifyParent ?? "task_settled"
-            }, ct).ConfigureAwait(false);
-        }, ct).ConfigureAwait(false);
-        var intent = new WorkerDispatchIntent(TrackId, authorId, requestKey, RequestIdentity.Hash(request), taskKey, session, caller);
-        var replayed = false;
+        var candidateId = $"ses_{Guid.NewGuid():N}";
+        var intent = new WorkerDispatchIntent(TrackId, authorId, requestKey, RequestIdentity.Hash(request), taskKey, Principal: caller);
         var committed = await CommitReportInternalAsync(caller is InteropPrincipal.Human ? EditActorKind.Human : null,
-            caller is InteropPrincipal.Session parent ? parent.SessionId : null, report =>
-            {
-                return BuildWorkerDispatchReportCommitCore(report, request, taskKey);
-            }, ct, intent, caller is InteropPrincipal.Session origin ? origin.ExecutionOrigin : null).ConfigureAwait(false);
+            caller is InteropPrincipal.Session parent ? parent.SessionId : null,
+            report => BuildWorkerDispatchReportCommitCore(report, request, taskKey),
+            ct, intent, caller is InteropPrincipal.Session origin ? origin.ExecutionOrigin : null,
+            providers => PrepareWorkerSessionCore(request, providers, candidateId)).ConfigureAwait(false);
         var task = committed.Tasks.Single(t => t.TaskKey == taskKey);
         return await EnqueueAsync(async _ =>
         {
             var created = _sessions.Values.Single(s => s.BoundTaskId == task.Id);
-            replayed = created.Id != session.Id;
+            var replayed = created.Id != candidateId;
             SessionInputReceipt? first = null;
             if (created.BoundAttemptId is { } attemptId &&
                 await Messages.GetAsync(created.Id, true, $"inp_{attemptId}", ct).ConfigureAwait(false) is { } initial)
@@ -59,8 +44,24 @@ public sealed partial class TrackActor
         }, ct).ConfigureAwait(false);
     }
 
+    private AgentSessionDto PrepareWorkerSessionCore(CreateSessionRequest request,
+        IReadOnlyList<ProviderStatus> providers, string sessionId)
+    {
+        var route = _policy is null ? new PolicyTaskRoute(request.Provider, request.Model) :
+            _policyVm.RouteTaskDispatch(_policy, request.Role,
+                request.Task!.Access ?? _policy.Manifest.WorkerDispatch?.Access ?? "read_only",
+                request.Provider, request.Model, _track.TemplateInputs);
+        if (route.Denial is { } denial) throw KernelException.PolicyDenied(denial);
+        return NewSubagentSessionCore(request with
+        {
+            Provider = request.Provider ?? route.Provider,
+            Model = request.Model ?? route.Model,
+            NotifyParent = request.NotifyParent ?? "task_settled"
+        }, providers, requireAvailable: true, sessionId: sessionId);
+    }
+
     private async Task<ReportReadResult?> TryReplayWorkerDispatchCoreAsync(
-        WorkerDispatchIntent intent, string? callerSessionId, CancellationToken ct)
+        WorkerDispatchIntent intent, CancellationToken ct)
     {
         var parent = RequireInteropCore(intent.Caller, write: true);
         SessionPolicy.RequireCreate(intent.Caller, parent, TrackId, _options.MaxSessionSpawnDepth);
@@ -68,10 +69,14 @@ public sealed partial class TrackActor
         if (replay is not null)
         {
             RequireMatchingHash(replay.RequestHash, intent.RequestHash);
-            if (!_tasks.Any(task => task.Id == replay.TaskId && task.TaskKey == intent.TaskKey))
-                throw KernelException.Gone("The dispatched Worker task is no longer present.");
-            if (_tasks.Any(task => task.Id == replay.TaskId && task.Status == TaskRunStatus.Pending))
-                await ScheduleEligibleTasksCoreAsync(_actorShutdownCts.Token).ConfigureAwait(false);
+            var task = _tasks.FirstOrDefault(task => task.Id == replay.TaskId && task.TaskKey == intent.TaskKey)
+                ?? throw KernelException.Gone("The dispatched Worker task is no longer present.");
+            if (task.Status == TaskRunStatus.Pending)
+            {
+                // The durable receipt is available while a pending delivery retries in the background.
+                var shutdown = _actorShutdownCts.Token;
+                _ = TrackBackgroundJob(() => TriggerSchedulerAsync(shutdown));
+            }
             return new ReportReadResult(_report.DocRev, _report.Summary, _reportEngine.RenderMarkdown(_report, withMarkers: true),
                 _report.Blocks, _tasks.ToArray(), WorkerDispatchReadAnchor(_report), []);
         }
@@ -134,5 +139,6 @@ public sealed partial class TrackActor
         new(report.DocRev, report.Blocks.ToDictionary(block => block.Id, block => block.Rev, StringComparer.Ordinal), WholeDocumentRead: true);
 
     private string? ResolveTaskWorkerModelCore(string provider) =>
-        string.Equals(provider, GetDefaultProviderCore(), StringComparison.OrdinalIgnoreCase) ? GetDefaultModelCore(provider) : null;
+        SessionLaunchValidator.NormalizeProvider(provider) == SessionLaunchValidator.NormalizeProvider(GetDefaultProviderCore())
+            ? GetDefaultModelCore(provider) : null;
 }

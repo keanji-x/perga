@@ -83,6 +83,8 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
     public IReadOnlyCollection<RecordedTurnExecution> ExecutedTurns => _executedTurns.ToArray();
     public IReadOnlyList<PermissionModeOption>? AcpPermissionModes { get; set; }
 
+    public IReadOnlyList<ProviderStatus>? ProviderStatuses { get; set; }
+
     public int ProbeCount => Volatile.Read(ref _probeCount);
     public int ForceRefreshProbeCount => Volatile.Read(ref _forceRefreshProbeCount);
 
@@ -103,9 +105,10 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
     {
         _ = ct;
         Interlocked.Increment(ref _probeCount);
-        IReadOnlyList<ProviderStatus> providers =
+        IReadOnlyList<ProviderStatus> providers = ProviderStatuses ??
         [
-            new("codex", Available: true, Version: "0.10.0-mock", Reason: null, Models: ["gpt-5.4"]),
+            new("codex", Available: true, Version: "0.10.0-mock", Reason: null,
+                Models: ["gpt-5.4", "gpt-5.4-mini", "post-compaction-model", "next-model", "new-model", "A", "B", "chosen", "chosen-model"]),
             new("claude", Available: true, Version: "1.0.0-mock", Reason: null, Models: ["claude-sonnet-4-6"]),
             new("acp:antigravity", Available: true, Version: "2.0.0-mock", Reason: null, Models: ["gemini-3.1-pro"], PermissionModes: AcpPermissionModes)
         ];

@@ -1577,8 +1577,14 @@ internal sealed class ScriptableFakeAgentRuntime : IAgentRuntime
 
     public Func<CancellationToken, Task<IReadOnlyList<ProviderStatus>>>? ProbeScript { get; set; }
 
+    // Most kernel tests use synthetic model IDs. Tests of discovery and validation supply a catalog.
     public IReadOnlyList<ProviderStatus> Providers { get; set; } =
-        [new ProviderStatus("codex", true, "1.0.0", null, ["gpt-5"])];
+    [
+        new("codex", true, "1.0.0", null, []),
+        new("claude", true, "1.0.0", null, []),
+        new("acp:custom", true, "1.0.0", null, []),
+        new("acp:other", true, "1.0.0", null, [])
+    ];
 
     public int ProviderProbeCalls { get; private set; }
     public Task<IReadOnlyList<ProviderStatus>> ProbeProvidersAsync(CancellationToken ct)

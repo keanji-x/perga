@@ -228,7 +228,8 @@ public sealed class McpKernelAndVcsIntegrationTests
 
         // 1. Lead gets shared, governance and unified session tools.
         var leadTools = await ListToolNamesAsync(cluster, "/mcp/kernel", leadToken, ct);
-        Assert.Equal(34, leadTools.Count);
+        Assert.Equal(35, leadTools.Count);
+        Assert.Contains(KernelMcpToolNames.ProviderLs, leadTools);
         Assert.Contains(KernelMcpToolNames.TaskAccept, leadTools);
         Assert.Contains(KernelMcpToolNames.TrackClose, leadTools);
         Assert.Contains(KernelMcpToolNames.TemplateLs, leadTools);
@@ -328,7 +329,8 @@ public sealed class McpKernelAndVcsIntegrationTests
         // Bound Workers observe sessions and submit their own task results.
         var contractToken = await contractSubagentTokenTcs.Task.WaitAsync(ct);
         var subTools = await ListToolNamesAsync(cluster, "/mcp/kernel", contractToken, ct);
-        Assert.Equal(15, subTools.Count);
+        Assert.Equal(16, subTools.Count);
+        Assert.Contains(KernelMcpToolNames.ProviderLs, subTools);
         Assert.Contains(KernelMcpToolNames.TaskDone, subTools);
         Assert.Contains(KernelMcpToolNames.TaskFail, subTools);
         Assert.DoesNotContain(KernelMcpToolNames.TaskAccept, subTools);

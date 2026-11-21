@@ -38,9 +38,21 @@ internal sealed class SessionRuntime
     {
         get
         {
-            lock (_sync) return _agent is null ? null : new(_agent, _spec!, _selection!, _confirmation, _contextUsage, _generation);
+            lock (_sync) return SnapshotCore();
         }
     }
+    public OpenSessionHandle? SettingsSnapshot
+    {
+        get
+        {
+            lock (_sync)
+                return _disposing || _shutdownUnconfirmed || _activeOps > 0 || _launchCts is not null
+                    ? null : SnapshotCore();
+        }
+    }
+
+    private OpenSessionHandle? SnapshotCore() =>
+        _agent is null ? null : new(_agent, _spec!, _selection!, _confirmation, _contextUsage, _generation);
     public LiveContextUsage ContextUsage
     {
         get
@@ -322,6 +334,11 @@ internal sealed class SessionRuntimeRegistry
     public bool TryGetOpen(string id, out OpenSessionHandle handle)
     {
         handle = _sessions.TryGetValue(id, out var runtime) ? runtime.Snapshot! : null!;
+        return handle is not null;
+    }
+    public bool TryGetOpenForSettings(string id, out OpenSessionHandle handle)
+    {
+        handle = _sessions.TryGetValue(id, out var runtime) ? runtime.SettingsSnapshot! : null!;
         return handle is not null;
     }
     public bool HasActiveWork => _sessions.Values.Any(runtime => runtime.HasActiveWork);
