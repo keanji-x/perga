@@ -109,6 +109,11 @@ public interface IVcsService
 {
     Task<VcsBackendKind> DetectAsync(string path, CancellationToken ct);
     IReadOnlyList<VcsBackendKind> ListWorkspaceBackends(string path);
+    Task<IReadOnlyList<VcsBackendKind>> ListWorkspaceBackendsAsync(string path, CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        return Task.FromResult(ListWorkspaceBackends(path));
+    }
     Task<IsolatedWorkspace> CreateWorkspaceAsync(string repoPath, string workspaceName, string targetDir, string? baseRev = null,
         CancellationToken ct = default, VcsBackendKind? backend = null);
     Task RemoveWorkspaceAsync(IsolatedWorkspace workspace, CancellationToken ct = default);

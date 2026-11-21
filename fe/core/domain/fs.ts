@@ -24,14 +24,20 @@ export type DirectoryListingWire = z.infer<typeof directoryListingWireSchema>;
 /** `path` omitted starts the walk at the server's `$HOME`; the query key is left off rather than sent empty. */
 export function listDirectoryOperation(
   path?: string,
-  options?: Readonly<{ perga?: boolean }>,
+  options?: Readonly<{ perga?: boolean; targetId?: string }>,
 ): ApiOperation<DirectoryListingWire> {
   const base = options?.perga === true ? '/api/v1/fs/listdir' : '/api/fs/listdir';
+  const params: string[] = [];
+  if (path !== undefined && path !== '') {
+    params.push(`path=${encodeURIComponent(path)}`);
+  }
+  if (options?.perga === true && options.targetId !== undefined && options.targetId !== '' && options.targetId !== 'local') {
+    params.push(`targetId=${encodeURIComponent(options.targetId)}`);
+  }
+  const query = params.length === 0 ? '' : `?${params.join('&')}`;
   return {
     method: 'GET',
-    path: path === undefined || path === ''
-      ? base
-      : `${base}?path=${encodeURIComponent(path)}`,
+    path: `${base}${query}`,
     responseSchema: z.union([
       directoryListingWireSchema,
       hostDirListDtoSchema.transform((dto): DirectoryListingWire => ({

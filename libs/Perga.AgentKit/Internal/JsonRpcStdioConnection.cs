@@ -19,7 +19,7 @@ internal sealed class JsonRpcRemoteException : Exception
 
 internal sealed class JsonRpcStdioConnection : IAsyncDisposable
 {
-    private readonly StdioSubprocess _process;
+    private readonly ISubprocessHandle _process;
     private readonly Action<string, JsonElement> _onNotification;
     private readonly Action<JsonElement, string, JsonElement> _onServerRequest;
     private readonly Action<Exception?> _onDisconnected;
@@ -35,7 +35,7 @@ internal sealed class JsonRpcStdioConnection : IAsyncDisposable
     private bool _pumpDisposed;
 
     public JsonRpcStdioConnection(
-        StdioSubprocess process,
+        ISubprocessHandle process,
         Action<string, JsonElement> onNotification,
         Action<JsonElement, string, JsonElement> onServerRequest,
         Action<Exception?> onDisconnected)
@@ -47,7 +47,7 @@ internal sealed class JsonRpcStdioConnection : IAsyncDisposable
         _pumpTask = Task.Run(PumpStdoutAsync);
     }
 
-    public StdioSubprocess Process => _process;
+    public ISubprocessHandle Process => _process;
 
     public static string NormalizeIdKey(JsonElement idElement) =>
         idElement.ValueKind switch

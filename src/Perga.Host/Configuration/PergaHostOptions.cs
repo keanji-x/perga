@@ -3,6 +3,26 @@ using Perga.Kernel;
 
 namespace Perga.Host.Configuration;
 
+public sealed class ExecutionTargetOptions
+{
+    public string Kind { get; set; } = "ssh";
+    public string? Label { get; set; }
+    public string Host { get; set; } = "127.0.0.1";
+    public int Port { get; set; } = 22;
+    public string? User { get; set; }
+    public string? IdentityFile { get; set; }
+    public string? KnownHostsFile { get; set; }
+    public string StrictHostKeyChecking { get; set; } = "accept-new";
+    public string? WorkspacesRoot { get; set; }
+    public string? TerminalBridgeExecutablePath { get; set; }
+    public string? OarNodeExecutablePath { get; set; }
+    public string? OarBridgeScriptPath { get; set; }
+    public string? McpBaseUriOverride { get; set; }
+    public string? SshExecutablePath { get; set; }
+    public Dictionary<string, string> ExtraEnv { get; set; } = new(StringComparer.Ordinal);
+    public Dictionary<string, string> ProviderExecutables { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+}
+
 public sealed class PergaHostOptions
 {
     public const string SectionName = "Perga";
@@ -12,6 +32,7 @@ public sealed class PergaHostOptions
     public string? BridgeBuildId { get; set; }
     public string? SystemManagementTokenSha256 { get; set; }
     public Dictionary<string, SystemUpgrade.UpgradeSourceOptions> UpgradeSources { get; set; } = new(StringComparer.Ordinal);
+    public Dictionary<string, ExecutionTargetOptions> ExecutionTargets { get; set; } = new(StringComparer.Ordinal);
     public string Version { get; set; } = "1.0.0";
     public string? DataDir { get; set; }
     public string? DbPath { get; set; }

@@ -14982,6 +14982,13 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "targetId",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -14990,6 +14997,41 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HostDirListDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/targets/{targetId}/providers": {
+      "get": {
+        "parameters": [
+          {
+            "name": "targetId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "refresh",
+            "in": "query",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ProviderStatusDto"
+                  }
                 }
               }
             }
@@ -24823,6 +24865,29 @@
           }
         }
       },
+      "ExecutionTargetDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "kind",
+          "isDefault"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "isDefault": {
+            "type": "boolean"
+          }
+        }
+      },
       "AreaDto": {
         "type": "object",
         "required": [
@@ -24865,6 +24930,9 @@
           "updatedAtMs": {
             "type": "integer"
           },
+          "executionTargetId": {
+            "type": "string"
+          },
           "permissionMode": {
             "type": [
               "string",
@@ -24903,6 +24971,12 @@
               "$ref": "#/components/schemas/AreaDto"
             }
           },
+          "executionTargets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExecutionTargetDto"
+            }
+          },
           "databaseId": {
             "type": [
               "string",
@@ -24936,6 +25010,9 @@
             "type": "string"
           },
           "areaId": {
+            "type": "string"
+          },
+          "executionTargetId": {
             "type": "string"
           },
           "parentTrackId": {

@@ -9,6 +9,7 @@ import { VStack } from '@astryxdesign/core/VStack';
 import { useId, type FormEvent, type RefObject } from 'react';
 
 import { DirectoryPicker } from '../directory-picker.tsx';
+import type { ExecutionTargetDto } from '../../../../../core/domain/area.ts';
 import type { ListDirectory } from '../../../ui/directory-browser/public.tsx';
 import { useState } from '../../../ui/state/public.ts';
 import { FolderPill } from '../default-pills/public.tsx';
@@ -21,6 +22,7 @@ const NATIVE_REQUIRED_INPUT_PROPS = Object.freeze({ required: true });
 export type AreaEditorValues = Readonly<{
   name: string;
   defaultCwd: string | null;
+  executionTargetId?: string;
 }>;
 
 export type AreaEditorPatch = Readonly<{
@@ -35,6 +37,9 @@ export type AreaEditorFormProps = Readonly<{
   cancelLabel: string;
   error: string | null;
   listDirectory: ListDirectory;
+  listDirectoryForTarget?: (targetId: string) => ListDirectory;
+  executionTargets?: readonly ExecutionTargetDto[];
+  targetEditable?: boolean;
   nameInputRef: RefObject<HTMLInputElement | null>;
   submitLabel: string;
   onCancel: () => void;
@@ -45,13 +50,20 @@ export type AreaEditorFormProps = Readonly<{
 export function AreaEditorForm(props: AreaEditorFormProps) {
   const {
     initial, submitting, locked, cancelLabel, error,
-    listDirectory, nameInputRef, submitLabel, onCancel, onSubmit,
+    listDirectory, listDirectoryForTarget, executionTargets, targetEditable = false,
+    nameInputRef, submitLabel, onCancel, onSubmit,
   } = props;
-  const folderId = `${useId()}-default-folder`;
+  const baseId = useId();
+  const folderId = `${baseId}-default-folder`;
+  const targetSelectId = `${baseId}-execution-target`;
   const [name, setName] = useState(initial.name);
   const [cwd, setCwd] = useState(initial.defaultCwd ?? '');
+  const [targetId, setTargetId] = useState(initial.executionTargetId ?? 'local');
   const [browsing, setBrowsing] = useState(false);
   const normalizedName = name.trim();
+  const showTargetControl = (executionTargets !== undefined && executionTargets.length > 1) || targetId !== 'local';
+  const resolvedTargetLabel = executionTargets?.find((target) => target.id === targetId)?.label ?? targetId;
+  const activeListDirectory = listDirectoryForTarget ? listDirectoryForTarget(targetId) : listDirectory;
 
   const submit = (event: FormEvent<HTMLElement>) => {
     event.preventDefault();
@@ -62,6 +74,7 @@ export function AreaEditorForm(props: AreaEditorFormProps) {
     onSubmit({
       name: normalizedName,
       defaultCwd: cwd === '' ? null : cwd,
+      ...(showTargetControl ? { executionTargetId: targetId } : {}),
     });
   };
 
@@ -77,6 +90,36 @@ export function AreaEditorForm(props: AreaEditorFormProps) {
         width="100%"
         isDisabled={submitting || locked}
       />
+      {showTargetControl && (
+        <div className={styles.targetField}>
+          <label htmlFor={targetSelectId} className={styles.targetLabel}>Execution target</label>
+          {targetEditable && executionTargets !== undefined && executionTargets.length > 1 ? (
+            <select
+              id={targetSelectId}
+              className={styles.targetSelect}
+              value={targetId}
+              disabled={submitting || locked}
+              onChange={(event) => {
+                const next = event.target.value;
+                if (next !== targetId) {
+                  setTargetId(next);
+                  setCwd('');
+                }
+              }}
+            >
+              {executionTargets.map((target) => (
+                <option key={target.id} value={target.id}>
+                  {target.label}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <span id={targetSelectId} className={styles.targetReadonly}>
+              {resolvedTargetLabel}
+            </span>
+          )}
+        </div>
+      )}
       <HStack gap={1} align="center" className={styles.controlRow}>
         <HStack gap={1} align="center" className={styles.pills}>
           <FolderPill
@@ -106,7 +149,7 @@ export function AreaEditorForm(props: AreaEditorFormProps) {
       <DirectoryPicker
         open={browsing}
         initialPath={cwd === '' ? null : cwd}
-        listDirectory={listDirectory}
+        listDirectory={activeListDirectory}
         onCancel={() => setBrowsing(false)}
         onSelect={(path) => { setCwd(path); setBrowsing(false); }}
       />

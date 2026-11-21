@@ -19,4 +19,31 @@
     margin-inline-start: auto;
   }
 
+  .targetField {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+
+  .targetLabel {
+    font: var(--type-label);
+    letter-spacing: var(--type-label-tracking);
+    color: var(--text-2);
+  }
+
+  .targetSelect {
+    inline-size: 100%;
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-sm);
+    border: var(--space-px) solid var(--hairline-strong);
+    background: var(--paper);
+    color: var(--text);
+    font: var(--type-ui);
+  }
+
+  .targetReadonly {
+    font: var(--type-metadata);
+    color: var(--text-2);
+  }
+
 }

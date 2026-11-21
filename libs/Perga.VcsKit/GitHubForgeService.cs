@@ -23,11 +23,13 @@ public sealed partial class GitHubForgeService : IGitHubForgeService
 {
     private readonly IProcessRunner _processRunner;
     private readonly GitHubForgeOptions _options;
+    private readonly IWorkspaceFileSystemOps _fs;
 
-    public GitHubForgeService(IProcessRunner? processRunner = null, GitHubForgeOptions? options = null)
+    public GitHubForgeService(IProcessRunner? processRunner = null, GitHubForgeOptions? options = null, IWorkspaceFileSystemOps? fsOps = null)
     {
         _processRunner = processRunner ?? new ProcessRunner();
         _options = options ?? new GitHubForgeOptions();
+        _fs = fsOps ?? LocalWorkspaceFileSystemOps.Instance;
 
         if (_options.MaxCiLogTailChars <= 0)
         {
@@ -302,24 +304,24 @@ public sealed partial class GitHubForgeService : IGitHubForgeService
         return new IssueInfo(number, url, state, title, body, labels);
     }
 
-    private static (string WorkingDirectory, IReadOnlyList<string> RepoFlags) ResolveRepoTarget(string repoOrPath)
+    private (string WorkingDirectory, IReadOnlyList<string> RepoFlags) ResolveRepoTarget(string repoOrPath)
     {
         if (IsRepositorySlug(repoOrPath))
         {
-            return (Environment.CurrentDirectory, ["-R", repoOrPath]);
+            return (_fs.IsLocal ? Environment.CurrentDirectory : _fs.TempRootPath, ["-R", repoOrPath]);
         }
 
         return (Path.GetFullPath(repoOrPath), []);
     }
 
-    private static bool IsRepositorySlug(string repoOrPath)
+    private bool IsRepositorySlug(string repoOrPath)
     {
         if (Path.IsPathRooted(repoOrPath) ||
             repoOrPath.StartsWith("./", StringComparison.Ordinal) ||
             repoOrPath.StartsWith("../", StringComparison.Ordinal) ||
             repoOrPath.StartsWith(".\\", StringComparison.Ordinal) ||
             repoOrPath.StartsWith("..\\", StringComparison.Ordinal) ||
-            Directory.Exists(repoOrPath))
+            _fs.DirectoryExists(repoOrPath))
         {
             return false;
         }

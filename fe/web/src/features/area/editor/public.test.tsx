@@ -87,4 +87,38 @@ describe('AreaEditorForm', () => {
       name: 'Work', defaultCwd: '/srv/ work ',
     });
   });
+
+  it('allows choosing an execution target on creation, resets default folder on switch, and scopes directory browsing', async () => {
+    const onSubmit = vi.fn();
+    const listerCalls: string[] = [];
+    const listDirectoryForTarget = (targetId: string) => {
+      listerCalls.push(targetId);
+      return vi.fn((path?: string) =>
+        Promise.resolve({ path: path ?? `/home/${targetId}`, parent: null, entries: [] }));
+    };
+
+    renderForm({
+      initial: { name: 'Jasper Area', defaultCwd: '/home/kenji/repo', executionTargetId: 'local' },
+      targetEditable: true,
+      executionTargets: [
+        { id: 'local', label: 'Local (kenji)', kind: 'local', isDefault: true },
+        { id: 'jasper', label: 'jasper (local ssh)', kind: 'ssh', isDefault: false },
+      ],
+      listDirectoryForTarget,
+      submitLabel: 'Create area',
+      onSubmit,
+    });
+
+    const select = screen.getByLabelText('Execution target');
+    await userEvent.selectOptions(select, 'jasper');
+    expect(listerCalls).toContain('jasper');
+
+    // Switching target clears the previous target's default folder so paths cannot leak across targets.
+    await userEvent.click(screen.getByRole('button', { name: 'Create area' }));
+    expect(onSubmit).toHaveBeenCalledWith({
+      name: 'Jasper Area',
+      defaultCwd: null,
+      executionTargetId: 'jasper',
+    });
+  });
 });

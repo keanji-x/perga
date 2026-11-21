@@ -17,7 +17,7 @@ export type TrackCreationRequest = Readonly<{ body: NewTrackBody; key: string; m
 
 type SubmittedTrackDraft = Readonly<{ request: TrackCreationRequest; createdTrackId: string | null }>;
 
-export type NewTrackDraftArea = Pick<Area, 'id' | 'name' | 'defaultCwd'> & Readonly<{
+export type NewTrackDraftArea = Pick<Area, 'id' | 'name' | 'defaultCwd' | 'executionTargetId'> & Readonly<{
   defaultTemplateId?: string | null;
 }>;
 
@@ -78,7 +78,13 @@ function createDraftStore(submittedStorage?: () => Storage, userId?: string) {
       if (drafts.has(area.id)) return;
       const { request, createdTrackId } = readSubmittedDraft(area.id) ?? { request: null, createdTrackId: null };
       drafts.set(area.id, {
-        area: { id: area.id, name: area.name, defaultCwd: area.defaultCwd, defaultTemplateId: area.defaultTemplateId },
+        area: {
+          id: area.id,
+          name: area.name,
+          defaultCwd: area.defaultCwd,
+          executionTargetId: area.executionTargetId,
+          defaultTemplateId: area.defaultTemplateId,
+        },
         form: request === null ? null : {
           message: request.message ?? '', cwd: request.body.cwd ?? '', isolation: request.body.isolation,
           workspaceOptionId: request.body.workspace_option_id,

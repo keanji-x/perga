@@ -71,6 +71,23 @@ describe('area wire decode', () => {
     });
   });
 
+  it('forwards executionTargetId on area creation and decodes it from AreaDto', () => {
+    const op = createAreaOperation({ name: 'Jasper', color: '#123456', execution_target_id: 'jasper' }, 'k-jasper');
+    expect(op.body).toMatchObject({ name: 'Jasper', executionTargetId: 'jasper' });
+    const parsed = op.responseSchema.parse({
+      id: 'area_j',
+      name: 'Jasper',
+      color: '#123456',
+      defaultCwd: '/home/jasper/app',
+      folders: [],
+      sortOrder: 0,
+      createdAtMs: 10,
+      updatedAtMs: 20,
+      executionTargetId: 'jasper',
+    });
+    expect(toArea(parsed).executionTargetId).toBe('jasper');
+  });
+
   it('reads the areas list from the documented path', () => {
     expect(areaListOperation()).toMatchObject({ method: 'GET', path: '/api/v1/areas' });
   });

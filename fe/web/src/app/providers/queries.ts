@@ -25,8 +25,8 @@ import type { ApiOperation, ApiTransportPort } from '../../../../core/api/types.
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import {
   asFolderConflict, areaListOperation, areaCreationCapabilityOperation, createAreaOperation, deleteAreaOperation,
-  newestArea, sortedAreas, toArea, updateAreaOperation, visibleAreas,
-  type Area, type AreaPatchBody, type FolderConflict, type NewAreaBody,
+  executionTargetsOperation, newestArea, sortedAreas, toArea, updateAreaOperation, visibleAreas,
+  type Area, type AreaPatchBody, type ExecutionTargetDto, type FolderConflict, type NewAreaBody,
 } from '../../../../core/domain/area.ts';
 import {
   deriveReportTasks, hasLiveTaskRun, readTrackViewsOperation, trackBacklinksOperation, trackPreviewsOperation, trackTaskVerdictsOperation,
@@ -143,6 +143,17 @@ export function plannerRunQueryOptions(transport: ApiTransportPort, cardId: stri
     queryKey: [...queryKeys.plannerRun(cardId),'conversation_v1'],
     queryFn: ({ signal }: { signal: AbortSignal }) =>
       runOperation(transport, { ...conversationRunOperation(cardId), signal }, unauthorized),
+  };
+}
+
+export function executionTargetsQueryOptions(
+  transport: ApiTransportPort,
+  unauthorized: UnauthorizedChannel,
+) {
+  return {
+    queryKey: ['execution-targets'] as const,
+    queryFn: ({ signal }: { signal: AbortSignal }): Promise<ExecutionTargetDto[]> =>
+      runOperation(transport, { ...executionTargetsOperation(), signal }, unauthorized),
   };
 }
 

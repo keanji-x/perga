@@ -63,10 +63,16 @@ public static class ApiV1Endpoints
             return Results.Json(overlays, PergaJsonDefaults.ApiOptions);
         });
 
-        v1.MapGet("/fs/listdir", (string? path, IPergaKernel kernel) =>
+        v1.MapGet("/fs/listdir", async (string? path, string? targetId, IPergaKernel kernel, CancellationToken ct) =>
         {
-            var listing = kernel.ListHostDirectory(path);
+            var listing = await kernel.ListHostDirectoryAsync(path, targetId, ct).ConfigureAwait(false);
             return Results.Json(listing, PergaJsonDefaults.ApiOptions);
+        });
+
+        v1.MapGet("/targets/{targetId}/providers", async (string targetId, bool? refresh, IPergaKernel kernel, CancellationToken ct) =>
+        {
+            var providers = await kernel.GetTargetProvidersAsync(targetId, refresh ?? false, ct).ConfigureAwait(false);
+            return Results.Json(providers, PergaJsonDefaults.ApiOptions);
         });
 
         v1.MapGet("/templates", (IPergaKernel kernel) =>
@@ -380,8 +386,11 @@ public static class ApiV1Endpoints
         v1.Map("/events", (HttpContext ctx, IPergaKernel kernel, ITrackReadStore readStore) =>
             EventsWebSocketHandler.HandleAsync(ctx, kernel, readStore));
 
-        v1.Map("/terminals/{termId}/ws", (string termId, HttpContext ctx, ITerminalBridgeClient terminalClient) =>
-            TerminalWebSocketRelayHandler.HandleAsync(ctx, termId, terminalClient));
+        v1.Map("/terminals/{termId}/ws", async (string termId, HttpContext ctx, IPergaKernel kernel) =>
+        {
+            var terminalClient = await kernel.ResolveTerminalClientAsync(termId, ctx.RequestAborted).ConfigureAwait(false);
+            await TerminalWebSocketRelayHandler.HandleAsync(ctx, termId, terminalClient).ConfigureAwait(false);
+        });
 
         return endpoints;
     }

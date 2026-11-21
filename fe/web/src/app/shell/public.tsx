@@ -16,6 +16,7 @@ import { mobileFontClassName } from '../../ui/mobile-font/public.ts';
 // `Sidebar` stays presentational.
 
 import { Outlet, useRouter, type RouterHistory } from '@tanstack/react-router';
+import { useQuery } from '@tanstack/react-query';
 import { createContext, useContext, useEffect, useRef, useCallback, useLayoutEffect, useMemo, type ReactNode } from 'react';
 
 import { useUiPreferences } from '../providers/ui-preferences.tsx';
@@ -38,7 +39,7 @@ import { useState } from '../../ui/state/public.ts';
 import { createDirectoryLister } from '../providers/directory.ts';
 import { workspaceActivityErrorText, workspaceReadErrorText } from '../providers/query-read-feedback.ts';
 import {
-  AreaCreatePreflightError, useAreaMutations, useTrackMutations, useWorkspace,
+  AreaCreatePreflightError, executionTargetsQueryOptions, useAreaMutations, useTrackMutations, useWorkspace,
 } from '../providers/queries.ts';
 import { useKeyedIntent, type KeyedRequest } from '../providers/idempotency-key.ts';
 import { routeParamFromPath, useCurrentPath, useGo, useNewTrackBack, useRouteCardId, useRouteFilePath, useTrackPanelNavigation } from '../router/navigation.ts';
@@ -182,6 +183,15 @@ export function AppShell({
   const trackMutations = useTrackMutations(transport, unauthorized);
   const pinFeedback = useOperationFeedback();
   const listDirectory = createDirectoryLister(transport, unauthorized, pergaMode);
+  const executionTargetsQuery = useQuery({
+    ...executionTargetsQueryOptions(transport, unauthorized),
+    enabled: pergaMode,
+    retry: false,
+  });
+  const listDirectoryForTarget = useCallback(
+    (targetId: string) => createDirectoryLister(transport, unauthorized, pergaMode, targetId),
+    [transport, unauthorized, pergaMode],
+  );
   /* The create form is locked while a request is held, so every press resends the held key and body (#2131). */
   const areaIntent = useKeyedIntent<null, NewAreaBody>(() => true);
   const areaCreateRequest = areaIntent.held;
@@ -388,6 +398,9 @@ export function AppShell({
         name: values.name,
         color: randomAreaColor(),
         default_cwd: values.defaultCwd,
+        ...(values.executionTargetId && values.executionTargetId !== 'local'
+          ? { execution_target_id: values.executionTargetId }
+          : {}),
       }));
       write = areaMutations.create(creation.body, creation.key);
     } else {
@@ -615,15 +628,20 @@ export function AppShell({
               ? {
                 name: areaEditorTarget.area.name,
                 defaultCwd: areaEditorTarget.area.defaultCwd,
+                executionTargetId: areaEditorTarget.area.executionTargetId,
               }
               : {
                 name: areaCreateRequest?.body.name ?? '',
                 defaultCwd: areaCreateRequest?.body.default_cwd ?? null,
+                executionTargetId: areaCreateRequest?.body.execution_target_id ?? 'local',
               }}
             submitting={areaEditorPending}
             locked={areaEditorTarget.kind === 'create' && areaCreateRequest !== null}
             error={areaEditorError}
             listDirectory={listDirectory}
+            listDirectoryForTarget={listDirectoryForTarget}
+            executionTargets={executionTargetsQuery.data}
+            targetEditable={areaEditorTarget.kind === 'create'}
             nameInputRef={areaEditorNameRef}
             submitLabel={areaEditorTarget.kind === 'edit' ? 'Save changes'
               : areaCreateRequest === null ? 'Create area' : 'Try again'}

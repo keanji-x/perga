@@ -14,14 +14,16 @@ public sealed record BootstrapDto(
     IReadOnlyList<AreaDto> Areas,
     string DatabaseId = "",
     string DbInstanceId = "",
-    bool AuthRequired = false);
+    bool AuthRequired = false,
+    IReadOnlyList<ExecutionTargetDto>? ExecutionTargets = null);
 
 public sealed record CreateAreaRequest(
     string Name,
     string? Color = null,
     string? DefaultCwd = null,
     IReadOnlyList<string>? Folders = null,
-    double? SortOrder = null);
+    double? SortOrder = null,
+    string? ExecutionTargetId = null);
 
 public sealed record PatchAreaRequest(
     string? Name = null,

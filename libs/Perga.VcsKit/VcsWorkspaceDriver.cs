@@ -14,11 +14,13 @@ public sealed class VcsWorkspaceDriver : IWorkspaceDriver
     };
 
     private readonly IVcsService _vcsService;
+    private readonly IWorkspaceFileSystemOps _fs;
 
-    public VcsWorkspaceDriver(IVcsService vcsService)
+    public VcsWorkspaceDriver(IVcsService vcsService, IWorkspaceFileSystemOps? fsOps = null)
     {
         ArgumentNullException.ThrowIfNull(vcsService);
         _vcsService = vcsService;
+        _fs = fsOps ?? LocalWorkspaceFileSystemOps.Instance;
     }
 
     public string DriverId => Id;
@@ -47,7 +49,7 @@ public sealed class VcsWorkspaceDriver : IWorkspaceDriver
         if (req.NewEmptyWorkspace)
         {
             ct.ThrowIfCancellationRequested();
-            Directory.CreateDirectory(targetDir);
+            _fs.CreateDirectory(targetDir);
             isolated = new(VcsBackendKind.PlainDirectory, sourcePath, workspaceName, targetDir, null);
         }
         else

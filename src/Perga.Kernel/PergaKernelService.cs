@@ -1,4 +1,4 @@
-using System.Text;
+using System.Collections.Concurrent;
 using System.Text.Json;
 using Perga.AgentKit;
 using Perga.Contracts;
@@ -22,6 +22,7 @@ public partial interface IPergaKernel : IAsyncDisposable
     IKernelEventBus EventBus { get; }
     ITemplateCatalog Templates { get; }
     IMcpSessionBridge McpSessionBridge { get; }
+    IExecutionEnvironmentRegistry ExecutionEnvironments { get; }
     TrackActorRegistry Actors { get; }
     IBootReconciler BootReconciler { get; }
     SystemUpgrade.DispatchAdmission DispatchAdmission { get; }
@@ -31,10 +32,12 @@ public partial interface IPergaKernel : IAsyncDisposable
     // System & Bootstrap
     Task<BootstrapDto> GetBootstrapAsync(CancellationToken ct = default);
     Task<BootstrapDto> GetBootstrapAsync(string? scope, bool refresh = false, CancellationToken ct = default);
+    Task<IReadOnlyList<ProviderStatus>> GetTargetProvidersAsync(string targetId, bool refresh = false, CancellationToken ct = default);
     Task<TrackProvidersDto> ListProvidersForTrackAsync(string trackId, string? provider = null,
         bool refresh = false, bool includeUnavailable = false, CancellationToken ct = default);
     Task<TrackOverlaysResponseDto> GetOverlaysAsync(bool includeClosed = false, CancellationToken ct = default);
     HostListDirResultDto ListHostDirectory(string? path = null);
+    Task<HostListDirResultDto> ListHostDirectoryAsync(string? path = null, string? targetId = null, CancellationToken ct = default);
     IReadOnlyList<CompiledTemplateManifest> ListTemplates();
     JsonElement InspectTemplate(string? templateId);
     Task<JsonElement> InspectCurrentTemplateAsync(string trackId, string sessionId, CancellationToken ct = default);
@@ -111,6 +114,7 @@ public partial interface IPergaKernel : IAsyncDisposable
     Task ResizeTerminalAsync(string trackId, string terminalId, ushort cols, ushort rows, CancellationToken ct = default);
     Task<TerminalDto> CloseTerminalAsync(string trackId, string terminalId, int graceMs = 2000, CancellationToken ct = default);
     Uri GetTerminalWebSocketRelayUri(string terminalId);
+    Task<ITerminalBridgeClient> ResolveTerminalClientAsync(string terminalId, CancellationToken ct = default);
 
     // MCP Policy Guard, Tool Dispatch & Schedules
     McpSessionPrincipal ObserveMcpExecution(McpSessionPrincipal caller);
@@ -133,7 +137,6 @@ public partial interface IPergaKernel : IAsyncDisposable
 public sealed partial class PergaKernelService : IPergaKernel
 {
     private const long ProviderProbeCacheTtlMs = 60_000L;
-    private const int BinarySniffBytes = 8 * 1024;
     private static readonly string ProcessDbInstanceId = Guid.NewGuid().ToString("N");
 
     private readonly ISystemUpgradeController? _systemUpgradeController;
@@ -141,19 +144,15 @@ public sealed partial class PergaKernelService : IPergaKernel
     private readonly ITrackStore _store;
     private readonly IReportDocEngine _reportEngine;
     private readonly IPolicyVm _policyVm;
-    private readonly IAgentRuntime _agentRuntime;
-    private readonly IWorkspaceDriverRegistry _workspaceDrivers;
-    private readonly IVcsService _vcsService;
-    private readonly ITerminalBridgeClient _terminalClient;
-    private readonly IShellCommandRunner _commandRunner;
+    private readonly IExecutionEnvironmentRegistry _executionEnvironments;
     private readonly EventHub _eventHub;
     private readonly KernelOptions _options;
     private readonly TimeProvider _timeProvider;
     private readonly string _fallbackDatabaseId = Guid.NewGuid().ToString("N");
-    private readonly SemaphoreSlim _providerProbeLock = new(1, 1);
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _providerProbeLocks = new(StringComparer.Ordinal);
 
     private sealed record ProviderObservation(IReadOnlyList<ProviderStatus> Providers, long ObservedAtMs);
-    private ProviderObservation? _cachedProviders;
+    private readonly ConcurrentDictionary<string, ProviderObservation> _cachedProvidersByTarget = new(StringComparer.Ordinal);
     private bool _disposed;
 
     public PergaKernelService(
@@ -172,22 +171,33 @@ public sealed partial class PergaKernelService : IPergaKernel
         TimeProvider? timeProvider = null,
         ISystemUpgradeController? systemUpgradeController = null,
         ISystemUpgradeReceiptSource? upgradeReceiptSource = null,
-        IScheduleCronEvaluator? scheduleCronEvaluator = null)
+        IScheduleCronEvaluator? scheduleCronEvaluator = null,
+        IExecutionEnvironmentRegistry? executionEnvironments = null)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _reportEngine = reportEngine ?? throw new ArgumentNullException(nameof(reportEngine));
         _policyVm = policyVm ?? throw new ArgumentNullException(nameof(policyVm));
         ArgumentNullException.ThrowIfNull(agentRuntime);
-        _workspaceDrivers = workspaceDrivers ?? throw new ArgumentNullException(nameof(workspaceDrivers));
-        _vcsService = vcsService ?? throw new ArgumentNullException(nameof(vcsService));
-        _terminalClient = terminalClient ?? throw new ArgumentNullException(nameof(terminalClient));
+        ArgumentNullException.ThrowIfNull(workspaceDrivers);
+        ArgumentNullException.ThrowIfNull(vcsService);
+        ArgumentNullException.ThrowIfNull(terminalClient);
         _options = options ?? new KernelOptions();
-        _agentRuntime = agentRuntime;
         _systemUpgradeController = systemUpgradeController;
         _scheduleCronEvaluator = scheduleCronEvaluator;
         _timeProvider = timeProvider ?? TimeProvider.System;
-        _commandRunner = commandRunner ?? new ProcessShellCommandRunner();
+        var resolvedCommandRunner = commandRunner ?? new ProcessShellCommandRunner();
         _eventHub = eventHub ?? new EventHub();
+
+        _executionEnvironments = executionEnvironments ?? new ExecutionEnvironmentRegistry(
+        [
+            new LocalExecutionEnvironment(
+                workspacesRoot: _options.WorkspacesRootDirectory,
+                agentRuntime: agentRuntime,
+                shell: resolvedCommandRunner,
+                vcs: vcsService,
+                workspaceDrivers: workspaceDrivers,
+                terminals: terminalClient)
+        ]);
 
         Templates = templateCatalog ?? new TemplateCatalog(_policyVm, _options.TemplatesDirectory);
         McpSessionBridge = mcpSessionBridge ?? new InMemoryMcpSessionBridge(_options.McpBaseUri);
@@ -196,16 +206,13 @@ public sealed partial class PergaKernelService : IPergaKernel
             _reportEngine,
             _policyVm,
             Templates,
-            _agentRuntime,
-            _workspaceDrivers,
-            _terminalClient,
+            _executionEnvironments,
             McpSessionBridge,
-            _commandRunner,
             _eventHub,
             _options,
             _timeProvider, _scheduleCronEvaluator);
         UpgradeReceipts = new SystemUpgrade.UpgradeReceiptConsumer(_store, upgradeReceiptSource, Actors, _eventHub, DispatchAdmission);
-        BootReconciler = new BootReconciler(_store, _workspaceDrivers, Actors, UpgradeReceipts);
+        BootReconciler = new BootReconciler(_store, workspaceDrivers, Actors, UpgradeReceipts);
         DispatchAdmission.Changed += PublishUpgradeStatus;
         DispatchAdmission.Resumed += ResumeSchedulers;
     }
@@ -213,6 +220,7 @@ public sealed partial class PergaKernelService : IPergaKernel
     public IKernelEventBus EventBus => _eventHub;
     public ITemplateCatalog Templates { get; }
     public IMcpSessionBridge McpSessionBridge { get; }
+    public IExecutionEnvironmentRegistry ExecutionEnvironments => _executionEnvironments;
     public TrackActorRegistry Actors { get; }
     public IBootReconciler BootReconciler { get; }
     public SystemUpgrade.DispatchAdmission DispatchAdmission => _options.DispatchAdmission;
@@ -239,7 +247,7 @@ public sealed partial class PergaKernelService : IPergaKernel
         }
         else
         {
-            var providersTask = GetCachedOrProbeProvidersAsync(refresh, ct);
+            var providersTask = GetCachedOrProbeProvidersAsync(ExecutionTargetIds.Local, refresh, ct);
             await Task.WhenAll(providersTask, areasTask).ConfigureAwait(false);
             providers = (await providersTask.ConfigureAwait(false)).Providers;
         }
@@ -255,7 +263,8 @@ public sealed partial class PergaKernelService : IPergaKernel
             Areas: await areasTask.ConfigureAwait(false),
             DatabaseId: databaseId,
             DbInstanceId: ProcessDbInstanceId,
-            AuthRequired: false);
+            AuthRequired: false,
+            ExecutionTargets: _executionEnvironments.ListTargets());
     }
 
     public async Task<TrackOverlaysResponseDto> GetOverlaysAsync(
@@ -324,192 +333,74 @@ public sealed partial class PergaKernelService : IPergaKernel
         _eventHub.PublishTransient(null, receipt.Kind == "track" ? receipt.TargetId : null,
             KernelEventKinds.ReadReceiptUpdated, JsonHelpers.ToElement(receipt), NowMs());
 
-    public HostListDirResultDto ListHostDirectory(string? path = null)
+    public HostListDirResultDto ListHostDirectory(string? path = null) =>
+        LocalExecutionFileSystem.Instance.ListDirectory(path);
+
+    public Task<HostListDirResultDto> ListHostDirectoryAsync(
+        string? path = null,
+        string? targetId = null,
+        CancellationToken ct = default)
     {
-        var homeDir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        if (string.IsNullOrWhiteSpace(homeDir))
-        {
-            homeDir = Environment.GetEnvironmentVariable("HOME") ?? Path.DirectorySeparatorChar.ToString();
-        }
-
-        string rawTarget;
-        if (string.IsNullOrWhiteSpace(path))
-        {
-            rawTarget = homeDir;
-        }
-        else
-        {
-            var trimmed = path.Trim();
-            if (string.Equals(trimmed, "~", StringComparison.Ordinal))
-            {
-                rawTarget = homeDir;
-            }
-            else if (trimmed.StartsWith("~/", StringComparison.Ordinal) ||
-                     trimmed.StartsWith("~\\", StringComparison.Ordinal))
-            {
-                rawTarget = Path.Combine(homeDir, trimmed[2..]);
-            }
-            else
-            {
-                rawTarget = trimmed;
-            }
-        }
-
-        string fullPath;
-        try
-        {
-            fullPath = Path.GetFullPath(rawTarget);
-        }
-        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
-        {
-            throw KernelException.InvalidArgument($"Invalid directory path '{rawTarget}': {ex.Message}");
-        }
-
-        if (File.Exists(fullPath) && !Directory.Exists(fullPath))
-        {
-            throw KernelException.InvalidArgument($"Path '{fullPath}' is a file, not a directory.");
-        }
-
-        if (!Directory.Exists(fullPath))
-        {
-            throw KernelException.NotFound($"Directory '{fullPath}' not found.");
-        }
-
-        // 1. Verify the target directory itself is readable (throws 403 on chmod 000 target dir,
-        // without stat'ing child entries yet).
-        try
-        {
-            using var openCheck = Directory
-                .EnumerateFileSystemEntries(fullPath, "*", new EnumerationOptions
-                {
-                    IgnoreInaccessible = false,
-                    ReturnSpecialDirectories = false
-                })
-                .GetEnumerator();
-            _ = openCheck;
-        }
-        catch (UnauthorizedAccessException)
-        {
-            throw KernelException.Forbidden($"Access denied reading directory '{fullPath}'.");
-        }
-
-        // 2. Enumerate child paths as strings (AttributesToSkip = 0 avoids stat inside MoveNext()),
-        //    then inspect each child inside a per-entry try/catch so FUSE mounts (/tmp/.mount_*) or
-        //    root-owned dirs (/tmp/systemd-private-*, /root) never fail the parent listing.
-        var entries = new List<HostDirEntryDto>();
-        var enumOptions = new EnumerationOptions
-        {
-            IgnoreInaccessible = true,
-            ReturnSpecialDirectories = false,
-            AttributesToSkip = 0
-        };
-        foreach (var childFullPath in Directory.EnumerateFileSystemEntries(fullPath, "*", enumOptions))
-        {
-            try
-            {
-                var name = Path.GetFileName(childFullPath);
-                if (string.IsNullOrEmpty(name))
-                {
-                    continue;
-                }
-
-                var attrs = File.GetAttributes(childFullPath);
-                var isSymlink = (attrs & FileAttributes.ReparsePoint) != 0;
-                bool isDir;
-                if (isSymlink)
-                {
-                    try
-                    {
-                        isDir = Directory.Exists(childFullPath);
-                    }
-                    catch
-                    {
-                        isDir = (attrs & FileAttributes.Directory) != 0;
-                    }
-                }
-                else
-                {
-                    isDir = (attrs & FileAttributes.Directory) != 0;
-                }
-
-                entries.Add(new HostDirEntryDto(name, isDir, isSymlink));
-            }
-            catch (UnauthorizedAccessException)
-            {
-                // Skip inaccessible child entry (e.g. FUSE mount or root-only dir) without failing parent listing.
-            }
-            catch (IOException)
-            {
-                // Skip transiently vanishing or special child entry.
-            }
-        }
-
-        entries.Sort(static (a, b) =>
-        {
-            if (a.IsDir != b.IsDir)
-            {
-                return a.IsDir ? -1 : 1;
-            }
-
-            var cmp = StringComparer.OrdinalIgnoreCase.Compare(a.Name, b.Name);
-            return cmp != 0 ? cmp : StringComparer.Ordinal.Compare(a.Name, b.Name);
-        });
-
-        var parent = Directory.GetParent(fullPath)?.FullName;
-        return new HostListDirResultDto(fullPath, parent, entries);
+        var env = _executionEnvironments.GetRequired(ExecutionTargetIds.Normalize(targetId));
+        return env.Files.ListDirectoryAsync(path, ct);
     }
 
     private async Task<ProviderObservation> GetCachedOrProbeProvidersAsync(
+        string targetId,
         bool forceRefresh,
         CancellationToken ct)
     {
+        var env = _executionEnvironments.GetRequired(targetId);
+        var cacheKey = env.Descriptor.Id;
         var nowMs = NowMs();
         if (!forceRefresh &&
-            Volatile.Read(ref _cachedProviders) is { } cached &&
+            _cachedProvidersByTarget.TryGetValue(cacheKey, out var cached) &&
             (nowMs - cached.ObservedAtMs) < ProviderProbeCacheTtlMs)
         {
             return cached;
         }
 
-        await _providerProbeLock.WaitAsync(ct).ConfigureAwait(false);
+        var probeLock = _providerProbeLocks.GetOrAdd(cacheKey, static _ => new SemaphoreSlim(1, 1));
+        await probeLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             nowMs = NowMs();
             if (!forceRefresh &&
-                _cachedProviders is { } cachedInside &&
+                _cachedProvidersByTarget.TryGetValue(cacheKey, out var cachedInside) &&
                 (nowMs - cachedInside.ObservedAtMs) < ProviderProbeCacheTtlMs)
             {
                 return cachedInside;
             }
 
             IReadOnlyList<ProviderStatus> probed;
+            var runtime = env.AgentRuntime;
             if (forceRefresh)
             {
-                var forceOverload = _agentRuntime
+                var forceOverload = runtime
                     .GetType()
                     .GetMethod("ProbeProvidersAsync", [typeof(bool), typeof(CancellationToken)]);
                 if (forceOverload is not null &&
-                    forceOverload.Invoke(_agentRuntime, [true, ct]) is Task<IReadOnlyList<ProviderStatus>> forceTask)
+                    forceOverload.Invoke(runtime, [true, ct]) is Task<IReadOnlyList<ProviderStatus>> forceTask)
                 {
                     probed = await forceTask.ConfigureAwait(false);
                 }
                 else
                 {
-                    probed = await _agentRuntime.ProbeProvidersAsync(ct).ConfigureAwait(false);
+                    probed = await runtime.ProbeProvidersAsync(ct).ConfigureAwait(false);
                 }
             }
             else
             {
-                probed = await _agentRuntime.ProbeProvidersAsync(ct).ConfigureAwait(false);
+                probed = await runtime.ProbeProvidersAsync(ct).ConfigureAwait(false);
             }
 
             var observation = new ProviderObservation(probed, NowMs());
-            Volatile.Write(ref _cachedProviders, observation);
+            _cachedProvidersByTarget[cacheKey] = observation;
             return observation;
         }
         finally
         {
-            _providerProbeLock.Release();
+            probeLock.Release();
         }
     }
 
@@ -584,6 +475,13 @@ public sealed partial class PergaKernelService : IPergaKernel
             throw KernelException.InvalidArgument("Area name cannot be empty.");
         }
 
+        var executionTargetId = ExecutionTargetIds.Normalize(req.ExecutionTargetId);
+        if (_executionEnvironments.TryGet(executionTargetId) is null)
+        {
+            throw KernelException.InvalidArgument(
+                $"Execution target '{executionTargetId}' is not configured on this Host.");
+        }
+
         var now = NowMs();
         var area = new AreaDto(
             Id: $"area_{Guid.NewGuid():N}",
@@ -593,7 +491,8 @@ public sealed partial class PergaKernelService : IPergaKernel
             Folders: req.Folders?.ToArray() ?? [],
             SortOrder: req.SortOrder ?? 0.0,
             CreatedAtMs: now,
-            UpdatedAtMs: now);
+            UpdatedAtMs: now,
+            ExecutionTargetId: executionTargetId);
 
         var evt = new EventEnvelopeDto(null, area.Id, null, KernelEventKinds.AreaUpdated, JsonHelpers.ToElement(area), now);
         await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
@@ -683,6 +582,7 @@ public sealed partial class PergaKernelService : IPergaKernel
 
         var area = systemArea ?? await _store.GetAreaAsync(req.AreaId, ct).ConfigureAwait(false)
                    ?? throw KernelException.NotFound($"Area '{req.AreaId}' not found.");
+        var env = _executionEnvironments.GetRequired(area.ExecutionTargetId);
 
         CompiledPolicy? policy = null;
         if (!string.IsNullOrWhiteSpace(req.TemplateId))
@@ -700,26 +600,26 @@ public sealed partial class PergaKernelService : IPergaKernel
         {
             if (!string.IsNullOrWhiteSpace(req.WorkspaceDriver))
                 throw KernelException.InvalidArgument("Choose a workspace option or specify a workspace driver.");
-            var choices = await WorkspaceChoicesAsync(source, policy?.Manifest.WorkspaceDriver, ct).ConfigureAwait(false);
+            var choices = await WorkspaceChoicesAsync(env, source, policy?.Manifest.WorkspaceDriver, ct).ConfigureAwait(false);
             choice = choices.FirstOrDefault(candidate => candidate.Option.Id == optionId)
                 ?? throw KernelException.InvalidArgument("The selected workspace option is unavailable for this folder. Choose an available workspace option.");
         }
         var driverId = choice?.DriverId ?? PreferredWorkspaceDriver(req.WorkspaceDriver, policy?.Manifest.WorkspaceDriver);
         var blankWorkspace = source is null;
         var sourcePath = blankWorkspace
-            ? Path.Combine(_options.WorkspacesRootDirectory, trackId)
+            ? CombineExecutionPath(env, env.WorkspacesRoot, trackId)
             : source!;
-        var targetRootDir = Path.Combine(_options.WorkspacesRootDirectory, blankWorkspace ? "_worktrees" : trackId);
+        var targetRootDir = CombineExecutionPath(env, env.WorkspacesRoot, blankWorkspace ? "_worktrees" : trackId);
         var lowerCacheDirs = policy?.Manifest.WorkspaceLowerCacheDirs ?? [];
         var createCommand = policy?.Manifest.WorkspaceCreateCmd;
         if (blankWorkspace && (driverId == VcsWorkspaceDriver.Id || policy?.Manifest.WorkspaceDriver == VcsWorkspaceDriver.Id))
             createCommand = string.IsNullOrWhiteSpace(createCommand) ? "git init -q" : $"git init -q && (\n{createCommand}\n)";
 
-        var workspaceDriver = _workspaceDrivers.GetRequired(driverId);
+        var workspaceDriver = env.WorkspaceDrivers.GetRequired(driverId);
         if (choice is null && !await workspaceDriver.IsAvailableAsync(source, ct).ConfigureAwait(false))
-            throw KernelException.PreconditionFailed($"Workspace driver '{driverId}' is unavailable for this source on this Host.");
+            throw KernelException.PreconditionFailed($"Workspace driver '{driverId}' is unavailable for this source on target '{env.Descriptor.Id}'.");
         var preparation = new WorkspacePreparation(
-            new WorkspaceProvisionRequest(trackId, Path.GetFullPath(sourcePath), Path.GetFullPath(targetRootDir),
+            new WorkspaceProvisionRequest(trackId, NormalizeExecutionPath(env, sourcePath), NormalizeExecutionPath(env, targetRootDir),
                 lowerCacheDirs, req.BaseRevision, NewEmptyWorkspace: blankWorkspace, VcsBackend: choice?.Backend),
             createCommand, RepeatableProvision: workspaceDriver.ProvisionIsRepeatable);
 
@@ -769,7 +669,8 @@ public sealed partial class PergaKernelService : IPergaKernel
             PinnedAtMs: null,
             SortOrder: req.SortOrder ?? 0.0,
             CreatedAtMs: now,
-            UpdatedAtMs: now);
+            UpdatedAtMs: now,
+            ExecutionTargetId: area.ExecutionTargetId);
 
         var leadProvider = string.IsNullOrWhiteSpace(req.Provider) ? _options.DefaultProvider
             : TaskBlockSynchronizer.NormalizeProviderId(req.Provider) ?? req.Provider.Trim();
@@ -864,77 +765,11 @@ public sealed partial class PergaKernelService : IPergaKernel
         int maxBytes = 256 * 1024,
         CancellationToken ct = default)
     {
+        var env = await ResolveTrackExecutionEnvironmentAsync(trackId, ct).ConfigureAwait(false);
         var mounted = await Actors.GetOrActivate(trackId).EnsureMountedAsync(ct).ConfigureAwait(false);
-        var (rootFull, candidateFull, sanitizedRel) = ResolveContainedWorkspacePathOrThrow(mounted.MergedCwd, relativePath);
-
-        if (Directory.Exists(candidateFull))
-        {
-            var containedDirectory = EnsureRealPathContainedInWorkspace(rootFull, candidateFull);
-            using var openedDirectory = UseWorkspaceFileReader(() => WorkspaceFileReader.OpenDirectory(containedDirectory));
-            var directoryPath = openedDirectory is null ? containedDirectory
-                : $"/proc/self/fd/{openedDirectory.DangerousGetHandle()}";
-            var entries = new List<WorkspaceFileEntryDto>();
-            foreach (var dir in Directory.GetDirectories(directoryPath).OrderBy(d => d, StringComparer.Ordinal))
-            {
-                var name = Path.GetFileName(dir);
-                var rel = Path.GetRelativePath(rootFull, Path.Combine(candidateFull, name)).Replace('\\', '/');
-                entries.Add(new WorkspaceFileEntryDto(name, rel, IsDirectory: true, SizeBytes: 0));
-            }
-
-            foreach (var file in Directory.GetFiles(directoryPath).OrderBy(f => f, StringComparer.Ordinal))
-            {
-                var info = new FileInfo(file);
-                var rel = Path.GetRelativePath(rootFull, Path.Combine(candidateFull, info.Name)).Replace('\\', '/');
-                entries.Add(new WorkspaceFileEntryDto(info.Name, rel, IsDirectory: false, SizeBytes: info.Length));
-            }
-
-            var relDir = string.Equals(candidateFull, rootFull, StringComparison.Ordinal)
-                ? string.Empty
-                : Path.GetRelativePath(rootFull, candidateFull).Replace('\\', '/');
-            return new WorkspaceFileResultDto(
-                relDir,
-                IsDirectory: true,
-                Content: null,
-                Truncated: false,
-                Entries: entries,
-                IsBinary: false);
-        }
-
-        if (!File.Exists(candidateFull))
-        {
-            throw KernelException.NotFound($"Workspace path '{sanitizedRel}' not found.");
-        }
-
-        var canonicalPath = EnsureRealPathContainedInWorkspace(rootFull, candidateFull);
-        await using var fs = UseWorkspaceFileReader(() => WorkspaceFileReader.Open(canonicalPath));
-        var limit = Math.Max(1, maxBytes);
-        var buffer = new byte[Math.Min(fs.Length, limit)];
-        var read = await fs.ReadAtLeastAsync(buffer, buffer.Length, throwOnEndOfStream: false, ct).ConfigureAwait(false);
-        var relFile = Path.GetRelativePath(rootFull, candidateFull).Replace('\\', '/');
-
-        var sniffLen = Math.Min(read, BinarySniffBytes);
-        if (buffer.AsSpan(0, sniffLen).IndexOf((byte)0) >= 0)
-        {
-            return new WorkspaceFileResultDto(
-                relFile,
-                IsDirectory: false,
-                Content: null,
-                Truncated: false,
-                Entries: null,
-                IsBinary: true);
-        }
-
-        var truncated = fs.Length > read;
-        var validLen = truncated ? TrimTrailingIncompleteUtf8(buffer.AsSpan(0, read)) : read;
-        var text = Encoding.UTF8.GetString(buffer, 0, validLen);
-
-        return new WorkspaceFileResultDto(
-            relFile,
-            IsDirectory: false,
-            Content: text,
-            Truncated: truncated,
-            Entries: null,
-            IsBinary: false);
+        return await env.Files
+            .BrowseOrReadWorkspaceFileAsync(mounted.MergedCwd, relativePath, maxBytes, ct)
+            .ConfigureAwait(false);
     }
 
     public async Task<(string Path, Stream Content)> OpenWorkspaceRawFileAsync(
@@ -947,119 +782,11 @@ public sealed partial class PergaKernelService : IPergaKernel
             throw KernelException.InvalidArgument("Query parameter 'path' is required.");
         }
 
+        var env = await ResolveTrackExecutionEnvironmentAsync(trackId, ct).ConfigureAwait(false);
         var mounted = await Actors.GetOrActivate(trackId).EnsureMountedAsync(ct).ConfigureAwait(false);
-        var (rootFull, candidateFull, sanitizedRel) = ResolveContainedWorkspacePathOrThrow(mounted.MergedCwd, relativePath);
-
-        if (Directory.Exists(candidateFull))
-        {
-            throw KernelException.NotFound($"Workspace path '{sanitizedRel}' is a directory, not a file.");
-        }
-
-        if (!File.Exists(candidateFull))
-        {
-            throw KernelException.NotFound($"Workspace file '{sanitizedRel}' not found.");
-        }
-
-        var canonicalPath = EnsureRealPathContainedInWorkspace(rootFull, candidateFull);
-        return (canonicalPath, UseWorkspaceFileReader(() => WorkspaceFileReader.Open(canonicalPath)));
-    }
-
-    private static (string RootFull, string CandidateFull, string SanitizedRel) ResolveContainedWorkspacePathOrThrow(
-        string workspaceRoot,
-        string? rawPath)
-    {
-        var rootFull = Path.GetFullPath(workspaceRoot);
-        var rootWithSep = rootFull.EndsWith(Path.DirectorySeparatorChar)
-            ? rootFull
-            : rootFull + Path.DirectorySeparatorChar;
-
-        if (string.IsNullOrWhiteSpace(rawPath))
-        {
-            return (rootFull, rootFull, string.Empty);
-        }
-
-        var trimmed = rawPath.Trim();
-        string candidateFull;
-        if (Path.IsPathRooted(trimmed))
-        {
-            var rootedFull = Path.GetFullPath(trimmed);
-            if (string.Equals(rootedFull, rootFull, StringComparison.Ordinal) ||
-                rootedFull.StartsWith(rootWithSep, StringComparison.Ordinal))
-            {
-                candidateFull = rootedFull;
-            }
-            else
-            {
-                candidateFull = Path.GetFullPath(Path.Combine(rootFull, trimmed.TrimStart('/', '\\')));
-            }
-        }
-        else
-        {
-            candidateFull = Path.GetFullPath(Path.Combine(rootFull, trimmed));
-        }
-
-        if (!string.Equals(candidateFull, rootFull, StringComparison.Ordinal) &&
-            !candidateFull.StartsWith(rootWithSep, StringComparison.Ordinal))
-        {
-            throw KernelException.Forbidden("Path escapes workspace root.");
-        }
-
-        var sanitizedRel = string.Equals(candidateFull, rootFull, StringComparison.Ordinal)
-            ? string.Empty
-            : Path.GetRelativePath(rootFull, candidateFull).Replace('\\', '/');
-        return (rootFull, candidateFull, sanitizedRel);
-    }
-
-    private static string EnsureRealPathContainedInWorkspace(string rootFull, string candidateFull) =>
-        UseWorkspaceFileReader(() => WorkspaceFileReader.ResolveContainedPath(rootFull, candidateFull));
-
-    private static T UseWorkspaceFileReader<T>(Func<T> read)
-    {
-        try
-        {
-            return read();
-        }
-        catch (FileNotFoundException ex)
-        {
-            throw KernelException.NotFound(ex.Message);
-        }
-        catch (UnauthorizedAccessException ex)
-        {
-            throw KernelException.Forbidden(ex.Message);
-        }
-    }
-
-    private static int TrimTrailingIncompleteUtf8(ReadOnlySpan<byte> bytes)
-    {
-        if (bytes.IsEmpty)
-        {
-            return 0;
-        }
-
-        var i = bytes.Length - 1;
-        var cont = 0;
-        while (i >= 0 && cont < 4 && (bytes[i] & 0b1100_0000) == 0b1000_0000)
-        {
-            i--;
-            cont++;
-        }
-
-        if (i < 0)
-        {
-            return bytes.Length;
-        }
-
-        var lead = bytes[i];
-        var expected = lead switch
-        {
-            < 0b1000_0000 => 1,
-            >= 0b1111_0000 => 4,
-            >= 0b1110_0000 => 3,
-            >= 0b1100_0000 => 2,
-            _ => 1
-        };
-
-        return (bytes.Length - i) < expected ? i : bytes.Length;
+        return await env.Files
+            .OpenWorkspaceRawFileAsync(mounted.MergedCwd, relativePath, ct)
+            .ConfigureAwait(false);
     }
 
     public Task<DiffSummary> GetTrackVcsDiffAsync(
@@ -1076,17 +803,122 @@ public sealed partial class PergaKernelService : IPergaKernel
         string? path,
         CancellationToken ct = default)
     {
+        var env = await ResolveTrackExecutionEnvironmentAsync(trackId, ct).ConfigureAwait(false);
         var mounted = await Actors.GetOrActivate(trackId).EnsureMountedAsync(ct).ConfigureAwait(false);
         string? normalizedRelPath = null;
         if (!string.IsNullOrWhiteSpace(path))
         {
-            var (_, _, sanitizedRel) = ResolveContainedWorkspacePathOrThrow(mounted.MergedCwd, path);
+            var sanitizedRel = ResolveContainedRelativePathOrThrow(mounted.MergedCwd, path, env.IsLocal);
             normalizedRelPath = string.IsNullOrEmpty(sanitizedRel) ? null : sanitizedRel;
         }
 
-        return await _vcsService
+        return await env.Vcs
             .DiffDetailedAsync(mounted.MergedCwd, fromRev, toRev, normalizedRelPath, ct, searchAncestors: !mounted.ManagedEmptyWorkspace)
             .ConfigureAwait(false);
+    }
+
+    private async Task<IExecutionEnvironment> ResolveTrackExecutionEnvironmentAsync(string trackId, CancellationToken ct)
+    {
+        var track = await _store.GetTrackAsync(trackId, ct).ConfigureAwait(false)
+            ?? throw KernelException.NotFound($"Track '{trackId}' not found.");
+        return _executionEnvironments.GetRequired(track.ExecutionTargetId);
+    }
+
+    private static string CombineExecutionPath(IExecutionEnvironment env, string basePath, string segment)
+    {
+        if (env.IsLocal)
+        {
+            return Path.Combine(basePath, segment);
+        }
+
+        var trimmedBase = basePath.TrimEnd('/');
+        var trimmedSeg = segment.TrimStart('/');
+        return string.IsNullOrEmpty(trimmedBase) ? "/" + trimmedSeg : trimmedBase + "/" + trimmedSeg;
+    }
+
+    private static string NormalizeExecutionPath(IExecutionEnvironment env, string path)
+    {
+        if (env.IsLocal)
+        {
+            return Path.GetFullPath(path);
+        }
+
+        return NormalizePosixPath(path);
+    }
+
+    private static string ResolveContainedRelativePathOrThrow(string workspaceRoot, string rawPath, bool isLocal)
+    {
+        if (isLocal)
+        {
+            var (_, _, sanitizedRel) = LocalExecutionFileSystem.ResolveContainedWorkspacePathOrThrow(workspaceRoot, rawPath);
+            return sanitizedRel;
+        }
+
+        var rootFull = NormalizePosixPath(workspaceRoot);
+        var rootWithSep = rootFull == "/" ? "/" : rootFull + "/";
+        var trimmed = rawPath.Trim();
+        string candidateFull;
+        if (trimmed.StartsWith('/'))
+        {
+            var rootedFull = NormalizePosixPath(trimmed);
+            candidateFull = string.Equals(rootedFull, rootFull, StringComparison.Ordinal) ||
+                            rootedFull.StartsWith(rootWithSep, StringComparison.Ordinal)
+                ? rootedFull
+                : NormalizePosixPath(rootWithSep + trimmed.TrimStart('/'));
+        }
+        else
+        {
+            candidateFull = NormalizePosixPath(rootWithSep + trimmed.Replace('\\', '/'));
+        }
+
+        if (!string.Equals(candidateFull, rootFull, StringComparison.Ordinal) &&
+            !candidateFull.StartsWith(rootWithSep, StringComparison.Ordinal))
+        {
+            throw KernelException.Forbidden("Path escapes workspace root.");
+        }
+
+        return string.Equals(candidateFull, rootFull, StringComparison.Ordinal)
+            ? string.Empty
+            : candidateFull[rootWithSep.Length..];
+    }
+
+    private static string NormalizePosixPath(string path)
+    {
+        var replaced = path.Replace('\\', '/').Trim();
+        var isAbsolute = replaced.StartsWith('/');
+        var parts = replaced.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        var stack = new List<string>(parts.Length);
+        foreach (var part in parts)
+        {
+            if (part == ".")
+            {
+                continue;
+            }
+
+            if (part == "..")
+            {
+                if (stack.Count > 0 && stack[^1] != "..")
+                {
+                    stack.RemoveAt(stack.Count - 1);
+                }
+                else if (!isAbsolute)
+                {
+                    stack.Add("..");
+                }
+            }
+            else
+            {
+                stack.Add(part);
+            }
+        }
+
+        var joined = string.Join('/', stack);
+        if (isAbsolute)
+        {
+            return "/" + joined;
+        }
+
+        return string.IsNullOrEmpty(joined) ? "." : joined;
     }
 
     // ------------------- Report & Revisions -------------------
@@ -1248,7 +1080,22 @@ public sealed partial class PergaKernelService : IPergaKernel
         Actors.GetOrActivate(trackId).CloseTerminalAsync(terminalId, graceMs, ct);
 
     public Uri GetTerminalWebSocketRelayUri(string terminalId) =>
-        _terminalClient.GetWebSocketRelayUri(terminalId);
+        _executionEnvironments.Default.Terminals.GetWebSocketRelayUri(terminalId);
+
+    public async Task<ITerminalBridgeClient> ResolveTerminalClientAsync(string terminalId, CancellationToken ct = default)
+    {
+        if (!string.IsNullOrWhiteSpace(terminalId))
+        {
+            var trackId = await _store.FindTrackIdByTerminalAsync(terminalId, ct).ConfigureAwait(false);
+            if (!string.IsNullOrEmpty(trackId) &&
+                await _store.GetTrackAsync(trackId, ct).ConfigureAwait(false) is { } track)
+            {
+                return _executionEnvironments.GetRequired(track.ExecutionTargetId).Terminals;
+            }
+        }
+
+        return _executionEnvironments.Default.Terminals;
+    }
 
     // ------------------- MCP Policy Guard, Tool Dispatch & Schedules -------------------
 
@@ -1304,9 +1151,13 @@ public sealed partial class PergaKernelService : IPergaKernel
 
         _disposed = true;
         await Actors.DisposeAsync().ConfigureAwait(false);
+        await _executionEnvironments.DisposeAsync().ConfigureAwait(false);
         DispatchAdmission.Changed -= PublishUpgradeStatus;
         DispatchAdmission.Resumed -= ResumeSchedulers;
         _eventHub.Dispose();
-        _providerProbeLock.Dispose();
+        foreach (var probeLock in _providerProbeLocks.Values)
+        {
+            probeLock.Dispose();
+        }
     }
 }
