@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { ApiError } from './failure-class.js';
 import type { ApiFailure } from '../api/types.js';
 import {
-  KeyedSendFailure, retryUnknownSend, sendFailureMessage, SEND_RETRIES, type SendFailureKind,
+  KeyedSendFailure, retryUnknownSend, sendFailureCode, sendFailureMessage, SEND_RETRIES, type SendFailureKind,
 } from './conversation-delivery.js';
 
 /** One failure the send table reads as each kind. */
@@ -100,8 +100,12 @@ it('keeps a lost response unknown when the next attempt requires recovery', asyn
   expect(attempts).toBe(2);
 });
 
-it('localizes recovery refusal diagnostics without losing ordinary refusal reasons', () => {
-  expect(sendFailureMessage(new ApiError({ kind: 'http', status: 409, code: 'session_recovery_required', message: 'Recover the provider session before sending more input.' })))
-    .toBe('会话需要恢复，请先恢复会话后再发送。');
+it('exposes recovery codes and preserves ordinary refusal reasons for app presentation', () => {
+  const error = new ApiError({ kind: 'http', status: 409, code: 'session_recovery_required', message: 'Recover the provider session before sending more input.' });
+  expect(sendFailureCode(error)).toBe('session_recovery_required');
+  expect(sendFailureMessage(error)).toBe(error.message);
+  expect(sendFailureCode(new Error('Ordinary refusal'))).toBeUndefined();
+  expect(sendFailureCode(null)).toBeUndefined();
+  expect(sendFailureCode(new ApiError({ kind: 'transport', message: 'Offline' }))).toBeUndefined();
   expect(sendFailureMessage(new Error('Ordinary refusal'))).toBe('Ordinary refusal');
 });

@@ -120,7 +120,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         Volatile.Read(ref _queuedMailboxOps) > 0 ||
         Volatile.Read(ref _inFlightExternalOps) > 0 ||
         !_backgroundJobs.IsEmpty ||
-        _runtimes.HasActiveWork;
+        _scheduler.HasActiveWork;
 
     public bool IsSessionOrTaskRunning =>
         _scheduler.HasActiveTurns || _activeAttempts.Count > 0 || _scheduler.HasDispatchingInputs;
@@ -377,36 +377,48 @@ public sealed partial class TrackActor : IAsyncDisposable
         }, ct);
     }
 
-    public async Task<TrackDto> CloseTrackBySessionAsync(string callerSessionId, CancellationToken ct = default)
+    private async Task<TResult> RunWithMailboxReservationAsync<TReservation, TResult>(
+        Func<Task<TReservation>> reserve, Func<TReservation, Task<TResult>> run, Func<TReservation, Task> release)
     {
-        var reserved = false;
+        var reservation = await EnqueueAsync(_ => reserve(), CancellationToken.None).ConfigureAwait(false);
         try
         {
-            await EnqueueAsync(async _ =>
+            return await run(reservation).ConfigureAwait(false);
+        }
+        finally
+        {
+            await EnqueueAsync(_ => release(reservation), CancellationToken.None).ConfigureAwait(false);
+        }
+    }
+
+    public Task<TrackDto> CloseTrackBySessionAsync(string callerSessionId, CancellationToken ct = default) =>
+        RunWithMailboxReservationAsync(
+            reserve: async () =>
             {
                 await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
                 RequireGovernanceSessionCore(callerSessionId, "perga_track_close");
                 if (_closingTrack || _deletingTrack) throw KernelException.Conflict("Track teardown is already in progress.");
                 ct.ThrowIfCancellationRequested();
                 _closingTrack = true;
-                reserved = true;
-            }, CancellationToken.None).ConfigureAwait(false);
-            await CancelAllInFlightAttemptsAsync("Track closed.", ct).ConfigureAwait(false);
-            return await EnqueueAsync(async _ =>
+                return true;
+            },
+            run: async _ =>
             {
-                var now = NowMs();
-                _track = _track with { ClosedAtMs = _track.ClosedAtMs ?? now, UpdatedAtMs = now };
-                SetApprovalAdmissionClosed(true, stopPendingTurns: true);
-                await EmitTrackUpdatedCoreAsync(now, CancellationToken.None).ConfigureAwait(false);
-                return PresentTrackCore();
-            }, CancellationToken.None).ConfigureAwait(false);
-        }
-        finally
-        {
-            if (reserved)
-                await EnqueueAsync(_ => { _closingTrack = false; return Task.CompletedTask; }, CancellationToken.None).ConfigureAwait(false);
-        }
-    }
+                await CancelAllInFlightAttemptsAsync("Track closed.", ct).ConfigureAwait(false);
+                return await EnqueueAsync(async _ =>
+                {
+                    var now = NowMs();
+                    _track = _track with { ClosedAtMs = _track.ClosedAtMs ?? now, UpdatedAtMs = now };
+                    SetApprovalAdmissionClosed(true, stopPendingTurns: true);
+                    await EmitTrackUpdatedCoreAsync(now, CancellationToken.None).ConfigureAwait(false);
+                    return PresentTrackCore();
+                }, CancellationToken.None).ConfigureAwait(false);
+            },
+            release: _ =>
+            {
+                _closingTrack = false;
+                return Task.CompletedTask;
+            });
 
     public async Task TeardownAndDeleteTrackAsync(CancellationToken ct = default)
     {
@@ -444,7 +456,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             if (_deletingTrack || _closingTrack)
                 throw KernelException.Conflict("Track teardown is already in progress.");
             RequireAttemptsOutsideVerification(_activeAttempts.Values);
-            if (_sessions.Keys.Any(_runtimes.IsRecovering))
+            if (_scheduler.HasRecoveringSessions)
                 throw KernelException.Conflict("Wait for provider recovery before deleting this Track.");
             ct.ThrowIfCancellationRequested();
             _deletingTrack = true;
@@ -1884,9 +1896,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                                 if (confirmed) await ScheduleEligibleTasksCoreAsync(CancellationToken.None).ConfigureAwait(false);
                                 else
                                 {
-                                    var current = RequireSessionCore(previousSession.Id);
-                                    var unknown = current with { Status = "unknown", UnknownReason = "shutdown_unconfirmed", UpdatedAtMs = NowMs() };
-                                    await PersistAndEmitSessionUpdatedCoreAsync(unknown, unknown.UpdatedAtMs, CancellationToken.None).ConfigureAwait(false);
+                                    await MarkShutdownUnconfirmedIfNeededAsync(previousSession.Id).ConfigureAwait(false);
                                 }
                             }, CancellationToken.None).ConfigureAwait(false);
                     });
@@ -2383,197 +2393,205 @@ public sealed partial class TrackActor : IAsyncDisposable
         ct = deadline.Token;
         using var dispatch = automatic ? null : await _options.DispatchAdmission.EnterAsync(ct).ConfigureAwait(false);
         Interlocked.Increment(ref _inFlightExternalOps);
-        var reserved = false;
         try
         {
-            var preparation = await EnqueueAsync<(AgentSessionDto Session, int HandoverTurnIndex)?>(async _ =>
+            return await RunWithMailboxReservationAsync(ReserveAsync, RunAsync, ReleaseAsync).ConfigureAwait(false);
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _inFlightExternalOps);
+        }
+
+        async Task<(AgentSessionDto Session, int HandoverTurnIndex)?> ReserveAsync()
+        {
+            await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
+            var session = RequireSessionCore(sessionId);
+            RequireSessionMutationCore(session, principal ?? new InteropPrincipal.Human(), expectedAttemptId, destructive: true);
+            RequireSessionDispatchAvailableCore(sessionId);
+            if (automatic && !(CurrentContextUsageRatioCore(session) >= _options.AutoCompactionThreshold))
+                return null;
+            if (_scheduler.IsOccupied(session, allowFinishingDispatch: true))
             {
-                await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
-                var session = RequireSessionCore(sessionId);
-                RequireSessionMutationCore(session, principal ?? new InteropPrincipal.Human(), expectedAttemptId, destructive: true);
-                RequireSessionDispatchAvailableCore(sessionId);
-                if (automatic && !(CurrentContextUsageRatioCore(session) >= _options.AutoCompactionThreshold))
-                    return null;
-                if (_scheduler.IsOccupied(session, allowFinishingDispatch: true))
+                throw KernelException.Conflict($"Cannot compact session '{sessionId}' while a turn is actively running.");
+            }
+
+            ct.ThrowIfCancellationRequested();
+            var turnIdx = NextTurnIndexCore(sessionId);
+            _scheduler.BeginCompacting(sessionId);
+            return (session, turnIdx);
+        }
+
+        async Task<AgentSessionDto> RunAsync((AgentSessionDto Session, int HandoverTurnIndex)? preparation)
+        {
+            try
+            {
+                if (preparation is not { } prepared)
+                    return await EnqueueAsync(_ => Task.FromResult(RequireSessionCore(sessionId)), ct).ConfigureAwait(false);
+
+                await EnqueueAsync(async _ =>
                 {
-                    throw KernelException.Conflict($"Cannot compact session '{sessionId}' while a turn is actively running.");
+                    var session = RequireSessionCore(sessionId);
+                    await PersistAndEmitSessionUpdatedCoreAsync(session with { Status = "compacting", UpdatedAtMs = NowMs() }, NowMs(), ct).ConfigureAwait(false);
+                }, ct).ConfigureAwait(false);
+
+                var oldAgent = await GetOrOpenAgentSessionCoreAsync(prepared.Session, null, ct).ConfigureAwait(false);
+                var prep = (OldAgentSession: oldAgent, ContextBinding: _runtimes.Get(sessionId).ContextUsage,
+                    HandoverTurnIndex: prepared.HandoverTurnIndex);
+                if (await prep.OldAgentSession.ResolveNativeCompactSupportAsync(ct).AsTask().WaitAsync(ct).ConfigureAwait(false))
+                {
+                    var compactTurnId = $"trn_{prep.HandoverTurnIndex:D6}_{Guid.NewGuid():N}";
+                    var nativeStartedAt = NowMs();
+                    var nativeResult = await prep.OldAgentSession.CompactAsync(ct).WaitAsync(ct).ConfigureAwait(false);
+                    var compactSummary = string.IsNullOrWhiteSpace(nativeResult.Summary)
+                        ? "Context compacted."
+                        : nativeResult.Summary.Trim();
+
+                    return await EnqueueAsync(async _ =>
+                    {
+                        var current = RequireSessionCore(sessionId);
+                        var now = NowMs();
+
+                        var compactTurn = new SessionTurnDto(
+                            Id: compactTurnId,
+                            SessionId: sessionId,
+                            TurnIndex: prep.HandoverTurnIndex,
+                            Epoch: current.Epoch,
+                            TriggerKind: "system",
+                            Input: JsonHelpers.ToElement(new { prompt = "/compact", kind = "native_compact" }),
+                            Status: "completed",
+                            Usage: nativeResult.Usage is null ? null : JsonHelpers.ToElement(nativeResult.Usage),
+                            ErrorText: null,
+                            StartedAtMs: nativeStartedAt,
+                            CompletedAtMs: now);
+
+                        var compactItems = new List<SessionItemDto>
+                        {
+                            new(0, sessionId, compactTurnId, "user", JsonHelpers.ToElement(new { v = 1, content = "/compact" }), nativeStartedAt),
+                            new(0, sessionId, compactTurnId, "assistant_text", JsonHelpers.ToElement(new { v = 1, text = compactSummary }), now)
+                        };
+
+                        var compacted = current;
+                        if (IsCurrentContextBindingCore(current, prep.OldAgentSession, prep.ContextBinding))
+                        {
+                            compacted = nativeResult.Usage is { } usage
+                                ? ApplyContextUsageCore(current, prep.OldAgentSession, prep.ContextBinding, nativeResult.ContextUsageRevision, usage, now)
+                                : current with { ContextUsage = null };
+                            compacted = ApplyTrailingContextUsageCore(compacted, prep.OldAgentSession, prep.ContextBinding, nativeResult.CompletedPromptId, now);
+                        }
+                        compacted = compacted with
+                        {
+                            NativeThreadId = current.NativeThreadId ?? prep.OldAgentSession.NativeThreadId,
+                            Status = "idle",
+                            LastNotifiableTurnAtMs = Math.Max(current.LastNotifiableTurnAtMs ?? 0, now),
+                            UpdatedAtMs = now
+                        };
+                        await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
+                        await _store.RecordTurnAndItemsAsync(compactTurn, compactItems, compacted, ct).ConfigureAwait(false);
+                        _sessions[sessionId] = compacted;
+                        await PersistAndEmitSessionUpdatedCoreAsync(compacted, now, ct).ConfigureAwait(false);
+
+                        return compacted;
+                    }, ct).ConfigureAwait(false);
                 }
 
-                ct.ThrowIfCancellationRequested();
-                _runtimes.Get(sessionId).SetBusy("compacting");
-                reserved = true;
-                await PersistAndEmitSessionUpdatedCoreAsync(session with { Status = "compacting", UpdatedAtMs = NowMs() }, NowMs(), ct).ConfigureAwait(false);
-                var turnIdx = NextTurnIndexCore(sessionId);
-                return (session, turnIdx);
-            }, CancellationToken.None).ConfigureAwait(false);
+                // Fallback: Request structured handover summary turn on current IAgentSession and bump Epoch.
+                const string handoverPrompt =
+                    "Epoch handover requested. Summarize concisely in structured sections: " +
+                    "(1) Current Progress, (2) Key Paths & Artifacts, (3) Verified Conclusions, and (4) Immediate Next Steps.";
 
-            if (preparation is not { } prepared)
-                return await EnqueueAsync(_ => Task.FromResult(RequireSessionCore(sessionId)), ct).ConfigureAwait(false);
+                var handoverTurnId = $"trn_{prep.HandoverTurnIndex:D6}_{Guid.NewGuid():N}";
+                var startedAt = NowMs();
+                var summaryBuilder = new StringBuilder();
+                TokenUsage? handoverUsage = null;
 
-            var oldAgent = await GetOrOpenAgentSessionCoreAsync(prepared.Session, null, ct).ConfigureAwait(false);
-            var prep = (OldAgentSession: oldAgent, ContextBinding: _runtimes.Get(sessionId).ContextUsage,
-                HandoverTurnIndex: prepared.HandoverTurnIndex);
-            if (await prep.OldAgentSession.ResolveNativeCompactSupportAsync(ct).AsTask().WaitAsync(ct).ConfigureAwait(false))
-            {
-                var compactTurnId = $"trn_{prep.HandoverTurnIndex:D6}_{Guid.NewGuid():N}";
-                var nativeStartedAt = NowMs();
-                var nativeResult = await prep.OldAgentSession.CompactAsync(ct).WaitAsync(ct).ConfigureAwait(false);
-                var compactSummary = string.IsNullOrWhiteSpace(nativeResult.Summary)
-                    ? "Context compacted."
-                    : nativeResult.Summary.Trim();
-
-                return await EnqueueAsync(async _ =>
+                await foreach (var evt in ReadCompactionEventsAsync(prep.OldAgentSession,
+                                   new TurnInput(handoverPrompt, handoverTurnId), ct).ConfigureAwait(false))
                 {
+                    switch (evt)
+                    {
+                        case UnifiedAgentEvent.TextDelta td:
+                            summaryBuilder.Append(td.Delta);
+                            break;
+                        case UnifiedAgentEvent.TurnCompleted tc:
+                            handoverUsage = tc.Usage;
+                            break;
+                    }
+                }
+
+                var handoverSummary = summaryBuilder.ToString().Trim();
+
+                // 2. Dispose old IAgentSession instance.
+                await _runtimes.Get(sessionId).CloseAsync(_options.SessionStartupTimeout, ct).ConfigureAwait(false);
+
+                // 3 & 4. Update Epoch = Epoch + 1, NativeThreadId = null, clear context usage -> seed fresh IAgentSession with latest Report + handover summary!
+                var handover = await EnqueueAsync(async _ =>
+                {
+
                     var current = RequireSessionCore(sessionId);
                     var now = NowMs();
 
-                    var compactTurn = new SessionTurnDto(
-                        Id: compactTurnId,
+                    var handoverTurn = new SessionTurnDto(
+                        Id: handoverTurnId,
                         SessionId: sessionId,
                         TurnIndex: prep.HandoverTurnIndex,
                         Epoch: current.Epoch,
                         TriggerKind: "system",
-                        Input: JsonHelpers.ToElement(new { prompt = "/compact", kind = "native_compact" }),
+                        Input: JsonHelpers.ToElement(new { prompt = handoverPrompt, kind = "epoch_handover" }),
                         Status: "completed",
-                        Usage: nativeResult.Usage is null ? null : JsonHelpers.ToElement(nativeResult.Usage),
+                        Usage: handoverUsage is null ? null : JsonHelpers.ToElement(handoverUsage),
                         ErrorText: null,
-                        StartedAtMs: nativeStartedAt,
+                        StartedAtMs: startedAt,
                         CompletedAtMs: now);
 
-                    var compactItems = new List<SessionItemDto>
+                    var handoverItems = new List<SessionItemDto>
                     {
-                        new(0, sessionId, compactTurnId, "user", JsonHelpers.ToElement(new { v = 1, content = "/compact" }), nativeStartedAt),
-                        new(0, sessionId, compactTurnId, "assistant_text", JsonHelpers.ToElement(new { v = 1, text = compactSummary }), now)
+            new(0, sessionId, handoverTurnId, "user", JsonHelpers.ToElement(new { v = 1, content = handoverPrompt }), startedAt),
+            new(0, sessionId, handoverTurnId, "assistant_text", JsonHelpers.ToElement(new { v = 1, text = handoverSummary }), now)
                     };
 
-                    var compacted = current;
-                    if (IsCurrentContextBindingCore(current, prep.OldAgentSession, prep.ContextBinding))
+                    var compacted = current with
                     {
-                        compacted = nativeResult.Usage is { } usage
-                            ? ApplyContextUsageCore(current, prep.OldAgentSession, prep.ContextBinding, nativeResult.ContextUsageRevision, usage, now)
-                            : current with { ContextUsage = null };
-                        compacted = ApplyTrailingContextUsageCore(compacted, prep.OldAgentSession, prep.ContextBinding, nativeResult.CompletedPromptId, now);
-                    }
-                    compacted = compacted with
-                    {
-                        NativeThreadId = current.NativeThreadId ?? prep.OldAgentSession.NativeThreadId,
+                        Epoch = current.Epoch + 1,
+                        NativeThreadId = null,
+                        ContextUsage = null,
                         Status = "idle",
                         LastNotifiableTurnAtMs = Math.Max(current.LastNotifiableTurnAtMs ?? 0, now),
                         UpdatedAtMs = now
                     };
                     await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
-                    await _store.RecordTurnAndItemsAsync(compactTurn, compactItems, compacted, ct).ConfigureAwait(false);
+                    await _store.RecordTurnAndItemsAsync(handoverTurn, handoverItems, compacted, ct).ConfigureAwait(false);
                     _sessions[sessionId] = compacted;
                     await PersistAndEmitSessionUpdatedCoreAsync(compacted, now, ct).ConfigureAwait(false);
 
-                    return compacted;
+                    var latestReportMarkdown = _reportEngine.RenderMarkdown(_report, withMarkers: true);
+                    var seedPrompt = BuildEpochSeedSystemPrompt(compacted, latestReportMarkdown, handoverSummary);
+
+                    return (Session: compacted, SeedPrompt: seedPrompt);
                 }, ct).ConfigureAwait(false);
+                await GetOrOpenAgentSessionCoreAsync(handover.Session, handover.SeedPrompt, ct).ConfigureAwait(false);
+                return await EnqueueAsync(_ => Task.FromResult(RequireSessionCore(sessionId)), ct).ConfigureAwait(false);
             }
-
-            // Fallback: Request structured handover summary turn on current IAgentSession and bump Epoch.
-            const string handoverPrompt =
-                "Epoch handover requested. Summarize concisely in structured sections: " +
-                "(1) Current Progress, (2) Key Paths & Artifacts, (3) Verified Conclusions, and (4) Immediate Next Steps.";
-
-            var handoverTurnId = $"trn_{prep.HandoverTurnIndex:D6}_{Guid.NewGuid():N}";
-            var startedAt = NowMs();
-            var summaryBuilder = new StringBuilder();
-            TokenUsage? handoverUsage = null;
-
-            await foreach (var evt in ReadCompactionEventsAsync(prep.OldAgentSession,
-                               new TurnInput(handoverPrompt, handoverTurnId), ct).ConfigureAwait(false))
+            catch (OperationCanceledException) when (deadline.IsCancellationRequested && !_actorShutdownCts.IsCancellationRequested)
             {
-                switch (evt)
-                {
-                    case UnifiedAgentEvent.TextDelta td:
-                        summaryBuilder.Append(td.Delta);
-                        break;
-                    case UnifiedAgentEvent.TurnCompleted tc:
-                        handoverUsage = tc.Usage;
-                        break;
-                }
-            }
-
-            var handoverSummary = summaryBuilder.ToString().Trim();
-
-            // 2. Dispose old IAgentSession instance.
-            await _runtimes.Get(sessionId).CloseAsync(_options.SessionStartupTimeout, ct).ConfigureAwait(false);
-
-            // 3 & 4. Update Epoch = Epoch + 1, NativeThreadId = null, clear context usage -> seed fresh IAgentSession with latest Report + handover summary!
-            var handover = await EnqueueAsync(async _ =>
-            {
-
-                var current = RequireSessionCore(sessionId);
-                var now = NowMs();
-
-                var handoverTurn = new SessionTurnDto(
-                    Id: handoverTurnId,
-                    SessionId: sessionId,
-                    TurnIndex: prep.HandoverTurnIndex,
-                    Epoch: current.Epoch,
-                    TriggerKind: "system",
-                    Input: JsonHelpers.ToElement(new { prompt = handoverPrompt, kind = "epoch_handover" }),
-                    Status: "completed",
-                    Usage: handoverUsage is null ? null : JsonHelpers.ToElement(handoverUsage),
-                    ErrorText: null,
-                    StartedAtMs: startedAt,
-                    CompletedAtMs: now);
-
-                var handoverItems = new List<SessionItemDto>
-                {
-                    new(0, sessionId, handoverTurnId, "user", JsonHelpers.ToElement(new { v = 1, content = handoverPrompt }), startedAt),
-                    new(0, sessionId, handoverTurnId, "assistant_text", JsonHelpers.ToElement(new { v = 1, text = handoverSummary }), now)
-                };
-
-                var compacted = current with
-                {
-                    Epoch = current.Epoch + 1,
-                    NativeThreadId = null,
-                    ContextUsage = null,
-                    Status = "idle",
-                    LastNotifiableTurnAtMs = Math.Max(current.LastNotifiableTurnAtMs ?? 0, now),
-                    UpdatedAtMs = now
-                };
-                await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
-                await _store.RecordTurnAndItemsAsync(handoverTurn, handoverItems, compacted, ct).ConfigureAwait(false);
-                _sessions[sessionId] = compacted;
-                await PersistAndEmitSessionUpdatedCoreAsync(compacted, now, ct).ConfigureAwait(false);
-
-                var latestReportMarkdown = _reportEngine.RenderMarkdown(_report, withMarkers: true);
-                var seedPrompt = BuildEpochSeedSystemPrompt(compacted, latestReportMarkdown, handoverSummary);
-
-                return (Session: compacted, SeedPrompt: seedPrompt);
-            }, ct).ConfigureAwait(false);
-            await GetOrOpenAgentSessionCoreAsync(handover.Session, handover.SeedPrompt, ct).ConfigureAwait(false);
-            return await EnqueueAsync(_ => Task.FromResult(RequireSessionCore(sessionId)), ct).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (deadline.IsCancellationRequested && !_actorShutdownCts.IsCancellationRequested)
-        {
-            // A timed-out compaction may still be mutating the provider. Fence dispatch
-            // until explicit recovery confirms shutdown or reconnects the original session.
-            await EnqueueAsync(async _ =>
-            {
-                var current = RequireSessionCore(sessionId);
-                var unknown = current with { Status = "unknown", UnknownReason = "stream_lost",
-                    UnknownLastError = "Provider compaction timed out.", UpdatedAtMs = NowMs() };
-                await PersistAndEmitSessionUpdatedCoreAsync(unknown, unknown.UpdatedAtMs, CancellationToken.None).ConfigureAwait(false);
-            }, CancellationToken.None).ConfigureAwait(false);
-            throw;
-        }
-        finally
-        {
-            if (reserved && !_actorShutdownCts.IsCancellationRequested)
+                // A timed-out compaction may still be mutating the provider. Fence dispatch
+                // until explicit recovery confirms shutdown or reconnects the original session.
                 await EnqueueAsync(async _ =>
                 {
-                    _runtimes.Get(sessionId).SetBusy(null);
-                    var current = RequireSessionCore(sessionId);
-                    if (_runtimes.IsShutdownUnconfirmed(sessionId))
-                        await PersistAndEmitSessionUpdatedCoreAsync(current with { Status = "unknown", UnknownReason = "shutdown_unconfirmed", UpdatedAtMs = NowMs() }, NowMs(), CancellationToken.None).ConfigureAwait(false);
-                    else if (current.Status == "compacting")
-                        await PersistAndEmitSessionUpdatedCoreAsync(current with { Status = "idle", UpdatedAtMs = NowMs() }, NowMs(), CancellationToken.None).ConfigureAwait(false);
-                    await PokeSessionCoreAsync(sessionId).ConfigureAwait(false);
+                    await MarkSessionUnknownCoreAsync(RequireSessionCore(sessionId), "stream_lost",
+                        lastError: "Provider compaction timed out.").ConfigureAwait(false);
                 }, CancellationToken.None).ConfigureAwait(false);
-            Interlocked.Decrement(ref _inFlightExternalOps);
+                throw;
+            }
+        }
+
+        async Task ReleaseAsync((AgentSessionDto Session, int HandoverTurnIndex)? preparation)
+        {
+            if (preparation is null || _actorShutdownCts.IsCancellationRequested) return;
+            _scheduler.EndCompacting(sessionId);
+            var current = RequireSessionCore(sessionId);
+            if (!await MarkShutdownUnconfirmedIfNeededAsync(sessionId).ConfigureAwait(false) && current.Status == "compacting")
+                await PersistAndEmitSessionUpdatedCoreAsync(current with { Status = "idle", UpdatedAtMs = NowMs() }, NowMs(), CancellationToken.None).ConfigureAwait(false);
+            await PokeSessionCoreAsync(sessionId).ConfigureAwait(false);
         }
     }
 
@@ -2631,11 +2649,8 @@ public sealed partial class TrackActor : IAsyncDisposable
             if (error is ProviderSessionNotFoundException || _runtimes.IsShutdownUnconfirmed(session.Id))
                 await EnqueueAsync(async _ =>
                 {
-                    var current = RequireSessionCore(session.Id);
-                    var unknown = current with { Status = "unknown",
-                        UnknownReason = _runtimes.IsShutdownUnconfirmed(session.Id) ? "shutdown_unconfirmed" : "session_lost",
-                        ReconnectInvalidated = error is ProviderSessionNotFoundException, UpdatedAtMs = NowMs() };
-                    await PersistAndEmitSessionUpdatedCoreAsync(unknown, unknown.UpdatedAtMs, CancellationToken.None).ConfigureAwait(false);
+                    if (!await MarkShutdownUnconfirmedIfNeededAsync(session.Id, error is ProviderSessionNotFoundException).ConfigureAwait(false))
+                        await MarkSessionUnknownCoreAsync(RequireSessionCore(session.Id), "session_lost", reconnectInvalidated: true).ConfigureAwait(false);
                 }, CancellationToken.None).ConfigureAwait(false);
             if (error is SessionConfigurationException) throw KernelException.PreconditionFailed(error.Message);
             throw;
@@ -2803,7 +2818,7 @@ public sealed partial class TrackActor : IAsyncDisposable
     {
         if (!_activeAttempts.TryGetValue(active.AttemptId, out var current) || !ReferenceEquals(active, current))
             throw KernelException.Conflict("The attempt already ended.");
-        if (active.SessionId is { } id && (_runtimes.Get(id).HasActiveWork || _runtimes.TryGetOpen(id, out _)))
+        if (active.SessionId is { } id && (_scheduler.IsBusy(id) || _runtimes.Get(id).HasActiveWork || _runtimes.TryGetOpen(id, out _)))
             throw new KernelException(KernelErrorCode.SessionRecoveryRequired, "Worker shutdown has not been confirmed.");
         await active.Driver.SettleAttemptLeaseAsync(active.Lease, AttemptLeaseDisposition.Discard, ct).ConfigureAwait(false);
         _activeAttempts.Remove(active.AttemptId);

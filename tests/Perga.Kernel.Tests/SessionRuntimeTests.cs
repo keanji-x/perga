@@ -138,4 +138,88 @@ public sealed class SessionRuntimeTests
         Assert.Null(runtime.Snapshot);
         Assert.Equal(1, Assert.Single(provider.OpenedSessions).DisposeCalls);
     }
+    [Fact]
+    public async Task CloseRechecksCallerPredicateAfterWaitingForGate()
+    {
+        var runtime = new SessionRuntime();
+        var provider = new ScriptableFakeAgentRuntime();
+        await Open(runtime, provider, default);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var operation = runtime.RunAsync(async _ =>
+        {
+            await release.Task;
+            return true;
+        }, default);
+        var shouldClose = true;
+        var close = runtime.CloseAsync(Timeout, default, shouldClose: () => shouldClose);
+        shouldClose = false;
+        release.SetResult();
+        await operation;
+        await close;
+        Assert.Equal(0, Assert.Single(provider.OpenedSessions).DisposeCalls);
+        Assert.NotNull(runtime.Snapshot);
+        await runtime.CloseAsync(Timeout, default, shouldClose: () => true);
+        Assert.Null(runtime.Snapshot);
+    }
+
+    [Fact]
+    public async Task ConditionalCloseKeepsProviderWhileLaunchIsPending()
+    {
+        var runtime = new SessionRuntime();
+        var provider = new ScriptableFakeAgentRuntime();
+        await Open(runtime, provider, default);
+        var launch = runtime.BeginLaunch(default);
+        try
+        {
+            await runtime.CloseAsync(Timeout, default, shouldClose: () => true);
+            Assert.Equal(0, Assert.Single(provider.OpenedSessions).DisposeCalls);
+            Assert.NotNull(runtime.Snapshot);
+        }
+        finally
+        {
+            runtime.EndLaunch(launch);
+            await runtime.CloseAsync(Timeout, default);
+        }
+    }
+
+    [Fact]
+    public async Task DisposeIsBoundedWhenPriorCloseStillHangs()
+    {
+        var runtime = new SessionRuntime();
+        var provider = new ScriptableFakeAgentRuntime();
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var shutdownFinished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        provider.OnOpenedSession = agent =>
+        {
+            agent.ShutdownConfirmed = false;
+            agent.DisposeHandler = async () =>
+            {
+                await release.Task;
+                agent.ShutdownConfirmed = true;
+                shutdownFinished.TrySetResult();
+            };
+        };
+        await Open(runtime, provider, default);
+        var timeout = TimeSpan.FromMilliseconds(50);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => runtime.CloseAsync(timeout, default));
+        var disposing = runtime.DisposeAsync(timeout);
+        try
+        {
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => disposing.WaitAsync(Timeout));
+            Assert.True(disposing.IsCompleted);
+            Assert.True(runtime.IsShutdownUnconfirmed);
+            Assert.Equal(1, Assert.Single(provider.OpenedSessions).DisposeCalls);
+        }
+        finally
+        {
+            release.TrySetResult();
+            try { await disposing.WaitAsync(Timeout); }
+            catch (OperationCanceledException) { }
+            await shutdownFinished.Task.WaitAsync(Timeout);
+            await runtime.DisposeAsync(timeout).WaitAsync(Timeout);
+            Assert.Null(runtime.Snapshot);
+            Assert.Equal(1, Assert.Single(provider.OpenedSessions).DisposeCalls);
+        }
+    }
+
 }

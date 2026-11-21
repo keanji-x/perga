@@ -13,6 +13,8 @@ public sealed partial class TrackActor
         private sealed class SessionState
         {
             public volatile ActiveTurnState? Active;
+            public volatile bool Compacting;
+            public volatile bool Recovering;
             public Guid? Reservation;
             public (string InputId, Task Attempt)? Steering;
             public string? DispatchInputId;
@@ -24,6 +26,26 @@ public sealed partial class TrackActor
         public IEnumerable<ActiveTurnState> ActiveTurns => _sessions.Values.Select(s => s.Active).OfType<ActiveTurnState>();
         public bool HasActiveTurns => ActiveTurns.Any();
         public bool HasDispatchingInputs => _sessions.Values.Any(s => Volatile.Read(ref s.DispatchInputId) is not null);
+
+        public bool HasRecoveringSessions => _sessions.Values.Any(s => s.Recovering);
+        public bool HasActiveWork => actor._runtimes.HasActiveWork || _sessions.Values.Any(s =>
+            s.Active is not null || s.Compacting || s.Recovering || s.Reservation is not null ||
+            s.Steering is not null || Volatile.Read(ref s.DispatchInputId) is not null);
+
+        public bool IsBusy(string id) => HasActive(id) || IsCompacting(id) || IsRecovering(id);
+        public bool IsCompacting(string id) => _sessions.TryGetValue(id, out var state) && state.Compacting;
+        public void BeginCompacting(string id) => State(id).Compacting = true;
+        public void EndCompacting(string id) => State(id).Compacting = false;
+        public bool IsRecovering(string id) => _sessions.TryGetValue(id, out var state) && state.Recovering;
+        public bool TryBeginRecovery(string id)
+        {
+            var runtime = actor._runtimes.Get(id);
+            if (IsBusy(id) || HasReservation(id) || IsSteering(id) ||
+                runtime.IsDisposing || runtime.HasInFlightOperation) return false;
+            State(id).Recovering = true;
+            return true;
+        }
+        public void EndRecovery(string id) => State(id).Recovering = false;
 
         public void Clear(string id)
         {
@@ -45,10 +67,9 @@ public sealed partial class TrackActor
             actor._runtimes.Get(id).ThrowIfStartupCanceled();
             var state = State(id);
             state.Active = active;
-            actor._runtimes.Get(id).SetBusy("turn");
         }
 
-        public void RemoveActive(string id) { State(id).Active = null; actor._runtimes.Get(id).SetBusy(null); }
+        public void RemoveActive(string id) => State(id).Active = null;
         public bool TryGetActive(string id, out ActiveTurnState active)
         {
             active = _sessions.TryGetValue(id, out var state) ? state.Active! : null!;
@@ -92,10 +113,10 @@ public sealed partial class TrackActor
 
         public bool IsOccupied(AgentSessionDto session, PersistedSessionInput? input = null, Guid? reservation = null, bool allowFinishingDispatch = false)
         {
-            if (actor._runtimes.IsShutdownUnconfirmed(session.Id) || actor._runtimes.IsRecovering(session.Id)) return true;
+            if (actor._runtimes.IsShutdownUnconfirmed(session.Id) || IsRecovering(session.Id)) return true;
             if (!_sessions.TryGetValue(session.Id, out var state))
                 return input is null && session.Status is "queued" or "running" or "unknown";
-            return state.Active is not null || actor._runtimes.Get(session.Id).IsCompacting || state.Steering is not null ||
+            return state.Active is not null || state.Compacting || state.Steering is not null ||
                 (state.Reservation is not null && state.Reservation != reservation) ||
                 (!allowFinishingDispatch && Volatile.Read(ref state.DispatchInputId) is { } dispatch && dispatch != input?.Receipt.InputId) ||
                 (input is null && session.Status is "queued" or "running" or "unknown");

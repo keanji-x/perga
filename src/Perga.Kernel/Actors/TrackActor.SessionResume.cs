@@ -7,6 +7,28 @@ namespace Perga.Kernel.Actors;
 
 public sealed partial class TrackActor
 {
+    private Task MarkSessionUnknownCoreAsync(AgentSessionDto session, string reason,
+        bool? reconnectInvalidated = null, string? lastError = null)
+    {
+        var now = NowMs();
+        var unknown = session with
+        {
+            Status = "unknown",
+            UnknownReason = reason,
+            ReconnectInvalidated = reconnectInvalidated ?? session.ReconnectInvalidated,
+            UnknownLastError = lastError ?? session.UnknownLastError,
+            UpdatedAtMs = now
+        };
+        return PersistAndEmitSessionUpdatedCoreAsync(unknown, now, CancellationToken.None);
+    }
+
+    private async Task<bool> MarkShutdownUnconfirmedIfNeededAsync(string sessionId, bool? reconnectInvalidated = null)
+    {
+        if (!_runtimes.IsShutdownUnconfirmed(sessionId)) return false;
+        await MarkSessionUnknownCoreAsync(RequireSessionCore(sessionId), "shutdown_unconfirmed", reconnectInvalidated).ConfigureAwait(false);
+        return true;
+    }
+
     private SessionUnknownDetailDto? ReadUnknownDetailCore(AgentSessionDto session)
     {
         if (session.Status != "unknown") return null;
@@ -24,12 +46,12 @@ public sealed partial class TrackActor
         if (string.IsNullOrWhiteSpace(session.NativeThreadId)) detail += " No original provider session ID is available.";
         var recoverable = session.BoundAttemptId is null || _activeAttempts.ContainsKey(session.BoundAttemptId);
         return new(reason, detail, recoverable && supports && !session.ReconnectInvalidated &&
-            !string.IsNullOrWhiteSpace(session.NativeThreadId), recoverable, _runtimes.IsRecovering(session.Id), session.UnknownLastError);
+            !string.IsNullOrWhiteSpace(session.NativeThreadId), recoverable, _scheduler.IsRecovering(session.Id), session.UnknownLastError);
     }
 
     private void RequireSessionDispatchAvailableCore(string sessionId)
     {
-        if (_runtimes.IsShutdownUnconfirmed(sessionId) || _runtimes.IsRecovering(sessionId) ||
+        if (_runtimes.IsShutdownUnconfirmed(sessionId) || _scheduler.IsRecovering(sessionId) ||
             RequireSessionCore(sessionId).Status == "unknown")
             throw new KernelException(KernelErrorCode.SessionRecoveryRequired, "Recover the provider session before sending more input.");
     }
@@ -45,12 +67,12 @@ public sealed partial class TrackActor
             RequireSessionMutationCore(session, principal ?? new InteropPrincipal.Human(), expectedAttemptId, destructive: true);
             if (expectedEpoch is { } epoch && epoch != session.Epoch) throw KernelException.Conflict("The session epoch changed.");
             RequireResumeWorkspaceCore(session);
-            if (_scheduler.HasActive(sessionId) || _runtimes.Get(sessionId).IsCompacting ||
+            if (_scheduler.HasActive(sessionId) || _scheduler.IsCompacting(sessionId) ||
                 _scheduler.HasReservation(sessionId) || _scheduler.IsSteering(sessionId))
                 throw KernelException.Conflict("Wait for the current session operation before recovering.");
             if (session.Status != "unknown" && !(action == "reset_context" && session.Status == "idle"))
                 throw KernelException.Conflict("Recovery is unavailable in this session state.");
-            if (_runtimes.IsRecovering(session.Id)) throw KernelException.Conflict("Session recovery is already in progress.");
+            if (_scheduler.IsRecovering(session.Id)) throw KernelException.Conflict("Session recovery is already in progress.");
             if (action == "reconnect" && ReadUnknownDetailCore(session)?.CanReconnect != true)
             {
                 if (string.IsNullOrWhiteSpace(session.NativeThreadId))
@@ -58,7 +80,7 @@ public sealed partial class TrackActor
                         UnknownLastError = "No original provider session ID is available.", UpdatedAtMs = NowMs() }, NowMs(), CancellationToken.None).ConfigureAwait(false);
                 throw KernelException.PreconditionFailed("The original provider session cannot be reconnected.");
             }
-            if (!_runtimes.Get(sessionId).TryBeginRecovery())
+            if (!_scheduler.TryBeginRecovery(sessionId))
                 throw KernelException.Conflict("Session recovery is already in progress.");
             NotifyQueueChangedCore(sessionId);
             var completion = new TaskCompletionSource<AgentSessionDto>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -179,7 +201,7 @@ public sealed partial class TrackActor
         }
         finally
         {
-            _runtimes.Get(sessionId).EndRecovery();
+            _scheduler.EndRecovery(sessionId);
             if (!_actorShutdownCts.IsCancellationRequested)
                 await EnqueueAsync(async _ =>
                 {

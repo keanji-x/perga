@@ -128,18 +128,13 @@ public sealed partial class TrackActor
             try
             {
                 await _runtimes.Get(updated.Id).CloseAsync(_options.SessionStartupTimeout,
-                    _actorShutdownCts.Token, idleOnly: true).ConfigureAwait(false);
+                    _actorShutdownCts.Token, shouldClose: () => !_scheduler.IsBusy(updated.Id)).ConfigureAwait(false);
                 completion.TrySetResult(updated);
             }
             catch (Exception error)
             {
                 if (!_actorShutdownCts.IsCancellationRequested && _runtimes.IsShutdownUnconfirmed(updated.Id))
-                    await EnqueueAsync(async _ =>
-                    {
-                        var current = RequireSessionCore(updated.Id);
-                        var unknown = current with { Status = "unknown", UnknownReason = "shutdown_unconfirmed", UpdatedAtMs = NowMs() };
-                        await PersistAndEmitSessionUpdatedCoreAsync(unknown, unknown.UpdatedAtMs, CancellationToken.None).ConfigureAwait(false);
-                    }, CancellationToken.None).ConfigureAwait(false);
+                    await EnqueueAsync(_ => MarkShutdownUnconfirmedIfNeededAsync(updated.Id), CancellationToken.None).ConfigureAwait(false);
                 completion.TrySetException(error);
             }
         });

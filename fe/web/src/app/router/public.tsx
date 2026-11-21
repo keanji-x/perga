@@ -941,7 +941,7 @@ function useConversationPane(
           {action.detail?.canResetContext && <ChatFooterRemedy disabled={store.recovering} onClick={() => store.recover('reset_context')}>重置上下文并继续</ChatFooterRemedy>}
           {store.recovering && <span>正在恢复会话…</span>}
         </> : action.kind === 'sendFailed' ? <>
-          <span>{action.unconfirmed ? '发送结果未确认。' : `消息未发送。${store.failedSend?.message ?? ''}`}</span>
+          <span>{action.unconfirmed ? '发送结果未确认。' : `消息未发送。${store.failedSend?.code === 'session_recovery_required' ? '会话需要恢复，请先恢复会话后再发送。' : store.failedSend?.message ?? ''}`}</span>
           <ChatFooterRemedy disabled={store.sending} onClick={retrySend}>{action.unconfirmed ? '安全重试（同幂等键）' : '重试'}</ChatFooterRemedy>
           <ChatFooterRemedy onClick={() => { if (store.failedSend !== null) {
             if (action.unconfirmed) store.dismissFailedSend(store.failedSend.key);

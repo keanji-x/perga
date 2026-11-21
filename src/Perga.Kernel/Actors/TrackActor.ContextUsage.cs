@@ -162,7 +162,7 @@ public sealed partial class TrackActor
             current.ArchivedAtMs is not null ||
             current.BoundAttemptId is not null ||
             current.Epoch != expectedEpoch ||
-            (current.Status == "unknown" || !bindPending && _runtimes.IsRecovering(sessionId)) ||
+            (current.Status == "unknown" || !bindPending && _scheduler.IsRecovering(sessionId)) ||
             !_runtimes.TryGetOpen(sessionId, out var openSession) ||
             !ReferenceEquals(openSession.Agent, expectedSession))
         {
@@ -181,7 +181,7 @@ public sealed partial class TrackActor
             return false;
         }
 
-        if (_scheduler.HasActive(sessionId) || _runtimes.Get(sessionId).IsCompacting)
+        if (_scheduler.HasActive(sessionId) || _scheduler.IsCompacting(sessionId))
         {
             // The notification can arrive on the RPC reader before the actor settles the terminal event.
             if (idleUsage.CompletedPromptId is not null && idleUsage.ContextUsageRevision == expectedSession.ContextUsageRevision &&

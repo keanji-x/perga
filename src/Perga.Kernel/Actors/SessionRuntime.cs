@@ -29,8 +29,6 @@ internal sealed class SessionRuntime
     private long _generation;
     private CancellationTokenSource? _launchCts;
     private string? _launchTurnId;
-    private string? _busyKind;
-    private bool _recovering;
     private bool _shutdownUnconfirmed;
     private bool _disposing;
     private int _activeOps;
@@ -38,25 +36,50 @@ internal sealed class SessionRuntime
 
     public OpenSessionHandle? Snapshot
     {
-        get { lock (_sync) return _agent is null ? null : new(_agent, _spec!, _selection!, _confirmation, _contextUsage, _generation); }
-    }
-    public LiveContextUsage ContextUsage { get { lock (_sync) return _contextUsage; } }
-    public bool HasActiveWork { get { lock (_sync) return _activeOps > 0 || _busyKind is not null || _recovering || _shutdownUnconfirmed || _launchCts is not null; } }
-    public bool IsRecovering { get { lock (_sync) return _recovering; } }
-    public bool IsShutdownUnconfirmed { get { lock (_sync) return _shutdownUnconfirmed; } }
-    public bool IsCompacting { get { lock (_sync) return _busyKind == "compacting"; } }
-    public void SetBusy(string? kind) { lock (_sync) _busyKind = kind; }
-    public void InvalidateContextUsage() { lock (_sync) _contextUsage = new(); }
-    public bool TryBeginRecovery()
-    {
-        lock (_sync)
+        get
         {
-            if (_recovering || _disposing || _activeOps > 0 || _busyKind is not null || _launchCts is not null) return false;
-            _recovering = true;
-            return true;
+            lock (_sync) return _agent is null ? null : new(_agent, _spec!, _selection!, _confirmation, _contextUsage, _generation);
         }
     }
-    public void EndRecovery() { lock (_sync) _recovering = false; }
+    public LiveContextUsage ContextUsage
+    {
+        get
+        {
+            lock (_sync) return _contextUsage;
+        }
+    }
+    public bool HasInFlightOperation
+    {
+        get
+        {
+            lock (_sync) return _activeOps > 0 || _launchCts is not null;
+        }
+    }
+    public bool HasActiveWork
+    {
+        get
+        {
+            lock (_sync) return _activeOps > 0 || _launchCts is not null || _shutdownUnconfirmed;
+        }
+    }
+    public bool IsDisposing
+    {
+        get
+        {
+            lock (_sync) return _disposing;
+        }
+    }
+    public bool IsShutdownUnconfirmed
+    {
+        get
+        {
+            lock (_sync) return _shutdownUnconfirmed;
+        }
+    }
+    public void InvalidateContextUsage()
+    {
+        lock (_sync) _contextUsage = new();
+    }
 
     public CancellationTokenSource BeginLaunch(CancellationToken shutdown, string? turnId = null)
     {
@@ -76,10 +99,17 @@ internal sealed class SessionRuntime
             source = _launchCts;
         }
         // Cancellation callbacks are external code and must not run under the snapshot lock.
-        try { source.Cancel(); } catch (ObjectDisposedException) { }
+        try
+        {
+            source.Cancel();
+        }
+        catch (ObjectDisposedException) { }
         return true;
     }
-    public void ThrowIfStartupCanceled() { lock (_sync) _launchCts?.Token.ThrowIfCancellationRequested(); }
+    public void ThrowIfStartupCanceled()
+    {
+        lock (_sync) _launchCts?.Token.ThrowIfCancellationRequested();
+    }
 
     public void EndLaunch(CancellationTokenSource? expected = null)
     {
@@ -94,7 +124,11 @@ internal sealed class SessionRuntime
 
     public async Task<T> RunAsync<T>(Func<SessionRuntime, Task<T>> operation, CancellationToken ct)
     {
-        lock (_sync) { ObjectDisposedException.ThrowIf(_disposing, this); _activeOps++; }
+        lock (_sync)
+        {
+            ObjectDisposedException.ThrowIf(_disposing, this);
+            _activeOps++;
+        }
         try
         {
             await _gate.WaitAsync(ct).ConfigureAwait(false);
@@ -103,15 +137,28 @@ internal sealed class SessionRuntime
                 lock (_sync) ObjectDisposedException.ThrowIf(_disposing, this);
                 return await operation(this).ConfigureAwait(false);
             }
-            finally { _gate.Release(); }
+            finally
+            {
+                _gate.Release();
+            }
         }
-        finally { lock (_sync) _activeOps--; }
+        finally
+        {
+            lock (_sync) _activeOps--;
+        }
     }
 
-    public Task CloseAsync(TimeSpan timeout, CancellationToken ct, bool scoped = false, bool idleOnly = false) =>
+    public Task CloseAsync(TimeSpan timeout, CancellationToken ct, bool scoped = false, Func<bool>? shouldClose = null) =>
         RunAsync(async runtime =>
         {
-            lock (_sync) { if (idleOnly && (_busyKind is not null || _recovering || _launchCts is not null)) return false; }
+            if (shouldClose is not null)
+            {
+                lock (_sync)
+                {
+                    if (_launchCts is not null) return false;
+                }
+                if (!shouldClose()) return false;
+            }
             await runtime.CloseLockedAsync(timeout, ct, scoped).ConfigureAwait(false);
             return true;
         }, ct);
@@ -146,8 +193,12 @@ internal sealed class SessionRuntime
                     _shutdownUnconfirmed = !agent.ShutdownConfirmed;
                     if (agent.ShutdownConfirmed)
                     {
-                        _agent = null; _spec = null; _selection = null; _confirmation = null;
-                        _contextUsage = new(); _closeTask = null;
+                        _agent = null;
+                        _spec = null;
+                        _selection = null;
+                        _confirmation = null;
+                        _contextUsage = new();
+                        _closeTask = null;
                     }
                 }
             }
@@ -167,8 +218,12 @@ internal sealed class SessionRuntime
             var agent = runtime.CreateSession(spec);
             lock (_sync)
             {
-                _agent = agent; _spec = spec; _selection = SessionConfiguration.FromLaunch(spec);
-                _confirmation = null; _contextUsage = new(); _generation++;
+                _agent = agent;
+                _spec = spec;
+                _selection = SessionConfiguration.FromLaunch(spec);
+                _confirmation = null;
+                _contextUsage = new();
+                _generation++;
             }
             await agent.InitializeAsync(deadline.Token).WaitAsync(deadline.Token).ConfigureAwait(false);
             if (spec.ResumeNativeThreadId is not null && agent.NativeThreadId != spec.ResumeNativeThreadId)
@@ -179,7 +234,10 @@ internal sealed class SessionRuntime
         }
         catch
         {
-            try { await CloseLockedAsync(timeout, CancellationToken.None).ConfigureAwait(false); }
+            try
+            {
+                await CloseLockedAsync(timeout, CancellationToken.None).ConfigureAwait(false);
+            }
             catch { /* Preserve startup failure; the retained handle fences dispatch. */ }
             throw;
         }
@@ -189,7 +247,7 @@ internal sealed class SessionRuntime
         string provider, Func<Task<HarnessLaunchSpec>> buildSpec, Action<IAgentSession> validate,
         TimeSpan timeout, CancellationToken ct) => await RunAsync(async owner =>
     {
-        if (IsShutdownUnconfirmed || IsRecovering)
+        if (IsShutdownUnconfirmed)
             throw new KernelException(KernelErrorCode.SessionRecoveryRequired, "Recover the provider session before sending more input.");
         if (Snapshot is { } handle)
         {
@@ -204,7 +262,8 @@ internal sealed class SessionRuntime
                     lock (_sync)
                     {
                         if (_confirmation != applied.Configuration) _contextUsage = new();
-                        _selection = applied.Configuration.Selection; _confirmation = applied.Configuration;
+                        _selection = applied.Configuration.Selection;
+                        _confirmation = applied.Configuration;
                     }
                     return Snapshot!;
                 }
@@ -214,7 +273,11 @@ internal sealed class SessionRuntime
             }
             catch
             {
-                try { await CloseLockedAsync(timeout, CancellationToken.None).ConfigureAwait(false); } catch { }
+                try
+                {
+                    await CloseLockedAsync(timeout, CancellationToken.None).ConfigureAwait(false);
+                }
+                catch { /* Preserve configuration failure; retain ownership until shutdown is confirmed. */ }
                 throw;
             }
         }
@@ -230,19 +293,29 @@ internal sealed class SessionRuntime
         {
             if (_closeTask is { IsCompleted: false })
             {
+                using var deadline = new CancellationTokenSource(timeout);
                 try
                 {
-                    await _closeTask.ConfigureAwait(false);
-                    lock (_sync) if (_agent?.ShutdownConfirmed == true) _shutdownUnconfirmed = false;
+                    await _closeTask.WaitAsync(deadline.Token).ConfigureAwait(false);
                 }
-                catch { }
+                catch (OperationCanceledException) when (deadline.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch
+                {
+                    // A completed failed shutdown can be retried by CloseLockedAsync.
+                }
+            }
+            lock (_sync)
+            {
+                if (_agent?.ShutdownConfirmed == true) _shutdownUnconfirmed = false;
             }
             await CloseLockedAsync(timeout, CancellationToken.None).ConfigureAwait(false);
         }
         finally
         {
             EndLaunch();
-            lock (_sync) { _busyKind = null; _recovering = false; }
             _gate.Release();
         }
     }
@@ -268,7 +341,6 @@ internal sealed class SessionRuntimeRegistry
         return handle is not null;
     }
     public bool HasActiveWork => _sessions.Values.Any(runtime => runtime.HasActiveWork);
-    public bool IsRecovering(string id) => _sessions.TryGetValue(id, out var runtime) && runtime.IsRecovering;
     public bool IsShutdownUnconfirmed(string id) => _sessions.TryGetValue(id, out var runtime) && runtime.IsShutdownUnconfirmed;
     public async Task CloseAllAsync(TimeSpan timeout)
     {
@@ -281,11 +353,18 @@ internal sealed class SessionRuntimeRegistry
     public async Task DisposeAllAsync(TimeSpan timeout)
     {
         SessionRuntime[] runtimes;
-        lock (_sync) { _disposing = true; runtimes = _sessions.Values.ToArray(); }
+        lock (_sync)
+        {
+            _disposing = true;
+            runtimes = _sessions.Values.ToArray();
+        }
         foreach (var runtime in runtimes) runtime.CancelLaunch();
         await Task.WhenAll(runtimes.Select(async runtime =>
         {
-            try { await runtime.DisposeAsync(timeout).ConfigureAwait(false); }
+            try
+            {
+                await runtime.DisposeAsync(timeout).ConfigureAwait(false);
+            }
             catch { /* Retained unconfirmed handles remain available to a subsequent teardown retry. */ }
         })).ConfigureAwait(false);
     }

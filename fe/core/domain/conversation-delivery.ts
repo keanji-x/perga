@@ -44,12 +44,14 @@ export function notSentMessage(reason: string): string {
   return `Not sent. ${reason}`;
 }
 
-/** The refusal reason shown by the outbox; recovery diagnostics stay out of user-facing copy. */
-export function sendFailureMessage(error: unknown): string {
+/** The server failure code, when an answered HTTP request carries one. */
+export function sendFailureCode(error: unknown): string | undefined {
   const failure = writeFailureOf(error);
-  if (failure !== null && 'kind' in failure && failure.kind === 'http' && failure.code === 'session_recovery_required') {
-    return '会话需要恢复，请先恢复会话后再发送。';
-  }
+  return failure !== null && 'kind' in failure && failure.kind === 'http' ? failure.code : undefined;
+}
+
+/** The ordinary refusal reason; localized presentation belongs to the app. */
+export function sendFailureMessage(error: unknown): string {
   return error instanceof Error && error.message !== '' ? error.message : 'Could not send the message.';
 }
 
