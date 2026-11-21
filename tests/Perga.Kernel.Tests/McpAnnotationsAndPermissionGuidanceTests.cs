@@ -72,7 +72,10 @@ public sealed class McpAnnotationsAndPermissionGuidanceTests
             s.LaunchSpec.SystemPrompt?.Contains("Contract Subagent", StringComparison.Ordinal) == true);
         Assert.Contains("user_ask", workerLaunch.LaunchSpec.SystemPrompt!, StringComparison.Ordinal);
         Assert.Contains("permissionMode", workerLaunch.LaunchSpec.SystemPrompt!, StringComparison.Ordinal);
-        Assert.Contains("user_ask", Assert.Single(workerLaunch.RecordedInputs).Prompt, StringComparison.Ordinal);
+        Assert.Contains("settles the task", workerLaunch.LaunchSpec.SystemPrompt!, StringComparison.Ordinal);
+        var workerTurnPrompt = Assert.Single(workerLaunch.RecordedInputs).Prompt;
+        Assert.Contains("user_ask", workerTurnPrompt, StringComparison.Ordinal);
+        Assert.Contains("settles the task", workerTurnPrompt, StringComparison.Ordinal);
 
         await ctx.Kernel.CreateSessionAsync(
             snapshot.Track.Id,
