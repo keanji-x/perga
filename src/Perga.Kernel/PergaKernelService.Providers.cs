@@ -1,15 +1,28 @@
 using Perga.AgentKit;
+using Perga.Kernel.Ports;
 
 namespace Perga.Kernel;
 
 public sealed partial class PergaKernelService
 {
+    public async Task<IReadOnlyList<ProviderStatus>> GetTargetProvidersAsync(
+        string targetId,
+        bool refresh = false,
+        CancellationToken ct = default)
+    {
+        var observation = await GetCachedOrProbeProvidersAsync(ExecutionTargetIds.Normalize(targetId), refresh, ct)
+            .ConfigureAwait(false);
+        return observation.Providers;
+    }
+
     public async Task<TrackProvidersDto> ListProvidersForTrackAsync(string trackId, string? provider = null,
         bool refresh = false, bool includeUnavailable = false, CancellationToken ct = default)
     {
+        var track = await _store.GetTrackAsync(trackId, ct).ConfigureAwait(false)
+            ?? throw KernelException.NotFound($"Track '{trackId}' not found.");
         var (defaultProvider, liveModes) = await Actors.GetOrActivate(trackId)
             .ReadProviderDiscoveryContextAsync(ct).ConfigureAwait(false);
-        var observation = await GetCachedOrProbeProvidersAsync(refresh, ct).ConfigureAwait(false);
+        var observation = await GetCachedOrProbeProvidersAsync(track.ExecutionTargetId, refresh, ct).ConfigureAwait(false);
         IEnumerable<ProviderStatus> providers = observation.Providers;
         if (provider is not null)
         {

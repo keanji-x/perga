@@ -22,7 +22,10 @@ import { managedProvidersQueryOptions } from '../providers/managed-providers.ts'
 import { agentProvidersQueryOptions } from '../providers/agent-providers.ts';
 import { createDirectoryLister } from '../providers/directory.ts';
 import { useMentionSearch } from '../providers/mentions.ts';
-import { folderConflictOf, modelCatalogQueryOptions, runOperation, useTrackMutations, useWorkspace, type Workspace } from '../providers/queries.ts';
+import {
+  executionTargetsQueryOptions, folderConflictOf, modelCatalogQueryOptions, runOperation,
+  useCreateExecutionTarget, useTrackMutations, useWorkspace, type Workspace,
+} from '../providers/queries.ts';
 import { readHostThemeRgb } from '../theme/host-rgb.ts';
 import { mintIdempotencyKey } from '../providers/idempotency-key.ts';
 import { useGo, useRouteParam } from './navigation.ts';
@@ -54,27 +57,38 @@ function NewTrackEditor({ transport, unauthorized, pergaMode = false, workspace,
 }) {
   const compactViewport = useCompactViewport();
   const areaId = session.area.id;
+  const targetId = session.form?.executionTargetId ?? session.area.executionTargetId ?? 'local';
+  const executionTargetsQuery = useQuery({
+    ...executionTargetsQueryOptions(transport, unauthorized),
+    enabled: pergaMode,
+    retry: false,
+  });
+  const createExecutionTarget = useCreateExecutionTarget(transport, unauthorized);
+  const listDirectoryForTarget = useCallback(
+    (nextTargetId: string) => createDirectoryLister(transport, unauthorized, pergaMode, nextTargetId),
+    [transport, unauthorized, pergaMode],
+  );
   /* Availability has one cache owner; the managed response supplies only static creation capability.
      The server admits each submitted shape and renders any refusal through the existing error flow. */
-  const codexCatalog = useQuery(modelCatalogQueryOptions(transport, { kind: 'provider', provider: 'codex' }, unauthorized));
-  const claudeCatalog = useQuery(modelCatalogQueryOptions(transport, { kind: 'provider', provider: 'claude' }, unauthorized));
-  const opencodeCatalog = useQuery(modelCatalogQueryOptions(transport, { kind: 'provider', provider: 'opencode' }, unauthorized));
-  const grokCatalog = useQuery(modelCatalogQueryOptions(transport, { kind: 'provider', provider: 'grok' }, unauthorized));
-  const antigravityCatalog = useQuery(modelCatalogQueryOptions(transport, { kind: 'provider', provider: 'antigravity' }, unauthorized));
-  const availability = useQuery(agentProvidersQueryOptions(transport, unauthorized));
-  const providers = useQuery(managedProvidersQueryOptions(transport, unauthorized));
+  const codexCatalog = useQuery(modelCatalogQueryOptions(transport, { kind: 'provider', provider: 'codex', targetId }, unauthorized));
+  const claudeCatalog = useQuery(modelCatalogQueryOptions(transport, { kind: 'provider', provider: 'claude', targetId }, unauthorized));
+  const opencodeCatalog = useQuery(modelCatalogQueryOptions(transport, { kind: 'provider', provider: 'opencode', targetId }, unauthorized));
+  const grokCatalog = useQuery(modelCatalogQueryOptions(transport, { kind: 'provider', provider: 'grok', targetId }, unauthorized));
+  const antigravityCatalog = useQuery(modelCatalogQueryOptions(transport, { kind: 'provider', provider: 'antigravity', targetId }, unauthorized));
+  const availability = useQuery(agentProvidersQueryOptions(transport, unauthorized, targetId));
+  const providers = useQuery(managedProvidersQueryOptions(transport, unauthorized, targetId));
   const optionCwd = session.form?.cwd ?? session.area.defaultCwd ?? '';
   const workspaceOptionsQuery = useQuery({
-    queryKey: ['track-workspace-options', areaId, optionCwd],
+    queryKey: ['track-workspace-options', areaId, targetId, optionCwd],
     queryFn: ({ signal }: { signal: AbortSignal }) =>
-      runOperation(transport, { ...trackWorkspaceOptionsOperation(areaId, optionCwd), signal }, unauthorized),
+      runOperation(transport, { ...trackWorkspaceOptionsOperation(areaId, optionCwd, undefined, targetId), signal }, unauthorized),
     enabled: pergaMode && session.form !== null && session.request === null,
     retry: false,
   });
   const trackMutations = useTrackMutations(transport, unauthorized);
   const conversationRegistry = useConversationCommands();
   const go = useGo();
-  const listDirectory = createDirectoryLister(transport, unauthorized, pergaMode);
+  const listDirectory = listDirectoryForTarget(targetId);
   /* The sentence is the new track's Planner's first message, and that Planner reads this Area's reports; there is no track yet to rank first. */
   const templatesRef = useRef<readonly TrackTemplate[]>([]);
   const onTemplates = useCallback((templates: readonly TrackTemplate[]) => { templatesRef.current = templates; }, []);
@@ -134,6 +148,7 @@ function NewTrackEditor({ transport, unauthorized, pergaMode = false, workspace,
       ...(draft.cwd === undefined ? {} : { cwd: draft.cwd, attach_folder: true,
         ...(pergaMode ? {} : { isolation: draft.isolation ?? 'worktree' }) }),
       ...(draft.workspaceOptionId === undefined ? {} : { cwd: draft.cwd ?? '', workspace_option_id: draft.workspaceOptionId }),
+      ...(draft.executionTargetId === undefined ? {} : { execution_target_id: draft.executionTargetId }),
       ...(current.role === 'admin' ? { admin: true } : {}),
       ...(authorization === undefined ? {} : { allow_cross_area_cwd: authorization }),
     } satisfies NewTrackBody;
@@ -209,6 +224,7 @@ function NewTrackEditor({ transport, unauthorized, pergaMode = false, workspace,
   return <NewTrackForm
     workspaceOptions={pergaMode
       ? { cwd: optionCwd,
+          targetId,
           result: !workspaceOptionsQuery.isError ? workspaceOptionsQuery.data ?? null : null }
       : undefined}
     readNotice={workspace.areasLoading ? <Banner status="info" title="Loading Area…"
@@ -262,7 +278,11 @@ function NewTrackEditor({ transport, unauthorized, pergaMode = false, workspace,
         ? { label: `Reuse directory in ${session.area.name}`, isApplicable: (draft) => draft.cwd === folderConflict.cwd, onClick: recoverFolderConflict }
         : session.canRetryAsNewTrack ? { label: 'Start as a new track', onClick: retryAsNewTrack } : undefined}
     initialCwd={session.area.defaultCwd}
+    initialExecutionTargetId={session.area.executionTargetId}
+    executionTargets={pergaMode ? executionTargetsQuery.data : undefined}
     listDirectory={listDirectory}
+    listDirectoryForTarget={pergaMode ? listDirectoryForTarget : undefined}
+    onCreateExecutionTarget={pergaMode ? createExecutionTarget : undefined}
     onSubmit={submit}
   />;
 }

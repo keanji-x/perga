@@ -14,14 +14,16 @@ public sealed record BootstrapDto(
     IReadOnlyList<AreaDto> Areas,
     string DatabaseId = "",
     string DbInstanceId = "",
-    bool AuthRequired = false);
+    bool AuthRequired = false,
+    IReadOnlyList<ExecutionTargetDto>? ExecutionTargets = null);
 
 public sealed record CreateAreaRequest(
     string Name,
     string? Color = null,
     string? DefaultCwd = null,
     IReadOnlyList<string>? Folders = null,
-    double? SortOrder = null);
+    double? SortOrder = null,
+    string? ExecutionTargetId = null);
 
 public sealed record PatchAreaRequest(
     string? Name = null,
@@ -29,7 +31,8 @@ public sealed record PatchAreaRequest(
     string? DefaultCwd = null,
     bool ClearDefaultCwd = false,
     IReadOnlyList<string>? Folders = null,
-    double? SortOrder = null);
+    double? SortOrder = null,
+    string? ExecutionTargetId = null);
 
 public sealed record CreateTrackRequest(
     string AreaId,
@@ -47,7 +50,8 @@ public sealed record CreateTrackRequest(
     double? SortOrder = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ReasoningEffort = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? WorkspaceOptionId = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? PermissionMode = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? PermissionMode = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ExecutionTargetId = null);
 
 public sealed record TrackWorkspaceOptionDto(string Id, string Label, string Description);
 

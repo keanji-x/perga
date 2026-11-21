@@ -115,3 +115,10 @@ it('keeps a mode for same-provider model changes and clears it on provider chang
   act(() => { draft.result.current.store.update(area.id, { provider: 'opencode' }); });
   expect(draft.result.current.session?.permissionMode).toBeNull();
 });
+
+it.each(['local', 'jasper'])('restores the persisted execution target %s', (executionTargetId) => {
+  const { storage, storageKey, request, mount } = draftFixture();
+  storage.setItem(storageKey, JSON.stringify({ ...request, body: { ...request.body, execution_target_id: executionTargetId } }));
+  const reopened = mount();
+  expect(reopened.result.current.session?.form?.executionTargetId).toBe(executionTargetId);
+});

@@ -51,9 +51,9 @@ public static class ApiV1Endpoints
         }).ExcludeFromDescription();
 
         // ------------------- System -------------------
-        v1.MapGet("/bootstrap", async (string? scope, bool? refresh, IPergaKernel kernel, CancellationToken ct) =>
+        v1.MapGet("/bootstrap", async (string? scope, bool? refresh, string? card_id, IPergaKernel kernel, CancellationToken ct) =>
         {
-            var dto = await kernel.GetBootstrapAsync(scope, refresh ?? false, ct).ConfigureAwait(false);
+            var dto = await kernel.GetBootstrapAsync(scope, refresh ?? false, ct, card_id).ConfigureAwait(false);
             return Results.Json(dto, PergaJsonDefaults.ApiOptions);
         });
 
@@ -63,10 +63,35 @@ public static class ApiV1Endpoints
             return Results.Json(overlays, PergaJsonDefaults.ApiOptions);
         });
 
-        v1.MapGet("/fs/listdir", (string? path, IPergaKernel kernel) =>
+        v1.MapGet("/fs/listdir", async (string? path, string? targetId, IPergaKernel kernel, CancellationToken ct) =>
         {
-            var listing = kernel.ListHostDirectory(path);
+            var listing = await kernel.ListHostDirectoryAsync(path, targetId, ct).ConfigureAwait(false);
             return Results.Json(listing, PergaJsonDefaults.ApiOptions);
+        });
+
+        v1.MapGet("/targets", (IPergaKernel kernel) =>
+        {
+            var targets = kernel.ExecutionEnvironments.ListTargets();
+            return Results.Json(targets, PergaJsonDefaults.ApiOptions);
+        });
+
+        v1.MapPost("/targets", async (HttpContext ctx, IExecutionTargetManager targetManager, CancellationToken ct) =>
+        {
+            var req = await ReadRequiredJsonBodyAsync<CreateExecutionTargetRequest>(ctx, ct).ConfigureAwait(false);
+            var created = await targetManager.CreateSshTargetAsync(req, ct).ConfigureAwait(false);
+            return Results.Json(created, PergaJsonDefaults.ApiOptions, statusCode: StatusCodes.Status201Created);
+        });
+
+        v1.MapDelete("/targets/{targetId}", async (string targetId, IExecutionTargetManager targetManager, CancellationToken ct) =>
+        {
+            var deleted = await targetManager.DeleteTargetAsync(targetId, ct).ConfigureAwait(false);
+            return deleted ? Results.NoContent() : Results.NotFound();
+        });
+
+        v1.MapGet("/targets/{targetId}/providers", async (string targetId, bool? refresh, IPergaKernel kernel, CancellationToken ct) =>
+        {
+            var providers = await kernel.GetTargetProvidersAsync(targetId, refresh ?? false, ct).ConfigureAwait(false);
+            return Results.Json(providers, PergaJsonDefaults.ApiOptions);
         });
 
         v1.MapGet("/templates", (IPergaKernel kernel) =>
@@ -103,9 +128,9 @@ public static class ApiV1Endpoints
         });
 
         // ------------------- Tracks -------------------
-        v1.MapGet("/areas/{areaId}/workspace-options", async (string areaId, string? cwd, string? templateId, IPergaKernel kernel, CancellationToken ct) =>
+        v1.MapGet("/areas/{areaId}/workspace-options", async (string areaId, string? cwd, string? templateId, string? targetId, IPergaKernel kernel, CancellationToken ct) =>
         {
-            var options = await kernel.GetTrackWorkspaceOptionsAsync(areaId, cwd, templateId, ct).ConfigureAwait(false);
+            var options = await kernel.GetTrackWorkspaceOptionsAsync(areaId, cwd, templateId, ct, targetId).ConfigureAwait(false);
             return Results.Json(options, PergaJsonDefaults.ApiOptions);
         });
 
@@ -380,8 +405,11 @@ public static class ApiV1Endpoints
         v1.Map("/events", (HttpContext ctx, IPergaKernel kernel, ITrackReadStore readStore) =>
             EventsWebSocketHandler.HandleAsync(ctx, kernel, readStore));
 
-        v1.Map("/terminals/{termId}/ws", (string termId, HttpContext ctx, ITerminalBridgeClient terminalClient) =>
-            TerminalWebSocketRelayHandler.HandleAsync(ctx, termId, terminalClient));
+        v1.Map("/terminals/{termId}/ws", async (string termId, HttpContext ctx, IPergaKernel kernel) =>
+        {
+            var terminalClient = await kernel.ResolveTerminalClientAsync(termId, ctx.RequestAborted).ConfigureAwait(false);
+            await TerminalWebSocketRelayHandler.HandleAsync(ctx, termId, terminalClient).ConfigureAwait(false);
+        });
 
         return endpoints;
     }

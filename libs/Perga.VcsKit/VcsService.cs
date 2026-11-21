@@ -18,23 +18,25 @@ public sealed partial class VcsService : IVcsService
 {
     private readonly IProcessRunner _processRunner;
     private readonly VcsServiceOptions _options;
+    private readonly IWorkspaceFileSystemOps _fs;
     private readonly bool _usesDefaultRunner;
 
     public VcsService()
-        : this(new ProcessRunner(), new VcsServiceOptions())
+        : this(new ProcessRunner(), new VcsServiceOptions(), LocalWorkspaceFileSystemOps.Instance)
     {
     }
 
     public VcsService(VcsServiceOptions options)
-        : this(new ProcessRunner(), options)
+        : this(new ProcessRunner(), options, LocalWorkspaceFileSystemOps.Instance)
     {
     }
 
-    public VcsService(IProcessRunner processRunner, VcsServiceOptions? options = null)
+    public VcsService(IProcessRunner processRunner, VcsServiceOptions? options = null, IWorkspaceFileSystemOps? fsOps = null)
     {
         ArgumentNullException.ThrowIfNull(processRunner);
         _processRunner = processRunner;
         _options = options ?? new VcsServiceOptions();
+        _fs = fsOps ?? LocalWorkspaceFileSystemOps.Instance;
         _usesDefaultRunner = processRunner is ProcessRunner;
 
         if (_options.MaxDiffBytes <= 0)
@@ -52,13 +54,13 @@ public sealed partial class VcsService : IVcsService
         ct.ThrowIfCancellationRequested();
 
         var fullPath = Path.GetFullPath(path);
-        var startDir = Directory.Exists(fullPath)
+        var startDir = _fs.DirectoryExists(fullPath)
             ? fullPath
-            : File.Exists(fullPath)
+            : _fs.FileExists(fullPath)
                 ? Path.GetDirectoryName(fullPath)
                 : null;
 
-        if (string.IsNullOrEmpty(startDir) || !Directory.Exists(startDir))
+        if (string.IsNullOrEmpty(startDir) || !_fs.DirectoryExists(startDir))
         {
             return VcsBackendKind.PlainDirectory;
         }
@@ -93,7 +95,7 @@ public sealed partial class VcsService : IVcsService
 
     public IReadOnlyList<VcsBackendKind> ListWorkspaceBackends(string path)
     {
-        if (!Directory.Exists(path))
+        if (!_fs.DirectoryExists(path))
             return [];
 
         var root = FindNearestVcsRoot(Path.GetFullPath(path));
@@ -104,14 +106,20 @@ public sealed partial class VcsService : IVcsService
         if (root.Value.HasJj && ResolveJjExecutable() is not null)
             candidates.Add(VcsBackendKind.JjColocated);
         var git = _options.GitExecutablePath;
-        if (OperatingSystem.IsWindows() && !Path.HasExtension(git))
+        if (OperatingSystem.IsWindows() && _fs.IsLocal && !Path.HasExtension(git))
             git += ".exe";
-        var gitAvailable = !_usesDefaultRunner || (Path.IsPathRooted(git)
-            ? File.Exists(git)
-            : SearchExecutableOnPath(git) is not null);
+        var gitAvailable = !_usesDefaultRunner && _fs.IsLocal
+            ? true
+            : _fs.ResolveExecutable(git) is not null;
         if (root.Value.HasGit && gitAvailable)
             candidates.Add(VcsBackendKind.GitWorktree);
         return candidates;
+    }
+
+    public Task<IReadOnlyList<VcsBackendKind>> ListWorkspaceBackendsAsync(string path, CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        return Task.Run(() => ListWorkspaceBackends(path), ct);
     }
 
     public async Task<IsolatedWorkspace> CreateWorkspaceAsync(
@@ -141,7 +149,7 @@ public sealed partial class VcsService : IVcsService
         var parentDir = Path.GetDirectoryName(fullTargetDir);
         if (!string.IsNullOrEmpty(parentDir))
         {
-            Directory.CreateDirectory(parentDir);
+            _fs.CreateDirectory(parentDir);
         }
 
         var kind = backend ?? await DetectAsync(fullRepoPath, ct).ConfigureAwait(false);
@@ -244,7 +252,7 @@ public sealed partial class VcsService : IVcsService
             case VcsBackendKind.JjColocated:
             {
                 var jjExe = ResolveJjExecutable();
-                if (jjExe is not null && Directory.Exists(rootRepoPath) && !string.IsNullOrWhiteSpace(workspace.WorkspaceName))
+                if (jjExe is not null && _fs.DirectoryExists(rootRepoPath) && !string.IsNullOrWhiteSpace(workspace.WorkspaceName))
                 {
                     // Ignore non-zero if workspace was already forgotten.
                     _ = await RunJjAsync(jjExe, rootRepoPath, ["workspace", "forget", workspace.WorkspaceName], ct)
@@ -257,7 +265,7 @@ public sealed partial class VcsService : IVcsService
 
             case VcsBackendKind.GitWorktree:
             {
-                if (Directory.Exists(rootRepoPath))
+                if (_fs.DirectoryExists(rootRepoPath))
                 {
                     _ = await RunGitAsync(rootRepoPath, ["worktree", "remove", "--force", workspacePath], ct)
                         .ConfigureAwait(false);
@@ -625,36 +633,16 @@ public sealed partial class VcsService : IVcsService
                 return null;
             }
 
-            if (!_usesDefaultRunner)
+            if (!_usesDefaultRunner && _fs.IsLocal)
             {
                 return _options.JjExecutablePath;
             }
 
-            if (Path.IsPathRooted(_options.JjExecutablePath))
-            {
-                return File.Exists(_options.JjExecutablePath) ? _options.JjExecutablePath : null;
-            }
-
-            return SearchExecutableOnPath(_options.JjExecutablePath, pathEnvironmentOverride);
+            return _fs.ResolveExecutable(_options.JjExecutablePath, pathEnvironmentOverride);
         }
 
-        var exeName = OperatingSystem.IsWindows() ? "jj.exe" : "jj";
-        var fromPath = SearchExecutableOnPath(exeName, pathEnvironmentOverride);
-        if (fromPath is not null)
-        {
-            return fromPath;
-        }
-
-        foreach (var homeDir in EnumerateCandidateHomeDirectories())
-        {
-            var localBinCandidate = Path.Combine(homeDir, ".local", "bin", exeName);
-            if (File.Exists(localBinCandidate))
-            {
-                return localBinCandidate;
-            }
-        }
-
-        return null;
+        var exeName = OperatingSystem.IsWindows() && _fs.IsLocal ? "jj.exe" : "jj";
+        return _fs.ResolveExecutable(exeName, pathEnvironmentOverride);
     }
 
     internal static (string Text, bool Truncated) TruncateUtf8Deterministically(string text, int maxBytes)
@@ -787,9 +775,9 @@ public sealed partial class VcsService : IVcsService
             ChangedFiles: changedFiles);
     }
 
-    private static RevisionSnapshot SnapshotPlainDirectory(string workspacePath)
+    private RevisionSnapshot SnapshotPlainDirectory(string workspacePath)
     {
-        if (!Directory.Exists(workspacePath))
+        if (!_fs.IsLocal || !Directory.Exists(workspacePath))
         {
             return new RevisionSnapshot(VcsBackendKind.PlainDirectory, "plain", "none", null, false, []);
         }
@@ -1116,7 +1104,7 @@ public sealed partial class VcsService : IVcsService
         return new VcsDiffFileDto(relPath, status, patch, headText, workingText, IsBinary: false);
     }
 
-    private static async Task<(string? Text, bool IsBinary)> ReadWorkspaceFileSafeAsync(
+    private async Task<(string? Text, bool IsBinary)> ReadWorkspaceFileSafeAsync(
         string fullWorkspacePath,
         string relPath,
         CancellationToken ct)
@@ -1126,9 +1114,27 @@ public sealed partial class VcsService : IVcsService
             ? rootFull
             : rootFull + Path.DirectorySeparatorChar;
         var candidate = Path.GetFullPath(Path.Combine(rootFull, relPath.TrimStart('/', '\\')));
-        if (!candidate.StartsWith(rootWithSep, PathComparison) || !File.Exists(candidate))
+        if (!candidate.StartsWith(rootWithSep, PathComparison) || !_fs.FileExists(candidate))
         {
             return (null, false);
+        }
+
+        if (!_fs.IsLocal)
+        {
+            var remoteBytes = _fs.ReadContainedFileBytes(rootFull, candidate, MaxFileContentBytes);
+            if (remoteBytes is null)
+            {
+                return (null, false);
+            }
+
+            var remoteSniff = Math.Min(remoteBytes.Length, BinarySniffBytes);
+            if (remoteBytes.AsSpan(0, remoteSniff).IndexOf((byte)0) >= 0)
+            {
+                return (null, true);
+            }
+
+            var remoteValid = TrimTrailingIncompleteUtf8Bytes(remoteBytes);
+            return (Encoding.UTF8.GetString(remoteBytes, 0, remoteValid), false);
         }
 
         try
@@ -1680,7 +1686,7 @@ public sealed partial class VcsService : IVcsService
                     ? rawPath
                     : Path.GetFullPath(Path.Combine(workspacePath, rawPath));
 
-                if (Directory.Exists(resolved) || File.Exists(resolved))
+                if (_fs.DirectoryExists(resolved) || _fs.FileExists(resolved))
                 {
                     return true;
                 }
@@ -1815,125 +1821,13 @@ public sealed partial class VcsService : IVcsService
         return result;
     }
 
+    private (string RootPath, bool HasJj, bool HasGit)? FindNearestVcsRoot(
+        string startDirectory, bool searchAncestors = true, bool ignoreAmbientRoots = true) =>
+        FindNearestVcsRoot(_fs, startDirectory, searchAncestors, ignoreAmbientRoots);
+
     private static (string RootPath, bool HasJj, bool HasGit)? FindNearestVcsRoot(
-        string startDirectory, bool searchAncestors = true, bool ignoreAmbientRoots = true)
-    {
-        var current = NormalizeDirectoryPath(startDirectory);
-        var tempRoot = NormalizeDirectoryPath(Path.GetTempPath());
-
-        while (!string.IsNullOrEmpty(current))
-        {
-            var parent = Directory.GetParent(current)?.FullName;
-            var isFilesystemRoot = string.IsNullOrEmpty(parent) || string.Equals(parent, current, StringComparison.Ordinal);
-
-            // Never treat `/` or the system temp root (`/tmp`) itself as a repository root.
-            if (!ignoreAmbientRoots || (!isFilesystemRoot && !string.Equals(current, tempRoot, PathComparison)))
-            {
-                var hasJj = IsValidJjMarker(Path.Combine(current, ".jj"));
-                var hasGit = IsValidGitMarker(Path.Combine(current, ".git"));
-
-                if (hasJj || hasGit)
-                {
-                    return (current, hasJj, hasGit);
-                }
-            }
-
-            if (isFilesystemRoot || !searchAncestors)
-            {
-                break;
-            }
-
-            current = NormalizeDirectoryPath(parent!);
-        }
-
-        return null;
-    }
-
-    private static bool IsValidJjMarker(string jjPath)
-    {
-        if (!Directory.Exists(jjPath))
-        {
-            return false;
-        }
-
-        var repoEntry = Path.Combine(jjPath, "repo");
-        return Directory.Exists(repoEntry) || File.Exists(repoEntry);
-    }
-
-    private static bool IsValidGitMarker(string gitPath)
-    {
-        if (Directory.Exists(gitPath))
-        {
-            return File.Exists(Path.Combine(gitPath, "HEAD"));
-        }
-
-        if (File.Exists(gitPath))
-        {
-            try
-            {
-                var firstLine = File.ReadLines(gitPath).FirstOrDefault();
-                return firstLine is not null &&
-                       firstLine.TrimStart().StartsWith("gitdir:", StringComparison.OrdinalIgnoreCase);
-            }
-            catch (IOException)
-            {
-                return false;
-            }
-            catch (UnauthorizedAccessException)
-            {
-                return false;
-            }
-        }
-
-        return false;
-    }
-
-    private static string? SearchExecutableOnPath(string executableName, string? pathEnvironmentOverride = null)
-    {
-        var pathVar = pathEnvironmentOverride ?? Environment.GetEnvironmentVariable("PATH");
-        if (string.IsNullOrWhiteSpace(pathVar))
-        {
-            return null;
-        }
-
-        foreach (var entry in pathVar.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
-        {
-            var candidate = Path.Combine(entry.Trim(), executableName);
-            if (File.Exists(candidate))
-            {
-                return candidate;
-            }
-        }
-
-        return null;
-    }
-
-    private static IEnumerable<string> EnumerateCandidateHomeDirectories()
-    {
-        var yielded = new HashSet<string>(StringComparer.Ordinal);
-
-        var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        if (!string.IsNullOrWhiteSpace(userProfile) && yielded.Add(userProfile))
-        {
-            yield return userProfile;
-        }
-
-        var homeEnv = Environment.GetEnvironmentVariable("HOME");
-        if (!string.IsNullOrWhiteSpace(homeEnv) && yielded.Add(homeEnv))
-        {
-            yield return homeEnv;
-        }
-
-        var userName = Environment.UserName;
-        if (!string.IsNullOrWhiteSpace(userName))
-        {
-            var linuxHome = Path.Combine("/home", userName);
-            if (Directory.Exists(linuxHome) && yielded.Add(linuxHome))
-            {
-                yield return linuxHome;
-            }
-        }
-    }
+        IWorkspaceFileSystemOps fs, string startDirectory, bool searchAncestors = true, bool ignoreAmbientRoots = true) =>
+        fs.FindNearestVcsRoot(startDirectory, searchAncestors, ignoreAmbientRoots);
 
     private static IReadOnlyList<string> ParseNonEmptyLines(string text)
     {
@@ -1949,73 +1843,11 @@ public sealed partial class VcsService : IVcsService
             .ToArray();
     }
 
-    private static void CopyDirectorySafe(string sourceDir, string targetDir, CancellationToken ct)
-    {
-        if (!Directory.Exists(sourceDir))
-        {
-            throw new DirectoryNotFoundException($"Source directory '{sourceDir}' does not exist.");
-        }
+    private void CopyDirectorySafe(string sourceDir, string targetDir, CancellationToken ct) =>
+        _fs.CopyDirectory(sourceDir, targetDir, ct);
 
-        var sourceEntries = Directory.GetFiles(sourceDir, "*", SearchOption.AllDirectories);
-        var sourceSubdirs = Directory.GetDirectories(sourceDir, "*", SearchOption.AllDirectories);
-
-        Directory.CreateDirectory(targetDir);
-
-        var normalizedTargetPrefix = NormalizeDirectoryPath(targetDir) + Path.DirectorySeparatorChar;
-
-        foreach (var dir in sourceSubdirs)
-        {
-            ct.ThrowIfCancellationRequested();
-            var fullSubdir = Path.GetFullPath(dir);
-            if (PathsEqual(fullSubdir, targetDir) ||
-                fullSubdir.StartsWith(normalizedTargetPrefix, PathComparison))
-            {
-                continue;
-            }
-
-            var relDir = Path.GetRelativePath(sourceDir, fullSubdir);
-            Directory.CreateDirectory(Path.Combine(targetDir, relDir));
-        }
-
-        foreach (var file in sourceEntries)
-        {
-            ct.ThrowIfCancellationRequested();
-            var fullFile = Path.GetFullPath(file);
-            if (fullFile.StartsWith(normalizedTargetPrefix, PathComparison))
-            {
-                continue;
-            }
-
-            var relFile = Path.GetRelativePath(sourceDir, fullFile);
-            var destFile = Path.Combine(targetDir, relFile);
-            var destParent = Path.GetDirectoryName(destFile);
-            if (!string.IsNullOrEmpty(destParent))
-            {
-                Directory.CreateDirectory(destParent);
-            }
-
-            File.Copy(fullFile, destFile, overwrite: true);
-        }
-    }
-
-    private static void DeleteDirectoryIfExists(string path)
-    {
-        if (!Directory.Exists(path))
-        {
-            return;
-        }
-
-        foreach (var file in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories))
-        {
-            var attrs = File.GetAttributes(file);
-            if ((attrs & FileAttributes.ReadOnly) != 0)
-            {
-                File.SetAttributes(file, attrs & ~FileAttributes.ReadOnly);
-            }
-        }
-
-        Directory.Delete(path, recursive: true);
-    }
+    private void DeleteDirectoryIfExists(string path) =>
+        _fs.DeleteDirectoryIfExists(path);
 
     private static bool PathsEqual(string left, string right) =>
         string.Equals(NormalizeDirectoryPath(left), NormalizeDirectoryPath(right), PathComparison);

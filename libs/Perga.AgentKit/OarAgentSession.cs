@@ -57,7 +57,7 @@ public sealed class OarAgentSession : IAgentSession
     private readonly TimeSpan _handshakeTimeout;
     private readonly Action<OarAgentSession>? _onInitialized;
 
-    private OarAgentSession(StdioSubprocess process, HarnessLaunchSpec spec, string runtimeId,
+    private OarAgentSession(ISubprocessHandle process, HarnessLaunchSpec spec, string runtimeId,
         string? executableOverride, TimeSpan handshakeTimeout, Action<IAgentSession>? onDispose,
         Action<OarAgentSession>? onInitialized)
     {
@@ -78,7 +78,7 @@ public sealed class OarAgentSession : IAgentSession
     public long? ContextUsageRevision => Interlocked.Read(ref _contextUsageRevision);
     public WorkerProviderConfiguration? WorkerConfiguration => Volatile.Read(ref _workerConfiguration);
     public bool ShutdownConfirmed => _rpc.ShutdownConfirmed;
-    internal StdioSubprocess Subprocess => _rpc.Process;
+    internal StdioSubprocess Subprocess => (StdioSubprocess)_rpc.Process;
     public bool SupportsSessionResume => Volatile.Read(ref _supportsSessionResume);
     public bool RequiresTerminalStop => true;
     public bool SupportsScopedClose => true;
@@ -92,9 +92,11 @@ public sealed class OarAgentSession : IAgentSession
         string? executableOverride,
         TimeSpan handshakeTimeout,
         Action<IAgentSession>? onDispose,
-        Action<OarAgentSession>? onInitialized = null)
+        Action<OarAgentSession>? onInitialized = null,
+        ISubprocessTransport? transport = null)
     {
-        return new OarAgentSession(StdioSubprocess.Start(invocation), spec, oarRuntimeId,
+        var handle = (transport ?? LocalSubprocessTransport.Instance).StartInteractive(invocation);
+        return new OarAgentSession(handle, spec, oarRuntimeId,
             executableOverride, handshakeTimeout, onDispose, onInitialized);
     }
 

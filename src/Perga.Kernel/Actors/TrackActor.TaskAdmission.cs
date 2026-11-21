@@ -143,7 +143,7 @@ public sealed partial class TrackActor
     {
         try
         {
-            return await _agentRuntime.ProbeProvidersAsync(ct).ConfigureAwait(false);
+            return await EffectiveAgentRuntime.ProbeProvidersAsync(ct).ConfigureAwait(false);
         }
         catch (Exception ex) when (!ct.IsCancellationRequested)
         {

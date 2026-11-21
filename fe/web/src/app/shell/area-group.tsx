@@ -11,12 +11,13 @@ import { navigationRowClass as rowLayout } from '../../ui/navigation-row/public.
 import { useUiPreferences } from '../providers/ui-preferences.tsx';
 
 export function AreaGroup({
-  readReady, area, areaTracks, activeTrackId, expanded, onToggle, showClosed, onSetShowClosed, disclosureRef, onEdit,
+  readReady, area, targetLabel, areaTracks, activeTrackId, expanded, onToggle, showClosed, onSetShowClosed, disclosureRef, onEdit,
   onShare, onRequestDelete, onNewTrack, management, ...rowProps
 }: RowProps & {
   readReady: boolean;
   management: GroupManagement;
   area: Area;
+  targetLabel?: string | undefined;
   areaTracks: readonly Track[];
   activeTrackId: string | null;
   expanded: boolean;
@@ -31,9 +32,12 @@ export function AreaGroup({
 }) {
   const preferences = useUiPreferences();
   const ordered = areaPinnedTracks(areaTracks, (track) => preferences.areaTrackPinned(area.id, track.id));
+  const areaTitle = area.executionTargetId && area.executionTargetId !== 'local'
+    ? `${area.name} · ${targetLabel ?? area.executionTargetId}`
+    : area.name;
   return <SidebarTrackGroup
     emptyState={readReady ? { icon: <Icon name="file" />, title: '没有可显示的 Track', description: '此 Area 中符合当前筛选的 Track 会显示在这里。' } : null}
-    title={area.name}
+    title={areaTitle}
     label={`area ${area.name}`}
     icon="folder"
     level="area"

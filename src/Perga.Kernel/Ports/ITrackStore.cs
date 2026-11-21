@@ -86,10 +86,18 @@ public interface ITrackReadStore
     Task<ReadReceiptsResponseDto> GetReadReceiptsAsync(CancellationToken ct = default);
     Task<IReadOnlyList<TrackOverlayDto>> ListTrackOverlaysAsync(bool includeClosed = false, CancellationToken ct = default);
     Task<string?> FindTrackIdBySessionAsync(string sessionId, CancellationToken ct);
+    Task<string?> FindTrackIdByTerminalAsync(string terminalId, CancellationToken ct) => Task.FromResult<string?>(null);
+    Task<IReadOnlyList<StoredExecutionTarget>> ListExecutionTargetsAsync(CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<StoredExecutionTarget>>([]);
 }
 
 public interface ITrackStore : ITrackReadStore
 {
+    Task<StoredExecutionTarget> UpsertExecutionTargetAsync(StoredExecutionTarget target, CancellationToken ct = default)
+        => throw new NotSupportedException("Execution target persistence is not supported by this store.");
+    Task<bool> DeleteExecutionTargetAsync(string targetId, CancellationToken ct = default)
+        => throw new NotSupportedException("Execution target persistence is not supported by this store.");
+
     Task<ReadReceiptDto> MarkReadAsync(string kind, string targetId, long readThroughMs, CancellationToken ct = default);
     Task<ReadReceiptDto> MarkUnreadAsync(string kind, string targetId, CancellationToken ct = default);
 

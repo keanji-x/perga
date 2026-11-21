@@ -14044,6 +14044,13 @@
         },
         "parameters": [
           {
+            "name": "card_id",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "scope",
             "in": "query",
             "schema": {
@@ -14128,6 +14135,21 @@
           "410": {
             "description": "The Area originally created with this key was deleted."
           }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "executionTargetId": {
+                    "type": "string",
+                    "description": "Execution target ID."
+                  }
+                }
+              }
+            }
+          }
         }
       }
     },
@@ -14149,6 +14171,21 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/AreaDto"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "executionTargetId": {
+                    "type": "string",
+                    "description": "Execution target ID."
+                  }
                 }
               }
             }
@@ -14215,6 +14252,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "targetId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Execution target override; defaults to the Area target."
           }
         ],
         "responses": {
@@ -14308,6 +14354,10 @@
                       "string",
                       "null"
                     ]
+                  },
+                  "executionTargetId": {
+                    "type": "string",
+                    "description": "Execution target ID."
                   }
                 }
               }
@@ -14982,6 +15032,13 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "targetId",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -14990,6 +15047,101 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HostDirListDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/targets": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ExecutionTargetDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateExecutionTargetRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionTargetDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/targets/{targetId}": {
+      "delete": {
+        "parameters": [
+          {
+            "name": "targetId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          }
+        }
+      }
+    },
+    "/api/v1/targets/{targetId}/providers": {
+      "get": {
+        "parameters": [
+          {
+            "name": "targetId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "refresh",
+            "in": "query",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ProviderStatusDto"
+                  }
                 }
               }
             }
@@ -24823,6 +24975,85 @@
           }
         }
       },
+      "ExecutionTargetDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "kind",
+          "isDefault"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "isDefault": {
+            "type": "boolean"
+          },
+          "destination": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "removable": {
+            "type": "boolean"
+          }
+        }
+      },
+      "CreateExecutionTargetRequest": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "host": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "port": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "user": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "identityFile": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "workspacesRoot": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "AreaDto": {
         "type": "object",
         "required": [
@@ -24865,6 +25096,9 @@
           "updatedAtMs": {
             "type": "integer"
           },
+          "executionTargetId": {
+            "type": "string"
+          },
           "permissionMode": {
             "type": [
               "string",
@@ -24903,6 +25137,12 @@
               "$ref": "#/components/schemas/AreaDto"
             }
           },
+          "executionTargets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExecutionTargetDto"
+            }
+          },
           "databaseId": {
             "type": [
               "string",
@@ -24936,6 +25176,9 @@
             "type": "string"
           },
           "areaId": {
+            "type": "string"
+          },
+          "executionTargetId": {
             "type": "string"
           },
           "parentTrackId": {

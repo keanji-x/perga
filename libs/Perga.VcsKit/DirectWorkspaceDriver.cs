@@ -6,6 +6,13 @@ public sealed class DirectWorkspaceDriver : IWorkspaceDriver
 {
     public const string Id = "direct";
 
+    private readonly IWorkspaceFileSystemOps _fs;
+
+    public DirectWorkspaceDriver(IWorkspaceFileSystemOps? fsOps = null)
+    {
+        _fs = fsOps ?? LocalWorkspaceFileSystemOps.Instance;
+    }
+
     public string DriverId => Id;
 
     public Task<WorkspaceSpec> ProvisionTrackAsync(WorkspaceProvisionRequest req, CancellationToken ct = default)
@@ -17,7 +24,7 @@ public sealed class DirectWorkspaceDriver : IWorkspaceDriver
 
         var sourcePath = Path.GetFullPath(req.SourcePath);
         if (req.NewEmptyWorkspace)
-            Directory.CreateDirectory(sourcePath);
+            _fs.CreateDirectory(sourcePath);
         var lowerDirs = req.LowerCacheDirs?.ToArray() ?? [];
         var metadata = JsonSerializer.SerializeToElement(new
         {
@@ -60,8 +67,8 @@ public sealed class DirectWorkspaceDriver : IWorkspaceDriver
         ArgumentNullException.ThrowIfNull(spec);
         ct.ThrowIfCancellationRequested();
 
-        if (spec.ManagedEmptyWorkspace && Directory.Exists(spec.LogicalRoot))
-            Directory.Delete(spec.LogicalRoot, recursive: true);
+        if (spec.ManagedEmptyWorkspace && _fs.DirectoryExists(spec.LogicalRoot))
+            _fs.DeleteDirectoryIfExists(spec.LogicalRoot);
         return Task.CompletedTask;
     }
 }

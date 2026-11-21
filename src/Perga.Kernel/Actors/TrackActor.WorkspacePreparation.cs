@@ -82,13 +82,14 @@ public sealed partial class TrackActor
         if (preparation.Phase is WorkspacePreparationPhase.Pending or WorkspacePreparationPhase.Provisioned ||
             retry && preparation.Phase == WorkspacePreparationPhase.Failed)
         {
-            var driver = _workspaceDrivers.GetRequired(_track.WorkspaceDriver);
+            var env = Env;
+            var driver = env.WorkspaceDrivers.GetRequired(_track.WorkspaceDriver);
             _workspacePreparation = preparation with { Phase = WorkspacePreparationPhase.Pending };
-            _workspacePreparationJob = TrackBackgroundJob(() => PrepareWorkspaceAsync(preparation, driver, _actorShutdownCts.Token));
+            _workspacePreparationJob = TrackBackgroundJob(() => PrepareWorkspaceAsync(preparation, env, driver, _actorShutdownCts.Token));
         }
     }
 
-    private async Task PrepareWorkspaceAsync(WorkspacePreparation initial, IWorkspaceDriver driver, CancellationToken ct)
+    private async Task PrepareWorkspaceAsync(WorkspacePreparation initial, IExecutionEnvironment env, IWorkspaceDriver driver, CancellationToken ct)
     {
         var preparation = initial with { Phase = initial.Spec is null
             ? WorkspacePreparationPhase.Provisioning : WorkspacePreparationPhase.Mounting };
@@ -109,14 +110,14 @@ public sealed partial class TrackActor
             }
 
             mounted = await driver.EnsureMountedAsync(preparation.Spec!, ct).ConfigureAwait(false);
-            var canonicalCwd = WorkspaceFileReader.ResolveCanonicalPath(mounted.MergedCwd);
+            var canonicalCwd = await env.Files.ResolveCanonicalPathAsync(mounted.MergedCwd, ct).ConfigureAwait(false);
             mounted = mounted with { MergedCwd = canonicalCwd };
             preparation = preparation with { Spec = preparation.Spec! with { MergedCwd = canonicalCwd } };
             if (!string.IsNullOrWhiteSpace(preparation.Command))
             {
                 preparation = preparation with { Phase = WorkspacePreparationPhase.Initializing };
                 await _store.SaveWorkspacePreparationAsync(TrackId, preparation, null, null, ct).ConfigureAwait(false);
-                var result = await _commandRunner.RunAsync(new ShellCommandRequest(
+                var result = await env.Shell.RunAsync(new ShellCommandRequest(
                     preparation.Command, mounted.MergedCwd, TimeSpan.FromSeconds(_options.DefaultHookTimeoutSecs)), ct).ConfigureAwait(false);
                 preparation = preparation with
                 {

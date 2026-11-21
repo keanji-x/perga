@@ -24,9 +24,10 @@ import { performApiRequest } from '../../../../core/api/client.ts';
 import type { ApiOperation, ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import {
-  asFolderConflict, areaListOperation, areaCreationCapabilityOperation, createAreaOperation, deleteAreaOperation,
-  newestArea, sortedAreas, toArea, updateAreaOperation, visibleAreas,
-  type Area, type AreaPatchBody, type FolderConflict, type NewAreaBody,
+  asFolderConflict, areaListOperation, areaCreationCapabilityOperation, createAreaOperation,
+  createExecutionTargetOperation, deleteAreaOperation,
+  executionTargetsOperation, newestArea, sortedAreas, toArea, updateAreaOperation, visibleAreas,
+  type Area, type AreaPatchBody, type CreateExecutionTargetBody, type ExecutionTargetDto, type FolderConflict, type NewAreaBody,
 } from '../../../../core/domain/area.ts';
 import {
   deriveReportTasks, hasLiveTaskRun, readTrackViewsOperation, trackBacklinksOperation, trackPreviewsOperation, trackTaskVerdictsOperation,
@@ -143,6 +144,34 @@ export function plannerRunQueryOptions(transport: ApiTransportPort, cardId: stri
     queryKey: [...queryKeys.plannerRun(cardId),'conversation_v1'],
     queryFn: ({ signal }: { signal: AbortSignal }) =>
       runOperation(transport, { ...conversationRunOperation(cardId), signal }, unauthorized),
+  };
+}
+
+export function executionTargetsQueryOptions(
+  transport: ApiTransportPort,
+  unauthorized: UnauthorizedChannel,
+) {
+  return {
+    queryKey: ['execution-targets'] as const,
+    queryFn: ({ signal }: { signal: AbortSignal }): Promise<ExecutionTargetDto[]> =>
+      runOperation(transport, { ...executionTargetsOperation(), signal }, unauthorized),
+  };
+}
+
+export function useCreateExecutionTarget(
+  transport: ApiTransportPort,
+  unauthorized: UnauthorizedChannel,
+): (body: CreateExecutionTargetBody) => Promise<ExecutionTargetDto> {
+  const queryClient = useQueryClient();
+  return async (body: CreateExecutionTargetBody): Promise<ExecutionTargetDto> => {
+    const created = await runOperation(transport, createExecutionTargetOperation(body), unauthorized);
+    queryClient.setQueryData<ExecutionTargetDto[]>(['execution-targets'], (current) => {
+      if (current === undefined) return [created];
+      return current.some((item) => item.id === created.id)
+        ? current.map((item) => (item.id === created.id ? created : item))
+        : [...current, created];
+    });
+    return created;
   };
 }
 
