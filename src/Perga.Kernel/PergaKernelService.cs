@@ -307,7 +307,7 @@ public sealed partial class PergaKernelService : IPergaKernel
         for (var attempt = 0; actor is not null && attempt < 2; attempt++)
         {
             try { return await actor.MergeOverlayAsync(stored, ct).ConfigureAwait(false); }
-            catch (ObjectDisposedException ex) when (ex.ObjectName == nameof(TrackActor) || ex.ObjectName == typeof(TrackActor).FullName)
+            catch (ObjectDisposedException ex) when (ex.ObjectName == typeof(TrackActor).FullName)
             {
                 ct.ThrowIfCancellationRequested();
                 if (attempt == 1) break;

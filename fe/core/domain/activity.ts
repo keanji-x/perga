@@ -14,9 +14,6 @@ export type AttentionKind = 'none' | 'input' | 'failed';
 /** The per-card verdict the overlay's `cards[]` carries; a card without one has no indicator. */
 export type CardActivity = 'working' | 'input' | 'failed';
 
-/** Notification sources projected from Track activity. */
-export type NotificationSource = 'ask';
-
 /** One question of an ask: the first option is the recommended one; none means a free answer. */
 export type AskQuestion = Readonly<{ title: string; detail?: string; options: readonly string[] }>;
 

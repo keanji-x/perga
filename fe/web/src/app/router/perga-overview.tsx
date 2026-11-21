@@ -6,7 +6,7 @@ import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { visibleAreas } from '../../../../core/domain/area.ts';
 import { readErrorText } from '../../../../core/domain/read-failure.ts';
-import { trackDisplayTitle, userVisibleTracks, hasFailed, needsUserAttention, trackActivityState } from '../../../../core/domain/track.ts';
+import { trackDisplayTitle, trackRecentAt, userVisibleTracks, hasFailed, needsUserAttention, trackActivityState } from '../../../../core/domain/track.ts';
 import { ErrorBox } from '../../ui/error-box/public.tsx';
 import { ActivityIndicator } from '../../ui/activity-indicator/public.tsx';
 import { useReadReceipts } from '../providers/read-receipts.tsx';
@@ -40,7 +40,7 @@ export function PergaOverviewRoute({
     () =>
       [...tracks]
         .filter((track) => track.closedAt === null)
-        .sort((a, b) => (b.activityAt ?? b.updatedAt) - (a.activityAt ?? a.updatedAt)),
+        .sort((a, b) => trackRecentAt(b) - trackRecentAt(a)),
     [tracks],
   );
 
@@ -91,18 +91,21 @@ export function PergaOverviewRoute({
             <div className={styles.grid}>
               {waitingTracks.map((track) => {
                 const area = areaById.get(track.areaId);
+                const activity = trackActivityState(track, receipts.isTrackUnread(track.id, track.notifiableSessions));
+                const activityLabel = activityLabelOf(activity);
+                const descriptionId = `${activityDescriptionId}-waiting-${track.id}`;
                 return (
                   <button
                     key={track.id}
                     type="button"
                     className={styles.trackButton}
-                    aria-describedby={`${activityDescriptionId}-waiting-${track.id}`}
+                    aria-describedby={activityLabel === null ? undefined : descriptionId}
                     onClick={() => go({ name: 'track', trackId: track.id, openPlanner: true })}
                   >
                     <span className={styles.trackTitle}>{trackDisplayTitle(track.title)}</span>
-                    <span id={`${activityDescriptionId}-waiting-${track.id}`} hidden>{activityLabelOf(trackActivityState(track, receipts.isTrackUnread(track.id, track.notifiableSessions)))}</span>
+                    {activityLabel !== null && <span id={descriptionId} hidden>{activityLabel}</span>}
                     <span className={styles.trackMeta}>
-                      <ActivityIndicator state={trackActivityState(track, receipts.isTrackUnread(track.id, track.notifiableSessions))} />
+                      <ActivityIndicator state={activity} />
                       {area !== undefined && <span>{area.name}</span>}
                     </span>
                   </button>
@@ -143,18 +146,21 @@ export function PergaOverviewRoute({
             <div className={styles.grid}>
               {openTracks.map((track) => {
                 const area = areaById.get(track.areaId);
+                const activity = trackActivityState(track, receipts.isTrackUnread(track.id, track.notifiableSessions));
+                const activityLabel = activityLabelOf(activity);
+                const descriptionId = `${activityDescriptionId}-active-${track.id}`;
                 return (
                   <button
                     key={track.id}
                     type="button"
                     className={styles.trackButton}
-                    aria-describedby={`${activityDescriptionId}-active-${track.id}`}
+                    aria-describedby={activityLabel === null ? undefined : descriptionId}
                     onClick={() => go({ name: 'track', trackId: track.id })}
                   >
                     <span className={styles.trackTitle}>{trackDisplayTitle(track.title)}</span>
-                    <span id={`${activityDescriptionId}-active-${track.id}`} hidden>{activityLabelOf(trackActivityState(track, receipts.isTrackUnread(track.id, track.notifiableSessions)))}</span>
+                    {activityLabel !== null && <span id={descriptionId} hidden>{activityLabel}</span>}
                     <span className={styles.trackMeta}>
-                      <ActivityIndicator state={trackActivityState(track, receipts.isTrackUnread(track.id, track.notifiableSessions))} />
+                      <ActivityIndicator state={activity} />
                       {area !== undefined && <span>{area.name}</span>}
                     </span>
                   </button>

@@ -18,6 +18,7 @@ import { useMemo, useRef } from 'react';
 import { admitTransport, useRecoveryMutation } from './recovery-mutation.ts';
 import { z } from 'zod';
 import { bootstrapDtoSchema, type AgentProvider, type TrackAggregateSnapshotDto, type ReportReadResultDto } from '../../../../core/api/schemas.ts';
+import type { TrackOverlayItemDto } from '../../../../core/api/perga-v1.ts';
 
 import { performApiRequest } from '../../../../core/api/client.ts';
 import type { ApiOperation, ApiTransportPort } from '../../../../core/api/types.ts';
@@ -55,11 +56,11 @@ import {
 import {
   createCardOperation, createClaudeCardOperation, createCodexCardOperation, createTerminalCardOperation, setTerminalWorkbenchOperation, createTrackOperation,
   createTrackRecipeOperation, deleteTerminalOperation, deleteTrackOperation, deleteTrackRecipeOperation,
-  listTrackTerminalsOperation, overlaysByKindOperation, recipeSaveAttempts, recipeSaveLanded, toTrack, updateTrackOperation, updateTrackRecipeOperation,
-  NEUTRAL_ACTIVITY, sortAreaTracksByRecent, trackActivitiesFrom, trackDetailOperation, trackRecipeOperation, trackRecipesOperation,
+  listTrackTerminalsOperation, trackOverlaysOperation, recipeSaveAttempts, recipeSaveLanded, toTrack, updateTrackOperation, updateTrackRecipeOperation,
+  NEUTRAL_ACTIVITY, sortAreaTracksByRecent, trackActivitiesFromOverlays, trackDetailOperation, trackRecipeOperation, trackRecipesOperation,
   tracksInAreaOperation,
   type CardWire, type NewCardBody, type NewClaudeCardBody, type NewCodexCardBody, type NewTerminalCardBody,
-  type NewTrackBody, type OverlayWire,
+  type NewTrackBody,
   type Track, type TrackPatchBody, type TrackRecipe,
 } from '../../../../core/domain/track.ts';
 import {
@@ -442,9 +443,9 @@ export function areaListQueryOptions(transport: ApiTransportPort, unauthorized: 
 export function trackOverlaysQueryOptions(transport: ApiTransportPort, unauthorized: UnauthorizedChannel) {
   return {
     queryKey: queryKeys.overlaysByKind('track'),
-    queryFn: async ({ signal }: { signal: AbortSignal }): Promise<OverlayWire[]> => {
+    queryFn: async ({ signal }: { signal: AbortSignal }): Promise<TrackOverlayItemDto[]> => {
       try {
-        return await runOperation(transport, { ...overlaysByKindOperation('track'), signal }, unauthorized);
+        return await runOperation(transport, { ...trackOverlaysOperation(), signal }, unauthorized);
       } catch (error) {
         if (isNotFound(error)) return [];
         throw error;
@@ -694,7 +695,7 @@ export function useWorkspace(transport: ApiTransportPort, unauthorized: Unauthor
     queries: areas.map((area) => tracksInAreaQueryOptions(transport, area.id, unauthorized)),
     combine: combineWorkspaceTracks,
   });
-  const activity = useMemo(() => trackActivitiesFrom(overlaysQuery.data ?? []), [overlaysQuery.data]);
+  const activity = useMemo(() => trackActivitiesFromOverlays(overlaysQuery.data ?? []), [overlaysQuery.data]);
   const { tracksByArea, tracks } = useMemo(() => {
     const tracksByArea = new Map<string, readonly Track[]>();
     const tracks: Track[] = [];

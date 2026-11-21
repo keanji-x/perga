@@ -56,12 +56,10 @@ public static class ApiV1Endpoints
         v1.MapPost("/read-receipts/{kind}/{targetId}/unread", async (string kind, string targetId, IPergaKernel kernel, CancellationToken ct) =>
             Results.Json(await kernel.MarkUnreadAsync(kind, targetId, ct).ConfigureAwait(false), PergaJsonDefaults.ApiOptions));
 
-        // Empty segments do not bind {targetId}; explicitly reject these malformed receipt URLs.
-        v1.MapPost("/read-receipts/{kind}/{**invalidTarget}", (string? invalidTarget) =>
+        // Empty segments do not bind {targetId}; match only literal //read and //unread.
+        v1.MapPost("/read-receipts/{kind}/{**emptyTarget:regex(^/(?:read|unread)$)}", () =>
         {
-            if (invalidTarget is "/read" or "/unread")
-                throw KernelException.InvalidArgument("TargetId cannot be empty.");
-            return Results.NotFound();
+            throw KernelException.InvalidArgument("TargetId cannot be empty.");
         }).ExcludeFromDescription();
 
         // ------------------- System -------------------

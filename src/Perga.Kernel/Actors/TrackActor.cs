@@ -154,7 +154,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         if (!written)
         {
             Interlocked.Decrement(ref _queuedMailboxOps);
-            throw new ObjectDisposedException(nameof(TrackActor), $"TrackActor '{TrackId}' is shutting down.");
+            ObjectDisposedException.ThrowIf(true, this);
         }
 
         return await tcs.Task.WaitAsync(ct).ConfigureAwait(false);

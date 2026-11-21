@@ -10,7 +10,7 @@ import { readFailureOf, readFailureText } from '../../../../core/domain/read-fai
 import { readReportDocument, type ReportLinkTarget, type TrackReport } from '../../../../core/domain/report.ts';
 import type { ReportSourceLinkTarget } from '../../../../core/domain/report-source.ts';
 import type { ReportFileLinkTarget } from '../../../../core/domain/report-file.ts';
-import { toTrack, trackDtoToWire, trackOverlayPayload, snapshotActivityOverlays } from '../../../../core/domain/track.ts';
+import { toTrack, trackDtoToWire } from '../../../../core/domain/track.ts';
 import { ReportDocument } from '../../features/report/document/public.tsx';
 import { ErrorBox } from '../../ui/error-box/public.tsx';
 import { createTrackWorkspaceFilesPort } from '../providers/directory.ts';
@@ -58,7 +58,7 @@ function ReferenceDocument({ transport, unauthorized, target, detail, report, on
   return <ReportDocument report={report} empty={<EmptyReportReference />} fileRoot={toTrack(trackDtoToWire(detail.track)).agentCwd}
     onOpenLink={onOpenLink} onOpenSourceLink={source => onOpenSource(target.trackId, source)}
     onOpenFileLink={file => onOpenFile(target.trackId, file)}
-    resolveOverlay={source => trackOverlayPayload(target.trackId, snapshotActivityOverlays(detail), source)} resolveSeries={resolveSeries}
+    resolveSeries={resolveSeries}
     linkPreview={{ files, trackId: target.trackId, report,
       renderSource: source => <ReportSourcePreview transport={transport} unauthorized={unauthorized} trackId={target.trackId} target={source} />,
       renderReference: reference => <ReportReferencePreview transport={transport} unauthorized={unauthorized} target={reference}

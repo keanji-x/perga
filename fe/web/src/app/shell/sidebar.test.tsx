@@ -476,13 +476,13 @@ describe('collapse toggle', () => {
 
 
 it('reads each conversation completion watermark, not track metadata', async () => {
-  /* `updatedAt` moves on a rename or a pin; the receipt compares the kernel's
-   * completion high-water mark, and `activityAt: null` is never unread. The kernel's baseline is 100. */
+  /* `updatedAt` moves on a rename or a pin; the receipt compares each conversation's
+   * completion high-water mark, and empty `notifiableSessions` is never unread. The kernel's baseline is 100. */
   renderSidebar({
     tracks: [
       track({ id: 'fresh', title: 'Fresh', updatedAt: 1, notifiableSessions: [{ sessionId: 's1', lastNotifiableTurnAtMs: 150 }] }),
       track({ id: 'seen', title: 'Seen', updatedAt: 1_000, notifiableSessions: [{ sessionId: 's2', lastNotifiableTurnAtMs: 50 }] }),
-      track({ id: 'never', title: 'Never', updatedAt: 1_000, activityAt: null }),
+      track({ id: 'never', title: 'Never', updatedAt: 1_000, notifiableSessions: [] }),
     ],
   }, createUiPreferences(memoryStorage()), createReadReceiptsKernel({ baselineMs: 100 }));
   const marker = (title: string) => screen.getByRole('button', { name: new RegExp(`^Track ${title}`) })
@@ -585,7 +585,7 @@ describe('shared sidebar groups', () => {
 
   it('never surfaces system Tracks in shortcut groups', async () => {
     const kernel = createReadReceiptsKernel({ baselineMs: 1 });
-    renderSidebar({ areas: [area({ kind: 'system' })], tracks: [track({ activityAt: 10, working: true, pinnedAt: 5 })] }, createUiPreferences(), kernel);
+    renderSidebar({ areas: [area({ kind: 'system' })], tracks: [track({ notifiableSessions: [{ sessionId: 's1', lastNotifiableTurnAtMs: 10 }], working: true, pinnedAt: 5 })] }, createUiPreferences(), kernel);
     await waitFor(() => expect(kernel.requests).toHaveLength(1));
     expect(headings()).toEqual([]);
     expect(screen.getByRole('heading', { name: '还没有 Area' })).toBeTruthy();
@@ -757,7 +757,7 @@ it('offers personal Track actions without navigation and pins before the Area li
   const kernel = createReadReceiptsKernel({ baselineMs: 1_000 });
   const onGo = vi.fn();
   const onSetPinned = vi.fn();
-  const rows = [track({ id: 'old', title: 'Old', activityAt: 0 }), ...Array.from({ length: 6 }, (_, i) => track({ id: `t${i}`, title: `Task ${i}` }))];
+  const rows = [track({ id: 'old', title: 'Old', notifiableSessions: [] }), ...Array.from({ length: 6 }, (_, i) => track({ id: `t${i}`, title: `Task ${i}` }))];
   preferences.setAreaTrackPinned('c1', 'old', true);
   renderSidebar({ tracks: rows.toReversed(), onGo, onSetPinned }, preferences, kernel);
   const group = within(screen.getByRole('group', { name: 'area Work' }));

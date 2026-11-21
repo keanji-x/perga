@@ -1720,6 +1720,42 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
         return rows.Select(MapEvent).ToList();
     }
 
+    private static readonly string ListTrackOverlaysSql = $$"""
+        SELECT tr.id AS TrackId,
+               tr.area_id AS AreaId,
+               tr.closed_at_ms AS ClosedAtMs,
+               CASE WHEN EXISTS (
+                   SELECT 1 FROM agent_sessions s WHERE s.track_id = tr.id AND s.archived_at_ms IS NULL
+                   AND LOWER(s.status) IN ('queued', 'running', 'stopping', 'compacting')
+               ) OR EXISTS (
+                   SELECT 1 FROM tasks t WHERE t.track_id = tr.id AND LOWER(t.status) IN ('running', 'verifying')
+               ) OR EXISTS (
+                   SELECT 1 FROM track_workspace_preparations p WHERE p.track_id = tr.id
+                   AND json_extract(p.intent_json, '$.Phase') IN ({{(int)WorkspacePreparationPhase.Pending}}, {{(int)WorkspacePreparationPhase.Provisioning}}, {{(int)WorkspacePreparationPhase.Mounting}}, {{(int)WorkspacePreparationPhase.Initializing}}, {{(int)WorkspacePreparationPhase.Provisioned}})
+               ) THEN 1 ELSE 0 END AS IsWorking,
+               (SELECT COUNT(1) FROM asks a WHERE a.track_id = tr.id AND LOWER(a.status) = 'open') AS OpenAskCount,
+               CASE WHEN EXISTS (
+                   SELECT 1 FROM agent_sessions s WHERE s.track_id = tr.id AND s.archived_at_ms IS NULL
+                   AND LOWER(s.status) = 'unknown' AND (s.bound_task_id IS NULL OR EXISTS (
+                       SELECT 1 FROM task_attempts a WHERE a.attempt_id = s.bound_attempt_id AND a.finished_at_ms IS NULL
+                   ))
+               ) THEN 1 ELSE 0 END AS HasBlockedSession,
+               CASE WHEN EXISTS (
+                   SELECT 1 FROM track_workspace_preparations p WHERE p.track_id = tr.id
+                   AND json_extract(p.intent_json, '$.Phase') IN ({{(int)WorkspacePreparationPhase.Failed}}, {{(int)WorkspacePreparationPhase.Unknown}})
+               ) THEN 1 ELSE 0 END AS WorkspaceFailed,
+               MAX(
+                   tr.updated_at_ms,
+                   COALESCE((SELECT MAX(s2.updated_at_ms) FROM agent_sessions s2 WHERE s2.track_id = tr.id), tr.updated_at_ms),
+                   COALESCE((SELECT MAX(t2.updated_at_ms) FROM tasks t2 WHERE t2.track_id = tr.id), tr.updated_at_ms),
+                   COALESCE((SELECT MAX(COALESCE(a2.answered_at_ms, a2.created_at_ms)) FROM asks a2 WHERE a2.track_id = tr.id), tr.updated_at_ms),
+                   COALESCE((SELECT MAX(m2.created_at_ms) FROM mails m2 WHERE m2.to_track_id = tr.id), tr.updated_at_ms)
+               ) AS UpdatedAtMs
+        FROM tracks tr
+        WHERE (@IncludeClosed = 1 OR tr.closed_at_ms IS NULL)
+        ORDER BY tr.updated_at_ms DESC, tr.id ASC;
+        """;
+
     public async Task<IReadOnlyList<TrackOverlayDto>> ListTrackOverlaysAsync(
         bool includeClosed = false,
         CancellationToken ct = default)
@@ -1728,41 +1764,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
         await using var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);
         var rows = await conn.QueryAsync<TrackOverlayRow>(
             new CommandDefinition(
-                """
-                SELECT tr.id AS TrackId,
-                       tr.area_id AS AreaId,
-                       tr.closed_at_ms AS ClosedAtMs,
-                       CASE WHEN EXISTS (
-                           SELECT 1 FROM agent_sessions s WHERE s.track_id = tr.id AND s.archived_at_ms IS NULL
-                           AND LOWER(s.status) IN ('queued', 'running', 'stopping', 'compacting')
-                       ) OR EXISTS (
-                           SELECT 1 FROM tasks t WHERE t.track_id = tr.id AND LOWER(t.status) IN ('running', 'verifying')
-                       ) OR EXISTS (
-                           SELECT 1 FROM track_workspace_preparations p WHERE p.track_id = tr.id
-                           AND json_extract(p.intent_json, '$.Phase') IN (0, 1, 2, 3, 7)
-                       ) THEN 1 ELSE 0 END AS IsWorking,
-                       (SELECT COUNT(1) FROM asks a WHERE a.track_id = tr.id AND LOWER(a.status) = 'open') AS OpenAskCount,
-                       CASE WHEN EXISTS (
-                           SELECT 1 FROM agent_sessions s WHERE s.track_id = tr.id AND s.archived_at_ms IS NULL
-                           AND LOWER(s.status) = 'unknown' AND (s.bound_task_id IS NULL OR EXISTS (
-                               SELECT 1 FROM task_attempts a WHERE a.attempt_id = s.bound_attempt_id AND a.finished_at_ms IS NULL
-                           ))
-                       ) THEN 1 ELSE 0 END AS HasBlockedSession,
-                       CASE WHEN EXISTS (
-                           SELECT 1 FROM track_workspace_preparations p WHERE p.track_id = tr.id
-                           AND json_extract(p.intent_json, '$.Phase') IN (4, 5)
-                       ) THEN 1 ELSE 0 END AS WorkspaceFailed,
-                       MAX(
-                           tr.updated_at_ms,
-                           COALESCE((SELECT MAX(s2.updated_at_ms) FROM agent_sessions s2 WHERE s2.track_id = tr.id), tr.updated_at_ms),
-                           COALESCE((SELECT MAX(t2.updated_at_ms) FROM tasks t2 WHERE t2.track_id = tr.id), tr.updated_at_ms),
-                           COALESCE((SELECT MAX(COALESCE(a2.answered_at_ms, a2.created_at_ms)) FROM asks a2 WHERE a2.track_id = tr.id), tr.updated_at_ms),
-                           COALESCE((SELECT MAX(m2.created_at_ms) FROM mails m2 WHERE m2.to_track_id = tr.id), tr.updated_at_ms)
-                       ) AS UpdatedAtMs
-                FROM tracks tr
-                WHERE (@IncludeClosed = 1 OR tr.closed_at_ms IS NULL)
-                ORDER BY tr.updated_at_ms DESC, tr.id ASC;
-                """,
+                ListTrackOverlaysSql,
                 new { IncludeClosed = includeClosed ? 1 : 0 },
                 cancellationToken: ct)).ConfigureAwait(false);
 

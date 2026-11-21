@@ -13,7 +13,7 @@ import { createRecoveryTransports } from '../../systems/recovery/transport.ts';
 import { RecoveryGate } from '../auth/recovery-gate.tsx';
 import { SidebarFixture as Sidebar } from '../shell/sidebar-fixture.tsx';
 import { WEB_COMPAT_VERSION } from './public.tsx';
-import { ReadReceiptsProvider, useReadReceipt, useReadReceipts, type ReadReceipts } from './read-receipts.tsx';
+import { ReadReceiptsProvider, useReadReceipt, useReadReceipts, useViewReadReceipt, type ReadReceipts } from './read-receipts.tsx';
 import { createReadReceiptsKernel, type ReadReceiptsKernel } from './read-receipts-fixture.tsx';
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
@@ -98,7 +98,7 @@ it('says a mark unread refused during recovery like any other write, and changes
   const area: Area = { id: 'work', name: 'Work', color: '#5B8DEF', sort: 1, kind: 'user',
     defaultTemplateId: null, defaultCwd: null, createdAt: 0, updatedAt: 0 };
   const track: Track = { id: 't', areaId: 'work', title: 'Task', sort: 1, cwd: '/tmp', isolation: 'none', agentCwd: '/tmp',
-    pinnedAt: null, closedAt: null, createdAt: 0, updatedAt: 0, ...NEUTRAL_ACTIVITY, activityAt: 50 };
+    pinnedAt: null, closedAt: null, createdAt: 0, updatedAt: 0, ...NEUTRAL_ACTIVITY };
   const kernel = createReadReceiptsKernel({ baselineMs: 100 });
   bundled(kernel, <Sidebar areas={[area]} tracksByArea={new Map([['work', [track]]])} tracks={[track]} currentPath="/"
     onGo={vi.fn()} onRequestCreateArea={vi.fn()} onRequestEditArea={vi.fn()} onDeleteArea={vi.fn()} onNewTrack={vi.fn()}
@@ -135,4 +135,24 @@ it('keeps a manual unread of the open target across a bundled event-stream recon
   await new Promise((resolve) => setTimeout(resolve, 100));
   expect(kernel.stored('track', 't')?.manualUnread).toBe(true);
   expect(kernel.posts().filter((request) => request.path.endsWith('/read'))).toHaveLength(reads);
+});
+
+it('useViewReadReceipt posts nothing for an already-read target and clears only manualUnread', async () => {
+  const kernel = createReadReceiptsKernel({ baselineMs: 100 });
+  function TrackView({ id }: { id: string }) {
+    useViewReadReceipt('track', id, true);
+    return <p>{id}</p>;
+  }
+  const app = bundled(kernel, <TrackView id="t1" />);
+  await app.connect();
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  expect(kernel.posts()).toEqual([]);
+
+  await kernel.transport.send({ method: 'POST', path: '/api/v1/read-receipts/track/t2/unread', credentials: 'include' });
+  const beforeVisit = kernel.posts().filter((request) => request.path.endsWith('/read')).length;
+  act(() => { window.dispatchEvent(new Event('visibilitychange')); });
+  await waitFor(() => expect(kernel.requests.at(-1)?.method).toBe('GET'));
+  app.rerender(<TrackView id="t2" />);
+  await waitFor(() => expect(kernel.stored('track', 't2')?.manualUnread).toBe(false));
+  expect(kernel.posts().filter((request) => request.path.endsWith('/read'))).toHaveLength(beforeVisit + 1);
 });

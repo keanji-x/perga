@@ -62,8 +62,8 @@ import {
   type AttachmentStore, usePlannerAttachments,
 } from '../../features/planner/attachments.tsx';
 import {
-  trackOverlayPayload, toTrack, trackActivityFrom, trackDisplayTitle,
-  trackDtoToWire, snapshotActivityOverlays, retryTrackWorkspaceOperation,
+  toTrack, trackActivityFromSnapshot, trackDisplayTitle,
+  trackDtoToWire, retryTrackWorkspaceOperation,
 } from '../../../../core/domain/track.ts';
 import { cardActivityOf, type CardActivity } from '../../../../core/domain/activity.ts';
 import { parkedWorkerNotices, workbenchTerminalCardIds } from '../../../../core/view/track-page.ts';
@@ -601,8 +601,10 @@ function useConversationPane(
   // when the reader queues a message. `null` is never unread.
   const openActivity = rows.find(row => row.id === open?.id);
   const visibleConversation = panePresented && threadPresented && store.historyReady && !store.historyLoading && store.historyError === null;
+  const openCompletedAt = openActivity?.lastTurnCompletedAt ?? null;
   useViewReadReceipt('track', panePresented && openRowId !== null ? imageTrackId : null, visibleConversation, openRowId ?? undefined);
-  useReadReceipt('conversation', openActivity?.id ?? null, openActivity?.lastTurnCompletedAt ?? 0,
+  useViewReadReceipt('conversation', openCompletedAt === null ? openActivity?.id ?? null : null, visibleConversation, openActivity?.id);
+  useReadReceipt('conversation', openCompletedAt === null ? null : openActivity?.id ?? null, openCompletedAt,
     visibleConversation && receipts.ready);
 
   /* Only this route's slot is visible, reopenable or sendable here. */
@@ -1119,15 +1121,10 @@ function useConversationPane(
   });
   const unreadIds = useMemo(() => new Set(rows.filter(row => receipts.isUnread('conversation', row.id,
     row.lastTurnCompletedAt ?? null)).map(row => row.id)), [rows, receipts]);
-  const awaitingInputIds = useMemo(() => {
-    const ids = new Set<string>(source.pendingApprovals.map((approval) => approval.sessionId));
-    return ids;
-  }, [source.pendingApprovals]);
   const listProps = useMemo(() => ({
     conversations: store.conversations, cards: source.cards, unreadIds, activeId: existingId,
-    awaitingInputIds,
     showTrack: options?.showTrack ?? true, onOpen: openConversation, onArchive: options?.onArchive,
-  }), [store.conversations, source.cards, unreadIds, awaitingInputIds, existingId, options?.showTrack, options?.onArchive, openConversation]);
+  }), [store.conversations, source.cards, unreadIds, existingId, options?.showTrack, options?.onArchive, openConversation]);
   const listNode = useMemo(() => <ChatList {...listProps} />, [listProps]);
   const contextList = useMemo(() => <ChatList {...listProps} context />, [listProps]);
 
@@ -1190,7 +1187,7 @@ function TrackRoute({ transport, unauthorized, cardRuntime, recentFiles, prepare
   /* One `Track` per detail read, not per render: the body memoises on it. */
   const detailData = detail.data;
   const track = useMemo(
-    () => detailData === undefined ? null : toTrack(trackDtoToWire(detailData.track), trackActivityFrom(detailData.track.id, snapshotActivityOverlays(detailData))),
+    () => detailData === undefined ? null : toTrack(trackDtoToWire(detailData.track), trackActivityFromSnapshot(detailData)),
     [detailData],
   );
   const requestedCard = detail.data?.sessions.find(session => session.id === openRequest?.id);
@@ -1257,8 +1254,7 @@ function TrackRouteBody({
   reportEmpty?: ReactNode;
   pergaMode?: boolean;
 }) {
-  const overlays = useMemo(() => snapshotActivityOverlays(snapshot), [snapshot]);
-  const track = useMemo(() => toTrack(trackDtoToWire(snapshot.track), trackActivityFrom(snapshot.track.id, overlays)), [snapshot.track, overlays]);
+  const track = useMemo(() => toTrack(trackDtoToWire(snapshot.track), trackActivityFromSnapshot(snapshot)), [snapshot]);
   const canReopenTrack = snapshot.track.closedAtMs != null;
   const canCloseTrack = !canReopenTrack;
   const adminGrantedAt = null;
@@ -1468,12 +1464,6 @@ function TrackRouteBody({
   );
   useMobileConversationOwner({ track, conversations: rows, onArchive: conversationMutations.archive, onNew: chat.startConversation,
     selectedConversationId: chat.selectedConversationId, onClose: chat.close, onOpen: chat.openConversation, conversationOpen: chat.isOpen });
-  /* Stable across renders that do not change the overlays, so a live table is
-     not handed a new resolver identity on every keystroke elsewhere. */
-  const resolveOverlay = useCallback(
-    (source: string) => trackOverlayPayload(track.id, overlays, source),
-    [track.id, overlays],
-  );
   /* One query per `chart.series` block, keyed by the block's rev; opening the
        report is what makes the kernel fetch the data. */
   const resolveSeries = useReportSeriesResolver(transport, track.id, reportBlocks, unauthorized);
@@ -1717,9 +1707,6 @@ function TrackRouteBody({
         sourceInsertion={requestedFilePath === null ? sourceInsertion : undefined}
         trackId={track.id}
         openedAt={navigationCompletedAt}
-        /* `overlay.set` already invalidates this track's detail, so a plugin push
-                   re-renders the block without the report being rewritten. */
-        resolveOverlay={resolveOverlay}
         resolveSeries={resolveSeries}
         resolvePreview={resolvePreview}
         previewViewports={previewViewports}

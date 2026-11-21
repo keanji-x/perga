@@ -223,7 +223,7 @@ describe('track list', () => {
     const transport: ApiTransportPort = {
       send: (request) => {
         requestSignal = request.signal as AbortSignal;
-        return Promise.resolve(ok([]));
+        return Promise.resolve(ok({ tracks: [] }));
       },
     };
     const controller = new AbortController();
@@ -237,14 +237,15 @@ describe('track list', () => {
     const recent = { ...baseTrackWire, id: 'recent', sort: 2, updated_at: 10 };
     const second = { ...baseTrackWire, id: 'second', area_id: 'c2', sort: 1, updated_at: 30 };
     const activityOverlay = {
-      id: 'activity-recent', plugin_id: 'kernel', entity_kind: 'track', entity_id: 'recent',
-      kind: 'activity', payload: { schemaVersion: 4 }, updated_at: 100,
+      trackId: 'recent', areaId: 'c1', isWorking: false, openAskCount: 0,
+      pendingApprovalCount: 0, hasBlockedSession: false, workspaceFailed: false,
+      notifiableSessions: [], updatedAtMs: 100,
     };
     const { transport } = recordingTransport((request) => {
       if (request.path === '/api/v1/areas') return ok([userArea, secondArea]);
       if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return ok([old, recent]);
       if (request.path === '/api/v1/areas/c2/tracks?includeClosed=true') return ok([second]);
-      if (request.path === '/api/v1/overlays?entity_kind=track&includeClosed=true') return ok([activityOverlay]);
+      if (request.path === '/api/v1/overlays?entity_kind=track&includeClosed=true') return ok({ tracks: [activityOverlay] });
       throw new Error(`unexpected request: ${request.path}`);
     });
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });

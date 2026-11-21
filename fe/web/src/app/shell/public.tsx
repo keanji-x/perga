@@ -225,8 +225,8 @@ export function AppShell({
   }
   const historyTracks = conversationScope === null ? [] : [conversationScope.track];
   const receipts = useReadReceipts();
-  const readUnread = receipts.isUnread;
-  const isUnread = useCallback((track: Track) => readUnread('track', track.id, track.activityAt), [readUnread]);
+  const readTrackUnread = receipts.isTrackUnread;
+  const isUnread = useCallback((track: Track) => readTrackUnread(track.id, track.notifiableSessions), [readTrackUnread]);
   const trackGroups = useMemo(() => sidebarTrackGroups(workspace.tracks, workspace.areas, isUnread),
     [workspace.tracks, workspace.areas, isUnread]);
   const history = useMobileHistoryData(transport, unauthorized, historyTracks, narrowRail && historyOpen);

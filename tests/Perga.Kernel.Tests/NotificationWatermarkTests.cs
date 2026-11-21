@@ -54,6 +54,10 @@ public sealed class NotificationWatermarkTests
     [Theory]
     [InlineData(WorkspacePreparationPhase.Ready, false, false)]
     [InlineData(WorkspacePreparationPhase.Pending, true, false)]
+    [InlineData(WorkspacePreparationPhase.Provisioning, true, false)]
+    [InlineData(WorkspacePreparationPhase.Mounting, true, false)]
+    [InlineData(WorkspacePreparationPhase.Initializing, true, false)]
+    [InlineData(WorkspacePreparationPhase.Provisioned, true, false)]
     [InlineData(WorkspacePreparationPhase.Failed, false, true)]
     [InlineData(WorkspacePreparationPhase.Unknown, false, true)]
     public async Task ActorWorkspaceAndClosedOverlayPreserveWatermarks(WorkspacePreparationPhase phase, bool working, bool failed)
@@ -66,14 +70,19 @@ public sealed class NotificationWatermarkTests
         await ctx.Store.UpsertSessionAsync(session, null, default);
         await ctx.Store.SaveWorkspacePreparationAsync(id,
             new(new WorkspaceProvisionRequest(id, "/tmp/source", "/tmp/target", []), null, phase), null, null, default);
-        await ctx.Kernel.GetTrackAggregateAsync(id);
+        // Activate without starting preparation: overlay reads hydrate the saved phase themselves.
+        ctx.Kernel.Actors.GetOrActivate(id);
         var overlay = Assert.Single((await ctx.Kernel.GetOverlaysAsync()).Tracks);
         Assert.Equal(working, overlay.IsWorking);
         Assert.Equal(failed, overlay.WorkspaceFailed);
-        // An active actor's workspace state overrides a contradictory stored failure bit.
-        var active = await PergaKernelService.MergeActiveOverlayAsync(overlay with { WorkspaceFailed = !failed },
+        // An active actor is the single source of truth over contradictory stored flags.
+        var active = await PergaKernelService.MergeActiveOverlayAsync(
+            overlay with { IsWorking = !working, WorkspaceFailed = !failed, HasBlockedSession = true, OpenAskCount = 3 },
             () => ctx.Kernel.Actors.GetOrActivate(id), default);
+        Assert.Equal(working, active.IsWorking);
         Assert.Equal(failed, active.WorkspaceFailed);
+        Assert.False(active.HasBlockedSession);
+        Assert.Equal(0, active.OpenAskCount);
         Assert.Equal(123, Assert.Single(overlay.NotifiableSessions!).LastNotifiableTurnAtMs);
         await ctx.Kernel.PatchTrackAsync(id, new(Closed: true));
         var closed = Assert.Single((await ctx.Kernel.GetOverlaysAsync(includeClosed: true)).Tracks);
