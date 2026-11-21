@@ -295,9 +295,9 @@ public sealed class SessionLaunchValidationTests
         await ctx.Kernel.WaitForTrackIdleAsync(trackId, ct);
 
         ctx.AgentRuntime.Providers = [new("codex", false, null, "offline", [])];
-        await ctx.Kernel.CompleteAttemptDoneAsync(trackId, blocker.Session.Id, ct: ct);
+        await ctx.Kernel.CompleteTaskDoneAsync(trackId, blocker.Session.Id, ct: ct);
         await ctx.Kernel.WaitForTrackIdleAsync(trackId, ct);
-        Assert.Empty(await ctx.Kernel.ListTaskAttemptsAsync(trackId, worker.Task!.Id, ct));
+        Assert.Equal(0, (await ctx.Kernel.ListTasksAsync(trackId, ct)).Single(t => t.Id == worker.Task!.Id).RunCount);
 
         var probing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -319,7 +319,7 @@ public sealed class SessionLaunchValidationTests
             release.TrySetResult();
         }
         await ctx.Kernel.WaitForTrackIdleAsync(trackId, ct);
-        Assert.Empty(await ctx.Kernel.ListTaskAttemptsAsync(trackId, worker.Task.Id, ct));
+        Assert.Equal(0, (await ctx.Kernel.ListTasksAsync(trackId, ct)).Single(t => t.Id == worker.Task!.Id).RunCount);
 
         ctx.AgentRuntime.ProbeScript = null;
         ctx.AgentRuntime.Providers = [new("codex", true, "1", null, ["gpt-5"])];
@@ -327,7 +327,7 @@ public sealed class SessionLaunchValidationTests
         Assert.True(recovered.Replay);
         Assert.Equal(worker.Session.Id, recovered.Receipt.Session.Id);
         await ctx.Kernel.WaitForTrackIdleAsync(trackId, ct);
-        Assert.Single(await ctx.Kernel.ListTaskAttemptsAsync(trackId, worker.Task.Id, ct));
+        Assert.Equal(1, (await ctx.Kernel.ListTasksAsync(trackId, ct)).Single(t => t.Id == worker.Task!.Id).RunCount);
     }
 
     [Theory]

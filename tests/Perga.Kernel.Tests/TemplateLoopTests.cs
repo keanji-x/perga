@@ -66,7 +66,7 @@ public sealed class TemplateLoopTests
             """;
         await KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller, KernelMcpToolNames.TrackSet, TestJson.FromObject(new { source = rewriting }));
         var rewritten = await ctx.Kernel.CreateSessionAsync(snap.Track.Id, new(Prompt: "Inspect again", Task: new()), "rewrite", new InteropPrincipal.Human(), timeout.Token);
-        var worker = ((await ctx.Kernel.ListSessionsAsync(snap.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray()).Single(session => session.BoundTaskId == rewritten.Receipt.Task!.Id);
+        var worker = (await ctx.Kernel.ListSessionsAsync(snap.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Single(summary => summary.TaskId == rewritten.Receipt.Task!.Id).Session;
         Assert.Equal("codex", worker.Provider);
         Assert.Equal("gpt-5", worker.Model);
         Assert.Null(rewritten.Receipt.Task!.Provider);
@@ -116,13 +116,13 @@ public sealed class TemplateLoopTests
             [new BlockOp.UpsertBlockOp(null, ReportBlockKind.Task, null, TestJson.FromObject(new {
                 task_key = "pending", role = "review", ready = false, access = "read_only", goal_or_cmd = "Inspect" }))]));
         var draft = Assert.Single(await ctx.Kernel.ListTasksAsync(snapshot.Track.Id));
-        await ctx.Store.UpsertTaskAndAttemptAsync(draft with { Ready = true, Status = TaskRunStatus.Pending }, null, null, null, default);
+        await ctx.Store.UpsertTaskAsync(draft with { Ready = true, Status = TaskRunStatus.Pending }, null, null, default);
         await ctx.Kernel.Actors.RemoveAndDisposeAsync(snapshot.Track.Id);
         await ctx.Kernel.RejectTaskAsync(snapshot.Track.Id, caller.SessionId, draft.TaskKey, "Retry after restart", reQueue: true);
         var failed = Assert.Single(await ctx.Kernel.ListTasksAsync(snapshot.Track.Id));
         Assert.Equal(TaskRunStatus.Failed, failed.Status);
         Assert.Equal("Blocked after restart", failed.StatusDetail);
-        Assert.DoesNotContain((await ctx.Kernel.ListSessionsAsync(snapshot.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray(), session => session.BoundTaskId == failed.Id);
+        Assert.DoesNotContain(await ctx.Kernel.ListSessionsAsync(snapshot.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default), summary => summary.TaskId == failed.Id);
     }
 
     [Fact]

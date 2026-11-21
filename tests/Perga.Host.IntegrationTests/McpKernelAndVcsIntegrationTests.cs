@@ -406,6 +406,9 @@ public sealed class McpKernelAndVcsIntegrationTests
             new { result = new { summary = "Implemented feature 1" } },
             ct);
         Assert.False(doneErr, doneText);
+        using var revokedDone = await cluster.PostMcpAsync("/mcp/kernel", contractToken,
+            new { jsonrpc = "2.0", id = 91, method = "tools/list" }, ct: ct);
+        Assert.Equal(HttpStatusCode.Unauthorized, revokedDone.StatusCode);
         allowSubagentFinishTcs.TrySetResult();
 
         await kernel.WaitForTrackIdleAsync(trackAId, ct);
@@ -463,6 +466,9 @@ public sealed class McpKernelAndVcsIntegrationTests
             new { reason = "Missing upstream credential" },
             ct);
         Assert.False(failResErr, failResText);
+        using var revokedFail = await cluster.PostMcpAsync("/mcp/kernel", failSubToken,
+            new { jsonrpc = "2.0", id = 92, method = "tools/list" }, ct: ct);
+        Assert.Equal(HttpStatusCode.Unauthorized, revokedFail.StatusCode);
         releaseFailSubagentTcs.TrySetResult();
         await kernel.WaitForTrackIdleAsync(trackAId, ct);
 

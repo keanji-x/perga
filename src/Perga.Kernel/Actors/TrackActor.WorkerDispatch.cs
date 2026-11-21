@@ -28,11 +28,12 @@ public sealed partial class TrackActor
         var task = committed.Tasks.Single(t => t.TaskKey == taskKey);
         return await EnqueueAsync(async _ =>
         {
-            var created = _sessions.Values.Single(s => s.BoundTaskId == task.Id);
+            var currentTask = RequireTaskCore(task.Id);
+            var created = RequireSessionCore(currentTask.SessionId!);
             var replayed = created.Id != candidateId;
             SessionInputReceipt? first = null;
-            if (created.BoundAttemptId is { } attemptId &&
-                await Messages.GetAsync(created.Id, true, $"inp_{attemptId}", ct).ConfigureAwait(false) is { } initial)
+            if (currentTask.RunCount > 0 &&
+                await Messages.GetAsync(created.Id, $"inp_{currentTask.Id}_{currentTask.RunCount}", ct).ConfigureAwait(false) is { } initial)
             {
                 var turn = (await _store.ListSessionTurnsAsync(created.Id, ct).ConfigureAwait(false))
                     .SingleOrDefault(t => t.Id == initial.TargetTurnId);
@@ -40,7 +41,7 @@ public sealed partial class TrackActor
                     initial.Delivery == "dispatching" ? "accepted" : initial.Delivery, turn?.Status ?? initial.Delivery switch
                     { "unknown" => "unknown", "interrupted" => "interrupted", "rejected" => "failed", _ => "queued" }, null);
             }
-            return (new SessionCreationReceipt(created, first, task, requestKey), replayed);
+            return (new SessionCreationReceipt(created, first, currentTask, requestKey), replayed);
         }, ct).ConfigureAwait(false);
     }
 
@@ -65,7 +66,8 @@ public sealed partial class TrackActor
         WorkerDispatchIntent intent, CancellationToken ct)
     {
         var parent = RequireInteropCore(intent.Caller, write: true);
-        SessionPolicy.RequireCreate(intent.Caller, parent, TrackId, _options.MaxSessionSpawnDepth);
+        SessionPolicy.RequireCreate(intent.Caller, parent, TrackId,
+            callerIsTaskOwned: parent is not null && IsTaskOwnedSessionCore(parent.Id), _options.MaxSessionSpawnDepth);
         var replay = await _store.FindWorkerDispatchAsync(intent, ct).ConfigureAwait(false);
         if (replay is not null)
         {

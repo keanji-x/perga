@@ -104,7 +104,7 @@ const investmentResearchTemplate = {
   after: (event, ctx) => {
     if (event.type === "schedule.fired") return event.prompt;
     if (event.type !== "task.settled") return;
-    if (event.attemptStatus === "done") {
+    if (event.status === "done") {
       if (!ctx.state.completedAnalyses.includes(event.taskKey)) {
         ctx.state.completedAnalyses.push(event.taskKey);
       }
@@ -121,7 +121,7 @@ const investmentResearchTemplate = {
       return `Research task '${event.taskKey}' completed for ${ctx.inputs.tickerOrTheme} (verified sources=${ctx.state.dataSourcesVerified}). Synthesize findings into the report.`;
     }
 
-    if (event.attemptStatus === "failed") {
+    if (event.status === "failed") {
       return `Research task '${event.taskKey}' failed; cross-check data feed availability before retrying.`;
     }
 

@@ -198,30 +198,7 @@ public sealed class VcsMcpBackend : IMcpToolBackend
     {
         var actor = _kernel.Actors.GetOrActivate(caller.TrackId);
         var mounted = await actor.EnsureMountedAsync(ct).ConfigureAwait(false);
-        var effectiveCwd = mounted.MergedCwd;
-
-        if (!string.IsNullOrEmpty(caller.BoundAttemptId) && !string.IsNullOrEmpty(caller.BoundTaskId))
-        {
-            try
-            {
-                var attempts = await _kernel.ListTaskAttemptsAsync(caller.TrackId, caller.BoundTaskId, ct)
-                    .ConfigureAwait(false);
-                var boundAttempt = attempts.FirstOrDefault(a =>
-                    string.Equals(a.AttemptId, caller.BoundAttemptId, StringComparison.Ordinal));
-                if (boundAttempt?.WorkspaceLease is { ValueKind: JsonValueKind.Object } leaseElem &&
-                    McpToolResultFormatter.OptionalString(leaseElem, ["effectiveCwd", "effective_cwd"]) is { } leaseCwd &&
-                    !string.IsNullOrWhiteSpace(leaseCwd))
-                {
-                    effectiveCwd = leaseCwd;
-                }
-            }
-            catch (KernelException)
-            {
-                // Fall back to Track MergedCwd if task was removed.
-            }
-        }
-
-        return effectiveCwd;
+        return mounted.MergedCwd;
     }
 
     private static IReadOnlyList<McpToolWireDescriptor> BuildDescriptors()

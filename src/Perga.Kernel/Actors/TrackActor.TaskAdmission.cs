@@ -59,11 +59,11 @@ public sealed partial class TrackActor
             context.TryGetProperty("initialModel", out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
         var route = _policy is null ? new PolicyTaskRoute(task.Provider, model) : _policyVm.RouteTaskDispatch(_policy,
             task.Role, FormatAccessModeForPolicy(task.Access), task.Provider, model, _track.TemplateInputs);
-        var session = _sessions.Values.FirstOrDefault(s => s.BoundTaskId == task.Id);
+        var session = task.SessionId is { } sid && _sessions.TryGetValue(sid, out var found) ? found : null;
         if (session is null) return (route, false);
         // A preallocated session can carry a Track default that the catalog does not list.
-        var usesPreparedDefault = route.Model is null && task.LatestAttemptId is null &&
-            session is { BoundAttemptId: null, ConfigVersion: 0 };
+        var usesPreparedDefault = route.Model is null && task.RunCount == 0 &&
+            session is { ConfigVersion: 0 };
         return (route with { Provider = session.Provider, Model = session.Model }, usesPreparedDefault);
     }
 
@@ -173,8 +173,8 @@ public sealed partial class TrackActor
                         _taskDispatchApprovals[task.TaskKey] = (task.Generation, generation, TaskDispatchFields(task));
                     else
                     {
-                        var failed = current with { Status = TaskRunStatus.Failed, StatusDetail = "Task dispatch denied by human.", UpdatedAtMs = NowMs() };
-                        await PersistAndEmitTaskUpdatedCoreAsync(failed, null, null, failed.UpdatedAtMs, _actorShutdownCts.Token).ConfigureAwait(false);
+                        var failed = current with { Status = TaskRunStatus.Failed, StatusDetail = "Task dispatch denied by human.", FinishedAtMs = NowMs(), UpdatedAtMs = NowMs() };
+                        await PersistAndEmitTaskUpdatedCoreAsync(failed, null, failed.UpdatedAtMs, _actorShutdownCts.Token).ConfigureAwait(false);
                         ReplaceTaskInMemoryCore(failed);
                     }
                 }

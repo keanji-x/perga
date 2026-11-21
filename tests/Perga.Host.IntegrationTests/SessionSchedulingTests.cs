@@ -20,12 +20,12 @@ public sealed class SessionSchedulingTests
         var kernel = host.Services.GetRequiredService<IPergaKernel>();
         var store = host.Services.GetRequiredService<ITrackStore>();
         kernel.DispatchAdmission.SetDraining(true);
-        await store.SessionMessages!.InsertAsync(new("drained-queue", lead, null, "owner:installation", "drained-key", "hash",
+        await store.SessionMessages!.InsertAsync(new("drained-queue", lead, "owner:installation", "drained-key", "hash",
             null, null, "queued during drain", "queued", 1, "queue"), default);
         await store.TrackWakes.EnqueueAsync(TrackWakeRequests.Prompt(trackId, "mail", "mail:drained", "wake during drain"), default);
         await kernel.Actors.GetOrActivate(trackId).PokePendingWakesAsync();
         Assert.Equal("pending", Assert.Single(await store.TrackWakes.ListAsync(trackId, default)).State);
-        Assert.Null((await store.SessionMessages.GetAsync(lead, false, "drained-queue", default))!.TurnId);
+        Assert.Null((await store.SessionMessages.GetAsync(lead, "drained-queue", default))!.TurnId);
         Assert.Empty(host.AgentRuntime.ExecutedTurns);
         Assert.Equal(0, kernel.DispatchAdmission.ActiveDispatches);
         kernel.DispatchAdmission.SetDraining(false);
@@ -48,7 +48,7 @@ public sealed class SessionSchedulingTests
         var kernel = host.Services.GetRequiredService<IPergaKernel>();
         var store = host.Services.GetRequiredService<ITrackStore>();
         // Pause at the persisted queue boundary, before any actor Poke can claim it.
-        await store.SessionMessages!.InsertAsync(new("queued-message", lead, null, "owner:installation", "queued-key", "hash",
+        await store.SessionMessages!.InsertAsync(new("queued-message", lead, "owner:installation", "queued-key", "hash",
             null, null, "queued human message", "queued", 1, "queue"), default);
         await WakeAsync(host, trackId, "system wake");
         await kernel.WaitForTrackIdleAsync(trackId).WaitAsync(Deadline);

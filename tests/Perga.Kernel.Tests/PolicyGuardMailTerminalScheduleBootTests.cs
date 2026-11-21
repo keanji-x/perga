@@ -184,10 +184,10 @@ public sealed class PolicyGuardMailTerminalScheduleBootTests
 
         // 4. Independent sessions get unified controls; bound Workers retain observation and completion.
         Assert.Equal(38, KernelMcpToolNames.All.Count);
-        Assert.Contains(KernelMcpCatalog.GetToolsForSession(boundAttemptId: null, isLead: true), tool => tool.Name == KernelMcpToolNames.SessionSend);
-        Assert.Equal(33, KernelMcpCatalog.GetToolsForSession(boundAttemptId: null).Count);
-        Assert.Contains(KernelMcpCatalog.GetToolsForSession(boundAttemptId: null), tool => tool.Name == KernelMcpToolNames.SessionCreate);
-        var workerTools = KernelMcpCatalog.GetToolsForSession(boundAttemptId: "att_1");
+        Assert.Contains(KernelMcpCatalog.GetToolsForSession(boundTaskId: null, isLead: true), tool => tool.Name == KernelMcpToolNames.SessionSend);
+        Assert.Equal(33, KernelMcpCatalog.GetToolsForSession(boundTaskId: null).Count);
+        Assert.Contains(KernelMcpCatalog.GetToolsForSession(boundTaskId: null), tool => tool.Name == KernelMcpToolNames.SessionCreate);
+        var workerTools = KernelMcpCatalog.GetToolsForSession(boundTaskId: "att_1");
         Assert.Equal(17, workerTools.Count);
         Assert.Contains(workerTools, tool => tool.Name == KernelMcpToolNames.ProviderList);
         Assert.Contains(workerTools, tool => tool.Name == KernelMcpToolNames.DataPatch);
@@ -198,36 +198,27 @@ public sealed class PolicyGuardMailTerminalScheduleBootTests
     }
 
     [Fact]
-    public async Task BootReconciler_DiscardsSurvivingAttemptLeases_MarksInterrupted_AndWakesOpenTracksOnly()
+    public async Task BootReconciler_MarksInterrupted_AndWakesOpenTracksOnly()
     {
         await using var ctx = new KernelTestContext();
         var area = await ctx.Kernel.CreateAreaAsync(new CreateAreaRequest("Boot Area"));
         var emptyJson = TestJson.Parse("{}");
 
-        // Open track with an in-flight Running attempt holding a WorkspaceLease
+        // Open track with an in-flight Running task
         var openTrack = new TrackDto(
             "trk_boot_open", area.Id, null, null, "Open Interrupted Track", "/repo/open", "direct",
             emptyJson, "ses_open_lead", null, emptyJson, emptyJson, [], ClosedAtMs: null, PinnedAtMs: null, 0, 1000, 1000);
         var openLead = new AgentSessionDto(
-            "ses_open_lead", "trk_boot_open", true, null, null, "Lead", "codex", null, null, 1, "idle", null, 1000, 1000);
+            "ses_open_lead", "trk_boot_open", true, "Lead", "codex", null, null, 1, "idle", null, 1000, 1000);
         var inFlightTask = new TaskDto(
             "tsk_inflight", "trk_boot_open", "b_1", "crashed-task", 1, "agent", null, AccessMode.ReadWrite, true, [],
-            "Build", null, null, null, TaskRunStatus.Running, null, SemanticVerdict.None, null, "att_surviving", 1000, 1000);
-        var survivingLease = new AttemptWorkspaceLease(
-            DriverId: "direct",
-            AttemptId: "att_surviving",
-            EffectiveCwd: "/repo/open/leases/att_surviving",
-            IsIsolatedCopyOnWrite: true,
-            Metadata: emptyJson);
-        var inFlightAttempt = new TaskAttemptDto(
-            "att_surviving", "tsk_inflight", "trk_boot_open", null, "Running", null, emptyJson,
-            TestJson.FromObject(survivingLease), null, 1000, null);
+            "Build", null, null, null, TaskRunStatus.Running, null, SemanticVerdict.None, null, 1000, 1000,
+            RunCount: 1, StartedAtMs: 1000);
 
         ctx.Store.SeedDirectAggregate(
             openTrack,
             new ReportDocument(0, "", "", []),
             [inFlightTask],
-            [inFlightAttempt],
             [openLead]);
 
         // Closed track with an interrupted turn -> should be reconciled in DB, NOT woken!
@@ -235,25 +226,18 @@ public sealed class PolicyGuardMailTerminalScheduleBootTests
             "trk_boot_closed", area.Id, null, null, "Closed Track", "/repo/closed", "direct",
             emptyJson, "ses_closed_lead", null, emptyJson, emptyJson, [], ClosedAtMs: 2000, PinnedAtMs: null, 0, 1000, 2000);
         var closedLead = new AgentSessionDto(
-            "ses_closed_lead", "trk_boot_closed", true, null, null, "Lead", "codex", null, null, 1, "running", null, 1000, 1000);
+            "ses_closed_lead", "trk_boot_closed", true, "Lead", "codex", null, null, 1, "running", null, 1000, 1000);
         ctx.Store.SeedDirectAggregate(
             closedTrack,
             new ReportDocument(0, "", "", []),
-            [],
             [],
             [closedLead]);
 
         var reconcileResult = await ctx.Kernel.ReconcileOnBootAsync();
 
-        Assert.Equal(1, reconcileResult.DiscardedLeases);
         Assert.Equal(1, reconcileResult.WokenTracks);
         Assert.Equal(1, ctx.Store.MarkInterruptedCalls);
         Assert.Equal(["trk_boot_closed", "trk_boot_open"], reconcileResult.AffectedTrackIds);
-
-        // Verify surviving lease was settled with AttemptLeaseDisposition.Discard!
-        var discarded = Assert.Single(ctx.DirectDriver.SettleLeaseCalls);
-        Assert.Equal("att_surviving", discarded.Lease.AttemptId);
-        Assert.Equal(AttemptLeaseDisposition.Discard, discarded.Disposition);
 
         // Verify open track's LeadSessionId received system wake turn, and closed track's Lead did NOT!
         var openLeadTurns = ctx.Store.GetTurnsForSession("ses_open_lead");

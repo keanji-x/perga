@@ -1,16 +1,15 @@
 import { fixtureSnapshot, fixtureTrack } from './session-contract-fixture.ts';
 import type { ApiRequest, ApiTransportPort, ApiTransportResponse } from '../../../../core/api/types.ts';
-import type { TaskAttempt, TaskRecoveryView } from '../../../../core/domain/task-recovery.ts';
+import { taskDtoSchema } from '../../../../core/api/perga-v1.ts';
 import { withReadReceipts } from '../providers/read-receipts-fixture.tsx';
 
 /** A read-only Track with one failed task, as scripted HTTP snapshots. Any write is a test failure. */
 export function createTrackTaskFixture() {
   const taskKey = 'calculation-example';
   const goal = 'Calculate six times seven and explain the result.';
-  const first: TaskAttempt = { attempt_id: 'failed-native-attempt', generation: 1, status: 'failed',
-    status_detail: 'The execution reported failure.', blocking_reason: null, worker_card_id: null,
-    created_at_ms: 1788600000000, finished_at_ms: 1788600060000 };
-  const history: TaskRecoveryView = { key: taskKey, current: first, attempts: [first] };
+  const task = taskDtoSchema.parse({ id: 'task', trackId: 'w1', blockId: 'calculation-task', taskKey,
+    kind: 'agent', status: 'failed', runCount: 1, statusDetail: 'The execution reported failure.',
+    createdAtMs: 1788600000000, updatedAtMs: 1788600060000, finishedAtMs: 1788600060000 });
   const requests: ApiRequest[] = [];
   const area = { id: 'c1', name: 'Work', color: '#123456', sortOrder: 1, kind: 'user', createdAtMs: 1, updatedAtMs: 1 };
   const track = fixtureTrack('w1', { areaId: 'c1', title: 'The calculation', cwd: '/tmp', sortOrder: 1, closedAtMs: null, createdAtMs: 1, updatedAtMs: 2 });
@@ -25,12 +24,11 @@ export function createTrackTaskFixture() {
     if (request.method !== 'GET') throw new Error(`Unexpected write: ${request.method} ${request.path}`);
     if (request.path === '/api/v1/areas') return Promise.resolve(ok([area]));
     if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return Promise.resolve(ok([track]));
-    if (request.path === '/api/v1/tracks/w1') return Promise.resolve(ok(fixtureSnapshot(track, [], { docRev: reportCard.payload.docRev, summary: reportCard.payload.summary, leadingComment: '', blocks: reportCard.payload.blocks.map(block => ({ ...block, markdown: '' })) })));
+    if (request.path === '/api/v1/tracks/w1') return Promise.resolve(ok({ ...fixtureSnapshot(track, [], { docRev: reportCard.payload.docRev, summary: reportCard.payload.summary, leadingComment: '', blocks: reportCard.payload.blocks.map(block => ({ ...block, markdown: '' })) }), tasks: [task] }));
     if (request.path === '/api/v1/tracks/w1/report') return Promise.resolve(ok({ ...reportCard.payload, taskDiagnostics: [
-      { blockId: declaration.id, key: taskKey, schedulable: true, status: first.status,
-        statusDetail: first.status_detail, workerCardId: null, diagnostics: [] },
+      { blockId: declaration.id, key: taskKey, schedulable: true, status: task.status,
+        statusDetail: task.statusDetail, workerCardId: null, diagnostics: [] },
     ] }));
-    if (request.path === `/api/v1/tracks/w1/tasks/${taskKey}/attempts`) return Promise.resolve(ok(history));
     if (request.path === '/api/settings') return Promise.resolve(ok({}));
     return Promise.resolve(ok([]));
   } };

@@ -14,6 +14,7 @@ export type ConversationStore = Readonly<{
   sessionState: import('../../../../core/api/perga-v1.ts').SessionItemsPageDto['state'] | null;
   readonlyReason: import('../../../../core/api/perga-v1.ts').SessionItemsPageDto['readonlyReason'];
   canReopen: boolean;
+  taskId: string | null;
   workerPaused: boolean;
   lastTurn: import('../../../../core/api/perga-v1.ts').SessionTurnDto | null;
   unknownDetail: import('../../../../core/api/perga-v1.ts').SessionItemsPageDto['unknownDetail'];

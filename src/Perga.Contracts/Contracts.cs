@@ -77,8 +77,6 @@ public sealed record AgentSessionDto(
     string Id,
     string TrackId,
     bool IsLead,
-    string? BoundTaskId,
-    string? BoundAttemptId,
     string? Title,
     string Provider,
     string? Model,
@@ -171,23 +169,16 @@ public sealed record TaskDto(
     string? StatusDetail,
     SemanticVerdict SemanticVerdict,
     string? SemanticNote,
-    string? LatestAttemptId,
     long CreatedAtMs,
     long UpdatedAtMs,
-    string? Role = null);
-
-public sealed record TaskAttemptDto(
-    string AttemptId,
-    string TaskId,
-    string TrackId,
-    string? SessionId,
-    string Status,
-    JsonElement? WorkerResult,
-    JsonElement Meta,
-    JsonElement? WorkspaceLease,
-    JsonElement? GateVerdict,
-    long StartedAtMs,
-    long? FinishedAtMs);
+    string? Role = null,
+    string? SessionId = null,
+    int RunCount = 0,
+    JsonElement? WorkerResult = null,
+    JsonElement? Meta = null,
+    JsonElement? GateVerdict = null,
+    long? StartedAtMs = null,
+    long? FinishedAtMs = null);
 
 public sealed record AskQuestionDto(
     string Question,
@@ -239,7 +230,7 @@ public sealed record MailDto(
 public sealed record TerminalDto(
     string Id,
     string TrackId,
-    string? AttemptId,
+    string? SessionId,
     string? IdempotencyKey,
     string Title,
     string? Program,
@@ -263,7 +254,7 @@ public sealed record DbMaintenanceStatsDto(
     int CompactedItems,
     int ReclaimedPages)
 {
-    public int CompactedAttempts { get; init; }
+    public int CompactedTasks { get; init; }
     public int ReclaimedBlobs { get; init; }
 }
 

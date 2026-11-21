@@ -70,15 +70,13 @@ public sealed class ReadReceiptTests
         await h.Store.UpsertAreaAsync(StorageTestHarness.CreateArea(), default);
         var (track, report, lead) = StorageTestHarness.CreateSeedTrack();
         await h.Store.CreateTrackAsync(track, report, null, lead, default);
+        var worker = lead with { Id = "worker", IsLead = false, Status = "unknown" };
+        await h.Store.UpsertSessionAsync(worker, null, default);
         await using var conn = h.OpenRawInspectConnection();
         await conn.ExecuteAsync("""
-            INSERT INTO tasks(id, track_id, block_id, task_key, kind, goal_or_cmd, status, created_at_ms, updated_at_ms)
-            VALUES ('task', @TrackId, 'block', 'task', 'subagent', 'test', 'running', 1, 1);
-            INSERT INTO task_attempts(attempt_id, task_id, track_id, session_id, status, started_at_ms)
-            VALUES ('attempt', 'task', @TrackId, 'worker', 'running', 1);
+            INSERT INTO tasks(id, track_id, block_id, task_key, kind, goal_or_cmd, status, session_id, run_count, started_at_ms, created_at_ms, updated_at_ms)
+            VALUES ('task', @TrackId, 'block', 'task', 'subagent', 'test', 'running', 'worker', 1, 1, 1, 1);
             """, new { TrackId = track.Id });
-        var worker = lead with { Id = "worker", IsLead = false, BoundTaskId = "task", BoundAttemptId = "attempt", Status = "unknown" };
-        await h.Store.UpsertSessionAsync(worker, null, default);
         await h.Store.RecordTurnAndItemsAsync(new SessionTurnDto("worker-turn", worker.Id, 1, 0, "user",
             StorageTestHarness.Json("{}"), "failed", null, null, 3000, 5000), [], null, default);
         var active = Assert.Single(await h.Store.ListTrackOverlaysAsync());
@@ -86,7 +84,7 @@ public sealed class ReadReceiptTests
         Assert.True(active.IsWorking);
         Assert.Empty(active.NotifiableSessions!);
         Assert.Equal(5000, Assert.Single((await h.Store.LoadTrackAggregateAsync(track.Id, default))!.Sessions, s => s.Id == worker.Id).LastNotifiableTurnAtMs);
-        await conn.ExecuteAsync("UPDATE task_attempts SET status='failed', finished_at_ms=6000; UPDATE tasks SET status='failed';");
+        await conn.ExecuteAsync("UPDATE tasks SET status='failed', finished_at_ms=6000;");
         var finished = Assert.Single(await h.Store.ListTrackOverlaysAsync());
         Assert.False(finished.HasBlockedSession);
         Assert.False(finished.IsWorking);

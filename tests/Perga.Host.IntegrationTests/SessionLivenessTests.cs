@@ -75,13 +75,13 @@ public sealed class SessionLivenessTests
                 var store = host.Services.GetRequiredService<ITrackStore>();
                 var page = await kernel.GetSessionItemsAsync(id, new(), new InteropPrincipal.Human(), default);
                 var track = page.Session.TrackId;
-                await store.SessionMessages!.InsertAsync(new("unknown-queue", id, null, "user", "queue", "hash", null, null,
+                await store.SessionMessages!.InsertAsync(new("unknown-queue", id, "user", "queue", "hash", null, null,
                     "  copy this exact text\nagain  ", "unknown", 1, "queue"), default);
                 var startupCalls = 0;
                 host.AgentRuntime.BeforeOpenAsync = async (_, ct) =>
                 {
                     Interlocked.Increment(ref startupCalls);
-                    await store.SessionMessages.InsertAsync(new("waiting-queue", id, null, "user", "waiting", "hash", null, null,
+                    await store.SessionMessages.InsertAsync(new("waiting-queue", id, "user", "waiting", "hash", null, null,
                         "waiting for startup", "queued", 2, "queue"), ct);
                     await store.TrackWakes.EnqueueAsync(new(track, "mail", null,
                         System.Text.Json.JsonSerializer.SerializeToElement(new { prompt = "critical wake content" }), id), ct);
@@ -127,11 +127,11 @@ public sealed class SessionLivenessTests
         await using var host = new PergaHostTestCluster();
         var (_, id) = await host.CreateTrackAsync();
         var store = host.Services.GetRequiredService<ITrackStore>();
-        await store.SessionMessages!.InsertAsync(new("withdraw", id, null, "user", "withdraw", "hash", null, null,
+        await store.SessionMessages!.InsertAsync(new("withdraw", id, "user", "withdraw", "hash", null, null,
             "withdraw text", delivery, 1, "queue"), default);
         using var response = await host.Client.DeleteAsync($"/api/v1/sessions/{id}/messages/withdraw");
         Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
-        Assert.Equal("withdrawn", (await store.SessionMessages.GetAsync(id, false, "withdraw", default))?.Delivery);
+        Assert.Equal("withdrawn", (await store.SessionMessages.GetAsync(id, "withdraw", default))?.Delivery);
     }
 
     [Fact]

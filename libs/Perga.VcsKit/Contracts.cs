@@ -2,13 +2,7 @@ using System.Text.Json;
 
 namespace Perga.VcsKit;
 
-// -------- 1. 工作区存储/挂载与 CoW 租约抽象（预留 OverlayFS，一期仅实现 direct / vcs-workspace） --------
-
-public enum AttemptLeaseDisposition
-{
-    Promote,
-    Discard
-}
+// -------- 1. Track-scoped workspace storage & mount abstractions --------
 
 public sealed record WorkspaceOverlayLayer(
     IReadOnlyList<string> LowerDirs,
@@ -41,33 +35,15 @@ public sealed record MountedWorkspace(
     IReadOnlyList<WorkspaceOverlayLayer>? ProcessOverlayLayers = null,
     bool ManagedEmptyWorkspace = false);
 
-public sealed record AttemptWorkspaceLease(
-    string DriverId,
-    string AttemptId,
-    string EffectiveCwd,
-    bool IsIsolatedCopyOnWrite,
-    JsonElement Metadata,
-    IReadOnlyList<WorkspaceOverlayLayer>? ProcessOverlayLayers = null);
-
 public interface IWorkspaceDriver
 {
     string DriverId { get; }
-    bool SupportsParallelIsolatedWriteLeases { get; }
     bool ProvisionIsRepeatable => false;
     bool VerifyMountOnAccess => false;
     Task<bool> IsAvailableAsync(string? source, CancellationToken ct) => Task.FromResult(true);
 
     Task<WorkspaceSpec> ProvisionTrackAsync(WorkspaceProvisionRequest req, CancellationToken ct = default);
     Task<MountedWorkspace> EnsureMountedAsync(WorkspaceSpec spec, CancellationToken ct = default);
-    Task<AttemptWorkspaceLease> AcquireAttemptLeaseAsync(
-        MountedWorkspace workspace,
-        string attemptId,
-        bool readWrite,
-        CancellationToken ct = default);
-    Task SettleAttemptLeaseAsync(
-        AttemptWorkspaceLease lease,
-        AttemptLeaseDisposition disposition,
-        CancellationToken ct = default);
     Task TeardownTrackAsync(WorkspaceSpec spec, CancellationToken ct = default);
     Task CleanupDeletedTrackAsync(WorkspaceSpec spec) => Task.CompletedTask;
 }

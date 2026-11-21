@@ -49,9 +49,6 @@ public sealed record WorkerDispatchIntent(string TrackId, string AuthorId, strin
 }
 public sealed record StoredWorkerDispatch(string RequestHash, string TaskId);
 
-public sealed record InterruptedAttemptLeaseDto(
-    string AttemptId, string TaskId, string TrackId, JsonElement WorkspaceLease);
-
 public interface ITrackReadStore
 {
     string DatabaseId => string.Empty;
@@ -62,7 +59,6 @@ public interface ITrackReadStore
     Task<TrackDto?> GetTrackAsync(string trackId, CancellationToken ct);
     Task<TrackAggregateSnapshot?> LoadTrackAggregateAsync(string trackId, CancellationToken ct);
     Task<IReadOnlyList<ReportBlock>> GetReportRevisionBlocksAsync(string trackId, int docRev, CancellationToken ct);
-    Task<IReadOnlyList<TaskAttemptDto>> ListAttemptsForTaskAsync(string taskId, CancellationToken ct);
     Task<IReadOnlyList<SessionItemDto>> ListSessionItemsAsync(string sessionId, long afterId = 0, int limit = 100, CancellationToken ct = default, bool latest = false, long? beforeId = null);
     async Task<(IReadOnlyList<SessionItemDto> Items, bool HasMoreBefore)> ListSessionItemsPageAsync(
         string sessionId,
@@ -129,8 +125,9 @@ public interface ITrackStore : ITrackReadStore
     Task<IReadOnlyList<string>> ListPendingWorkerDispatchTracksAsync(CancellationToken ct) =>
         Task.FromResult<IReadOnlyList<string>>([]);
 
-    Task UpsertTaskAndAttemptAsync(TaskDto task, TaskAttemptDto? attempt, JsonElement? nextTemplateState, EventEnvelopeDto? evt, CancellationToken ct,
-        AgentSessionDto? session = null, EventEnvelopeDto? sessionEvent = null, string? wakePrompt = null, SessionMessage? initialMessage = null);
+    Task UpsertTaskAsync(TaskDto task, JsonElement? nextTemplateState, EventEnvelopeDto? evt, CancellationToken ct,
+        AgentSessionDto? session = null, EventEnvelopeDto? sessionEvent = null, string? wakePrompt = null,
+        SessionMessage? initialMessage = null, bool writeNewRunBoundary = false);
     Task<bool> HasSessionTurnAsync(string sessionId, string turnId, CancellationToken ct);
     Task<IReadOnlyList<SessionTurnDto>> ListSessionTurnsAsync(string sessionId, CancellationToken ct) =>
         Task.FromResult<IReadOnlyList<SessionTurnDto>>([]);
@@ -157,7 +154,6 @@ public interface ITrackStore : ITrackReadStore
     Task UpsertTerminalAsync(TerminalDto terminal, EventEnvelopeDto? evt, CancellationToken ct);
     Task DeleteTerminalAsync(string trackId, string terminalId, EventEnvelopeDto? evt, CancellationToken ct);
     Task AppendEventAsync(EventEnvelopeDto evt, CancellationToken ct);
-    Task<IReadOnlyList<InterruptedAttemptLeaseDto>> ListInFlightAttemptLeasesAsync(CancellationToken ct = default);
     Task<IReadOnlyList<string>> MarkInFlightInterruptedOnBootAsync(CancellationToken ct);
     Task<DbMaintenanceStatsDto> RunMaintenancePassAsync(long nowMs, CancellationToken ct);
 }

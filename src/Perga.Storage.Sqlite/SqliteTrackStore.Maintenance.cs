@@ -31,14 +31,14 @@ public sealed partial class SqliteTrackStore
             () => ThinReportRevisionsAsync(nowMs, ct), MaintenanceBatchSize).ConfigureAwait(false);
         var compactedItems = await RunMaintenanceBatchesAsync(
             () => SlimSessionItemsAsync(nowMs, ct), MaintenanceBatchSize).ConfigureAwait(false);
-        var compactedAttempts = await RunMaintenanceBatchesAsync(
-            () => CompactAttemptDiagnosticsAsync(nowMs, ct), MaintenanceBatchSize).ConfigureAwait(false);
+        var compactedTasks = await RunMaintenanceBatchesAsync(
+            () => CompactTaskDiagnosticsAsync(nowMs, ct), MaintenanceBatchSize).ConfigureAwait(false);
         var reclaimedBlobs = await SweepUnreferencedBlobsAsync(ct).ConfigureAwait(false);
         var reclaimedPages = await VacuumAndCheckpointAsync(ct).ConfigureAwait(false);
 
         return new DbMaintenanceStatsDto(prunedEvents, thinnedRevisions, compactedItems, reclaimedPages)
         {
-            CompactedAttempts = compactedAttempts,
+            CompactedTasks = compactedTasks,
             ReclaimedBlobs = reclaimedBlobs
         };
     }
@@ -240,12 +240,12 @@ public sealed partial class SqliteTrackStore
         }, ct).ConfigureAwait(false);
     }
 
-    private async Task<int> CompactAttemptDiagnosticsAsync(long nowMs, CancellationToken ct)
+    private async Task<int> CompactTaskDiagnosticsAsync(long nowMs, CancellationToken ct)
     {
         const string eligible = """
-            FROM task_attempts
+            FROM tasks
             WHERE finished_at_ms <= @Cutoff
-              AND lower(status) IN ('done', 'failed', 'canceled', 'cancelled', 'interrupted')
+              AND lower(status) IN ('done', 'failed', 'canceled', 'cancelled')
               AND (
                   (
                       session_id IS NULL AND json_type(worker_result_json, '$.stdoutTruncated') IN ('true', 'false')
@@ -271,7 +271,7 @@ public sealed partial class SqliteTrackStore
         await using (var reader = await OpenReadConnectionAsync(ct).ConfigureAwait(false))
         {
             var ids = (await reader.QueryAsync<string>(new CommandDefinition(
-                "SELECT attempt_id " + eligible + " ORDER BY finished_at_ms, attempt_id LIMIT @BatchSize;",
+                "SELECT id " + eligible + " ORDER BY finished_at_ms, id LIMIT @BatchSize;",
                 parameters, cancellationToken: ct)).ConfigureAwait(false)).AsList();
             if (ids.Count == 0)
             {
@@ -283,32 +283,32 @@ public sealed partial class SqliteTrackStore
 
         return await _writer.EnqueueAsync<int>(async (conn, tx, innerCt) =>
         {
-            var attempts = await conn.QueryAsync<AttemptDiagnosticRow>(new CommandDefinition(
+            var tasks = await conn.QueryAsync<TaskDiagnosticRow>(new CommandDefinition(
                 """
-                SELECT attempt_id AS AttemptId, track_id AS TrackId, session_id AS SessionId,
+                SELECT id AS TaskId, track_id AS TrackId, session_id AS SessionId,
                        worker_result_json AS WorkerResultJson, gate_verdict_json AS GateVerdictJson
-                """ + " " + eligible + " AND attempt_id IN @Ids;",
+                """ + " " + eligible + " AND id IN @Ids;",
                 parameters, tx, cancellationToken: innerCt)).ConfigureAwait(false);
 
             var compacted = 0;
-            foreach (var attempt in attempts)
+            foreach (var task in tasks)
             {
-                var resultJson = attempt.WorkerResultJson;
-                if (attempt.SessionId is null && resultJson is not null && JsonNode.Parse(resultJson) is JsonObject result &&
+                var resultJson = task.WorkerResultJson;
+                if (task.SessionId is null && resultJson is not null && JsonNode.Parse(resultJson) is JsonObject result &&
                     result["stdoutTruncated"] is JsonValue truncated && truncated.TryGetValue<bool>(out _) &&
                     ExpireShellOutput(result))
                 {
                     resultJson = result.ToJsonString();
                 }
 
-                var gateJson = ExpireGateDiagnostics(attempt);
+                var gateJson = ExpireGateDiagnostics(task);
                 compacted += await conn.ExecuteAsync(new CommandDefinition(
                     """
-                    UPDATE task_attempts
+                    UPDATE tasks
                        SET worker_result_json = @ResultJson, gate_verdict_json = @GateJson
-                     WHERE attempt_id = @AttemptId;
+                     WHERE id = @TaskId;
                     """,
-                    new { attempt.AttemptId, ResultJson = resultJson, GateJson = gateJson },
+                    new { task.TaskId, ResultJson = resultJson, GateJson = gateJson },
                     tx, cancellationToken: innerCt)).ConfigureAwait(false);
             }
 
@@ -316,16 +316,16 @@ public sealed partial class SqliteTrackStore
         }, ct).ConfigureAwait(false);
     }
 
-    private string? ExpireGateDiagnostics(AttemptDiagnosticRow attempt)
+    private string? ExpireGateDiagnostics(TaskDiagnosticRow task)
     {
-        var gateJson = attempt.GateVerdictJson;
+        var gateJson = task.GateVerdictJson;
         if (gateJson is null || JsonNode.Parse(gateJson) is not JsonObject storedGate ||
             storedGate["outputExpired"]?.GetValue<bool>() == true)
         {
             return gateJson;
         }
 
-        var verdict = _coldBlobStore.Hydrate(gateJson, "task_attempts.gate_verdict_json");
+        var verdict = _coldBlobStore.Hydrate(gateJson, "tasks.gate_verdict_json");
         if (JsonNode.Parse(verdict.GetRawText()) is JsonObject gate && gate["steps"] is JsonArray steps)
         {
             var expired = false;
@@ -337,7 +337,7 @@ public sealed partial class SqliteTrackStore
             if (expired)
             {
                 gate["outputExpired"] = true;
-                gateJson = _coldBlobStore.StoreOrInline(attempt.TrackId, JsonSerializer.SerializeToElement(gate));
+                gateJson = _coldBlobStore.StoreOrInline(task.TrackId, JsonSerializer.SerializeToElement(gate));
                 storedGate = (JsonObject)JsonNode.Parse(gateJson)!;
             }
         }
@@ -430,7 +430,7 @@ public sealed partial class SqliteTrackStore
             WHERE json_type(payload_json, '$.blobRef') = 'text'
             """;
         const string gateRefs = """
-            SELECT json_extract(gate_verdict_json, '$.blobRef') FROM task_attempts
+            SELECT json_extract(gate_verdict_json, '$.blobRef') FROM tasks
             WHERE json_type(gate_verdict_json, '$.blobRef') = 'text'
             """;
         var sql = candidates is null ? sessionRefs + " UNION ALL " + gateRefs
@@ -441,8 +441,8 @@ public sealed partial class SqliteTrackStore
         return refs.ToHashSet(StringComparer.Ordinal);
     }
 
-    private sealed record AttemptDiagnosticRow(
-        string AttemptId, string TrackId, string? SessionId, string? WorkerResultJson, string? GateVerdictJson);
+    private sealed record TaskDiagnosticRow(
+        string TaskId, string TrackId, string? SessionId, string? WorkerResultJson, string? GateVerdictJson);
 
     private Task<int> VacuumAndCheckpointAsync(CancellationToken ct) =>
         _writer.EnqueueNonTransactionalAsync<int>(

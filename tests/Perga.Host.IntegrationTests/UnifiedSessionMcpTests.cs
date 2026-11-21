@@ -221,7 +221,7 @@ public sealed class UnifiedSessionMcpTests
     }
 
     [Fact]
-    public async Task SessionUpdateHonorsExpectedAttemptId()
+    public async Task SessionSendHonorsExpectedEpoch()
     {
         await using var host = new PergaHostTestCluster();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
@@ -233,16 +233,14 @@ public sealed class UnifiedSessionMcpTests
         var child = await Success<SessionCreationReceipt>(host, token, KernelMcpToolNames.SessionCreate,
             new { title = "original", prompt = "work", task = new { access = "read_only" } }, ct);
         var page = await WaitPage(kernel, child.Session.Id, p => p.State == "running", ct);
-        var attemptId = Assert.IsType<string>(page.Session.BoundAttemptId);
-        await Error(host, token, KernelMcpToolNames.SessionUpdate,
-            new { sessionId = child.Session.Id, title = "stale", expectedAttemptId = "stale-attempt" }, "conflict", ct);
-        Assert.Equal("original", (await kernel.GetSessionItemsAsync(child.Session.Id, new(), Human, ct)).Session.Title);
-        var updated = await Success<AgentSessionDto>(host, token, KernelMcpToolNames.SessionUpdate,
-            new { sessionId = child.Session.Id, title = "renamed", expectedAttemptId = attemptId }, ct);
-        Assert.Equal("renamed", updated.Title);
-        Assert.Equal(attemptId, updated.BoundAttemptId);
-        var schema = KernelMcpCatalog.GetAllTools().Single(t => t.Name == KernelMcpToolNames.SessionUpdate).InputSchema;
-        Assert.Equal("string", schema.GetProperty("properties").GetProperty("expectedAttemptId").GetProperty("type").GetString());
+        var epoch = page.Session.Epoch;
+        await Error(host, token, KernelMcpToolNames.SessionSend,
+            new { sessionId = child.Session.Id, content = "stale", mode = "queue", requestKey = "stale-epoch", expectedEpoch = epoch + 1 }, "conflict", ct);
+        var queued = await Success<SessionMessageReceipt>(host, token, KernelMcpToolNames.SessionSend,
+            new { sessionId = child.Session.Id, content = "queued", mode = "queue", requestKey = "good-epoch", expectedEpoch = epoch }, ct);
+        Assert.Equal("queued", queued.Delivery);
+        var schema = KernelMcpCatalog.GetAllTools().Single(t => t.Name == KernelMcpToolNames.SessionSend).InputSchema;
+        Assert.Equal("integer", schema.GetProperty("properties").GetProperty("expectedEpoch").GetProperty("type").GetString());
     }
 
     [Theory]
@@ -275,11 +273,10 @@ public sealed class UnifiedSessionMcpTests
         var reset = await Success<AgentSessionDto>(host, token, KernelMcpToolNames.SessionControl,
             new { sessionId = child.Session.Id, action = "reset_context" }, ct);
         Assert.Equal(recovered.Epoch + 1, reset.Epoch);
-        Assert.Equal(recovered.BoundAttemptId, reset.BoundAttemptId);
         if (taskBound)
         {
             var workerToken = kernel.McpSessionBridge.RegisterSession(reset.TrackId, reset.Id, false,
-                reset.BoundTaskId, reset.BoundAttemptId, []).Principal.Token;
+                child.Task!.Id, 1, []).Principal.Token;
             var tools = await ListToolNamesAsync(host, "/mcp/kernel", workerToken, ct);
             Assert.Contains(KernelMcpToolNames.SessionRead, tools);
             Assert.Contains(KernelMcpToolNames.SessionList, tools);
@@ -576,7 +573,7 @@ public sealed class UnifiedSessionMcpTests
         await kernel.SendSessionMessageAsync(sessionId, new(Content: "hold:" + sessionId, RequestKey: Guid.NewGuid().ToString("N")), Human, ct);
         var page = await WaitPage(kernel, sessionId, p => p.ActiveTurn is not null && p.Activity is { Sequence: > 0 }, ct);
         return kernel.McpSessionBridge.RegisterSession(page.Session.TrackId, sessionId, page.Session.IsLead,
-            page.Session.BoundTaskId, page.Session.BoundAttemptId, []).Principal.Token;
+            page.TaskBinding?.Task.Id, page.TaskBinding?.Task.RunCount, []).Principal.Token;
     }
 
     private static async Task<SessionItemsPageDto> WaitPage(IPergaKernel kernel, string session, Func<SessionItemsPageDto, bool> predicate, CancellationToken ct)

@@ -106,7 +106,7 @@ public sealed record PolicyTurnContext(
     string TrackId,
     string SessionId,
     bool IsLead,
-    string? BoundAttemptId,
+    string? BoundTaskId,
     double ContextUsageRatio,
     JsonElement Inputs);
 

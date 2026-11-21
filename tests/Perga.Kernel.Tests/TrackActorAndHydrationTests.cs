@@ -46,8 +46,6 @@ public sealed class TrackActorAndHydrationTests
             Id: "ses_lead_cold",
             TrackId: "trk_cold",
             IsLead: true,
-            BoundTaskId: null,
-            BoundAttemptId: null,
             Title: "Lead",
             Provider: "codex",
             Model: null,
@@ -62,7 +60,6 @@ public sealed class TrackActorAndHydrationTests
             seededTrack,
             ctx.ReportEngine.Parse("# Overview\n\nHydration test."),
             tasks: [],
-            attempts: [],
             sessions: [seededLead]);
 
         var ensureMountedSeenBeforeSessionOpen = false;

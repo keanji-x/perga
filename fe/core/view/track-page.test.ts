@@ -255,7 +255,7 @@ describe('deriveTrackPageView tasks', () => {
     const [failed, working] = tasksModule([
       task({ blockId: 'b-f', key: 'k-f', kind: 'claude', workerCardId: 'card-9', status: 'running' }),
       { ...task({ blockId: 'b-w', key: 'k-w', kind: 'codex', workerCardId: 'stale', status: 'dispatched' }), execution: {
-        attemptId: 'a1', generation: 1, createdAtMs: 1000, finishedAtMs: null, status: 'running', label: 'Running', statusDetail: null,
+        sessionId: 'a1', runCount: 1, createdAtMs: 1000, finishedAtMs: null, status: 'running', label: 'Running', statusDetail: null,
         workerCardId: 'card-7', blockingReason: null,
       } },
     ], activity, new Set()).rows;
@@ -372,7 +372,7 @@ it('labels a superseded worker card’s live status as its session’s, leaving 
       card({ id: 'new-worker', title: 'alpha-task', kind: 'codex', runtime: { worker_session_id: 's2', kind: 'codex', status: 'running' } }),
     ],
     tasks: [{ ...task({ key: 'alpha-task', status: 'done', kind: 'codex', workerCardId: 'old-worker' }), execution: {
-      attemptId: 'a2', generation: 2, createdAtMs: 1000, finishedAtMs: null, status: 'done', label: 'Done', statusDetail: null, workerCardId: 'new-worker', blockingReason: null,
+      sessionId: 'a2', runCount: 2, createdAtMs: 1000, finishedAtMs: null, status: 'done', label: 'Done', statusDetail: null, workerCardId: 'new-worker', blockingReason: null,
     } }],
     activity: NEUTRAL_ACTIVITY,
     openableCards: new Set(),
@@ -387,7 +387,7 @@ it('labels a superseded worker card’s live status as its session’s, leaving 
 });
 
 it('separates an execution label from its actual explanation', () => {
-  const execution = { attemptId: 'a1', generation: 1, createdAtMs: 1000, finishedAtMs: null, status: 'failed', label: 'Failed',
+  const execution = { sessionId: 'a1', runCount: 1, createdAtMs: 1000, finishedAtMs: null, status: 'failed', label: 'Failed',
     statusDetail: 'Gate exited with code 1', workerCardId: null, blockingReason: null };
   const [detailed, labelOnly] = tasksModule([
     { ...task({ blockId: 'detail' }), execution },
@@ -406,10 +406,10 @@ describe('parkedWorkerNotices (#2526)', () => {
       status, parkedWorkerNotices([worker(status)]).get('card-w'),
     ]));
     expect(Object.fromEntries(notices)).toEqual({
-      verifying: 'Checking result — this attempt has ended; input typed here belongs to no task.',
-      done: 'Completed — this attempt has ended; input typed here belongs to no task.',
-      failed: 'Failed — this attempt has ended; input typed here belongs to no task.',
-      canceled: 'Canceled — this attempt has ended; input typed here belongs to no task.',
+      verifying: 'Checking result — this task has ended; input typed here belongs to no task.',
+      done: 'Completed — this task has ended; input typed here belongs to no task.',
+      failed: 'Failed — this task has ended; input typed here belongs to no task.',
+      canceled: 'Canceled — this task has ended; input typed here belongs to no task.',
     });
   });
 
@@ -427,11 +427,11 @@ describe('parkedWorkerNotices (#2526)', () => {
   });
 
   it('reads the loaded execution over the report verdict', () => {
-    const execution = { attemptId: 'a2', generation: 2, createdAtMs: 1000, finishedAtMs: null, status: 'running', label: 'Running',
+    const execution = { sessionId: 'a2', runCount: 2, createdAtMs: 1000, finishedAtMs: null, status: 'running', label: 'Running',
       statusDetail: null, workerCardId: 'card-w', blockingReason: null };
     expect(parkedWorkerNotices([{ ...worker('done'), execution }]).size).toBe(0);
     expect(parkedWorkerNotices([{ ...worker('running'), execution: { ...execution, status: 'failed' } }]).get('card-w'))
-      .toBe('Failed — this attempt has ended; input typed here belongs to no task.');
+      .toBe('Failed — this task has ended; input typed here belongs to no task.');
   });
 
   it('lets a live claim on the card win over a parked one', () => {
@@ -522,7 +522,7 @@ it('orders independent resources by recency within live and ended partitions', (
 
 it('uses attempt end evidence for finished tasks without borrowing a reused worker’s later activity', () => {
   const ended = (blockId: string, finish: number | null): ReportTaskRow => ({ ...task({ blockId, kind: 'codex', status: 'done', workerCardId: 'shared' }),
-    ...(finish === null ? {} : { execution: { attemptId: blockId, generation: 1, status: 'done', label: 'Completed',
+    ...(finish === null ? {} : { execution: { sessionId: blockId, runCount: 1, status: 'done', label: 'Completed',
       statusDetail: null, blockingReason: null, workerCardId: 'shared', createdAtMs: 0, finishedAtMs: finish } }),
   });
   const view = deriveTrackPageView({ existingCardIds: new Set(["shared"]), cards: [card({ id: 'shared', updated_at: 9000 })],

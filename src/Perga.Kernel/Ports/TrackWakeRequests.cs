@@ -6,7 +6,7 @@ namespace Perga.Kernel.Ports;
 
 public static class TrackWakeRequests
 {
-    public const string BootPrompt = "System boot reconciliation completed: previous in-flight session turns and task attempts were marked interrupted and temporary workspace leases were discarded. Review track status and decide next steps.";
+    public const string BootPrompt = "System boot reconciliation completed: previous in-flight session turns and running tasks were marked interrupted. Review track status and decide next steps.";
     public const string MailKeyPrefix = "mail:";
     public const string TrackScheduleKeyPrefix = "track_schedule:";
     public const string SystemUpgradeMailIdPrefix = "system-upgrade:";
@@ -36,9 +36,9 @@ public static class TrackWakeRequests
             TargetSessionId: null);
     public static TrackWakeRequest Mail(MailDto mail) => Prompt(mail.ToTrackId, TrackWakeKinds.Mail, MailKey(mail.Id),
         $"New cross-track mail '{mail.Id}' from track '{mail.FromTrackId}': {mail.Summary}\n\n{mail.Body}", TrackWakePresentations.SystemMail);
-    public static TrackWakeRequest TaskSettled(TaskDto task, TaskAttemptDto attempt, string? prompt = null) => Prompt(task.TrackId,
-        TrackWakeKinds.TaskSettled, $"task:{task.Id}:{attempt.AttemptId}",
-        prompt ?? $"Task '{task.TaskKey}' (attempt '{attempt.AttemptId}') settled as {task.Status}. {task.StatusDetail}",
+    public static TrackWakeRequest TaskSettled(TaskDto task, string? prompt = null) => Prompt(task.TrackId,
+        TrackWakeKinds.TaskSettled, $"task:{task.Id}:{task.RunCount}",
+        prompt ?? $"Task '{task.TaskKey}' (run #{task.RunCount}) settled as {task.Status}. {task.StatusDetail}",
         task.Status == TaskRunStatus.Done ? TrackWakePresentations.SystemTaskCompleted : TrackWakePresentations.SystemTaskFailed);
     public static TrackWakeRequest Ask(AskDto ask) => Prompt(ask.TrackId, TrackWakeKinds.AskAnswered, "ask:" + ask.Id,
         $"User answered ask '{ask.Id}': {ask.Answer?.GetRawText()}") with { TargetSessionId = ask.SessionId };

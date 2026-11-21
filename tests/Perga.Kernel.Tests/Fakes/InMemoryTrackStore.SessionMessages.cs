@@ -5,15 +5,15 @@ namespace Perga.Kernel.Tests.Fakes;
 
 internal sealed partial class InMemoryTrackStore : ISessionInputStore, ISessionMessageStore
 {
-    private readonly Dictionary<(string SessionId, bool Worker, string Id), PersistedSessionInput> _inputs = new();
-    private readonly Dictionary<(string SessionId, bool Worker, string Id), SessionMessage> _messages = new();
+    private readonly Dictionary<(string SessionId, string Id), PersistedSessionInput> _inputs = new();
+    private readonly Dictionary<(string SessionId, string Id), SessionMessage> _messages = new();
     private readonly Dictionary<(string Track, string Author, string Key), StoredSessionCreation> _sessionCreations = new();
     private readonly Dictionary<(string Id, string Turn), string> _queuedSteers = new();
 
-    private static (string SessionId, bool Worker, string Id) Key(SessionMessage message) =>
-        (message.SessionId, message.AttemptId is not null, message.Id);
-    private static (string SessionId, bool Worker, string Id) Key(PersistedSessionInput input) =>
-        (input.Receipt.SessionId, false, input.Receipt.InputId);
+    private static (string SessionId, string Id) Key(SessionMessage message) => (message.SessionId, message.Id);
+    private static (string SessionId, string Id) Key(PersistedSessionInput input) => (input.Receipt.SessionId, input.Receipt.InputId);
+
+    public Action? BeforeInputWrite { get; set; }
 
     public ISessionInputStore SessionInputs => this;
     public ISessionMessageStore SessionMessages => this;
@@ -23,14 +23,14 @@ internal sealed partial class InMemoryTrackStore : ISessionInputStore, ISessionM
     public Task<PersistedSessionInput?> FindByKeyAsync(string sessionId, string key, CancellationToken ct)
     {
         lock (_gate)
-            return Task.FromResult(_messages.Values.Where(m => m.SessionId == sessionId && m.AttemptId is null && m.RequestKey == key && m.Kind == "input")
+            return Task.FromResult(_messages.Values.Where(m => m.SessionId == sessionId && m.RequestKey == key && m.Kind == "input")
                 .Select(m => _inputs.GetValueOrDefault(Key(m))).FirstOrDefault());
     }
 
     public Task<PersistedSessionInput?> FindByIdAsync(string sessionId, string inputId, CancellationToken ct)
     {
         lock (_gate)
-            return Task.FromResult(_inputs.GetValueOrDefault((sessionId, false, inputId)) is { } input && input.Receipt.SessionId == sessionId ? input : null);
+            return Task.FromResult(_inputs.GetValueOrDefault((sessionId, inputId)) is { } input && input.Receipt.SessionId == sessionId ? input : null);
     }
 
     public Task<PersistedSessionInput?> FindUnresolvedAsync(string sessionId, CancellationToken ct)
@@ -45,7 +45,9 @@ internal sealed partial class InMemoryTrackStore : ISessionInputStore, ISessionM
         lock (_gate)
         {
             var prior = _sessionCreations.GetValueOrDefault((intent.TrackId, intent.AuthorId, intent.RequestKey));
-            return Task.FromResult(prior is null ? null : new StoredWorkerDispatch(prior.RequestHash, prior.Session?.BoundTaskId!));
+            if (prior?.Session is not { } session) return Task.FromResult<StoredWorkerDispatch?>(null);
+            var task = _tasksByTrack.GetValueOrDefault(intent.TrackId)?.FirstOrDefault(t => t.SessionId == session.Id);
+            return Task.FromResult<StoredWorkerDispatch?>(new StoredWorkerDispatch(prior.RequestHash, task?.Id ?? ""));
         }
     }
 
@@ -84,7 +86,8 @@ internal sealed partial class InMemoryTrackStore : ISessionInputStore, ISessionM
         {
             if (_sessions[session.Id].Status is "queued" or "running" or "unknown")
                 throw KernelException.Conflict("The session already has an active or unresolved turn.");
-            var input = BindInputLocked(session, new($"inp_{Guid.NewGuid():N}", session.Id, null, request.AuthorId, request.Key,
+            BeforeInputWrite?.Invoke();
+            var input = BindInputLocked(session, new($"inp_{Guid.NewGuid():N}", session.Id, request.AuthorId, request.Key,
                 request.Hash, null, null, request.Content, "queued", session.UpdatedAtMs, "input"), false);
             AppendEventLocked(sessionEvent);
             return Task.FromResult(input);
@@ -98,7 +101,7 @@ internal sealed partial class InMemoryTrackStore : ISessionInputStore, ISessionM
             if (_messages.GetValueOrDefault(Key(message)) is not { Delivery: "queued", TurnId: null } ||
                 _sessions[session.Id].Status is "queued" or "running" or "unknown")
                 return Task.FromResult<PersistedSessionInput?>(null);
-            var batch = _messages.Values.Where(m => m.SessionId == session.Id && m.AttemptId is null && m.Delivery == "queued" && m.TurnId is null).ToArray();
+            var batch = _messages.Values.Where(m => m.SessionId == session.Id && m.Delivery == "queued" && m.TurnId is null).ToArray();
             var input = BindInputLocked(session, message, true);
             foreach (var next in batch.Where(m => m.Id != message.Id))
             {
@@ -118,7 +121,7 @@ internal sealed partial class InMemoryTrackStore : ISessionInputStore, ISessionM
         lock (_gate)
         {
             _sessions[session.Id] = session;
-            var input = firstInput is null ? null : BindInputLocked(session, new($"inp_{Guid.NewGuid():N}", session.Id, null,
+            var input = firstInput is null ? null : BindInputLocked(session, new($"inp_{Guid.NewGuid():N}", session.Id,
                 "owner:installation", firstInput.Key, firstInput.Hash, null, null, firstInput.Content, "queued", session.UpdatedAtMs, "input"), false);
             _sessionCreations.Add((intent.TrackId, intent.AuthorId, intent.Key), new(intent.Hash, session, input));
             AppendEventLocked(sessionEvent);
@@ -191,26 +194,27 @@ internal sealed partial class InMemoryTrackStore : ISessionInputStore, ISessionM
         }
     }
 
-    public Task<SessionMessage?> FindAsync(string sessionId, bool worker, string authorId, string requestKey, CancellationToken ct)
+    public Task<SessionMessage?> FindAsync(string sessionId, string authorId, string requestKey, CancellationToken ct)
     {
         lock (_gate)
-            return Task.FromResult(_messages.Values.FirstOrDefault(m => m.SessionId == sessionId && (m.AttemptId is not null) == worker && m.AuthorId == authorId && m.RequestKey == requestKey));
+            return Task.FromResult(_messages.Values.FirstOrDefault(m => m.SessionId == sessionId && m.AuthorId == authorId && m.RequestKey == requestKey));
     }
 
-    public Task<SessionMessage?> GetAsync(string sessionId, bool worker, string messageId, CancellationToken ct)
+    Task<SessionMessage?> ISessionMessageStore.GetAsync(string sessionId, string messageId, CancellationToken ct)
     {
         lock (_gate)
-            return Task.FromResult(_messages.GetValueOrDefault((sessionId, worker, messageId)) is { } m && m.SessionId == sessionId && (m.AttemptId is not null) == worker ? m : null);
+            return Task.FromResult(_messages.GetValueOrDefault((sessionId, messageId)) is { } m && m.SessionId == sessionId ? m : null);
     }
 
-    public Task<SessionMessage?> NextAsync(string sessionId, string? attemptId, CancellationToken ct)
+    public Task<SessionMessage?> NextAsync(string sessionId, CancellationToken ct)
     {
         lock (_gate)
-            return Task.FromResult(_messages.Values.FirstOrDefault(m => m.SessionId == sessionId && m.AttemptId == attemptId && m.Delivery == "queued" && m.TurnId is null));
+            return Task.FromResult(_messages.Values.FirstOrDefault(m => m.SessionId == sessionId && m.Delivery == "queued" && m.TurnId is null));
     }
 
     public Task InsertAsync(SessionMessage message, CancellationToken ct)
     {
+        BeforeInputWrite?.Invoke();
         lock (_gate) _messages.Add(Key(message), message);
         return Task.CompletedTask;
     }
@@ -266,14 +270,15 @@ internal sealed partial class InMemoryTrackStore : ISessionInputStore, ISessionM
         lock (_gate) return Task.FromResult<IReadOnlyList<string>>(_messages.Values.Where(m => m.SessionId == sessionId && m.DeliveredTurnId is not null).Select(m => m.Id).ToArray());
     }
 
-    public Task<IReadOnlyList<SessionMessage>> RecentWorkerAsync(string sessionId, CancellationToken ct)
-    {
-        lock (_gate) return Task.FromResult<IReadOnlyList<SessionMessage>>(_messages.Values.Where(m => m.SessionId == sessionId && m.AttemptId is not null).ToArray());
-    }
-
     public Task<IReadOnlyList<(string TrackId, string SessionId)>> ListRecoverableQueuesAsync(CancellationToken ct)
     {
-        lock (_gate) return Task.FromResult<IReadOnlyList<(string, string)>>(_messages.Values.Where(m => m.Delivery == "queued" && m.TurnId is null)
-            .Select(m => (_sessions[m.SessionId].TrackId, m.SessionId)).Distinct().ToArray());
+        lock (_gate)
+        {
+            var taskOwnedSessions = _tasksByTrack.Values.SelectMany(list => list)
+                .Where(t => t.SessionId is not null).Select(t => t.SessionId!).ToHashSet(StringComparer.Ordinal);
+            return Task.FromResult<IReadOnlyList<(string, string)>>(_messages.Values
+                .Where(m => m.Delivery == "queued" && m.TurnId is null && !taskOwnedSessions.Contains(m.SessionId))
+                .Select(m => (_sessions[m.SessionId].TrackId, m.SessionId)).Distinct().ToArray());
+        }
     }
 }

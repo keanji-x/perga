@@ -52,7 +52,6 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
     private readonly Dictionary<string, string?> _templateSnapshots = new(StringComparer.Ordinal);
     private readonly Dictionary<(string TrackId, int DocRev), byte[]> _revisions = new();
     private readonly Dictionary<string, List<TaskDto>> _tasksByTrack = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, List<TaskAttemptDto>> _attemptsByTask = new(StringComparer.Ordinal);
     private readonly Dictionary<string, AgentSessionDto> _sessions = new(StringComparer.Ordinal);
     private readonly Dictionary<string, List<SessionTurnDto>> _turnsBySession = new(StringComparer.Ordinal);
     private readonly Dictionary<string, List<SessionItemDto>> _itemsBySession = new(StringComparer.Ordinal);
@@ -91,7 +90,6 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
         TrackDto track,
         ReportDocument report,
         IReadOnlyList<TaskDto> tasks,
-        IReadOnlyList<TaskAttemptDto> attempts,
         IReadOnlyList<AgentSessionDto> sessions,
         IReadOnlyList<SessionTurnDto>? turns = null,
         string? templateSnapshot = null)
@@ -102,17 +100,6 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
             _reports[track.Id] = report;
             _templateSnapshots[track.Id] = templateSnapshot;
             _tasksByTrack[track.Id] = tasks.ToList();
-
-            foreach (var att in attempts)
-            {
-                if (!_attemptsByTask.TryGetValue(att.TaskId, out var attList))
-                {
-                    attList = [];
-                    _attemptsByTask[att.TaskId] = attList;
-                }
-
-                attList.Add(att);
-            }
 
             foreach (var ses in sessions)
             {
@@ -211,15 +198,6 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
             var json = Encoding.UTF8.GetString(compressed);
             var blocks = JsonSerializer.Deserialize<List<ReportBlock>>(json) ?? [];
             return Task.FromResult<IReadOnlyList<ReportBlock>>(blocks);
-        }
-    }
-
-    public Task<IReadOnlyList<TaskAttemptDto>> ListAttemptsForTaskAsync(string taskId, CancellationToken ct)
-    {
-        lock (_gate)
-        {
-            return Task.FromResult<IReadOnlyList<TaskAttemptDto>>(
-                _attemptsByTask.TryGetValue(taskId, out var list) ? list.OrderBy(a => a.StartedAtMs).ToArray() : []);
         }
     }
 
@@ -502,18 +480,20 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
         lock (_gate)
         {
             _reports[trackId] = report;
+            var taskList = syncedTasks.ToList();
             if (dispatch?.Session is { } allocated)
             {
-                var task = syncedTasks.Single(t => t.TaskKey == dispatch.TaskKey);
+                var taskIdx = taskList.FindIndex(t => t.TaskKey == dispatch.TaskKey);
                 var parent = authorSessionId is null ? null : _sessions[authorSessionId];
-                allocated = allocated with { BoundTaskId = task.Id, ParentSessionId = parent?.Id,
+                allocated = allocated with { ParentSessionId = parent?.Id,
                     SpawnDepth = parent is null ? 0 : parent.SpawnDepth + 1 };
                 _sessions[allocated.Id] = allocated;
+                taskList[taskIdx] = taskList[taskIdx] with { SessionId = allocated.Id };
                 _sessionCreations[(trackId, dispatch.AuthorId, dispatch.RequestKey)] = new(dispatch.RequestHash, allocated, null);
             }
             if (authorSessionId is null && dispatch is null) EnqueueWakeLocked(TrackWakeRequests.Report(trackId, report.DocRev, evt.Payload));
             _revisions[(trackId, report.DocRev)] = compressedRevisionBlocks.ToArray();
-            _tasksByTrack[trackId] = syncedTasks.ToList();
+            _tasksByTrack[trackId] = taskList;
 
             if (_tracks.TryGetValue(trackId, out var track))
             {
@@ -525,17 +505,20 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
         }
     }
 
-    public Task UpsertTaskAndAttemptAsync(
+    public Action<TaskDto, AgentSessionDto?>? OnBeforeUpsertTask { get; set; }
+
+    public Task UpsertTaskAsync(
         TaskDto task,
-        TaskAttemptDto? attempt,
         JsonElement? nextTemplateState,
         EventEnvelopeDto? evt,
         CancellationToken ct,
         AgentSessionDto? session = null,
-        EventEnvelopeDto? sessionEvent = null, string? wakePrompt = null, SessionMessage? initialMessage = null)
+        EventEnvelopeDto? sessionEvent = null, string? wakePrompt = null, SessionMessage? initialMessage = null,
+        bool writeNewRunBoundary = false)
     {
         lock (_gate)
         {
+            OnBeforeUpsertTask?.Invoke(task, session);
             if (session is not null)
                 _sessions[session.Id] = session;
             if (sessionEvent is not null)
@@ -557,33 +540,15 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
                 list.Add(task);
             }
 
-            if (attempt?.FinishedAtMs is not null)
+            if (task.FinishedAtMs is not null)
             {
-                var child = attempt.SessionId is { } childId ? _sessions.GetValueOrDefault(childId) : null;
+                var child = task.SessionId is { } childId ? _sessions.GetValueOrDefault(childId) : null;
                 if (child?.ParentSessionId is { } parentId)
                 {
                     if (child.NotifyParent == "task_settled" && _sessions.GetValueOrDefault(parentId)?.ArchivedAtMs is null)
-                        EnqueueWakeLocked(TrackWakeRequests.TaskSettled(task, attempt, wakePrompt) with { TargetSessionId = parentId }, once: true);
+                        EnqueueWakeLocked(TrackWakeRequests.TaskSettled(task, wakePrompt) with { TargetSessionId = parentId }, once: true);
                 }
-                else EnqueueWakeLocked(TrackWakeRequests.TaskSettled(task, attempt, wakePrompt), once: true);
-            }
-            if (attempt is not null)
-            {
-                if (!_attemptsByTask.TryGetValue(task.Id, out var attList))
-                {
-                    attList = [];
-                    _attemptsByTask[task.Id] = attList;
-                }
-
-                var aIdx = attList.FindIndex(a => a.AttemptId == attempt.AttemptId);
-                if (aIdx >= 0)
-                {
-                    attList[aIdx] = attempt;
-                }
-                else
-                {
-                    attList.Add(attempt);
-                }
+                else EnqueueWakeLocked(TrackWakeRequests.TaskSettled(task, wakePrompt), once: true);
             }
 
             if (nextTemplateState is { } ns && _tracks.TryGetValue(task.TrackId, out var track))
@@ -864,21 +829,6 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
         }
     }
 
-    public Task<IReadOnlyList<InterruptedAttemptLeaseDto>> ListInFlightAttemptLeasesAsync(CancellationToken ct = default)
-    {
-        lock (_gate)
-        {
-            IReadOnlyList<InterruptedAttemptLeaseDto> leases = _attemptsByTask.Values.SelectMany(attempts => attempts)
-                .Where(attempt => attempt.WorkspaceLease.HasValue &&
-                    (string.Equals(attempt.Status, "running", StringComparison.OrdinalIgnoreCase) ||
-                     string.Equals(attempt.Status, "verifying", StringComparison.OrdinalIgnoreCase)))
-                .Select(attempt => new InterruptedAttemptLeaseDto(
-                    attempt.AttemptId, attempt.TaskId, attempt.TrackId, attempt.WorkspaceLease!.Value))
-                .ToArray();
-            return Task.FromResult(leases);
-        }
-    }
-
     public Task<IReadOnlyList<string>> MarkInFlightInterruptedOnBootAsync(CancellationToken ct)
     {
         lock (_gate)
@@ -912,20 +862,6 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
                 }
             }
 
-            foreach (var kvp in _attemptsByTask)
-            {
-                for (var i = 0; i < kvp.Value.Count; i++)
-                {
-                    var att = kvp.Value[i];
-                    if (string.Equals(att.Status, "Running", StringComparison.OrdinalIgnoreCase) ||
-                        string.Equals(att.Status, "Verifying", StringComparison.OrdinalIgnoreCase))
-                    {
-                        kvp.Value[i] = att with { Status = "interrupted" };
-                        affected.Add(att.TrackId);
-                    }
-                }
-            }
-
             foreach (var kvp in _tasksByTrack)
             {
                 for (var i = 0; i < kvp.Value.Count; i++)
@@ -933,7 +869,7 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
                     var t = kvp.Value[i];
                     if (t.Status is TaskRunStatus.Running or TaskRunStatus.Verifying)
                     {
-                        kvp.Value[i] = t with { Status = TaskRunStatus.Failed, StatusDetail = "interrupted" };
+                        kvp.Value[i] = t with { Status = TaskRunStatus.Failed, StatusDetail = "interrupted", FinishedAtMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() };
                         affected.Add(t.TrackId);
                     }
                 }
@@ -964,15 +900,7 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
         _tracks.Remove(trackId);
         _reports.Remove(trackId);
         _templateSnapshots.Remove(trackId);
-        if (_tasksByTrack.TryGetValue(trackId, out var tasks))
-        {
-            foreach (var t in tasks)
-            {
-                _attemptsByTask.Remove(t.Id);
-            }
-
-            _tasksByTrack.Remove(trackId);
-        }
+        _tasksByTrack.Remove(trackId);
 
         foreach (var ses in _sessions.Values.Where(s => s.TrackId == trackId).ToArray())
         {
@@ -1366,7 +1294,7 @@ internal sealed class ConfigurableFakePolicyVm : IPolicyVm
             return OnScheduleFired(policy, data.GetProperty("scheduleId").GetString()!, inputs, state);
         if (eventName == "task.settled") RecordedSettledEvents.Enqueue(data);
         return OnAfter?.Invoke(policy, eventName, data, state) ?? new(state,
-            eventName == "task.settled" ? $"Policy noted {data.GetProperty("taskKey").GetString()} -> {data.GetProperty("attemptStatus").GetString()}" : null);
+            eventName == "task.settled" ? $"Policy noted {data.GetProperty("taskKey").GetString()} -> {data.GetProperty("status").GetString()}" : null);
     }
 
     public void ValidateInputs(CompiledPolicy policy, JsonElement inputs) => new PolicyVm.PolicyVm().ValidateInputs(policy, inputs);
@@ -1659,25 +1587,20 @@ internal sealed class ScriptableFakeAgentRuntime : IAgentRuntime
 
 internal sealed class SpyWorkspaceDriver : IWorkspaceDriver
 {
-    public SpyWorkspaceDriver(string driverId = "direct", bool supportsParallelWriteLeases = false)
+    public SpyWorkspaceDriver(string driverId = "direct")
     {
         DriverId = driverId;
-        SupportsParallelIsolatedWriteLeases = supportsParallelWriteLeases;
     }
 
     public string DriverId { get; }
-    public bool SupportsParallelIsolatedWriteLeases { get; set; }
     public IReadOnlyList<WorkspaceOverlayLayer>? OverlayLayersToInject { get; set; }
     public string? OverrideMountedMergedCwd { get; set; }
     public bool VerifyMountOnAccess { get; set; }
-    public bool CreateLeaseDirectories { get; set; }
     public Task? ProvisionGate { get; set; }
     public Exception? TeardownError { get; set; }
 
     public ConcurrentQueue<WorkspaceProvisionRequest> ProvisionCalls { get; } = new();
     public ConcurrentQueue<WorkspaceSpec> EnsureMountedCalls { get; } = new();
-    public ConcurrentQueue<(MountedWorkspace Workspace, string AttemptId, bool ReadWrite)> AcquireLeaseCalls { get; } = new();
-    public ConcurrentQueue<(AttemptWorkspaceLease Lease, AttemptLeaseDisposition Disposition)> SettleLeaseCalls { get; } = new();
     public ConcurrentQueue<WorkspaceSpec> TeardownCalls { get; } = new();
     public ConcurrentQueue<string> LifecycleTimeline { get; } = new();
 
@@ -1703,35 +1626,6 @@ internal sealed class SpyWorkspaceDriver : IWorkspaceDriver
         LifecycleTimeline.Enqueue($"ensure_mounted:{spec.MergedCwd}");
         var merged = OverrideMountedMergedCwd ?? spec.MergedCwd;
         return Task.FromResult(new MountedWorkspace(DriverId, merged, OverlayLayersToInject));
-    }
-
-    public Task<AttemptWorkspaceLease> AcquireAttemptLeaseAsync(
-        MountedWorkspace workspace,
-        string attemptId,
-        bool readWrite,
-        CancellationToken ct = default)
-    {
-        AcquireLeaseCalls.Enqueue((workspace, attemptId, readWrite));
-        LifecycleTimeline.Enqueue($"acquire_lease:{attemptId}:{(readWrite ? "rw" : "ro")}");
-        var effectiveCwd = Path.Combine(workspace.MergedCwd, "leases", attemptId);
-        if (CreateLeaseDirectories) Directory.CreateDirectory(effectiveCwd);
-        return Task.FromResult(new AttemptWorkspaceLease(
-            DriverId: DriverId,
-            AttemptId: attemptId,
-            EffectiveCwd: effectiveCwd,
-            IsIsolatedCopyOnWrite: SupportsParallelIsolatedWriteLeases && readWrite,
-            Metadata: TestJson.FromObject(new { readWrite }),
-            ProcessOverlayLayers: OverlayLayersToInject));
-    }
-
-    public Task SettleAttemptLeaseAsync(
-        AttemptWorkspaceLease lease,
-        AttemptLeaseDisposition disposition,
-        CancellationToken ct = default)
-    {
-        SettleLeaseCalls.Enqueue((lease, disposition));
-        LifecycleTimeline.Enqueue($"settle_lease:{lease.AttemptId}:{disposition}");
-        return Task.CompletedTask;
     }
 
     public Task TeardownTrackAsync(WorkspaceSpec spec, CancellationToken ct = default)
@@ -1872,8 +1766,8 @@ internal sealed partial class KernelTestContext : IAsyncDisposable
     public InMemoryReportDocEngine ReportEngine { get; } = new();
     public ConfigurableFakePolicyVm PolicyVm { get; } = new();
     public ScriptableFakeAgentRuntime AgentRuntime { get; } = new();
-    public SpyWorkspaceDriver DirectDriver { get; } = new("direct", supportsParallelWriteLeases: false);
-    public SpyWorkspaceDriver CowOverlayDriver { get; } = new("cow-overlay", supportsParallelWriteLeases: true);
+    public SpyWorkspaceDriver DirectDriver { get; } = new("direct");
+    public SpyWorkspaceDriver CowOverlayDriver { get; } = new("cow-overlay");
     public FakeWorkspaceDriverRegistry DriverRegistry { get; }
     public FakeVcsService VcsService { get; } = new();
     public FakeTerminalBridgeClient TerminalClient { get; } = new();

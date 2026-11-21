@@ -66,17 +66,14 @@ public sealed partial class TrackActor
             JsonHelpers.ToElement(new { sessionId }), NowMs());
     }
 
-    private Task RemoveQueuedMessageAsync(string sessionId, string inputId, CancellationToken ct, string? attemptId, InteropPrincipal principal) =>
+    private Task RemoveQueuedMessageAsync(string sessionId, string inputId, CancellationToken ct, InteropPrincipal principal) =>
         EnqueueAsync(async _ =>
         {
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
             var session = RequireSessionCore(sessionId);
-            RequireSessionMutationCore(session, principal, attemptId);
-            var worker = session.BoundAttemptId is not null;
-            var message = await Messages.GetAsync(sessionId, worker, inputId, ct).ConfigureAwait(false)
+            RequireSessionMutationCore(session, principal);
+            var message = await Messages.GetAsync(sessionId, inputId, ct).ConfigureAwait(false)
                 ?? throw KernelException.NotFound("Message not found in this session.");
-            if (attemptId is not null && attemptId != message.AttemptId)
-                throw KernelException.Conflict("The message belongs to another Worker attempt.");
             if (message.Delivery == "withdrawn") return;
             if (message.TurnId is not null || message.Delivery is not ("queued" or "unknown") ||
                 !await Messages.TransitionAsync(message with { Delivery = "withdrawn" }, message.Delivery, ct).ConfigureAwait(false))

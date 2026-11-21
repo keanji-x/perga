@@ -124,7 +124,7 @@ public sealed partial class TrackActor
 
         public async Task<bool> HasQueuedMessageAsync(AgentSessionDto session, CancellationToken ct) =>
             actor._store.SessionMessages is not null &&
-            await actor.Messages.NextAsync(session.Id, session.BoundAttemptId, ct).ConfigureAwait(false) is not null;
+            await actor.Messages.NextAsync(session.Id, ct).ConfigureAwait(false) is not null;
 
         public Task<Func<CancellationToken, Task>?> PokeLeadAsync(bool allowInline = false) =>
             actor._track.LeadSessionId is { } lead ? PokeAsync(lead, allowInline: allowInline) : Task.FromResult<Func<CancellationToken, Task>?>(null);
@@ -135,29 +135,22 @@ public sealed partial class TrackActor
                 !actor._sessions.TryGetValue(sessionId, out var session) || session.ArchivedAtMs is not null || IsOccupied(session))
                 return null;
 
-            ActiveAttemptState? attempt = null;
-            if (session.BoundAttemptId is { } attemptId &&
-                (!allowWorker || !actor._activeAttempts.TryGetValue(attemptId, out attempt) || attempt.Paused || attempt.Settling ||
-                 attempt.InterruptionUnconfirmed || !string.Equals(attempt.AttemptDto.Status, "running", StringComparison.OrdinalIgnoreCase) ||
-                 actor.RequireTaskCore(attempt.TaskId).LatestAttemptId != attemptId))
+            if (actor.IsSessionFrozenForDispatchCore(session) || actor.IsSessionAutoDrainPausedCore(sessionId))
+                return null;
+            if (!allowWorker && actor.IsTaskOwnedSessionCore(sessionId))
                 return null;
 
             if (actor._store.SessionMessages is not null &&
-                await actor.Messages.NextAsync(sessionId, session.BoundAttemptId, CancellationToken.None).ConfigureAwait(false) is { } next)
+                await actor.Messages.NextAsync(sessionId, CancellationToken.None).ConfigureAwait(false) is { } next)
             {
-                if (attempt is not null)
-                    await actor.ScheduleWorkerMessageCoreAsync(next, attempt).ConfigureAwait(false);
-                else
+                var queued = session with { Status = "queued", UpdatedAtMs = actor.NowMs() };
+                var evt = actor.SessionUpdatedEvent(queued);
+                await actor._eventHub.EnsureInitializedFromStoreAsync(actor._store, CancellationToken.None).ConfigureAwait(false);
+                var input = await actor._store.SessionInputs.PromoteQueuedBatchAsync(queued, next, evt, CancellationToken.None).ConfigureAwait(false);
+                if (input is not null)
                 {
-                    var queued = session with { Status = "queued", UpdatedAtMs = actor.NowMs() };
-                    var evt = actor.SessionUpdatedEvent(queued);
-                    await actor._eventHub.EnsureInitializedFromStoreAsync(actor._store, CancellationToken.None).ConfigureAwait(false);
-                    var input = await actor._store.SessionInputs.PromoteQueuedBatchAsync(queued, next, evt, CancellationToken.None).ConfigureAwait(false);
-                    if (input is not null)
-                    {
-                        actor.RegisterAcceptedInput(queued, input);
-                        await actor.PublishInputEventAsync(evt).ConfigureAwait(false);
-                    }
+                    actor.RegisterAcceptedInput(queued, input);
+                    await actor.PublishInputEventAsync(evt).ConfigureAwait(false);
                 }
                 return null;
             }

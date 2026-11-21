@@ -16,7 +16,7 @@ public sealed class SessionInputBatchTests
         await h.Store.UpsertAreaAsync(StorageTestHarness.CreateArea(), default);
         var (track, report, lead) = StorageTestHarness.CreateSeedTrack();
         await h.Store.CreateTrackAsync(track, report, null, lead, default);
-        var first = new SessionMessage("first", lead.Id, null, "owner:installation", "first", "hash",
+        var first = new SessionMessage("first", lead.Id, "owner:installation", "first", "hash",
             null, null, "First", "queued", 1000, "queue");
         await h.Store.SessionMessages!.InsertAsync(first, default);
         await h.Store.SessionMessages.InsertAsync(first with { Id = "second", RequestKey = "second" }, default);
@@ -42,7 +42,7 @@ public sealed class SessionInputBatchTests
         await h.Store.CreateTrackAsync(track, report, null, lead, default);
         var other = lead with { Id = "other-session", IsLead = false };
         await h.Store.UpsertSessionAsync(other, null, default);
-        var first = new SessionMessage("first", lead.Id, null, "owner:installation", "first", "hash",
+        var first = new SessionMessage("first", lead.Id, "owner:installation", "first", "hash",
             null, null, "First", "queued", 1000, "queue");
         var second = first with { Id = "second", RequestKey = "second", Content = "Second" };
         foreach (var message in new[] { first, second, first with { SessionId = other.Id }, second with { SessionId = other.Id } })
@@ -53,8 +53,8 @@ public sealed class SessionInputBatchTests
         Assert.Equal("First\n\nSecond", input.Content);
         foreach (var id in new[] { "first", "second" })
         {
-            Assert.Equal(input.Receipt.TurnId, (await h.Store.SessionMessages!.GetAsync(lead.Id, false, id, default))!.TurnId);
-            var untouched = (await h.Store.SessionMessages.GetAsync(other.Id, false, id, default))!;
+            Assert.Equal(input.Receipt.TurnId, (await h.Store.SessionMessages!.GetAsync(lead.Id, id, default))!.TurnId);
+            var untouched = (await h.Store.SessionMessages.GetAsync(other.Id, id, default))!;
             Assert.Null(untouched.TurnId);
             Assert.Equal("queued", untouched.Delivery);
         }
@@ -70,7 +70,7 @@ public sealed class SessionInputBatchTests
         var (track, report, lead) = StorageTestHarness.CreateSeedTrack();
         await h.Store.CreateTrackAsync(track, report, null, lead, default);
         var messages = h.Store.SessionMessages!;
-        var first = new SessionMessage("first", lead.Id, null, "owner:installation", "first-key", "hash1",
+        var first = new SessionMessage("first", lead.Id, "owner:installation", "first-key", "hash1",
             null, null, "First prompt", "queued", 1000, "queue");
         var second = first with { Id = "second", RequestKey = "second-key", RequestHash = "hash2", Content = "Second prompt" };
         await messages.InsertAsync(first, default);
@@ -108,7 +108,7 @@ public sealed class SessionInputBatchTests
         await h.Store.UpsertAreaAsync(StorageTestHarness.CreateArea(), default);
         var (track, report, lead) = StorageTestHarness.CreateSeedTrack();
         await h.Store.CreateTrackAsync(track, report, null, lead, default);
-        var first = new SessionMessage("first", lead.Id, null, "owner:installation", "first-key", "hash1",
+        var first = new SessionMessage("first", lead.Id, "owner:installation", "first-key", "hash1",
             null, null, "First", "queued", 1000, "queue");
         await h.Store.SessionMessages!.InsertAsync(first, default);
         await h.Store.SessionMessages.InsertAsync(first with { Id = "second", RequestKey = "second", Content = "Second" }, default);

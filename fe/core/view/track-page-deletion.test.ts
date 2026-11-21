@@ -39,7 +39,7 @@ describe('Progress after worker deletion', () => {
 
   it.each(['new-worker', null])('uses the current execution worker %s instead of the deleted verdict worker', workerCardId => {
     const current = { ...task('recovered', 'deleted-worker'), execution: {
-      attemptId: 'attempt-2', generation: 2, status: 'running', label: 'Running', statusDetail: null,
+      sessionId: 'attempt-2', runCount: 2, status: 'running', label: 'Running', statusDetail: null,
       workerCardId, blockingReason: null, createdAtMs: 1, finishedAtMs: null,
     } };
     const view = deriveTrackPageView({ cards: [worker('new-worker')], tasks: [current],

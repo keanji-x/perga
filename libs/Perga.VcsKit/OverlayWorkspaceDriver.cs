@@ -28,7 +28,6 @@ public sealed partial class OverlayWorkspaceDriver(
     private readonly SemaphoreSlim _mountLock = new(1, 1);
 
     public string DriverId => Id;
-    public bool SupportsParallelIsolatedWriteLeases => false;
     public bool ProvisionIsRepeatable => true;
     public bool VerifyMountOnAccess => true;
 
@@ -142,21 +141,6 @@ public sealed partial class OverlayWorkspaceDriver(
         {
             _mountLock.Release();
         }
-    }
-
-    public Task<AttemptWorkspaceLease> AcquireAttemptLeaseAsync(
-        MountedWorkspace workspace, string attemptId, bool readWrite, CancellationToken ct = default)
-    {
-        ct.ThrowIfCancellationRequested();
-        return Task.FromResult(new AttemptWorkspaceLease(
-            Id, attemptId, workspace.MergedCwd, false, JsonSerializer.SerializeToElement(new { readWrite })));
-    }
-
-    public Task SettleAttemptLeaseAsync(
-        AttemptWorkspaceLease lease, AttemptLeaseDisposition disposition, CancellationToken ct = default)
-    {
-        ct.ThrowIfCancellationRequested();
-        return Task.CompletedTask;
     }
 
     public async Task TeardownTrackAsync(WorkspaceSpec spec, CancellationToken ct = default)

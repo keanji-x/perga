@@ -1,9 +1,10 @@
-import { attemptStatusLabel, type TaskRecoveryView } from './task-recovery.js';
+import type { TaskDto } from '../api/perga-v1.js';
+import { taskStatusLabel } from './task-recovery.js';
 
-/** One presentation of known current identity, shared by inventory, header and detail. */
+/** Current task execution, projected from the task that owns its session. */
 export type CurrentTaskExecution = Readonly<{
-  attemptId: string;
-  generation: number;
+  sessionId: string | null;
+  runCount: number;
   status: string;
   label: string;
   statusDetail: string | null;
@@ -13,9 +14,10 @@ export type CurrentTaskExecution = Readonly<{
   finishedAtMs: number | null;
 }>;
 
-export function currentTaskExecution(view: TaskRecoveryView | undefined): CurrentTaskExecution | undefined {
-  const current = view?.current ?? undefined;
-  if (current === undefined) return undefined;
-  return { attemptId: current.attempt_id, generation: current.generation, status: current.status,
-    label: attemptStatusLabel(current.status), statusDetail: current.status_detail, workerCardId: current.worker_card_id, blockingReason: current.blocking_reason, createdAtMs: current.created_at_ms, finishedAtMs: current.finished_at_ms };
+export function currentTaskExecution(task: TaskDto | undefined): CurrentTaskExecution | undefined {
+  if (task === undefined) return undefined;
+  return { sessionId: task.sessionId ?? null, runCount: task.runCount, status: task.status,
+    label: taskStatusLabel(task.status), statusDetail: task.statusDetail ?? null,
+    workerCardId: task.sessionId ?? null, blockingReason: null,
+    createdAtMs: task.startedAtMs ?? task.createdAtMs, finishedAtMs: task.finishedAtMs ?? null };
 }

@@ -60,14 +60,14 @@ public sealed class WorkerSessionIntegrationTests
         var (trackId, _) = await host.CreateTrackAsync();
         var dispatched = await kernel.CreateSessionAsync(trackId, new(Prompt: "Inspect the report", Task: new()), "settings", new InteropPrincipal.Human(), ct);
         await kernel.WaitForTrackIdleAsync(trackId, ct);
-        var worker = Assert.Single((await kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), ct)).Select(summary => summary.Session).ToArray(), session => session.BoundTaskId == dispatched.Receipt.Task!.Id);
-        var saved = await kernel.UpdateSessionAsync(worker.Id, new(ExpectedConfigVersion: 0, Model: new("gpt-5.4"), ReasoningEffort: new("high"), ExpectedAttemptId: worker.BoundAttemptId!), new InteropPrincipal.Human(), ct);
+        var worker = Assert.Single(await kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), ct), summary => summary.TaskId == dispatched.Receipt.Task!.Id).Session;
+        var saved = await kernel.UpdateSessionAsync(worker.Id, new(ExpectedConfigVersion: 0, Model: new("gpt-5.4"), ReasoningEffort: new("high")), new InteropPrincipal.Human(), ct);
         var stored = Assert.Single((await host.Services.GetRequiredService<ITrackStore>().LoadTrackAggregateAsync(trackId, ct))!.Sessions,
             session => session.Id == worker.Id);
         Assert.Equal(saved.ConfigVersion, stored.ConfigVersion);
         Assert.Equal(saved.Model, stored.Model);
         Assert.Equal(saved.ReasoningEffort, stored.ReasoningEffort);
-        await Assert.ThrowsAsync<KernelException>(() => kernel.UpdateSessionAsync(worker.Id, new(ExpectedConfigVersion: 0, Model: new(null), ReasoningEffort: new(null), ExpectedAttemptId: worker.BoundAttemptId!), new InteropPrincipal.Human(), ct));
+        await Assert.ThrowsAsync<KernelException>(() => kernel.UpdateSessionAsync(worker.Id, new(ExpectedConfigVersion: 0, Model: new(null), ReasoningEffort: new(null)), new InteropPrincipal.Human(), ct));
     }
 
     [Fact]
@@ -81,16 +81,15 @@ public sealed class WorkerSessionIntegrationTests
         host.AgentRuntime.SetTurnHandler(Stream);
         var dispatched = await kernel.CreateSessionAsync(trackId, new(Prompt: "Measure context", Task: new()), "worker-context", new InteropPrincipal.Human(), ct);
         await kernel.WaitForTrackIdleAsync(trackId, ct);
-        var worker = Assert.Single((await kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), ct)).Select(summary => summary.Session).ToArray(), session => session.BoundTaskId == dispatched.Receipt.Task!.Id);
-        var attemptId = worker.BoundAttemptId!;
+        var worker = Assert.Single(await kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), ct), summary => summary.TaskId == dispatched.Receipt.Task!.Id).Session;
         Assert.Equal(1000, worker.ContextUsage?.WindowTokens);
         using var patch = await host.Client.PatchAsJsonAsync($"/api/v1/sessions/{worker.Id}",
-            new { expectedAttemptId = attemptId, expectedConfigVersion = 0, model = "gpt-5.4-mini", reasoningEffort = "low" }, ct);
+            new { expectedConfigVersion = 0, model = "gpt-5.4-mini", reasoningEffort = "low" }, ct);
         patch.EnsureSuccessStatusCode();
         var cleared = await kernel.GetSessionItemsAsync(worker.Id, new(), new InteropPrincipal.Human(), ct);
         Assert.Null(cleared.Session.ContextUsage);
 
-        await kernel.SendSessionMessageAsync(worker.Id, new(Content: "After model switch", RequestKey: "after-model-switch", Mode: "default", TurnId: null, ExpectedAttemptId: attemptId), new InteropPrincipal.Human(), ct);
+        await kernel.SendSessionMessageAsync(worker.Id, new(Content: "After model switch", RequestKey: "after-model-switch", Mode: "default", TurnId: null, ExpectedEpoch: worker.Epoch), new InteropPrincipal.Human(), ct);
         await kernel.WaitForTrackIdleAsync(trackId, ct);
         var updated = await kernel.GetSessionItemsAsync(worker.Id, new(), new InteropPrincipal.Human(), ct);
         var usage = Assert.IsType<SessionContextUsage>(updated.Session.ContextUsage);
@@ -123,13 +122,13 @@ public sealed class WorkerSessionIntegrationTests
         host.AgentRuntime.SetTurnHandler(Turns);
 
         var dispatched = await kernel.CreateSessionAsync(trackId, new(Prompt: "Inspect the report", Task: new()), "dispatch", new InteropPrincipal.Human(), ct);
-        var worker = Assert.Single((await kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), ct)).Select(summary => summary.Session).ToArray(), session => session.BoundTaskId == dispatched.Receipt.Task!.Id);
-        var leadQueue = new { sessionId = worker.Id, expectedAttemptId = worker.BoundAttemptId, content = "Lead follow-up", mode = "queue", requestKey = "lead-queue" };
+        var worker = Assert.Single(await kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), ct), summary => summary.TaskId == dispatched.Receipt.Task!.Id).Session;
+        var leadQueue = new { sessionId = worker.Id, content = "Lead follow-up", mode = "queue", requestKey = "lead-queue" };
         try
         {
             using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/sessions/{worker.Id}/messages")
             {
-                Content = JsonContent.Create(new { expectedAttemptId = worker.BoundAttemptId, content = "Look at dates", mode = "queue" })
+                Content = JsonContent.Create(new { content = "Look at dates", mode = "queue" })
             };
             request.Headers.Add("Idempotency-Key", "queued-request");
             using var response = await host.Client.SendAsync(request, ct);
@@ -148,8 +147,8 @@ public sealed class WorkerSessionIntegrationTests
             Assert.Equal(JsonSerializer.Deserialize<SessionMessageReceipt>(replayed, PergaJsonDefaults.ApiOptions)!.MessageId,
                 JsonSerializer.Deserialize<SessionMessageReceipt>(again, PergaJsonDefaults.ApiOptions)!.MessageId);
             Assert.Equal(0, steers);
-            Assert.DoesNotContain(host.AgentRuntime.ExecutedTurns, turn => turn.Input.Prompt == "Look at dates");
-            var extra = new { sessionId = worker.Id, expectedAttemptId = worker.BoundAttemptId, content = "Withdraw this", mode = "queue", requestKey = "withdraw" };
+            Assert.DoesNotContain(host.AgentRuntime.ExecutedTurns, turn => turn.Input.Prompt.Contains("Look at dates", StringComparison.Ordinal));
+            var extra = new { sessionId = worker.Id, content = "Withdraw this", mode = "queue", requestKey = "withdraw" };
             var (extraText, extraError) = await CallFromRunningLeadAsync(host, "/mcp/kernel", lead.Principal.SessionId, KernelMcpToolNames.SessionSend, extra, ct);
             Assert.False(extraError, extraText);
             var extraReceipt = JsonSerializer.Deserialize<SessionMessageReceipt>(extraText, PergaJsonDefaults.ApiOptions)!;
@@ -159,41 +158,39 @@ public sealed class WorkerSessionIntegrationTests
             using var withdrawn = await host.Client.DeleteAsync(queuePath, ct);
             Assert.Equal(HttpStatusCode.NoContent, withdrawn.StatusCode);
             var (withdrawAgain, withdrawError) = await CallFromRunningLeadAsync(host, "/mcp/kernel", lead.Principal.SessionId, KernelMcpToolNames.SessionWithdraw,
-                new { sessionId = worker.Id, expectedAttemptId = worker.BoundAttemptId, messageId = extraReceipt.MessageId }, ct);
+                new { sessionId = worker.Id, messageId = extraReceipt.MessageId }, ct);
             Assert.False(withdrawError, withdrawAgain);
             var (replayWithdrawal, withdrawalError) = await CallFromRunningLeadAsync(host, "/mcp/kernel", lead.Principal.SessionId, KernelMcpToolNames.SessionSend, extra, ct);
             Assert.False(withdrawalError, replayWithdrawal);
             Assert.Equal("withdrawn", JsonSerializer.Deserialize<SessionMessageReceipt>(replayWithdrawal, PergaJsonDefaults.ApiOptions)!.Delivery);
             var (wrongTarget, wrongTargetError) = await CallFromRunningLeadAsync(host, "/mcp/kernel", lead.Principal.SessionId, KernelMcpToolNames.SessionSend,
-                new { sessionId = worker.Id, expectedAttemptId = worker.BoundAttemptId, turnId, content = "Wrong queue target", mode = "queue", requestKey = "bad-queue" }, ct);
+                new { sessionId = worker.Id, turnId, content = "Wrong queue target", mode = "queue", requestKey = "bad-queue" }, ct);
             Assert.True(wrongTargetError);
             Assert.Contains("valid delivery mode", wrongTarget);
             var (stale, staleError) = await CallFromRunningLeadAsync(host, "/mcp/kernel", lead.Principal.SessionId, KernelMcpToolNames.SessionSend,
-                new { sessionId = worker.Id, expectedAttemptId = worker.BoundAttemptId, turnId = "old-turn", content = "Stale steer", mode = "steer", requestKey = "stale" }, ct);
+                new { sessionId = worker.Id, turnId = "old-turn", content = "Stale steer", mode = "steer", requestKey = "stale" }, ct);
             Assert.True(staleError);
-            Assert.Contains("conflict", stale);
+            Assert.Contains("not_found", stale);
         }
         finally
         {
             release.TrySetResult();
         }
         await kernel.WaitForTrackIdleAsync(trackId, ct);
-        Assert.Single(host.AgentRuntime.ExecutedTurns, turn => turn.Input.Prompt == "Look at dates");
-        Assert.DoesNotContain(host.AgentRuntime.ExecutedTurns, turn => turn.Input.Prompt == "Withdraw this");
-        Assert.Single(host.AgentRuntime.ExecutedTurns, turn => turn.Input.Prompt == "Lead follow-up");
+        Assert.Single(host.AgentRuntime.ExecutedTurns, turn => turn.Input.Prompt == "Look at dates\n\nLead follow-up");
+        Assert.DoesNotContain(host.AgentRuntime.ExecutedTurns, turn => turn.Input.Prompt.Contains("Withdraw this", StringComparison.Ordinal));
         var (delivered, deliveredError) = await CallFromRunningLeadAsync(host, "/mcp/kernel", lead.Principal.SessionId, KernelMcpToolNames.SessionSend, leadQueue, ct);
         Assert.False(deliveredError, delivered);
         Assert.Equal("delivered", JsonSerializer.Deserialize<SessionMessageReceipt>(delivered, PergaJsonDefaults.ApiOptions)!.Delivery);
-        Assert.Single(host.AgentRuntime.ExecutedTurns, turn => turn.Input.Prompt == "Lead follow-up");
         var persisted = await kernel.GetSessionItemsAsync(worker.Id, new(), new InteropPrincipal.Human(), ct);
         var followup = Assert.Single(persisted.Items, item => item.Kind == "user" &&
             item.Payload.GetProperty("content").GetString() == "Lead follow-up");
         Assert.Equal("delivered", followup.InputDelivery);
         await kernel.CancelTaskAsync(trackId, leadId, dispatched.Receipt.Task!.TaskKey, ct: ct);
         var (afterCancel, afterCancelError) = await CallFromRunningLeadAsync(host, "/mcp/kernel", lead.Principal.SessionId, KernelMcpToolNames.SessionSend,
-            new { sessionId = worker.Id, expectedAttemptId = worker.BoundAttemptId, turnId = "old-turn", content = "Stale steer", mode = "steer", requestKey = "stale" }, ct);
+            new { sessionId = worker.Id, turnId = "old-turn", content = "Stale steer", mode = "steer", requestKey = "stale" }, ct);
         Assert.True(afterCancelError);
-        Assert.Contains("attempt is no longer running", afterCancel);
+        Assert.Contains("conflict", afterCancel);
 
         async IAsyncEnumerable<UnifiedAgentEvent> Turns(HarnessLaunchSpec spec, TurnInput input,
             [EnumeratorCancellation] CancellationToken token)
@@ -224,7 +221,7 @@ public sealed class WorkerSessionIntegrationTests
                 var receipt = await kernel.CreateSessionAsync(trackId, new(Prompt: "Inspect", Task: new()), "restart-requeue", new InteropPrincipal.Human(), ct);
                 taskId = receipt.Receipt.Task!.Id;
                 await kernel.WaitForTrackIdleAsync(trackId, ct);
-                var session = Assert.Single((await kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), ct)).Select(summary => summary.Session).ToArray(), s => s.BoundTaskId == taskId);
+                var session = Assert.Single(await kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), ct), s => s.TaskId == taskId).Session;
                 var page = await kernel.GetSessionItemsAsync(session.Id, new(), new InteropPrincipal.Human(), ct);
                 worker = page.Session;
                 // Leave exactly the durable in-flight state a crash would preserve, without a live provider.
@@ -237,24 +234,25 @@ public sealed class WorkerSessionIntegrationTests
             var orphan = (await resumed.GetSessionItemsAsync(worker.Id, new(), new InteropPrincipal.Human(), ct)).Session;
             Assert.Equal("unknown", orphan.Status);
             Assert.NotNull(orphan.ArchivedAtMs);
-            Assert.Equal("interrupted", Assert.Single(await resumed.ListTaskAttemptsAsync(worker.TrackId, taskId, ct)).Status);
+            var interruptedTask = Assert.Single(await resumed.ListTasksAsync(worker.TrackId, ct), t => t.Id == taskId);
+            Assert.Equal(TaskRunStatus.Failed, interruptedTask.Status);
             await resumed.RejectTaskAsync(worker.TrackId, null, taskId, "Retry after restart", reQueue: true, ct: ct);
             await resumed.WaitForTrackIdleAsync(worker.TrackId, ct);
             var reused = await resumed.GetSessionItemsAsync(worker.Id, new(), new InteropPrincipal.Human(), ct);
             Assert.Equal(worker.Epoch + 1, reused.Session.Epoch);
             Assert.Null(reused.Session.ArchivedAtMs);
-            Assert.NotEqual(worker.BoundAttemptId, reused.Session.BoundAttemptId);
             Assert.Equal("completed", reused.LastTurn!.Status);
-            Assert.Equal(2, (await resumed.ListTaskAttemptsAsync(worker.TrackId, taskId, ct)).Count);
+            var retriedTask = Assert.Single(await resumed.ListTasksAsync(worker.TrackId, ct), t => t.Id == taskId);
+            Assert.Equal(2, retriedTask.RunCount);
             Assert.Contains(reused.Items, item => item.Kind == "epoch_boundary" &&
-                item.Payload.GetProperty("reason").GetString() == "new_attempt");
-            Assert.Single((await resumed.ListSessionsAsync(worker.TrackId, new(IncludeArchived: true), new InteropPrincipal.Human(), ct)).Select(summary => summary.Session).ToArray(), s => s.BoundTaskId == taskId);
+                item.Payload.GetProperty("reason").GetString() == "new_run");
+            Assert.Single(await resumed.ListSessionsAsync(worker.TrackId, new(IncludeArchived: true), new InteropPrincipal.Human(), ct), s => s.TaskId == taskId);
         }
         finally { directory.Delete(recursive: true); }
     }
 
     [Fact]
-    public async Task RestartRejectsAnAcceptedLegacyInputToAnInterruptedWorker()
+    public async Task RestartInterruptsAcceptedInputToAnInterruptedTaskSession()
     {
         var directory = Directory.CreateTempSubdirectory("perga-legacy-worker-");
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
@@ -270,7 +268,7 @@ public sealed class WorkerSessionIntegrationTests
                 var kernel = host.Services.GetRequiredService<IPergaKernel>();
                 var receipt = await kernel.CreateSessionAsync(trackId, new(Prompt: "Inspect the report", Task: new()), "task-restart", new InteropPrincipal.Human(), ct);
                 await kernel.WaitForTrackIdleAsync(trackId, ct);
-                var worker = Assert.Single((await kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), ct)).Select(summary => summary.Session).ToArray(), session => session.BoundTaskId == receipt.Receipt.Task!.Id);
+                var worker = Assert.Single(await kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), ct), summary => summary.TaskId == receipt.Receipt.Task!.Id).Session;
                 var store = host.Services.GetRequiredService<ITrackStore>();
                 var evt = new EventEnvelopeDto(null, null, trackId, KernelEventKinds.SessionUpdated,
                     JsonSerializer.SerializeToElement(worker), worker.UpdatedAtMs);
@@ -282,7 +280,7 @@ public sealed class WorkerSessionIntegrationTests
             var resumed = reopened.Services.GetRequiredService<IPergaKernel>();
             await resumed.WaitForTrackIdleAsync(trackId, ct);
             var outcome = (await reopened.Services.GetRequiredService<ITrackStore>().SessionInputs.FindByIdAsync(input.SessionId, input.InputId, ct))!.Receipt;
-            Assert.Equal("rejected", outcome.DeliveryState);
+            Assert.Equal("interrupted", outcome.DeliveryState);
             Assert.DoesNotContain(reopened.AgentRuntime.ExecutedTurns, turn => turn.Input.Prompt == "Do not run after restart");
         }
         finally
@@ -309,7 +307,7 @@ public sealed class WorkerSessionIntegrationTests
         Assert.True(receipt.Task.Ready);
         Assert.Equal("Inspect the report", receipt.Task.GoalOrCmd);
         await kernel.WaitForTrackIdleAsync(track.Id, ct);
-        Assert.Single((await kernel.ListSessionsAsync(track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), ct)).Select(summary => summary.Session).ToArray(), session => session.BoundTaskId == receipt.Task.Id);
+        Assert.Single(await kernel.ListSessionsAsync(track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), ct), summary => summary.TaskId == receipt.Task.Id);
 
         var (replay, replayError) = await CallFromRunningLeadAsync(host, "/mcp/kernel", lead.Principal.SessionId, KernelMcpToolNames.SessionCreate, call, ct);
         Assert.False(replayError, replay);
@@ -371,8 +369,9 @@ public sealed class WorkerSessionIntegrationTests
                 JsonSerializer.SerializeToElement(new { task_key = "inspect", ready = true, access = "read_only", goal_or_cmd = "Inspect the report" }))
         ]), ct);
         var turnId = await firstTurn.Task.WaitAsync(ct);
-        var worker = Assert.Single((await kernel.ListSessionsAsync(track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), ct)).Select(summary => summary.Session).ToArray(), session => session.BoundAttemptId is not null);
-        var attemptId = worker.BoundAttemptId!;
+        var workerSummary = Assert.Single(await kernel.ListSessionsAsync(track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), ct), summary => summary.TaskId is not null);
+        var worker = workerSummary.Session;
+        var taskId = workerSummary.TaskId!;
         var sessionPath = $"/api/v1/sessions/{worker.Id}";
         var httpPage = await ReadPage();
         Assert.Equal(turnId, httpPage.ActiveTurn!.Id);
@@ -383,9 +382,9 @@ public sealed class WorkerSessionIntegrationTests
         Assert.False(readError, readText);
         var leadPage = JsonSerializer.Deserialize<SessionItemsPageDto>(readText, PergaJsonDefaults.ApiOptions)!;
         Assert.Equal(httpPage.Activity!.Sequence, leadPage.Activity!.Sequence);
-        Assert.Equal(attemptId, leadPage.TaskBinding!.AttemptId);
+        Assert.Equal(taskId, leadPage.TaskBinding!.Task.Id);
 
-        var request = new { sessionId = worker.Id, expectedAttemptId = attemptId, turnId, mode = "steer", content = "Check the dates", requestKey = "lead-steer" };
+        var request = new { sessionId = worker.Id, turnId, mode = "steer", content = "Check the dates", requestKey = "lead-steer" };
         for (var index = 0; index < 2; index++)
         {
             var (receiptText, receiptError) = await CallFromRunningLeadAsync(host, "/mcp/kernel", lead.Principal.SessionId,
@@ -396,25 +395,25 @@ public sealed class WorkerSessionIntegrationTests
         Assert.Equal(["Check the dates"], steers);
         Assert.Contains((await ReadPage()).Items, item => item.Kind == "user" && item.Payload.ToString().Contains("Check the dates", StringComparison.Ordinal));
 
-        await kernel.UpdateSessionAsync(worker.Id, new(ExpectedConfigVersion: 0, Model: new("gpt-5.4"), ReasoningEffort: new("high"), ExpectedAttemptId: attemptId), new InteropPrincipal.Human(), ct);
+        await kernel.UpdateSessionAsync(worker.Id, new(ExpectedConfigVersion: 0, Model: new("gpt-5.4"), ReasoningEffort: new("high")), new InteropPrincipal.Human(), ct);
         Assert.Equal(1, (await ReadPage()).Session.ConfigVersion);
 
-        using var stale = await host.Client.PostAsJsonAsync($"{sessionPath}/control", new { action = "stop", expectedAttemptId = attemptId, turnId = "stale" }, ct);
+        using var stale = await host.Client.PostAsJsonAsync($"{sessionPath}/control", new { action = "stop", turnId = "stale" }, ct);
         Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
-        using var stop = await host.Client.PostAsJsonAsync($"{sessionPath}/control", new { action = "stop", expectedAttemptId = attemptId, turnId }, ct);
+        using var stop = await host.Client.PostAsJsonAsync($"{sessionPath}/control", new { action = "stop", turnId }, ct);
         Assert.Equal(HttpStatusCode.OK, stop.StatusCode);
-        while ((await ReadPage()) is not { State: "idle", TaskBinding.AttemptPhase: "paused" })
+        while ((await ReadPage()) is not { State: "idle", TaskBinding.Phase: "paused" })
             await Task.Delay(10, ct);
 
         using var resume = new HttpRequestMessage(HttpMethod.Post, $"{sessionPath}/messages")
         {
-            Content = JsonContent.Create(new { expectedAttemptId = attemptId, content = "Continue the inspection" })
+            Content = JsonContent.Create(new { content = "Continue the inspection" })
         };
         resume.Headers.Add("Idempotency-Key", "human-resume");
         using var resumed = await host.Client.SendAsync(resume, ct);
         Assert.True(resumed.StatusCode == HttpStatusCode.OK, await resumed.Content.ReadAsStringAsync(ct));
         Assert.NotEqual(turnId, await continued.Task.WaitAsync(ct));
-        Assert.Equal(attemptId, (await ReadPage()).TaskBinding!.AttemptId);
+        Assert.Equal(taskId, (await ReadPage()).TaskBinding!.Task.Id);
         var resumedTurn = Assert.Single(host.AgentRuntime.ExecutedTurns, item => item.Input.Prompt == "Continue the inspection");
         Assert.Equal("gpt-5.4", resumedTurn.Input.Model);
         Assert.Equal("high", resumedTurn.Input.ReasoningEffort);

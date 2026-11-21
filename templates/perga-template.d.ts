@@ -89,7 +89,6 @@ export interface KernelFactsSnapshot {
     isLead: boolean;
     provider?: string | null;
     model?: string | null;
-    boundAttemptId?: string | null;
     status?: string;
   }>;
 }
@@ -129,7 +128,7 @@ export interface PergaTemplateSetupResult<TState = Record<string, any>, TInputs 
   turnContext?: (ctx: TemplateContext<TState, TInputs> & { session: {
     sessionId: string;
     isLead: boolean;
-    boundAttemptId?: string;
+    boundTaskId?: string;
     contextUsageRatio: number;
   } }) => string | void;
   /** Declarative prompts support ${inputs.key}; use after(schedule.fired) for stateful decisions. */

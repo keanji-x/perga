@@ -102,13 +102,13 @@ const longTermGoalTemplate = {
     if (event.type !== "task.settled") return;
     ctx.state.lastSettledTask = event.taskKey;
 
-    if (event.attemptStatus === "done") {
+    if (event.status === "done") {
       ctx.state.milestonesCompleted += 1;
       ctx.state.consecutiveFailures = 0;
       return `Milestone task '${event.taskKey}' succeeded (completed=${ctx.state.milestonesCompleted}). Update '# Progress Log' and evaluate next milestone.`;
     }
 
-    if (event.attemptStatus === "failed") {
+    if (event.status === "failed") {
       ctx.state.consecutiveFailures += 1;
       if (ctx.state.consecutiveFailures >= 3) {
         ctx.state.pausedForHuman = true;
@@ -117,7 +117,7 @@ const longTermGoalTemplate = {
       return `Task '${event.taskKey}' failed (${ctx.state.consecutiveFailures}/3 before circuit breaker).`;
     }
 
-    return `Task '${event.taskKey}' settled as '${event.attemptStatus}'.`;
+    return `Task '${event.taskKey}' settled as '${event.status}'.`;
   },
   before: (action, ctx) => {
     if (action.type === "report.commit") {

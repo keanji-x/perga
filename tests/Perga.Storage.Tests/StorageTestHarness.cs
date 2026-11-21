@@ -125,8 +125,6 @@ internal sealed class StorageTestHarness : IAsyncDisposable
             Id: leadSessionId,
             TrackId: trackId,
             IsLead: true,
-            BoundTaskId: null,
-            BoundAttemptId: null,
             Title: "Lead",
             Provider: "codex",
             Model: "gpt-5",

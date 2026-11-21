@@ -53,7 +53,6 @@ public sealed class WorkspaceDriversTests : IDisposable
 
         var driver = new DirectWorkspaceDriver();
         Assert.Equal("direct", driver.DriverId);
-        Assert.False(driver.SupportsParallelIsolatedWriteLeases);
 
         var req = new WorkspaceProvisionRequest(
             TrackId: "trk_direct_1",
@@ -69,13 +68,6 @@ public sealed class WorkspaceDriversTests : IDisposable
         var mounted = await driver.EnsureMountedAsync(spec);
         Assert.Equal(sourceDir, mounted.MergedCwd);
 
-        var lease = await driver.AcquireAttemptLeaseAsync(mounted, "att_1", readWrite: true);
-        Assert.Equal("direct", lease.DriverId);
-        Assert.Equal("att_1", lease.AttemptId);
-        Assert.Equal(sourceDir, lease.EffectiveCwd);
-        Assert.False(lease.IsIsolatedCopyOnWrite);
-
-        await driver.SettleAttemptLeaseAsync(lease, AttemptLeaseDisposition.Discard);
         await driver.TeardownTrackAsync(spec);
 
         Assert.True(File.Exists(sourceFile));
@@ -95,7 +87,6 @@ public sealed class WorkspaceDriversTests : IDisposable
         var vcs = new VcsService();
         var driver = new VcsWorkspaceDriver(vcs);
         Assert.Equal("vcs-workspace", driver.DriverId);
-        Assert.False(driver.SupportsParallelIsolatedWriteLeases);
 
         var workspacesRoot = Path.Combine(_tempRoot, "track-workspaces");
         var req = new WorkspaceProvisionRequest(
@@ -117,13 +108,11 @@ public sealed class WorkspaceDriversTests : IDisposable
         var hydratedSpec = JsonSerializer.Deserialize<WorkspaceSpec>(serializedSpec)!;
 
         var mounted = await driver.EnsureMountedAsync(hydratedSpec);
-        var lease = await driver.AcquireAttemptLeaseAsync(mounted, "att_alpha_1", readWrite: true);
-        Assert.Equal(expectedWsDir, lease.EffectiveCwd);
+        Assert.Equal(expectedWsDir, mounted.MergedCwd);
 
-        await File.WriteAllTextAsync(Path.Combine(lease.EffectiveCwd, "isolated.txt"), "only-in-track");
+        await File.WriteAllTextAsync(Path.Combine(mounted.MergedCwd, "isolated.txt"), "only-in-track");
         Assert.False(File.Exists(Path.Combine(repoDir, "isolated.txt")));
 
-        await driver.SettleAttemptLeaseAsync(lease, AttemptLeaseDisposition.Promote);
         await driver.TeardownTrackAsync(hydratedSpec);
 
         Assert.False(Directory.Exists(expectedWsDir));

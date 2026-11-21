@@ -19,7 +19,7 @@ public sealed partial class TrackActor
             try
             {
                 var evaluation = _policyVm.PrepareTurn(_policy, new(TrackId, session.Id, session.IsLead,
-                    session.BoundAttemptId, CurrentContextUsageRatioCore(session) ?? 0, _track.TemplateInputs), _track.TemplateState);
+                    TryGetActiveTaskForSessionCore(session.Id)?.Task.Id, CurrentContextUsageRatioCore(session) ?? 0, _track.TemplateInputs), _track.TemplateState);
                 await UpdateTemplateStateIfChangedCoreAsync(evaluation.NextState, ct).ConfigureAwait(false);
                 var suspension = ApplyGuardDecisionCore(evaluation.Output.Decision, sessionId, null, ct);
                 return (new(generation, evaluation.Output.Context, null), suspension);

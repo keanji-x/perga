@@ -131,7 +131,7 @@ public sealed class PolicyVmTests
         // Turn context includes role, upstream branch, and handover notice at high context usage
         var turnRes = _vm.PrepareTurn(
             compiled,
-            new PolicyTurnContext("trk_dev", "ses_lead", IsLead: true, BoundAttemptId: null, ContextUsageRatio: 0.82, Inputs: inputs),
+            new PolicyTurnContext("trk_dev", "ses_lead", IsLead: true, BoundTaskId: null, ContextUsageRatio: 0.82, Inputs: inputs),
             state);
         Assert.Contains("release/1.0", turnRes.Output.Context);
         Assert.Contains("Epoch handover", turnRes.Output.Context);
@@ -141,7 +141,7 @@ public sealed class PolicyVmTests
             JsonSerializer.SerializeToElement(new {
                 sessionId = "ses_lead",
                 isLead = true,
-                boundAttemptId = (object?)null,
+                boundTaskId = (object?)null,
                 mcpServer = "vcs",
                 toolName = "pr_merge",
                 arguments = ParseJson("""{"prNumber":12}""")
@@ -154,7 +154,7 @@ public sealed class PolicyVmTests
             JsonSerializer.SerializeToElement(new {
                 taskKey = "impl-core",
                 accessMode = "read_write",
-                attemptStatus = "done",
+                status = "done",
                 workerResult = ParseJson("""{"summary":"Implemented engine"}"""),
                 meta = ParseJson("""{"changeId":"kxyz1234","opId":"op_9988"}"""),
                 gateVerdict = ParseJson("""{"passed":true}""")
@@ -172,7 +172,7 @@ public sealed class PolicyVmTests
             JsonSerializer.SerializeToElement(new {
                 sessionId = "ses_lead",
                 isLead = true,
-                boundAttemptId = (object?)null,
+                boundTaskId = (object?)null,
                 mcpServer = "vcs",
                 toolName = "publish_pr",
                 arguments = ParseJson("{}")
@@ -187,7 +187,7 @@ public sealed class PolicyVmTests
             JsonSerializer.SerializeToElement(new {
                 sessionId = "ses_lead",
                 isLead = true,
-                boundAttemptId = (object?)null,
+                boundTaskId = (object?)null,
                 mcpServer = "vcs",
                 toolName = "pr_merge",
                 arguments = ParseJson("""{"prNumber":12}""")
@@ -236,7 +236,7 @@ public sealed class PolicyVmTests
                 JsonSerializer.SerializeToElement(new {
                     taskKey = $"milestone-{i}",
                     accessMode = "read_write",
-                    attemptStatus = "failed",
+                    status = "failed",
                     workerResult = (object?)null,
                     meta = ParseJson("{}"),
                     gateVerdict = (object?)null
@@ -251,7 +251,7 @@ public sealed class PolicyVmTests
             JsonSerializer.SerializeToElement(new {
                 sessionId = "ses_1",
                 isLead = true,
-                boundAttemptId = (object?)null,
+                boundTaskId = (object?)null,
                 mcpServer = "perga",
                 toolName = "mail_send",
                 arguments = ParseJson("{}")
@@ -263,7 +263,7 @@ public sealed class PolicyVmTests
             JsonSerializer.SerializeToElement(new {
                 sessionId = "ses_1",
                 isLead = true,
-                boundAttemptId = (object?)null,
+                boundTaskId = (object?)null,
                 mcpServer = "perga",
                 toolName = "track_close",
                 arguments = ParseJson("{}")
@@ -290,7 +290,7 @@ public sealed class PolicyVmTests
             JsonSerializer.SerializeToElement(new {
                 sessionId = "ses_1",
                 isLead = true,
-                boundAttemptId = (object?)null,
+                boundTaskId = (object?)null,
                 mcpServer = "paper-trading",
                 toolName = "portfolio_positions",
                 arguments = ParseJson("{}")
@@ -302,7 +302,7 @@ public sealed class PolicyVmTests
             JsonSerializer.SerializeToElement(new {
                 sessionId = "ses_1",
                 isLead = true,
-                boundAttemptId = (object?)null,
+                boundTaskId = (object?)null,
                 mcpServer = "paper-trading",
                 toolName = "submit_order",
                 arguments = ParseJson("""{"qty":100}""")
@@ -315,7 +315,7 @@ public sealed class PolicyVmTests
             JsonSerializer.SerializeToElement(new {
                 taskKey = "dcf-model",
                 accessMode = "read_only",
-                attemptStatus = "done",
+                status = "done",
                 workerResult = ParseJson("""{"verifiedSources":4,"convictionScore":82}"""),
                 meta = ParseJson("{}"),
                 gateVerdict = (object?)null
@@ -329,7 +329,7 @@ public sealed class PolicyVmTests
             JsonSerializer.SerializeToElement(new {
                 sessionId = "ses_1",
                 isLead = true,
-                boundAttemptId = (object?)null,
+                boundTaskId = (object?)null,
                 mcpServer = "paper-trading",
                 toolName = "submit_order",
                 arguments = ParseJson("""{"qty":100}""")
@@ -388,7 +388,7 @@ public sealed class PolicyVmTests
                 JsonSerializer.SerializeToElement(new {
                     sessionId = "s1",
                     isLead = true,
-                    boundAttemptId = (object?)null,
+                    boundTaskId = (object?)null,
                     mcpServer = "perga",
                     toolName = "task_list",
                     arguments = ParseJson("{}")
@@ -513,7 +513,7 @@ public sealed class PolicyVmTests
             JsonSerializer.SerializeToElement(new {
                 sessionId = "s1",
                 isLead = true,
-                boundAttemptId = (object?)null,
+                boundTaskId = (object?)null,
                 mcpServer = "perga",
                 toolName = "ask_no_opts",
                 arguments = emptyInputs
@@ -527,7 +527,7 @@ public sealed class PolicyVmTests
             JsonSerializer.SerializeToElement(new {
                 sessionId = "s1",
                 isLead = true,
-                boundAttemptId = (object?)null,
+                boundTaskId = (object?)null,
                 mcpServer = "perga",
                 toolName = "deny_tool",
                 arguments = emptyInputs

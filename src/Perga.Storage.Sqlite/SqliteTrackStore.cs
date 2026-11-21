@@ -561,7 +561,13 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                        status_detail AS StatusDetail,
                        semantic_verdict AS SemanticVerdict,
                        semantic_note AS SemanticNote,
-                       latest_attempt_id AS LatestAttemptId,
+                       session_id AS SessionId,
+                       run_count AS RunCount,
+                       worker_result_json AS WorkerResultJson,
+                       meta_json AS MetaJson,
+                       gate_verdict_json AS GateVerdictJson,
+                       started_at_ms AS StartedAtMs,
+                       finished_at_ms AS FinishedAtMs,
                        created_at_ms AS CreatedAtMs,
                        updated_at_ms AS UpdatedAtMs
                 FROM tasks
@@ -577,8 +583,6 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                 """
                 SELECT id AS Id,
                        track_id AS TrackId,
-                       bound_task_id AS BoundTaskId,
-                       bound_attempt_id AS BoundAttemptId,
                        title AS Title,
                        provider AS Provider,
                        model AS Model,
@@ -905,9 +909,15 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                     {
                         var parentDepth = authorSessionId is null ? (int?)null : await conn.ExecuteScalarAsync<int?>(new CommandDefinition(
                             "SELECT spawn_depth FROM agent_sessions WHERE id=@Id;", new { Id = authorSessionId }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
-                        await UpsertSessionInternalAsync(conn, tx, session with { BoundTaskId = dispatched.Id,
-                            ParentSessionId = authorSessionId, SpawnDepth = parentDepth is null ? 0 : parentDepth.Value + 1,
-                            NotifyParent = session.NotifyParent }, innerCt).ConfigureAwait(false);
+                        await UpsertSessionInternalAsync(conn, tx, session with
+                        {
+                            ParentSessionId = authorSessionId,
+                            SpawnDepth = parentDepth is null ? 0 : parentDepth.Value + 1,
+                            NotifyParent = session.NotifyParent
+                        }, innerCt).ConfigureAwait(false);
+                        await conn.ExecuteAsync(new CommandDefinition(
+                            "UPDATE tasks SET session_id = @SessionId WHERE id = @TaskId;",
+                            new { SessionId = session.Id, TaskId = dispatched.Id }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
                     }
                     await conn.ExecuteAsync(new CommandDefinition("""
                         INSERT INTO creation_receipts (author_id, operation, scope_id, request_key, request_hash, resource_id, created_at_ms)
@@ -942,17 +952,19 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
     }
 
     // -------------------------------------------------------------------------
-    // Tasks & Attempts
+    // Tasks
     // -------------------------------------------------------------------------
 
-    public Task UpsertTaskAndAttemptAsync(
+    public Task UpsertTaskAsync(
         TaskDto task,
-        TaskAttemptDto? attempt,
         JsonElement? nextTemplateState,
         EventEnvelopeDto? evt,
         CancellationToken ct,
         AgentSessionDto? session = null,
-        EventEnvelopeDto? sessionEvent = null, string? wakePrompt = null, SessionMessage? initialMessage = null)
+        EventEnvelopeDto? sessionEvent = null,
+        string? wakePrompt = null,
+        SessionMessage? initialMessage = null,
+        bool writeNewRunBoundary = false)
     {
         ArgumentNullException.ThrowIfNull(task);
         EnsureInitialized();
@@ -964,67 +976,29 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
         return _writer.EnqueueAsync(
             async (conn, tx, innerCt) =>
             {
-                await UpsertTaskInternalAsync(conn, tx, task, innerCt).ConfigureAwait(false);
                 if (session is not null)
                 {
-                    if (session.BoundAttemptId is not null && await conn.ExecuteScalarAsync<bool>(new CommandDefinition(
-                        "SELECT EXISTS(SELECT 1 FROM agent_sessions WHERE id=@Id AND bound_attempt_id IS NOT NULL AND bound_attempt_id<>@BoundAttemptId);",
-                        session, tx, cancellationToken: innerCt)).ConfigureAwait(false))
-                        await InsertSessionItemsAsync(conn, tx, session.TrackId, [new SessionItemDto(0, session.Id, null,
-                            "epoch_boundary", System.Text.Json.JsonSerializer.SerializeToElement(new { epoch = session.Epoch, reason = "new_attempt" }), session.UpdatedAtMs)], innerCt).ConfigureAwait(false);
                     await UpsertSessionInternalAsync(conn, tx, session, innerCt).ConfigureAwait(false);
+                    if (writeNewRunBoundary)
+                    {
+                        await InsertSessionItemsAsync(conn, tx, session.TrackId, [new SessionItemDto(0, session.Id, null,
+                            "epoch_boundary", System.Text.Json.JsonSerializer.SerializeToElement(new { epoch = session.Epoch, reason = "new_run" }), session.UpdatedAtMs)], innerCt).ConfigureAwait(false);
+                    }
                 }
+
+                await UpsertTaskInternalAsync(conn, tx, task, innerCt).ConfigureAwait(false);
+
                 if (sessionEvent is not null)
                     await InsertEventInternalAsync(conn, tx, sessionEvent, innerCt).ConfigureAwait(false);
                 if (initialMessage is not null)
                     await InsertSessionMessageAsync(conn, tx, initialMessage, innerCt).ConfigureAwait(false);
 
-                if (attempt is not null)
+                if (task.FinishedAtMs is not null && task.SessionId is not null)
                 {
-                    await conn.ExecuteAsync(
-                        new CommandDefinition(
-                            """
-                            INSERT INTO task_attempts (
-                                attempt_id, task_id, track_id, session_id, status,
-                                worker_result_json, meta_json, workspace_lease_json, gate_verdict_json,
-                                started_at_ms, finished_at_ms
-                            )
-                            VALUES (
-                                @AttemptId, @TaskId, @TrackId, @SessionId, @Status,
-                                @WorkerResultJson, @MetaJson, @WorkspaceLeaseJson, @GateVerdictJson,
-                                @StartedAtMs, @FinishedAtMs
-                            )
-                            ON CONFLICT(attempt_id) DO UPDATE SET
-                                session_id = excluded.session_id,
-                                status = excluded.status,
-                                worker_result_json = excluded.worker_result_json,
-                                meta_json = excluded.meta_json,
-                                workspace_lease_json = excluded.workspace_lease_json,
-                                gate_verdict_json = excluded.gate_verdict_json,
-                                finished_at_ms = excluded.finished_at_ms;
-                            """,
-                            new
-                            {
-                                attempt.AttemptId,
-                                attempt.TaskId,
-                                attempt.TrackId,
-                                attempt.SessionId,
-                                attempt.Status,
-                                WorkerResultJson = SqliteJsonUpcaster.SerializeNullableElement(attempt.WorkerResult),
-                                MetaJson = SqliteJsonUpcaster.SerializeElement(attempt.Meta),
-                                WorkspaceLeaseJson = SqliteJsonUpcaster.SerializeNullableElement(attempt.WorkspaceLease),
-                                GateVerdictJson = _coldBlobStore.StoreOrInlineNullable(attempt.TrackId, attempt.GateVerdict),
-                                attempt.StartedAtMs,
-                                attempt.FinishedAtMs
-                            },
-                            transaction: tx,
-                            cancellationToken: innerCt)).ConfigureAwait(false);
-
-                    if (attempt.FinishedAtMs is not null)
-                        await conn.ExecuteAsync(new CommandDefinition("""
-                            UPDATE session_messages SET delivery = 'interrupted'
-                            WHERE attempt_id = @AttemptId AND delivery = 'queued';
-                            """, new { attempt.AttemptId }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
+                    await conn.ExecuteAsync(new CommandDefinition("""
+                        UPDATE session_messages SET delivery = 'interrupted'
+                        WHERE session_id = @SessionId AND delivery = 'queued';
+                        """, new { task.SessionId }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
                 }
 
                 if (nextTemplateStateJson is not null)
@@ -1047,16 +1021,16 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                             cancellationToken: innerCt)).ConfigureAwait(false);
                 }
 
-                if (attempt?.FinishedAtMs is not null)
+                if (task.FinishedAtMs is not null)
                 {
-                    var child = await conn.QuerySingleOrDefaultAsync<(string? Parent, string Notify)?> (new CommandDefinition(
-                        "SELECT parent_session_id, notify_parent FROM agent_sessions WHERE id=@Id;", new { Id = attempt.SessionId }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
+                    var child = task.SessionId is null ? null : await conn.QuerySingleOrDefaultAsync<(string? Parent, string Notify)?>(new CommandDefinition(
+                        "SELECT parent_session_id, notify_parent FROM agent_sessions WHERE id=@Id;", new { Id = task.SessionId }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
                     if (child?.Parent is { } parentId && child.Value.Notify == "task_settled" &&
                         await conn.ExecuteScalarAsync<bool>(new CommandDefinition(
                             "SELECT EXISTS(SELECT 1 FROM agent_sessions WHERE id=@Id AND archived_at_ms IS NULL);", new { Id = parentId }, tx, cancellationToken: innerCt)).ConfigureAwait(false))
-                        await EnqueueWakeOnceInternalAsync(conn, tx, TrackWakeRequests.TaskSettled(task, attempt, wakePrompt) with { TargetSessionId = parentId }, task.UpdatedAtMs, innerCt).ConfigureAwait(false);
+                        await EnqueueWakeOnceInternalAsync(conn, tx, TrackWakeRequests.TaskSettled(task, wakePrompt) with { TargetSessionId = parentId }, task.UpdatedAtMs, innerCt).ConfigureAwait(false);
                     else if (child is null || child.Value.Parent is null)
-                        await EnqueueWakeOnceInternalAsync(conn, tx, TrackWakeRequests.TaskSettled(task, attempt, wakePrompt), task.UpdatedAtMs, innerCt).ConfigureAwait(false);
+                        await EnqueueWakeOnceInternalAsync(conn, tx, TrackWakeRequests.TaskSettled(task, wakePrompt), task.UpdatedAtMs, innerCt).ConfigureAwait(false);
                 }
                 if (evt is not null)
                 {
@@ -1064,36 +1038,6 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                 }
             },
             ct);
-    }
-
-    public async Task<IReadOnlyList<TaskAttemptDto>> ListAttemptsForTaskAsync(string taskId, CancellationToken ct)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(taskId);
-        EnsureInitialized();
-
-        await using var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);
-        var rows = await conn.QueryAsync<TaskAttemptRow>(
-            new CommandDefinition(
-                """
-                SELECT attempt_id AS AttemptId,
-                       task_id AS TaskId,
-                       track_id AS TrackId,
-                       session_id AS SessionId,
-                       status AS Status,
-                       worker_result_json AS WorkerResultJson,
-                       meta_json AS MetaJson,
-                       workspace_lease_json AS WorkspaceLeaseJson,
-                       gate_verdict_json AS GateVerdictJson,
-                       started_at_ms AS StartedAtMs,
-                       finished_at_ms AS FinishedAtMs
-                FROM task_attempts
-                WHERE task_id = @TaskId
-                ORDER BY started_at_ms ASC, attempt_id ASC;
-                """,
-                new { TaskId = taskId },
-                cancellationToken: ct)).ConfigureAwait(false);
-
-        return rows.Select(MapTaskAttempt).ToList();
     }
 
     // -------------------------------------------------------------------------
@@ -1367,7 +1311,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                        item.session_id AS SessionId,
                        item.turn_id AS TurnId,
                        item.kind AS Kind,
-                       CASE WHEN input.id IS NULL OR input.source = 'worker' OR input.turn_id IS NULL THEN item.payload_json
+                       CASE WHEN input.id IS NULL OR input.kind = 'worker' OR input.turn_id IS NULL THEN item.payload_json
                             ELSE json_object('v', 1, 'content', input.content, 'triggerKind', 'user', 'inputId', input.id)
                        END AS PayloadJson,
                        item.created_at_ms AS CreatedAtMs,
@@ -1593,15 +1537,15 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                     new CommandDefinition(
                         """
                         INSERT INTO terminals (
-                            id, track_id, attempt_id, idempotency_key, title,
+                            id, track_id, session_id, idempotency_key, title,
                             program, cwd, status, exit_code, created_at_ms, exited_at_ms
                         )
                         VALUES (
-                            @Id, @TrackId, @AttemptId, @IdempotencyKey, @Title,
+                            @Id, @TrackId, @SessionId, @IdempotencyKey, @Title,
                             @Program, @Cwd, @Status, @ExitCode, @CreatedAtMs, @ExitedAtMs
                         )
                         ON CONFLICT(id) DO UPDATE SET
-                            attempt_id = excluded.attempt_id,
+                            session_id = excluded.session_id,
                             idempotency_key = excluded.idempotency_key,
                             title = excluded.title,
                             program = excluded.program,
@@ -1614,7 +1558,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                         {
                             terminal.Id,
                             terminal.TrackId,
-                            terminal.AttemptId,
+                            terminal.SessionId,
                             terminal.IdempotencyKey,
                             terminal.Title,
                             terminal.Program,
@@ -1670,7 +1614,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                 """
                 SELECT id AS Id,
                        track_id AS TrackId,
-                       attempt_id AS AttemptId,
+                       session_id AS SessionId,
                        idempotency_key AS IdempotencyKey,
                        title AS Title,
                        program AS Program,
@@ -1781,9 +1725,10 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                (SELECT COUNT(1) FROM asks a WHERE a.track_id = tr.id AND LOWER(a.status) = 'open') AS OpenAskCount,
                CASE WHEN EXISTS (
                    SELECT 1 FROM agent_sessions s WHERE s.track_id = tr.id AND s.archived_at_ms IS NULL
-                   AND LOWER(s.status) = 'unknown' AND (s.bound_task_id IS NULL OR EXISTS (
-                       SELECT 1 FROM task_attempts a WHERE a.attempt_id = s.bound_attempt_id AND a.finished_at_ms IS NULL
-                   ))
+                   AND LOWER(s.status) = 'unknown' AND (
+                       NOT EXISTS (SELECT 1 FROM tasks tk WHERE tk.session_id = s.id)
+                       OR EXISTS (SELECT 1 FROM tasks tk WHERE tk.session_id = s.id AND LOWER(tk.status) IN ('running', 'verifying'))
+                   )
                ) THEN 1 ELSE 0 END AS HasBlockedSession,
                CASE WHEN EXISTS (
                    SELECT 1 FROM track_workspace_preparations p WHERE p.track_id = tr.id
@@ -1817,7 +1762,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
             SELECT s.track_id AS TrackId, s.id AS SessionId, MAX(t.completed_at_ms) AS LastNotifiableTurnAtMs
             FROM agent_sessions s JOIN session_turns t ON t.session_id = s.id
             JOIN tracks tr ON tr.id = s.track_id
-            WHERE s.archived_at_ms IS NULL AND s.bound_task_id IS NULL
+            WHERE s.archived_at_ms IS NULL AND NOT EXISTS (SELECT 1 FROM tasks tk WHERE tk.session_id = s.id)
               AND LOWER(t.status) IN ('completed', 'failed') AND t.completed_at_ms IS NOT NULL
               AND (@IncludeClosed = 1 OR tr.closed_at_ms IS NULL)
             GROUP BY s.track_id, s.id ORDER BY s.id;
@@ -1842,33 +1787,6 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
     // Boot Reconciliation
     // -------------------------------------------------------------------------
 
-    /// <summary>
-    /// Returns in-flight attempts with a lease to settle before boot marks them interrupted.
-    /// </summary>
-    public async Task<IReadOnlyList<InterruptedAttemptLeaseDto>> ListInFlightAttemptLeasesAsync(
-        CancellationToken ct = default)
-    {
-        EnsureInitialized();
-
-        await using var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);
-        var liveRows = (await conn.QueryAsync<InterruptedLeaseRow>(
-            new CommandDefinition(
-                """
-                SELECT attempt_id AS AttemptId,
-                       task_id AS TaskId,
-                       track_id AS TrackId,
-                       workspace_lease_json AS WorkspaceLeaseJson
-                FROM task_attempts
-                WHERE LOWER(status) IN ('running', 'verifying')
-                  AND workspace_lease_json IS NOT NULL;
-                """,
-                cancellationToken: ct)).ConfigureAwait(false)).ToList();
-
-        return liveRows.Select(static r => new InterruptedAttemptLeaseDto(
-            r.AttemptId, r.TaskId, r.TrackId,
-            SqliteJsonUpcaster.ParseElementOrDefault(r.WorkspaceLeaseJson))).ToArray();
-    }
-
     public Task<IReadOnlyList<string>> MarkInFlightInterruptedOnBootAsync(CancellationToken ct)
     {
         EnsureInitialized();
@@ -1887,11 +1805,6 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                                   SELECT 1 FROM tasks task
                                   WHERE task.track_id = tr.id
                                     AND task.status IN ('running', 'verifying')
-                              )
-                              OR EXISTS (
-                                  SELECT 1 FROM task_attempts a
-                                  WHERE a.track_id = tr.id
-                                    AND LOWER(a.status) IN ('running', 'verifying')
                               )
                               OR EXISTS (
                                   SELECT 1 FROM session_turns t
@@ -1913,25 +1826,22 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                 await conn.ExecuteAsync(
                     new CommandDefinition(
                         """
-                        UPDATE tasks AS t
-                        SET status = CASE WHEN LOWER(a.status) = 'running' AND a.workspace_lease_json IS NULL AND a.session_id IS NULL THEN 'pending' ELSE 'failed' END,
-                            status_detail = CASE WHEN LOWER(a.status) = 'running' AND a.workspace_lease_json IS NULL AND a.session_id IS NULL THEN NULL ELSE 'The host stopped during this attempt.' END,
-                            updated_at_ms = @NowMs
-                        FROM task_attempts a
-                        WHERE a.attempt_id = t.latest_attempt_id AND a.task_id = t.id
-                          AND t.status IN ('running', 'verifying') AND LOWER(a.status) IN ('running', 'verifying', 'interrupted');
-                        UPDATE agent_sessions AS s
-                        SET archived_at_ms = COALESCE(archived_at_ms, @NowMs), updated_at_ms = @NowMs
-                        WHERE EXISTS (
-                            SELECT 1 FROM task_attempts a WHERE a.attempt_id = s.bound_attempt_id AND a.session_id = s.id
-                                AND LOWER(a.status) IN ('running', 'verifying')
-                        );
-                        UPDATE task_attempts
-                        SET status = 'interrupted',
-                            finished_at_ms = COALESCE(finished_at_ms, @NowMs)
-                        WHERE LOWER(status) IN ('running', 'verifying');
                         UPDATE session_messages SET delivery = 'interrupted'
-                        WHERE source = 'worker' AND delivery = 'queued';
+                        WHERE delivery = 'queued' AND session_id IN (
+                            SELECT session_id FROM tasks WHERE status IN ('running', 'verifying') AND session_id IS NOT NULL
+                        );
+                        UPDATE agent_sessions
+                        SET archived_at_ms = COALESCE(archived_at_ms, @NowMs), updated_at_ms = @NowMs,
+                            status = CASE WHEN status IN ('queued', 'running') THEN 'idle' ELSE status END
+                        WHERE id IN (
+                            SELECT session_id FROM tasks WHERE status IN ('running', 'verifying') AND session_id IS NOT NULL
+                        );
+                        UPDATE tasks
+                        SET status = 'failed',
+                            status_detail = 'The host stopped during this task.',
+                            finished_at_ms = COALESCE(finished_at_ms, @NowMs),
+                            updated_at_ms = @NowMs
+                        WHERE status IN ('running', 'verifying');
                         """,
                         new { NowMs = nowMs },
                         transaction: tx,
@@ -2014,7 +1924,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                 cancellationToken: ct)).ConfigureAwait(false);
     }
 
-    private static async Task UpsertTaskInternalAsync(
+    private async Task UpsertTaskInternalAsync(
         SqliteConnection conn,
         SqliteTransaction tx,
         TaskDto task,
@@ -2035,13 +1945,15 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                     id, track_id, block_id, task_key, generation, kind, provider, role,
                     access_mode, ready, depends_on_json, goal_or_cmd, context_json,
                     acceptance, gate_json, status, status_detail, semantic_verdict,
-                    semantic_note, latest_attempt_id, created_at_ms, updated_at_ms
+                    semantic_note, session_id, run_count, worker_result_json, meta_json,
+                    gate_verdict_json, started_at_ms, finished_at_ms, created_at_ms, updated_at_ms
                 )
                 VALUES (
                     @Id, @TrackId, @BlockId, @TaskKey, @Generation, @Kind, @Provider, @Role,
                     @AccessMode, @Ready, @DependsOnJson, @GoalOrCmd, @ContextJson,
                     @Acceptance, @GateJson, @Status, @StatusDetail, @SemanticVerdict,
-                    @SemanticNote, @LatestAttemptId, @CreatedAtMs, @UpdatedAtMs
+                    @SemanticNote, @SessionId, @RunCount, @WorkerResultJson, @MetaJson,
+                    @GateVerdictJson, @StartedAtMs, @FinishedAtMs, @CreatedAtMs, @UpdatedAtMs
                 )
                 ON CONFLICT(id) DO UPDATE SET
                     block_id = excluded.block_id,
@@ -2061,7 +1973,13 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                     status_detail = excluded.status_detail,
                     semantic_verdict = excluded.semantic_verdict,
                     semantic_note = excluded.semantic_note,
-                    latest_attempt_id = excluded.latest_attempt_id,
+                    session_id = excluded.session_id,
+                    run_count = excluded.run_count,
+                    worker_result_json = excluded.worker_result_json,
+                    meta_json = excluded.meta_json,
+                    gate_verdict_json = excluded.gate_verdict_json,
+                    started_at_ms = excluded.started_at_ms,
+                    finished_at_ms = excluded.finished_at_ms,
                     updated_at_ms = excluded.updated_at_ms;
                 """,
                 new
@@ -2085,7 +2003,13 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                     task.StatusDetail,
                     SemanticVerdict = SqliteJsonUpcaster.FormatSemanticVerdict(task.SemanticVerdict),
                     task.SemanticNote,
-                    task.LatestAttemptId,
+                    task.SessionId,
+                    task.RunCount,
+                    WorkerResultJson = SqliteJsonUpcaster.SerializeNullableElement(task.WorkerResult),
+                    MetaJson = task.Meta.HasValue ? SqliteJsonUpcaster.SerializeElement(task.Meta.Value) : "{}",
+                    GateVerdictJson = _coldBlobStore.StoreOrInlineNullable(task.TrackId, task.GateVerdict),
+                    task.StartedAtMs,
+                    task.FinishedAtMs,
                     task.CreatedAtMs,
                     task.UpdatedAtMs
                 },
@@ -2103,7 +2027,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
             new CommandDefinition(
                 """
                 INSERT INTO agent_sessions (
-                    id, track_id, bound_task_id, bound_attempt_id, title,
+                    id, track_id, title,
                     provider, model, reasoning_effort, native_thread_id, epoch, status,
                     context_used_tokens, context_window_tokens, context_usage_at_ms,
                     archived_at_ms, created_at_ms, updated_at_ms, permission_mode,
@@ -2111,7 +2035,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                     parent_session_id, spawn_depth, config_version, notify_parent, system_prompt
                 )
                 VALUES (
-                    @Id, @TrackId, @BoundTaskId, @BoundAttemptId, @Title,
+                    @Id, @TrackId, @Title,
                     @Provider, @Model, @ReasoningEffort, @NativeThreadId, @Epoch, @Status,
                     @ContextUsedTokens, @ContextWindowTokens, @ContextUsageAtMs,
                     @ArchivedAtMs, @CreatedAtMs, @UpdatedAtMs, @PermissionMode,
@@ -2119,8 +2043,6 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                     @ParentSessionId, @SpawnDepth, @ConfigVersion, @NotifyParent, @SystemPrompt
                 )
                 ON CONFLICT(id) DO UPDATE SET
-                    bound_task_id = excluded.bound_task_id,
-                    bound_attempt_id = excluded.bound_attempt_id,
                     title = excluded.title,
                     provider = excluded.provider,
                     model = excluded.model,
@@ -2143,8 +2065,6 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                 {
                     session.Id,
                     session.TrackId,
-                    session.BoundTaskId,
-                    session.BoundAttemptId,
                     session.Title,
                     session.Provider,
                     session.Model,
@@ -2254,7 +2174,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
             CreatedAtMs: r.CreatedAtMs,
             UpdatedAtMs: r.UpdatedAtMs);
 
-    private static TaskDto MapTask(TaskRow r) =>
+    private TaskDto MapTask(TaskRow r) =>
         new(
             Id: r.Id,
             TrackId: r.TrackId,
@@ -2275,23 +2195,15 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
             StatusDetail: r.StatusDetail,
             SemanticVerdict: SqliteJsonUpcaster.ParseSemanticVerdict(r.SemanticVerdict),
             SemanticNote: r.SemanticNote,
-            LatestAttemptId: r.LatestAttemptId,
+            SessionId: r.SessionId,
+            RunCount: (int)r.RunCount,
+            WorkerResult: SqliteJsonUpcaster.ParseNullableElement(r.WorkerResultJson),
+            Meta: _upcaster.UpcastObjectOrElement(r.MetaJson, "tasks.meta_json"),
+            GateVerdict: _coldBlobStore.HydrateNullable(r.GateVerdictJson, "tasks.gate_verdict_json"),
+            StartedAtMs: r.StartedAtMs,
+            FinishedAtMs: r.FinishedAtMs,
             CreatedAtMs: r.CreatedAtMs,
             UpdatedAtMs: r.UpdatedAtMs);
-
-    private TaskAttemptDto MapTaskAttempt(TaskAttemptRow r) =>
-        new(
-            AttemptId: r.AttemptId,
-            TaskId: r.TaskId,
-            TrackId: r.TrackId,
-            SessionId: r.SessionId,
-            Status: r.Status,
-            WorkerResult: SqliteJsonUpcaster.ParseNullableElement(r.WorkerResultJson),
-            Meta: _upcaster.UpcastObjectOrElement(r.MetaJson, "task_attempts.meta_json"),
-            WorkspaceLease: SqliteJsonUpcaster.ParseNullableElement(r.WorkspaceLeaseJson),
-            GateVerdict: _coldBlobStore.HydrateNullable(r.GateVerdictJson, "task_attempts.gate_verdict_json"),
-            StartedAtMs: r.StartedAtMs,
-            FinishedAtMs: r.FinishedAtMs);
 
     private static AgentSessionDto MapSession(SessionRow r, string? leadSessionId) =>
         new(
@@ -2299,8 +2211,6 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
             TrackId: r.TrackId,
             IsLead: !string.IsNullOrWhiteSpace(leadSessionId) &&
                     string.Equals(r.Id, leadSessionId, StringComparison.Ordinal),
-            BoundTaskId: r.BoundTaskId,
-            BoundAttemptId: r.BoundAttemptId,
             Title: r.Title,
             Provider: r.Provider,
             Model: r.Model,
@@ -2370,7 +2280,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
         new(
             Id: r.Id,
             TrackId: r.TrackId,
-            AttemptId: r.AttemptId,
+            SessionId: r.SessionId,
             IdempotencyKey: r.IdempotencyKey,
             Title: r.Title,
             Program: r.Program,
@@ -2479,24 +2389,15 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
         public string? StatusDetail { get; init; }
         public string SemanticVerdict { get; init; } = "none";
         public string? SemanticNote { get; init; }
-        public string? LatestAttemptId { get; init; }
-        public long CreatedAtMs { get; init; }
-        public long UpdatedAtMs { get; init; }
-    }
-
-    private sealed class TaskAttemptRow
-    {
-        public string AttemptId { get; init; } = string.Empty;
-        public string TaskId { get; init; } = string.Empty;
-        public string TrackId { get; init; } = string.Empty;
         public string? SessionId { get; init; }
-        public string Status { get; init; } = string.Empty;
+        public long RunCount { get; init; }
         public string? WorkerResultJson { get; init; }
         public string MetaJson { get; init; } = "{}";
-        public string? WorkspaceLeaseJson { get; init; }
         public string? GateVerdictJson { get; init; }
-        public long StartedAtMs { get; init; }
+        public long? StartedAtMs { get; init; }
         public long? FinishedAtMs { get; init; }
+        public long CreatedAtMs { get; init; }
+        public long UpdatedAtMs { get; init; }
     }
 
     private sealed class SessionRow
@@ -2513,8 +2414,6 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
         public bool ReconnectInvalidated { get; init; }
         public string Id { get; init; } = string.Empty;
         public string TrackId { get; init; } = string.Empty;
-        public string? BoundTaskId { get; init; }
-        public string? BoundAttemptId { get; init; }
         public string? Title { get; init; }
         public string Provider { get; init; } = string.Empty;
         public string? Model { get; init; }
@@ -2589,7 +2488,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
     {
         public string Id { get; init; } = string.Empty;
         public string TrackId { get; init; } = string.Empty;
-        public string? AttemptId { get; init; }
+        public string? SessionId { get; init; }
         public string? IdempotencyKey { get; init; }
         public string Title { get; init; } = "Terminal";
         public string? Program { get; init; }
@@ -2608,14 +2507,6 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
         public string Kind { get; init; } = string.Empty;
         public string PayloadJson { get; init; } = "{}";
         public long CreatedAtMs { get; init; }
-    }
-
-    private sealed class InterruptedLeaseRow
-    {
-        public string AttemptId { get; init; } = string.Empty;
-        public string TaskId { get; init; } = string.Empty;
-        public string TrackId { get; init; } = string.Empty;
-        public string WorkspaceLeaseJson { get; init; } = "{}";
     }
 
     private static string ResolveOrCreateDatabaseId(string fullDbPath, bool dbExistedBeforeInit)

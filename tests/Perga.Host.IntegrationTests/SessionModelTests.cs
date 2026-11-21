@@ -460,7 +460,7 @@ public sealed class SessionModelTests
         var (trackId, _) = await host.CreateTrackAsync();
         var dispatch = await kernel.CreateSessionAsync(trackId, new(Prompt: "Inspect safely", Task: new()), "worker-model-boundary", new InteropPrincipal.Human(), CancellationToken.None);
         await kernel.WaitForTrackIdleAsync(trackId);
-        var worker = Assert.Single((await kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray(), s => s.BoundTaskId == dispatch.Receipt.Task!.Id);
+        var worker = Assert.Single(await kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), default), s => s.TaskId == dispatch.Receipt.Task!.Id).Session;
         using var response = await host.Client.PatchAsJsonAsync($"/api/v1/sessions/{worker.Id}",
             new { model = "gpt-5.4", reasoningEffort = "high" });
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);

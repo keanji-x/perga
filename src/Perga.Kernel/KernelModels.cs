@@ -145,7 +145,7 @@ public sealed record SessionItemsPageDto(
 public sealed record WorkerActivityEvent(long Sequence, string Kind, JsonElement Payload, long CreatedAtMs);
 
 
-public sealed record WorkerCompletionOrigin(string Token, string TurnId);
+public sealed record WorkerCompletionOrigin(string Token, string TurnId, string TaskId, int RunCount);
 
 public sealed record TemplateSetResult(TrackDto Track, IReadOnlyList<string> Warnings, bool DryRun);
 
@@ -199,5 +199,4 @@ public sealed record TrackStatusDto(
 
 public sealed record BootReconcileResult(
     IReadOnlyList<string> AffectedTrackIds,
-    int DiscardedLeases,
     int WokenTracks);

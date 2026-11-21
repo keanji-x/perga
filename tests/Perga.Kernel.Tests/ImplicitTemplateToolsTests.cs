@@ -307,8 +307,11 @@ public sealed class ImplicitTemplateToolsTests
     {
         await using var ctx = new KernelTestContext();
         var (_, snap) = await ctx.CreateDefaultTrackAsync();
-        var bound = snap.Sessions.Single() with { Id = "bound", IsLead = false, BoundAttemptId = "attempt" };
-        await ctx.Store.UpsertSessionAsync(bound, null, default);
+        var bound = snap.Sessions.Single() with { Id = "bound", IsLead = false };
+        var owningTask = new TaskDto("tsk_bound", snap.Track.Id, "b_1", "bound-task", 1, "agent", null, AccessMode.ReadOnly,
+            true, [], "Work", null, null, null, TaskRunStatus.Running, null, SemanticVerdict.None, null, 1, 1,
+            SessionId: bound.Id, RunCount: 1, StartedAtMs: 1);
+        await ctx.Store.UpsertTaskAsync(owningTask, null, null, default, session: bound);
         // Seed before actor hydration in a fresh actor.
         await ctx.Kernel.WaitForTrackIdleAsync(snap.Track.Id);
         await ctx.Kernel.Actors.RemoveAndDisposeAsync(snap.Track.Id);
@@ -317,8 +320,8 @@ public sealed class ImplicitTemplateToolsTests
             Assert.Contains(name, KernelMcpToolNames.All);
             Assert.True(KernelMcpCatalog.IsGovernanceOnly(name));
             Assert.Contains(KernelMcpCatalog.GetToolsForSession(null), d => d.Name == name);
-            Assert.DoesNotContain(KernelMcpCatalog.GetToolsForSession("attempt"), d => d.Name == name);
-            var ex = await Assert.ThrowsAsync<KernelException>(() => Call(ctx, Caller(snap) with { SessionId = bound.Id }, name, new { source = Source }));
+            Assert.DoesNotContain(KernelMcpCatalog.GetToolsForSession("tsk_bound"), d => d.Name == name);
+            var ex = await Assert.ThrowsAsync<KernelException>(() => Call(ctx, Caller(snap) with { SessionId = bound.Id, BoundTaskId = "tsk_bound", TaskRunCount = 1 }, name, new { source = Source }));
             Assert.Equal(KernelErrorCode.Forbidden, ex.Code);
         }
     }

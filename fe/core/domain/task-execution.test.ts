@@ -1,24 +1,18 @@
 import { expect, it } from 'vitest';
+import { taskDtoSchema } from '../api/perga-v1.js';
 import { currentTaskExecution } from './task-execution.js';
-import type { TaskAttempt, TaskRecoveryView } from './task-recovery.js';
 
-function view(id: string, generation: number): TaskRecoveryView & { current: TaskAttempt } {
-  const current = { attempt_id: id, generation, status: 'failed', blocking_reason: null, status_detail: 'validation failed',
-    worker_card_id: `${id}-worker`, created_at_ms: 1000, finished_at_ms: 2000 };
-  return { key: 'b', current, attempts: [current] };
-}
-
-it('presents the current attempt of the history, and nothing without one', () => {
+it('projects session identity and run count from the current task', () => {
   expect(currentTaskExecution(undefined)).toBeUndefined();
-  expect(currentTaskExecution({ key: 'b', current: null, attempts: [] })).toBeUndefined();
-  expect(currentTaskExecution(view('later', 2))).toEqual({ attemptId: 'later', generation: 2, status: 'failed',
-    createdAtMs: 1000, finishedAtMs: 2000, label: 'Failed', statusDetail: 'validation failed', workerCardId: 'later-worker', blockingReason: null });
+  const task = taskDtoSchema.parse({ id: 'task', trackId: 'track', blockId: 'block', taskKey: 'inspect',
+    kind: 'agent', status: 'failed', sessionId: 'session', runCount: 2, statusDetail: 'validation failed',
+    createdAtMs: 1, updatedAtMs: 4, startedAtMs: 2, finishedAtMs: 3 });
+  expect(currentTaskExecution(task)).toEqual({ sessionId: 'session', runCount: 2, status: 'failed',
+    createdAtMs: 2, finishedAtMs: 3, label: 'Failed', statusDetail: 'validation failed', workerCardId: 'session', blockingReason: null });
 });
 
-it('uses only the blocker belonging to the current attempt', () => {
-  const previous = view('old', 1);
-  const replacement = view('new', 2);
-  replacement.attempts.unshift({ ...previous.current, blocking_reason: 'Old prerequisite missing.' });
-  replacement.current = { ...replacement.current, status: 'awaiting_projection', blocking_reason: 'Release was withdrawn.' };
-  expect(currentTaskExecution(replacement)?.blockingReason).toBe('Release was withdrawn.');
+it('represents a pending task before its first run', () => {
+  const task = taskDtoSchema.parse({ id: 'task', trackId: 'track', blockId: 'block', taskKey: 'inspect',
+    kind: 'agent', status: 'pending', runCount: 0, createdAtMs: 1, updatedAtMs: 1 });
+  expect(currentTaskExecution(task)).toMatchObject({ runCount: 0, sessionId: null, label: 'Queued' });
 });

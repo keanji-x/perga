@@ -36,8 +36,8 @@ public sealed class BoundAttemptFenceAndGovernanceTests
 
         await ctx.Kernel.WaitForTrackIdleAsync(trackId);
 
-        var sessions = (await ctx.Kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray();
-        var contractSubagent = Assert.Single(sessions, s => s.BoundAttemptId is not null);
+        var summaries = await ctx.Kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), default);
+        var contractSubagent = Assert.Single(summaries, s => s.TaskId is not null).Session;
 
         // 1. Contract Subagent CAN append/edit Prose blocks
         var subRead1 = await ctx.Kernel.ReadReportAsync(trackId, contractSubagent.Id);
@@ -102,17 +102,17 @@ public sealed class BoundAttemptFenceAndGovernanceTests
             [new BlockOp.UpsertBlockOp("b_t1", ReportBlockKind.Task, null, TestJson.Parse("""{"task_key":"t1","ready":true,"goal_or_cmd":"work"}"""))]));
         await ctx.Kernel.WaitForTrackIdleAsync(trackId);
 
-        var boundSubagent = Assert.Single((await ctx.Kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray(), s => s.BoundAttemptId is not null);
+        var boundSubagent = Assert.Single(await ctx.Kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), default), s => s.TaskId is not null).Session;
 
         // A. Unbound sessions (Lead & free Subagent) CANNOT call task_done or task_fail
         foreach (var unboundId in new[] { leadId, freeSubagent.Id })
         {
             var doneEx = await Assert.ThrowsAsync<KernelException>(() =>
-                ctx.Kernel.CompleteAttemptDoneAsync(trackId, unboundId));
+                ctx.Kernel.CompleteTaskDoneAsync(trackId, unboundId));
             Assert.Equal(KernelErrorCode.Forbidden, doneEx.Code);
 
             var failEx = await Assert.ThrowsAsync<KernelException>(() =>
-                ctx.Kernel.CompleteAttemptFailAsync(trackId, unboundId, "nope"));
+                ctx.Kernel.CompleteTaskFailAsync(trackId, unboundId, "nope"));
             Assert.Equal(KernelErrorCode.Forbidden, failEx.Code);
         }
 

@@ -171,12 +171,8 @@ function isWorkingSessionStatus(status: string): boolean {
 /** Shared rule for both Track-level and per-session red indicators. */
 function isSessionBlockingTrack(session: AgentSessionDto, tasks: readonly TaskDto[]): boolean {
   if (session.status !== 'unknown') return false;
-  if (session.boundTaskId == null) return true;
-  return session.boundAttemptId != null && tasks.some(
-    task => task.id === session.boundTaskId
-      && task.latestAttemptId === session.boundAttemptId
-      && (task.status === 'running' || task.status === 'verifying'),
-  );
+  const owner = tasks.find(task => task.sessionId === session.id);
+  return owner === undefined || owner.status === 'running' || owner.status === 'verifying';
 }
 
 /** Direct projection of one `/api/v1/overlays` item into `TrackActivity`. */
@@ -584,7 +580,7 @@ export function terminalDtoToCardWire(dto: TerminalDto, sort = 100, inWorkbench 
       program: dto.program ?? null,
       status: dto.status,
       exit_code: dto.exitCode ?? null,
-      terminal_presentation: { source: dto.attemptId == null ? 'unrecorded' : 'task', in_workbench: inWorkbench } satisfies TerminalPresentation,
+      terminal_presentation: { source: dto.sessionId == null ? 'unrecorded' : 'agent', in_workbench: inWorkbench } satisfies TerminalPresentation,
     },
     runtime: {
       worker_session_id: dto.id,
@@ -641,7 +637,7 @@ export function trackActivityFromSnapshot(snapshot: TrackAggregateSnapshotDto): 
   }
   return {
     notifiableSessions: sessions
-      .filter((s): s is AgentSessionDto & { lastNotifiableTurnAtMs: number } => s.boundTaskId == null && s.lastNotifiableTurnAtMs != null)
+      .filter((s): s is AgentSessionDto & { lastNotifiableTurnAtMs: number } => !snapshot.tasks.some(task => task.sessionId === s.id) && s.lastNotifiableTurnAtMs != null)
       .map(s => ({ sessionId: s.id, lastNotifiableTurnAtMs: s.lastNotifiableTurnAtMs })),
     working,
     attention,

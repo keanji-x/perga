@@ -261,7 +261,7 @@ public sealed class SystemUpgradeTests
         using var infoResponse = await host.Client.GetAsync("/api/v1/system/info");
         Assert.Equal("no-store", infoResponse.Headers.CacheControl!.ToString());
         var info = (await infoResponse.Content.ReadFromJsonAsync<SystemInfoDto>(PergaJsonDefaults.ApiOptions))!;
-        Assert.Equal(22, info.SchemaVersion);
+        Assert.Equal(23, info.SchemaVersion);
         Assert.False(info.Draining);
         using var draining = await host.Client.PostAsJsonAsync("/api/v1/system/drain", new { draining = true });
         Assert.Equal(HttpStatusCode.Accepted, draining.StatusCode);
@@ -366,7 +366,7 @@ public sealed class SystemUpgradeTests
         foreach (var name in new[] { KernelMcpToolNames.SystemUpgradeCheck, KernelMcpToolNames.SystemUpgradeApply, KernelMcpToolNames.SystemUpgradeRollback })
         {
             var args = JsonSerializer.SerializeToElement(name == KernelMcpToolNames.SystemUpgradeApply ? new { sourceId = "trusted" } : (object)new { });
-            foreach (var forbidden in new[] { principal with { SessionId = subagent.Id, IsLead = true }, principal with { BoundAttemptId = "worker" } })
+            foreach (var forbidden in new[] { principal with { SessionId = subagent.Id, IsLead = true }, principal with { BoundTaskId = "worker" } })
             {
                 var error = await Assert.ThrowsAsync<KernelException>(() => kernel.InvokeKernelMcpToolAsync(forbidden, name, args));
                 Assert.Equal(KernelErrorCode.SystemUpgradeLeadRequired, error.Code);

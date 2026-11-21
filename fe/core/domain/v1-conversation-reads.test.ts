@@ -112,7 +112,7 @@ it('keeps actual terminal session status and computes a nonnegative running cloc
 
 it('preserves top-level activity and task binding independently of the session turn', () => {
   const activity = { turnId: 'turn', sequence: 7, reset: true, text: 'partial reply', truncated: false, events: [] };
-  const taskBinding = { task: { id: 'task', trackId: 'track', blockId: 'block', taskKey: 'inspect', kind: 'agent', status: 'running', createdAtMs: 1, updatedAtMs: 2 }, attemptId: 'attempt', attemptPhase: 'interrupting', waitingReason: null };
+  const taskBinding = { task: { id: 'task', trackId: 'track', blockId: 'block', taskKey: 'inspect', kind: 'agent', status: 'running', createdAtMs: 1, updatedAtMs: 2 }, phase: 'interrupting', waitingReason: null };
   const run = conversationRunOperation(session.id).responseSchema.parse({ ...page, state: 'stopping', activity, taskBinding });
   expect(run.activity).toEqual(activity);
   expect(run.taskBinding).toMatchObject(taskBinding);

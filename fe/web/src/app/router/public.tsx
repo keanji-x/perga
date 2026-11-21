@@ -829,6 +829,26 @@ function useConversationPane(
   }), [options?.inline, options?.showSideCommand, newConversation, composerView.manualCompactSupported, composerView.historyReady,
     composerView.compact, hasSideConversation, sideQuestion, sideSourceReady, onTerminal, compactComposer, plannerCommands, composerStop, plannerSwitchBinding, interrupt, compact, recover, commandEnabled]);
   const draftOnly = options?.workspace?.waiting === true;
+  const sessionConfigurationControls = useMemo(() => <>
+    <ModelPill key={`model-${existingId}`}
+      groups={[{ provider: scopeProvider, catalog: composerView.modelCatalog, availability: null,
+        defaultAvailable: composerView.modelDefaultAvailable }]}
+      provider={scopeProvider}
+      selection={composerView.model}
+      onChange={composerView.setModel}
+      isDisabled={!composerView.historyReady || composerView.modelChangeDisabled}
+      appliesNextTurn={composerView.working}
+    />
+    {permissionControl.visible && (
+      <ConversationApprovalControl key={`approvals-${existingId}`}
+        mode={permissionControl.mode}
+        options={permissionControl.options}
+        change={composerView.setPermissionMode}
+        disabled={permissionControl.isDisabled}
+      />
+    )}
+  </>, [existingId, scopeProvider, composerView, permissionControl]);
+
   const composerNode = useMemo(() => existingId === null ? null : (
             <ConversationComposer target={{ kind: 'card', id: existingId }} layout={compactComposer ? 'mobile' : 'standard'}
               /* Read at mount only, which is what makes it one-shot; the flag is dropped
@@ -874,29 +894,13 @@ function useConversationPane(
                     }}
                     disabled={editingQueue || composerView.sendBlocked || !composerView.historyReady || replacing}
                   />
-                  <ModelPill key={`model-${existingId}`}
-                    groups={[{ provider: scopeProvider, catalog: composerView.modelCatalog, availability: null,
-                      defaultAvailable: composerView.modelDefaultAvailable }]}
-                    provider={scopeProvider}
-                    selection={composerView.model}
-                    onChange={composerView.setModel}
-                    isDisabled={!composerView.historyReady || composerView.modelChangeDisabled}
-                    appliesNextTurn={composerView.working}
-                  />
-                  {permissionControl.visible && (
-                    <ConversationApprovalControl key={`approvals-${existingId}`}
-                      mode={permissionControl.mode}
-                      options={permissionControl.options}
-                      change={composerView.setPermissionMode}
-                      disabled={permissionControl.isDisabled}
-                    />
-                  )}
+                  {sessionConfigurationControls}
                 </HStack>
               )}
             />
   ), [existingId, compactComposer, panePresented, composerFocusFor, composerFocusRequest, changeComposer, composerView, draftOnly,
     paneCommands, composerStop, replacing, editingQueue,
-    sendText, composerAttachments, mentionTrigger, scopeProvider, permissionControl]);
+    sendText, composerAttachments, mentionTrigger, sessionConfigurationControls]);
 
   const [archiveFailure, setArchiveFailure] = useState<Readonly<{ id: string; message: string }> | null>(null);
   const archiveLease = useRef(new Set<string>());
@@ -965,11 +969,11 @@ function useConversationPane(
         focusInput={panePresented && (draftOpen || (open !== null && composerFocusFor === open.id))}
         contextTitle={scope?.title}
         sessionHeader={open === null ? undefined : <ConversationSessionHeader session={store.session} state={store.sessionState}
-          readonlyReason={store.readonlyReason} workerPaused={store.workerPaused}
+          taskId={store.taskId} readonlyReason={store.readonlyReason} workerPaused={store.workerPaused}
           compactEnabled={commandEnabled('compact') && store.manualCompactSupported}
           resetEnabled={commandEnabled('reset')}
           onCompact={compact} onReset={() => store.recover('reset_context')}
-          onArchive={store.session?.isLead === true || store.session?.boundTaskId != null || options?.onArchive === undefined || (store.readonlyReason !== null && !store.canReopen) ? undefined : () => changeArchive(store.readonlyReason !== 'archived')} />}
+          onArchive={store.session?.isLead === true || store.taskId != null || options?.onArchive === undefined || (store.readonlyReason !== null && !store.canReopen) ? undefined : () => changeArchive(store.readonlyReason !== 'archived')} />}
         resizeGroup={resizeGroup}
         id={open === null ? undefined : `conversation-${open.id}`}
         inline={options?.inline}
@@ -1057,6 +1061,9 @@ function useConversationPane(
           <>
             {actionArea}
             {store.readonlyReason === null && composerNode}
+            {store.readonlyReason === 'waiting_task' && <HStack gap={1} align="center" wrap="wrap" className={footerStyles.group}>
+              {sessionConfigurationControls}
+            </HStack>}
           </>
         )}
       >

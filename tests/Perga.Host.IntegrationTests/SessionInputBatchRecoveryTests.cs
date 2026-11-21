@@ -28,7 +28,7 @@ public sealed class SessionInputBatchRecoveryTests
                 (trackId, sessionId) = await host.CreateTrackAsync();
                 var store = host.Services.GetRequiredService<ITrackStore>();
                 var session = Assert.Single((await store.LoadTrackAggregateAsync(trackId, default))!.Sessions);
-                var first = new SessionMessage("first", sessionId, null, "owner:installation", "first", "hash-first",
+                var first = new SessionMessage("first", sessionId, "owner:installation", "first", "hash-first",
                     null, null, "First prompt", "queued", 1, "queue");
                 await store.SessionMessages!.InsertAsync(first, default);
                 await store.SessionMessages.InsertAsync(first with { Id = "second", RequestKey = "second", Content = "Second prompt" }, default);

@@ -44,7 +44,7 @@ public sealed partial class TrackActor
             _ => "The provider stream ended without a confirmed outcome."
         };
         if (string.IsNullOrWhiteSpace(session.NativeThreadId)) detail += " No original provider session ID is available.";
-        var recoverable = session.BoundAttemptId is null || _activeAttempts.ContainsKey(session.BoundAttemptId);
+        var recoverable = !IsSessionFrozenForDispatchCore(session);
         return new(reason, detail, recoverable && supports && !session.ReconnectInvalidated &&
             !string.IsNullOrWhiteSpace(session.NativeThreadId), recoverable, _scheduler.IsRecovering(session.Id), session.UnknownLastError);
     }
@@ -56,7 +56,7 @@ public sealed partial class TrackActor
             throw new KernelException(KernelErrorCode.SessionRecoveryRequired, "Recover the provider session before sending more input.");
     }
 
-    private async Task<AgentSessionDto> RecoverSessionAsync(string sessionId, string action, CancellationToken ct, InteropPrincipal? principal = null, int? expectedEpoch = null, string? expectedAttemptId = null)
+    private async Task<AgentSessionDto> RecoverSessionAsync(string sessionId, string action, CancellationToken ct, InteropPrincipal? principal = null, int? expectedEpoch = null)
     {
         if (action is not ("reconnect" or "reset_context"))
             throw KernelException.InvalidArgument("Recovery mode must be reconnect or reset_context.");
@@ -64,8 +64,7 @@ public sealed partial class TrackActor
         {
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
             var session = RequireSessionCore(sessionId);
-            RequireSessionMutationCore(session, principal ?? new InteropPrincipal.Human(), expectedAttemptId, destructive: true);
-            if (expectedEpoch is { } epoch && epoch != session.Epoch) throw KernelException.Conflict("The session epoch changed.");
+            RequireSessionMutationCore(session, principal ?? new InteropPrincipal.Human(), expectedEpoch, destructive: true);
             RequireResumeWorkspaceCore(session);
             if (_scheduler.HasActive(sessionId) || _scheduler.IsCompacting(sessionId) ||
                 _scheduler.HasReservation(sessionId) || _scheduler.IsSteering(sessionId))
@@ -97,11 +96,8 @@ public sealed partial class TrackActor
     private void RequireResumeWorkspaceCore(AgentSessionDto session)
     {
         RequireWorkspaceReadyCore();
-        if (session.BoundAttemptId is { } attemptId)
-            RequireCurrentWorkerCore(session.Id, attemptId);
+        RequireSessionWritableCore(session);
         RequireDispatchWorkspace(session);
-        if (_track.ClosedAtMs is not null || session.ArchivedAtMs is not null)
-            throw KernelException.PreconditionFailed("Reopen this conversation before recovering its provider session.");
     }
 
     private async Task<AgentSessionDto> RunSessionRecoveryAsync(string sessionId, string mode, string? nativeId, int opEpoch)
@@ -159,12 +155,12 @@ public sealed partial class TrackActor
                         await _store.CompleteSessionResumeAsync(updated, unknown, evt, opEpoch, CancellationToken.None, boundary).ConfigureAwait(false);
                         _sessions[sessionId] = updated;
                         success = true;
-                        if (session.BoundAttemptId is { } attemptId && _activeAttempts.TryGetValue(attemptId, out var attempt))
+                        if (mode == "reset_context")
                         {
-                            attempt.InterruptionUnconfirmed = false;
-                            if (mode == "reset_context") attempt.Paused = true;
+                            if (TryGetActiveTaskForSessionCore(sessionId) is { Active: var activeTask })
+                                activeTask.Paused = true;
+                            _scheduler.Clear(sessionId);
                         }
-                        if (mode == "reset_context") _scheduler.Clear(sessionId);
                         if (replacement is not null && spec is not null)
                             await RegisterConfirmedOpenAgentSessionCoreAsync(updated with { Model = spec.Model,
                                 ReasoningEffort = spec.ReasoningEffort, PermissionMode = spec.PermissionMode }, replacement,

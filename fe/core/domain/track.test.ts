@@ -499,9 +499,9 @@ describe('trackOverlayPayload', () => {
   });
 });
 
-it.each([null, 'attempt-1'])('makes a v1 terminal consumable by the Track workbench (attempt=%s)', attemptId => {
-  const card = terminalDtoToCardWire({ id: 'terminal-1', trackId: 'w1', attemptId, title: 'Shell', cwd: '/tmp', status: 'exited', createdAtMs: 1 });
-  expect(terminalPresentation(card)).toEqual({ source: attemptId === null ? 'unrecorded' : 'task', in_workbench: true });
+it.each([null, 'session-1'])('makes a v1 terminal consumable by the Track workbench (session=%s)', sessionId => {
+  const card = terminalDtoToCardWire({ id: 'terminal-1', trackId: 'w1', sessionId, title: 'Shell', cwd: '/tmp', status: 'exited', createdAtMs: 1 });
+  expect(terminalPresentation(card)).toEqual({ source: sessionId === null ? 'unrecorded' : 'agent', in_workbench: true });
 });
 
 describe('template report projection', () => {

@@ -92,32 +92,31 @@ public sealed class TrackWakeSchedulingTests
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
         ctx.AgentRuntime.OnBeforeOpenSession = spec =>
         {
-            if (spec.SystemPrompt?.Contains("BoundAttemptId=", StringComparison.Ordinal) == true) throw KernelException.Conflict("Setup refused");
+            if (spec.SystemPrompt?.Contains("BoundTaskId=", StringComparison.Ordinal) == true) throw KernelException.Conflict("Setup refused");
         };
         var dispatch = await ctx.Kernel.CreateSessionAsync(snapshot.Track.Id, new(Prompt: "Inspect report", Task: new()), "worker", new InteropPrincipal.Human(), default);
         await ctx.Kernel.WaitForTrackIdleAsync(snapshot.Track.Id);
-        var worker = Assert.Single((await ctx.Kernel.ListSessionsAsync(snapshot.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray(), s => s.BoundTaskId == dispatch.Receipt.Task!.Id);
+        var worker = Assert.Single(await ctx.Kernel.ListSessionsAsync(snapshot.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default), s => s.TaskId == dispatch.Receipt.Task!.Id).Session;
         Assert.Empty(ctx.Store.GetTurnsForSession(worker.Id));
         Assert.Empty(await ctx.Store.ListSessionItemsAsync(worker.Id));
     }
 
     [Fact]
-    public async Task InMemoryPromotionPreservesSessionAndSourceIdentityForSameIds()
+    public async Task InMemoryPromotionPreservesSessionIdentityForSameIds()
     {
         await using var ctx = new KernelTestContext();
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
         var lead = Assert.Single(snapshot.Sessions);
         var other = (await ctx.Kernel.CreateSessionAsync(snapshot.Track.Id, new CreateSessionRequest(), Guid.NewGuid().ToString("N"), new InteropPrincipal.Human(), default)).Receipt.Session;
-        var first = new SessionMessage("first", lead.Id, null, "owner:installation", "first", "hash",
+        var first = new SessionMessage("first", lead.Id, "owner:installation", "first", "hash",
             null, null, "First", "queued", 1, "queue");
         foreach (var message in new[] { first, first with { Id = "second", RequestKey = "second", Content = "Second" },
-                     first with { SessionId = other.Id }, first with { AttemptId = "attempt", Content = "Worker source" } })
+                     first with { SessionId = other.Id } })
             await ctx.Store.SessionMessages.InsertAsync(message, default);
         var input = (await ctx.Store.SessionInputs.PromoteQueuedBatchAsync(lead with { Status = "queued" }, first,
             new(null, null, snapshot.Track.Id, "session.updated", TestJson.FromObject(lead), 1), default))!;
         Assert.Equal("First\n\nSecond", input.Content);
-        Assert.Null((await ctx.Store.SessionMessages.GetAsync(other.Id, false, "first", default))!.TurnId);
-        Assert.Null((await ctx.Store.SessionMessages.GetAsync(lead.Id, true, "first", default))!.TurnId);
+        Assert.Null((await ctx.Store.SessionMessages.GetAsync(other.Id, "first", default))!.TurnId);
         Assert.NotNull(await ctx.Store.SessionInputs.FindByIdAsync(lead.Id, "first", default));
         Assert.Null(await ctx.Store.SessionInputs.FindByIdAsync(other.Id, "first", default));
         var otherInput = await ctx.Store.SessionInputs.PromoteQueuedBatchAsync(other with { Status = "queued" }, first with { SessionId = other.Id },

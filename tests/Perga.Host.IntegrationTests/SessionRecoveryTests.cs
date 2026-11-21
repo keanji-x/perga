@@ -256,7 +256,7 @@ public sealed class SessionRecoveryTests
                 var kernel = host.Services.GetRequiredService<IPergaKernel>();
                 var dispatched = await kernel.CreateSessionAsync(track, new(Prompt: "Inspect", Task: new()), "recover-worker", new InteropPrincipal.Human(), default);
                 await kernel.WaitForTrackIdleAsync(track);
-                worker = Assert.Single((await kernel.ListSessionsAsync(track, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray(), session => session.BoundTaskId == dispatched.Receipt.Task!.Id);
+                worker = Assert.Single(await kernel.ListSessionsAsync(track, new(IncludeArchived: true), new InteropPrincipal.Human(), default), summary => summary.TaskId == dispatched.Receipt.Task!.Id).Session;
                 await host.Services.GetRequiredService<ITrackStore>().UpsertSessionAsync(worker with
                     { Status = "unknown", UnknownReason = "host_restarted" }, null, default);
             }

@@ -51,8 +51,7 @@ public sealed partial class TrackActor
         if (request.Content is not null && string.IsNullOrWhiteSpace(request.Content))
             throw KernelException.InvalidArgument("Message content cannot be empty.");
         if (request.Content is not null) ValidateRequestKey(request.RequestKey!);
-        var hash = RequestIdentity.Hash(new { version = 3, request.Content, request.Mode, request.TurnId,
-            request.ExpectedAttemptId });
+        var hash = RequestIdentity.Hash(new { version = 4, request.Content, request.Mode, request.TurnId, request.ExpectedEpoch });
         var author = caller is InteropPrincipal.Session identity ? identity.SessionId : InstallationAuthor;
         var startedAt = _timeProvider.GetTimestamp();
         var delivery = await EnqueueAsync(async actor =>
@@ -60,13 +59,13 @@ public sealed partial class TrackActor
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
             var session = RequireSessionCore(sessionId);
             RequireInteropCore(caller, session, write: true);
-            if (request.ExpectedAttemptId is { } expected && session.BoundAttemptId != expected)
-                throw KernelException.Conflict("The session attempt changed.");
-            var worker = session.BoundAttemptId is not null;
+            if (request.ExpectedEpoch is { } expectedEpoch && session.Epoch != expectedEpoch)
+                throw KernelException.Conflict("The session epoch changed.");
+
             var existing = request.MessageId is { } id
-                ? await Messages.GetAsync(sessionId, worker, id, ct).ConfigureAwait(false)
+                ? await Messages.GetAsync(sessionId, id, ct).ConfigureAwait(false)
                     ?? throw KernelException.NotFound("Message not found in this session.")
-                : await Messages.FindAsync(sessionId, worker, author, request.RequestKey!, ct).ConfigureAwait(false);
+                : await Messages.FindAsync(sessionId, author, request.RequestKey!, ct).ConfigureAwait(false);
             if (request.MessageId is null)
             {
                 if (existing is not null)
@@ -85,8 +84,6 @@ public sealed partial class TrackActor
             }
             else
             {
-                if (existing!.AttemptId != session.BoundAttemptId)
-                    throw KernelException.Conflict("The message belongs to another attempt.");
                 var prior = await Messages.FindQueuedSteerAsync(existing!, request.TurnId!, ct).ConfigureAwait(false);
                 if (prior is not null)
                 {
@@ -99,20 +96,18 @@ public sealed partial class TrackActor
 
             RequireSessionWritableCore(session);
             RequireSessionDispatchAvailableCore(sessionId);
-            if (worker && _activeAttempts[session.BoundAttemptId!].InterruptionUnconfirmed)
-                throw KernelException.Conflict("The previous Worker interruption could not be confirmed.");
             _scheduler.TryGetActive(sessionId, out var active);
             var turnId = request.TurnId;
             if (turnId is not null)
             {
                 if (request.MessageId is not null)
                 {
-                    if (existing!.Kind is not ("queue" or "worker") || existing.Delivery != "queued" || existing.TurnId is not null)
+                    if (existing!.Kind != "queue" || existing.Delivery != "queued" || existing.TurnId is not null)
                         throw KernelException.Conflict("Only waiting messages can be steered.");
                 }
                 if (active?.TurnDto.Id != turnId || active.Interrupted)
                 {
-                    if (!worker && !await _store.HasSessionTurnAsync(sessionId, turnId, ct).ConfigureAwait(false))
+                    if (!await _store.HasSessionTurnAsync(sessionId, turnId, ct).ConfigureAwait(false))
                         throw KernelException.NotFound("The target turn was not found in this session.");
                     throw KernelException.Conflict("The target turn changed. Refresh before steering.");
                 }
@@ -120,8 +115,8 @@ public sealed partial class TrackActor
                 if (request.Mode == "steer" && (!active.AgentSession.SupportsNativeSteer ||
                     request.MessageId is not null && !active.CanSteerQueuedMessages))
                     throw KernelException.PreconditionFailed("The runtime does not support steering this turn.");
-                var message = existing ?? new SessionMessage($"inp_{Guid.NewGuid():N}", sessionId, session.BoundAttemptId,
-                    author, request.RequestKey!, hash, turnId, null, request.Content!, "dispatching", NowMs(), worker ? "worker" : "steer");
+                var message = existing ?? new SessionMessage($"inp_{Guid.NewGuid():N}", sessionId,
+                    author, request.RequestKey!, hash, turnId, null, request.Content!, "dispatching", NowMs(), "steer");
                 if (existing is null) await Messages.InsertAsync(message, ct).ConfigureAwait(false);
                 else if (!await Messages.ClaimQueuedSteerAsync(message, turnId, ct).ConfigureAwait(false))
                     throw KernelException.Conflict("This message is already being sent or has been withdrawn.");
@@ -133,17 +128,21 @@ public sealed partial class TrackActor
                 return CompleteSteeringReceiptAsync(send, sessionId, turnId, false);
             }
 
-            var occupied = _scheduler.IsOccupied(session) || await _scheduler.HasQueuedMessageAsync(session, ct).ConfigureAwait(false);
-            if (occupied && request.Mode != "queue")
+            var activeTask = TryGetActiveTaskForSessionCore(sessionId)?.Active;
+            var busy = _scheduler.IsOccupied(session);
+            var resuming = activeTask?.Paused == true && !busy && request.Mode == "default";
+            var occupied = busy || await _scheduler.HasQueuedMessageAsync(session, ct).ConfigureAwait(false);
+            if (occupied && request.Mode != "queue" && !resuming)
                 throw KernelException.Conflict("The session already has an active or unresolved turn.");
-            if (worker || occupied || request.Mode == "queue")
+            if (occupied || request.Mode == "queue")
             {
                 RequireWorkspaceReadyCore();
                 RequireDispatchWorkspace(session);
-                var message = new SessionMessage($"inp_{Guid.NewGuid():N}", sessionId, session.BoundAttemptId, author,
-                    request.RequestKey!, hash, null, null, request.Content!, "queued", NowMs(), worker ? "worker" : "queue");
+                var message = new SessionMessage($"inp_{Guid.NewGuid():N}", sessionId, author,
+                    request.RequestKey!, hash, null, null, request.Content!, "queued", NowMs(), "queue");
                 await Messages.InsertAsync(message, ct).ConfigureAwait(false);
-                if (worker && request.Mode != "queue") _activeAttempts[session.BoundAttemptId!].Paused = false;
+                // Persist the resume input before opening the existing queue for dispatch.
+                if (resuming) activeTask!.Paused = false;
                 await PokeSessionCoreAsync(sessionId).ConfigureAwait(false);
                 NotifyQueueChangedCore(sessionId);
                 return Task.FromResult(MessageReceipt(message));
@@ -153,6 +152,7 @@ public sealed partial class TrackActor
             await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
             var accepted = await _store.SessionInputs.AcceptAsync(session,
                 new(request.RequestKey!, hash, request.Content!, author), evt, ct).ConfigureAwait(false);
+            if (resuming) activeTask!.Paused = false;
             RegisterAcceptedInput(session, accepted);
             await PublishInputEventAsync(evt).ConfigureAwait(false);
             return Task.FromResult(new SessionMessageReceipt(accepted.Receipt.MessageId, sessionId,
@@ -172,9 +172,8 @@ public sealed partial class TrackActor
         { "accepted" => "delivered", "unconfirmed" => "unknown", _ => result.Delivery }, replay);
     }
 
-    public Task WithdrawSessionMessageAsync(string sessionId, string messageId, string? expectedAttemptId,
-        InteropPrincipal caller, CancellationToken ct) => RemoveQueuedMessageAsync(sessionId, messageId, ct,
-            attemptId: expectedAttemptId, principal: caller);
+    public Task WithdrawSessionMessageAsync(string sessionId, string messageId,
+        InteropPrincipal caller, CancellationToken ct) => RemoveQueuedMessageAsync(sessionId, messageId, ct, principal: caller);
 
     public async Task<AgentSessionDto> ControlSessionAsync(string sessionId, SessionControlRequest request,
         InteropPrincipal caller, CancellationToken ct)
@@ -187,16 +186,20 @@ public sealed partial class TrackActor
                 {
                     await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
                     var session = RequireSessionCore(sessionId);
-                    RequireSessionMutationCore(session, caller, request.ExpectedAttemptId, destructive: true);
+                    RequireSessionMutationCore(session, caller, request.ExpectedEpoch, destructive: true);
+                    var activeTask = TryGetActiveTaskForSessionCore(sessionId)?.Active;
                     if (_scheduler.TryGetActive(sessionId, out var active) && active.TurnDto.Id == request.TurnId)
                     {
-                        _activeAttempts.TryGetValue(session.BoundAttemptId ?? "", out var attempt);
-                        var stopping = RequestTurnStop(active, workerAttempt: attempt);
+                        var stopping = RequestTurnStop(active, pauseTask: activeTask);
                         return (stopping, session with { Status = "stopping", UpdatedAtMs = NowMs() });
                     }
                     if (_runtimes.Get(sessionId).CancelLaunch(request.TurnId))
                     {
-                        if (session.BoundAttemptId is { } attemptId) _activeAttempts[attemptId].Paused = true;
+                        if (activeTask is not null)
+                        {
+                            activeTask.Paused = true;
+                            _mcpBridge.RevokeSession(sessionId);
+                        }
                         var stopping = session with { Status = "stopping", UpdatedAtMs = NowMs() };
                         await PersistAndEmitSessionUpdatedCoreAsync(stopping, stopping.UpdatedAtMs, CancellationToken.None).ConfigureAwait(false);
                         return (Task.CompletedTask, stopping);
@@ -208,10 +211,9 @@ public sealed partial class TrackActor
                 return snapshot;
             case "reconnect":
             case "reset_context":
-                return await RecoverSessionAsync(sessionId, request.Action, ct, caller, request.ExpectedEpoch,
-                    request.ExpectedAttemptId).ConfigureAwait(false);
+                return await RecoverSessionAsync(sessionId, request.Action, ct, caller, request.ExpectedEpoch).ConfigureAwait(false);
             case "compact":
-                return await CompactSessionAsync(sessionId, ct, caller, request.ExpectedAttemptId).ConfigureAwait(false);
+                return await CompactSessionAsync(sessionId, ct, caller, request.ExpectedEpoch).ConfigureAwait(false);
             default:
                 throw KernelException.InvalidArgument("Unknown session control action.");
         }

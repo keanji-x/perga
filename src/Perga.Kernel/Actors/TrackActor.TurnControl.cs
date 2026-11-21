@@ -31,16 +31,17 @@ public sealed partial class TrackActor
         await PersistAndEmitSessionUpdatedCoreAsync(session with { Status = "stopping", UpdatedAtMs = NowMs() }, NowMs(), CancellationToken.None).ConfigureAwait(false);
     }
 
-    private Task RequestTurnStop(ActiveTurnState active, bool observeTerminal = false, ActiveAttemptState? workerAttempt = null)
+    private Task RequestTurnStop(ActiveTurnState active, bool observeTerminal = false, ActiveTaskRunState? pauseTask = null)
     {
         var control = active.Control;
         List<PendingApproval>? expired = null;
         Task stopTask;
         lock (control.Sync)
         {
-            if (workerAttempt is not null && control.Phase != ExecutionPhase.Ended)
+            if (pauseTask is not null && control.Phase != ExecutionPhase.Ended)
             {
-                workerAttempt.Paused = true;
+                pauseTask.Paused = true;
+                active.CloseRuntimeOnStop = true;
                 _mcpBridge.RevokeSession(active.SessionId);
             }
 

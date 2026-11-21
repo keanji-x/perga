@@ -8,8 +8,6 @@ public sealed class DirectWorkspaceDriver : IWorkspaceDriver
 
     public string DriverId => Id;
 
-    public bool SupportsParallelIsolatedWriteLeases => false;
-
     public Task<WorkspaceSpec> ProvisionTrackAsync(WorkspaceProvisionRequest req, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(req);
@@ -55,47 +53,6 @@ public sealed class DirectWorkspaceDriver : IWorkspaceDriver
             ManagedEmptyWorkspace: spec.ManagedEmptyWorkspace);
 
         return Task.FromResult(mounted);
-    }
-
-    public Task<AttemptWorkspaceLease> AcquireAttemptLeaseAsync(
-        MountedWorkspace workspace,
-        string attemptId,
-        bool readWrite,
-        CancellationToken ct = default)
-    {
-        ArgumentNullException.ThrowIfNull(workspace);
-        ArgumentException.ThrowIfNullOrWhiteSpace(workspace.MergedCwd);
-        ArgumentException.ThrowIfNullOrWhiteSpace(attemptId);
-        ct.ThrowIfCancellationRequested();
-
-        var metadata = JsonSerializer.SerializeToElement(new
-        {
-            v = 1,
-            readWrite,
-        });
-
-        var lease = new AttemptWorkspaceLease(
-            DriverId: DriverId,
-            AttemptId: attemptId,
-            EffectiveCwd: workspace.MergedCwd,
-            IsIsolatedCopyOnWrite: false,
-            Metadata: metadata,
-            ProcessOverlayLayers: workspace.ProcessOverlayLayers);
-
-        return Task.FromResult(lease);
-    }
-
-    public Task SettleAttemptLeaseAsync(
-        AttemptWorkspaceLease lease,
-        AttemptLeaseDisposition disposition,
-        CancellationToken ct = default)
-    {
-        ArgumentNullException.ThrowIfNull(lease);
-        _ = disposition;
-        ct.ThrowIfCancellationRequested();
-
-        // Direct passthrough shares the source directory directly; never delete EffectiveCwd.
-        return Task.CompletedTask;
     }
 
     public Task TeardownTrackAsync(WorkspaceSpec spec, CancellationToken ct = default)

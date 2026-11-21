@@ -3,8 +3,8 @@ import type { SendFailureKind } from './conversation-delivery.js';
 
 import type { HarnessQueueEntryRef } from '../api/generated/wire.js';
 
-/** A task submission keeps its attempt and delivery choice across retries. */
-export type ConversationSendTarget = Readonly<{ attemptId: string; queue: boolean }>;
+/** A message submission keeps its session epoch and delivery choice across retries. */
+export type ConversationSendTarget = Readonly<{ epoch: number; queue: boolean }>;
 
 /** No operation means idle. A receipt ends local send state; session reads own accepted messages. */
 export type SendOp = Readonly<{

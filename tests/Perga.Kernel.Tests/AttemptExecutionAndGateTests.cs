@@ -36,15 +36,15 @@ public sealed class AttemptExecutionAndGateTests
                 task_key = "guarded", ready = true, access = "read_write", goal_or_cmd = "Implement", gate = "verify"
             }))]), ct);
         await ctx.Kernel.WaitForTrackIdleAsync(track.Id, ct);
-        var worker = Assert.Single((await ctx.Kernel.ListSessionsAsync(track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), ct)).Select(summary => summary.Session).ToArray(), session => session.BoundAttemptId is not null);
-        var finish = ctx.Kernel.CompleteAttemptDoneAsync(track.Id, worker.Id, ct: ct);
+        var guarded = Assert.Single(await ctx.Kernel.ListTasksAsync(track.Id, ct), t => t.TaskKey == "guarded");
+        var workerId = guarded.SessionId!;
+        var finish = ctx.Kernel.CompleteTaskDoneAsync(track.Id, workerId, ct: ct);
         try
         {
             await entered.Task.WaitAsync(ct);
             var blocked = await Assert.ThrowsAsync<KernelException>(() =>
                 ctx.Kernel.CancelTaskAsync(track.Id, track.LeadSessionId, "guarded", ct: ct));
             Assert.Equal(KernelErrorCode.Conflict, blocked.Code);
-            Assert.Empty(ctx.DirectDriver.SettleLeaseCalls);
         }
         finally
         {
@@ -52,11 +52,10 @@ public sealed class AttemptExecutionAndGateTests
         }
 
         Assert.Equal(TaskRunStatus.Done, (await finish).Status);
-        Assert.Equal(AttemptLeaseDisposition.Promote, Assert.Single(ctx.DirectDriver.SettleLeaseCalls).Disposition);
     }
 
     [Fact]
-    public async Task TaskDone_RunsAfterWorkerDoneCmdJsonMerge_RunsGate_PromotesLeaseOnPass_UnblocksDependent_AndWakesLead()
+    public async Task TaskDone_RunsAfterWorkerDoneCmdJsonMerge_RunsGate_UnblocksDependent_AndWakesLead()
     {
         await using var ctx = new KernelTestContext();
         ctx.Kernel.Templates.RegisterTemplate(
@@ -122,26 +121,24 @@ public sealed class AttemptExecutionAndGateTests
 
         await ctx.Kernel.WaitForTrackIdleAsync(trackId);
 
-        // Verify step-1-write is Running with WorkspaceWriteBwrap sandbox in lease.EffectiveCwd, and step-2-audit is still Pending
+        // Verify step-1-write is Running in track workspace, and step-2-audit is still Pending
         var tasksBefore = await ctx.Kernel.ListTasksAsync(trackId);
         var step1 = tasksBefore.Single(t => t.TaskKey == "step-1-write");
         var step2 = tasksBefore.Single(t => t.TaskKey == "step-2-audit");
         Assert.Equal(TaskRunStatus.Running, step1.Status);
+        Assert.Equal(1, step1.RunCount);
+        Assert.NotNull(step1.SessionId);
         Assert.Equal(TaskRunStatus.Pending, step2.Status);
 
-        var attemptsBefore = await ctx.Kernel.ListTaskAttemptsAsync(trackId, "step-1-write");
-        var attempt1 = Assert.Single(attemptsBefore);
-        Assert.NotNull(attempt1.WorkspaceLease);
-        var expectedLeaseCwd = $"/repo/main/leases/{attempt1.AttemptId}";
-
-        var subagent1 = Assert.Single((await ctx.Kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray(), s => s.BoundAttemptId == attempt1.AttemptId);
-        var subagentLaunch = ctx.AgentRuntime.OpenedSessions.Single(s => s.LaunchSpec.Cwd == expectedLeaseCwd);
-        Assert.Equal(expectedLeaseCwd, subagentLaunch.LaunchSpec.Cwd);
+        var expectedCwd = "/repo/main";
+        var subagent1 = Assert.Single((await ctx.Kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray(), s => s.Id == step1.SessionId);
+        var subagentLaunch = ctx.AgentRuntime.OpenedSessions.Single(s => s.LaunchSpec.StateKey == subagent1.Id);
+        Assert.Equal(expectedCwd, subagentLaunch.LaunchSpec.Cwd);
 
         var leadTurnsBefore = ctx.Store.GetTurnsForSession(leadId).Count;
 
-        // Subagent calls task_done!
-        var doneTask = await ctx.Kernel.CompleteAttemptDoneAsync(
+        // Subagent calls perga_task_done!
+        var doneTask = await ctx.Kernel.CompleteTaskDoneAsync(
             trackId,
             subagent1.Id,
             TestJson.FromObject(new { summary = "Implemented module cleanly" }));
@@ -149,31 +146,27 @@ public sealed class AttemptExecutionAndGateTests
 
         Assert.Equal(TaskRunStatus.Done, doneTask.Status);
 
-        // Verify afterWorkerDoneCmd & Gate both executed inside lease.EffectiveCwd
+        // Verify afterWorkerDoneCmd & Gate both executed inside Track workspace
         Assert.Contains(ctx.CommandRunner.ExecutedCommands,
-            c => c.Command == "collect-vcs-snapshot.sh" && c.WorkingDirectory == expectedLeaseCwd);
+            c => c.Command == "collect-vcs-snapshot.sh" && c.WorkingDirectory == expectedCwd);
         Assert.Contains(ctx.CommandRunner.ExecutedCommands,
-            c => c.Command == "dotnet test --no-restore" && c.WorkingDirectory == expectedLeaseCwd);
+            c => c.Command == "dotnet test --no-restore" && c.WorkingDirectory == expectedCwd);
 
-        // Verify attempt.Meta merged JSON & PolicyVm.OnTaskSettled received merged AttemptMeta
-        var settledAttempt = Assert.Single(await ctx.Kernel.ListTaskAttemptsAsync(trackId, "step-1-write"));
-        Assert.Equal("done", settledAttempt.Status);
-        Assert.Equal("kkmpptxz", settledAttempt.Meta.GetProperty("changeId").GetString());
-        Assert.Equal(3, settledAttempt.Meta.GetProperty("changedFiles").GetInt32());
-        Assert.NotNull(settledAttempt.GateVerdict);
-        Assert.True(settledAttempt.GateVerdict!.Value.GetProperty("passed").GetBoolean());
-        var firstGateStep = settledAttempt.GateVerdict.Value.GetProperty("steps")[0];
+        // Verify task.Meta merged JSON & PolicyVm.OnTaskSettled received merged Meta
+        var settledTask = (await ctx.Kernel.ListTasksAsync(trackId)).Single(t => t.TaskKey == "step-1-write");
+        Assert.Equal(TaskRunStatus.Done, settledTask.Status);
+        Assert.Equal("kkmpptxz", settledTask.Meta!.Value.GetProperty("changeId").GetString());
+        Assert.Equal(3, settledTask.Meta!.Value.GetProperty("changedFiles").GetInt32());
+        Assert.NotNull(settledTask.GateVerdict);
+        Assert.True(settledTask.GateVerdict!.Value.GetProperty("passed").GetBoolean());
+        var firstGateStep = settledTask.GateVerdict.Value.GetProperty("steps")[0];
         Assert.True(firstGateStep.GetProperty("passed").GetBoolean());
         Assert.Contains("All tests passed!", firstGateStep.GetProperty("stdout").GetString());
         Assert.Contains("All tests passed!", firstGateStep.GetProperty("outputTail").GetString());
 
         Assert.True(ctx.PolicyVm.RecordedSettledEvents.TryDequeue(out var settledCtx));
-        Assert.Equal("done", settledCtx.GetProperty("attemptStatus").GetString());
+        Assert.Equal("done", settledCtx.GetProperty("status").GetString());
         Assert.Equal("kkmpptxz", settledCtx.GetProperty("meta").GetProperty("changeId").GetString());
-
-        // Verify lease settled with Promote!
-        Assert.Contains(ctx.DirectDriver.SettleLeaseCalls,
-            s => s.Lease.AttemptId == attempt1.AttemptId && s.Disposition == AttemptLeaseDisposition.Promote);
 
         // Verify LeadSessionId was woken!
         Assert.True(ctx.Store.GetTurnsForSession(leadId).Count > leadTurnsBefore);
@@ -187,7 +180,7 @@ public sealed class AttemptExecutionAndGateTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task TaskDone_WhenGateFails_DiscardsLease_MarksTaskFailed_AndWakesLead(bool runnerThrows)
+    public async Task TaskDone_WhenGateFails_MarksTaskFailed_AndWakesLead(bool runnerThrows)
     {
         await using var ctx = new KernelTestContext();
         ctx.CommandRunner.Handler = (req, _) =>
@@ -222,37 +215,25 @@ public sealed class AttemptExecutionAndGateTests
 
         await ctx.Kernel.WaitForTrackIdleAsync(trackId);
 
-        var subagent = Assert.Single((await ctx.Kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray(), s => s.BoundAttemptId is not null);
+        var brokenTask = Assert.Single(await ctx.Kernel.ListTasksAsync(trackId));
         var leadTurnsBefore = ctx.Store.GetTurnsForSession(leadId).Count;
 
-        var settled = await ctx.Kernel.CompleteAttemptDoneAsync(trackId, subagent.Id, TestJson.FromObject(new { ok = true }));
+        var settled = await ctx.Kernel.CompleteTaskDoneAsync(trackId, brokenTask.SessionId!, TestJson.FromObject(new { ok = true }));
         Assert.Equal(TaskRunStatus.Failed, settled.Status);
         Assert.Contains("cargo-test", settled.StatusDetail ?? "");
-
-        // Verify lease was Discarded (NOT Promoted)!
-        Assert.Contains(ctx.DirectDriver.SettleLeaseCalls,
-            s => s.Lease.AttemptId == subagent.BoundAttemptId && s.Disposition == AttemptLeaseDisposition.Discard);
-        Assert.DoesNotContain(ctx.DirectDriver.SettleLeaseCalls,
-            s => s.Disposition == AttemptLeaseDisposition.Promote);
+        Assert.NotNull(settled.FinishedAtMs);
 
         // Verify LeadSessionId woken
         Assert.True(ctx.Store.GetTurnsForSession(leadId).Count > leadTurnsBefore);
     }
 
     [Fact]
-    public async Task TaskFail_And_CommandKindTask_And_ParallelWriteLeases_WorkEndToEnd()
+    public async Task TaskFail_And_CommandKindTask_And_SingleWriterSerialization_WorkEndToEnd()
     {
         await using var ctx = new KernelTestContext();
-        var (area, _) = await ctx.CreateDefaultTrackAsync();
-
-        // Create track using cow-overlay driver (SupportsParallelIsolatedWriteLeases == true)
-        var cowSnap = await ctx.Kernel.CreateTrackAsync(new CreateTrackRequest(
-            AreaId: area.Id,
-            Title: "CoW Parallel Track",
-            Cwd: "/repo/cow",
-            WorkspaceDriver: "cow-overlay"));
-        var trackId = cowSnap.Track.Id;
-        var leadId = cowSnap.Track.LeadSessionId!;
+        var (_, snap) = await ctx.CreateDefaultTrackAsync(cwd: "/repo/serial");
+        var trackId = snap.Track.Id;
+        var leadId = snap.Track.LeadSessionId!;
 
         var r0 = await ctx.Kernel.ReadReportAsync(trackId, leadId);
         await ctx.Kernel.CommitReportAsync(trackId, leadId, new ReportCommitRequest(
@@ -260,14 +241,14 @@ public sealed class AttemptExecutionAndGateTests
             [
                 new BlockOp.UpsertBlockOp("b_rw1", ReportBlockKind.Task, null, TestJson.FromObject(new
                 {
-                    task_key = "parallel-rw-1",
+                    task_key = "serial-rw-1",
                     access = "read_write",
                     ready = true,
                     goal_or_cmd = "Work 1"
                 })),
                 new BlockOp.UpsertBlockOp("b_rw2", ReportBlockKind.Task, null, TestJson.FromObject(new
                 {
-                    task_key = "parallel-rw-2",
+                    task_key = "serial-rw-2",
                     access = "read_write",
                     ready = true,
                     goal_or_cmd = "Work 2"
@@ -284,20 +265,24 @@ public sealed class AttemptExecutionAndGateTests
 
         await ctx.Kernel.WaitForTrackIdleAsync(trackId);
 
-        // Both ReadWrite tasks are concurrently Running with isolated CoW leases, while command task auto-completed to Done!
+        // Single-writer policy runs serial-rw-1 first while holding serial-rw-2 and cmd-task until serial-rw-1 settles.
         var tasks = await ctx.Kernel.ListTasksAsync(trackId);
-        Assert.Equal(TaskRunStatus.Running, tasks.Single(t => t.TaskKey == "parallel-rw-1").Status);
-        Assert.Equal(TaskRunStatus.Running, tasks.Single(t => t.TaskKey == "parallel-rw-2").Status);
-        Assert.Equal(TaskRunStatus.Done, tasks.Single(t => t.TaskKey == "cmd-task").Status);
+        var rw1 = tasks.Single(t => t.TaskKey == "serial-rw-1");
+        Assert.Equal(TaskRunStatus.Running, rw1.Status);
+        Assert.Equal(TaskRunStatus.Pending, tasks.Single(t => t.TaskKey == "serial-rw-2").Status);
 
-        // Fail parallel-rw-1 via task_fail -> discards lease & wakes Lead!
-        var sessions = (await ctx.Kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray();
-        var rw1Id = tasks.Single(t => t.TaskKey == "parallel-rw-1").Id;
-        var sub1 = sessions.Single(s => s.BoundTaskId == rw1Id);
-
-        var failed = await ctx.Kernel.CompleteAttemptFailAsync(trackId, sub1.Id, "Blocked on upstream spec");
+        // Fail serial-rw-1 via perga_task_fail -> unblocks serial-rw-2 & wakes Lead!
+        var failed = await ctx.Kernel.CompleteTaskFailAsync(trackId, rw1.SessionId!, "Blocked on upstream spec");
         Assert.Equal(TaskRunStatus.Failed, failed.Status);
-        Assert.Contains(ctx.CowOverlayDriver.SettleLeaseCalls,
-            s => s.Lease.AttemptId == sub1.BoundAttemptId && s.Disposition == AttemptLeaseDisposition.Discard);
+        await ctx.Kernel.WaitForTrackIdleAsync(trackId);
+
+        var tasksAfter = await ctx.Kernel.ListTasksAsync(trackId);
+        var rw2After = tasksAfter.Single(t => t.TaskKey == "serial-rw-2");
+        Assert.Equal(TaskRunStatus.Running, rw2After.Status);
+        await ctx.Kernel.CompleteTaskDoneAsync(trackId, rw2After.SessionId!);
+        await ctx.Kernel.WaitForTrackIdleAsync(trackId);
+
+        var finalTasks = await ctx.Kernel.ListTasksAsync(trackId);
+        Assert.Equal(TaskRunStatus.Done, finalTasks.Single(t => t.TaskKey == "cmd-task").Status);
     }
 }

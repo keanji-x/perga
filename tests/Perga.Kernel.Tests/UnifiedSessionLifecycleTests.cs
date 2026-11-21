@@ -23,11 +23,11 @@ public sealed class UnifiedSessionLifecycleTests
         }
     }
 
-    private static InteropPrincipal.Session Caller(KernelTestContext ctx, AgentSessionDto session, string turnId)
+    private static InteropPrincipal.Session Caller(KernelTestContext ctx, AgentSessionDto session, string turnId, string? boundTaskId = null, int? runCount = null)
     {
         var registration = ctx.Kernel.McpSessionBridge.RegisterSession(session.TrackId, session.Id, session.IsLead,
-            session.BoundTaskId, session.BoundAttemptId, []);
-        return new(session.TrackId, session.Id, session.IsLead, session.BoundAttemptId, session.SpawnDepth,
+            boundTaskId, runCount, []);
+        return new(session.TrackId, session.Id, session.IsLead, boundTaskId, session.SpawnDepth,
             registration.Principal.Token, new(turnId));
     }
 
@@ -38,6 +38,128 @@ public sealed class UnifiedSessionLifecycleTests
         await release.WaitAsync(ct);
         yield return new UnifiedAgentEvent.TextDelta("finished");
         yield return new UnifiedAgentEvent.TurnCompleted(null);
+    }
+
+    [Fact]
+    public async Task VerifyingFreezesQueuedFollowUpAndRevokesWorkerToken()
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
+        var releaseTurn = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var gateEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var turns = 0;
+        ctx.AgentRuntime.TurnScript = (_, _, ct) => Interlocked.Increment(ref turns) == 2
+            ? Hold(releaseTurn.Task, ct) : Completed();
+        ctx.CommandRunner.Handler = async (_, ct) =>
+        {
+            gateEntered.TrySetResult();
+            await releaseGate.Task.WaitAsync(ct);
+            return new(0, "", "", false, 1);
+        };
+        var report = await ctx.Kernel.ReadReportAsync(snapshot.Track.Id);
+        await ctx.Kernel.CommitReportAsync(snapshot.Track.Id, snapshot.Track.LeadSessionId!,
+            new(report.Anchor, [new Perga.ReportDoc.BlockOp.UpsertBlockOp(null, Perga.ReportDoc.ReportBlockKind.Task, null,
+                TestJson.FromObject(new { task_key = "slow-gate", ready = true, goal_or_cmd = "inspect", gate = "verify" }))]));
+        var task = Assert.Single(await ctx.Kernel.ListTasksAsync(snapshot.Track.Id));
+        var id = task.SessionId!;
+        await ctx.Kernel.WaitForTrackIdleAsync(snapshot.Track.Id);
+        await ctx.Kernel.SendSessionMessageAsync(id, new(Content: "working", RequestKey: "working"), Human, default);
+        await WaitForPage(ctx, id, p => p.Activity?.Text == "started");
+        var session = ctx.AgentRuntime.OpenedSessions.Single(s => s.LaunchSpec.StateKey == id);
+        var http = Assert.IsType<McpServerConfig.HttpMcpServer>(session.LaunchSpec.McpServers["perga"]);
+        var token = http.Headers["Authorization"];
+        Assert.NotNull(ctx.Kernel.McpSessionBridge.ResolveToken(token));
+        var queued = await ctx.Kernel.SendSessionMessageAsync(id,
+            new(Content: "follow-up", RequestKey: "follow-up", Mode: "queue"), Human, default);
+        var finish = ctx.Kernel.CompleteTaskDoneAsync(snapshot.Track.Id, id);
+        try
+        {
+            await gateEntered.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            releaseTurn.TrySetResult();
+            var page = await WaitForPage(ctx, id, p => p.ActiveTurn is null);
+            Assert.Equal(TaskRunStatus.Verifying, Assert.Single(await ctx.Kernel.ListTasksAsync(snapshot.Track.Id)).Status);
+            Assert.Equal("task_finished", page.ReadonlyReason);
+            Assert.Null(ctx.Kernel.McpSessionBridge.ResolveToken(token));
+            Assert.Equal("queued", (await ctx.Store.SessionMessages.GetAsync(id, queued.MessageId, default))!.Delivery);
+            Assert.Equal(2, session.RecordedInputs.Count);
+            await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.SendSessionMessageAsync(id,
+                new(Content: "blocked", RequestKey: "blocked"), Human, default));
+        }
+        finally { releaseTurn.TrySetResult(); releaseGate.TrySetResult(); }
+        Assert.Equal(TaskRunStatus.Done, (await finish).Status);
+        await ctx.Kernel.WaitForTrackIdleAsync(snapshot.Track.Id);
+        Assert.Equal(2, session.RecordedInputs.Count);
+    }
+
+    [Fact]
+    public async Task ConclusiveInitialTurnFailureSettlesTaskAndReleasesWriterSlot()
+    {
+        await using var ctx = new KernelTestContext();
+        ctx.Kernel.Templates.RegisterTemplate("export default defineTemplate({ id: 'failure-policy', title: 'Failure policy' });");
+        var (_, snapshot) = await ctx.CreateDefaultTrackAsync(templateId: "failure-policy");
+        ctx.AgentRuntime.TurnScript = (_, input, _) => input.Prompt.Contains("'first'", StringComparison.Ordinal)
+            ? Failed() : Completed();
+        var report = await ctx.Kernel.ReadReportAsync(snapshot.Track.Id);
+        await ctx.Kernel.CommitReportAsync(snapshot.Track.Id, snapshot.Track.LeadSessionId!,
+            new(report.Anchor, [
+                new Perga.ReportDoc.BlockOp.UpsertBlockOp(null, Perga.ReportDoc.ReportBlockKind.Task, null,
+                    TestJson.FromObject(new { task_key = "first", ready = true, access = "read_write", goal_or_cmd = "inspect", gate = "verify" })),
+                new Perga.ReportDoc.BlockOp.UpsertBlockOp(null, Perga.ReportDoc.ReportBlockKind.Task, null,
+                    TestJson.FromObject(new { task_key = "second", ready = true, access = "read_write", goal_or_cmd = "inspect", gate = "verify" }))]));
+        await ctx.Kernel.WaitForTrackIdleAsync(snapshot.Track.Id);
+        var tasks = (await ctx.Store.LoadTrackAggregateAsync(snapshot.Track.Id, default))!.Tasks;
+        var failed = tasks.Single(t => t.TaskKey == "first");
+        Assert.Equal(TaskRunStatus.Failed, failed.Status);
+        Assert.Equal("provider: conclusive failure", failed.StatusDetail);
+        Assert.NotNull(failed.FinishedAtMs);
+        Assert.Equal(TaskRunStatus.Running, tasks.Single(t => t.TaskKey == "second").Status);
+        Assert.Contains(ctx.PolicyVm.RecordedSettledEvents, e =>
+            e.GetProperty("taskKey").GetString() == "first" && e.GetProperty("status").GetString() == "failed");
+        await ctx.Kernel.RejectTaskAsync(snapshot.Track.Id, null, failed.Id, "retry", reQueue: true);
+        Assert.Equal(TaskRunStatus.Pending, (await ctx.Kernel.ListTasksAsync(snapshot.Track.Id)).Single(t => t.Id == failed.Id).Status);
+    }
+
+    private static async IAsyncEnumerable<UnifiedAgentEvent> Failed()
+    {
+        await Task.Yield();
+        yield return new UnifiedAgentEvent.TurnError("provider", "conclusive failure", false, IsConclusive: true);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PausedWorkerResumesExistingQueueAndNewMessageInOrder(bool existingQueue)
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var calls = 0;
+        ctx.AgentRuntime.TurnScript = (_, _, ct) => Interlocked.Increment(ref calls) == 1 ? Hold(release.Task, ct) : Completed();
+        var created = await ctx.Kernel.CreateSessionAsync(snapshot.Track.Id,
+            new(Prompt: "worker", Task: new()), "resume-queue", Human, default);
+        var id = created.Receipt.Session.Id;
+        var page = await WaitForPage(ctx, id, p => p.Activity?.Text == "started");
+        var queued = existingQueue ? await ctx.Kernel.SendSessionMessageAsync(id,
+            new(Content: "earlier", RequestKey: "earlier", Mode: "queue"), Human, default) : null;
+        await ctx.Kernel.ControlSessionAsync(id, new("stop", TurnId: page.ActiveTurn!.Id), Human, default);
+        await ctx.Kernel.WaitForTrackIdleAsync(snapshot.Track.Id);
+        page = await WaitForPage(ctx, id, p => p.State == "idle" && p.WorkerPaused);
+        ctx.Store.BeforeInputWrite = () => throw new IOException("resume write failed");
+        await Assert.ThrowsAsync<IOException>(() => ctx.Kernel.SendSessionMessageAsync(id,
+            new(Content: "resume", RequestKey: "resume"), Human, default));
+        Assert.True((await ctx.Kernel.GetSessionItemsAsync(id, new(), Human, default)).WorkerPaused);
+        ctx.Store.BeforeInputWrite = null;
+        var resumed = await ctx.Kernel.SendSessionMessageAsync(id,
+            new(Content: "resume", RequestKey: "resume"), Human, default);
+        await ctx.Kernel.WaitForTrackIdleAsync(snapshot.Track.Id);
+        Assert.False((await ctx.Kernel.GetSessionItemsAsync(id, new(), Human, default)).WorkerPaused);
+        var inputs = ctx.AgentRuntime.OpenedSessions.SelectMany(s => s.RecordedInputs).ToArray();
+        Assert.Equal(2, inputs.Length);
+        Assert.Equal(existingQueue ? "earlier\n\nresume" : "resume", inputs[1].Prompt);
+        if (queued is not null)
+            Assert.Equal("delivered", (await ctx.Store.SessionMessages.GetAsync(id, queued.MessageId, default))!.Delivery);
+        Assert.Equal("delivered", (await ctx.Store.SessionMessages.GetAsync(id, resumed.MessageId, default))!.Delivery);
     }
 
     [Fact]
@@ -57,7 +179,7 @@ public sealed class UnifiedSessionLifecycleTests
             var receipt = await ctx.Kernel.SendSessionMessageAsync(id,
                 new(Content: "declined", RequestKey: "declined", Mode: "steer", TurnId: page.ActiveTurn!.Id), Human, default);
             Assert.Equal("rejected", receipt.Delivery);
-            Assert.Equal("rejected", (await ctx.Store.SessionMessages.GetAsync(id, false, receipt.MessageId, default))!.Delivery);
+            Assert.Equal("rejected", (await ctx.Store.SessionMessages.GetAsync(id, receipt.MessageId, default))!.Delivery);
         }
         finally { release.TrySetResult(); }
         await ctx.Kernel.WaitForTrackIdleAsync(snapshot.Track.Id);
@@ -171,9 +293,9 @@ public sealed class UnifiedSessionLifecycleTests
                     TurnId: page.ActiveTurn!.Id, MessageId: queued?.MessageId), Human, default));
             Assert.Equal(KernelErrorCode.PreconditionFailed, failure.Code);
             if (queued is not null)
-                Assert.Equal("queued", (await ctx.Store.SessionMessages.GetAsync(id, false, queued.MessageId, default))!.Delivery);
+                Assert.Equal("queued", (await ctx.Store.SessionMessages.GetAsync(id, queued.MessageId, default))!.Delivery);
             else
-                Assert.Null(await ctx.Store.SessionMessages.FindAsync(id, false, "owner:installation", "unsupported", default));
+                Assert.Null(await ctx.Store.SessionMessages.FindAsync(id, "owner:installation", "unsupported", default));
         }
         finally { release.TrySetResult(); }
         await ctx.Kernel.WaitForTrackIdleAsync(snapshot.Track.Id);
@@ -216,7 +338,9 @@ public sealed class UnifiedSessionLifecycleTests
             var recovered = await ctx.Kernel.ControlSessionAsync(id, new(action), Human, default);
             Assert.Equal(before.Epoch + 1, recovered.Epoch);
             Assert.True(agent.DisposeCalls >= 2);
-            Assert.Equal(before.BoundAttemptId, recovered.BoundAttemptId);
+            var afterTask = Assert.Single(await ctx.Kernel.ListTasksAsync(snapshot.Track.Id), t => t.Id == created.Receipt.Task!.Id);
+            Assert.Equal(id, afterTask.SessionId);
+            Assert.Equal(TaskRunStatus.Running, afterTask.Status);
         }
     }
 
@@ -297,7 +421,7 @@ public sealed class UnifiedSessionLifecycleTests
         var replay = await ctx.Kernel.SendSessionMessageAsync(id, request, caller, default);
         Assert.Equal(queued.MessageId, replay.MessageId);
         Assert.True(replay.Replay);
-        var stored = await ctx.Store.SessionMessages.GetAsync(id, worker, queued.MessageId, default);
+        var stored = await ctx.Store.SessionMessages.GetAsync(id, queued.MessageId, default);
         Assert.Equal(lead.Id, stored!.AuthorId);
         var human = await ctx.Kernel.SendSessionMessageAsync(id, request, Human, default);
         Assert.NotEqual(queued.MessageId, human.MessageId);
@@ -305,7 +429,7 @@ public sealed class UnifiedSessionLifecycleTests
         Assert.Equal("delivered", (await ctx.Kernel.SendSessionMessageAsync(id, steer, caller, default)).Delivery);
         Assert.True((await ctx.Kernel.SendSessionMessageAsync(id, steer, caller, default)).Replay);
         Assert.Single(ctx.AgentRuntime.OpenedSessions.Single(s => s.LaunchSpec.StateKey == id).SteeredMessages);
-        Assert.Equal("delivered", (await ctx.Store.SessionMessages.GetAsync(id, worker, queued.MessageId, default))!.Delivery);
+        Assert.Equal("delivered", (await ctx.Store.SessionMessages.GetAsync(id, queued.MessageId, default))!.Delivery);
         var stale = caller with { ExecutionOrigin = new("old-turn") };
         Assert.Equal(KernelErrorCode.Conflict, (await Assert.ThrowsAsync<KernelException>(() =>
             ctx.Kernel.SendSessionMessageAsync(id, request, stale, default))).Code);
@@ -410,7 +534,7 @@ public sealed class UnifiedSessionLifecycleTests
         var child = (await ctx.Kernel.CreateSessionAsync(snapshot.Track.Id, new(Prompt: "child", Task: new()),
             "child", Caller(ctx, parent, page.ActiveTurn!.Id), default)).Receipt;
         await WaitForPage(ctx, child.Session.Id, p => p.LastTurn?.Status == "completed");
-        await ctx.Kernel.CompleteAttemptDoneAsync(snapshot.Track.Id, child.Session.Id);
+        await ctx.Kernel.CompleteTaskDoneAsync(snapshot.Track.Id, child.Session.Id);
         await ctx.Kernel.GuardMcpToolCallAsync(snapshot.Track.Id, parent.Id, "perga", "task_" + action,
             TestJson.FromObject(new { taskId = child.Task!.Id }));
         var caller = role switch { "human" => null, "parent" => parent.Id, "lead" => snapshot.Track.LeadSessionId,
@@ -462,7 +586,7 @@ public sealed class UnifiedSessionLifecycleTests
         await ctx.Kernel.WaitForTrackIdleAsync(snapshot.Track.Id);
         if (worker)
         {
-            await ctx.Kernel.CompleteAttemptDoneAsync(snapshot.Track.Id, child.Id);
+            await ctx.Kernel.CompleteTaskDoneAsync(snapshot.Track.Id, child.Id);
             await ctx.Kernel.WaitForTrackIdleAsync(snapshot.Track.Id);
         }
         Assert.Equal(turns, ctx.Store.GetTurnsForSession(parent.Id).Count);
@@ -520,6 +644,62 @@ public sealed class UnifiedSessionLifecycleTests
         yield return new UnifiedAgentEvent.ApprovalRequested("approval", "shell", TestJson.Parse("{}"));
         await release.WaitAsync(ct);
         yield return new UnifiedAgentEvent.TurnCompleted(null);
+    }
+
+    [Fact]
+    public async Task TaskSettlementInterruptsQueuedMessagesSoRequeueNeverLeaksStaleFollowUps()
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
+        var trackId = snapshot.Track.Id;
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var runNumber = 0;
+        ctx.AgentRuntime.TurnScript = (_, input, ct) =>
+            Interlocked.Increment(ref runNumber) == 1 ? Hold(release.Task, ct) : Completed();
+        var created = await ctx.Kernel.CreateSessionAsync(trackId, new(Prompt: "First run", Task: new()), "cross-run", Human, default);
+        var sessionId = created.Receipt.Session.Id;
+        var taskId = created.Receipt.Task!.Id;
+        await WaitForPage(ctx, sessionId, p => p.ActiveTurn is not null);
+        var queued = await ctx.Kernel.SendSessionMessageAsync(sessionId,
+            new(Content: "stale-from-run-1", RequestKey: "stale-key", Mode: "queue"), Human, default);
+        Assert.Equal("queued", queued.Delivery);
+
+        await ctx.Kernel.CompleteTaskFailAsync(trackId, sessionId, "run 1 failed");
+        release.TrySetResult();
+        await ctx.Kernel.WaitForTrackIdleAsync(trackId);
+        Assert.Equal("interrupted", (await ctx.Store.SessionMessages.GetAsync(sessionId, queued.MessageId, default))!.Delivery);
+
+        await ctx.Kernel.RejectTaskAsync(trackId, null, taskId, "retry", reQueue: true);
+        await ctx.Kernel.WaitForTrackIdleAsync(trackId);
+        var taskAfter = Assert.Single(await ctx.Kernel.ListTasksAsync(trackId), t => t.Id == taskId);
+        Assert.Equal(2, taskAfter.RunCount);
+        Assert.DoesNotContain(ctx.AgentRuntime.OpenedSessions.SelectMany(s => s.RecordedInputs),
+            i => i.Prompt.Contains("stale-from-run-1", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task TaskOwnedSessionSupportsIdleContextUsageAndCompactionParity()
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
+        var trackId = snapshot.Track.Id;
+        ctx.AgentRuntime.OnOpenedSession = s => s.SupportsNativeCompact = true;
+        var created = await ctx.Kernel.CreateSessionAsync(trackId, new(Prompt: "Analyze", Task: new()), "parity", Human, default);
+        await ctx.Kernel.WaitForTrackIdleAsync(trackId);
+        var sessionId = created.Receipt.Session.Id;
+        var agent = Assert.Single(ctx.AgentRuntime.OpenedSessions, s => s.LaunchSpec.StateKey == sessionId);
+
+        agent.EmitIdleContextUsage(new IdleContextUsage(
+            new TokenUsage(42_000, 0, 0, 100_000),
+            ContextUsageRevision: 0,
+            NativeThreadId: agent.NativeThreadId,
+            CompletedPromptId: 1));
+        var withUsage = await WaitForPage(ctx, sessionId, p => p.Session.ContextUsage?.UsedTokens == 42_000);
+        Assert.Equal(100_000, withUsage.Session.ContextUsage!.WindowTokens);
+
+        var compacted = await ctx.Kernel.ControlSessionAsync(sessionId, new("compact"), Human, default);
+        Assert.Equal(1, agent.CompactCalls);
+        Assert.Equal("idle", compacted.Status);
     }
 
 }
