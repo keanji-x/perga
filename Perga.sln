@@ -39,6 +39,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Perga.Kernel.Tests", "tests
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Perga.Host.IntegrationTests", "tests\Perga.Host.IntegrationTests\Perga.Host.IntegrationTests.csproj", "{E7018129-76CA-4EE3-BCFB-55992735FD78}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Perga.Processes", "libs\Perga.Processes\Perga.Processes.csproj", "{51FEBE88-B33C-41DF-8AFE-01246CF3326C}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -253,6 +255,18 @@ Global
 		{E7018129-76CA-4EE3-BCFB-55992735FD78}.Release|x64.Build.0 = Release|Any CPU
 		{E7018129-76CA-4EE3-BCFB-55992735FD78}.Release|x86.ActiveCfg = Release|Any CPU
 		{E7018129-76CA-4EE3-BCFB-55992735FD78}.Release|x86.Build.0 = Release|Any CPU
+		{51FEBE88-B33C-41DF-8AFE-01246CF3326C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{51FEBE88-B33C-41DF-8AFE-01246CF3326C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{51FEBE88-B33C-41DF-8AFE-01246CF3326C}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{51FEBE88-B33C-41DF-8AFE-01246CF3326C}.Debug|x64.Build.0 = Debug|Any CPU
+		{51FEBE88-B33C-41DF-8AFE-01246CF3326C}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{51FEBE88-B33C-41DF-8AFE-01246CF3326C}.Debug|x86.Build.0 = Debug|Any CPU
+		{51FEBE88-B33C-41DF-8AFE-01246CF3326C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{51FEBE88-B33C-41DF-8AFE-01246CF3326C}.Release|Any CPU.Build.0 = Release|Any CPU
+		{51FEBE88-B33C-41DF-8AFE-01246CF3326C}.Release|x64.ActiveCfg = Release|Any CPU
+		{51FEBE88-B33C-41DF-8AFE-01246CF3326C}.Release|x64.Build.0 = Release|Any CPU
+		{51FEBE88-B33C-41DF-8AFE-01246CF3326C}.Release|x86.ActiveCfg = Release|Any CPU
+		{51FEBE88-B33C-41DF-8AFE-01246CF3326C}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -275,5 +289,6 @@ Global
 		{3C1A863D-9BC2-4AB7-8CA4-0C7C54F4080E} = {6C4D298B-81FB-2B6B-5AB6-46205EDDC72C}
 		{17D8A171-205A-444A-8695-C7CA003684BF} = {6C4D298B-81FB-2B6B-5AB6-46205EDDC72C}
 		{E7018129-76CA-4EE3-BCFB-55992735FD78} = {6C4D298B-81FB-2B6B-5AB6-46205EDDC72C}
+		{51FEBE88-B33C-41DF-8AFE-01246CF3326C} = {6C4D298B-81FB-2B6B-5AB6-46205EDDC72C}
 	EndGlobalSection
 EndGlobal

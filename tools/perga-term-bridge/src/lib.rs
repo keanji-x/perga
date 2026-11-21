@@ -5,6 +5,7 @@
 //! over Unix Domain Sockets (`--listen-uds`) and/or TCP (`--listen-tcp`).
 
 pub mod actions;
+mod child_environment;
 pub mod rpc;
 pub mod runtime;
 pub mod screen_diff;

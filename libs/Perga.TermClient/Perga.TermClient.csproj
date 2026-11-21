@@ -1,2 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../Perga.Processes/Perga.Processes.csproj" />
+  </ItemGroup>
 </Project>

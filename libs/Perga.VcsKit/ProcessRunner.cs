@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using Perga.Processes;
 
 namespace Perga.VcsKit;
 
@@ -91,7 +92,9 @@ public sealed class ProcessRunner : IProcessRunner
             startInfo.ArgumentList.Add(arg);
         }
 
-        if (!request.InheritEnvironment)
+        if (request.InheritEnvironment)
+            ChildProcessEnvironment.Apply(startInfo, ChildProcessEnvironment.Capture());
+        else
             startInfo.Environment.Clear();
 
         // Non-interactive defaults so git / jj / gh never block on terminal prompts or pagers.

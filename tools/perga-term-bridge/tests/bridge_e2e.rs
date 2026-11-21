@@ -25,6 +25,10 @@ struct BridgeProcess {
 
 impl BridgeProcess {
     fn spawn_dual() -> Result<Self> {
+        Self::spawn_dual_with_env(&[])
+    }
+
+    fn spawn_dual_with_env(env: &[(&str, &str)]) -> Result<Self> {
         let dir = tempfile::tempdir()?;
         let uds_path = dir.path().join("bridge.sock");
         let mut child = Command::new(env!("CARGO_BIN_EXE_perga-term-bridge"))
@@ -33,6 +37,7 @@ impl BridgeProcess {
             .arg("--listen-tcp")
             .arg("127.0.0.1:0")
             .arg("--linux-unshare")
+            .envs(env.iter().copied())
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -74,6 +79,46 @@ impl Drop for BridgeProcess {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn standalone_bridge_strips_host_settings_and_preserves_developer_env() -> Result<()> {
+    let bridge = BridgeProcess::spawn_dual_with_env(&[
+        ("PERGA_DB_PATH", "/simulated/managed/perga.db"),
+        ("ASPNETCORE_Perga__DataDir", "/simulated/managed"),
+        ("DOTNET_Perga__DataDir", "/simulated/managed"),
+        ("DOTNET_ENVIRONMENT", "Production"),
+        ("DOTNET_ROOT", "/simulated/dotnet"),
+        ("VIRTUAL_ENV", "/simulated/venv"),
+    ])?;
+    rpc_tcp(
+        &bridge.tcp_url,
+        "term.ensure",
+        json!({
+            "terminal_id": "t_environment",
+            "program": "/bin/sh",
+            "args": ["-c", r#"if test -z "${PERGA_DB_PATH+x}" && test -z "${ASPNETCORE_Perga__DataDir+x}" && test -z "${DOTNET_Perga__DataDir+x}" && test -z "${DOTNET_ENVIRONMENT+x}" && test "$DOTNET_ROOT" = /simulated/dotnet && test "$VIRTUAL_ENV" = /simulated/venv && test "$TERMINAL_SETTING" = configured; then echo ENV_RESULT=isolated; else echo ENV_RESULT=leaked; fi"#],
+            "cwd": bridge._dir.path(),
+            "env": { "TERMINAL_SETTING": "configured" },
+            "cols": 100,
+            "rows": 30
+        }),
+    )
+    .await?;
+    let observed = rpc_tcp(
+        &bridge.tcp_url,
+        "term.observe",
+        json!({ "terminal_id": "t_environment", "wait_for": "text", "wait_text": ["ENV_RESULT="], "wait_ms": 5000 }),
+    )
+    .await?;
+    assert!(
+        observed["frame"]["text"]
+            .to_string()
+            .contains("ENV_RESULT=isolated"),
+        "{observed}"
+    );
+    Ok(())
 }
 
 async fn rpc_tcp(base_url: &str, method: &str, params: Value) -> Result<Value> {

@@ -1,5 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
   <ItemGroup>
+    <ProjectReference Include="..\..\libs\Perga.Processes\Perga.Processes.csproj" />
     <ProjectReference Include="..\Perga.Kernel\Perga.Kernel.csproj" />
     <ProjectReference Include="..\Perga.Storage.Sqlite\Perga.Storage.Sqlite.csproj" />
     <ProjectReference Include="..\Perga.Contracts\Perga.Contracts.csproj" />

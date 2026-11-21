@@ -1,7 +1,7 @@
 using System.Net;
 using System.Text.Json;
-using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
+using Perga.Host.IntegrationTests.Fixtures;
 
 namespace Perga.Host.IntegrationTests;
 
@@ -10,12 +10,20 @@ public sealed class HostSmokeTests
     [Fact]
     public async Task HealthzEndpoint_ReturnsOk()
     {
-        await using var factory = new WebApplicationFactory<Program>();
-        using var client = factory.CreateClient();
+        var directory = Directory.CreateTempSubdirectory("perga-host-smoke-");
+        try
+        {
+            await using var factory = new IsolatedPergaHostFactory(directory.FullName);
+            using var client = factory.CreateClient();
 
-        using var response = await client.GetAsync("/healthz");
+            using var response = await client.GetAsync("/healthz");
 
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
     }
 
     [Fact]
@@ -39,8 +47,9 @@ public sealed class HostSmokeTests
                 arguments[index] = $"--Perga:ProviderExecutables:{name}={executable}";
             }
 
-            await using var factory = new WebApplicationFactory<Program>()
-                .WithWebHostBuilder(builder => builder.ConfigureAppConfiguration((_, config) => config.AddCommandLine(arguments)));
+            await using var factory = new IsolatedPergaHostFactory(
+                Path.Combine(directory.FullName, "test-data"),
+                configureHost: builder => builder.ConfigureAppConfiguration((_, config) => config.AddCommandLine(arguments)));
             using var client = factory.CreateClient();
             using var response = await client.GetAsync("/api/v1/bootstrap?refresh=true");
             response.EnsureSuccessStatusCode();

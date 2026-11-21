@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using Perga.Processes;
 
 namespace Perga.TermClient;
 
@@ -106,6 +107,7 @@ public sealed class TerminalBridgeDaemon : IAsyncDisposable
             RedirectStandardError = true,
             CreateNoWindow = true
         };
+        ChildProcessEnvironment.Apply(psi, ChildProcessEnvironment.Capture());
 
         var expectUds = false;
         var expectTcp = false;
@@ -373,6 +375,7 @@ public sealed class TerminalBridgeDaemon : IAsyncDisposable
             RedirectStandardError = true,
             CreateNoWindow = true
         };
+        ChildProcessEnvironment.Apply(psi, ChildProcessEnvironment.Capture());
         psi.ArgumentList.Add("build");
         psi.ArgumentList.Add("--bin");
         psi.ArgumentList.Add("perga-term-bridge");

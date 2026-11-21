@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
+using Perga.Processes;
 
 namespace Perga.AgentKit.Internal;
 
@@ -76,10 +77,7 @@ internal sealed class StdioSubprocess : IAsyncDisposable
             psi.ArgumentList.Add(arg);
         }
 
-        foreach (var kvp in invocation.Environment)
-        {
-            psi.Environment[kvp.Key] = kvp.Value;
-        }
+        ChildProcessEnvironment.Apply(psi, invocation.Environment);
 
         var process = new Process
         {

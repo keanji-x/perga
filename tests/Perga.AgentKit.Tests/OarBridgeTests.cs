@@ -1,9 +1,11 @@
+using System.Text.Json;
 using Perga.AgentKit;
 using Perga.AgentKit.Internal;
 using Xunit;
 
 namespace Perga.AgentKit.Tests;
 
+[Collection("OAR process environment")]
 public sealed class OarBridgeTests : IDisposable
 {
     private readonly string _tempDir;
@@ -234,6 +236,68 @@ public sealed class OarBridgeTests : IDisposable
         Assert.Contains(logLines, l => l.Contains("\"--permission-mode\",\"plan\"", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public async Task AmbientHostSettingsDoNotReachProviderProbeOrSessionWhileDeveloperEnvPassesThrough()
+    {
+        var previous = new Dictionary<string, string?>();
+        var overrides = new Dictionary<string, string?>
+        {
+            ["Perga__DataDir"] = _tempDir,
+            ["PERGA_DB_PATH"] = Path.Combine(_tempDir, "perga.db"),
+            ["ASPNETCORE_Perga__DataDir"] = _tempDir,
+            ["DOTNET_Perga__DataDir"] = _tempDir,
+            ["DOTNET_ENVIRONMENT"] = "Production",
+            ["VIRTUAL_ENV"] = "/simulated/venv",
+            ["OAR_TEST_CUSTOM_ENV"] = "custom-ok"
+        };
+        try
+        {
+            foreach (var (key, value) in overrides)
+            {
+                previous[key] = Environment.GetEnvironmentVariable(key);
+                Environment.SetEnvironmentVariable(key, value);
+            }
+
+            var mockEnvironment = new Dictionary<string, string> { ["MOCK_OAR_LOG"] = _logPath };
+            await using var runtime = new AgentRuntime(new AgentRuntimeOptions
+            {
+                BridgeScriptPath = _mockBridgePath,
+                ProviderOverrides = new Dictionary<string, ProviderCommandOverride>
+                {
+                    ["codex"] = new("fake-codex", mockEnvironment),
+                    ["claude"] = new("fake-claude", mockEnvironment)
+                }
+            });
+
+            var statuses = await runtime.ProbeProvidersAsync(CancellationToken.None);
+            Assert.Contains(statuses, status => status.Provider == "codex" && status.Available);
+            await using var session = await runtime.OpenSessionAsync(
+                new HarnessLaunchSpec("codex", null, _workspaceDir, null, null, new Dictionary<string, McpServerConfig>()),
+                CancellationToken.None);
+
+            var calls = new List<(string? Method, string? Runtime)>();
+            foreach (var line in await File.ReadAllLinesAsync(_logPath))
+            {
+                using var log = JsonDocument.Parse(line);
+                var method = log.RootElement.GetProperty("method").GetString();
+                if (method is not ("probe" or "session/open")) continue;
+                var runtimeName = log.RootElement.GetProperty("params").GetProperty("runtime").GetString();
+                calls.Add((method, runtimeName));
+                Assert.True(log.RootElement.GetProperty("hasDeveloperEnv").GetBoolean());
+                Assert.False(log.RootElement.GetProperty("hasHostStorage").GetBoolean(),
+                    "The bridge inherited Host-reserved settings.");
+            }
+            Assert.Contains(("probe", "codex"), calls);
+            Assert.Contains(("probe", "claude"), calls);
+            Assert.Contains(("session/open", "codex"), calls);
+        }
+        finally
+        {
+            foreach (var (key, value) in previous)
+                Environment.SetEnvironmentVariable(key, value);
+        }
+    }
+
     private const string MockBridgeScript = """
 import fs from 'node:fs';
 import readline from 'node:readline';
@@ -248,7 +312,16 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
   const trimmed = line.trim();
   if (!trimmed) return;
   const req = JSON.parse(trimmed);
-  log({ method: req.method, params: req.params });
+  const hasHostStorage =
+    Object.hasOwn(process.env, "Perga__DataDir") ||
+    Object.hasOwn(process.env, "PERGA_DB_PATH") ||
+    Object.hasOwn(process.env, "ASPNETCORE_Perga__DataDir") ||
+    Object.hasOwn(process.env, "DOTNET_Perga__DataDir") ||
+    Object.hasOwn(process.env, "DOTNET_ENVIRONMENT");
+  const hasDeveloperEnv =
+    process.env.VIRTUAL_ENV === "/simulated/venv" &&
+    process.env.OAR_TEST_CUSTOM_ENV === "custom-ok";
+  log({ method: req.method, params: req.params, hasHostStorage, hasDeveloperEnv });
 
   if (req.method === 'probe') {
     const rt = req.params.runtime;
@@ -292,3 +365,6 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
 });
 """;
 }
+
+[CollectionDefinition("OAR process environment", DisableParallelization = true)]
+public sealed class OarProcessEnvironmentCollection;

@@ -3,6 +3,7 @@
 //! Purified from `tools/rust-terminal/calm-terminal-runtime` with `portable-pty` backend support.
 
 use crate::actions::{Encoded, encode_rpc_action};
+use crate::child_environment;
 use crate::view::{Frame, MAX_COLS, MAX_ROWS, TerminalView};
 use crate::wait_plan::{WaitFor, WaitPlan, wait_for_change, wait_for_text};
 use anyhow::{Context, Result, bail, ensure};
@@ -270,6 +271,7 @@ impl PtyBackend for PortablePtyBackend {
             cmd.arg(arg);
         }
         cmd.cwd(&spec.cwd);
+        child_environment::apply(&mut cmd);
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
         for (key, value) in &spec.env {

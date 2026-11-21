@@ -7,6 +7,7 @@ using Perga.Host.Configuration;
 using Perga.Host.Serialization;
 using Perga.Kernel;
 using Perga.Kernel.Ports;
+using Perga.Processes;
 
 namespace Perga.Host.Mcp;
 
@@ -648,6 +649,7 @@ public sealed class McpPluginRouter : IAsyncDisposable
                 }
             }
 
+            ChildProcessEnvironment.Apply(psi, ChildProcessEnvironment.Capture());
             if (def.Env is not null)
             {
                 foreach (var (k, v) in def.Env)

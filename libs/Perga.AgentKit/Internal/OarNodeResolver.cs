@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using Perga.Processes;
 
 namespace Perga.AgentKit.Internal;
 
@@ -36,13 +37,13 @@ internal static class OarNodeResolver
                            ?? Path.GetFullPath(configuredExecutable.Trim());
             if (!File.Exists(resolved))
                 throw new FileNotFoundException($"Configured Node 24 executable was not found: '{configuredExecutable}'.", resolved);
-            if (ProbeNodeVersion(resolved) is { Major: < MinimumNodeMajorVersion } v)
+            if (ProbeNodeVersion(resolved, environment) is { Major: < MinimumNodeMajorVersion } v)
                 throw new InvalidOperationException($"perga-oar-bridge requires Node.js >= {MinimumNodeMajorVersion}.0.0, but '{resolved}' is v{v}.");
             return resolved;
         }
 
         if (AgentRuntime.FindExecutableOnPath("node", environment) is { } pathNode &&
-            ProbeNodeVersion(pathNode) is { Major: >= MinimumNodeMajorVersion })
+            ProbeNodeVersion(pathNode, environment) is { Major: >= MinimumNodeMajorVersion })
             return pathNode;
 
         if (FindNvmNode24(environment) is { } nvmNode)
@@ -77,7 +78,7 @@ internal static class OarNodeResolver
             .FirstOrDefault();
     }
 
-    private static Version? ProbeNodeVersion(string executable)
+    private static Version? ProbeNodeVersion(string executable, IReadOnlyDictionary<string, string>? environment)
     {
         try
         {
@@ -88,6 +89,7 @@ internal static class OarNodeResolver
                 StandardOutputEncoding = Utf8NoBom, StandardErrorEncoding = Utf8NoBom
             };
             psi.ArgumentList.Add("--version");
+            ChildProcessEnvironment.Apply(psi, environment ?? ChildProcessEnvironment.Capture());
             using var p = Process.Start(psi);
             if (p is null) return null;
             p.StandardInput.Close();

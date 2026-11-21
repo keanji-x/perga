@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
+using Perga.Processes;
 
 namespace Perga.Kernel.Ports;
 
@@ -129,6 +130,7 @@ public sealed class ProcessShellCommandRunner : IShellCommandRunner
             psi.ArgumentList.Add(request.Command);
         }
 
+        ChildProcessEnvironment.Apply(psi, ChildProcessEnvironment.Capture());
         if (request.Environment is not null)
         {
             foreach (var kvp in request.Environment)
