@@ -30,7 +30,7 @@ function parentDirectory(path: string): string {
  * card board.
  */
 export function ReportFileViewer({
-  path, files, fileRoot, wide, onClose, onFileOpened, onOpenFileLink, onOpenSourceLink, linkPreview, sourceInsertion,
+  path, files, fileRoot, wide, onClose, hasBackFocus, onFileOpened, onOpenFileLink, onOpenSourceLink, linkPreview, sourceInsertion,
 }: Readonly<{
   path: string;
   files: WorkspaceFilePort;
@@ -38,6 +38,8 @@ export function ReportFileViewer({
   /** Code, text, images and pages may use the panel column when no card owns it. */
   wide: boolean;
   onClose: () => void;
+  /** The owning page's file Back control can also dismiss with Escape. */
+  hasBackFocus?: () => boolean;
   onFileOpened?: (path: string) => void;
   onOpenFileLink?: (target: ReportFileLinkTarget) => void;
   onOpenSourceLink?: (target: ReportSourceLinkTarget) => void;
@@ -59,6 +61,9 @@ export function ReportFileViewer({
     isActive: true,
     onDismiss: () => onClose(),
     getContainer: () => layerRef.current,
+    isPresent: () => document.activeElement === document.body
+      || layerRef.current?.contains(document.activeElement) === true
+      || hasBackFocus?.() === true,
   });
 
   return (

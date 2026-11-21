@@ -21,8 +21,7 @@
     padding-block: var(--space-2) var(--space-6);
   }
 
-  /* With no drawable card, the panel column is free. Replace the asymmetric
-     document/panel tracks with one centered wide measure and equal gutters. */
+  /* Give code, images and rendered pages more of the file viewer's own width. */
   .bodyWide {
     grid-template-columns:
       minmax(var(--space-4), 1fr)

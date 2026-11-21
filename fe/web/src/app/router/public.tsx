@@ -1320,6 +1320,7 @@ function TrackRouteBody({
     if (previous === null || requestedFilePath !== null) return;
     const opener = fileReturnFocusRef.current;
     fileReturnFocusRef.current = null;
+    if (document.activeElement !== document.body) return;
     // The stable region exists even when report preparation has not completed.
     const target = opener?.isConnected === true
       ? opener
@@ -1663,14 +1664,9 @@ function TrackRouteBody({
   };
 
   const closeBoard = () => {
-    if (requestedFilePath !== null) {
-      fileNavigation.closeFile(track.id);
-      return;
-    }
     go({ name: 'track', trackId: track.id, from: routeFrom }, { replace: true });
   };
-
-  const boardOpen = knownCard || requestedFilePath !== null;
+  const closeFile = () => { fileNavigation.closeFile(track.id); };
 
   const openReportAnchor = (blockId: string) => {
     go({ name: 'track', trackId: track.id, blockId, from: routeFrom });
@@ -1796,7 +1792,7 @@ function TrackRouteBody({
         void terminalPlacementFeedback.run(trackMutations.setTerminalWorkbench(track.id, cardId, inWorkbench),
           () => 'Could not move this terminal. Try again.');
       }}
-      board={<>
+      board={
         <CardGridOverlay
           open={knownCard && (compactViewport || !workbench.cardIds.has(requestedCardId))}
           items={workbench.ordinaryHost ? gridItems : gridItems.filter(item => !workbench.cardIds.has(item.card.id))}
@@ -1804,8 +1800,11 @@ function TrackRouteBody({
           activeCardId={requestedCardId}
           onRemoveCard={(id) => cardDeletion.request(id, { kind: 'surface-center' })}
           onClose={knownCard ? closeBoard : undefined}
-        />
-        {requestedFilePath !== null && (
+        />}
+      onCloseBoard={knownCard ? closeBoard : undefined}
+      fileViewer={requestedFilePath === null ? undefined : {
+        onClose: closeFile,
+        render: hasBackFocus => (
           <ReportFileViewer
             key={requestedFilePath}
             path={requestedFilePath}
@@ -1813,15 +1812,15 @@ function TrackRouteBody({
             sourceInsertion={sourceInsertion}
             linkPreview={linkPreview}
             fileRoot={track.agentCwd}
-            wide={gridItems.length === 0}
-            onClose={closeBoard}
+            wide
+            onClose={closeFile}
+            hasBackFocus={hasBackFocus}
             onFileOpened={(path) => { rememberReportFile({ path }); }}
             onOpenFileLink={openReportFile}
             onOpenSourceLink={openReportSource}
           />
-        )}
-      </>}
-      onCloseBoard={boardOpen ? closeBoard : undefined}
+        ),
+      }}
       /* Gated on the viewport too: the effect above cannot have run yet on a desktop
                cold start, and one render "open" is one render with the desktop panel `inert`. */
       panel={renderedMobilePanel(routePanel, {

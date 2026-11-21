@@ -104,9 +104,10 @@ export type TrackPageProps = Readonly<{
    *  `neige://` link and a backlink all use. */
   onOpenTask?: (blockId: string) => void;
   onOpenOutline?: (blockId: string) => void;
-  /** The card grid or transient file viewer, composed by `app/router` and positioned over the document column. */
+  /** The card grid covers the workspace. A file covers only the reading column. */
   board?: ReactNode;
   onCloseBoard?: () => void;
+  fileViewer?: Readonly<{ render: (hasBackFocus: () => boolean) => ReactNode; onClose: () => void }>;
   /** Which secondary panel the mobile report is showing, or `null`. The panel is a navigation destination, so its identity lives in the URL and `app/router` reads it. */
   panel?: MobilePanelKind | null;
   onOpenPanel?: (panel: MobilePanelKind) => void;
@@ -139,7 +140,7 @@ function rowModule(view: TrackPageView, key: RowModuleView['key']): RowModuleVie
 export function TrackPage({ fillReading = false, showWorkspaceIsolation = true, mobileReportIntro, mobileChatComposer,
   panelHeader, panelContent, progressDisclosure, track, cards, existingCardIds, tasks, openableCards, outlineItems = [], report, backlinks, conversationList, conversationContextList,
   shareLinks, onShareTrack, onStartConversation, showConversationAction = true, conversationOpen = false, mobilePanelObscured, unread = false, onReply,
-  cardsAction, recentFiles, onOpenCard, onDeleteCard, onSetWorkbench, onOpenTask, onOpenOutline, board, onCloseBoard,
+  cardsAction, recentFiles, onOpenCard, onDeleteCard, onSetWorkbench, onOpenTask, onOpenOutline, board, onCloseBoard, fileViewer,
   panel = null, onOpenPanel, onClosePanel,
   mobileBackLabel = 'Pages', onMobileBack, mobileHeaderActionsHost = null, mobileHeaderTitleHost = null, mobileTitleReadView,
   canReopenTrack, canCloseTrack, adminGrantedAt, onRenameTrack, closedControl, onDeleteTrack, onTrackDeleted,
@@ -186,7 +187,14 @@ export function TrackPage({ fillReading = false, showWorkspaceIsolation = true, 
   const offeredClosedAction = closedControl === undefined ? null : canReopenTrack ? 'reopen' : (canCloseTrack ? 'close' : null);
   const activity = trackActivityState(track, unread);
   const activityLabel = activityLabelOf(activity);
+  const headerBackRef = useRef<HTMLButtonElement>(null);
+  const mobileBackRef = useRef<HTMLButtonElement>(null);
+  const hasBackFocus = () => {
+    const active = document.activeElement;
+    return active !== null && (headerBackRef.current === active || mobileBackRef.current === active);
+  };
   const boardOpen = onCloseBoard !== undefined;
+  const closeSurface = fileViewer?.onClose ?? onCloseBoard;
   const mobilePanelOpen = panel !== null;
   const mobilePanelKind: MobilePanelKind = panel ?? 'cards';
   const trackWorkActions = [
@@ -258,7 +266,7 @@ export function TrackPage({ fillReading = false, showWorkspaceIsolation = true, 
     onBack: closeMobilePanel,
   });
 
-  const mobileActions = !boardOpen ? (
+  const mobileActions = closeSurface === undefined ? (
     <span className={styles.mobilePanelButton} ref={mobileActionsRef}>
       <AstryxMoreMenu
         label="Track actions"
@@ -287,7 +295,7 @@ export function TrackPage({ fillReading = false, showWorkspaceIsolation = true, 
 
   return (
     <section
-      className={`${styles.page} ${fillReading ? styles.fillReading : ''} ${boardOpen ? styles.pageBoard : ''}`}
+      className={`${styles.page} ${fillReading ? styles.fillReading : ''} ${closeSurface !== undefined ? styles.pageBoard : ''}`}
       data-nc-track-page=""
     >
       {dismissalLayer}
@@ -295,14 +303,15 @@ export function TrackPage({ fillReading = false, showWorkspaceIsolation = true, 
         className={`${styles.workHeader} ${conversationOpen ? styles.workHeaderBesideDrawer : ''}`}
         title={
           <>
-            {onCloseBoard !== undefined && (
+            {closeSurface !== undefined && (
               <button
                 type="button"
                 data-nc-role="icon"
                 className={styles.headerBack}
                 aria-label="Back to track"
                 title="Back to track"
-                onClick={onCloseBoard}
+                ref={headerBackRef}
+                onClick={closeSurface}
               >
                 <Icon name="arrow-left" />
               </button>
@@ -376,14 +385,15 @@ export function TrackPage({ fillReading = false, showWorkspaceIsolation = true, 
         {!titleInHeader && <ActivityIndicator state={activity} />}
       </div>, titleContainer)}
       {headerActionsHost !== null && mobileActions !== undefined && createPortal(mobileActions, headerActionsHost)}
-      {titleInHeader && !boardOpen ? null : <div className={styles.mobileTrackHeader}>
+      {titleInHeader && closeSurface === undefined ? null : <div className={styles.mobileTrackHeader}>
         <MobileHeader
           title={trackDisplayTitle(track.title)}
           titleText={<TrackTitle track={track} />}
           meta={<>{showWorkspaceIsolation && track.isolation === 'none' && <ExplanationBadge label={NO_ISOLATION_LABEL}>{NO_ISOLATION_EXPLANATION}</ExplanationBadge>}<TrackClosedBadge closedAt={track.closedAt} /><TrackAdminBadge adminGrantedAt={adminGrantedAt} /></>}
           level={1}
-          backLabel={boardOpen ? 'Report' : mobileBackLabel}
-          onBack={boardOpen ? onCloseBoard : onMobileBack}
+          backLabel={closeSurface === undefined ? mobileBackLabel : 'Report'}
+          onBack={closeSurface ?? onMobileBack}
+          backRef={mobileBackRef}
           actions={headerActionsHost === null ? mobileActions : undefined}
         />
       </div>}
@@ -394,12 +404,11 @@ export function TrackPage({ fillReading = false, showWorkspaceIsolation = true, 
         aria-hidden={boardOpen ? true : undefined}
         inert={boardOpen}
       >
-        <div className={styles.doc}>
+        <div className={styles.doc} inert={fileViewer !== undefined}>
           {compactViewport && mobileReportIntro}
           {compactViewport && (panelHeader !== undefined || panelContent !== undefined) && <div className={styles.compactPanelContent}><PanelCard>{panelHeader}{panelContent}</PanelCard></div>}
           {report}
         </div>
-
         {/* `data-nc-panel` is how `app/shell` hides this while the conversation
             drawer is open. */}
         <aside
@@ -490,11 +499,14 @@ export function TrackPage({ fillReading = false, showWorkspaceIsolation = true, 
           </div>
         </aside>
       </div>
+      {fileViewer !== undefined && <LayerDepthProvider>
+        <div className={styles.fileSurface}>{fileViewer.render(hasBackFocus)}</div>
+      </LayerDepthProvider>}
       {board}
       </div>
 
       {compactViewport && !conversationOpen && !mobilePanelObscured
-        && !boardOpen && !mobilePanelOpen && (mobileChatComposer !== undefined || onStartConversation !== undefined) && (
+        && closeSurface === undefined && !mobilePanelOpen && (mobileChatComposer !== undefined || onStartConversation !== undefined) && (
         mobileChatComposer !== undefined ? <div className={styles.mobileReportChatDock} data-nc-mobile-report-chat="">
           <AstryxButton label="Open conversation" aria-description={activityLabel ?? undefined} isIconOnly variant="ghost" onClick={onReply ?? onStartConversation}
             icon={<><Icon name="chat" /><ActivityIndicator state={activity} /></>} />
