@@ -2,7 +2,7 @@
 
 A task-driven organization of AI agents for long-horizon work.
 
-Perga moves multi-day and multi-week work — maintaining a repository, driving engineering OKRs, or running ongoing research — out of scrolling chat tabs. Each goal gets its own isolated **Track**: conversation stays in the side pane while the main view continuously distills a read-only living report backed by kernel-verified facts. Orchestrate the CLIs you already use (Claude Code, Codex, ACP) with optional protocols, enforced cross-model review, and zero-token external watches.
+Perga moves multi-day and multi-week work — maintaining a repository, driving engineering OKRs, or running ongoing research — out of scrolling chat tabs. Each goal gets its own isolated **Track**: conversation stays in the side pane while the main view continuously distills a read-only living report backed by kernel-verified facts. Orchestrate the CLIs you already use (Claude Code, Codex, ACP) with lightweight protocols, enforced cross-model review, and zero-token external watches.
 
 ## Key Capabilities
 
@@ -10,13 +10,13 @@ Perga moves multi-day and multi-week work — maintaining a repository, driving 
 - **Heterogeneous agents with shared control.** A single Lead coordinates Claude Code, Codex, and ACP workers inside the same track. Execution is structurally separated from acceptance, reviews can be enforced on a different model, and humans share the exact same live stream, steering, interrupt, and model controls as the Lead.
 - **Unified flows and zero-token watches.** A lightweight declarative `flow.json` unifies parallel dependencies, `cron`/`at` schedules, and zero-token external probes (`prChecks` or shell commands). Nothing spends tokens while idle; state changes and exceptions wake the Lead to decide next steps.
 - **Real isolated workspaces, local sovereignty.** Isolate tracks via Git worktrees, Jujutsu (`jj`), Linux OverlayFS (shared prewarmed build caches), or remote SSH targets. Terminals run in an independent Rust bridge (`perga-term-bridge`) that survives host upgrades, and all state stays in a local SQLite database you own.
-- **Zero-template start, progressive structure.** Start any track with a single sentence. Attach a built-in protocol or ask the Lead to author a lightweight one only when recurring rules and guardrails emerge.
+- **Zero-template start, progressive structure.** Start any track with a single sentence. Attach a lightweight built-in protocol (28–41 lines) or ask the Lead to author one only when recurring rules and guardrails emerge.
 
 ## Built-in Protocols
 
-- [`agents-delivery`](templates/agents-delivery) — Design alignment, isolated implementation, parallel independent cross-model reviews with fix loops, enforced test gates, zero-token PR CI watches, and merge safeguards.
-- [`okr-loop`](templates/okr-loop) — Stable Objective, four-column KR ledger with kernel-stamped updates, scheduled metric collection, expectation-checked experiments, and rollback tracking.
-- [`equity-research`](templates/equity-research) — Frameless valuation range axis, event expectation timeline (`beat`/`inline`/`miss`), evergreen thesis notes, and scheduled cross-model reviews.
+- [`agents-delivery`](templates/agents-delivery) — Zero-schema delivery protocol: `builtin:flow` orchestration, enforced read-write verification gates, and enforced read-only cross-model review routing.
+- [`okr-loop`](templates/okr-loop) — Stable Objective, four-column KR ledger (`builtin:table`) with kernel-stamped updates, daily `cron` metric collection, enforced triage routing, and `builtin:flow` tracking.
+- [`equity-research`](templates/equity-research) — Frameless valuation range axis, event expectation timeline (`builtin:list`), evergreen thesis notes, weekly `cron` valuation refresh, on-demand `at` event checks, and enforced cross-model review routing.
 
 ## Quickstart
 
@@ -46,8 +46,8 @@ Pushing a `vX.Y.Z` tag (for example `v0.1.0`) runs the same pipeline and publish
 
 ### Product
 - [Vision and Fundamental Tensions](docs/product/vision.md) — Core premise, four orthogonal tensions, AI vs. human organizational asymmetries, and long-term vision
-- [Product Design and Prioritized Pain Points](docs/product/design.md) — Concrete `P0`–`P3` pain points, minimal solutions, intentionally deferred scope, and paradigm comparison
-- [Scenario Applications](docs/product/scenarios.md) — Real-world usage and boundaries across `agents-delivery`, `okr-loop`, and `equity-research`
+- [Product Design and Prioritized Pain Points](docs/product/design.md) — Concrete `P0`–`P3` pain points, minimal solutions, deliberate trade-offs, deferred scope, and paradigm comparison
+- [Scenario Applications](docs/product/scenarios.md) — Progressive complexity across `agents-delivery`, `okr-loop`, and `equity-research`
 
 ### Architecture & Operations
 - [Architecture Reference](DESIGN.md) — 18-project .NET topology, dependency matrix, core modules, and contracts
