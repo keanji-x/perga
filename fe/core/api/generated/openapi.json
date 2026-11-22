@@ -3614,6 +3614,449 @@
           }
         }
       },
+      "AgentIdleActivityDto": {
+        "type": "object",
+        "required": [
+          "since",
+          "lastEventAt"
+        ],
+        "properties": {
+          "since": {
+            "type": "number"
+          },
+          "lastEventAt": {
+            "type": "number"
+          }
+        }
+      },
+      "AgentStopEvidenceDto": {
+        "type": "object",
+        "required": [
+          "pendingAbortIds",
+          "abortedOnExit"
+        ],
+        "properties": {
+          "pendingAbortIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "abortedOnExit": {
+            "type": "boolean"
+          }
+        }
+      },
+      "AgentCompactionDto": {
+        "type": "object",
+        "required": [
+          "requestId"
+        ],
+        "properties": {
+          "requestId": {
+            "type": "string"
+          },
+          "started": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "AgentPendingPromptDto": {
+        "type": "object",
+        "required": [
+          "inputId",
+          "sinceSeq"
+        ],
+        "properties": {
+          "inputId": {
+            "type": "string"
+          },
+          "sinceSeq": {
+            "type": "number"
+          },
+          "requestId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "stop": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentStopEvidenceDto"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "AgentTurnOutcomeDto": {
+        "type": "object",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "failure": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "credential": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resetsAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rateLimitType": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "structuredOutput": {}
+        }
+      },
+      "AgentRuntimeStatusDto": {
+        "type": "object",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "phase": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "toolName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "toolCallId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "writing": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sinceSeq": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "requestId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "inputId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "released": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lastTurnOutcome": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentTurnOutcomeDto"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "idleActivity": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentIdleActivityDto"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pendingPrompt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentPendingPromptDto"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "stop": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentStopEvidenceDto"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "compaction": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentCompactionDto"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "AgentRuntimeTaskDto": {
+        "type": "object",
+        "required": [
+          "taskId"
+        ],
+        "properties": {
+          "taskId": {
+            "type": "string"
+          },
+          "taskType": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "nativeType": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "toolCallId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "childSessionId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "background": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ambient": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "outputFile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "seq": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ts": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
       "AgentSessionDto": {
         "type": "object",
         "required": [
@@ -4005,6 +4448,8 @@
           "unknownDetail"
         ],
         "properties": {
+          "runtimeStatus": { "anyOf": [{ "$ref": "#/components/schemas/AgentRuntimeStatusDto" }, { "type": "null" }] },
+          "runtimeTasks": { "anyOf": [{ "type": "array", "items": { "$ref": "#/components/schemas/AgentRuntimeTaskDto" } }, { "type": "null" }] },
           "items": {
             "type": "array",
             "items": {

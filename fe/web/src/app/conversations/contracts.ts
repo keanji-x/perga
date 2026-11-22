@@ -14,6 +14,8 @@ export type ConversationStore = Readonly<{
   pendingApprovals: readonly import('../../../../core/domain/approval.ts').PendingApproval[] | null;
   session: import('../../../../core/api/perga-v1.ts').AgentSessionDto | null;
   sessionState: import('../../../../core/api/perga-v1.ts').SessionItemsPageDto['state'] | null;
+  runtimeStatus?: import('../../../../core/api/perga-v1.ts').AgentRuntimeStatusDto | null;
+  runtimeTasks?: readonly import('../../../../core/api/perga-v1.ts').AgentRuntimeTaskDto[] | null;
   readonlyReason: import('../../../../core/api/perga-v1.ts').SessionItemsPageDto['readonlyReason'];
   canReopen: boolean;
   taskId: string | null;

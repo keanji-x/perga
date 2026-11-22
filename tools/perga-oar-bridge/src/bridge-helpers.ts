@@ -1,12 +1,20 @@
 import crypto from "node:crypto";
 import type {
   AvailableInstallation,
+  AgentStatus,
   InstallationSnapshot,
   RawEvent,
   Runtime,
   Session,
   ToolOutputPart,
 } from "@botiverse/oar/browser";
+
+export function statusEmissionKey(status: AgentStatus): string {
+  const { lastEventAt: ignored, ...structural } = status as AgentStatus & { lastEventAt?: number };
+  void ignored;
+  return JSON.stringify({ ...structural, ...(status.kind === "idle" && status.activity
+    ? { activity: { since: status.activity.since } } : {}) });
+}
 
 export interface UsagePayload {
   readonly inputTokens: number;

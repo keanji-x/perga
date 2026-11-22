@@ -36,6 +36,11 @@ public sealed class OarAgentSession : IAgentSession
     private readonly object _idleUsageLock = new();
     private Action<IdleContextUsage>? _idleUsageHandler;
     private IdleContextUsage? _pendingIdleUsage;
+    private readonly object _runtimeActivityLock = new();
+    private readonly List<UnifiedAgentEvent> _pendingRuntimeActivity = [];
+    private Action<UnifiedAgentEvent>? _runtimeActivityHandler;
+    private bool _runtimeExited;
+    private static readonly JsonSerializerOptions RuntimeJsonOptions = new(JsonSerializerDefaults.Web);
     private TurnStreamState? _currentTurn;
     private string? _nativeThreadId;
     private string? _lastEmittedThreadId;
@@ -135,6 +140,45 @@ public sealed class OarAgentSession : IAgentSession
             _pendingIdleUsage = null;
             return _idleUsageHandler is not null && pending is not null ? [pending] : [];
         }
+    }
+
+    public IReadOnlyList<UnifiedAgentEvent> AttachRuntimeActivityHandler(Action<UnifiedAgentEvent>? handler)
+    {
+        lock (_runtimeActivityLock)
+        {
+            _runtimeActivityHandler = _disposed == 0 ? handler : null;
+            var pending = _runtimeActivityHandler is null ? [] : _pendingRuntimeActivity.ToArray();
+            _pendingRuntimeActivity.Clear();
+            return pending;
+        }
+    }
+
+    private void PublishRuntimeActivity(UnifiedAgentEvent observation)
+    {
+        lock (_runtimeActivityLock)
+        {
+            if (_disposed != 0 || _runtimeExited) return;
+            if (observation is UnifiedAgentEvent.RuntimeExited) _runtimeExited = true;
+            Volatile.Read(ref _currentTurn)?.Events.Writer.TryWrite(observation);
+            if (_runtimeActivityHandler is { } handler) handler(observation);
+            else _pendingRuntimeActivity.Add(observation);
+        }
+    }
+
+    private static AgentRuntimeStatus? ParseRuntimeStatus(JsonElement value)
+    {
+        var fields = value.Deserialize<Dictionary<string, JsonElement>>(RuntimeJsonOptions)!;
+        if (fields.TryGetValue("phase", out var phase) && phase.ValueKind == JsonValueKind.Object)
+        {
+            fields["phase"] = JsonSerializer.SerializeToElement("tool");
+            if (phase.TryGetProperty("tool", out var tool)) fields["toolName"] = tool;
+            if (phase.TryGetProperty("callId", out var call)) fields["toolCallId"] = call;
+            if (phase.TryGetProperty("writing", out var writing)) fields["writing"] = writing;
+        }
+        var status = JsonSerializer.SerializeToElement(fields).Deserialize<AgentRuntimeStatus>(RuntimeJsonOptions);
+        if (status is null) return null;
+        return value.TryGetProperty("activity", out var activity) && activity.ValueKind == JsonValueKind.Object
+            ? status with { IdleActivity = activity.Deserialize<AgentIdleActivity>(RuntimeJsonOptions) } : status;
     }
 
     public async Task<bool> TryCloseSessionAsync(CancellationToken ct)
@@ -335,6 +379,7 @@ public sealed class OarAgentSession : IAgentSession
     {
         Interlocked.Exchange(ref _disposed, 1);
         lock (_idleUsageLock) { _idleUsageHandler = null; _pendingIdleUsage = null; }
+        lock (_runtimeActivityLock) { _runtimeActivityHandler = null; _pendingRuntimeActivity.Clear(); }
         Interlocked.Exchange(ref _currentTurn, null)?.CompleteQuietly();
         try
         {
@@ -365,7 +410,12 @@ public sealed class OarAgentSession : IAgentSession
                 ["env"] = permissionEnv,
                 ["launchArgs"] = permissionLaunchArgs,
 
-            }, ct).ConfigureAwait(false);
+            }, ct, observeResult: response =>
+            {
+                if (response.TryGetProperty("agentStatus", out var initialStatus) && initialStatus.ValueKind == JsonValueKind.Object &&
+                    ParseRuntimeStatus(initialStatus) is { } status)
+                    PublishRuntimeActivity(new UnifiedAgentEvent.AgentStatusChanged(status));
+            }).ConfigureAwait(false);
         }
         catch (JsonRpcRemoteException ex) when (spec.ResumeNativeThreadId is not null && IsSessionNotFoundError(ex))
         {
@@ -446,6 +496,21 @@ public sealed class OarAgentSession : IAgentSession
         var turn = Volatile.Read(ref _currentTurn);
         switch (TryGetString(p, "kind"))
         {
+            case "task_started":
+            case "task_updated":
+            case "task_ended":
+                if (p.Deserialize<AgentRuntimeTask>(RuntimeJsonOptions) is { TaskId.Length: > 0 } task)
+                    PublishRuntimeActivity(TryGetString(p, "kind") switch
+                    {
+                        "task_started" => new UnifiedAgentEvent.TaskStarted(task),
+                        "task_updated" => new UnifiedAgentEvent.TaskUpdated(task),
+                        _ => new UnifiedAgentEvent.TaskEnded(task)
+                    });
+                break;
+            case "agent_status":
+                if (p.TryGetProperty("status", out var runtimeStatus) && ParseRuntimeStatus(runtimeStatus) is { } status)
+                    PublishRuntimeActivity(new UnifiedAgentEvent.AgentStatusChanged(status));
+                break;
             case "text_delta" when TryGetRawString(p, "delta") is { Length: > 0 } d:
                 turn?.Events.Writer.TryWrite(new UnifiedAgentEvent.TextDelta(d));
                 break;
@@ -481,8 +546,9 @@ public sealed class OarAgentSession : IAgentSession
                 }
                 break;
             }
-            case "exited" when turn is not null:
-                turn.TryFinish(new UnifiedAgentEvent.TurnError(
+            case "exited":
+                PublishRuntimeActivity(new UnifiedAgentEvent.RuntimeExited());
+                turn?.TryFinish(new UnifiedAgentEvent.TurnError(
                     "OAR_EXITED", TryGetString(p, "reason") ?? "OAR runtime process exited.", false, IsConclusive: true));
                 break;
         }
@@ -493,9 +559,12 @@ public sealed class OarAgentSession : IAgentSession
         _ = _rpc.SendErrorResponseAsync(id, -32601, $"Unsupported bridge callback '{method}'.", CancellationToken.None);
     }
 
-    private void OnDisconnected(Exception? error) =>
+    private void OnDisconnected(Exception? error)
+    {
+        PublishRuntimeActivity(new UnifiedAgentEvent.RuntimeExited());
         Volatile.Read(ref _currentTurn)?.TryFinish(new UnifiedAgentEvent.TurnError(
             "OAR_DISCONNECTED", error?.Message ?? "OAR bridge disconnected.", false, IsConclusive: true));
+    }
 
     private void PublishIdleContextUsage(TokenUsage usage, long revision)
     {

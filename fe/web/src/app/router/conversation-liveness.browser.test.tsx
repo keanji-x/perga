@@ -229,3 +229,32 @@ it.each([
   fixture.client.clear();
   overviewClient.clear();
 });
+
+it('displays OAR runtime phase, active background tasks, and idle activity in the session header without blocking idle input', async () => {
+  await page.viewport(1280, 850);
+  let runtimeStatus: Record<string, unknown> = { kind: 'running', phase: 'tool', toolName: 'shell', toolCallId: 'call-1', writing: true };
+  let runtimeTasks: Record<string, unknown>[] = [
+    { taskId: 'bg-1', taskType: 'shell', background: true, ambient: false, status: 'running' },
+    { taskId: 'ambient-1', taskType: 'other', background: true, ambient: true, status: 'running' },
+  ];
+  const view = renderSessionFixture({ initial: '/track/daily?panel=conversations', reply: request => {
+    if (request.path.includes('/daily-planner/items?')) return sessionReply({
+      ...sessionPage(view.sessions[0], [], null, 'idle'),
+      runtimeStatus,
+      runtimeTasks,
+    });
+    return undefined;
+  } });
+  await page.getByRole('button', { name: /Conversation Daily Planner conversation/ }).click();
+  await expect.element(page.getByText('工具：shell', { exact: true })).toBeVisible();
+  await expect.element(page.getByText('运行时任务 1', { exact: true })).toBeVisible();
+  await expect.element(page.getByRole('combobox', { name: 'Message' })).toBeEnabled();
+
+  runtimeStatus = { kind: 'idle', idleActivity: { since: 10, lastEventAt: 20 } };
+  runtimeTasks = [{ taskId: 'bg-1', taskType: 'shell', background: true, ambient: false, status: 'completed' }];
+  await view.client.invalidateQueries();
+  await expect.element(page.getByText('近期后台活动', { exact: true })).toBeVisible();
+  await expect.element(page.getByText('工具：shell', { exact: true })).not.toBeInTheDocument();
+  await expect.element(page.getByText('运行时任务 1', { exact: true })).not.toBeInTheDocument();
+  view.client.clear();
+});

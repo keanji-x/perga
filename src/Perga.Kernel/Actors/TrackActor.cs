@@ -953,7 +953,8 @@ public sealed partial class TrackActor : IAsyncDisposable
                 session.ArchivedAtMs is not null && _track.ClosedAtMs is null && binding is null,
                 binding?.Phase == "paused", lastTurn, ReadUnknownDetailCore(session), settingsSession?.AvailablePermissionModes,
                 ReadActivityCore(running, activityTurnId, afterSequence), binding, ReadCapabilitiesCore(session),
-                ReadInteractionsCore(session, principal ?? new InteropPrincipal.Human()));
+                ReadInteractionsCore(session, principal ?? new InteropPrincipal.Human()),
+                ReadRuntimeActivityCore(session)?.Status, ReadRuntimeActivityCore(session)?.Tasks.Values.ToArray());
         }, ct);
     }
 

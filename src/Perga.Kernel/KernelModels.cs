@@ -144,7 +144,8 @@ public sealed record SessionItemsPageDto(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] SessionUnknownDetailDto? UnknownDetail,
     IReadOnlyList<PermissionModeOption>? PermissionModes = null,
     SessionActivityDto? Activity = null, SessionTaskBindingDto? TaskBinding = null,
-    SessionCapabilitiesDto? Capabilities = null, IReadOnlyList<PendingInteractionDto>? PendingInteractions = null);
+    SessionCapabilitiesDto? Capabilities = null, IReadOnlyList<PendingInteractionDto>? PendingInteractions = null,
+    AgentRuntimeStatusDto? RuntimeStatus = null, IReadOnlyList<AgentRuntimeTaskDto>? RuntimeTasks = null);
 
 public sealed record WorkerActivityEvent(long Sequence, string Kind, JsonElement Payload, long CreatedAtMs);
 

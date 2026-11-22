@@ -29,6 +29,8 @@ public static class KernelEventKinds
     public const string SessionTextDelta = "session.text_delta";
     public const string SessionThinkingDelta = "session.thinking_delta";
     public const string SessionToolProgress = "session.tool_progress";
+    public const string SessionRuntimeStatus = "session.runtime_status";
+    public const string SessionTaskProgress = "session.task_progress";
 
     private static readonly HashSet<string> TransientKinds = new(StringComparer.Ordinal)
     {
@@ -38,6 +40,8 @@ public static class KernelEventKinds
         SessionTextDelta,
         SessionThinkingDelta,
         SessionToolProgress,
+        SessionRuntimeStatus,
+        SessionTaskProgress,
         "system.upgrade_status"
     };
 

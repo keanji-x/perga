@@ -4,19 +4,21 @@ import { trackDtoToWire } from './track-projection.js';
 import { z } from 'zod';
 
 import {
-agentSessionDtoSchema,
-askDtoSchema,
-decodePergaEventEnvelope,
-mailDtoSchema,
-readReceiptDtoSchema,
-sessionTextDeltaPayloadSchema,
-sessionThinkingDeltaPayloadSchema,
-sessionToolProgressPayloadSchema,
-sessionTurnDtoSchema,
-systemUpgradeStatusPayloadSchema,
-terminalDtoSchema,
-trackDtoSchema,
-type PergaStreamDelta,
+  agentSessionDtoSchema,
+  askDtoSchema,
+  decodePergaEventEnvelope,
+  mailDtoSchema,
+  readReceiptDtoSchema,
+  sessionRuntimeStatusPayloadSchema,
+  sessionTaskProgressPayloadSchema,
+  sessionTextDeltaPayloadSchema,
+  sessionThinkingDeltaPayloadSchema,
+  sessionToolProgressPayloadSchema,
+  sessionTurnDtoSchema,
+  systemUpgradeStatusPayloadSchema,
+  terminalDtoSchema,
+  trackDtoSchema,
+  type PergaStreamDelta,
 } from './perga-v1.js';
 import type { ApiDecodeFailure } from './types.js';
 
@@ -286,6 +288,8 @@ export const wireEventSchema = z.discriminatedUnion('ev', [
   pergaSessionTextDeltaSchema,
   pergaSessionThinkingDeltaSchema,
   pergaSessionToolProgressSchema,
+  z.object({ ev: z.literal('session.runtime_status'), data: sessionRuntimeStatusPayloadSchema }),
+  z.object({ ev: z.literal('session.task_progress'), data: sessionTaskProgressPayloadSchema }),
 ]);
 
 export type Area = z.infer<typeof areaSchema>;
@@ -301,6 +305,8 @@ export function decodeWireEvent(input: unknown): WireEventDecodeResult {
   if (typeof input === 'object' && input !== null && 'kind' in input && !('ev' in input)) {
     const perga = decodePergaEventEnvelope(input);
     if (perga.status === 'failed') return perga;
+    if (perga.kind === 'runtime-status') return { status: 'ready', value: { ev: 'session.runtime_status', data: perga.payload } };
+    if (perga.kind === 'task-progress') return { status: 'ready', value: { ev: 'session.task_progress', data: perga.payload } };
     if (perga.kind === 'read-receipt') return { status: 'ready', value: { ev: 'read_receipt.updated', data: perga.payload } };
     if (perga.kind === 'session-state') return { status: 'ready', value: {
       ev: 'session.state_changed', data: { trackId: perga.trackId, sessionId: perga.sessionId },
