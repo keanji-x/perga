@@ -14,7 +14,7 @@ internal sealed class AreaRepository
         _context = context;
     }
 
-    public async Task<IReadOnlyList<AreaDto>> ListAreasAsync(CancellationToken ct)
+    public async Task<IReadOnlyList<AreaDto>> ListAreasAsync(CancellationToken ct, bool includeSystem)
     {
         _context.EnsureInitialized();
         await using var conn = await _context.OpenReadConnectionAsync(ct).ConfigureAwait(false);
@@ -31,9 +31,10 @@ internal sealed class AreaRepository
                        updated_at_ms AS UpdatedAtMs,
                        execution_target_id AS ExecutionTargetId
                 FROM areas
-                WHERE is_system = 0
+                WHERE @IncludeSystem OR is_system = 0
                 ORDER BY sort_order ASC, created_at_ms ASC, id ASC;
                 """,
+                new { IncludeSystem = includeSystem },
                 cancellationToken: ct)).ConfigureAwait(false);
 
         return rows.Select(MapArea).ToList();

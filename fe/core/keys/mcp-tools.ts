@@ -22,6 +22,8 @@ export const REPORT_READ_TOOLS: readonly string[] = Object.freeze([
 /** Every report tool, read or write, is under this prefix: an unknown report tool counts as a change. */
 export const REPORT_TOOL_PREFIX = 'report_';
 
+export const AREA_LIST_TOOL = 'area_list';
+export const TRACK_LIST_TOOL = 'track_list';
 export const TRACK_TOOL_PREFIX = 'track_';
 
 /** A `track_*` tool that is a WRITE — keep it out of the `TRACK_TOOL_PREFIX` read bucket. */

@@ -73,7 +73,8 @@ public sealed partial class PolicyVm
         CompiledPolicy policy,
         JsonElement inputs,
         JsonElement currentData,
-        JsonElement kernelSnapshot)
+        JsonElement kernelSnapshot,
+        IReadOnlySet<string>? viewNames = null)
     {
         ArgumentNullException.ThrowIfNull(policy);
 
@@ -92,6 +93,9 @@ public sealed partial class PolicyVm
                 foreach (var prop in viewsObj.GetOwnProperties())
                 {
                     var viewName = prop.Key.AsString();
+                    if (viewNames is not null && !viewNames.Contains(viewName))
+                        continue;
+
                     var fnVal = prop.Value.Value;
                     if (fnVal is not Function fn)
                     {

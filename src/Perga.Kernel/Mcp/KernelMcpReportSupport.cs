@@ -15,6 +15,11 @@ internal static class KernelMcpReportSupport
         {
           "type": "object",
           "properties": {
+            "trackId": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Omit for the current Track. A different Track ID returns a read-only snapshot without a read anchor."
+            },
             "format": {
               "type": "string",
               "enum": ["full", "blocks", "markdown", "outline"],
@@ -22,13 +27,13 @@ internal static class KernelMcpReportSupport
             },
             "sectionH1": {
               "type": "string",
-              "description": "Optional H1 section title filter. Returns only blocks in that section with a scoped ReadAnchor (wholeDocumentRead=false)."
+              "description": "Optional H1 section title filter. Returns only blocks in that section. Reads of the current Track include a scoped ReadAnchor (wholeDocumentRead=false)."
             },
             "blockIds": {
               "type": "array",
               "minItems": 1,
               "items": { "type": "string", "minLength": 1 },
-              "description": "Optional non-empty block ID allowlist. Returns only matching blocks with a scoped ReadAnchor (wholeDocumentRead=false)."
+              "description": "Optional non-empty block ID allowlist. Returns only matching blocks. Reads of the current Track include a scoped ReadAnchor (wholeDocumentRead=false)."
             },
             "includeContract": {
               "type": "boolean",
@@ -165,64 +170,78 @@ internal static class KernelMcpReportSupport
         }
         """;
 
+    internal sealed record ReportReadOptions(string Format, string? SectionH1, HashSet<string>? BlockIds, bool IncludeContract)
+    {
+        public bool IsScoped => SectionH1 is not null || BlockIds is not null;
+    }
+
+    internal static ReportReadOptions ParseReadOptions(JsonElement args) => new(
+        ParseReadFormat(args), ParseOptionalSectionFilter(args), ParseOptionalBlockIdFilter(args),
+        ParseOptionalBool(args, ["includeContract", "include_contract"]));
+
     internal static JsonElement FormatReportReadResponse(
         ReportReadResult res,
-        JsonElement args,
+        ReportReadOptions options,
         Perga.PolicyVm.TemplateViewsProjection? templateViews = null)
     {
-        var format = ParseReadFormat(args);
-        var sectionFilter = ParseOptionalSectionFilter(args);
-        var blockIdFilter = ParseOptionalBlockIdFilter(args);
-        var includeContract = ParseOptionalBool(args, ["includeContract", "include_contract"]);
-        var projectedViews = templateViews is { Views.Count: > 0 } ? templateViews.Views : null;
-
-        var isScoped = sectionFilter is not null || blockIdFilter is not null;
-        if (!isScoped && format == "full" && !includeContract && templateViews is null)
+        if (!options.IsScoped && options.Format == "full" && !options.IncludeContract && templateViews is null)
         {
             return JsonHelpers.ToElement(res);
         }
 
-        var blocks = FilterBlocks(res.Blocks, sectionFilter, blockIdFilter);
-        var anchor = format == "outline"
-            ? new ReadAnchor(res.DocRev, new Dictionary<string, int>(StringComparer.Ordinal), WholeDocumentRead: false)
-            : isScoped
-                ? new ReadAnchor(
-                    res.DocRev,
-                    blocks.ToDictionary(b => b.Id, b => b.Rev, StringComparer.Ordinal),
-                    WholeDocumentRead: false)
-                : res.Anchor;
+        var blocks = ReportBlockSelection.FilterBlocks(res.Blocks, options.SectionH1, options.BlockIds);
+        var markdown = options.IsScoped && options.Format is "full" or "markdown"
+            ? ScopedRenderer.RenderMarkdown(new ReportDocument(res.DocRev, res.Summary, string.Empty, blocks), withMarkers: true)
+            : res.RenderedMarkdown;
+        var report = new McpReportReadResponse(
+            DocRev: res.DocRev, Summary: res.Summary, Sections: null, RenderedMarkdown: markdown,
+            Blocks: blocks, OutlineBlocks: null, Tasks: res.Tasks, Anchor: res.Anchor,
+            Diagnostics: res.Diagnostics, BlockContract: null,
+            TemplateViews: templateViews is { Views.Count: > 0 } ? templateViews.Views : null,
+            DataRev: templateViews?.DataRev ?? res.DataRev);
+        return FormatReportProjection(report, options);
+    }
 
-        string? renderedMarkdown = format is "full" or "markdown"
-            ? (isScoped
-                ? ScopedRenderer.RenderMarkdown(new ReportDocument(res.DocRev, res.Summary, string.Empty, blocks), withMarkers: true)
-                : res.RenderedMarkdown)
-            : null;
+    internal static JsonElement FormatReportSnapshotResponse(
+        string trackId,
+        ReportSnapshot snapshot,
+        ReportReadOptions options)
+    {
+        var report = new McpReportReadResponse(
+            DocRev: snapshot.DocRev, Summary: snapshot.Summary, Sections: null, RenderedMarkdown: snapshot.RenderedMarkdown,
+            Blocks: snapshot.Blocks, OutlineBlocks: null, Tasks: null, Anchor: null,
+            Diagnostics: [], BlockContract: null, TemplateViews: snapshot.TemplateViews,
+            DataRev: snapshot.DataRev, TrackId: trackId, ReadOnly: true);
+        return FormatReportProjection(report, options);
+    }
 
-        IReadOnlyList<string>? sections = format == "outline"
-            ? CollectOrderedSections(blocks)
-            : null;
+    private static JsonElement FormatReportProjection(
+        McpReportReadResponse report,
+        ReportReadOptions options)
+    {
+        var format = options.Format;
+        var blocks = report.Blocks!;
+        var anchor = report.Anchor;
+        if (anchor is not null && (format == "outline" || options.IsScoped))
+        {
+            var knownRevs = format == "outline"
+                ? new Dictionary<string, int>(StringComparer.Ordinal)
+                : blocks.ToDictionary(b => b.Id, b => b.Rev, StringComparer.Ordinal);
+            anchor = new ReadAnchor(report.DocRev, knownRevs, WholeDocumentRead: false);
+        }
 
-        IReadOnlyList<ReportOutlineBlock>? outlineBlocks = format == "outline"
-            ? blocks.Select(b => new ReportOutlineBlock(b.Id, b.Rev, b.Kind, b.SectionH1)).ToArray()
-            : null;
-
-        IReadOnlyList<ReportBlock>? fullBlocks = format is "full" or "blocks"
-            ? blocks
-            : null;
-
-        return JsonHelpers.ToElement(new McpReportReadResponse(
-            DocRev: res.DocRev,
-            Summary: res.Summary,
-            Sections: sections,
-            RenderedMarkdown: renderedMarkdown,
-            Blocks: fullBlocks,
-            OutlineBlocks: outlineBlocks,
-            Tasks: res.Tasks,
-            Anchor: anchor,
-            Diagnostics: res.Diagnostics,
-            BlockContract: includeContract ? CachedBlockContract : null,
-            TemplateViews: format == "outline" ? null : projectedViews,
-            DataRev: templateViews?.DataRev ?? res.DataRev));
+        return JsonHelpers.ToElement(report with
+        {
+            Sections = format == "outline" ? CollectOrderedSections(blocks) : null,
+            RenderedMarkdown = format is "full" or "markdown" ? report.RenderedMarkdown : null,
+            Blocks = format is "full" or "blocks" ? blocks : null,
+            OutlineBlocks = format == "outline"
+                ? blocks.Select(b => new ReportOutlineBlock(b.Id, b.Rev, b.Kind, b.SectionH1)).ToArray()
+                : null,
+            Anchor = anchor,
+            BlockContract = options.IncludeContract ? CachedBlockContract : null,
+            TemplateViews = format == "outline" ? null : report.TemplateViews
+        });
     }
 
     internal static bool ParseIncludeDocumentArg(JsonElement args) =>
@@ -329,25 +348,6 @@ internal static class KernelMcpReportSupport
         return elem.GetBoolean();
     }
 
-    private static IReadOnlyList<ReportBlock> FilterBlocks(
-        IReadOnlyList<ReportBlock> blocks,
-        string? sectionFilter,
-        HashSet<string>? blockIdFilter)
-    {
-        IEnumerable<ReportBlock> query = blocks;
-        if (sectionFilter is not null)
-        {
-            query = query.Where(b => string.Equals(b.SectionH1, sectionFilter, StringComparison.OrdinalIgnoreCase));
-        }
-
-        if (blockIdFilter is not null)
-        {
-            query = query.Where(b => blockIdFilter.Contains(b.Id));
-        }
-
-        return query.ToArray();
-    }
-
     private static IReadOnlyList<string> CollectOrderedSections(IReadOnlyList<ReportBlock> blocks)
     {
         var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -399,12 +399,14 @@ internal static class KernelMcpReportSupport
         [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? RenderedMarkdown,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<ReportBlock>? Blocks,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<ReportOutlineBlock>? OutlineBlocks,
-        IReadOnlyList<TaskDto> Tasks,
-        ReadAnchor Anchor,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<TaskDto>? Tasks,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ReadAnchor? Anchor,
         IReadOnlyList<ReportDiagnosticDto> Diagnostics,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] JsonElement? BlockContract,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyDictionary<string, JsonElement>? TemplateViews = null,
-        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? DataRev = null);
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? DataRev = null,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? TrackId = null,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? ReadOnly = null);
 
     private sealed record McpReportCommitReceipt(
         int DocRev,

@@ -122,7 +122,7 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
         }
     }
 
-    public Task<IReadOnlyList<AreaDto>> ListAreasAsync(CancellationToken ct)
+    public Task<IReadOnlyList<AreaDto>> ListAreasAsync(CancellationToken ct, bool includeSystem = false)
     {
         lock (_gate)
         {
@@ -155,6 +155,17 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
             }
 
             return Task.FromResult<IReadOnlyList<TrackDto>>(q.OrderBy(t => t.SortOrder).ThenBy(t => t.CreatedAtMs).ToArray());
+        }
+    }
+
+    public Task<IReadOnlyDictionary<string, string>> GetReportSummariesAsync(
+        IReadOnlyCollection<string> trackIds, CancellationToken ct = default)
+    {
+        lock (_gate)
+        {
+            return Task.FromResult<IReadOnlyDictionary<string, string>>(trackIds.Distinct(StringComparer.Ordinal)
+                .Where(_reports.ContainsKey)
+                .ToDictionary(id => id, id => _reports[id].Summary, StringComparer.Ordinal));
         }
     }
 
@@ -1382,7 +1393,8 @@ internal sealed class ConfigurableFakePolicyVm : IPolicyVm
         CompiledPolicy policy,
         JsonElement inputs,
         JsonElement currentData,
-        JsonElement kernelSnapshot) =>
+        JsonElement kernelSnapshot,
+        IReadOnlySet<string>? viewNames = null) =>
         new(
             policy.TemplateId,
             new Dictionary<string, JsonElement>(StringComparer.Ordinal),

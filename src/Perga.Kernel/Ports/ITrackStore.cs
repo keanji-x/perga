@@ -54,9 +54,10 @@ public interface ITrackReadStore
 {
     string DatabaseId => string.Empty;
 
-    Task<IReadOnlyList<AreaDto>> ListAreasAsync(CancellationToken ct);
+    Task<IReadOnlyList<AreaDto>> ListAreasAsync(CancellationToken ct, bool includeSystem = false);
     Task<AreaDto?> GetAreaAsync(string areaId, CancellationToken ct);
     Task<IReadOnlyList<TrackDto>> ListTracksAsync(string? areaId = null, bool includeClosed = false, CancellationToken ct = default);
+    Task<IReadOnlyDictionary<string, string>> GetReportSummariesAsync(IReadOnlyCollection<string> trackIds, CancellationToken ct = default);
     Task<TrackDto?> GetTrackAsync(string trackId, CancellationToken ct);
     Task<TrackAggregateSnapshot?> LoadTrackAggregateAsync(string trackId, CancellationToken ct);
     Task<IReadOnlyList<ReportBlock>> GetReportRevisionBlocksAsync(string trackId, int docRev, CancellationToken ct);

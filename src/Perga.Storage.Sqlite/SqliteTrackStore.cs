@@ -268,8 +268,8 @@ public sealed class SqliteTrackStore : ITrackStore, IAsyncDisposable, ISessionIn
         EventEnvelopeDto sessionEvent, int expectedEpoch, CancellationToken ct, SessionItemDto? boundary = null) =>
         _sessionResumeRepository.CompleteSessionResumeAsync(session, unresolved, sessionEvent, expectedEpoch, ct, boundary);
 
-    public Task<IReadOnlyList<AreaDto>> ListAreasAsync(CancellationToken ct) =>
-        _areaRepository.ListAreasAsync(ct);
+    public Task<IReadOnlyList<AreaDto>> ListAreasAsync(CancellationToken ct, bool includeSystem = false) =>
+        _areaRepository.ListAreasAsync(ct, includeSystem);
 
     public Task<AreaDto?> GetAreaAsync(string areaId, CancellationToken ct) =>
         _areaRepository.GetAreaAsync(areaId, ct);
@@ -292,6 +292,10 @@ public sealed class SqliteTrackStore : ITrackStore, IAsyncDisposable, ISessionIn
         bool includeClosed = false,
         CancellationToken ct = default) =>
         _trackReadRepository.ListTracksAsync(areaId, includeClosed, ct);
+
+    public Task<IReadOnlyDictionary<string, string>> GetReportSummariesAsync(
+        IReadOnlyCollection<string> trackIds, CancellationToken ct = default) =>
+        _trackReadRepository.GetReportSummariesAsync(trackIds, ct);
 
     public Task<TrackDto?> GetTrackAsync(string trackId, CancellationToken ct) =>
         _trackReadRepository.GetTrackAsync(trackId, ct);
