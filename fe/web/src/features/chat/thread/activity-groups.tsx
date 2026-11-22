@@ -8,7 +8,7 @@ import { createPortal } from 'react-dom';
 
 import { useState } from '../../../ui/state/public.ts';
 import { restoreDrawerFocus } from '../../../ui/drawer/restore-focus.ts';
-import { NeigeMotion } from '../../../ui/brand/motion.tsx';
+import { BrandMotion } from '../../../ui/brand/motion.tsx';
 
 import styles from './activity-groups.module.css';
 import type { ConversationActivity } from '../../../../../core/domain/conversation.ts';
@@ -124,7 +124,7 @@ export function ToolCallGroup({ calls, entry, ui, onExpandedChange, onDetailOpen
         calls={[...calls]}
       />
       {statusHosts.map((host, index) => live
-        ? createPortal(<NeigeMotion kind="execution" />, host, String(index))
+        ? createPortal(<BrandMotion kind="execution" />, host, String(index))
         : host.parentElement !== null ? createPortal(<span className={styles.unconfirmed} data-nc-unconfirmed="" title="Completion unconfirmed" aria-hidden="true"><Icon icon="info" size="xsm" /></span>, host.parentElement, String(index)) : null)}
     </>
   );

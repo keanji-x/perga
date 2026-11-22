@@ -62,7 +62,7 @@ function runtime(overrides: Partial<ProviderRuntime> = {}): ProviderRuntime {
     fetchVersion: () => Promise.resolve(compatible),
     reload: vi.fn(),
     deleteDatabase: vi.fn(),
-    idbDatabaseName: 'neige-calm',
+    idbDatabaseName: 'perga',
     storage: {
       getItem: (key: string) => values.get(key) ?? null,
       setItem: (key: string, value: string) => { values.set(key, value); },

@@ -85,18 +85,6 @@ export const XtermView = forwardRef<XtermViewHandle, XtermViewProps>(function Xt
   visible = true,
   focused = false,
 }, ref) {
-  // Playwright instrumentation, gated on `?testMounts=1`: counts real mounts in `window.__xtermMounts__`.
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const url = new URL(window.location.href);
-    if (url.searchParams.get('testMounts') !== '1') return;
-    const w = window as unknown as { __xtermMounts__?: number };
-    w.__xtermMounts__ = (w.__xtermMounts__ ?? 0) + 1;
-    return () => {
-      if (w.__xtermMounts__ !== undefined) w.__xtermMounts__ -= 1;
-    };
-  }, []);
-
   const rootRef = useRef<HTMLDivElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   // Live ref so the theme effect can re-theme without tearing down the WebSocket.

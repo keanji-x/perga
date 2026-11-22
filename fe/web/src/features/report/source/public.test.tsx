@@ -37,8 +37,8 @@ function target(destination: string, sourceId: string | null, quoteId: string | 
   return { destination, sourceId, quoteId };
 }
 
-const WELL_FORMED = target('neige://source/src_2c9e0a1b#q1', 'src_2c9e0a1b', 'q1');
-const NO_ANCHOR = target('neige://source/src_2c9e0a1b', 'src_2c9e0a1b', null);
+const WELL_FORMED = target('perga://source/src_2c9e0a1b#q1', 'src_2c9e0a1b', 'q1');
+const NO_ANCHOR = target('perga://source/src_2c9e0a1b', 'src_2c9e0a1b', null);
 
 describe('ReportSourcePanel', () => {
   it.each(Object.keys(SOURCE_PROVENANCE_COPY) as SourceProvenance[])('names the %s provenance with the signed wording', (provenance) => {
@@ -86,7 +86,7 @@ describe('ReportSourcePanel', () => {
   });
 
   it('keeps the source but shows the missing state with the destination when the anchor is not on the row', () => {
-    const missingAnchor = target('neige://source/src_2c9e0a1b#q7', 'src_2c9e0a1b', 'q7');
+    const missingAnchor = target('perga://source/src_2c9e0a1b#q7', 'src_2c9e0a1b', 'q7');
     const { container } = render(<ReportSourcePanel target={missingAnchor} resolution={{ status: 'ok', source: row() }} onRetry={() => undefined} />);
     expect(container.querySelector('[data-nc-report-source-provenance="full_text"]')?.textContent).toBe('智堡全文');
     expect(screen.getByRole('heading', { level: 2 }).textContent).toBe('Mikko 全球市场日志 9-13');
@@ -98,7 +98,7 @@ describe('ReportSourcePanel', () => {
     expect(screen.getByRole('heading', { level: 3 }).textContent).toBe(SOURCE_PANEL_COPY.anchorMissingTitle);
     expect(SOURCE_PANEL_COPY.anchorMissingTitle).toBe('引用锚点缺失');
     expect(notice?.textContent).toContain(SOURCE_PANEL_COPY.anchorMissingDetail);
-    expect(notice?.querySelector('code')?.textContent).toBe('neige://source/src_2c9e0a1b#q7');
+    expect(notice?.querySelector('code')?.textContent).toBe('perga://source/src_2c9e0a1b#q7');
     expect(container.querySelector('pre')?.textContent).not.toContain('引用锚点缺失');
   });
 
@@ -107,7 +107,7 @@ describe('ReportSourcePanel', () => {
     const { container } = render(<ReportSourcePanel target={WELL_FORMED} resolution={{ status: 'ok', source }} onRetry={() => undefined} />);
     expect(container.querySelector('mark')).toBeNull();
     const notice = container.querySelector('[data-nc-report-source-missing="anchor"]');
-    expect(notice?.querySelector('code')?.textContent).toBe('neige://source/src_2c9e0a1b#q1');
+    expect(notice?.querySelector('code')?.textContent).toBe('perga://source/src_2c9e0a1b#q1');
     expect(container.querySelector('pre[data-nc-report-source-body]')?.textContent).toBe(BODY);
   });
 
@@ -123,17 +123,17 @@ describe('ReportSourcePanel', () => {
     expect(screen.getByRole('heading', { level: 2 }).textContent).toBe(SOURCE_PANEL_COPY.missingTitle);
     expect(container.querySelector('[data-nc-report-source-missing]')?.getAttribute('data-nc-report-source-missing')).toBe('dangling');
     expect(container.textContent).toContain(SOURCE_PANEL_COPY.missingDangling);
-    expect(container.querySelector('code')?.textContent).toBe('neige://source/src_2c9e0a1b#q1');
+    expect(container.querySelector('code')?.textContent).toBe('perga://source/src_2c9e0a1b#q1');
     expect(container.querySelector('pre')).toBeNull();
   });
 
   it('says the source is missing, with the destination, when the citation would not parse', () => {
-    const malformed = target('neige://source/src_dead#q0', null, null);
+    const malformed = target('perga://source/src_dead#q0', null, null);
     const { container } = render(<ReportSourcePanel target={malformed} resolution={{ status: 'ok', source: row() }} onRetry={() => undefined} />);
     expect(screen.getByRole('heading', { level: 2 }).textContent).toBe(SOURCE_PANEL_COPY.missingTitle);
     expect(container.querySelector('[data-nc-report-source-missing]')?.getAttribute('data-nc-report-source-missing')).toBe('malformed');
     expect(container.textContent).toContain(SOURCE_PANEL_COPY.missingMalformed);
-    expect(container.querySelector('code')?.textContent).toBe('neige://source/src_dead#q0');
+    expect(container.querySelector('code')?.textContent).toBe('perga://source/src_dead#q0');
     expect(container.querySelector('pre')).toBeNull();
   });
 

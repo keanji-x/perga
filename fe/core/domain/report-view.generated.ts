@@ -4,7 +4,7 @@ import { isCalendarDate } from './report-date.js';
 
 const shapeComponentKind = z.union([z.literal("metrics"), z.literal("time-series"), z.literal("distribution"), z.literal("table"), z.literal("bars"), z.literal("meter"), z.literal("records")]);
 const shapeLiveTag = z.literal("live");
-const shapeLiveSlot = z.strictObject({"expects": shapeComponentKind, "id": z.string().refine(value => [...value].length >= 1, 'Text below protocol minimum').refine(value => [...value].length <= 100, 'Text exceeds protocol limit').regex(new RegExp("^[A-Za-z0-9._-]+$")), "kind": shapeLiveTag, "source": z.string().refine(value => [...value].length <= 2048, 'Text exceeds protocol limit').regex(new RegExp("^neige://plugin/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$"))});
+const shapeLiveSlot = z.strictObject({"expects": shapeComponentKind, "id": z.string().refine(value => [...value].length >= 1, 'Text below protocol minimum').refine(value => [...value].length <= 100, 'Text exceeds protocol limit').regex(new RegExp("^[A-Za-z0-9._-]+$")), "kind": shapeLiveTag, "source": z.string().refine(value => [...value].length <= 2048, 'Text exceeds protocol limit').regex(new RegExp("^perga://plugin/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$"))});
 const shapeEmphasis = z.union([z.literal("primary"), z.literal("normal")]);
 const shapeTone = z.union([z.literal("neutral"), z.literal("positive"), z.literal("warning"), z.literal("negative")]);
 const shapePlacement = z.union([z.literal("prefix"), z.literal("suffix")]);

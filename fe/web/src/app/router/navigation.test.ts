@@ -329,7 +329,7 @@ describe('draft Back supersession owner', () => {
     cleanup();
     release();
     renderDailyFixture({ initial: '/area/project-area/new' });
-    await waitFor(() => { expect(router.history.location.pathname).toBe('/next/track/project'); });
+    await waitFor(() => { expect(router.history.location.pathname).toBe('/track/project'); });
     expect(latest).not.toHaveBeenCalled();
   });
 });

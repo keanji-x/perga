@@ -34,7 +34,7 @@ describe('native view conformance shared with the kernel', () => {
     expect(nativeViewPayloadSchema.parse(fixture.valid_slots)).toEqual(fixture.valid_slots);
   });
   it('compiles the same live source rule the live table and chart.series decoders use', () => {
-    expect(LIVE_TABLE_SOURCE_PATTERN.test('neige://plugin/operations/capacity.summary')).toBe(true);
+    expect(LIVE_TABLE_SOURCE_PATTERN.test('perga://plugin/operations/capacity.summary')).toBe(true);
     expect(LIVE_TABLE_SOURCE_PATTERN.test('http://example.com/slot')).toBe(false);
   });
   it('resolves every slot of the real App-authored SPY example through the production lookup', () => {
@@ -48,7 +48,7 @@ describe('native view conformance shared with the kernel', () => {
       .flatMap(view => view.rows.flatMap(row => row.cells)).flatMap(cell => cell.kind === 'live' ? [cell] : []);
     const states = slots.map(slot => resolveLiveSlot(slot, source => trackOverlayPayload('example', overlays, source)));
     expect(states.filter(resolution => resolution.state !== 'ok')).toEqual([]);
-    expect(new Set(slots.map(slot => slot.source))).toEqual(new Set(Object.keys(example.overlays).map(kind => `neige://plugin/${id}/${kind}`)));
+    expect(new Set(slots.map(slot => slot.source))).toEqual(new Set(Object.keys(example.overlays).map(kind => `perga://plugin/${id}/${kind}`)));
   });
   it('accepts all native primitives with explicit missing values', () => {
     expect(nativeViewPayloadSchema.parse(fixture.valid)).toEqual(fixture.valid);

@@ -64,7 +64,7 @@
 
 # Feature domains are the closed §4 set; each prefix contains its public entry,
 # colocated behavior/contract tests, render components, and *.module.css files.
-- { path: fe/web/src/features/track, type: directory, owner: features/track, readonly: false, basis: "architecture §2/§4; INV-DUP-009" }
+- { path: fe/web/src/features/track, type: directory, owner: features/track, readonly: false, basis: "INV-DUP-010; architecture §2/§4; INV-DUP-009" }
 - { path: fe/web/src/features/area, type: directory, owner: features/area, readonly: false, basis: "architecture §2/§4; INV-DUP-006" }
 - { path: fe/web/src/features/today, type: directory, owner: features/today, readonly: false, basis: "#2912 daily empty-report presentation" }
 - { path: fe/web/src/features/report, type: directory, owner: features/report, readonly: false, basis: "architecture §4.8/§4.9" }
@@ -100,7 +100,6 @@
 - { path: fe/web/src/ui/menu, type: directory, owner: ui/menu, readonly: true, basis: "frozen interface §6.7c" }
 - { path: fe/web/src/ui/focus, type: directory, owner: ui/focus, readonly: true, basis: "frozen interface §6.7c" }
 - { path: fe/web/src/ui/editable-title, type: directory, owner: ui/editable-title, readonly: true, basis: "INV-DUP-008" }
-- { path: fe/web/src/ui/confirm-dialog, type: directory, owner: ui/confirm-dialog, readonly: true, basis: "INV-DUP-010" }
 - { path: fe/web/src/ui/error-box, type: directory, owner: ui/error-box, readonly: false, basis: "shared non-blocking and blocking read failure surface" }
 - { path: fe/web/src/ui/data-visualization, type: directory, owner: ui/data-visualization, readonly: false, basis: "#1769 domain-free metric and chart primitives; no core/domain or network dependencies" }
 - { path: fe/web/src/ui/operation-feedback, type: directory, owner: ui/operation-feedback, readonly: false, basis: "shared asynchronous mutation feedback surface" }
@@ -117,7 +116,7 @@
 - { path: fe/web/src/ui/drawer, type: directory, owner: ui/drawer, readonly: false, basis: "design §7.6 对话抽屉 (#997)" }
 - { path: fe/web/src/ui/viewport, type: directory, owner: ui/viewport, readonly: false, basis: "#1191 §3.2 唯一的 compact viewport 判据；architecture/single-viewport-source 的豁免目录" }
 - { path: fe/web/src/ui/icon, type: directory, owner: ui/icon, readonly: false, basis: "design §6.7 描边图标集；字形墨迹在同字号下差 1.75 倍 (#997)" }
-- { path: fe/web/src/ui/brand, type: directory, owner: ui/brand, readonly: false, basis: "#1211 品牌资产；neige-mark.svg 由 app/shell 的工作区栏与 features/area 的新建页共同引用，放在 ui 是因为 features/** 不得进入 app/**" }
+- { path: fe/web/src/ui/brand, type: directory, owner: ui/brand, readonly: false, basis: "#1211 品牌资产；perga-mark.svg 由 app/shell 的工作区栏与 features/area 的新建页共同引用，放在 ui 是因为 features/** 不得进入 app/**" }
 - { path: fe/web/src/features/chat, type: directory, owner: features/chat, readonly: false, basis: "对话列表；数据源为 WorkerSessionProjection + HarnessItem，端点未落地 (#997)" }
 
 - { path: fe/web/src/ui/sheet, type: directory, owner: ui/sheet, readonly: false, basis: "#3008 single nonmodal Sheet UI owner" }

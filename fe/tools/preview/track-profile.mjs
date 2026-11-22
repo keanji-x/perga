@@ -193,7 +193,7 @@ const onTerminate = () => interrupt('SIGTERM');
 process.once('SIGINT', onInterrupt);
 process.once('SIGTERM', onTerminate);
 try {
-  server = await preview({ configFile: false, root: join(fe, 'web'), base: '/next/', logLevel: 'warn',
+  server = await preview({ configFile: false, root: join(fe, 'web'), base: '/', logLevel: 'warn',
     build: { outDir }, preview: { host: '127.0.0.1', port: 0, strictPort: true } });
   const address = server.httpServer.address();
   if (address === null || typeof address === 'string') throw new Error('Preview has no loopback TCP address');
@@ -341,7 +341,7 @@ try {
       }
     };
   }, { fixture });
-  await page.goto(`${baseUrl}/next/track/small`);
+  await page.goto(`${baseUrl}/track/small`);
   await page.waitForFunction(() => {
     const scope = /** @type {BrowserScope} */ (globalThis);
     return scope.__ncTrackProfile.state?.full === true;

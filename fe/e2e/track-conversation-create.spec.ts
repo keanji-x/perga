@@ -8,7 +8,7 @@ test('adopts a v1 session creation receipt and renders the persisted first input
     const track = await createTrack(request, area.id);
     const path = `/api/v1/tracks/${track.id}/sessions`;
     const before = agentSessionDtoSchema.array().parse(await (await request.get(path)).json());
-    await page.goto(`/next/track/${track.id}`);
+    await page.goto(`/track/${track.id}`);
     await page.getByRole('button', { name: 'New conversation', exact: true }).click();
     const text = 'fake-reply: New session reply';
     const composer = page.getByRole('combobox', { name: 'Message', exact: true });

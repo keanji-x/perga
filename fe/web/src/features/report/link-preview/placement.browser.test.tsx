@@ -34,7 +34,7 @@ describe('report preview placement through the production renderer', () => {
     await page.viewport(1600, 900);
     const files = { readFile: () => Promise.reject(new Error('Unexpected file read')), rawUrl: (path: string) => path };
     const report = { summary: '', body: `[Other report](${trackReportLinkUrl('other')})`, blocks: null };
-    const nested = { summary: '', body: '## Nested report\n\n[Evidence](neige://source/src_0971fbde)', blocks: null };
+    const nested = { summary: '', body: '## Nested report\n\n[Evidence](perga://source/src_0971fbde)', blocks: null };
     render(<div style={{ position: 'absolute', left: 80, top: 160, width: 560,
       ['--document-start' as string]: '0px', ['--document-measure' as string]: '560px' }}>
       <ReportDocument report={report} empty={null} linkPreview={{ trackId: 't1', report, files,

@@ -8,7 +8,7 @@ import { ReportDocument } from '../../../web/src/features/report/document/public
 import { InventoryGroups } from '../../../web/src/features/track/page/inventory-groups.tsx';
 import { ContextRing } from '../../../web/src/features/chat/thread/context-ring.tsx';
 import { ActivityIndicator } from '../../../web/src/ui/activity-indicator/public.tsx';
-import { NeigeMotion } from '../../../web/src/ui/brand/motion.tsx';
+import { BrandMotion } from '../../../web/src/ui/brand/motion.tsx';
 import { Dialog } from '../../../web/src/ui/dialog/public.tsx';
 import { Drawer } from '../../../web/src/ui/drawer/public.tsx';
 import { ChatComposer, ChatThread } from '../../../web/src/features/chat/thread/public.tsx';
@@ -41,7 +41,7 @@ function Preview() {
   ];
   return <main style={{ maxWidth: 1160, margin: "0 auto", padding: "var(--space-7) var(--space-5)", color: 'var(--text)' }}>
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-5)', alignItems: 'flex-end', justifyContent: 'space-between', marginBottom: 'var(--space-5)' }}>
-      <div><p style={{ color: 'var(--text-3)', font: 'var(--type-metadata)', letterSpacing: 'var(--type-metadata-tracking)', marginBottom: 'var(--space-3)' }}>NEIGE · 交互预览</p>
+      <div><p style={{ color: 'var(--text-3)', font: 'var(--type-metadata)', letterSpacing: 'var(--type-metadata-tracking)', marginBottom: 'var(--space-3)' }}>PERGA · 交互预览</p>
         <h1 style={{ font: 'var(--type-display-title)', letterSpacing: 'var(--type-display-title-tracking)', margin: "0 0 var(--space-3)" }}>Motion · 统一弹簧预览</h1>
         <p style={{ color: 'var(--text-2)', margin: 0 }}>同一套运动规则处理短消息、超长消息和中途反向，文字保持清晰。</p></div>
       <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
@@ -95,7 +95,7 @@ function Preview() {
         <button onClick={() => setPercent(value => value === 10 ? 65 : 10)}>更新进度</button>
         <ContextRing usage={{ used_tokens: percent * 100, context_window: 10000, percent, at_ms: 0 }} />
         <ActivityIndicator state="working" />
-        {(['thinking', 'execution', 'creation'] as const).map(kind => <div key={kind} style={{ width: 48, height: 48 }}><NeigeMotion kind={kind} /></div>)}
+        {(['thinking', 'execution', 'creation'] as const).map(kind => <div key={kind} style={{ width: 48, height: 48 }}><BrandMotion kind={kind} /></div>)}
       </div>
     </section>
     <CardMotionPreview />

@@ -40,8 +40,8 @@ const PAYLOAD = {
     { key: 'source', label: '来源' },
   ],
   rows: [
-    { metric: '布伦特收盘', value: '67.4', source: '[AP](neige://source/src_ddef99cc#q1)' },
-    { metric: 'OPEC+ 增产', value: '13.7 万桶/日', source: '见 [AP](neige://source/src_ddef99cc#q1) 收盘' },
+    { metric: '布伦特收盘', value: '67.4', source: '[AP](perga://source/src_ddef99cc#q1)' },
+    { metric: 'OPEC+ 增产', value: '13.7 万桶/日', source: '见 [AP](perga://source/src_ddef99cc#q1) 收盘' },
   ],
 };
 
@@ -83,7 +83,7 @@ describe('a source citation in a table cell, as the engine lays it out', () => {
     expect(inside(box, cell.getBoundingClientRect())).toBe(true);
     const mixed = document.querySelector<HTMLElement>('tbody tr:nth-child(2) td:nth-child(3)')!;
     expect(mixed.querySelector('button, a')).toBeNull();
-    expect(mixed.textContent).toBe('见 [AP](neige://source/src_ddef99cc#q1) 收盘');
+    expect(mixed.textContent).toBe('见 [AP](perga://source/src_ddef99cc#q1) 收盘');
 
     await click(citation);
 

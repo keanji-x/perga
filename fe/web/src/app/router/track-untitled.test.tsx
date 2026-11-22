@@ -15,7 +15,7 @@ import { afterEach,beforeEach,describe,expect,it,vi } from 'vitest';
 import type { ApiRequest,ApiTransportPort,ApiTransportResponse } from '../../../../core/api/types.ts';
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { ThemeProvider } from '../theme/public.tsx';
-import { APP_BASEPATH,createAppRouter } from './public.tsx';
+import { createAppRouter } from './public.tsx';
 import { bootTestCardRuntime } from './test-card-runtime.ts';
 
 const unauthorized = createUnauthorizedChannel({ enqueue: (task) => task() });
@@ -148,7 +148,7 @@ async function goToTrack(router: ReturnType<typeof setup>['router'], trackId: st
 }
 
 beforeEach(() => {
-  window.history.pushState({}, '', `${APP_BASEPATH}/`);
+  window.history.pushState({}, '', `/`);
   /* The drawer, the composer and `EditableTitle` all move focus inside a frame;
        running frames synchronously is what makes focus answerable here. */
   vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { callback(0); return 1; });

@@ -169,12 +169,12 @@ def test_assessment_keeps_the_portfolio_fields(rig):
     r.thesis('aaa-margins', 'US:AAA')
     raised = r.open_thesis('aaa-margins')
     r.assess(r.instrument('US:AAA')['key'], 'aaa-margins', 'at_risk', summary='Orders slipped in September.',
-             source_refs=['neige://source/research-2'])
+             source_refs=['perga://source/research-2'])
     thesis = r.open_thesis('aaa-margins')
     for field in ('stance', 'title', 'summary', 'source_refs', 'added_at'):
         assert thesis[field] == raised[field], field
     assert thesis['research'] == {'summary': 'Orders slipped in September.',
-                                  'source_refs': ['neige://source/research-2'], 'assessed_at': NOW.isoformat()}
+                                  'source_refs': ['perga://source/research-2'], 'assessed_at': NOW.isoformat()}
     # A lost answer of thesis_add replays after the assessment; another thesis under its id does not.
     assert r.thesis('aaa-margins', 'US:AAA')['theses'] == [thesis]
     with refusal(CONFLICT, 'another thesis'):

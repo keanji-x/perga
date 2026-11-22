@@ -116,10 +116,10 @@ export function toTrack(wire: TrackWire, activity: TrackActivity = NEUTRAL_ACTIV
 export type OverlayWire = z.infer<typeof overlaySchema>;
 
 /** Scheme prefix of a live table `source`. Mirrors `report_blocks::LIVE_SOURCE_PREFIX`. */
-const LIVE_TABLE_SOURCE_PREFIX = 'neige://plugin/';
+const LIVE_TABLE_SOURCE_PREFIX = 'perga://plugin/';
 
 /**
- * Resolves a report's `neige://plugin/<plugin_id>/<kind>` source to at most one overlay's
+ * Resolves a report's `perga://plugin/<plugin_id>/<kind>` source to at most one overlay's
  * payload, unvalidated (the renderer decodes it); `undefined` when nothing matches.
  */
 export function trackOverlayPayload(

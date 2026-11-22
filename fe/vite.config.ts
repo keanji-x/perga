@@ -74,7 +74,7 @@ export default defineConfig(({ mode }) => {
     // root on the command line silently dropped this file — and the React plugin
     // with it. Declaring the root here keeps dev and build on this config.
     root: 'web',
-    base: '/next/',
+    base: '/',
     publicDir: platform.publicDir,
     build: { target: platform.target },
     plugins: platform.plugins(),

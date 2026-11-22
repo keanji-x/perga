@@ -15,7 +15,7 @@ export default defineConfig({
   webServer: {
     command: `npm run build && npx vite preview --host 127.0.0.1 --port ${port} --strictPort`,
     cwd: fileURLToPath(new URL('../..', import.meta.url)),
-    url: `http://127.0.0.1:${port}/next/`,
+    url: `http://127.0.0.1:${port}/`,
     reuseExistingServer: false,
     timeout: 120_000,
     // Pages are routed to a signed-out API response, but Chrome's background

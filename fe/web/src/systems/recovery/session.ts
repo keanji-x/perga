@@ -160,7 +160,7 @@ export class RecoverySession {
       if (!current()) return null;
       acceptIdentity();
       if (version.minWebCompatVersion > this.ports.compatibleVersion || version.webCompatVersion < this.ports.compatibleVersion) {
-        this.access.change('update', version.minWebCompatVersion > this.ports.compatibleVersion ? '请更新 Neige App' : '请更新电脑端 Neige');
+        this.access.change('update', version.minWebCompatVersion > this.ports.compatibleVersion ? '请更新 Perga App' : '请更新电脑端 Perga');
         return null;
       }
       let stored = null;

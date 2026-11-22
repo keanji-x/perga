@@ -8,12 +8,12 @@ import { parseReportLink } from './report.js';
 
 describe('parseReportSourceLink', () => {
   it('reads a well-formed citation, with and without an anchor', () => {
-    expect(parseReportSourceLink('neige://source/src_2c9e0a1b'))
-      .toEqual({ destination: 'neige://source/src_2c9e0a1b', sourceId: 'src_2c9e0a1b', quoteId: null });
-    expect(parseReportSourceLink('neige://source/src_2c9e0a1b#q1'))
-      .toEqual({ destination: 'neige://source/src_2c9e0a1b#q1', sourceId: 'src_2c9e0a1b', quoteId: 'q1' });
-    expect(parseReportSourceLink('neige://source/src_ffffffff#q32'))
-      .toEqual({ destination: 'neige://source/src_ffffffff#q32', sourceId: 'src_ffffffff', quoteId: 'q32' });
+    expect(parseReportSourceLink('perga://source/src_2c9e0a1b'))
+      .toEqual({ destination: 'perga://source/src_2c9e0a1b', sourceId: 'src_2c9e0a1b', quoteId: null });
+    expect(parseReportSourceLink('perga://source/src_2c9e0a1b#q1'))
+      .toEqual({ destination: 'perga://source/src_2c9e0a1b#q1', sourceId: 'src_2c9e0a1b', quoteId: 'q1' });
+    expect(parseReportSourceLink('perga://source/src_ffffffff#q32'))
+      .toEqual({ destination: 'perga://source/src_ffffffff#q32', sourceId: 'src_ffffffff', quoteId: 'q32' });
   });
 
   /* The kernel's `report_source_links::scan` keeps malformed links and flags
@@ -21,12 +21,12 @@ describe('parseReportSourceLink', () => {
      the same reason — a citation that failed must be visible as one. */
   it('keeps a malformed id clickable but unresolvable, destination intact', () => {
     for (const destination of [
-      'neige://source/src_dead',
-      'neige://source/src_2C9E0A1B',
-      'neige://source/2c9e0a1b',
-      'neige://source/',
-      'neige://source/src_dead#q1',
-      'neige://source/src_2c9e0a1b/extra',
+      'perga://source/src_dead',
+      'perga://source/src_2C9E0A1B',
+      'perga://source/2c9e0a1b',
+      'perga://source/',
+      'perga://source/src_dead#q1',
+      'perga://source/src_2c9e0a1b/extra',
     ]) {
       expect(parseReportSourceLink(destination), destination)
         .toEqual({ destination, sourceId: null, quoteId: null });
@@ -35,12 +35,12 @@ describe('parseReportSourceLink', () => {
 
   it('treats a malformed anchor as the whole link being unresolvable, like the kernel does', () => {
     for (const destination of [
-      'neige://source/src_2c9e0a1b#q0',
-      'neige://source/src_2c9e0a1b#q01',
-      'neige://source/src_2c9e0a1b#Q1',
-      'neige://source/src_2c9e0a1b#b_1f3a',
-      'neige://source/src_2c9e0a1b#',
-      'neige://source/src_2c9e0a1b#q1#q2',
+      'perga://source/src_2c9e0a1b#q0',
+      'perga://source/src_2c9e0a1b#q01',
+      'perga://source/src_2c9e0a1b#Q1',
+      'perga://source/src_2c9e0a1b#b_1f3a',
+      'perga://source/src_2c9e0a1b#',
+      'perga://source/src_2c9e0a1b#q1#q2',
     ]) {
       expect(parseReportSourceLink(destination), destination)
         .toEqual({ destination, sourceId: null, quoteId: null });
@@ -49,54 +49,54 @@ describe('parseReportSourceLink', () => {
 
   it('is nobody else\'s scheme: not a track citation, not a file, not http', () => {
     for (const destination of [
-      'neige://plugin/dev-neige-market/market.series',
+      'perga://plugin/dev-neige-market/market.series',
       'https://example.com/src_2c9e0a1b',
       './docs/src_2c9e0a1b.md',
-      'NEIGE://source/src_2c9e0a1b',
+      'PERGA://source/src_2c9e0a1b',
       '',
     ]) {
       expect(parseReportSourceLink(destination), destination).toBeNull();
     }
     // …and the other two parsers do not claim a source link either (I5).
-    expect(parseReportLink('neige://source/src_2c9e0a1b#q1')).toBeNull();
-    expect(parseReportFileLink('neige://source/src_2c9e0a1b#q1')).toBeNull();
+    expect(parseReportLink('perga://source/src_2c9e0a1b#q1')).toBeNull();
+    expect(parseReportFileLink('perga://source/src_2c9e0a1b#q1')).toBeNull();
   });
 });
 
 /* A table cell is one citation iff the prose's own parser reads it as exactly one paragraph
    holding exactly one link under the source scheme — the parser, not a pattern. */
 describe('parseSourceCitationCell', () => {
-  const TARGET = { destination: 'neige://source/src_ddef99cc#q1', sourceId: 'src_ddef99cc', quoteId: 'q1' };
+  const TARGET = { destination: 'perga://source/src_ddef99cc#q1', sourceId: 'src_ddef99cc', quoteId: 'q1' };
 
   it('reads a cell that is exactly one source link', () => {
-    expect(parseSourceCitationCell('[AP](neige://source/src_ddef99cc#q1)')).toEqual({ label: 'AP', target: TARGET });
-    expect(parseSourceCitationCell('[智堡所载UBS摘要](neige://source/src_04d04fc3)')).toEqual({
+    expect(parseSourceCitationCell('[AP](perga://source/src_ddef99cc#q1)')).toEqual({ label: 'AP', target: TARGET });
+    expect(parseSourceCitationCell('[智堡所载UBS摘要](perga://source/src_04d04fc3)')).toEqual({
       label: '智堡所载UBS摘要',
-      target: { destination: 'neige://source/src_04d04fc3', sourceId: 'src_04d04fc3', quoteId: null },
+      target: { destination: 'perga://source/src_04d04fc3', sourceId: 'src_04d04fc3', quoteId: null },
     });
   });
 
   it('follows Markdown on brackets: a stray `[` is text beside a link, balanced ones are one label', () => {
-    expect(parseSourceCitationCell('[[AP](neige://source/src_ddef99cc#q1)')).toBeNull();
-    expect(parseSourceCitationCell('[AP [Reuters]](neige://source/src_ddef99cc#q1)'))
+    expect(parseSourceCitationCell('[[AP](perga://source/src_ddef99cc#q1)')).toBeNull();
+    expect(parseSourceCitationCell('[AP [Reuters]](perga://source/src_ddef99cc#q1)'))
       .toEqual({ label: 'AP [Reuters]', target: TARGET });
   });
 
   it('applies the parser\'s own whitespace rules: trailing and light leading space vanish, an indent is code', () => {
-    expect(parseSourceCitationCell('[AP](neige://source/src_ddef99cc#q1) ')).toEqual({ label: 'AP', target: TARGET });
-    expect(parseSourceCitationCell('  [AP](neige://source/src_ddef99cc#q1)\n')).toEqual({ label: 'AP', target: TARGET });
-    expect(parseSourceCitationCell('    [AP](neige://source/src_ddef99cc#q1)')).toBeNull();
+    expect(parseSourceCitationCell('[AP](perga://source/src_ddef99cc#q1) ')).toEqual({ label: 'AP', target: TARGET });
+    expect(parseSourceCitationCell('  [AP](perga://source/src_ddef99cc#q1)\n')).toEqual({ label: 'AP', target: TARGET });
+    expect(parseSourceCitationCell('    [AP](perga://source/src_ddef99cc#q1)')).toBeNull();
   });
 
   it('is null for a link with prose around it, two links, or two paragraphs', () => {
-    expect(parseSourceCitationCell('见 [AP](neige://source/src_ddef99cc#q1) 收盘')).toBeNull();
-    expect(parseSourceCitationCell('[AP](neige://source/src_ddef99cc#q1) 收盘')).toBeNull();
-    expect(parseSourceCitationCell('[AP](neige://source/src_ddef99cc#q1) [UBS](neige://source/src_04d04fc3#q2)')).toBeNull();
-    expect(parseSourceCitationCell('[AP](neige://source/src_ddef99cc#q1)\n\nmore')).toBeNull();
+    expect(parseSourceCitationCell('见 [AP](perga://source/src_ddef99cc#q1) 收盘')).toBeNull();
+    expect(parseSourceCitationCell('[AP](perga://source/src_ddef99cc#q1) 收盘')).toBeNull();
+    expect(parseSourceCitationCell('[AP](perga://source/src_ddef99cc#q1) [UBS](perga://source/src_04d04fc3#q2)')).toBeNull();
+    expect(parseSourceCitationCell('[AP](perga://source/src_ddef99cc#q1)\n\nmore')).toBeNull();
   });
 
   it('is null for a link under any other scheme, for markup, and for an empty cell', () => {
-    expect(parseSourceCitationCell('[x](neige://report/b_1#s1)')).toBeNull();
+    expect(parseSourceCitationCell('[x](perga://report/b_1#s1)')).toBeNull();
     expect(parseSourceCitationCell('[x](https://example.com/a)')).toBeNull();
     expect(parseSourceCitationCell('<a href="https://example.com">x</a>')).toBeNull();
     expect(parseSourceCitationCell('')).toBeNull();
@@ -104,14 +104,14 @@ describe('parseSourceCitationCell', () => {
   });
 
   it('drops raw HTML before counting, as the prose does, and keeps a malformed id as a citation', () => {
-    expect(parseSourceCitationCell('[AP](neige://source/src_ddef99cc#q1)<b>')).toEqual({ label: 'AP', target: TARGET });
-    expect(parseSourceCitationCell('[坏链接](neige://source/src_zz)')).toEqual({
-      label: '坏链接', target: { destination: 'neige://source/src_zz', sourceId: null, quoteId: null },
+    expect(parseSourceCitationCell('[AP](perga://source/src_ddef99cc#q1)<b>')).toEqual({ label: 'AP', target: TARGET });
+    expect(parseSourceCitationCell('[坏链接](perga://source/src_zz)')).toEqual({
+      label: '坏链接', target: { destination: 'perga://source/src_zz', sourceId: null, quoteId: null },
     });
   });
 
   it('projects the label to plain text', () => {
-    expect(parseSourceCitationCell('[**AP** `x` ![alt](i.png)](neige://source/src_ddef99cc#q1)'))
+    expect(parseSourceCitationCell('[**AP** `x` ![alt](i.png)](perga://source/src_ddef99cc#q1)'))
       .toEqual({ label: 'AP x alt', target: TARGET });
   });
 });

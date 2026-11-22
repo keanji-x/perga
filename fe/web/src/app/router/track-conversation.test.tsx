@@ -34,7 +34,7 @@ import { ConversationProvider, useConversationCommands, useConversationComposerT
 import { createUiPreferences, type UiPreferenceStorage } from '../providers/ui-preferences.tsx';
 import { createReadReceiptsKernel, type ReadReceiptsKernel } from '../providers/read-receipts-fixture.tsx';
 import { ThemeProvider } from '../theme/public.tsx';
-import { APP_BASEPATH, createAppRouter } from './public.tsx';
+import { createAppRouter } from './public.tsx';
 import { bootTestCardRuntime } from './test-card-runtime.ts';
 import { RAIL_COLLAPSE_QUERY } from '../../styles/breakpoints.ts';
 
@@ -216,7 +216,7 @@ async function submit() {
 }
 
 beforeEach(() => {
-  window.history.pushState({}, '', `${APP_BASEPATH}/track/w1`);
+  window.history.pushState({}, '', `/track/w1`);
   vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { callback(0); return 1; });
   vi.stubGlobal('cancelAnimationFrame', vi.fn());
 });
@@ -227,7 +227,7 @@ afterEach(() => {
 });
 
 it.each(['/track/w1', '/track/w2'])('keeps compact dock text updates below both pane controllers in %s', async route => {
-    window.history.pushState({}, '', `${APP_BASEPATH}${route}`);
+    window.history.pushState({}, '', `${route}`);
     vi.stubGlobal('matchMedia', vi.fn((media: string) => ({
       matches: media === RAIL_COLLAPSE_QUERY || media === '(prefers-reduced-motion: reduce)', media, onchange: null,
       addEventListener: vi.fn(), removeEventListener: vi.fn(), addListener: vi.fn(), removeListener: vi.fn(), dispatchEvent: vi.fn(),

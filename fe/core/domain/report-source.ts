@@ -1,5 +1,5 @@
 /*
- * A captured source behind a `neige://source/<id>[#q<n>]` citation: the parser, the request,
+ * A captured source behind a `perga://source/<id>[#q<n>]` citation: the parser, the request,
  * and the slice of the body that is the quote. A sibling of `parseReportLink`, not an extension:
  * the track-citation scanner must never learn about sources.
  */
@@ -10,7 +10,7 @@ import type { SourceProvenance,TrackSourceDetail } from '../api/generated/wire.j
 import type { ApiFailure } from '../api/types.js';
 import { parse,sanitizeAstPolicy,type SafeInline } from '../markdown/public.js';
 
-const SOURCE_LINK_PREFIX = 'neige://source/';
+const SOURCE_LINK_PREFIX = 'perga://source/';
 
 /** `src_` + 8 lowercase hex — what the kernel mints, and nothing looser. */
 const SOURCE_ID_PATTERN = /^src_[0-9a-f]{8}$/;
@@ -33,7 +33,7 @@ export type ReportSourceLinkTarget = Readonly<{
   quoteId: string | null;
 }>;
 
-/** `null` when the destination is not under `neige://source/` at all; under the prefix, always a target. */
+/** `null` when the destination is not under `perga://source/` at all; under the prefix, always a target. */
 export function parseReportSourceLink(destination: string): ReportSourceLinkTarget | null {
   if (!destination.startsWith(SOURCE_LINK_PREFIX)) return null;
   const path = destination.slice(SOURCE_LINK_PREFIX.length);
@@ -55,7 +55,7 @@ export type SourceCitationCell = Readonly<{
 
 /**
  * Read a `table` cell as one source citation and nothing else: exactly one paragraph holding
- * exactly one link under `neige://source/…`, decided by the parser so the cell agrees with the
+ * exactly one link under `perga://source/…`, decided by the parser so the cell agrees with the
  * prose beside it. `null` for every other cell.
  */
 export function parseSourceCitationCell(text: string): SourceCitationCell | null {

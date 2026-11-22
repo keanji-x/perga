@@ -4,7 +4,7 @@ import { isCalendarDate } from './report-date.js';
 import { readTrackReport, TRACK_REPORT_CARD_KIND } from './report.js';
 import type { CardWire } from './track.js';
 
-const SOURCE = 'neige://plugin/dev-neige-market/market.series';
+const SOURCE = 'perga://plugin/dev-neige-market/market.series';
 
 function card(payload: unknown): CardWire {
   return {
@@ -87,7 +87,7 @@ describe('readTrackReport — chart.series', () => {
     ['nine series', { source: SOURCE, series: Array.from({ length: 9 }, (_, i) => `US:A${i}`) }],
     ['a repeated asset', { source: SOURCE, series: ['US:NVDA', 'US:NVDA'] }],
     ['an unknown field', { source: SOURCE, series: ['US:NVDA'], points: [] }],
-    ['a source of the wrong shape', { source: 'neige://plugin/one-segment', series: ['US:NVDA'] }],
+    ['a source of the wrong shape', { source: 'perga://plugin/one-segment', series: ['US:NVDA'] }],
     ['candles with two series', { source: SOURCE, series: ['US:NVDA', 'HK:9988'], view: 'candles' }],
     ['candles with a field', { source: SOURCE, series: ['US:NVDA'], view: 'candles', field: 'close' }],
     ['overlays under a bar view', { source: SOURCE, series: ['US:NVDA'], view: 'bar', overlays: ['ma20'] }],

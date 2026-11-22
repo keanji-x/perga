@@ -36,7 +36,7 @@ CONFIG = {'profile': 'spy_cash', 'account_no': 'EXAMPLE-PAPER', 'broker_home': '
           'max_order_bps': 10000}
 FIRST, LAST = date(2026, 7, 1), date(2026, 9, 30)
 HOLIDAYS = {date(2026, 7, 3), date(2026, 9, 7)}  # NYSE: Independence Day (observed), Labor Day
-SOURCES = ['neige://source/example-market-breadth', 'neige://source/example-macro-calendar']
+SOURCES = ['perga://source/example-market-breadth', 'perga://source/example-macro-calendar']
 AFTER_CLOSE = date(2026, 8, 19)
 # Planner decisions: day -> (target bps, executions per order, rationale).
 DECISIONS = {

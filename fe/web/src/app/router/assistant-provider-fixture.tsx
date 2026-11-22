@@ -8,7 +8,7 @@ import { render } from '@testing-library/react';
 import type { AgentProvider } from '../../../../core/api/generated/wire.ts';
 import type { ApiRequest, ApiTransportPort } from '../../../../core/api/types.ts';
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
-import { createAppRouter, APP_BASEPATH } from './public.tsx';
+import { createAppRouter } from './public.tsx';
 import { bootTestCardRuntime } from './test-card-runtime.ts';
 import { ThemeProvider } from '../theme/public.tsx';
 
@@ -88,7 +88,7 @@ export function renderAssistantProviderFixture(options: {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const router = createAppRouter({ prepareReport: prepareReportDocument, transport, client, cards: bootTestCardRuntime(),
     unauthorized: createUnauthorizedChannel({ enqueue: task => task() }), onSignOut: () => undefined });
-  router.update({ history: createMemoryHistory({ initialEntries: [`${APP_BASEPATH}/track/${track.id}${options.mobile ? "" : "?panel=conversations"}`] }) });
+  router.update({ history: createMemoryHistory({ initialEntries: [`/track/${track.id}${options.mobile ? "" : "?panel=conversations"}`] }) });
   const container = document.createElement('div'); container.id = 'root'; document.body.append(container);
   render(<QueryClientProvider client={client}><ThemeProvider><RouterProvider router={router} /></ThemeProvider></QueryClientProvider>, { container });
   return { requests, client, rows };

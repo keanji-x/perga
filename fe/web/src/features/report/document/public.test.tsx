@@ -92,11 +92,11 @@ describe('ReportDocument', () => {
       expect(container.innerHTML).not.toContain('example.com');
     });
 
-    it('routes a neige:// citation through a button and a callback, not an anchor', () => {
+    it('routes a perga:// citation through a button and a callback, not an anchor', () => {
       const onOpenLink = vi.fn();
       const { container } = render(
         <ReportDocument
-          report={flat('See [the model](neige://wave/w-2#b-3).')}
+          report={flat('See [the model](perga://wave/w-2#b-3).')}
           empty={EMPTY}
           onOpenLink={onOpenLink}
         />,
@@ -169,18 +169,18 @@ describe('ReportDocument', () => {
       const onOpenSourceLink = vi.fn<(target: ReportSourceLinkTarget) => void>();
       const { container } = render(
         <ReportDocument
-          report={flat('据 [Mikko 日志](neige://source/src_2c9e0a1b#q1) 与 [年报](neige://source/src_0badf00d)。')}
+          report={flat('据 [Mikko 日志](perga://source/src_2c9e0a1b#q1) 与 [年报](perga://source/src_0badf00d)。')}
           empty={EMPTY}
           onOpenSourceLink={onOpenSourceLink}
         />,
       );
       expect(container.querySelectorAll('a').length).toBe(0);
-      expect(container.innerHTML).not.toContain('neige://source');
+      expect(container.innerHTML).not.toContain('perga://source');
       screen.getByRole('button', { name: 'Mikko 日志' }).click();
       screen.getByRole('button', { name: '年报' }).click();
       expect(onOpenSourceLink.mock.calls.map(([target]) => target)).toEqual([
-        { destination: 'neige://source/src_2c9e0a1b#q1', sourceId: 'src_2c9e0a1b', quoteId: 'q1' },
-        { destination: 'neige://source/src_0badf00d', sourceId: 'src_0badf00d', quoteId: null },
+        { destination: 'perga://source/src_2c9e0a1b#q1', sourceId: 'src_2c9e0a1b', quoteId: 'q1' },
+        { destination: 'perga://source/src_0badf00d', sourceId: 'src_0badf00d', quoteId: null },
       ]);
       expect(container.querySelectorAll('[data-nc-report-source-link]').length).toBe(2);
     });
@@ -189,14 +189,14 @@ describe('ReportDocument', () => {
       const onOpenSourceLink = vi.fn<(target: ReportSourceLinkTarget) => void>();
       render(
         <ReportDocument
-          report={flat('见 [坏链接](neige://source/src_dead#q0)。')}
+          report={flat('见 [坏链接](perga://source/src_dead#q0)。')}
           empty={EMPTY}
           onOpenSourceLink={onOpenSourceLink}
         />,
       );
       screen.getByRole('button', { name: '坏链接' }).click();
       expect(onOpenSourceLink).toHaveBeenCalledWith({
-        destination: 'neige://source/src_dead#q0', sourceId: null, quoteId: null,
+        destination: 'perga://source/src_dead#q0', sourceId: null, quoteId: null,
       });
     });
 
@@ -206,7 +206,7 @@ describe('ReportDocument', () => {
       const onOpenSourceLink = vi.fn();
       render(
         <ReportDocument
-          report={flat('[x](neige://source/src_2c9e0a1b#q1)')}
+          report={flat('[x](perga://source/src_2c9e0a1b#q1)')}
           empty={EMPTY}
           onOpenLink={onOpenLink}
           onOpenFileLink={onOpenFileLink}
@@ -222,13 +222,13 @@ describe('ReportDocument', () => {
 
     it('renders a source citation as a badge plus label, not a control, when no handler is injected', () => {
       const { container } = render(
-        <ReportDocument report={flat('据 [Mikko 日志](neige://source/src_2c9e0a1b#q1)。')} empty={EMPTY} />,
+        <ReportDocument report={flat('据 [Mikko 日志](perga://source/src_2c9e0a1b#q1)。')} empty={EMPTY} />,
       );
       expect(container.querySelectorAll('button, a').length).toBe(0);
       const citation = container.querySelector('[data-nc-report-source-citation]');
       expect(citation).not.toBeNull();
       expect(citation?.textContent).toBe(`${SOURCE_PANEL_COPY.citationBadge}Mikko 日志`);
-      expect(container.innerHTML).not.toContain('neige://source');
+      expect(container.innerHTML).not.toContain('perga://source');
     });
 
     it('hands a table cell citation the same source handler as the prose', () => {
@@ -236,12 +236,12 @@ describe('ReportDocument', () => {
       const { container } = render(
         <ReportDocument
           report={blocked(
-            prose('b-1', '据 [Mikko 日志](neige://source/src_2c9e0a1b#q1)。'),
+            prose('b-1', '据 [Mikko 日志](perga://source/src_2c9e0a1b#q1)。'),
             {
               id: 'b-2', kind: 'table',
               payload: {
                 columns: [{ key: 'metric', label: '指标' }, { key: 'source', label: '来源' }],
-                rows: [{ metric: '布伦特收盘', source: '[AP](neige://source/src_ddef99cc#q1)' }],
+                rows: [{ metric: '布伦特收盘', source: '[AP](perga://source/src_ddef99cc#q1)' }],
               },
             },
           )}
@@ -252,14 +252,14 @@ describe('ReportDocument', () => {
       expect(container.querySelectorAll('a').length).toBe(0);
       screen.getByRole('button', { name: 'AP' }).click();
       expect(onOpenSourceLink).toHaveBeenCalledWith({
-        destination: 'neige://source/src_ddef99cc#q1', sourceId: 'src_ddef99cc', quoteId: 'q1',
+        destination: 'perga://source/src_ddef99cc#q1', sourceId: 'src_ddef99cc', quoteId: 'q1',
       });
       expect(container.querySelectorAll('td [data-nc-report-source-link]').length).toBe(1);
     });
 
     it('renders a citation as plain text when no handler is injected', () => {
       const { container } = render(
-        <ReportDocument report={flat('See [the model](neige://wave/w-2#b-3).')} empty={EMPTY} />,
+        <ReportDocument report={flat('See [the model](perga://wave/w-2#b-3).')} empty={EMPTY} />,
       );
       expect(container.querySelectorAll('button').length).toBe(0);
       expect(container.textContent).toContain('the model');
@@ -392,7 +392,7 @@ describe('ReportDocument', () => {
       const report = readTrackReport([{
         id: 'report', kind: 'track-report', track_id: 't', title: null, sort: 0, deletable: false, created_at: 0, updated_at: 0,
         payload: { body: '', blocks: [
-          { id: 'b-old', kind: retired, rev: 1, payload: { source: 'neige://plugin/operations/capacity', version: 1 } },
+          { id: 'b-old', kind: retired, rev: 1, payload: { source: 'perga://plugin/operations/capacity', version: 1 } },
           { id: 'b-2', kind: 'prose', rev: 1, payload: { markdown: 'Still readable.' } },
         ] },
       }]);
@@ -437,7 +437,7 @@ describe('ReportDocument', () => {
 
     it('renders a chart.series block through the injected resolver, by block id and rev', () => {
       const block: ReportBlock = { id: 'b-1', kind: 'chart.series', rev: 3, payload: {
-        source: 'neige://plugin/dev-neige-market/market.series', series: ['US:NVDA', 'HK:9988'], range: '6M', caption: 'Big tech',
+        source: 'perga://plugin/dev-neige-market/market.series', series: ['US:NVDA', 'HK:9988'], range: '6M', caption: 'Big tech',
       } };
       const { container } = render(<ReportDocument report={blocked(block)} empty={EMPTY} />);
       expect(screen.getByRole('heading', { name: '暂无图表数据' })).toBeTruthy();

@@ -245,13 +245,13 @@
             "kind": "live",
             "id": "slot-summary",
             "expects": "metrics",
-            "source": "neige://plugin/operations/capacity.summary"
+            "source": "perga://plugin/operations/capacity.summary"
           },
           {
             "kind": "live",
             "id": "slot-history",
             "expects": "time-series",
-            "source": "neige://plugin/operations/capacity.history"
+            "source": "perga://plugin/operations/capacity.history"
           }
         ]
       },
@@ -264,7 +264,7 @@
             "kind": "live",
             "id": "slot-detail",
             "expects": "table",
-            "source": "neige://plugin/operations/capacity.detail"
+            "source": "perga://plugin/operations/capacity.detail"
           }
         ]
       }

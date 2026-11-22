@@ -55,13 +55,13 @@ export type ReportDocumentProps = Readonly<{
   sourceInsertion?: ReportSourceInsertion;
   /** How many backlinks land on each block, for the sidenote markers. */
   backlinkCounts?: ReadonlyMap<string, number>;
-  /** A `neige://wave/…` link was activated. Absent ⇒ links render as plain text. */
+  /** A `perga://wave/…` link was activated. Absent ⇒ links render as plain text. */
   onOpenLink?: (target: ReportLinkTarget) => void;
   /** A file link admitted beneath `fileRoot` was activated. */
   onOpenFileLink?: (target: ReportFileLinkTarget) => void;
   /** Opens a Worker conversation bound to a report checkpoint or task. */
   onOpenWorker?: (sessionId: string) => void;
-  /** A `neige://source/…` citation was activated. Absent ⇒ citations render as an inline badge plus their label. */
+  /** A `perga://source/…` citation was activated. Absent ⇒ citations render as an inline badge plus their label. */
   onOpenSourceLink?: (target: ReportSourceLinkTarget) => void;
   /** Absolute root used to admit relative or already-absolute workspace links. */
   fileRoot?: string;

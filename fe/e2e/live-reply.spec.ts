@@ -17,7 +17,7 @@ test('renders a completed v1 reply once and retains it after reload', async ({ p
     const stored = await read();
     expect(stored.activeTurn).toBeNull();
     expect(stored.items.find(item => item.kind === 'assistant_text')?.payload).toMatchObject({ text: 'Stored v1 reply' });
-    await page.goto(`/next/track/${snapshot.track.id}`);
+    await page.goto(`/track/${snapshot.track.id}`);
     await page.getByRole('button', { name: `Conversation ${session.title}` }).click();
     const reply = page.locator('[data-nc-thread] [data-nc-turn="agent"]');
     await expect(reply).toHaveCount(1);

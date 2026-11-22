@@ -46,7 +46,7 @@ name (see Errors).
 ## Chart series
 
 `series_show` answers a report's `chart.series` block, for example
-`{"source": "neige://plugin/invest/series_show", "series": ["US:SPY"], "range": "1Y"}`, on any
+`{"source": "perga://plugin/invest/series_show", "series": ["US:SPY"], "range": "1Y"}`, on any
 Track. It follows the `market.series` contract for US symbols: all seven keys are required, a
 request past `deadline_ms` is refused before any SDK call, and each asset gets its own `ok`,
 `unknown_asset` (not `US:<CODE>`) or `unavailable` entry. The bars are the official SDK's
@@ -95,7 +95,7 @@ superseded Track's `instrument.position` and `thesis.records` keep the state of 
 call: the App refreshes them only for attested callers.
 
 The two kinds of report link each other: the portfolio's 研究论点 section lists one
-`neige://wave/<track_id>` link per live research Track, and each research report's 研究笔记 starts
+`perga://wave/<track_id>` link per live research Track, and each research report's 研究笔记 starts
 with a link to the portfolio Track (`portfolio_track_id` in `instrument_status`).
 
 ## Errors

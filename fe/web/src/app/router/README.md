@@ -1,30 +1,28 @@
-# `app/router`
+# app/router
 
-Code-based TanStack Router. The tree is built by `createRouteTree` /
-`createAppRouter`: nothing is constructed at module scope, and the transport and
-QueryClient are injected so a test can drive a real tree.
+Code-based TanStack Router. `createRouteTree` and `createAppRouter` build the tree
+with injected transport and QueryClient. The production basepath is `/`, matching
+Vite and the PWA manifest. No legacy mount or compatibility redirect is installed.
 
-## Routes
+| Path | Surface |
+| --- | --- |
+| `/` | Today daily Track and calendar |
+| `/area/$areaId/new` | New Track in the selected Area |
+| `/track/$trackId` | Track report, inventory and conversations |
+| `/settings` | Settings landing page |
+| `/settings/planners` | Planner configuration |
+| `/settings/appearance` | Theme and appearance |
+| `/settings/about` | Build and Host information |
 
-| path | state |
-|---|---|
-| `/` | Daily Planner Track and report changes |
-| `/today/legacy` | Redirect to the unified Today homepage |
-| `/area/$areaId/new` | creates a Track inside the selected Area |
-| `/track/$trackId` | registered, renders `PendingRoute` (owner `features/track`) |
-| `/settings` | registered, renders `PendingRoute` (owner `features/settings`) |
+The index loader primes areas; the workspace's Track queries remain lazy so one
+slow Area cannot block the route commit. Area is a sidebar disclosure group,
+not a separate page. `useGo` owns application navigation and root-path links.
 
-Area itself has no route: it is a disclosure group in the rail. Track and
-Settings remain page destinations.
+`track-route.tsx` and `track-route-body.tsx` compose the Track feature and
+conversation panel. Conversation pane/action/initial-send modules carry their
+specific assembly responsibilities. Card creation belongs to the Track feature's
+new-card controller. Business rules and generic UI primitives stay below app.
 
-## Deliberate gaps
-
-- **INV-APP-084** — the index loader primes **only** the areas list. The
-  area → tracks fan-out stays lazy in the page (`useQueries` inside
-  `useWorkspace`); awaiting it in the loader would let one slow area block the
-  whole calendar behind the route commit.
-- **INV-A11Y-061** — `useGo` is the single navigation exit and callers are
-  buttons. Do not spread native links around; mixing forks Tab and activation
-  semantics.
-- No `basepath`. The legacy app serves under `/calm/`; this one is still a
-  standalone dev surface.
+Router tests inject controlled transports and exercise real route trees,
+including confirmed Track identity across reload, execution-target isolation,
+conversation liveness and accessible panel navigation.

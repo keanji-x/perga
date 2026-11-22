@@ -1,4 +1,4 @@
-// The source panel: what a `neige://source/…` citation opens.
+// The source panel: what a `perga://source/…` citation opens.
 // Captured evidence has an inert reading view and an exact original-text view.
 
 import { useEffect, useRef, type ReactNode, type RefObject } from 'react';

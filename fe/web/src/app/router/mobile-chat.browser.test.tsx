@@ -314,7 +314,7 @@ it('draft Back supersession preserves native history in an independent window', 
   if (host === null) throw new Error('Native history test requires an independent window');
   try {
     await expect.poll(() => host.location.href.includes('native-history-fixture.html') && host.document.readyState === 'complete').toBe(true);
-    host.history.replaceState({}, '', '/next/track/project?from=pages#evidence');
+    host.history.replaceState({}, '', '/track/project?from=pages#evidence');
     const history = createBrowserHistory({ window: host });
     const actions: string[] = [];
     const stop = history.subscribe(({ action }) => { actions.push(action.type); });
@@ -333,7 +333,7 @@ it('draft Back supersession preserves native history in an independent window', 
       // Native traversal remains async, while both production activation handlers
       // run in one task. This is DOM activation, not a pointer-speed claim.
       back.click();
-      expect(history.location.pathname).toBe('/next/area/project-area/new');
+      expect(history.location.pathname).toBe('/area/project-area/new');
       const newer = document.querySelector<HTMLButtonElement>('button[aria-label="New track"]');
       expect(newer).not.toBeNull();
       newer!.click();

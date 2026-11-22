@@ -25,7 +25,7 @@ import {
   TRACK_PATCH_FAILURES, TRACK_PATCH_TEXT, UNTITLED_TRACK_LABEL, trackActivityState, trackDisplayTitle, type CardWire, type Track,
 } from '../../../../../core/domain/track.ts';
 import { ActivityIndicator } from '../../../ui/activity-indicator/public.tsx';
-import { DELETE_TRACK_COPY } from '../../../ui/confirm-dialog/copy.ts';
+import { DELETE_TRACK_COPY } from '../delete-copy.ts';
 import { EditableTitle, type EditableTitleProps } from '../../../ui/editable-title/public.tsx';
 import { Icon } from '../../../ui/icon/public.tsx';
 import { MobileList, MobileListItem, MobileListPage } from '../../../ui/mobile-list/public.tsx';
@@ -101,7 +101,7 @@ export type TrackPageProps = Readonly<{
   onDeleteCard?: (cardId: string, origin: DialogOrigin) => void;
   onSetWorkbench?: (cardId: string, inWorkbench: boolean) => void;
   /** Reveal a task's block in the document — the same landing the outline, a
-   *  `neige://` link and a backlink all use. */
+   *  `perga://` link and a backlink all use. */
   onOpenTask?: (blockId: string) => void;
   onOpenOutline?: (blockId: string) => void;
   /** The card grid covers the workspace. A file covers only the reading column. */

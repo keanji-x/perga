@@ -4,18 +4,18 @@ import { chromium, expect, test } from '@playwright/test';
 test('PWA metadata stays valid at the entry point and deep links', async ({ page, context }) => {
   // Installation is available before login; no live kernel is needed for this check.
   await context.route(/^https?:\/\/[^/]+\/api\//, route => route.fulfill({ status: 401, body: '{}' }));
-  for (const path of ['/next/', '/next/settings/appearance', '/next/track/pwa-check']) {
+  for (const path of ['/', '/settings/appearance', '/track/pwa-check']) {
     await page.goto(path);
     await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
     const link = page.locator('link[rel="manifest"]');
-    await expect(link).toHaveAttribute('href', '/next/manifest.webmanifest');
+    await expect(link).toHaveAttribute('href', '/manifest.webmanifest');
     const cdp = await context.newCDPSession(page);
     try {
       const manifest = await cdp.send('Page.getAppManifest');
       expect(manifest.errors).toEqual([]);
       expect(JSON.parse(manifest.data ?? '') as unknown).toMatchObject({
-        id: '/next/', start_url: '/next/', scope: '/next/',
-        name: 'Neige Calm', short_name: 'Neige Calm', display: 'standalone',
+        id: '/', start_url: '/', scope: '/',
+        name: 'Perga', short_name: 'Perga', display: 'standalone',
         icons: expect.arrayContaining([
           expect.objectContaining({ sizes: '192x192', type: 'image/png' }),
           expect.objectContaining({ sizes: '512x512', type: 'image/png' }),
@@ -28,7 +28,7 @@ test('PWA metadata stays valid at the entry point and deep links', async ({ page
   }
 });
 
-test('Chrome installs and launches Neige Calm in a standalone window', async ({ baseURL }, testInfo) => {
+test('Chrome installs and launches Perga in a standalone window', async ({ baseURL }, testInfo) => {
   // PWA installation needs a regular profile and full Chromium, not an incognito
   // context or the headless shell used for ordinary browser tests.
   // Chromium writes installed-app launchers and shortcuts under HOME (Desktop)
@@ -49,7 +49,7 @@ test('Chrome installs and launches Neige Calm in a standalone window', async ({ 
   try {
     await context.route(/^https?:\/\/[^/]+\/api\//, route => route.fulfill({ status: 401, body: '{}' }));
     const page = await context.newPage();
-    const manifestId = new URL('/next/', baseURL).href;
+    const manifestId = new URL('/', baseURL).href;
     await page.goto(manifestId);
     await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
     const cdp = await context.newCDPSession(page);

@@ -19,13 +19,14 @@ The rule catches direct globals, `window`/`globalThis` members (including
 computed members), destructuring, and aliases created from those expressions.
 It does not attempt inter-module or arbitrary function data-flow analysis.
 
-`architecture/no-calm-key-outside-core-keys` makes `core/keys/**` the owner of
-all string and template heads beginning `calm:` or `calm.`. Consumers should
+`architecture/no-perga-key-outside-core-keys` makes `core/keys/**` the owner of
+all storage string and template heads beginning `perga:`.
+The `perga://` report URI scheme is excluded. Consumers should
 import a key factory or accept the key through an injected port. A deliberately
-split constant such as `'calm' + ':x'` is a known escape: recognizing it safely
+split constant such as `'perga' + ':x'` is a known escape: recognizing it safely
 requires constant folding/data-flow, while banning all concatenation would be
 unrelated to this namespace contract. A template whose non-first static segment
-contains the prefix (for example, `` `${prefix}calm:x` ``) is likewise a known
+contains the prefix (for example, `` `${prefix}perga:x` ``) is likewise a known
 escape because only the statically anchored head proves the runtime prefix.
 
 `architecture/no-class-dom-query` parses static selectors used by
@@ -112,3 +113,14 @@ The markdown import fence includes `micromark*`; consumers use
 `core/markdown/public.ts`. `architecture/no-core-platform-escape` closes the
 `globalThis.fetch` and dynamic `import()` paths left by identifier-only global
 restrictions. Inject a transport or adapter through a static boundary instead.
+
+Exact `nonStorageLiterals` exceptions declare a file and its independently published
+widget message/MCP test literals. Another literal in that file and the same literal
+in another file still fail; string/template fixtures check both restrictions.
+The same allowlisted literal reused as a storage key in that exact file would
+pass this literal rule. The independent direct-persistence rule still forbids
+browser storage access there; the allowlist is a documented semantic boundary,
+not proof of data flow through an injected storage port.
+Dynamic templates cannot use protocol literal exceptions: even an allowlisted
+head followed by interpolation is rejected. Only a complete static value in its
+exact owning file qualifies.

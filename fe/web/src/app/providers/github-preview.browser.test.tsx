@@ -82,12 +82,12 @@ it('does not fetch unsupported links or compact-view links', async () => {
 });
 
 it('preserves external, mail and relative navigation and keeps unsafe Markdown destinations inert', () => {
-  const { read, client } = mount(<Reply text="[Web](https://example.com/path) [Mail](mailto:a@example.com) [Local](/next/today) [Unsafe](javascript:alert(1))" imageFiles={null} />);
+  const { read, client } = mount(<Reply text="[Web](https://example.com/path) [Mail](mailto:a@example.com) [Local](/today) [Unsafe](javascript:alert(1))" imageFiles={null} />);
   expect(screen.getByRole('link', { name: 'Web' }).getAttribute('target')).toBe('_blank');
   expect(screen.getByRole('link', { name: 'Web' }).getAttribute('rel')).toBe('noopener noreferrer');
   expect(screen.getByRole('link', { name: 'Mail' }).getAttribute('href')).toBe('mailto:a@example.com');
   expect(screen.getByRole('link', { name: 'Mail' }).getAttribute('target')).toBeNull();
-  expect(screen.getByRole('link', { name: 'Local' }).getAttribute('href')).toBe('/next/today');
+  expect(screen.getByRole('link', { name: 'Local' }).getAttribute('href')).toBe('/today');
   expect(screen.getByRole('link', { name: 'Local' }).getAttribute('target')).toBeNull();
   expect(screen.queryByRole('link', { name: 'Unsafe' })).toBeNull();
   expect(read).not.toHaveBeenCalled();

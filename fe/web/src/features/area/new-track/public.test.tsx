@@ -21,7 +21,7 @@ const LISTING: DirectoryListing = {
 const TASK_LABEL = 'What this track should do';
 const TASK_PLACEHOLDER = 'What should this track do?';
 
-const FOLDER_PLACEHOLDER = 'Neige workspace';
+const FOLDER_PLACEHOLDER = 'Perga workspace';
 const FOLDER_CHIP_NAME = `Repo: ${FOLDER_PLACEHOLDER}`;
 
 
@@ -332,7 +332,7 @@ describe('The folder is optional, and its absence is the managed default', () =>
     const { onSubmit } = renderForm();
     await fillMessage();
     await pickTheListedFolder();
-    await userEvent.click(screen.getByRole('button', { name: 'Use a Neige workspace instead' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Use a Perga workspace instead' }));
     await userEvent.click(submitButton());
     const [draft] = onSubmit.mock.calls[0] as [Record<string, unknown>];
     expect(draft).toEqual({ message: 'Ship the thing' });
@@ -341,7 +341,7 @@ describe('The folder is optional, and its absence is the managed default', () =>
 
   it('offers no way back before a folder is chosen — there is nothing to clear', () => {
     renderForm();
-    expect(screen.queryByRole('button', { name: 'Use a Neige workspace instead' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Use a Perga workspace instead' })).toBeNull();
   });
 
   /* `ui/` primitives may not know a transport exists and `features/**` may not

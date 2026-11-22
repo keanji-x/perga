@@ -8,7 +8,7 @@ export function previewConfig(port, kind, mode) {
   if (name === undefined) throw new Error('Expected motion or links preview');
   if (mode !== 'development' && mode !== 'production') throw new Error('Expected development or production mode');
   const fe = resolve(import.meta.dirname, '../..');
-  return Object.freeze({ port: number, kind, mode, fe, route: `/next/${name}-preview`, entry: resolve(fe, `tools/preview/pages/${name}-preview.tsx`), unit: `neige-preview-${kind}-${number}.service`, url: `http://127.0.0.1:${number}/next/${name}-preview` });
+  return Object.freeze({ port: number, kind, mode, fe, route: `/${name}-preview`, entry: resolve(fe, `tools/preview/pages/${name}-preview.tsx`), unit: `neige-preview-${kind}-${number}.service`, url: `http://127.0.0.1:${number}/${name}-preview` });
 }
 /** Probe each declared initial asset; an HTML fallback is not a loaded script. */
 /** @param {ReturnType<typeof previewConfig>} config @param {string} session */

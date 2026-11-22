@@ -50,7 +50,7 @@ describe('AreaEditorForm', () => {
       </Dialog>,
     );
     expect(screen.queryByRole('button', { name: /template|isolation/i })).toBeNull();
-    await userEvent.click(screen.getByRole('button', { name: 'Default folder: Neige workspace' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Default folder: Perga workspace' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Select this directory' }));
     await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     expect(onSubmit).toHaveBeenCalledWith({
@@ -119,7 +119,7 @@ describe('AreaEditorForm', () => {
     });
 
     // Open folder picker -> machine capsules live at the top of the directory dialog.
-    await userEvent.click(screen.getByRole('button', { name: 'Default folder: Neige workspace' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Default folder: Perga workspace' }));
     expect(screen.getByRole('button', { name: 'Local (kenji)', pressed: true })).toBeTruthy();
 
     // Switch to existing SSH target capsule.

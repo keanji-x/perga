@@ -29,7 +29,7 @@ test('reopens a closed track from Track actions', async ({ page, request }) => {
   });
   expect(closed.ok()).toBe(true);
 
-  await page.goto(`/next/track/${track.id}`);
+  await page.goto(`/track/${track.id}`);
   await expect(page.getByRole('status', { name: 'Track closed' })).toBeVisible();
   await page.getByRole('button', { name: /^Track actions for / }).click();
   await page.getByRole('menuitem', { name: /Reopen/ }).click();
@@ -51,7 +51,7 @@ test('closes an open track from Track actions; the rail keeps it while open and 
   const rail = page.locator('nav[aria-label="Workspace"]');
   const railRow = rail.getByRole('button', { name: /^Track Close me/ });
 
-  await page.goto(`/next/track/${track.id}`);
+  await page.goto(`/track/${track.id}`);
   await page.getByRole('button', { name: /^Track actions for / }).click();
   await page.getByRole('menuitem', { name: 'Close' }).click();
 

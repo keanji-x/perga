@@ -30,9 +30,9 @@ it.each([['failed', 'failed', '0'], ['active', 'dead', '123'], ['active', 'runni
   const metadata = resolve(fixture, 'identity.json');
   const config = previewConfig('5229', 'motion', 'production');
   const server = createServer((request, response) => {
-    if (request.url === '/next/motion-preview') {
+    if (request.url === '/motion-preview') {
       const identity = JSON.parse(readFileSync(metadata, 'utf8')) as { session: string };
-      response.setHeader('content-type', 'text/html'); response.end(`<meta name="nc-preview-session" content="${identity.session}"><div id="root"></div><script src="/next/entry.js"></script>`);
+      response.setHeader('content-type', 'text/html'); response.end(`<meta name="nc-preview-session" content="${identity.session}"><div id="root"></div><script src="/entry.js"></script>`);
     } else { response.setHeader('content-type', 'text/javascript'); response.end('export const ready=true;'); }
   });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));

@@ -35,7 +35,7 @@ export function templateFieldValue(field: TemplateInputField, values: TemplateIn
 
 /** One explicit declaration; malformed or duplicate declarations never become an empty form. */
 export function readTemplateInputForm(body: string): TemplateInputForm | null {
-  const matches = [...body.matchAll(/<!--\s*neige:input-form\s+([\s\S]*?)-->/g)];
+  const matches = [...body.matchAll(/<!--\s*perga:input-form\s+([\s\S]*?)-->/g)];
   if (matches.length !== 1) return null;
   try {
     const result = templateInputFormSchema.safeParse(JSON.parse(matches[0][1]));
@@ -59,7 +59,7 @@ export function compileTemplateInputs(body: string, schemaValue: unknown, values
   const schema = inputSchema.safeParse(schemaValue);
   if (!schema.success) return { status: 'unsupported', form: null };
   // Absence is different from an invalid declaration: only optional plugin inputs can be omitted.
-  if (!/<!--\s*neige:input-form\b/.test(body) && (schema.data.required ?? []).length === 0) {
+  if (!/<!--\s*perga:input-form\b/.test(body) && (schema.data.required ?? []).length === 0) {
     return { status: 'no-input', form: null };
   }
   const properties = schema.data.properties;

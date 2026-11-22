@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// @vitest-environment-options {"url":"http://192.168.5.20:4040/next/tracks/w1"}
+// @vitest-environment-options {"url":"http://192.168.5.20:4040/tracks/w1"}
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -24,8 +24,8 @@ function registered(live: boolean, port = 4050): PreviewResolution {
 
 describe('previewFrameUrl', () => {
   it('keeps the page scheme and host and swaps in the gateway port and the path', () => {
-    expect(previewFrameUrl({ protocol: 'http:', hostname: '192.168.5.20' }, 4050, '/next/'))
-      .toBe('http://192.168.5.20:4050/next/');
+    expect(previewFrameUrl({ protocol: 'http:', hostname: '192.168.5.20' }, 4050, '/'))
+      .toBe('http://192.168.5.20:4050/');
     expect(previewFrameUrl({ protocol: 'http:', hostname: 'devbox.local' }, 4051, undefined)).toBe('http://devbox.local:4051/');
     expect(previewFrameUrl({ protocol: 'http:', hostname: '[::1]' }, 4052, null)).toBe('http://[::1]:4052/');
   });
@@ -33,11 +33,11 @@ describe('previewFrameUrl', () => {
 
 describe('ReportPreviewBlock', () => {
   it('frames the gateway port on this page\'s host, at the payload path', () => {
-    const { container } = render(<ReportPreviewBlock payload={{ key: 'fe', path: '/next/' }}
+    const { container } = render(<ReportPreviewBlock payload={{ key: 'fe', path: '/' }}
       resolve={() => registered(true)} />);
     fireEvent.click(screen.getByRole('button', { name: 'Load preview' }));
     const frame = container.querySelector('iframe');
-    expect(frame?.getAttribute('src')).toBe('http://192.168.5.20:4050/next/');
+    expect(frame?.getAttribute('src')).toBe('http://192.168.5.20:4050/');
     // The registration's title names the frame when the payload has none.
     expect(frame?.getAttribute('title')).toBe('Dev FE');
   });

@@ -22,7 +22,7 @@ test('copies v1 Markdown and regenerates the original input while preserving a s
       keys.push(route.request().headers()['idempotency-key']);
       await route.continue();
     });
-    await page.goto(`/next/track/${track.id}`);
+    await page.goto(`/track/${track.id}`);
     await page.getByRole('button', { name: 'Conversation Lead' }).click();
     await page.getByRole('button', { name: 'Copy response', exact: true }).click();
     expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(answer);

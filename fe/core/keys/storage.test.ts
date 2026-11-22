@@ -1,17 +1,18 @@
 import { describe, expect, it } from 'vitest';
 
-import { DATABASE_ID_KEY, DB_INSTANCE_ID_KEY, SYNC_CURSOR_KEY, THEME_KEY, createStorageKey } from './storage.js';
+import { IDB_DB_NAME, DATABASE_ID_KEY, DB_INSTANCE_ID_KEY, SYNC_CURSOR_KEY, THEME_KEY, createStorageKey } from './storage.js';
 
 describe('stable storage keys', () => {
-  it('preserves deployed key spellings independently of production constants', () => {
-    expect(SYNC_CURSOR_KEY).toBe('calm:sync:cursor');
-    expect(DB_INSTANCE_ID_KEY).toBe('calm:db_instance_id');
-    expect(DATABASE_ID_KEY).toBe('calm:database_id');
-    expect(THEME_KEY).toBe('calm.theme');
+  it('pins the new Perga namespace independently of production constants', () => {
+    expect(IDB_DB_NAME).toBe('perga');
+    expect(SYNC_CURSOR_KEY).toBe('perga:sync:cursor');
+    expect(DB_INSTANCE_ID_KEY).toBe('perga:db_instance_id');
+    expect(DATABASE_ID_KEY).toBe('perga:database_id');
+    expect(THEME_KEY).toBe('perga:theme');
   });
 
   it('creates namespaced colon-separated keys', () => {
-    expect(createStorageKey('draft', 'report', '42')).toBe('calm:draft:report:42');
+    expect(createStorageKey('draft', 'report', '42')).toBe('perga:draft:report:42');
   });
 
   it('rejects ambiguous dynamic key segments', () => {

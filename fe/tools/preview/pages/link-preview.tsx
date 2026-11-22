@@ -15,7 +15,7 @@ import styles from './link-preview.module.css';
 
 function exampleNotes() { return '# 把链接变成一个可以停留的地方\n\n悬停只是快速看一眼。预览出现后就可以移入阅读和点击；移到别处时卡片自动消失。\n\n## 进入卡片之后\n\n- 在卡片里滚动长文\n- 鼠标沿着边缘移入卡片，点击里面的链接\n- 移到卡片外自动收起，也可以点击外部或按 Esc\n\n## 文件中的链接\n\n继续查看 [实现示例](./example.ts)，相对路径仍以当前文件为准。\n\n' + Array.from({ length: 12 }, (_, index) => `### 阅读段落 ${index + 1}\n\n卡片有自己的滚动区域，长内容不会把页面推开。标题始终留在顶部，内容在卡片里滚动。\n\n`).join(''); }
 const code = 'type PreviewState = "closed" | "waiting" | "open";\n\n// 预览打开后即可交互，离开后自动收起。\nfunction openPreview() {\n  return "open";\n}\n';
-const image = '<svg xmlns="http://www.w3.org/2000/svg" width="800" height="480" viewBox="0 0 800 480"><rect width="800" height="480" fill="#eef0f7"/><circle cx="650" cy="110" r="70" fill="#d4bfea"/><path d="M0 430L180 200L370 400L570 180L800 430V480H0Z" fill="#8a94bd"/><path d="M0 460L230 300L420 450L650 300L800 430V480H0Z" fill="#586a94"/><text x="40" y="70" font-family="sans-serif" font-size="26" fill="#344260">NEIGE · 图片预览</text></svg>';
+const image = '<svg xmlns="http://www.w3.org/2000/svg" width="800" height="480" viewBox="0 0 800 480"><rect width="800" height="480" fill="#eef0f7"/><circle cx="650" cy="110" r="70" fill="#d4bfea"/><path d="M0 430L180 200L370 400L570 180L800 430V480H0Z" fill="#8a94bd"/><path d="M0 460L230 300L420 450L650 300L800 430V480H0Z" fill="#586a94"/><text x="40" y="70" font-family="sans-serif" font-size="26" fill="#344260">PERGA · 图片预览</text></svg>';
 const files: WorkspaceFilePort = Object.freeze({
   readFile: async (path: string) => {
     await new Promise((resolve) => { setTimeout(resolve, 220); });
@@ -47,7 +47,7 @@ function Preview() {
   const openSource = (trackId: string, target: ReportSourceLinkTarget) => { setSourceSelection({ trackId, target }); };
   return <QueryClientProvider client={client}><main className={styles.page}>
     <header className={styles.header}>
-      <div><p className={styles.eyebrow}>NEIGE · 链接预览</p><h1>悬停，停留，继续阅读。</h1><p className={styles.subtitle}>卡片优先放在正文旁边 · 沿路径移入交互 · 移到别处自动收起</p></div>
+      <div><p className={styles.eyebrow}>PERGA · 链接预览</p><h1>悬停，停留，继续阅读。</h1><p className={styles.subtitle}>卡片优先放在正文旁边 · 沿路径移入交互 · 移到别处自动收起</p></div>
       <button type="button" className={styles.theme} onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}>{theme === 'light' ? '深色模式' : '浅色模式'}</button>
     </header>
     <div className={styles.document}>

@@ -301,7 +301,7 @@ it('compiles shipped Perga .perga.js template input schemas cleanly', () => {
       riskLevel: { type: 'string', enum: ['low', 'medium', 'high'], default: 'medium', title: 'Change risk profile' },
     },
   };
-  const formHeader = `<!-- neige:input-form ${JSON.stringify({
+  const formHeader = `<!-- perga:input-form ${JSON.stringify({
     version: 1,
     groups: [{
       title: 'Development Settings',

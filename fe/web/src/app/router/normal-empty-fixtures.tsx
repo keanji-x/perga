@@ -37,7 +37,7 @@ export function EmptySearchComposer() {
 
 
 export function mountReportDataSources() {
-  const payload = {source:'neige://plugin/example/data',series:['US:EXAMPLE'],caption:'示例数据源'};
+  const payload = {source:'perga://plugin/example/data',series:['US:EXAMPLE'],caption:'示例数据源'};
   mount(<div style={{display:'grid',gap:28}}>
     <section><h2 style={{font:'var(--type-ui)',fontWeight:'var(--weight-medium)'}}>表格 · 无行数据</h2><InlineTable payload={{columns:[{key:'name',label:'名称'},{key:'status',label:'状态'}],rows:[]}} /></section>
     <section><h2 style={{font:'var(--type-ui)',fontWeight:'var(--weight-medium)'}}>图表引用 · 此视图未携带数据</h2><ReportSeriesBlock payload={payload} blockId="example" rev={0}/></section>
@@ -74,9 +74,9 @@ export function mountReportComponentStates() {
 export function mountMissingReportSources() {
   const source={source_id:'src_2c9e0a1b',provenance:'web_page' as const,origin:{kind:'plugin' as const,plugin_id:'example',tool:'data',args_sha256:'ab',args_canon:'v1',content_id:'example'},title:'示例来源',published_at:'2026-10-19',content_id:'example',body_bytes:12,body_sha256:'cd',captured_at:'2026-10-19T08:00:00Z',quotes:[],body:'示例来源正文。'};
   mount(<div style={{display:'grid',gap:30}}>
-    <section><h2 style={{font:'var(--type-ui)',fontWeight:'var(--weight-medium)'}}>来源引用 · 来源不存在</h2><ReportSourcePanel target={{destination:'neige://source/src_2c9e0a1b',sourceId:'src_2c9e0a1b',quoteId:null}} resolution={{status:'missing'}} onRetry={noop}/></section>
-    <section><h2 style={{font:'var(--type-ui)',fontWeight:'var(--weight-medium)'}}>来源引用 · 链接无法定位</h2><ReportSourcePanel target={{destination:'neige://source/invalid',sourceId:null,quoteId:null}} resolution={{status:'missing'}} onRetry={noop}/></section>
-    <section><h2 style={{font:'var(--type-ui)',fontWeight:'var(--weight-medium)'}}>来源引用 · 引用锚点缺失</h2><ReportSourcePanel target={{destination:'neige://source/src_2c9e0a1b#q1',sourceId:'src_2c9e0a1b',quoteId:'q1'}} resolution={{status:'ok',source}} onRetry={noop} scrollToQuote={false}/></section>
+    <section><h2 style={{font:'var(--type-ui)',fontWeight:'var(--weight-medium)'}}>来源引用 · 来源不存在</h2><ReportSourcePanel target={{destination:'perga://source/src_2c9e0a1b',sourceId:'src_2c9e0a1b',quoteId:null}} resolution={{status:'missing'}} onRetry={noop}/></section>
+    <section><h2 style={{font:'var(--type-ui)',fontWeight:'var(--weight-medium)'}}>来源引用 · 链接无法定位</h2><ReportSourcePanel target={{destination:'perga://source/invalid',sourceId:null,quoteId:null}} resolution={{status:'missing'}} onRetry={noop}/></section>
+    <section><h2 style={{font:'var(--type-ui)',fontWeight:'var(--weight-medium)'}}>来源引用 · 引用锚点缺失</h2><ReportSourcePanel target={{destination:'perga://source/src_2c9e0a1b#q1',sourceId:'src_2c9e0a1b',quoteId:'q1'}} resolution={{status:'ok',source}} onRetry={noop} scrollToQuote={false}/></section>
   </div>,true);
 }
 
@@ -84,7 +84,7 @@ export function mountEmptyResolvedSeries() {
   const entry = { asset:'US:EXAMPLE',status:'ok' as const,currency:'USD',complete_through:'2026-10-19',n:0,first:['2026-10-19',0] as [string,number],last:['2026-10-19',0] as [string,number],change_pct:null,high:0,low:0,points:[] };
   mount(<div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:24}}>{(['line','normalized','bar','candles'] as const).map(view => <section key={view}>
     <h2 style={{font:'var(--type-ui)',fontWeight:'var(--weight-medium)'}}>{view} · 已读取，无数据点</h2>
-    <ReportSeriesBlock payload={{source:'neige://plugin/example/data',series:['US:EXAMPLE'],view}} blockId={view} rev={0}
+    <ReportSeriesBlock payload={{source:'perga://plugin/example/data',series:['US:EXAMPLE'],view}} blockId={view} rev={0}
       resolve={()=>({status:'ok',view,field:'close',period:'day',range:'1M',as_of:'2026-10-19',resolved_at:'2026-10-19T08:00:00Z',pinned:false,series:[entry]})}/>
   </section>)}</div>,true);
 }

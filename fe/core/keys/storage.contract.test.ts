@@ -25,9 +25,9 @@ describe('core/keys storage public contract', () => {
     const compileOnly = false as boolean;
     if (compileOnly) {
       // @ts-expect-error -- INV-APP-017: literal keys must come from the storage key factory.
-      const literalKey: StorageKey = 'calm:sync:cursor';
+      const literalKey: StorageKey = 'perga:sync:cursor';
       const adapter = null as unknown as StorageAdapterPort;
-      const arbitraryKey = 'calm:arbitrary' as string;
+      const arbitraryKey = 'perga:arbitrary' as string;
       // @ts-expect-error -- INV-APP-017: the adapter rejects unbranded strings.
       void adapter.read(arbitraryKey, null as unknown as Codec<unknown>);
       void literalKey;

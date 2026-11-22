@@ -17,9 +17,9 @@ test('the primary routes have no WCAG A or AA violations in light mode', async (
 
   const routes = [
     /* Anchored on the composer: the new-track page has no `data-nc-page-title`; the greeting is its one title. */
-    { path: `/next/area/${area.id}/new`, anchor: page.getByLabel('What this track should do') },
-    { path: `/next/track/${track.id}`, anchor: page.locator('[data-nc-page-title]', { hasText: track.title }) },
-    { path: '/next/settings/appearance', anchor: page.getByRole('combobox', { name: 'Theme' }) },
+    { path: `/area/${area.id}/new`, anchor: page.getByLabel('What this track should do') },
+    { path: `/track/${track.id}`, anchor: page.locator('[data-nc-page-title]', { hasText: track.title }) },
+    { path: '/settings/appearance', anchor: page.getByRole('combobox', { name: 'Theme' }) },
   ];
 
   for (const route of routes) {
@@ -47,7 +47,7 @@ for (const theme of ['light', 'dark'] as const) {
     const area = await createArea(request);
     createdAreaIds.push(area.id);
     const track = await createTrack(request, area.id);
-    await page.goto(`/next/track/${track.id}`);
+    await page.goto(`/track/${track.id}`);
     const workbench = page.getByRole('region', { name: 'Workbench', exact: true });
     const toggle = workbench.getByRole('button', { name: 'Workbench', exact: true });
     const tools = workbench.getByRole('button', { name: 'Tools', exact: true });

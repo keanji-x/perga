@@ -151,12 +151,12 @@ export function AboutPane({ system }: Readonly<{ system?: SystemUpgradeState | n
         <SettingRow title="Version" control={<span className={styles.aboutValue}>{__NC_VERSION__}</span>} />
         <SettingRow title="Build" control={<span className={styles.aboutValue}>{__NC_BUILD__}</span>} />
         {system && <>
-          <SettingRow title="releaseId" control={<span className={styles.aboutValue}>{system.info?.releaseId ?? 'Loading…'}</span>} />
-          <SettingRow title="webBuildId" control={<span className={styles.aboutValue}>{system.info?.webBuildId ?? 'Loading…'}</span>} />
-          <SettingRow title="hostBuildId" control={<span className={styles.aboutValue}>{system.info?.hostBuildId ?? 'Loading…'}</span>} />
-          <SettingRow title="schemaVersion" control={<span className={styles.aboutValue}>{system.info ? String(system.info.schemaVersion) : 'Loading…'}</span>} />
-          <SettingRow title="draining" control={<span className={styles.aboutValue}>{String(system.draining)}</span>} />
-          <SettingRow title="activeDispatches" control={<span className={styles.aboutValue}>{String(system.activeDispatches)}</span>} />
+          <SettingRow title="Release" control={<span className={styles.aboutValue}>{system.info?.releaseId ?? 'Loading…'}</span>} />
+          <SettingRow title="Web build" control={<span className={styles.aboutValue}>{system.info?.webBuildId ?? 'Loading…'}</span>} />
+          <SettingRow title="Host build" control={<span className={styles.aboutValue}>{system.info?.hostBuildId ?? 'Loading…'}</span>} />
+          <SettingRow title="Schema version" control={<span className={styles.aboutValue}>{system.info ? String(system.info.schemaVersion) : 'Loading…'}</span>} />
+          <SettingRow title="Draining" control={<span className={styles.aboutValue}>{String(system.draining)}</span>} />
+          <SettingRow title="Active dispatches" control={<span className={styles.aboutValue}>{String(system.activeDispatches)}</span>} />
           {system.receipt && <SettingRow title="Latest upgrade receipt" control={<span className={styles.aboutValue}>{upgradeReceiptSummary(system.receipt)}</span>} />}
         </>}
       </SettingsList>

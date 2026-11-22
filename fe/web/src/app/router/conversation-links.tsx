@@ -37,14 +37,14 @@ export function useConversationLinks({ transport, unauthorized, conversationId, 
   }, [conversationId, trackId]);
   const renderLink = useMemo(() => ({ href, children }: { href: string; children: ReactNode }) => {
     // The router owns the application namespace; rejected workspace paths never become anchors.
-    const base = (router.options.basepath ?? '').replace(/\/$/, '');
     if (href.startsWith('/') && !href.startsWith('//')) {
       // URL treats backslashes as separators; do not reinterpret Markdown as app navigation.
       if (href.includes('\\')) return children;
       let url: URL;
       try { url = new URL(href, window.location.origin); }
       catch { return children; }
-      if (url.origin === window.location.origin && (url.pathname === base || url.pathname.startsWith(`${base}/`))) {
+      const { foundRoute, routeParams } = router.getMatchedRoutes(url.pathname);
+      if (url.origin === window.location.origin && foundRoute !== undefined && routeParams['**'] === undefined) {
         return <button type="button" onClick={() => { void router.navigate({ href: url.pathname + url.search + url.hash }); }}>{children}</button>;
       }
     }

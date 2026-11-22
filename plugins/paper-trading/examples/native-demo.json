@@ -14,13 +14,13 @@
             {
               "kind": "live",
               "id": "nav",
-              "source": "neige://plugin/dev-neige-paper-trading/spy.nav",
+              "source": "perga://plugin/dev-neige-paper-trading/spy.nav",
               "expects": "metrics"
             },
             {
               "kind": "live",
               "id": "nav-history",
-              "source": "neige://plugin/dev-neige-paper-trading/spy.nav_history",
+              "source": "perga://plugin/dev-neige-paper-trading/spy.nav_history",
               "expects": "time-series"
             }
           ]
@@ -33,7 +33,7 @@
             {
               "kind": "live",
               "id": "account",
-              "source": "neige://plugin/dev-neige-paper-trading/spy.account",
+              "source": "perga://plugin/dev-neige-paper-trading/spy.account",
               "expects": "metrics"
             }
           ]
@@ -54,19 +54,19 @@
             {
               "kind": "live",
               "id": "weights",
-              "source": "neige://plugin/dev-neige-paper-trading/spy.weights",
+              "source": "perga://plugin/dev-neige-paper-trading/spy.weights",
               "expects": "distribution"
             },
             {
               "kind": "live",
               "id": "weight-history",
-              "source": "neige://plugin/dev-neige-paper-trading/spy.weight_history",
+              "source": "perga://plugin/dev-neige-paper-trading/spy.weight_history",
               "expects": "time-series"
             },
             {
               "kind": "live",
               "id": "holdings",
-              "source": "neige://plugin/dev-neige-paper-trading/spy.holdings",
+              "source": "perga://plugin/dev-neige-paper-trading/spy.holdings",
               "expects": "table"
             }
           ]
@@ -87,7 +87,7 @@
             {
               "kind": "live",
               "id": "decisions",
-              "source": "neige://plugin/dev-neige-paper-trading/spy.decision_log",
+              "source": "perga://plugin/dev-neige-paper-trading/spy.decision_log",
               "expects": "records"
             }
           ]
@@ -100,7 +100,7 @@
             {
               "kind": "live",
               "id": "fills",
-              "source": "neige://plugin/dev-neige-paper-trading/spy.fill_log",
+              "source": "perga://plugin/dev-neige-paper-trading/spy.fill_log",
               "expects": "table"
             }
           ]
@@ -2420,7 +2420,7 @@
     },
     "spy.decision_log": {
       "snapshot": {
-        "id": "57f8dad28977632a1a67f281f6dc7cbcb4c1f99362dd3e9d9d7ffceb388ae24e",
+        "id": "9f7440389b9587e432df11ccd98a43a4f09d26fd43c869b65912a8f0d0a9565f",
         "observedAt": 1790798340000,
         "producedAt": null
       },
@@ -2480,7 +2480,7 @@
                   },
                   {
                     "label": "来源",
-                    "body": "neige://source/example-market-breadth\nneige://source/example-macro-calendar"
+                    "body": "perga://source/example-market-breadth\nperga://source/example-macro-calendar"
                   }
                 ],
                 "disclosures": [
@@ -2538,7 +2538,7 @@
                   },
                   {
                     "label": "来源",
-                    "body": "neige://source/example-market-breadth\nneige://source/example-macro-calendar"
+                    "body": "perga://source/example-market-breadth\nperga://source/example-macro-calendar"
                   }
                 ],
                 "disclosures": []
@@ -2588,7 +2588,7 @@
                   },
                   {
                     "label": "来源",
-                    "body": "neige://source/example-market-breadth\nneige://source/example-macro-calendar"
+                    "body": "perga://source/example-market-breadth\nperga://source/example-macro-calendar"
                   }
                 ],
                 "disclosures": [
@@ -2653,7 +2653,7 @@
                   },
                   {
                     "label": "来源",
-                    "body": "neige://source/example-market-breadth\nneige://source/example-macro-calendar"
+                    "body": "perga://source/example-market-breadth\nperga://source/example-macro-calendar"
                   }
                 ],
                 "disclosures": []
@@ -2703,7 +2703,7 @@
                   },
                   {
                     "label": "来源",
-                    "body": "neige://source/example-market-breadth\nneige://source/example-macro-calendar"
+                    "body": "perga://source/example-market-breadth\nperga://source/example-macro-calendar"
                   }
                 ],
                 "disclosures": [

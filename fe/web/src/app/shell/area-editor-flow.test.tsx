@@ -167,7 +167,7 @@ describe('AppShell Area editor flow', () => {
     expect(within(dialog).queryByRole('button', { name: /template/i })).toBeNull();
     expect(within(dialog).queryByText(/Could not load templates/)).toBeNull();
     expect(within(dialog).queryByText(/isolation/i)).toBeNull();
-    expect(within(dialog).getByRole('button', { name: 'Default folder: Neige workspace' })).toBeTruthy();
+    expect(within(dialog).getByRole('button', { name: 'Default folder: Perga workspace' })).toBeTruthy();
     await userEvent.type(within(dialog).getByRole('textbox', { name: /^Name/ }), 'Simple');
     await userEvent.click(within(dialog).getByRole('button', { name: 'Create area' }));
     await waitFor(() => expect(harness.create).toHaveBeenCalledWith(expect.objectContaining({
@@ -411,7 +411,7 @@ describe('AppShell Area editor flow', () => {
     };
     renderShell();
     await openDesktopEditor();
-    await userEvent.click(screen.getByRole('button', { name: 'Use a new Neige workspace' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Use a new Perga workspace' }));
     await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
 
     await waitFor(() => expect(harness.update).toHaveBeenCalledWith('c1', {

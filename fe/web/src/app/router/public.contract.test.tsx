@@ -67,11 +67,11 @@ describe('INV-APP-084 the index loader primes areas and nothing else', () => {
 });
 
 describe('route registration', () => {
-  it('renders the index route at the deployed /next/ basepath', async () => {
+  it('renders the index route at the deployed / basepath', async () => {
     const { transport } = recordingTransport();
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const router = createAppRouter({ prepareReport: prepareReportDocument, transport, unauthorized, client, cards: bootTestCardRuntime(), onSignOut: () => undefined });
-    router.update({ history: createMemoryHistory({ initialEntries: ['/next/'] }) });
+    router.update({ history: createMemoryHistory({ initialEntries: ['/'] }) });
 
     render(
       <QueryClientProvider client={client}>

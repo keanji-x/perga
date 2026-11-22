@@ -50,7 +50,7 @@ single `configure({ syncEventVersion, topics })` that returns the
 - `client: QueryClient` — injected, never constructed here.
 - `stream: UnconfiguredEventStream` — created and owned by the caller.
 - `cursor: SyncCursorPort` — `read()`/`write()`. The implementation must persist
-  under `SYNC_CURSOR_KEY` (`calm:sync:cursor`) from `core/keys/storage.ts`; the
+  under `SYNC_CURSOR_KEY` (`perga:sync:cursor`) from `core/keys/storage.ts`; the
   bridge never calls `localStorage` itself.
 - `context?: InvalidationContext` — `findTrackOwningCard`, so card-scoped events
   can reach their track. Absent it, card-derived track keys are simply skipped.
