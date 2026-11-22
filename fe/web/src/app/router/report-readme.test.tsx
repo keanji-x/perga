@@ -10,10 +10,10 @@ afterEach(() => { cleanup(); document.getElementById('root')?.remove(); vi.resto
 async function readmeDocument() {
   const file = await screen.findByRole('region', { name: 'File docs/README.md' });
   await within(file).findByRole('heading', { name: 'Documentation', level: 2 });
-  expect(within(file).getByRole('heading', { name: 'Use and operate Neige Calm', level: 3 })).toBeTruthy();
+  expect(within(file).getByRole('heading', { name: 'Use and operate Perga', level: 3 })).toBeTruthy();
   expect(within(file).getByRole('heading', { name: 'Develop and understand the system', level: 3 })).toBeTruthy();
   expect(within(file).getAllByRole('table')).toHaveLength(2);
-  expect(within(file).getByRole('button', { name: 'Using Neige Calm' }).getAttribute('title')).toBe('docs/using-neige-calm.md');
+  expect(within(file).getByRole('button', { name: 'Using Perga' }).getAttribute('title')).toBe('docs/using-perga.md');
   expect(within(file).getByRole('button', { name: 'English README' }).getAttribute('title')).toBe('README.md');
   expect(file.querySelector('pre')).toBeNull();
   expect(file.querySelector('[data-nc-report-file-source]')).toBeNull();
@@ -73,7 +73,7 @@ it('resolves the real README parent link through the same scoped file navigation
   const file = await readmeDocument();
   fireEvent.click(within(file).getByRole('button', { name: 'English README' }));
   const parent = await screen.findByRole('region', { name: 'File README.md' });
-  await within(parent).findByRole('heading', { name: 'Why Neige Calm?', level: 3 });
+  await within(parent).findByRole('heading', { name: 'Why Perga?', level: 3 });
   expect(router.history.location.href).toBe(`${README_TRACK_URL}?file=README.md`);
   expect(router.history.length).toBe(1);
   expect(requests.filter(request => request.path.includes('/files?')).map(request => request.path)).toEqual([

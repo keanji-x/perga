@@ -12,7 +12,8 @@ import {
 TRACK_PATCH_FAILURES,TRACK_PATCH_TEXT,userVisibleTracks,type Track,
 } from '../../../../core/domain/track.ts';
 import { SIDEBAR_SECTION_IDS,moveSidebarGroup,type SidebarGroupId,type SidebarMove,type SidebarSectionId } from '../../../../core/view/sidebar-layout.ts';
-import { DELETE_TRACK_COPY,deleteAreaCopy } from '../../ui/confirm-dialog/copy.ts';
+import { DELETE_TRACK_COPY } from '../../features/track/delete-copy.ts';
+import { deleteAreaCopy } from '../../features/area/delete-copy.ts';
 import { Icon } from '../../ui/icon/public.tsx';
 import { ListText } from '../../ui/list-typography/public.tsx';
 import { Menu } from '../../ui/menu/public.tsx';
@@ -263,7 +264,7 @@ export function Sidebar({
             onClick={() => onGo({ name: 'today' })}
           >
             <span className={rowLayout('leading')}><span className={styles.brandMark} aria-hidden="true" /></span>
-            <span className={styles.brandText}>Neige</span>
+            <span className={styles.brandText}>Perga</span>
           </button>
         )}
         {collapsed && (

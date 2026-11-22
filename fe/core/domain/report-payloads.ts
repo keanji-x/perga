@@ -26,12 +26,12 @@ export const chartCandlesPayloadSchema = z.strictObject({
  * A live `table` names where its rows come from: the overlay written by `<plugin_id>` under
  * `<overlay_kind>`. A shape check only — the plugin need not be installed.
  */
-export const LIVE_TABLE_SOURCE_PATTERN = /^neige:\/\/plugin\/[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
+export const LIVE_TABLE_SOURCE_PATTERN = /^perga:\/\/plugin\/[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
 
 /** The rows-carrying form — and the shape a live table's overlay must hold. */
 export const liveTableBlockPayloadSchema = z.strictObject({
   source: max2048CodePoints(z.string().regex(LIVE_TABLE_SOURCE_PATTERN,
-    'must be neige://plugin/<plugin_id>/<overlay_kind>')),
+    'must be perga://plugin/<plugin_id>/<overlay_kind>')),
   caption: max2048CodePoints(z.string()).nullish(),
 });
 
@@ -43,7 +43,7 @@ export const CHART_SERIES_ASSET_PATTERN = /^[A-Z]{2,8}:[A-Za-z0-9._-]{1,32}$/;
 
 export const chartSeriesPayloadSchema = z.strictObject({
   source: max2048CodePoints(z.string().regex(LIVE_TABLE_SOURCE_PATTERN,
-    'must be neige://plugin/<plugin_id>/<tool>')),
+    'must be perga://plugin/<plugin_id>/<tool>')),
   series: z.array(max2048CodePoints(z.string().regex(CHART_SERIES_ASSET_PATTERN,
     'must be a venue-qualified asset id such as US:NVDA'))).min(1).max(8),
   field: z.enum(['close', 'open', 'high', 'low', 'volume']).nullish(),

@@ -177,7 +177,7 @@ describe('readTrackReport', () => {
 
   it.each([
     ['a kind this build has never seen', { id: 'b-1', kind: 'chart.sankey', rev: 1, payload: { nodes: [] } }],
-    ['a retired kind', { id: 'b-1', kind: 'view.live', rev: 1, payload: { source: 'neige://plugin/a/b', version: 1 } }],
+    ['a retired kind', { id: 'b-1', kind: 'view.live', rev: 1, payload: { source: 'perga://plugin/a/b', version: 1 } }],
     ['a known kind whose payload does not fit', { id: 'b-1', kind: 'table', rev: 1, payload: { columns: [] } }],
     ['a known kind whose payload is not an object', { id: 'b-1', kind: 'prose', rev: 1, payload: 7 }],
     ['a terminal task with a result contract', { id: 'b-1', kind: 'task', payload: { key: 'terminal', kind: 'terminal', command: 'true', ready: true, declared_by: 'user', result_contract: 'review-v1' } }],
@@ -212,8 +212,8 @@ describe('preview blocks', () => {
   }
 
   it('reads a preview block with every optional field', () => {
-    expect(firstBlock({ key: 'fe', title: '前端', path: '/next/', height: 720 })).toEqual({
-      id: 'b-1', kind: 'preview', payload: { key: 'fe', title: '前端', path: '/next/', height: 720 },
+    expect(firstBlock({ key: 'fe', title: '前端', path: '/', height: 720 })).toEqual({
+      id: 'b-1', kind: 'preview', payload: { key: 'fe', title: '前端', path: '/', height: 720 },
     });
     expect(firstBlock({ key: 'a' })).toEqual({ id: 'b-1', kind: 'preview', payload: { key: 'a' } });
   });
@@ -1001,27 +1001,27 @@ describe('backlinks', () => {
 
 describe('parseReportLink', () => {
   it('resolves a track link with a block fragment', () => {
-    expect(parseReportLink('neige://wave/w-2#b-1')).toEqual({ trackId: 'w-2', blockId: 'b-1' });
+    expect(parseReportLink('perga://wave/w-2#b-1')).toEqual({ trackId: 'w-2', blockId: 'b-1' });
   });
 
   it('resolves a track link without a fragment', () => {
-    expect(parseReportLink('neige://wave/w-2')).toEqual({ trackId: 'w-2', blockId: null });
+    expect(parseReportLink('perga://wave/w-2')).toEqual({ trackId: 'w-2', blockId: null });
   });
 
   it('keeps a malformed percent escape as a usable raw track target', () => {
-    expect(() => parseReportLink('neige://wave/%E0%A4%A')).not.toThrow();
-    expect(parseReportLink('neige://wave/%E0%A4%A'))
+    expect(() => parseReportLink('perga://wave/%E0%A4%A')).not.toThrow();
+    expect(parseReportLink('perga://wave/%E0%A4%A'))
       .toEqual({ trackId: '%E0%A4%A', blockId: null });
   });
 
   it('drops a malformed fragment but keeps the track', () => {
-    expect(parseReportLink('neige://wave/w-2#../../etc/passwd'))
+    expect(parseReportLink('perga://wave/w-2#../../etc/passwd'))
       .toEqual({ trackId: 'w-2', blockId: null });
   });
 
   it.each([
     ['a plain http url', 'https://example.com'],
-    ['another neige noun', 'neige://area/c-1'],
+    ['another neige noun', 'perga://area/c-1'],
     ['a javascript url', 'javascript:alert(1)'],
   ])('reads null for %s, which the renderer then shows as plain text', (_label, url) => {
     expect(parseReportLink(url)).toBeNull();

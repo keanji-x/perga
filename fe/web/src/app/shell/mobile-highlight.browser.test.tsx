@@ -31,7 +31,7 @@ it.each(['light', 'dark'])('uses the highlight contour for history views and row
   for (const name of ['本 Track', 'Selected conversation']) {
     expect(getComputedStyle(view.getByRole('button', { name })).borderRadius).toBe(highlightRadius(view.container));
   }
-  expect(getComputedStyle(view.getByRole('searchbox')).borderRadius).toBe('12px');
+  expect(view.queryByRole('searchbox')).toBeNull();
 });
 
 it.each(['light', 'dark'])('uses the highlight contour for the real Area menu in %s', async theme => {

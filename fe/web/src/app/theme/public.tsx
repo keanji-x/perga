@@ -7,7 +7,6 @@ export type ThemeMode = (typeof THEME_MODES)[number];
 export type ResolvedTheme = Exclude<ThemeMode, 'system'>;
 export type ThemeContextValue = Readonly<{ mode: ThemeMode; resolved: ResolvedTheme; setMode: (mode: ThemeMode) => void }>;
 
-declare global { interface Window { __calmSetTheme?: (mode: ThemeMode) => void } }
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
@@ -49,14 +48,6 @@ export function ThemeProvider({ children, storage }: { children: ReactNode; stor
     if (!storage) return;
     try { storage.setItem(THEME_KEY, next); } catch { /* Persistence is best-effort. */ }
   }, [storage]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const url = new URL(window.location.href);
-    if (url.searchParams.get('testMounts') !== '1') return;
-    window.__calmSetTheme = setMode;
-    return () => { if (window.__calmSetTheme === setMode) delete window.__calmSetTheme; };
-  }, [setMode]);
 
   const value = useMemo<ThemeContextValue>(() => ({ mode, resolved, setMode }), [mode, resolved, setMode]);
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;

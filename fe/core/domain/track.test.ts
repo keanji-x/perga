@@ -440,7 +440,7 @@ describe('trackOverlayPayload', () => {
     updated_at: 1,
     ...over,
   });
-  const SOURCE = 'neige://plugin/dev-neige-binance/portfolio.holdings';
+  const SOURCE = 'perga://plugin/dev-neige-binance/portfolio.holdings';
 
   it('returns the payload of the overlay the source addresses', () => {
     expect(trackOverlayPayload('t1', [overlay({})], SOURCE))
@@ -464,12 +464,12 @@ describe('trackOverlayPayload', () => {
 
   it('returns undefined for a source that is not a plugin overlay reference', () => {
     for (const source of [
-      'neige://track/t1#b_x',
+      'perga://track/t1#b_x',
       'https://example.com/x',
-      'neige://plugin/only-one',
-      'neige://plugin/a/b/c',
-      'neige://plugin//portfolio.holdings',
-      'neige://plugin/dev-neige-binance/',
+      'perga://plugin/only-one',
+      'perga://plugin/a/b/c',
+      'perga://plugin//portfolio.holdings',
+      'perga://plugin/dev-neige-binance/',
     ]) {
       expect(trackOverlayPayload('t1', [overlay({})], source)).toBeUndefined();
     }

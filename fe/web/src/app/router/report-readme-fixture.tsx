@@ -17,11 +17,11 @@ const readme = `# Documentation
 
 Read the [English README](../README.md) for the high-level overview.
 
-## Use and operate Neige Calm
+## Use and operate Perga
 
 | Guide | Summary |
 | --- | --- |
-| [Using Neige Calm](./using-neige-calm.md) | Day-to-day workspace workflow |
+| [Using Perga](./using-perga.md) | Day-to-day workspace workflow |
 
 ## Develop and understand the system
 
@@ -33,15 +33,15 @@ ${Array.from({ length: 18 }, (_, index) => `## Documentation topic ${index}\n\n$
 [Prose ratchet](./prose-ratchet.md)
 `;
 
-const rootReadme = `# Neige Calm
+const rootReadme = `# Perga
 
-## Why Neige Calm?
+## Why Perga?
 
 Durable tracks, structured reports, and live agent sessions in one workspace.
 `;
 
 export const README_TRACK_ID = 'aadd6ed448d349228d672b1546b6a48c';
-export const README_TRACK_URL = `/next/track/${README_TRACK_ID}`;
+export const README_TRACK_URL = `/track/${README_TRACK_ID}`;
 export const README_FILE_URL = `${README_TRACK_URL}?file=docs%2FREADME.md`;
 
 export function renderReadmeFixture(initial: string, detailReady: Promise<void> = Promise.resolve(),

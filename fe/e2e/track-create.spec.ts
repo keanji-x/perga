@@ -9,7 +9,7 @@ test('creates an untitled Track from the Area composer and persists its first me
     page.on('request', pending => {
       if (pending.method() === 'POST' && new URL(pending.url()).pathname === '/api/v1/tracks') creates.push(pending.url());
     });
-    await page.goto(`/next/area/${area.id}/new`);
+    await page.goto(`/area/${area.id}/new`);
     const text = `fake-reply: FE e2e ${Date.now()}`;
     await page.getByLabel('What this track should do').fill(text);
     const created = page.waitForResponse(response => response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/v1/tracks');

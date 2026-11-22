@@ -30,7 +30,7 @@ async function visibleReadme() {
   await expect.element(file.getByRole('heading', { name: 'Documentation', exact: true })).toBeVisible();
   const layer = fileLayer();
   expect(within(layer).getAllByRole('table')).toHaveLength(2);
-  expect(within(layer).getByRole('button', { name: 'Using Neige Calm' }).getAttribute('title')).toBe('docs/using-neige-calm.md');
+  expect(within(layer).getByRole('button', { name: 'Using Perga' }).getAttribute('title')).toBe('docs/using-perga.md');
   expect(layer.querySelector('pre')).toBeNull();
   expect(layer.querySelector('[data-nc-report-file-source]')).toBeNull();
   expect(layer.closest('[data-nc-track-page]')).toBe(trackPage());
@@ -128,7 +128,7 @@ async function readWithPointerAndKeyboard(reportScroll: number, screenshot: stri
   expectHit(parent);
   await userEvent.click(parent);
   await expect.element(page.getByRole('region', { name: 'File README.md' })
-    .getByRole('heading', { name: 'Why Neige Calm?', exact: true })).toBeVisible();
+    .getByRole('heading', { name: 'Why Perga?', exact: true })).toBeVisible();
   expectReportPosition(reportScroll, 'document link click');
 }
 

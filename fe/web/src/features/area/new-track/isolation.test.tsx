@@ -16,7 +16,7 @@ it.each(['/repo', null])('defaults to worktree isolation for folder %s', async (
   expect(onSubmit).toHaveBeenLastCalledWith(cwd === null ? { message: 'Plan' }
     : { message: 'Plan', cwd, isolation: 'worktree' });
   if (cwd !== null) {
-    await userEvent.click(screen.getByRole('button', { name: 'Use a Neige workspace instead' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Use a Perga workspace instead' }));
     await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
     expect(onSubmit).toHaveBeenLastCalledWith({ message: 'Plan' });
   }
@@ -60,12 +60,12 @@ it('switches between Worktree and Bare folder modes in the Repo popover and open
   expect(onSubmit).toHaveBeenLastCalledWith({ message: 'Edit in source', cwd: '/repo-2', isolation: 'none' });
 });
 
-it('keeps Neige workspace locked to Worktree mode and does not open the file picker on mode click', async () => {
+it('keeps Perga workspace locked to Worktree mode and does not open the file picker on mode click', async () => {
   render(<NewTrackForm submitting={false} error={null}
     initialCwd={null}
     listDirectory={vi.fn()} onSubmit={vi.fn()} />);
 
-  await userEvent.click(screen.getByRole('button', { name: 'Repo: Neige workspace' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Repo: Perga workspace' }));
   const bareModeItem = await screen.findByRole('menuitem', { name: /裸文件夹模式/ });
   expect(bareModeItem.getAttribute('aria-disabled')).toBe('true');
 

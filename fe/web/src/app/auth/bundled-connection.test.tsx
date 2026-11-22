@@ -27,7 +27,7 @@ it('shows connection progress and withholds the workspace until compatibility is
 it('requests an APK update rather than promising a browser refresh can update bundled code', async () => {
   const { reload } = mount(() => Promise.resolve({ webCompatVersion: WEB_COMPAT_VERSION + 1,
     minWebCompatVersion: WEB_COMPAT_VERSION + 1, syncEventVersion: 20, dbInstanceId: 'bundled-test' }));
-  expect(await screen.findByRole('heading', { name: '请更新 Neige App' })).toBeTruthy();
+  expect(await screen.findByRole('heading', { name: '请更新 Perga App' })).toBeTruthy();
   expect(screen.queryByText('workspace')).toBeNull();
   expect(screen.getByRole('link', { name: '返回连接页' }).getAttribute('href')).toBe('http://tauri.localhost/');
   expect(reload).not.toHaveBeenCalled();
@@ -36,7 +36,7 @@ it('requests an APK update rather than promising a browser refresh can update bu
 it('requests a server update when an independently updated APK is newer than its server', async () => {
   mount(() => Promise.resolve({ webCompatVersion: WEB_COMPAT_VERSION - 1,
     minWebCompatVersion: WEB_COMPAT_VERSION - 1, syncEventVersion: 20, dbInstanceId: 'bundled-test' }));
-  expect(await screen.findByRole('heading', { name: '请更新电脑端 Neige' })).toBeTruthy();
+  expect(await screen.findByRole('heading', { name: '请更新电脑端 Perga' })).toBeTruthy();
   expect(screen.queryByText('workspace')).toBeNull();
 });
 
@@ -57,6 +57,6 @@ it('blocks pre-MCP-setup servers before the bundle can submit unsupported connec
   // has no unsaved connection-check endpoint. Pin that released version.
   mount(() => Promise.resolve({ webCompatVersion: 26,
     minWebCompatVersion: 26, syncEventVersion: 20, dbInstanceId: 'before-mcp-setup' }));
-  expect(await screen.findByRole('heading', { name: '请更新电脑端 Neige' })).toBeTruthy();
+  expect(await screen.findByRole('heading', { name: '请更新电脑端 Perga' })).toBeTruthy();
   expect(screen.queryByText('workspace')).toBeNull();
 });

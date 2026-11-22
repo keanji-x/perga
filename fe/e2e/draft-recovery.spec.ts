@@ -13,7 +13,7 @@ test('retains a rejected Track draft across navigation and creates it on an expl
         await route.fulfill({ status: 422, json: { code: 'invalid_argument', error: 'Review this request.' } });
       } else await route.continue();
     });
-    await page.goto(`/next/area/${area.id}/new`);
+    await page.goto(`/area/${area.id}/new`);
     const composer = page.getByRole('combobox', { name: 'What this track should do' });
     await composer.fill('Keep this draft until accepted.');
     await page.getByRole('button', { name: 'Create track', exact: true }).click();
@@ -27,7 +27,7 @@ test('retains a rejected Track draft across navigation and creates it on an expl
     const response = await created;
     expect(response.status()).toBe(201);
     const { track } = trackAggregateSnapshotDtoSchema.parse(await response.json());
-    await expect(page).toHaveURL(new RegExp(`/next/track/${track.id}`));
+    await expect(page).toHaveURL(new RegExp(`/track/${track.id}`));
     expect(attempts).toEqual([attempts[0], attempts[0]]);
     const tracks = trackDtoSchema.array().parse(await (await request.get(`/api/v1/areas/${area.id}/tracks`)).json());
     expect(tracks.map(row => row.id)).toEqual([track.id]);
@@ -39,7 +39,7 @@ test('keeps a deleted Area draft selectable and never creates an orphan Track', 
   const creates: string[] = [];
   page.on('request', (entry) => { if (entry.method() === 'POST' && entry.url().endsWith('/api/v1/tracks')) creates.push(entry.url()); });
   try {
-    await page.goto(`/next/area/${area.id}/new`);
+    await page.goto(`/area/${area.id}/new`);
     const composer = page.getByRole('combobox', { name: 'What this track should do' });
     await composer.fill('Keep this unfinished draft after its parent is deleted.');
     expect((await request.delete(`/api/v1/areas/${area.id}`)).ok()).toBe(true);

@@ -136,8 +136,7 @@ export function MobileHistory({ owner, open, onOpenChange, conversations, loadin
       {view === 'current' && <div className={styles.functions}>
         <Button className={styles.functionButton} label="发起新对话" variant="ghost" size="lg" isDisabled={onNew === null}
           icon={<UiIcon name="plus" />} onClick={() => { if (onNew !== null) leave(onNew); }} />
-        <div className={styles.searchWrap}><span className={styles.searchIcon}><Icon icon="search" color="inherit" /></span><input className={styles.search} type="search" name="history-search" aria-label="搜索对话内容（暂未开放）"
-          placeholder="搜索对话内容（暂未开放）" disabled /></div>
+
       </div>}
       <div ref={captureList} className={styles.list}>
         {view === 'current' ? <>

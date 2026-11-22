@@ -67,5 +67,5 @@ describe('the composer focus ring', () => {
 });
 
 function trigger(): HTMLButtonElement {
-  return screen.getByRole('button', { name: 'Repo: Neige workspace' });
+  return screen.getByRole('button', { name: 'Repo: Perga workspace' });
 }

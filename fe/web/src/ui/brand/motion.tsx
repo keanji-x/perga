@@ -9,10 +9,10 @@ function splines(times: string): string {
   return Array.from({ length: times.split(';').length - 1 }, () => SPLINE).join(';');
 }
 
-export type NeigeMotionKind = 'thinking' | 'execution' | 'creation';
+export type BrandMotionKind = 'thinking' | 'execution' | 'creation';
 
 /** Decorative, theme-owned vector motion. The owning surface supplies the status name. */
-export function NeigeMotion({ kind, className = '' }: Readonly<{ kind: NeigeMotionKind; className?: string }>) {
+export function BrandMotion({ kind, className = '' }: Readonly<{ kind: BrandMotionKind; className?: string }>) {
   return (
     <svg className={`${styles.motion} ${className}`} viewBox="0 0 384 384" aria-hidden="true" focusable="false"
       fill="none" stroke="currentColor" strokeWidth="34" strokeLinecap="round" strokeLinejoin="round" data-nc-motion={kind}>

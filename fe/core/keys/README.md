@@ -1,13 +1,19 @@
 # core/keys
 
-## 用途
+This frozen module owns persistent key constants, the dynamic key factory and
+branded storage adapter ports. Logout, cache reset and recovery consumers must
+use the same declared keys instead of spelling namespace literals themselves.
 
-冻结持久化 key 的唯一出处、动态 key 工厂和带 brand 的 storage adapter port。集中定义是因为登出、缓存爆破与事件恢复必须操作完全相同的 key。
+Browser state uses the `perga` IndexedDB database. Keys use `perga:` followed by
+colon-separated segments, including `perga:theme`. Empty segments and segments
+containing colons are rejected synchronously. Adapters accept `StorageKey` and
+return explicit core/state results so platform and quota errors remain data.
 
-## 契约
+P3 intentionally changed the namespace and database identity. Existing Neige
+browser data is not read, copied or migrated. New Perga keys remain stable after
+this reset. The architecture gate enforces central ownership of key literals;
+`perga://` report URLs are a separate domain contract.
 
-三个已部署 key 保持逐字符稳定，因为改名会造成用户状态静默丢失。动态 key 统一使用 `calm:` 加冒号分段，因为调用方不得各自拼接命名空间；空段或含冒号的段会同步拒绝，因为否则会产生歧义 key。adapter 只接受 `StorageKey` 并沿用 core/state 的显式结果通道，因为平台异常与配额失败不能泄漏成未约定的 throw。
-
-## 故意不做
-
-这里不访问 localStorage/IndexedDB、不选择 codec、不实现迁移或清理策略，因为平台和生命周期策略由端侧注入；也不为任意旧 key 提供逃生字符串转换，避免重新制造多出处。
+This module does not access localStorage or IndexedDB, select codecs, or perform
+migration/cleanup. Those platform and lifecycle responsibilities are injected by
+the browser layer. Do not add arbitrary raw-key casts at consumer call sites.

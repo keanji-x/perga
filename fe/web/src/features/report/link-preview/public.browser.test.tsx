@@ -23,7 +23,7 @@ async function hover(name: string) {
 
 describe('report preview admission and rendering', () => {
   it('makes a captured source keyboard-accessible when the host supplies a preview without navigation', async () => {
-    const report: TrackReport = { summary: '', body: '[Evidence](neige://source/src_0971fbde)', blocks: null };
+    const report: TrackReport = { summary: '', body: '[Evidence](perga://source/src_0971fbde)', blocks: null };
     render(<ReportDocument report={report} empty={null} linkPreview={{ files, trackId: 't1', report,
       renderSource: () => <p>Captured evidence contents.</p>,
     }} />);

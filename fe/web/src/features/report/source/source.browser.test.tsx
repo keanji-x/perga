@@ -32,7 +32,7 @@ const SOURCE: TrackSourceDetail = {
   body: BODY,
 };
 
-const TARGET: ReportSourceLinkTarget = { destination: 'neige://source/src_2c9e0a1b#q1', sourceId: 'src_2c9e0a1b', quoteId: 'q1' };
+const TARGET: ReportSourceLinkTarget = { destination: 'perga://source/src_2c9e0a1b#q1', sourceId: 'src_2c9e0a1b', quoteId: 'q1' };
 
 /** A positioned, clipped, fixed-height main region for the drawer, spelled inline because a feature test may not import `app/**`. */
 function Page() {

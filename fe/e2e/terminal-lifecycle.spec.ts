@@ -34,7 +34,7 @@ test('refreshing an exited terminal shows its final state while secondary reads 
     await route.fulfill({ json: body });
   });
   try {
-    await page.goto('/next/track/track-1?card=card-1');
+    await page.goto('/track/track-1?card=card-1');
     await expect(page.getByText('Session exited.')).toBeVisible();
     await expect(page).toHaveURL(/\?card=card-1$/);
     await page.reload();

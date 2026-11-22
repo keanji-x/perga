@@ -19,7 +19,7 @@ import { CurrentUserScope } from '../auth/current-user.tsx';
 import { createStorageKey } from '../../../../core/keys/storage.ts';
 import { PLANNER_OPEN_STATE_KEY } from './navigation.ts';
 import { createMemoryStorage } from './share-reuse-fixture.ts';
-import { APP_BASEPATH,createAppRouter } from './public.tsx';
+import { createAppRouter } from './public.tsx';
 import { bootTestCardRuntime } from './test-card-runtime.ts';
 
 const IDENTITY = { userId: 'track-create-owner', displayName: 'Owner', role: 'owner', sessionId: 'one' } as const;
@@ -43,7 +43,7 @@ function memoryStorage() {
 /* astryx puts `label` on the `contenteditable` as `aria-label`, so the composer resolves by label query. */
 const TASK_LABEL = 'What this track should do';
 
-const FOLDER_PLACEHOLDER = 'Neige workspace';
+const FOLDER_PLACEHOLDER = 'Perga workspace';
 const FOLDER_CHIP_NAME = `Repo: ${FOLDER_PLACEHOLDER}`;
 
 
@@ -222,7 +222,7 @@ function harness(options: {
       return Promise.resolve({ status: 200, statusText: 'OK', body });
     },
   };
-  if (!options.reload) window.history.pushState({}, '', `${APP_BASEPATH}${options.path ?? '/'}`);
+  if (!options.reload) window.history.pushState({}, '', `${options.path ?? '/'}`);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const router = createAppRouter({ prepareReport: prepareReportDocument,
     transport, unauthorized, client, cards: bootTestCardRuntime(), onSignOut: vi.fn(),
@@ -341,7 +341,7 @@ describe('New track model selection', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
     await waitFor(() => expect(createdTrackRequests(sent)).toHaveLength(1));
     expect(createdTrackRequests(sent)[0]?.body).toMatchObject({ planner_provider: 'codex', model: 'gpt-5' });
-    await waitFor(() => expect(window.location.pathname).toBe(`${APP_BASEPATH}/track/w-new`));
+    await waitFor(() => expect(window.location.pathname).toBe(`/track/w-new`));
   });
 
   it('switches a Claude draft back to Codex while Codex is unavailable (#1817)', async () => {
@@ -416,7 +416,7 @@ describe('New track model selection', () => {
     expect(await screen.findByRole('button', { name: 'Model: Claude haiku' })).toBeTruthy();
     await userEvent.type(screen.getByLabelText(TASK_LABEL), 'Plan with Claude');
     await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
-    await waitFor(() => expect(window.location.pathname).toBe(`${APP_BASEPATH}/track/w-new`));
+    await waitFor(() => expect(window.location.pathname).toBe(`/track/w-new`));
     await userEvent.click(screen.getByRole('button', { name: 'Go to Today' }));
     await userEvent.click(await screen.findByRole('button', { name: 'New track in Work' }));
     expect(await screen.findByRole('button', { name: 'Model: Codex Default' })).toBeTruthy();
@@ -429,7 +429,7 @@ describe('New track model selection', () => {
     await pick('Model: Codex Default', 'Claude', /^sonnet/);
     await userEvent.type(screen.getByLabelText(TASK_LABEL), 'Plan with Claude');
     await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
-    await waitFor(() => expect(window.location.pathname).toBe(`${APP_BASEPATH}/track/w-new`));
+    await waitFor(() => expect(window.location.pathname).toBe(`/track/w-new`));
     const drawer = await screen.findByRole('complementary', { name: 'Planner' });
     const trigger = await within(drawer).findByRole('button', { name: 'Model: Default' });
     await waitFor(() => expect((trigger as HTMLButtonElement).disabled).toBe(false));
@@ -555,7 +555,7 @@ describe('Track creation drafts survive navigation', () => {
     const retry = createdTrackRequests(sent)[1];
     expect(retry?.headers).toEqual(first?.headers);
     expect(retry?.body).toEqual(first?.body);
-    await waitFor(() => expect(window.location.pathname).toBe(`${APP_BASEPATH}/track/w-new`));
+    await waitFor(() => expect(window.location.pathname).toBe(`/track/w-new`));
   });
 
   it('retains an unsent draft when its parent is deleted and prevents an orphan create', async () => {
@@ -585,7 +585,7 @@ describe('Track creation drafts survive navigation', () => {
     expect(createdTrackRequests(sent)).toHaveLength(1);
     release();
     await userEvent.click(await screen.findByRole('button', { name: 'Open track' }));
-    await waitFor(() => expect(window.location.pathname).toBe(`${APP_BASEPATH}/track/w-new`));
+    await waitFor(() => expect(window.location.pathname).toBe(`/track/w-new`));
     expect(createdTrackRequests(sent)).toHaveLength(1);
   });
 });
@@ -624,7 +624,7 @@ it.each([false, true])('opens the confirmed draft after reload with initial mess
   const openTrack = await screen.findByRole('button', { name: 'Open track' });
   expect(screen.queryByText(UNCONFIRMED_TRACK)).toBeNull();
   await userEvent.click(openTrack);
-  await waitFor(() => expect(window.location.pathname).toBe(`${APP_BASEPATH}/track/w-new`));
+  await waitFor(() => expect(window.location.pathname).toBe(`/track/w-new`));
   await screen.findByRole('complementary', { name: 'Planner' });
   expect(submittedStorage.getItem(DRAFT_KEY)).toBeNull();
   await waitFor(() => expect(submittedStorage.getItem(FIRST_SEND_KEY)).toBeNull());
@@ -657,7 +657,7 @@ it.each([false, true])('recovers an unread first message after reload (still unr
   if (stillUnreadable) {
     await userEvent.click(openTrack);
     expect(await screen.findByText(/its saved first message is unavailable/)).toBeTruthy();
-    expect(window.location.pathname).toBe(`${APP_BASEPATH}/area/c1/new`);
+    expect(window.location.pathname).toBe(`/area/c1/new`);
     expect(getItem(DRAFT_KEY)).toBe(draft);
     expect(getItem(FIRST_SEND_KEY)).toBe(firstSend);
     expect(plannerInputTexts(sent)).toEqual([]);
@@ -667,7 +667,7 @@ it.each([false, true])('recovers an unread first message after reload (still unr
   unreadable = false;
   await userEvent.click(screen.getByRole('button', { name: 'Open track' }));
   await screen.findByRole('complementary', { name: 'Planner' });
-  expect(window.location.pathname).toBe(`${APP_BASEPATH}/track/w-new`);
+  expect(window.location.pathname).toBe(`/track/w-new`);
   await waitFor(() => expect(plannerInputTexts(sent)).toEqual([message]));
   await waitFor(() => expect(getItem(FIRST_SEND_KEY)).toBeNull());
   const sends = sent.filter(({ method, path }) => method === 'POST' && path === '/api/v1/sessions/card-planner/messages');
@@ -759,7 +759,7 @@ it.each(['one-shot reload', 'persistent reload', 'persistent in tab'] as const)(
     expect(submittedStorage.getItem(FIRST_SEND_KEY)).toBeNull();
 
     await userEvent.click(openTrack);
-    await waitFor(() => expect(window.location.pathname).toBe(`${APP_BASEPATH}/track/w-new`));
+    await waitFor(() => expect(window.location.pathname).toBe(`/track/w-new`));
     await waitFor(() => expect(original.sent).toContainEqual(expect.objectContaining({ method: 'GET', path: '/api/v1/tracks/w-new' })));
     expect(plannerInputTexts(original.sent)).toEqual([]);
     expect(submittedStorage.getItem(DRAFT_KEY)).toBe(persistentlyFailing ? savedRequest : null);
@@ -829,14 +829,14 @@ describe('the new-track page is a route reached from Area groups', () => {
     harness();
     await userEvent.click(await screen.findByRole('button', { name: 'New track in Reading' }));
     expect(await findComposer()).toBeTruthy();
-    expect(window.location.pathname).toBe(`${APP_BASEPATH}/area/c2/new`);
+    expect(window.location.pathname).toBe(`/area/c2/new`);
 
     expect(screen.queryByRole('dialog')).toBeNull();
 
     window.history.back();
     await userEvent.click(await screen.findByRole('button', { name: 'New track in Work' }));
     expect(await findComposer()).toBeTruthy();
-    expect(window.location.pathname).toBe(`${APP_BASEPATH}/area/c1/new`);
+    expect(window.location.pathname).toBe(`/area/c1/new`);
   });
 
   it('remounts the route when switching directly between Areas and takes only the new Area defaults', async () => {
@@ -852,7 +852,7 @@ describe('the new-track page is a route reached from Area groups', () => {
     await userEvent.type(screen.getByLabelText(TASK_LABEL), 'Draft for A');
 
     await userEvent.click(screen.getByRole('button', { name: 'New track in Reading' }));
-    await waitFor(() => expect(window.location.pathname).toBe(`${APP_BASEPATH}/area/c2/new`));
+    await waitFor(() => expect(window.location.pathname).toBe(`/area/c2/new`));
     expect(composerText()).toBe('');
     expect(screen.queryByRole('button', { name: /^Template:/ })).toBeNull();
     expect(screen.getByRole('button', { name: 'Repo: work-b · Direct folder (/srv/work-b)' })).toBeTruthy();
@@ -876,14 +876,14 @@ describe('the new-track page is a route reached from Area groups', () => {
     await waitFor(() => expect(createdTrackBodies(sent)).toHaveLength(1));
 
     await userEvent.click(screen.getByRole('button', { name: 'New track in Reading' }));
-    await waitFor(() => expect(window.location.pathname).toBe(`${APP_BASEPATH}/area/c2/new`));
+    await waitFor(() => expect(window.location.pathname).toBe(`/area/c2/new`));
     releaseCreate();
     await act(async () => {
       await heldCreate;
       await new Promise((resolve) => { setTimeout(resolve, 0); });
     });
     await new Promise((resolve) => { setTimeout(resolve, 0); });
-    expect(window.location.pathname).toBe(`${APP_BASEPATH}/area/c2/new`);
+    expect(window.location.pathname).toBe(`/area/c2/new`);
   });
 
   it('arrives with the composer focused, so typing reaches it', async () => {
@@ -978,7 +978,7 @@ describe('the new-track page is a route reached from Area groups', () => {
     });
     await userEvent.click(await screen.findByRole('button', { name: 'New track in Work' }));
     expect(await findComposer()).toBeTruthy();
-    await userEvent.click(screen.getByRole('button', { name: 'Use a Neige workspace instead' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Use a Perga workspace instead' }));
     await userEvent.type(screen.getByLabelText(TASK_LABEL), 'Read it');
     await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
     await waitFor(() => expect(createdTrackBodies(sent)).toHaveLength(1));
@@ -1076,7 +1076,7 @@ describe('the new-track page is a route reached from Area groups', () => {
     expect(recovered?.body).not.toHaveProperty('first_message');
     expect(recovered?.headers?.['Idempotency-Key']).toBeDefined();
     expect(recovered?.headers?.['Idempotency-Key']).not.toBe(failed?.headers?.['Idempotency-Key']);
-    await waitFor(() => expect(window.location.pathname).toBe(`${APP_BASEPATH}/track/w-new`));
+    await waitFor(() => expect(window.location.pathname).toBe(`/track/w-new`));
     },
   );
 
@@ -1174,7 +1174,7 @@ describe('the new-track page is a route reached from Area groups', () => {
 
     const alert = await within(await screen.findByRole('main')).findByRole('alert', {}, { timeout: 5_000 });
     expect(within(alert).getByRole('button', { name: 'Reuse directory in Reading' })).toBeTruthy();
-    await userEvent.click(screen.getByRole('button', { name: 'Use a Neige workspace instead' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Use a Perga workspace instead' }));
     expect(within(alert).queryByRole('button', { name: 'Reuse directory in Reading' })).toBeNull();
     await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
 
@@ -1237,7 +1237,7 @@ describe('the route refuses an area id that no longer exists', () => {
 
     /* Without this the absence checks below would pass against an app that had not rendered at all. */
     await screen.findByRole('button', { name: 'Go to Today' });
-    expect(window.location.pathname).toBe(`${APP_BASEPATH}/area/c9/new`);
+    expect(window.location.pathname).toBe(`/area/c9/new`);
 
     expect(screen.queryByLabelText(TASK_LABEL)).toBeNull();
     expect(screen.queryByRole('button', { name: 'Create track' })).toBeNull();
@@ -1277,7 +1277,7 @@ describe('the sentence is delivered by the create, and the track opens on it', (
     await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
 
     await waitFor(() => expect(createdTrackBodies(sent)).toHaveLength(1));
-    await waitFor(() => expect(window.location.pathname).toBe(`${APP_BASEPATH}/track/w-new`));
+    await waitFor(() => expect(window.location.pathname).toBe(`/track/w-new`));
     expect(createdTrackBodies(sent)[0]).not.toHaveProperty('first_message');
     expect(createdTrackRequests(sent)[0]?.headers?.['Idempotency-Key']).toBeDefined();
     /* The `waitFor` above returns the instant the first create is seen; the landing
@@ -1294,7 +1294,7 @@ describe('the sentence is delivered by the create, and the track opens on it', (
     await userEvent.type(screen.getByLabelText(TASK_LABEL), 'Read it');
     await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
 
-    await waitFor(() => expect(window.location.pathname).toBe(`${APP_BASEPATH}/track/w-new`));
+    await waitFor(() => expect(window.location.pathname).toBe(`/track/w-new`));
     /* Named, not by bare role: the track page's panel column is a `complementary` too. */
     expect(await screen.findByRole('complementary', { name: 'Planner' })).toBeTruthy();
   });
@@ -1312,7 +1312,7 @@ describe('the sentence is delivered by the create, and the track opens on it', (
     await userEvent.type(screen.getByLabelText(TASK_LABEL), 'Read it');
     await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
 
-    await waitFor(() => expect(window.location.pathname).toBe(`${APP_BASEPATH}/track/w-new`));
+    await waitFor(() => expect(window.location.pathname).toBe(`/track/w-new`));
     const drawer = await screen.findByRole('complementary', { name: 'Planner' });
     await waitFor(() => expect(
       [...drawer.querySelectorAll('[data-nc-turn="human"]')].map((turn) => turn.textContent),
@@ -1331,7 +1331,7 @@ describe('the sentence is delivered by the create, and the track opens on it', (
     await userEvent.type(screen.getByLabelText(TASK_LABEL), 'Read it');
     await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
 
-    await waitFor(() => expect(window.location.pathname).toBe(`${APP_BASEPATH}/track/w-new`));
+    await waitFor(() => expect(window.location.pathname).toBe(`/track/w-new`));
     const drawer = await screen.findByRole('complementary', { name: 'Planner' });
     await waitFor(() => expect(plannerInputTexts(sent)).toEqual(['Read it']));
     await waitFor(() => expect(drawer.querySelector('[data-nc-thread-empty]')).toBeNull());
@@ -1349,7 +1349,7 @@ describe('the sentence is delivered by the create, and the track opens on it', (
     await userEvent.type(screen.getByLabelText(TASK_LABEL), 'Read it');
     await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
 
-    await waitFor(() => { expect(window.location.pathname).toBe(`${APP_BASEPATH}/track/w-new`); });
+    await waitFor(() => { expect(window.location.pathname).toBe(`/track/w-new`); });
     expect(createdTrackBodies(sent)).toHaveLength(1);
     await findTrackPage();
     expect(screen.queryByRole('complementary', { name: 'Planner' })).toBeNull();
@@ -1371,14 +1371,14 @@ describe('the sentence is delivered by the create, and the track opens on it', (
     await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
 
     await userEvent.click(await screen.findByRole('button', { name: 'Go to Today' }));
-    await waitFor(() => { expect(window.location.pathname).toBe(`${APP_BASEPATH}/`); });
+    await waitFor(() => { expect(window.location.pathname).toBe(`/`); });
 
     releaseCreate();
     await waitFor(() => expect(createdTrackBodies(sent)).toHaveLength(1));
-    expect(window.location.pathname).toBe(`${APP_BASEPATH}/`);
+    expect(window.location.pathname).toBe(`/`);
 
     /* A leftover intent would surface on the next visit to the track, so that visit is the observable. */
-    window.history.pushState({}, '', `${APP_BASEPATH}/track/w-new`);
+    window.history.pushState({}, '', `/track/w-new`);
     /* The title only renders once the track detail has landed, the same read the
            drawer needs; asserting absence before that is vacuous. */
     await screen.findByRole('button', { name: 'Rename track' });
@@ -1396,7 +1396,7 @@ describe('the sentence is delivered by the create, and the track opens on it', (
     await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
 
     await waitFor(() => expect(createdTrackBodies(sent)).toHaveLength(1));
-    await waitFor(() => expect(window.location.pathname).toBe(`${APP_BASEPATH}/track/w-new`));
+    await waitFor(() => expect(window.location.pathname).toBe(`/track/w-new`));
   });
 
   /* A failed harness start answers 500 *after* the track is minted, so the state of
@@ -1412,7 +1412,7 @@ describe('the sentence is delivered by the create, and the track opens on it', (
     await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
 
     expect(await within(await screen.findByRole('main')).findByRole('alert')).toBeTruthy();
-    expect(window.location.pathname).toBe(`${APP_BASEPATH}/area/c2/new`);
+    expect(window.location.pathname).toBe(`/area/c2/new`);
     expect(composerText()).toBe('Read it');
     expect(createdTrackBodies(sent)).toHaveLength(1);
     expect(plannerInputTexts(sent)).toEqual([]);

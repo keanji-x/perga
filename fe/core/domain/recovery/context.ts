@@ -2,15 +2,15 @@ import { createStorageKey } from '../../keys/storage.js';
 
 export function recoveryContextKey() { return createStorageKey('recovery', 'presentation'); }
 export function logoutMarkerKey() { return createStorageKey('recovery', 'logout'); }
-export type RecoveryPage = Readonly<{ route: string; kind: 'today' | 'track' | 'recipes' | 'settings'; pane: string | null }>;
+export type RecoveryPage = Readonly<{ route: string; kind: 'today' | 'track' | 'settings'; pane: string | null }>;
 export type RecoveryScope = Readonly<{ origin: string; userId: string; dbInstanceId: string }>;
 export type RecoveryScroll = Readonly<{ region: 'page' | 'board' | 'panel'; top: number; left: number }>;
 export type RecoveryContext = Readonly<{ schemaVersion: 1; scope: RecoveryScope; page: RecoveryPage; scroll: readonly RecoveryScroll[] }>;
 
 /** Deliberately excludes titles, bodies, file paths, secrets and arbitrary query strings. */
 export function recoveryPage(path: string, search = ''): RecoveryPage {
-  let route = '/next/'; let kind: RecoveryPage['kind'] = 'today'; let pane: string | null = null;
-  if (/^\/next\/track\/[A-Za-z0-9_-]{1,128}$/.test(path)) {
+  let route = '/'; let kind: RecoveryPage['kind'] = 'today'; let pane: string | null = null;
+  if (/^\/track\/[A-Za-z0-9_-]{1,128}$/.test(path)) {
     route = path; kind = 'track';
     const params = new Map<string, string>();
     for (const pair of search.replace(/^\?/, '').split('&')) {
@@ -23,8 +23,7 @@ export function recoveryPage(path: string, search = ''): RecoveryPage {
     if (panel && /^(outline|cards|tasks|conversations)$/.test(panel)) { pane = panel; query.push(`panel=${panel}`); }
     if (from === 'pages' || from === 'area') query.push(`from=${from}`);
     if (query.length) route += `?${query.join('&')}`;
-  } else if (path === '/next/recipes') { route = path; kind = 'recipes'; }
-  else if (/^\/next\/settings(?:\/(?:general|network|plugins|appearance|about))?$/.test(path)) {
+  } else if (/^\/settings(?:\/(?:planners|appearance|about))?$/.test(path)) {
     route = path; kind = 'settings';
   }
   return { route, kind, pane };

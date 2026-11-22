@@ -26,5 +26,5 @@ fixture 方法论有固有边界：同源产物互比（两侧可能一起陈旧
 
 ## 设计系统与 token
 
-遵循 [前端设计系统](../docs/frontend-design-system.md)，使用现有语义 token，
+遵循 [前端设计系统](web/src/styles/README.md)，使用现有语义 token，
 优先复用 Astryx 和本仓库 UI 原语。等值 token 替换保持现有视觉。

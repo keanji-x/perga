@@ -10,7 +10,7 @@ test('v1 bootstrap and workspace routes are reachable through the real kernel', 
   const area = await createArea(request);
   try {
     const track = await createTrack(request, area.id);
-    for (const path of [`/next/area/${area.id}/new`, `/next/track/${track.id}`, '/next/settings/appearance']) {
+    for (const path of [`/area/${area.id}/new`, `/track/${track.id}`, '/settings/appearance']) {
       await page.goto(path);
       await expect(page.locator('nav[aria-label="Workspace"]')).toBeVisible();
       if (path.endsWith('/new')) await expect(page.getByLabel('What this track should do')).toBeVisible();

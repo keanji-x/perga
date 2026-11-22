@@ -17,7 +17,7 @@ import { invalidationPlanFor } from '../../../../core/events/invalidation-plan.t
 import { applyEventEffects } from '../events/query-invalidation-adapter.ts';
 import { queryKeys } from '../providers/query-keys.ts';
 import { ThemeProvider } from '../theme/public.tsx';
-import { APP_BASEPATH,createAppRouter } from './public.tsx';
+import { createAppRouter } from './public.tsx';
 import { bootTestCardRuntime } from './test-card-runtime.ts';
 
 /* A send's automatic retries wait no real time here; how long they back off is not under test. */
@@ -661,7 +661,7 @@ async function readEarlierWithInput() {
 }
 
 beforeEach(() => {
-  window.history.pushState({}, '', `${APP_BASEPATH}/track/w1`);
+  window.history.pushState({}, '', `/track/w1`);
   vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => window.setTimeout(() => callback(0), 0));
   vi.stubGlobal('cancelAnimationFrame', (id: number) => window.clearTimeout(id));
 });

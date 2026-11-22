@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Neige Calm">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Perga">
   <defs>
     <linearGradient id="app-background" x1="0" y1="0" x2="1" y2="1">
       <stop stop-color="#3c528d" />
@@ -8,7 +8,7 @@
   <path d="M128 0H384C472 0 512 40 512 128V384C512 472 472 512 384 512H128C40 512 0 472 0 384V128C0 40 40 0 128 0Z" fill="#ffffff" />
   <circle cx="256" cy="256" r="190" fill="url(#app-background)" />
   <svg x="116" y="116" width="280" height="280" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 384" role="img" aria-labelledby="title description">
-  <title id="title">Neige mark</title>
+  <title id="title">Perga mark</title>
   <desc id="description">Three geometric tracks form a quiet, simplified snow crystal.</desc>
 
   <g

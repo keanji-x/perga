@@ -81,7 +81,7 @@ def test_recipe_views_are_native_views_over_invest_units(recipe, kinds):
     for view in views(recipe):
         jsonschema.Draft202012Validator(view_schema).validate(view)
     placed = slots(recipe)
-    assert placed and all(source.startswith(tuple(f'neige://plugin/invest/{k}' for k in kinds))
+    assert placed and all(source.startswith(tuple(f'perga://plugin/invest/{k}' for k in kinds))
                           for source, _ in placed)
     assert len({source for source, _ in placed}) == len(placed)
 
@@ -105,7 +105,7 @@ def agent_texts():
 def test_agent_texts_name_tools_by_their_served_names():
     names = '|'.join(tool['name'] for tool in MANIFEST['exposes_tools'])
     # A bare `instrument_status` is an unknown tool to the agent; only `plugin_invest_<tool>` is served.
-    # (`neige://plugin/invest/<tool>` is a report source, not a call.)
+    # (`perga://plugin/invest/<tool>` is a report source, not a call.)
     bare = re.compile(rf'(?<![A-Za-z0-9_/]){"(?:" + names + ")"}(?![A-Za-z0-9_])')
     for where, text in agent_texts():
         assert not bare.findall(re.sub(r'plugin_invest_\w+', '', text)), where
@@ -113,8 +113,8 @@ def test_agent_texts_name_tools_by_their_served_names():
 
 def test_recipes_link_each_others_reports():
     portfolio, research = ((ROOT / recipe).read_text() for recipe in (PORTFOLIO, INSTRUMENT))
-    assert '研究链接' in portfolio and '- [<symbol> 研究](neige://wave/<track_id>)' in portfolio
-    assert '[组合 Track](neige://wave/<portfolio_track_id>)' in research
+    assert '研究链接' in portfolio and '- [<symbol> 研究](perga://wave/<track_id>)' in portfolio
+    assert '[组合 Track](perga://wave/<portfolio_track_id>)' in research
 
 
 def test_agent_texts_never_send_a_planner_to_the_longbridge_cli():

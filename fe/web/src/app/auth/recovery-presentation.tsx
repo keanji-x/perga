@@ -6,7 +6,7 @@ import type { RecoveryState } from '../../../../core/domain/recovery/access.ts';
 import styles from './recovery-presentation.module.css';
 export function RecoveryPresentation() {
   const page = recoveryPage(window.location.pathname, window.location.search);
-  const title = page.kind === 'track' ? 'Track' : page.kind === 'recipes' ? 'Recipes' : page.kind === 'settings' ? 'Settings' : 'Today';
+  const title = page.kind === 'track' ? 'Track' : page.kind === 'settings' ? 'Settings' : 'Today';
   return <div className={styles.frame} data-nc-recovery-page={page.kind}>
     <nav aria-label="恢复页面导航">
       <MobileHeader title={title} level={1} leading={<a href="http://tauri.localhost/" className={styles.menu} aria-label="连接设置"><Icon icon="menu" size="md" color="inherit" /></a>} />

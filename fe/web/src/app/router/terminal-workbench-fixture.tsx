@@ -10,7 +10,7 @@ import { createReadReceiptsKernel } from '../providers/read-receipts-fixture.tsx
 import { ThemeProvider } from '../theme/public.tsx';
 import { conversationCardId } from './conversation-read-data.ts';
 import { sessionItem,sessionPage } from './conversation-session-data.ts';
-import { APP_BASEPATH,createAppRouter } from './public.tsx';
+import { createAppRouter } from './public.tsx';
 import { fixtureBootstrap,fixtureSession,fixtureSnapshot,fixtureTrack } from './session-contract-fixture.ts';
 import { bootTestCardRuntime } from './test-card-runtime.ts';
 
@@ -91,7 +91,7 @@ export function setupWorkbench({ cards: initial = [] as CardWire[], defer = fals
   const runtime = { ...booted, host: { ...booted.host } };
   const router = createAppRouter({ prepareReport: prepareReportDocument, transport, client, cards: runtime,
     unauthorized: createUnauthorizedChannel({ enqueue: task => task() }), onSignOut: () => undefined });
-  router.update({ history: createMemoryHistory({ initialEntries: [`${APP_BASEPATH}${daily ? '/' : '/track/workbench'}${initialCard === null ? '' : `?card=${encodeURIComponent(initialCard)}`}`] }) });
+  router.update({ history: createMemoryHistory({ initialEntries: [`${daily ? '/' : '/track/workbench'}${initialCard === null ? '' : `?card=${encodeURIComponent(initialCard)}`}`] }) });
   const container = document.createElement('div'); container.id = 'root'; document.body.append(container);
   const view = render(<QueryClientProvider client={client}><ThemeProvider><RouterProvider router={router} /></ThemeProvider></QueryClientProvider>, { container });
   return { ...view, requests, releases, router, client, runtime, cards, savedReply, posts: () => requests.filter(request => request.method === 'POST' && request.path.endsWith('/terminals')) };

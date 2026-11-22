@@ -63,7 +63,7 @@ describe('production app mount', () => {
     expect(rendered.props.client.getQueryData(['private'])).toBeUndefined();
     expect(mocks.cursorClear).toHaveBeenCalledOnce();
     expect(deleteDatabase).toHaveBeenCalledWith(IDB_DB_NAME);
-    expect(IDB_DB_NAME).toBe('neige-calm');
+    expect(IDB_DB_NAME).toBe('perga');
     expect(sequence).toEqual(['query', 'cursor', `indexed-db:${IDB_DB_NAME}`, 'reload']);
   });
 

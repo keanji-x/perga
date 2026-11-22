@@ -148,7 +148,7 @@ export function RepoPill({
           }}
         />
         <DropdownMenuItem
-          label="Neige workspace"
+          label="Perga workspace"
           description={value === '' ? '当前使用托管默认工作区' : '切回托管默认工作区'}
           onClick={() => {
             if (value !== '') onClear();

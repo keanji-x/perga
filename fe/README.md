@@ -1,51 +1,53 @@
-# Neige Calm frontend
+# Perga frontend
 
-This is an independent npm project; it deliberately is not a root workspace member.
+This independent npm project contains platform-neutral contracts in `core/` and
+the React client in `web/src/`. Runtime dependencies flow down from app to
+features, systems, UI and core. Consumers import their owning module directly.
+See [AGENTS.md](AGENTS.md) and [styles](web/src/styles/README.md).
 
-`make dev` builds this frontend and serves it through the Docker stack at
-`http://localhost:<printed-port>/next/`. The legacy frontend remains available
-under `/calm/` during the cutover.
+From the repository root:
 
-For HMR, run `make fe-dev` from the repository root, then open
-`http://localhost:5180/next/`. The `/next/` prefix matches the built mount path
-and also applies to LAN previews.
+```sh
+(cd fe && npm ci)
+(cd fe && npm run dev)
+(cd fe && npm run lint && npm test && npm run build)
+(cd fe && npm run test:browser)
+```
+
+Vite serves `http://localhost:5180/` and proxies `/api` to
+`http://127.0.0.1:4041` by default. Set `FE_API_PROXY_TARGET` for another Host;
+`FE_DEV_HOST` and `FE_DEV_PORT` configure the dev listener. The build in
+`web/dist/` is mounted at `/`. There is no legacy frontend mount.
+
+The Host exposes `/api/v1` and `/api/today`. `core/api/perga-v1.ts` declares
+Perga DTO schemas. `npm run gen:api` currently prints a notice: it does not
+regenerate contracts. Maintain the published OpenAPI snapshot against Host
+routes and run the contract tests when changing it.
+
+Browser state uses the `perga` IndexedDB database and `perga:*` keys. No legacy
+browser data is imported. Report source/plugin/wave links use `perga://` and
+input forms use `<!-- perga:input-form ... -->`.
 
 ## Install in Chrome
 
-Open `/next/` in Chrome using HTTPS, or HTTP on `localhost` / `127.0.0.1`.
-Use Chrome's address-bar install icon or **Cast, save, and share → Install page
-as app** (the menu label varies by Chrome version), then confirm the installation.
-Launch **Neige Calm** from the system application launcher to open it in its own
-window. Existing links under `/next/` remain within the app's scope. Installation
-is available on the sign-in page; the app uses the same session as the website in
-that Chrome profile.
+Open `/` with HTTPS or HTTP on localhost, then use Chrome's install action.
+Launch **Perga** from the system launcher. The manifest identity, start URL and
+scope are `/`; installations from a former mount have a different identity.
+The app requires a running server and network: there is no service worker or
+offline cache. Chrome manages installed name/icon refresh independently.
 
-Plain HTTP on a LAN IP is not a secure context: use HTTPS for installation from
-another machine. If Chrome does not offer installation, check the address,
-whether the app is already installed, and DevTools → Application → Manifest.
-The app still needs a running server and network connection. This installation
-support adds no service worker or offline cache; reload to receive a deployed
-frontend update. Chrome manages updates to installed names and icons separately.
-
-The app icons use a white snowflake on a blue-purple circle with a rounded white background and transparent corners.
-They are composed from `web/src/ui/brand/neige-mark.svg`, which remains the in-app
-mark. To regenerate the SVG favicon and PNG installation icons:
+App icons retain the existing mark geometry, with Perga names and accessibility
+text. Regenerate the favicon and PNGs with:
 
 ```sh
-npx playwright install --with-deps chromium
 node tools/pwa/generate-icons.mjs
+npx playwright test --config tools/pwa/playwright.config.ts
 ```
 
-Run `npx playwright test --config tools/pwa/playwright.config.ts` for a production
-build check covering Chrome manifest diagnostics, deep links, installation and
-standalone launch. It uses a temporary browser profile and home directory.
-Playwright pages receive a routed signed-out API response; Chrome's background
-install fetch is not routed, so the preview server proxies `/api` to a closed
-local port (`127.0.0.1:9`). No kernel, agent runtime or backend is required or
-reached. CI runs it in the `fe-browser` job; the same tests also run against the
-dev server as part of `npm run e2e`, where the background fetch goes to the
-configured `FE_API_PROXY_TARGET`.
+The PWA test builds and serves shipped assets with a closed-port API proxy and
+an isolated Chrome profile. It verifies the manifest, root deep links,
+installation and standalone launch without reaching a backend.
 
-`@astryxdesign/core` is pinned exactly. Astryx shipped 12 releases in 5.5 weeks, 67% with breaking changes and no codemod, so upgrades must be reviewed as dedicated work.
-
-The module-state lint rule defaults both `new` and top-level calls to rejection. Its pure-factory exceptions are source-and-export-specific. To add one, document why its returned object graph is immutable, register that exact import/API in `tools/architecture/no-module-runtime-state.mjs`, and add a passing regression fixture plus a mutation that makes only that fixture fail. TypeScript `as const` is not runtime immutability; freeze static arrays as `Object.freeze([... ] as const)`.
+`@astryxdesign/core` is pinned exactly; review upgrades separately. Module-level
+static arrays must be frozen at runtime. Add pure-factory lint exceptions only
+with focused positive and negative fixtures; keep architecture gates intact.

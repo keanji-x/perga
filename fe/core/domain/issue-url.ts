@@ -3,7 +3,7 @@
 // no `http://`, no leading zeros; query, fragment and trailing slash are stripped.
 
 export type ParsedIssueUrl = Readonly<{
-  /** `owner/name`, e.g. `"keanji-x/neige-calm"`. */
+  /** `owner/name`, e.g. `"keanji-x/perga"`. */
   repo: string;
   /** Positive integer from the `/issues/<n>` segment. */
   issue_number: number;

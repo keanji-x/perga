@@ -97,7 +97,7 @@ export function AreaEditorForm(props: AreaEditorFormProps) {
             emptyLabel={targetId !== 'local' ? resolvedTargetLabel : undefined}
             modeSuffix={targetId !== 'local' ? resolvedTargetLabel : undefined}
             controlLabel="Default folder"
-            clearLabel="Use a new Neige workspace"
+            clearLabel="Use a new Perga workspace"
             isDisabled={submitting || locked}
             onBrowse={() => setBrowsing(true)}
             onClear={() => {

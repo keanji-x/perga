@@ -19,7 +19,7 @@ describe('creating an Area after navigation changes', () => {
     const createHeld = new Promise<void>((resolve) => { releaseCreate = resolve; });
     try {
       await expect.poll(() => host.location.href.includes('native-history-fixture.html') && host.document.readyState === 'complete').toBe(true);
-      host.history.replaceState({}, '', '/next/track/w1');
+      host.history.replaceState({}, '', '/track/w1');
       const history = createBrowserHistory({ window: host });
       const receipts = createReadReceiptsKernel();
       const reply = receipts.reply;

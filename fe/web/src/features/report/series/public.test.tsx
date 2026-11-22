@@ -9,7 +9,7 @@ import { ReportSeriesBlock } from './public.tsx';
 afterEach(cleanup);
 
 const DAY = 86_400_000;
-const SOURCE = 'neige://plugin/dev-neige-market/market.series';
+const SOURCE = 'perga://plugin/dev-neige-market/market.series';
 
 function payload(overrides: Partial<ChartSeriesPayload> = {}): ChartSeriesPayload {
   return { source: SOURCE, series: ['US:NVDA', 'HK:9988'], range: '1Y', ...overrides };

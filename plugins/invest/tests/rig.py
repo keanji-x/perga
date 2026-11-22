@@ -20,7 +20,7 @@ ROOT = Path(__file__).parents[1]
 NOW = datetime(2026, 9, 30, 15, tzinfo=timezone.utc)  # 11:00 New York, regular session
 PLANNER = {'role': 'planner', 'card_id': 'planner-card', 'session_id': 'planner-session'}
 WORKER = {'role': 'worker', 'card_id': 'worker-card', 'session_id': 'worker-session'}
-SOURCES = ['neige://source/research-1', 'neige://source/market-1']
+SOURCES = ['perga://source/research-1', 'perga://source/market-1']
 
 
 @contextmanager

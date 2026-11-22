@@ -1,13 +1,13 @@
-import mark from './neige-mark.svg?raw';
+import mark from './perga-mark.svg?raw';
 
 export type Point = readonly [number, number];
 
 /** Read the released mark rather than maintaining a second drawing of its three folds. */
 export function snowFold(index: number): readonly Point[] {
   const path = /<path d="([^"]+)"/.exec(mark);
-  if (path === null) throw new Error('Neige mark has no canonical path');
+  if (path === null) throw new Error('Perga mark has no canonical path');
   const coordinates = path[1].match(/-?\d+(?:\.\d+)?/g)?.map(Number);
-  if (coordinates === undefined || coordinates.length !== 6) throw new Error('Neige mark must have three vertices');
+  if (coordinates === undefined || coordinates.length !== 6) throw new Error('Perga mark must have three vertices');
   const angle = index * 120 * Math.PI / 180;
   return Array.from({ length: 3 }, (_, vertex): Point => {
     const x = coordinates[vertex * 2] - 192;

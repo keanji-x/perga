@@ -557,9 +557,9 @@ export function deriveReportTasks(
   return rows;
 }
 
-/* `neige://wave/<id>[#<block id>]` links, resolved here so the renderer never holds a URL. */
+/* `perga://wave/<id>[#<block id>]` links, resolved here so the renderer never holds a URL. */
 
-const TRACK_REPORT_LINK_PREFIX = 'neige://wave/';
+const TRACK_REPORT_LINK_PREFIX = 'perga://wave/';
 const TRACK_REPORT_LINK_TARGET = /^([^/?#]+)(?:#([^#]+))?$/;
 
 export function trackReportLinkUrl(trackId: string): string {

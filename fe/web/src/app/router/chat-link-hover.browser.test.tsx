@@ -7,7 +7,7 @@ import type { ApiRequest, ApiTransportPort } from '../../../../core/api/types.ts
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { trackReportLinkUrl } from '../../../../core/domain/report.ts';
 import { createEvidencePreviewTransport } from '../shell/link-preview-data.ts';
-import { createAppRouter, APP_BASEPATH } from './public.tsx';
+import { createAppRouter } from './public.tsx';
 import { bootTestCardRuntime } from './test-card-runtime.ts';
 import { ThemeProvider } from '../theme/public.tsx';
 import { cleanup, render } from '@testing-library/react';
@@ -29,7 +29,7 @@ async function setup({ streaming = false, historySuffix = '', narrow = false, fi
   const card = fixtureSession('chat-card', track.id, { title: 'Link chat', isLead: true });
   const other = fixtureSession('chat-b', track.id, { title: 'Other chat' });
   const live = { text: 'Streaming reply starts.' };
-  const text = '[**Chat source**](neige://source/src_0971fbde#q1) · [Chat report](' + trackReportLinkUrl('reference-demo') + ') · [Chat file](./notes.md) · [Chat website](https://example.com) · [Today](/next/) · [Legacy Today](/next/today) · [Outside](/etc/passwd) · [Escape](../../secret.txt) · [Email](mailto:reader@example.com) · [Phone](tel:+123) · [Section](#part)';
+  const text = '[**Chat source**](perga://source/src_0971fbde#q1) · [Chat report](' + trackReportLinkUrl('reference-demo') + ') · [Chat file](./notes.md) · [Chat website](https://example.com) · [Today](/) · [Outside](/etc/passwd) · [Escape](../../secret.txt) · [Email](mailto:reader@example.com) · [Phone](tel:+123) · [Section](#part)';
   const transport: ApiTransportPort = { async send(request) {
     requests.push(request);
     if (request.path.includes('/sources/') || request.path === '/api/v1/tracks/reference-demo') return evidence.send(request);
@@ -58,7 +58,7 @@ async function setup({ streaming = false, historySuffix = '', narrow = false, fi
     const Component = route.options.component;
     if (Component !== undefined) route.update({ component: () => <><Component /><Probe /></> });
   }
-  router.update({ history: createMemoryHistory({ initialEntries: [`${APP_BASEPATH}/track/link-preview?panel=conversations`] }) });
+  router.update({ history: createMemoryHistory({ initialEntries: [`/track/link-preview?panel=conversations`] }) });
   const root = document.createElement('div'); root.id = 'root'; document.body.append(root);
   render(<Profiler id="source-isolation" onRender={() => {
     if (observing && document.getElementById('conversation-chat-card') === null
@@ -92,7 +92,7 @@ it('shows missing captured sources without ghost requests and previews real Trac
 it.each(['history', 'incremental'])('rejects malformed navigation hrefs without losing the %s reply', async mode => {
   // These pass through the real Astryx parser and sanitizer in Reply. The first
   // throws in URL parsing; the second would normalize into an application path.
-  const malformed = '\n\n[Invalid authority](/\\[) · [Reinterpreted path](/next\\today)\n\nReply survives.';
+  const malformed = '\n\n[Invalid authority](/\\[) · [Reinterpreted path](/track\\today)\n\nReply survives.';
   const { append, requests, router } = await setup({ streaming: mode === 'incremental',
     historySuffix: mode === 'history' ? malformed : '' });
   if (mode === 'incremental') {
@@ -107,7 +107,7 @@ it.each(['history', 'incremental'])('rejects malformed navigation hrefs without 
   }
   expect(document.querySelector('[data-nc-thread]')?.textContent).toContain('Chat source');
   expect(page.getByText('Something went wrong!', { exact: true }).query()).toBeNull();
-  expect(router.history.location.pathname).toBe(`${APP_BASEPATH}/track/link-preview`);
+  expect(router.history.location.pathname).toBe(`/track/link-preview`);
   expect(requests.filter(request => request.path.includes('/files'))).toHaveLength(0);
   await page.getByRole('button', { name: 'Chat file', exact: true }).hover();
   await expect.element(page.getByRole('heading', { name: 'Chat file contents', exact: true })).toBeVisible();
@@ -142,7 +142,7 @@ it('renders incremental links and keeps external loading explicit', async () => 
   await expect.poll(() => document.querySelector('iframe[src="https://example.com/"]')).not.toBeNull();
 });
 
-it.each([['Today', '/'], ['Legacy Today', '/today']])('preserves application navigation without admitting rejected workspace paths: %s', async (label, path) => {
+it.each([['Today', '/']])('preserves application navigation without admitting rejected workspace paths: %s', async (label, path) => {
   const { router } = await setup();
   const drawer = page.getByRole('complementary', { name: 'Link chat', exact: true });
   await expect.element(drawer.getByRole('button', { name: 'Today', exact: true })).toBeVisible();
@@ -154,10 +154,9 @@ it.each([['Today', '/'], ['Legacy Today', '/today']])('preserves application nav
   expect(page.getByRole('link', { name: 'Email', exact: true }).element().getAttribute('href')).toBe('mailto:reader@example.com');
   expect(page.getByRole('link', { name: 'Phone', exact: true }).element().getAttribute('href')).toBe('tel:+123');
   expect(page.getByRole('link', { name: 'Section', exact: true }).element().getAttribute('href')).toBe('#part');
-  // /next/today retains the existing router's treatment, even though main moved Today to /next/.
   await drawer.getByRole('button', { name: label, exact: true }).click();
   await expect.poll(() => router.state.location.pathname).toBe(path);
-  expect(router.history.location.pathname).toBe(`${APP_BASEPATH}${path}`);
+  expect(router.history.location.pathname).toBe(`${path}`);
 });
 
 it('clears source selection synchronously across same-Track A to B to A', async () => {

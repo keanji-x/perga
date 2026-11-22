@@ -93,7 +93,7 @@ const TASK_LABEL = 'What this track should do';
 const TASK_PLACEHOLDER = 'What should this track do?';
 
 /** The way back to the managed default, which exists nowhere else. */
-const FOLDER_CLEAR_LABEL = 'Use a Neige workspace instead';
+const FOLDER_CLEAR_LABEL = 'Use a Perga workspace instead';
 
 export type NewTrackFormState = Readonly<{
   message: string;

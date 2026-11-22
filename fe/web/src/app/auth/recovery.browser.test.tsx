@@ -24,7 +24,7 @@ import { WEB_COMPAT_VERSION } from '../providers/public.tsx';
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 it.each(['before', 'after'] as const)('cold saved Track and hot reconnect retain the production page with Query online listener %s lifecycle', async (listenerOrder) => {
   vi.stubGlobal('__NC_BUNDLED__', true); await page.viewport(390, 844);
-  window.history.replaceState({}, '', '/next/track/w1');
+  window.history.replaceState({}, '', '/track/w1');
   const fixture = createTrackTaskFixture(); const access = new RecoveryAccess();
   const transport = createRecoveryTransports(fixture.transport, access).business;
   const unauthorized = createRecoveryUnauthorizedChannel(access, { enqueue: task => queueMicrotask(task) });

@@ -16,7 +16,7 @@ import type { SessionItemDto } from '../../../../core/api/perga-v1.ts';
 import { HARNESS_ITEMS_PAGE_LIMIT as PAGE_LIMIT } from '../../../../core/domain/conversation.ts';
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { queryKeys } from '../providers/query-keys.ts';
-import { createAppRouter, APP_BASEPATH } from './public.tsx';
+import { createAppRouter } from './public.tsx';
 import { bootTestCardRuntime } from './test-card-runtime.ts';
 import { ThemeProvider } from '../theme/public.tsx';
 
@@ -93,7 +93,7 @@ function mount(count: number) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const router = createAppRouter({ prepareReport: prepareReportDocument, transport, client, cards: bootTestCardRuntime(),
     unauthorized: createUnauthorizedChannel({ enqueue: (task) => task() }), onSignOut: () => {} });
-  router.update({ history: createMemoryHistory({ initialEntries: [`${APP_BASEPATH}/track/${track.id}?panel=conversations`] }) });
+  router.update({ history: createMemoryHistory({ initialEntries: [`/track/${track.id}?panel=conversations`] }) });
   const root = document.createElement('div'); root.id = 'root'; document.body.append(root);
   render(<Profiler id="host" onRender={record}><QueryClientProvider client={client}><ThemeProvider>
     <RouterProvider router={router} />

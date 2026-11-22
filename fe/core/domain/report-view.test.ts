@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { resolveLiveSlot, type NativeLiveSlot } from './report-view.js';
 
-const slot: NativeLiveSlot = { kind: 'live', id: 'detail', source: 'neige://plugin/operations/capacity.detail', expects: 'table' };
+const slot: NativeLiveSlot = { kind: 'live', id: 'detail', source: 'perga://plugin/operations/capacity.detail', expects: 'table' };
 const table = (rows: Record<string, string>[]) => ({ snapshot: { id: 'unit', observedAt: null, producedAt: null },
   cell: { kind: 'table', id: 'detail', title: '', table: { columns: Object.keys(rows[0]).map(key => ({ key, label: key })), rows } } });
 

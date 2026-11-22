@@ -30,5 +30,5 @@ export const duplicationManifest = Object.freeze(/** @type {DuplicationEntry[]} 
   { id: 'INV-DUP-007', type: 'unique-symbol', canonicalPath: 'web/src/app/theme/host-rgb.ts', symbols: ['readHostThemeRgb'] },
   { id: 'INV-DUP-008', type: 'unique-symbol', canonicalPath: 'web/src/ui/editable-title/public.tsx', symbols: ['EditableTitle'], mergeObligations: ['Area 版有 #288 的合成 click 抑制器；合并时必须把抑制器带进统一实现，而不是删掉。'] },
   { id: 'INV-DUP-009', type: 'unique-symbol', canonicalPath: 'web/src/features/track/row/public.tsx', symbols: ['TrackRow'] },
-  { id: 'INV-DUP-010', type: 'unique-symbol', canonicalPath: 'web/src/ui/confirm-dialog/copy.ts', symbols: ['DELETE_TRACK_COPY'] },
+  { id: 'INV-DUP-010', type: 'unique-symbol', canonicalPath: 'web/src/features/track/delete-copy.ts', symbols: ['DELETE_TRACK_COPY'] },
 ]).map(freezeEntry));

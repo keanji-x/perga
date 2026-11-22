@@ -3,14 +3,14 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { commands } from 'vitest/browser';
 
 import '../../styles/entry.css';
-import { NeigeMotion } from './motion.tsx';
+import { BrandMotion } from './motion.tsx';
 
 declare module 'vitest/browser' { interface BrowserCommands { emulateReducedMotion(reduce: boolean): Promise<void> } }
 
 afterEach(cleanup);
 
 function mount(kind: 'thinking' | 'execution' | 'creation') {
-  const { container } = render(<div style={{ width: 64, height: 64 }}><NeigeMotion kind={kind} /></div>);
+  const { container } = render(<div style={{ width: 64, height: 64 }}><BrandMotion kind={kind} /></div>);
   const svg = container.querySelector('svg')!;
   svg.pauseAnimations();
   return svg;
@@ -28,7 +28,7 @@ function coordinates(polyline: SVGPolylineElement): readonly (readonly [number, 
   });
 }
 
-describe('Neige vector motion in the browser', () => {
+describe('Perga vector motion in the browser', () => {
   it('rotates a closed triangle into the snow crystal without bending or stretching its folds', () => {
     const svg = mount('creation');
     svg.setCurrentTime(0);
@@ -131,7 +131,7 @@ it('turns each creation fold clockwise throughout the cycle', () => {
 
 it('shares one native cycle across all tracks and removes the SVG on unmount', () => {
   for (const kind of ['thinking', 'execution', 'creation'] as const) {
-    const { container, unmount } = render(<NeigeMotion kind={kind} />);
+    const { container, unmount } = render(<BrandMotion kind={kind} />);
     const svg = container.querySelector('svg')!;
     const tracks = [...svg.querySelectorAll('animate, animateTransform')];
     expect(tracks.length).toBeGreaterThan(0);

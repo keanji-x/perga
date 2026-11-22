@@ -11,7 +11,7 @@ function basenameOf(path: string): string {
 
 export function folderLabelParts({
   value,
-  emptyLabel = 'Neige workspace',
+  emptyLabel = 'Perga workspace',
   controlLabel = 'Folder',
   modeSuffix,
   showLabel = false,
@@ -54,7 +54,7 @@ export function FolderClearButton({
 }
 
 export function FolderPill({
-  value, emptyLabel = 'Neige workspace', controlLabel = 'Folder', modeSuffix, clearLabel, showLabel = false,
+  value, emptyLabel = 'Perga workspace', controlLabel = 'Folder', modeSuffix, clearLabel, showLabel = false,
   buttonId, onBrowse, onClear, isDisabled = false,
 }: Readonly<{
   value: string;

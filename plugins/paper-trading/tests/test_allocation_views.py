@@ -182,7 +182,7 @@ def test_decision_records_show_targets_states_and_actual_fills(allocation_rig):
     assert second['badges'][0] == {'label': '执行状态', 'value': '已成交', 'tone': 'positive'}
     sections = {s['label']: s['body'] for s in second['sections']}
     assert sections['理由'] == 'Captured research and market evidence support this allocation.'
-    assert sections['来源'] == 'neige://source/research-1\nneige://source/market-1'
+    assert sections['来源'] == 'perga://source/research-1\nperga://source/market-1'
     [fill] = second['disclosures']
     assert '60 股' in fill['body'] and '$100' in fill['body'] and 'buy-fill' in fill['body']
     empty = cells(state | {'decisions': [], 'fills': []})
@@ -200,7 +200,7 @@ def test_history_and_records_stay_bounded(allocation_rig):
     r.app.clock = lambda: clock
     # The largest accepted plan: a 6000-character rationale in 3-byte UTF-8 and 20 maximal sources.
     rationale = '理' * 6000
-    refs = [f'neige://source/{index:02}-' + 'r' * 494 for index in range(20)]
+    refs = [f'perga://source/{index:02}-' + 'r' * 494 for index in range(20)]
     for index in range(55):
         r.plan(decision_id=f'noop-{index:02}', target_spy_bps=0, rationale=rationale, source_refs=refs,
                valid_until=(clock + timedelta(hours=1)).isoformat())
@@ -260,10 +260,10 @@ def test_spy_recipe_contract_matches_body_and_published_units(allocation_rig):
     for view in views:
         jsonschema.Draft202012Validator(SCHEMA).validate(view)
     slots = [c for view in views for row in view['rows'] for c in row['cells']]
-    assert all(c['kind'] == 'live' and c['source'].startswith(f'neige://plugin/{PLUGIN}/') for c in slots)
+    assert all(c['kind'] == 'live' and c['source'].startswith(f'perga://plugin/{PLUGIN}/') for c in slots)
     expects = {c['source'].rsplit('/', 1)[1]: c['expects'] for c in slots}
     # Every plugin source in the body is one of these slots: no live table names a retired kind.
-    assert re.findall(rf'"source":"neige://plugin/{PLUGIN}/([^"]+)"', body) == list(expects)
+    assert re.findall(rf'"source":"perga://plugin/{PLUGIN}/([^"]+)"', body) == list(expects)
     published = units(projected(allocation_rig))
     assert len(expects) == len(slots) and set(expects) == set(published)
     for kind, unit in published.items():
@@ -272,7 +272,7 @@ def test_spy_recipe_contract_matches_body_and_published_units(allocation_rig):
     assert "Persist the decision's sourced reasoning" in text
     # The 总览 keeps one link to its research Track and asks it by mail; it never researches itself.
     assert re.findall(r'^- Pre-market decision, on a mail wake:', text, flags=re.M)
-    assert '`- [SPY 研究](neige://wave/<track_id>)`' in text and 'idempotency_key "spy-research"' in text
+    assert '`- [SPY 研究](perga://wave/<track_id>)`' in text and 'idempotency_key "spy-research"' in text
     assert 'neige_mail_send' in text and 'Never research yourself.' in text
     # The decision reads the research reply's sender and date, and cites it as the 总览's own source.
     assert 'neige --json mail cat <mail_id>' in text and 'its track_id is the research Track' in text
@@ -288,9 +288,9 @@ def test_spy_research_recipe_is_a_report_without_live_views_or_trading():
     headings = re.findall(r'^# (.+)$', body, flags=re.M)
     assert headings == [s['h1'] for s in contract['sections']]
     assert headings == ['结论', '核心逻辑', '关键数据', '风险与证伪', '催化剂与跟踪', '来源与边界']
-    assert recipe.views(text) == [] and 'neige://plugin/' not in text
+    assert recipe.views(text) == [] and 'perga://plugin/' not in text
     # It links back to the 总览, answers by reply mail and never trades.
-    assert '`[SPY 总览](neige://wave/<总览 track_id>)`' in text
+    assert '`[SPY 总览](perga://wave/<总览 track_id>)`' in text
     assert 'neige --json mail cat <mail_id>' in text and 'whose track_id is the 总览 Track' in text
     assert text.count('neige_mail_send (mail_id = the request)') == 2
     assert 'summary starting with the request\'s "SPY 盘前研究 YYYY-MM-DD"' in text

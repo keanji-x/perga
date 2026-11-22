@@ -10,7 +10,7 @@ afterEach(cleanup);
 function setup() {
   const close = vi.fn();
   const files = {
-    readFile: (path: string) => Promise.resolve({ path, text: '[Evidence](neige://source/src_0971fbde)', size: 48, truncated: false }),
+    readFile: (path: string) => Promise.resolve({ path, text: '[Evidence](perga://source/src_0971fbde)', size: 48, truncated: false }),
     rawUrl: (path: string) => `/raw/${path}`,
   };
   render(<ReportFileViewer path="notes.md" files={files} fileRoot="/repo" wide onClose={close}

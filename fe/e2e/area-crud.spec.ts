@@ -20,7 +20,7 @@ test('creates, edits, and deletes an area through the shared dialog', async ({ p
   const errors = captureBrowserErrors(page);
   const name = `FE e2e CRUD ${Date.now()}`;
   const renamed = `${name} edited`;
-  await page.goto('/next/');
+  await page.goto('/');
   const rail = page.locator('nav[aria-label="Workspace"]');
   await rail.getByRole('button', { name: 'New area' }).click();
   const create = page.getByRole('dialog', { name: 'New area' });

@@ -56,7 +56,7 @@ def allocation_rig(tmp_path):
         def plan(self, **changes):
             args = {'decision_id': 'allocation-1', 'target_spy_bps': 6000,
                     'rationale': 'Captured research and market evidence support this allocation.',
-                    'source_refs': ['neige://source/research-1', 'neige://source/market-1'],
+                    'source_refs': ['perga://source/research-1', 'perga://source/market-1'],
                     'valid_until': (NOW + timedelta(hours=1)).isoformat(), **changes}
             return self.app.call('owner', 'spy.plan', args, PLANNER)
 
@@ -142,7 +142,7 @@ def test_spy_role_fence(allocation_rig, name, caller, args, match):
     else:
         args = {'decision_id': 'worker-target', 'target_spy_bps': 6000,
                 'rationale': 'A Worker must never choose the allocation target.',
-                'source_refs': ['neige://source/research-1'],
+                'source_refs': ['perga://source/research-1'],
                 'valid_until': (NOW + timedelta(hours=1)).isoformat()}
     before = r.status()
     with pytest.raises(ValueError, match=match):
@@ -325,7 +325,7 @@ def test_spy_production_stdio_entrypoint_and_overlays(allocation_rig):
         assert names == {'spy.plan', 'spy.execute', 'spy.status', 'spy.refresh'}
         args = {'decision_id': 'stdio-target', 'target_spy_bps': 6000,
                 'rationale': 'Research and live market data support the target allocation.',
-                'source_refs': ['neige://source/frozen-research'],
+                'source_refs': ['perga://source/frozen-research'],
                 'valid_until': (now + timedelta(hours=1)).isoformat()}
         assert host.tool('spy.plan', args, track='owner', caller=WORKER)['isError']
         assert host.tool('spy.status', {}, track='owner')['isError']

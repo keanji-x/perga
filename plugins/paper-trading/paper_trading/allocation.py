@@ -80,8 +80,8 @@ class Allocation:
             raise ValueError('rationale must contain 10-6000 characters')
         refs = args['source_refs']
         if not isinstance(refs, list) or not 1 <= len(refs) <= 20 or any(
-                not isinstance(r, str) or not r.startswith('neige://source/') or len(r) > 512 for r in refs):
-            raise ValueError('1-20 captured Neige source references required')
+                not isinstance(r, str) or not r.startswith('perga://source/') or len(r) > 512 for r in refs):
+            raise ValueError('1-20 captured Perga source references required')
         now = self.clock()
         if not now < timestamp(args['valid_until']) <= now + timedelta(hours=24):
             raise ValueError('decision expires within the next 24 hours')

@@ -29,14 +29,14 @@ function view(cells: unknown[], layout: string): NativeViewPayload {
   return nativeViewPayloadSchema.parse({ version: 1, title: '容量', description: '', snapshot: null,
     rows: [{ id: 'row', title: '概览', layout, cells }] });
 }
-const slot = (id: string, kind: string, expects: string) => ({ kind: 'live', id, source: `neige://plugin/operations/${kind}`, expects });
+const slot = (id: string, kind: string, expects: string) => ({ kind: 'live', id, source: `perga://plugin/operations/${kind}`, expects });
 
 it('degrades only the failing slot', () => {
   const payload = view([slot('ok', 'ok', 'metrics'), slot('pending', 'pending', 'time-series'), slot('malformed', 'malformed', 'table')], 'three');
   const { container } = render(<NativeReportView payload={payload} resolveOverlay={lookup({ ok: unit(metrics), malformed: { cell: 'not a unit' } })} />);
   expect(screen.getByText('已用空间').parentElement?.textContent).toContain('120 GB');
-  expect(screen.getByText('Waiting for neige://plugin/operations/pending — nothing has been pushed here yet.')).toBeTruthy();
-  expect(screen.getByRole('status').textContent).toBe('neige://plugin/operations/malformed cannot be displayed: it is not a data unit this build can read.');
+  expect(screen.getByText('Waiting for perga://plugin/operations/pending — nothing has been pushed here yet.')).toBeTruthy();
+  expect(screen.getByRole('status').textContent).toBe('perga://plugin/operations/malformed cannot be displayed: it is not a data unit this build can read.');
   const cells = container.querySelector('section > div')!.children;
   expect(cells).toHaveLength(3);
 });

@@ -1,1 +1,1 @@
-export const key = 'calm:cursor';
+export const key = 'perga:cursor';

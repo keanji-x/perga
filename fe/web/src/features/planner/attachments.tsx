@@ -29,7 +29,7 @@ export type UploadAttachment = (readBytes: () => Promise<Uint8Array>, contentTyp
 export type AttachmentSupport = Readonly<{ available: boolean; reason?: string }>;
 
 export const ATTACHED_WORKSPACE_REASON =
-  'This track works in a folder you own, and neige never writes into one. Images can be attached on tracks with a managed workspace.';
+  'This track works in a folder you own, and Perga never writes into one. Images can be attached on tracks with a managed workspace.';
 
 /** One card's uploads: how many are in flight, and the last refusal to show beside its strip. */
 export type UploadState = Readonly<{ inFlight: number; refusal: string | null }>;

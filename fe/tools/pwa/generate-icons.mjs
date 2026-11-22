@@ -3,11 +3,11 @@ import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 
 // Compose the app icon from the canonical mark without changing in-app branding.
-const mark = await readFile(new URL('../../web/src/ui/brand/neige-mark.svg', import.meta.url), 'utf8');
+const mark = await readFile(new URL('../../web/src/ui/brand/perga-mark.svg', import.meta.url), 'utf8');
 const snowflake = mark
   .replace('<svg ', '<svg x="116" y="116" width="280" height="280" ')
   .replace('stroke="#3C528D"', 'stroke="#ffffff"');
-const icon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Neige Calm">
+const icon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Perga">
   <defs>
     <linearGradient id="app-background" x1="0" y1="0" x2="1" y2="1">
       <stop stop-color="#3c528d" />
@@ -21,13 +21,13 @@ const icon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role
 `;
 const output = new URL('../../web/public/icons/', import.meta.url);
 await mkdir(output, { recursive: true });
-await writeFile(new URL('../../web/src/ui/brand/neige-app.svg', import.meta.url), icon);
+await writeFile(new URL('../../web/src/ui/brand/perga-app.svg', import.meta.url), icon);
 const browser = await chromium.launch();
 try {
   for (const size of [192, 512]) {
     const page = await browser.newPage({ viewport: { width: size, height: size }, deviceScaleFactor: 1 });
     await page.setContent(`<style>body { margin: 0; } body > svg { width: 100vw; height: 100vh; }</style>${icon}`);
-    await page.screenshot({ path: fileURLToPath(new URL(`neige-${size}.png`, output)), omitBackground: true });
+    await page.screenshot({ path: fileURLToPath(new URL(`perga-${size}.png`, output)), omitBackground: true });
     await page.close();
   }
 } finally {

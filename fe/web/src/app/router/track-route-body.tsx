@@ -58,7 +58,7 @@ BoardHostItem
 import {
 createCardHost,partitionTrackCards
 } from '../../systems/cards/public.js';
-import { DELETE_CARD_COPY } from '../../ui/confirm-dialog/copy.ts';
+import { DELETE_CARD_COPY } from '../../features/track/delete-copy.ts';
 import { DeleteConfirmDialog,useDeleteConfirm } from '../../ui/operation-feedback/public.tsx';
 import { useState } from '../../ui/state/public.ts';
 import { useCompactViewport } from '../../ui/viewport/public.ts';

@@ -2,7 +2,7 @@
 import { act, cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { THEME_KEY } from '../../../../core/keys/storage.ts';
-import { ThemeProvider, useTheme, type ThemeMode } from './public.tsx';
+import { ThemeProvider, useTheme } from './public.tsx';
 
 function memoryStorage() { const values = new Map<string, string>(); return { values, getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, value); } }; }
 
@@ -78,17 +78,4 @@ describe('ThemeProvider behavior', () => {
     expect(() => render(<Probe />)).toThrow(/ThemeProvider.*app\/providers\/public\.tsx/u);
   });
 
-  it('CAP-APP-076 only owns and conditionally removes its test driver', () => {
-    history.replaceState(null, '', '/?testMounts=1');
-    const { unmount } = render(<ThemeProvider><Probe /></ThemeProvider>);
-    const driver = window.__calmSetTheme;
-    expect(driver).toBeTypeOf('function');
-    const successor = vi.fn<(mode: ThemeMode) => void>(); window.__calmSetTheme = successor;
-    unmount();
-    expect(window.__calmSetTheme).toBe(successor);
-    delete window.__calmSetTheme;
-    history.replaceState(null, '', '/');
-    render(<ThemeProvider><Probe /></ThemeProvider>);
-    expect(window.__calmSetTheme).toBeUndefined();
-  });
 });

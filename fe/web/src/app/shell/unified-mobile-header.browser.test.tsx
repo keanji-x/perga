@@ -24,7 +24,7 @@ const AREA = { id: 'c1', name: 'Product', color: '#5B8DEF', sortOrder: 1, folder
 const ok = (body: unknown): ApiTransportResponse => ({ status: 200, statusText: 'OK', body });
 function setup(path: string, areaName = AREA.name, onRequest: (request: ApiRequest) => void = () => undefined, title = 'Responsive mobile UI', options: Readonly<{ trackAreaId?: string; failTracks?: boolean; failAreas?: boolean; longLists?: boolean; longReport?: boolean; viewportRoot?: boolean }> = {}) {
   const track = fixtureTrack('w1', { areaId: options.trackAreaId ?? 'c1', title, leadSessionId: 'planner', workspaceDriver: 'vcs-workspace', workspaceSpec: { logicalRoot: '/tmp', worktreePath: '/tmp/.worktrees/w1' } });
-  const report = fixtureReport(options.longReport ? '# Findings\n\n' + Array.from({ length: 60 }, (_, index) => `Paragraph ${index + 1}: report content remains below the fixed workspace header.`).join('\n\n') : '## Findings\n\n[Source detail](neige://source/src_2c9e0a1b)');
+  const report = fixtureReport(options.longReport ? '# Findings\n\n' + Array.from({ length: 60 }, (_, index) => `Paragraph ${index + 1}: report content remains below the fixed workspace header.`).join('\n\n') : '## Findings\n\n[Source detail](perga://source/src_2c9e0a1b)');
   const planner = fixtureSession('planner', 'w1', { title: 'Design review', isLead: true });
   const transport: ApiTransportPort = { send(request) {
     return Promise.resolve(reply(request));

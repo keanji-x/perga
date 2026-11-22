@@ -18,7 +18,7 @@ it('separates history from workspace navigation and hands a selection to the exi
   await page.getByRole('button', { name: 'Open conversation history', exact: true }).click();
   const history = page.getByRole('dialog', { name: '历史对话', exact: true });
   await expect.element(history).toBeVisible();
-  await expect.element(page.getByRole('searchbox', { name: '搜索对话内容（暂未开放）', exact: true })).toBeDisabled();
+  expect(page.getByRole('searchbox').query()).toBeNull();
   await expect.element(page.getByRole('button', { name: '发起新对话', exact: true })).toBeEnabled();
   await page.getByRole('button', { name: '2026-10-04 Daily Planner conversation', exact: true }).click();
   await expect.poll(() => history.query()).toBeNull();

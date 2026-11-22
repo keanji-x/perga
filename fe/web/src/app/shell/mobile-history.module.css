@@ -12,7 +12,6 @@
   .drawer > div > div:last-child { display: flex; min-block-size: 0; overflow: hidden; padding: 0 !important; }
   .layout { display: flex; flex-direction: column; flex: 1; min-block-size: 0; padding: var(--space-4) var(--space-5); background: var(--surface-rail); gap: var(--space-4); }
   .functionButton, .footerButton { font-size: var(--font-step-3-size) !important; line-height: var(--font-step-3-line) !important; font-weight: var(--weight-medium) !important; inline-size: 100%; justify-content: flex-start !important; text-align: start; min-block-size: var(--rail-w-collapsed); padding-inline: 0 !important; block-size: var(--rail-w-collapsed) !important; gap: var(--space-3) !important; }
-  .searchIcon > span, .searchIcon svg { inline-size: var(--glyph-xl) !important; block-size: var(--glyph-xl) !important; }
   .functionButton svg, .functionButton span:has(> svg), .footerButton svg, .footerButton span:has(> svg) { inline-size: var(--glyph-xl) !important; block-size: var(--glyph-xl) !important; }
   .footerButton { block-size: var(--control-h-touch) !important; }
   .footerButton span:has(> .avatar) { inline-size: var(--space-6) !important; block-size: var(--space-6) !important; }
@@ -23,9 +22,6 @@
   .view:focus-visible { outline: var(--space-px) solid var(--accent); outline-offset: var(--space-1); }
   .count { font-size: var(--font-step-2-size); font-weight: var(--weight-normal); color: var(--text-3); }
   .functions { display: grid; gap: var(--space-4); }
-  .searchWrap { position: relative; }
-  .searchIcon { display: grid; place-items: center; position: absolute; inset-inline-start: var(--space-3); inset-block-start: 10px; inline-size: var(--glyph-xl); block-size: var(--glyph-xl); color: var(--text-3); pointer-events: none; }
-  .search { font-size: var(--font-step-2-size); border: 0; box-shadow: none; inline-size: 100%; min-block-size: var(--rail-w-collapsed); padding-inline: calc(var(--space-3) + var(--space-5) + var(--space-2)) var(--space-3); border-radius: var(--radius-md); background: var(--surface-chip); color: var(--text-3); }
   .list { flex: 1; min-block-size: 0; overflow: auto; overscroll-behavior: contain; }
   .scope { font-size: var(--font-step-2-size); line-height: var(--font-step-2-line); color: var(--text-2); }
   .group { font-size: var(--font-step-2-size); font-weight: var(--weight-medium); line-height: var(--font-step-2-line); margin-block: var(--space-4) var(--space-2); color: var(--text-3); }

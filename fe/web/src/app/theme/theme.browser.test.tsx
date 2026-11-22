@@ -1,4 +1,4 @@
-import { render } from '@testing-library/react';
+import { cleanup, render } from '@testing-library/react';
 import { page } from 'vitest/browser';
 import { afterEach, describe, expect, it } from 'vitest';
 import { THEME_KEY } from '../../../../core/keys/storage.ts';
@@ -6,6 +6,7 @@ import { ThemeProvider, useTheme } from './public.tsx';
 import { DARK_THEME_RGB, LIGHT_THEME_RGB, readHostThemeRgb } from './host-rgb.ts';
 import '../../styles/tokens.css';
 
+function Controls() { const { setMode } = useTheme(); return <button type="button" onClick={() => setMode('dark')}>Dark</button>; }
 function Probe() { const { resolved } = useTheme(); return <output data-testid="resolved">{resolved}</output>; }
 function memoryStorage() { const values = new Map<string, string>(); return { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, value); } }; }
 function pixelLuminance(cssColor: string): number {
@@ -15,7 +16,7 @@ function pixelLuminance(cssColor: string): number {
   const [red, green, blue] = context.getImageData(0, 0, 1, 1).data;
   return 0.2126 * red + 0.7152 * green + 0.0722 * blue;
 }
-afterEach(() => { delete document.documentElement.dataset.theme; history.replaceState(null, '', '/'); });
+afterEach(() => { cleanup(); delete document.documentElement.dataset.theme; history.replaceState(null, '', '/'); });
 
 describe('browser theme contracts', () => {
   it('E2E-CAP-THEME-011 resolves light and dark through the real document channel', async () => {
@@ -50,12 +51,14 @@ describe('browser theme contracts', () => {
     expect(document.documentElement.dataset.theme).toBe('light');
   });
 
-  it('CAP-APP-076 exposes the driver only for the structured testMounts query parameter', () => {
-    history.replaceState(null, '', '/?testMounts=1');
-    const enabled = render(<ThemeProvider storage={memoryStorage()}><Probe /></ThemeProvider>);
-    expect(window.__calmSetTheme).toBeTypeOf('function'); enabled.unmount();
-    expect(window.__calmSetTheme).toBeUndefined(); history.replaceState(null, '', '/?testMounts=0');
-    render(<ThemeProvider storage={memoryStorage()}><Probe /></ThemeProvider>);
-    expect(window.__calmSetTheme).toBeUndefined();
+  it('persists theme selected through the public context controls', async () => {
+    const storage = memoryStorage();
+    const view = render(<ThemeProvider storage={storage}><Controls /></ThemeProvider>);
+    await page.getByRole('button', { name: 'Dark' }).click();
+    expect(document.documentElement.dataset.theme).toBe('dark');
+    expect(storage.getItem(THEME_KEY)).toBe('dark');
+    view.unmount();
+    render(<ThemeProvider storage={storage}><Probe /></ThemeProvider>);
+    await expect.element(page.getByTestId('resolved')).toHaveTextContent('dark');
   });
 });

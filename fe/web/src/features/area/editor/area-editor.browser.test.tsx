@@ -27,7 +27,7 @@ it('renders the creation folder and both actions as one compact borderless row',
     </Dialog>,
   );
   expect(screen.queryByRole('button', { name: /template|isolation/i })).toBeNull();
-  const folder = screen.getByRole('button', { name: 'Default folder: Neige workspace' });
+  const folder = screen.getByRole('button', { name: 'Default folder: Perga workspace' });
   for (const pill of [folder]) {
     const style = getComputedStyle(pill);
     expect(style.borderStyle).toBe('none');
@@ -68,7 +68,7 @@ it('wraps safely at phone width while keeping Cancel and Save together', async (
   const dialog = screen.getByRole('dialog', { name: 'Edit area' });
   const cancelBox = screen.getByRole('button', { name: 'Cancel' }).getBoundingClientRect();
   const saveBox = screen.getByRole('button', { name: 'Save changes' }).getBoundingClientRect();
-  const clear = screen.getByRole('button', { name: 'Use a new Neige workspace' });
+  const clear = screen.getByRole('button', { name: 'Use a new Perga workspace' });
   expect(dialog.scrollWidth).toBeLessThanOrEqual(dialog.clientWidth + 1);
   expect(Math.abs((cancelBox.top + cancelBox.height / 2) - (saveBox.top + saveBox.height / 2)))
     .toBeLessThan(1);

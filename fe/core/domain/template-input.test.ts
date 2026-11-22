@@ -10,7 +10,7 @@ function contract() {
   }] }] };
   const schema = { type: 'object', properties: { ticket: { type: 'string' }, project: { type: 'string' },
     number: { type: 'integer' }, action: { type: 'string', enum: ['hold', 'publish'] } }, required: ['ticket', 'project', 'number', 'action'] };
-  const body = `<!-- neige:input-form ${JSON.stringify(form)} -->`;
+  const body = `<!-- perga:input-form ${JSON.stringify(form)} -->`;
   return { form, schema, body };
 }
 
@@ -40,10 +40,10 @@ it('rejects required plugin fields with no declared source', () => {
 
 it('rejects malformed, duplicate and conflicting declarations', () => {
   const { body, form, schema } = contract();
-  expect(readTemplateInputForm('<!-- neige:input-form {invalid} -->')).toBeNull();
+  expect(readTemplateInputForm('<!-- perga:input-form {invalid} -->')).toBeNull();
   expect(readTemplateInputForm(body + body)).toBeNull();
   form.groups.push(form.groups[0]);
-  expect(readTemplateInputForm(`<!-- neige:input-form ${JSON.stringify(form)} -->`)).toBeNull();
+  expect(readTemplateInputForm(`<!-- perga:input-form ${JSON.stringify(form)} -->`)).toBeNull();
   expect(compileTemplateInputs(body, { ...schema, properties: { ...schema.properties, number: { type: 'string' } } }, {}).status).toBe('unsupported');
 });
 
@@ -66,7 +66,7 @@ it.each([
   { issue_url: 'project', repo: 'project' },
 ])('rejects conflicting outputs including the implicit canonical URL writer: %j', (outputs) => {
   const { form, schema } = contract();
-  const body = `<!-- neige:input-form ${JSON.stringify({ ...form, groups: [{ ...form.groups[0], fields: [{
+  const body = `<!-- perga:input-form ${JSON.stringify({ ...form, groups: [{ ...form.groups[0], fields: [{
     ...form.groups[0].fields[0], format: { kind: 'github-issue-url', outputs: { ...outputs, issue_number: 'number' } },
   }] }, form.groups[1]] })} -->`;
   const collisionSchema = { ...schema, required: schema.required.filter((key) => key !== 'project') };
@@ -75,7 +75,7 @@ it.each([
 
 it('accepts an explicit canonical URL identity mapping', () => {
   const { form, schema } = contract();
-  const body = `<!-- neige:input-form ${JSON.stringify({ ...form, groups: [{ ...form.groups[0], fields: [{
+  const body = `<!-- perga:input-form ${JSON.stringify({ ...form, groups: [{ ...form.groups[0], fields: [{
     ...form.groups[0].fields[0], format: { kind: 'github-issue-url', outputs: { issue_url: 'ticket', repo: 'project', issue_number: 'number' } },
   }] }, form.groups[1]] })} -->`;
   const result = compileTemplateInputs(body, schema, { ticket: 'https://github.com/owner/repo/issues/12' });
@@ -91,7 +91,7 @@ it('omits blank optional formatted inputs and their derived outputs', () => {
   if (!('required' in field)) throw new Error('Expected a text field');
   field.required = false;
   const optionalSchema = { ...schema, required: ['action'] };
-  const body = `<!-- neige:input-form ${JSON.stringify(form)} -->`;
+  const body = `<!-- perga:input-form ${JSON.stringify(form)} -->`;
   for (const ticket of ['', '   ']) {
     const result = compileTemplateInputs(body, optionalSchema, { ticket });
     expect(result.status).toBe('ready');
@@ -110,7 +110,7 @@ it('validates formatted declarations and required derived fields even when optio
   const field = form.groups[0].fields[0];
   if (!('required' in field)) throw new Error('Expected a text field');
   field.required = false;
-  const body = `<!-- neige:input-form ${JSON.stringify(form)} -->`;
+  const body = `<!-- perga:input-form ${JSON.stringify(form)} -->`;
   const result = compileTemplateInputs(body, schema, {});
   expect(result.status).toBe('incomplete');
   if (result.form === null) throw new Error('Required contract was refused');
@@ -122,7 +122,7 @@ it('validates formatted declarations and required derived fields even when optio
 it('does not skip required inputs or malformed declarations', () => {
   const schema = { type: 'object', properties: { ticket: { type: 'string' } }, required: ['ticket'] };
   expect(compileTemplateInputs('# No form', schema, {}).status).toBe('unsupported');
-  for (const body of ['<!-- neige:input-form {invalid} -->', '<!-- neige:input-form']) {
+  for (const body of ['<!-- perga:input-form {invalid} -->', '<!-- perga:input-form']) {
     expect(compileTemplateInputs(body, { ...schema, required: [] }, {}).status).toBe('unsupported');
   }
 });

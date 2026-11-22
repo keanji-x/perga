@@ -7,7 +7,7 @@ test('remembers each Track conversation and Area disclosure across navigation an
   try {
     const first = await createTrack(request, area.id, 'Remember chat A');
     const second = await createTrack(request, area.id, 'Remember chat B');
-    await page.goto(`/next/track/${first.id}`);
+    await page.goto(`/track/${first.id}`);
     await page.getByRole('button', { name: 'Conversation Lead' }).click();
     await expect(page.getByRole('button', { name: 'Close conversation' })).toBeVisible();
     await page.getByRole('button', { name: /^Track Remember chat B/ }).click();

@@ -73,10 +73,10 @@ def text(value, field, limit):
 
 
 def captured(refs):
-    """Source references: 1-20 captured `neige://source/` URIs."""
+    """Source references: 1-20 captured `perga://source/` URIs."""
     if not isinstance(refs, list) or not 1 <= len(refs) <= 20 or any(
-            not isinstance(r, str) or not r.startswith('neige://source/') or len(r) > 512 for r in refs):
-        raise ValueError('1-20 captured neige://source/ references required')
+            not isinstance(r, str) or not r.startswith('perga://source/') or len(r) > 512 for r in refs):
+        raise ValueError('1-20 captured perga://source/ references required')
     return refs
 
 

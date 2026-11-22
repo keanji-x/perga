@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { ApiFailure } from '../api/types.js';
 
-/* Backlinks: the kernel resolves `neige://wave/<id>#<block>` links in other tracks' reports. */
+/* Backlinks: the kernel resolves `perga://wave/<id>#<block>` links in other tracks' reports. */
 
 export const backlinkQuoteSchema = z.object({
   before: z.string(),

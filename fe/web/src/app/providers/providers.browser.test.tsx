@@ -8,7 +8,7 @@ const incompatible = { webCompatVersion: 9, minWebCompatVersion: WEB_COMPAT_VERS
 const reload = vi.fn();
 const values = new Map<string, string>();
 const storage = { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, value); }, removeItem: (key: string) => { values.delete(key); } };
-const runtime: ProviderRuntime = { fetchVersion: () => Promise.resolve(incompatible), reload, deleteDatabase: vi.fn(), idbDatabaseName: 'neige-calm', storage };
+const runtime: ProviderRuntime = { fetchVersion: () => Promise.resolve(incompatible), reload, deleteDatabase: vi.fn(), idbDatabaseName: 'perga', storage };
 afterEach(() => { cleanup(); reload.mockClear(); values.clear(); });
 
 describe('browser provider contracts', () => {

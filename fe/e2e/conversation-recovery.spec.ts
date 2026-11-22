@@ -18,7 +18,7 @@ test('retains a rejected conversation message and retries it once', async ({ pag
       accepted = response.ok();
       await route.fulfill({ response });
     });
-    await page.goto(`/next/track/${track.id}`);
+    await page.goto(`/track/${track.id}`);
     await page.getByRole('button', { name: 'Conversation Lead' }).click();
     const composer = page.getByRole('combobox', { name: 'Message' });
     await expect(composer).toHaveAttribute('contenteditable', 'true');

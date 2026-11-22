@@ -161,19 +161,36 @@ describe('architecture/no-direct-persistence', () => {
   }
 });
 
-describe('architecture/no-calm-key-outside-core-keys', () => {
-  for (const [fixture, messageId] of [['calm-key/string-literal.ts', 'key'], ['calm-key/template-head.ts', 'key']] as const) {
+describe('architecture/no-perga-key-outside-core-keys', () => {
+  for (const [fixture, messageId] of [['perga-key/string-literal.ts', 'key'], ['perga-key/template-head.ts', 'key']] as const) {
     it(`rejects ${fixture}`, async () => {
-      const messages = await lintFixture('no-calm-key-outside-core-keys', fixture);
+      const messages = await lintFixture('no-perga-key-outside-core-keys', fixture);
       expect(messages).toHaveLength(1);
       expect(messages.at(0)?.messageId).toBe(messageId);
     });
   }
-  for (const fixture of ['core/keys/calm-key.ts', 'core/keys.ts', 'calm-key/injected-key.ts', 'calm-key/known-concatenation-escape.ts'] as const) {
+  for (const fixture of ['core/keys/perga-key.ts', 'core/keys.ts', 'perga-key/injected-key.ts', 'perga-key/report-uris.ts', 'perga-key/known-concatenation-escape.ts'] as const) {
     it(`accepts ${fixture}`, async () => {
-      expect(await lintFixture('no-calm-key-outside-core-keys', fixture)).toHaveLength(0);
+      expect(await lintFixture('no-perga-key-outside-core-keys', fixture)).toHaveLength(0);
     });
   }
+  for (const [fixture, value] of [['perga-key/message-literal.ts', 'perga:theme'], ['perga-key/message-template.ts', 'perga:intent']] as const) {
+    it(`allows only the exact non-storage protocol in its owner: ${fixture}`, async () => {
+      expect(await lintFixture('no-perga-key-outside-core-keys', fixture,
+        { nonStorageLiterals: [{ file: fixture, values: [value] }] })).toHaveLength(0);
+      expect(await lintFixture('no-perga-key-outside-core-keys', fixture,
+        { nonStorageLiterals: [{ file: 'other/file.ts', values: [value] }] })).toHaveLength(1);
+      expect(await lintFixture('no-perga-key-outside-core-keys', fixture,
+        { nonStorageLiterals: [{ file: fixture, values: ['perga:other'] }] })).toHaveLength(1);
+    });
+  }
+
+  it('rejects a dynamic template even when its head is an allowlisted message', async () => {
+    const fixture = 'perga-key/message-template-dynamic.ts';
+    expect(await lintFixture('no-perga-key-outside-core-keys', fixture,
+      { nonStorageLiterals: [{ file: fixture, values: ['perga:intent'] }] })).toHaveLength(1);
+  });
+
 });
 
 describe('architecture/no-class-dom-query', () => {

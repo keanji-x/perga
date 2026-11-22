@@ -21,7 +21,7 @@ describe('parseReportFileLink', () => {
     for (const destination of [
       '', '.', '..',
       'https://example.com/x', '//example.com/x',
-      '#section', '?download=1', 'neige://wave/w1', 'javascript:alert(1)',
+      '#section', '?download=1', 'perga://wave/w1', 'javascript:alert(1)',
     ]) {
       expect(parseReportFileLink(destination), destination).toBeNull();
     }

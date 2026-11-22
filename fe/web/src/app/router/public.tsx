@@ -37,7 +37,7 @@ import { NewTrackRoute } from './new-track-route.tsx';
 import type { CardRuntime } from './card-runtime.ts';
 import { TrackRouteBody } from './track-route-body.tsx';
 import { TrackRoute } from './track-route.tsx';
-export const APP_BASEPATH = '/next';
+export const APP_BASEPATH = '/';
 
 export type AppRouterDeps = Readonly<{
   basepath?: string;
@@ -140,6 +140,9 @@ export function createAppRouter(deps: AppRouterDeps) {
     defaultPreload: false,
     // Report arrivals reveal only after their current complete content commits.
     defaultHashScrollIntoView: false,
+    // App scroll ports and report arrivals own scrolling, including POP to the
+    // initial history entry (which has no navigation-time hash-scroll options).
+    scrollRestoration: () => false,
   });
   router.update({ context: { draftBack: createDraftBackOwner(router) } });
   return router;

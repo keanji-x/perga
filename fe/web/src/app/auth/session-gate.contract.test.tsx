@@ -26,7 +26,7 @@ const noopCursorStore = { clear: () => undefined };
 describe('session gate contracts', () => {
   it('cold bundled deep link paints its saved page structure before whoami or version can respond', () => {
     vi.stubGlobal('__NC_BUNDLED__', true);
-    window.history.replaceState({}, '', '/next/track/previous-track');
+    window.history.replaceState({}, '', '/track/previous-track');
     const paths: string[] = [];
     const transport: ApiTransportPort = { send: (request) => {
       paths.push(request.path); return new Promise(() => {});
@@ -47,7 +47,7 @@ describe('session gate contracts', () => {
   });
   it('bundled assembly without recovery admission never mounts business routes after successful identity and version', async () => {
     vi.stubGlobal('__NC_BUNDLED__', true);
-    window.history.replaceState({}, '', '/next/track/previous-track');
+    window.history.replaceState({}, '', '/track/previous-track');
     const paths: string[] = [];
     const transport: ApiTransportPort = { send: request => { paths.push(request.path); return Promise.resolve({ status: 200, statusText: 'OK', body: identity }); } };
     const client = new QueryClient(); const unauthorized = createUnauthorizedChannel({ enqueue: task => task() });

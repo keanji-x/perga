@@ -59,7 +59,14 @@ export default tseslint.config(
     rules: {
       'architecture/no-module-runtime-state': 'error',
       'architecture/no-direct-persistence': 'error',
-      'architecture/no-calm-key-outside-core-keys': 'error',
+      // These exact literals are existing message/tool protocols, not persisted keys.
+      'architecture/no-perga-key-outside-core-keys': ['error', { nonStorageLiterals: [
+        { file: 'core/domain/conversation-display.test.ts', values: ['perga:user_ask', 'perga:perga_user_ask', 'perga:perga_task_ls'] },
+        { file: 'core/domain/conversation-quiet-sync.test.ts', values: ['perga:', 'perga:perga_'] },
+        { file: 'core/domain/conversation-tool.test.ts', values: ['perga:', 'perga:perga_'] },
+        { file: 'web/src/features/report/widget/seamless-html.tsx', values: ['perga:theme', 'perga:data', 'perga:ready', 'perga:resize', 'perga:intent'] },
+        { file: 'web/src/features/report/widget/public.test.tsx', values: ['perga:resize', 'perga:intent'] },
+      ] }],
       'architecture/no-class-dom-query': ['error', {
         allowlist: [
           {
