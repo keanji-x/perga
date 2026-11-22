@@ -42,7 +42,6 @@ export type AppRouterDeps = Readonly<{
   transport: ApiTransportPort;
   unauthorized: UnauthorizedChannel;
   client: QueryClient;
-  onSignOut?: (() => void) | undefined;
 
   cards: CardRuntime;
   prepareReport: ReportPreparationPort;
@@ -54,12 +53,12 @@ export type AppRouterDeps = Readonly<{
 function renderNothing(): null { return null; }
 
 export function createRouteTree(deps: AppRouterDeps): AnyRoute {
-  const { transport, unauthorized, client, onSignOut, cards, prepareReport } = deps;
+  const { transport, unauthorized, client, cards, prepareReport } = deps;
   const recentFiles = deps.recentFiles ?? createRecentFileHistory();
   const preferences = deps.uiPreferences ?? createUiPreferences();
   const rootRoute = createRootRouteWithContext<DraftBackContext>()({ component: () => (
     <UiPreferencesProvider preferences={preferences}><ReadReceiptsProvider transport={transport} unauthorized={unauthorized}>
-      <TrackViewProvider><DraftBackLifecycle><MobileConversationProvider><ShellRoute submittedStorage={deps.submittedStorage} transport={transport} unauthorized={unauthorized} onSignOut={onSignOut} /></MobileConversationProvider></DraftBackLifecycle></TrackViewProvider>
+      <TrackViewProvider><DraftBackLifecycle><MobileConversationProvider><ShellRoute submittedStorage={deps.submittedStorage} transport={transport} unauthorized={unauthorized} /></MobileConversationProvider></DraftBackLifecycle></TrackViewProvider>
     </ReadReceiptsProvider></UiPreferencesProvider>
   ) });
 
@@ -146,7 +145,7 @@ export function createAppRouter(deps: AppRouterDeps) {
   return router;
 }
 
-function ShellRoute({ transport, unauthorized, onSignOut, submittedStorage, }: { submittedStorage?: () => Storage; transport: ApiTransportPort; unauthorized: UnauthorizedChannel; onSignOut?: (() => void) | undefined }) {
+function ShellRoute({ transport, unauthorized, submittedStorage }: { submittedStorage?: () => Storage; transport: ApiTransportPort; unauthorized: UnauthorizedChannel }) {
   const go = useGo();
   const currentUser = useCurrentUser();
   const signOut = useSignOut();
@@ -158,7 +157,7 @@ function ShellRoute({ transport, unauthorized, onSignOut, submittedStorage, }: {
         onOpenSettings={() => go({ name: 'settings' })}
         onOpenPlugins={undefined}
         userLabel={currentUser?.displayName}
-        onSignOut={currentUser === null ? undefined : signOut ? () => signOut(currentUser.sessionId) : onSignOut}
+        onSignOut={currentUser !== null && signOut !== null ? () => signOut(currentUser.sessionId) : undefined}
       />
     </NewTrackDraftProvider></ConversationProvider>
   );

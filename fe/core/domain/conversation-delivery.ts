@@ -58,6 +58,10 @@ export function sendFailureMessage(error: unknown): string {
 /** Automatic retries of one keyed send after its first attempt; an attempt that cannot go out counts too. */
 export const SEND_RETRIES = 5;
 
+export function sendRetryDelay(attempt: number, random: number): number {
+  return Math.round(Math.min(30_000, 500 * 2 ** Math.min(attempt, 6)) * (0.75 + Math.max(0, Math.min(1, random)) * 0.5));
+}
+
 /**
  * A keyed send that gave up. `cause` is the last attempt's error. `delivery` stays `unknown` once
  * any attempt's outcome was: no later answer short of a 200 says whether that attempt was stored.

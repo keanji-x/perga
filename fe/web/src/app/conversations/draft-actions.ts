@@ -1,10 +1,8 @@
 import type { ManagedProviderAvailability } from '../../../../core/domain/agent-providers.ts';
 import { managedProviderProblem } from '../../../../core/domain/agent-providers.ts';
 import { onlineManager } from '@tanstack/react-query';
-import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import { CONVERSATION_CREATE_TEXT, conversationCreateFailure, CONVERSATION_TEXT_MAX, FOLLOW_INSTALLATION_DEFAULT, type CreatedConversation, type SubmittedConversationInput } from '../../../../core/domain/conversation.ts';
 import { ApiError, NotSentError } from '../../../../core/domain/failure-class.ts';
-import { admitTransport } from '../providers/recovery-mutation.ts';
 import { mintIdempotencyKey } from '../providers/idempotency-key.ts';
 import type { ConversationDraft, ConversationDraftId, ConversationRegistry } from './public.tsx';
 import type { ConversationCreationSource } from './contracts.ts';
@@ -18,7 +16,6 @@ export type ConversationDraftActionInput = Readonly<{
   creating: boolean;
   source: ConversationCreationSource;
   sourceScopeId: string;
-  transport: ApiTransportPort;
   supportsSideConversation: boolean;
   supportsDraftModel: boolean;
   supportsInitialInput: boolean;
@@ -34,7 +31,7 @@ export type ConversationDraftActionInput = Readonly<{
 
 /** A command assembly for this render's draft. Construction has no side effects;
  * dispatched attempts retain their original scope/key and settle through Registry. */
-export function createConversationDraftActions({ registry, draft, creating, source, sourceScopeId, transport,
+export function createConversationDraftActions({ registry, draft, creating, source, sourceScopeId,
   supportsSideConversation, supportsDraftModel, supportsInitialInput, supportsAssistantProviders, defaultProvider, managedProviders, recheckManagedProviders, openDraft, closeView, onGone, onAdopt,
 }: ConversationDraftActionInput) {
   /* Every draft write goes through one of these three, each a whole-object update,
@@ -129,20 +126,8 @@ export function createConversationDraftActions({ registry, draft, creating, sour
     return true;
   };
 
-  const admitDraft = (attempt: ConversationDraft, text: string): (() => boolean) | null => {
-    try {
-      const admitted = admitTransport(transport);
-      const checkpoint = admitted.recovery?.checkpoint();
-      return () => { try { checkpoint?.(); return true; } catch { return false; } };
-    } catch {
-      // Initial submit has handed these words to the held draft, even when no POST can leave.
-      amendDraft(attempt, { text, error: notSentText(attempt.submitted), remedy: 'retry' });
-      return null;
-    }
-  };
-
   /** Retry frozen submissions under their original key; only an explicit new conversation rekeys. */
-  const createDraft = (from: ConversationDraft, text: string, current: () => boolean, recheck: ConversationDraft['remedy'], answers = managedProviders) => {
+  const createDraft = (from: ConversationDraft, text: string, recheck: ConversationDraft['remedy'], answers = managedProviders) => {
     const { create } = source;
     /* The draft this send is for, fixed here: a send that outlives its draft changes nothing. */
     let attempt = from;
@@ -150,17 +135,16 @@ export function createConversationDraftActions({ registry, draft, creating, sour
     void (async () => {
       try {
         // Refresh display metadata, but a frozen dispatched request keeps its original
-        // admission: neither probe failure nor new capabilities can prevent reconciliation/replay.
+        // request body: neither probe failure nor new capabilities can prevent reconciliation/replay.
         if (attempt.submitted !== null) void recheckManagedProviders().catch(() => undefined);
         if (recheck === 'new-conversation') attempt = rekeyDraft(attempt, mintIdempotencyKey());
-        if (!current()) { amendDraft(attempt, { error: notSentText(attempt.submitted), remedy: 'retry' }); return; }
         if (refuseOfflineDraft(attempt, text, answers)) return;
         previouslySubmitted = attempt.submitted;
         const submitted = attempt.submitted ?? Object.freeze({ text, atMs: Date.now() });
         markDraftSent(attempt, submitted);
         attempt = { ...attempt, text, submitted };
         await create(submitted.text, attempt.key, attempt.provider, attempt.model, attempt.side, (result) => {
-          if (current()) adopt(attempt, result);
+          adopt(attempt, result);
         }, attempt.permissionMode);
       } catch (error: unknown) {
         if (error instanceof NotSentError) {
@@ -169,7 +153,7 @@ export function createConversationDraftActions({ registry, draft, creating, sour
           registry.editDraft(attempt, (current) => ({ ...current, submitted: previouslySubmitted }));
           amendDraft(attempt, { error: notSentText(previouslySubmitted), remedy: 'retry' });
         } else {
-          attempt = handleCreateFailure(error, attempt, current);
+          attempt = handleCreateFailure(error, attempt);
         }
       } finally {
         amendDraft(attempt, { creating: false });
@@ -198,21 +182,15 @@ export function createConversationDraftActions({ registry, draft, creating, sour
       return false;
     }
     if (refuseOfflineDraft(draft, text, answers)) return false;
-    const current = admitDraft(draft, text); if (current === null) return false;
     amendDraft(draft, { text, creating: true, error: null, remedy: null });
-    createDraft(draft, text, current, null, answers);
+    createDraft(draft, text, null, answers);
     return true;
   };
 
   function handleCreateFailure(
     error: unknown,
     attempt: ConversationDraft,
-    current: () => boolean,
   ): ConversationDraft {
-    if (!current()) {
-      amendDraft(attempt, { error: CONVERSATION_CREATE_TEXT.unknown, remedy: 'retry' });
-      return attempt;
-    }
     const failure = conversationCreateFailure(error instanceof ApiError ? error.failure : null);
     const message = failure.message;
     switch (failure.kind) {
@@ -243,10 +221,9 @@ export function createConversationDraftActions({ registry, draft, creating, sour
     if (creating || draft === null || draft.text === null) return false;
     const text = draft.text;
     if (refuseOfflineDraft(draft, text)) return false;
-    const current = admitDraft(draft, text); if (current === null) return false;
     amendDraft(draft, { creating: true, error: null, remedy: null });
     /* An explicit new-conversation choice starts a fresh idempotent submission. */
-    createDraft(draft, text, current, 'new-conversation');
+    createDraft(draft, text, 'new-conversation');
     return true;
   };
 
@@ -257,11 +234,9 @@ export function createConversationDraftActions({ registry, draft, creating, sour
     if (draft.submitted !== null) return sendDraft(draft.submitted.text);
     const text = draft.text;
     if (!onlineManager.isOnline()) return false;
-    const current = admitDraft(draft, text); if (current === null) return false;
     amendDraft(draft, { creating: true });
     void recheckManagedProviders().then(answers => {
       amendDraft(draft, { creating: false });
-      if (!current()) return;
       sendDraft(text, answers);
     }).catch(() => {
       amendDraft(draft, { creating: false, error: 'Managed provider capabilities are unavailable. Reconnect before sending.', remedy: 'retry' });

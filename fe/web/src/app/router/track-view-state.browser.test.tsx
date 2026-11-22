@@ -44,7 +44,7 @@ function setup(prepareReport: ReportPreparationPort = prepareReportDocument, ini
   const runtime = bootTestCardRuntime();
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const router = createAppRouter({ prepareReport, transport, client, cards: runtime,
-    unauthorized: createUnauthorizedChannel({ enqueue: (task) => task() }), onSignOut: () => undefined });
+    unauthorized: createUnauthorizedChannel({ enqueue: (task) => task() }) });
   router.update({ history: createMemoryHistory({ initialEntries: [initial] }) });
   const container = document.createElement('div');
   container.id = 'root';

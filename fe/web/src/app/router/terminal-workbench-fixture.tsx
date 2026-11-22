@@ -90,7 +90,7 @@ export function setupWorkbench({ cards: initial = [] as CardWire[], defer = fals
   const booted = bootTestCardRuntime();
   const runtime = { ...booted, host: { ...booted.host } };
   const router = createAppRouter({ prepareReport: prepareReportDocument, transport, client, cards: runtime,
-    unauthorized: createUnauthorizedChannel({ enqueue: task => task() }), onSignOut: () => undefined });
+    unauthorized: createUnauthorizedChannel({ enqueue: task => task() }) });
   router.update({ history: createMemoryHistory({ initialEntries: [`${daily ? '/' : '/track/workbench'}${initialCard === null ? '' : `?card=${encodeURIComponent(initialCard)}`}`] }) });
   const container = document.createElement('div'); container.id = 'root'; document.body.append(container);
   const view = render(<QueryClientProvider client={client}><ThemeProvider><RouterProvider router={router} /></ThemeProvider></QueryClientProvider>, { container });

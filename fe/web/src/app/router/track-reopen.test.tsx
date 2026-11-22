@@ -6,7 +6,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider, createMemoryHistory } from '@tanstack/react-router';
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, expect, it } from 'vitest';
 
 import type { ApiRequest, ApiTransportPort, ApiTransportResponse } from '../../../../core/api/types.ts';
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
@@ -55,7 +55,7 @@ function renderTrack(closedAt: number | null, { failRefetch = false } = {}): Har
   };
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const router = createAppRouter({ prepareReport: prepareReportDocument,
-    transport, unauthorized, client, cards: bootTestCardRuntime(), onSignOut: vi.fn(),
+    transport, unauthorized, client, cards: bootTestCardRuntime(),
   });
   router.update({ history: createMemoryHistory({ initialEntries: ['/track/w1'] }) });
 

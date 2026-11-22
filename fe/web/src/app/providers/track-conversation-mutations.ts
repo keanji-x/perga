@@ -2,7 +2,7 @@ import { queryKeys } from './query-keys.ts';
 import { useQueryClient } from '@tanstack/react-query';
 import { type TrackAggregateSnapshotDto } from '../../../../core/api/perga-v1.ts';
 import { type AgentProvider } from '../../../../core/api/schemas.ts';
-import { useRecoveryMutation } from './recovery-mutation.ts';
+import { useOnlineMutation } from './online-mutation.ts';
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import type { CreatedConversation,SideConversation } from '../../../../core/domain/conversation.ts';
@@ -22,8 +22,8 @@ export function useTrackConversationMutations(
   transport: ApiTransportPort, trackId: string, unauthorized: UnauthorizedChannel,
 ): ConversationMutations {
   const client = useQueryClient();
-  const create = useRecoveryMutation(transport, {
-    mutationFn: async ({ text, idempotencyKey, provider, selection, side, permissionMode }: { text: string; idempotencyKey: string; provider: AgentProvider; selection: ModelSelection; side?: SideConversation; answered: (result: CreatedConversation) => void; permissionMode?: string | null }, transport: ApiTransportPort) => {
+  const create = useOnlineMutation({
+    mutationFn: async ({ text, idempotencyKey, provider, selection, side, permissionMode }: { text: string; idempotencyKey: string; provider: AgentProvider; selection: ModelSelection; side?: SideConversation; answered: (result: CreatedConversation) => void; permissionMode?: string | null }) => {
       return runOperation(
         transport,
         createTrackConversationOperation(trackId, text, idempotencyKey, provider, selection, side, permissionMode),
@@ -33,7 +33,7 @@ export function useTrackConversationMutations(
     onSuccess: (result, { answered }) => {
       // Fence an older aggregate read before publishing the create receipt.
       // Query cancellation reverts synchronously, before its Promise settles. Keep
-      // this recovery-admitted publish in the same turn, without an await boundary.
+      // this cache update in the same turn, without an await boundary.
       void client.cancelQueries({ queryKey: queryKeys.trackDetail(trackId), exact: true });
       client.setQueryData<TrackAggregateSnapshotDto>(queryKeys.trackDetail(trackId), current => {
         if (current === undefined || current.track.id !== trackId) return current;
@@ -44,8 +44,8 @@ export function useTrackConversationMutations(
       void client.invalidateQueries({ queryKey: queryKeys.trackDetail(trackId), exact: true });
     },
   });
-  const archive = useRecoveryMutation(transport, {
-    mutationFn: ({ cardId, archived }: { cardId: string; archived: boolean }, transport: ApiTransportPort) =>
+  const archive = useOnlineMutation({
+    mutationFn: ({ cardId, archived }: { cardId: string; archived: boolean }) =>
       runOperation(transport, setConversationArchiveOperation(trackId, cardId, archived), unauthorized),
     onSettled: async () => {
       await client.cancelQueries({ queryKey: queryKeys.trackDetail(trackId), exact: true });

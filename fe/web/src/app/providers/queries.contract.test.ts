@@ -17,11 +17,9 @@ import type { ApiRequest,ApiTransportPort,ApiTransportResponse } from '../../../
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { toArea } from '../../../../core/domain/area.ts';
 import { ApiError,NotSentError } from '../../../../core/domain/failure-class.ts';
-import { RecoveryAccess } from '../../../../core/domain/recovery/access.ts';
 import { readTrackReport, TRACK_REPORT_CARD_KIND } from '../../../../core/domain/report.ts';
 import { type TaskVerdict } from '../../../../core/domain/report-verdicts.ts';
 import { NEUTRAL_ACTIVITY } from '../../../../core/domain/track.ts';
-import { createRecoveryTransports } from '../../systems/recovery/transport.ts';
 import { areaListQueryOptions, useWorkspace } from './workspace-queries.ts';
 import { modelCatalogQueryOptions } from './model-queries.ts';
 import { queryKeys } from './query-keys.ts';
@@ -35,7 +33,6 @@ import { useTrackConversationMutations } from './track-conversation-mutations.ts
 import { useTrackMutations } from './track-mutations.ts';
 import { agentProvidersQueryOptions } from './agent-providers.ts';
 import { managedProvidersQueryOptions } from './managed-providers.ts';
-import { coordinateRecoveryQueries } from './recovery-queries.ts';
 
 function recordingTransport(reply: (request: ApiRequest) => ApiTransportResponse) {
   const paths: string[] = [];
@@ -61,7 +58,7 @@ const baseTrackWire = { workspaceDriver: 'direct', workspaceSpec: {},
 
 afterEach(() => { cleanup(); onlineManager.setOnline(true); });
 
-describe('writes never queue an offline submission, in either build', () => {
+describe('writes never queue an offline submission', () => {
   function useWrites(transport: ApiTransportPort) {
     return {
       area: useAreaMutations(transport, unauthorized),
@@ -75,7 +72,7 @@ describe('writes never queue an offline submission, in either build', () => {
     ['track create', ({ track }) => track.create({ area_id: 'c1', planner_provider: 'codex', theme: { fg: [0, 0, 0], bg: [255, 255, 255] } }, 'offline-track')],
     ['terminal create', ({ track }) => track.createTerminal('w1', { theme: { fg: [0, 0, 0], bg: [255, 255, 255] } }, 'offline-terminal')],
     ['conversation create', ({ conversation }) => conversation.create('Offline message', 'offline-key', 'codex', { model: null, reasoning_effort: null }, undefined, () => undefined)],
-    /* The writes that never had a guard of their own: in the web build they used to pause offline and fire on reconnect (#2131). */
+    /* The writes that never had a guard of their own: they previously would pause offline and fire on reconnect (#2131). */
     ['track rename', ({ track }) => track.patch('w1', 'c1', { title: 'Offline rename' })],
     ['track pin', ({ track }) => track.setPinned('w1', 'c1', true, 1)],
     ['track close', ({ track }) => track.patch('w1', 'c1', { closed: true })],
@@ -450,7 +447,7 @@ describe('delete mutation wiring', () => {
       wrapper: mutationWrapper(client),
     });
 
-    await expect(result.current.send('accepted by the server', [], 'send-key', transport))
+    await expect(result.current.send('accepted by the server', [], 'send-key'))
       .resolves.toMatchObject({ card_id: 'card-1' });
     await waitFor(() => expect(invalidate).toHaveBeenCalledTimes(2));
     /* The answer is noted before any refresh read starts, and a read still out from before it is cancelled first. */
@@ -670,53 +667,7 @@ describe('task-verdict poll interval', () => {
 
 
 describe('input metadata mutation reconciliation', () => {
-  it.each(['offline', 'expired', '401', 'local denial'] as const)(
-    'keeps input metadata stale until recovery admits reads after %s, preserving the send failure', async outcome => {
-      const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
-      const access = new RecoveryAccess(); access.change('connected');
-      const paths: string[] = [];
-      const channel = createUnauthorizedChannel({ enqueue: task => task() });
-      const unsubscribe = channel.subscribe(() => access.invalidate('login'));
-      const transport = createRecoveryTransports({ send: request => {
-        paths.push(request.path);
-        if (request.method === 'GET') return Promise.resolve(ok({ track: { id: 'w1', areaId: 'c1', createdAtMs: 1, updatedAtMs: 2 }, report: {}, sessions: [], tasks: [], openAsks: [] }));
-        if (outcome === '401') return Promise.resolve({ status: 401, statusText: 'Unauthorized', body: { error: 'Sign in' } });
-        if (outcome === 'offline') access.change('offline');
-        else { access.invalidate('recovering'); access.change('connected'); }
-        return Promise.reject(new Error('answer lost'));
-      } }, access).business;
-      client.mount();
-      const releaseRecovery = coordinateRecoveryQueries(access, client);
-      const options = trackDetailQueryOptions(transport, 'w1', channel);
-      await client.fetchQuery(options);
-      const observer = new QueryObserver(client, options);
-      const release = observer.subscribe(() => undefined);
-      const admitted = transport.recovery!.scope(transport.recovery!.capture());
-      if (outcome === 'local denial') access.invalidate('offline');
-      const cancel = vi.spyOn(client, 'cancelQueries');
-      const { result, unmount } = renderHook(() => usePlannerMutations(transport, 'card-1', 'w1', channel, useTestConversationRegistry()), {
-        wrapper: ({ children }: { children: ReactNode }) => createElement(QueryClientProvider, { client }, children),
-      });
-      let failure: unknown;
-      await act(async () => {
-        try { await result.current.send('Keep my words', [], 'key', admitted); }
-        catch (error) { failure = error; }
-      });
-      expect(failure).toBeInstanceOf(Error);
-      // runOperation's checkpoint remains authoritative; reconciliation cannot replace it.
-      expect((failure as Error).message).toBe('连接状态已改变，请重新操作。');
-      expect(cancel.mock.calls.filter(([filters]) => filters?.queryKey !== undefined)).toEqual([]);
-      expect(paths).toEqual(['/api/v1/tracks/w1', ...(outcome === 'local denial' ? [] : ['/api/v1/sessions/card-1/messages'])]);
-      expect(client.getQueryState(queryKeys.trackDetail('w1'))).toMatchObject({ status: 'success', isInvalidated: true });
-      // The existing recovery coordinator, rather than a retained write or custom retry, resumes stale reads.
-      act(() => { access.invalidate('recovering'); access.change('connected'); });
-      await waitFor(() => expect(paths.filter(path => path === '/api/v1/tracks/w1')).toHaveLength(2));
-      expect(client.getQueryState(queryKeys.trackDetail('w1'))?.isInvalidated).toBe(false);
-      release(); unmount(); unsubscribe(); releaseRecovery(); client.unmount(); client.clear();
-    },
-  );
-
-  it('retains an input 401 without starting reconciliation reads even without a recovery channel subscriber', async () => {
+  it('retains an input 401 without starting reconciliation reads even without an unauthorized-channel subscriber', async () => {
     const client = new QueryClient();
     const invalidate = vi.spyOn(client, 'invalidateQueries');
     const cancel = vi.spyOn(client, 'cancelQueries');
@@ -725,7 +676,7 @@ describe('input metadata mutation reconciliation', () => {
     const { result } = renderHook(() => usePlannerMutations(transport, 'card-1', 'w1', channel, useTestConversationRegistry()), {
       wrapper: ({ children }: { children: ReactNode }) => createElement(QueryClientProvider, { client }, children),
     });
-    await expect(result.current.send('Kept', [], 'key', transport))
+    await expect(result.current.send('Kept', [], 'key'))
       .rejects.toMatchObject({ failure: { kind: 'unauthorized', status: 401 } });
     expect(cancel).not.toHaveBeenCalled();
     expect(invalidate.mock.calls).toEqual([
@@ -775,7 +726,7 @@ describe('input metadata mutation reconciliation', () => {
         });
         await act(async () => {
           try {
-            if (action === 'send') await result.current.send('Edited', [], 'key', transport);
+            if (action === 'send') await result.current.send('Edited', [], 'key');
           } catch { /* Sends reject on refusal/unknown; reconciliation is still required. */ }
         });
         await waitFor(() => expect(detail.getCurrentResult().data?.sessions[0]?.title).toBe('Edited'));

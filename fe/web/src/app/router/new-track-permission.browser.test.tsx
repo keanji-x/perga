@@ -39,7 +39,7 @@ function mount(refuseDiscovery = false) {
   } };
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const router = createAppRouter({ prepareReport: prepareReportDocument, transport, client, cards: bootTestCardRuntime(),
-    unauthorized: createUnauthorizedChannel({ enqueue: (task) => task() }), onSignOut: () => undefined });
+    unauthorized: createUnauthorizedChannel({ enqueue: (task) => task() }) });
   router.update({ history: createMemoryHistory({ initialEntries: ['/area/c1/new'] }) });
   render(<QueryClientProvider client={client}><ThemeProvider><RouterProvider router={router} /></ThemeProvider></QueryClientProvider>);
   return { creates };

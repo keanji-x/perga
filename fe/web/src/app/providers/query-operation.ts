@@ -9,9 +9,7 @@ export async function runOperation<T>(
   operation: ApiOperation<T>,
   unauthorized: UnauthorizedChannel | undefined,
 ): Promise<T> {
-  const checkpoint = transport.recovery?.checkpoint();
   const result = await performApiRequest(transport, operation, unauthorized);
-  checkpoint?.();
   if (result.status === 'failed') throw new ApiError(result.error);
   return result.value;
 }

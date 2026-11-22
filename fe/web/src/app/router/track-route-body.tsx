@@ -8,7 +8,7 @@ import { TemplateProtocolBar } from '../../features/report/template-protocol/pub
 import { useTrackClosedControl } from '../../features/track/page/closed-control.ts';
 import { TerminalWorkbenchView,useTerminalWorkbench } from '../../features/track/workbench/public.tsx';
 import { PanelModule } from '../../ui/panel-card/public.tsx';
-import { useRecoveryMutation } from '../providers/recovery-mutation.ts';
+import { useOnlineMutation } from '../providers/online-mutation.ts';
 import { trackCommandBindings } from './track-composer-command.ts';
 
 import { useQuery,useQueryClient } from '@tanstack/react-query';
@@ -442,9 +442,9 @@ export function TrackRouteBody({
   const protocolClient = useQueryClient();
   const templateQuery = useQuery({ queryKey: trackTemplate(track.id), enabled: !!track.templateId,
     queryFn: ({ signal }) => runOperation(transport, { ...trackTemplateOperation(track.id), signal }, unauthorized) });
-  const inputsMutation = useRecoveryMutation(transport, {
-    mutationFn: (patch: Readonly<Record<string, unknown>>, admitted) =>
-      runOperation(admitted, updateTrackTemplateInputsOperation(track.id, patch), unauthorized),
+  const inputsMutation = useOnlineMutation({
+    mutationFn: (patch: Readonly<Record<string, unknown>>) =>
+      runOperation(transport, updateTrackTemplateInputsOperation(track.id, patch), unauthorized),
     onSuccess: async () => {
       await Promise.all([
         protocolClient.invalidateQueries({ queryKey: trackTemplate(track.id) }),

@@ -10,7 +10,6 @@ import { ReportDocument } from '../document/public.tsx';
 
 afterEach(() => {
   cleanup();
-  vi.unstubAllGlobals();
 });
 
 const PATH = 'docs/architecture/overview.html';
@@ -75,16 +74,6 @@ describe('ReportHtmlBlock', () => {
     const { container } = renderBlock({ path: PATH }, files(readFile));
     expect((await screen.findByRole('note')).textContent).toContain('larger than 2 MiB');
     expect(container.querySelector('iframe')).toBeNull();
-  });
-
-  it('shows the desktop note without reading the page or framing it in the mobile app, whose document policy blocks frames', async () => {
-    vi.stubGlobal('__NC_BUNDLED__', true);
-    const port = readable();
-    const { container } = renderBlock({ path: PATH, title: 'Architecture' }, port);
-    expect((await screen.findByRole('note')).textContent).toContain('Open this page on desktop');
-    expect(container.querySelector('iframe')).toBeNull();
-    expect(port.readFile).not.toHaveBeenCalled();
-    expect(container.querySelector('figcaption')?.textContent).toContain('Architecture');
   });
 
   it('says the view carries no workspace and mounts no frame without linkPreview', () => {

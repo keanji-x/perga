@@ -2,21 +2,15 @@ import { queryKeys } from './query-keys.ts';
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { useEffect, type ReactNode } from 'react';
 import { DATABASE_ID_KEY, DB_INSTANCE_ID_KEY } from '../../../../core/keys/storage.ts';
-import { logoutMarkerKey } from '../../../../core/domain/recovery/context.ts';
 import { readErrorText } from '../../../../core/domain/read-failure.ts';
 import type { SyncCursorPort } from '../../systems/events/cursor-port.ts';
 import { Dialog } from '../../ui/dialog/public.tsx';
 import { useState } from '../../ui/state/public.ts';
 import { ThemeProvider } from '../theme/public.tsx';
-import { BundledConnectionNotice } from '../auth/bundled-connection.tsx';
 import { DatabaseScopeProvider } from './ui-preferences.tsx';
 import styles from './preflight-status.module.css';
 import { LiveConnectionProvider } from './connection-status.tsx';
 
-/**
- * This bundle's view of the negotiated wire contract. Must equal `WEB_COMPAT_VERSION` in
- * `crates/calm-server/src/routes/version.rs` and `web/src/api/version.ts`; CI compares them textually.
- */
 // #2618: timeout activity notices require an explicit decoder and presentation.
 // #2672: template purposes and readiness are required in the creation flow.
 // #3279: negotiated run reads require nullable exact current terminal evidence.
@@ -85,24 +79,13 @@ export function ServerCompatGate({ children: routeContent, runtime, client, rend
     if (safeRead(runtime, DATABASE_ID_KEY) !== databaseId) safeWrite(runtime, DATABASE_ID_KEY, databaseId);
   }, [databaseId, runtime]);
 
-  const authRequired = query.data?.authRequired;
-  useEffect(() => {
-    if (authRequired !== false) return;
-    try { runtime.storage.removeItem(logoutMarkerKey()); } catch { /* no-op */ }
-  }, [authRequired, runtime]);
-
   const id = query.data?.dbInstanceId;
   const verdict = id === undefined ? 'pending'
     : identity !== undefined && previousIdentity !== null && previousIdentity !== identity ? 'switched' : 'same';
   // The database scope is the database identity, never the per-boot instance id; a kernel without one leaves it null.
   const databaseScope = verdict === 'same' && databaseId !== undefined ? databaseId : null;
   const children = <DatabaseScopeProvider id={databaseScope}>{routeContent}</DatabaseScopeProvider>;
-  if (busted) return __NC_BUNDLED__ ? <BundledConnectionNotice kind="checking" /> : null;
-  if (__NC_BUNDLED__ && query.data === undefined) return <BundledConnectionNotice kind={query.isError || query.fetchStatus === 'paused' ? 'unreachable' : 'checking'}>
-    {(query.isError || query.fetchStatus === 'paused') && <button type="button" disabled={query.isFetching} onClick={() => { void query.refetch(); }}>重试连接</button>}
-  </BundledConnectionNotice>;
-  if (__NC_BUNDLED__ && query.data && query.data.webCompatVersion < WEB_COMPAT_VERSION) return <BundledConnectionNotice kind="server-update" />;
-  if (__NC_BUNDLED__ && query.data && query.data.minWebCompatVersion > WEB_COMPAT_VERSION) return <BundledConnectionNotice kind="app-update" />;
+  if (busted) return null;
   if (query.data && query.data.minWebCompatVersion > WEB_COMPAT_VERSION) return <RefreshRequiredOverlay server={query.data} reload={() => runtime.reload()} />;
   return <>{verdict === 'same' && renderEventBridge?.(query.data!)}{children}
     {query.data === undefined && (query.isError || query.fetchStatus === 'paused') && (

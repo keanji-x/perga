@@ -49,7 +49,7 @@ async function setup({ streaming = false, historySuffix = '', narrow = false, fi
   } };
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const router = createAppRouter({ prepareReport: prepareReportDocument, transport, client, cards: bootTestCardRuntime(),
-    unauthorized: createUnauthorizedChannel({ enqueue: task => task() }), onSignOut: () => {} });
+    unauthorized: createUnauthorizedChannel({ enqueue: task => task() }) });
   let registry: ConversationRegistry;
   const stale: string[] = [];
   let observing = false;

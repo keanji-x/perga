@@ -45,7 +45,7 @@ History/Sheet migration or close #3007.
 
 ## Press feedback
 
-`DepthFeedback` is installed once by ProductionApp (including login/recovery). Its
+`DepthFeedback` is installed once by ProductionApp (including login). Its
 UI-owned document event adapter resolves native buttons and explicit button roles,
 including Astryx and portal controls, without DOM observation or business identities.
 The entire button, including text and icons, moves. `depth.ts` defines one camera:

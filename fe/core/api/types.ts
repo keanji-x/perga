@@ -1,5 +1,4 @@
 import type { z } from 'zod';
-import type { RecoveryPermit } from '../domain/recovery/access.js';
 
 /** Platform-neutral subset used to relay request cancellation to an adapter. */
 export type ApiAbortSignal = Readonly<{
@@ -30,17 +29,8 @@ export type ApiTransportResponse = Readonly<{
   headers?: Readonly<Record<string, string>>;
 }>;
 
-/** A ticket is captured before accepting an intent, never when draining a queue. */
-export interface RecoveryAdmission {
-  capture(): RecoveryPermit;
-  checkpoint(): () => void;
-  scope(permit: RecoveryPermit): ApiTransportPort;
-}
-
 /** Browser, native, and test ends implement transport; core never calls a platform API. */
 export interface ApiTransportPort {
-  /** Present on bundled business transports; captures immutable intent admission. */
-  readonly recovery?: RecoveryAdmission;
   send(request: ApiRequest): Promise<ApiTransportResponse>;
 }
 

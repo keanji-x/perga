@@ -1,4 +1,3 @@
-import type { RecoveryAccess } from '../../../../core/domain/recovery/access.ts';
 import { lazy, useEffect } from 'react';
 
 import type { TerminalConnectionStatus } from './xterm-view.tsx';
@@ -15,9 +14,8 @@ function readDocumentTheme(): 'light' | 'dark' {
   return document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
 }
 
-export function TerminalSurface({ card, recovery = null, visible = true, focused = false, onStatusChange }: {
+export function TerminalSurface({ card, visible = true, focused = false, onStatusChange }: {
   card: { readonly id: string; readonly terminalId: string | null };
-  recovery?: RecoveryAccess | null;
   visible?: boolean;
   focused?: boolean;
   onStatusChange?: (status: TerminalConnectionStatus) => void;
@@ -31,5 +29,5 @@ export function TerminalSurface({ card, recovery = null, visible = true, focused
     return () => observer.disconnect();
   }, []);
   if (card.terminalId === null) return null;
-  return <XtermView recovery={recovery} terminalId={card.terminalId} theme={resolved} visible={visible} focused={focused} onStatusChange={onStatusChange} />;
+  return <XtermView terminalId={card.terminalId} theme={resolved} visible={visible} focused={focused} onStatusChange={onStatusChange} />;
 }

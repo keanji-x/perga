@@ -21,9 +21,9 @@ import { createAppRouter } from './public.tsx';
 import { bootTestCardRuntime } from './test-card-runtime.ts';
 
 /* A send's automatic retries wait no real time here; how long they back off is not under test. */
-vi.mock('../../../../core/domain/recovery/access.ts', async (importOriginal) => ({
-  ...await importOriginal<typeof import('../../../../core/domain/recovery/access.ts')>(),
-  recoveryDelay: () => 0,
+vi.mock('../../../../core/domain/conversation-delivery.ts', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../../../../core/domain/conversation-delivery.ts')>(),
+  sendRetryDelay: () => 0,
 }));
 
 const AREA = { id: 'c1', name: 'Work', color: '#000', sortOrder: 1, createdAtMs: 1, updatedAtMs: 1 };
@@ -83,7 +83,7 @@ function setup(reply?: Reply) {
     },
   };
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, structuralSharing: false } } });
-  const router = createAppRouter({ prepareReport: prepareReportDocument, transport, unauthorized, client, cards: bootTestCardRuntime(), onSignOut: vi.fn() });
+  const router = createAppRouter({ prepareReport: prepareReportDocument, transport, unauthorized, client, cards: bootTestCardRuntime() });
   render(<QueryClientProvider client={client}><ThemeProvider storage={themeStorage}>
     <RouterProvider router={router} />
   </ThemeProvider></QueryClientProvider>);

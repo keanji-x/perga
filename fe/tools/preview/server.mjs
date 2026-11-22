@@ -11,7 +11,7 @@ if (!/^[a-f0-9-]{36}$/.test(session)) throw new Error('Invalid preview session i
 const base = '/';
 const plugins = [react()];
 /** @type {import('vite').InlineConfig} */
-const shared = { configFile: false, root: resolve(config.fe, 'web'), base, plugins, define: { __NC_BUNDLED__: 'false', __NC_VERSION__: JSON.stringify('preview'), __NC_BUILD__: JSON.stringify('preview') } };
+const shared = { configFile: false, root: resolve(config.fe, 'web'), base, plugins, define: { __NC_VERSION__: JSON.stringify('preview'), __NC_BUILD__: JSON.stringify('preview') } };
 /** @param {string} css @param {string} entry */
 const html = (css, entry) => `<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Perga · 交互预览</title><meta name="nc-preview-session" content="${session}">${css}</head><body><div id="root"></div><script type="module" src="${entry}"></script></body></html>`;
 /** @type {string | null} */

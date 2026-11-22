@@ -246,7 +246,7 @@ export function useConversationPane(
   useConversationDraftRetention({ discardUnsentDraft, sourceScopeId });
 
   const { start, startWithMessage, withDraft, sendDraft, retryDraft, sendAsNewConversation, closeDrawer } = createConversationDraftActions({
-    registry, draft, creating, source, sourceScopeId, transport, supportsDraftModel,
+    registry, draft, creating, source, sourceScopeId, supportsDraftModel,
     defaultProvider: source.defaultProvider,
     supportsInitialInput: !draftCapabilities.isError && draftCapabilities.data?.conversationInitialInput === true,
     managedProviders: managed.answers,

@@ -3,7 +3,7 @@ import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { ApiTransportResponse } from '../../../../core/api/types.ts';
-import { useReadReceipt, useReadReceipts } from './read-receipts.tsx';
+import { useReadReceipt, useReadReceipts, useViewReadReceipt } from './read-receipts.tsx';
 import { createReadReceiptsKernel, readReceiptsFixture, type ReadReceiptsKernel } from './read-receipts-fixture.tsx';
 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); onlineManager.setOnline(true); });
@@ -110,6 +110,24 @@ it('keeps a manual unread of the open target until it is opened again', async ()
   await screen.findByText('t: read');
   expect(fake.posts().map((request) => request.path)).toEqual([
     '/api/v1/read-receipts/track/t/read', '/api/v1/read-receipts/track/t/unread', '/api/v1/read-receipts/track/t/read',
+  ]);
+});
+
+it('clears manual unread on view without acknowledging an already-read target', async () => {
+  const kernel = createReadReceiptsKernel({ baselineMs: 100,
+    receipts: [{ kind: 'track', targetId: 't2', readThroughMs: 150, manualUnread: true }] });
+  function TrackView({ id }: { id: string }) {
+    useViewReadReceipt('track', id, true);
+    return <Verdict id={id} at={50} />;
+  }
+  const view = mount(kernel, <TrackView id="t1" />);
+  await screen.findByText('t1: read');
+  expect(kernel.posts()).toEqual([]);
+
+  view.rerender(<TrackView id="t2" />);
+  await waitFor(() => expect(kernel.stored('track', 't2')?.manualUnread).toBe(false));
+  expect(kernel.posts().map(({ path, body }) => [path, body])).toEqual([
+    ['/api/v1/read-receipts/track/t2/read', { readThroughMs: 0 }],
   ]);
 });
 

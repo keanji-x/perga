@@ -81,7 +81,7 @@ it('releases an offline refusal before reconciliation, restores the draft, and n
       .toContain('Resolve the open questions first. (Original Planner: Daily Planner conversation)'));
     await waitFor(() => expect(input.textContent).toBe('/planner'));
     expect(writes(fixture)).toHaveLength(1);
-    // A new explicit intent reaches recovery admission: the old pending guard has been released.
+    // A new explicit intent can proceed after the pending guard has been released.
     await submit(input);
     await screen.findByText('Planner switching was not sent.');
     await waitFor(() => expect(input.textContent).toBe('/planner')); expect(writes(fixture)).toHaveLength(1);

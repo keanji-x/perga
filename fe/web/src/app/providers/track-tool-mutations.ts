@@ -1,6 +1,6 @@
 import { queryKeys } from './query-keys.ts';
 import { useQueryClient } from '@tanstack/react-query';
-import { useRecoveryMutation } from './recovery-mutation.ts';
+import { useOnlineMutation } from './online-mutation.ts';
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { createTerminalCardOperation, deleteTerminalOperation, type CardWire, type NewTerminalCardBody } from '../../../../core/domain/track.ts';
@@ -9,7 +9,7 @@ import { deleteDone, runOperation } from './query-operation.ts';
 export function useTrackToolMutations(transport: ApiTransportPort, unauthorized: UnauthorizedChannel) {
   const client = useQueryClient();
   /* Tool receipts go to the independent inventory. Cancellation synchronously fences
-   * older reads; publishing stays inside the recovery-admitted callback. */
+   * older reads; publishing stays inside the success callback. */
   const addToolToCache = (card: CardWire): void => {
     void client.cancelQueries({ queryKey: queryKeys.trackTools(card.track_id), exact: true });
     client.setQueryData(queryKeys.trackTools(card.track_id), (previous: CardWire[] | undefined) => {
@@ -18,8 +18,8 @@ export function useTrackToolMutations(transport: ApiTransportPort, unauthorized:
     });
     void client.invalidateQueries({ queryKey: queryKeys.trackTools(card.track_id), exact: true });
   };
-  const createTerminal = useRecoveryMutation(transport, {
-    mutationFn: ({ trackId, body, key }: { trackId: string; body: NewTerminalCardBody; key: string }, transport: ApiTransportPort) =>
+  const createTerminal = useOnlineMutation({
+    mutationFn: ({ trackId, body, key }: { trackId: string; body: NewTerminalCardBody; key: string }) =>
       runOperation(transport, createTerminalCardOperation(trackId, body, key), unauthorized),
     onSuccess: addToolToCache,
   });
@@ -34,8 +34,8 @@ export function useTrackToolMutations(transport: ApiTransportPort, unauthorized:
       return cards.length === previous.length ? previous : cards;
     });
   };
-  const removeCard = useRecoveryMutation(transport, {
-    mutationFn: async ({ trackId, cardId, signal }: { trackId: string; cardId: string; signal?: AbortSignal }, transport: ApiTransportPort) => {
+  const removeCard = useOnlineMutation({
+    mutationFn: async ({ trackId, cardId, signal }: { trackId: string; cardId: string; signal?: AbortSignal }) => {
       if (cardId.startsWith('file-local-')) {
         return undefined;
       }

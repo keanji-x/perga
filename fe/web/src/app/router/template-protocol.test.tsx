@@ -35,7 +35,7 @@ it('loads the current manifest and sends typed edits through the production rout
   } };
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   const router = createAppRouter({ prepareReport: prepareReportDocument, transport: withReadReceipts(transport), client, cards: bootTestCardRuntime(),
-    unauthorized: createUnauthorizedChannel({ enqueue: task => task() }), onSignOut: () => undefined });
+    unauthorized: createUnauthorizedChannel({ enqueue: task => task() }) });
   router.update({ history: createMemoryHistory({ initialEntries: ['/track/protocol'] }) });
   const container = document.createElement('div'); container.id = 'root'; document.body.append(container);
   render(<QueryClientProvider client={client}><ThemeProvider storage={{ getItem: () => null, setItem: () => undefined }}>

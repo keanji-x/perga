@@ -147,15 +147,6 @@ export function SeamlessHtmlWidget({
     };
   }, [pushState, selectionKey, onSelect, onOpenFile, onOpenWorker]);
 
-  if (__NC_BUNDLED__) {
-    return (
-      <div className={styles.diagnostic} role="note">
-        <div className={styles.diagnosticTitle}>{title}</div>
-        <div>此图形 Widget 需在桌面端查看。</div>
-      </div>
-    );
-  }
-
   return (
     <figure className={styles.host}>
       <iframe

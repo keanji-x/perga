@@ -88,23 +88,6 @@ describe('browser display preferences', () => {
       expect(createUiPreferences(storage).drawerWidth()).toBeNull();
     });
 
-    /* The production scope is `[origin, userId, dbInstanceId]` and `dbInstanceId` changes on every kernel boot. */
-    it('survives a bundled server restart, and stays per user', () => {
-      const storage = memoryStorage();
-      const scope = (user: string, boot: string) => JSON.stringify(['https://server.test', user, boot]);
-      const first = createUiPreferences(storage);
-      first.setRecoveryScope(scope('owner', 'boot-1'));
-      first.setConversation('track', 'chat');
-      first.setDrawerWidth(52);
-
-      const restarted = createUiPreferences(storage);
-      restarted.setRecoveryScope(scope('owner', 'boot-2'));
-      expect(restarted.conversation('track')).toBeNull();
-      expect(restarted.drawerWidth()).toBe(52);
-      first.setRecoveryScope(scope('another-user', 'boot-2'));
-      expect(first.drawerWidth()).toBeNull();
-    });
-
     it('keeps the width in memory when browser storage throws', () => {
       const preferences = createUiPreferences({ getItem() { throw new Error('denied'); }, setItem() { throw new Error('quota'); } });
       expect(preferences.drawerWidth()).toBeNull();
@@ -163,56 +146,30 @@ it('seeds the database scope from the stable database id, never the per-boot ins
   expect(createUiPreferences(storage).databaseScope()).toBe('db1');
 });
 
-it('isolates remembered conversation selection by verified recovery scope', () => {
-  const values = new Map<string, string>();
-  const storage = { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, value); } };
-  const preferences = createUiPreferences(storage);
-  preferences.setRecoveryScope('origin/owner/db-a'); preferences.setConversation('track', 'conversation-a');
-  preferences.setRecoveryScope('origin/owner/db-b'); expect(preferences.conversation('track')).toBeNull();
-  preferences.setConversation('track', 'conversation-b');
-  const resumed = createUiPreferences(storage); resumed.setRecoveryScope('origin/owner/db-b');
-  expect(resumed.conversation('track')).toBe('conversation-b');
-});
-
-it('keeps sidebar display choices across server boots and scopes them to the user', () => {
+it('keeps sidebar display choices across app instances', () => {
   const storage = memoryStorage();
-  const scope = (user: string, boot: string) => JSON.stringify(['https://server.test', user, boot]);
   const first = createUiPreferences(storage);
-  first.setRecoveryScope(scope('owner', 'boot-1'));
   first.setSidebarGroupVisible('focus', false);
   first.setSidebarGroupVisible('pinned', false);
   first.setSidebarGroupExpanded('pinned', false);
   const restored = createUiPreferences(storage);
-  restored.setRecoveryScope(scope('owner', 'boot-2'));
   expect(restored.sidebarGroupVisible('focus')).toBe(false);
   expect(restored.sidebarGroupVisible('pinned')).toBe(false);
   expect(restored.sidebarGroupExpanded('pinned')).toBe(false);
-  restored.setRecoveryScope(scope('other', 'boot-2'));
-  expect(restored.sidebarGroupVisible('focus')).toBe(true);
-  expect(restored.sidebarGroupVisible('pinned')).toBe(true);
-  expect(restored.sidebarGroupExpanded('pinned')).toBe(true);
 });
 
-
-it('keeps order and visibility per user across boots, with an in-memory fallback', () => {
+it('keeps order and visibility across app instances, with an in-memory fallback', () => {
   const storage = memoryStorage();
-  const scope = (user: string, boot: string) => JSON.stringify(['https://server.test', user, boot]);
   const first = createUiPreferences(storage);
-  first.setRecoveryScope(scope('owner', 'one'));
   first.setSidebarOrder('sections', ['areas', 'pinned', 'focus']);
   first.setSidebarOrder('areas', ['b', 'a']);
   first.setSidebarGroupVisible('focus', false);
   first.setSidebarGroupVisible('area:a', false);
   const restored = createUiPreferences(storage);
-  restored.setRecoveryScope(scope('owner', 'two'));
   expect(restored.sidebarOrder('sections', ['focus', 'pinned', 'areas'])).toEqual(['areas', 'pinned', 'focus']);
   expect(restored.sidebarOrder('areas', ['a', 'b', 'new'])).toEqual(['b', 'a', 'new']);
   expect(restored.sidebarGroupVisible('focus')).toBe(false);
   expect(restored.sidebarGroupVisible('area:a')).toBe(false);
-  restored.setRecoveryScope(scope('other', 'two'));
-  expect(restored.sidebarOrder('areas', ['a', 'b'])).toEqual(['a', 'b']);
-  expect(restored.sidebarGroupVisible('focus')).toBe(true);
-  expect(restored.sidebarGroupVisible('area:a')).toBe(true);
   const memory = createUiPreferences({ getItem() { throw new Error('denied'); }, setItem() { throw new Error('quota'); } });
   memory.setSidebarOrder('areas', ['b', 'a']);
   memory.setSidebarGroupVisible('area:a', false);
@@ -220,22 +177,18 @@ it('keeps order and visibility per user across boots, with an in-memory fallback
   expect(memory.sidebarGroupVisible('area:a')).toBe(false);
 });
 
-
-it('isolates Area pins by database and user while surviving restart', () => {
+it('isolates Area pins by database and preserves them across app instances', () => {
   const storage = memoryStorage();
   const preferences = createUiPreferences(storage);
-  preferences.setRecoveryScope(JSON.stringify(['origin', 'owner', 'boot1']));
   preferences.setDatabaseScope('db1');
   preferences.setAreaTrackPinned('area', 't', true);
   expect(preferences.areaTrackPinned('other-area', 't')).toBe(false);
   preferences.setDatabaseScope('db2');
   expect(preferences.areaTrackPinned('area', 't')).toBe(false);
-  preferences.setDatabaseScope('db1');
-  preferences.setRecoveryScope(JSON.stringify(['origin', 'owner', 'boot2']));
-  expect(preferences.areaTrackPinned('area', 't')).toBe(true);
-  preferences.setRecoveryScope(JSON.stringify(['origin', 'guest', 'boot2']));
-  expect(preferences.areaTrackPinned('area', 't')).toBe(false);
-  preferences.setDatabaseScope(null);
-  preferences.setAreaTrackPinned('area', 't', true);
-  expect(preferences.areaTrackPinned('area', 't')).toBe(false);
+  const restored = createUiPreferences(storage);
+  restored.setDatabaseScope('db1');
+  expect(restored.areaTrackPinned('area', 't')).toBe(true);
+  restored.setDatabaseScope(null);
+  restored.setAreaTrackPinned('area', 't', true);
+  expect(restored.areaTrackPinned('area', 't')).toBe(false);
 });

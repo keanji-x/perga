@@ -92,7 +92,7 @@ function mount(count: number) {
   } };
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const router = createAppRouter({ prepareReport: prepareReportDocument, transport, client, cards: bootTestCardRuntime(),
-    unauthorized: createUnauthorizedChannel({ enqueue: (task) => task() }), onSignOut: () => {} });
+    unauthorized: createUnauthorizedChannel({ enqueue: (task) => task() }) });
   router.update({ history: createMemoryHistory({ initialEntries: [`/track/${track.id}?panel=conversations`] }) });
   const root = document.createElement('div'); root.id = 'root'; document.body.append(root);
   render(<Profiler id="host" onRender={record}><QueryClientProvider client={client}><ThemeProvider>

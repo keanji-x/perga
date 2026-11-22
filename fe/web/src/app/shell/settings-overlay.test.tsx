@@ -48,7 +48,7 @@ function renderApp(initialEntry: string) {
   };
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const router = createAppRouter({ prepareReport: prepareReportDocument,
-    transport, unauthorized, client, cards: bootTestCardRuntime(), onSignOut: () => undefined,
+    transport, unauthorized, client, cards: bootTestCardRuntime(),
   });
   router.update({ history: createMemoryHistory({ initialEntries: [initialEntry] }) });
   render(
