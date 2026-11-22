@@ -2,7 +2,7 @@
 
 import { createCardHost, createCardRegistry } from '../../systems/cards/public.js';
 import { bootCards } from '../cards.ts';
-import type { CardRuntime } from './public.tsx';
+import type { CardRuntime } from './card-runtime.ts';
 
 export function bootTestCardRuntime(): CardRuntime {
   const registry = createCardRegistry();
