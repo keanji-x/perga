@@ -41,11 +41,11 @@ public sealed partial class TrackActor
     {
         if (_track.ClosedAtMs is not null || session.ArchivedAtMs is not null)
             throw KernelException.PreconditionFailed("Reopen the conversation before modifying it.");
-        if (TryGetActiveOwningTaskCore(session.Id) is { } task)
+        if (_taskCoordinator.TryGetActiveOwningTaskCore(session.Id) is { } task)
         {
-            if (!_activeTasks.TryGetValue(task.Id, out var active) || active.Settling || task.Status != TaskRunStatus.Running)
+            if (!_taskCoordinator.TryGetActiveRun(task.Id, out var active) || active.Settling || task.Status != TaskRunStatus.Running)
                 throw KernelException.Conflict("The task is no longer running. Refresh the task before sending a command.");
-            RequireDispatchWorkspace(session);
+            _taskCoordinator.RequireDispatchWorkspace(session);
         }
     }
 
@@ -53,7 +53,7 @@ public sealed partial class TrackActor
     {
         if (session.ArchivedAtMs is not null) return "archived";
         if (_track.ClosedAtMs is not null) return "track_closed";
-        var task = TryGetActiveOwningTaskCore(session.Id);
+        var task = _taskCoordinator.TryGetActiveOwningTaskCore(session.Id);
         if (task?.Status == TaskRunStatus.Pending) return "waiting_task";
         if (task?.Status == TaskRunStatus.Verifying) return "task_verifying";
         return null;
@@ -70,12 +70,12 @@ public sealed partial class TrackActor
                          (filter.ParentSessionId is null || s.ParentSessionId == filter.ParentSessionId)))
             {
                 var last = (await _store.ListSessionTurnsAsync(session.Id, ct).ConfigureAwait(false)).MaxBy(t => t.TurnIndex);
-                var owningTask = TryGetActiveOwningTaskCore(session.Id);
-                var activeTask = owningTask is not null && _activeTasks.TryGetValue(owningTask.Id, out var found) ? found : null;
+                var owningTask = _taskCoordinator.TryGetActiveOwningTaskCore(session.Id);
+                var activeTask = owningTask is not null && _taskCoordinator.TryGetActiveRun(owningTask.Id, out var found) ? found : null;
                 var state = session.Status == "queued" ? "running" : session.Status;
                 var readonlyReason = ReadSessionReadonlyReasonCore(session);
                 var pendingInteractionCount = pendingApprovals.Count(a => a.SessionId == session.Id) +
-                    _asks.Values.Count(a => a.Status == AskStatus.Open && a.SessionId == session.Id);
+                    _interactions.OpenAsks().Count(a => a.Status == AskStatus.Open && a.SessionId == session.Id);
                 summaries.Add(new(session, state, readonlyReason, activeTask?.Paused == true, last, pendingInteractionCount, owningTask?.Id));
             }
             return summaries;
@@ -114,11 +114,11 @@ public sealed partial class TrackActor
         var session = RequireSessionCore(sessionId);
         RequireInteropCore(caller, session, write: true, destructive: request.Archived == true || request.Provider is not null);
         if (_track.ClosedAtMs is not null) throw KernelException.PreconditionFailed("The Track is closed.");
-        if (TryGetActiveOwningTaskCore(sessionId) is { Status: not TaskRunStatus.Pending } task)
+        if (_taskCoordinator.TryGetActiveOwningTaskCore(sessionId) is { Status: not TaskRunStatus.Pending } task)
         {
-            if (!_activeTasks.TryGetValue(task.Id, out var active) || active.Settling || task.Status != TaskRunStatus.Running)
+            if (!_taskCoordinator.TryGetActiveRun(task.Id, out var active) || active.Settling || task.Status != TaskRunStatus.Running)
                 throw KernelException.Conflict("The task is no longer running. Refresh the task before updating it.");
-            RequireDispatchWorkspace(session);
+            _taskCoordinator.RequireDispatchWorkspace(session);
         }
         if (configChanged && request.ExpectedConfigVersion is { } version && version != session.ConfigVersion)
             throw KernelException.Conflict("Session configuration changed. Refresh before updating it.");
@@ -213,5 +213,85 @@ public sealed partial class TrackActor
         await _store.TrackWakes.EnqueueAsync(TrackWakeRequests.Prompt(TrackId, TrackWakeKinds.TaskSettled,
             key, prompt) with { TargetSessionId = parentId }, CancellationToken.None).ConfigureAwait(false);
         await PokeSessionCoreAsync(parentId).ConfigureAwait(false);
+    }
+
+    private static bool IsWorkingSessionStatus(string status) =>
+        status is "queued" or "running" or "stopping" or "compacting";
+
+    private bool IsSessionBlockingTrack(AgentSessionDto session) =>
+        _taskCoordinator.TryGetActiveOwningTaskCore(session.Id) is not { } task ||
+        task.Status is TaskRunStatus.Running or TaskRunStatus.Verifying;
+
+    internal Task<TrackOverlayDto> MergeOverlayAsync(TrackOverlayDto stored, CancellationToken ct) =>
+        EnqueueAsync(async _ =>
+        {
+            await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
+            var open = _track.ClosedAtMs is null;
+            var sessions = _sessions.Values.Where(s => s.ArchivedAtMs is null).ToArray();
+            return stored with
+            {
+                IsWorking = open && (
+                    IsSessionOrTaskRunning ||
+                    _workspacePreparation?.Phase is WorkspacePreparationPhase.Pending or
+                        WorkspacePreparationPhase.Provisioning or WorkspacePreparationPhase.Mounting or
+                        WorkspacePreparationPhase.Initializing or WorkspacePreparationPhase.Provisioned ||
+                    sessions.Any(s => IsWorkingSessionStatus(s.Status)) ||
+                    _taskCoordinator.Snapshot().Any(t => t.Status is TaskRunStatus.Running or TaskRunStatus.Verifying)),
+                OpenAskCount = open ? _interactions.OpenAsks().Count(a => a.Status == AskStatus.Open) : 0,
+                PendingApprovalCount = open ? PendingApprovalCount : 0,
+                HasBlockedSession = open && sessions.Any(s =>
+                    string.Equals(s.Status, "unknown", StringComparison.OrdinalIgnoreCase) &&
+                    IsSessionBlockingTrack(s)),
+                WorkspaceFailed = open && _workspacePreparation?.Phase is
+                    WorkspacePreparationPhase.Failed or WorkspacePreparationPhase.Unknown,
+                UpdatedAtMs = Math.Max(stored.UpdatedAtMs, LastActivityAtMs),
+                NotifiableSessions = sessions
+                    .Where(s => !_taskCoordinator.IsTaskOwnedSessionCore(s.Id) && s.LastNotifiableTurnAtMs is not null)
+                    .OrderBy(s => s.Id, StringComparer.Ordinal)
+                    .Select(s => new NotifiableSessionWatermarkDto(s.Id, s.LastNotifiableTurnAtMs!.Value))
+                    .ToArray()
+            };
+        }, ct);
+
+    private SessionTaskBindingDto? ReadTaskBindingCore(AgentSessionDto session)
+    {
+        if (_taskCoordinator.TryGetActiveOwningTaskCore(session.Id) is not { } task) return null;
+        var phase = task.Status.ToString().ToLowerInvariant();
+        if (_taskCoordinator.TryGetActiveRun(task.Id, out var active) && active.SessionId == session.Id)
+        {
+            if (session.Status == "stopping") phase = "interrupting";
+            else if (session.UnknownReason == "shutdown_unconfirmed") phase = "interrupt_unknown";
+            else if (active.Paused) phase = "paused";
+        }
+        string? waitingReason = null;
+        if (phase == "pending")
+            waitingReason = task.DependsOn.Any(key => _taskCoordinator.RequireTaskCore(key).Status != TaskRunStatus.Done)
+                ? "waiting_dependencies" : "waiting_slot";
+        return new(task, phase, waitingReason);
+    }
+
+    private SessionCapabilitiesDto ReadCapabilitiesCore(AgentSessionDto session)
+    {
+        _runtimes.TryGetOpen(session.Id, out var handle);
+        if (!string.Equals(handle?.LaunchSpec.Provider, session.Provider, StringComparison.OrdinalIgnoreCase)) handle = null;
+        var configuration = handle?.Agent.WorkerConfiguration;
+        return new(configuration?.Models ?? [], configuration?.DefaultModel, configuration?.DefaultReasoningEffort,
+            handle?.Agent.AvailablePermissionModes ?? [], handle?.Agent.SupportsNativeSteer == true,
+            handle?.Agent.SupportsSessionResume ?? EffectiveAgentRuntime.CanResumeSession(session.Provider),
+            handle?.Agent.SupportsNativeCompact == true);
+    }
+
+    private IReadOnlyList<PendingInteractionDto> ReadInteractionsCore(AgentSessionDto session, InteropPrincipal principal)
+    {
+        var caller = principal is InteropPrincipal.Session identity ? RequireSessionCore(identity.SessionId) : null;
+        var canRespond = SessionPolicy.CanAccess(principal, session, caller, write: true, activeTurn: true);
+        bool CanRespondTo(string? delegateSessionId) => canRespond &&
+            (principal is InteropPrincipal.Human || caller!.IsLead || delegateSessionId == caller.Id);
+        return ReadPendingApprovals().Where(a => a.SessionId == session.Id).Select(a => new PendingInteractionDto(
+                a.Id, "approval", a.SessionId, a.TurnId, a.ExecutionId, a.Title, a.Options, null, CanRespondTo(a.DelegateSessionId), a.CreatedAtMs, a.ToolName, a.Arguments))
+            .Concat(_interactions.OpenAsks().Where(a => a.Status == AskStatus.Open && a.SessionId == session.Id).Select(a =>
+                new PendingInteractionDto(a.Id, "ask", session.Id, a.TurnId, null,
+                    a.Questions[0].Question, null, a.Questions, CanRespondTo(a.TargetSessionId), a.CreatedAtMs)))
+            .OrderBy(i => i.CreatedAtMs).ToArray();
     }
 }

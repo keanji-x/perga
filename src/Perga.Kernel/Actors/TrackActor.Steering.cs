@@ -45,7 +45,7 @@ public sealed partial class TrackActor
                 else
                 {
                     // Only an open (non-frozen) session can take back a declined message for a later turn.
-                    if (outcome is "queued" or "rejected" && IsSessionFrozenForDispatchCore(RequireSessionCore(message.SessionId)))
+                    if (outcome is "queued" or "rejected" && _taskCoordinator.IsSessionFrozenForDispatchCore(RequireSessionCore(message.SessionId)))
                         outcome = "interrupted";
                     var item = outcome == "delivered" ? CreateSteeredItem(message, turnId) : null;
                     try
@@ -113,8 +113,8 @@ public sealed partial class TrackActor
         var target = await EnqueueAsync(_ =>
         {
             var session = RequireSessionCore(message.SessionId);
-            RequireDispatchWorkspace(session);
-            if (IsSessionFrozenForDispatchCore(session))
+            _taskCoordinator.RequireDispatchWorkspace(session);
+            if (_taskCoordinator.IsSessionFrozenForDispatchCore(session))
                 return Task.FromResult<ActiveTurnState?>(null);
             _scheduler.TryGetActive(message.SessionId, out var current);
             return Task.FromResult(current is not null && current.TurnDto.Id == turnId && !current.Interrupted ? current : null);

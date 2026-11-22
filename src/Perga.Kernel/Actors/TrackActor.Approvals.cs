@@ -1,3 +1,12 @@
+using System.Text;
+using System.Threading.Channels;
+using Perga.Kernel.Flow;
+using Perga.Kernel.Mcp;
+using Perga.Kernel.Tasks;
+using Perga.Kernel.Templates;
+using Perga.ReportDoc;
+using Perga.TermClient;
+using Perga.VcsKit;
 using System.Collections.Concurrent;
 using System.Text.Json;
 using Perga.AgentKit;
@@ -406,5 +415,144 @@ public sealed partial class TrackActor
         {
             ExpireApproval(approval.Pending);
         }
+    }
+    public async Task<string> GuardMcpToolCallAsync(
+        string sessionId,
+        string mcpServer,
+        string toolName,
+        JsonElement arguments,
+        CancellationToken ct = default,
+        McpExecutionOrigin? origin = null)
+    {
+        var approvalTurn = _scheduler.TryGetActive(sessionId, out var callingTurn) ? callingTurn : null;
+        Interlocked.Increment(ref _inFlightExternalOps);
+        try
+        {
+            string authorizedPolicyGeneration = null!;
+            var askSuspension = await EnqueueAsync<PolicyApproval?>(async _ =>
+            {
+                await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
+                var caller = RequireSessionCore(sessionId);
+                if (string.Equals(mcpServer, "perga", StringComparison.OrdinalIgnoreCase) &&
+                    KernelMcpCatalog.IsGovernanceOnly(toolName))
+                    RequireGovernanceSessionCore(sessionId, toolName);
+
+                if (!string.Equals(mcpServer, "perga", StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(mcpServer, "vcs", StringComparison.OrdinalIgnoreCase) &&
+                    !_track.EnabledPlugins.Contains(mcpServer, StringComparer.Ordinal))
+                {
+                    throw KernelException.Forbidden(
+                        $"MCP plugin '{mcpServer}' is not enabled on track '{TrackId}'.");
+                }
+
+                // Capture before evaluation, including across an AskHuman suspension.
+                authorizedPolicyGeneration = _policyGeneration;
+                if (mcpServer == "perga" && KernelMcpCatalog.IsLeadOnly(toolName))
+                {
+                    if (caller.Id != _track.LeadSessionId)
+                        throw KernelException.Forbidden("Only the current Track Lead can use this tool.");
+                }
+
+                var providerDiscovery = mcpServer == "perga" && toolName == KernelMcpToolNames.ProviderList;
+                var flowRead = mcpServer == "perga" && toolName == KernelMcpToolNames.FlowRead;
+                var previewOnly = providerDiscovery || flowRead;
+                if (mcpServer == "perga" && toolName == KernelMcpToolNames.TrackSet)
+                    previewOnly = ValidateTemplateSetArguments(arguments);
+                if (mcpServer == "perga" && toolName == KernelMcpToolNames.FlowCommit &&
+                    arguments.ValueKind == JsonValueKind.Object && arguments.TryGetProperty("dryRun", out var dryRun))
+                    previewOnly = dryRun.ValueKind == JsonValueKind.True;
+                if (!(mcpServer == "perga" && toolName == KernelMcpToolNames.TrackSet))
+                    RequirePolicyAvailableCore();
+                if (_policy is null)
+                {
+                    return null;
+                }
+
+                var policyToolName = GetPolicyToolName(mcpServer, toolName, _policy.UsesLegacyBeforeToolNames);
+                var eval = _policyVm.Before(_policy, "tool." + policyToolName, TrackId, JsonHelpers.ToElement(new {
+                    sessionId = caller.Id, isLead = caller.IsLead, boundTaskId = _taskCoordinator.TryGetActiveTaskForSessionCore(caller.Id)?.Task.Id,
+                    mcpServer, toolName = policyToolName, arguments = arguments.ValueKind == JsonValueKind.Undefined ? JsonHelpers.EmptyObject : arguments
+                }), _track.TemplateInputs, _track.TemplateState);
+                if (providerDiscovery && eval.Output is GuardDecision.AskHuman)
+                    throw KernelException.PolicyDenied("Provider discovery is read-only and cannot request approval.");
+                if (flowRead && eval.Output is GuardDecision.AskHuman)
+                    throw KernelException.PolicyDenied("Reading flow is read-only and cannot request approval.");
+                if (eval.Output is GuardDecision.AskHuman)
+                    RequireApprovalOrigin(sessionId, approvalTurn, origin);
+                // An allowed replacement initializes its own state atomically. Denied or
+                // suspended attempts still retain the current policy's guard state updates.
+                if (!previewOnly && (!string.Equals(mcpServer, "perga", StringComparison.OrdinalIgnoreCase) ||
+                    toolName != KernelMcpToolNames.TrackSet || eval.Output is not GuardDecision.Allow))
+                    await UpdateTemplateStateIfChangedCoreAsync(eval.NextState, ct).ConfigureAwait(false);
+
+                if (previewOnly && eval.Output is GuardDecision.AskHuman)
+                    throw KernelException.PolicyDenied("Template preview requires human approval; dryRun cannot create an approval request.");
+
+                return ApplyGuardDecisionCore(eval.Output, caller.Id, approvalTurn, ct, toolName, arguments);
+            }, ct).ConfigureAwait(false);
+
+            if (askSuspension is null)
+            {
+                return authorizedPolicyGeneration;
+            }
+
+
+            await RequirePolicyApprovalAsync(askSuspension, ct).ConfigureAwait(false);
+            return authorizedPolicyGeneration;
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _inFlightExternalOps);
+        }
+    }
+
+    private void RequirePolicyAvailableCore()
+    {
+        if (_policyUnavailableReason is { } reason) throw KernelException.PolicyDenied(reason);
+    }
+
+
+    // The pending approval itself owns its notification. Detaching it on decision,
+    // expiry or shutdown also removes all undispatched notification work.
+    private bool TryScheduleApprovalNotificationCore(string sessionId)
+    {
+        var pending = _approvals.Values.Where(a => a.Dto.DelegateSessionId == sessionId && !a.NotificationScheduled).ToArray();
+        if (pending.Length == 0) return false;
+        foreach (var approval in pending) approval.NotificationScheduled = true;
+        var reservation = Guid.NewGuid();
+        _scheduler.Reserve(sessionId, reservation);
+        _ = TrackBackgroundJob(async () =>
+        {
+            try { await _turnRunner.RunAsync(new ApprovalNotificationWorkItem(this, sessionId, pending, reservation), _actorShutdownCts.Token).ConfigureAwait(false); }
+            finally
+            {
+                if (!_actorShutdownCts.IsCancellationRequested)
+                    await EnqueueAsync(async _ =>
+                    {
+                        if (_scheduler.TryGetReservation(sessionId, out var held) && held == reservation)
+                            _scheduler.ReleaseReservation(sessionId);
+                        await PokeSessionCoreAsync(sessionId).ConfigureAwait(false);
+                    }, CancellationToken.None).ConfigureAwait(false);
+            }
+        });
+        return true;
+    }
+
+    private sealed class ApprovalNotificationWorkItem(TrackActor actor, string sessionId,
+        PendingApproval[] pending, Guid reservation) : ReservedTurnWorkItem(actor, sessionId, reservation)
+    {
+        public override string TriggerKind => "system";
+        public override Task<string?> PreparePromptAsync(CancellationToken ct) => Actor.EnqueueAsync(_ =>
+            Task.FromResult(FinalizePromptCore(string.Empty)), ct);
+        public override string? FinalizePromptCore(string prompt)
+        {
+            var live = pending.Where(a => Actor._approvals.ContainsKey(a.Dto.Id)).Select(a => a.Dto).ToArray();
+            return live.Length == 0 ? null :
+                "Pending approvals delegated to you. Use session_respond to decide, or leave them for the human:\n" +
+                JsonHelpers.ToElement(live).GetRawText();
+        }
+        public override SessionTurnDto? CreateUnstartedTurn() => null;
+        public override Task OnProviderDeliveredAsync(SessionTurnDto turn, UnifiedAgentEvent evt, string? nativeThreadId) => Task.CompletedTask;
+        public override async Task OnTurnSettledAsync(TurnSettlement settlement) => await settlement.SettleAsync().ConfigureAwait(false);
     }
 }

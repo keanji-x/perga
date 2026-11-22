@@ -111,7 +111,7 @@ public sealed partial class TrackActor
             {
                 _taskProviderProbePending = false;
                 if (providers is not null)
-                    await ScheduleEligibleTasksCoreAsync(ct, providers).ConfigureAwait(false);
+                    await _taskCoordinator.ScheduleEligibleTasksCoreAsync(ct, providers).ConfigureAwait(false);
             }, ct).ConfigureAwait(false);
         });
     }
@@ -143,7 +143,7 @@ public sealed partial class TrackActor
             await EnqueueAsync(async _ => {
                 _pendingTaskDispatchApprovals.Remove(task.Id);
                 pendingRemoved = true;
-                var current = _tasks.FirstOrDefault(t => t.Id == task.Id);
+                var current = _taskCoordinator.Snapshot().FirstOrDefault(t => t.Id == task.Id);
                 if (current is null || current.Status != TaskRunStatus.Pending) return;
                 if (current.Generation == task.Generation && _policyGeneration == generation && TaskDispatchFields(current) == TaskDispatchFields(task))
                 {
@@ -152,11 +152,11 @@ public sealed partial class TrackActor
                     else
                     {
                         var failed = current with { Status = TaskRunStatus.Failed, StatusDetail = "Task dispatch denied by human.", FinishedAtMs = NowMs(), UpdatedAtMs = NowMs() };
-                        await PersistAndEmitTaskUpdatedCoreAsync(failed, null, failed.UpdatedAtMs, _actorShutdownCts.Token).ConfigureAwait(false);
-                        ReplaceTaskInMemoryCore(failed);
+                        await _taskCoordinator.PersistAndEmitTaskUpdatedCoreAsync(failed, null, failed.UpdatedAtMs, _actorShutdownCts.Token).ConfigureAwait(false);
+                        _taskCoordinator.ReplaceTaskInMemoryCore(failed);
                     }
                 }
-                await ScheduleEligibleTasksCoreAsync(_actorShutdownCts.Token).ConfigureAwait(false);
+                await _taskCoordinator.ScheduleEligibleTasksCoreAsync(_actorShutdownCts.Token).ConfigureAwait(false);
             }, _actorShutdownCts.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) { }
@@ -173,7 +173,7 @@ public sealed partial class TrackActor
                 {
                     await EnqueueAsync(async _ => {
                         _pendingTaskDispatchApprovals.Remove(task.Id);
-                        await ScheduleEligibleTasksCoreAsync(_actorShutdownCts.Token).ConfigureAwait(false);
+                        await _taskCoordinator.ScheduleEligibleTasksCoreAsync(_actorShutdownCts.Token).ConfigureAwait(false);
                     }, _actorShutdownCts.Token).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) when (_actorShutdownCts.IsCancellationRequested) { }

@@ -135,9 +135,9 @@ public sealed partial class TrackActor
                 !actor._sessions.TryGetValue(sessionId, out var session) || session.ArchivedAtMs is not null || IsOccupied(session))
                 return null;
 
-            if (actor.IsSessionFrozenForDispatchCore(session) || actor.IsSessionAutoDrainPausedCore(sessionId))
+            if (actor._taskCoordinator.IsSessionFrozenForDispatchCore(session) || actor._taskCoordinator.IsSessionAutoDrainPausedCore(sessionId))
                 return null;
-            if (!allowWorker && actor.IsTaskOwnedSessionCore(sessionId))
+            if (!allowWorker && actor._taskCoordinator.IsTaskOwnedSessionCore(sessionId))
                 return null;
 
             if (actor._store.SessionMessages is not null &&

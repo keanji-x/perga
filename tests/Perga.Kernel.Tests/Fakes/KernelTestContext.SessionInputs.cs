@@ -23,4 +23,14 @@ internal sealed partial class KernelTestContext
             await Task.Delay(5, deadline.Token);
         }
     }
+
+    // Keep the manual clock fixed while establishing the idle precondition. An operation's
+    // result can arrive before its mailbox finally and tracked background cleanup complete.
+    public async Task WaitForActorQuiescenceAsync(string trackId, CancellationToken ct)
+    {
+        var actor = Kernel.Actors.GetOrActivate(trackId);
+        await actor.WaitForBackgroundWorkAsync(ct);
+        while (actor.HasActiveWork)
+            await Task.Delay(1, ct);
+    }
 }

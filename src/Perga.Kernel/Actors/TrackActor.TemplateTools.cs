@@ -1,3 +1,11 @@
+using System.Collections.Concurrent;
+using System.Text;
+using System.Threading.Channels;
+using Perga.AgentKit;
+using Perga.Kernel.Tasks;
+using Perga.ReportDoc;
+using Perga.TermClient;
+using Perga.VcsKit;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Perga.Contracts;
@@ -56,7 +64,7 @@ public sealed partial class TrackActor
         _presentedTemplateSnapshotSource = null;
         _policyGeneration = Guid.NewGuid().ToString("N");
         await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, CancellationToken.None).ConfigureAwait(false);
-        await ScheduleEligibleTasksCoreAsync(CancellationToken.None).ConfigureAwait(false);
+        await _taskCoordinator.ScheduleEligibleTasksCoreAsync(CancellationToken.None).ConfigureAwait(false);
         return PresentTrackCore();
     }
 
@@ -86,7 +94,7 @@ public sealed partial class TrackActor
             "Existing track data is incompatible with the updated template inputs",
             ". Migrate data before changing inputs.");
         TemplateFlow.ReadSeedNodes(_policyVm, _policy, next.TemplateInputs);
-        TemplateFlow.RequireValid(TrackFlowValidator.Validate(_flowSpec, _flowSpec, _tasks, CollectActiveFlowTaskIdsCore(),
+        TemplateFlow.RequireValid(TrackFlowValidator.Validate(_flowSpec, _flowSpec, _taskCoordinator.Snapshot(), CollectActiveFlowTaskIdsCore(),
             _sessions, next.LeadSessionId, _policy, _policyVm, next.TemplateInputs, _scheduleCronEvaluator, _timeProvider));
         var templateNodes = _flowSpec.Nodes.Where(node => node.Source == TrackScheduleSources.Template)
             .ToDictionary(node => node.Id, StringComparer.Ordinal);
@@ -186,7 +194,7 @@ public sealed partial class TrackActor
         IReadOnlyList<DataValidationError> errors;
         try
         {
-            errors = _policyVm.ValidateData(policy, inputs, data, _tasks.Select(t => t.TaskKey).ToArray());
+            errors = _policyVm.ValidateData(policy, inputs, data, _taskCoordinator.Snapshot().Select(t => t.TaskKey).ToArray());
         }
         catch (InvalidOperationException ex)
         {
@@ -229,4 +237,129 @@ public sealed partial class TrackActor
         }
         return warnings.Distinct(StringComparer.Ordinal).ToArray();
     }
+    public async Task<TrackDto> SetTemplateBySessionAsync(string callerSessionId, string? templateId,
+        string? source, string expectedPolicyGeneration, JsonElement? inputs, CancellationToken ct = default, bool resetData = false) =>
+        (await SetTemplateWithOptionsAsync(callerSessionId, templateId, source, expectedPolicyGeneration, inputs, false, false, ct, resetData).ConfigureAwait(false)).Track;
+
+    public Task<TemplateSetResult> SetTemplateWithOptionsAsync(string callerSessionId, string? templateId,
+        string? source, string expectedPolicyGeneration, JsonElement? inputs, bool dryRun, bool clear, CancellationToken ct = default, bool resetData = false)
+    {
+        return EnqueueAsync(async _ =>
+        {
+            await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
+            RequireGovernanceSessionCore(callerSessionId, KernelMcpToolNames.TrackSet);
+            if (_policyGeneration != expectedPolicyGeneration)
+                throw KernelException.PolicyDenied("Active policy changed after template application was authorized.");
+            if (_track.ClosedAtMs is not null)
+                throw KernelException.Conflict("Cannot set a template on a closed track.");
+            if (clear && (templateId is not null || source is not null || inputs is not null || resetData))
+                throw KernelException.InvalidArgument("clear cannot be combined with a template, inputs, or resetData.");
+            if (clear)
+            {
+                return new TemplateSetResult(await DetachTemplateCoreAsync(dryRun, ct).ConfigureAwait(false), [], dryRun);
+            }
+
+            if ((templateId is null) == (source is null) ||
+                templateId is not null && string.IsNullOrWhiteSpace(templateId) ||
+                source is not null && string.IsNullOrWhiteSpace(source))
+                throw KernelException.InvalidArgument("Specify exactly one non-empty 'templateId' or 'source'.");
+            if (inputs is { ValueKind: not JsonValueKind.Object })
+                throw KernelException.InvalidArgument("'inputs' must be an object.");
+
+            var nextInputs = JsonHelpers.EnsureClonedObject(inputs);
+            CompiledPolicy policy;
+            JsonElement state;
+            try
+            {
+                if (templateId is not null)
+                    policy = _templateCatalog.GetRequiredPolicy(templateId);
+                else if (_templateSnapshotSource is { } existing && source == _presentedTemplateSnapshotSource)
+                    policy = _templateCatalog.GetOrCompileSnapshot(existing);
+                else
+                    policy = _templateCatalog.CompileSource(source!);
+                TemplateFlow.ValidateInputs(_policyVm, policy, nextInputs);
+                var init = _policyVm.InitState(policy, nextInputs);
+                state = (init.Output.ValueKind != JsonValueKind.Undefined ? init.Output : init.NextState).Clone();
+            }
+            catch (KernelException) { throw; }
+            catch (Exception ex)
+            {
+                throw KernelException.InvalidArgument($"Template compilation or initialization failed: {ex.Message}");
+            }
+
+            var data = _track.Data.ValueKind == JsonValueKind.Object ? _track.Data : JsonHelpers.EmptyObject;
+            if (resetData || !HasBusinessDataFields(data))
+            {
+                try { data = _policyVm.InitData(policy, nextInputs); }
+                catch (InvalidOperationException ex) { throw KernelException.InvalidArgument(ex.Message); }
+            }
+            else
+            {
+                ValidateTrackDataCompatibilityCore(policy, nextInputs, data,
+                    "Existing track data is incompatible with the new template",
+                    ". Migrate data or explicitly pass resetData: true.");
+            }
+            var dataRev = JsonElement.DeepEquals(data, _track.Data) ? _track.DataRev : checked(_track.DataRev + 1);
+            var warnings = await TemplateWarningsCoreAsync(policy, nextInputs, ct).ConfigureAwait(false);
+            var now = NowMs();
+            var nextTrack = _track with
+            {
+                TemplateId = policy.TemplateId,
+                TemplateInputs = nextInputs,
+                TemplateState = state,
+                Data = data,
+                DataRev = dataRev,
+                EnabledPlugins = _track.EnabledPlugins.Concat(policy.Manifest.DefaultPlugins).Distinct(StringComparer.Ordinal).ToArray(),
+                UpdatedAtMs = now
+            };
+            var (nextFlow, flowUpdate) = PreviewTemplateFlowCore(nextTrack, policy);
+            if (flowUpdate is not null)
+                nextTrack = nextTrack with { FlowRev = nextFlow.Rev, FlowSpecJson = TrackFlowSerializer.SerializeCanonical(nextFlow) };
+            if (dryRun) return new TemplateSetResult(TemplatePresentation.Project(nextTrack, policy, _policyVm), warnings, true);
+            var evt = new EventEnvelopeDto(null, nextTrack.AreaId, TrackId, KernelEventKinds.TrackUpdated,
+                JsonHelpers.ToElement(TemplatePresentation.Project(nextTrack, policy, _policyVm)), now);
+            await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
+            var snapshotSource = TemplateHost.Freeze(policy);
+            await _store.UpdateTrackTemplateAndEmitAsync(nextTrack, snapshotSource, evt, ct, writeData: dataRev != _track.DataRev, flow: flowUpdate).ConfigureAwait(false);
+            _policy = policy;
+            _policyUnavailableReason = null;
+            _policyGeneration = Guid.NewGuid().ToString("N");
+            _templateSnapshotSource = snapshotSource;
+            _presentedTemplateSnapshotSource = TemplateHost.InspectSource(snapshotSource);
+            var pluginsChanged = !_track.EnabledPlugins.SequenceEqual(nextTrack.EnabledPlugins, StringComparer.Ordinal);
+            _track = nextTrack;
+            if (flowUpdate is not null)
+            {
+                _flowSpec = nextFlow;
+                foreach (var task in flowUpdate.Tasks) _taskCoordinator.ReplaceTaskInMemoryCore(task);
+                await ProjectCommittedFlowFileCoreAsync(CancellationToken.None).ConfigureAwait(false);
+            }
+            if (pluginsChanged)
+                _mcpBridge.UpdateTrackPlugins(TrackId, nextTrack.EnabledPlugins);
+            await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, ct).ConfigureAwait(false);
+            if (flowUpdate is not null)
+            {
+                await EvaluateFlowAfterTriggersCoreAsync(CancellationToken.None).ConfigureAwait(false);
+                await _taskCoordinator.ScheduleEligibleTasksCoreAsync(CancellationToken.None).ConfigureAwait(false);
+            }
+            return new TemplateSetResult(PresentTrackCore(), warnings, false);
+        }, ct);
+    }
+
+    private async Task UpdateTemplateStateIfChangedCoreAsync(JsonElement nextState, CancellationToken ct, bool emitEvent = false)
+    {
+        if (nextState.ValueKind == JsonValueKind.Undefined || JsonElement.DeepEquals(_track.TemplateState, nextState))
+        {
+            return;
+        }
+
+        var nextTrack = _track with { TemplateState = nextState.Clone(), UpdatedAtMs = NowMs() };
+        var evt = emitEvent ? new EventEnvelopeDto(null, nextTrack.AreaId, TrackId, KernelEventKinds.TrackUpdated,
+            JsonHelpers.ToElement(TemplatePresentation.Project(nextTrack, _policy, _policyVm)), nextTrack.UpdatedAtMs) : null;
+        if (evt is not null) await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
+        await _store.UpdateTrackAndEmitAsync(nextTrack, evt, ct).ConfigureAwait(false);
+        _track = nextTrack;
+        if (evt is not null) await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, CancellationToken.None).ConfigureAwait(false);
+    }
+
 }

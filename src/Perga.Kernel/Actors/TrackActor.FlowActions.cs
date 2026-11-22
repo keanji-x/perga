@@ -34,8 +34,8 @@ public sealed partial class TrackActor
                 FinishedAtMs = failNow,
                 UpdatedAtMs = failNow
             };
-            ReplaceTaskInMemoryCore(failed);
-            await PersistAndEmitTaskUpdatedCoreAsync(failed, null, failNow, ct).ConfigureAwait(false);
+            _taskCoordinator.ReplaceTaskInMemoryCore(failed);
+            await _taskCoordinator.PersistAndEmitTaskUpdatedCoreAsync(failed, null, failNow, ct).ConfigureAwait(false);
             await OnTaskSettledFlowHookCoreAsync(failed, ct).ConfigureAwait(false);
             return false;
         }
@@ -65,13 +65,12 @@ public sealed partial class TrackActor
             UpdatedAtMs = now
         };
 
-        ReplaceTaskInMemoryCore(runningTask);
-        await PersistAndEmitTaskUpdatedCoreAsync(runningTask, null, now, ct).ConfigureAwait(false);
+        _taskCoordinator.ReplaceTaskInMemoryCore(runningTask);
+        await _taskCoordinator.PersistAndEmitTaskUpdatedCoreAsync(runningTask, null, now, ct).ConfigureAwait(false);
 
         var runCts = CancellationTokenSource.CreateLinkedTokenSource(_actorShutdownCts.Token);
-        var active = new ActiveTaskRunState(task.Id, nextRunCount, null, runCts);
-        _activeTasks[task.Id] = active;
-        Volatile.Write(ref _activeTaskCount, _activeTasks.Count);
+        var active = new TrackTasks.ActiveTaskRunState(task.Id, nextRunCount, null, runCts);
+        _taskCoordinator.RegisterActiveRun(active);
 
         var reservation = Guid.NewGuid();
         _scheduler.Reserve(targetSessionId, reservation);
@@ -135,17 +134,16 @@ public sealed partial class TrackActor
 
         await EnqueueAsync(async _ =>
         {
-            if (!_activeTasks.TryGetValue(taskId, out var active) || active.RunCount != runCount || active.Settling)
+            if (!_taskCoordinator.TryGetActiveRun(taskId, out var active) || active.RunCount != runCount || active.Settling)
             {
                 return;
             }
 
-            _activeTasks.Remove(taskId);
-            Volatile.Write(ref _activeTaskCount, _activeTasks.Count);
+            _taskCoordinator.RemoveActiveRun(taskId);
             active.Cts.Dispose();
 
             var now = NowMs();
-            var current = RequireTaskCore(taskId);
+            var current = _taskCoordinator.RequireTaskCore(taskId);
             var succeeded = errorMessage is null && turn is { Status: "completed" };
             var settled = current with
             {
@@ -156,8 +154,8 @@ public sealed partial class TrackActor
                 FinishedAtMs = now,
                 UpdatedAtMs = now
             };
-            ReplaceTaskInMemoryCore(settled);
-            await PersistAndEmitTaskUpdatedCoreAsync(settled, null, now, CancellationToken.None, suppressDefaultWake: true).ConfigureAwait(false);
+            _taskCoordinator.ReplaceTaskInMemoryCore(settled);
+            await _taskCoordinator.PersistAndEmitTaskUpdatedCoreAsync(settled, null, now, CancellationToken.None, suppressDefaultWake: true).ConfigureAwait(false);
             await OnTaskSettledFlowHookCoreAsync(settled, CancellationToken.None).ConfigureAwait(false);
         }, CancellationToken.None).ConfigureAwait(false);
     }
@@ -198,8 +196,8 @@ public sealed partial class TrackActor
                 FinishedAtMs = null,
                 UpdatedAtMs = now
             };
-            await PersistAndEmitTaskUpdatedCoreAsync(runningTask, null, now, ct).ConfigureAwait(false);
-            ReplaceTaskInMemoryCore(runningTask);
+            await _taskCoordinator.PersistAndEmitTaskUpdatedCoreAsync(runningTask, null, now, ct).ConfigureAwait(false);
+            _taskCoordinator.ReplaceTaskInMemoryCore(runningTask);
         }
 
         var watchCts = CancellationTokenSource.CreateLinkedTokenSource(_actorShutdownCts.Token);
@@ -304,7 +302,7 @@ public sealed partial class TrackActor
         CancellationToken ct)
     {
         var res = await EffectiveCommandRunner.RunAsync(
-            new ShellCommandRequest(cmd, cwd, probeTimeout, OutputTailChars: TaskOutputTailChars),
+            new ShellCommandRequest(cmd, cwd, probeTimeout, OutputTailChars: TrackTasks.TaskOutputTailChars),
             ct).ConfigureAwait(false);
 
         var tail = FlowConstants.ExtractTailLine(res.Stdout, res.Stderr);
@@ -419,7 +417,7 @@ public sealed partial class TrackActor
                 return;
             }
 
-            var task = _tasks.FirstOrDefault(t => t.Id == watchState.TaskId);
+            var task = _taskCoordinator.Snapshot().FirstOrDefault(t => t.Id == watchState.TaskId);
             if (watchState.Cts.IsCancellationRequested || task?.Status != TaskRunStatus.Running)
                 return;
             var updated = task with
@@ -427,8 +425,8 @@ public sealed partial class TrackActor
                 Meta = JsonHelpers.ToElement(new { watchProgress = progress }),
                 UpdatedAtMs = NowMs()
             };
-            await PersistAndEmitTaskUpdatedCoreAsync(updated, null, updated.UpdatedAtMs, CancellationToken.None).ConfigureAwait(false);
-            ReplaceTaskInMemoryCore(updated);
+            await _taskCoordinator.PersistAndEmitTaskUpdatedCoreAsync(updated, null, updated.UpdatedAtMs, CancellationToken.None).ConfigureAwait(false);
+            _taskCoordinator.ReplaceTaskInMemoryCore(updated);
             watchState.Progress = progress;
         }, CancellationToken.None).ConfigureAwait(false);
     }
@@ -448,7 +446,7 @@ public sealed partial class TrackActor
                 return;
             }
 
-            var task = RequireTaskCore(watchState.TaskId);
+            var task = _taskCoordinator.RequireTaskCore(watchState.TaskId);
             if (watchState.Cts.IsCancellationRequested || task.Status != TaskRunStatus.Running)
                 return;
 
@@ -468,13 +466,13 @@ public sealed partial class TrackActor
                 : null;
             shouldPokeLead = wakePrompt is not null;
 
-            await PersistAndEmitTaskUpdatedCoreAsync(settled, null, now, CancellationToken.None, wakePrompt: wakePrompt, suppressDefaultWake: wakePrompt is null)
+            await _taskCoordinator.PersistAndEmitTaskUpdatedCoreAsync(settled, null, now, CancellationToken.None, wakePrompt: wakePrompt, suppressDefaultWake: wakePrompt is null)
                 .ConfigureAwait(false);
-            ReplaceTaskInMemoryCore(settled);
+            _taskCoordinator.ReplaceTaskInMemoryCore(settled);
             _activeWatches.Remove(watchState.TaskId);
             watchState.Cts.Dispose();
             await OnTaskSettledFlowHookCoreAsync(settled, CancellationToken.None).ConfigureAwait(false);
-            await ScheduleEligibleTasksCoreAsync(CancellationToken.None).ConfigureAwait(false);
+            await _taskCoordinator.ScheduleEligibleTasksCoreAsync(CancellationToken.None).ConfigureAwait(false);
         }, CancellationToken.None).ConfigureAwait(false);
 
         if (shouldPokeLead)

@@ -105,11 +105,11 @@ public sealed partial class TrackActor
             {
                 await actor.EnqueueAsync(_ =>
                 {
-                    if (actor.IsSessionFrozenForDispatchCore(claimed.Session))
+                    if (actor._taskCoordinator.IsSessionFrozenForDispatchCore(claimed.Session))
                         throw KernelException.Conflict("The session is no longer accepting execution.");
-                    if (actor.IsSessionAutoDrainPausedCore(claimed.Session.Id))
+                    if (actor._taskCoordinator.IsSessionAutoDrainPausedCore(claimed.Session.Id))
                         throw KernelException.Conflict("The task worker is paused.");
-                    if (work.IsQueuedMessage) actor.RequireDispatchWorkspace(claimed.Session);
+                    if (work.IsQueuedMessage) actor._taskCoordinator.RequireDispatchWorkspace(claimed.Session);
                     if (policyAdmission.Failure is { } failure) throw failure;
                     if (actor._policyGeneration != policyAdmission.Generation)
                         throw KernelException.PolicyDenied("Active policy changed during turn authorization.");
@@ -124,7 +124,7 @@ public sealed partial class TrackActor
                     startupDeadline.Token.ThrowIfCancellationRequested();
                     var current = actor.RequireSessionCore(work.SessionId);
                     actor.RequireSessionDispatchAvailableCore(work.SessionId);
-                    if (actor.IsSessionFrozenForDispatchCore(current) || actor.IsSessionAutoDrainPausedCore(current.Id))
+                    if (actor._taskCoordinator.IsSessionFrozenForDispatchCore(current) || actor._taskCoordinator.IsSessionAutoDrainPausedCore(current.Id))
                         throw KernelException.Conflict("The session changed during provider startup.");
                     if (current.Epoch != claimed.Session.Epoch ||
                         actor._policyGeneration != policyAdmission.Generation)
@@ -466,18 +466,18 @@ public sealed partial class TrackActor
 
             await actor.AfterPolicyEventCoreAsync("turn.after", JsonHelpers.ToElement(new {
                 sessionId, turnId = completedTurn.Id, status = outcome.Status,
-                isLead = currentSession.IsLead, boundTaskId = actor.TryGetActiveTaskForSessionCore(sessionId)?.Task.Id
+                isLead = currentSession.IsLead, boundTaskId = actor._taskCoordinator.TryGetActiveTaskForSessionCore(sessionId)?.Task.Id
             }), CancellationToken.None).ConfigureAwait(false);
             actor._scheduler.RemoveActive(sessionId);
-            if (actor.TryGetActiveOwningTaskCore(sessionId) is { Status: TaskRunStatus.Pending } ||
+            if (actor._taskCoordinator.TryGetActiveOwningTaskCore(sessionId) is { Status: TaskRunStatus.Pending } ||
                 actor.HasPendingFlowTaskForSessionCore(sessionId))
-                await actor.ScheduleEligibleTasksCoreAsync(CancellationToken.None).ConfigureAwait(false);
+                await actor._taskCoordinator.ScheduleEligibleTasksCoreAsync(CancellationToken.None).ConfigureAwait(false);
             await actor.NotifyParentCoreAsync(updatedSession, "turn_end", "turn:" + completedTurn.Id,
                 $"Child session '{sessionId}' turn '{completedTurn.Id}' ended as {completedTurn.Status}.").ConfigureAwait(false);
             active.Settled.TrySetResult(outcome.Conclusive);
             var settledSession = actor._sessions[sessionId];
-            var autoCompact = !actor.IsSessionFrozenForDispatchCore(settledSession) &&
-                              !actor.IsSessionAutoDrainPausedCore(sessionId) &&
+            var autoCompact = !actor._taskCoordinator.IsSessionFrozenForDispatchCore(settledSession) &&
+                              !actor._taskCoordinator.IsSessionAutoDrainPausedCore(sessionId) &&
                               settledSession.Status == "idle" && outcome.Status == "completed" &&
                               actor.CurrentContextUsageRatioCore(settledSession) >= actor._options.AutoCompactionThreshold;
             return (completedTurn, autoCompact);
