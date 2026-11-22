@@ -697,8 +697,11 @@ public sealed class TrackFlowTests
             TestJson.FromObject(new { outcome = "attention", summary = "Found 1 blocker in auth.cs" }));
         Assert.Equal("attention", doneRes.GetProperty("outcome").GetString());
         Assert.Equal("Found 1 blocker in auth.cs", doneRes.GetProperty("outcomeSummary").GetString());
+        Assert.False(openedR1.Disposed);
         releaseRound1Turn.TrySetResult();
         await ctx.Kernel.WaitForTrackIdleAsync(trackId);
+        Assert.True(openedR1.Disposed);
+        Assert.Equal("completed", Assert.Single(ctx.Store.GetTurnsForSession(reviewerSessionId)).Status);
 
         // Session is now writable (no task_finished lock) and holds its persisted NativeThreadId + Epoch!
         var pageAfterR1 = await ctx.Kernel.GetSessionItemsAsync(reviewerSessionId, new(), Human, default);
@@ -715,6 +718,9 @@ public sealed class TrackFlowTests
             : DefaultCompletedTurnAsync();
         await ctx.Kernel.SendSessionMessageAsync(reviewerSessionId, new(Content: "Discuss the review", RequestKey: "review-follow-up"), Human, default);
         await followUpStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var followUp = ctx.AgentRuntime.OpenedSessions.Last(s => s.LaunchSpec.StateKey == reviewerSessionId);
+        Assert.NotSame(openedR1, followUp);
+        Assert.Equal(originalThreadId, followUp.LaunchSpec.ResumeNativeThreadId);
 
         // Round 2: schedule `r2-recheck` reusing `reviewerSessionId` -> preserves NativeThreadId & Epoch!
         var flowRev = (await ctx.Kernel.GetTrackFlowAsync(trackId)).FlowRev;
@@ -743,6 +749,7 @@ public sealed class TrackFlowTests
 
         // Verify provider reopened with ResumeNativeThreadId == originalThreadId
         var lastOpened = ctx.AgentRuntime.OpenedSessions.Last(s => s.LaunchSpec.StateKey == reviewerSessionId);
+        Assert.NotSame(followUp, lastOpened);
         Assert.Equal(originalThreadId, lastOpened.LaunchSpec.ResumeNativeThreadId);
     }
 

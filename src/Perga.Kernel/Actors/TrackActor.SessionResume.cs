@@ -181,6 +181,7 @@ public sealed partial class TrackActor
                         await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, CancellationToken.None).ConfigureAwait(false);
                         return updated;
                     }, CancellationToken.None).ConfigureAwait(false);
+                    if (replacement is not null) owner.TouchUsed();
                     return restored;
                 }
                 catch
@@ -278,6 +279,7 @@ public sealed partial class TrackActor
                     var compactTurnId = $"trn_{prep.HandoverTurnIndex:D6}_{Guid.NewGuid():N}";
                     var nativeStartedAt = NowMs();
                     var nativeResult = await prep.OldAgentSession.CompactAsync(ct).WaitAsync(ct).ConfigureAwait(false);
+                    _runtimes.Get(sessionId).TouchUsed();
                     var compactSummary = string.IsNullOrWhiteSpace(nativeResult.Summary)
                         ? "Context compacted."
                         : nativeResult.Summary.Trim();

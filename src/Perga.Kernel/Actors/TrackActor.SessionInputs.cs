@@ -119,10 +119,10 @@ public sealed partial class TrackActor
                 completedTurn = await _turnRunner.RunAsync(new SessionInputBatchWorkItem(this, input), _actorShutdownCts.Token,
                     startupCancellation: startupToken, compactedEpoch: epoch => expectedEpoch = epoch).ConfigureAwait(false);
             }
-            catch (OperationCanceledException error) when (!_actorShutdownCts.IsCancellationRequested)
+            catch (Exception error) when (!_actorShutdownCts.IsCancellationRequested &&
+                (error is OperationCanceledException || error is KernelException { Code: KernelErrorCode.SessionRecoveryRequired }))
             {
-                // Stop can arrive while queued behind workspace/admission/policy work,
-                // before the runner has claimed the durable input.
+                // Stop or an unconfirmed idle shutdown can arrive before the runner claims the durable input.
                 await EnqueueAsync(async _ =>
                 {
                     var session = RequireSessionCore(input.Receipt.SessionId);

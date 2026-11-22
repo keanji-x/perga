@@ -147,7 +147,7 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
             yield break;
         }
 
-        yield return new UnifiedAgentEvent.ThreadBound($"thr_{Guid.NewGuid():N}");
+        yield return new UnifiedAgentEvent.ThreadBound(spec.ResumeNativeThreadId ?? $"thr_{Guid.NewGuid():N}");
         yield return new UnifiedAgentEvent.ThinkingDelta("Analyzing track state...");
         yield return new UnifiedAgentEvent.TextDelta($"Ack: {input.Prompt[..Math.Min(40, input.Prompt.Length)]}");
         yield return new UnifiedAgentEvent.TurnCompleted(new TokenUsage(120, 45, 0, 100_000));

@@ -176,34 +176,117 @@ public sealed partial class TrackActor
                 ContextUsage = modelChanged ? null : session.ContextUsage,
                 UpdatedAtMs = NowMs()
             };
-            await PersistAndEmitSessionUpdatedCoreAsync(updated, updated.UpdatedAtMs, ct).ConfigureAwait(false);
+            ct.ThrowIfCancellationRequested();
+            await PersistAndEmitSessionUpdatedCoreAsync(updated, updated.UpdatedAtMs,
+                request.Archived == true ? _actorShutdownCts.Token : ct).ConfigureAwait(false);
             if (modelChanged) InvalidateContextBindingCore(sessionId);
-            if (providerChanged) _mcpBridge.RevokeSession(sessionId);
-            if (!providerChanged) return Task.FromResult(updated);
-            return actor.TrackProviderChangeCloseAsync(updated);
+            if (providerChanged || request.Archived == true)
+            {
+                _mcpBridge.RevokeSession(sessionId);
+                if (_scheduler.TryGetActive(sessionId, out var active))
+                    active.CloseRuntimeOnSettle = true;
+                else if (_scheduler.IsIdleForRuntimeClose(sessionId) && _runtimes.TryGetOpen(sessionId, out var open))
+                    return actor.TrackSessionUpdateCloseAsync(updated, open.Generation);
+            }
+            return Task.FromResult(updated);
         }, ct).ConfigureAwait(false);
         return await operation.WaitAsync(ct).ConfigureAwait(false);
     }
 
-    private Task<AgentSessionDto> TrackProviderChangeCloseAsync(AgentSessionDto updated)
+    private Task<AgentSessionDto> TrackSessionUpdateCloseAsync(AgentSessionDto updated, long generation)
     {
         var completion = new TaskCompletionSource<AgentSessionDto>(TaskCreationOptions.RunContinuationsAsynchronously);
         _ = TrackBackgroundJob(async () =>
         {
             try
             {
-                await _runtimes.Get(updated.Id).CloseAsync(_options.SessionStartupTimeout,
-                    _actorShutdownCts.Token, shouldClose: () => !_scheduler.IsBusy(updated.Id)).ConfigureAwait(false);
+                await CloseSessionRuntimeAsync(updated.Id, generation, propagateFailure: true).ConfigureAwait(false);
                 completion.TrySetResult(updated);
             }
             catch (Exception error)
             {
-                if (!_actorShutdownCts.IsCancellationRequested && _runtimes.IsShutdownUnconfirmed(updated.Id))
-                    await EnqueueAsync(_ => MarkShutdownUnconfirmedIfNeededAsync(updated.Id), CancellationToken.None).ConfigureAwait(false);
                 completion.TrySetException(error);
             }
         });
         return completion.Task;
+    }
+
+    private void ScheduleSessionRuntimeCloseCore(string sessionId, bool revokeToken = false)
+    {
+        if (revokeToken) _mcpBridge.RevokeSession(sessionId);
+        if (_scheduler.TryGetActive(sessionId, out var active))
+            active.CloseRuntimeOnSettle = true;
+        else if (_runtimes.TryGetOpen(sessionId, out var open))
+            _ = TrackBackgroundJob(() => CloseSessionRuntimeAsync(sessionId, open.Generation));
+    }
+
+    private async Task<bool> CloseSessionRuntimeAsync(string sessionId, long expectedGeneration,
+        bool propagateFailure = false, long? idleCutoffMs = null, string? allowDispatchInputId = null)
+    {
+        var runtime = _runtimes.Get(sessionId);
+        try
+        {
+            return await runtime.CloseAsync(_options.SessionStartupTimeout, _actorShutdownCts.Token,
+                shouldClose: () => _scheduler.IsIdleForRuntimeClose(sessionId, allowDispatchInputId) &&
+                    (idleCutoffMs is null || !runtime.IsShutdownUnconfirmed &&
+                        runtime.Snapshot is { } handle && handle.LastUsedAtMs <= idleCutoffMs),
+                expectedGeneration: expectedGeneration).ConfigureAwait(false);
+        }
+        catch (Exception)
+        {
+            if (!_actorShutdownCts.IsCancellationRequested && runtime.IsShutdownUnconfirmed)
+                await EnqueueAsync(_ => MarkShutdownUnconfirmedIfNeededAsync(sessionId),
+                    touchActivity: false).ConfigureAwait(false);
+            if (propagateFailure) throw;
+            return false;
+        }
+    }
+
+    internal async Task<int> EvictIdleSessionRuntimesAsync(CancellationToken ct = default)
+    {
+        if (_disposed || _runtimes.SnapshotOpen().Count == 0)
+            return 0;
+
+        long? idleCutoffMs = _options.SessionIdleTimeout > TimeSpan.Zero
+            ? NowMs() - (long)_options.SessionIdleTimeout.TotalMilliseconds
+            : null;
+        List<(string SessionId, long Generation, long? IdleCutoffMs)> candidates;
+        try
+        {
+            candidates = await EnqueueAsync(_ =>
+            {
+                var idle = new List<(string, long, long?)>();
+                if (!_hydrated) return Task.FromResult(idle);
+                foreach (var (sessionId, handle) in _runtimes.SnapshotOpen())
+                {
+                    if (_runtimes.Get(sessionId).HasActiveWork ||
+                        !_sessions.TryGetValue(sessionId, out var session) ||
+                        !_scheduler.IsIdleForRuntimeClose(sessionId)) continue;
+                    var retired = session.ArchivedAtMs is not null || _track.ClosedAtMs is not null ||
+                        _mcpBridge.GetTokenForSession(sessionId) is null;
+                    if (retired)
+                    {
+                        idle.Add((sessionId, handle.Generation, null));
+                        continue;
+                    }
+                    if (idleCutoffMs is null || handle.LastUsedAtMs > idleCutoffMs || _scheduler.IsOccupied(session)) continue;
+                    if (handle.Agent.SupportsSessionResume && !string.IsNullOrWhiteSpace(session.NativeThreadId) &&
+                        !handle.RuntimeActivity.Tasks.Values.Any(t => t.Status is "running" or "pending"))
+                        idle.Add((sessionId, handle.Generation, idleCutoffMs));
+                }
+                return Task.FromResult(idle);
+            }, ct, touchActivity: false).ConfigureAwait(false);
+        }
+        catch (ObjectDisposedException) when (_disposed)
+        {
+            return 0;
+        }
+
+        if (candidates.Count == 0) return 0;
+        var results = await Task.WhenAll(candidates.Select(candidate =>
+            CloseSessionRuntimeAsync(candidate.SessionId, candidate.Generation, idleCutoffMs: candidate.IdleCutoffMs)))
+            .ConfigureAwait(false);
+        return results.Count(closed => closed);
     }
 
     private async Task NotifyParentCoreAsync(AgentSessionDto child, string policy, string key, string prompt)
@@ -251,7 +334,7 @@ public sealed partial class TrackActor
                     .Select(s => new NotifiableSessionWatermarkDto(s.Id, s.LastNotifiableTurnAtMs!.Value))
                     .ToArray()
             };
-        }, ct);
+        }, ct, touchActivity: false);
 
     private SessionTaskBindingDto? ReadTaskBindingCore(AgentSessionDto session)
     {

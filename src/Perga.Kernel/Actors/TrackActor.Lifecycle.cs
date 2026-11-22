@@ -85,11 +85,13 @@ public sealed partial class TrackActor
             if (changed)
             {
                 var reopening = _track.ClosedAtMs is not null && nextTrack.ClosedAtMs is null;
+                var closing = _track.ClosedAtMs is null && nextTrack.ClosedAtMs is not null;
                 ct.ThrowIfCancellationRequested();
                 nextTrack = nextTrack with { UpdatedAtMs = now };
                 _track = nextTrack;
                 SetApprovalAdmissionClosed(nextTrack.ClosedAtMs is not null || _deletingTrack, stopPendingTurns: nextTrack.ClosedAtMs is not null);
-                await EmitTrackUpdatedCoreAsync(now, reopening ? _actorShutdownCts.Token : ct).ConfigureAwait(false);
+                await EmitTrackUpdatedCoreAsync(now, reopening || closing ? _actorShutdownCts.Token : ct).ConfigureAwait(false);
+                if (closing) CloseTrackRuntimesCore();
                 if (req.LeadSessionId is not null) await _scheduler.PokeLeadAsync().ConfigureAwait(false);
             }
 
@@ -137,6 +139,7 @@ public sealed partial class TrackActor
                     _track = _track with { ClosedAtMs = _track.ClosedAtMs ?? now, UpdatedAtMs = now };
                     SetApprovalAdmissionClosed(true, stopPendingTurns: true);
                     await EmitTrackUpdatedCoreAsync(now, CancellationToken.None).ConfigureAwait(false);
+                    CloseTrackRuntimesCore();
                     return PresentTrackCore();
                 }, CancellationToken.None).ConfigureAwait(false);
             },
@@ -145,6 +148,12 @@ public sealed partial class TrackActor
                 _closingTrack = false;
                 return Task.CompletedTask;
             });
+
+    private void CloseTrackRuntimesCore()
+    {
+        foreach (var sessionId in _sessions.Keys)
+            ScheduleSessionRuntimeCloseCore(sessionId, revokeToken: !_scheduler.HasActive(sessionId));
+    }
 
     public async Task TeardownAndDeleteTrackAsync(CancellationToken ct = default)
     {

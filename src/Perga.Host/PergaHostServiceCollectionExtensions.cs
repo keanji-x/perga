@@ -223,6 +223,7 @@ public static class PergaHostServiceCollectionExtensions
                 McpBaseUri = baseUri,
                 DispatchWakesInBackground = opts.DispatchWakesInBackground,
                 SessionStartupTimeout = opts.SessionStartupTimeout,
+                SessionIdleTimeout = opts.SessionIdleTimeout,
                 SessionCompactionTimeout = opts.SessionCompactionTimeout,
                 ProviderCancelDispatchGrace = opts.ProviderCancelDispatchGrace,
                 ProviderTerminalStopGrace = opts.ProviderTerminalStopGrace

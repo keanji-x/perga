@@ -54,6 +54,9 @@ public sealed partial class TrackActor
                     var epoch = await TryAutoCompactAsync(work.SessionId).ConfigureAwait(false);
                     if (epoch is { } value) compactedEpoch?.Invoke(value);
                 }
+                if (start.Active.CloseRuntimeOnSettle)
+                    await actor.CloseSessionRuntimeAsync(work.SessionId, start.Active.OpenGeneration,
+                        allowDispatchInputId: work.DispatchInputId).ConfigureAwait(false);
                 await actor.EnqueueAsync(async _ =>
                 {
                     if (actor.RequireSessionCore(work.SessionId).Epoch == start.Active.TurnDto.Epoch)
@@ -124,7 +127,8 @@ public sealed partial class TrackActor
                     startupDeadline.Token.ThrowIfCancellationRequested();
                     var current = actor.RequireSessionCore(work.SessionId);
                     actor.RequireSessionDispatchAvailableCore(work.SessionId);
-                    if (actor._taskCoordinator.IsSessionFrozenForDispatchCore(current) || actor._taskCoordinator.IsSessionAutoDrainPausedCore(current.Id))
+                    if (actor._taskCoordinator.IsSessionFrozenForDispatchCore(current) || actor._taskCoordinator.IsSessionAutoDrainPausedCore(current.Id) ||
+                        actor._mcpBridge.GetTokenForSession(current.Id) is null)
                         throw KernelException.Conflict("The session changed during provider startup.");
                     if (current.Epoch != claimed.Session.Epoch ||
                         actor._policyGeneration != policyAdmission.Generation)
@@ -137,9 +141,10 @@ public sealed partial class TrackActor
                     await work.OnTurnCreatedAsync(turn).ConfigureAwait(false);
                     actor._sessions[running.Id] = running;
                     var turnCts = CancellationTokenSource.CreateLinkedTokenSource(ct, actor._actorShutdownCts.Token);
+                    var handle = actor._runtimes.Get(running.Id).Snapshot!;
                     var active = new ActiveTurnState(running.Id,
                         SessionConfiguration.FromNullable(claimed.Session.Model, claimed.Session.ReasoningEffort, claimed.Session.PermissionMode),
-                        actor._runtimes.Get(running.Id).ContextUsage, turn, agent, turnCts, true);
+                        handle.ContextUsage, turn, agent, turnCts, true, handle.Generation);
                     try
                     {
                         actor._scheduler.SetActive(running.Id, active);
@@ -468,6 +473,12 @@ public sealed partial class TrackActor
                 sessionId, turnId = completedTurn.Id, status = outcome.Status,
                 isLead = currentSession.IsLead, boundTaskId = actor._taskCoordinator.TryGetActiveTaskForSessionCore(sessionId)?.Task.Id
             }), CancellationToken.None).ConfigureAwait(false);
+            actor._runtimes.Get(sessionId).TouchUsed();
+            if (actor._track.ClosedAtMs is not null || updatedSession.ArchivedAtMs is not null)
+            {
+                active.CloseRuntimeOnSettle = true;
+                actor._mcpBridge.RevokeSession(sessionId);
+            }
             actor._scheduler.RemoveActive(sessionId);
             if (actor._taskCoordinator.TryGetActiveOwningTaskCore(sessionId) is { Status: TaskRunStatus.Pending } ||
                 actor.HasPendingFlowTaskForSessionCore(sessionId))
@@ -476,7 +487,8 @@ public sealed partial class TrackActor
                 $"Child session '{sessionId}' turn '{completedTurn.Id}' ended as {completedTurn.Status}.").ConfigureAwait(false);
             active.Settled.TrySetResult(outcome.Conclusive);
             var settledSession = actor._sessions[sessionId];
-            var autoCompact = !actor._taskCoordinator.IsSessionFrozenForDispatchCore(settledSession) &&
+            var autoCompact = !active.CloseRuntimeOnSettle &&
+                              !actor._taskCoordinator.IsSessionFrozenForDispatchCore(settledSession) &&
                               !actor._taskCoordinator.IsSessionAutoDrainPausedCore(sessionId) &&
                               settledSession.Status == "idle" && outcome.Status == "completed" &&
                               actor.CurrentContextUsageRatioCore(settledSession) >= actor._options.AutoCompactionThreshold;

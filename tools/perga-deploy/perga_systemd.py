@@ -56,7 +56,7 @@ class SystemdInstallation:
         host = (f'[Unit]\nDescription=Perga Host ({self.name})\nWants={self.name}-term.service\n'
                 f'After={self.name}-term.service\n\n[Service]\nType=simple\nWorkingDirectory={self.root}\n'
                 f'ExecStart=/usr/bin/python3 {binaries}/perga_host.py --name {self.name} '
-                f'--term-socket %t/{self.name}/term.sock' + common)
+                f'--term-socket %t/{self.name}/term.sock\nTasksMax=65536' + common)
         term = (f'[Unit]\nDescription=Perga terminal bridge ({self.name})\n\n[Service]\nType=simple\n'
                 f'RuntimeDirectory={self.name}\nRuntimeDirectoryMode=0700\n'
                 f'ExecStart={self.root}/current/termBridge/perga-term-bridge --listen-uds %t/{self.name}/term.sock' + common)

@@ -294,7 +294,8 @@ public sealed partial class TrackActor
         SessionTurnDto turnDto,
         IAgentSession agentSession,
         CancellationTokenSource turnCts,
-        bool hasStoredTurn)
+        bool hasStoredTurn,
+        long openGeneration)
     {
         public bool CanSteerQueuedMessages => hasStoredTurn && AgentSession.SupportsNativeSteer;
         public string SessionId { get; } = sessionId;
@@ -304,6 +305,8 @@ public sealed partial class TrackActor
         public ExecutionControl Control { get; } = new(starting: true);
         public TurnActivity Activity { get; } = new();
         public bool CloseRuntimeOnStop { get; set; }
+        public long OpenGeneration { get; } = openGeneration;
+        public bool CloseRuntimeOnSettle { get; set; }
         public SessionConfiguration Configuration { get; } = executionConfiguration;
         public LiveContextUsage ContextBinding { get; } = contextBinding;
         // Frozen inputs can execute a configuration different from the committed selection.

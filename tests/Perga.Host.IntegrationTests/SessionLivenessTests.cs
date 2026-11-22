@@ -12,6 +12,39 @@ namespace Perga.Host.IntegrationTests;
 
 public sealed class SessionLivenessTests
 {
+    [Fact]
+    public async Task ConfiguredIdleEvictionPreservesSqliteSessionAndResumesNextTurn()
+    {
+        var idleTimeout = TimeSpan.FromMinutes(2);
+        await using var host = new PergaHostTestCluster(configureHostOptions: o => o.SessionIdleTimeout = idleTimeout);
+        var (track, sessionId) = await host.CreateTrackAsync();
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        var store = host.Services.GetRequiredService<ITrackStore>();
+        var human = new InteropPrincipal.Human();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var ct = deadline.Token;
+
+        await kernel.SendSessionMessageAsync(sessionId, new("first", "first"), human, ct);
+        await kernel.WaitForTrackIdleAsync(track, ct);
+        var before = Assert.Single((await store.LoadTrackAggregateAsync(track, ct))!.Sessions);
+        var opened = Assert.Single(host.AgentRuntime.OpenedSessions);
+        Assert.NotNull(before.NativeThreadId);
+        Assert.NotNull(before.ContextUsage);
+
+        host.TimeProvider.Advance(idleTimeout);
+        Assert.Equal(1, await kernel.Actors.EvictIdleSessionRuntimesAsync(ct));
+        Assert.Equal(opened.NativeThreadId, Assert.Single(host.AgentRuntime.DisposedSessions));
+        Assert.Equal(before, Assert.Single((await store.LoadTrackAggregateAsync(track, ct))!.Sessions));
+
+        await kernel.SendSessionMessageAsync(sessionId, new("follow-up", "follow-up"), human, ct);
+        await kernel.WaitForTrackIdleAsync(track, ct);
+        Assert.Equal(before.NativeThreadId, host.AgentRuntime.OpenedSessions.Last().Spec.ResumeNativeThreadId);
+        var page = await kernel.GetSessionItemsAsync(sessionId, new(), human, ct);
+        Assert.Equal("completed", page.LastTurn?.Status);
+        Assert.Equal(before.NativeThreadId, page.Session.NativeThreadId);
+        Assert.Equal(before.Epoch, page.Session.Epoch);
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]

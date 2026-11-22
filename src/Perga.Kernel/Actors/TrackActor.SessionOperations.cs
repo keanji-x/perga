@@ -407,6 +407,7 @@ public sealed partial class TrackActor
         var activeTask = _taskCoordinator.TryGetActiveTaskForSessionCore(session.Id);
 
         var mcpBaseUri = await Env.ResolveMcpBaseUriAsync(_mcpBridge.ResolveBaseUri(), ct).ConfigureAwait(false);
+        RequireSessionWritableCore(RequireSessionCore(session.Id));
         var mcpReg = _mcpBridge.RegisterSession(
             TrackId,
             session.Id,
