@@ -1,3 +1,4 @@
+import { queryKeys } from '../providers/query-keys.ts';
 import '../../styles/entry.css';
 import { prepareReportDocument } from '../../features/report/document/preparation.ts';
 // The grouped model picker on the real new-track route, in a real engine: a Claude pick sets the
@@ -19,7 +20,9 @@ const AREA = { id: 'c1', name: 'Work', color: '#5B8DEF', sortOrder: 1, createdAt
 
 function mount(providers = ['codex', 'claude', 'opencode']) {
   const creates: ApiRequest[] = [];
+  const requests: ApiRequest[] = [];
   const transport: ApiTransportPort = { async send(request) {
+    requests.push(request);
     if (request.path.includes('/workspace-options')) return Promise.resolve({ status: 200, statusText: 'OK', body: { defaultId: 'direct', options: [{ id: 'direct', label: 'Direct folder', description: 'Use this folder' }] } });
     if (request.method === 'POST' && request.path === '/api/v1/tracks') {
       creates.push(request);
@@ -36,7 +39,7 @@ function mount(providers = ['codex', 'claude', 'opencode']) {
   const router = createAppRouter({ prepareReport: prepareReportDocument, transport, client, cards: bootTestCardRuntime(), unauthorized: createUnauthorizedChannel({ enqueue: task => task() }), onSignOut: () => undefined });
   router.update({ history: createMemoryHistory({ initialEntries: ['/area/c1/new'] }) });
   render(<QueryClientProvider client={client}><ThemeProvider><RouterProvider router={router} /></ThemeProvider></QueryClientProvider>);
-  return { creates };
+  return { creates, requests, client };
 }
 
 /** Open the model popover by clicking its trigger button. */
@@ -62,8 +65,27 @@ it.each([['claude', 'Claude', 1280], ['claude', 'Claude', 390], ['opencode', 'Op
 });
 
 it('offers only providers declared by bootstrap', async () => {
-  mount(['codex']);
+  const { requests } = mount(['codex']);
   await openModelMenu('Model: Default');
   await expect.element(page.getByRole('radio', { name: 'codex-model' })).toBeVisible();
   expect(page.getByRole('group', { name: 'Providers' }).getByRole('radio', { name: 'Claude' }).query()).toBeNull();
+  expect(requests.filter(request => request.path.includes('?provider=')).map(request => request.path))
+    .toEqual(['/api/v1/bootstrap?provider=codex']);
+});
+
+it('loads newly registered providers after the managed list refreshes', async () => {
+  const providers = ['codex'];
+  const { client, requests } = mount(providers);
+  await openModelMenu('Model: Default');
+  await expect.element(page.getByRole('radio', { name: 'codex-model' })).toBeVisible();
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  providers.push('grok');
+  await Promise.all([
+    client.invalidateQueries({ queryKey: queryKeys.managedProviders() }),
+    client.invalidateQueries({ queryKey: queryKeys.agentProviders() }),
+  ]);
+  await openModelMenu('Model: Codex Default');
+  await page.getByRole('group', { name: 'Providers' }).getByRole('radio', { name: 'Grok', exact: true }).click();
+  await expect.element(page.getByRole('radio', { name: 'grok-model', exact: true })).toBeVisible();
+  expect(requests.some(request => request.path === '/api/v1/bootstrap?provider=grok')).toBe(true);
 });

@@ -8,7 +8,8 @@ import type { AreaWire } from '../../../../core/domain/area.ts';
 import type { CacheWrite } from '../../../../core/events/invalidation-plan.ts';
 import { invalidationPlanFor } from '../../../../core/events/invalidation-plan.ts';
 import type { EventEffect } from '../../../../core/events/reducer.ts';
-import { queryKeys,trackDetailQueryOptions } from '../providers/queries.ts';
+import { queryKeys } from '../providers/query-keys.ts';
+import { trackDetailQueryOptions } from '../providers/track-queries.ts';
 import { applyEventEffects,type QueryCachePort } from './query-invalidation-adapter.ts';
 
 type Call = Readonly<{ op: 'reset' | 'invalidate' | 'remove' | 'set' | 'clear'; queryKey?: readonly unknown[] }>;

@@ -76,13 +76,12 @@ export interface QueryCachePort extends AreaQueryLifecyclePort {
  * read started after the event, even when the transport ignores abort.
  */
 function invalidateQuery(client: QueryCachePort, queryKey: readonly unknown[]): void {
-  const cancelFirst = queryKey[0] === 'track' || queryKey[0] === 'track-conversations'
-    || queryKey[0] === 'track-report' || queryKey[0] === 'track-views'
-    || queryKey[0] === 'harness-items' || queryKey[0] === 'planner-run'
-    || queryKey[0] === 'track-backlinks' || queryKey[0] === 'plugins'
-    || queryKey[0] === 'track-templates' || queryKey[0] === 'plugin-data'
-    || queryKey[0] === 'track-terminals' || queryKey[0] === 'task-attempts'
-    || (queryKey[0] === 'overlays' && queryKey[1] === 'track');
+  const cancelFirst = [
+    queryKeys.trackDetailPrefix(), queryKeys.trackReportPrefix(), queryKeys.trackViewsPrefix(),
+    queryKeys.transcriptPrefix(), queryKeys.plannerRun(''), queryKeys.trackBacklinksPrefix(),
+    queryKeys.trackTemplates(), queryKeys.trackTerminals(''),
+  ].some(prefix => prefix[0] === queryKey[0])
+    || (queryKey[0] === queryKeys.overlaysByKind('track')[0] && queryKey[1] === queryKeys.overlaysByKind('track')[1]);
   if (!cancelFirst) {
     void client.invalidateQueries({ queryKey });
     return;

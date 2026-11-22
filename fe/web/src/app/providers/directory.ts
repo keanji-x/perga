@@ -13,7 +13,7 @@ type CardFilesPort,type DirectoryListingWire,type GitDiffWire,type GitStatusWire
 } from '../../../../core/domain/fs.ts';
 import { readErrorText } from '../../../../core/domain/read-failure.ts';
 import { DIRECTORY_LIST_FAILED,joinDirectoryPath,type ListDirectory } from '../../ui/directory-browser/public.tsx';
-import { runOperation } from './queries.ts';
+import { runOperation } from './query-operation.ts';
 
 /**
  * `joinDirectoryPath` is passed in: the directory browser owns how a listing's rows are addressed, and the decoder must

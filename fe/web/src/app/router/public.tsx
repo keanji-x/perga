@@ -1,3 +1,4 @@
+import { queryKeys } from '../providers/query-keys.ts';
 import { Button } from '@astryxdesign/core/Button';
 import type { TrackAggregateSnapshotDto } from "../../../../core/api/perga-v1.ts";
 import type { ApiOperation } from '../../../../core/api/types.ts';
@@ -133,15 +134,13 @@ type ConversationDraftId,
 import { createDirectoryLister,createTrackCardFilesPort,createTrackWorkspaceFilesPort } from '../providers/directory.ts';
 import { mintIdempotencyKey,useKeyedIntent,type KeyedRequest } from '../providers/idempotency-key.ts';
 import { useMentionSearch } from '../providers/mentions.ts';
-import {
-prefetchAreaList,
-runOperation,
-serverVersionOperation,
-trackDetailQueryOptions,
-trackTaskVerdictsQueryOptions,
-trackToolsQueryOptions,
-useTrackConversationMutations,useTrackMutations
-} from '../providers/queries.ts';
+import { prefetchAreaList } from '../providers/workspace-queries.ts';
+import { runOperation } from '../providers/query-operation.ts';
+import { serverVersionOperation } from '../providers/server-queries.ts';
+import { trackDetailQueryOptions, trackToolsQueryOptions } from '../providers/track-queries.ts';
+import { trackTaskVerdictsQueryOptions } from '../providers/report-queries.ts';
+import { useTrackConversationMutations } from '../providers/track-conversation-mutations.ts';
+import { useTrackMutations } from '../providers/track-mutations.ts';
 import { ReadReceiptsProvider,useReadReceipt,useReadReceipts,useViewReadReceipt } from '../providers/read-receipts.tsx';
 import {
 createRecentFileHistory,type RecentFileHistory,
@@ -320,7 +319,7 @@ export function createAppRouter(deps: AppRouterDeps) {
 function ShellRoute({ transport, unauthorized, onSignOut, submittedStorage, }: { submittedStorage?: () => Storage; transport: ApiTransportPort; unauthorized: UnauthorizedChannel; onSignOut: () => void }) {
   const go = useGo();
   const versionQuery = useQuery({
-    queryKey: ['server-version'],
+    queryKey: queryKeys.serverVersion(),
     queryFn: () => runOperation(transport, serverVersionOperation(), unauthorized),
     enabled: true,
     retry: false,
@@ -384,7 +383,7 @@ function useConversationPanel(
       ?? preferredConversation?.id ?? source.planner?.cardId ?? source.rows[0]?.id ?? null
     : parentId;
   const mainReportComposer = options.reportComposer === undefined ? undefined : { ...options.reportComposer, conversationId: dockOwnerId };
-  const capabilities = useQuery({ queryKey: ['server-version'],
+  const capabilities = useQuery({ queryKey: queryKeys.serverVersion(),
     queryFn: () => runOperation(transport, serverVersionOperation(), unauthorized), enabled: parentId !== null && !compact, retry: false });
   const sideSlot = `${source.scopeId}:side:${parentId ?? ''}`;
   const sideTarget = useConversationPaneTarget(sideSlot, source.rows);

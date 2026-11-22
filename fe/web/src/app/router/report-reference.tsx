@@ -15,7 +15,7 @@ import { toTrack,} from '../../../../core/domain/track.ts';
 import { ReportDocument } from '../../features/report/document/public.tsx';
 import { ErrorBox } from '../../ui/error-box/public.tsx';
 import { createTrackWorkspaceFilesPort } from '../providers/directory.ts';
-import { trackDetailQueryOptions } from '../providers/queries.ts';
+import { trackDetailQueryOptions } from '../providers/track-queries.ts';
 import { ReportSourcePreview } from './report-source.tsx';
 import { useTrackTemplateViews } from './report-views.ts';
 

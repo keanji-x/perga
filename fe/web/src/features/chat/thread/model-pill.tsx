@@ -1,3 +1,4 @@
+import { PROVIDER_PRESENTATION } from '../../../../../core/domain/provider-presentation.ts';
 // The model picker in a planner conversation's composer footer, and on the new-track page. Presentational:
 // every value is a prop; the queries and the write live in `app/router`. Each provider's catalog is one
 // group; on the new-track page the pick also decides the Planner's provider (#1810), and each group
@@ -28,40 +29,8 @@ import styles from './model-pill.module.css';
 const FOLLOW_DEFAULT_LABEL = 'Default';
 
 /**
- * Legacy Planner presentation only; managed groups use the declared provider identifier.
- * Total over AgentProvider, so a new backend is a compile error until its Planner presentation is declared.
- * `unavailable` says why that provider's `source: 'unavailable'` catalog is empty. A Claude group waits for
- * its availability and catalog before it joins a menu that offers other providers (`hiddenUntilKnown`); a
- * Codex one stays while the daemon is down, saying so. Only codex compacts (`switchNote`).
- * The host supplies the server's blank-creation capability only on the new-track surface.
- */
-const PROVIDERS: Readonly<Record<AgentProvider, Readonly<{
-  label: string; unavailable: string; hiddenUntilKnown: boolean; switchNote: boolean;
-}>>> = Object.freeze({
-  codex: Object.freeze({
-    label: 'Codex', unavailable: 'codex is not running', hiddenUntilKnown: false, switchNote: true,
-  }),
-  claude: Object.freeze({
-    label: 'Claude', unavailable: 'Claude cannot run on this server right now', hiddenUntilKnown: true,
-    switchNote: false,
-  }),
-  opencode: Object.freeze({
-    label: 'OpenCode', unavailable: 'OpenCode cannot run on this server right now', hiddenUntilKnown: true,
-    switchNote: false,
-  }),
-  antigravity: Object.freeze({
-    label: 'Antigravity (agy)', unavailable: 'Antigravity (agy) cannot run on this server right now', hiddenUntilKnown: true,
-    switchNote: false,
-  }),
-  grok: Object.freeze({
-    label: 'Grok', unavailable: 'Grok cannot run on this server right now', hiddenUntilKnown: true,
-    switchNote: false,
-  }),
-});
-
-/**
  * One provider's section of the menu: its catalog, `null` while it loads, and whether the provider can run
- * right now (`GET /api/agent-providers`). `availability` is `null` while that answer is unknown, and for a
+ * right now (`GET /api/v1/bootstrap`). `availability` is `null` while that answer is unknown, and for a
  * conversation that already exists: its turns keep issue-time handling (#1817).
  */
 export type ModelGroup<Provider extends string = AgentProvider> = Readonly<{
@@ -77,7 +46,7 @@ export type ModelGroup<Provider extends string = AgentProvider> = Readonly<{
 }>;
 
 function legacyPresentation(provider: string) {
-  return Object.entries(PROVIDERS).find(([key]) => key === provider)?.[1];
+  return Object.entries(PROVIDER_PRESENTATION).find(([key]) => key === provider)?.[1];
 }
 
 /** Managed display needs no provider-specific UI registration. */

@@ -9,7 +9,7 @@ import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { readFailureOf, readFailureText } from '../../../../core/domain/read-failure.ts';
 import type { ReportBlock, TemplateViewsState } from '../../../../core/domain/report.ts';
-import { trackViewsQueryOptions } from '../providers/queries.ts';
+import { trackViewsQueryOptions } from '../providers/report-queries.ts';
 
 export function useTrackTemplateViews(
   transport: ApiTransportPort,

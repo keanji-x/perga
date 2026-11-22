@@ -15,7 +15,7 @@ import type { ApiRequest, ApiTransportPort } from '../../../../core/api/types.ts
 import type { SessionItemDto } from '../../../../core/api/perga-v1.ts';
 import { HARNESS_ITEMS_PAGE_LIMIT as PAGE_LIMIT } from '../../../../core/domain/conversation.ts';
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
-import { queryKeys } from '../providers/queries.ts';
+import { queryKeys } from '../providers/query-keys.ts';
 import { createAppRouter, APP_BASEPATH } from './public.tsx';
 import { bootTestCardRuntime } from './test-card-runtime.ts';
 import { ThemeProvider } from '../theme/public.tsx';

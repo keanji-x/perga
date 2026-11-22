@@ -36,7 +36,7 @@ describe('web api request callpoints', () => {
     const callpoints = performApiRequestCallpoints(root);
     expect(callpoints.map((path) => path.slice(root.length + 1)).sort()).toEqual([
       'app/auth/session-gate.tsx',
-      'app/providers/queries.ts',
+      'app/providers/query-operation.ts',
     ]);
     /* Arity 3 pins that the third argument is always written out, NOT that a channel is always supplied:
        `session-gate` passes `undefined` on purpose, because the unauthenticated probe must not notify. */

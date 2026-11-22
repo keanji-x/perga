@@ -1,3 +1,4 @@
+import { queryKeys } from '../providers/query-keys.ts';
 import type { QueryClient } from '@tanstack/react-query';
 
 import type { TrackAggregateSnapshotDto } from "../../../../core/api/perga-v1.ts";
@@ -8,7 +9,7 @@ import type { InvalidationContext } from '../../../../core/events/invalidation-p
 export function trackLookupContext(client: Pick<QueryClient, 'getQueriesData'>): InvalidationContext {
   return {
     findTrackOwningCard(cardId) {
-      for (const [key, detail] of client.getQueriesData<TrackAggregateSnapshotDto | CardWire[]>({ queryKey: ['track'] })) {
+      for (const [key, detail] of client.getQueriesData<TrackAggregateSnapshotDto | CardWire[]>({ queryKey: queryKeys.trackDetailPrefix() })) {
         if ((Array.isArray(detail) ? detail.some(card => card.id === cardId) : detail?.sessions.some(session => session.id === cardId))) {
           const trackId = key[1];
           return typeof trackId === 'string' ? trackId : null;

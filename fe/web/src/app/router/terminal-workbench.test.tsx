@@ -1,7 +1,7 @@
 import { act,cleanup,fireEvent,screen,waitFor,within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach,expect,it,vi } from 'vitest';
-import { queryKeys } from '../providers/queries.ts';
+import { queryKeys } from '../providers/query-keys.ts';
 import { openTerminalCommand,setupWorkbench,terminalCard,terminalCommandInput } from './terminal-workbench-fixture.tsx';
 
 const { mountedHost } = vi.hoisted(() => ({ mountedHost: vi.fn() }));

@@ -7,7 +7,8 @@ import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts'
 import { type Area } from '../../../../core/domain/area.ts';
 import type { TrackOverlayItemDto } from '../../../../core/api/perga-v1.ts';
 import { NEUTRAL_ACTIVITY, type Track } from '../../../../core/domain/track.ts';
-import { queryKeys, useWorkspace } from './queries.ts';
+import { queryKeys } from './query-keys.ts';
+import { useWorkspace } from './workspace-queries.ts';
 
 afterEach(cleanup);
 

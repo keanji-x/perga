@@ -4,7 +4,7 @@ import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { byRecency, type Conversation } from '../../../../core/domain/conversation.ts';
 import { trackDisplayTitle, type Track } from '../../../../core/domain/track.ts';
 import { agentSessionDtoToConversation } from '../../../../core/domain/conversation.ts';
-import { trackDetailQueryOptions } from '../providers/queries.ts';
+import { trackDetailQueryOptions } from '../providers/track-queries.ts';
 
 /** Reads only the declared current Track while history is open, using the existing query caches. */
 export function useMobileHistoryData(transport: ApiTransportPort, unauthorized: UnauthorizedChannel,

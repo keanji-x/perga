@@ -38,9 +38,10 @@ import { useState } from '../../ui/state/public.ts';
 import { useCompactViewport } from '../../ui/viewport/public.ts';
 import { createDirectoryLister } from '../providers/directory.ts';
 import { useKeyedIntent,type KeyedRequest } from '../providers/idempotency-key.ts';
-import {
-AreaCreatePreflightError,executionTargetsQueryOptions,useCreateExecutionTarget,useAreaMutations,useTrackMutations,useWorkspace,
-} from '../providers/queries.ts';
+import { AreaCreatePreflightError, useAreaMutations } from '../providers/area-mutations.ts';
+import { executionTargetsQueryOptions, useCreateExecutionTarget } from '../providers/execution-target-queries.ts';
+import { useTrackLifecycleMutations } from '../providers/track-lifecycle-mutations.ts';
+import { useWorkspace } from '../providers/workspace-queries.ts';
 import { workspaceActivityErrorText,workspaceReadErrorText } from '../providers/query-read-feedback.ts';
 import { useReadReceipts } from '../providers/read-receipts.tsx';
 import { useUiPreferences } from '../providers/ui-preferences.tsx';
@@ -160,7 +161,7 @@ export function AppShell({
   const workspace = fullWorkspace;
   const areaMutations = useAreaMutations(transport, unauthorized);
   const prepareNewTrack = usePrepareNewTrack();
-  const trackMutations = useTrackMutations(transport, unauthorized);
+  const trackMutations = useTrackLifecycleMutations(transport, unauthorized);
   const pinFeedback = useOperationFeedback();
   const listDirectory = createDirectoryLister(transport, unauthorized);
   const executionTargetsQuery = useQuery({

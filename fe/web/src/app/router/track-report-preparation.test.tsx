@@ -2,7 +2,7 @@ import { act,cleanup,fireEvent,screen,waitFor } from '@testing-library/react';
 import { afterEach,beforeEach,expect,it,vi } from 'vitest';
 import type { TrackAggregateSnapshotDto } from "../../../../core/api/perga-v1.ts";
 import * as markdown from '../../../../core/markdown/public.ts';
-import { queryKeys } from '../providers/queries.ts';
+import { queryKeys } from '../providers/query-keys.ts';
 import { createReadReceiptsKernel } from '../providers/read-receipts-fixture.tsx';
 import { useReadReceipts } from '../providers/read-receipts.tsx';
 import { renderDailyFixture } from './daily-planner-fixture.tsx';

@@ -9,7 +9,7 @@ import { RecoverySession } from '../../systems/recovery/session.ts';
 import { useState } from '../../ui/state/public.ts';
 import { ConnectionStatusScope } from '../providers/connection-status.tsx';
 import { WEB_COMPAT_VERSION,type ProviderRuntime,type ServerVersionInfo } from '../providers/public.tsx';
-import { runOperation } from '../providers/queries.ts';
+import { runOperation } from '../providers/query-operation.ts';
 import { coordinateRecoveryQueries } from '../providers/recovery-queries.ts';
 import { DatabaseScopeProvider } from '../providers/ui-preferences.tsx';
 import { ThemeProvider } from '../theme/public.tsx';

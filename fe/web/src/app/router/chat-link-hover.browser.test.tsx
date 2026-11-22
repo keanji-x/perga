@@ -14,7 +14,7 @@ import { cleanup, render } from '@testing-library/react';
 import { page, userEvent } from 'vitest/browser';
 import { afterEach, expect, it } from 'vitest';
 import { prepareReportDocument } from '../../features/report/document/preparation.ts';
-import { queryKeys } from '../providers/queries.ts';
+import { queryKeys } from '../providers/query-keys.ts';
 import { Profiler } from 'react';
 import { useConversationCommands, type ConversationRegistry } from '../conversations/public.tsx';
 import { conversationCardId } from './conversation-read-data.ts';

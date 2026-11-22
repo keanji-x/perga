@@ -9,7 +9,9 @@ import {
 } from '../../../../core/domain/task-recovery.ts';
 import { TaskRecoveryDetails } from '../../features/report/task/recovery.tsx';
 import { readErrorText } from '../../../../core/domain/read-failure.ts';
-import { queryKeys, runOperation, trackDetailQueryOptions } from '../providers/queries.ts';
+import { queryKeys } from '../providers/query-keys.ts';
+import { runOperation } from '../providers/query-operation.ts';
+import { trackDetailQueryOptions } from '../providers/track-queries.ts';
 import { hasReadFailure } from '../providers/query-read-feedback.ts';
 import { currentTaskExecution } from '../../../../core/domain/task-execution.ts';
 import { useState } from '../../ui/state/public.ts';

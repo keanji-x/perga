@@ -5,7 +5,7 @@ import type { ApiRequest,ApiTransportResponse } from '../../../../core/api/types
 import type { TrackReport } from '../../../../core/domain/report.ts';
 import * as markdown from '../../../../core/markdown/public.ts';
 import { prepareReportDocument,type PreparedReport,type ReportPreparationPort } from '../../features/report/document/preparation.ts';
-import { queryKeys } from '../providers/queries.ts';
+import { queryKeys } from '../providers/query-keys.ts';
 import { createReadReceiptsKernel } from '../providers/read-receipts-fixture.tsx';
 import { renderDailyFixture } from './daily-planner-fixture.tsx';
 import { fixtureReport,fixtureSnapshot,fixtureTrack } from './session-contract-fixture.ts';

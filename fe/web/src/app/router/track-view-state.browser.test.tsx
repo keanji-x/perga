@@ -8,7 +8,7 @@ import { afterEach, expect, it } from 'vitest';
 import type { TrackAggregateSnapshotDto } from '../../../../core/api/perga-v1.ts';
 import { trackReportLinkUrl, type TrackReport } from '../../../../core/domain/report.ts';
 import { filePathFromLocation } from './navigation.ts';
-import { queryKeys } from '../providers/queries.ts';
+import { queryKeys } from '../providers/query-keys.ts';
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { createAppRouter } from './public.tsx';

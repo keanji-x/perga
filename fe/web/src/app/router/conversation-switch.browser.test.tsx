@@ -4,7 +4,7 @@ import { afterEach, expect, it } from 'vitest';
 import { commands, page } from 'vitest/browser';
 import type { ApiTransportResponse } from '../../../../core/api/types.ts';
 import { fixtureTrack, fixtureSession, fixtureSnapshot } from './session-contract-fixture.ts';
-import { queryKeys } from '../providers/queries.ts';
+import { queryKeys } from '../providers/query-keys.ts';
 import { historyRows, type History } from '../conversations/history.ts';
 import { renderSessionFixture } from './conversation-session-fixture.tsx';
 import { sessionItem, sessionPage, sessionReply } from './conversation-session-data.ts';

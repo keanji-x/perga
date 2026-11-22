@@ -4,7 +4,7 @@ import { ThreadStatusNotice, type CopyResponseAction, type ResponseAction } from
 import { useRunningElapsedMs } from './running-clock.ts';
 import styles from './thread.module.css';
 
-/** One plain sentence for the `codexErrorInfo` values a reader can act on; every other code is shown as the token codex sent. */
+/** One plain sentence for provider error codes a reader can act on; every other code is shown as received. */
 const FAILURE_HINTS: Readonly<Record<string, string>> = Object.freeze({
   contextWindowExceeded: 'The conversation no longer fits in the model’s context window.',
   usageLimitExceeded: 'The usage limit for this account has been reached.',

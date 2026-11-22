@@ -44,7 +44,7 @@ function noticeText(outcome: PlannerQueueWriteOutcome): string | null {
     return 'This message is still queued for a follow-up turn.';
   }
   if (outcome.kind === 'unanswered') {
-    return 'Codex did not answer in time, so it is not known whether this message '
+    return 'The assistant did not answer in time, so it is not known whether this message '
       + 'reached the current turn. It stays queued and will go with the next turn; '
       + 'if it did reach this one, it will also show up in the conversation.';
   }

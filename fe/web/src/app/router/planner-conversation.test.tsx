@@ -15,7 +15,7 @@ import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts'
 import { HARNESS_ITEMS_PAGE_LIMIT as TRANSCRIPT_PAGE_LIMIT } from '../../../../core/domain/conversation.ts';
 import { invalidationPlanFor } from '../../../../core/events/invalidation-plan.ts';
 import { applyEventEffects } from '../events/query-invalidation-adapter.ts';
-import { queryKeys } from '../providers/queries.ts';
+import { queryKeys } from '../providers/query-keys.ts';
 import { ThemeProvider } from '../theme/public.tsx';
 import { APP_BASEPATH,createAppRouter } from './public.tsx';
 import { bootTestCardRuntime } from './test-card-runtime.ts';

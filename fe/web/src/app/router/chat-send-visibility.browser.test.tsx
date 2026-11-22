@@ -7,7 +7,7 @@ import { afterEach, expect, it } from 'vitest';
 import { commands, page, userEvent } from 'vitest/browser';
 import type { SessionItemDto } from '../../../../core/api/perga-v1.ts';
 import type { ApiTransportResponse } from '../../../../core/api/types.ts';
-import { queryKeys } from '../providers/queries.ts';
+import { queryKeys } from '../providers/query-keys.ts';
 
 
 const history = Object.freeze(Array.from({ length: 16 }, (_, index) => sessionItem('daily-planner', index + 1,

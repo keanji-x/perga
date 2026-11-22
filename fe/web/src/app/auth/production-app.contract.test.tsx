@@ -9,7 +9,7 @@ import { afterEach,describe,expect,it,vi } from 'vitest';
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { IDB_DB_NAME } from '../../../../core/keys/storage.ts';
 import { bootCards } from '../cards.ts';
-import { logoutOperation,runOperation } from '../providers/queries.ts';
+import { runOperation } from '../providers/query-operation.ts';
 import { createAppRouter } from '../router/public.tsx';
 import { mountProductionApp,ProductionApp } from './production-app.tsx';
 
@@ -25,18 +25,16 @@ vi.mock('../cards.ts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../cards.ts')>();
   return { bootCards: vi.fn(actual.bootCards) };
 });
-vi.mock('../providers/queries.ts', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../providers/queries.ts')>();
-  return { ...actual, logoutOperation: vi.fn(() => ({ method: 'POST', path: '/logout' })), runOperation: vi.fn() };
+vi.mock('../providers/query-operation.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../providers/query-operation.ts')>();
+  return { ...actual, runOperation: vi.fn() };
 });
 
 afterEach(() => { cleanup(); vi.clearAllMocks(); mocks.cursorClear.mockReset(); });
 
 describe('production app mount', () => {
 
-  it('clears every session artifact after logout completion and then reloads the browser', async () => {
-    let finishLogout!: () => void;
-    vi.mocked(runOperation).mockReturnValue(new Promise<void>((resolve) => { finishLogout = resolve; }));
+  it('clears every session artifact locally and then reloads without a logout request', async () => {
     const sequence: string[] = [];
     const reload = vi.fn(() => { sequence.push('reload'); });
     const deleteDatabase = vi.fn((name: string) => { sequence.push(`indexed-db:${name}`); });
@@ -60,11 +58,7 @@ describe('production app mount', () => {
     mocks.cursorClear.mockImplementation(() => { sequence.push('cursor'); });
 
     routerOptions?.onSignOut();
-    expect(logoutOperation).toHaveBeenCalledOnce();
-    expect(runOperation).toHaveBeenCalledOnce();
-    expect(reload).not.toHaveBeenCalled();
-
-    finishLogout();
+    expect(runOperation).not.toHaveBeenCalled();
     await vi.waitFor(() => expect(reload).toHaveBeenCalledOnce());
     expect(rendered.props.client.getQueryData(['private'])).toBeUndefined();
     expect(mocks.cursorClear).toHaveBeenCalledOnce();

@@ -10,7 +10,7 @@ import { AREA_PALETTE } from '../../features/area/palette.ts';
 import { ThemeProvider } from '../theme/public.tsx';
 import { AppShell } from './public.tsx';
 import { ApiError } from '../../../../core/domain/failure-class.ts';
-import { AreaCreatePreflightError } from '../providers/queries.ts';
+import { AreaCreatePreflightError } from '../providers/area-mutations.ts';
 import { useKeyedIntent } from '../providers/idempotency-key.ts';
 import type { NewAreaBody } from '../../../../core/domain/area.ts';
 import type { ApiRequest, ApiTransportPort, ApiTransportResponse } from '../../../../core/api/types.ts';
@@ -46,8 +46,8 @@ vi.mock('@tanstack/react-router', async (importOriginal) => {
   };
 });
 
-vi.mock('../providers/queries.ts', async (importOriginal) => {
-  const original = await importOriginal<typeof import('../providers/queries.ts')>();
+vi.mock('../providers/workspace-queries.ts', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../providers/workspace-queries.ts')>();
   return {
     ...original,
     useWorkspace: () => ({
@@ -64,6 +64,13 @@ vi.mock('../providers/queries.ts', async (importOriginal) => {
       retryOverlays: vi.fn(),
       retryTracks: vi.fn(),
     }),
+  };
+});
+
+vi.mock('../providers/area-mutations.ts', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../providers/area-mutations.ts')>();
+  return {
+    ...original,
     useAreaMutations: (...args: Parameters<typeof original.useAreaMutations>) => {
       const mutations = original.useAreaMutations(...args);
       return harness.realMutations ? mutations : {
@@ -72,10 +79,7 @@ vi.mock('../providers/queries.ts', async (importOriginal) => {
         remove: harness.remove,
       };
     },
-    useTrackMutations: () => ({
-      create: vi.fn(), patch: vi.fn(), setPinned: vi.fn(), createTerminal: vi.fn(),
-      createCodex: vi.fn(), createCard: vi.fn(), removeCard: vi.fn(), remove: vi.fn(),
-    }),
+
   };
 });
 

@@ -12,7 +12,7 @@ import { afterEach,beforeEach,describe,expect,it,vi } from 'vitest';
 import type { ApiRequest,ApiTransportPort,ApiTransportResponse } from '../../../../core/api/types.ts';
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { RECHECK_TEXT,unavailableCreationNote } from '../../../../core/domain/agent-providers.ts';
-import { queryKeys } from '../providers/queries.ts';
+import { queryKeys } from '../providers/query-keys.ts';
 import { createAppRouter } from '../router/public.tsx';
 import { bootTestCardRuntime } from '../router/test-card-runtime.ts';
 import { ThemeProvider } from '../theme/public.tsx';

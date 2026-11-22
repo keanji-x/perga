@@ -1,3 +1,4 @@
+import { queryKeys } from './query-keys.ts';
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { useEffect, type ReactNode } from 'react';
 import { DATABASE_ID_KEY, DB_INSTANCE_ID_KEY } from '../../../../core/keys/storage.ts';
@@ -60,7 +61,7 @@ export function ServerCompatGate({ children: routeContent, runtime, client, rend
   const [busted, setBusted] = useState(false);
   const [previousInstanceId] = useState(() => safeRead(runtime, DB_INSTANCE_ID_KEY));
   const [previousDatabaseId] = useState(() => safeRead(runtime, DATABASE_ID_KEY));
-  const query = useQuery({ queryKey: ['server-version'], queryFn: () => runtime.fetchVersion(), staleTime: 0, gcTime: 0, retry: retryUnless401, refetchInterval: false }, client);
+  const query = useQuery({ queryKey: queryKeys.serverVersion(), queryFn: () => runtime.fetchVersion(), staleTime: 0, gcTime: 0, retry: retryUnless401, refetchInterval: false }, client);
 
   // Perga's dbInstanceId is a process boot identity, used by the event cursor.
   // Only its stable databaseId denotes a database switch requiring cache replacement.

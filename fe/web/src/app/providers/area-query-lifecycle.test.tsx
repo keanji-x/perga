@@ -8,7 +8,9 @@ import { ApiError } from '../../../../core/domain/failure-class.ts';
 import { toArea, type AreaWire } from '../../../../core/domain/area.ts';
 import { invalidationPlanFor } from '../../../../core/events/invalidation-plan.ts';
 import { applyEventEffects } from '../events/query-invalidation-adapter.ts';
-import { queryKeys, useAreaMutations, useWorkspace } from './queries.ts';
+import { queryKeys } from './query-keys.ts';
+import { useAreaMutations } from './area-mutations.ts';
+import { useWorkspace } from './workspace-queries.ts';
 
 const area: AreaWire = { id: 'a1', name: 'Work', color: '#123456', sort: 0, kind: 'user', default_cwd: null, default_template_id: null, created_at: 1, updated_at: 1 };
 const unauthorized = createUnauthorizedChannel({ enqueue: task => task() });

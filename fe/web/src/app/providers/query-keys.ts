@@ -22,6 +22,19 @@ transcriptPrefix,
 
 // Key shapes match the legacy app so a cache dump reads the same in both.
 export const queryKeys = Object.freeze({
+  executionTargets: () => ['execution-targets'] as const,
+  systemInfo: () => ['system-info'] as const,
+  managedProviders: (targetId?: string) => targetId !== undefined && targetId !== '' && targetId !== 'local'
+    ? ['managed-providers', targetId] as const : ['managed-providers'] as const,
+  trackWorkspaceOptions: (areaId: string, targetId: string, cwd: string) => ['track-workspace-options', areaId, targetId, cwd] as const,
+  dailyPlanner: (date: string) => ['daily-planner', date] as const,
+  dailyCalendar: (start: string, end: string) => ['daily-calendar', start, end] as const,
+  dailyReportChanges: (date: string) => ['daily-report-changes', date] as const,
+  dailyReportEdits: (date: string, trackId: string, through: number) => ['daily-report-edits', date, trackId, through] as const,
+  conversationHistory: (cardId: string) => [...harnessItems(cardId), 'conversation_v1'] as const,
+  conversationLiveRead: (cardId: string, read: number, turnId: string | null) => ['harness-live', cardId, 'conversation_v1', read, turnId] as const,
+  conversationLive: (cardId: string) => ['harness-live', cardId, 'conversation_v1'] as const,
+  conversationRun: (cardId: string) => [...plannerRun(cardId), 'conversation_v1'] as const,
   serverVersion: () => ['server-version'] as const,
   areas,
   areaFolders: (areaId: string) => ['area-folders', areaId] as const,
@@ -74,8 +87,9 @@ export const queryKeys = Object.freeze({
   modelCatalogForCard,
   /** Every scope's catalog: a Recheck (#1822) re-fetches the Claude CLI's list behind the Claude ones. */
   modelCatalogPrefix,
-  /** `GET /api/agent-providers` (#1817). No event reaches it: the server's own 30 s cache is its freshness. */
-  agentProviders: () => ['agent-providers'] as const,
+  /** `GET /api/v1/bootstrap` provider availability. No event reaches it: the server's own 30 s cache is its freshness. */
+  agentProviders: (targetId?: string) => targetId !== undefined && targetId !== '' && targetId !== 'local'
+    ? ['agent-providers', targetId] as const : ['agent-providers'] as const,
   /** One track's conversation list, keyed by its track. */
   trackDetailPrefix,
   /**
