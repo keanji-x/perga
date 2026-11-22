@@ -18,7 +18,7 @@ confirmation.
 The same Dialog creates and edits an Area with a name and optional folder.
 Neither operation reads templates. Editing changes only name and directory;
 an existing `default_template_id` is preserved by omitting it from the patch.
-An empty folder gives each new Track its own managed Neige workspace. A saved
+An empty folder gives each new Track its own managed Perga workspace. A saved
 folder is the exact directory preselected for an attached Track. The opening
 name and directory snapshot stays fixed while the draft is open.
 

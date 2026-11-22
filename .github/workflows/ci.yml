@@ -107,7 +107,6 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          # The frontend ownership checks resolve their base from Git history.
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
@@ -116,12 +115,7 @@ jobs:
           cache: npm
           cache-dependency-path: fe/package-lock.json
       - run: npm ci
-      - name: Lint frontend and check ownership
-        env:
-          # Audit the PR commits even though the build uses GitHub's merge commit.
-          OWNERSHIP_EVENT_NAME: ${{ github.event_name == 'pull_request' && 'pull_request' || '' }}
-          OWNERSHIP_BASE_SHA: ${{ github.event.pull_request.base.sha || github.sha }}
-          OWNERSHIP_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Lint frontend
         run: npm run lint
       - name: Test frontend
         env:

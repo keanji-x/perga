@@ -73,8 +73,7 @@ invalidation. `core/events/invalidation-plan.ts` therefore extends the existing
 app adapter invokes public Query reset and the existing typed callers consume
 the declared effect. The task's approved refresh/read-model and typed-caller
 scope authorizes this narrow extension. Event wire formats, backend and persistent
-storage remain unchanged. Preserve its exact-path ownership trailer in the PR
-and squash body. This adds no event roster or per-test CI inventory; ordinary
+storage remain unchanged. This adds no event roster or per-test CI inventory; ordinary
 new tests and file renames use existing discovery. Page-size boundary fixtures
 live in the history owner and real-router switch targets.
 

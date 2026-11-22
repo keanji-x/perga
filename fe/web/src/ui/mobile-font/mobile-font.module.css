@@ -1,6 +1,6 @@
 @layer ui {
   @font-face {
-    font-family: 'Neige Mobile Roboto';
+    font-family: 'Perga Mobile Roboto';
     font-style: normal;
     font-weight: 400 700;
     font-display: swap;
@@ -9,7 +9,7 @@
   }
 
   .mobile {
-    --font-sans: 'Neige Mobile Roboto', 'Neige Mobile CJK', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+    --font-sans: 'Perga Mobile Roboto', 'Perga Mobile CJK', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
     --font-family-body: var(--font-sans);
     --font-family-heading: var(--font-sans);
     font-family: var(--font-sans);

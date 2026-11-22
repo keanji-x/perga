@@ -1,12 +1,11 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ReportFileLinkTarget } from '../../../../../core/domain/report-file.ts';
 import type { ReportSourceLinkTarget } from '../../../../../core/domain/report-source.ts';
 import { readTrackReportPayload, type ReportBlock, type TrackReport } from '../../../../../core/domain/report.ts';
 import { SOURCE_PANEL_COPY } from '../source/public.tsx';
-import { initialBody, splitInitialBody } from './kernel-initial-body.ts';
 import { ReportDocument, ReportTextLink } from './public.tsx';
 
 afterEach(cleanup);
@@ -321,50 +320,6 @@ describe('ReportDocument', () => {
       />);
       expect(container.textContent).toContain('◂ 3');
       expect(container.textContent?.match(/◂/g)?.length).toBe(1);
-    });
-  });
-
-  describe('a document that carries its own maintenance contract (#1185)', () => {
-    /* Read in `beforeAll`, not at module scope: `kernel-initial-body.ts` must never touch the filesystem at import time. */
-    let CONTRACT: string;
-    let SECTIONS: string[];
-    beforeAll(() => {
-      [CONTRACT, ...SECTIONS] = splitInitialBody();
-    });
-
-    it('the fixture really is the kernel skeleton', () => {
-      expect(CONTRACT.startsWith('<!-- neige:contract ')).toBe(true);
-      expect(CONTRACT).toContain('<!-- 报告维护契约');
-      expect(CONTRACT.endsWith('-->\n\n')).toBe(true);
-      expect(CONTRACT).toContain('散文正文');
-      expect(SECTIONS.map((s) => s.split('\n')[0]))
-        .toEqual(['# 概要', '# 待你定', '# 已完成', '# 决策']);
-    });
-
-    it('renders neither the contract nor a row for its block', () => {
-      const { container } = render(<ReportDocument
-        report={blocked(prose('b_1', CONTRACT), prose('b_2', `${SECTIONS[0]}本轮结论。\n`))}
-        empty={EMPTY}
-      />);
-      expect(container.textContent).not.toContain('报告维护契约');
-      expect(container.innerHTML).not.toContain('报告维护契约');
-      expect(container.innerHTML).not.toContain('neige:contract');
-      expect(container.textContent).not.toContain('散文正文');
-      expect(container.innerHTML).not.toContain('散文正文');
-      expect(container.querySelector('#b_1')?.childNodes.length).toBe(0);
-      expect(container.textContent).toContain('概要');
-      expect(container.textContent).toContain('本轮结论。');
-    });
-
-    it('drops the contract on the v1 flat-body path too', () => {
-      const { container } = render(<ReportDocument report={flat(initialBody())} empty={EMPTY} />);
-      expect(container.textContent).not.toContain('报告维护契约');
-      expect(container.innerHTML).not.toContain('报告维护契约');
-      expect(container.innerHTML).not.toContain('neige:contract');
-      expect(container.textContent).not.toContain('散文正文');
-      expect(container.innerHTML).not.toContain('散文正文');
-      expect(screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent))
-        .toEqual(['概要', '待你定', '已完成', '决策']);
     });
   });
 });

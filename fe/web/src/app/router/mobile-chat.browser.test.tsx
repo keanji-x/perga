@@ -235,7 +235,7 @@ it('loads real mobile CJK weight ranges and keeps shadowed controls free of visi
   await page.viewport(390, 844);
   renderDailyFixture({ emptyWorkspace: true });
   const entry = await page.getByRole('textbox', { name: 'Chat message', exact: true }).findElement();
-  const faces = await document.fonts.load('500 15px "Neige Mobile CJK"', '工作区手机对话');
+  const faces = await document.fonts.load('500 15px "Perga Mobile CJK"', '工作区手机对话');
   expect(faces.length).toBeGreaterThan(0);
   expect(faces.every(face => face.status === 'loaded' && face.weight === '400 700')).toBe(true);
   const surface = getComputedStyle(entry.closest('form')!);

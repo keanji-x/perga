@@ -15,9 +15,9 @@ it('resolves roles in the explicit font scope while preserving the desktop stack
   const scope = document.querySelector<HTMLElement>('[data-testid="scope"]')!;
   const mobile = document.querySelector<HTMLElement>('[data-testid="mobile"]')!;
   const family = document.querySelector<HTMLElement>('[data-testid="family"]')!;
-  await document.fonts.load('14px "Neige Mobile Roboto"');
-  expect(document.fonts.check('14px "Neige Mobile Roboto"')).toBe(true);
-  expect(getComputedStyle(family).fontFamily).toContain('Neige Mobile Roboto');
+  await document.fonts.load('14px "Perga Mobile Roboto"');
+  expect(document.fonts.check('14px "Perga Mobile Roboto"')).toBe(true);
+  expect(getComputedStyle(family).fontFamily).toContain('Perga Mobile Roboto');
   const desktopFamily = getComputedStyle(desktop).fontFamily;
   expect(getComputedStyle(mobile).fontFamily).toBe(getComputedStyle(family).fontFamily);
   scope.style.setProperty('--font-sans', 'monospace');
