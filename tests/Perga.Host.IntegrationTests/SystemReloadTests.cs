@@ -47,9 +47,9 @@ public sealed class SystemReloadTests
         Assert.Contains("new", (await store.LoadTrackAggregateAsync(newTrack.Track.Id, default))!.TemplateSnapshotSource);
         Assert.Equal("old asset", await host.Client.GetStringAsync("/assets/old-abc123.js"));
         Assert.Equal("new asset", await host.Client.GetStringAsync("/assets/new-abc123.js"));
-        using var next = await host.Client.GetAsync("/next");
-        Assert.Equal("no-cache", next.Headers.CacheControl!.ToString());
-        Assert.Contains("new", await next.Content.ReadAsStringAsync());
+        using var root = await host.Client.GetAsync("/");
+        Assert.Equal("no-cache", root.Headers.CacheControl!.ToString());
+        Assert.Contains("new", await root.Content.ReadAsStringAsync());
         using var fallback = await host.Client.GetAsync("/tracks/existing");
         Assert.Equal("no-cache", fallback.Headers.CacheControl!.ToString());
         Assert.Contains("new", await fallback.Content.ReadAsStringAsync());

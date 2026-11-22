@@ -486,7 +486,7 @@ public sealed class ApiV1RestIntegrationTests
         await File.WriteAllTextAsync(Path.Combine(distDir, "app.js"), "console.log('perga');");
         await File.WriteAllTextAsync(Path.Combine(distDir, "assets", "bundle.js"), "console.log('bundle');");
         await File.WriteAllTextAsync(Path.Combine(distDir, "assets", "bundle.css"), "body{margin:0;}");
-        await File.WriteAllTextAsync(Path.Combine(distDir, "manifest.webmanifest"), "{\"id\":\"/next/\"}");
+        await File.WriteAllTextAsync(Path.Combine(distDir, "manifest.webmanifest"), "{\"id\":\"/\"}");
 
         try
         {
@@ -561,20 +561,19 @@ public sealed class ApiV1RestIntegrationTests
             Assert.Equal(HttpStatusCode.OK, assetResp.StatusCode);
             Assert.Contains("console.log('perga')", await assetResp.Content.ReadAsStringAsync());
 
-            using var nextJsResp = await client.GetAsync("/next/assets/bundle.js");
-            Assert.Equal(HttpStatusCode.OK, nextJsResp.StatusCode);
-            Assert.Contains("javascript", nextJsResp.Content.Headers.ContentType?.MediaType ?? string.Empty, StringComparison.OrdinalIgnoreCase);
-            Assert.Contains("console.log('bundle')", await nextJsResp.Content.ReadAsStringAsync());
-
             using var rootJsResp = await client.GetAsync("/assets/bundle.js");
             Assert.Equal(HttpStatusCode.OK, rootJsResp.StatusCode);
             Assert.Contains("javascript", rootJsResp.Content.Headers.ContentType?.MediaType ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("console.log('bundle')", await rootJsResp.Content.ReadAsStringAsync());
 
-            using var nextCssResp = await client.GetAsync("/next/assets/bundle.css");
-            Assert.Equal(HttpStatusCode.OK, nextCssResp.StatusCode);
-            Assert.Equal("text/css", nextCssResp.Content.Headers.ContentType?.MediaType);
+            using var removedAlias = await client.GetAsync("/next/assets/bundle.js");
+            Assert.DoesNotContain("console.log('bundle')", await removedAlias.Content.ReadAsStringAsync());
 
-            using var manifestResp = await client.GetAsync("/next/manifest.webmanifest");
+            using var rootCssResp = await client.GetAsync("/assets/bundle.css");
+            Assert.Equal(HttpStatusCode.OK, rootCssResp.StatusCode);
+            Assert.Equal("text/css", rootCssResp.Content.Headers.ContentType?.MediaType);
+
+            using var manifestResp = await client.GetAsync("/manifest.webmanifest");
             Assert.Equal(HttpStatusCode.OK, manifestResp.StatusCode);
             Assert.Equal("application/manifest+json", manifestResp.Content.Headers.ContentType?.MediaType);
 

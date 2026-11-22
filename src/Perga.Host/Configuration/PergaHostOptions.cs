@@ -27,6 +27,9 @@ public sealed class PergaHostOptions
 {
     public const string SectionName = "Perga";
 
+    public string[] AllowedOrigins { get; set; } = [];
+    public string[] AllowedHosts { get; set; } = [];
+
     public string? InstallationRoot { get; set; }
     public string InstallationName { get; set; } = "perga";
     public string? BridgeBuildId { get; set; }
