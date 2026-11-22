@@ -193,7 +193,7 @@ public sealed class ImplicitTemplateToolsTests
     private const string Source = """
         export default defineTemplate({ id: "authored", title: "Authored",
           plugins: ["search", "new-plugin", "search"],
-          initialState: inputs => ({ marker: inputs.marker }),
+          data: { initial: inputs => ({ marker: inputs.marker ?? "default" }) },
           before: () => Deny("authored policy active") });
         """;
 
@@ -235,7 +235,6 @@ public sealed class ImplicitTemplateToolsTests
         Assert.Equal("Authored", inspected.GetProperty("manifest").GetProperty("title").GetString());
         var contract = await Call(ctx, caller, KernelMcpToolNames.TemplateRead, new { });
         Assert.Contains("defineTemplate", contract.GetProperty("contract").GetString());
-        Assert.Contains("editableSource", contract.GetProperty("contract").GetString());
         Assert.Equal(contract.GetRawText(), (await Call(ctx, caller, KernelMcpToolNames.TemplateRead,
             new { templateId = "__contract__" })).GetRawText());
         var ex = await Assert.ThrowsAsync<KernelException>(() => Call(ctx, caller, KernelMcpToolNames.TemplateRead,
@@ -274,9 +273,9 @@ public sealed class ImplicitTemplateToolsTests
             : (object)new { source = Source, inputs = new { marker = "initialized" } });
         Assert.Equal("authored", result.GetProperty("templateId").GetString());
         var persisted = (await ctx.Store.LoadTrackAggregateAsync(snap.Track.Id, default))!;
-        Assert.Equal(Source, TestJson.Parse(persisted.TemplateSnapshotSource!).GetProperty("source").GetString());
+        Assert.Equal(Source, persisted.TemplateSnapshotSource);
         Assert.Equal("initialized", persisted.Track.TemplateInputs.GetProperty("marker").GetString());
-        Assert.Equal("initialized", persisted.Track.TemplateState.GetProperty("marker").GetString());
+        Assert.Equal("initialized", persisted.Track.Data.GetProperty("marker").GetString());
         Assert.Equal(["existing", "search", "new-plugin"], persisted.Track.EnabledPlugins);
         Assert.Equal(persisted.Track.EnabledPlugins,
             ctx.Kernel.McpSessionBridge.ResolveToken(registration.Principal.Token)!.EnabledPlugins);
@@ -299,9 +298,9 @@ public sealed class ImplicitTemplateToolsTests
         var caller = Caller(snap);
         const string asking = """
             export default defineTemplate({ id:'asking', title:'Asking',
-              initialState: () => ({ requests: 0 }),
+              data: { initial: { requests: 0 } },
               before: (call, ctx) => {
-                ctx.state.requests++;
+                ctx.data.requests++;
                 return call.arguments.inputs?.suspend
                   ? AskHuman('Approve replacement?', { approve: 'Approve', deny: 'Reject' }) : Allow();
               } });
@@ -321,8 +320,8 @@ public sealed class ImplicitTemplateToolsTests
             if (ask is null) await Task.Delay(10, timeout.Token);
         }
         Assert.False(suspended.IsCompleted);
-        Assert.Equal(1, (await ctx.Store.LoadTrackAggregateAsync(snap.Track.Id, default))!
-            .Track.TemplateState.GetProperty("requests").GetInt32());
+        Assert.Equal(0, (await ctx.Store.LoadTrackAggregateAsync(snap.Track.Id, default))!
+            .Track.Data.GetProperty("requests").GetInt32());
         await Call(ctx, caller, KernelMcpToolNames.TrackSet, new { source = replacement });
         var events = ctx.Store.PersistedEvents.Count(e => e.Kind == "track.updated");
         await ctx.Kernel.RespondInteractionAsync(ask.SessionId, ask.Id, new(ExecutionId: ask.ExecutionId, OptionId: ask.Options.Single(option => option.IsApproval).Id), new InteropPrincipal.Human(), timeout.Token);
@@ -330,7 +329,7 @@ public sealed class ImplicitTemplateToolsTests
         Assert.Equal(KernelErrorCode.PolicyDenied, ex.Code);
         var persisted = (await ctx.Store.LoadTrackAggregateAsync(snap.Track.Id, default))!;
         Assert.Equal("replacement", persisted.Track.TemplateId);
-        Assert.Equal(replacement, TestJson.Parse(persisted.TemplateSnapshotSource!).GetProperty("source").GetString());
+        Assert.Equal(replacement, persisted.TemplateSnapshotSource);
         Assert.Equal(events, ctx.Store.PersistedEvents.Count(e => e.Kind == "track.updated"));
     }
 
@@ -392,20 +391,20 @@ public sealed class ImplicitTemplateToolsTests
     }
 
     [Fact]
-    public async Task DeniedTrackSet_PersistsGuardState()
+    public async Task DeniedTrackSet_DiscardsGuardMutations()
     {
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
         var (_, snap) = await ctx.CreateDefaultTrackAsync();
         await Call(ctx, Caller(snap), KernelMcpToolNames.TrackSet, new { source = """
             export default defineTemplate({ id:'denying', title:'Denying',
-              initialState: () => ({ denied: 0 }),
-              before: (action, ctx) => { ctx.state.denied++; return Deny('blocked'); } });
+              data: { initial: { denied: 0 } },
+              before: (action, ctx) => { ctx.data.denied++; return Deny('blocked'); } });
             """ });
         var ex = await Assert.ThrowsAsync<KernelException>(() => Call(ctx, Caller(snap),
             KernelMcpToolNames.TrackSet, new { source = Source }));
         Assert.Equal(KernelErrorCode.PolicyDenied, ex.Code);
         var persisted = (await ctx.Store.LoadTrackAggregateAsync(snap.Track.Id, default))!;
-        Assert.Equal(1, persisted.Track.TemplateState.GetProperty("denied").GetInt32());
+        Assert.Equal(0, persisted.Track.Data.GetProperty("denied").GetInt32());
         Assert.Equal("denying", persisted.Track.TemplateId);
     }
 
@@ -413,7 +412,7 @@ public sealed class ImplicitTemplateToolsTests
     [InlineData("{}")]
     [InlineData("{\"templateId\":\"a\",\"source\":\"b\"}")]
     [InlineData("{\"source\":\"export default defineTemplate({\"}")]
-    [InlineData("{\"source\":\"export default defineTemplate({id:'bad',title:'Bad',initialState:()=>{throw new Error('init failed')}});\"}")]
+    [InlineData("{\"source\":\"export default defineTemplate({id:'bad',title:'Bad',data:{initial:()=>{throw new Error('init failed')}}});\"}")]
     [InlineData("{\"source\":\"x\",\"inputs\":[]}")]
     [InlineData("{\"source\":null}")]
     public async Task InvalidApplication_DoesNotMutateTrackOrSnapshotOrEmit(string arguments)
@@ -432,13 +431,13 @@ public sealed class ImplicitTemplateToolsTests
     }
 
     [Fact]
-    public async Task InvalidReplacement_PreservesExistingPolicyAndGuardState()
+    public async Task InvalidReplacement_PreservesExistingPolicyAndData()
     {
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
         var (_, snap) = await ctx.CreateDefaultTrackAsync();
         const string original = """
             export default defineTemplate({ id:'original', title:'Original',
-              before: (action, ctx) => { ctx.state.calls = (ctx.state.calls || 0) + 1; return Allow(); } });
+              before: (action, ctx) => { ctx.data.calls = (ctx.data.calls || 0) + 1; return Allow(); } });
             """;
         await Call(ctx, Caller(snap), KernelMcpToolNames.TrackSet, new { source = original });
         var before = await ctx.Kernel.GetTrackAggregateAsync(snap.Track.Id);
@@ -491,7 +490,7 @@ public sealed class ImplicitTemplateToolsTests
         var owningTask = new TaskDto("tsk_bound", snap.Track.Id, "b_1", "bound-task", 1, "agent", null, AccessMode.ReadOnly,
             true, [], "Work", null, null, null, TaskRunStatus.Running, null, SemanticVerdict.None, null, 1, 1,
             SessionId: bound.Id, RunCount: 1, StartedAtMs: 1);
-        await ctx.Store.UpsertTaskAsync(owningTask, null, null, default, session: bound);
+        await ctx.Store.UpsertTaskAsync(owningTask, null, default, session: bound);
         // Seed before actor hydration in a fresh actor.
         await ctx.Kernel.WaitForTrackIdleAsync(snap.Track.Id);
         await ctx.Kernel.Actors.RemoveAndDisposeAsync(snap.Track.Id);

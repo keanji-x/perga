@@ -52,7 +52,7 @@ internal sealed partial class InMemoryTrackStore : ITrackScheduleStore, ITodayRe
             if (idx < 0)
                 return Task.FromResult(false);
             if (armedTask is not null)
-                UpsertTaskAsync(armedTask, null, taskEvent, ct).GetAwaiter().GetResult();
+                UpsertTaskAsync(armedTask, taskEvent, ct).GetAwaiter().GetResult();
             _trackSchedules[idx] = nextClock;
             return Task.FromResult(true);
         }

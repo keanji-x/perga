@@ -50,7 +50,6 @@ public sealed partial class TrackActor : IAsyncDisposable
     private string? _policyUnavailableReason;
     private string _policyGeneration = Guid.NewGuid().ToString("N");
     private string? _templateSnapshotSource;
-    private string? _presentedTemplateSnapshotSource;
     private MountedWorkspace? _mountedWorkspace;
     private readonly Dictionary<string, AgentSessionDto> _sessions = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _nextTurnIndexBySession = new(StringComparer.Ordinal);
@@ -361,7 +360,6 @@ public sealed partial class TrackActor : IAsyncDisposable
         _executionTargetId = _track.ExecutionTargetId;
         _reports.Hydrate(snapshot.Report);
         _templateSnapshotSource = snapshot.TemplateSnapshotSource;
-        _presentedTemplateSnapshotSource = TemplateHost.InspectSource(_templateSnapshotSource);
 
         try
         {
@@ -464,7 +462,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             Tasks: _taskCoordinator.Snapshot(),
             Sessions: OrderedSessionsCore(),
             OpenAsks: _interactions.OpenAsks(),
-            TemplateSnapshotSource: _presentedTemplateSnapshotSource,
+            TemplateSnapshotSource: _templateSnapshotSource,
             WorkspacePreparation: WorkspacePreparationStatus) { PendingApprovals = ReadPendingApprovals() };
     }
 

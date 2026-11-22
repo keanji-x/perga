@@ -1,7 +1,6 @@
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
-using System.Text.Json;
 using Perga.PolicyVm;
 using Vm = Perga.PolicyVm.PolicyVm;
 
@@ -14,7 +13,6 @@ public interface ITemplateCatalog
     CompiledPolicy? TryGetPolicy(string templateId);
     CompiledPolicy GetRequiredPolicy(string templateId);
     CompiledPolicy GetOrCompileSnapshot(string templateSnapshotSource);
-    CompiledPolicy CompileSource(string source);
     CompiledPolicy RegisterTemplate(string jsModuleSource);
     int LoadFromDirectory(string directoryPath);
 }
@@ -78,25 +76,7 @@ public class TemplateHost : ITemplateCatalog
         }
 
         var hash = ComputeSha256Hex(templateSnapshotSource);
-        return _snapshotCacheByHash.GetOrAdd(hash, _ =>
-        {
-            var source = Vm.WithToolNameVersion(templateSnapshotSource, legacy: true);
-            return ResolveInheritance(_policyVm.Compile(source));
-        });
-    }
-
-    public CompiledPolicy CompileSource(string source) => GetOrCompileSnapshot(Vm.WithToolNameVersion(source, legacy: false));
-
-    internal static string Freeze(CompiledPolicy policy) => Vm.WithToolNameVersion(policy.JsSource, legacy: false);
-
-    internal static string? LegacyReapplySource(CompiledPolicy? policy) =>
-        policy is { UsesLegacyBeforeToolNames: true } or { UsesLegacyAfterToolNames: true } ? Freeze(policy) : null;
-
-    internal static string? InspectSource(string? snapshot)
-    {
-        if (snapshot is null) return null;
-        try { return Vm.ReadToolNameVersion(snapshot)?.Source ?? snapshot; }
-        catch (Exception ex) when (ex is JsonException or InvalidOperationException) { return snapshot; }
+        return _snapshotCacheByHash.GetOrAdd(hash, _ => ResolveInheritance(_policyVm.Compile(templateSnapshotSource)));
     }
 
     private CompiledPolicy ResolveInheritance(CompiledPolicy policy) =>
@@ -105,18 +85,12 @@ public class TemplateHost : ITemplateCatalog
             : policy;
 
     public CompiledPolicy RegisterTemplate(string jsModuleSource) =>
-        Register(ResolveInheritance(_policyVm.Compile(Vm.WithToolNameVersion(jsModuleSource, legacy: false))));
-
-    public CompiledPolicy RegisterFileSource(string source) =>
-        Register(ResolveInheritance(CompileFileSource(source)));
-
-    private CompiledPolicy CompileFileSource(string source) =>
-        _policyVm.Compile(Vm.WithToolNameVersion(source, legacy: true));
+        Register(ResolveInheritance(_policyVm.Compile(jsModuleSource)));
 
     private CompiledPolicy Register(CompiledPolicy compiled)
     {
         _policiesById[compiled.TemplateId] = compiled;
-        _snapshotCacheByHash[ComputeSha256Hex(Freeze(compiled))] = compiled;
+        _snapshotCacheByHash[ComputeSha256Hex(compiled.JsSource)] = compiled;
         return compiled;
     }
 
@@ -130,7 +104,7 @@ public class TemplateHost : ITemplateCatalog
             return 0;
         }
 
-        var pending = sources.Select(CompileFileSource).ToList();
+        var pending = sources.Select(_policyVm.Compile).ToList();
         var count = 0;
         while (pending.Count > 0)
         {

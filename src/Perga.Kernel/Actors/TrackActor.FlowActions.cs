@@ -35,7 +35,7 @@ public sealed partial class TrackActor
                 UpdatedAtMs = failNow
             };
             _taskCoordinator.ReplaceTaskInMemoryCore(failed);
-            await _taskCoordinator.PersistAndEmitTaskUpdatedCoreAsync(failed, null, failNow, ct).ConfigureAwait(false);
+            await _taskCoordinator.PersistAndEmitTaskUpdatedCoreAsync(failed, failNow, ct).ConfigureAwait(false);
             await OnTaskSettledFlowHookCoreAsync(failed, ct).ConfigureAwait(false);
             return false;
         }
@@ -68,7 +68,7 @@ public sealed partial class TrackActor
         try
         {
             await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
-            await _store.UpsertTaskAsync(runningTask, null, evt, ct).ConfigureAwait(false);
+            await _store.UpsertTaskAsync(runningTask, evt, ct).ConfigureAwait(false);
         }
         catch
         {
@@ -172,7 +172,7 @@ public sealed partial class TrackActor
                 UpdatedAtMs = now
             };
             _taskCoordinator.ReplaceTaskInMemoryCore(settled);
-            await _taskCoordinator.PersistAndEmitTaskUpdatedCoreAsync(settled, null, now, CancellationToken.None, suppressDefaultWake: true).ConfigureAwait(false);
+            await _taskCoordinator.PersistAndEmitTaskUpdatedCoreAsync(settled, now, CancellationToken.None, suppressDefaultWake: true).ConfigureAwait(false);
             await OnTaskSettledFlowHookCoreAsync(settled, CancellationToken.None).ConfigureAwait(false);
         }, CancellationToken.None).ConfigureAwait(false);
     }
@@ -213,7 +213,7 @@ public sealed partial class TrackActor
                 FinishedAtMs = null,
                 UpdatedAtMs = now
             };
-            await _taskCoordinator.PersistAndEmitTaskUpdatedCoreAsync(runningTask, null, now, ct).ConfigureAwait(false);
+            await _taskCoordinator.PersistAndEmitTaskUpdatedCoreAsync(runningTask, now, ct).ConfigureAwait(false);
             _taskCoordinator.ReplaceTaskInMemoryCore(runningTask);
         }
 
@@ -442,7 +442,7 @@ public sealed partial class TrackActor
                 Meta = JsonHelpers.ToElement(new { watchProgress = progress }),
                 UpdatedAtMs = NowMs()
             };
-            await _taskCoordinator.PersistAndEmitTaskUpdatedCoreAsync(updated, null, updated.UpdatedAtMs, CancellationToken.None).ConfigureAwait(false);
+            await _taskCoordinator.PersistAndEmitTaskUpdatedCoreAsync(updated, updated.UpdatedAtMs, CancellationToken.None).ConfigureAwait(false);
             _taskCoordinator.ReplaceTaskInMemoryCore(updated);
             watchState.Progress = progress;
         }, CancellationToken.None).ConfigureAwait(false);
@@ -483,7 +483,7 @@ public sealed partial class TrackActor
                 : null;
             shouldPokeLead = wakePrompt is not null;
 
-            await _taskCoordinator.PersistAndEmitTaskUpdatedCoreAsync(settled, null, now, CancellationToken.None, wakePrompt: wakePrompt, suppressDefaultWake: wakePrompt is null)
+            await _taskCoordinator.PersistAndEmitTaskUpdatedCoreAsync(settled, now, CancellationToken.None, wakePrompt: wakePrompt, suppressDefaultWake: wakePrompt is null)
                 .ConfigureAwait(false);
             _taskCoordinator.ReplaceTaskInMemoryCore(settled);
             _activeWatches.Remove(watchState.TaskId);

@@ -72,6 +72,6 @@ public sealed class AskHumanContractTests
         var vm = new PolicyVm();
         var policy = vm.Compile("export default {id:'ask',title:'Ask',before:()=>" + expression + "};");
         var json = JsonSerializer.SerializeToElement(new { });
-        return vm.Before(policy, "task.dispatch", "track", json, json, json).Output;
+        return vm.Before(policy, "task.dispatch", "track", json, json, json);
     }
 }

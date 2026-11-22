@@ -210,7 +210,7 @@ public sealed class SqliteMaintenanceGcTests
                 """),
             StartedAtMs: nowMs - 16L * DayMs,
             FinishedAtMs: nowMs - 15L * DayMs);
-        await store.UpsertTaskAsync(taskSub, null, null, ct, session: subOld);
+        await store.UpsertTaskAsync(taskSub, null, ct, session: subOld);
         await store.RecordTurnAndItemsAsync(
             new SessionTurnDto("turn_sub_old", "sess_sub_old", 1, Epoch: 1, "wake", StorageTestHarness.Json("{}"), "completed", null, null, nowMs - 16L * DayMs, nowMs - 15L * DayMs),
             [

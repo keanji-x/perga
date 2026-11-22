@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Dapper;
 using Perga.Contracts;
 using Perga.Kernel.Ports;
@@ -6,7 +5,7 @@ using Perga.ReportDoc;
 
 namespace Perga.Storage.Sqlite;
 
-/// <summary>Atomic report/revision commits, template state, event linkage and report wakes.</summary>
+/// <summary>Atomic report/revision commits, event linkage and report wakes.</summary>
 internal sealed class ReportRepository
 {
     private readonly SqliteStoreContext _context;
@@ -22,7 +21,6 @@ internal sealed class ReportRepository
         byte[] compressedRevisionBlocks,
         string? authorSessionId,
         string commitMessage,
-        JsonElement nextTemplateState,
         EventEnvelopeDto evt,
         CancellationToken ct)
     {
@@ -37,7 +35,6 @@ internal sealed class ReportRepository
         var effectiveBlocksZstd = compressedRevisionBlocks.Length > 0
             ? compressedRevisionBlocks
             : SqliteJsonUpcaster.CompressReportBlocksZstd(report.Blocks);
-        var nextTemplateStateJson = SqliteJsonUpcaster.SerializeElement(nextTemplateState);
         var nowMs = evt.CreatedAtMs > 0 ? evt.CreatedAtMs : _context.TimeProvider.GetUtcNow().ToUnixTimeMilliseconds();
 
         return _context.Writer.EnqueueAsync(
@@ -98,14 +95,12 @@ internal sealed class ReportRepository
                     new CommandDefinition(
                         """
                         UPDATE tracks
-                        SET template_state_json = @NextTemplateStateJson,
-                            updated_at_ms = @UpdatedAtMs
+                        SET updated_at_ms = @UpdatedAtMs
                         WHERE id = @TrackId;
                         """,
                         new
                         {
                             TrackId = trackId,
-                            NextTemplateStateJson = nextTemplateStateJson,
                             UpdatedAtMs = nowMs
                         },
                         transaction: tx,

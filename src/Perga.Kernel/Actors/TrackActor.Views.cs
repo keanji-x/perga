@@ -45,10 +45,13 @@ public sealed partial class TrackActor
         string source,
         string? callerSessionId = null,
         CancellationToken ct = default,
-        long? expectedDataRev = null) =>
+        long? expectedDataRev = null,
+        string? expectedPolicyGeneration = null) =>
         EnqueueAsync(async _ =>
         {
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
+            if (expectedPolicyGeneration is not null && _policyGeneration != expectedPolicyGeneration)
+                throw KernelException.PolicyDenied("Active policy changed after data patch authorization.");
             if (_track.ClosedAtMs is not null)
             {
                 throw KernelException.Conflict("Cannot patch template data on a closed Track.");
@@ -110,6 +113,8 @@ public sealed partial class TrackActor
                 await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
                 await _store.UpdateTrackAndEmitAsync(nextTrack, evt, ct, writeData: true).ConfigureAwait(false);
                 _track = nextTrack;
+                // Existing approvals evaluated the previous policy data snapshot.
+                _policyGeneration = Guid.NewGuid().ToString("N");
                 await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, CancellationToken.None).ConfigureAwait(false);
             }
 

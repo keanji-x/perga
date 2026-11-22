@@ -58,19 +58,6 @@ public sealed class VcsMcpBackend : IMcpToolBackend
         var args = arguments.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null
             ? McpToolResultFormatter.EmptyObject
             : arguments;
-        var result = await CallToolCoreAsync(caller, toolName, args, ct).ConfigureAwait(false);
-        if (!result.IsError)
-            await _kernel.Actors.GetOrActivate(caller.TrackId).AfterMcpToolCallAsync(ServerName, toolName,
-                JsonSerializer.SerializeToElement(new { mcpServer = ServerName, arguments = args, result }), ct).ConfigureAwait(false);
-        return result;
-    }
-
-    private async Task<McpCallToolResult> CallToolCoreAsync(
-        McpSessionPrincipal caller,
-        string toolName,
-        JsonElement args,
-        CancellationToken ct)
-    {
         try
         {
             if (!VcsMcpToolNames.All.Contains(toolName))

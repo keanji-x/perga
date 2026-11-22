@@ -41,7 +41,6 @@ internal sealed class TrackReadRepository
                    t.template_id AS TemplateId,
                    t.template_snapshot AS TemplateSnapshot,
                    t.template_inputs_json AS TemplateInputsJson,
-                   t.template_state_json AS TemplateStateJson,
                    t.data_json AS DataJson,
                    t.data_rev AS DataRev,
                    t.flow_spec_json AS FlowSpecJson,
@@ -254,7 +253,6 @@ internal sealed class TrackReadRepository
                        t.template_id AS TemplateId,
                        t.template_snapshot AS TemplateSnapshot,
                        t.template_inputs_json AS TemplateInputsJson,
-                       t.template_state_json AS TemplateStateJson,
                        t.data_json AS DataJson,
                        t.data_rev AS DataRev,
                        t.flow_spec_json AS FlowSpecJson,
@@ -288,7 +286,6 @@ internal sealed class TrackReadRepository
             LeadSessionId: r.LeadSessionId,
             TemplateId: r.TemplateId,
             TemplateInputs: _context.Upcaster.UpcastObjectOrElement(r.TemplateInputsJson, "tracks.template_inputs_json"),
-            TemplateState: _context.Upcaster.UpcastObjectOrElement(r.TemplateStateJson, "tracks.template_state_json"),
             Data: _context.Upcaster.UpcastObjectOrElement(r.DataJson, "tracks.data_json"),
             DataRev: r.DataRev,
             FlowRev: r.FlowRev,
@@ -316,7 +313,6 @@ internal sealed class TrackReadRepository
         public string? TemplateId { get; init; }
         public string? TemplateSnapshot { get; init; }
         public string TemplateInputsJson { get; init; } = "{}";
-        public string TemplateStateJson { get; init; } = "{}";
         public string DataJson { get; init; } = "{}";
         public long DataRev { get; init; }
         public string FlowSpecJson { get; init; } = """{"rev":0,"nodes":[]}""";

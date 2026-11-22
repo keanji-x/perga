@@ -7,11 +7,58 @@ using Perga.Host.Serialization;
 using Perga.Kernel;
 using Perga.Kernel.Mcp;
 using Perga.Kernel.Ports;
+using Perga.ReportDoc;
 
 namespace Perga.Host.IntegrationTests;
 
 public sealed class McpReportErgonomicsIntegrationTests
 {
+    [Fact]
+    public async Task HistoricalCheckpointsStayReadableAcrossUnrelatedReportEdits()
+    {
+        await using var cluster = new PergaHostTestCluster();
+        var kernel = cluster.Services.GetRequiredService<IPergaKernel>();
+        var store = cluster.Services.GetRequiredService<ITrackStore>();
+        var area = await kernel.CreateAreaAsync(new("Historical Report", DefaultCwd: cluster.DataDir));
+        var track = (await kernel.CreateTrackAsync(new(area.Id))).Track;
+        await kernel.WaitForTrackIdleAsync(track.Id);
+        await kernel.Actors.RemoveAndDisposeAsync(track.Id);
+
+        var engine = new ReportDocEngine();
+        var historical = engine.Parse("""
+            # Milestones
+
+            ```perga-block checkpoints
+            {"items":[{"id":"first","title":"First stage","status":"done"}]}
+            ```
+
+            # Progress
+
+            Original prose
+            """, docRev: 1);
+        await store.SaveReportAsync(track.Id, historical, engine.CompressZstd(historical.Blocks),
+            track.LeadSessionId, "Historical import",
+            new(null, area.Id, track.Id, "report.updated", JsonSerializer.SerializeToElement(new { docRev = 1 }),
+                cluster.TimeProvider.GetUtcNow().ToUnixTimeMilliseconds()), default);
+        var checkpoint = Assert.Single(historical.Blocks, block => block.Kind == ReportBlockKind.Checkpoints);
+        var report = await kernel.ReadReportAsync(track.Id);
+        Assert.Contains("First stage", report.RenderedMarkdown);
+        var legacyRevision = await store.GetReportRevisionBlocksAsync(track.Id, 1, default);
+        Assert.Contains(legacyRevision, block => block.Id == checkpoint.Id && block.Kind == checkpoint.Kind);
+
+        var committed = await kernel.CommitReportAsync(track.Id, track.LeadSessionId!,
+            new(report.Anchor, [new BlockOp.ReplaceSectionOp("Progress", "# Progress\n\nNew prose")]));
+        var preserved = Assert.Single(committed.Blocks, block => block.Id == checkpoint.Id);
+        Assert.Equal(checkpoint.Rev, preserved.Rev);
+        Assert.True(JsonElement.DeepEquals(checkpoint.Payload!.Value, preserved.Payload!.Value));
+        Assert.Contains("New prose", committed.RenderedMarkdown);
+
+        var denied = await Assert.ThrowsAsync<KernelException>(() => kernel.CommitReportAsync(track.Id, track.LeadSessionId!,
+            new(committed.Anchor, [new BlockOp.UpsertBlockOp(null, ReportBlockKind.Checkpoints, null, checkpoint.Payload)])));
+        Assert.Equal(KernelErrorCode.InvalidArgument, denied.Code);
+        Assert.Equal(committed.DocRev, (await kernel.ReadReportAsync(track.Id)).DocRev);
+    }
+
     [Fact]
     public async Task McpKernel_ReportSchemas_CompactCommit_And_ScopedRead_WorkOverHttp()
     {

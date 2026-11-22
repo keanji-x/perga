@@ -469,10 +469,6 @@ public sealed partial class TrackActor
             await work.PersistSettlementCoreAsync(outcome.Delivered, outcome.RejectedBeforePrompt, completedTurn, items, updatedSession)
                 .ConfigureAwait(false);
 
-            await actor.AfterPolicyEventCoreAsync("turn.after", JsonHelpers.ToElement(new {
-                sessionId, turnId = completedTurn.Id, status = outcome.Status,
-                isLead = currentSession.IsLead, boundTaskId = actor._taskCoordinator.TryGetActiveTaskForSessionCore(sessionId)?.Task.Id
-            }), CancellationToken.None).ConfigureAwait(false);
             actor._runtimes.Get(sessionId).TouchUsed();
             if (actor._track.ClosedAtMs is not null || updatedSession.ArchivedAtMs is not null)
             {

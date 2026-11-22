@@ -65,8 +65,7 @@ public sealed partial class PolicyVm : IPolicyVm
             var bundle = TemplateBundle.Parse(jsModuleSource);
             using var engine = CreateSandboxedEngine(CompileTimeoutMs, bundle);
             var tHelper = engine.GetValue("t");
-            var loaded = LoadDefinition(engine, bundle);
-            var rawDef = ValidateDefaultTemplateObject(loaded.Definition);
+            var rawDef = ValidateDefaultTemplateObject(LoadDefinition(engine, bundle));
 
             var id = ReadRequiredNonEmptyString(rawDef, "id", "template.id");
             var title = ReadRequiredNonEmptyString(rawDef, "title", "template.title");
@@ -80,8 +79,6 @@ public sealed partial class PolicyVm : IPolicyVm
 
             EnsureOptionalFunction(def, "headerView", "template.headerView");
             EnsureOptionalFunction(def, "before", "template.before");
-            EnsureOptionalFunction(def, "after", "template.after");
-            EnsureOptionalFunction(def, "initialState", "template.initialState");
             EnsureOptionalFunction(def, "turnContext", "template.turnContext");
 
             // Workspace spec
@@ -98,18 +95,9 @@ public sealed partial class PolicyVm : IPolicyVm
             }
 
             // Report spec
-            int? maxProseChars = null;
-            var sections = new List<SectionRule>();
             var viewNames = new List<string>();
             if (TryGetOptionalObject(def, "report", "template.report", out var reportObj))
             {
-                maxProseChars = ReadOptionalInt(reportObj, "maxProseChars", "template.report.maxProseChars");
-                if (maxProseChars is <= 0)
-                {
-                    throw new InvalidOperationException("template.report.maxProseChars must be positive when specified.");
-                }
-
-                sections = ParseSectionRules(reportObj);
                 if (TryGetOptionalObject(reportObj, "views", "template.report.views", out var viewsObj))
                 {
                     foreach (var prop in viewsObj.GetOwnProperties())
@@ -146,8 +134,6 @@ public sealed partial class PolicyVm : IPolicyVm
                 Description: description,
                 DefaultPlugins: defaultPlugins,
                 InputsSchema: inputsSchema,
-                Sections: sections,
-                MaxProseChars: maxProseChars,
                 RequireGateForReadWrite: requireGateForReadWrite,
                 WorkspaceDriver: workspaceDriver,
                 WorkspaceLowerCacheDirs: lowerCacheDirs,
@@ -161,84 +147,38 @@ public sealed partial class PolicyVm : IPolicyVm
                 InitialReportMarkdown: initialReportMarkdown,
                 ViewNames: viewNames.Count > 0 ? viewNames : null);
 
-            var policy = new CompiledPolicy(id, jsModuleSource, manifest, loaded.LegacyBefore, loaded.LegacyAfter);
+            var policy = new CompiledPolicy(id, jsModuleSource, manifest);
             PolicyBundles.Add(policy, bundle);
             return policy;
         }, CompileTimeoutMs);
     }
 
-    public PolicyEvalResult<JsonElement> InitState(CompiledPolicy policy, JsonElement inputs)
+    public PolicyTurnPreparation PrepareTurn(CompiledPolicy policy, PolicyTurnContext ctx, JsonElement data)
     {
-        ArgumentNullException.ThrowIfNull(policy);
-
-        return EvaluateWithEffectiveDefinition(policy, inputs, "InitState", (engine, _, def, jsInputs, _) =>
-        {
-            var initialStateFn = def.Get("initialState");
-            if (initialStateFn.IsUndefined() || initialStateFn.IsNull())
-            {
-                var empty = ParseJsonObject("{}");
-                return new PolicyEvalResult<JsonElement>(empty, empty.Clone());
-            }
-
-            if (initialStateFn is not Function fn)
-            {
-                throw new InvalidOperationException("template.initialState must be a function.");
-            }
-
-            var returned = engine.Call(fn, def, [jsInputs]);
-            var stateElem = JsValueToJsonElement(engine, returned, defaultJson: "{}");
-            return new PolicyEvalResult<JsonElement>(stateElem, stateElem.Clone());
-        });
-    }
-
-    public PolicyEvalResult<PolicyTurnPreparation> PrepareTurn(CompiledPolicy policy, PolicyTurnContext ctx, JsonElement state)
-    {
-        var context = EvaluateTurnContext(policy, ctx, state);
-        var before = Before(policy, "turn.before", ctx.TrackId, System.Text.Json.JsonSerializer.SerializeToElement(new {
-            sessionId = ctx.SessionId, isLead = ctx.IsLead, boundTaskId = ctx.BoundTaskId,
-            contextUsageRatio = ctx.ContextUsageRatio, context = context.Output
-        }), ctx.Inputs, context.NextState);
-        return new(before.NextState, new(context.Output, before.Output));
-    }
-
-    private PolicyEvalResult<string?> EvaluateTurnContext(CompiledPolicy policy, PolicyTurnContext ctx, JsonElement state)
-    {
-        ArgumentNullException.ThrowIfNull(policy);
         ArgumentNullException.ThrowIfNull(ctx);
-
-        return EvaluateWithEffectiveDefinition(policy, ctx.Inputs, "TurnContext", (engine, _, def, _, _) =>
+        var session = new Dictionary<string, object?>
         {
-            var hookVal = def.Get("turnContext");
-            if (hookVal.IsUndefined() || hookVal.IsNull())
-            {
-                return new PolicyEvalResult<string?>(NormalizeStateJson(state), null);
-            }
-
-            if (hookVal is not Function hookFn)
-            {
-                throw new InvalidOperationException("template.turnContext must be a function.");
-            }
-
-            var templateCtx = BuildTemplateContextObject(engine, def, ctx.TrackId, ctx.Inputs, state);
-            var sessionObj = ParseJsJson(engine, System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, object?>
-            {
-                ["sessionId"] = ctx.SessionId,
-                ["isLead"] = ctx.IsLead,
-                ["boundTaskId"] = ctx.BoundTaskId,
-                ["contextUsageRatio"] = ctx.ContextUsageRatio
-            }));
-
-            if (ctx.BoundTaskId is null && sessionObj is ObjectInstance sessionInst)
-            {
-                sessionInst.Delete("boundTaskId");
-            }
-
-            ((ObjectInstance)templateCtx).Set("session", sessionObj);
-            var result = engine.Call(hookFn, def, [templateCtx]);
-            var nextState = ExtractContextState(engine, templateCtx);
-            var text = ExtractOptionalStringResult(result, "turnContext");
-            return new PolicyEvalResult<string?>(nextState, text);
+            ["sessionId"] = ctx.SessionId,
+            ["isLead"] = ctx.IsLead,
+            ["contextUsageRatio"] = ctx.ContextUsageRatio
+        };
+        if (ctx.BoundTaskId is not null)
+            session["boundTaskId"] = ctx.BoundTaskId;
+        var sessionJson = System.Text.Json.JsonSerializer.SerializeToElement(session);
+        var context = EvaluateWithEffectiveDefinition<string?>(policy, ctx.Inputs, "TurnContext", (engine, _, def, _, _) =>
+        {
+            if (def.Get("turnContext") is not Function hook)
+                return null;
+            var templateCtx = BuildTemplateContextObject(engine, def, ctx.TrackId, ctx.Inputs, data, sessionJson);
+            return ExtractOptionalStringResult(engine.Call(hook, def, [templateCtx]), "turnContext");
         });
+        var payload = System.Text.Json.JsonSerializer.SerializeToElement(new
+        {
+            sessionId = ctx.SessionId, isLead = ctx.IsLead, boundTaskId = ctx.BoundTaskId,
+            contextUsageRatio = ctx.ContextUsageRatio, context
+        });
+        var decision = EvaluateBefore(policy, "turn.before", ctx.TrackId, payload, ctx.Inputs, data, sessionJson);
+        return new(context, decision);
     }
 
     private static Engine CreateSandboxedEngine(int timeoutMs = ExecutionTimeoutMs, TemplateBundle? bundle = null)
@@ -277,7 +217,7 @@ public sealed partial class PolicyVm : IPolicyVm
             var bundle = PolicyBundles.GetValue(policy, static compiled => TemplateBundle.Parse(compiled.JsSource));
             using var engine = CreateSandboxedEngine(ExecutionTimeoutMs, bundle);
             var schemaBuilder = engine.GetValue("t");
-            var rawDef = ValidateDefaultTemplateObject(LoadDefinition(engine, bundle).Definition);
+            var rawDef = ValidateDefaultTemplateObject(LoadDefinition(engine, bundle));
             var jsInputs = BuildEffectiveJsInputs(engine, rawDef, inputs);
             var def = ResolveEffectiveDefinition(engine, rawDef, jsInputs);
             return evaluate(engine, bundle, def, jsInputs, schemaBuilder);
@@ -343,24 +283,16 @@ public sealed partial class PolicyVm : IPolicyVm
         ObjectInstance def,
         string trackId,
         JsonElement inputs,
-        JsonElement state)
+        JsonElement data,
+        JsonElement? session = null)
     {
-        var effectiveInputs = BuildEffectiveJsInputs(engine, def, inputs);
-        var rawStateJson = state.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null
-            ? "{}"
-            : state.GetRawText();
-
-        var jsState = ParseJsJson(engine, rawStateJson);
-        if (jsState.IsUndefined() || jsState.IsNull() || jsState is not ObjectInstance || jsState.IsArray())
-        {
-            jsState = new JsObject(engine);
-        }
-
-        var ctxObj = new JsObject(engine);
-        ctxObj.Set("trackId", trackId);
-        ctxObj.Set("inputs", effectiveInputs);
-        ctxObj.Set("state", jsState);
-        return ctxObj;
+        var context = new JsObject(engine);
+        context.Set("trackId", trackId);
+        context.Set("inputs", BuildEffectiveJsInputs(engine, def, inputs));
+        context.Set("data", ParseJsJson(engine, NormalizeObjectJson(data).GetRawText()));
+        if (session is { } sessionJson)
+            context.Set("session", ParseJsJson(engine, sessionJson.GetRawText()));
+        return context;
     }
 
     private static JsValue BuildEffectiveJsInputs(Engine engine, ObjectInstance def, JsonElement inputs)
@@ -397,12 +329,6 @@ public sealed partial class PolicyVm : IPolicyVm
         }
 
         return inputsObj;
-    }
-
-    private static JsonElement ExtractContextState(Engine engine, ObjectInstance templateCtx)
-    {
-        var stateVal = templateCtx.Get("state");
-        return JsValueToJsonElement(engine, stateVal, defaultJson: "{}");
     }
 
     private static JsonElement ExtractInputsSchema(Engine engine, ObjectInstance def)
@@ -444,45 +370,6 @@ public sealed partial class PolicyVm : IPolicyVm
                 throw new InvalidOperationException($"template.inputs.{field.Name}.values must be a nonempty array of strings.");
         }
         return schema;
-    }
-
-    private static List<SectionRule> ParseSectionRules(ObjectInstance reportObj)
-    {
-        var sectionsVal = reportObj.Get("sections");
-        if (sectionsVal.IsUndefined() || sectionsVal.IsNull())
-        {
-            return [];
-        }
-
-        if (!sectionsVal.IsArray())
-        {
-            throw new InvalidOperationException("template.report.sections must be an array.");
-        }
-
-        var list = new List<SectionRule>();
-        var arr = sectionsVal.AsArray();
-        for (uint i = 0; i < arr.Length; i++)
-        {
-            var item = arr.Get(i);
-            if (item is not ObjectInstance secObj || item.IsArray())
-            {
-                throw new InvalidOperationException($"template.report.sections[{i}] must be an object.");
-            }
-
-            var h1 = ReadRequiredNonEmptyString(secObj, "h1", $"template.report.sections[{i}].h1");
-            var omitIfEmpty = ReadOptionalBool(secObj, "omitIfEmpty", $"template.report.sections[{i}].omitIfEmpty") ?? false;
-
-            IReadOnlyList<string>? editableBy = null;
-            var editableVal = secObj.Get("editableBy");
-            if (!editableVal.IsUndefined() && !editableVal.IsNull())
-            {
-                editableBy = ReadStringArrayValue(editableVal, $"template.report.sections[{i}].editableBy");
-            }
-
-            list.Add(new SectionRule(h1, omitIfEmpty, editableBy));
-        }
-
-        return list;
     }
 
     private static GuardDecision ParseGuardDecision(Engine engine, JsValue value, string hookName)
@@ -566,10 +453,10 @@ public sealed partial class PolicyVm : IPolicyVm
         return ParseJsonObject(serialized.AsString());
     }
 
-    private static JsonElement NormalizeStateJson(JsonElement state) =>
-        state.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null
+    private static JsonElement NormalizeObjectJson(JsonElement value) =>
+        value.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null
             ? ParseJsonObject("{}")
-            : state.Clone();
+            : value.Clone();
 
     private static JsonElement ParseJsonObject(string json)
     {
@@ -656,28 +543,6 @@ public sealed partial class PolicyVm : IPolicyVm
         }
 
         return val.AsBoolean();
-    }
-
-    private static int? ReadOptionalInt(ObjectInstance obj, string prop, string path)
-    {
-        var val = obj.Get(prop);
-        if (val.IsUndefined() || val.IsNull())
-        {
-            return null;
-        }
-
-        if (!val.IsNumber())
-        {
-            throw new InvalidOperationException($"{path} must be an integer number.");
-        }
-
-        var num = val.AsNumber();
-        if (double.IsNaN(num) || double.IsInfinity(num) || Math.Floor(num) != num || num < int.MinValue || num > int.MaxValue)
-        {
-            throw new InvalidOperationException($"{path} must be a finite 32-bit integer.");
-        }
-
-        return (int)num;
     }
 
     private static IReadOnlyList<string> ReadOptionalStringList(ObjectInstance obj, string prop, string path)

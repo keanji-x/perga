@@ -86,8 +86,8 @@ public sealed class BoundAttemptFenceAndGovernanceTests
         var leadId = snap.Track.LeadSessionId!;
 
         // 1. Deny
-        ctx.PolicyVm.OnBefore = (_, action, _, state) =>
-            new PolicyEvalResult<GuardDecision>(state, new GuardDecision.Deny("Prose freeze active"));
+        ctx.PolicyVm.OnBefore = (_, action, _, _) =>
+            new GuardDecision.Deny("Prose freeze active");
 
         var r0 = await ctx.Kernel.ReadReportAsync(trackId, leadId);
         var denyEx = await Assert.ThrowsAsync<KernelException>(() =>
@@ -97,8 +97,8 @@ public sealed class BoundAttemptFenceAndGovernanceTests
         Assert.Equal(KernelErrorCode.PolicyDenied, denyEx.Code);
 
         // 2. AskHuman -> suspends without blocking actor -> human approves -> commit succeeds!
-        ctx.PolicyVm.OnBefore = (_, action, _, state) =>
-            new PolicyEvalResult<GuardDecision>(state, new GuardDecision.AskHuman("Approve report edit?"));
+        ctx.PolicyVm.OnBefore = (_, action, _, _) =>
+            new GuardDecision.AskHuman("Approve report edit?");
 
         var expired = await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.CommitReportAsync(trackId, leadId,
             new ReportCommitRequest(r0.Anchor, [new BlockOp.UpsertBlockOp(null, ReportBlockKind.Prose, "Stale request", null)]),

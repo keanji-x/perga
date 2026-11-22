@@ -39,8 +39,8 @@ public sealed class PolicyGuardMailTerminalScheduleBootTests
         var leadId = snap.Track.LeadSessionId!;
 
         // 1. Allow
-        ctx.PolicyVm.OnBefore = (_, action, _, state) =>
-            new PolicyEvalResult<GuardDecision>(state, new GuardDecision.Allow());
+        ctx.PolicyVm.OnBefore = (_, action, _, _) =>
+            new GuardDecision.Allow();
         await ctx.Kernel.GuardMcpToolCallAsync(trackId, leadId, "vcs", "status", TestJson.Parse("{}"));
 
         // 2. Disabled plugin rejected immediately
@@ -49,15 +49,15 @@ public sealed class PolicyGuardMailTerminalScheduleBootTests
         Assert.Equal(KernelErrorCode.Forbidden, disabledEx.Code);
 
         // 3. Policy Deny
-        ctx.PolicyVm.OnBefore = (_, action, call, state) =>
-            new PolicyEvalResult<GuardDecision>(state, new GuardDecision.Deny($"Blocked tool {call.GetProperty("toolName").GetString()}"));
+        ctx.PolicyVm.OnBefore = (_, action, call, _) =>
+            new GuardDecision.Deny($"Blocked tool {call.GetProperty("toolName").GetString()}");
         var denyEx = await Assert.ThrowsAsync<KernelException>(() =>
             ctx.Kernel.GuardMcpToolCallAsync(trackId, leadId, "vcs", "pr_merge", TestJson.Parse("{}")));
         Assert.Equal(KernelErrorCode.PolicyDenied, denyEx.Code);
 
         // 4. Policy AskHuman -> suspends until human approves -> allows; if human denies -> throws PolicyDenied!
-        ctx.PolicyVm.OnBefore = (_, action, _, state) =>
-            new PolicyEvalResult<GuardDecision>(state, new GuardDecision.AskHuman("Allow vcs_push?", "拒绝", "Approve"));
+        ctx.PolicyVm.OnBefore = (_, action, _, _) =>
+            new GuardDecision.AskHuman("Allow vcs_push?", "拒绝", "Approve");
 
         var guardTask = ctx.Kernel.GuardMcpToolCallAsync(trackId, leadId, "vcs", "publish_pr", TestJson.Parse("{}"));
         ApprovalDto? openAsk = null;
@@ -186,7 +186,7 @@ public sealed class PolicyGuardMailTerminalScheduleBootTests
         // Open track with an in-flight Running task
         var openTrack = new TrackDto(
             "trk_boot_open", area.Id, null, null, "Open Interrupted Track", "/repo/open", "direct",
-            emptyJson, "ses_open_lead", null, emptyJson, emptyJson, [], ClosedAtMs: null, PinnedAtMs: null, 0, 1000, 1000);
+            emptyJson, "ses_open_lead", null, emptyJson, [], ClosedAtMs: null, PinnedAtMs: null, 0, 1000, 1000);
         var openLead = new AgentSessionDto(
             "ses_open_lead", "trk_boot_open", true, "Lead", "codex", null, null, 1, "idle", null, 1000, 1000);
         var inFlightTask = new TaskDto(
@@ -203,7 +203,7 @@ public sealed class PolicyGuardMailTerminalScheduleBootTests
         // Closed track with an interrupted turn -> should be reconciled in DB, NOT woken!
         var closedTrack = new TrackDto(
             "trk_boot_closed", area.Id, null, null, "Closed Track", "/repo/closed", "direct",
-            emptyJson, "ses_closed_lead", null, emptyJson, emptyJson, [], ClosedAtMs: 2000, PinnedAtMs: null, 0, 1000, 2000);
+            emptyJson, "ses_closed_lead", null, emptyJson, [], ClosedAtMs: 2000, PinnedAtMs: null, 0, 1000, 2000);
         var closedLead = new AgentSessionDto(
             "ses_closed_lead", "trk_boot_closed", true, "Lead", "codex", null, null, 1, "running", null, 1000, 1000);
         ctx.Store.SeedDirectAggregate(

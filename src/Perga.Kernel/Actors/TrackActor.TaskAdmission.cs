@@ -45,26 +45,25 @@ public sealed partial class TrackActor
         return (route with { Provider = session.Provider, Model = session.Model }, usesPreparedDefault);
     }
 
-    private PolicyEvalResult<GuardDecision> EvaluateTaskDispatchCore(TaskDto task, PolicyTaskRoute route) =>
-        _policy is null ? new(_track.TemplateState, new GuardDecision.Allow()) :
+    private GuardDecision EvaluateTaskDispatchCore(TaskDto task, PolicyTaskRoute route) =>
+        _policy is null ? new GuardDecision.Allow() :
         _policyVm.Before(_policy, "task.dispatch", TrackId, JsonHelpers.ToElement(new {
             taskKey = task.TaskKey, role = task.Role, access = FormatAccessModeForPolicy(task.Access),
             provider = route.Provider, model = route.Model, gate = task.Gate, acceptance = task.Acceptance
-        }), _track.TemplateInputs, _track.TemplateState);
+        }), _track.TemplateInputs, _track.Data);
 
-    private async Task<bool> EnsureTaskDispatchApprovedCoreAsync(TaskDto task, PolicyTaskRoute route, CancellationToken ct)
+    private bool EnsureTaskDispatchApprovedCore(TaskDto task, PolicyTaskRoute route)
     {
         if (route.Denial is { } denial) throw KernelException.PolicyDenied(denial);
         if (_policy is null || _taskDispatchApprovals.TryGetValue(task.TaskKey, out var approval) &&
             approval == (task.Generation, _policyGeneration, TaskDispatchFields(task))) return true;
         if (_pendingTaskDispatchApprovals.Contains(task.Id)) return false;
         var evaluation = EvaluateTaskDispatchCore(task, route);
-        await UpdateTemplateStateIfChangedCoreAsync(evaluation.NextState, ct).ConfigureAwait(false);
-        if (evaluation.Output is GuardDecision.Deny denied)
+        if (evaluation is GuardDecision.Deny denied)
             throw KernelException.PolicyDenied(denied.Reason);
         if (_policy.Manifest.RequireGateForReadWrite && task.Access == AccessMode.ReadWrite && (task.Gate is null || task.Gate.Steps.Count == 0))
             throw KernelException.PolicyDenied("Template policy requires a gate for this task.");
-        if (evaluation.Output is GuardDecision.AskHuman ask)
+        if (evaluation is GuardDecision.AskHuman ask)
         {
             var suspension = ApplyGuardDecisionCore(ask, _track.LeadSessionId, null, _actorShutdownCts.Token)!;
             _pendingTaskDispatchApprovals.Add(task.Id);
@@ -152,7 +151,7 @@ public sealed partial class TrackActor
                     else
                     {
                         var failed = current with { Status = TaskRunStatus.Failed, StatusDetail = "Task dispatch denied by human.", FinishedAtMs = NowMs(), UpdatedAtMs = NowMs() };
-                        await _taskCoordinator.PersistAndEmitTaskUpdatedCoreAsync(failed, null, failed.UpdatedAtMs, _actorShutdownCts.Token).ConfigureAwait(false);
+                        await _taskCoordinator.PersistAndEmitTaskUpdatedCoreAsync(failed, failed.UpdatedAtMs, _actorShutdownCts.Token).ConfigureAwait(false);
                         _taskCoordinator.ReplaceTaskInMemoryCore(failed);
                     }
                 }

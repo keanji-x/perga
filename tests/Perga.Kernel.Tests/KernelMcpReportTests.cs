@@ -153,10 +153,7 @@ public sealed class KernelMcpReportTests
         Assert.Single(scopedAnchor.GetProperty("knownBlockRevs").EnumerateObject());
 
         var contract = scoped.GetProperty("blockContract");
-        Assert.True(contract.GetProperty("kinds").TryGetProperty("task", out _));
-        Assert.True(contract.GetProperty("kinds").TryGetProperty("table", out _));
-        Assert.True(contract.GetProperty("kinds").TryGetProperty("view", out _));
-        Assert.Equal("path", Assert.Single(contract.GetProperty("kinds").GetProperty("html").GetProperty("required").EnumerateArray()).GetString());
+        Assert.Equal(["prose", "widget"], contract.GetProperty("kinds").EnumerateObject().Select(property => property.Name));
 
         // format=markdown + sectionH1 with '# ' prefix renders only the scoped section
         var scopedMd = await Call(ctx, caller, KernelMcpToolNames.ReportRead, new

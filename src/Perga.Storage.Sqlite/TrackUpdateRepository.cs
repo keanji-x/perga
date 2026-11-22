@@ -134,7 +134,6 @@ internal sealed class TrackUpdateRepository
 
         var workspaceSpecJson = SqliteJsonUpcaster.SerializeElement(track.WorkspaceSpec);
         var templateInputsJson = SqliteJsonUpcaster.SerializeElement(track.TemplateInputs);
-        var templateStateJson = SqliteJsonUpcaster.SerializeElement(track.TemplateState);
         var dataJson = writeData ? SqliteJsonUpcaster.SerializeElement(track.Data) : null;
         var enabledPluginsJson = SqliteJsonUpcaster.SerializeStringList(track.EnabledPlugins);
 
@@ -166,7 +165,6 @@ internal sealed class TrackUpdateRepository
                             template_snapshot = CASE WHEN @ReplaceTemplateSnapshot = 1 THEN @TemplateSnapshot ELSE template_snapshot END,
                             template_id = @TemplateId,
                             template_inputs_json = @TemplateInputsJson,
-                            template_state_json = @TemplateStateJson,
                             enabled_plugins_json = @EnabledPluginsJson,
                             closed_at_ms = @ClosedAtMs,
                             pinned_at_ms = @PinnedAtMs,
@@ -189,7 +187,6 @@ internal sealed class TrackUpdateRepository
                             TemplateSnapshot = templateSnapshot,
                             ReplaceTemplateSnapshot = replaceTemplateSnapshot ? 1 : 0,
                             TemplateInputsJson = templateInputsJson,
-                            TemplateStateJson = templateStateJson,
                             EnabledPluginsJson = enabledPluginsJson,
                             track.ClosedAtMs,
                             track.PinnedAtMs,

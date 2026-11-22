@@ -15,9 +15,12 @@ public sealed class TrackDataTests
     private const string Source = """
         export default defineTemplate({
           id: 'ledger', title: 'Ledger',
-          initialState: () => ({ approvals: 0 }),
           before(action, ctx) {
-            if (action.type === 'tool.data_patch') ctx.state.approvals++;
+            if (action.type === 'tool.data_patch') {
+              if (ctx.data.records?.[0]?.value !== 1) return Deny('Expected current ledger');
+              ctx.data.records[0].value = 98;
+              ctx.data.approvals = 1;
+            }
             return Allow();
           },
           data: {
@@ -49,7 +52,6 @@ public sealed class TrackDataTests
                     kernel, principal, tool, JsonSerializer.SerializeToElement(args));
 
                 Assert.Equal(0, created.DataRev);
-                Assert.False(created.TemplateState.TryGetProperty("records", out _));
                 Assert.Equal(2, created.Data.GetProperty("records").GetArrayLength());
 
                 var first = await Apply(KernelMcpToolNames.DataPatch, new
@@ -63,7 +65,7 @@ public sealed class TrackDataTests
                 Assert.Equal("keep", records[0].GetProperty("note").GetString());
                 Assert.Equal(5, records[0].GetProperty("value").GetInt32());
                 Assert.Equal("c", records[1].GetProperty("code").GetString());
-                Assert.Equal(1, (await kernel.GetTrackAggregateAsync(id)).Track.TemplateState.GetProperty("approvals").GetInt32());
+                Assert.False((await kernel.GetTrackAggregateAsync(id)).Track.Data.TryGetProperty("approvals", out _));
 
                 using var invalid = await host.AuthenticatedClient.PatchAsJsonAsync(url + "/data",
                     new { expectedDataRev = 1, patch = Parse("""{"records":{"$upsert":[{"code":"a","value":"invalid"}]}}""") });
@@ -127,7 +129,6 @@ public sealed class TrackDataTests
             await using var reopened = NewHost(directory.FullName);
             var persisted = (await reopened.Services.GetRequiredService<IPergaKernel>().GetTrackAggregateAsync(id)).Track;
             Assert.Null(persisted.TemplateId);
-            Assert.Empty(persisted.TemplateState.EnumerateObject());
             Assert.Equal(3, persisted.DataRev);
             Assert.True(JsonElement.DeepEquals(expected, persisted.Data));
         }

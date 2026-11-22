@@ -7,7 +7,7 @@ Flow 定义工作如何执行，模板定义业务数据、Report 视图和运�
 | Kernel Flow | Track 的 `flow.json` | 校验、持久化并调度 `when × do`，投影 `builtin:flow` |
 | Template Data | `data.schema(t)`、`data.initial(inputs)`、`data_patch` | 保存模板特有的业务数据并校验变更 |
 | Template View | `report.md`、`report.views`、包内 HTML | 将业务数据与内核事实排成可阅读的 Report |
-| Template Policy | 输入、路由、门禁要求、生命周期钩子 | 指定当前 Track 的任务和会话策略 |
+| Template Policy | 输入、路由、门禁要求、只读策略钩子 | 指定当前 Track 的任务和会话策略 |
 
 ## Flow
 
@@ -29,7 +29,9 @@ Lead 通过 `flow_read` 查看当前定义，通过 `flow_commit` 提交流程�
 
 模板用 `data.schema(t)` 定义字段、必填项、枚举等约束，用 `data.initial` 初始化业务数据。可用 `t.ref("task")` 引用 Track 任务，用 `t.ref("file")` 引用 Track 工作区中的相对路径。写入走 `data_patch` 或 `PATCH /api/v1/tracks/{trackId}/data`。内核校验合并后的数据，可用 `expectedDataRev` 防止并发覆盖。
 
-`report.views` 函数接收当前业务数据和内核事实，后者包括实际任务、会话、门禁及 Flow 状态。由 `initialState` 初始化的 `TemplateState` 用于策略钩子。`before` 可允许、拒绝或请求人确认，`after` 可处理生命周期事件，`turnContext` 为相关会话提供上下文，`headerView` 投影 Track 头部信息。`tasks.routing` 可提供执行默认值或强制模型、访问模式，`requireGateForReadWrite` 要求写任务携带门禁。
+`report.views` 函数接收当前业务数据和内核事实，后者包括实际任务、会话、门禁及 Flow 状态。策略钩子使用当前 `{ trackId, inputs, data }` 的独立快照，钩子中的修改不会写回。Report 提交和任务派发会校验审批所依据的数据快照。`before` 可允许、拒绝或请求人确认，MCP 动作使用 `tool.<toolName>`。`turnContext` 与 `before("turn.before", …)` 也接收会话快照，`headerView` 投影 Track 头部信息。`tasks.routing` 可提供执行默认值或强制模型、访问模式，`requireGateForReadWrite` 要求写任务携带门禁。
+
+模板快照直接存储源码或包，保留继承所需的冻结源码。
 
 ## Report 视图
 
@@ -42,7 +44,7 @@ Lead 通过 `flow_read` 查看当前定义，通过 `flow_commit` 提交流程�
 | `builtin:table` | 视图返回 `metrics`，可带目标、当前值、状态、更新信息和证据 |
 | `./widgets/*.html` | 包内 HTML 接收对应视图的 JSON，用于估值轴等专用图形 |
 
-列表和指标表各自校验数据。运行中的视图出错时，诊断显示在对应块内。历史 Report 中的 `perga-block checkpoints` 继续由原生组件呈现。
+列表和指标表各自校验数据。运行中的视图出错时，诊断显示在对应块内。Report 的创作契约是 Markdown 正文与 `perga-block widget`。历史 Report 块及其压缩修订仍可读取，模板快照直接存储源码或包，保留继承所需的冻结源码。
 
 HTML 通过含 `sandbox="allow-scripts"` 的 iframe 承载。宿主发送 `perga:data` 和 `perga:theme`，组件可上报 `perga:resize`，并通过 `perga:intent` 请求打开工作区文件或会话。导航沿用 Track 的文件和会话入口。
 

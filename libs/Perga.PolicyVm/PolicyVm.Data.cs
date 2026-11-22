@@ -18,6 +18,6 @@ public sealed partial class PolicyVm
         JsonElement data, IReadOnlyList<string>? knownTaskKeys) => EvaluateWithEffectiveDefinition(policy, inputs, "ValidateData", (engine, _, def, _, tHelper) =>
     {
         return (IReadOnlyList<DataValidationError>)TemplateDataValidator.ValidateRoot(
-            ExtractTemplateSchemaNode(engine, def, tHelper), NormalizeStateJson(data), knownTaskKeys);
+            ExtractTemplateSchemaNode(engine, def, tHelper), NormalizeObjectJson(data), knownTaskKeys);
     });
 }

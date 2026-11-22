@@ -81,7 +81,7 @@ public partial interface IPergaKernel : IAsyncDisposable
     Task<TemplateViewsProjection> GetTrackViewsAsync(string trackId, CancellationToken ct = default);
     Task<FlowSnapshotDto> GetTrackFlowAsync(string trackId, CancellationToken ct = default);
     Task<FlowCommitResultDto> CommitTrackFlowAsync(string trackId, bool dryRun, long? expectedFlowRev, InteropPrincipal caller, CancellationToken ct = default, string? content = null);
-    Task<TrackDataPatchResult> PatchTrackDataAsync(string trackId, JsonElement patch, string source, string? callerSessionId = null, CancellationToken ct = default, long? expectedDataRev = null);
+    Task<TrackDataPatchResult> PatchTrackDataAsync(string trackId, JsonElement patch, string source, string? callerSessionId = null, CancellationToken ct = default, long? expectedDataRev = null, string? expectedPolicyGeneration = null);
     Task<IReadOnlyList<ReportBlock>> GetReportRevisionBlocksAsync(string trackId, int docRev, CancellationToken ct = default);
     Task<ReportReadResult> CommitReportAsync(string trackId, string callerSessionId, ReportCommitRequest req,
         CancellationToken ct = default, McpExecutionOrigin? origin = null, string? expectedPolicyGeneration = null);
@@ -414,9 +414,7 @@ public sealed partial class PergaKernelService : IPergaKernel
             return JsonHelpers.ToElement(new { contract });
         }
         var policy = Templates.GetRequiredPolicy(templateId);
-        var source = TemplateHost.InspectSource(policy.JsSource);
-        var reapply = TemplateHost.LegacyReapplySource(policy);
-        return JsonHelpers.ToElement(new { policy.Manifest, JsSource = reapply ?? source, EditableSource = reapply is null ? null : source });
+        return JsonHelpers.ToElement(new { policy.Manifest, policy.JsSource });
     }
 
     public Task<JsonElement> InspectCurrentTemplateAsync(string trackId, string sessionId, CancellationToken ct = default) =>
@@ -637,7 +635,6 @@ public sealed partial class PergaKernelService : IPergaKernel
             createCommand, RepeatableProvision: workspaceDriver.ProvisionIsRepeatable);
 
         var templateInputs = JsonHelpers.EnsureClonedObject(req.TemplateInputs);
-        var templateState = JsonHelpers.EmptyObject;
         var templateData = JsonHelpers.EmptyObject;
         var initialReportMarkdown = string.Empty;
         if (policy is not null)
@@ -649,10 +646,6 @@ public sealed partial class PergaKernelService : IPergaKernel
                 initialReportMarkdown = _policyVm.InterpolateInputs(policy, policy.Manifest.InitialReportMarkdown, templateInputs);
             }
             catch (InvalidOperationException ex) { throw KernelException.InvalidArgument(ex.Message); }
-            var initEval = _policyVm.InitState(policy, templateInputs);
-            templateState = initEval.Output.ValueKind != JsonValueKind.Undefined
-                ? initEval.Output.Clone()
-                : initEval.NextState.Clone();
         }
 
         var initialReport = _reportEngine.Parse(
@@ -680,7 +673,6 @@ public sealed partial class PergaKernelService : IPergaKernel
             LeadSessionId: leadSessionId,
             TemplateId: policy?.TemplateId,
             TemplateInputs: templateInputs,
-            TemplateState: templateState,
             Data: templateData,
             EnabledPlugins: enabledPlugins,
             ClosedAtMs: null,
@@ -730,7 +722,7 @@ public sealed partial class PergaKernelService : IPergaKernel
 
         await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
         var id = await _store.CreateTrackAsync(
-            new(track, initialReport, policy is null ? null : TemplateHost.Freeze(policy), leadSession,
+            new(track, initialReport, policy?.JsSource, leadSession,
                 initialFlow?.Tasks ?? [], null, preparation, events, dailyDate, systemArea)
             { FlowClocks = initialFlow?.Clocks ?? [] },
             key, ct).ConfigureAwait(false);

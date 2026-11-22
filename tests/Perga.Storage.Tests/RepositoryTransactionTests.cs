@@ -53,7 +53,7 @@ public sealed class RepositoryTransactionTests
     }
 
     [Fact]
-    public async Task ReportWakeFailureRollsBackRevisionStateAndEventAcrossReopen()
+    public async Task ReportWakeFailureRollsBackRevisionAndEventAcrossReopen()
     {
         await using var h = await StorageTestHarness.CreateAsync();
         await h.Store.UpsertAreaAsync(StorageTestHarness.CreateArea(), default);
@@ -65,17 +65,15 @@ public sealed class RepositoryTransactionTests
                 BEGIN SELECT RAISE(ABORT, 'wake failed after event'); END;
                 """);
         var next = report with { DocRev = 2, Summary = "Changed" };
-        var state = StorageTestHarness.Json("""{"stage":"changed"}""");
         var evt = StorageTestHarness.CreateEvent("report.updated");
         await Assert.ThrowsAsync<SqliteException>(() => h.Store.SaveReportAsync(
-            track.Id, next, [], null, "edit", state, evt, default));
+            track.Id, next, [], null, "edit", evt, default));
         await h.Store.DisposeAsync();
 
         await using var reopened = await SqliteTrackStore.OpenAsync(h.DbPath, h.DataDir);
         var snapshot = (await reopened.LoadTrackAggregateAsync(track.Id, default))!;
         Assert.Equal(report.Summary, snapshot.Report.Summary);
         Assert.Equal(1, snapshot.Report.DocRev);
-        Assert.Equal("init", snapshot.Track.TemplateState.GetProperty("stage").GetString());
         Assert.Empty(await reopened.ListEventsSinceAsync(0));
         Assert.Empty(await reopened.TrackWakes.ListAsync(track.Id, default));
         using (var conn = h.OpenRawInspectConnection())
@@ -83,7 +81,7 @@ public sealed class RepositoryTransactionTests
             Assert.Equal(1, await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM report_revisions;"));
             await conn.ExecuteAsync("DROP TRIGGER reject_report_wake;");
         }
-        await reopened.SaveReportAsync(track.Id, next, [], null, "edit", state, evt, default);
+        await reopened.SaveReportAsync(track.Id, next, [], null, "edit", evt, default);
         Assert.Equal(2, (await reopened.LoadTrackAggregateAsync(track.Id, default))!.Report.DocRev);
         var persistedEvent = Assert.Single(await reopened.ListEventsSinceAsync(0));
         Assert.Single(await reopened.TrackWakes.ListAsync(track.Id, default));

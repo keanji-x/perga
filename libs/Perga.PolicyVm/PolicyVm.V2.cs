@@ -41,13 +41,13 @@ public sealed partial class PolicyVm
         {
             return new DataPatchValidationResult(
                 false,
-                NormalizeStateJson(currentData),
+                NormalizeObjectJson(currentData),
                 [new DataValidationError("$", "Patch payload must be a JSON object.")]);
         }
 
         return EvaluateWithEffectiveDefinition(policy, inputs, "ValidateAndPatchData", (engine, _, def, _, tHelper) =>
         {
-            var normalizedCurrent = NormalizeStateJson(currentData);
+            var normalizedCurrent = NormalizeObjectJson(currentData);
             var (ok, mergedJson, safetyErrors) = TemplateDataValidator.MergeAndStamp(
                 normalizedCurrent,
                 patch,
@@ -86,8 +86,8 @@ public sealed partial class PolicyVm
             if (TryGetOptionalObject(def, "report", "template.report", out var reportObj) &&
                 TryGetOptionalObject(reportObj, "views", "template.report.views", out var viewsObj))
             {
-                var dataJs = ParseJsJson(engine, NormalizeStateJson(currentData).GetRawText());
-                var kernelJs = ParseJsJson(engine, NormalizeStateJson(kernelSnapshot).GetRawText());
+                var dataJs = ParseJsJson(engine, NormalizeObjectJson(currentData).GetRawText());
+                var kernelJs = ParseJsJson(engine, NormalizeObjectJson(kernelSnapshot).GetRawText());
 
                 foreach (var prop in viewsObj.GetOwnProperties())
                 {
@@ -156,8 +156,6 @@ public sealed partial class PolicyVm
         {
             throw new InvalidOperationException("template.setup(inputs) must return a configuration object.");
         }
-
-        RejectLegacyHooks(resolved);
 
         var mergedVal = engine.Invoke("__mergeTemplateStatic", rawDef, resolved);
         if (mergedVal is ObjectInstance mergedObj)

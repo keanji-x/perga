@@ -98,7 +98,6 @@ internal sealed class StorageTestHarness : IAsyncDisposable
             LeadSessionId: leadSessionId,
             TemplateId: "dev",
             TemplateInputs: Json("""{"repo":"perga"}"""),
-            TemplateState: Json("""{"stage":"init"}"""),
             EnabledPlugins: ["market", "research-archive"],
             ClosedAtMs: closedAtMs,
             PinnedAtMs: null,

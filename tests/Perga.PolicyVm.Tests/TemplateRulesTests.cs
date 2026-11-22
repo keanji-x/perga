@@ -66,22 +66,31 @@ public sealed class TemplateRulesTests
     }
 
     [Fact]
-    public void FourHooks_HaveIndependentSlotsAndShareExplicitState()
+    public void TurnHooksReceiveIndependentDataAndSessionSnapshots()
     {
         var policy = _vm.Compile("""
             export default {id:'hooks',title:'Hooks',
-              turnContext:ctx=>ctx.session.isLead?'lead context':'worker context',
-              before(a,ctx){ctx.state.before=a.type;return a.type==='report.commit'?Deny('report rule'):Allow();},
-              after(e,ctx){ctx.state.after=e.type;return 'wake';},
-              headerView:ctx=>({badges:[{label:ctx.state.after}]})};
+              turnContext(ctx) {
+                const context = ctx.data.note + ':' + ctx.session.sessionId;
+                ctx.data.note = 'changed';
+                ctx.session.sessionId = 'changed';
+                return context;
+              },
+              before(action, ctx) {
+                if (action.type === 'turn.before' && ctx.session.sessionId === 'session' &&
+                    action.context === 'ready:session' && ctx.data.note === 'ready') {
+                  ctx.data.note = 'changed';
+                  return Allow();
+                }
+                return Deny('Unexpected snapshot');
+              },
+              headerView:ctx=>({badges:[{label:ctx.data.note}]})};
             """);
-        var turn = _vm.PrepareTurn(policy,new("track","session",true,null,0,Json()),Json());
-        Assert.Equal("lead context",turn.Output.Context);
-        Assert.Equal("turn.before",turn.NextState.GetProperty("before").GetString());
-        Assert.IsType<GuardDecision.Deny>(_vm.Before(policy,"report.commit","track",Json(),Json(),Json()).Output);
-        var after = _vm.After(policy,"task.settled","track",Json(),Json(),turn.NextState);
-        Assert.Equal("wake",after.Output);
-        Assert.Equal("task.settled",Assert.Single(_vm.EvaluateHeaderView(policy,new("track",Json()),after.NextState)!.Badges!).Label);
+        var data = Json("""{"note":"ready"}""");
+        var turn = _vm.PrepareTurn(policy, new("track","session",true,null,0,Json()), data);
+        Assert.Equal("ready:session", turn.Context);
+        Assert.IsType<GuardDecision.Allow>(turn.Decision);
+        Assert.Equal("ready", Assert.Single(_vm.EvaluateHeaderView(policy, new("track",Json()), data)!.Badges!).Label);
     }
 
     [Fact]
@@ -90,29 +99,23 @@ public sealed class TemplateRulesTests
         var parent = _vm.Compile("""
             export default {id:'base',title:'Base',plugins:['a','b'],inputs:{one:{type:'string',default:'base'}},
               flow:[{id:'pulse',when:{cron:'0 9 * * *'},do:{kind:'wake',session:'lead',prompt:'base'}}],
-              report:{maxProseChars:100,sections:[{h1:'Keep'},{h1:'Override',editableBy:['human']}]},
               tasks:{routing:[{when:{role:'review'},model:'base'},{when:{},provider:'codex'}]},
-              before(){throw Error('parent before replaced');},after(){throw Error('parent after replaced');},
+              before(){throw Error('parent before replaced');},
               turnContext(){throw Error('parent context replaced');},headerView(){throw Error('parent header replaced');}};
             """);
         var policy = _vm.Compile(PolicyVm.Inherit(parent,"""
             export default {id:'child',title:'Child',plugins:['b','c'],inputs:{one:{type:'string',default:'child'},two:{type:'boolean'}},
               flow:[{id:'pulse',when:{cron:'0 10 * * *'},do:{kind:'wake',session:'lead',prompt:'child'}}],
-              report:{sections:[{h1:'Override',editableBy:['lead']}]},
               tasks:{routing:[{when:{role:'review'},model:'child'}]},
-              before(a,ctx){ctx.state.order=['child'];return Allow();},after(e,ctx){ctx.state.after=['child'];},
+              before:()=>Deny('child decision'),
               turnContext:()=> 'child context',headerView:()=>({badges:[{label:'child'}]})};
             """));
         Assert.Equal(["a","b","c"],policy.Manifest.DefaultPlugins);
         Assert.Equal("child",policy.Manifest.InputsSchema.GetProperty("one").GetProperty("default").GetString());
-        Assert.Equal(100,policy.Manifest.MaxProseChars);
-        Assert.Equal(2,policy.Manifest.Sections.Count);
-        Assert.Equal("lead",Assert.Single(policy.Manifest.Sections[1].EditableBy!));
         Assert.Equal("0 10 * * *",Assert.Single(_vm.ResolveFlow(policy, Json())).When?.Cron);
         Assert.Equal(new PolicyTaskRoute("codex","child"),_vm.RouteTaskDispatch(policy,"review","read_only",null,null,Json()));
-        Assert.Equal("[\"child\"]",_vm.Before(policy,"task.dispatch","track",Json(),Json(),Json()).NextState.GetProperty("order").GetRawText());
-        Assert.Equal("[\"child\"]",_vm.After(policy,"event","track",Json(),Json(),Json()).NextState.GetProperty("after").GetRawText());
-        Assert.Equal("child context",_vm.PrepareTurn(policy,new("track","session",true,null,0,Json()),Json()).Output.Context);
+        Assert.Equal("child decision", Assert.IsType<GuardDecision.Deny>(_vm.Before(policy,"task.dispatch","track",Json(),Json(),Json())).Reason);
+        Assert.Equal("child context",_vm.PrepareTurn(policy,new("track","session",true,null,0,Json()),Json()).Context);
         Assert.Equal("child",Assert.Single(_vm.EvaluateHeaderView(policy,new("track",Json()),Json())!.Badges!).Label);
     }
 
@@ -120,13 +123,12 @@ public sealed class TemplateRulesTests
     public void Inheritance_InheritsEachOmittedHook()
     {
         var parent = _vm.Compile("""
-            export default {id:'base',title:'Base',before:()=>Deny('parent denied'),after:()=> 'parent note',
+            export default {id:'base',title:'Base',before:()=>Deny('parent denied'),
               turnContext:()=> 'parent context',headerView:()=>({badges:[{label:'parent'}]})};
             """);
         var policy = _vm.Compile(PolicyVm.Inherit(parent,"export default {id:'child',title:'Child'};"));
-        Assert.Equal("parent denied",Assert.IsType<GuardDecision.Deny>(_vm.Before(policy,"task.dispatch","track",Json(),Json(),Json()).Output).Reason);
-        Assert.Equal("parent note",_vm.After(policy,"event","track",Json(),Json(),Json()).Output);
-        Assert.Equal("parent context",_vm.PrepareTurn(policy,new("track","session",true,null,0,Json()),Json()).Output.Context);
+        Assert.Equal("parent denied",Assert.IsType<GuardDecision.Deny>(_vm.Before(policy,"task.dispatch","track",Json(),Json(),Json())).Reason);
+        Assert.Equal("parent context",_vm.PrepareTurn(policy,new("track","session",true,null,0,Json()),Json()).Context);
         Assert.Equal("parent",Assert.Single(_vm.EvaluateHeaderView(policy,new("track",Json()),Json())!.Badges!).Label);
     }
 }

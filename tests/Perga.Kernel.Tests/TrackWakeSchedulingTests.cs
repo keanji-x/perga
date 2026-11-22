@@ -10,27 +10,21 @@ namespace Perga.Kernel.Tests;
 public sealed class TrackWakeSchedulingTests
 {
     [Theory]
-    [InlineData(null, null, false)]
-    [InlineData(null, "", false)]
-    [InlineData(null, " \t\n", false)]
-    [InlineData("", null, false)]
-    [InlineData(" \t", "", false)]
-    [InlineData("", " \n", true)]
-    [InlineData("static prompt", "", false)]
-    [InlineData("", "dynamic prompt", false)]
-    public async Task BlankScheduleSegmentsSettleWithoutEmptyTurns(string? staticPrompt, string? output, bool withMail)
+    [InlineData(" \t", false)]
+    [InlineData("", true)]
+    [InlineData("stored prompt", false)]
+    public async Task BlankScheduleSegmentsSettleWithoutEmptyTurns(string staticPrompt, bool withMail)
     {
         await using var ctx = new KernelTestContext();
-        ctx.PolicyVm.OnScheduleFired = (_, _, _, state) => new(state, output);
         ctx.Kernel.Templates.RegisterTemplate("export default defineTemplate({id:'schedule-test',title:'Schedule'});");
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync(templateId: "schedule-test");
         var id = snapshot.Track.Id;
-        await ctx.Store.TrackWakes.EnqueueAsync(new(id, "schedule", "track_schedule:daily", TestJson.FromObject(new { scheduleId = "daily", sourceKind = "template", prompt = staticPrompt ?? "stored prompt" })), default);
+        await ctx.Store.TrackWakes.EnqueueAsync(new(id, "schedule", "track_schedule:daily", TestJson.FromObject(new { scheduleId = "daily", sourceKind = "template", prompt = staticPrompt })), default);
         if (withMail)
             await ctx.Store.TrackWakes.EnqueueAsync(TrackWakeRequests.Prompt(id, "mail", "mail:test", "mail prompt", "system_mail"), default);
         await ctx.Kernel.Actors.GetOrActivate(id).PokePendingWakesAsync();
         await ctx.Kernel.WaitForTrackIdleAsync(id);
-        var expected = output ?? staticPrompt ?? "stored prompt";
+        var expected = staticPrompt;
         var suppressed = string.IsNullOrWhiteSpace(expected);
         var turns = ctx.Store.GetTurnsForSession(snapshot.Track.LeadSessionId!);
         if (suppressed && !withMail)
@@ -214,44 +208,20 @@ public sealed class TrackWakeSchedulingTests
     }
 
     [Fact]
-    public async Task ThrowingScheduleHookFallsBackAndDeliversCoBatchedMailWithoutChangingState()
-    {
-        await using var ctx = new KernelTestContext();
-        ctx.Kernel.Templates.RegisterTemplate("export default defineTemplate({id:'schedule-test',title:'Schedule'});");
-        var (_, snapshot) = await ctx.CreateDefaultTrackAsync(templateId: "schedule-test");
-        var id = snapshot.Track.Id;
-        var state = snapshot.Track.TemplateState.GetRawText();
-        ctx.PolicyVm.OnScheduleFired = (_, _, _, _) => throw new InvalidOperationException("broken schedule JS");
-        await ctx.Store.TrackWakes.EnqueueAsync(TrackWakeRequests.DynamicSchedule(id, "daily", "stored prompt", "template"), default);
-        await ctx.Store.TrackWakes.EnqueueAsync(TrackWakeRequests.Prompt(id, "mail", "mail:test", "mail prompt"), default);
-        await ctx.Kernel.Actors.GetOrActivate(id).PokePendingWakesAsync();
-        await ctx.Kernel.WaitForTrackIdleAsync(id);
-        Assert.Equal("stored prompt\n\nmail prompt", Assert.Single(ctx.Store.GetTurnsForSession(snapshot.Track.LeadSessionId!))
-            .Input.GetProperty("prompt").GetString());
-        Assert.All(await ctx.Store.TrackWakes.ListAsync(id, default), w => Assert.Equal(("done", "delivered"), (w.State, w.Reason)));
-        Assert.Equal(state, (await ctx.Kernel.GetTrackAggregateAsync(id)).Track.TemplateState.GetRawText());
-    }
-
-    [Fact]
-    public async Task ScheduleEvaluatesOnlyAtClaimAndBatchesInOrdinalOrder()
+    public async Task ScheduleUsesStoredPromptAndBatchesInOrdinalOrder()
     {
         await using var ctx = new KernelTestContext();
         ctx.Kernel.Templates.RegisterTemplate("export default defineTemplate({id:'schedule-test',title:'Schedule'});");
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync(templateId: "schedule-test");
         var id = snapshot.Track.Id;
         var actor = ctx.Kernel.Actors.GetOrActivate(id);
-        var evaluations = 0;
-        ctx.PolicyVm.OnScheduleFired = (_, _, _, state) => { evaluations++; return new PolicyEvalResult<string?>(state, "schedule evaluated"); };
         await ctx.Store.TrackWakes.EnqueueAsync(TrackWakeRequests.Prompt(id, "mail", "mail:test", "first notice"), default);
         await ctx.Store.TrackWakes.EnqueueAsync(new(id, "schedule", "track_schedule:daily", TestJson.FromObject(new { scheduleId = "daily", sourceKind = "template", prompt = "stored prompt" })), default);
-        Assert.Equal(0, evaluations);
         await actor.PokePendingWakesAsync();
-        Assert.Equal(1, evaluations);
         var turn = Assert.Single(ctx.Store.GetTurnsForSession(snapshot.Track.LeadSessionId!));
         Assert.Equal("system", turn.TriggerKind);
-        Assert.Equal("first notice\n\nschedule evaluated", turn.Input.GetProperty("prompt").GetString());
+        Assert.Equal("first notice\n\nstored prompt", turn.Input.GetProperty("prompt").GetString());
         Assert.All(await ctx.Store.TrackWakes.ListAsync(id, default), w => Assert.Equal(("done", "delivered"), (w.State, w.Reason)));
         await actor.PokePendingWakesAsync();
-        Assert.Equal(1, evaluations);
     }
 }

@@ -27,6 +27,7 @@ public sealed partial class PergaKernelService
         string source,
         string? callerSessionId = null,
         CancellationToken ct = default,
-        long? expectedDataRev = null) =>
-        Actors.GetOrActivate(trackId).PatchTemplateDataAsync(patch, source, callerSessionId, ct, expectedDataRev);
+        long? expectedDataRev = null,
+        string? expectedPolicyGeneration = null) =>
+        Actors.GetOrActivate(trackId).PatchTemplateDataAsync(patch, source, callerSessionId, ct, expectedDataRev, expectedPolicyGeneration);
 }

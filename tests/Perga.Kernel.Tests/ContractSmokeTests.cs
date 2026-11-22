@@ -23,7 +23,6 @@ public sealed class ContractSmokeTests
             "ses_1",
             null,
             elem,
-            elem,
             [],
             null,
             null,

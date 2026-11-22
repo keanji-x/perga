@@ -8,7 +8,7 @@ internal static class TemplatePresentation
     internal static TrackDto Project(TrackDto track, CompiledPolicy? policy, IPolicyVm vm)
     {
         var view = policy is null ? null : vm.EvaluateHeaderView(policy,
-            new PolicyHeaderViewContext(track.Id, track.TemplateInputs), track.TemplateState);
+            new PolicyHeaderViewContext(track.Id, track.TemplateInputs), track.Data);
         return track with
         {
             TemplateTitle = policy?.Manifest.Title,

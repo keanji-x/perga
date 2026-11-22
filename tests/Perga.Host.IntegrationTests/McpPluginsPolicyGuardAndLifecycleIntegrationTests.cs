@@ -543,7 +543,7 @@ public sealed class McpPluginsPolicyGuardAndLifecycleIntegrationTests
                     Meta: dummyDoc.RootElement.Clone(),
                     StartedAtMs: nowMs);
 
-                await store.UpsertTaskAsync(crashedTask, null, null, ct);
+                await store.UpsertTaskAsync(crashedTask, null, ct);
             }
 
             // -------- Part 2: Reboot Perga.Host on same SQLite DB -> PergaBootHostedService reconciles crashed state! --------

@@ -9,11 +9,6 @@ public closed record GuardDecision
     public sealed record AskHuman(string Title, string ApproveLabel = "Approve", string DenyLabel = "Deny") : GuardDecision;
 }
 
-public sealed record SectionRule(
-    string H1,
-    bool OmitIfEmpty = false,
-    IReadOnlyList<string>? EditableBy = null);
-
 public sealed record DataValidationError(
     string Path,
     string Message);
@@ -42,8 +37,6 @@ public sealed record CompiledTemplateManifest(
     string? Description,
     IReadOnlyList<string> DefaultPlugins,
     JsonElement InputsSchema,
-    IReadOnlyList<SectionRule> Sections,
-    int? MaxProseChars,
     bool RequireGateForReadWrite,
     string? WorkspaceDriver,
     IReadOnlyList<string> WorkspaceLowerCacheDirs,
@@ -60,15 +53,9 @@ public sealed record CompiledTemplateManifest(
 public sealed record CompiledPolicy(
     string TemplateId,
     string JsSource,
-    CompiledTemplateManifest Manifest,
-    bool UsesLegacyBeforeToolNames = false,
-    bool UsesLegacyAfterToolNames = false);
+    CompiledTemplateManifest Manifest);
 
 public sealed record PolicyTurnPreparation(string? Context, GuardDecision Decision);
-
-public sealed record PolicyEvalResult<T>(
-    JsonElement NextState,
-    T Output);
 
 public sealed record TemplateHeaderBadge(string Label, string? Tone = null);
 public sealed record TemplateHeaderNotice(string Text, string? Tone = null);
@@ -99,13 +86,11 @@ public sealed record PolicyTaskRoute(string? Provider, string? Model, string? De
 public interface IPolicyVm
 {
     CompiledPolicy Compile(string jsModuleSource);
-    PolicyEvalResult<GuardDecision> Before(CompiledPolicy policy, string action, string trackId, JsonElement data, JsonElement inputs, JsonElement state);
-    PolicyEvalResult<string?> After(CompiledPolicy policy, string eventName, string trackId, JsonElement data, JsonElement inputs, JsonElement state);
-    TemplateHeaderView? EvaluateHeaderView(CompiledPolicy policy, PolicyHeaderViewContext ctx, JsonElement state);
+    GuardDecision Before(CompiledPolicy policy, string action, string trackId, JsonElement payload, JsonElement inputs, JsonElement data);
+    TemplateHeaderView? EvaluateHeaderView(CompiledPolicy policy, PolicyHeaderViewContext ctx, JsonElement data);
     JsonElement InitData(CompiledPolicy policy, JsonElement inputs);
     IReadOnlyList<DataValidationError> ValidateData(CompiledPolicy policy, JsonElement inputs, JsonElement data, IReadOnlyList<string>? knownTaskKeys);
-    PolicyEvalResult<JsonElement> InitState(CompiledPolicy policy, JsonElement inputs);
-    PolicyEvalResult<PolicyTurnPreparation> PrepareTurn(CompiledPolicy policy, PolicyTurnContext ctx, JsonElement state);
+    PolicyTurnPreparation PrepareTurn(CompiledPolicy policy, PolicyTurnContext ctx, JsonElement data);
     PolicyTaskRoute RouteTaskDispatch(CompiledPolicy policy, string? role, string access, string? provider, string? model, JsonElement inputs);
     IReadOnlyList<PolicyTaskRoute> ResolveRoutingTargets(CompiledPolicy policy, JsonElement inputs);
     IReadOnlyList<Perga.Contracts.FlowNodeSpecDto> ResolveFlow(CompiledPolicy policy, JsonElement inputs);

@@ -21,7 +21,6 @@ public sealed class DailyReportTests
         var engine = new ReportDocEngine();
         var doc = engine.Parse("# Work\n\nRetained evidence.\n", 2, "Retained summary");
         await store.SaveReportAsync(track.Id, doc, engine.CompressZstd(doc.Blocks), null, "edit",
-            JsonSerializer.SerializeToElement(new { }),
             StorageTestHarness.CreateEvent("report.updated", track.Id, track.AreaId, createdAtMs: at), default);
         // Capture a boundary beyond the last report event, so MAX(report_event_id) is insufficient.
         await store.AppendEventAsync(StorageTestHarness.CreateEvent("track.updated", track.Id, track.AreaId, createdAtMs: at), default);
@@ -52,12 +51,10 @@ public sealed class DailyReportTests
         await store.UpsertAreaAsync(StorageTestHarness.CreateArea(), default);
         var engine = new ReportDocEngine();
         var at = DateTimeOffset.Parse("2026-11-17T12:00:00Z").ToUnixTimeMilliseconds();
-        var empty = JsonSerializer.SerializeToElement(new { });
         async Task Save(string id, int rev)
         {
             var doc = engine.Parse($"# Work\n\nBody {rev}.\n", rev, $"Summary {rev}");
             await store.SaveReportAsync(id, doc, engine.CompressZstd(doc.Blocks), null, "edit",
-            empty,
                 new(null, "area_1", id, "report.updated", JsonSerializer.SerializeToElement(new { docRev = rev }), at), default);
         }
         for (var i = 0; i < 51; i++)

@@ -133,11 +133,10 @@ public interface ITrackStore : ITrackReadStore
         byte[] compressedRevisionBlocks,
         string? authorSessionId,
         string commitMessage,
-        JsonElement nextTemplateState,
         EventEnvelopeDto evt,
         CancellationToken ct);
 
-    Task UpsertTaskAsync(TaskDto task, JsonElement? nextTemplateState, EventEnvelopeDto? evt, CancellationToken ct,
+    Task UpsertTaskAsync(TaskDto task, EventEnvelopeDto? evt, CancellationToken ct,
         AgentSessionDto? session = null, EventEnvelopeDto? sessionEvent = null, string? wakePrompt = null,
         SessionMessage? initialMessage = null, bool writeNewRunBoundary = false, bool suppressDefaultWake = false);
     Task<bool> HasSessionTurnAsync(string sessionId, string turnId, CancellationToken ct);

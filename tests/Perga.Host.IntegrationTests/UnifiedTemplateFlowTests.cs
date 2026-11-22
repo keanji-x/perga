@@ -17,7 +17,6 @@ public sealed class UnifiedTemplateFlowTests
 {
     private const string Source = """
         export default {id:'unified', title:'Unified', inputs:{target:{type:'string',default:'first'}},
-          initialState:()=>({started:true}),
           data:{initial:()=>({business:"untouched"})},
           setup() {
             return {flow:[{id:'pulse', title:'Pulse ${inputs.target}', when:{cron:'* * * * *',tz:'UTC'},
@@ -175,7 +174,7 @@ public sealed class UnifiedTemplateFlowTests
             var row = Assert.Single((await store.LoadTrackAggregateAsync(id, default))!.Tasks);
             await kernel.Actors.RemoveAndDisposeAsync(id);
             await store.UpsertTaskAsync(row with { Context = JsonSerializer.SerializeToElement(new { flowNode = true }) },
-                null, null, default, suppressDefaultWake: true);
+                null, default, suppressDefaultWake: true);
         }
         var original = Assert.Single((await store.LoadTrackAggregateAsync(id, default))!.Tasks);
         var before = await kernel.GetTrackFlowAsync(id);
@@ -486,7 +485,7 @@ public sealed class UnifiedTemplateFlowTests
                 Assert.Equal(nextFire, clock.NextFireAtMs);
                 var persisted = (await kernel.GetTrackAggregateAsync(id)).Track;
                 Assert.True(JsonElement.DeepEquals(created.Track.Data, persisted.Data));
-                Assert.True(persisted.TemplateState.GetProperty("started").GetBoolean());
+                Assert.Equal("untouched", persisted.Data.GetProperty("business").GetString());
             }
 
             await using var reopened = Host(directory);

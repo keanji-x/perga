@@ -9,7 +9,7 @@ public sealed class TemplateFlowTests
     [Theory]
     [InlineData("headerView: 42")]
     [InlineData("headerView: null")]
-    [InlineData("initialMarkdown: 'removed'")]
+    [InlineData("before: 42")]
     [InlineData("flow: {}")]
     [InlineData("flow: [{id:'x', do:{kind:'wake',session:'lead',prompt:()=> 'p'}}]")]
     [InlineData("flow: [{id:'x', do:{kind:'run',cmd:'echo hi',prompt:'p'}}]")]
