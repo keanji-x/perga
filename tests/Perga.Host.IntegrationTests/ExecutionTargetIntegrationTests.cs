@@ -20,6 +20,61 @@ namespace Perga.Host.IntegrationTests;
 
 public sealed class ExecutionTargetIntegrationTests
 {
+    [Theory]
+    [InlineData(0)]
+    [InlineData(127)]
+    public async Task RawFile_EmptyHeader_ReturnsPreconditionFailed(int exitCode)
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var root = Path.Combine(Path.GetTempPath(), $"perga-ssh-header-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        try
+        {
+            var ssh = Path.Combine(root, "ssh");
+            await File.WriteAllTextAsync(ssh, $"#!/bin/sh\necho 'python3 unavailable' >&2\nexit {exitCode}\n");
+            File.SetUnixFileMode(ssh, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            var files = new SshExecutionFileSystem(new SshTargetConfig("test", new ExecutionTargetOptions
+            {
+                User = "test", WorkspacesRoot = root, SshExecutablePath = ssh
+            }));
+            var error = await Assert.ThrowsAsync<KernelException>(() => files.OpenWorkspaceRawFileAsync(root, "file"));
+            Assert.Equal(KernelErrorCode.PreconditionFailed, error.Code);
+            Assert.Contains("python3 unavailable", error.Message);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public async Task ResolveBridgeScriptPath_ConcurrentInitialStaging_DoesNotCollide()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var root = Path.Combine(Path.GetTempPath(), $"perga-ssh-stage-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        var ssh = Path.Combine(root, "ssh");
+        await File.WriteAllTextAsync(ssh, "#!/bin/sh\nfor arg do last=$arg; done\nexec sh -c \"$last\"\n");
+        File.SetUnixFileMode(ssh, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        var localBridge = Path.Combine(root, "perga-oar-bridge.mjs");
+        var bridgeContent = "console.log('bridge');\n" + new string('x', 32 * 1024);
+        await File.WriteAllTextAsync(localBridge, bridgeContent);
+        var config = new SshTargetConfig("remote", new ExecutionTargetOptions
+        {
+            Host = "remote.example", User = "test", WorkspacesRoot = root, SshExecutablePath = ssh
+        });
+        try
+        {
+            var results = await Task.WhenAll(Enumerable.Range(0, 4).Select(_ =>
+                Task.Run(() => new SshSubprocessTransport(config).ResolveBridgeScriptPath(localBridge))));
+            Assert.Single(results.Distinct());
+            Assert.Equal(bridgeContent, await File.ReadAllTextAsync(results[0]));
+            Assert.Empty(Directory.GetFiles(Path.Combine(root, ".perga-runtime"), "*.tmp.*"));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+            if (Directory.Exists(config.ControlDir)) Directory.Delete(config.ControlDir, recursive: true);
+        }
+    }
+
     [Fact]
     public async Task SshAdapters_StreamFiles_AndCleanUpCommandGroups()
     {
@@ -71,7 +126,8 @@ public sealed class ExecutionTargetIntegrationTests
             File.CreateSymbolicLink(Path.Combine(root, "escape"), "/etc/passwd");
             await Assert.ThrowsAsync<KernelException>(() => files.OpenWorkspaceRawFileAsync(root, "escape"));
             await Assert.ThrowsAsync<KernelException>(() => files.OpenWorkspaceRawFileAsync(root, "missing"));
-            await Assert.ThrowsAsync<KernelException>(() => files.OpenWorkspaceRawFileAsync(root, "."));
+            var dirErr = await Assert.ThrowsAsync<KernelException>(() => files.OpenWorkspaceRawFileAsync(root, "."));
+            Assert.Equal(KernelErrorCode.NotFound, dirErr.Code);
 
             Directory.CreateDirectory(Path.Combine(root, ".git"));
             await File.WriteAllTextAsync(Path.Combine(root, ".git", "HEAD"), "ref: refs/heads/main");
@@ -85,7 +141,8 @@ public sealed class ExecutionTargetIntegrationTests
             using (var fifoCts = new CancellationTokenSource(TimeSpan.FromSeconds(3)))
             {
                 await Assert.ThrowsAsync<KernelException>(() => files.BrowseOrReadWorkspaceFileAsync(root, "pipe", 1024, fifoCts.Token));
-                await Assert.ThrowsAsync<KernelException>(() => files.OpenWorkspaceRawFileAsync(root, "pipe", fifoCts.Token));
+                var rawError = await Assert.ThrowsAsync<KernelException>(() => files.OpenWorkspaceRawFileAsync(root, "pipe", fifoCts.Token));
+                Assert.Equal(KernelErrorCode.InvalidArgument, rawError.Code);
             }
             Directory.CreateDirectory(Path.Combine(nested, ".git")); // An empty marker is not a repository.
             var callsBeforeSearch = File.ReadAllLines(callsFile).Length;

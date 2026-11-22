@@ -65,7 +65,7 @@ public sealed partial class VcsService : IVcsService
             return VcsBackendKind.PlainDirectory;
         }
 
-        var vcsRoot = FindNearestVcsRoot(startDir, searchAncestors);
+        var vcsRoot = _fs.FindNearestVcsRoot(startDir, searchAncestors);
         if (vcsRoot is null)
         {
             return VcsBackendKind.PlainDirectory;
@@ -98,7 +98,7 @@ public sealed partial class VcsService : IVcsService
         if (!_fs.DirectoryExists(path))
             return [];
 
-        var root = FindNearestVcsRoot(Path.GetFullPath(path));
+        var root = _fs.FindNearestVcsRoot(Path.GetFullPath(path));
         if (root is null)
             return [VcsBackendKind.PlainDirectory];
 
@@ -153,7 +153,7 @@ public sealed partial class VcsService : IVcsService
         }
 
         var kind = backend ?? await DetectAsync(fullRepoPath, ct).ConfigureAwait(false);
-        var rootRepoPath = FindNearestVcsRoot(fullRepoPath)?.RootPath ?? fullRepoPath;
+        var rootRepoPath = _fs.FindNearestVcsRoot(fullRepoPath)?.RootPath ?? fullRepoPath;
 
         if (PathsEqual(rootRepoPath, fullTargetDir))
         {
@@ -1820,14 +1820,6 @@ public sealed partial class VcsService : IVcsService
 
         return result;
     }
-
-    private (string RootPath, bool HasJj, bool HasGit)? FindNearestVcsRoot(
-        string startDirectory, bool searchAncestors = true, bool ignoreAmbientRoots = true) =>
-        FindNearestVcsRoot(_fs, startDirectory, searchAncestors, ignoreAmbientRoots);
-
-    private static (string RootPath, bool HasJj, bool HasGit)? FindNearestVcsRoot(
-        IWorkspaceFileSystemOps fs, string startDirectory, bool searchAncestors = true, bool ignoreAmbientRoots = true) =>
-        fs.FindNearestVcsRoot(startDirectory, searchAncestors, ignoreAmbientRoots);
 
     private static IReadOnlyList<string> ParseNonEmptyLines(string text)
     {

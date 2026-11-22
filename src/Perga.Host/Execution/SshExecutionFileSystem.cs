@@ -170,6 +170,11 @@ public sealed class SshExecutionFileSystem : IExecutionFileSystem
                     if not stat.S_ISREG(info.st_mode):
                         print(json.dumps({"error": "invalid_argument", "message": "Workspace path is not a regular file."}))
                         sys.exit(0)
+                    fd_link = f"/proc/self/fd/{f.fileno()}"
+                    opened_path = os.path.realpath(fd_link) if os.path.exists(fd_link) else real_cand
+                    if opened_path != real_root and not opened_path.startswith(real_root_sep):
+                        print(json.dumps({"error": "forbidden", "message": "Path escapes workspace root."}))
+                        sys.exit(0)
                     total_size = info.st_size
                     data = f.read(max_bytes)
             except PermissionError:
@@ -254,17 +259,26 @@ public sealed class SshExecutionFileSystem : IExecutionFileSystem
     {
         var pyScript = WorkspacePathScript + "\n" + """
             import shutil
-            if not os.path.isfile(real_cand):
-                print(json.dumps({"error": "not_found", "message": f"Workspace file '{rel}' not found."}))
-                sys.exit(0)
             try:
                 f = os.fdopen(os.open(real_cand, os.O_RDONLY | os.O_NONBLOCK), "rb")
             except PermissionError:
                 print(json.dumps({"error": "forbidden", "message": f"Access denied reading file '{rel}'."}))
                 sys.exit(0)
+            except (FileNotFoundError, IsADirectoryError):
+                print(json.dumps({"error": "not_found", "message": f"Workspace file '{rel}' not found."}))
+                sys.exit(0)
             with f:
-                if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
+                mode = os.fstat(f.fileno()).st_mode
+                if stat.S_ISDIR(mode):
+                    print(json.dumps({"error": "not_found", "message": f"Workspace file '{rel}' not found."}))
+                    sys.exit(0)
+                if not stat.S_ISREG(mode):
                     print(json.dumps({"error": "invalid_argument", "message": "Workspace path is not a regular file."}))
+                    sys.exit(0)
+                fd_link = f"/proc/self/fd/{f.fileno()}"
+                opened_path = os.path.realpath(fd_link) if os.path.exists(fd_link) else real_cand
+                if opened_path != real_root and not opened_path.startswith(real_root_sep):
+                    print(json.dumps({"error": "forbidden", "message": "Path escapes workspace root."}))
                     sys.exit(0)
                 print(json.dumps({"path": real_cand}), flush=True)
                 shutil.copyfileobj(f, sys.stdout.buffer, 65536)
@@ -295,10 +309,15 @@ public sealed class SshExecutionFileSystem : IExecutionFileSystem
             // Read only the JSON header; a StreamReader could buffer file bytes past it.
             using var header = new MemoryStream();
             var singleByte = new byte[1];
-            while (await stream.ReadAsync(singleByte.AsMemory(), ct).ConfigureAwait(false) != 0)
+            while (await process.StandardOutput.BaseStream.ReadAsync(singleByte.AsMemory(), ct).ConfigureAwait(false) != 0)
             {
                 if (singleByte[0] == (byte)'\n') break;
                 header.WriteByte(singleByte[0]);
+            }
+            if (header.Length == 0)
+            {
+                throw KernelException.PreconditionFailed(
+                    $"Failed to read workspace file on target '{_config.TargetId}': {(await stream.Stderr.ConfigureAwait(false)).Trim()}");
             }
             using var doc = JsonDocument.Parse(header.ToArray());
             ThrowIfRemoteError(doc.RootElement);
@@ -368,6 +387,8 @@ public sealed class SshExecutionFileSystem : IExecutionFileSystem
             _stderr = process.StandardError.ReadToEndAsync();
             _cancellation = ct.Register(() => SshCommandBuilder.TryKill(process));
         }
+
+        public Task<string> Stderr => _stderr;
 
         public override bool CanRead => !_disposed;
         public override bool CanSeek => false;

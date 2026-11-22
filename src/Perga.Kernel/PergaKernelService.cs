@@ -36,7 +36,6 @@ public partial interface IPergaKernel : IAsyncDisposable
     Task<TrackProvidersDto> ListProvidersForTrackAsync(string trackId, string? provider = null,
         bool refresh = false, bool includeUnavailable = false, CancellationToken ct = default);
     Task<TrackOverlaysResponseDto> GetOverlaysAsync(bool includeClosed = false, CancellationToken ct = default);
-    HostListDirResultDto ListHostDirectory(string? path = null);
     Task<HostListDirResultDto> ListHostDirectoryAsync(string? path = null, string? targetId = null, CancellationToken ct = default);
     IReadOnlyList<CompiledTemplateManifest> ListTemplates();
     JsonElement InspectTemplate(string? templateId);
@@ -113,7 +112,6 @@ public partial interface IPergaKernel : IAsyncDisposable
     Task<TermActionResult> SendTerminalInputAsync(string trackId, TermActionRequest req, CancellationToken ct = default);
     Task ResizeTerminalAsync(string trackId, string terminalId, ushort cols, ushort rows, CancellationToken ct = default);
     Task<TerminalDto> CloseTerminalAsync(string trackId, string terminalId, int graceMs = 2000, CancellationToken ct = default);
-    Uri GetTerminalWebSocketRelayUri(string terminalId);
     Task<ITerminalBridgeClient> ResolveTerminalClientAsync(string terminalId, CancellationToken ct = default);
 
     // MCP Policy Guard, Tool Dispatch & Schedules
@@ -341,9 +339,6 @@ public sealed partial class PergaKernelService : IPergaKernel
     private void PublishReadReceipt(ReadReceiptDto receipt) =>
         _eventHub.PublishTransient(null, receipt.Kind == "track" ? receipt.TargetId : null,
             KernelEventKinds.ReadReceiptUpdated, JsonHelpers.ToElement(receipt), NowMs());
-
-    public HostListDirResultDto ListHostDirectory(string? path = null) =>
-        LocalExecutionFileSystem.Instance.ListDirectory(path);
 
     public Task<HostListDirResultDto> ListHostDirectoryAsync(
         string? path = null,
@@ -1110,9 +1105,6 @@ public sealed partial class PergaKernelService : IPergaKernel
         int graceMs = 2000,
         CancellationToken ct = default) =>
         Actors.GetOrActivate(trackId).CloseTerminalAsync(terminalId, graceMs, ct);
-
-    public Uri GetTerminalWebSocketRelayUri(string terminalId) =>
-        _executionEnvironments.Default.Terminals.GetWebSocketRelayUri(terminalId);
 
     public async Task<ITerminalBridgeClient> ResolveTerminalClientAsync(string terminalId, CancellationToken ct = default)
     {

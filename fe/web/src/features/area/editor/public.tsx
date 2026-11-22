@@ -63,7 +63,6 @@ export function AreaEditorForm(props: AreaEditorFormProps) {
   const [browsing, setBrowsing] = useState(false);
   const normalizedName = name.trim();
   const resolvedTargetLabel = executionTargets?.find((target) => target.id === targetId)?.label ?? targetId;
-  const activeListDirectory = listDirectoryForTarget ? listDirectoryForTarget(targetId) : listDirectory;
 
   const submit = (event: FormEvent<HTMLElement>) => {
     event.preventDefault();
@@ -124,7 +123,7 @@ export function AreaEditorForm(props: AreaEditorFormProps) {
       <DirectoryPicker
         open={browsing}
         initialPath={cwd === '' ? null : cwd}
-        listDirectory={activeListDirectory}
+        listDirectory={listDirectory}
         listDirectoryForTarget={listDirectoryForTarget}
         targets={executionTargets}
         selectedTargetId={targetId}

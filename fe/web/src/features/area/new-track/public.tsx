@@ -456,7 +456,7 @@ export function NewTrackForm({
         open={browsing !== null}
         origin={browsing ?? { kind: 'surface-center' }}
         initialPath={cwd === '' ? null : cwd}
-        listDirectory={listDirectoryForTarget ? listDirectoryForTarget(executionTargetId) : listDirectory}
+        listDirectory={listDirectory}
         listDirectoryForTarget={listDirectoryForTarget}
         targets={executionTargets}
         selectedTargetId={executionTargetId}

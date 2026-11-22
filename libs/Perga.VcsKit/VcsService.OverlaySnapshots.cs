@@ -5,15 +5,15 @@ namespace Perga.VcsKit;
 public sealed partial class VcsService
 {
     internal static bool IsInsideRepository(string path) =>
-        FindNearestVcsRoot(LocalWorkspaceFileSystemOps.Instance, path, ignoreAmbientRoots: false) is not null;
+        ((IWorkspaceFileSystemOps)LocalWorkspaceFileSystemOps.Instance).FindNearestVcsRoot(path, ignoreAmbientRoots: false) is not null;
 
     internal static bool IsJjOnlySource(string path) =>
-        FindNearestVcsRoot(LocalWorkspaceFileSystemOps.Instance, WorkspaceFileReader.ResolveCanonicalPath(path), ignoreAmbientRoots: false) is { HasJj: true, HasGit: false };
+        ((IWorkspaceFileSystemOps)LocalWorkspaceFileSystemOps.Instance).FindNearestVcsRoot(WorkspaceFileReader.ResolveCanonicalPath(path), ignoreAmbientRoots: false) is { HasJj: true, HasGit: false };
 
     internal async Task<GitSnapshotSource?> ResolveOverlayGitSourceAsync(
         string source, string? baseRevision, CancellationToken ct)
     {
-        var root = FindNearestVcsRoot(source, ignoreAmbientRoots: false);
+        var root = _fs.FindNearestVcsRoot(source, ignoreAmbientRoots: false);
         if (root is { HasJj: true, HasGit: false })
             throw new WorkspaceUnavailableException("Use a Jujutsu workspace for a Jujutsu-only source.");
         if (root is not { HasGit: true })

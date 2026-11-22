@@ -27,15 +27,6 @@ public sealed class SshSubprocessTransport : ISubprocessTransport
         var runToken = Guid.NewGuid().ToString("N")[..12];
         var remotePidFile = $"{_config.WorkspacesRoot.TrimEnd('/')}/.perga-runtime/pids/agent-{runToken}.pid";
 
-        var env = new Dictionary<string, string?>(StringComparer.Ordinal);
-        if (invocation.Environment is not null)
-        {
-            foreach (var (key, value) in invocation.Environment)
-            {
-                env[key] = value;
-            }
-        }
-
         var cmd = new StringBuilder();
         cmd.Append(SshCommandBuilder.QuotePosix(invocation.FileName));
         foreach (var arg in invocation.Arguments)
@@ -46,7 +37,7 @@ public sealed class SshSubprocessTransport : ISubprocessTransport
 
         var remoteScript = SshCommandBuilder.BuildRemoteScript(
             workingDirectory: invocation.WorkingDirectory,
-            extraEnv: env,
+            extraEnv: invocation.Environment?.Select(static kv => new KeyValuePair<string, string?>(kv.Key, kv.Value)),
             targetDefaultEnv: _config.ExtraEnv,
             body: SshCommandBuilder.BuildTrackedCommand(_config, remotePidFile, cmd.ToString()));
 
@@ -229,8 +220,10 @@ public sealed class SshSubprocessTransport : ISubprocessTransport
 
         if (existsCode != 0)
         {
+            var qTemp = SshCommandBuilder.QuotePosix($"{stagedPath}.tmp.{Guid.NewGuid():N}");
             var stageScript =
-                $"umask 077 && mkdir -p -- {qDir} && cat > {qStaged}.tmp && mv -f -- {qStaged}.tmp {qStaged}";
+                $"umask 077; trap {SshCommandBuilder.QuotePosix($"rm -f -- {qTemp}")} EXIT; " +
+                $"mkdir -p -- {qDir} && cat > {qTemp} && mv -f -- {qTemp} {qStaged}";
             var (stageCode, _, stageErr) = SshCommandBuilder
                 .RunBytesAsync(_config, stageScript, scriptBytes, CancellationToken.None)
                 .GetAwaiter()
