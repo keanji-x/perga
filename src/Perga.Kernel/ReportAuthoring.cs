@@ -1,4 +1,3 @@
-using Perga.Kernel.Internal;
 using Perga.ReportDoc;
 
 namespace Perga.Kernel;
@@ -13,8 +12,7 @@ internal static class ReportAuthoring
         {
             if (historical is not null && historical.TryGetValue(block.Id, out var previous))
             {
-                if (previous.Kind == block.Kind && previous.Rev == block.Rev && previous.SectionH1 == block.SectionH1 &&
-                    previous.Markdown == block.Markdown && JsonHelpers.JsonEquals(previous.Payload, block.Payload))
+                if (previous.Rev == block.Rev && previous.HasSameContentAs(block))
                     continue;
                 Reject(previous.Kind);
             }

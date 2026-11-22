@@ -364,7 +364,7 @@ public sealed class McpPluginRouter : IAsyncDisposable
 
             try
             {
-                await _router._kernel.GuardMcpToolCallAsync(
+                var generation = await _router._kernel.GuardMcpToolCallAsync(
                     caller.TrackId,
                     caller.SessionId,
                     _pluginId,
@@ -373,6 +373,7 @@ public sealed class McpPluginRouter : IAsyncDisposable
                     ct, caller.ExecutionOrigin).ConfigureAwait(false);
 
                 var client = await _router.GetOrOpenClientAsync(_pluginId, ct).ConfigureAwait(false);
+                await _router._kernel.EnsurePolicyGenerationAsync(caller.TrackId, generation, ct).ConfigureAwait(false);
                 return await client.CallToolAsync(toolName, normalizedArgs, ct).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)

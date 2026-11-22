@@ -20,7 +20,14 @@ public sealed record ReportBlock(
     ReportBlockKind Kind,
     string? SectionH1,
     string? Markdown,
-    JsonElement? Payload);
+    JsonElement? Payload)
+{
+    public bool HasSameContentAs(ReportBlock other) =>
+        Kind == other.Kind && SectionH1 == other.SectionH1 && Markdown == other.Markdown &&
+        (Payload is { } payload
+            ? other.Payload is { } otherPayload && JsonElement.DeepEquals(payload, otherPayload)
+            : other.Payload is null);
+}
 
 public sealed record ReadAnchor(
     int DocRev,

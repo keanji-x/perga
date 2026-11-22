@@ -503,6 +503,14 @@ public sealed partial class TrackActor
         }
     }
 
+    public Task EnsurePolicyGenerationAsync(string expectedGeneration, CancellationToken ct = default) =>
+        EnqueueAsync(_ =>
+        {
+            if (_policyGeneration != expectedGeneration)
+                throw KernelException.PolicyDenied("Active policy or template data changed after authorization.");
+            return Task.CompletedTask;
+        }, ct);
+
     private void RequirePolicyAvailableCore()
     {
         if (_policyUnavailableReason is { } reason) throw KernelException.PolicyDenied(reason);

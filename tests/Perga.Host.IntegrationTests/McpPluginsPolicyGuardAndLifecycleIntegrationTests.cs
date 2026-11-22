@@ -8,11 +8,14 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Perga.Contracts;
+using Perga.Host.Configuration;
 using Perga.Host.IntegrationTests.Fixtures;
 using Perga.Host.Lifecycle;
+using Perga.Host.Mcp;
 using Perga.Host.Serialization;
 using Perga.Kernel;
 using Perga.Kernel.Events;
+using Perga.Kernel.Mcp;
 using Perga.Kernel.Ports;
 using Perga.Storage.Sqlite;
 using Perga.VcsKit;
@@ -22,6 +25,77 @@ namespace Perga.Host.IntegrationTests;
 [Collection("Template policy sandbox")]
 public sealed class McpPluginsPolicyGuardAndLifecycleIntegrationTests
 {
+    [Fact]
+    public async Task ChangedPolicyDataPreventsDispatchAfterColdPluginInitialization()
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var ct = timeout.Token;
+        await using var cluster = new PergaHostTestCluster();
+        var kernel = cluster.Services.GetRequiredService<IPergaKernel>();
+        kernel.Templates.RegisterTemplate("""
+            export default defineTemplate({
+              id: 'plugin-init-policy', title: 'Plugin initialization policy',
+              data: { initial: { locked: false } },
+              before(action, ctx) {
+                return action.type === 'tool.update' && ctx.data.locked ? Deny('Updates locked') : Allow();
+              }
+            });
+            """);
+        var area = await kernel.CreateAreaAsync(new("Plugin policy", DefaultCwd: cluster.DataDir), ct);
+        var track = (await kernel.CreateTrackAsync(new(area.Id, TemplateId: "plugin-init-policy",
+            EnabledPlugins: ["test-plugin"]), ct)).Track;
+        var caller = new McpSessionPrincipal("", track.Id, track.LeadSessionId!, true, null, null, track.EnabledPlugins);
+        var upstream = new PausedPluginInitialization();
+        using var httpClient = new HttpClient(upstream);
+        await using var router = new McpPluginRouter(kernel, new PergaHostOptions(), httpClient);
+        router.RegisterPlugin(new("test-plugin", "http", "http://plugin.test/mcp"));
+        var backend = router.TryCreateBackend("test-plugin")!;
+
+        var call = backend.CallToolAsync(caller, "update", McpToolResultFormatter.EmptyObject, ct);
+        try
+        {
+            await upstream.Initializing.Task.WaitAsync(ct);
+            await kernel.InvokeKernelMcpToolAsync(caller, KernelMcpToolNames.DataPatch,
+                McpToolResultFormatter.ParseClone("""{"patch":{"locked":true}}"""), ct);
+        }
+        finally
+        {
+            upstream.Resume.TrySetResult();
+        }
+
+        var result = await call.WaitAsync(ct);
+        Assert.True(result.IsError);
+        Assert.Equal("Active policy or template data changed after authorization.", Assert.Single(result.Content).Text);
+        Assert.Equal(0, upstream.ToolCalls);
+
+        var retry = await backend.CallToolAsync(caller, "update", McpToolResultFormatter.EmptyObject, ct);
+        Assert.True(retry.IsError);
+        Assert.Equal("Updates locked", Assert.Single(retry.Content).Text);
+        Assert.Equal(0, upstream.ToolCalls);
+    }
+
+    private sealed class PausedPluginInitialization : HttpMessageHandler
+    {
+        public TaskCompletionSource Initializing { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Resume { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public int ToolCalls { get; private set; }
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            using var message = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
+            var method = message.RootElement.GetProperty("method").GetString();
+            if (method == "initialize")
+            {
+                Initializing.TrySetResult();
+                await Resume.Task.WaitAsync(ct);
+            }
+            if (method == "tools/call")
+                ToolCalls++;
+
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(new { result = new { } }) };
+        }
+    }
+
     [Fact]
     public async Task McpPluginRouter_HttpAndStdioPlugins_EnabledPluginsFence_And_PolicyGuard_Allow_Deny_AskHuman_WorkEndToEnd()
     {

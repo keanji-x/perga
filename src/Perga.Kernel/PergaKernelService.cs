@@ -118,6 +118,7 @@ public partial interface IPergaKernel : IAsyncDisposable
     McpSessionPrincipal ObserveMcpExecution(McpSessionPrincipal caller);
     Task<string> GuardMcpToolCallAsync(string trackId, string sessionId, string mcpServer, string toolName, JsonElement arguments,
         CancellationToken ct = default, McpExecutionOrigin? origin = null);
+    Task EnsurePolicyGenerationAsync(string trackId, string? expectedGeneration, CancellationToken ct = default);
     Task<JsonElement> InvokeKernelMcpToolAsync(McpSessionPrincipal caller, string toolName, JsonElement arguments, CancellationToken ct = default);
     Task<bool> CancelPendingWakeAsync(string trackId, string wakeId, CancellationToken ct = default);
     Task<IReadOnlyList<FiredTrackSchedule>> FireDueTrackSchedulesAsync(long nowMs, CancellationToken ct = default);
@@ -1111,6 +1112,11 @@ public sealed partial class PergaKernelService : IPergaKernel
         CancellationToken ct = default,
         McpExecutionOrigin? origin = null) =>
         Actors.GetOrActivate(trackId).GuardMcpToolCallAsync(sessionId, mcpServer, toolName, arguments, ct, origin);
+
+    public Task EnsurePolicyGenerationAsync(string trackId, string? expectedGeneration, CancellationToken ct = default) =>
+        expectedGeneration is null
+            ? Task.CompletedTask
+            : Actors.GetOrActivate(trackId).EnsurePolicyGenerationAsync(expectedGeneration, ct);
 
     public Task<JsonElement> InvokeKernelMcpToolAsync(
         McpSessionPrincipal caller,
