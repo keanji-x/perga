@@ -20,6 +20,26 @@ internal sealed class TrackReadRepository
         _taskRepository = taskRepository;
     }
 
+    public async Task<IReadOnlyDictionary<string, AreaTrackCounts>> GetAreaTrackCountsAsync(CancellationToken ct = default)
+    {
+        _context.EnsureInitialized();
+        await using var conn = await _context.OpenReadConnectionAsync(ct).ConfigureAwait(false);
+        var rows = await conn.QueryAsync<(string AreaId, long OpenCount, long ClosedCount)>(new CommandDefinition(
+            """
+            SELECT area_id,
+                   SUM(CASE WHEN closed_at_ms IS NULL THEN 1 ELSE 0 END) AS OpenCount,
+                   SUM(CASE WHEN closed_at_ms IS NOT NULL THEN 1 ELSE 0 END) AS ClosedCount
+            FROM tracks
+            GROUP BY area_id;
+            """,
+            cancellationToken: ct)).ConfigureAwait(false);
+
+        return rows.ToDictionary(
+            row => row.AreaId,
+            row => new AreaTrackCounts((int)row.OpenCount, (int)row.ClosedCount),
+            StringComparer.Ordinal);
+    }
+
     public async Task<IReadOnlyList<TrackDto>> ListTracksAsync(
         string? areaId = null,
         bool includeClosed = false,

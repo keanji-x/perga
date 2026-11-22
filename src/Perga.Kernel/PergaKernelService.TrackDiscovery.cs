@@ -33,14 +33,12 @@ public sealed partial class PergaKernelService
     {
         var currentAreaId = await GetCurrentAreaIdAsync(currentTrackId, ct).ConfigureAwait(false);
         var areas = await _store.ListAreasAsync(ct, includeSystem: true).ConfigureAwait(false);
-        var tracks = await _store.ListTracksAsync(includeClosed: true, ct: ct).ConfigureAwait(false);
-        var tracksByArea = tracks.ToLookup(track => track.AreaId, StringComparer.Ordinal);
+        var counts = await _store.GetAreaTrackCountsAsync(ct).ConfigureAwait(false);
         var entries = areas.Select(area =>
         {
-            var areaTracks = tracksByArea[area.Id];
-            var openCount = areaTracks.Count(track => track.ClosedAtMs is null);
+            var count = counts.GetValueOrDefault(area.Id);
             return new AreaDiscoveryEntry(area.Id, area.Name, area.Id == currentAreaId,
-                openCount, areaTracks.Count() - openCount, area.DefaultCwd);
+                count?.OpenCount ?? 0, count?.ClosedCount ?? 0, area.DefaultCwd);
         }).ToArray();
         return new AreaDiscoveryResult(currentAreaId, entries);
     }

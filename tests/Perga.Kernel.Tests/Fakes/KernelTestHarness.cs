@@ -66,6 +66,7 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
     public Action? AfterTemplateCommit { get; set; }
 
     public int MarkInterruptedCalls { get; private set; }
+    public int ListTracksCalls { get; private set; }
 
     public IReadOnlyList<EventEnvelopeDto> PersistedEvents
     {
@@ -139,10 +140,27 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
         }
     }
 
+    public Task<IReadOnlyDictionary<string, AreaTrackCounts>> GetAreaTrackCountsAsync(CancellationToken ct = default)
+    {
+        lock (_gate)
+        {
+            return Task.FromResult<IReadOnlyDictionary<string, AreaTrackCounts>>(
+                _tracks.Values.GroupBy(t => t.AreaId, StringComparer.Ordinal).ToDictionary(
+                    group => group.Key,
+                    group =>
+                    {
+                        var open = group.Count(t => t.ClosedAtMs is null);
+                        return new AreaTrackCounts(open, group.Count() - open);
+                    },
+                    StringComparer.Ordinal));
+        }
+    }
+
     public Task<IReadOnlyList<TrackDto>> ListTracksAsync(string? areaId = null, bool includeClosed = false, CancellationToken ct = default)
     {
         lock (_gate)
         {
+            ListTracksCalls++;
             var q = _tracks.Values.AsEnumerable();
             if (areaId is not null)
             {

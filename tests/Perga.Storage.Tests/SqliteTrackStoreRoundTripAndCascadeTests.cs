@@ -555,4 +555,40 @@ public sealed class SqliteTrackStoreRoundTripAndCascadeTests
         Assert.Single(await store.ListMailsAsync("trk_keep", ct: ct));
         Assert.Single(await store.ListTerminalsAsync("trk_keep", ct));
     }
+
+    [Fact]
+    public async Task GetAreaTrackCountsAsync_AggregatesOpenAndClosedTracksWithoutDeserializingTrackBlobs()
+    {
+        await using var harness = await StorageTestHarness.CreateAsync();
+        var store = harness.Store;
+        var ct = CancellationToken.None;
+
+        Assert.Empty(await store.GetAreaTrackCountsAsync(ct));
+
+        await store.UpsertAreaAsync(StorageTestHarness.CreateArea("area_mixed", "Mixed"), ct);
+        await store.UpsertAreaAsync(StorageTestHarness.CreateArea("area_closed", "Closed"), ct);
+        await store.UpsertAreaAsync(StorageTestHarness.CreateArea("area_empty", "Empty"), ct);
+
+        async Task SeedTrackAsync(string id, string areaId, long? closedAtMs = null)
+        {
+            var (track, report, lead) = StorageTestHarness.CreateSeedTrack(id, areaId, $"lead_{id}");
+            await store.CreateTrackAsync(track with { ClosedAtMs = closedAtMs }, report, null, lead, ct);
+        }
+
+        await SeedTrackAsync("trk_open_1", "area_mixed");
+        await SeedTrackAsync("trk_open_2", "area_mixed");
+        await SeedTrackAsync("trk_closed_1", "area_mixed", closedAtMs: 2_000);
+        await SeedTrackAsync("trk_closed_2", "area_closed", closedAtMs: 3_000);
+
+        // Corrupt JSON payload columns on a closed track to prove the aggregate count query never reads or parses them.
+        using var conn = harness.OpenRawInspectConnection();
+        await conn.ExecuteAsync(
+            "UPDATE tracks SET data_json = '{bad-json', template_inputs_json = '{bad-json', workspace_spec_json = '{bad-json' WHERE id = 'trk_closed_2';");
+
+        var counts = await store.GetAreaTrackCountsAsync(ct);
+        Assert.Equal(2, counts.Count);
+        Assert.Equal(new AreaTrackCounts(2, 1), counts["area_mixed"]);
+        Assert.Equal(new AreaTrackCounts(0, 1), counts["area_closed"]);
+        Assert.False(counts.ContainsKey("area_empty"));
+    }
 }

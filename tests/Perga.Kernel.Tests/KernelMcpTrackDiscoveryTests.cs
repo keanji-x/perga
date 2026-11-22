@@ -30,6 +30,9 @@ public sealed class KernelMcpTrackDiscoveryTests
         await Call(ctx, caller, KernelMcpToolNames.TrackSet, TestJson.FromObject(new { source }).GetRawText());
         var denied = await Assert.ThrowsAsync<KernelException>(() => Call(ctx, caller, KernelMcpToolNames.TrackList, args));
         Assert.Equal(KernelErrorCode.PolicyDenied, denied.Code);
+        var alternateCase = await Assert.ThrowsAsync<KernelException>(() =>
+            Call(ctx, caller, KernelMcpToolNames.TrackList, """{"AREA":"*"}"""));
+        Assert.Equal(KernelErrorCode.InvalidArgument, alternateCase.Code);
     }
 
     [Fact]
@@ -45,7 +48,9 @@ public sealed class KernelMcpTrackDiscoveryTests
         await EvictAsync(ctx, closed.Track.Id);
         await EvictAsync(ctx, peer.Track.Id);
 
+        var listTracksBefore = ctx.Store.ListTracksCalls;
         var result = await Call(ctx, caller, KernelMcpToolNames.AreaList, "{}");
+        Assert.Equal(listTracksBefore, ctx.Store.ListTracksCalls);
         Assert.Equal(current.Id, result.GetProperty("currentAreaId").GetString());
         Assert.Collection(result.GetProperty("areas").EnumerateArray(),
             entry => AssertArea(entry, other, false, 1, 0),

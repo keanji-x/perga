@@ -376,6 +376,7 @@ public static class KernelMcpDispatcher
 
             case KernelMcpToolNames.ReportRead:
             {
+                RejectUnknownArgs(args, ToolSchema(toolName));
                 var trackId = OptionalNonBlankStringArg(args, ["trackId"]);
                 var options = KernelMcpReportSupport.ParseReadOptions(args);
                 if (trackId is not null && trackId != caller.TrackId)
@@ -718,7 +719,7 @@ public static class KernelMcpDispatcher
         var properties = schema.GetProperty("properties").EnumerateObject().ToArray();
         foreach (var prop in args.EnumerateObject())
         {
-            var allowed = properties.FirstOrDefault(p => string.Equals(prop.Name, p.Name, StringComparison.OrdinalIgnoreCase));
+            var allowed = properties.FirstOrDefault(p => string.Equals(prop.Name, p.Name, StringComparison.Ordinal));
             if (allowed.Value.ValueKind == JsonValueKind.Undefined)
                 throw KernelException.InvalidArgument(
                     $"Unknown argument '{prop.Name}'. Allowed arguments: {string.Join(", ", properties.Select(p => p.Name))}.");
