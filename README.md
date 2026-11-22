@@ -48,7 +48,7 @@ Pushing a `vX.Y.Z` tag (for example `v0.1.0`) runs the same pipeline and publish
 - [Vision and Fundamental Tensions](docs/product/vision.md) — Core premise, four orthogonal tensions, AI vs. human organizational asymmetries, and long-term vision
 - [Product Design and Prioritized Pain Points](docs/product/design.md) — Concrete `P0`–`P3` pain points, minimal solutions, deliberate trade-offs, deferred scope, and paradigm comparison
 - [Scenario Overview](docs/product/scenarios/README.md) — Progressive complexity across `agents-delivery`, `okr-loop`, and `equity-research`
-- [Software Development Loop](docs/product/scenarios/software-development.md) — Primary focus scenario: five-step golden loop and key UX polish points
+- [Software Development Scenarios](docs/product/scenarios/software-development.md) — Bottom-up user flows across 6 engineering scenarios (bug fixing, features, RFC design, module maintenance, ops, and refactoring), commonalities, differences, and design questions
 
 ### Architecture & Operations
 - [Architecture Reference](DESIGN.md) — 18-project .NET topology, dependency matrix, core modules, and contracts
