@@ -1,1410 +1,324 @@
-# Perga 详细架构设计与冻结接口规范（DESIGN.md）
+# Perga 架构参考
 
-> **文档性质**：本规范为 **Perga（C# .NET 11 微内核 + 零耦合独立库 + 提纯 Rust 终端守护 + 原生 Jujutsu `jj`）** 的唯一权威设计基线与冻结契约。后续 Stage 0 脚手架搭建与 Stage 1 / Stage 2 Swarm 并行实现必须严格遵守本文档第 2–4 节定义的命名空间、接口签名、SQL DDL 与线协议，未经架构协调者批准不得擅自变更跨模块公开契约。
+> 实现基线：`6c907fa5`。本文描述该版本已实现的架构；接口、SQL 与运行参数的精确定义以所链接源码为准。后续契约生成工作的计划不作为本版本能力。
 
----
+Perga 以 Track 为长期工作单元，将会话、任务编排、工作区、报告和外部工具放在同一生命周期内。Host 接入浏览器与 Agent，Kernel 决定领域行为，SQLite 保存可恢复状态，适配器执行外部协议。Report 是出版物，Flow 是调度规格，Session 是可复用的会话工位。
 
-## 1. 工程拓扑与严格无环依赖规则
+## 1. 仓库拓扑与依赖
 
-### 1.1 仓库与 Solution 目录布局
+### 1.1 Solution 与工具
 
-实现仓库（`perga`）根目录下目录布局如下：
+[Perga.sln](Perga.sln) 包含 **18 个 C# 项目**：6 个库、4 个应用层项目、8 个测试项目。
 
-```text
-Perga.sln                                 # 统一注册全部 17 个 .csproj 工程
-├── DESIGN.md                             # 本架构与冻结接口规范
-├── README.md / LICENSE / rust-toolchain.toml
-├── Directory.Build.props                 # 统一 net11.0 / Nullable=enable / ImplicitUsings=enable / TreatWarningsAsErrors=true / LangVersion=15
-├── fe/                                   # 已迁移的前端（React + TypeScript + Astryx Design）
-├── docs/                                 # 架构拓扑图与前期 Rust 审计蓝图（已迁移）
-├── plugins/                              # 保留的独立领域插件（market / barra / invest / paper-trading / research-archive）
-├── libs/                                 # 零业务耦合独立底座库（严禁引用任何 src/* 或彼此环路引用）
-│   ├── Perga.ReportDoc/
-│   │   └── Perga.ReportDoc.csproj        # 依赖: ZstdSharp.Port
-│   ├── Perga.PolicyVm/
-│   │   └── Perga.PolicyVm.csproj         # 依赖: Jint
-│   ├── Perga.AgentKit/
-│   │   └── Perga.AgentKit.csproj         # 无重型三方依赖（System.Text.Json + Process/Pipes + OS Sandbox Wrapper）
-│   ├── Perga.VcsKit/
-│   │   └── Perga.VcsKit.csproj           # 无重型三方依赖（原生调用 jj / git / gh CLI）
-│   └── Perga.TermClient/
-│       └── Perga.TermClient.csproj       # 轻量 UDS/TCP JSON-RPC + WebSocket 客户端对接 perga-term-bridge
-│
-├── tools/
-│   ├── rust-terminal/                    # 已迁移的只读 Rust 终端种子（calm-terminal-view / calm-terminal-runtime / terminal_interaction_ref）
-│   └── perga-term-bridge/                # 独立纯 Rust 跨平台终端守护（#![forbid(unsafe_code)]）
-│       ├── Cargo.toml                    # 提纯组装自只读种子 tools/rust-terminal/（rmux-core / rmux-server / rmux-sdk / portable-pty）
-│       └── src/
-│           ├── main.rs                   # CLI 参数（--listen-uds / --listen-tcp）与双监听启动
-│           ├── view.rs                   # 提纯自 calm-terminal-view/src/lib.rs
-│           ├── runtime.rs                # 提纯自 calm-terminal-runtime（macOS 可选跳过 unshare + Windows ConPTY trait）
-│           ├── screen_diff.rs            # 提纯自 terminal_interaction_ref/screen_diff.rs
-│           ├── actions.rs                # 提纯自 terminal_interaction_ref/actions.rs
-│           ├── wait_plan.rs              # 提纯自 terminal_interaction_ref/wait_plan.rs & text_wait.rs
-│           ├── rpc.rs                    # JSON-RPC 2.0 分发（term.ensure / observe / action / resize / kill）
-│           └── ws.rs                     # 二进制 WS 流（0x01 raw PTY bytes, 0x02 JSON control）+ 64KB 环形缓冲回放
-│
-├── src/                                  # Perga 应用层（仅组合上述独立库）
-│   ├── Perga.Contracts/
-│   │   └── Perga.Contracts.csproj        # 纯跨进程/跨层共享 DTO、Enum、REST/WS 协议模型（零业务或 IO 依赖）
-│   ├── Perga.Kernel/
-│   │   └── Perga.Kernel.csproj           # 引用 Contracts + 5 个 libs/*；定义 ITrackStore / ITrackReadStore（零 SQLite/Web 引用！）
-│   ├── Perga.Storage.Sqlite/
-│   │   └── Perga.Storage.Sqlite.csproj   # 依赖反转引用 Perga.Kernel + Perga.Contracts；依赖 Microsoft.Data.Sqlite + Dapper + ZstdSharp.Port
-│   └── Perga.Host/
-│       └── Perga.Host.csproj             # ASP.NET Core 组合根（Microsoft.NET.Sdk.Web）；引用 src/* + 5 个 libs/* + Cronos；在 Perga.Host/Mcp/ 下以 System.Text.Json 直接实现标准 MCP JSON-RPC 2.0 Streamable HTTP + SSE
-│
-├── templates/                            # 内置动态可编程模板与 TS 类型检查声明（Jint 直接跑 .perga.js）
-│   ├── tsconfig.json                     # { allowJs: true, checkJs: true, noEmit: true, strict: true } (编辑期/CI 强类型校验)
-│   ├── perga-template.d.ts               # PergaTemplateDefinition 与全局辅助函数类型声明
-│   ├── agents-delivery/
-│   ├── equity-research/
-│   └── okr-loop/
-│
-├── scripts/hooks/                        # 供模板可选调用的标准生命周期脚本示例
-└── tests/                                # 8 个测试工程（连同 libs/ 5 个 + src/ 4 个共 17 个 .csproj）
-    ├── Perga.ReportDoc.Tests/
-    ├── Perga.PolicyVm.Tests/
-    ├── Perga.AgentKit.Tests/
-    ├── Perga.VcsKit.Tests/
-    ├── Perga.TermClient.Tests/
-    ├── Perga.Storage.Tests/
-    ├── Perga.Kernel.Tests/
-    └── Perga.Host.IntegrationTests/
+| 位置 | 项目 | 职责 |
+| --- | --- | --- |
+| [libs/Perga.Processes](libs/Perga.Processes) | Perga.Processes | 子进程环境整理与 Host 配置隔离 |
+| [libs/Perga.ReportDoc](libs/Perga.ReportDoc) | Perga.ReportDoc | Markdown 块文档、修订与压缩快照 |
+| [libs/Perga.PolicyVm](libs/Perga.PolicyVm) | Perga.PolicyVm | Jint 模板编译、输入与数据校验、策略及视图 |
+| [libs/Perga.AgentKit](libs/Perga.AgentKit) | Perga.AgentKit | OAR Agent 运行时、会话与子进程传输 |
+| [libs/Perga.VcsKit](libs/Perga.VcsKit) | Perga.VcsKit | VCS、Forge、工作区驱动与文件访问 |
+| [libs/Perga.TermClient](libs/Perga.TermClient) | Perga.TermClient | 终端桥的启动、RPC 与客户端契约 |
+| [src/Perga.Contracts](src/Perga.Contracts) | Perga.Contracts | 跨层 DTO、枚举和公开数据契约 |
+| [src/Perga.Kernel](src/Perga.Kernel) | Perga.Kernel | Track、Session、Flow、任务、模板与恢复编排 |
+| [src/Perga.Storage.Sqlite](src/Perga.Storage.Sqlite) | Perga.Storage.Sqlite | Kernel 存储端口的 SQLite 实现 |
+| [src/Perga.Host](src/Perga.Host) | Perga.Host | ASP.NET Core 组合根，HTTP、WS、MCP 与 SSH 适配 |
+| [tests/Perga.ReportDoc.Tests](tests/Perga.ReportDoc.Tests) | Perga.ReportDoc.Tests | 文档引擎测试 |
+| [tests/Perga.PolicyVm.Tests](tests/Perga.PolicyVm.Tests) | Perga.PolicyVm.Tests | 模板与策略测试 |
+| [tests/Perga.AgentKit.Tests](tests/Perga.AgentKit.Tests) | Perga.AgentKit.Tests | Agent 运行时协议测试 |
+| [tests/Perga.VcsKit.Tests](tests/Perga.VcsKit.Tests) | Perga.VcsKit.Tests | VCS、Forge 与工作区测试 |
+| [tests/Perga.TermClient.Tests](tests/Perga.TermClient.Tests) | Perga.TermClient.Tests | 终端客户端测试 |
+| [tests/Perga.Storage.Tests](tests/Perga.Storage.Tests) | Perga.Storage.Tests | 真实 SQLite、迁移、事务、恢复与维护测试 |
+| [tests/Perga.Kernel.Tests](tests/Perga.Kernel.Tests) | Perga.Kernel.Tests | 受控运行时下的领域与并发测试 |
+| [tests/Perga.Host.IntegrationTests](tests/Perga.Host.IntegrationTests) | Perga.Host.IntegrationTests | HTTP、WS、MCP 与 Host 集成测试 |
+
+非 Solution 工具与内容：
+
+- [tools/perga-term-bridge](tools/perga-term-bridge)：独立 Rust PTY 终端服务，有自己的 Cargo 清单与锁文件。
+- [tools/perga-oar-bridge](tools/perga-oar-bridge)：TypeScript/Node OAR 桥；依赖 `@botiverse/oar`，Node 要求 `>=24.0.0`，构建为可供 C# 启动的 ESM bundle。
+- [tools/perga-overlayfs](tools/perga-overlayfs)：OverlayFS 工作区辅助程序。
+- [tools/perga-deploy](tools/perga-deploy)：安装、发布、systemd 与升级控制工具。
+- [templates](templates)：内置包 `agents-delivery`、`equity-research`、`okr-loop`；每包有 `template.perga.js` 与报告骨架，部分包含 schema、views 和 widget。共享类型为 [perga-template.d.ts](templates/perga-template.d.ts)，检查配置为 [tsconfig.json](templates/tsconfig.json)。
+- [plugins](plugins)：当前目录为 `barra`、`invest`、`market`、`paper-trading`、`research-archive`；插件是否向某 Track 暴露由运行配置与授权决定，目录存在不等于默认启用。
+- [fe](fe)：React/TypeScript 浏览器客户端及其构建、测试、架构门禁。
+
+### 1.2 编译与直接依赖矩阵
+
+[Directory.Build.props](Directory.Build.props) 的统一属性是：`TargetFramework=net11.0`、`Nullable=enable`、`ImplicitUsings=enable`、`TreatWarningsAsErrors=true`、`LangVersion=15`。下表列出全部生产项目的直接 `ProjectReference` 和 `PackageReference`；传递依赖不重复列入。
+
+| 项目（省略 Perga. 前缀） | 直接项目依赖 | NuGet 包 |
+| --- | --- | --- |
+| Processes | 无 | 无 |
+| Contracts | 无 | 无 |
+| ReportDoc | 无 | ZstdSharp.Port 0.8.4 |
+| PolicyVm | Contracts | Jint 4.2.2 |
+| AgentKit | Processes | 无 |
+| VcsKit | Processes | 无 |
+| TermClient | Processes | 无 |
+| Kernel | Processes、Contracts、ReportDoc、PolicyVm、AgentKit、VcsKit、TermClient | 无 |
+| Storage.Sqlite | Kernel、Contracts | Microsoft.Data.Sqlite 11.0.0、Dapper 2.1.66、ZstdSharp.Port 0.8.4 |
+| Host | Processes、Kernel、Storage.Sqlite、Contracts、ReportDoc、PolicyVm、AgentKit、VcsKit、TermClient | Cronos 0.9.0 |
+
+8 个测试项目均直接使用 `Microsoft.NET.Test.Sdk 17.12.0`、`xunit 2.9.3`、`xunit.runner.visualstudio 2.8.2`。Host 集成测试另用 `Microsoft.AspNetCore.Mvc.Testing 11.0.0`。
+
+| 测试项目 | 直接项目依赖（省略 Perga. 前缀） |
+| --- | --- |
+| ReportDoc.Tests | ReportDoc |
+| PolicyVm.Tests | PolicyVm |
+| AgentKit.Tests | AgentKit |
+| VcsKit.Tests | VcsKit |
+| TermClient.Tests | TermClient |
+| Storage.Tests | Storage.Sqlite、Kernel、Contracts、ReportDoc |
+| Kernel.Tests | Kernel、Contracts |
+| Host.IntegrationTests | Host |
+
+该图无环：Kernel 定义存储端口，不引用 SQLite；SQLite 引用 Kernel 实现端口；Host 装配两者。Processes 与 Contracts 是依赖叶子。不要把某个适配器的协议或模板的业务规则放进通用契约层。
+
+## 2. 领域与运行架构
+
+### 2.1 Track 与单邮箱 Actor
+
+[PergaKernelService](src/Perga.Kernel/PergaKernelService.cs) 是领域入口，[TrackActorRegistry](src/Perga.Kernel/Actors/TrackActorRegistry.cs) 管理按 Track 加载、复用与回收的 Actor。数据库是持久事实源，Actor 持有已水合状态与运行中的资源。
+
+[TrackActor.cs](src/Perga.Kernel/Actors/TrackActor.cs) 主文件为 **517 行**，聚焦组合、邮箱与生命周期。相关 partial 文件承接会话、Flow、模板等跨职责协调；四个私有嵌套协作者真正封装各自的可变状态：
+
+| 协作者 | 拥有的状态与职责 |
+| --- | --- |
+| [TerminalLifecycle](src/Perga.Kernel/Actors/TerminalLifecycle.cs) | 终端集合、水合、幂等打开、观察、输入、尺寸、关闭及删除清理 |
+| [TrackInteractions](src/Perga.Kernel/Actors/TrackInteractions.cs) | Ask、等待者、回答与取消，以及跨 Track 邮件交付和唤醒 |
+| [TrackReport](src/Perga.Kernel/Actors/TrackReport.cs) | 当前报告、预览、授权复核与提交 |
+| [TrackTasks](src/Perga.Kernel/Actors/TrackTasks.cs) | 任务集合、活跃执行、准入、调度、取消、验证与结算 |
+
+每个 Track 只有一个 mailbox reader；这是异步串行化，不是固定 OS 线程。领域状态转换在获准的邮箱操作内完成。会阻塞生命周期的 provider 停止、gate、终端 I/O 和后台命令等已有外部工作阶段在邮箱外执行，完成后重新进入邮箱并复核身份、版本或生命周期。不能把“邮箱外 I/O”理解为数据库访问也全部移出邮箱。
+
+Actor 继续拥有 Track/Session 索引、模板及工作区协调、活动计数、后台工作和释放顺序。协作者通过显式方法与快照交互，不向其他领域交出可写集合。拆解边界见 [TrackActor 设计记录](docs/design/backend-trackactor-decomposition.md)；其中历史验证段落须结合最终 retirement/rebase 段落阅读。
+
+### 2.2 统一会话生命周期
+
+[UnifiedSessionModels](src/Perga.Kernel/UnifiedSessionModels.cs) 与 [SessionInterop](src/Perga.Kernel/Actors/TrackActor.SessionInterop.cs) 把 Lead、普通子会话与正式 Task Worker 放在同一会话模型中。普通协作者共享 Track 工作区；正式任务还受任务访问模式、工作区隔离或写租约、gate、完成边界及权限约束。普通子会话不自动产生一个任务。
+
+- Session 保存父子关系、provider/model、permission mode、reasoning effort、配置版本、通知父会话策略与 Epoch。
+- [SessionTurnScheduler](src/Perga.Kernel/Actors/SessionTurnScheduler.cs) 与 [SessionTurnRunner](src/Perga.Kernel/Actors/SessionTurnRunner.cs) 协调输入、执行、流式输出及结算。
+- 持久输入回执与消息队列负责请求键幂等、排队、steering、撤回和派发状态。重试回到原身份，不能用重复派发掩盖不确定结果。
+- Unknown、重连、reset/compact、审批等待与响应是显式生命周期路径。结果不明与已失败是不同状态；恢复逻辑不能假定外部执行没有发生。
+- Task 通过 `session_id` 指向会话；终结任务的关联用于追溯。当前活跃任务租约决定会话限制，历史任务不会永久锁住可复用会话。
+
+接口与运行模型见 [统一会话设计](docs/design/unified-conversation-architecture.md)、[会话配置状态](docs/design/unified-session-config-state.md) 与 [任务/会话归属](docs/design/unify-task-session-ownership.md)。这些设计记录提供背景，当前工具和路由以源码为准。
+
+### 2.3 Track Flow v1
+
+实现位于 [Flow](src/Perga.Kernel/Flow) 与 [TrackActor.Flow](src/Perga.Kernel/Actors/TrackActor.Flow.cs)。Flow 将调度与报告正文分离：
+
+1. `flow.json` 是 Host 管理的可编辑调度文件；提交时经 `flow_commit` 或 HTTP 进入同一个校验/调谐路径。SQLite 中的 `tracks.flow_spec_json`、`flow_rev` 与文件 hash 保存已提交规格及投影依据。
+2. 节点用 `when`（依赖、cron、指定时间）与 `do`（`run`、`wake`、`watch`）组合。Run 可调用 Agent 或确定性命令；Wake 向会话投递轻量工作；Watch 用 PR checks 或命令探针等待外部条件。
+3. 全图校验覆盖依赖、活跃节点删除、会话复用与路由等不变量。取消活跃节点必须显式声明；提交支持 dry run 与版本检查。
+4. Task、时钟与 wake 保存运行状态；`ok`、`attention`、`blocked` 表达业务结果，`none` 表示尚无结论。终结节点的归档保留历史身份。
+5. 文件投影使用 hash 检查，避免后台归档或重启恢复覆盖尚未提交的草稿。执行、结算、重启与时钟触发通过持久状态和幂等标识衔接。
+6. `builtin:flow` 是内置视图；模板可把 Flow 与业务 Data 投影成专属视图。旧的独立 worker dispatch、旧 schedule CRUD、task accept/reject 与人类逐块编辑报告入口已退役。
+
+[统一调度图设计](docs/design/unified-track-flow-architecture.md) 包含演进背景；不要把其中的历史诊断或旧工具示例当作仍然开放的 API。
+
+### 2.4 Report、模板与业务 Data
+
+[ReportDocEngine](libs/Perga.ReportDoc/ReportDocEngine.cs) 负责 Markdown 块身份、提交与修订快照；[PolicyVm](libs/Perga.PolicyVm) 使用 Jint 执行模板，并提供输入校验、业务 Data 校验、策略和视图能力。模板包按 [模板架构](docs/design/template-architecture.md) 组织，源类型定义位于模板目录。
+
+Report 发布正文与模板声明的骨架；`report_commit` 受块版本、模板章节权限、正文预算及策略检查，明确禁止新增或修改 Task 块，任务调度通过 Flow 声明。View/Widget 块仍可经报告操作插入，当前没有通用的视图插入禁令。`data_patch` 维护独立的业务 JSON 和 `data_rev`。Flow 负责调度，视图读取 Data/Flow，通用 UI 不承载投资、交付等模板领域政策。
+
+### 2.5 Provider 与 OAR 运行活动
+
+[AgentRuntime](libs/Perga.AgentKit/AgentRuntime.cs) 经 [OarAgentSession](libs/Perga.AgentKit/OarAgentSession.cs) 和 stdio JSON-RPC 驱动 Node OAR 桥。provider/model/effort 结合目标运行时目录发现；permission mode 按 provider 使用静态声明或动态目录（Codex/Claude 为静态目录，`acp:*` 为动态目录），并在配置及启动路径校验。不能按外部工具名称的私有前缀推断能力。
+
+桥接除 turn 文本与工具事件，还转发 OAR runtime status/task activity；[TrackActor.RuntimeActivity](src/Perga.Kernel/Actors/TrackActor.RuntimeActivity.cs) 以 Session Epoch 和 provider 实例身份拒绝过期观察，将当前投影通过 WS 和会话 items 响应提供给前端。运行活动不等同于新的持久任务或一轮 turn；turn 结束后仍可能有活动。见 [OAR 桥设计](docs/design/oar-agent-bridge.md)。
+
+[ChildProcessEnvironment](libs/Perga.Processes/ChildProcessEnvironment.cs) 移除 Host 保留环境名/前缀，保留正常工具链环境；SSH 边界另有显式环境传递策略。不要将本地环境过滤误写为所有子进程均采用同一份严格白名单。
+
+### 2.6 Execution Targets、工作区与 SSH
+
+[IExecutionEnvironment](src/Perga.Kernel/Ports/IExecutionEnvironment.cs) 汇集某一目标的 Agent runtime、workspace drivers、文件系统、shell 和 terminal，Registry 根据 Track 的 `executionTargetId` 选择环境。Area 保存默认目标，Track 保存自身目标；目录查询、provider 发现及创建流程都携带目标身份。
+
+本地环境与 [Host SSH 适配](src/Perga.Host/Execution) 支持本地、多用户及远程 SSH 执行。SSH 的命令、文件、终端和 provider 使用目标适配器；Host 的数据库与编排权威不迁往远端。`SshMcpTunnel` 在远端 loopback 分配反向转发端口，将 Agent 的 MCP 调用送回 Host；自动隧道要求 HTTP Host MCP 地址，HTTPS 需配置可达的 `McpBaseUriOverride` 以保留 TLS 主机名验证。
+
+[VcsKit](libs/Perga.VcsKit) 提供 direct、VCS 与 overlay 工作区驱动，以及 Git/Jujutsu 和 GitHub Forge 操作。工作区准备、失败重试、隔离/租约与销毁由 Kernel 生命周期协调，外部协议由适配器实现。只读任务的隔离不能依靠提示词替代。
+
+[终端桥](tools/perga-term-bridge) 管理 PTY、屏幕状态、RPC 和终端 WS；[TermClient](libs/Perga.TermClient) 是 C# 侧契约与进程/连接管理。浏览器经 Host relay 接入，不直接承担桥进程的生命周期。
+
+## 3. SQLite 持久化与恢复
+
+### 3.1 门面、共享寿命与领域仓储
+
+[SqliteTrackStore](src/Perga.Storage.Sqlite/SqliteTrackStore.cs) 是 **501 行**的公开端口门面；保留 `ITrackStore` 等接口和 `SessionInputs`、`SessionMessages`、`TrackSchedules`、`TrackWakes` capability 的原对象身份。
+
+[SqliteStoreContext](src/Perga.Storage.Sqlite/SqliteStoreContext.cs) 独占共享初始化、migrator、单 writer、冷 Blob、upcaster、时钟、读连接工厂、数据库 identity sidecar 和 disposal。先迁移再启动 writer；释放时先结束 writer，再清理对应 reader pool。
+
+**24 个 internal sealed repository** 按领域封装 SQL 与映射，依赖通过构造器显式注入，context 不持有仓储反向引用：
+
+| 领域 | 仓储类型 |
+| --- | --- |
+| Area、创建回执与准备 | AreaRepository、CreationRepository |
+| Track 创建、读取、更新、删除 | TrackCreationRepository、TrackReadRepository、TrackUpdateRepository、TrackDeletionRepository |
+| 报告、任务 | ReportRepository、TaskRepository |
+| Session、输入、消息、恢复 | SessionRepository、SessionInputsRepository、SessionMessagesRepository、SessionResumeRepository |
+| Ask/邮件、终端、事件、overlay | CorrespondenceRepository、TerminalRepository、EventRepository、OverlayRepository |
+| 时钟、wake、维护、启动恢复 | TrackSchedulesRepository、TrackWakesRepository、MaintenanceRepository、BootRecoveryRepository |
+| Today、目标、已读、升级 | TodayRepository、ExecutionTargetsRepository、ReadReceiptsRepository、SystemUpgradeRepository |
+
+[SessionMessageSql](src/Perga.Storage.Sqlite/SessionMessageSql.cs) 只提供消息插入、状态 CAS 与 ordinal 等事务内原语。跨仓储助手使用调用者的 connection/transaction，不嵌套 enqueue 或开启另一事务；仓储与静态助手依赖图保持无环。参见 [存储拆解记录](docs/design/backend-storage-decomposition.md)。
+
+### 3.2 写入、快照与失败边界
+
+[SqliteSingleWriter](src/Perga.Storage.Sqlite/SqliteSingleWriter.cs) 使用单写连接和有界通道。默认队列容量 4,096，微批最多 32 项；WAL、`synchronous=NORMAL`、外键开启。查询使用独立只读/query-only 连接，aggregate 读取保留自己的快照事务。
+
+一个业务回调中的相关行与事件在同一事务提交。例如 Track 创建包括初始聚合、输入、准备意图、回执和事件；报告提交包括修订、当前正文、模板状态、事件和 wake；Flow 更新将规格、任务和时钟效果保持一致。
+
+微批中任一项失败会回滚整批，再逐项在独立事务重放，使有效的其他调用能够成功。回调因此必须保持事务内可重放，不能夹带不可撤销的外部副作用。成功结果在 commit 后发布；取消与失败不能把半批结果当成成功。
+
+输入准入、消息 steering、恢复和 Epoch 变更使用持久状态与 CAS。Boot recovery 与 Actor 水合配合处理进程重启后的中断工作。`synchronous=NORMAL` 下的进程恢复保证不应扩写成断电后零丢失承诺。
+
+### 3.3 25 个冻结迁移与真实 schema
+
+唯一 DDL 事实源为 [Migrations](src/Perga.Storage.Sqlite/Migrations)：**0001–0025，共 25 个 SQL 文件**，发布后字节冻结，修正必须新增前向迁移。本文不复制一份容易漂移的建表脚本。
+
+| Schema 分组 | 当前承载 |
+| --- | --- |
+| 基础与工作区 | `schema_migrations`、`areas`、`tracks`、`track_workspace_preparations`、`creation_receipts` |
+| 报告与业务数据 | `reports`、`report_revisions`；业务 Data/版本与模板状态存于 Track 相关列 |
+| Flow 与运行 | `tracks.flow_spec_json/flow_rev/flow_file_sha256`、`tasks`、`track_schedules`、`track_wakes` |
+| 会话与输入消息 | `agent_sessions`、`session_turns`、`session_inputs`、`session_items`、`session_messages`、`session_message_steers` |
+| 交互与终端 | `asks`、`mails`、`terminals` |
+| 事件与产品投影 | `events`、`daily_tracks`、`read_receipt_meta`、`read_receipts` |
+| 执行与运维 | `execution_targets`、`system_upgrade_receipts` |
+
+迁移顺序也描述了结构演进：0002 工作区准备；0003 Worker 消息；0004 provider resume；0005 Blob 引用索引；0006 消息队列；0007–0009 权限与推理配置；0010 Ask 交付；0011 升级回执；0012 Today；0013–0015 上下文及 wake；0016 退役 hold Ask；0017 task role；0018 时钟；0019 unknown 状态；0020 已读回执；0021 统一会话；0022 Data；0023 Task/Session 归属统一；0024 执行目标；0025 Flow。
+
+历史迁移出现过的 `task_attempts`、`worker_messages`、`worker_settings`、`provider_session_resume` 已在后续迁移删除。**当前没有独立 `track_flows` 表**，Flow 规格在 `tracks` 列中；`track_schedules` 的历史列仍存在，运行语义已收口为 Flow 时钟，不能仅凭建表历史推断仍有旧 CRUD。
+
+[SqliteMigrator](src/Perga.Storage.Sqlite/SqliteMigrator.cs) 从内嵌 SQL 资源加载连续版本，验证已应用迁移的 SHA-256，升级前通过 SQLite backup 生成版本备份，再执行迁移。校验实现规范化 BOM/换行，不等于允许修改已发布脚本。读取期 JSON upcaster 由 [SqliteJsonUpcaster](src/Perga.Storage.Sqlite/SqliteJsonUpcaster.cs) 集中处理，不能假定所有任意 JSON 都有同一版本封装。
+
+### 3.4 冷数据与维护
+
+[ColdBlobStore](src/Perga.Storage.Sqlite/ColdBlobStore.cs) 处理大 payload 的压缩、预览和水合；默认剥离阈值为 65,536 bytes，preview 为 2,048 bytes，参数在 [SqliteStorageOptions](src/Perga.Storage.Sqlite/SqliteStorageOptions.cs)。关系数据中的引用、写入与文件回收顺序是完整性边界。
+
+[SqliteMaintenanceHostedService](src/Perga.Host/Lifecycle/SqliteMaintenanceHostedService.cs) 周期调用维护；[MaintenanceRepository](src/Perga.Storage.Sqlite/MaintenanceRepository.cs) 分批裁剪事件、报告历史与可缩减输出，复查冷 Blob 引用，并执行增量 vacuum/checkpoint。用户输入、报告当前版本和任务/消息身份有各自保留规则，不能把维护概括为清空旧会话。配置及具体预算以实现为准。
+
+## 4. Host 接入与安全边界
+
+### 4.1 组合根与静态发布
+
+[Program.cs](src/Perga.Host/Program.cs) 安装异常转换、RequestOriginGuard、WebSocket，映射 API/MCP，并通过 [ReleaseSnapshotManager](src/Perga.Host/SystemUpgrade/ReleaseSnapshotManager.cs) 在 **根路径 `/`** 交付静态前端。不存在单独的旧前缀静态挂载。非 API/MCP 的 GET/HEAD 可回退到 SPA；未知 API/MCP 路由返回错误，不返回 HTML。
+
+[服务注册](src/Perga.Host/PergaHostServiceCollectionExtensions.cs) 组合存储、Kernel、目标环境、桥与 hosted services。启动恢复、Cronos 时钟调度和 SQLite 维护分别位于 [Lifecycle](src/Perga.Host/Lifecycle)。
+
+### 4.2 HTTP 资源面
+
+路由权威为 [ApiV1Endpoints](src/Perga.Host/Http/ApiV1Endpoints.cs)、[TodayEndpoints](src/Perga.Host/Http/TodayEndpoints.cs) 与 [SystemEndpoints](src/Perga.Host/Http/SystemEndpoints.cs)。下表列出实际资源组，避免固定“若干个逻辑端点”的虚假计数。
+
+| 路径（资源组） | 当前操作 |
+| --- | --- |
+| `/healthz` | GET 健康检查 |
+| `/api/v1/bootstrap`、`/templates`、`/overlays` | GET 引导、模板目录与活动/通知投影（后两项同属 `/api/v1`） |
+| `/api/v1/fs/listdir` | GET 目标环境目录 |
+| `/api/v1/targets` | GET/POST，DELETE `/{targetId}`，GET `/{targetId}/providers` |
+| `/api/v1/areas` | GET/POST，PATCH/DELETE `/{areaId}`；GET `/{areaId}/workspace-options`、`/{areaId}/tracks` |
+| `/api/v1/tracks` | POST；GET/PATCH/DELETE `/{trackId}`；POST `/{trackId}/workspace/retry` |
+| `/api/v1/tracks/{trackId}/template` | GET/DELETE；PATCH `/inputs` |
+| `/api/v1/tracks/{trackId}/files`、`/files/raw`、`/vcs-diff` | GET 文件/原始内容与差异（均相对同一 Track） |
+| `/api/v1/tracks/{trackId}/report`、`/views` | GET 报告与投影视图 |
+| `/api/v1/tracks/{trackId}/flow` | GET；POST `/flow/commit`（相对 Track） |
+| `/api/v1/tracks/{trackId}/data` | PATCH 业务数据 |
+| `/api/v1/tracks/{trackId}/tasks/{taskKey}/cancel` | POST 取消 |
+| `/api/v1/tracks/{trackId}/sessions` | GET/POST |
+| `/api/v1/sessions/{sessionId}` | PATCH 配置；GET `/items`；POST `/messages`、`/control`、`/interactions/{interactionId}/respond`；DELETE `/messages/{messageId}` |
+| `/api/v1/tracks/{trackId}/terminals` | GET/POST；DELETE `/{termId}` |
+| `/api/v1/read-receipts` | GET；POST `/{kind}/{targetId}/read` 或 `/unread` |
+| `/api/v1/system/info`、`/system/drain`、`/system/reload` | 分别 GET、POST、POST（均属 `/api/v1`） |
+| `/api/today/daily`、`/calendar`、`/report-changes`、`/report-edits` | GET 日 Track、日历、报告变化及编辑明细 |
+
+`/api/v1` 默认属性为 camelCase，枚举写出 snake_case 字符串，见 [PergaJsonDefaults](src/Perga.Host/Serialization/PergaJsonDefaults.cs)。**该基线的 Today 仍在 `/api/today`，使用 snake_case 序列化与部分 snake_case 查询参数**，尚未统一迁到 `/api/v1/today`。
+
+### 4.3 WebSocket 与事件重放
+
+- **`/api/v1/events`**：事件 WS，支持 `since` 与可选 Track 过滤；先订阅实时广播再读持久日志，去除重放重叠。超出保留窗口或最大 2,000 条重放范围时发送 `_snapshot_required`，正常完成发送 `_replay_complete`；客户端刷新快照后从 tip 续接。当前没有 `/api/v1/ws` 路由。
+- **`/api/v1/terminals/{termId}/ws`**：Host 将终端 WS 中继到对应执行环境的终端桥。
+
+[EventsWebSocketHandler](src/Perga.Host/WebSockets/EventsWebSocketHandler.cs) 区分带持久 event ID 的领域事件与无持久 ID 的瞬态流式帧；完整状态可由查询恢复，不能依赖所有 delta 都曾写入 SQLite。[EventHub](src/Perga.Kernel/Events/EventHub.cs) 提供内存广播。
+
+### 4.4 MCP 与授权
+
+[McpStreamableHttpEndpoints](src/Perga.Host/Mcp/McpStreamableHttpEndpoints.cs) 在 `/mcp` 前缀下映射三类 Streamable HTTP 端点，分别支持 POST/GET/DELETE：
+
+| 端点 | 后端 |
+| --- | --- |
+| `/mcp/kernel` | Kernel 工具：Report/Data、Flow/Task、Session、Ask/Mail、provider、terminal、Track 与升级 |
+| `/mcp/vcs` | VCS/Forge 操作 |
+| `/mcp/p/{pluginId}` | 配置的外部 HTTP/stdio 插件路由，并检查 Track 访问 |
+
+`/mcp` 是路由前缀，不是单独工具调用端点。[HostMcpSessionBridge](src/Perga.Host/Mcp/HostMcpSessionBridge.cs) 管理会话 token 与 Principal；传输会话也绑定 owner token。工具公开名以 [KernelMcpTools](src/Perga.Kernel/Mcp/KernelMcpTools.cs) 的运行目录为准，例如 `session_create`、`flow_commit`、`task_done`，不把旧前缀命名当成新契约。
+
+工具按当前是否绑定任务、Lead 身份及会话关系限制可见性与操作权限。任务完成与治理不是同一权限；模板策略和批准等待也由对应 Kernel 路径执行。不要将旧设计中“所有工具统一等待人类放行”的设想当作所有调用必经的实现。
+
+### 4.5 浏览器来源与系统管理
+
+[RequestOriginGuard](src/Perga.Host/Http/RequestOriginGuard.cs) 覆盖 `/api/v1`、`/api/today` 和 `/mcp`，包括 WS 握手：
+
+- 对 loopback 或无 socket 地址的连接，Host 仅接受 localhost、loopback IP 或配置的 `AllowedHosts`，防 DNS rebinding；不信任 forwarded headers 来判定本机地址。
+- 提供 `Origin` 时必须是有效单一 HTTP(S) origin，匹配请求本源或 `AllowedOrigins`；格式错误、多个值、未授权异源均拒绝。
+- 提供 `Sec-Fetch-Site` 时检查其合法值，未显式允许 origin 的 cross-site 拒绝。允许不带这些浏览器头的非浏览器调用；这层保护不是客户端身份认证。
+
+升级的 drain/reload 另受 [SystemManagementAuthorization](src/Perga.Host/Http/SystemManagementAuthorization.cs) 控制。Drain 管理派发准入，reload 切换发布快照；升级回执与通知由 Kernel 和 SQLite 配合恢复，细节见 [升级设计](docs/design/system-upgrade-phase2.md) 与 [安装升级](docs/design/install-and-upgrade.md)。
+
+## 5. 前端架构
+
+### 5.1 Perga 原生客户端与分层
+
+[前端规则](fe/AGENTS.md) 定义运行时依赖方向：`app → features → systems → ui → core`，允许向下跨层，禁止向上引用和 feature 域互相引用；styles 是有 owner 的非运行时叶子层。禁止新建 shared/barrel，具体静态规则与测试例外以该文件和门禁为准。
+
+| 层 | 位置与责任 |
+| --- | --- |
+| core | [fe/core](fe/core)：跨平台领域模型、契约解析、transport、事件与 query key 语义 |
+| styles | [styles](fe/web/src/styles)：token、CSS layers、主题与设计系统约束 |
+| ui | [ui](fe/web/src/ui)：通用原语与 Astryx 封装 |
+| systems | [systems](fe/web/src/systems)：终端、卡片、文件查看等浏览器系统能力 |
+| features | [features](fe/web/src/features)：Track、对话、Report、Area 等业务界面 |
+| app | [app](fe/web/src/app)：路由、provider、Query、会话注册表和组装 |
+
+生产入口按 Perga 单一产品运行，已移除 `pergaMode` 双轨。浏览器挂载根路径 `/`；产品持久键使用 `perga:*`、IndexedDB 名为 `perga`、内部链接为 `perga://`。P3 不引入旧命名迁移兼容层，见 [前端 P3 记录](docs/design/frontend-p3-cleanup.md)。
+
+### 5.2 查询、会话与编辑器
+
+TanStack Router 组织导航，TanStack Query 组织查询、mutation 与失效；[app/providers](fe/web/src/app/providers) 按领域拆分 Query hooks。核心 API 通过 [client](fe/core/api/client.ts) 与 [Perga v1 schema](fe/core/api/perga-v1.ts) 接入 `/api/v1`，Today 保留上文所述真实接口。Query key 包含必要的目标/资源身份，避免不同 execution target 的 provider/model 目录串缓存。
+
+[app/conversations](fe/web/src/app/conversations) 管理会话注册表、outbox、历史、活跃流与审批控制；WS 驱动实时投影及查询失效，刷新仍可从持久快照恢复。创建确认的 Track ID 与首次发送恢复是客户端生命周期的一部分。
+
+编辑器使用原生 `@codemirror/view` 和 `@codemirror/state`；代码查看与报告源码编辑共用 CodeMirror 基础能力，已移除 React CodeMirror wrapper。Astryx Design 与本仓库语义 token/UI 原语提供通用视觉层，模板/provider 业务规则留在所属领域。拆解与修复背景见 [P2a](docs/design/frontend-p2a-providers-queries.md)、[P2b](docs/design/frontend-p2b-router-split.md)、[P2c](docs/design/frontend-p2c-dom-render.md)、[P2d](docs/design/frontend-p2d-codemirror-perf.md)。
+
+### 5.3 契约现状与门禁
+
+**本基线没有真正运行的 OpenAPI → 前端生成链。** [package.json](fe/package.json) 的 `gen:api` 仅打印维护提示。[openapi.json](fe/core/api/generated/openapi.json)、前端解析 schema 与 Host 路由仍需同步核验；文件名为 generated 不代表它由当前 Host 自动导出。`TrackWire`/`AreaWire` 等前端投影命名与 provider 标识适配也不能视为已经由 C1 消除。
+
+前端门禁包含 ESLint、Stylelint、dependency-cruiser、目录/清单、样式/token 与 fixture 检查，入口为 npm lint scripts 和 [tools](fe/tools)。运行时不得导入测试工具；修改门禁须有正反 fixture 并检查同源互比的局限。契约检查还应对照真实 Host，不能用两份共同陈旧的产物相互证明。
+
+## 6. 验证与维护约定
+
+[AGENTS.md](AGENTS.md) 定义 review tier、单 checkout 单 writer、发布迁移冻结与最终树检查。维护本文时先核对源码；演进设计文档保留历史推演，引用时区分历史提案和当前实现。
+
+以下为仓库检查入口，应按改动影响选择；文档修改只需路径、事实和 diff 检查，不据此声称运行测试已通过：
+
+```sh
+# 后端跨层、持久化、契约或隔离变更
+dotnet test Perga.sln
+
+# 前端；缺依赖或锁文件变更时先运行 npm ci
+(cd fe && npm run lint && npm run build)
+(cd fe && npm test)
+(cd fe && npm run test:browser)
+
+# Rust 终端桥
+(cd tools/perga-term-bridge && cargo fmt --check && cargo test --locked)
+
+# OAR 桥；依赖安装后运行，要求 Node >=24
+(cd tools/perga-oar-bridge && npm run typecheck && npm test && npm run build)
+
+# 所有改动的空白检查
+git diff --check origin/main
 ```
 
-### 1.2 全局编译期约束（`Directory.Build.props`）
-
-所有 C# 工程共享以下 `Directory.Build.props`，严禁各 `.csproj` 私自关闭可空检查或放行警告：
-
-```xml
-<Project>
-  <PropertyGroup>
-    <TargetFramework>net11.0</TargetFramework>
-    <Nullable>enable</Nullable>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-    <LangVersion>15</LangVersion>
-  </PropertyGroup>
-</Project>
-```
-
-### 1.3 严格单向依赖矩阵
-
-| 模块 | 允许引用的工程与 NuGet | 严禁引用的对象（违者架构验收拦截） |
-| :--- | :--- | :--- |
-| `Perga.Contracts` | 无（仅 BCL） | 任何项目、任何 NuGet IO/Web/DB 库 |
-| `libs/Perga.ReportDoc` | 无工程引用（仅 `ZstdSharp.Port`） | `src/*`、其他 `libs/*`、`Microsoft.Data.Sqlite` |
-| `libs/Perga.PolicyVm` | 无工程引用（仅 `Jint`） | `src/*`、其他 `libs/*`、任何文件/网络 IO |
-| `libs/Perga.AgentKit` | 无（仅 BCL） | `src/*`、其他 `libs/*`、SQLite、ASP.NET Core |
-| `libs/Perga.VcsKit` | 无（仅 BCL） | `src/*`、其他 `libs/*` |
-| `libs/Perga.TermClient` | 无（仅 BCL） | `src/*`、其他 `libs/*` |
-| `Perga.Kernel` | `Perga.Contracts` + 5 个 `libs/*` | `Microsoft.Data.Sqlite`、`Dapper`、`AspNetCore`、`Perga.Storage.Sqlite`、`Perga.Host` |
-| `Perga.Storage.Sqlite` | `Perga.Kernel` + `Perga.Contracts`（NuGet：`Microsoft.Data.Sqlite`、`Dapper`、`ZstdSharp.Port`） | `Perga.Host`、`AspNetCore` |
-| `Perga.Host` | `Perga.Kernel`、`Perga.Storage.Sqlite`、`Perga.Contracts`、5 个 `libs/*`（`Microsoft.NET.Sdk.Web` + `Cronos`） | 无（组合根；标准 MCP JSON-RPC 2.0 Streamable HTTP + SSE 在 `Perga.Host/Mcp/` 中使用 `System.Text.Json` 直接实现，不依赖预览版 MCP Web 库） |
-
----
-
-## 2. 冻结 C# 接口与核心数据契约
-
-以下所有命名空间、类型名、属性签名与方法签名即为 Stage 0 落盘编译的冻结契约。
-
-### 2.1 `namespace Perga.Contracts`（共享 Wire 模型）
-
-```csharp
-using System.Text.Json;
-
-namespace Perga.Contracts;
-
-public enum AccessMode { ReadOnly, ReadWrite }
-public enum TaskRunStatus { Draft, Pending, Running, Verifying, Done, Failed, Canceled }
-public enum TaskTriggerSource { Manual, Scheduler, Wake }
-public enum SemanticVerdict { None, Accepted, Rejected }
-public enum AskStatus { Open, Answered, Withdrawn }
-public enum TerminalStatus { Running, Exited }
-public enum EditActorKind { Human, Lead, Subagent, System }
-
-public sealed record AreaDto(
-    string Id,
-    string Name,
-    string Color,
-    string? DefaultCwd,
-    IReadOnlyList<string> Folders,
-    double SortOrder,
-    long CreatedAtMs,
-    long UpdatedAtMs);
-
-public sealed record TrackDto(
-    string Id,
-    string AreaId,
-    string? ParentTrackId,
-    string? ParentAttemptId,
-    string Title,
-    string Cwd,
-    string WorkspaceDriver,
-    JsonElement WorkspaceSpec,
-    string? LeadSessionId,
-    string? TemplateId,
-    JsonElement TemplateInputs,
-    JsonElement TemplateState,
-    IReadOnlyList<string> EnabledPlugins,
-    long? ClosedAtMs,
-    long? PinnedAtMs,
-    double SortOrder,
-    long CreatedAtMs,
-    long UpdatedAtMs);
-
-public sealed record AgentSessionDto(
-    string Id,
-    string TrackId,
-    bool IsLead,
-    string? BoundTaskId,
-    string? BoundAttemptId,
-    string? Title,
-    string Provider,
-    string? Model,
-    string? NativeThreadId,
-    int Epoch,
-    string Status,
-    long? ArchivedAtMs,
-    long CreatedAtMs,
-    long UpdatedAtMs,
-    SessionContextUsage? ContextUsage);
-
-public sealed record SessionContextUsage(long UsedTokens, long? WindowTokens, long ObservedAtMs)
-{
-    public double? Ratio => WindowTokens is > 0
-        ? Math.Clamp((double)UsedTokens / WindowTokens.Value, 0.0, 1.0)
-        : null;
-}
-
-public sealed record SessionTurnDto(
-    string Id,
-    string SessionId,
-    int TurnIndex,
-    int Epoch,
-    string TriggerKind,
-    JsonElement Input,
-    string Status,
-    JsonElement? Usage,
-    string? ErrorText,
-    long StartedAtMs,
-    long? CompletedAtMs);
-
-public sealed record SessionItemDto(
-    long Id,
-    string SessionId,
-    string TurnId,
-    string Kind,
-    JsonElement Payload,
-    long CreatedAtMs);
-
-public sealed record GateStepDto(string Name, string Cmd);
-
-public sealed record GateSpecDto(
-    IReadOnlyList<GateStepDto> Steps,
-    int TimeoutSecs = 1800);
-
-public sealed record TaskDto(
-    string Id,
-    string TrackId,
-    string BlockId,
-    string TaskKey,
-    int Generation,
-    string Kind,
-    string? Provider,
-    AccessMode Access,
-    bool Ready,
-    IReadOnlyList<string> DependsOn,
-    string GoalOrCmd,
-    JsonElement? Context,
-    string? Acceptance,
-    GateSpecDto? Gate,
-    TaskRunStatus Status,
-    string? StatusDetail,
-    SemanticVerdict SemanticVerdict,
-    string? SemanticNote,
-    string? LatestAttemptId,
-    long CreatedAtMs,
-    long UpdatedAtMs);
-
-public sealed record TaskAttemptDto(
-    string AttemptId,
-    string TaskId,
-    string TrackId,
-    string? SessionId,
-    string Status,
-    JsonElement? WorkerResult,
-    JsonElement Meta,
-    JsonElement? WorkspaceLease,
-    JsonElement? GateVerdict,
-    long StartedAtMs,
-    long? FinishedAtMs);
-
-public sealed record AskQuestionDto(
-    string Question,
-    IReadOnlyList<string> Options,
-    bool IsMultiSelect = false);
-
-public sealed record AskDto(
-    string Id,
-    string TrackId,
-    AskStatus Status,
-    IReadOnlyList<AskQuestionDto> Questions,
-    JsonElement? Answer,
-    long CreatedAtMs,
-    long? AnsweredAtMs);
-
-public sealed record MailDto(
-    string Id,
-    string FromTrackId,
-    string ToTrackId,
-    string Summary,
-    string Body,
-    long? ReadAtMs,
-    long CreatedAtMs);
-
-public sealed record TerminalDto(
-    string Id,
-    string TrackId,
-    string? AttemptId,
-    string? IdempotencyKey,
-    string Title,
-    string? Program,
-    string Cwd,
-    TerminalStatus Status,
-    int? ExitCode,
-    long CreatedAtMs,
-    long? ExitedAtMs);
-
-public sealed record EventEnvelopeDto(
-    long? EventId,
-    string? AreaId,
-    string? TrackId,
-    string Kind,
-    JsonElement Payload,
-    long CreatedAtMs);
-
-public sealed record DbMaintenanceStatsDto(
-    int PrunedEvents,
-    int ThinnedRevisions,
-    int CompactedItems,
-    int ReclaimedPages);
-```
-
----
-
-### 2.2 `namespace Perga.ReportDoc`（纯内存块文档与 Zstd 快照库）
-
-- **职责**：解析带 `<!-- perga:b_xxxx -->` 块锚点的 Markdown 报告与 `perga-block` 围栏（`task` / `html` / `table` / `view`）；执行基于 `ReadAnchor` 的并发乐观锁防盲写校验；提供 `ReplaceSection` / `UpsertBlock` / `DeleteBlock` / `MoveBlock` 原子编辑；提供 Zstd 历史快照压缩/解压。
-- **不变量**：
-  - Block 在 `# `（H1）与 ` ```perga-block <kind>` 边界切分，维护稳定 6 字符 ID（如 `b_a1b2`）。
-  - 修改或删除已存在块/章节时，`callerAnchor` 必须满足 `WholeDocumentRead == true` 或在 `KnownBlockRevs` 中包含目标块且版本匹配当前块 `Rev`；否则抛出 `ReportConflictException` 附带冲突详情。
-
-```csharp
-using System.Text.Json;
-
-namespace Perga.ReportDoc;
-
-public enum ReportBlockKind
-{
-    Prose,
-    Task,
-    Html,
-    Table,
-    View
-}
-
-public sealed record ReportBlock(
-    string Id,
-    int Rev,
-    ReportBlockKind Kind,
-    string? SectionH1,
-    string? Markdown,
-    JsonElement? Payload);
-
-public sealed record ReadAnchor(
-    int DocRev,
-    IReadOnlyDictionary<string, int> KnownBlockRevs,
-    bool WholeDocumentRead);
-
-public abstract record BlockOp
-{
-    public sealed record ReplaceSectionOp(string SectionH1, string Markdown) : BlockOp;
-    public sealed record UpsertBlockOp(
-        string? Id,
-        ReportBlockKind Kind,
-        string? Markdown,
-        JsonElement? Payload,
-        int? Position = null) : BlockOp;
-    public sealed record DeleteBlockOp(string Id) : BlockOp;
-    public sealed record MoveBlockOp(string Id, int ToIndex) : BlockOp;
-}
-
-public sealed record ReportDocument(
-    int DocRev,
-    string Summary,
-    string LeadingComment,
-    IReadOnlyList<ReportBlock> Blocks);
-
-public sealed record BlockChangeRecord(
-    string Id,
-    ReportBlockKind Kind,
-    int? PreviousRev,
-    int? CurrentRev,
-    int? Position,
-    bool Moved);
-
-public sealed record ReportCommitResult(
-    ReportDocument NextDocument,
-    IReadOnlyList<BlockChangeRecord> Changes);
-
-public sealed class ReportConflictException : Exception
-{
-    public string Code { get; }
-    public string NextStep { get; }
-
-    public ReportConflictException(string code, string message, string nextStep)
-        : base(message)
-    {
-        Code = code;
-        NextStep = nextStep;
-    }
-}
-
-public interface IReportDocEngine
-{
-    ReportDocument Parse(string rawMarkdown, int docRev = 0, string summary = "");
-    string RenderMarkdown(ReportDocument doc, bool withMarkers = false);
-    ReportCommitResult ApplyCommit(
-        ReportDocument current,
-        ReadAnchor callerAnchor,
-        IReadOnlyList<BlockOp> ops,
-        string? newSummary = null);
-    byte[] CompressZstd(IReadOnlyList<ReportBlock> blocks);
-    IReadOnlyList<ReportBlock> DecompressZstd(byte[] compressed);
-}
-```
-
----
-
-### 2.3 `namespace Perga.PolicyVm` 与 `.perga.js` SDK（零手写解析 · 受限策略虚拟机）
-
-- **职责（彻底消灭手写类型擦除解析器）**：`Perga.PolicyVm` **不做任何手写正则或字符串类型擦除**，直接接收标准 **ECMAScript Module (`.perga.js`)**，由 **Jint 4.x 内置 Acornima JS/ESM 引擎**原生编译执行 5 个生命周期钩子，堆栈行号 1:1 精确对齐。
-- **编辑期/CI 强类型保障**：所有 `.perga.js` 头部声明 `// @ts-check` 与 `/// <reference path="./perga-template.d.ts" />`（配合 `templates/tsconfig.json` 的 `allowJs + checkJs + noEmit + strict`），编辑器与 CI 通过 `tsc --noEmit` 直接享受与 `.ts` 同等的完整泛型推断与只读类型检查；若未来外部作者确需用 `.ts` 编写策略，应在打包发布前由离线构建链（如 Node 22 原生 `module.stripTypeScriptTypes` 或 `esbuild`）输出标准 `.perga.js` 再交由内核加载。
-- **沙箱安全硬约束**：
-  - `Options`: `.Strict()`, `.LimitMemory(16 * 1024 * 1024)`, `.MaxStatements(10_000)`, `.TimeoutInterval(TimeSpan.FromMilliseconds(50))`, `.LimitRecursion(64)`。
-  - **禁止暴露**任何 CLR 类型反射、文件系统、`HttpClient`、进程或环境变量读取能力；`globalThis` 与模板全局变量仅注入纯 JSON 辅助函数 `defineTemplate` / `Allow` / `Deny` / `AskHuman`（模块无需依赖外部 `node_modules` 解析即可直接 `export default defineTemplate(...)`）。
-
-```csharp
-using System.Text.Json;
-
-namespace Perga.PolicyVm;
-
-public closed record GuardDecision
-{
-    public sealed record Allow : GuardDecision;
-    public sealed record Deny(string Reason) : GuardDecision;
-    public sealed record AskHuman(string Title, IReadOnlyList<string> Options) : GuardDecision;
-}
-
-public sealed record SectionRule(
-    string H1,
-    bool OmitIfEmpty = false,
-    IReadOnlyList<string>? EditableBy = null);
-
-public sealed record ScheduleSpec(
-    string Id,
-    string Cron,
-    string Timezone,
-    string Prompt,
-    string? Title = null);
-
-public sealed record CompiledTemplateManifest(
-    string Id,
-    string Title,
-    string? Description,
-    IReadOnlyList<string> DefaultPlugins,
-    JsonElement InputsSchema,
-    IReadOnlyList<SectionRule> Sections,
-    int? MaxProseChars,
-    bool RequireGateForReadWrite,
-    string? WorkspaceDriver,
-    IReadOnlyList<string> WorkspaceLowerCacheDirs,
-    string? WorkspaceCreateCmd,
-    string? WorkspaceCloseCmd,
-    string? AfterWorkerDoneCmd,
-    IReadOnlyList<ScheduleSpec> Schedules);
-
-public sealed record CompiledPolicy(
-    string TemplateId,
-    string JsSource,
-    CompiledTemplateManifest Manifest);
-
-public sealed record PolicyEvalResult<T>(
-    JsonElement NextState,
-    T Output);
-
-public sealed record PolicyTurnContext(
-    string TrackId,
-    string SessionId,
-    bool IsLead,
-    string? BoundAttemptId,
-    double ContextUsageRatio,
-    JsonElement Inputs);
-
-public sealed record PolicyReportCommitContext(
-    string TrackId,
-    string EditorRole,     // "human" | "lead" | "subagent" | "system"
-    string PrevMarkdown,
-    string NextMarkdown,
-    IReadOnlyList<string> TouchedSections,
-    int NextProseChars,
-    JsonElement Inputs);
-
-public sealed record PolicyToolCallContext(
-    string TrackId,
-    string SessionId,
-    bool IsLead,
-    string? BoundAttemptId,
-    string McpServer,      // "perga" | "vcs" | "<pluginId>"
-    string ToolName,
-    JsonElement Arguments,
-    JsonElement Inputs);
-
-public sealed record PolicyTaskSettledContext(
-    string TrackId,
-    string TaskKey,
-    string AccessMode,     // "read_only" | "read_write"
-    string AttemptStatus,  // "done" | "failed" | "canceled"
-    JsonElement? WorkerResult,
-    JsonElement AttemptMeta,
-    JsonElement? GateVerdict,
-    JsonElement Inputs);
-
-public interface IPolicyVm
-{
-    CompiledPolicy Compile(string jsModuleSource);
-    PolicyEvalResult<JsonElement> InitState(CompiledPolicy policy, JsonElement inputs);
-    PolicyEvalResult<GuardDecision> Before(CompiledPolicy policy, string action, string trackId, JsonElement data, JsonElement inputs, JsonElement state);
-    PolicyEvalResult<string?> After(CompiledPolicy policy, string eventName, string trackId, JsonElement data, JsonElement inputs, JsonElement state);
-    PolicyEvalResult<PolicyTurnPreparation> PrepareTurn(CompiledPolicy policy, PolicyTurnContext ctx, JsonElement state);
-    PolicyTaskRoute RouteTaskDispatch(CompiledPolicy policy, string? role, string access, string? provider, string? model, JsonElement inputs);
-    void ValidateInputs(CompiledPolicy policy, JsonElement inputs);
-    string InterpolateInputs(CompiledPolicy policy, string text, JsonElement inputs);
-}
-```
-
-#### `templates/perga-template.d.ts`（冻结脚本契约 · `@ts-check` + Jint 原生直跑）
-
-```ts
-/** A pure JSON object may contain the declarative fields of this definition.
- * Function hooks require an ES module: export default defineTemplate({...}). */
-export type Tone = "neutral" | "accent" | "success" | "warn" | "error";
-
-export interface TemplateHeaderView {
-  badges?: Array<{ label: string; tone?: Tone }>;
-  notice?: { text: string; tone?: "info" | "warn" | "error" };
-  metrics?: Array<{ label: string; value: string; delta?: string; tone?: Tone; sub?: string; spark?: number[] }>;
-  rules?: Array<{ label: string; text: string }>;
-}
-
-export type GuardDecision =
-  | { kind: "allow" }
-  | { kind: "deny"; reason: string }
-  | { kind: "ask_human"; title: string; options?: string[] };
-
-export interface SectionSpec {
-  h1: string;
-  omitIfEmpty?: boolean;
-  editableBy?: Array<"human" | "lead" | "subagent" | "system">;
-}
-
-export interface TemplateContext<TState = Record<string, any>, TInputs = Record<string, any>> {
-  trackId: string;
-  inputs: TInputs;
-  state: TState;
-}
-
-export interface PergaTemplateDefinition<TState = Record<string, any>, TInputs = Record<string, any>> {
-  id: string;
-  title: string;
-  description?: string;
-  /** Catalog base; snapshots freeze its complete source. Child keyed declarations take precedence. */
-  extends?: string;
-  /** Child hooks replace the inherited slot; omitted hooks inherit. */
-  before?: (action: { type: string; role?: string; access?: string; provider?: string; model?: string; context?: string; arguments?: Record<string, any>; [key: string]: any }, ctx: TemplateContext<TState, TInputs>) => GuardDecision;
-  /** Events include task.settled, report.commit, turn.after, and tool.<name>. */
-  after?: (event: { type: string; [key: string]: any }, ctx: TemplateContext<TState, TInputs>) => string | void;
-  plugins?: string[];
-  inputs?: Record<string, { type: "string" | "number" | "boolean" | "enum"; values?: string[]; default?: any; optional?: boolean; label?: string }>;
-  initialState?: (inputs: TInputs) => TState;
-  headerView?: (ctx: TemplateContext<TState, TInputs>) => TemplateHeaderView;
-  workspace?: {
-    driver?: string;
-    lowerCacheDirs?: string[];
-    onCreateCmd?: string;
-    onCloseCmd?: string;
-  };
-  report?: {
-    maxProseChars?: number;
-    sections?: SectionSpec[];
-  };
-  tasks?: {
-    dispatch?: { section?: string; access?: "read_only" | "read_write"; gateInput?: string };
-    /** First matching defaults fill omitted fields. enforce denies explicit conflicts.
-     * provider/model support ${inputs.key}, including input schema defaults. */
-    routing?: Array<{ when: { role?: string; access?: "read_only" | "read_write" }; provider?: string; model?: string; enforce?: boolean }>;
-    requireGateForReadWrite?: boolean;
-    afterWorkerDoneCmd?: string;
-  };
-  turnContext?: (ctx: TemplateContext<TState, TInputs> & { session: {
-    sessionId: string;
-    isLead: boolean;
-    boundAttemptId?: string;
-    contextUsageRatio: number;
-  } }) => string | void;
-  schedules?: Array<{
-    id: string;
-    cron: string;
-    timezone?: string;
-    title?: string;
-    prompt: string;
-  }>;
-}
-
-declare global {
-  function Allow(): GuardDecision;
-  function Deny(reason: string): GuardDecision;
-  function AskHuman(title: string, options?: string[]): GuardDecision;
-  function defineTemplate<TState = Record<string, any>, TInputs = Record<string, any>>(
-    def: PergaTemplateDefinition<TState, TInputs>
-  ): PergaTemplateDefinition<TState, TInputs>;
-}
-```
-
----
-
-### 2.4 `namespace Perga.AgentKit`（三条铁律解毒多 Harness 兼容库）
-
-**三条工程铁律（写死在 `Perga.AgentKit` 实现中）**：
-1. **上下文压缩优先走底层原生能力，Epoch 换页兜底**：当底层 `IAgentSession` 支持原生 compact（如 Codex `thread/compact/start`、Claude `"/compact"`、ACP `available_commands_update` 声明 `compact`）时原地压缩并保留 `NativeThreadId` 与 `Epoch`；不支持时由 `Perga.Kernel` 通过 Epoch 换页完成。
-2. **严禁拼接 CLI 私有路径/权限 DSL 字符串**（如 Claude `Edit(//path/**)` 或 Codex `shell_environment_policy`）：统一外置给 `OsSandboxWrapper`（Linux 使用 `/usr/bin/bwrap`，macOS 使用 `sandbox-exec`）隔离工作目录边界，保留 CLI 自身完整性。一期在当前宿主机 `bwrap 0.8.0` 下直接绑定传入的 `Cwd`（即解析后的 `AttemptWorkspaceLease.EffectiveCwd`），同时通过 `OverlayMounts` 字段预留升级到 `bwrap >= 0.9` 时按进程直注 `--overlay-src / --overlay` 层的能力。
-3. **锁死最小 4 原语表面**：Antigravity / OpenCode 原生走 ACP JSON-RPC 2.0（`initialize` -> `session/new` / `session/load` -> `session/prompt` -> `session/cancel` -> `session/request_permission`）；Claude 走 `--print --verbose --input-format stream-json --output-format stream-json --mcp-config <tempJson>`（或 `claude-agent-acp`）；Codex 走 `codex app-server` JSON-RPC 2.0（`thread/start` / `thread/resume` / `turn/start` / `turn/steer` / `turn/interrupt`）。
-
-```csharp
-using System.Text.Json;
-
-namespace Perga.AgentKit;
-
-public enum OsSandboxMode
-{
-    None,
-    WorkspaceWriteBwrap,
-    ReadOnlyBwrap
-}
-
-public abstract record McpServerConfig
-{
-    public sealed record HttpMcpServer(
-        string Url,
-        IReadOnlyDictionary<string, string> Headers) : McpServerConfig;
-
-    public sealed record StdioMcpServer(
-        string Command,
-        IReadOnlyList<string> Args,
-        IReadOnlyDictionary<string, string> Env) : McpServerConfig;
-}
-
-public sealed record OverlayMountSpec(
-    IReadOnlyList<string> LowerDirs,
-    string? UpperDir,
-    string? WorkDir,
-    string TargetPath);
-
-public sealed record HarnessLaunchSpec(
-    string Provider,   // "codex" | "claude" | "acp:antigravity" | "acp:opencode"
-    string? Model,
-    string Cwd,
-    string? ResumeNativeThreadId,
-    string? SystemPrompt,
-    IReadOnlyDictionary<string, McpServerConfig> McpServers,
-    OsSandboxMode Sandbox = OsSandboxMode.None,
-    IReadOnlyList<OverlayMountSpec>? OverlayMounts = null);
-
-public sealed record TurnInput(
-    string Prompt,
-    string CorrelationId);
-
-public sealed record TokenUsage(
-    long InputTokens,
-    long OutputTokens,
-    long CachedInputTokens,
-    long? ContextWindowTokens);
-
-public abstract record UnifiedAgentEvent
-{
-    public sealed record ThreadBound(string NativeThreadId) : UnifiedAgentEvent;
-    public sealed record TextDelta(string Delta) : UnifiedAgentEvent;
-    public sealed record ThinkingDelta(string Delta) : UnifiedAgentEvent;
-    public sealed record ToolCallStarted(string CallId, string Name, JsonElement Args) : UnifiedAgentEvent;
-    public sealed record ToolCallCompleted(string CallId, string Output, bool IsError) : UnifiedAgentEvent;
-    public sealed record ApprovalRequested(string RequestId, string ToolName, JsonElement Args) : UnifiedAgentEvent;
-    public sealed record TurnCompleted(TokenUsage? Usage) : UnifiedAgentEvent;
-    public sealed record TurnError(string Code, string Message, bool IsRetryable) : UnifiedAgentEvent;
-}
-
-public sealed record ProviderStatus(
-    string Provider,
-    bool Available,
-    string? Version,
-    string? Reason,
-    IReadOnlyList<string> Models);
-
-public interface IAgentSession : IAsyncDisposable
-{
-    string? NativeThreadId { get; }
-    bool SupportsNativeSteer { get; }
-
-    IAsyncEnumerable<UnifiedAgentEvent> StreamTurnAsync(TurnInput input, CancellationToken ct);
-    Task CancelTurnAsync(CancellationToken ct);
-    Task RespondApprovalAsync(string requestId, bool approved, string? reason = null, CancellationToken ct = default);
-    Task<bool> TrySteerAsync(string message, CancellationToken ct = default);
-}
-
-public interface IAgentRuntime : IAsyncDisposable
-{
-    Task<IReadOnlyList<ProviderStatus>> ProbeProvidersAsync(CancellationToken ct);
-    Task<IAgentSession> OpenSessionAsync(HarnessLaunchSpec spec, CancellationToken ct);
-}
-```
-
----
-
-### 2.5 `namespace Perga.VcsKit`（原生 Jujutsu `jj` + `git`/`gh` + 可插拔 `IWorkspaceDriver` 挂载扩展缝）
-
-- **存储隔离与版本语义彻底解耦**：
-  - `IWorkspaceDriver` 负责**物理工作区制备、挂载恢复、Per-Attempt Copy-on-Write 租约与安全卸载**（决定进程看到什么目录树及能否并行写）；
-  - `IVcsService` 负责**代码版本历史语义**（`jj` / `git` 的快照、ChangeId、Rebase 与 Push）。
-  - **一期实现边界**：Stage 1 仅实现极薄的 `DirectWorkspaceDriver`（`"direct"`：原目录直通）与 `VcsWorkspaceDriver`（`"vcs-workspace"`：委托 `IVcsService.CreateWorkspaceAsync` 创建隔离 `jj workspace` 或 `git worktree`）。未来接入 `"fuse-overlayfs"`、`"kernel-overlayfs"` 或 `"bwrap-overlay"` 仅需向 `IWorkspaceDriverRegistry` 注册新驱动，**无需修改 `Kernel`、`SQLite` 表结构、`AgentKit` 或前端任何契约**：
-    - `EnsureMountedAsync` 解决宿主机或 Daemon 重启后 Overlay 挂载点丢失的重挂问题（一期驱动为零开销透传）；
-    - `TeardownTrackAsync` 先卸载 `MergedCwd` 再清理 `UpperDir` / `WorkDir`，确保挂载时作为只读 `lowerdir` 共享的全局依赖缓存（如 `target/`、`node_modules/`）绝不会被误删；
-    - `AcquireAttemptLeaseAsync` / `SettleAttemptLeaseAsync` 预留了 Per-Attempt 临时 `upperdir`（`Promote` 晋升 / `Discard` 秒级丢弃并解锁 `SupportsParallelIsolatedWriteLeases` 并行写能力）。
-- **VCS 探测逻辑 (`DetectAsync`)**：检查 `jj` CLI 是否存在及目录是否包含 `.jj`；若含 `.git` 但未初始化 `.jj` 且用户开启自动共存模式，支持调用 `jj git init --colocate`。若无 `jj` 则降级为 `GitWorktree`；非 VCS 目录返回 `PlainDirectory`。
-- **`jj` 核心语义优势**：
-  - `SnapshotWorkingCopyAsync` 在 `JjColocated` 下不执行 `git add/commit`，直接运行 `jj log -r @ --no-graph -T ...` 与 `jj op log -n 1` 获取稳定 `ChangeId`、`CommitId`、`OpId` 与冲突标志。
-  - `RebaseOntoUpstreamAsync` 运行 `jj git fetch && jj rebase -s <root> -d main@origin`——`jj` 将冲突作为一等树状态提交并退出码为 0，绝不会像 `git rebase` 一样卡死工作区在半途 `REBASING` 状态。
-
-```csharp
-using System.Text.Json;
-
-namespace Perga.VcsKit;
-
-// -------- 1. 工作区存储/挂载与 CoW 租约抽象（预留 OverlayFS，一期仅实现 direct / vcs-workspace） --------
-
-public enum AttemptLeaseDisposition
-{
-    Promote,
-    Discard
-}
-
-public sealed record WorkspaceOverlayLayer(
-    IReadOnlyList<string> LowerDirs,
-    string? UpperDir,
-    string? WorkDir,
-    string TargetPath);
-
-public sealed record WorkspaceProvisionRequest(
-    string TrackId,
-    string SourcePath,
-    string TargetRootDir,
-    IReadOnlyList<string> LowerCacheDirs,
-    string? BaseRevision = null);
-
-public sealed record WorkspaceSpec(
-    string DriverId,
-    string LogicalRoot,
-    IReadOnlyList<string> LowerDirs,
-    string? UpperDir,
-    string? WorkDir,
-    string MergedCwd,
-    JsonElement Metadata);
-
-public sealed record MountedWorkspace(
-    string DriverId,
-    string MergedCwd,
-    IReadOnlyList<WorkspaceOverlayLayer>? ProcessOverlayLayers = null);
-
-public sealed record AttemptWorkspaceLease(
-    string DriverId,
-    string AttemptId,
-    string EffectiveCwd,
-    bool IsIsolatedCopyOnWrite,
-    JsonElement Metadata,
-    IReadOnlyList<WorkspaceOverlayLayer>? ProcessOverlayLayers = null);
-
-public interface IWorkspaceDriver
-{
-    string DriverId { get; }
-    bool SupportsParallelIsolatedWriteLeases { get; }
-
-    Task<WorkspaceSpec> ProvisionTrackAsync(WorkspaceProvisionRequest req, CancellationToken ct = default);
-    Task<MountedWorkspace> EnsureMountedAsync(WorkspaceSpec spec, CancellationToken ct = default);
-    Task<AttemptWorkspaceLease> AcquireAttemptLeaseAsync(
-        MountedWorkspace workspace,
-        string attemptId,
-        bool readWrite,
-        CancellationToken ct = default);
-    Task SettleAttemptLeaseAsync(
-        AttemptWorkspaceLease lease,
-        AttemptLeaseDisposition disposition,
-        CancellationToken ct = default);
-    Task TeardownTrackAsync(WorkspaceSpec spec, CancellationToken ct = default);
-}
-
-public interface IWorkspaceDriverRegistry
-{
-    IWorkspaceDriver GetRequired(string driverId);
-    IReadOnlyList<string> RegisteredDrivers { get; }
-}
-
-// -------- 2. 版本控制与 Forge 抽象（JJ 一等支持 + Git 兜底 + gh CLI） --------
-
-public enum VcsBackendKind
-{
-    JjColocated,
-    GitWorktree,
-    PlainDirectory
-}
-
-public sealed record IsolatedWorkspace(
-    VcsBackendKind Kind,
-    string RootRepoPath,
-    string WorkspaceName,
-    string WorkspacePath,
-    string? BaseRevision);
-
-public sealed record RevisionSnapshot(
-    VcsBackendKind Kind,
-    string ChangeIdOrBranch,
-    string CommitId,
-    string? OpId,
-    bool HasConflicts,
-    IReadOnlyList<string> ChangedFiles);
-
-public sealed record DiffSummary(
-    string DiffText,
-    bool Truncated,
-    IReadOnlyList<string> ChangedFiles);
-
-public sealed record PushResult(
-    string BookmarkOrBranch,
-    string RemoteName,
-    string HeadCommitId);
-
-public interface IVcsService
-{
-    Task<VcsBackendKind> DetectAsync(string path, CancellationToken ct);
-    Task<IsolatedWorkspace> CreateWorkspaceAsync(string repoPath, string workspaceName, string targetDir, string? baseRev = null, CancellationToken ct = default);
-    Task RemoveWorkspaceAsync(IsolatedWorkspace workspace, CancellationToken ct = default);
-    Task<RevisionSnapshot> SnapshotWorkingCopyAsync(string workspacePath, string? commitMessageIfGit = null, CancellationToken ct = default);
-    Task RestoreOperationAsync(string workspacePath, string opId, CancellationToken ct = default);
-    Task<RevisionSnapshot> RebaseOntoUpstreamAsync(string workspacePath, string upstreamBranch = "main", CancellationToken ct = default);
-    Task<DiffSummary> DiffAsync(string workspacePath, string? fromRev = null, string? toRev = null, CancellationToken ct = default);
-    Task<PushResult> PushBookmarkAsync(string workspacePath, string bookmarkOrBranch, string? targetRev = null, CancellationToken ct = default);
-}
-
-public sealed record PrPublishRequest(
-    string WorkspacePath,
-    string HeadBranch,
-    string BaseBranch,
-    string Title,
-    string Body);
-
-public sealed record PrInfo(int Number, string Url, string State, string HeadSha);
-public sealed record CheckRunSummary(string Name, string Status, string? Conclusion, string? DetailsUrl);
-public sealed record PrChecksStatus(int PrNumber, string HeadSha, bool AllCompleted, bool AllGreen, IReadOnlyList<CheckRunSummary> Checks);
-public sealed record CiFailureEvidence(int PrNumber, string HeadSha, string SummaryText, string LogTail);
-public sealed record IssueInfo(int Number, string Url, string State, string Title, string Body, IReadOnlyList<string> Labels);
-
-public interface IGitHubForgeService
-{
-    Task<PrInfo> PublishPrAsync(PrPublishRequest req, CancellationToken ct);
-    Task<PrChecksStatus> GetPrChecksAsync(string repoOrPath, int prNumber, CancellationToken ct);
-    Task<CiFailureEvidence> GetCiFailureEvidenceAsync(string repoOrPath, int prNumber, string headSha, CancellationToken ct);
-    Task MergePrAsync(string repoOrPath, int prNumber, string expectedHeadSha, CancellationToken ct);
-    Task<IssueInfo> ViewIssueAsync(string repoOrPath, int issueNumber, CancellationToken ct);
-}
-```
-
----
-
-### 2.6 `tools/perga-term-bridge` (Rust) 与 `namespace Perga.TermClient` (C#)
-
-#### 提纯自已迁移只读 Rust 终端种子（`tools/rust-terminal/`）的精确模块来源
-从本仓库已迁移的只读目录 `tools/rust-terminal/` 中抽取并剥离业务依赖：
-1. **`tools/rust-terminal/calm-terminal-view/src/lib.rs`**：原样保留 `TerminalView`、`Frame`、`Cursor`、`Cell`、`InputSurface`（含 `bracketed_paste()` 感知 `MODE_BRACKETPASTE`）、`key_bytes()`（感知 `MODE_KCURSOR`）及 `take_replies()` 防重复应答机制，基于 `rmux-core = "=0.10.0"` 与 `rmux-proto = "=0.10.0"`。
-2. **`tools/rust-terminal/calm-terminal-runtime/src/lib.rs`**：保留 `rmux-server` / `rmux-sdk` 会话生命周期管理（确保主进程重启不杀终端）；将 `isolated_command` 中写死报错的 Linux `unshare` 改造为“Linux 下按开关可选，macOS 走普通子进程”，并抽取 `PtyBackend` trait 以便 Windows 使用 `portable-pty` ConPTY 向同一个 `TerminalView` 喂字节。
-3. **`tools/rust-terminal/terminal_interaction_ref/`**：提取 `screen_diff.rs`（`CursorSnapshot`、`ScreenDiff`、`row_hashes`）、`actions.rs`（`ACTION_BYTES_MAX = 16384`、`SEQUENCE_KEYS`、`Encoded::{Bytes, Submit}`）、`wait_plan.rs`（`WaitFor::{Elapsed, Change, Signal, Text}`、`WAIT_MS_MAX = 20_000`、`SETTLE_MS_DEFAULT = 150`），彻底剔除 `RouteRepo`、`CardRole` 与 `fixtures` 钩子。
-
-#### Rust `perga-term-bridge` 对外协议（JSON-RPC 2.0 + 二进制 WS）
-监听 `--listen-uds <path>` 或 `--listen-tcp 127.0.0.1:<port>`：
-- **`term.ensure`**：
-  - 请求：`{ "terminal_id": "t_1", "program": "/bin/bash", "args": [], "cwd": "/repo", "env": {}, "cols": 120, "rows": 40 }`
-  - 响应：`{ "terminal_id": "t_1", "pid": 12345, "created": true }`
-- **`term.observe`**：
-  - 请求：`{ "terminal_id": "t_1", "scroll_offset": 0, "wait_for": "none"|"elapsed"|"change"|"text", "wait_ms": 2000, "settle_ms": 150, "wait_text": [], "wait_text_absent": [] }`
-  - 响应：`{ "revision": 42, "frame": { "cols": 120, "rows": 40, "cursor": { "column": 0, "row": 5, "visible": true }, "alternate": false, "scroll_offset": 0, "history_rows": 12, "modes": 0, "text": ["..."] }, "exited": false, "exit_code": null }`
-- **`term.action`**：
-  - 请求：`{ "terminal_id": "t_1", "kind": "text"|"keys"|"paste"|"submit", "payload": { ... } }`
-  - 响应：`{ "ack_revision": 43 }`（内部根据 `InputSurface` 的 `bracketed_paste` 与 `alternate` 自动编码）。
-- **`term.resize`**：
-  - 请求：`{ "terminal_id": "t_1", "cols": 140, "rows": 45 }` -> `{ "ok": true }`
-- **`term.kill`**：
-  - 请求：`{ "terminal_id": "t_1", "grace_ms": 2000 }` -> `{ "exited": true, "exit_code": 0 }`
-- **WebSocket `/ws/{terminal_id}`**（供 `Perga.Host` 透传给前端 `xterm.js`）：
-  - 连接建立时立刻推送最近 **64KB** 环形缓冲历史字节帧；
-  - 双向二进制帧：`0x01 + <raw_pty_bytes>`（终端原始输入输出）；
-  - 控制帧：`0x02 + <utf8_json>`（客户端发 `{"type":"resize","cols":120,"rows":40}`，服务端推 `{"type":"exit","exit_code":0}`）。
-
-#### C# 契约 `namespace Perga.TermClient`
-
-```csharp
-using System.Text.Json;
-
-namespace Perga.TermClient;
-
-public enum TermWaitMode { None, Elapsed, Change, Text }
-public enum TermActionKind { Text, Keys, Paste, Submit }
-
-public sealed record TermEnsureRequest(
-    string TerminalId,
-    string Program,
-    IReadOnlyList<string> Args,
-    string Cwd,
-    IReadOnlyDictionary<string, string> Env,
-    ushort Cols = 120,
-    ushort Rows = 40);
-
-public sealed record TermEnsureResult(string TerminalId, int Pid, bool Created);
-
-public sealed record TerminalCursor(uint Column, uint Row, bool Visible);
-
-public sealed record TerminalFrame(
-    ushort Cols,
-    ushort Rows,
-    TerminalCursor Cursor,
-    bool Alternate,
-    int ScrollOffset,
-    int HistoryRows,
-    uint Modes,
-    IReadOnlyList<string> Text);
-
-public sealed record TermObserveRequest(
-    string TerminalId,
-    int ScrollOffset = 0,
-    TermWaitMode WaitFor = TermWaitMode.None,
-    int WaitMs = 0,
-    int SettleMs = 150,
-    IReadOnlyList<string>? WaitText = null,
-    IReadOnlyList<string>? WaitTextAbsent = null);
-
-public sealed record TermObserveResult(
-    ulong Revision,
-    TerminalFrame Frame,
-    bool Exited,
-    int? ExitCode);
-
-public sealed record TermActionRequest(
-    string TerminalId,
-    TermActionKind Kind,
-    JsonElement Payload);
-
-public sealed record TermActionResult(ulong AckRevision);
-
-public interface ITerminalBridgeClient : IAsyncDisposable
-{
-    Task<TermEnsureResult> EnsureAsync(TermEnsureRequest req, CancellationToken ct);
-    Task<TermObserveResult> ObserveAsync(TermObserveRequest req, CancellationToken ct);
-    Task<TermActionResult> SendActionAsync(TermActionRequest req, CancellationToken ct);
-    Task ResizeAsync(string terminalId, ushort cols, ushort rows, CancellationToken ct);
-    Task KillAsync(string terminalId, int graceMs = 2000, CancellationToken ct = default);
-    Uri GetWebSocketRelayUri(string terminalId);
-}
-```
-
----
-
-### 2.7 `namespace Perga.Kernel`（微内核编排、`TrackActor`、Epoch 换页与 `ITrackStore`）
-
-#### 核心机制设计
-1. **`TrackActor` 单写者模型与按需挂载激活**：
-   - `TrackActorRegistry` 维护 `ConcurrentDictionary<string, TrackActor>`；每个活跃 Track 拥有独立无锁 `Channel<Func<TrackActor, Task>>`，确保该 Track 内的会话输入、Report 提交、Task 声明/状态推进、Subagent 交卷回调、Ask 回答、Mail 投递与 Track 删除严格顺序执行。
-   - **激活重挂（Hydration Mount Hook）**：`TrackActor` 从 SQLite 唤醒水合时，在启动任何 `AgentSession`、`Terminal` 或 `TaskAttempt` 前必先调用 `IWorkspaceDriverRegistry.GetRequired(track.WorkspaceDriver).EnsureMountedAsync(workspaceSpec)` 并将返回的 `MountedWorkspace`（含 `MergedCwd` 与可选 `ProcessOverlayLayers`）注入会话与终端启动参数；一期 `Direct` / `VcsWorkspace` 为空操作，未来接 `OverlayFS` / `fuse-overlayfs` 时可零修改恢复宿主机重启丢失的挂载点。
-   - 当某 Track 无运行中 Turn/Task 且空闲超过 `10 分钟` 时自动从字典休眠卸载，保留 SQLite 快照。
-2. **`LeadSessionId` 主理路由与二元会话模型（`Lead` + `Subagent`）**：
-   - 废除传统 `Planner` / `Assistant` / `Worker` 三重角色包袱，全 Track 统一为同一 `AgentSession`（仅由两个正交属性刻画）：
-     - **`Lead`（主理代表：`Track.LeadSessionId == session.Id` / `IsLead == true`）**：默认代表指针，接收外部 `Mail` 到达唤醒、后台 `Task` 完结/失败唤醒、UI 上提交的 `Ask` 回答与外部 `Report` 修改唤醒；可通过 `SetLeadSessionAsync` 随时切换主理会话。
-     - **`Subagent`（协作者：`IsLead == false`）**：分为 **自由协作（`BoundAttemptId == null`）** 与 **契约协作（`BoundAttemptId != null`，由 `TaskGraphScheduler` 按 Task 派发）**；两者在前端共享同一会话流式查看与实时 Steer 纠偏能力，均可读写 `ReportDoc`（乐观锁防盲写）与调用 `perga_terminal_open/read`；唯一硬边界由内核在 `/mcp/kernel` 统一看守——绑定了在途 `BoundAttemptId` 的 `Subagent` 拥有 `perga_task_done / fail`，并被禁止改动 `task` 块或调用 `perga_task_accept/reject/cancel` 自我判过。
-3. **原生压缩优先与 Epoch 换页兜底（Native Compaction + Epoch Handover Fallback）**：
-   - `TrackActor` 统一合并空闲通知、回合和压缩的用量观测。只在适配器确认同一会话绑定及配置时复用实测窗口。迁移后的 SQLite 会话表仅保存实测的用量、窗口和时间，重连后的自动压缩等待当前绑定的新读数。
-   - 当当前绑定的 `ContextUsage.Ratio >= 0.80` 或用户触发 `CompactSessionAsync`：
-     - provider 支持原生压缩时，原地调用 `CompactAsync` 并保留 `NativeThreadId`、进程与 `Epoch`。有用量就更新快照，无用量就清除占用读数；
-     - 否则回退到宿主自管 Epoch 换页：
-       1. 向当前底层 `IAgentSession` 发送一条普通对话 Turn，要求输出结构化交接摘要（当前进展、关键路径、已验证结论、下一步）；
-       2. 关闭旧底层 `IAgentSession` 实例；
-       3. 在数据库更新该 `AgentSession` 的 `Epoch = Epoch + 1`、`NativeThreadId = null`、`ContextUsage = null`；
-       4. 用「最新 Report 全文 + 交接摘要」作为系统种子打开全新底层 `IAgentSession` 并绑定新 `NativeThreadId`（前端 `SessionId` 与历史消息流水保持连贯不断）。
-4. **`TaskGraphScheduler` 租约感知调度与 `afterWorkerDoneCmd`**：
-   - `ComputeSchedulable(tasks, bool allowParallelWriteLeases = false)`：筛选 `ready == true`、所有 `depends_on` 任务处于 `Done`、非 `Draft`/`Running`/`Verifying`/`Done`/`Failed`/`Canceled` 的任务；当 `driver.SupportsParallelIsolatedWriteLeases == false`（一期默认）时，存在在途 `ReadWrite` 任务则返回空，存在在途 `ReadOnly` 任务仅放行 `ReadOnly`，无在途则按优先级与创建时间放行 `ReadOnly` 集合或单个最高优 `ReadWrite`；未来若挂载了支持独立 per-attempt CoW `upperdir` 的 `OverlayFS` 驱动（`SupportsParallelIsolatedWriteLeases == true`），调度器无需改动即可并发放行多个相互隔离的投机写 Attempt。
-   - **Attempt 租约与统一钩子槽 `afterWorkerDoneCmd`**：派发 Attempt 前先向 `IWorkspaceDriver.AcquireAttemptLeaseAsync` 申请 `AttemptWorkspaceLease`（并将快照持久化至 `task_attempts.workspace_lease_json`）；契约 `Subagent` 会话、`afterWorkerDoneCmd` 与 `GateSpec` 门禁均在 `lease.EffectiveCwd`（以及透传映射到 `HarnessLaunchSpec.OverlayMounts` 的层配置）内执行。`perga_task_done` 后若 `CompiledTemplateManifest.AfterWorkerDoneCmd` 非空，在 `lease.EffectiveCwd` 下运行该命令并解析 `stdout` **最后一行非空合法 JSON** 并入 `task_attempts.meta_json` 后传给 `PolicyVm.After("task.settled", ...)`；最终门禁通过调 `SettleAttemptLeaseAsync(lease, AttemptLeaseDisposition.Promote)`，门禁失败/取消/Fail 调 `SettleAttemptLeaseAsync(lease, AttemptLeaseDisposition.Discard)`（秒级 O(1) 抛弃脏层）。
-5. **启动收口 `BootReconciler`**：
-   - 启动监听前扫描数据库 `status IN ('Running', 'Verifying')` 的 `task_attempts` 与 `session_turns`：统一标记为 `interrupted`；对仍持有非空 `workspace_lease_json` 的中断 Attempt 调用 `SettleAttemptLeaseAsync(lease, Discard)` 清理残留临时挂载与 CoW 层；释放内存占坑后向受影响的开放 Track 投递 `SystemWake` 通知 `LeadSessionId` 恢复决策。
-
-#### 冻结仓储端口 `ITrackStore` 与 `ITrackReadStore`
-
-```csharp
-using System.Text.Json;
-using Perga.Contracts;
-using Perga.ReportDoc;
-
-namespace Perga.Kernel.Ports;
-
-public sealed record TrackAggregateSnapshot(
-    TrackDto Track,
-    ReportDocument Report,
-    IReadOnlyList<TaskDto> Tasks,
-    IReadOnlyList<AgentSessionDto> Sessions,
-    IReadOnlyList<AskDto> OpenAsks,
-    string? TemplateSnapshotSource);
-
-public interface ITrackReadStore
-{
-    Task<IReadOnlyList<AreaDto>> ListAreasAsync(CancellationToken ct);
-    Task<AreaDto?> GetAreaAsync(string areaId, CancellationToken ct);
-    Task<IReadOnlyList<TrackDto>> ListTracksAsync(string? areaId = null, bool includeClosed = false, CancellationToken ct = default);
-    Task<TrackDto?> GetTrackAsync(string trackId, CancellationToken ct);
-    Task<TrackAggregateSnapshot?> LoadTrackAggregateAsync(string trackId, CancellationToken ct);
-    Task<IReadOnlyList<ReportBlock>> GetReportRevisionBlocksAsync(string trackId, int docRev, CancellationToken ct);
-    Task<IReadOnlyList<TaskAttemptDto>> ListAttemptsForTaskAsync(string taskId, CancellationToken ct);
-    Task<IReadOnlyList<SessionItemDto>> ListSessionItemsAsync(string sessionId, long afterId = 0, int limit = 100, CancellationToken ct = default);
-    Task<IReadOnlyList<MailDto>> ListMailsAsync(string trackId, bool unreadOnly = false, CancellationToken ct = default);
-    Task<IReadOnlyList<TerminalDto>> ListTerminalsAsync(string trackId, CancellationToken ct);
-    Task<IReadOnlyList<EventEnvelopeDto>> ListEventsSinceAsync(long sinceEventId, string? trackId = null, int limit = 500, CancellationToken ct = default);
-    Task<string?> FindTrackIdBySessionAsync(string sessionId, CancellationToken ct);
-}
-
-public interface ITrackStore : ITrackReadStore
-{
-    Task<AreaDto> UpsertAreaAsync(AreaDto area, CancellationToken ct);
-    Task DeleteAreaAsync(string areaId, CancellationToken ct);
-
-    Task CreateTrackAsync(TrackDto track, ReportDocument initialReport, string? templateSnapshot, AgentSessionDto initialLeadSession, CancellationToken ct);
-    Task UpdateTrackAndEmitAsync(TrackDto track, EventEnvelopeDto? evt, CancellationToken ct);
-    Task DeleteTrackAsync(string trackId, CancellationToken ct);
-
-    Task SaveReportAndTasksAsync(
-        string trackId,
-        ReportDocument report,
-        byte[] compressedRevisionBlocks,
-        string? authorSessionId,
-        string commitMessage,
-        IReadOnlyList<TaskDto> syncedTasks,
-        JsonElement nextTemplateState,
-        EventEnvelopeDto evt,
-        CancellationToken ct);
-
-    Task UpsertTaskAndAttemptAsync(TaskDto task, TaskAttemptDto? attempt, JsonElement? nextTemplateState, EventEnvelopeDto? evt, CancellationToken ct);
-    Task UpsertSessionAsync(AgentSessionDto session, EventEnvelopeDto? evt, CancellationToken ct);
-    Task RecordTurnAndItemsAsync(SessionTurnDto turn, IReadOnlyList<SessionItemDto> newItems, AgentSessionDto? updatedSession, CancellationToken ct);
-    Task UpsertAskAsync(AskDto ask, EventEnvelopeDto evt, CancellationToken ct);
-    Task UpsertMailAsync(MailDto mail, EventEnvelopeDto evt, CancellationToken ct);
-    Task UpsertTerminalAsync(TerminalDto terminal, EventEnvelopeDto? evt, CancellationToken ct);
-    Task AppendEventAsync(EventEnvelopeDto evt, CancellationToken ct);
-    Task<IReadOnlyList<string>> MarkInFlightInterruptedOnBootAsync(CancellationToken ct);
-    Task<DbMaintenanceStatsDto> RunMaintenancePassAsync(long nowMs, CancellationToken ct);
-}
-```
-
----
-
-## 3. 完整冻结 SQLite 10-表群 WAL Schema、升级规范与防膨胀 GC
-
-> 全库收敛为以下 10 组清晰正交的表（含 `schema_migrations` 元表，废除老版 `operations`、`track_vcs_*`、`cards`、`harness_items` 等全部 70 余张冗余表），从建库第一天即开启 `INCREMENTAL auto_vacuum`、全量外键级联子表索引、大对象冷剥离与确定性滑窗回收。
-
-```sql
--- 必须在首次建表前设置，使数据库支持逐页增量回收给 OS 而无需全库阻塞 VACUUM
-PRAGMA auto_vacuum = INCREMENTAL;
-PRAGMA journal_mode = WAL;
-PRAGMA synchronous = NORMAL;
-PRAGMA foreign_keys = ON;
-PRAGMA temp_store = MEMORY;
-
--- 0. 迁移账本（字节冻结内嵌脚本 + SHA-256 校验）
-CREATE TABLE IF NOT EXISTS schema_migrations (
-    version             INTEGER PRIMARY KEY,
-    name                TEXT NOT NULL,
-    checksum_sha256     TEXT NOT NULL,
-    applied_at_ms       INTEGER NOT NULL
-);
-
--- 1. 领域分组与声明目录
-CREATE TABLE IF NOT EXISTS areas (
-    id                  TEXT PRIMARY KEY,
-    name                TEXT NOT NULL,
-    color               TEXT NOT NULL DEFAULT '#64748b',
-    default_cwd         TEXT,
-    folders_json        TEXT NOT NULL DEFAULT '[]',
-    sort_order          REAL NOT NULL DEFAULT 0,
-    created_at_ms       INTEGER NOT NULL,
-    updated_at_ms       INTEGER NOT NULL
-);
-
--- 2. Track 核心表（含主理指针、工作区挂载描述与模板快照/状态槽；零 Git 强耦合字段）
-CREATE TABLE IF NOT EXISTS tracks (
-    id                      TEXT PRIMARY KEY,
-    area_id                 TEXT NOT NULL REFERENCES areas(id) ON DELETE CASCADE,
-    parent_track_id         TEXT REFERENCES tracks(id) ON DELETE SET NULL,
-    parent_attempt_id       TEXT,
-    title                   TEXT NOT NULL DEFAULT '',
-    cwd                     TEXT NOT NULL,
-    workspace_driver        TEXT NOT NULL DEFAULT 'direct',
-    workspace_spec_json     TEXT NOT NULL DEFAULT '{}',
-    cleanup_cmd             TEXT,
-    lead_session_id         TEXT,
-    template_id             TEXT,
-    template_snapshot       TEXT,
-    template_inputs_json    TEXT NOT NULL DEFAULT '{}',
-    template_state_json     TEXT NOT NULL DEFAULT '{}',
-    enabled_plugins_json    TEXT NOT NULL DEFAULT '[]',
-    closed_at_ms            INTEGER,
-    pinned_at_ms            INTEGER,
-    sort_order              REAL NOT NULL DEFAULT 0,
-    created_at_ms           INTEGER NOT NULL,
-    updated_at_ms           INTEGER NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_tracks_area ON tracks(area_id, sort_order);
-CREATE INDEX IF NOT EXISTS idx_tracks_parent ON tracks(parent_track_id) WHERE parent_track_id IS NOT NULL;
-
--- 3. Report 当前文档态
-CREATE TABLE IF NOT EXISTS reports (
-    track_id            TEXT PRIMARY KEY REFERENCES tracks(id) ON DELETE CASCADE,
-    doc_rev             INTEGER NOT NULL DEFAULT 0,
-    summary             TEXT NOT NULL DEFAULT '',
-    leading_comment     TEXT NOT NULL DEFAULT '',
-    blocks_json         TEXT NOT NULL DEFAULT '[]',
-    updated_at_ms       INTEGER NOT NULL
-);
-
--- 4. Report 历史 Zstd 压缩快照（替代原 5,000 行自研 track_vcs）
-CREATE TABLE IF NOT EXISTS report_revisions (
-    track_id            TEXT NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
-    doc_rev             INTEGER NOT NULL,
-    author_session_id   TEXT,
-    message             TEXT NOT NULL DEFAULT '',
-    blocks_zstd         BLOB NOT NULL,
-    created_at_ms       INTEGER NOT NULL,
-    PRIMARY KEY (track_id, doc_rev)
-);
-
--- 5. 任务声明与调度唯一真相表
-CREATE TABLE IF NOT EXISTS tasks (
-    id                  TEXT PRIMARY KEY,
-    track_id            TEXT NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
-    block_id            TEXT NOT NULL,
-    task_key            TEXT NOT NULL,
-    generation          INTEGER NOT NULL DEFAULT 1,
-    kind                TEXT NOT NULL,
-    provider            TEXT,
-    access_mode         TEXT NOT NULL DEFAULT 'read_write',
-    ready               INTEGER NOT NULL DEFAULT 0,
-    depends_on_json     TEXT NOT NULL DEFAULT '[]',
-    goal_or_cmd         TEXT NOT NULL,
-    context_json        TEXT,
-    acceptance          TEXT,
-    gate_json           TEXT,
-    status              TEXT NOT NULL DEFAULT 'pending',
-    status_detail       TEXT,
-    semantic_verdict    TEXT NOT NULL DEFAULT 'none',
-    semantic_note       TEXT,
-    latest_attempt_id   TEXT,
-    created_at_ms       INTEGER NOT NULL,
-    updated_at_ms       INTEGER NOT NULL,
-    UNIQUE (track_id, task_key)
-);
-CREATE INDEX IF NOT EXISTS idx_tasks_track_status ON tasks(track_id, status);
-
--- 6. 任务执行 Attempt 轨迹（含 afterWorkerDoneCmd 采集的通用 meta_json 与 Per-Attempt 租约快照）
-CREATE TABLE IF NOT EXISTS task_attempts (
-    attempt_id           TEXT PRIMARY KEY,
-    task_id              TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-    track_id             TEXT NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
-    session_id           TEXT,
-    status               TEXT NOT NULL,
-    worker_result_json   TEXT,
-    meta_json            TEXT NOT NULL DEFAULT '{}',
-    workspace_lease_json TEXT,
-    gate_verdict_json    TEXT,
-    started_at_ms        INTEGER NOT NULL,
-    finished_at_ms       INTEGER
-);
-CREATE INDEX IF NOT EXISTS idx_attempts_task ON task_attempts(task_id, started_at_ms);
-CREATE INDEX IF NOT EXISTS idx_attempts_track ON task_attempts(track_id);
-
--- 7. 大一统会话表（二元模型：Lead 由 tracks.lead_session_id 指针认定，其余均为 Subagent，彻底消除 Planner/Assistant/Worker 三态）
-CREATE TABLE IF NOT EXISTS agent_sessions (
-    id                  TEXT PRIMARY KEY,
-    track_id            TEXT NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
-    bound_task_id       TEXT,                 -- 非空表示该 Subagent 关联某 Task；空则为自由协作 Subagent
-    bound_attempt_id    TEXT,                 -- 非空表示当前背负在途/历史 TaskAttempt（启用 task_done/fail 并锁 task 块改写）
-    title               TEXT,
-    provider            TEXT NOT NULL,
-    model               TEXT,
-    native_thread_id    TEXT,
-    epoch               INTEGER NOT NULL DEFAULT 1,
-    status              TEXT NOT NULL DEFAULT 'idle',
-    context_usage_ratio REAL NOT NULL DEFAULT 0,
-    archived_at_ms      INTEGER,
-    created_at_ms       INTEGER NOT NULL,
-    updated_at_ms       INTEGER NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_sessions_track ON agent_sessions(track_id);
-
--- 8A. 会话轮次（队列、派发及执行结果）
-CREATE TABLE IF NOT EXISTS session_turns (
-    id                  TEXT PRIMARY KEY,
-    session_id          TEXT NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
-    turn_index          INTEGER NOT NULL,
-    epoch               INTEGER NOT NULL DEFAULT 1,
-    trigger_kind        TEXT NOT NULL,        -- 'user' | 'wake' | 'system'
-    input_json          TEXT,
-    status              TEXT NOT NULL,        -- 'queued' | 'running' | 'completed' | 'failed' | 'interrupted' | 'unknown'
-    usage_json          TEXT,
-    error_text          TEXT,
-    started_at_ms       INTEGER,
-    completed_at_ms     INTEGER,
-    accepted_at_ms      INTEGER,
-    provider            TEXT,
-    model               TEXT,
-    provider_turn_ref   TEXT,
-    UNIQUE (session_id, id)
-);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_turns_session_idx ON session_turns(session_id, turn_index);
-CREATE INDEX IF NOT EXISTS idx_turns_session_epoch ON session_turns(session_id, epoch);
-
--- 8B. 已接收的会话输入及派发状态
-CREATE TABLE IF NOT EXISTS session_inputs (
-    id                  TEXT PRIMARY KEY,
-    session_id          TEXT NOT NULL,
-    turn_id             TEXT NOT NULL UNIQUE,
-    author_id           TEXT NOT NULL CHECK (length(author_id) > 0),
-    request_key         TEXT NOT NULL CHECK (length(request_key) BETWEEN 1 AND 256),
-    request_hash        TEXT NOT NULL,
-    content             TEXT NOT NULL,
-    accepted_at_ms      INTEGER NOT NULL,
-    delivery_state      TEXT NOT NULL CHECK (delivery_state IN ('accepted', 'dispatching', 'delivered', 'rejected', 'unknown')),
-    dispatch_started_at_ms INTEGER,
-    resolved_at_ms      INTEGER,
-    FOREIGN KEY (session_id, turn_id) REFERENCES session_turns(session_id, id) ON DELETE CASCADE,
-    UNIQUE (session_id, author_id, request_key),
-    UNIQUE (id, session_id, turn_id)
-);
-CREATE INDEX IF NOT EXISTS idx_inputs_delivery ON session_inputs(delivery_state, accepted_at_ms, id);
-
--- 8C. 会话条目（流式 Delta 走内存 WS，>64KB 大输出剥离至外部冷存储）
-CREATE TABLE IF NOT EXISTS session_items (
-    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id          TEXT NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
-    turn_id             TEXT NOT NULL,
-    kind                TEXT NOT NULL,        -- 'user' | 'thinking' | 'assistant_text' | 'tool_call' | 'tool_result'
-    payload_json        TEXT NOT NULL,
-    created_at_ms       INTEGER NOT NULL,
-    accepted_input_id   TEXT UNIQUE,
-    FOREIGN KEY (session_id, turn_id) REFERENCES session_turns(session_id, id) ON DELETE CASCADE,
-    FOREIGN KEY (accepted_input_id, session_id, turn_id) REFERENCES session_inputs(id, session_id, turn_id),
-    CHECK (accepted_input_id IS NULL OR kind = 'user')
-);
-CREATE INDEX IF NOT EXISTS idx_items_session ON session_items(session_id, id);
-CREATE INDEX IF NOT EXISTS idx_items_turn ON session_items(turn_id);
-
--- 8D. 创建回执（资源删除后保留，重试仍返回 Gone）
-CREATE TABLE IF NOT EXISTS creation_receipts (
-    author_id           TEXT NOT NULL,
-    operation           TEXT NOT NULL,
-    scope_id            TEXT NOT NULL,
-    request_key         TEXT NOT NULL CHECK (length(request_key) BETWEEN 1 AND 256),
-    request_hash        TEXT NOT NULL,
-    resource_id         TEXT NOT NULL,
-    first_input_id      TEXT,
-    created_at_ms       INTEGER NOT NULL,
-    PRIMARY KEY (author_id, operation, scope_id, request_key)
-);
-
--- 9A. 用户审批问答
-CREATE TABLE IF NOT EXISTS asks (
-    id                  TEXT PRIMARY KEY,
-    track_id            TEXT NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
-    status              TEXT NOT NULL DEFAULT 'open',
-    questions_json      TEXT NOT NULL,
-    answer_json         TEXT,
-    created_at_ms       INTEGER NOT NULL,
-    answered_at_ms      INTEGER
-);
-CREATE INDEX IF NOT EXISTS idx_asks_track ON asks(track_id, status);
-
--- 9B. 跨 Track 邮件（投递后自动唤醒目标 Track 的 lead_session_id）
-CREATE TABLE IF NOT EXISTS mails (
-    id                  TEXT PRIMARY KEY,
-    from_track_id       TEXT NOT NULL,
-    to_track_id         TEXT NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
-    summary             TEXT NOT NULL,
-    body                TEXT NOT NULL,
-    reply_to_mail_id    TEXT,
-    wake_pending        INTEGER NOT NULL DEFAULT 0 CHECK (wake_pending IN (0, 1)),
-    read_at_ms          INTEGER,
-    created_at_ms       INTEGER NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_mails_to_track ON mails(to_track_id, created_at_ms DESC);
-CREATE INDEX IF NOT EXISTS idx_mails_pending_wake ON mails(created_at_ms, id) WHERE wake_pending = 1;
-
--- 10A. 终端元数据
-CREATE TABLE IF NOT EXISTS terminals (
-    id                  TEXT PRIMARY KEY,
-    track_id            TEXT NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
-    attempt_id          TEXT,
-    idempotency_key     TEXT,
-    title               TEXT NOT NULL DEFAULT 'Terminal',
-    program             TEXT,
-    cwd                 TEXT NOT NULL,
-    status              TEXT NOT NULL,
-    exit_code           INTEGER,
-    created_at_ms       INTEGER NOT NULL,
-    exited_at_ms        INTEGER
-);
-CREATE INDEX IF NOT EXISTS idx_terminals_track ON terminals(track_id);
-
--- 10B. 增量事件流水（供 WS ?since= 断线重放，受滑窗上限约束）
-CREATE TABLE IF NOT EXISTS events (
-    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-    area_id             TEXT,
-    track_id            TEXT,
-    kind                TEXT NOT NULL,
-    payload_json        TEXT NOT NULL,
-    created_at_ms       INTEGER NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_events_track_id ON events(track_id, id);
-CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at_ms);
-```
-
-### 3.1 `SqliteSingleWriter` 单写协程与平滑升级契约（`SqliteMigrator`）
-- **`SqliteSingleWriter` 单写通道**：
-  - 启动时打开**唯一**写连接 `_writeConnection`（`Mode=ReadWriteCreate;Pooling=False`）并配置 `PRAGMA journal_mode=WAL; synchronous=NORMAL; foreign_keys=ON;`。
-  - 拥有有界通道 `Channel<WriteBatchItem>`（容量 `4096`），每批最多提取 `32` 个写入闭包在单次 `BEGIN IMMEDIATE ... COMMIT` 中提交，失败整体 `ROLLBACK`；所有 `ITrackReadStore` 查询走独立 `Mode=ReadOnly` 连接池并发无锁快照读。
-- **平滑可逆升级规则（不再重蹈老版 221 个迁移失控覆辙）**：
-  1. **字节冻结迁移 + 迁移前在线备份**：所有迁移脚本以内嵌资源 `Migrations/NNNN_*.sql` 存放；`SqliteMigrator` 启动时先核对已应用脚本的 `checksum_sha256`，发现待升级脚本前通过 SQLite Online Backup API 自动生成 `{dbPath}.bak-v{current}`，再在事务中顺序执行增量迁移。
-  2. **热关系列最小化 + JSON `"v": 1` 读取期 Upcaster**：仅对用于外键、索引或调度的字段建模为物理列；易演进的扩展属性（`workspace_spec_json`、`template_state_json`、`meta_json`、`gate_verdict_json`、`payload_json`）在应用层统一携带 `"v": 1` 并通过 C# 读取期 Upcaster 兼容旧版缺省字段，**日常新增可选字段 0 `ALTER TABLE` 成本**。
-  3. **默认只增不毁与外键级联索引强制**：普通版本升级优先采用纯增列（`ADD COLUMN ... DEFAULT`）或新增索引；若必须重建表，必须遵循 `PRAGMA foreign_keys = OFF` -> 事务重建 -> `PRAGMA foreign_key_check`；**每张引用父表带 `ON DELETE CASCADE` 的子表均已强制配备子表外键索引**，防止删除 Track/Turn 时触发全表扫描锁死写协程。
-
-### 3.2 存储保留与回收
-
-Host 沿用默认每 6 小时的 SQLite 维护服务。维护通过单写通道提交小批次，每批提交后让其他写入继续。所有保留判断使用现有状态与时间。
-
-- 任务事件通知客户端重读详情。命令任务和验证步骤每路最多捕获末尾 4,096 个 UTF-16 码元，旧验证日志保留结果、步骤和退出信息。Task、Attempt、Worker 消息及幂等回执保留原有身份。
-- 事件保留窗口同时受 7 天、50,000 行和 32 MiB 的事件 payload 预算约束。裁剪从事件序号最早端开始，断线客户端使用已有的快照恢复流程。
-- Report 保留当前正文与初版。活跃 Track 保留最近 100 版，关闭满 14 天后保留最近 10 版。复用当前历史快照格式。
-- 已完成 turn 的思考和大型工具输出在 14 天后缩减。旧 Epoch 仍可提前缩减。用户输入、回复正文和未决 turn 继续可用。
-- 冷 Blob 的结果引用随关系数据保存。文件回收在写通道中复查最终引用，孤儿可在后续维护中回收。维护使用增量 vacuum 与 WAL checkpoint 归还磁盘页。
-
-关闭 Track 提供报告历史的保留信号。Workspace 和会话运行资源仍遵循各自的生命周期。用真实存储和 Host 验证活跃 Worker、关闭和重开、历史回执，以及部分维护后重新执行。
-
----
-
-## 4. `/api/v1` REST + WebSocket + `/mcp/*` 线协议规范
-
-### 4.1 22 个精简 REST 端点
-
-| 分组 | 方法与路径 | 请求 / 响应契约概要 |
-| :--- | :--- | :--- |
-| 系统 | `GET /api/v1/bootstrap` | 一次返回 `{ version, providers: ProviderStatus[], templates: CompiledTemplateManifest[], areas: AreaDto[] }` |
-| 系统 | `GET /api/v1/templates` | 返回所有可用 `.perga.js` 模板及其 `inputs` JSON Schema |
-| Area | `GET /api/v1/areas` | 返回 `AreaDto[]` |
-| Area | `POST /api/v1/areas` | `{ name, color?, defaultCwd?, folders? }` → `201 AreaDto` |
-| Area | `PATCH /api/v1/areas/{areaId}` | 部分更新名称/颜色/目录绑定 → `200 AreaDto` |
-| Area | `DELETE /api/v1/areas/{areaId}` | 级联删除 Area 及下属 Track → `204` |
-| Track | `GET /api/v1/areas/{areaId}/tracks` | 查询 `?includeClosed=true\|false` → `TrackDto[]` |
-| Track | `POST /api/v1/tracks` | `{ areaId, title?, cwd?, workspaceDriver?, templateId?, templateInputs?, provider?, model?, firstMessage? }` → `201 TrackAggregateSnapshot` |
-| Track | `GET /api/v1/tracks/{trackId}` | 返回完整 `TrackAggregateSnapshot` |
-| Track | `PATCH /api/v1/tracks/{trackId}` | `{ title?, closed?, pinned?, enabledPlugins?, leadSessionId? }` → `200 TrackDto` |
-| Track | `DELETE /api/v1/tracks/{trackId}` | 停止 Actor 与会话、调用模板 `onCloseCmd`、`TeardownTrackAsync` 安全卸载工作区并删除行 → `204` |
-| 文件 | `GET /api/v1/tracks/{trackId}/files` | `?path=` 目录列表或读取工作区安全文本文件 |
-| Diff | `GET /api/v1/tracks/{trackId}/vcs-diff` | 调用 `IVcsService.DiffAsync` 返回变更文件列表与 Diff 文本 |
-| 报告 | `GET /api/v1/tracks/{trackId}/report` | 返回 `{ docRev, summary, blocks, tasks, diagnostics }` |
-| 报告 | `PUT /api/v1/tracks/{trackId}/report/blocks/{blockId}` | 人类直接编辑报告块 `{ docRev, knownBlockRev, markdown?, payload? }`；更新后唤醒主理会话 (`LeadSessionId`) |
-| 任务 | `GET /api/v1/tracks/{trackId}/tasks/{taskKey}/attempts` | 返回该 Task 的历史 `TaskAttemptDto[]`（含 `meta` 与 Gate 日志） |
-| 会话 | `GET /api/v1/tracks/{trackId}/sessions` | 统一返回该 Track 下所有 `AgentSessionDto`（含 `Lead`、自由 `Subagent` 与契约 `Subagent`） |
-| 会话 | `POST /api/v1/tracks/{trackId}/sessions` | 必填 `Idempotency-Key`。可传 `{ title?, provider?, model?, text? }`，其中 `text` 为首条消息。创建返回 `201 SessionCreationReceipt`，相同请求重放返回 `200` |
-| 会话 | `GET /api/v1/sessions/{sessionId}/items` | 按 `afterId` 正序分页。用 `latest=true` 或 `beforeId` 读最近一页。响应含会话、在途轮次和待处理的未知输入 |
-| 会话 | `POST /api/v1/sessions/{sessionId}/messages` | 必填 `Idempotency-Key`。普通发送提交后返回 `202 SessionInputReceipt`，相同请求重放返回 `200`。在途 steering 保留原响应 |
-| 会话 | `GET /api/v1/sessions/{sessionId}/inputs/{inputId}` | 读取当前派发状态和轮次结果 |
-| 会话 | `POST /api/v1/sessions/{sessionId}/inputs/{inputId}/abandon` | 确认未知结果并解除发送阻塞，后续消息使用新的 provider 线程 |
-| 会话 | `POST /api/v1/sessions/{sessionId}/interrupt` | 中断当前在途 Turn → `200` |
-| 会话 | `POST /api/v1/sessions/{sessionId}/compact` | 触发宿主自管 Epoch 换页压缩 → `200 AgentSessionDto` |
-| 决策/终端 | `POST /api/v1/tracks/{trackId}/asks/{askId}/answer` | 提交 `{ answers: [...] }` 回答并唤醒 `LeadSessionId` |
-| 决策/终端 | `GET / POST / DELETE /api/v1/tracks/{trackId}/terminals/{termId?}` | 列出/打开/关闭终端实例 |
-
-输入和创建回执表由 `0001_init.sql` 在空库中创建。输入回执协议以单一 Host 独占 SQLite 为前提。重启时会派发已接收且尚未登记派发的输入。派发结果不明时保留原回执，且同一请求键持续指向原输入。确认未知结果只解除会话阻塞，旧消息和旧轮次仍可见。当前 SQLite WAL 使用 `synchronous=NORMAL`，此协议验证进程重启恢复。
-
-*(说明：共 22 个逻辑 REST 操作路径，`GET/POST/DELETE terminals` 计为 1 组终端资源端点，加上 `bootstrap`/`templates` 共 24 条路由。)*
-
-### 4.2 WebSocket 协议
-
-1. **`WS /api/v1/events?since={lastEventId}&trackId={optional}`**
-   - 服务端先从 `EventHub` 订阅实时广播，再从 `events` 表重放 `id > since` 的持久化事件。日志已裁剪或待重放超过 2,000 条时，服务端发送 `{"kind":"_snapshot_required","tipId":T}`。客户端暂停连接、刷新活动查询，成功后从 T 重连。正常重放完毕后，服务端发送 `{"kind":"_replay_complete","tipId":...}`。
-   - **持久事件**（`eventId != null`）：`track.updated`, `report.updated`, `task.updated`, `session.updated`, `turn.completed`, `ask.changed`, `mail.received`, `terminal.changed`。
-   - **瞬态流式帧**（`eventId == null`，绝不写 SQLite）：`session.text_delta`, `session.thinking_delta`, `session.tool_progress`。
-2. **`WS /api/v1/terminals/{termId}/ws`**
-   - 透传对接 `perga-term-bridge` 的 `/ws/{termId}` 二进制帧（`0x01` 终端字节 / `0x02` 控制 JSON）。
-
-### 4.3 多源 MCP 路由体系（内核 + 内置 JJ Forge + 静态外挂插件）
-
-会话启动前由 `Perga.Host` 为每个 `AgentSession` 生成唯一短期内存 Token `pg_<guid>` 映射 `(TrackId, SessionId, IsLead, BoundAttemptId?)` 并通过 `HarnessLaunchSpec.McpServers` 注入多路 URL：
-
-1. **`/mcp/kernel`（服务名 `"perga"`，在 `Perga.Host/Mcp/` 中使用 `System.Text.Json` 直接实现标准 MCP JSON-RPC 2.0 Streamable HTTP + SSE）**：
-   - **全会话共享原语**（`Lead` 与所有 `Subagent` 平权共享）：`perga_report_read`, `perga_report_commit`（若 `BoundAttemptId != null` 则内核硬拦截修改 `task` 块，正文块遵循模板 `editableBy`）, `perga_task_ls`, `perga_user_ask`, `perga_mail_ls`, `perga_mail_cat`, `perga_track_status`, `perga_terminal_open`, `perga_terminal_read`, `perga_terminal_input`。
-   - **治理解锁原语**（仅 `BoundAttemptId == null` 的 `Lead` 与自由 `Subagent`）：`perga_task_cancel`, `perga_task_accept`, `perga_task_reject`, `perga_mail_send`, `perga_track_rename`, `perga_track_close`。
-   - **契约交卷原语**（仅 `BoundAttemptId != null` 的契约 `Subagent`）：`perga_task_done`, `perga_task_fail`。
-2. **`/mcp/vcs`（服务名 `"vcs"`，基于 `libs/Perga.VcsKit`）**：
-   - 暴露：`vcs_status`, `vcs_diff`, `vcs_restore_op` (JJ 时光机), `vcs_rebase_upstream`, `vcs_publish_pr`, `vcs_pr_checks`, `vcs_ci_evidence`, `vcs_pr_merge`, `vcs_issue_view`。
-3. **`/mcp/p/{pluginId}`（静态配置文件 `mcp-plugins.json` 挂载外部标准 MCP）**：
-   - 支持配置 `"transport": "http" | "stdio"`，例如直接挂载智堡 Wisburg MCP 或原仓库 `market` 二进制。
-   - **全局安全拦截切面**：所有 `/mcp/kernel`、`/mcp/vcs` 与 `/mcp/p/{pluginId}` 的 `tools/call` 请求在执行前统一先走 `TrackActor` 的 `PolicyVm.Before("tool.<name>", ...)`：
-     - `Allow` → 立即放行执行；
-     - `Deny(reason)` → 立刻返回 MCP `isError: true` 给 Agent；
-     - `AskHuman(title, options)` → 自动插入 `asks` 表、推 WS 通知用户并挂起当前 MCP HTTP 请求（或返还挂起等待用户点击后自动放行执行）！
-
----
-
-## 5. 宿主机工具链状态与 Swarm 分阶段实施路线
-
-### 5.1 已探测宿主机工具链现状
-- **已就绪**：`rustc` / `cargo` (`/home/kenji/.cargo/bin`), `git` (`/usr/bin/git`), `gh` (`/usr/bin/gh`), `node` / `npm` (`v22.22.2`), `bwrap` (`/usr/bin/bwrap`)。
-- **待 Stage 0 用户态安装（无需 root）**：
-  - `.NET 11 SDK` → 安装至 `~/.dotnet`（使用官方 `dotnet-install.sh --channel 11.0`）；
-  - `jj` (Jujutsu) → 下载官方预编译静态二进制或 `cargo install jj-cli` 至 `~/.local/bin/jj`。
-
-### 5.2 三阶段 Swarm 并行实施编排（Compact 后下一回合直接启动）
-
-1. **Stage 0（Scaffold · 单作者奠基）**：
-   - 安装 `dotnet` 9 SDK 与 `jj` 到用户目录并验证版本。
-   - 在仓库根目录落地 `Directory.Build.props`、`Perga.sln`、全部 **17 个 `.csproj`**（含 `tests/Perga.TermClient.Tests/`，以及 `tools/perga-term-bridge/Cargo.toml`）、**`templates/{tsconfig.json, perga-template.d.ts}` 以及第 2 节中全部冻结接口文件**，提交到 `main` 并确认 `dotnet test Perga.sln`、`cargo check` 与 `tsc --noEmit` 校验全绿。
-2. **Stage 1（6 路 `workspace: "share"` 并行开发 + 2 名只读 Verifier）**：
-   - `w-doc-vm`：实现 `libs/Perga.ReportDoc` + `libs/Perga.PolicyVm`（Jint 原生直跑 ESM，零手写解析）+ `templates/{tsconfig.json, *.perga.js}`（通过 `tsc --noEmit` 强类型检查）与单测。
-   - `w-agentkit`：实现 `libs/Perga.AgentKit`（Codex / Claude stream-json / ACP + `bwrap` Wrapper）与 Mock CLI 协议测试。
-   - `w-vcskit`：实现 `libs/Perga.VcsKit`（`jj --colocate` 一等支持 + `git` 兜底 + `gh` CLI + `IWorkspaceDriverRegistry` 与一期 `DirectWorkspaceDriver` / `VcsWorkspaceDriver`）与真实临时 `jj`/`git` 仓库及租约单测。
-   - `w-term-rust`：基于本仓库只读种子 `tools/rust-terminal/` 提纯组装 `tools/perga-term-bridge` + 实现 `libs/Perga.TermClient` 与 PTY 读写集成测试。
-   - `w-sqlite`：实现 `src/Perga.Storage.Sqlite`（10 表群 DDL + `SqliteMigrator` 迁移备份 + `SqliteSingleWriter` 微批写入 + `ITrackStore` + >64KB 冷 Blob 剥离与 `RunMaintenancePassAsync` 确定性 GC）与高并发无 `SQLITE_BUSY`、外键级联索引、升级及防膨胀压测。
-   - `w-kernel`：实现 `src/Perga.Kernel`（`TrackActor`、`LeadSessionId` 主理与 `Subagent` 二元路由、Epoch 换页压缩、`TaskGraphScheduler`、`TemplateHost`、`BootReconciler`）与纯内存模拟测试。
-   - 协调者按序审查并合入 `main`（或派 `v-libs` / `v-core` 验证每个分支 `dotnet test` / `cargo test` 全绿后再合并）。
-3. **Stage 2（组合根 `Perga.Host` + 前端 `fe/` 协同瘦身切换）**：
-   - `w-host`：实现 `src/Perga.Host`（REST / WS / `/mcp/kernel` / `/mcp/vcs` / `/mcp/p/{id}` 拦截器 / `Cronos` 调度 + 定期 `RunMaintenancePassAsync` / E2E 集成测试）。
-   - `w-fe`：在独立前端分支将 `fe/core/{api,events}` 对接到 `/api/v1`，裁剪冗余旧恢复/桌面/日历模块并通过 `npm run build` + Playwright 验证。
+验证失败要区分业务断言、依赖缺失和运行环境限制；只报告实际执行的结果。持久化测试应包含事务中途失败、同库重开与重试身份，外部执行使用受控 provider；界面改动在真实浏览器覆盖受影响流程。跨层或安全/持久化变更遵循 L2 双独立评审。
