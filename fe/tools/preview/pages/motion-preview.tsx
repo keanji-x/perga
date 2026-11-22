@@ -83,7 +83,6 @@ function Preview() {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 'var(--space-5)' }}>
         <ReportDocument report={{ summary: '', body: '', blocks: [
           { id: 'preview-prose', kind: 'prose', payload: { markdown: '# 组件动效\n\n展开内容保持即时，箭头轻柔接上。' } },
-          { id: 'preview-task', kind: 'task', payload: { key: '检查动效', kind: 'codex', declared_by: 'user', ready: true, goal: '保留内容与键盘交互。' } },
         ] }} empty={<EmptyState variant="compact" icon={<Icon name="file" />} title="暂无内容" description="内容会显示在这里。" />} />
         <InventoryGroups noun="task" groups={[{ key: 'working', label: '任务分组', expanded: true, attentionCount: 0, rows: ['清晰可读', '操作自然'] }]}
           renderRows={rows => rows.map(row => <p key={row}>{row}</p>)} />

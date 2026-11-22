@@ -1,10 +1,7 @@
 import '../../styles/entry.css';
 import { useRef } from 'react';
-import source from '../../../../core/domain/fixtures/native-view-v1.json?raw';
-import { nativeViewPayloadSchema } from '../../../../core/domain/report-view.ts';
 import { AreaEditorForm } from '../../features/area/editor/public.tsx';
 import { NewTrackForm } from '../../features/area/new-track/public.tsx';
-import { NativeReportView } from '../../features/report/native/public.tsx';
 import { AddCardMenu,NewCardForm } from '../../features/track/new-card/public.tsx';
 import { renderPage } from '../../features/track/page/test-fixtures.tsx';
 import type { CardAddMenuEntry } from '../../systems/cards/public.ts';
@@ -85,16 +82,6 @@ async function anchorIs(source: HTMLElement, name?: string) {
   animation.play(); await expect.poll(() => node.getAnimations().length).toBe(0);
   return node;
 }
-it('opens actual Native fullscreen from the unpressed action and keeps its inspection tree', async () => {
-  const payload = nativeViewPayloadSchema.parse((JSON.parse(source) as { valid: unknown }).valid);
-  render(<NativeReportView payload={payload} />);
-  const action = screen.getByRole('button', { name: /^放大查看/ });
-  await userEvent.click(action);
-  await anchorIs(action.parentElement!);
-  await page.screenshot({ path: 'test-results/dialog-native.png' });
-  await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
-  expect(screen.queryByRole('dialog')).toBeNull();
-});
 function CardEntry() {
   const [origin, setOrigin] = useState<DialogOrigin | null>(null);
   const initial = useRef<HTMLInputElement | null>(null);

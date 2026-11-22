@@ -3,7 +3,7 @@ import { commands, page, userEvent } from 'vitest/browser';
 import { afterEach, expect, it, vi } from 'vitest';
 import '../../styles/entry.css';
 import { DepthFeedback } from '../../ui/motion/depth-feedback.tsx';
-import type { ReportTaskRow } from '../../../../core/domain/report.ts';
+import type { ReportTaskRow } from '../../../../core/domain/track-task-inventory.ts';
 import { ChatList } from '../../features/chat/list/public.tsx';
 import { RecentFiles } from '../../features/report/recent-files/public.tsx';
 import { ReportBacklinks } from '../../features/report/backlinks/public.tsx';

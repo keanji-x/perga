@@ -1,7 +1,7 @@
 import '../../styles/entry.css';
 import { fixtureSnapshot, fixtureTrack } from './session-contract-fixture.ts';
 import emptyStyles from '../../ui/empty-state/empty-state.module.css';
-import { noop, ok, area, navigationActions, mount, EmptySearchComposer, mountReportDataSources, mountEmptyFileViewer, mountEmptyDirectoryBrowser, mountReportComponentStates, mountMissingReportSources, mountEmptyResolvedSeries, mountEmptyReportReference } from './normal-empty-fixtures.tsx';
+import { noop, ok, area, navigationActions, mount, EmptySearchComposer, mountEmptyFileViewer, mountEmptyDirectoryBrowser, mountReportComponentStates, mountMissingReportSources, mountEmptyReportReference } from './normal-empty-fixtures.tsx';
 import { assertNormalEmptySurface } from './normal-empty-assertions.ts';
 import { captureEmptySurface, waitForEmptySurfaceRendering } from './normal-empty-capture.ts';
 import { cleanup } from '@testing-library/react';
@@ -13,18 +13,11 @@ import { MobilePages } from '../shell/mobile-pages.tsx';
 import { MobileTracks } from '../shell/mobile-tracks.tsx';
 import { ChatEmpty } from '../../features/chat/thread/public.tsx';
 import { ReportDocument } from '../../features/report/document/public.tsx';
-import { ReportPreviewBlock } from '../../features/report/preview/public.tsx';
 it('catalog historical day without Track', async () => {
   await page.viewport(1440,900);
   renderDailyFixture({ initial:'/?day=2026-10-18' });
   await expect.element(page.getByText('No daily Track was created for this date.')).toBeVisible();
   await shot('27-historical-day-no-track', ["No daily Track was created for this date."]);
-});
-it('catalog report table and chart source placeholders', async () => {
-  await page.viewport(1100,850);
-  mountReportDataSources();
-  await expect.element(page.getByText('This chart is resolved by the kernel and this view does not carry its data.')).toBeVisible();
-  await shot('29-table-and-series-placeholders', ["暂无记录", "暂无图表数据"]);
 });
 it('catalog missing report reference block', async () => {
   await page.viewport(800,400);
@@ -125,8 +118,7 @@ it.each(['mention','command'])('catalog composer search %s', async type => {
 it('catalog report data and history component states', async () => {
   await page.viewport(1100,950);
   mountReportComponentStates();
-  await expect.element(page.getByText('No execution yet')).toBeVisible();
-  await shot('23-report-component-states', ["暂无数据", "暂无记录", "No execution yet", "暂无实时数据"]);
+  await shot('23-report-component-states', ["暂无数据", "暂无实时数据"]);
 });
 it('catalog waiting conversation', async () => {
   await page.viewport(650,500);
@@ -149,13 +141,6 @@ it('catalog missing report sources', async () => {
   await shot('31-source-missing-states', []);
 });
 
-it('catalog confirmed empty series in every chart presentation', async () => {
-  await page.viewport(1100,1050);
-  mountEmptyResolvedSeries();
-  await expect.element(page.getByRole('heading',{name:'暂无图表数据'}).first()).toBeVisible();
-  await shot('32-series-no-points', ["暂无图表数据"]);
-});
-
 it('catalog confirmed empty desktop shortcut groups', async () => {
   await page.viewport(1440,1000);
   const preferences = createUiPreferences();
@@ -169,11 +154,4 @@ it('catalog confirmed empty desktop shortcut groups', async () => {
   expect(page.getByRole('group',{name:'Focus',exact:true}).query()).toBeNull();
   expect(page.getByRole('group',{name:'Pinned',exact:true}).query()).toBeNull();
   await shot('34-desktop-empty-shortcuts', []);
-});
-
-it('catalog a surface without live previews', async () => {
-  await page.viewport(1000,650);
-  mount(<ReportPreviewBlock payload={{key:'example',title:'示例预览',height:300}}/>,true);
-  await expect.element(page.getByRole('heading',{name:'暂无预览内容',exact:true})).toBeVisible();
-  await shot('35-preview-no-content', ["暂无预览内容"]);
 });

@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import type { ReportTaskRow } from '../../../../../core/domain/report.ts';
+import type { ReportTaskRow } from '../../../../../core/domain/track-task-inventory.ts';
 import {
   builtinListViewSchema,
   builtinTableViewSchema,
@@ -7,7 +7,7 @@ import {
   type TemplateViewsState,
   type WidgetBlockPayload,
 } from '../../../../../core/domain/report-widget.ts';
-import { ReportCheckpointsChronicle } from '../checkpoints/chronicle.tsx';
+import { EditorialChronicle } from '../editorial/chronicle.tsx';
 import { ReportFlowBlock } from '../flow/public.tsx';
 import { EditorialMetricsStrip } from '../editorial/metrics.tsx';
 import { SeamlessHtmlWidget } from './seamless-html.tsx';
@@ -142,7 +142,7 @@ export function ReportWidgetBlock({
     }
 
     return (
-      <ReportCheckpointsChronicle
+      <EditorialChronicle
         payload={parsed.data}
         taskRows={taskRows}
         renderText={renderText}

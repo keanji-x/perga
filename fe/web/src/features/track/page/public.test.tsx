@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen, within } from '@testing-librar
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { ReportTaskRow } from '../../../../../core/domain/report.ts';
+import type { ReportTaskRow } from '../../../../../core/domain/track-task-inventory.ts';
 import { NEUTRAL_ACTIVITY } from '../../../../../core/domain/track.ts';
 import { deriveTrackPageView } from '../../../../../core/view/track-page.ts';
 import { Dialog } from '../../../ui/dialog/public.tsx';
@@ -333,7 +333,6 @@ describe('TrackPage task inventory', () => {
     const queued: ReportTaskRow = {
       ...running('beta', 'pending', null),
       pendingReason: {
-        kind: 'trackBusy',
         message: 'Track busy',
       },
     };

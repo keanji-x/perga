@@ -35,7 +35,7 @@ trackWorkspaceRawFileUrl,
 } from '../domain/fs.js';
 import { selectedReadyTemplateId } from '../domain/mentions.js';
 import { plannerSwitchOperation } from '../domain/planner-switch.js';
-import { readReportDocument, trackTaskVerdictsOperation } from '../domain/report.js';
+import { readReportDocument } from '../domain/report.js';
 import { readTrackReportOperation, readTrackViewsOperation } from '../domain/report-operations.js';
 import {
 cancelTaskOperation,
@@ -90,8 +90,6 @@ describe('Perga /api/v1 protocol contracts', () => {
         description: 'End-to-end feature track',
         defaultPlugins: ['github'],
         inputsSchema: { type: 'object', properties: { branch: { type: 'string' } } },
-        sections: [{ h1: 'Plan', omitIfEmpty: false, editableBy: ['lead', 'human'] }],
-        maxProseChars: 8000,
         requireGateForReadWrite: true,
         workspaceDriver: 'vcs-workspace',
         workspaceLowerCacheDirs: ['fe/node_modules'],
@@ -279,7 +277,6 @@ describe('Perga /api/v1 protocol contracts', () => {
         leadSessionId: 'ses_lead',
         templateId: 'feature-dev',
         templateInputs: {},
-        templateState: {},
         enabledPlugins: ['github'],
         closedAtMs: null,
         pinnedAtMs: 1500,
@@ -448,7 +445,6 @@ describe('Perga /api/v1 protocol contracts', () => {
     });
 
     expect(readTrackReportOperation('trk_1').path).toBe('/api/v1/tracks/trk_1/report');
-    expect(trackTaskVerdictsOperation('trk_1').path).toBe('/api/v1/tracks/trk_1/report');
   });
 
   it('maps Binary Sessions (Lead + Subagent), Terminals, Files, VCS Diff, and WS envelopes', () => {
@@ -566,7 +562,6 @@ describe('Perga /api/v1 protocol contracts', () => {
         leadSessionId: 'ses_lead',
         templateId: 'feature-dev',
         templateInputs: {},
-        templateState: {},
         enabledPlugins: [],
         closedAtMs: null,
         pinnedAtMs: null,
@@ -769,8 +764,8 @@ describe('Perga /api/v1 protocol contracts', () => {
     });
     const parsedAgyReport = readReportDocument({ ...agyReport, leadingComment: '' });
     expect(parsedAgyReport?.blocks).toMatchObject([
-      { id: 'b_agy', kind: 'task', payload: { key: 'audit-agy', kind: 'antigravity', goal: 'Run ACP verification', depends_on: ['prep'], ready: true } },
-      { id: 'b_oc', kind: 'task', payload: { key: 'audit-oc', kind: 'opencode', goal: 'Inspect workspace', ready: false } },
+      { id: 'b_agy', kind: 'unsupported', declaredKind: 'task' },
+      { id: 'b_oc', kind: 'unsupported', declaredKind: 'task' },
     ]);
 
     const overlaysOp = trackOverlaysOperation();

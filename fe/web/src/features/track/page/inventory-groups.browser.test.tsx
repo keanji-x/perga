@@ -2,7 +2,7 @@ import '../../../styles/entry.css';
 import { cleanup, render } from '@testing-library/react';
 import { page, userEvent } from 'vitest/browser';
 import { afterEach, expect, it, vi } from 'vitest';
-import type { ReportTaskRow } from '../../../../../core/domain/report.ts';
+import type { ReportTaskRow } from '../../../../../core/domain/track-task-inventory.ts';
 import { NEUTRAL_ACTIVITY, type CardWire } from '../../../../../core/domain/track.ts';
 import { deriveTrackPageView } from '../../../../../core/view/track-page.ts';
 import { PanelCard } from '../../../ui/panel-card/public.tsx';

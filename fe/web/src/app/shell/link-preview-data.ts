@@ -7,20 +7,11 @@ import type { TrackSourceDetail } from '../../../../core/domain/report-source.ts
 import { trackReportLinkUrl, type TrackReport } from '../../../../core/domain/report.ts';
 
 export function evidenceExamples(): TrackReport {
-  const citation = '[表格来源](perga://source/src_0971fbde#q1)';
-  const table = { columns: [{ key: 'where', label: '位置' }, { key: 'evidence', label: '来源' }],
-    rows: [{ where: '插件生成的表格', evidence: citation }] };
   return { summary: '', body: '', blocks: [
     { id: 'sources', kind: 'prose', payload: { markdown:
       '# 来源与边界\n\n以下内容均为交互示例，不是真实研究资料。\n\n摘要层：[来源正文与引用高亮](perga://source/src_0971fbde#q1)。移入卡片后可以滚动长文，点击 “Open in workspace” 查看完整来源详情。\n\n也可以试试 [来源缺失](perga://source/src_deadbeef)、[无效链接](perga://source/src_bad#q0)、[锚点缺失](perga://source/src_0971fbde#q7) 和 [失败后重试](perga://source/src_fa11ed00)。\n\n## 跨报告引用\n\n悬停 [另一份报告](' + trackReportLinkUrl('reference-demo') + ')，再悬停其中的来源链接。那条来源属于另一份报告，内容会明确显示所属报告。',
     } },
-    { id: 'source-table', kind: 'table', payload: table },
-    { id: 'source-view', kind: 'view', payload: { version: 1, title: '插件视图中的来源', description: '这张表使用正式的插件视图组件。',
-      snapshot: { id: 'preview-example', observedAt: 1791360000000, producedAt: 1791360000000 },
-      rows: [{ id: 'row', title: '', layout: 'one', cells: [{ id: 'table', kind: 'table', title: '', table: {
-        ...table, rows: [{ where: '原生插件视图', evidence: '[视图来源](perga://source/src_0971fbde#q1)' }],
-      } }] }],
-    } },
+    { id: 'source-table', kind: 'prose', payload: { markdown: '| 位置 | 来源 |\n| --- | --- |\n| 插件生成的表格 | [表格来源](perga://source/src_0971fbde#q1) |\n| 视图示例 | [视图来源](perga://source/src_0971fbde#q1) |' } },
   ] };
 }
 
@@ -60,7 +51,7 @@ export function createEvidencePreviewTransport(): ApiTransportPort {
       const report = trackId === 'reference-demo' ? referencedReport() : evidenceExamples();
       const snapshot: TrackAggregateSnapshotDto = {
         track: { id: trackId, areaId: 'examples', title: trackId === 'reference-demo' ? '另一份报告' : '来源预览',
-          cwd: '/preview', workspaceDriver: 'direct', workspaceSpec: {}, templateInputs: {}, templateState: {}, data: {}, dataRev: 0, flowRev: 0, enabledPlugins: [], sortOrder: 1, createdAtMs: 1, updatedAtMs: 1 },
+          cwd: '/preview', workspaceDriver: 'direct', workspaceSpec: {}, templateInputs: {}, data: {}, dataRev: 0, flowRev: 0, enabledPlugins: [], sortOrder: 1, createdAtMs: 1, updatedAtMs: 1 },
         report: { docRev: 1, summary: report.summary, leadingComment: '', blocks: (report.blocks ?? []).map(block => ({
           id: block.id, kind: block.kind, rev: 1, markdown: block.kind === 'prose' ? block.payload.markdown : '', payload: 'payload' in block ? block.payload : null,
         })) }, sessions: [], tasks: [], openAsks: [],

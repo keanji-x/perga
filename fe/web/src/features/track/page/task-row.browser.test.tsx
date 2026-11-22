@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import '../../../styles/entry.css';
 
-import type { ReportTaskRow } from '../../../../../core/domain/report.ts';
+import type { ReportTaskRow } from '../../../../../core/domain/track-task-inventory.ts';
 import { NEUTRAL_ACTIVITY, type Track } from '../../../../../core/domain/track.ts';
 import { TrackPage } from './public.tsx';
 
@@ -101,7 +101,7 @@ describe('a compact desktop TASKS row', () => {
       kind: 'codex',
       workerCardId: null,
       pendingReason: {
-        kind: 'dependencyBlocked', message, dependencies: ['status-hierarchy'],
+        message,
       },
     }]);
     const status = row.querySelector<HTMLElement>('[data-nc-task-status-text]')!;

@@ -1,3 +1,4 @@
+import hostPayloads from '../api/fixtures/unified-host-payloads.json';
 import { describe, expect, it } from 'vitest';
 import { decodeWireEvent } from '../api/schemas.js';
 import { invalidationPlanFor } from '../events/invalidation-plan.js';
@@ -25,7 +26,14 @@ describe('template-protocol wire contracts', () => {
       kind: 'wake', session: 'lead', prompt: 'Refresh ${inputs.ticker}',
     } }];
     expect(operation.responseSchema.parse({
-      snapshot: 'source', manifest: { id: 'equity-research', flow }, inputs: {}, state: {},
+      snapshot: 'source', manifest: { id: 'equity-research', flow }, inputs: {}, data: {},
     })).toMatchObject({ manifest: { flow }, headerView: null });
   });
+});
+
+it('decodes template inspection inputs and data from the Host wire', () => {
+  const inspection = trackTemplateOperation('research').responseSchema.parse(hostPayloads.currentTemplate);
+  expect(inspection.inputs).toEqual({ ticker: 'SAMPLE' });
+  expect(inspection.data).toEqual({ events: [] });
+  expect(inspection).not.toHaveProperty('state');
 });

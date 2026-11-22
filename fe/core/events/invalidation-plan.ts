@@ -49,10 +49,6 @@ function result(
   return { invalidate, remove, writeThrough };
 }
 
-function taskVerdicts(trackId: string | null): readonly QueryKey[] {
-  return [trackId === null ? eventKeys.trackReportPrefix() : eventKeys.trackReport(trackId)];
-}
-
 /**
  * Keyed by track; the bare prefix only when the track cannot be resolved (a key with no
  * active observer only marks entries stale, so that fallback is cheap).
@@ -77,12 +73,11 @@ function policies(): PolicyMap {
     [],
     [{ key: eventKeys.areas(), mode: 'replace-existing-area', value: event.data }],
   )),
-'area.deleted': plan((event) => result([eventKeys.areas(), eventKeys.overlaysByKind('track'), eventKeys.trackReportPrefix()], [],
+'area.deleted': plan((event) => result([eventKeys.areas(), eventKeys.overlaysByKind('track')], [],
     [{ mode: 'area-deleted', areaId: event.data.id }])),
 'track.updated': plan((event) => result([
     eventKeys.overlaysByKind('track'),
     eventKeys.tracksInArea(event.data.areaId), eventKeys.trackDetail(event.data.id), eventKeys.trackTemplate(event.data.id),
-    eventKeys.trackReportPrefix(),
     eventKeys.trackViews(event.data.id),
   ])),
   'track.schedules.updated': plan((event) => result([
@@ -91,22 +86,19 @@ function policies(): PolicyMap {
   'track.deleted': plan((event) => result(
     [
       eventKeys.tracksInArea(event.data.area_id), eventKeys.overlaysByKind('track'),
-      eventKeys.trackReportPrefix(),
     ],
-    [eventKeys.trackDetail(event.data.id), eventKeys.trackReport(event.data.id), eventKeys.trackViews(event.data.id)],
+    [eventKeys.trackDetail(event.data.id), eventKeys.trackViews(event.data.id)],
   )),
 'report.updated': plan((event) => result([
-    ...taskVerdicts(event.data.track_id ?? null),
     ...(event.data.track_id
       ? [eventKeys.trackDetail(event.data.track_id), eventKeys.trackViews(event.data.track_id)]
-      : [eventKeys.trackViewsPrefix()]),
+      : [eventKeys.trackDetailPrefix(), eventKeys.trackViewsPrefix()]),
   ])),
 'task.updated': plan((event) => result([
     eventKeys.overlaysByKind('track'),
-    ...taskVerdicts(event.data.track_id ?? null),
     ...(event.data.track_id
       ? [eventKeys.trackDetail(event.data.track_id), eventKeys.trackViews(event.data.track_id)]
-      : [eventKeys.trackViewsPrefix()]),
+      : [eventKeys.trackDetailPrefix(), eventKeys.trackViewsPrefix()]),
   ])),
 'system.upgrade_status': noop('The upgrade store consumes system status independently of query caches.'),
 'session.runtime_status': plan((event) => result([eventKeys.plannerRun(event.data.sessionId)])),

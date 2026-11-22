@@ -145,3 +145,19 @@ it('shares filename highlighting and original copying in the standalone file rea
   content.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   expect(close).toHaveBeenCalledOnce();
 });
+
+it('opens workspace HTML in the file viewer sandbox and can show its source', async () => {
+  render(<ReportFileViewer path="report.html" files={files('report.html', '<p>Example page</p>')}
+    fileRoot="/repo" wide onClose={vi.fn()} />);
+  const frame = await waitFor(() => {
+    const iframe = document.querySelector('iframe[title="report.html"]');
+    expect(iframe).not.toBeNull();
+    return iframe!;
+  });
+  expect(frame.getAttribute('src')).toBe('/raw?path=report.html');
+  expect(frame.getAttribute('sandbox')).toBe('allow-scripts');
+  expect(frame.getAttribute('referrerpolicy')).toBe('no-referrer');
+  screen.getByRole('button', { name: /^Source$/ }).click();
+  expect(await screen.findByRole('textbox', { name: 'Code' })).toBeTruthy();
+  expect(document.querySelector('iframe[title="report.html"]')).toBeNull();
+});

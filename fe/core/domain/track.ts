@@ -104,36 +104,6 @@ export function toTrack(wire: TrackDto, activity: TrackActivity = NEUTRAL_ACTIVI
   };
 }
 
-export type OverlayWire = z.infer<typeof overlaySchema>;
-
-/** Scheme prefix of a live table `source`. Mirrors `report_blocks::LIVE_SOURCE_PREFIX`. */
-const LIVE_TABLE_SOURCE_PREFIX = 'perga://plugin/';
-
-/**
- * Resolves a report's `perga://plugin/<plugin_id>/<kind>` source to at most one overlay's
- * payload, unvalidated (the renderer decodes it); `undefined` when nothing matches.
- */
-export function trackOverlayPayload(
-  trackId: string,
-  overlays: readonly OverlayWire[],
-  source: string,
-): unknown {
-  const rest = source.startsWith(LIVE_TABLE_SOURCE_PREFIX)
-    ? source.slice(LIVE_TABLE_SOURCE_PREFIX.length)
-    : null;
-  if (rest === null) return undefined;
-  const slash = rest.indexOf('/');
-  if (slash <= 0 || slash === rest.length - 1) return undefined;
-  const pluginId = rest.slice(0, slash);
-  const kind = rest.slice(slash + 1);
-  if (kind.includes('/')) return undefined;
-  const match = overlays.find((overlay) => overlay.entity_kind === 'track'
-    && overlay.entity_id === trackId
-    && overlay.plugin_id === pluginId
-    && overlay.kind === kind);
-  return match?.payload;
-}
-
 function finiteOrNull(value: number): number | null {
   return Number.isFinite(value) ? value : null;
 }

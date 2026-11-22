@@ -67,7 +67,7 @@ no translation table or silent rejection of an unknown address.
 | --- | --- |
 | areas / tracks in area / track detail | `['areas']` / `['tracks', areaId]` / `['track', trackId]` |
 | overlays | `['overlays', 'track' or 'card']` |
-| task verdicts / backlinks | `['track-report', trackId]` / `['track-backlinks', trackId]`, plus their bare prefixes |
+| backlinks | `['track-backlinks', trackId]` plus its bare prefix |
 | conversation list | `['track-conversations', trackId]`, or its bare prefix when ownership is unknown |
 | transcript / planner run | `['harness-items', cardId]` / `['planner-run', cardId]` |
 | plugins / templates / plugin data | `['plugins']` / `['track-templates']` / `['plugin-data', pluginId]` (all windows) |
@@ -82,18 +82,18 @@ Resulting per-kind behavior (all unchanged by the address refactor):
 | Event kind | Effect on cache |
 | --- | --- |
 | `area.updated` | write through an existing area, invalidate areas |
-| `area.deleted` | retire that area's child queries, invalidate areas + track overlays + all task verdicts |
-| `track.updated` | invalidate that area's track list + track detail + all task verdicts |
-| `track.deleted` | invalidate area's track list + track overlays + all task verdicts; remove track detail and its verdicts |
-| `card.added` | invalidate track detail + conversation list + all task verdicts |
+| `area.deleted` | retire that area's child queries, invalidate areas + track overlays |
+| `track.updated` | invalidate that area's track list + track detail |
+| `track.deleted` | invalidate area's track list + track overlays; remove track detail and Flow views |
+| `card.added` | invalidate track detail + conversation list |
 | `card.updated` | invalidate track detail + conversation list + card planner run |
-| `card.deleted` | invalidate track detail + all task verdicts |
-| `worker_session.started` / `worker_session.status_changed` / `worker_session.superseded` | invalidate card overlays, resolved track detail, task verdicts, conversation list; unresolved ownership uses resource prefixes |
+| `card.deleted` | invalidate track detail |
+| `worker_session.started` / `worker_session.status_changed` / `worker_session.superseded` | invalidate card overlays, resolved track detail, conversation list; unresolved ownership uses resource prefixes |
 | `overlay.set` / `overlay.deleted` | invalidate overlays of that kind, plus track detail if ownership resolves |
-| `track.report_edited` | invalidate all task verdicts and backlinks, the edited track detail and Today resolve |
-| `plan.updated` with string `agent_message` | invalidate that track's verdicts; companion projection events without the message are no-ops |
-| `terminal.deleted`, `codex.worker_requested`, `terminal.worker_requested` | invalidate task verdicts by named track or resolved card ownership, with prefix fallback |
-| `task.dispatched`, `task.completed`, `task.failed`, `task.gate_result`, `task.regate_requested` | invalidate task verdicts by prefix only; opaque task ids are never parsed |
+| `track.report_edited` | invalidate backlinks, the edited track detail and Today resolve |
+| `plan.updated` with string `agent_message` | invalidate the Track snapshot; companion projection events without the message are no-ops |
+| `terminal.deleted`, `codex.worker_requested`, `terminal.worker_requested` | invalidate the Track snapshot by named track or resolved card ownership, with prefix fallback |
+| `task.dispatched`, `task.completed`, `task.failed`, `task.gate_result`, `task.regate_requested` | invalidate Track snapshots by prefix only; opaque task ids are never parsed |
 | `task.git_delivery_settled` | invalidate the explicitly named track's verdicts |
 | `harness.item.added` | invalidate transcript; a persisted user message also refreshes track detail and conversation list |
 | `harness.presentation.changed` | invalidate transcript + planner run + track detail + conversation list |
@@ -125,7 +125,7 @@ addresses always fell out of the adapter. They are now removed from the plan.
 If either resource gains a query, add its address to the core factory and its
 policy to the plan together, with a production-entry-point contract test.
 
-Cancel-first execution remains app policy: track detail, conversations, verdicts,
+Cancel-first execution remains app policy: track detail, conversations,
 transcript, planner run, backlinks, plugins,
 templates, plugin data and track overlays cancel before invalidation. Card
 overlays retain ordinary invalidation. A replay boundary resets transcript
@@ -133,13 +133,4 @@ windows and cancels track overlays before invalidating everything. Confirmed
 area deletion still calls `retireAreaQueries`; area updates still replace only
 an existing row and preserve newer cached versions.
 
-**Events are not sufficient for that panel, and the gap is on the kernel side.**
-`scheduler::mark_running` stamps `worker_card_id` with no event at all —
-`task.dispatched` fired before the spawn (column still NULL) and every
-`worker_session.*` a worker adapter emits is emitted during the spawn, also before the
-stamp. Between spawn and completion a terminal worker therefore emits nothing
-that reaches this key, and an agent worker emits only hooks, which are excluded
-above for cost. The panel closes that window with a bounded refresh timer on the
-query itself, not with a new event or a re-included hook; see `hasLiveTaskRun`
-in `core/domain/report.ts` for the accounting and `trackTaskVerdictsQueryOptions`
-for the measured interval.
+Task updates refresh the Track snapshot and Flow views. The Track inventory uses the snapshot for task rows with a historical Report anchor.

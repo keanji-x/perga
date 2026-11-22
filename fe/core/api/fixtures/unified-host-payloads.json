@@ -293,5 +293,19 @@
     "outcomeSummary": "Validation failed",
     "triggerRunKey": null,
     "archivedAtMs": null
+  },
+  "currentTemplate": {
+    "snapshot": "template source",
+    "manifest": {
+      "id": "equity-research",
+      "title": "Equity research",
+      "inputsSchema": { "type": "object" },
+      "requireGateForReadWrite": false,
+      "flow": [],
+      "initialReportMarkdown": ""
+    },
+    "inputs": { "ticker": "SAMPLE" },
+    "data": { "events": [] },
+    "headerView": null
   }
 }

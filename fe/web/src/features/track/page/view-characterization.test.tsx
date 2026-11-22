@@ -3,7 +3,7 @@
 
 import { describe, expect, it, vi } from 'vitest';
 
-import type { ReportTaskRow } from '../../../../../core/domain/report.ts';
+import type { ReportTaskRow } from '../../../../../core/domain/track-task-inventory.ts';
 import { NEUTRAL_ACTIVITY, type CardWire } from '../../../../../core/domain/track.ts';
 import type { PanelRow, RowModuleView } from '../../../../../core/view/panel.ts';
 import { deriveTrackPageView } from '../../../../../core/view/track-page.ts';

@@ -20,7 +20,8 @@ import { createPortal } from 'react-dom';
 import { useCompactViewport } from '../../../ui/viewport/public.ts';
 
 import { DELETE_FAILURES, DELETE_TEXT, writeFailureText } from '../../../../../core/domain/failure-class.ts';
-import type { ReportOutlineItem, ReportTaskRow } from '../../../../../core/domain/report.ts';
+import type { ReportOutlineItem } from '../../../../../core/domain/report.ts';
+import type { ReportTaskRow } from '../../../../../core/domain/track-task-inventory.ts';
 import {
   TRACK_PATCH_FAILURES, TRACK_PATCH_TEXT, UNTITLED_TRACK_LABEL, trackActivityState, trackDisplayTitle, type CardWire, type Track,
 } from '../../../../../core/domain/track.ts';
@@ -63,7 +64,7 @@ export type TrackPageProps = Readonly<{
   cards: readonly CardWire[];
   /** Full Track resource identities, including agent sessions and independent tools. */
   existingCardIds: ReadonlySet<string>;
-  /** The track's tasks, joined by `app/router` from the report's `task` blocks and the kernel's verdicts. */
+  /** The Track snapshot's task rows with a Report anchor. */
   tasks: readonly ReportTaskRow[];
   /** The cards the board can draw, as `app/router` asks the registry. Required: a default here would be a second, silent verdict. It gates only whether a Task row's kind is an `open-card` control. */
   openableCards: ReadonlySet<string>;

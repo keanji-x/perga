@@ -167,4 +167,27 @@
       margin-inline-start: max(0px, calc((100% - var(--document-measure, 40rem)) / 2));
     }
   }
+
+  .htmlPage {
+    display: block;
+    flex: 1 1 auto;
+    inline-size: 100%;
+    min-block-size: 0;
+    border: none;
+    border-radius: var(--radius-sm);
+    background: var(--surface-code);
+  }
+
+  .htmlPageNote {
+    display: grid;
+    place-items: center;
+    margin: 0;
+    padding: var(--space-2);
+    border-radius: var(--radius-sm);
+    background: var(--surface-code);
+    color: var(--text-2);
+    font-family: var(--font-sans);
+    font-size: var(--font-step-2-size);
+    text-align: center;
+  }
 }

@@ -52,7 +52,7 @@ function setup(path: string) {
       if (request.path === '/api/v1/areas') return Promise.resolve(ok([AREA, OTHER_AREA]));
       if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return Promise.resolve(ok([TRACK]));
       if (request.path === '/api/v1/areas/c2/tracks?includeClosed=true') return Promise.resolve(ok([]));
-      if (request.path === '/api/v1/tracks/w1') return Promise.resolve(ok(fixtureSnapshot(TRACK, [], { docRev: REPORT_CARD.payload.docRev, summary: REPORT_CARD.payload.summary, leadingComment: '', blocks: REPORT_CARD.payload.blocks.map(block => ({ ...block, markdown: block.payload.markdown ?? '' })) })));
+      if (request.path === '/api/v1/tracks/w1') return Promise.resolve(ok({ ...fixtureSnapshot(TRACK, [], { docRev: REPORT_CARD.payload.docRev, summary: REPORT_CARD.payload.summary, leadingComment: '', blocks: REPORT_CARD.payload.blocks.map(block => ({ ...block, markdown: block.payload.markdown ?? '' })) }), tasks: [{ id: 'task', trackId: 'w1', blockId: 'b-task', taskKey: 'ship-it', kind: 'command', ready: true, status: 'pending', createdAtMs: 1, updatedAtMs: 1 }] }));
       if (request.path === '/api/v1/tracks/w1/terminals') return Promise.resolve(ok([CARD]));
       if (request.path === '/api/v1/tracks/w1/report') return Promise.resolve(ok({ taskDiagnostics: [] }));
       return Promise.resolve(ok([]));

@@ -228,12 +228,6 @@
     color: var(--text-3);
   }
 
-  /* 4. Structured Trigger / Action / Assign schedule table for pending stages */
-  .scheduleWrap {
-    margin-block-start: var(--space-2);
-    overflow-x: auto;
-  }
-
   .scheduleTable {
     width: 100%;
     border-collapse: collapse;
@@ -269,15 +263,6 @@
   .scheduleTable td:last-child {
     padding-inline-end: 0;
     white-space: nowrap;
-  }
-
-  .assignTag {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-1);
-    font-family: var(--font-mono);
-    font-size: 0.75rem;
-    color: var(--text);
   }
 
   .assignKind {

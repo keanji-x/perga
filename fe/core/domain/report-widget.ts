@@ -1,7 +1,6 @@
 import { z } from 'zod';
-import { checkpointItemSchema, checkpointMetricSchema } from './report-checkpoints.js';
+import { editorialItemSchema, editorialMetricSchema, max2048CodePoints } from './report-editorial.js';
 import { flowProjectionSchema } from './report-flow.js';
-import { max2048CodePoints } from './report-table.js';
 
 export const WIDGET_MIN_HEIGHT = 48;
 export const WIDGET_MAX_HEIGHT = 2400;
@@ -13,8 +12,6 @@ export const widgetBlockPayloadSchema = z.strictObject({
   view: max2048CodePoints(z.string().min(1)),
   /** Default `seamless` for HTML widgets (zero white box, transparent bg, auto-height). */
   chrome: z.enum(['seamless', 'framed']).optional(),
-  /** Legacy field accepted when decoding stored widget blocks. */
-  selectionKey: max2048CodePoints(z.string().min(1)).optional(),
   title: max2048CodePoints(z.string()).nullish(),
   height: z.number().min(WIDGET_MIN_HEIGHT).max(WIDGET_MAX_HEIGHT).nullish(),
 });
@@ -22,15 +19,15 @@ export const widgetBlockPayloadSchema = z.strictObject({
 export type WidgetBlockPayload = z.infer<typeof widgetBlockPayloadSchema>;
 
 export const builtinListViewSchema = z.object({
-  items: z.array(checkpointItemSchema).max(100),
+  items: z.array(editorialItemSchema).max(100),
   title: max2048CodePoints(z.string()).nullish(),
   summary: max2048CodePoints(z.string()).nullish(),
   groups: z.array(max2048CodePoints(z.string().min(1))).max(100).nullish(),
-  metrics: z.array(checkpointMetricSchema).min(1).max(12).nullish(),
+  metrics: z.array(editorialMetricSchema).min(1).max(12).nullish(),
 });
 
 export const builtinTableViewSchema = z.object({
-  metrics: z.array(checkpointMetricSchema).max(12),
+  metrics: z.array(editorialMetricSchema).max(12),
 });
 
 export const templateViewDiagnosticSchema = z.object({

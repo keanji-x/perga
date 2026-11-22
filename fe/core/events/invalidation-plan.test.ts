@@ -11,7 +11,7 @@ describe('invalidation plan behavior', () => {
 
   it('carries confirmed Area deletion before dependent invalidations', () => {
     expect(invalidationPlanFor({ ev: 'area.deleted', data: { id: 'c1' } })).toEqual({
-      invalidate: [['areas'], ['overlays', 'track'], ['track-report']], remove: [],
+      invalidate: [['areas'], ['overlays', 'track']], remove: [],
       writeThrough: [{ mode: 'area-deleted', areaId: 'c1' }],
     });
   });
@@ -29,7 +29,6 @@ describe('invalidation plan behavior', () => {
     expect(invalidationPlanFor(event({ ev: 'track.updated', data: { id: 'w1', areaId: 'c1' } }))).toEqual({
       invalidate: [
         ['overlays', 'track'], ['tracks', 'c1'], ['track', 'w1'], ['track-template', 'w1'],
-        ['track-report'],
         ['track-views', 'w1'],
       ],
       remove: [],
@@ -40,9 +39,9 @@ describe('invalidation plan behavior', () => {
   it('removes deleted track detail after invalidating its remaining projections', () => {
     expect(invalidationPlanFor(event({ ev: 'track.deleted', data: { id: 'w1', area_id: 'c1' } }))).toEqual({
       invalidate: [
-        ['tracks', 'c1'], ['overlays', 'track'], ['track-report'],
+        ['tracks', 'c1'], ['overlays', 'track'],
       ],
-      remove: [['track', 'w1'], ['track-report', 'w1'], ['track-views', 'w1']],
+      remove: [['track', 'w1'], ['track-views', 'w1']],
       writeThrough: [],
     });
   });

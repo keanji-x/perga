@@ -40,11 +40,15 @@ export function setup(path: string, areaName: string = AREA.name, onRequest: (re
       if (request.path === '/api/v1/areas') return ok(areas);
       if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return ok([TRACK, OTHER_TRACK]);
       if (request.path === '/api/v1/areas/c2/tracks?includeClosed=true') return ok([]);
-      if (request.path === '/api/v1/tracks/w1') return ok(fixtureSnapshot(TRACK, [session], report));
+      if (request.path === '/api/v1/tracks/w1') return ok({ ...fixtureSnapshot(TRACK, [session], report), tasks: [
+        { id: 'layout', trackId: 'w1', blockId: 'b-task-layout', taskKey: 'mobile-layout',
+          kind: 'agent', ready: true, status: 'pending', createdAtMs: 1, updatedAtMs: 1 },
+        { id: 'touch', trackId: 'w1', blockId: 'b-task-touch', taskKey: 'touch-targets',
+          kind: 'agent', ready: false, status: 'draft', createdAtMs: 1, updatedAtMs: 1 },
+      ] });
       if (request.path === '/api/v1/tracks/w2') return ok(fixtureSnapshot(OTHER_TRACK));
       if (request.path === '/api/v1/tracks/w1/terminals') return ok([{ id: 'card-terminal', trackId: 'w1', title: 'Implementation terminal', cwd: '/tmp', status: 'exited', createdAtMs: 1 }]);
       if (request.path === '/api/v1/tracks/w1/sessions') return ok([session]);
-      if (request.path === '/api/v1/tracks/w1/report') return ok(report);
       if (request.path.startsWith('/api/v1/sessions/card-review/items?')) return ok(sessionPage(session));
       return Promise.resolve(ok([]));
     },

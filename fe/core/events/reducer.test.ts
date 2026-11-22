@@ -65,7 +65,7 @@ describe('event reducer behavior', () => {
     expect(result.effects).toEqual([
       { type: 'persist-cursor', id: 7 },
       { type: 'write-through', writes: [{ mode: 'area-deleted', areaId: 'c1' }] },
-      { type: 'invalidate', keys: [['areas'], ['overlays', 'track'], ['track-report']] },
+      { type: 'invalidate', keys: [['areas'], ['overlays', 'track']] },
     ]);
   });
 
@@ -78,7 +78,7 @@ describe('event reducer behavior', () => {
       expect(result.state.cursor).toBe(8);
       expect(result.effects).toEqual([
         { type: 'write-through', writes: [{ mode: 'area-deleted', areaId: 'c1' }] },
-        { type: 'invalidate', keys: [['areas'], ['overlays', 'track'], ['track-report']] },
+        { type: 'invalidate', keys: [['areas'], ['overlays', 'track']] },
       ]);
     }
     const zeroFromColdStart = reduceEventFrame(
@@ -87,7 +87,7 @@ describe('event reducer behavior', () => {
     );
     expect(zeroFromColdStart.effects).toEqual([
       { type: 'write-through', writes: [{ mode: 'area-deleted', areaId: 'c1' }] },
-      { type: 'invalidate', keys: [['areas'], ['overlays', 'track'], ['track-report']] },
+      { type: 'invalidate', keys: [['areas'], ['overlays', 'track']] },
     ]);
   });
 
@@ -117,9 +117,9 @@ describe('event reducer behavior', () => {
       { type: 'persist-cursor', id: 8 },
       {
         type: 'invalidate',
-        keys: [['tracks', 'c1'], ['overlays', 'track'], ['track-report']],
+        keys: [['tracks', 'c1'], ['overlays', 'track']],
       },
-      { type: 'remove', keys: [['track', 'w1'], ['track-report', 'w1'], ['track-views', 'w1']] },
+      { type: 'remove', keys: [['track', 'w1'], ['track-views', 'w1']] },
     ]);
   });
 });

@@ -8,7 +8,6 @@ import type { ReportSourceLinkTarget } from '../../../../../core/domain/report-s
 import type { ReportFileLinkTarget } from '../../../../../core/domain/report-file.ts';
 import { FileReadError, useReportFileResource } from '../../../systems/fs-viewers/public.tsx';
 import { useState } from '../../../ui/state/public.ts';
-import { ReportHtmlFrame } from '../html/public.tsx';
 import type { ReportLinkPreviewResources } from '../link-preview/public.tsx';
 import { ReportDocument } from '../document/public.tsx';
 import type { ReportSourceInsertion } from '../source/placement.ts';
@@ -101,7 +100,7 @@ export function ReportFileViewer({
               <button type="button" className={styles.view} aria-pressed={pageView === 'source'} onClick={() => { setPageView('source'); }}>Source</button>
             </div>
             {pageView === 'page'
-              ? <ReportHtmlFrame url={resource.url} title={resource.path} />
+              ? <WorkspaceHtmlPage url={resource.url} title={resource.path} />
               : <div className={styles.pageSource} data-nc-report-file-source=""><ReadOnlyCode text={resource.text} source={{ kind: 'filename', value: resource.path }} /></div>}
           </div>
         )}
@@ -129,4 +128,13 @@ export function ReportFileViewer({
       </div>
     </div></LayerDepthProvider>
   );
+}
+
+// The raw file route applies the same sandbox when a page is opened directly.
+function WorkspaceHtmlPage({ url, title }: Readonly<{ url: string; title: string }>) {
+  if (__NC_BUNDLED__) return <p className={styles.htmlPageNote} role="note">
+    Open this page on desktop: the mobile app does not show embedded pages.
+  </p>;
+  return <iframe className={styles.htmlPage} src={url} title={title} sandbox="allow-scripts"
+    referrerPolicy="no-referrer" loading="lazy" />;
 }

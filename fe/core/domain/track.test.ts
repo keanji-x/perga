@@ -30,7 +30,6 @@ trackOverlayPayload,
 trackRecentAt,tracksInAreaOperation,
 updateTrackOperation,
 userVisibleTracks,
-type OverlayWire,
 type Track
 } from './track.js';
 
@@ -426,53 +425,6 @@ describe('isBlankForKernel', () => {
     expect(isBlankForKernel('hi')).toBe(false);
     expect(isBlankForKernel('  keep indentation  ')).toBe(false);
     expect(isBlankForKernel('\u0085x\u0085')).toBe(false);
-  });
-});
-
-describe('trackOverlayPayload', () => {
-  const overlay = (over: Partial<OverlayWire>): OverlayWire => ({
-    id: 'o1',
-    plugin_id: 'dev-neige-binance',
-    entity_kind: 'track',
-    entity_id: 't1',
-    kind: 'portfolio.holdings',
-    payload: { columns: [], rows: [] },
-    updated_at: 1,
-    ...over,
-  });
-  const SOURCE = 'perga://plugin/dev-neige-binance/portfolio.holdings';
-
-  it('returns the payload of the overlay the source addresses', () => {
-    expect(trackOverlayPayload('t1', [overlay({})], SOURCE))
-      .toEqual({ columns: [], rows: [] });
-  });
-
-  it('does not cross tracks, plugins, kinds or entity kinds', () => {
-    // Each of these differs from the addressed overlay in exactly one field.
-    const wrong = [
-      overlay({ entity_id: 't2' }),
-      overlay({ plugin_id: 'other-plugin' }),
-      overlay({ kind: 'portfolio.history' }),
-      overlay({ entity_kind: 'card' }),
-    ];
-    for (const row of wrong) {
-      expect(trackOverlayPayload('t1', [row], SOURCE)).toBeUndefined();
-    }
-    expect(trackOverlayPayload('t1', [...wrong, overlay({})], SOURCE))
-      .toEqual({ columns: [], rows: [] });
-  });
-
-  it('returns undefined for a source that is not a plugin overlay reference', () => {
-    for (const source of [
-      'perga://track/t1#b_x',
-      'https://example.com/x',
-      'perga://plugin/only-one',
-      'perga://plugin/a/b/c',
-      'perga://plugin//portfolio.holdings',
-      'perga://plugin/dev-neige-binance/',
-    ]) {
-      expect(trackOverlayPayload('t1', [overlay({})], source)).toBeUndefined();
-    }
   });
 });
 

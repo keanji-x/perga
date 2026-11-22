@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ReportTaskRow } from '../domain/report.js';
+import type { ReportTaskRow } from '../domain/track-task-inventory.js';
 import { NEUTRAL_ACTIVITY, type CardWire } from '../domain/track.js';
 import { deriveTrackPageView } from './track-page.js';
 

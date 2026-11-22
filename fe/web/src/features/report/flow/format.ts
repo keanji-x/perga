@@ -1,6 +1,6 @@
 // Pure formatting, state classification, and priority selection helpers for `builtin:flow`.
 
-import type { CheckpointItem, CheckpointStatus } from '../../../../../core/domain/report-checkpoints.ts';
+import type { EditorialListItem, EditorialListStatus } from '../../../../../core/domain/report-editorial.ts';
 import type {
   FlowArchivedNodeProjection,
   FlowNodeProjection,
@@ -204,9 +204,9 @@ export function formatDoKindLabel(doKind: FlowNodeProjection['doKind']): string 
   }
 }
 
-export function toEditorialBylineItem(node: FlowNodeProjection): CheckpointItem {
+export function toEditorialBylineItem(node: FlowNodeProjection): EditorialListItem {
   const visual = classifyFlowNodeState(node);
-  let status: CheckpointStatus;
+  let status: EditorialListStatus;
   switch (visual) {
     case 'ok':
       status = 'done';

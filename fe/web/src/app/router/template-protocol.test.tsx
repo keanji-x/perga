@@ -24,7 +24,7 @@ it('loads the current manifest and sends typed edits through the production rout
       track = { ...track, templateInputs: request.body };
       return Promise.resolve(ok(track));
     }
-    if (request.path === `${base}/template`) return Promise.resolve(ok({ snapshot: 'source', manifest: { id: 'agents-delivery', flow: [], inputsSchema: { count: { type: 'number' } } }, inputs: track.templateInputs, state: {} }));
+    if (request.path === `${base}/template`) return Promise.resolve(ok({ snapshot: 'source', manifest: { id: 'agents-delivery', flow: [], inputsSchema: { count: { type: 'number' } } }, inputs: track.templateInputs, data: {} }));
     if (request.path === base) return Promise.resolve(ok(fixtureSnapshot(track, [], fixtureReport('# Report'))));
     if (request.path === `${base}/views`) return Promise.resolve(ok({ templateId: 'agents-delivery', views: {}, widgets: {}, diagnostics: [] }));
     if (request.path === `${base}/report`) return Promise.resolve(ok({ taskDiagnostics: [] }));

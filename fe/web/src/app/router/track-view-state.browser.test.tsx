@@ -36,7 +36,11 @@ function setup(prepareReport: ReportPreparationPort = prepareReportDocument, ini
     if (request.path === '/api/v1/areas/area/tracks?includeClosed=true') body = tracks;
     if (request.path === '/api/settings') body = {};
     for (const track of tracks) {
-      if (request.path === `/api/v1/tracks/${track.id}`) body = fixtureSnapshot(track, [], serverReports.get(track.id));
+      if (request.path === `/api/v1/tracks/${track.id}`) body = {
+        ...fixtureSnapshot(track, [], serverReports.get(track.id)),
+        tasks: withProgress ? [{ id: 'task', trackId: track.id, blockId: 'progress-task', taskKey: 'progress-task',
+          kind: 'agent', ready: true, status: 'pending', createdAtMs: 1, updatedAtMs: 1 }] : [],
+      };
       if (request.path === `/api/v1/tracks/${track.id}/report`) body = { taskDiagnostics: [] };
     }
     return { status: 200, statusText: 'OK', body };

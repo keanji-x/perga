@@ -18,20 +18,20 @@ describe('invalidation plan contract', () => {
     expect(() => noop('')).toThrow(TypeError);
   });
 
-  it('refreshes active task diagnostics when a budget or admission setting changes', () => {
+  it('refreshes the Track snapshot when a budget or admission setting changes', () => {
     const event = { ev: 'track.updated', data: { id: 'track-7', areaId: 'area-1' } } as Extract<
       WireEvent,
       { ev: 'track.updated' }
     >;
-    expect(invalidationPlanFor(event).invalidate).toContainEqual(['track-report']);
+    expect(invalidationPlanFor(event).invalidate).toContainEqual(['track', 'track-7']);
   });
 
-  it('refreshes cross-area reference diagnostics after an area disappears', () => {
+  it('refreshes Track overlays after an area disappears', () => {
     const event = { ev: 'area.deleted', data: { id: 'target-area' } } as Extract<
       WireEvent,
       { ev: 'area.deleted' }
     >;
-    expect(invalidationPlanFor(event).invalidate).toContainEqual(['track-report']);
+    expect(invalidationPlanFor(event).invalidate).toContainEqual(['overlays', 'track']);
   });
 
   it('[type-only] rejects a policy map missing any wire event kind', () => {
