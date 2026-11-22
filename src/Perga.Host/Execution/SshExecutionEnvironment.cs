@@ -11,6 +11,7 @@ public sealed class SshExecutionEnvironment : IExecutionEnvironment
 {
     private readonly SshTargetConfig _config;
     private readonly SshTerminalBridgeClient _terminals;
+    private readonly SshMcpTunnel _mcpTunnel;
     private int _disposed;
 
     public SshExecutionEnvironment(SshTargetConfig config)
@@ -50,6 +51,7 @@ public sealed class SshExecutionEnvironment : IExecutionEnvironment
         Shell = new SshShellCommandRunner(config);
         Files = new SshExecutionFileSystem(config);
         _terminals = new SshTerminalBridgeClient(config);
+        _mcpTunnel = new SshMcpTunnel(config);
     }
 
     public ExecutionTargetDto Descriptor { get; }
@@ -68,7 +70,7 @@ public sealed class SshExecutionEnvironment : IExecutionEnvironment
         ct.ThrowIfCancellationRequested();
         if (!string.IsNullOrWhiteSpace(_config.McpBaseUriOverride))
         {
-            return Task.FromResult(_config.McpBaseUriOverride);
+            return Task.FromResult(_config.McpBaseUriOverride.TrimEnd('/'));
         }
 
         if (_config.IsLoopbackHost)
@@ -76,9 +78,7 @@ public sealed class SshExecutionEnvironment : IExecutionEnvironment
             return Task.FromResult(hostMcpBaseUri);
         }
 
-        throw KernelException.PreconditionFailed(
-            $"Remote SSH target '{_config.TargetId}' ({_config.Host}) requires ExecutionTargets:{_config.TargetId}:McpBaseUriOverride " +
-            $"pointing to a reachable Host MCP endpoint.");
+        return _mcpTunnel.EnsureTunnelUriAsync(hostMcpBaseUri, ct);
     }
 
     public async ValueTask DisposeAsync()
@@ -90,6 +90,7 @@ public sealed class SshExecutionEnvironment : IExecutionEnvironment
 
         await AgentRuntime.DisposeAsync().ConfigureAwait(false);
         await _terminals.DisposeAsync().ConfigureAwait(false);
+        await _mcpTunnel.DisposeAsync().ConfigureAwait(false);
         await SshCommandBuilder.TryCloseControlMasterAsync(_config).ConfigureAwait(false);
         try
         {

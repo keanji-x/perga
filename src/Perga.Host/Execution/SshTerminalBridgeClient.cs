@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Net.WebSockets;
+using System.Runtime.InteropServices;
 using Perga.Host.Terminals;
 using Perga.TermClient;
 
@@ -23,6 +24,7 @@ public sealed class SshTerminalBridgeClient : ITerminalBridgeClient, IHostTermin
     private string? _localUdsPath;
     private string? _remoteSocketDir;
     private string? _remotePidFile;
+    private string? _resolvedRemoteBridgeBin;
     private int _disposed;
 
     public SshTerminalBridgeClient(SshTargetConfig config)
@@ -115,6 +117,7 @@ public sealed class SshTerminalBridgeClient : ITerminalBridgeClient, IHostTermin
             await CleanupBrokenSessionAsync().ConfigureAwait(false);
             _config.EnsureControlDirectoryExists();
 
+            var bridgeBin = await ResolveRemoteBridgeExecutableAsync(ct).ConfigureAwait(false);
             var runToken = Guid.NewGuid().ToString("N")[..10];
             var remoteDir = $"/tmp/pg-tb-{runToken}";
             var remoteUds = $"{remoteDir}/tb.sock";
@@ -123,7 +126,6 @@ public sealed class SshTerminalBridgeClient : ITerminalBridgeClient, IHostTermin
             if (OperatingSystem.IsWindows()) Directory.CreateDirectory(localDir);
             else Directory.CreateDirectory(localDir, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
             var localUds = Path.Combine(localDir, "tb.sock");
-            var bridgeBin = _config.TerminalBridgeExecutablePath ?? "perga-term-bridge";
             var launchBody =
                 $"umask 077\n" +
                 $"mkdir -p -- {SshCommandBuilder.QuotePosix(remoteDir)}\n" +
@@ -247,6 +249,40 @@ public sealed class SshTerminalBridgeClient : ITerminalBridgeClient, IHostTermin
         {
             _initLock.Release();
         }
+    }
+
+    private async Task<string> ResolveRemoteBridgeExecutableAsync(CancellationToken ct)
+    {
+        if (_resolvedRemoteBridgeBin is not null) return _resolvedRemoteBridgeBin;
+        if (_config.TerminalBridgeExecutablePath is { } configured) return _resolvedRemoteBridgeBin = configured;
+        var (code, path, _) = await SshCommandBuilder.RunTextAsync(_config,
+            SshCommandBuilder.BuildRemotePathBootstrapScript() + "\ncommand -v perga-term-bridge 2>/dev/null", ct: ct).ConfigureAwait(false);
+        if (code == 0 && !string.IsNullOrWhiteSpace(path)) return _resolvedRemoteBridgeBin = path.Trim();
+
+        var (unameCode, uname, unameErr) = await SshCommandBuilder.RunTextAsync(_config, "uname -sm", ct: ct).ConfigureAwait(false);
+        if (unameCode != 0)
+            throw new TerminalBridgeException($"Failed to query OS/architecture for target '{_config.TargetId}': {unameErr.Trim()}");
+        var arch = RuntimeInformation.ProcessArchitecture switch
+        {
+            Architecture.X64 => "x86_64", Architecture.Arm64 => "aarch64", _ => null
+        };
+        var hostOsArch = $"{(OperatingSystem.IsLinux() ? "Linux" : RuntimeInformation.OSDescription)} {arch ?? RuntimeInformation.ProcessArchitecture.ToString()}";
+        var message = $"Remote target '{_config.TargetId}' ({uname.Trim()}) does not have 'perga-term-bridge' installed and cannot auto-stage from host ({hostOsArch}). " +
+            "Install 'perga-term-bridge' on the remote PATH or configure TerminalBridgeExecutablePath.";
+        if (!OperatingSystem.IsLinux() || arch is null || uname.Trim() != $"Linux {arch}")
+            throw new TerminalBridgeException($"OS/architecture mismatch. {message}");
+        string localBin;
+        try
+        {
+            localBin = await TerminalBridgeDaemon.ResolveOrBuildExecutableAsync(
+                _config.HostTerminalBridgeExecutablePath, buildIfMissing: false, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is TerminalBridgeException or FileNotFoundException)
+        {
+            throw new TerminalBridgeException($"{message} {ex.Message}");
+        }
+        return _resolvedRemoteBridgeBin = await SshCommandBuilder.StageFileAsync(_config,
+            localBin, "perga-term-bridge", string.Empty, executable: true, ct).ConfigureAwait(false);
     }
 
     private async Task CleanupBrokenSessionAsync()

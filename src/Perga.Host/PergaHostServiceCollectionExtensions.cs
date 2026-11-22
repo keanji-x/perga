@@ -172,7 +172,8 @@ public static class PergaHostServiceCollectionExtensions
                         $"Unsupported execution target kind '{targetOpts.Kind}' for target '{targetId}'. Supported kinds: ssh.");
                 }
 
-                var sshConfig = new SshTargetConfig(targetId, targetOpts, opts.OarBridgeScriptPath);
+                var sshConfig = new SshTargetConfig(targetId, targetOpts, opts.OarBridgeScriptPath,
+                    hostTerminalBridgeExecutablePath: opts.TerminalBridgeExecutablePath);
                 environments.Add(new SshExecutionEnvironment(sshConfig));
             }
 

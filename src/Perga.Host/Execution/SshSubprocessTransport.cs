@@ -1,6 +1,5 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
-using System.Security.Cryptography;
 using System.Text;
 using Perga.AgentKit;
 
@@ -205,35 +204,8 @@ public sealed class SshSubprocessTransport : ISubprocessTransport
             }
         }
 
-        // Auto-stage perga-oar-bridge.mjs into the target's private runtime directory (works for 0700 host homes & remote SSH).
-        var scriptBytes = File.ReadAllBytes(fullLocalPath);
-        var sha256 = Convert.ToHexString(SHA256.HashData(scriptBytes)).ToLowerInvariant();
-        var runtimeDir = $"{_config.WorkspacesRoot.TrimEnd('/')}/.perga-runtime";
-        var stagedPath = $"{runtimeDir}/perga-oar-bridge-{sha256[..12]}.mjs";
-
-        var qDir = SshCommandBuilder.QuotePosix(runtimeDir);
-        var qStaged = SshCommandBuilder.QuotePosix(stagedPath);
-        var (existsCode, _, _) = SshCommandBuilder
-            .RunTextAsync(_config, $"[ -f {qStaged} ] && [ -s {qStaged} ]", stdin: null, CancellationToken.None)
-            .GetAwaiter()
-            .GetResult();
-
-        if (existsCode != 0)
-        {
-            var qTemp = SshCommandBuilder.QuotePosix($"{stagedPath}.tmp.{Guid.NewGuid():N}");
-            var stageScript =
-                $"umask 077; trap {SshCommandBuilder.QuotePosix($"rm -f -- {qTemp}")} EXIT; " +
-                $"mkdir -p -- {qDir} && cat > {qTemp} && mv -f -- {qTemp} {qStaged}";
-            var (stageCode, _, stageErr) = SshCommandBuilder
-                .RunBytesAsync(_config, stageScript, scriptBytes, CancellationToken.None)
-                .GetAwaiter()
-                .GetResult();
-            if (stageCode != 0)
-            {
-                throw new IOException(
-                    $"Failed to stage perga-oar-bridge.mjs onto target '{_config.TargetId}' at '{stagedPath}': {stageErr.Trim()}");
-            }
-        }
+        var stagedPath = SshCommandBuilder.StageFileAsync(_config, fullLocalPath,
+            "perga-oar-bridge", ".mjs", executable: false, CancellationToken.None).GetAwaiter().GetResult();
 
         lock (_cacheLock)
         {
