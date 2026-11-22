@@ -1,14 +1,26 @@
 # Perga
 
-轻量级 Agent-Native 本地研发与长周期工作区（**.NET 11 微内核 + 零耦合独立底座库 + 提纯 Rust `rmux` 终端守护 + 原生 Jujutsu `jj`**），前端沿用 `fe/`（React + TypeScript + Astryx Design），前后端通过精简的 `/api/v1`、WebSocket 与多源 `/mcp/*` 协同工作。
+A task-driven organization of AI agents for long-horizon work.
 
-## 持续集成与发布
+Perga moves multi-day and multi-week work — maintaining a repository, driving engineering OKRs, or running ongoing research — out of scrolling chat tabs. Each goal gets its own isolated **Track**: conversation stays in the side pane while the main view continuously distills a read-only living report backed by kernel-verified facts. Orchestrate the CLIs you already use (Claude Code, Codex, ACP) with lightweight protocols, enforced cross-model review, and zero-token external watches.
 
-提交到 `main`、向 `main` 提交 PR，或在 GitHub Actions 手动运行 **CI and release**，都会执行 .NET 测试、Rust 终端桥检查，以及前端 lint、测试和构建。Chromium 测试单独运行。由于主分支已有失败用例，该作业在首个失败或达到时限时结束并报告结果。其余检查通过后，Actions 会验证打包后的服务能启动、终端桥可用、Web 页面和静态资源可访问，并上传 `perga-linux-x64` 构建产物。
+## Key Capabilities
 
-推送 `vX.Y.Z` 格式的标签（例如 `v0.1.0`）会执行同一流程，并将验证通过的 Linux x64 压缩包及 SHA-256 校验文件发布到 GitHub Releases。
+- **Living reports over drifting chat.** Keep conversation in the margin and anchor long-running state in a read-only report combining schema-validated ledgers with non-forgeable kernel facts (task status, actual model, gate exit codes, timestamps). Context limits trigger native compaction or report-anchored epoch handover.
+- **Heterogeneous agents with shared control.** A single Lead coordinates Claude Code, Codex, and ACP workers inside the same track. Execution is structurally separated from acceptance, reviews can be enforced on a different model, and humans share the exact same live stream, steering, interrupt, and model controls as the Lead.
+- **Unified flows and zero-token watches.** A lightweight declarative `flow.json` unifies parallel dependencies, `cron`/`at` schedules, and zero-token external probes (`prChecks` or shell commands). Nothing spends tokens while idle; state changes and exceptions wake the Lead to decide next steps.
+- **Real isolated workspaces, local sovereignty.** Isolate tracks via Git worktrees, Jujutsu (`jj`), Linux OverlayFS (shared prewarmed build caches), or remote SSH targets. Terminals run in an independent Rust bridge (`perga-term-bridge`) that survives host upgrades, and all state stays in a local SQLite database you own.
+- **Zero-template start, progressive structure.** Start any track with a single sentence. Attach a lightweight built-in protocol (27–40 lines) or ask the Lead to author one only when recurring rules and guardrails emerge.
 
-解包后的服务需要 ASP.NET Core 11 运行时。进入 `perga` 目录启动服务，然后打开 [本地 Web 界面](http://127.0.0.1:4041/)。
+## Built-in Protocols
+
+- [`agents-delivery`](templates/agents-delivery) — Zero-schema delivery protocol: `builtin:flow` orchestration, enforced read-write verification gates, and enforced read-only cross-model review routing.
+- [`okr-loop`](templates/okr-loop) — Stable Objective, four-column KR ledger (`builtin:table`) with kernel-stamped updates, daily `cron` metric collection, enforced triage routing, and `builtin:flow` tracking.
+- [`equity-research`](templates/equity-research) — Frameless valuation range axis, event expectation timeline (`builtin:list`), evergreen thesis notes, weekly `cron` valuation refresh, on-demand `at` event checks, and enforced cross-model review routing.
+
+## Quickstart
+
+Download the latest verified archive from GitHub Releases (requires the **ASP.NET Core 11** runtime and at least one configured agent CLI such as `claude`, `codex`, or an ACP provider):
 
 ```sh
 sha256sum -c perga-linux-x64.tar.gz.sha256
@@ -18,20 +30,33 @@ PERGA_DATA_DIR="$PWD/data" PERGA_STATIC_WEB_DIR="$PWD/web" \
   dotnet Perga.Host.dll --urls http://127.0.0.1:4041
 ```
 
-## 仓库目录结构
+Open [http://127.0.0.1:4041/](http://127.0.0.1:4041/) in your browser (installable as a PWA on desktop and mobile).
 
-- `DESIGN.md`：当前架构、工程依赖、核心接口契约与存储设计。
-- `fe/`：React 前端与架构校验工具链，通过 `/api/v1` 对接 Host。
-- `tools/perga-term-bridge/`：Rust 终端桥与持久化 PTY 守护。
-- `docs/`：当前架构设计记录与 Flow JSON Schema。
-- `libs/`、`src/`、`templates/`、`tests/`：独立底座库、服务实现、模板包与测试。
+### Codex in Linux Sandboxes
 
-## Linux 沙箱中的 Codex
+Sandboxed tasks store Codex state in an isolated session directory under Perga's data directory. Configure the OpenAI API key for sandboxed tasks via the Host setting `Perga__CodexSandboxApiKey`. Standard Codex CLI ChatGPT login continues to be managed by the CLI itself.
 
-沙箱任务把 Codex 状态存放在 Perga 数据目录的独立会话目录。通过 Host 的
-`Perga__CodexSandboxApiKey` 配置这类任务使用的 OpenAI API 密钥。普通 Codex CLI 的
-ChatGPT 登录由原 CLI 管理。
+## CI and Releases
 
-## 许可证
+Pushes to `main`, pull requests targeting `main`, and manual runs of **CI and release** in GitHub Actions run .NET tests, Rust terminal bridge checks, and frontend lint, unit tests, and production builds. Chromium browser tests run as a separate job. After checks pass, Actions verifies that the packaged host boots, the terminal bridge responds, and static web assets are served, then uploads the `perga-linux-x64` artifact.
 
-遵循 [LICENSE](LICENSE)（Apache License 2.0）。
+Pushing a `vX.Y.Z` tag (for example `v0.1.0`) runs the same pipeline and publishes the verified Linux x64 archive and SHA-256 checksum to GitHub Releases.
+
+## Documentation
+
+### Product
+- [Vision and Fundamental Tensions](docs/product/vision.md) — Core premise, four orthogonal tensions, AI vs. human organizational asymmetries, and long-term vision
+- [Product Design and Prioritized Pain Points](docs/product/design.md) — Concrete `P0`–`P3` pain points, minimal solutions, deliberate trade-offs, deferred scope, and paradigm comparison
+- [Scenario Overview](docs/product/scenarios/README.md) — Progressive complexity across `agents-delivery`, `okr-loop`, and `equity-research`
+- [Software Development Scenarios](docs/product/scenarios/software-development.md) — Bottom-up user flows across 6 engineering scenarios (bug fixing, features, RFC design, module maintenance, ops, and refactoring), commonalities, differences, and design questions
+
+### Architecture & Operations
+- [Architecture Reference](DESIGN.md) — 18-project .NET topology, dependency matrix, core modules, and contracts
+- [Unified Track Flow Architecture](docs/design/unified-track-flow-architecture.md) — Declarative `flow.json` engine and read-only `builtin:flow` projection
+- [Template Taste & Information Design](docs/design/template-taste.md) — Editorial read-only report principles
+- [Linux OverlayFS Workspaces](docs/track-overlayfs.md) — Prewarmed build cache sharing and namespace mount setup
+- [Self-Hosted Installation & Hot Upgrades](docs/design/install-and-upgrade.md) — Dual systemd user services and zero-downtime upgrades
+
+## License
+
+Licensed under the [Apache License 2.0](LICENSE).
