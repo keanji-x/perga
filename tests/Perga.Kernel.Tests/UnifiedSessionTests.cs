@@ -148,10 +148,12 @@ public sealed class UnifiedSessionTests
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
         var receipt = await FlowFixture.StartWorkerAsync(ctx.Kernel, snapshot.Track.Id, FlowFixture.Worker("settled", "inspect"));
         await ctx.Kernel.WaitForTrackIdleAsync(snapshot.Track.Id);
+        var provider = ctx.AgentRuntime.OpenedSessions.Single(s => s.LaunchSpec.StateKey == receipt.Session.Id);
         if (outcome == "done") await ctx.Kernel.CompleteTaskDoneAsync(snapshot.Track.Id, receipt.Session.Id);
         else if (outcome == "failed") await ctx.Kernel.CompleteTaskFailAsync(snapshot.Track.Id, receipt.Session.Id, "failed");
         else await ctx.Kernel.CancelTaskAsync(snapshot.Track.Id, null, receipt.Task!.Id);
         await ctx.Kernel.WaitForTrackIdleAsync(snapshot.Track.Id);
+        Assert.True(provider.Disposed);
         var summary = Assert.Single(await ctx.Kernel.ListSessionsAsync(snapshot.Track.Id, new(), Human, default),
             s => s.Session.Id == receipt.Session.Id);
         Assert.Null(summary.ReadonlyReason);

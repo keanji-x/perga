@@ -16,9 +16,7 @@ public sealed class NotificationWatermarkTests
     {
         await using var ctx = new KernelTestContext(new KernelOptions
         {
-            // This tests overlay fallback across disposal, not the idle-age threshold.
-            // Use a manual zero-age sweep so late startup cleanup cannot reset a virtual idle interval.
-            ActorIdleTimeout = TimeSpan.Zero, ActorEvictionSweepInterval = TimeSpan.Zero
+            ActorIdleTimeout = TimeSpan.FromMinutes(1), ActorEvictionSweepInterval = TimeSpan.Zero
         });
         var (_, snap) = await ctx.CreateDefaultTrackAsync();
         var stored = Assert.Single((await ctx.Kernel.GetOverlaysAsync()).Tracks) with
@@ -28,6 +26,7 @@ public sealed class NotificationWatermarkTests
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         // Awaiting an overlay result does not imply its mailbox finally or workspace cleanup has finished.
         await ctx.WaitForActorQuiescenceAsync(snap.Track.Id, deadline.Token);
+        ctx.Time.Advance(TimeSpan.FromMinutes(1));
         var selected = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var release = new ManualResetEventSlim();
         var lookups = 0;

@@ -786,6 +786,7 @@ public sealed partial class TrackActor
                     await PersistAndEmitTaskUpdatedCoreAsync(settledTask, nextTemplateState, now, verificationToken, summarySb.ToString())
                         .ConfigureAwait(false);
 
+                    if (current.SessionId is { } sid) actor.ScheduleSessionRuntimeCloseCore(sid);
                     await actor.EvaluateFlowAfterTriggersCoreAsync(verificationToken).ConfigureAwait(false);
                     await ScheduleEligibleTasksCoreAsync(verificationToken).ConfigureAwait(false);
                     await actor.TryRunFlowGcCoreAsync(verificationToken).ConfigureAwait(false);
@@ -866,6 +867,7 @@ public sealed partial class TrackActor
                         : $"Task '{updatedTask.TaskKey}' (run #{updatedTask.RunCount}) failed: {reason}\n{policyNote}";
                     await PersistAndEmitTaskUpdatedCoreAsync(updatedTask, nextTemplateState, now, ct, msg)
                         .ConfigureAwait(false);
+                    if (current.SessionId is { } sid) actor.ScheduleSessionRuntimeCloseCore(sid);
                     await ScheduleEligibleTasksCoreAsync(ct).ConfigureAwait(false);
                     await actor.OnTaskSettledFlowHookCoreAsync(updatedTask, ct).ConfigureAwait(false);
 

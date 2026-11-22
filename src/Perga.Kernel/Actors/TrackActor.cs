@@ -54,7 +54,7 @@ public sealed partial class TrackActor : IAsyncDisposable
     private MountedWorkspace? _mountedWorkspace;
     private readonly Dictionary<string, AgentSessionDto> _sessions = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _nextTurnIndexBySession = new(StringComparer.Ordinal);
-    private readonly SessionRuntimeRegistry _runtimes = new();
+    private readonly SessionRuntimeRegistry _runtimes;
     private readonly object _disposeSync = new();
     private Task? _disposeTask;
     private readonly TerminalLifecycle _terminalLifecycle;
@@ -101,6 +101,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         _eventHub = eventHub;
         _options = options;
         _timeProvider = timeProvider;
+        _runtimes = new(timeProvider);
         _lastActivityAtMs = NowMs();
 
         _mailbox = Channel.CreateUnbounded<Func<TrackActor, Task>>(new UnboundedChannelOptions
@@ -126,13 +127,16 @@ public sealed partial class TrackActor : IAsyncDisposable
         !_backgroundJobs.IsEmpty ||
         _scheduler.HasActiveWork;
 
+    internal bool CanEvictIdleActor =>
+        !HasActiveWork && (_options.SessionIdleTimeout <= TimeSpan.Zero || !_runtimes.HasOpenHandles);
+
     public bool IsSessionOrTaskRunning =>
         _scheduler.HasActiveTurns || _taskCoordinator.HasActiveWork || _activeWatches.Count > 0 || _scheduler.HasDispatchingInputs;
 
-    public async Task<T> EnqueueAsync<T>(Func<TrackActor, Task<T>> work, CancellationToken ct = default)
+    public async Task<T> EnqueueAsync<T>(Func<TrackActor, Task<T>> work, CancellationToken ct = default, bool touchActivity = true)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        TouchActivity();
+        if (touchActivity) TouchActivity();
         Interlocked.Increment(ref _queuedMailboxOps);
 
         var tcs = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -140,7 +144,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         {
             try
             {
-                TouchActivity();
+                if (touchActivity) TouchActivity();
                 var result = await work(actor).ConfigureAwait(false);
                 tcs.TrySetResult(result);
             }
@@ -150,7 +154,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             }
             finally
             {
-                TouchActivity();
+                if (touchActivity) TouchActivity();
                 Interlocked.Decrement(ref _queuedMailboxOps);
             }
         });
@@ -164,13 +168,13 @@ public sealed partial class TrackActor : IAsyncDisposable
         return await tcs.Task.WaitAsync(ct).ConfigureAwait(false);
     }
 
-    public Task EnqueueAsync(Func<TrackActor, Task> work, CancellationToken ct = default)
+    public Task EnqueueAsync(Func<TrackActor, Task> work, CancellationToken ct = default, bool touchActivity = true)
     {
         return EnqueueAsync<bool>(async actor =>
         {
             await work(actor).ConfigureAwait(false);
             return true;
-        }, ct);
+        }, ct, touchActivity);
     }
 
     // ------------------- Public Actor Operations -------------------

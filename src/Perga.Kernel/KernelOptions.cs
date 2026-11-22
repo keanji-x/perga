@@ -12,6 +12,7 @@ public sealed record KernelOptions
     public int MaxSessionSpawnDepth { get; init; } = 2;
     public string DefaultWorkspaceDriver { get; init; } = "direct";
     public TimeSpan ActorIdleTimeout { get; init; } = TimeSpan.FromMinutes(10);
+    public TimeSpan SessionIdleTimeout { get; init; } = TimeSpan.FromMinutes(15);
     public TimeSpan ActorEvictionSweepInterval { get; init; } = TimeSpan.FromMinutes(1);
     public double AutoCompactionThreshold { get; init; } = 0.80;
     public string McpBaseUri { get; init; } = "http://127.0.0.1:5000";

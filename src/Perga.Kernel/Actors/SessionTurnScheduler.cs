@@ -28,9 +28,18 @@ public sealed partial class TrackActor
         public bool HasDispatchingInputs => _sessions.Values.Any(s => Volatile.Read(ref s.DispatchInputId) is not null);
 
         public bool HasRecoveringSessions => _sessions.Values.Any(s => s.Recovering);
-        public bool HasActiveWork => actor._runtimes.HasActiveWork || _sessions.Values.Any(s =>
-            s.Active is not null || s.Compacting || s.Recovering || s.Reservation is not null ||
-            s.Steering is not null || Volatile.Read(ref s.DispatchInputId) is not null);
+        public bool HasActiveWork => actor._runtimes.HasActiveWork || _sessions.Values.Any(s => !IsIdle(s));
+
+        public bool IsIdleForRuntimeClose(string id, string? allowDispatchInputId = null) =>
+            !_sessions.TryGetValue(id, out var state) || IsIdle(state, allowDispatchInputId);
+
+        private static bool IsIdle(SessionState state, string? allowDispatchInputId = null)
+        {
+            lock (state)
+                return state.Active is null && !state.Compacting && !state.Recovering &&
+                    state.Reservation is null && state.Steering is null &&
+                    (Volatile.Read(ref state.DispatchInputId) is not { } dispatch || dispatch == allowDispatchInputId);
+        }
 
         public bool IsBusy(string id) => HasActive(id) || IsCompacting(id) || IsRecovering(id);
         public bool IsCompacting(string id) => _sessions.TryGetValue(id, out var state) && state.Compacting;
@@ -53,10 +62,13 @@ public sealed partial class TrackActor
             actor._runtimes.Get(id).EndLaunch();
             if (_sessions.TryGetValue(id, out var state))
             {
-                state.Active = null;
-                state.Reservation = null;
-                state.Steering = null;
-                Interlocked.Exchange(ref state.DispatchInputId, null);
+                lock (state)
+                {
+                    state.Active = null;
+                    state.Reservation = null;
+                    state.Steering = null;
+                    Interlocked.Exchange(ref state.DispatchInputId, null);
+                }
             }
         }
 
@@ -78,7 +90,11 @@ public sealed partial class TrackActor
 
         // Reservation
         public bool HasReservation(string id) => _sessions.TryGetValue(id, out var state) && state.Reservation is not null;
-        public void ReleaseReservation(string id) => State(id).Reservation = null;
+        public void ReleaseReservation(string id)
+        {
+            var state = State(id);
+            lock (state) state.Reservation = null;
+        }
         public bool TryGetReservation(string id, out Guid value)
         {
             var reservation = _sessions.TryGetValue(id, out var state) ? state.Reservation : null;
@@ -88,14 +104,26 @@ public sealed partial class TrackActor
 
         public void Reserve(string id, Guid value)
         {
-            if (State(id).Reservation is not null) throw KernelException.Conflict("The session is already reserved.");
-            State(id).Reservation = value;
+            var state = State(id);
+            lock (state)
+            {
+                if (state.Reservation is not null) throw KernelException.Conflict("The session is already reserved.");
+                state.Reservation = value;
+            }
         }
 
         // Steering
         public bool IsSteering(string id) => _sessions.TryGetValue(id, out var state) && state.Steering is not null;
-        public void SetSteering(string id, (string InputId, Task Attempt) value) => State(id).Steering = value;
-        public void EndSteering(string id) => State(id).Steering = null;
+        public void SetSteering(string id, (string InputId, Task Attempt) value)
+        {
+            var state = State(id);
+            lock (state) state.Steering = value;
+        }
+        public void EndSteering(string id)
+        {
+            var state = State(id);
+            lock (state) state.Steering = null;
+        }
         public bool TryGetSteering(string id, out (string InputId, Task Attempt) value)
         {
             var steer = _sessions.TryGetValue(id, out var state) ? state.Steering : null;

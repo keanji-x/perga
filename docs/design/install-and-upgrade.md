@@ -106,9 +106,13 @@ After=<name>-term.service
 Type=simple
 WorkingDirectory=<root>
 ExecStart=/usr/bin/python3 <root>/bin/perga_host.py --name <name> --term-socket %t/<name>/term.sock
+TasksMax=65536
 UMask=0077
 Restart=on-failure
 ```
+
+`TasksMax=65536` gives concurrent providers and their subprocesses headroom as
+Perga evicts idle and settled provider handles.
 
 Both install into `default.target`. In the default mode, the Host uses the
 separate bridge. Host restart has no `PartOf` or `BindsTo` relationship that

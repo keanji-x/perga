@@ -25,11 +25,12 @@ internal sealed class LiveRuntimeActivity
 
 internal sealed record OpenSessionHandle(IAgentSession Agent, HarnessLaunchSpec LaunchSpec,
     SessionConfiguration Selection, ConfirmedConfiguration? Confirmation, LiveContextUsage ContextUsage, long Generation,
-    LiveRuntimeActivity RuntimeActivity);
+    LiveRuntimeActivity RuntimeActivity, long LastUsedAtMs);
 
 // Provider methods are called only while holding the gate, never the snapshot lock.
-internal sealed class SessionRuntime
+internal sealed class SessionRuntime(TimeProvider? timeProvider = null)
 {
+    private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly object _sync = new();
     private IAgentSession? _agent;
@@ -38,6 +39,7 @@ internal sealed class SessionRuntime
     private ConfirmedConfiguration? _confirmation;
     private LiveContextUsage _contextUsage = new();
     private long _generation;
+    private long _lastUsedAtMs;
     private LiveRuntimeActivity _runtimeActivity = new();
     private CancellationTokenSource? _launchCts;
     private string? _launchTurnId;
@@ -64,7 +66,16 @@ internal sealed class SessionRuntime
     }
 
     private OpenSessionHandle? SnapshotCore() =>
-        _agent is null ? null : new(_agent, _spec!, _selection!, _confirmation, _contextUsage, _generation, _runtimeActivity);
+        _agent is null ? null : new(_agent, _spec!, _selection!, _confirmation, _contextUsage, _generation, _runtimeActivity, _lastUsedAtMs);
+
+    private long NowMs() => _timeProvider.GetUtcNow().ToUnixTimeMilliseconds();
+
+    public void TouchUsed()
+    {
+        lock (_sync)
+            if (_agent is not null) _lastUsedAtMs = NowMs();
+    }
+
     public LiveContextUsage ContextUsage
     {
         get
@@ -172,17 +183,14 @@ internal sealed class SessionRuntime
         }
     }
 
-    public Task CloseAsync(TimeSpan timeout, CancellationToken ct, bool scoped = false, Func<bool>? shouldClose = null) =>
+    public Task<bool> CloseAsync(TimeSpan timeout, CancellationToken ct, bool scoped = false,
+        Func<bool>? shouldClose = null, long? expectedGeneration = null) =>
         RunAsync(async runtime =>
         {
-            if (shouldClose is not null)
-            {
-                lock (_sync)
-                {
-                    if (_launchCts is not null) return false;
-                }
-                if (!shouldClose()) return false;
-            }
+            lock (_sync)
+                if (_agent is null || expectedGeneration is { } gen && _generation != gen ||
+                    shouldClose is not null && _launchCts is not null) return false;
+            if (shouldClose is not null && !shouldClose()) return false;
             await runtime.CloseLockedAsync(timeout, ct, scoped).ConfigureAwait(false);
             return true;
         }, ct);
@@ -249,6 +257,7 @@ internal sealed class SessionRuntime
             lock (_sync)
             {
                 _agent = agent;
+                _lastUsedAtMs = NowMs();
                 _spec = spec;
                 _selection = SessionConfiguration.FromLaunch(spec);
                 _confirmation = null;
@@ -260,7 +269,11 @@ internal sealed class SessionRuntime
             if (spec.ResumeNativeThreadId is not null && agent.NativeThreadId != spec.ResumeNativeThreadId)
                 throw new ProviderSessionNotFoundException("The provider did not restore the original session.");
             validate(agent);
-            lock (_sync) _confirmation = agent.ConfigurationState;
+            lock (_sync)
+            {
+                _lastUsedAtMs = NowMs();
+                _confirmation = agent.ConfigurationState;
+            }
             return Snapshot!;
         }
         catch
@@ -295,6 +308,7 @@ internal sealed class SessionRuntime
                         if (_confirmation != applied.Configuration) _contextUsage = new();
                         _selection = applied.Configuration.Selection;
                         _confirmation = applied.Configuration;
+                        _lastUsedAtMs = NowMs();
                     }
                     return Snapshot!;
                 }
@@ -332,7 +346,7 @@ internal sealed class SessionRuntime
     }
 }
 
-internal sealed class SessionRuntimeRegistry
+internal sealed class SessionRuntimeRegistry(TimeProvider? timeProvider = null)
 {
     private readonly ConcurrentDictionary<string, SessionRuntime> _sessions = new(StringComparer.Ordinal);
     private readonly object _sync = new();
@@ -343,7 +357,7 @@ internal sealed class SessionRuntimeRegistry
         {
             if (_sessions.TryGetValue(id, out var existing)) return existing;
             ObjectDisposedException.ThrowIf(_disposing, this);
-            return _sessions.GetOrAdd(id, _ => new());
+            return _sessions.GetOrAdd(id, _ => new(timeProvider));
         }
     }
     public bool TryGetOpen(string id, out OpenSessionHandle handle)
@@ -356,6 +370,15 @@ internal sealed class SessionRuntimeRegistry
         handle = _sessions.TryGetValue(id, out var runtime) ? runtime.SettingsSnapshot! : null!;
         return handle is not null;
     }
+    public IReadOnlyList<(string SessionId, OpenSessionHandle Handle)> SnapshotOpen()
+    {
+        var handles = new List<(string, OpenSessionHandle)>();
+        foreach (var (id, runtime) in _sessions)
+            if (runtime.Snapshot is { } handle) handles.Add((id, handle));
+        return handles;
+    }
+
+    public bool HasOpenHandles => _sessions.Values.Any(runtime => runtime.Snapshot is not null);
     public bool HasActiveWork => _sessions.Values.Any(runtime => runtime.HasActiveWork);
     public bool IsShutdownUnconfirmed(string id) => _sessions.TryGetValue(id, out var runtime) && runtime.IsShutdownUnconfirmed;
     public async Task CloseAllAsync(TimeSpan timeout)

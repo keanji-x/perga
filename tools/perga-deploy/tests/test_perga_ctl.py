@@ -155,6 +155,7 @@ class Harness(unittest.TestCase):
         host = (self.base / 'units/demo.service').read_text()
         term = (self.base / 'units/demo-term.service').read_text()
         self.assertIn('--term-socket %t/demo/term.sock', host)
+        self.assertIn('TasksMax=65536', host.splitlines())
         self.assertNotIn('Environment', host)
         self.assertIn(f'ExecStart=/usr/bin/python3 {self.root}/bin/perga_host.py', host)
         self.assertNotIn('PartOf=', term)

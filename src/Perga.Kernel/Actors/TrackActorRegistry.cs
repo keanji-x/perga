@@ -51,7 +51,7 @@ public sealed class TrackActorRegistry : IAsyncDisposable
         _timeProvider = timeProvider ?? TimeProvider.System;
 
         if (_options.ActorEvictionSweepInterval > TimeSpan.Zero &&
-            _options.ActorIdleTimeout > TimeSpan.Zero)
+            (_options.ActorIdleTimeout > TimeSpan.Zero || _options.SessionIdleTimeout > TimeSpan.Zero))
         {
             _evictionTimer = _timeProvider.CreateTimer(
                 static state => _ = ((TrackActorRegistry)state!).SweepFireAndForgetAsync(),
@@ -104,28 +104,21 @@ public sealed class TrackActorRegistry : IAsyncDisposable
             {
                 ct.ThrowIfCancellationRequested();
                 var actor = kvp.Value;
-                if (actor.HasActiveWork)
-                {
-                    continue;
-                }
+                await actor.EvictIdleSessionRuntimesAsync(ct).ConfigureAwait(false);
 
-                var idleDurationMs = nowMs - actor.LastActivityAtMs;
-                if (idleDurationMs < idleThresholdMs)
+                if (_options.ActorIdleTimeout > TimeSpan.Zero && actor.CanEvictIdleActor &&
+                    nowMs - actor.LastActivityAtMs >= idleThresholdMs && _actors.TryRemove(kvp))
                 {
-                    continue;
-                }
-
-                if (_actors.TryRemove(kvp.Key, out var removed))
-                {
-                    if (removed.HasActiveWork)
+                    if (!actor.CanEvictIdleActor)
                     {
                         // Activity raced with removal; re-insert if slot still free.
-                        _actors.TryAdd(kvp.Key, removed);
-                        continue;
+                        _actors.TryAdd(kvp.Key, actor);
                     }
-
-                    await removed.DisposeAsync().ConfigureAwait(false);
-                    evicted++;
+                    else
+                    {
+                        await actor.DisposeAsync().ConfigureAwait(false);
+                        evicted++;
+                    }
                 }
             }
 
@@ -135,6 +128,17 @@ public sealed class TrackActorRegistry : IAsyncDisposable
         {
             Interlocked.Exchange(ref _evicting, 0);
         }
+    }
+
+    public async Task<int> EvictIdleSessionRuntimesAsync(CancellationToken ct = default)
+    {
+        var evicted = 0;
+        foreach (var actor in _actors.Values)
+        {
+            ct.ThrowIfCancellationRequested();
+            evicted += await actor.EvictIdleSessionRuntimesAsync(ct).ConfigureAwait(false);
+        }
+        return evicted;
     }
 
     private async Task SweepFireAndForgetAsync()

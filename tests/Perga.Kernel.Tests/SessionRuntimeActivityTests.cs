@@ -46,8 +46,10 @@ public sealed class SessionRuntimeActivityTests
         provider.EmitRuntimeActivity(new UnifiedAgentEvent.TaskEnded(new("background", Status: "completed", Summary: "finished while archived")));
         await ctx.Kernel.UpdateSessionAsync(sessionId, new(Archived: false), new InteropPrincipal.Human(), default);
         page = await ctx.Kernel.GetSessionItemsAsync(sessionId, new(), new InteropPrincipal.Human(), default);
-        Assert.Equal("finished while archived", page.RuntimeTasks!.Single(task => task.TaskId == "background").Summary);
+        Assert.True(provider.Disposed);
+        Assert.Null(page.RuntimeTasks);
         await ctx.SendAndWaitForTurnAsync(sessionId, new("second", "runtime-second"));
+        provider = ctx.AgentRuntime.OpenedSessions.Last();
         provider.EmitRuntimeActivity(new UnifiedAgentEvent.AgentStatusChanged(new("idle", Released: true)));
         page = await ctx.Kernel.GetSessionItemsAsync(sessionId, new(), new InteropPrincipal.Human(), default);
         Assert.Empty(page.RuntimeTasks!);
