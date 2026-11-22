@@ -165,9 +165,8 @@ Use the `agy` or `antigravity` executable name for Antigravity's permission mode
 The proxy URL applies to HTTP and HTTPS for the Host and its provider processes.
 Loopback addresses always bypass the configured proxy. Managed instances use a
 direct connection when the proxy section is absent. The controller always
-connects directly to the local Host for management traffic. See
-[shared Codex Worker home](codex-installation-login.md) for directory and login
-requirements. Restart the Host after changing instance settings.
+connects directly to the local Host for management traffic.
+Restart the Host after changing instance settings.
 
 ### Move an existing managed installation to TOML
 

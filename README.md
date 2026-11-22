@@ -8,7 +8,7 @@
 
 推送 `vX.Y.Z` 格式的标签（例如 `v0.1.0`）会执行同一流程，并将验证通过的 Linux x64 压缩包及 SHA-256 校验文件发布到 GitHub Releases。
 
-解包后的服务需要 ASP.NET Core 11 运行时。进入 `perga` 目录启动服务，然后打开 [本地 Web 界面](http://127.0.0.1:4041/next/)。
+解包后的服务需要 ASP.NET Core 11 运行时。进入 `perga` 目录启动服务，然后打开 [本地 Web 界面](http://127.0.0.1:4041/)。
 
 ```sh
 sha256sum -c perga-linux-x64.tar.gz.sha256
@@ -20,12 +20,11 @@ PERGA_DATA_DIR="$PWD/data" PERGA_STATIC_WEB_DIR="$PWD/web" \
 
 ## 仓库目录结构
 
-- `DESIGN.md`：冻结架构规范、工程依赖矩阵、核心接口契约、`SQLite WAL` Schema 与三阶段并行实施路线。
-- `fe/`：已迁移的下一代 React 前端与架构校验工具链（待 Stage 2 协同瘦身对接 `/api/v1`）。
-- `tools/rust-terminal/`：迁移保留的 `calm-terminal-view`（`rmux-core` 屏幕与宽字符解析）、`calm-terminal-runtime`（`rmux-server` 持久化 PTY 底座）与 `terminal_interaction_ref/` 参考算法，用于提纯组装跨平台守护 `tools/perga-term-bridge`。
-- `plugins/`：保留的有价值独立领域插件源码（`market`、`barra`、`invest`、`paper-trading`、`research-archive`），已剔除虚拟桌面 `desktop` 与旧 `git-forge`（由原生 `VcsKit` 接管）。
-- `docs/`：架构拓扑图（`csharp-architecture.html`）、源码审计预研报告（`csharp-rewrite-prestudy.md`）与架构蓝图（`csharp-rewrite-blueprint.md`）。
-- `libs/`、`src/`、`templates/`、`tests/`：将按 `DESIGN.md` 第 5 节的 Stage 0 / Stage 1 / Stage 2 路线落地 `.NET 11` 微内核与底座库。
+- `DESIGN.md`：当前架构、工程依赖、核心接口契约与存储设计。
+- `fe/`：React 前端与架构校验工具链，通过 `/api/v1` 对接 Host。
+- `tools/perga-term-bridge/`：Rust 终端桥与持久化 PTY 守护。
+- `docs/`：当前架构设计记录与 Flow JSON Schema。
+- `libs/`、`src/`、`templates/`、`tests/`：独立底座库、服务实现、模板包与测试。
 
 ## Linux 沙箱中的 Codex
 
