@@ -30,7 +30,7 @@ PERGA_DATA_DIR="$PWD/data" PERGA_STATIC_WEB_DIR="$PWD/web" \
   dotnet Perga.Host.dll --urls http://127.0.0.1:4041
 ```
 
-Open [http://127.0.0.1:4041/next/](http://127.0.0.1:4041/next/) in your browser (installable as a PWA on desktop and mobile).
+Open [http://127.0.0.1:4041/](http://127.0.0.1:4041/) in your browser (installable as a PWA on desktop and mobile).
 
 ### Codex in Linux Sandboxes
 
@@ -47,7 +47,8 @@ Pushing a `vX.Y.Z` tag (for example `v0.1.0`) runs the same pipeline and publish
 ### Product
 - [Vision and Fundamental Tensions](docs/product/vision.md) — Core premise, four orthogonal tensions, AI vs. human organizational asymmetries, and long-term vision
 - [Product Design and Prioritized Pain Points](docs/product/design.md) — Concrete `P0`–`P3` pain points, minimal solutions, deliberate trade-offs, deferred scope, and paradigm comparison
-- [Scenario Applications](docs/product/scenarios.md) — Progressive complexity across `agents-delivery`, `okr-loop`, and `equity-research`
+- [Scenario Overview](docs/product/scenarios/README.md) — Progressive complexity across `agents-delivery`, `okr-loop`, and `equity-research`
+- [Software Development Loop](docs/product/scenarios/software-development.md) — Primary focus scenario: five-step golden loop and key UX polish points
 
 ### Architecture & Operations
 - [Architecture Reference](DESIGN.md) — 18-project .NET topology, dependency matrix, core modules, and contracts

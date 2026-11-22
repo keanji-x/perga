@@ -39,4 +39,4 @@ Perga 的长期愿景，是探索一种 **以任务为中心驱动的智能组�
 
 ---
 
-- 下一步：[产品设计与痛点优先级](design.md) · [典型场景应用](scenarios.md)
+- 下一步：[产品设计与痛点优先级](design.md) · [典型场景总览](scenarios/README.md) · [软件开发闭环产品设计](scenarios/software-development.md)
