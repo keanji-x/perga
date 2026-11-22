@@ -11,7 +11,7 @@ afterEach(async () => { cleanup(); document.getElementById('root')?.remove(); vi
 it('opens below the conversation, retains real xterm through hide and reopen, and preserves shell keys', async () => {
   await page.viewport(1512, 950);
   const { sockets, Socket } = workbenchSockets(); vi.stubGlobal('WebSocket', Socket);
-  const card = { ...terminalCard('shell', { source: 'manual', in_workbench: true }), payload: { terminal_presentation: { source: 'manual', in_workbench: true },  terminal_id: 'pty-1' } };
+  const card = { ...terminalCard('shell', { source: 'manual', inWorkbench: true }), presentation: { source: 'manual' as const, inWorkbench: true } };
   const fixture = setupWorkbench({ cards: [card] });
   await page.getByRole('button', { name: 'Conversation Main discussion' }).click();
   const main = page.getByRole('complementary', { name: 'Main discussion' });
@@ -51,7 +51,7 @@ it('opens below the conversation, retains real xterm through hide and reopen, an
 it('keeps exited output attached and reopens the same existing card without creating', async () => {
   await page.viewport(1280, 800);
   const { sockets, Socket } = workbenchSockets(); vi.stubGlobal('WebSocket', Socket);
-  const fixture = setupWorkbench({ cards: [{ ...terminalCard('finished', { source: 'manual', in_workbench: true }), payload: { terminal_presentation: { source: 'manual', in_workbench: true },  terminal_id: 'pty-1' } }] });
+  const fixture = setupWorkbench({ cards: [{ ...terminalCard('finished', { source: 'manual', inWorkbench: true }), presentation: { source: 'manual' as const, inWorkbench: true } }] });
   await page.getByRole('button', { name: /^finished/ }).click();
   await waitFor(() => expect(sockets).toHaveLength(1));
   act(() => { sockets[0].open(); sockets[0].exit(0); });
@@ -68,7 +68,7 @@ it('keeps exited output attached and reopens the same existing card without crea
 it('retains an unvisited survivor and its socket after Hide terminal', async () => {
   await page.viewport(1512, 950);
   const { sockets, Socket } = workbenchSockets(); vi.stubGlobal('WebSocket', Socket);
-  const fixture = setupWorkbench({ cards: ['first', 'second'].map(id => ({ ...terminalCard(id, { source: 'manual', in_workbench: true }), payload: { terminal_presentation: { source: 'manual', in_workbench: true },  terminal_id: 'pty-1' } })) });
+  const fixture = setupWorkbench({ cards: ['first', 'second'].map(id => ({ ...terminalCard(id, { source: 'manual', inWorkbench: true }), presentation: { source: 'manual' as const, inWorkbench: true } })) });
   await page.getByRole('button', { name: 'Conversation Main discussion' }).click();
   const field = page.getByRole('complementary', { name: 'Main discussion' }).getByRole('combobox', { name: 'Message' });
   await field.fill('/terminal'); await field.click(); await userEvent.keyboard('{Enter}');
@@ -153,7 +153,7 @@ it.each([['light', false], ['dark', true]] as const)('keeps the empty Workbench 
 it.each([false, true])('resizes the independent terminal entry and preserves Chat width after Chat closes with reduced motion %s', async reduced => {
   await page.viewport(1512, 950);
   const { sockets, Socket } = workbenchSockets(); vi.stubGlobal('WebSocket', Socket);
-  setupWorkbench({ cards: [{ ...terminalCard('resize', { source: 'manual', in_workbench: true }), payload: { terminal_presentation: { source: 'manual', in_workbench: true },  terminal_id: 'pty-1' } }] });
+  setupWorkbench({ cards: [{ ...terminalCard('resize', { source: 'manual', inWorkbench: true }), presentation: { source: 'manual' as const, inWorkbench: true } }] });
   await page.getByRole('button', { name: /^resize/ }).click();
   await waitFor(() => expect(sockets).toHaveLength(1));
   act(() => sockets[0].open());
@@ -209,7 +209,7 @@ it.each([false, true])('resizes the independent terminal entry and preserves Cha
 it.each(['light', 'dark'] as const)('shares the Chat header geometry and exposes deletion on hover and keyboard focus in %s', async theme => {
   await page.viewport(1512, 950);
   document.documentElement.dataset.theme = theme;
-  const fixture = setupWorkbench({ cards: [terminalCard('shell', { source: 'manual', in_workbench: true })] });
+  const fixture = setupWorkbench({ cards: [terminalCard('shell', { source: 'manual', inWorkbench: true })] });
   await page.getByRole('button', { name: 'Conversation Main discussion' }).click();
   const field = page.getByRole('complementary', { name: 'Main discussion' }).getByRole('combobox', { name: 'Message' });
   await field.fill('/terminal'); await field.click(); await userEvent.keyboard('{Enter}');
@@ -255,7 +255,7 @@ it.each(['light', 'dark'] as const)('shares the Chat header geometry and exposes
 
 it('creates from Tools and selects from the existing Workbench inventory during a pending create', async () => {
   await page.viewport(1512, 950);
-  const fixture = setupWorkbench({ cards: [terminalCard('first', { source: 'manual', in_workbench: true })], defer: true });
+  const fixture = setupWorkbench({ cards: [terminalCard('first', { source: 'manual', inWorkbench: true })], defer: true });
   const inventory = page.getByRole('region', { name: 'Workbench', exact: true });
   await inventory.getByRole('button', { name: 'Tools', exact: true }).click();
   await page.getByRole('menuitem', { name: 'terminal', exact: true }).click();
@@ -306,7 +306,7 @@ it('hands keyboard focus from Tools to the created terminal and returns it on hi
 it('folds the current Track Workbench without losing its terminal entry or command access', async () => {
   await page.viewport(1512, 950);
   const { sockets, Socket } = workbenchSockets(); vi.stubGlobal('WebSocket', Socket);
-  setupWorkbench({ cards: [{ ...terminalCard('shell', { source: 'manual', in_workbench: true }), payload: { terminal_presentation: { source: 'manual', in_workbench: true },  terminal_id: 'pty-1' } }] });
+  setupWorkbench({ cards: [{ ...terminalCard('shell', { source: 'manual', inWorkbench: true }), presentation: { source: 'manual' as const, inWorkbench: true } }] });
   await expect.element(page.getByRole('region', { name: 'Workbench', exact: true })).toBeVisible();
   expect(screen.queryByRole('button', { name: 'Terminal workbench' })).toBeNull();
   const group = document.querySelector<HTMLElement>('[data-nc-desktop-panel] [data-nc-module="cards"]')!;
@@ -333,8 +333,8 @@ it('folds the current Track Workbench without losing its terminal entry or comma
 it('retains the real temporary terminal through Workbench add and remove', async () => {
   await page.viewport(1512, 950);
   const { sockets, Socket } = workbenchSockets(); vi.stubGlobal('WebSocket', Socket);
-  const agent = terminalCard('Agent server', { source: 'agent', in_workbench: false });
-  setupWorkbench({ cards: [{ ...agent, payload: { ...(agent.payload as Record<string, unknown>), terminal_id: 'agent-pty' } }] });
+  const agent = terminalCard('Agent server', { source: 'agent', inWorkbench: false });
+  setupWorkbench({ cards: [agent] });
   const temporary = page.getByRole('region', { name: 'Temporary terminals', exact: true });
   await temporary.getByRole('button', { name: 'Temporary terminals', exact: true }).click();
   await temporary.getByRole('button', { name: /^Agent server/ }).click();
@@ -363,7 +363,7 @@ it('retains the real temporary terminal through Workbench add and remove', async
 for (const theme of ['light', 'dark'] as const) {
   it(`matches the /terminal outer frame to conversation chrome in ${theme} theme`, async () => {
     await page.viewport(1512, 950);
-    setupWorkbench({ cards: [terminalCard('shell', { source: 'manual', in_workbench: true })] });
+    setupWorkbench({ cards: [terminalCard('shell', { source: 'manual', inWorkbench: true })] });
     await page.getByRole('button', { name: 'Conversation Main discussion' }).click();
     document.documentElement.dataset.theme = theme;
     const main = page.getByRole('complementary', { name: 'Main discussion' });
@@ -394,7 +394,7 @@ it('cold-opens the requested terminal after the tools inventory arrives', async 
   let release!: () => void;
   const toolsRead = new Promise<void>(resolve => { release = resolve; });
   const fixture = setupWorkbench({ initialCard: 'cold', toolsRead,
-    cards: [terminalCard('cold', { source: 'manual', in_workbench: true })] });
+    cards: [terminalCard('cold', { source: 'manual', inWorkbench: true })] });
   await expect.element(page.getByRole('region', { name: 'Workbench' })).toBeVisible();
   expect(fixture.router.state.location.search).toHaveProperty('card', 'cold');
   await act(async () => { release(); await toolsRead; });

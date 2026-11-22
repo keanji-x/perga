@@ -10,7 +10,7 @@ export type BoardHostItem = Readonly<{
   card: RegisteredCard;
   title: string;
   originalIndex: number;
-  /** The kernel's `deletable` bit; absent means deletable (older servers omit it, matching `cardWireSchema`'s `.default(true)`). */
+  /** Client surface removal capability; omitted leaves removal available. */
   deletable?: boolean;
   /** The kernel's activity verdict, or `null` when the board has no overlay to read. */
   activity: CardActivity | null;

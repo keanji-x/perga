@@ -3,7 +3,8 @@ import { cleanup, render } from '@testing-library/react';
 import { page, userEvent } from 'vitest/browser';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { ReportTaskRow } from '../../../../../core/domain/track-task-inventory.ts';
-import { NEUTRAL_ACTIVITY, type CardWire } from '../../../../../core/domain/track.ts';
+import { NEUTRAL_ACTIVITY } from '../../../../../core/domain/track.ts';
+import type { PanelItem } from '../../../../../core/domain/panel-item.ts';
 import { deriveTrackPageView } from '../../../../../core/view/track-page.ts';
 import { PanelCard } from '../../../ui/panel-card/public.tsx';
 import { makeDesktopPainter, paintDesktopPanel, type DesktopPainterDeps } from './desktop-painter.tsx';
@@ -15,16 +16,16 @@ const task = (blockId: string, status: string, kind: NonNullable<ReportTaskRow['
   kind, workerCardId: `card-${blockId}`, pendingReason: null,
 });
 /** These cases are about layout, so every worker the fixture names is drawable and each task row keeps its kind control. */
-const derive = (input: { cards: readonly CardWire[]; tasks: readonly ReportTaskRow[] }) =>
+const derive = (input: { cards: readonly PanelItem[]; tasks: readonly ReportTaskRow[] }) =>
   deriveTrackPageView({ existingCardIds: new Set(input.cards.map(card => card.id)), ...input, activity: NEUTRAL_ACTIVITY, openableCards: openableCardsOf(input.cards, input.tasks) });
 
 it('lists tool names and their real statuses without type subgroups', async () => {
   await page.viewport(1200, 900);
   const onOpenCard = vi.fn();
   const view = derive({ cards: [
-    card({ id: 'running-terminal', title: 'Preview', runtime: { worker_session_id: 'one', kind: 'terminal', status: 'running' } }),
-    card({ id: 'exited-terminal', title: 'Tests', runtime: { worker_session_id: 'two', kind: 'terminal', status: 'exited' } }),
-    card({ id: 'exited-agent', kind: 'codex', title: 'Review', runtime: { worker_session_id: 'three', kind: 'managed-assistant', status: 'exited' } }),
+    card({ id: 'running-terminal', title: 'Preview', terminal: { id: 'terminal-test', trackId: 'w1', title: '', cwd: '/tmp', createdAtMs: 1, status: 'running' } }),
+    card({ id: 'exited-terminal', title: 'Tests', terminal: { id: 'terminal-test', trackId: 'w1', title: '', cwd: '/tmp', createdAtMs: 1, status: 'exited' } }),
+    card({ id: 'exited-agent', kind: 'codex', title: 'Review', terminal: { id: 'terminal-test', trackId: 'w1', title: '', cwd: '/tmp', createdAtMs: 1, status: 'exited' } }),
   ], tasks: [] });
   render(<div style={{ inlineSize: 300 }}><PanelCard>{paintDesktopPanel(makeDesktopPainter({ onOpenCard }), view)}</PanelCard></div>);
   expect(document.querySelectorAll('[data-nc-module="cards"] details')).toHaveLength(0);
@@ -38,7 +39,7 @@ it('lists tool names and their real statuses without type subgroups', async () =
 it('keeps failed tool status visible in the expanded Workbench', async () => {
   await page.viewport(1200, 900);
   render(<div style={{ inlineSize: 300 }}><PanelCard>{paintDesktopPanel(makeDesktopPainter({}), derive({
-    cards: [card({ id: 'failed-terminal', title: 'Build', runtime: { worker_session_id: 'one', kind: 'terminal', status: 'failed' } })], tasks: [],
+    cards: [card({ id: 'failed-terminal', title: 'Build', terminal: { id: 'terminal-test', trackId: 'w1', title: '', cwd: '/tmp', createdAtMs: 1, status: 'failed' } })], tasks: [],
   }))}</PanelCard></div>);
   expect(document.querySelectorAll('[data-nc-module="cards"] details')).toHaveLength(0);
   expect(document.querySelector<HTMLElement>('[data-nc-row="failed-terminal"] [data-nc-status]')?.textContent).toBe('failed');
@@ -48,7 +49,7 @@ it('keeps task metadata hidden while tool status remains visible', async () => {
   await page.viewport(1200, 900);
   render(<div style={{ inlineSize: 300 }}><PanelCard>{paintDesktopPanel(makeDesktopPainter({}),
     derive({ cards: [card({ id: 'pending-card', title: 'Long card title', kind: 'codex',
-      runtime: { worker_session_id: 'one', kind: 'managed-assistant', status: 'running' } })],
+      terminal: { id: 'terminal-test', trackId: 'w1', title: '', cwd: '/tmp', createdAtMs: 1, status: 'running' } })],
       tasks: [{ ...task('Long task title', 'awaiting_projection', 'codex'), workerCardId: 'pending-card' }] }))}</PanelCard></div>);
   for (const summary of document.querySelectorAll<HTMLElement>('details:not([open]) > summary')) await userEvent.click(summary);
   const statuses = document.querySelectorAll<HTMLElement>('[data-nc-status]');
@@ -64,7 +65,7 @@ it('keeps task metadata hidden while tool status remains visible', async () => {
 it('aligns text-only headings with row icons and preserves secondary columns', async () => {
   await page.viewport(1200, 900);
   const view = derive({
-    cards: [card({ title: 'Review workspace', runtime: { worker_session_id: 'one', kind: 'terminal', status: 'running' } })],
+    cards: [card({ title: 'Review workspace', terminal: { id: 'terminal-test', trackId: 'w1', title: '', cwd: '/tmp', createdAtMs: 1, status: 'running' } })],
     tasks: [task('Check layout', 'running', 'codex'), task('A longer task name', 'verifying', 'terminal'), task('Finished review', 'done', 'claude')],
   });
   render(<div style={{ inlineSize: 300 }}><PanelCard>{paintDesktopPanel(makeDesktopPainter({ taskSummary: '12' }), view)}</PanelCard></div>);
@@ -169,10 +170,10 @@ it('keeps the heading stationary and uses 4px content spacing with an 8px group 
 });
 
 
-it.each([false, true])('left-aligns type icons beside names with deletable=%s', async (deletable) => {
+it.each([false, true])('left-aligns type icons beside names with removable=%s', async (removable) => {
   await page.viewport(1200, 900);
-  const worker = card({ id: 'worker', title: 'A longer worker title', kind: 'codex', deletable,
-    runtime: { worker_session_id: 'session', kind: 'managed-assistant', status: 'running' } });
+  const worker = card({ id: 'worker', title: 'A longer worker title', kind: 'codex', removable,
+    terminal: { id: 'terminal-test', trackId: 'w1', title: '', cwd: '/tmp', createdAtMs: 1, status: 'running' } });
   const view = deriveTrackPageView({ existingCardIds: new Set([worker.id, "execution-worker"]), cards: [worker, card({ id: 'execution-worker', title: 'Execution', kind: 'codex' })],
     tasks: [{ ...task('work', 'running', 'codex'), workerCardId: 'execution-worker' }],
     activity: { cards: { worker: 'working', 'execution-worker': 'working' } }, openableCards: new Set(['worker', 'execution-worker']) });
@@ -200,7 +201,7 @@ it.each([false, true])('left-aligns type icons beside names with deletable=%s', 
     expect(row.querySelector<HTMLElement>('[data-nc-inventory-metadata]')!.getBoundingClientRect().width).toBeLessThanOrEqual(1);
     expect(getComputedStyle(row.querySelector('[data-nc-activity]')!).animationName).toBe('none');
   }
-  if (deletable) {
+  if (removable) {
     await userEvent.hover(cardRow);
     const menu = cardRow.querySelector<HTMLElement>('button[aria-haspopup="menu"]')!;
     expect(menu.getBoundingClientRect().right).toBeCloseTo(cardRow.getBoundingClientRect().right - 4, 0);
@@ -218,7 +219,7 @@ it.each([false, true])('left-aligns type icons beside names with deletable=%s', 
 it('keeps inventory activity metadata nonvisual and free of animation', async () => {
   await page.viewport(1200, 900);
   const worker = card({ id: 'worker', title: 'Worker', kind: 'codex',
-    runtime: { worker_session_id: 'session', kind: 'managed-assistant', status: 'running' } });
+    terminal: { id: 'terminal-test', trackId: 'w1', title: '', cwd: '/tmp', createdAtMs: 1, status: 'running' } });
   const view = deriveTrackPageView({ existingCardIds: new Set([worker.id]), cards: [worker],
     tasks: [{ ...task('work', 'running', 'codex'), workerCardId: 'worker' }],
     activity: { cards: { worker: 'working' } }, openableCards: new Set(['worker']) });
@@ -331,9 +332,7 @@ it('groups work and conversation entries in the real page without duplicating st
 
 it.each(['input', 'failed'] as const)('keeps kernel %s visible alongside a running tool session', async (activity) => {
   await page.viewport(1200, 900);
-  const worker = card({ id: 'busy-worker', title: 'Preview', runtime: {
-    worker_session_id: 'busy-session', kind: 'terminal', status: 'running',
-  } });
+  const worker = card({ id: 'busy-worker', title: 'Preview', terminal: { id: 'terminal-test', trackId: 'w1', title: '', cwd: '/tmp', createdAtMs: 1, status: 'running' } });
   const view = deriveTrackPageView({ existingCardIds: new Set([worker.id]), cards: [worker], tasks: [],
     activity: { cards: { [worker.id]: activity } }, openableCards: new Set([worker.id]) });
   render(<PanelCard>{paintDesktopPanel(makeDesktopPainter({}), view)}</PanelCard>);

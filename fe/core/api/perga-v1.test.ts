@@ -1,3 +1,4 @@
+import { terminalPanelItem } from '../domain/panel-item.js';
 import { workspaceForTrack } from '../domain/track.js';
 import { describe,expect,it } from 'vitest';
 import { agentProvidersOperation,managedProvidersOperation } from '../domain/agent-providers.js';
@@ -43,11 +44,11 @@ taskEvidence,
 } from '../domain/task-recovery.js';
 import { compilePergaTemplateInputs,parsePergaInputsSchema } from '../domain/template-input.js';
 import {
-createTerminalCardOperation,
+createTerminalOperation,
 createTrackOperation,
 deleteTerminalOperation,
 deleteTrackOperation,
-listTrackTerminalsOperation,terminalDtoToCardWire,
+listTrackTerminalsOperation,
 trackActivitiesFromOverlays,trackActivityFromSnapshot,trackDetailOperation,trackOverlaysOperation,tracksInAreaOperation,updateTrackOperation
 } from '../domain/track.js';
 
@@ -406,13 +407,12 @@ describe('Perga /api/v1 protocol contracts', () => {
     });
 
     const createOp = createTrackOperation({
-      area_id: 'area_1',
-      planner_provider: 'codex',
+      areaId: 'area_1',
+      provider: 'codex',
       title: 'New Track',
       cwd: '/repo',
-      isolation: 'worktree',
-      theme: { fg: [0, 0, 0], bg: [255, 255, 255] },
-    }, 'idem-t1');
+      workspaceDriver: 'vcs-workspace',
+      }, 'idem-t1');
     expect(createOp.path).toBe('/api/v1/tracks');
     expect(createOp.body).toMatchObject({
       areaId: 'area_1',
@@ -421,15 +421,13 @@ describe('Perga /api/v1 protocol contracts', () => {
     });
 
     const createDirectAcpOp = createTrackOperation({
-      area_id: 'area_1',
-      planner_provider: 'acp:antigravity',
+      areaId: 'area_1',
+      provider: 'acp:antigravity',
       cwd: '/repo',
-      isolation: 'none',
-      theme: { fg: [0, 0, 0], bg: [255, 255, 255] },
-    }, 'idem-t2');
+      workspaceDriver: 'direct',
+      }, 'idem-t2');
     expect(createDirectAcpOp.body).toMatchObject({
       areaId: 'area_1',
-      planner_provider: 'acp:antigravity',
       provider: 'acp:antigravity',
       workspaceDriver: 'direct',
     });
@@ -516,7 +514,7 @@ describe('Perga /api/v1 protocol contracts', () => {
     expect(compactPlannerOperation('ses_lead').path).toBe('/api/v1/sessions/ses_lead/control');
 
     expect(listTrackTerminalsOperation('trk_1').path).toBe('/api/v1/tracks/trk_1/terminals');
-    expect(createTerminalCardOperation('trk_1', { theme: { fg: [0, 0, 0], bg: [0, 0, 0] } }, 'idem-term').path)
+    expect(createTerminalOperation('trk_1', { }, 'idem-term').path)
       .toBe('/api/v1/tracks/trk_1/terminals');
     expect(deleteTerminalOperation('trk_1', 'term_1').path).toBe('/api/v1/tracks/trk_1/terminals/term_1');
 
@@ -673,7 +671,7 @@ describe('Perga /api/v1 protocol contracts', () => {
     }
 
     // CARD-01, CARD-02, CARD-03, CARD-04, CARD-05 & SHELL-03
-    const termCard = terminalDtoToCardWire({
+    const termCard = terminalPanelItem({
       id: 'term_1',
       trackId: 'trk_1',
       sessionId: null,
@@ -685,8 +683,8 @@ describe('Perga /api/v1 protocol contracts', () => {
       createdAtMs: 1000,
       exitedAtMs: null,
     });
-    expect(termCard.payload).toMatchObject({
-      terminal_presentation: { source: 'unrecorded', in_workbench: true },
+    expect(termCard).toMatchObject({
+      presentation: { source: 'unrecorded', inWorkbench: true },
     });
 
     const hostListOp = listDirectoryOperation('/srv');

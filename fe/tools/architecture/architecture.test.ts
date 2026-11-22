@@ -223,7 +223,6 @@ describe('architecture fixtures', () => {
     ['dup-inv-004', 'INV-DUP-004'],
     ['dup-inv-005', 'INV-DUP-005'],
     ['dup-inv-006', 'INV-DUP-006'],
-    ['dup-inv-007', 'INV-DUP-007'],
     ['dup-inv-008', 'INV-DUP-008'],
     ['dup-inv-009', 'INV-DUP-009'],
     ['dup-inv-010', 'INV-DUP-010'],

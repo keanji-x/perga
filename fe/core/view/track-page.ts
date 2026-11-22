@@ -7,7 +7,8 @@ import { groupPanelRows, progressRowFinished } from './panel-groups.js';
 import { activityLabelOf, cardActivityOf, cardActivityState, type CardActivity } from '../domain/activity.js';
 import { boundedStatusDetail, type ReportTaskRow } from '../domain/track-task-inventory.js';
 import { taskStatusLabel } from '../domain/task-recovery.js';
-import type { CardWire } from '../domain/track.js';
+
+import type { PanelItem } from '../domain/panel-item.js';
 import type { PanelRow, RowAction, RowBadge, InventoryModuleView, TrackPageView } from './panel.js';
 
 /** The track's per-card verdicts — the only input a row's `activity` is derived from; typed as the field alone so a caller cannot hand in a lifecycle by accident. */
@@ -43,9 +44,9 @@ export function progressStatusLabel(row: PanelRow): string | null {
   }
 }
 
-/** Runtime state time when supplied; otherwise the resource's own persisted update time. */
-function resourceRecency(card: CardWire): number {
-  return card.runtime?.updated_at_ms ?? card.updated_at;
+/** The resource timestamp used for panel ordering. */
+function resourceRecency(card: PanelItem): number {
+  return card.updatedAtMs;
 }
 
 function latestEvidence(left: number | null, right: number | null): number | null {
@@ -60,23 +61,22 @@ export function taskStatusPhrase(status: string, detail: string | null): string 
 }
 
 /**
- * The Cards module. `kind` is a separate field only when a title took the name slot; `kernel-owned`
- * is the `deletable === false` case. `delete-card` is carried whenever the card is deletable — a host
+ * The client Tools module. `kind` is separate when a title took the name slot. `delete-card` is carried whenever the card is removable — a host
  * with no callback is a painter that reports the action unsupported. The × takes `Delete card ${name}`
  * with `name` being `row.title` itself, never a second `title ?? card.kind`. A status that is not a
  * task's comes from the card's session and says so, in the phrase and in a visible `session` badge:
  * a superseded worker card keeps its task key as its title (#1946).
  */
-function cardRow(card: CardWire, task: PanelRow | null, activity: TrackPageActivity, terminalNumber: number | null): PanelRow {
+function cardRow(card: PanelItem, task: PanelRow | null, activity: TrackPageActivity, terminalNumber: number | null): PanelRow {
   const taskStatus = task?.status ?? null;
   const title = card.title;
   const name = title ?? (terminalNumber === null ? card.kind : `Terminal ${String(terminalNumber).padStart(2, '0')}`);
-  const sessionStatus = taskStatus === null && card.runtime !== undefined ? card.runtime.status : null;
+  const sessionStatus = taskStatus === null ? card.terminal?.status ?? null : null;
   const status = taskStatus ?? (sessionStatus === null ? null : { token: sessionStatus, phrase: `session ${sessionStatus}`, detail: null });
   const actions: RowAction[] = [
     { kind: 'open-card', cardId: card.id, label: null, hint: null, description: status?.phrase ?? null },
   ];
-  if (card.deletable) {
+  if (card.removable) {
     actions.push({
       kind: 'delete-card',
       cardId: card.id,
@@ -85,7 +85,7 @@ function cardRow(card: CardWire, task: PanelRow | null, activity: TrackPageActiv
       description: null,
     });
   }
-  const badges: RowBadge[] = card.deletable ? [] : [{ id: 'kernel-owned', text: 'kernel-owned', struck: false }];
+  const badges: RowBadge[] = [];
   if (sessionStatus !== null) badges.push({ id: 'session', text: 'session', struck: false });
   return {
     id: card.id,
@@ -190,7 +190,7 @@ function taskRow(task: ReportTaskRow, activity: TrackPageActivity, openableCards
 
 /** Tasks retain their report sources; desktop Progress omits workers absent from the full card inventory. */
 export function deriveTrackPageView(input: Readonly<{
-  cards: readonly CardWire[];
+  cards: readonly PanelItem[];
   /** Full Track card identities, including headless cards excluded from the panel. */
   existingCardIds: ReadonlySet<string>;
   tasks: readonly ReportTaskRow[];
@@ -214,7 +214,7 @@ export function deriveTrackPageView(input: Readonly<{
   }
   // Stable within this inventory across status regrouping; custom titles remain authoritative.
   const terminals = input.cards.filter(card => card.kind === 'terminal')
-    .toSorted((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id));
+    .toSorted((a, b) => a.createdAtMs - b.createdAtMs || a.id.localeCompare(b.id));
   const terminalNumbers = new Map(terminals.map((card, index) => [card.id, index + 1]));
   const cards: InventoryModuleView = {
     key: 'cards',
@@ -272,10 +272,10 @@ export function deriveTrackPageView(input: Readonly<{
     const card = resourcesById.get(row.id)!;
     if (card.kind !== 'terminal') return row;
     const presentation = terminalPresentation(card);
-    if (!presentation.in_workbench) temporaryIds.add(row.id);
+    if (!presentation.inWorkbench) temporaryIds.add(row.id);
     return { ...row, actions: [...row.actions, {
-      kind: 'set-workbench', cardId: card.id, inWorkbench: !presentation.in_workbench,
-      label: presentation.in_workbench ? 'Remove from Workbench' : 'Add to Workbench',
+      kind: 'set-workbench', cardId: card.id, inWorkbench: !presentation.inWorkbench,
+      label: presentation.inWorkbench ? 'Remove from Workbench' : 'Add to Workbench',
       hint: null, description: null,
     }] };
   };

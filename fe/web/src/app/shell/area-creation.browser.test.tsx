@@ -98,11 +98,9 @@ describe('creating an Area before its list is available', () => {
       await expect.element(page.getByRole('status').getByText('Loading Area…')).toBeVisible();
       expect(page.getByRole('main').getByRole('alert').query()).toBeNull();
       await expect.element(page.getByRole('button', { name: 'Create track', exact: true })).toBeDisabled();
-      await page.getByRole('button', { name: 'Track options' }).click();
       await expect.element(page.getByRole('button', { name: /^Repo: research.*\(\/srv\/research\)$/ })).toBeVisible();
       // Area creation does not expose a proactive template picker.
       await expect.element(page.getByRole('button', { name: /^Template:/ })).not.toBeInTheDocument();
-      await page.getByRole('button', { name: 'Track options' }).click();
       releaseReads();
       await expect.element(page.getByRole('button', { name: 'Create track', exact: true })).toBeEnabled();
       await expect.element(composer).toHaveTextContent('Keep this draft while Areas load');

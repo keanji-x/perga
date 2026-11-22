@@ -18,10 +18,10 @@ describe('track-report card entry', () => {
   });
 
   it('[INV-CARD-201] resolves the track-report kernel kind and nothing else', () => {
-    expect(TRACK_REPORT_CARD_ENTRY.fromKernel?.({ id: 'r1', kind: 'track-report', payload: null }))
+    expect(TRACK_REPORT_CARD_ENTRY.fromPanel?.({ id: 'r1', kind: 'track-report', payload: null }))
       .toEqual({ type: 'track-report', id: 'r1' });
-    expect(TRACK_REPORT_CARD_ENTRY.fromKernel?.({ id: 'r1', kind: 'codex', payload: null })).toBeNull();
-    expect(TRACK_REPORT_CARD_ENTRY.fromKernel?.({ id: 'r1', kind: 'report', payload: null })).toBeNull();
+    expect(TRACK_REPORT_CARD_ENTRY.fromPanel?.({ id: 'r1', kind: 'codex', payload: null })).toBeNull();
+    expect(TRACK_REPORT_CARD_ENTRY.fromPanel?.({ id: 'r1', kind: 'report', payload: null })).toBeNull();
   });
 
   it('resolves through a really booted registry', () => {

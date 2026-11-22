@@ -20,9 +20,8 @@ function draftFixture() {
   const request = {
     key: 'original-key',
     body: {
-      area_id: area.id, planner_provider: 'claude', cwd: '/repo', permissionMode: 'plan',
-      theme: { fg: [0, 0, 0], bg: [255, 255, 255] },
-    } as const,
+      areaId: area.id, provider: 'claude', cwd: '/repo', permissionMode: 'plan',
+      } as const,
   };
   return { area, storage, storageKey, request, mount: () => renderHook(() => useNewTrackSession(area.id, area), { wrapper }) };
 }
@@ -118,7 +117,7 @@ it('keeps a mode for same-provider model changes and clears it on provider chang
 
 it.each(['local', 'jasper'])('restores the persisted execution target %s', (executionTargetId) => {
   const { storage, storageKey, request, mount } = draftFixture();
-  storage.setItem(storageKey, JSON.stringify({ ...request, body: { ...request.body, execution_target_id: executionTargetId } }));
+  storage.setItem(storageKey, JSON.stringify({ ...request, body: { ...request.body, executionTargetId: executionTargetId } }));
   const reopened = mount();
   expect(reopened.result.current.session?.form?.executionTargetId).toBe(executionTargetId);
 });

@@ -1,6 +1,6 @@
 // The track-report card: headless, one per track; its contents are rendered by the report document runtime.
 
-import type { CardEntry, KernelCardInput } from '../registry.js';
+import type { CardEntry, PanelInput } from '../registry.js';
 
 declare module '../registry.js' {
   interface CardDataMap {
@@ -18,7 +18,7 @@ export const TRACK_REPORT_CARD_ENTRY = Object.freeze({
   title: () => 'Report',
   accessibleName: () => 'Track report',
   create: Object.freeze({ mode: 'kernel-minted-only' } as const),
-  fromKernel: (card: KernelCardInput): TrackReportCard | null => (
+  fromPanel: (card: PanelInput): TrackReportCard | null => (
     card.kind === 'track-report' ? Object.freeze({ type: 'track-report', id: card.id } as const) : null
   ),
 }) satisfies CardEntry<TrackReportCard>;

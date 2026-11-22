@@ -1,21 +1,22 @@
 import { describe, expect, it } from 'vitest';
 
 import type { ReportTaskRow } from '../domain/track-task-inventory.js';
-import { NEUTRAL_ACTIVITY, type CardWire } from '../domain/track.js';
+import { NEUTRAL_ACTIVITY } from '../domain/track.js';
+import type { PanelItem } from '../domain/panel-item.js';
 import { deriveTrackPageView, workbenchTerminalCardIds, parkedWorkerNotices, progressStatusLabel, taskStatusPhrase, type TrackPageActivity } from './track-page.js';
 
-function card(overrides: Partial<CardWire> = {}): CardWire {
+function card(overrides: Partial<PanelItem> = {}): PanelItem {
   return {
     id: 'card-1',
-    track_id: 'w1',
+    trackId: 'w1',
     kind: 'shell',
     title: 'Main pane',
     sort: 1,
-    payload: null,
-    deletable: true,
-    created_at: 0,
-    updated_at: 0,
-    ...overrides,
+    payload: null, presentation: { source: 'manual', inWorkbench: true },
+    removable: true,
+    createdAtMs: 0,
+    updatedAtMs: 0,
+    ...overrides, panelType: 'custom',
   };
 }
 
@@ -42,7 +43,7 @@ function everyWorkerOf(tasks: readonly ReportTaskRow[]): ReadonlySet<string> {
   }));
 }
 
-function cardsModule(cards: readonly CardWire[]) {
+function cardsModule(cards: readonly PanelItem[]) {
   return deriveTrackPageView({ existingCardIds: new Set(cards.map(card => card.id)), cards, tasks: [], activity: NEUTRAL_ACTIVITY, openableCards: new Set() }).rowModules.find(module => module.key === 'cards')!;
 }
 
@@ -57,9 +58,9 @@ function tasksModule(
 describe('deriveTrackPageView modules', () => {
   it('numbers anonymous terminals independently of status grouping while retaining custom names and actions', () => {
     const view = deriveTrackPageView({ existingCardIds: new Set(["z","a","b"]), cards: [
-      card({ id: 'z', kind: 'terminal', title: null, created_at: 2 , payload: { terminal_presentation: { source: 'manual', in_workbench: true } } }),
-      card({ id: 'a', kind: 'terminal', title: 'Preview server', created_at: 1 , payload: { terminal_presentation: { source: 'manual', in_workbench: true } } }),
-      card({ id: 'b', kind: 'terminal', title: null, created_at: 1 , payload: { terminal_presentation: { source: 'manual', in_workbench: true } } }),
+      card({ id: 'z', kind: 'terminal', title: null, createdAtMs: 2 , payload: {  }, presentation: { source: 'manual', inWorkbench: true } }),
+      card({ id: 'a', kind: 'terminal', title: 'Preview server', createdAtMs: 1 , payload: {  }, presentation: { source: 'manual', inWorkbench: true } }),
+      card({ id: 'b', kind: 'terminal', title: null, createdAtMs: 1 , payload: {  }, presentation: { source: 'manual', inWorkbench: true } }),
     ], tasks: [], activity: NEUTRAL_ACTIVITY, openableCards: new Set() });
     const tools = view.rowModules.find(module => module.key === 'cards')!;
     expect(tools.rows.map(row => [row.id, row.title, row.kind])).toEqual([
@@ -95,13 +96,13 @@ describe('deriveTrackPageView cards', () => {
     expect(row.kind).toBeNull();
   });
 
-  it('badges a kernel-owned card, and only a kernel-owned one', () => {
+  it('does not invent server ownership badges for client panels', () => {
     const [owned, user] = cardsModule([
-      card({ id: 'card-owned', deletable: false }),
-      card({ id: 'card-user', deletable: true }),
+      card({ id: 'card-owned', removable: false }),
+      card({ id: 'card-user', removable: true }),
     ]).rows;
 
-    expect(owned.badges).toEqual([{ id: 'kernel-owned', text: 'kernel-owned', struck: false }]);
+    expect(owned.badges).toEqual([]);
     expect(user.badges).toEqual([]);
   });
 
@@ -112,10 +113,10 @@ describe('deriveTrackPageView cards', () => {
     expect(row.status).toBeNull();
   });
 
-  it('offers delete only on a deletable card, after opening it', () => {
+  it('offers delete only on a removable card, after opening it', () => {
     const [owned, user] = cardsModule([
-      card({ id: 'card-owned', deletable: false }),
-      card({ id: 'card-user', deletable: true }),
+      card({ id: 'card-owned', removable: false }),
+      card({ id: 'card-user', removable: true }),
     ]).rows;
 
     expect(owned.actions.map((action) => action.kind)).toEqual(['open-card']);
@@ -146,7 +147,7 @@ describe('deriveTrackPageView cards', () => {
   });
 
   it('names the delete target in the ×’s accessible name and keeps its hint bare', () => {
-    const [row] = cardsModule([card({ title: 'Main pane', deletable: true })]).rows;
+    const [row] = cardsModule([card({ title: 'Main pane', removable: true })]).rows;
     const remove = row.actions[1];
 
     expect(remove.kind).toBe('delete-card');
@@ -155,7 +156,7 @@ describe('deriveTrackPageView cards', () => {
   });
 
   it('falls back to the printed name — the kind — when the card has no title', () => {
-    const [row] = cardsModule([card({ title: null, kind: 'harness', deletable: true })]).rows;
+    const [row] = cardsModule([card({ title: null, kind: 'harness', removable: true })]).rows;
     const remove = row.actions[1];
 
     expect(row.title).toBe('harness');
@@ -355,7 +356,7 @@ describe('taskStatusPhrase', () => {
 /* The card's task status is keyed by the worker's identity, so it holds for a card the board cannot draw too. */
 it('groups a completed task’s card as completed even while its worker process remains alive', () => {
   const view = deriveTrackPageView({ existingCardIds: new Set(["finished-worker"]),
-    cards: [card({ id: 'finished-worker', runtime: { worker_session_id: 'runtime', kind: 'managed-assistant', status: 'running' } })],
+    cards: [card({ id: 'finished-worker', terminal: { id: 'terminal-test', trackId: 'w1', title: '', cwd: '/tmp', createdAtMs: 1, status: 'running' } })],
     tasks: [task({ status: 'done', kind: 'codex', workerCardId: 'finished-worker' })], activity: NEUTRAL_ACTIVITY,
     openableCards: new Set(),
   });
@@ -367,8 +368,8 @@ it('groups a completed task’s card as completed even while its worker process 
 it('labels a superseded worker card’s live status as its session’s, leaving the current worker’s task status bare', () => {
   const [stale, current] = deriveTrackPageView({ existingCardIds: new Set(["old-worker","new-worker"]),
     cards: [
-      card({ id: 'old-worker', title: 'alpha-task', kind: 'codex', runtime: { worker_session_id: 's1', kind: 'managed-assistant', status: 'running' } }),
-      card({ id: 'new-worker', title: 'alpha-task', kind: 'codex', runtime: { worker_session_id: 's2', kind: 'managed-assistant', status: 'running' } }),
+      card({ id: 'old-worker', title: 'alpha-task', kind: 'codex', terminal: { id: 'terminal-test', trackId: 'w1', title: '', cwd: '/tmp', createdAtMs: 1, status: 'running' } }),
+      card({ id: 'new-worker', title: 'alpha-task', kind: 'codex', terminal: { id: 'terminal-test', trackId: 'w1', title: '', cwd: '/tmp', createdAtMs: 1, status: 'running' } }),
     ],
     tasks: [{ ...task({ key: 'alpha-task', status: 'done', kind: 'codex', workerCardId: 'old-worker' }), execution: {
       sessionId: 'a2', runCount: 2, createdAtMs: 1000, finishedAtMs: null, status: 'done', label: 'Done', statusDetail: null, workerCardId: 'new-worker', blockingReason: null,
@@ -473,7 +474,7 @@ it('joins only drawable current workers, preserves maintenance actions, and isol
 
 it('gives an independent tool its exact session status as the primary action description', () => {
   const view = deriveTrackPageView({ existingCardIds: new Set(["failed"]), cards: [card({ id: 'failed', title: 'Build log', kind: 'terminal',
-    runtime: { worker_session_id: 'session', kind: 'terminal', status: 'failed' } , payload: { terminal_presentation: { source: 'manual', in_workbench: true } } })],
+    terminal: { id: 'terminal-test', trackId: 'w1', title: '', cwd: '/tmp', createdAtMs: 1, status: 'failed' } , payload: {  }, presentation: { source: 'manual', inWorkbench: true } })],
     tasks: [], activity: NEUTRAL_ACTIVITY, openableCards: new Set(['failed']) });
   const row = view.desktop.rowModules[1].rows[0];
   expect(row.actions.find(action => action.kind === 'open-card')?.description).toBe('session failed');
@@ -498,9 +499,9 @@ it('keeps shared-worker activity and maintenance on the selected task without re
 it('orders live progress by existing runtime times and keeps terminal executions last regardless of activity', () => {
   const view = deriveTrackPageView({ existingCardIds: new Set(["older","newer","ended"]),
     cards: [
-      card({ id: 'older', updated_at: 10, runtime: { worker_session_id: 's1', kind: 'terminal', status: 'running', updated_at_ms: 300 } }),
-      card({ id: 'newer', updated_at: 999, runtime: { worker_session_id: 's2', kind: 'terminal', status: 'running', updated_at_ms: 600 } }),
-      card({ id: 'ended', updated_at: 900, runtime: { worker_session_id: 's3', kind: 'terminal', status: 'exited', updated_at_ms: 1000 } }),
+      card({ id: 'older', updatedAtMs: 10, terminal: { id: 'terminal-test', trackId: 'w1', title: '', cwd: '/tmp', createdAtMs: 1, status: 'running' } }),
+      card({ id: 'newer', updatedAtMs: 999, terminal: { id: 'terminal-test', trackId: 'w1', title: '', cwd: '/tmp', createdAtMs: 1, status: 'running' } }),
+      card({ id: 'ended', updatedAtMs: 900, terminal: { id: 'terminal-test', trackId: 'w1', title: '', cwd: '/tmp', createdAtMs: 1, status: 'exited' } }),
     ],
     tasks: [task({ blockId: 'older', status: 'running', kind: 'codex', workerCardId: 'older' }),
       task({ blockId: 'newer', status: 'running', kind: 'codex', workerCardId: 'newer' }),
@@ -511,9 +512,9 @@ it('orders live progress by existing runtime times and keeps terminal executions
 });
 
 it('orders independent resources by recency within live and ended partitions', () => {
-  const cards = [card({ id: 'old', updated_at: 100 }), card({ id: 'latest', updated_at: 600 }),
-    card({ id: 'failed', updated_at: 900, runtime: { worker_session_id: 'sf', kind: 'terminal', status: 'failed' } }),
-    card({ id: 'finished', updated_at: 700, runtime: { worker_session_id: 'sd', kind: 'terminal', status: 'exited' } })];
+  const cards = [card({ id: 'old', updatedAtMs: 100 }), card({ id: 'latest', updatedAtMs: 600 }),
+    card({ id: 'failed', updatedAtMs: 900, terminal: { id: 'terminal-test', trackId: 'w1', title: '', cwd: '/tmp', createdAtMs: 1, status: 'failed' } }),
+    card({ id: 'finished', updatedAtMs: 700, terminal: { id: 'terminal-test', trackId: 'w1', title: '', cwd: '/tmp', createdAtMs: 1, status: 'exited' } })];
   const view = deriveTrackPageView({ existingCardIds: new Set(cards.map(card => card.id)), cards, tasks: [], activity: NEUTRAL_ACTIVITY, openableCards: new Set(cards.map(card => card.id)) });
   expect(view.desktop.rowModules[1].rows.map(row => row.id)).toEqual(['tool:latest', 'tool:old', 'tool:failed', 'tool:finished']);
 });
@@ -524,7 +525,7 @@ it('uses attempt end evidence for finished tasks without borrowing a reused work
     ...(finish === null ? {} : { execution: { sessionId: blockId, runCount: 1, status: 'done', label: 'Completed',
       statusDetail: null, blockingReason: null, workerCardId: 'shared', createdAtMs: 0, finishedAtMs: finish } }),
   });
-  const view = deriveTrackPageView({ existingCardIds: new Set(["shared"]), cards: [card({ id: 'shared', updated_at: 9000 })],
+  const view = deriveTrackPageView({ existingCardIds: new Set(["shared"]), cards: [card({ id: 'shared', updatedAtMs: 9000 })],
     tasks: [ended('old', 100), ended('unknown-a', null), ended('recent', 500), ended('unknown-b', null),
       task({ blockId: 'current', kind: 'codex', status: 'running', workerCardId: 'shared' })],
     activity: NEUTRAL_ACTIVITY, openableCards: new Set(['shared']),
@@ -534,7 +535,7 @@ it('uses attempt end evidence for finished tasks without borrowing a reused work
 });
 
 it('retains zero timestamps and stable ties without a request-time substitute', () => {
-  const view = deriveTrackPageView({ existingCardIds: new Set(["zero-a","zero-b"]), cards: [card({ id: 'zero-a', updated_at: 0 }), card({ id: 'zero-b', updated_at: 0 })],
+  const view = deriveTrackPageView({ existingCardIds: new Set(["zero-a","zero-b"]), cards: [card({ id: 'zero-a', updatedAtMs: 0 }), card({ id: 'zero-b', updatedAtMs: 0 })],
     tasks: [task({ blockId: 'unknown-a', status: 'running' }), task({ blockId: 'unknown-b', status: 'running' })],
     activity: NEUTRAL_ACTIVITY, openableCards: new Set(),
   });
@@ -545,7 +546,7 @@ it('retains zero timestamps and stable ties without a request-time substitute', 
 
 
 it('does not describe a live harness turn_pending state as queued work', () => {
-  const view = deriveTrackPageView({ existingCardIds: new Set(["card-1"]), cards: [card({ runtime: { worker_session_id: 'live', kind: 'managed-assistant', status: 'turn_pending' } })],
+  const view = deriveTrackPageView({ existingCardIds: new Set(["card-1"]), cards: [card({ terminal: { id: 'terminal-test', trackId: 'w1', title: '', cwd: '/tmp', createdAtMs: 1, status: 'turn_pending' } })],
     tasks: [], activity: NEUTRAL_ACTIVITY, openableCards: new Set() });
   const row = view.desktop.rowModules[1].rows[0];
   expect(row.status?.token).toBe('turn_pending');
@@ -560,8 +561,8 @@ it('keeps an empty desktop Workbench beside Progress without changing mobile mod
 
 
 it('partitions independent terminal placement without inferring it from creator or status', () => {
-  const terminal = (id: string, source: string, inWorkbench: boolean) => card({ id, kind: 'terminal',
-    payload: { schemaVersion: 1, terminal_presentation: { source, in_workbench: inWorkbench } } });
+  const terminal = (id: string, source: NonNullable<PanelItem['presentation']>['source'], inWorkbench: boolean) => card({ id, kind: 'terminal',
+    payload: { schemaVersion: 1 }, presentation: { source, inWorkbench: inWorkbench } });
   const cards = [terminal('manual', 'manual', true), terminal('agent', 'agent', false),
     terminal('pinned-agent', 'agent', true), terminal('removed-manual', 'manual', false)];
   const view = deriveTrackPageView({ existingCardIds: new Set(cards.map(card => card.id)), cards, tasks: [], activity: NEUTRAL_ACTIVITY,
@@ -575,9 +576,9 @@ it('partitions independent terminal placement without inferring it from creator 
 
 it('default terminal selection excludes temporary cards and current Progress workers', () => {
   const cards = [
-    card({ id: 'temporary', kind: 'terminal', payload: { terminal_presentation: { source: 'agent', in_workbench: false } } }),
-    card({ id: 'task-worker', kind: 'terminal', payload: { terminal_presentation: { source: 'task', in_workbench: true } } }),
-    card({ id: 'manual', kind: 'terminal', payload: { terminal_presentation: { source: 'manual', in_workbench: true } } }),
+    card({ id: 'temporary', kind: 'terminal', payload: {  }, presentation: { source: 'agent', inWorkbench: false } }),
+    card({ id: 'task-worker', kind: 'terminal', payload: {  }, presentation: { source: 'task', inWorkbench: true } }),
+    card({ id: 'manual', kind: 'terminal', payload: {  }, presentation: { source: 'manual', inWorkbench: true } }),
   ];
   const input = { cards, existingCardIds: new Set(cards.map(card => card.id)), tasks: [task({ kind: 'terminal', workerCardId: 'task-worker', status: 'running' })],
     activity: NEUTRAL_ACTIVITY, openableCards: new Set(cards.map(entry => entry.id)) };

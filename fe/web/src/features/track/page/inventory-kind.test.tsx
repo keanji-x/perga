@@ -1,4 +1,6 @@
-import { render } from '@testing-library/react';
+import { InventoryKind } from './inventory-kind.tsx';
+import { Icon } from '../../../ui/icon/public.tsx';
+import { render, within } from '@testing-library/react';
 import { expect, it } from 'vitest';
 import type { RowModuleView } from '../../../../../core/view/panel.ts';
 import { checkProjection } from '../../../../../tools/projection/public.ts';
@@ -16,4 +18,14 @@ it('preserves exact kind fields and accessible worker names when their text beco
     return leaf.node;
   })}</>).container; openInventoryDisclosures(root); return root; };
   expect(checkProjection(makeDesktopPainter({}), [module], mount)).toEqual([]);
+});
+
+
+it('presents known opaque provider IDs without changing their projection identity', () => {
+  const { container } = render(<><InventoryKind kind="acp:claude" /><Icon name="claude" size="sm" />
+    <InventoryKind kind="runtime/future-provider" /></>);
+  expect(within(container).getByRole('img', { name: 'Claude' }).textContent).toBe('acp:claude');
+  expect(within(container).getByRole('img', { name: 'runtime/future-provider' })).toBeTruthy();
+  const icons = container.querySelectorAll('svg');
+  expect(icons[0].innerHTML).toBe(icons[1].innerHTML);
 });

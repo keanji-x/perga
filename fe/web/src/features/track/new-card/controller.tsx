@@ -1,6 +1,5 @@
 import { Button } from '@astryxdesign/core/Button';
 import { useEffect, useMemo, useRef } from 'react';
-import type { ThemeRgb } from '../../../../../core/domain/track.ts';
 import { cardAddMenuEntries, type CardRegistry, type CardAddMenuEntry } from '../../../systems/cards/public.ts';
 import { Dialog, type DialogOrigin } from '../../../ui/dialog/public.tsx';
 import { OperationFeedback, useOperationFeedback } from '../../../ui/operation-feedback/public.tsx';
@@ -17,12 +16,11 @@ export type CardCreateIntent = Readonly<{
  release: (request: KeyedRequest<CardDraft, KeyedCardBody>) => void;
 }>;
 
-export function useNewTrackCard({ registry, cardCreatePort, cardIntent, directory, readTheme, onCreated, compactViewport, newTerminalSession }: {
+export function useNewTrackCard({ registry, cardCreatePort, cardIntent, directory, onCreated, compactViewport, newTerminalSession }: {
  registry: CardRegistry;
  cardCreatePort: CardCreatePort;
  cardIntent: CardCreateIntent;
  directory: Parameters<typeof NewCardForm>[0]['listDirectory'];
- readTheme: () => ThemeRgb;
  onCreated: (cardId: string) => void;
  compactViewport: boolean;
  newTerminalSession: (trigger: HTMLButtonElement | null) => void;
@@ -77,9 +75,8 @@ export function useNewTrackCard({ registry, cardCreatePort, cardIntent, director
 
   const submitNewCard = (entry: CardAddMenuEntry, values: NewCardValues) => {
     const draft: CardDraft = { entry, values };
-    /* Read at click time from `<html data-theme>`, not `useTheme()`: subscribing
-           would remount any live terminal on every theme toggle. A resent request keeps its first press's theme. */
-    const body = keyedCardBodyOf(draft, readTheme());
+    // Build once per intent; a retry keeps the first submitted body.
+    const body = keyedCardBodyOf(draft);
     if (body === null) { runCardCreate(draft, null, false); return; }
     const resent = cardIntent.held !== null && sameCardDraft(cardIntent.held.draft, draft);
     runCardCreate(draft, cardIntent.request(draft, () => body), resent);

@@ -52,7 +52,7 @@ function mountTerminal(status: 'running' | 'starting' = 'running', width?: numbe
   const registry = createCardRegistry();
   registerAvailableBuiltinCards(registry);
   const card = registry.resolve({ id: 'card-1', kind: 'terminal', payload: {},
-    runtime: { worker_session_id: 'run-1', kind: 'terminal', status, terminal_id: 'pty-1' },
+    terminal: { id: 'pty-1', trackId: 'w1', title: '', cwd: '/tmp', createdAtMs: 1, status },
   });
   if (card === null) throw new Error('Missing terminal');
   const host = createCardHost(registry);

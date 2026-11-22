@@ -1,15 +1,14 @@
 import { VisuallyHidden } from '@astryxdesign/core/VisuallyHidden';
-import { Icon, type IconName } from '../../../ui/icon/public.tsx';
+import { providerPresentation } from '../../../../../core/domain/provider-presentation.ts';
+import { Icon } from '../../../ui/icon/public.tsx';
 
-/** The Track inventory owns this closed graphical vocabulary. Unknown kinds retain their exact name. */
-const KIND_ICONS: Readonly<Record<string, IconName>> = Object.freeze({
-  codex: 'codex', claude: 'claude', terminal: 'terminal', opencode: 'agent', grok: 'agent', antigravity: 'agent',
-});
-/** The same type vocabulary for entry icons and accessible worker controls. */
+/** Runtime identity remains in the projection; presentation alone chooses a known provider glyph. */
 export function InventoryIcon({ kind }: { kind: string }) {
-  return <Icon name={Object.hasOwn(KIND_ICONS, kind) ? KIND_ICONS[kind] : 'file'} size="sm" />;
+  return <Icon name={kind === 'terminal' ? 'terminal' : kind === 'agent' ? 'agent' : providerPresentation(kind).icon ?? 'file'} size="sm" />;
 }
-/** Exact text remains in the field and accessible name; only its visual presentation is an icon. */
+/** Preserve the exact projection text while exposing its clean display label to assistive technology. */
 export function InventoryKind({ kind }: { kind: string }) {
-  return <><InventoryIcon kind={kind} /><VisuallyHidden>{kind}</VisuallyHidden></>;
+  return <span role="img" aria-label={providerPresentation(kind).label}>
+    <InventoryIcon kind={kind} /><VisuallyHidden aria-hidden="true">{kind}</VisuallyHidden>
+  </span>;
 }

@@ -1,18 +1,18 @@
 import { describe,expect,it } from 'vitest';
 
-import { terminalDtoToCardWire } from './track.js';
+import { terminalPanelItem } from './panel-item.js';
 
 import { performApiRequest } from '../api/client.js';
 import type { TrackOverlayItemDto } from '../api/perga-v1.js';
 import { trackDtoSchema } from '../api/perga-v1.js';
-import { decodeWireEvent,overlaySchema } from '../api/schemas.js';
+import { decodeWireEvent } from '../api/schemas.js';
 import type { Area } from './area.js';
 import { terminalPresentation } from './terminal-presentation.js';
 import {
 AREA_TRACK_LIMIT,
 NEUTRAL_ACTIVITY,UNTITLED_TRACK_LABEL,
 activeTracksOn,
-createTerminalCardOperation,
+createTerminalOperation,
 createTrackOperation,
 hasFailed,isBlankForKernel,isClosed,
 isWorking,
@@ -64,15 +64,6 @@ describe('track aggregate HTTP decode', () => {
   });
 });
 
-describe('independent tool and overlay decode', () => {
-
-  it('keeps opaque overlay payloads and open kinds while stripping unknown fields', () => {
-    const overlay = { id: 'overlay', plugin_id: 'plugin', entity_kind: 'future-entity', entity_id: 'w1',
-      kind: 'future-kind', payload: { arbitrary: ['kept'] }, updated_at: 2 };
-    expect(overlaySchema.parse({ ...overlay, future_field: 'ignored' })).toEqual(overlay);
-  });
-});
-
 describe('track wire decode', () => {
   it('fills the kernel serde defaults so the decoded track has no optional fields', () => {
     const parsed = trackDtoSchema.parse(baseWire);
@@ -88,7 +79,7 @@ describe('track wire decode', () => {
   });
 
   it('drops server fields this slice does not model instead of failing the decode', () => {
-    expect(trackDtoSchema.safeParse({ ...baseWire, template_id: null, purpose: null }).success).toBe(true);
+    expect(trackDtoSchema.safeParse({ ...baseWire, templateId: null, purpose: null }).success).toBe(true);
   });
 
   it('maps the wire row onto the camelCase domain shape', () => {
@@ -117,11 +108,10 @@ describe('track wire decode', () => {
 });
 
 describe('track create operation', () => {
-  const theme = { fg: [1, 2, 3], bg: [4, 5, 6] } as const;
 
   it('carries the draft key on every create', () => {
     const keyed = createTrackOperation(
-      { area_id: 'area', planner_provider: 'codex', theme, permissionMode: 'live-mode' },
+      { areaId: 'area', provider: 'codex', permissionMode: 'live-mode' },
       'draft-key',
     );
     expect(keyed.headers).toEqual({ 'Idempotency-Key': 'draft-key' });
@@ -131,10 +121,9 @@ describe('track create operation', () => {
 });
 
 describe('card operations', () => {
-  const theme = { fg: [1, 2, 3], bg: [4, 5, 6] } as const;
 
   it('mints a terminal card on its own atomic endpoint, not the generic one', () => {
-    const operation = createTerminalCardOperation('w1', { theme }, 'intent-key');
+    const operation = createTerminalOperation('w1', {}, 'intent-key');
     expect(operation.method).toBe('POST');
     expect(operation.path).toBe('/api/v1/tracks/w1/terminals');
     expect(operation.headers).toEqual({ 'Idempotency-Key': 'intent-key' });
@@ -428,8 +417,8 @@ describe('isBlankForKernel', () => {
 });
 
 it.each([null, 'session-1'])('makes a v1 terminal consumable by the Track workbench (session=%s)', sessionId => {
-  const card = terminalDtoToCardWire({ id: 'terminal-1', trackId: 'w1', sessionId, title: 'Shell', cwd: '/tmp', status: 'exited', createdAtMs: 1 });
-  expect(terminalPresentation(card)).toEqual({ source: sessionId === null ? 'unrecorded' : 'agent', in_workbench: true });
+  const card = terminalPanelItem({ id: 'terminal-1', trackId: 'w1', sessionId, title: 'Shell', cwd: '/tmp', status: 'exited', createdAtMs: 1 });
+  expect(terminalPresentation(card)).toEqual({ source: sessionId === null ? 'unrecorded' : 'agent', inWorkbench: true });
 });
 
 describe('template report projection', () => {
@@ -457,4 +446,17 @@ describe('template report projection', () => {
 
 it('preserves an explicit local workspace target', () => {
   expect(trackWorkspaceOptionsOperation('area-1', '/tmp/x', undefined, 'local').path).toContain('targetId=local');
+});
+
+
+it('writes only declared Host Track fields, even when a caller object has extra properties', () => {
+  const body = { areaId: 'area', provider: 'runtime/future', reasoningEffort: 'deep', templateId: 'template', templateInputs: { x: 1 },
+    admin: true, theme: { fg: [], bg: [] }, area_id: 'ghost', planner_provider: 'ghost', attach_folder: true, recipe_id: 'ghost' };
+  expect(JSON.parse(JSON.stringify(createTrackOperation(body, 'key').body))).toEqual({
+    areaId: 'area', provider: 'runtime/future', reasoningEffort: 'deep', templateId: 'template', templateInputs: { x: 1 },
+  });
+  const patch = { title: 'Title', pinned: true, sortOrder: 2, admin: true, pinned_at: 1, sort: 9, enabled_plugins: ['ghost'], lead_session_id: 'ghost' };
+  expect(JSON.parse(JSON.stringify(updateTrackOperation('track', patch).body))).toEqual({ title: 'Title', pinned: true, sortOrder: 2 });
+  const terminal = { title: 'Shell', theme: { fg: [], bg: [] }, sort: 3 };
+  expect(JSON.parse(JSON.stringify(createTerminalOperation('track', terminal, 'key').body))).toEqual({ title: 'Shell', idempotencyKey: 'key' });
 });

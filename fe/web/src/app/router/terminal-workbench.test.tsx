@@ -35,7 +35,7 @@ it.each(['main', 'draft'] as const)('dispatches /terminal from the %s pane to th
   }
   // The composer was already committed with an empty card list. A new list
   // must change the event implementation without freezing that initial intent.
-  fixture.cards.push(terminalCard('arrived', { source: 'manual', in_workbench: true }));
+  fixture.cards.push(terminalCard('arrived', { source: 'manual', inWorkbench: true }));
   await act(async () => { await fixture.client.invalidateQueries({ queryKey: queryKeys.trackTools('workbench') }); });
   // Query invalidation resolves before its observer notification commits.
   // Wait for the real inventory projection, independently of composer typing.
@@ -56,7 +56,7 @@ it.each(['main', 'draft'] as const)('dispatches /terminal from the %s pane to th
   await waitFor(() => expect(fixture.posts()).toHaveLength(2));
   expect(fixture.posts()[1]?.headers?.['Idempotency-Key']).not.toBe(fixture.posts()[0]?.headers?.['Idempotency-Key']);
   await act(async () => { fixture.releases[1]?.(); await Promise.resolve(); });
-  await screen.findByText('No terminal session available.');
+  await screen.findByText('Connecting…');
 });
 
 it('deduplicates pending commands and retains the host when hidden', async () => {
@@ -68,7 +68,7 @@ it('deduplicates pending commands and retains the host when hidden', async () =>
   await openTerminalCommand(); await openTerminalCommand();
   await waitFor(() => expect(fixture.posts()).toHaveLength(1));
   await act(async () => { fixture.releases[0]?.(); await Promise.resolve(); });
-  await screen.findByText('No terminal session available.');
+  await screen.findByText('Connecting…');
   expect(mount).toHaveBeenCalledTimes(1);
   const hide = screen.getByRole('button', { name: 'Hide terminal' });
   expect(hide.textContent).toBe('');
@@ -93,17 +93,17 @@ it('retries an unknown response with the original key and first body despite a t
   await screen.findByRole('alert');
   document.documentElement.dataset.theme = 'light';
   await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
-  await screen.findByText('No terminal session available.');
+  await screen.findByText('Connecting…');
   const posts = fixture.posts();
   expect(posts).toHaveLength(2);
   expect(posts[0]?.headers?.['Idempotency-Key']).toBeTruthy();
   expect(posts[1]?.headers).toEqual(posts[0]?.headers);
   expect(posts[1]?.body).toEqual(posts[0]?.body);
-  expect(posts[0]?.body).not.toHaveProperty('cwd');
+  expect((posts[0]?.body as { cwd?: unknown }).cwd).toBeUndefined();
 });
 
 it('accepts /terminal in an empty draft and refuses arguments without sending', async () => {
-  const fixture = setupWorkbench({ cards: [terminalCard('existing', { source: 'manual', in_workbench: true })] });
+  const fixture = setupWorkbench({ cards: [terminalCard('existing', { source: 'manual', inWorkbench: true })] });
   await userEvent.click(await screen.findByRole('button', { name: /^New conversation$/u }));
   const input = await screen.findByRole('combobox', { name: 'Message' });
   // Astryx uses a contenteditable editor, so use its native input boundary.
@@ -118,7 +118,7 @@ it('accepts /terminal in an empty draft and refuses arguments without sending', 
 });
 
 it('switches existing ordinary terminals without a board double mount or implicit replacement', async () => {
-  const fixture = setupWorkbench({ cards: [terminalCard('first', { source: 'manual', in_workbench: true }), terminalCard('second', { source: 'manual', in_workbench: true })] });
+  const fixture = setupWorkbench({ cards: [terminalCard('first', { source: 'manual', inWorkbench: true }), terminalCard('second', { source: 'manual', inWorkbench: true })] });
   const mount = mountedHost;
   await openTerminalCommand();
   await userEvent.click(within(screen.getByRole('region', { name: 'Workbench' })).getByRole('button', { name: /^second/ }));
@@ -147,7 +147,7 @@ it('does not reopen a hidden view or steal changed focus on late completion', as
 it('creates within the resolved daily Track rather than a global or guessed scope', async () => {
   const fixture = setupWorkbench({ daily: true });
   await openTerminalCommand();
-  await screen.findByText('No terminal session available.');
+  await screen.findByText('Connecting…');
   expect(fixture.posts()[0]?.path).toBe('/api/v1/tracks/workbench/terminals');
 });
 
@@ -170,12 +170,12 @@ it('leaves a different Track view and its focus untouched when creation complete
   await userEvent.click(screen.getByRole('button', { name: /^New conversation$/u }));
   const current = await screen.findByRole('combobox', { name: 'Message' });
   current.textContent = '/terminal'; fireEvent.input(current); fireEvent.keyDown(current, { key: 'Enter', code: 'Enter' });
-  await screen.findByText('No terminal session available.');
+  await screen.findByText('Connecting…');
   expect(fixture.posts().map(post => post.path)).toEqual(['/api/v1/tracks/workbench/terminals', '/api/v1/tracks/other/terminals']);
 });
 
 it('routes an ordinary card URL into the same dock and keeps it out of the board', async () => {
-  const fixture = setupWorkbench({ cards: [terminalCard('first', { source: 'manual', in_workbench: true }), terminalCard('second', { source: 'manual', in_workbench: true })] });
+  const fixture = setupWorkbench({ cards: [terminalCard('first', { source: 'manual', inWorkbench: true }), terminalCard('second', { source: 'manual', inWorkbench: true })] });
   await terminalCommandInput();
   await act(async () => { await fixture.router.navigate({ to: '/track/$trackId', params: { trackId: 'workbench' }, search: { card: 'second' } }); });
   await screen.findByRole('button', { name: 'Hide terminal' });
@@ -186,7 +186,7 @@ it('routes an ordinary card URL into the same dock and keeps it out of the board
 });
 
 it('creates an extra terminal only on explicit New, and never overrides a newer selection', async () => {
-  const fixture = setupWorkbench({ cards: [terminalCard('first', { source: 'manual', in_workbench: true })], defer: true });
+  const fixture = setupWorkbench({ cards: [terminalCard('first', { source: 'manual', inWorkbench: true })], defer: true });
   await openTerminalCommand();
   await userEvent.click(screen.getByRole('button', { name: 'Tools' }));
   await userEvent.click(screen.getByRole('menuitem', { name: 'terminal' }));
@@ -199,7 +199,7 @@ it('creates an extra terminal only on explicit New, and never overrides a newer 
 });
 
 it('deletes only after confirmation, removes the inventory row and selects an existing survivor', async () => {
-  const fixture = setupWorkbench({ cards: [terminalCard('first', { source: 'manual', in_workbench: true }), terminalCard('second', { source: 'manual', in_workbench: true })] });
+  const fixture = setupWorkbench({ cards: [terminalCard('first', { source: 'manual', inWorkbench: true }), terminalCard('second', { source: 'manual', inWorkbench: true })] });
   await openTerminalCommand();
   await userEvent.click(within(screen.getByRole('region', { name: 'Workbench' })).getByRole('button', { name: /^second/ }));
   await userEvent.click(within(document.querySelector('[data-nc-card-dock]:not([hidden])') as HTMLElement).getByRole('button', { name: /^Delete card / }));
@@ -221,7 +221,7 @@ it('rejoins a pending intent after leaving and returning to the Track', async ()
   await openTerminalCommand();
   expect(fixture.posts()).toHaveLength(1);
   await act(async () => { fixture.releases[0]?.(); await Promise.resolve(); });
-  await screen.findByText('No terminal session available.');
+  await screen.findByText('Connecting…');
   expect(fixture.posts()).toHaveLength(1);
 });
 
@@ -233,7 +233,7 @@ it('keeps the first unknown request across route reentry even when the list now 
   await screen.findAllByText('Other track');
   await act(async () => { await fixture.router.navigate({ to: '/track/$trackId', params: { trackId: 'workbench' } }); });
   await openTerminalCommand();
-  await screen.findByText('No terminal session available.');
+  await screen.findByText('Connecting…');
   expect(fixture.posts()).toHaveLength(2);
   expect(fixture.posts()[1]?.headers).toEqual(fixture.posts()[0]?.headers);
   expect(fixture.posts()[1]?.body).toEqual(fixture.posts()[0]?.body);
@@ -270,7 +270,7 @@ it.each(['success', 'definite', 'unknown'] as const)('settles %s in a returned o
 });
 
 it('retains each unvisited deletion fallback lazily through hide and repeated list changes', async () => {
-  const fixture = setupWorkbench({ cards: [terminalCard('first', { source: 'manual', in_workbench: true }), terminalCard('second', { source: 'manual', in_workbench: true }), terminalCard('third', { source: 'manual', in_workbench: true })] });
+  const fixture = setupWorkbench({ cards: [terminalCard('first', { source: 'manual', inWorkbench: true }), terminalCard('second', { source: 'manual', inWorkbench: true }), terminalCard('third', { source: 'manual', inWorkbench: true })] });
   const mount = mountedHost;
   await terminalCommandInput();
   expect(mount).toHaveBeenCalledTimes(0);
@@ -295,7 +295,7 @@ it('retains each unvisited deletion fallback lazily through hide and repeated li
 
 
 it('retains visible list-refresh fallbacks without attaching hidden unvisited terminals', async () => {
-  const fixture = setupWorkbench({ cards: [terminalCard('first', { source: 'manual', in_workbench: true }), terminalCard('second', { source: 'manual', in_workbench: true }), terminalCard('third', { source: 'manual', in_workbench: true })] });
+  const fixture = setupWorkbench({ cards: [terminalCard('first', { source: 'manual', inWorkbench: true }), terminalCard('second', { source: 'manual', inWorkbench: true }), terminalCard('third', { source: 'manual', inWorkbench: true })] });
   const mount = mountedHost;
   await terminalCommandInput();
   await openTerminalCommand();
@@ -341,14 +341,14 @@ it('keeps the Track conversation final frame during desktop close', async () => 
 });
 
 
-it.each(['starting', 'exited'] as const)('cold-opens a %s terminal from its URL while secondary reads are held', async status => {
+it.each(['running', 'exited'] as const)('cold-opens a %s terminal from its URL while secondary reads are held', async status => {
   let release!: () => void;
   const secondaryReads = new Promise<void>(resolve => { release = resolve; });
-  const fixture = setupWorkbench({ initialCard: 'cold', secondaryReads, cards: [{ ...terminalCard('cold', { source: 'manual', in_workbench: true }),
-    payload: { terminal_presentation: { source: 'manual', in_workbench: true } }, runtime: { worker_session_id: 'run-1', kind: 'terminal', status },
+  const fixture = setupWorkbench({ initialCard: 'cold', secondaryReads, cards: [{ ...terminalCard('cold', { source: 'manual', inWorkbench: true }),
+    presentation: { source: 'manual', inWorkbench: true }, terminal: { id: 'cold', trackId: 'workbench', title: '', cwd: '/tmp', createdAtMs: 1, status },
   }] });
   try {
-    await screen.findByText(status === 'exited' ? 'Session exited.' : 'Starting terminal…');
+    await screen.findByText(status === 'exited' ? 'Session exited.' : 'Connecting…');
     expect(fixture.router.state.location.search).toHaveProperty('card', 'cold');
     expect(fixture.requests.some(request => request.path === '/api/v1/tracks/workbench/sessions')).toBe(false);
     await userEvent.click(screen.getByRole('button', { name: 'Hide terminal' }));
@@ -360,7 +360,7 @@ it.each(['starting', 'exited'] as const)('cold-opens a %s terminal from its URL 
 });
 
 it('paints one Chat-owned header without a toolbar or letter badge', async () => {
-  setupWorkbench({ cards: [terminalCard('shell', { source: 'manual', in_workbench: true })] });
+  setupWorkbench({ cards: [terminalCard('shell', { source: 'manual', inWorkbench: true })] });
   await userEvent.click(await screen.findByRole('button', { name: 'Conversation Main discussion' }));
   await openTerminalCommand();
   const workbench = document.querySelector('[data-nc-terminal-workbench]')!;
@@ -370,25 +370,16 @@ it('paints one Chat-owned header without a toolbar or letter badge', async () =>
   expect(headers[0].className).toBe(chatHeader.className);
   expect(within(headers[0]).getByRole('heading', { name: 'shell' })).toBeTruthy();
   expect(workbench.querySelector('select')).toBeNull();
-  expect([...headers[0].children].map(child => child.tagName)).toEqual(['H2', 'BUTTON', 'BUTTON']);
+  expect([...headers[0].children].map(child => child.tagName)).toEqual(['H2', 'SPAN', 'BUTTON', 'BUTTON']);
   expect(workbench.textContent).not.toContain('New terminal');
   expect(workbench.textContent).not.toContain('Delete card');
   expect(within(headers[0]).getByRole('button', { name: 'Delete card shell' })).toBeTruthy();
   expect(within(headers[0]).getByRole('button', { name: 'Hide terminal' })).toBeTruthy();
 });
 
-it('omits dock deletion for kernel-owned cards while keeping hide available', async () => {
-  const fixture = setupWorkbench({ cards: [{ ...terminalCard('protected', { source: 'manual', in_workbench: true }), deletable: false }] });
-  await openTerminalCommand();
-  const dock = document.querySelector('[data-nc-card-dock]') as HTMLElement;
-  expect(within(dock).queryByRole('button', { name: /^Delete card / })).toBeNull();
-  await userEvent.click(within(dock).getByRole('button', { name: 'Hide terminal' }));
-  expect(document.querySelector('[data-nc-card-dock]')).toBe(dock);
-  expect(fixture.requests.some(request => request.method === 'DELETE')).toBe(false);
-});
 
 it('keeps Agent terminals temporary and creates a manual terminal for an unqualified command', async () => {
-  const fixture = setupWorkbench({ cards: [terminalCard('agent-shell', { source: 'agent', in_workbench: false })] });
+  const fixture = setupWorkbench({ cards: [terminalCard('agent-shell', { source: 'agent', inWorkbench: false })] });
   await screen.findByRole('region', { name: 'Temporary terminals' });
   expect(within(screen.getByRole('region', { name: 'Workbench' })).queryByText('agent-shell')).toBeNull();
   const toggle = within(screen.getByRole('region', { name: 'Temporary terminals' })).getByRole('button', { name: 'Temporary terminals' });
@@ -397,24 +388,24 @@ it('keeps Agent terminals temporary and creates a manual terminal for an unquali
   await screen.findByRole('button', { name: 'Hide terminal' });
   expect(fixture.posts()).toHaveLength(1);
   await waitFor(() => expect(document.querySelector('[data-nc-card-dock]:not([hidden])')?.getAttribute('data-nc-card-id')).toBe('terminal-1'));
-  expect(fixture.cards.find(card => card.id === 'agent-shell')?.payload)
-    .toEqual({ terminal_presentation: { source: 'agent', in_workbench: false } });
+  expect(fixture.cards.find(card => card.id === 'agent-shell')?.presentation)
+    .toEqual({ source: 'agent', inWorkbench: false });
 });
 
 it('keeps terminal membership in local preferences without changing immutable creation source', async () => {
-  const fixture = setupWorkbench({ cards: [terminalCard('agent-shell', { source: 'agent', in_workbench: false })] });
+  const fixture = setupWorkbench({ cards: [terminalCard('agent-shell', { source: 'agent', inWorkbench: false })] });
   const temporary = await screen.findByRole('region', { name: 'Temporary terminals' });
   await userEvent.click(within(temporary).getByRole('button', { name: 'Temporary terminals' }));
   await userEvent.click(within(temporary).getByRole('button', { name: 'Actions for agent-shell' }));
   await userEvent.click(screen.getByRole('menuitem', { name: 'Add to Workbench' }));
   await waitFor(() => expect(within(screen.getByRole('region', { name: 'Workbench' })).getByRole('button', { name: /^agent-shell/ })).toBeTruthy());
-  expect(fixture.cards[0].payload).toEqual({ terminal_presentation: { source: 'agent', in_workbench: false } });
+  expect(fixture.cards[0].presentation).toEqual({ source: 'agent', inWorkbench: false });
   expect(fixture.requests.filter(request => request.method === 'PATCH')).toEqual([]);
   const workbench = screen.getByRole('region', { name: 'Workbench' });
   await userEvent.click(within(workbench).getByRole('button', { name: 'Actions for agent-shell' }));
   await userEvent.click(screen.getByRole('menuitem', { name: 'Remove from Workbench' }));
   await waitFor(() => expect(screen.getByRole('region', { name: 'Temporary terminals' })).toBeTruthy());
-  expect(fixture.cards[0].payload).toEqual({ terminal_presentation: { source: 'agent', in_workbench: false } });
+  expect(fixture.cards[0].presentation).toEqual({ source: 'agent', inWorkbench: false });
   expect(fixture.posts()).toHaveLength(0);
   expect(fixture.requests.some(request => request.method === 'DELETE')).toBe(false);
 });

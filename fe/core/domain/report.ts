@@ -1,10 +1,9 @@
 import { z } from 'zod';
 import type { ReportDocumentDto } from '../api/perga-v1.js';
 import { extractOutline, markdownExcerpt, parse, REPORT_MAX_DEPTH, reportHeadingIdPolicy } from '../markdown/public.js';
-import type { CardWire } from './track.js';
 import { widgetBlockPayloadSchema, type WidgetBlockPayload } from './report-widget.js';
 
-/** The card kind the kernel reserves for the report. One per track, undeletable. */
+/** Client registry kind for the headless report presentation. */
 export const TRACK_REPORT_CARD_KIND = 'track-report';
 
 export type ReportBlock =
@@ -61,21 +60,6 @@ export type TrackReport = Readonly<{
 /** The aggregate report is a document, independent of Workbench cards. */
 export function readReportDocument(document: ReportDocumentDto): TrackReport | null {
   return readTrackReportPayload({ ...document, pergaSnapshot: true });
-}
-
-/** The kernel's single report card, in wire order. */
-export function trackReportCardIn(cards: readonly CardWire[]): CardWire | undefined {
-  return cards.find((candidate) => candidate.kind === TRACK_REPORT_CARD_KIND);
-}
-
-/**
- * The track's report, or `null` when it has none — no card, an unparseable payload, or one empty in
- * both projections.
- */
-export function readTrackReport(cards: readonly CardWire[]): TrackReport | null {
-  const card = trackReportCardIn(cards);
-  if (card === undefined) return null;
-  return readTrackReportPayload(card.payload);
 }
 
 /** Shared resource and owner cards consume the same block parser. */

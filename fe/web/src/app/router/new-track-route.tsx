@@ -5,7 +5,6 @@ import { useCallback,useEffect,useRef } from 'react';
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { availabilityOf,permissionModesForProvider } from '../../../../core/domain/agent-providers.ts';
-import { folderConflictMessage } from '../../../../core/domain/area.ts';
 import { ApiError,classifyFailure,NotSentError,refusedText,writeFailureOf } from '../../../../core/domain/failure-class.ts';
 import { resolvePermissionControl } from '../../../../core/domain/planner-permission-mode.ts';
 import { readErrorText } from '../../../../core/domain/read-failure.ts';
@@ -15,7 +14,7 @@ trackWorkspaceOptionsOperation,type NewTrackBody,
 } from '../../../../core/domain/track.ts';
 import { NewTrackForm,type NewTrackDraft,type NewTrackFormState } from '../../features/area/new-track/public.tsx';
 import { useMentionTrigger } from '../../features/chat/thread/mention-trigger.tsx';
-import { ModelPill,PermissionModePill,PlannerRolePill } from '../../features/chat/thread/model-pill.tsx';
+import { ModelPill,PermissionModePill } from '../../features/chat/thread/model-pill.tsx';
 import { ErrorBox } from '../../ui/error-box/public.tsx';
 import { useCompactViewport } from '../../ui/viewport/public.ts';
 import { useConversationCommands } from '../conversations/public.tsx';
@@ -25,11 +24,9 @@ import { mintIdempotencyKey } from '../providers/idempotency-key.ts';
 import { useManagedProviderCatalogs } from '../providers/managed-providers.ts';
 import { useMentionSearch } from '../providers/mentions.ts';
 import { executionTargetsQueryOptions, useCreateExecutionTarget } from '../providers/execution-target-queries.ts';
-import { folderConflictOf } from '../providers/area-mutations.ts';
 import { runOperation } from '../providers/query-operation.ts';
 import { useTrackLifecycleMutations } from '../providers/track-lifecycle-mutations.ts';
 import { useWorkspace, type Workspace } from '../providers/workspace-queries.ts';
-import { readHostThemeRgb } from '../theme/host-rgb.ts';
 import { useGo,useRouteParam } from './navigation.ts';
 import { useNewTrackSession,type NewTrackSession,type TrackCreationRequest } from './new-track-drafts.tsx';
 
@@ -121,34 +118,31 @@ function NewTrackEditor({ transport, unauthorized, workspace, session, store }: 
     go({ name: 'track', trackId, openPlanner: true });
   };
 
-  const submit = (draft: NewTrackDraft, authorization?: Readonly<{ folder_id: number; area_id: string }>, replacementKey?: string) => {
+  const submit = (draft: NewTrackDraft) => {
     // The provider owns the lease too: leaving and returning during a POST
     // must not enable a second request before the first settles.
     const current = store.get(areaId);
     // After `key-reused` only an explicit new track goes anywhere: a retry under the key cannot.
     if (current === null || current.creating || !available || current.createdTrackId !== null
       || current.canRetryAsNewTrack) return;
-    const hadUnconfirmedRequest = replacementKey === undefined && current.request !== null;
-    const attemptKey = replacementKey ?? current.key;
+    const hadUnconfirmedRequest = current.request !== null;
+    const attemptKey = current.key;
     const body = {
-      area_id: areaId,
-      planner_provider: current.provider,
+      areaId: areaId,
+      provider: current.provider,
       ...(current.permissionMode === null ? {} : { permissionMode: current.permissionMode }),
-      theme: readHostThemeRgb(),
       ...(current.model.model === null ? {} : { model: current.model.model }),
-      ...(current.model.reasoning_effort === null ? {} : { reasoning_effort: current.model.reasoning_effort }),
-      ...(draft.cwd === undefined ? {} : { cwd: draft.cwd, attach_folder: true }),
-      ...(draft.workspaceOptionId === undefined ? {} : { cwd: draft.cwd ?? '', workspace_option_id: draft.workspaceOptionId }),
-      ...(draft.executionTargetId === undefined ? {} : { execution_target_id: draft.executionTargetId }),
-      ...(current.role === 'admin' ? { admin: true } : {}),
-      ...(authorization === undefined ? {} : { allow_cross_area_cwd: authorization }),
+      ...(current.model.reasoning_effort === null ? {} : { reasoningEffort: current.model.reasoning_effort }),
+      ...(draft.cwd === undefined ? {} : { cwd: draft.cwd }),
+      ...(draft.workspaceOptionId === undefined ? {} : { cwd: draft.cwd ?? '', workspaceOptionId: draft.workspaceOptionId }),
+      ...(draft.executionTargetId === undefined ? {} : { executionTargetId: draft.executionTargetId }),
     } satisfies NewTrackBody;
     // The original wire body travels with the key. A retry after navigation,
     // theme changes or template refresh must not silently change its payload.
-    const request: TrackCreationRequest = replacementKey === undefined && current.request !== null
+    const request: TrackCreationRequest = current.request !== null
       ? current.request
       : { body, key: attemptKey, ...(isBlankForKernel(draft.message) ? {} : { message: draft.message }) };
-    store.update(areaId, { creating: true, request, error: null, canRetryAsNewTrack: false, folderConflict: null });
+    store.update(areaId, { creating: true, request, error: null, canRetryAsNewTrack: false });
     const creation = trackMutations.create(request.body, request.key);
     void creation.then((track) => {
       const persistConfirmation = request.message === undefined || isBlankForKernel(request.message)
@@ -159,18 +153,6 @@ function NewTrackEditor({ transport, unauthorized, workspace, session, store }: 
       store.update(areaId, { createdTrackId: track.id }, { persistConfirmation });
       if (liveRef.current) openCreated(track.id);
     }).catch((failure: unknown) => {
-      const conflict = folderConflictOf(failure);
-      if (conflict !== null) {
-        const owner = workspace.areas.find((area) => area.id === conflict.area_id);
-        store.update(areaId, {
-          request: hadUnconfirmedRequest ? request : null,
-          error: folderConflictMessage(conflict, owner?.name ?? null),
-          folderConflict: !hadUnconfirmedRequest && owner !== undefined && owner.id !== areaId
-            && conflict.conflict_kind !== 'ancestor' && draft.cwd !== undefined
-            ? { ownerAreaId: owner.id, areaName: owner.name, folderId: conflict.folder_id, cwd: draft.cwd } : null,
-        });
-        return;
-      }
       const apiFailure = failure instanceof ApiError ? failure.failure : null;
       const kind = classifyFailure(apiFailure, TRACK_CREATE_FAILURES);
       const rejectedBeforeDispatch = failure instanceof NotSentError;
@@ -188,16 +170,6 @@ function NewTrackEditor({ transport, unauthorized, workspace, session, store }: 
 
   const retryAsNewTrack = () => {
     store.update(areaId, { key: mintIdempotencyKey(), request: null, canRetryAsNewTrack: false, error: null });
-  };
-  const folderConflict = session.folderConflict;
-  const recoverFolderConflict = (draft: NewTrackDraft) => {
-    if (folderConflict === null || draft.cwd !== folderConflict.cwd) return;
-    const key = mintIdempotencyKey();
-    store.update(areaId, { key, request: null });
-    submit(draft, {
-      folder_id: folderConflict.folderId,
-      area_id: folderConflict.ownerAreaId,
-    }, key);
   };
   const areaFailure = workspace.areasError !== null
     ? readErrorText(workspace.areasError, 'Areas could not be refreshed. Your draft is kept here.')
@@ -245,8 +217,6 @@ function NewTrackEditor({ transport, unauthorized, workspace, session, store }: 
         onChange={(model, provider) => { store.update(areaId, { provider, model }); }}
         isDisabled={configurationLocked}
       />
-      <PlannerRolePill value={session.role} onChange={(role) => { store.update(areaId, { role }); }}
-        isDisabled={configurationLocked} />
     </>}
     initialDraft={session.form ?? undefined}
     onDraftChange={saveForm}
@@ -256,9 +226,7 @@ function NewTrackEditor({ transport, unauthorized, workspace, session, store }: 
     error={areaFailure ?? session.error ?? (createdTrackId !== null ? 'Your track was created while you were away.' : null)}
     errorAction={createdTrackId !== null && session.request !== null
       ? { label: 'Open track', onClick: () => { openCreated(createdTrackId); } }
-      : folderConflict !== null
-        ? { label: `Reuse directory in ${session.area.name}`, isApplicable: (draft) => draft.cwd === folderConflict.cwd, onClick: recoverFolderConflict }
-        : session.canRetryAsNewTrack ? { label: 'Start as a new track', onClick: retryAsNewTrack } : undefined}
+      : session.canRetryAsNewTrack ? { label: 'Start as a new track', onClick: retryAsNewTrack } : undefined}
     initialCwd={session.area.defaultCwd}
     initialExecutionTargetId={session.area.executionTargetId}
     executionTargets={executionTargetsQuery.data}

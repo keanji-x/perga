@@ -296,7 +296,7 @@ describe('BoardHost card removal', () => {
 
   function renderRemovable(options: {
     onRemoveCard?: (cardId: string) => void;
-    deletable?: boolean;
+    removable?: boolean;
   }) {
     const registry = createCardRegistry();
     registry.register(removable);
@@ -306,7 +306,7 @@ describe('BoardHost card removal', () => {
       <BoardHost
         host={host}
         items={[Object.freeze({
-          card, title: 'Build log', originalIndex: 0, deletable: options.deletable, activity: null, notice: null,
+          card, title: 'Build log', originalIndex: 0, deletable: options.removable, activity: null, notice: null,
         })]}
         activeCardId="card-a"
         visible
@@ -317,23 +317,23 @@ describe('BoardHost card removal', () => {
 
   it('hands the component a remove bound to its own card id', async () => {
     const onRemoveCard = vi.fn();
-    renderRemovable({ onRemoveCard, deletable: true });
+    renderRemovable({ onRemoveCard, removable: true });
     await userEvent.click(screen.getByRole('button', { name: 'Delete card Build log' }));
     expect(onRemoveCard).toHaveBeenCalledWith('card-a');
   });
 
   it('draws no delete when the board was given none', () => {
-    renderRemovable({ deletable: true });
+    renderRemovable({ removable: true });
     expect(screen.queryByRole('button', { name: 'Delete card Build log' })).toBeNull();
   });
 
   it('withholds the delete on a kernel-owned card', () => {
-    renderRemovable({ onRemoveCard: vi.fn(), deletable: false });
+    renderRemovable({ onRemoveCard: vi.fn(), removable: false });
     expect(screen.queryByRole('button', { name: 'Delete card Build log' })).toBeNull();
   });
 
-  /* `cardWireSchema` reads an absent `deletable` (newer server) as user-deletable; the board must not read it as the opposite. */
-  it('treats an absent deletable bit as deletable', async () => {
+  /* A host may omit a local removal override. */
+  it('treats an absent removable bit as removable', async () => {
     const onRemoveCard = vi.fn();
     renderRemovable({ onRemoveCard });
     await userEvent.click(screen.getByRole('button', { name: 'Delete card Build log' }));

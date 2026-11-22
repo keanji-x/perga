@@ -1,13 +1,12 @@
+import type { CreateTrackRequest, PatchTrackRequest, OpenTerminalRequest } from '../api/generated/wire.js';
 import { type NotifiableSessionWatermark, type TrackOverlayItemDto } from '../api/perga-v1.js';
-import type { TerminalPresentation } from './terminal-presentation.js';
 // Track: the unit of work the product is organised around — wire decode, open or closed,
 // and the pure predicates several surfaces must agree on.
 
 import { z } from 'zod';
 
-import type { AgentProvider, WorkspaceIsolation } from './presentation-types.js';
+import type { WorkspaceIsolation } from './presentation-types.js';
 import { compiledTemplateManifestDtoSchema, overlaysListDtoSchema, terminalDtoSchema, trackAggregateSnapshotDtoSchema, trackDtoSchema, trackWorkspaceOptionsDtoSchema, type TrackDto, type AgentSessionDto, type AskDto, type TaskDto, type TerminalDto, type TrackAggregateSnapshotDto, type TrackWorkspaceOptionsDto } from '../api/perga-v1.js';
-import { cardSchema } from '../api/schemas.js';
 import type { ApiFailure,ApiOperation } from '../api/types.js';
 import {
 activityStateOf,type ActivityItem,type ActivityState,type AttentionKind,type CardActivity,
@@ -207,16 +206,6 @@ export function limitAreaTracks(
   return { rows, hiddenCount: sorted.length - rows.length };
 }
 
-/** HTTP readers normalize an omitted title to null; event readers retain the optional wire title. */
-export const cardWireSchema = z.object({
-  ...cardSchema.shape,
-  title: z.string().nullable().default(null),
-});
-export type CardWire = z.infer<typeof cardWireSchema>;
-
-/** `{ fg, bg }` RGB the kernel stamps onto a spawning daemon's argv. */
-export type ThemeRgb = Readonly<{ fg: readonly [number, number, number]; bg: readonly [number, number, number] }>;
-
 /**
  * Matches the kernel's `str::trim().is_empty()`: Rust whitespace is Unicode `White_Space`, which
  * JS `trim()` is not (`U+0085`). Answers only "is this blank" — the value itself is never trimmed.
@@ -225,76 +214,23 @@ export function isBlankForKernel(text: string): boolean {
   return /^\p{White_Space}*$/u.test(text);
 }
 
-export type NewTrackBody = Readonly<{
-  permissionMode?: string;
-  admin?: boolean;
-  area_id: string;
-  /** The Planner's backend, stamped on its card and never changed. Required: the kernel refuses a create without it. */
-  planner_provider: AgentProvider;
-  /** Planner overrides applied before the first message; omitted follows installation defaults. */
-  model?: string;
-  reasoning_effort?: string;
-  /** Optional; omitted stores the empty string (the kernel has no default name). Present values, including `""`, are stored verbatim. */
-  title?: string;
-  /** Omitted (or `null`) means a managed workspace the server allocates beneath its workspace root. */
-  cwd?: string | null;
-  /** Explicit isolation for an attached folder; omitted defaults to `worktree` on the server. */
-  isolation?: 'worktree' | 'none';
-  workspace_option_id?: string;
-  execution_target_id?: string;
-  theme: ThemeRgb;
-  /**
-   * `false` requires `cwd` to already sit under a claimed folder (409 naming the area otherwise);
-   * `true` claims it in the same transaction. Omitting `cwd` forces `false`.
-   */
-  attach_folder?: boolean;
-  /** Single-use consent for the exact foreign folder claim returned by a
-   * create 409. The kernel revalidates both ids transactionally. */
-  allow_cross_area_cwd?: Readonly<{ folder_id: number; area_id: string }>;
-  /** The chosen template's key (`template.id` from `GET /api/track-templates`). Blank omits the key entirely: the kernel 400s a whitespace-only id. */
-  template_id?: string;
-  /** Only accepted when `GET /api/track-templates` returned an `input_schema` for the template; otherwise a 400. */
-  template_input?: Readonly<Record<string, unknown>>;
-  /** The chosen user recipe's id. Mutually exclusive with `template_id` (400 naming both). Absent, never `''`. */
-  recipe_id?: string;
+export type NewTrackBody = Readonly<CreateTrackRequest>;
+
+/** A selectable compiled Host template, projected for the new Track form. */
+export type TrackTemplate = Readonly<{
+  id: string; title: string; description: string | null;
+  availability: Readonly<{ status: 'ready' }>;
+  input_schema?: unknown;
+  tasks: readonly Readonly<{ key: string; goal: string }>[];
 }>;
 
-/** A selectable starting point for a new track. `input_schema` is present exactly when a running trusted plugin is bound and the template takes input. */
-export const trackTemplateSchema = z.object({
-  id: z.string(),
-  title: z.string(),
-  /** Author-owned purpose; null means this author did not supply a description. */
-  description: z.string().nullable(),
-  /** Server-owned prerequisite state, independent of documentation references. */
-  availability: z.discriminatedUnion('status', [
-    z.object({ status: z.literal('ready') }),
-    z.object({ status: z.literal('requires_plugin'), plugin_id: z.string(), plugin_name: z.string() }),
-  ]),
-  input_schema: z.unknown().optional(),
-  /** Required, not `.default([])`: a default would let a broken read render as "pre-sets nothing". */
-  tasks: z.array(z.object({ key: z.string(), goal: z.string() })),
-});
-export type TrackTemplate = z.infer<typeof trackTemplateSchema>;
-
 export function trackTemplatesOperation(): ApiOperation<TrackTemplate[]> {
-  return {
-    method: 'GET',
-    path: '/api/v1/templates',
-    responseSchema: z.union([
-      z.array(trackTemplateSchema),
-      z.array(compiledTemplateManifestDtoSchema).transform((manifests) => manifests.map((manifest) => ({
-        id: manifest.id,
-        title: manifest.title,
-        description: manifest.description,
-        availability: { status: 'ready' as const },
-        ...(manifest.inputsSchema !== null
-          && manifest.inputsSchema !== undefined
-          && (typeof manifest.inputsSchema !== 'object' || Array.isArray(manifest.inputsSchema) || Object.keys(manifest.inputsSchema).length > 0)
-          ? { input_schema: manifest.inputsSchema }
-          : {}),
-        tasks: [],
-      }))),
-    ]),
+  return { method: 'GET', path: '/api/v1/templates',
+    responseSchema: z.array(compiledTemplateManifestDtoSchema).transform(manifests => manifests.map(manifest => ({
+      id: manifest.id, title: manifest.title, description: manifest.description, availability: { status: 'ready' as const },
+      ...(manifest.inputsSchema != null && (typeof manifest.inputsSchema !== 'object' || Array.isArray(manifest.inputsSchema) || Object.keys(manifest.inputsSchema).length > 0)
+        ? { input_schema: manifest.inputsSchema } : {}), tasks: [],
+    }))),
   };
 }
 
@@ -320,18 +256,7 @@ export function readKeyedCreateFailure(
   return { is, text: is === 'refused' ? refusedText(failure, text.refused) : text[is] };
 }
 
-export type TrackPatchBody = Readonly<{
-  admin?: boolean;
-  title?: string;
-  sort?: number;
-  pinned_at?: number | null;
-  pinned?: boolean;
-  enabled_plugins?: readonly string[];
-  lead_session_id?: string;
-  /** `true` closes the track, `false` reopens it; the server stamps the time. */
-  closed?: boolean;
-}>;
-
+export type TrackPatchBody = Readonly<Pick<PatchTrackRequest, 'title' | 'closed' | 'pinned' | 'sortOrder'>>;
 
 function askDtoToActivityItem(ask: AskDto): ActivityItem {
   const questions = normalizeAskQuestions(ask.questions);
@@ -343,34 +268,6 @@ function askDtoToActivityItem(ask: AskDto): ActivityItem {
     askId: ask.id,
     questions: [...questions],
     delivery: ask.delivery,
-  };
-}
-
-export function terminalDtoToCardWire(dto: TerminalDto, sort = 100, inWorkbench = true): CardWire {
-  return {
-    id: dto.id,
-    track_id: dto.trackId,
-    kind: 'terminal',
-    title: dto.title,
-    sort,
-    payload: {
-      terminal_id: dto.id,
-      cwd: dto.cwd,
-      program: dto.program ?? null,
-      status: dto.status,
-      exit_code: dto.exitCode ?? null,
-      terminal_presentation: { source: dto.sessionId == null ? 'unrecorded' : 'agent', in_workbench: inWorkbench } satisfies TerminalPresentation,
-    },
-    runtime: {
-      worker_session_id: dto.id,
-      kind: 'terminal',
-      status: dto.status === 'running' ? 'running' : 'exited',
-      terminal_id: dto.id,
-      updated_at_ms: dto.exitedAtMs ?? dto.createdAtMs,
-    },
-    deletable: true,
-    created_at: dto.createdAtMs,
-    updated_at: dto.exitedAtMs ?? dto.createdAtMs,
   };
 }
 
@@ -474,30 +371,25 @@ export function trackWorkspaceOptionsOperation(
  * `POST /api/v1/tracks`, keyed per draft on every create.
  */
 export function createTrackOperation(body: NewTrackBody, idempotencyKey: string): ApiOperation<TrackDto> {
-  const { workspace_option_id: workspaceOptionId, execution_target_id: executionTargetId, ...rest } = body;
-  const wireBody = {
-    ...rest,
-    areaId: body.area_id,
-    provider: body.planner_provider,
-    ...(workspaceOptionId !== undefined ? { workspaceOptionId } : body.isolation !== undefined
-      ? { workspaceDriver: body.isolation === 'worktree' ? 'vcs-workspace' : 'direct' }
-      : {}),
-    ...(executionTargetId !== undefined ? { executionTargetId } : {}),
-    ...(body.template_id !== undefined ? { templateId: body.template_id } : {}),
-    ...(body.template_input !== undefined ? { templateInputs: body.template_input } : {}),
-    ...(body.reasoning_effort !== undefined ? { reasoningEffort: body.reasoning_effort } : {}),
-  };
   return {
     method: 'POST',
     path: '/api/v1/tracks',
-    body: wireBody,
+    body: Object.fromEntries(Object.entries({
+      areaId: body.areaId, title: body.title, cwd: body.cwd, provider: body.provider,
+      model: body.model, reasoningEffort: body.reasoningEffort, permissionMode: body.permissionMode,
+      workspaceDriver: body.workspaceDriver, workspaceOptionId: body.workspaceOptionId,
+      executionTargetId: body.executionTargetId, baseRevision: body.baseRevision,
+      templateId: body.templateId, templateInputs: body.templateInputs,
+      enabledPlugins: body.enabledPlugins, sortOrder: body.sortOrder,
+      parentTrackId: body.parentTrackId, parentAttemptId: body.parentAttemptId,
+    } satisfies CreateTrackRequest).filter(([, value]) => value !== undefined)),
     headers: { 'Idempotency-Key': idempotencyKey },
     responseSchema: trackAggregateSnapshotDtoSchema.transform((snapshot) => snapshot.track),
   };
 }
 
 /**
- * What one failed `POST /api/tracks` means for its draft and key.
+ * What one failed `POST /api/v1/tracks` means for its draft and key.
  * - `exhausted`: the key can never mint again (spent, its track deleted, or refused as invalid);
  *   nothing was minted under it for this request, so only a fresh key goes anywhere.
  * - `key-reused`: the key is bound to another create (or one the server can no longer compare), so
@@ -535,29 +427,16 @@ export function trackCreateWorkspaceError(failure: ApiFailure | null): string | 
 }
 
 export function updateTrackOperation(trackId: string, body: TrackPatchBody): ApiOperation<TrackDto> {
-  const wireBody = {
-    ...(body.title !== undefined ? { title: body.title } : {}),
-    ...(body.closed !== undefined ? { closed: body.closed } : {}),
-    ...(body.pinned !== undefined
-      ? { pinned: body.pinned }
-      : body.pinned_at !== undefined
-        ? { pinned: body.pinned_at !== null, pinned_at: body.pinned_at }
-        : {}),
-    ...(body.enabled_plugins !== undefined ? { enabledPlugins: [...body.enabled_plugins] } : {}),
-    ...(body.lead_session_id !== undefined ? { leadSessionId: body.lead_session_id } : {}),
-    ...(body.sort !== undefined ? { sortOrder: body.sort, sort: body.sort } : {}),
-    ...(body.admin !== undefined ? { admin: body.admin } : {}),
-  };
   return {
     method: 'PATCH',
     path: `/api/v1/tracks/${encodeURIComponent(trackId)}`,
-    body: wireBody,
+    body: Object.fromEntries(Object.entries({ title: body.title, closed: body.closed, pinned: body.pinned, sortOrder: body.sortOrder } satisfies PatchTrackRequest).filter(([, value]) => value !== undefined)),
     responseSchema: trackDtoSchema,
   };
 }
 
 /**
- * What a failed `PATCH /api/tracks/{id}` (rename, pin, close, reopen, admin) says. It sets a value, so a retry is safe: 400, 403,
+ * What a failed `PATCH /api/v1/tracks/{id}` (rename, pin, close, reopen) says. It sets a value, so a retry is safe: 400, 403,
  * 404, 409 (a child track reopened under a closed parent), 413 and 422 are answered before anything is stored; anything
  * else may have stored it.
  */
@@ -572,67 +451,29 @@ export const TRACK_PATCH_TEXT = Object.freeze({
   pin: Object.freeze({ refused: 'The pin was not changed.', unknown: 'The pin change is unconfirmed.' }),
   close: Object.freeze({ refused: 'The track was not closed.', unknown: 'Closing the track is unconfirmed.' }),
   reopen: Object.freeze({ refused: 'The track was not reopened.', unknown: 'Reopening the track is unconfirmed.' }),
-  grantAdmin: Object.freeze({ refused: 'The track was not made an Area admin.', unknown: 'Making the track an Area admin is unconfirmed.' }),
-  revokeAdmin: Object.freeze({ refused: 'The Area admin grant was not removed.', unknown: 'Removing the Area admin grant is unconfirmed.' }),
 }) satisfies Readonly<Record<string, WriteText>>;
 
 export function deleteTrackOperation(trackId: string): ApiOperation<undefined> {
   return { method: 'DELETE', path: `/api/v1/tracks/${encodeURIComponent(trackId)}`, responseSchema: z.undefined() };
 }
 
-export type NewTerminalCardBody = Readonly<{
-  theme: ThemeRgb;
-  cwd?: string;
-  program?: string;
-  title?: string | null;
-  sort?: number | null;
-  env?: Readonly<Record<string, string>>;
-}>;
+export type NewTerminalBody = Readonly<Omit<OpenTerminalRequest, 'idempotencyKey'>>;
 
-export function listTrackTerminalsOperation(trackId: string): ApiOperation<CardWire[]> {
-  return {
-    method: 'GET',
-    path: `/api/v1/tracks/${encodeURIComponent(trackId)}/terminals`,
-    responseSchema: z.union([
-      z.array(terminalDtoSchema).transform((dtos) => dtos.map((dto, index) => terminalDtoToCardWire(dto, 100 + index))),
-      z.array(cardWireSchema),
-    ]),
-  };
+export function listTrackTerminalsOperation(trackId: string): ApiOperation<TerminalDto[]> {
+  return { method: 'GET', path: `/api/v1/tracks/${encodeURIComponent(trackId)}/terminals`, responseSchema: z.array(terminalDtoSchema) };
 }
 
-/**
- * `POST /api/v1/tracks/:id/terminals`. Keyed per add-card intent, not per call: a retry under the key joins the terminal
- * the first attempt made, where an unkeyed one would make a second terminal.
- */
-export function createTerminalCardOperation(
-  trackId: string,
-  body: NewTerminalCardBody,
-  idempotencyKey: string,
-): ApiOperation<CardWire> {
-  const wireBody = {
-    ...(body.title !== undefined && body.title !== null ? { title: body.title } : {}),
-    ...(body.program !== undefined ? { program: body.program } : {}),
-    ...(body.cwd !== undefined ? { cwd: body.cwd } : {}),
-    ...(body.env !== undefined ? { env: body.env } : {}),
-    idempotencyKey,
-  };
-  return {
-    method: 'POST',
-    path: `/api/v1/tracks/${encodeURIComponent(trackId)}/terminals`,
-    body: wireBody,
-    headers: { 'Idempotency-Key': idempotencyKey },
-    responseSchema: z.union([
-      terminalDtoSchema.transform((dto) => terminalDtoToCardWire(dto)),
-      cardWireSchema,
-    ]),
-  };
+/** One held intent uses the same body and key across retries. */
+export function createTerminalOperation(trackId: string, body: NewTerminalBody, idempotencyKey: string): ApiOperation<TerminalDto> {
+  return { method: 'POST', path: `/api/v1/tracks/${encodeURIComponent(trackId)}/terminals`,
+    body: Object.fromEntries(Object.entries({ title: body.title, cwd: body.cwd, program: body.program, args: body.args, env: body.env, cols: body.cols, rows: body.rows, idempotencyKey } satisfies OpenTerminalRequest).filter(([, value]) => value !== undefined)), headers: { 'Idempotency-Key': idempotencyKey }, responseSchema: terminalDtoSchema };
 }
 
 export function deleteTerminalOperation(trackId: string, termId: string): ApiOperation<undefined> {
   return {
     method: 'DELETE',
     path: `/api/v1/tracks/${encodeURIComponent(trackId)}/terminals/${encodeURIComponent(termId)}`,
-    responseSchema: z.union([terminalDtoSchema.transform(() => undefined), z.undefined()]),
+    responseSchema: z.undefined(),
   };
 }
 

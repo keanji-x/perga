@@ -6,7 +6,7 @@ import type { AgentProvider } from '../../../../../core/api/schemas.ts';
 import type { ProviderAvailability } from '../../../../../core/domain/agent-providers.ts';
 import { FOLLOW_INSTALLATION_DEFAULT } from '../../../../../core/domain/conversation.ts';
 import { modelCatalogOperation, type ModelCatalog } from '../../../../../core/domain/conversation-models.ts';
-import { ModelPill, PlannerRolePill } from './model-pill.tsx';
+import { ModelPill, PermissionModePill } from './model-pill.tsx';
 import { type ModelGroup } from './model-selection.ts';
 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
@@ -571,10 +571,10 @@ describe.each(['model', 'setting'] as const)('%s pill Escape focus', (kind) => {
     const view = render(<div role="dialog" aria-label="Host dialog">
       {kind === 'model'
         ? <ModelPill provider="codex" groups={both()} selection={FOLLOW_INSTALLATION_DEFAULT} onChange={vi.fn()} />
-        : <PlannerRolePill value="member" onChange={vi.fn()} />}
+        : <PermissionModePill mode="default" options={[{ id: 'default', label: 'Default', description: 'Default approval policy', tone: 'neutral', isDefault: true }]} onChange={vi.fn()} />}
       <input aria-label="Next control" />
     </div>);
-    const button = trigger(kind === 'model' ? /^Model:/ : /^Role:/);
+    const button = trigger(kind === 'model' ? /^Model:/ : /^Approvals:/);
     fireEvent.click(button);
     const popup = kind === 'model'
       ? screen.getByRole('dialog', { name: 'Select model and reasoning effort' })

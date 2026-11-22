@@ -11,12 +11,9 @@ export function useTrackLifecycleMutations(transport: ApiTransportPort, unauthor
   const create = useOnlineMutation({
     mutationFn: (variables: { body: NewTrackBody; idempotencyKey: string }) =>
       runOperation(transport, createTrackOperation(variables.body, variables.idempotencyKey), unauthorized),
-    onSuccess: (track, { body }) => {
+    onSuccess: (track) => {
       void client.invalidateQueries({ queryKey: queryKeys.tracksInArea(track.areaId) });
-      // Explicit `attach_folder` mints an area_folders row; drop any cached list so a later read cannot serve a stale empty array.
-      if (body.attach_folder) {
-        client.removeQueries({ queryKey: queryKeys.areaFolders(body.area_id) });
-      }
+
     },
   });
   const patch = useOnlineMutation({
@@ -53,7 +50,11 @@ export function useTrackLifecycleMutations(transport: ApiTransportPort, unauthor
   return {
     create: async (body: NewTrackBody, idempotencyKey: string) => toTrack(await create.mutateAsync({ body, idempotencyKey })),
     patch: patchTrack,
-    setPinned: (trackId: string, areaId: string, pinned: boolean, nowMs: number) => patchTrack(trackId, areaId, { pinned_at: pinned ? nowMs : null }),
+    setPinned: (trackId: string, areaId: string, pinned: boolean, nowMs: number) => {
+      // The Host stamps pin time; callers still supply their display clock.
+      void nowMs;
+      return patchTrack(trackId, areaId, { pinned });
+    },
     remove: async (trackId: string, areaId: string, signal?: AbortSignal) => { await remove.mutateAsync({ trackId, areaId, signal }); },
   };
 }

@@ -5,14 +5,14 @@ import { registerAvailableBuiltinCards } from './register.js';
 import { TERMINAL_CARD_ENTRY } from './terminal.ts';
 
 describe('TERMINAL_CARD_ENTRY', () => {
-  it('resolves kernel terminal cards, including an empty payload before terminal_id lands', () => {
-    expect(TERMINAL_CARD_ENTRY.fromKernel?.({
-      id: 'c1', kind: 'terminal', payload: { terminal_id: 't1' },
-    })).toEqual({ type: 'terminal', id: 'c1', title: null, terminalId: 't1', sessionState: null, cwd: null, gateCwd: null });
-    expect(TERMINAL_CARD_ENTRY.fromKernel?.({
+  it('resolves native terminal resources and explicit empty client panels', () => {
+    expect(TERMINAL_CARD_ENTRY.fromPanel?.({
+      id: 't1', kind: 'terminal', payload: null, terminal: { id: 't1', trackId: 'track', title: '', cwd: '/repo', status: 'running', createdAtMs: 1 },
+    })).toEqual({ type: 'terminal', id: 't1', title: null, terminalId: 't1', sessionState: 'running', cwd: '/repo', gateCwd: null });
+    expect(TERMINAL_CARD_ENTRY.fromPanel?.({
       id: 'c2', kind: 'terminal', payload: {},
     })).toEqual({ type: 'terminal', id: 'c2', title: null, terminalId: null, sessionState: null, cwd: null, gateCwd: null });
-    expect(TERMINAL_CARD_ENTRY.fromKernel?.({
+    expect(TERMINAL_CARD_ENTRY.fromPanel?.({
       id: 'c3', kind: 'codex', payload: { terminal_id: 't1' },
     })).toBeNull();
   });

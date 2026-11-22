@@ -1,3 +1,4 @@
+import { terminalPanelItem } from '../../../../core/domain/panel-item.ts';
 import '../../styles/entry.css';
 import { cleanup, render } from '@testing-library/react';
 import { page } from 'vitest/browser';
@@ -26,11 +27,9 @@ function draw(selected = false) {
   }));
   const view = deriveTrackPageView({
     existingCardIds: new Set(['card-0', 'card-1']),
-    cards: ['Card first', 'Card second'].map((title, i) => ({
-      id: `card-${i}`, track_id: 'track-0', title, kind: 'terminal', sort: i, payload: { terminal_presentation: { source: 'manual', in_workbench: true } },
-      deletable: true, created_at: 1, updated_at: 1,
-      runtime: { worker_session_id: `runtime-${i}`, kind: 'terminal', status: 'running' },
-    })),
+    cards: ['Card first', 'Card second'].map((title, i) => terminalPanelItem({
+      id: `card-${i}`, trackId: 'track-0', title, cwd: '/tmp', status: 'running', createdAtMs: 1,
+    }, i)),
     tasks: ['Task first', 'Task second'].map((key, i) => ({
       blockId: `task-${i}`, key, state: 'ready', declaration: null, status: 'running', statusDetail: null,
       kind: 'codex', workerCardId: null, pendingReason: null,

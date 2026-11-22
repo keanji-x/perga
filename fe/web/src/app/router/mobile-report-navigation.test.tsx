@@ -20,10 +20,7 @@ const AREA = { id: 'c1', name: 'Product', color: '#5B8DEF', sortOrder: 1, kind: 
 /* A second empty Area makes the centered selector’s destination observable. */
 const OTHER_AREA = { id: 'c2', name: 'Second', color: '#8B7FE8', sortOrder: 2, kind: 'user', createdAtMs: 1, updatedAtMs: 1 };
 const TRACK = fixtureTrack('w1', { areaId: 'c1', title: 'Responsive mobile UI', cwd: '/tmp', sortOrder: 1, closedAtMs: null, createdAtMs: 1, updatedAtMs: 2 });
-const CARD = {
-  id: 'card-term', track_id: 'w1', kind: 'terminal', title: 'Build log', sort: 1,
-  payload: { terminal_presentation: { source: 'manual', in_workbench: true }, }, deletable: true, created_at: 1, updated_at: 2,
-};
+const CARD = { id: 'card-term', trackId: 'w1', title: 'Build log', cwd: '/tmp', status: 'running', createdAtMs: 1 };
 /* One section and one task, which is what makes the Outline and TASKS panels non-empty. */
 const REPORT_CARD = {
   id: 'card-report', track_id: 'w1', kind: 'track-report', title: 'Report card', sort: 2,

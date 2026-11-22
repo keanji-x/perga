@@ -5,7 +5,7 @@ import { currentTaskExecution, type CurrentTaskExecution } from './task-executio
 
 export type ReportTaskState = 'ready' | 'not-ready' | 'withdrawn' | 'unreadable';
 
-export type TaskWorkerKind = 'codex' | 'claude' | 'antigravity' | 'opencode' | 'terminal' | 'compact';
+export type TaskWorkerKind = string;
 
 /**
  * One row of the panel's task inventory. The declaration word, status and kind travel separately
@@ -61,7 +61,7 @@ export function trackTaskInventory(blocks: readonly ReportBlock[] | null, tasks:
     const provider = normalizeWireAgentProvider(task.provider ?? undefined);
     const kind: TaskWorkerKind = task.kind === 'command' || task.kind === 'terminal' ? 'terminal'
       : task.kind === 'compact' ? 'compact'
-        : provider === 'claude' || provider === 'antigravity' || provider === 'opencode' ? provider : 'codex';
+        : provider ?? task.kind;
     const status = task.status === 'draft' ? null : task.status;
     return [{
       blockId: block.id, key: task.taskKey, kind, state: task.ready ? 'ready' : 'not-ready',
