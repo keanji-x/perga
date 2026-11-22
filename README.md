@@ -10,7 +10,7 @@ Perga moves multi-day and multi-week work — maintaining a repository, driving 
 - **Heterogeneous agents with shared control.** A single Lead coordinates Claude Code, Codex, and ACP workers inside the same track. Execution is structurally separated from acceptance, reviews can be enforced on a different model, and humans share the exact same live stream, steering, interrupt, and model controls as the Lead.
 - **Unified flows and zero-token watches.** A lightweight declarative `flow.json` unifies parallel dependencies, `cron`/`at` schedules, and zero-token external probes (`prChecks` or shell commands). Nothing spends tokens while idle; state changes and exceptions wake the Lead to decide next steps.
 - **Real isolated workspaces, local sovereignty.** Isolate tracks via Git worktrees, Jujutsu (`jj`), Linux OverlayFS (shared prewarmed build caches), or remote SSH targets. Terminals run in an independent Rust bridge (`perga-term-bridge`) that survives host upgrades, and all state stays in a local SQLite database you own.
-- **Zero-template start, progressive structure.** Start any track with a single sentence. Attach a lightweight built-in protocol (28–41 lines) or ask the Lead to author one only when recurring rules and guardrails emerge.
+- **Zero-template start, progressive structure.** Start any track with a single sentence. Attach a lightweight built-in protocol (27–40 lines) or ask the Lead to author one only when recurring rules and guardrails emerge.
 
 ## Built-in Protocols
 
