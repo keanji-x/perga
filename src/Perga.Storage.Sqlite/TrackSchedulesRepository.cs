@@ -35,14 +35,15 @@ internal sealed class TrackSchedulesRepository
         SqliteConnection conn,
         SqliteTransaction tx,
         TrackScheduleDto schedule,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool resetProgress = false)
     {
         var existing = await conn.QuerySingleOrDefaultAsync<TrackScheduleRow>(new CommandDefinition(
             ScheduleSelect + " WHERE track_id=@TrackId AND id=@Id;",
             new { schedule.TrackId, schedule.Id }, tx, cancellationToken: ct)).ConfigureAwait(false);
         if (existing is { NodeKey: null })
             throw KernelException.Conflict($"Schedule ID '{schedule.Id}' belongs to a standalone schedule.");
-        var keepProgress = existing is not null && existing.State != TrackScheduleStates.Canceled &&
+        var keepProgress = !resetProgress && existing is not null && existing.State != TrackScheduleStates.Canceled &&
             existing.ScheduleKind == schedule.ScheduleKind &&
             existing.CronExpr == schedule.CronExpr &&
             existing.Timezone == schedule.Timezone &&

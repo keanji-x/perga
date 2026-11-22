@@ -46,9 +46,6 @@ public sealed partial class TrackActor
             return true;
         }
 
-        var admission = _options.DispatchAdmission.TryEnter();
-        if (admission is null) return true;
-
         var now = NowMs();
         var nextRunCount = checked(task.RunCount + 1);
         var prompt = InterpolateFlowTextCore(node?.Do.Prompt ?? task.GoalOrCmd) ?? task.GoalOrCmd;
@@ -65,8 +62,20 @@ public sealed partial class TrackActor
             UpdatedAtMs = now
         };
 
+        var admission = _options.DispatchAdmission.TryEnter();
+        if (admission is null) return true;
+        var evt = _taskCoordinator.CreateTaskUpdatedEventCore(now);
+        try
+        {
+            await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
+            await _store.UpsertTaskAsync(runningTask, null, evt, ct).ConfigureAwait(false);
+        }
+        catch
+        {
+            admission.Dispose();
+            throw;
+        }
         _taskCoordinator.ReplaceTaskInMemoryCore(runningTask);
-        await _taskCoordinator.PersistAndEmitTaskUpdatedCoreAsync(runningTask, null, now, ct).ConfigureAwait(false);
 
         var runCts = CancellationTokenSource.CreateLinkedTokenSource(_actorShutdownCts.Token);
         var active = new TrackTasks.ActiveTaskRunState(task.Id, nextRunCount, null, runCts);
@@ -85,6 +94,14 @@ public sealed partial class TrackActor
             }
         });
 
+        try
+        {
+            await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, _actorShutdownCts.Token).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Trace.TraceWarning("Could not publish wake startup for task {0}: {1}", task.Id, ex);
+        }
         return true;
     }
 

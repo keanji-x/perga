@@ -68,7 +68,8 @@ internal sealed class TrackUpdateRepository
     private async Task CommitTrackFlowInternalAsync(
         SqliteConnection conn, SqliteTransaction tx, TrackDto track, long expectedFlowRev,
         IReadOnlyList<TaskDto> upsertedTasks, IReadOnlyList<TrackScheduleDto> activeFlowSchedules,
-        IReadOnlyList<string> canceledFlowScheduleIds, CancellationToken innerCt)
+        IReadOnlyList<string> canceledFlowScheduleIds, CancellationToken innerCt,
+        IReadOnlySet<string>? resetClockIds = null)
     {
         var updated = await conn.ExecuteAsync(new CommandDefinition(
             """
@@ -103,7 +104,8 @@ internal sealed class TrackUpdateRepository
 
         foreach (var schedule in activeFlowSchedules)
         {
-            await TrackSchedulesRepository.UpsertFlowScheduleInternalAsync(conn, tx, schedule, innerCt).ConfigureAwait(false);
+            await TrackSchedulesRepository.UpsertFlowScheduleInternalAsync(conn, tx, schedule, innerCt,
+                resetProgress: resetClockIds?.Contains(schedule.Id) == true).ConfigureAwait(false);
         }
 
         foreach (var scheduleId in canceledFlowScheduleIds)
@@ -199,7 +201,7 @@ internal sealed class TrackUpdateRepository
 
                 if (flow is not null)
                     await CommitTrackFlowInternalAsync(conn, tx, track, flow.ExpectedRev, flow.Tasks,
-                        flow.Clocks, [], innerCt).ConfigureAwait(false);
+                        flow.Clocks, flow.CanceledClockIds, innerCt, flow.ResetClockIds).ConfigureAwait(false);
                 if (track.ClosedAtMs is not null)
                     await conn.ExecuteAsync(new CommandDefinition($"""
                         UPDATE track_wakes SET state='{TrackWakeStates.Dropped}', reason='{TrackWakeReasons.TrackClosed}', updated_at_ms=@Now

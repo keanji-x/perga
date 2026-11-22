@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Perga.Contracts;
 using Perga.Kernel.Flow;
 using Perga.Kernel.Ports;
@@ -8,6 +9,26 @@ namespace Perga.Kernel.Templates;
 
 internal static class TemplateFlow
 {
+    private const string DetachedKey = "templateDetached";
+
+    internal static TaskDto MarkDetached(TaskDto task)
+    {
+        var meta = task.Meta is { ValueKind: JsonValueKind.Object } previous
+            ? JsonNode.Parse(previous.GetRawText())!.AsObject()
+            : new JsonObject();
+        meta[DetachedKey] = true;
+        return task with { Meta = JsonSerializer.SerializeToElement(meta) };
+    }
+
+    internal static bool WasDetached(TaskDto task) =>
+        task.Meta is { ValueKind: JsonValueKind.Object } meta &&
+        meta.TryGetProperty(DetachedKey, out var detached) && detached.ValueKind == JsonValueKind.True;
+
+    internal static string? GetSource(TaskDto task) =>
+        task.Context is { ValueKind: JsonValueKind.Object } context &&
+        context.TryGetProperty("flowSource", out var source) &&
+        source.ValueKind == JsonValueKind.String ? source.GetString() : null;
+
     internal static void ValidateInputs(IPolicyVm vm, CompiledPolicy policy, JsonElement inputs)
     {
         try { vm.ValidateInputs(policy, inputs); }

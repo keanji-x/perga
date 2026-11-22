@@ -104,31 +104,20 @@ public sealed partial class TrackActor
         return result;
     }
 
-    private (FlowSpecDto Spec, TrackFlowUpdate? Update) PreviewTemplateFlowCore(TrackDto nextTrack, CompiledPolicy policy)
-    {
-        // A blueprint is an initial declaration. Existing and archived IDs belong to the Track.
-        var knownIds = _flowSpec.Nodes.Select(node => node.Id).Concat(_taskCoordinator.Snapshot().Select(task => task.TaskKey))
-            .ToHashSet(StringComparer.Ordinal);
-        var seed = TemplateFlow.ReadSeedNodes(_policyVm, policy, nextTrack.TemplateInputs)
-            .Where(node => !knownIds.Contains(node.Id)).ToArray();
-        var spec = seed.Length == 0 ? _flowSpec :
-            new FlowSpecDto(checked(_flowSpec.Rev + 1), [.. _flowSpec.Nodes, .. seed], FlowConstants.SchemaPointer);
-        TemplateFlow.RequireValid(TrackFlowValidator.Validate(spec, _flowSpec, _taskCoordinator.Snapshot(), CollectActiveFlowTaskIdsCore(),
-            _sessions, nextTrack.LeadSessionId, policy, _policyVm, nextTrack.TemplateInputs, _scheduleCronEvaluator, _timeProvider));
-        return (spec, seed.Length == 0 ? null :
-            TemplateFlow.BuildSeedUpdate(nextTrack, _flowSpec.Rev, seed, policy, _policyVm, _scheduleCronEvaluator, _timeProvider));
-    }
-
     private async Task<Task> CancelFlowTaskCoreAsync(TaskDto task, string? reason, CancellationToken ct)
     {
+        if (task.ArchivedAtMs is not null)
+            return _taskCoordinator.TryGetActiveRun(task.Id, out var stopping)
+                ? BeginFlowCancellationCore([stopping], [])
+                : Task.CompletedTask;
         var node = _flowSpec.Nodes.FirstOrDefault(node => node.Id == task.TaskKey);
-        if (task.Status == TaskRunStatus.Canceled)
+        if (node is null)
+            throw KernelException.Conflict("The flow task has no live node.");
+        if (node.Canceled)
         {
             var runs = _taskCoordinator.TryGetActiveRun(task.Id, out var active) ? new[] { active } : [];
             return BeginFlowCancellationCore(runs, [task.TaskKey]);
         }
-        if (node is null || task.ArchivedAtMs is not null)
-            throw KernelException.Conflict("The flow task is archived.");
         if (_track.ClosedAtMs is not null)
             throw KernelException.Conflict("Cannot cancel a Flow node on a closed Track.");
 
@@ -145,7 +134,10 @@ public sealed partial class TrackActor
         FlowSpecDto proposed, bool dryRun, string? sourceSha, CancellationToken ct,
         string? canceledTaskId = null, string? cancellationReason = null)
     {
-        var prunedIds = TrackFlowReconciler.ComputeGcEligibleNodeIds(proposed, _taskCoordinator.Snapshot(), CollectActiveFlowTaskIdsCore());
+        // A targeted cancellation commits the node's canceled flag. Normal GC can archive it later.
+        var prunedIds = canceledTaskId is null
+            ? TrackFlowReconciler.ComputeGcEligibleNodeIds(proposed, _taskCoordinator.Snapshot(), CollectActiveFlowTaskIdsCore())
+            : [];
         var plan = TrackFlowReconciler.ComputePlanDiff(_flowSpec, proposed, prunedIds);
         var nextSpec = new FlowSpecDto(
             dryRun ? _track.FlowRev : checked(_track.FlowRev + 1),
@@ -195,6 +187,8 @@ public sealed partial class TrackActor
         foreach (var node in nextSpec.Nodes)
         {
             tasksByKey.TryGetValue(node.Id, out var existing);
+            if (canceledTaskId is not null && existing?.Id != canceledTaskId)
+                continue;
             if (existing is not null && previousNodes.TryGetValue(node.Id, out var previous) &&
                 !TrackFlowValidator.WhenEquals(previous.When, node.When))
                 existing = existing with { Ready = false, TriggerRunKey = null };
@@ -216,7 +210,7 @@ public sealed partial class TrackActor
         var events = await PersistFlowCoreAsync(nextSpec, sourceSha, upsertedTasks, schedules, canceledClocks, now, ct)
             .ConfigureAwait(false);
         var cleanup = BeginFlowCancellationCore(canceledRuns, canceledNodes);
-        if (canceledNodes.Count > 0 && cleanup == Task.CompletedTask)
+        if (canceledTaskId is null && canceledNodes.Count > 0 && cleanup == Task.CompletedTask)
             _ = TrackBackgroundJob(() => TriggerSchedulerAsync(_actorShutdownCts.Token));
 
         await PublishFlowCommitCoreAsync(events).ConfigureAwait(false);
@@ -234,9 +228,12 @@ public sealed partial class TrackActor
             TrackBackgroundJob(() => FinishFlowCancellationAsync(runs, watches));
     }
 
-    private async Task FinishFlowCancellationAsync(TrackTasks.ActiveTaskRunState[] runs, ActiveWatchState[] watches)
+    private Task FinishFlowCancellationAsync(TrackTasks.ActiveTaskRunState[] runs, ActiveWatchState[] watches) =>
+        Task.WhenAll(runs.Select(FinishCanceledFlowRunAsync).Concat(watches.Select(FinishCanceledFlowWatchAsync)));
+
+    private async Task FinishCanceledFlowRunAsync(TrackTasks.ActiveTaskRunState run)
     {
-        foreach (var run in runs)
+        try
         {
             await _taskCoordinator.CloseCanceledWorkerAsync(run).ConfigureAwait(false);
             await EnqueueAsync(async _ =>
@@ -247,26 +244,28 @@ public sealed partial class TrackActor
                 await TryRunFlowGcCoreAsync(CancellationToken.None).ConfigureAwait(false);
             }, CancellationToken.None).ConfigureAwait(false);
         }
-
-        foreach (var watch in watches)
+        catch (Exception ex)
         {
-            if (watch.Execution is { } exec)
-            {
-                try { await exec.ConfigureAwait(false); } catch { }
-            }
-
-            await EnqueueAsync(async _ =>
-            {
-                if (_activeWatches.TryGetValue(watch.TaskId, out var current) && ReferenceEquals(current, watch))
-                {
-                    _activeWatches.Remove(watch.TaskId);
-                }
-
-                try { watch.Cts.Dispose(); } catch { }
-                await _taskCoordinator.ScheduleEligibleTasksCoreAsync(CancellationToken.None).ConfigureAwait(false);
-                await TryRunFlowGcCoreAsync(CancellationToken.None).ConfigureAwait(false);
-            }, CancellationToken.None).ConfigureAwait(false);
+            System.Diagnostics.Trace.TraceWarning("Could not finish canceling Flow task {0}: {1}", run.TaskId, ex);
+            throw;
         }
+    }
+
+    private async Task FinishCanceledFlowWatchAsync(ActiveWatchState watch)
+    {
+        if (watch.Execution is { } exec)
+        {
+            try { await exec.ConfigureAwait(false); } catch { }
+        }
+
+        await EnqueueAsync(async _ =>
+        {
+            if (_activeWatches.TryGetValue(watch.TaskId, out var current) && ReferenceEquals(current, watch))
+                _activeWatches.Remove(watch.TaskId);
+            watch.Cts.Dispose();
+            await _taskCoordinator.ScheduleEligibleTasksCoreAsync(CancellationToken.None).ConfigureAwait(false);
+            await TryRunFlowGcCoreAsync(CancellationToken.None).ConfigureAwait(false);
+        }, CancellationToken.None).ConfigureAwait(false);
     }
 
     private async Task<EventEnvelopeDto[]> PersistFlowCoreAsync(
@@ -325,9 +324,13 @@ public sealed partial class TrackActor
                 return false;
 
             var existing = _taskCoordinator.Snapshot().FirstOrDefault(t => t.TaskKey == node.Id && t.ArchivedAtMs is null);
-            var busy = existing is not null && (_taskCoordinator.HasActiveRun(existing.Id) ||
-                _activeWatches.ContainsKey(existing.Id) || existing.Status is TaskRunStatus.Running or TaskRunStatus.Verifying ||
-                (existing.Status == TaskRunStatus.Pending && existing.Ready));
+            // A one-shot can arm behind a replaced watch. Dispatch still waits for that watch to exit.
+            var canArmBehindOldWatch = clock.CronExpr is null && existing is { Status: TaskRunStatus.Pending, Ready: false };
+            var busy = _activeWatches.Values.Any(watch => watch.NodeId == node.Id &&
+                    (!canArmBehindOldWatch || watch.TaskId == existing?.Id)) ||
+                (existing is not null && (_taskCoordinator.HasActiveRun(existing.Id) ||
+                    existing.Status is TaskRunStatus.Running or TaskRunStatus.Verifying ||
+                    (existing.Status == TaskRunStatus.Pending && existing.Ready)));
 
             // Busy ticks skip arming without consuming an occurrence toward maxOccurrences.
             var count = busy ? clock.FiredCount : checked(clock.FiredCount + 1);

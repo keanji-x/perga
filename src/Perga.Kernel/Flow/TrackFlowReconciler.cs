@@ -260,6 +260,20 @@ internal static class TrackFlowReconciler
             }
             : task with { Ready = false, ArchivedAtMs = nowMs, UpdatedAtMs = nowMs };
 
+    internal static TaskDto ArchiveForTemplateReplacement(TaskDto task, long nowMs)
+    {
+        // Preserve the task and its evidence while freeing SQLite's unique live task key.
+        var archived = task.ArchivedAtMs is not null ? task : ArchiveTaskForGc(task, nowMs);
+        if (task.Status is TaskRunStatus.Pending or TaskRunStatus.Running)
+            archived = archived with
+            {
+                Status = TaskRunStatus.Canceled,
+                StatusDetail = "Replaced by template binding.",
+                FinishedAtMs = task.FinishedAtMs ?? nowMs
+            };
+        return archived with { TaskKey = FlowConstants.MakeArchivedTaskKey(task.Id) };
+    }
+
     public static TaskDto BuildOrUpdateTaskForNode(
         string trackId,
         FlowNodeSpecDto node,
@@ -447,6 +461,7 @@ internal static class TrackFlowReconciler
                     JsonHelpers.ToElement(new
                     {
                         flowNode = true,
+                        flowSource = node.Source,
                         title = node.Title ?? node.Id,
                         targetSession = d.Session
                     }));
@@ -463,6 +478,7 @@ internal static class TrackFlowReconciler
                     JsonHelpers.ToElement(new
                     {
                         flowNode = true,
+                        flowSource = node.Source,
                         title = node.Title ?? node.Id,
                         prChecks = d.PrChecks,
                         repo = d.Repo,
@@ -489,6 +505,7 @@ internal static class TrackFlowReconciler
                         JsonHelpers.ToElement(new
                         {
                             flowNode = true,
+                            flowSource = node.Source,
                             title = node.Title ?? node.Id
                         }));
                 }
@@ -506,6 +523,7 @@ internal static class TrackFlowReconciler
                     JsonHelpers.ToElement(new
                     {
                         flowNode = true,
+                        flowSource = node.Source,
                         title = node.Title ?? node.Id,
                         initialModel = d.Model,
                         targetSession = d.Session,
@@ -529,7 +547,7 @@ internal static class TrackFlowReconciler
         return map;
     }
 
-    private static bool NodeSpecEquals(FlowNodeSpecDto a, FlowNodeSpecDto b) =>
+    internal static bool NodeSpecEquals(FlowNodeSpecDto a, FlowNodeSpecDto b) =>
         string.Equals(a.Id, b.Id, StringComparison.Ordinal) &&
         string.Equals(a.Title, b.Title, StringComparison.Ordinal) &&
         string.Equals(a.Source, b.Source, StringComparison.Ordinal) &&
