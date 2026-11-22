@@ -3,7 +3,7 @@ import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import type { ChartCandlesPayload } from '../../../../../core/domain/report.ts';
+import type { ChartCandlesPayload } from '../../../../../core/domain/report-payloads.ts';
 import { ReportCandlesBlock } from './public.tsx';
 
 afterEach(cleanup);

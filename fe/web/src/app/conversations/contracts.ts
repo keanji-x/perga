@@ -1,6 +1,8 @@
 import type { AgentProvider, PlannerAttachment } from '../../../../core/api/generated/wire.ts';
 import type { PlannerPermissionMode } from '../../../../core/domain/planner-permission-mode.ts';
-import type { Conversation, CreatedConversation, SideConversation, ConversationKind, ConversationState, ModelCatalog, ModelSelection, PendingQueueEntry, PlannerRunTokenUsage, PlannerQueueWriteOutcome, TranscriptEntry } from '../../../../core/domain/conversation.ts';
+import type { Conversation, CreatedConversation, SideConversation, ConversationKind, ConversationState, ModelSelection, PendingQueueEntry, PlannerRunTokenUsage, TranscriptEntry } from '../../../../core/domain/conversation.ts';
+import type { ModelCatalog } from '../../../../core/domain/conversation-models.ts';
+import type { PlannerQueueWriteOutcome } from '../../../../core/domain/conversation-commands.ts';
 import type { FailedSendOp, PendingQueueSend, QueueDisplayAccounting } from '../../../../core/domain/conversation-outbox.ts';
 import type { ConversationStopFeedback } from '../../../../core/domain/conversation-stop.ts';
 import type { UploadAttachment } from '../../features/planner/attachments.tsx';

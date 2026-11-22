@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { type SessionActivity, type SessionCapabilities, sessionCreationReceiptSchema } from '../api/perga-v1.js';
 import type { ApiOperation } from '../api/types.js';
-import type { ModelCatalog } from './conversation.js';
+import type { ModelCatalog } from './conversation-models.js';
 
 /** A task-bound provider can declare a different model catalog from the installation. */
 export function sessionModelCatalog(config: SessionCapabilities): ModelCatalog | null {

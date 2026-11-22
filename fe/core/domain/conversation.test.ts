@@ -3,21 +3,9 @@ import { describe, expect, it } from 'vitest';
 import { agentSessionDtoSchema } from '../api/perga-v1.js';
 import type { HarnessPhaseTag } from '../api/generated/wire.js';
 
-import {
-  agentSessionDtoToConversation,
-  CONVERSATION_CREATE_TEXT,
-  CONVERSATION_NAME_MAX,
-  conversationCreateFailure,
-  conversationName, conversationNameFrom,
-  createSerialWriter, createTrackConversationOperation,
-  isOptimisticConversationTurn, isQueuedConversationTurn, kernelQueuesInput,
-  mergeTranscript,
-  plannerQueueWriteFailure,
-  retireFollowedThoughts,
-  sendPlannerInputOperation,
-  type Conversation, type ConversationTurn, type OptimisticConversationTurn,
-  type TranscriptEntry
-} from './conversation.js';
+import { agentSessionDtoToConversation, CONVERSATION_CREATE_TEXT, CONVERSATION_NAME_MAX, conversationCreateFailure, conversationName, conversationNameFrom, createTrackConversationOperation, isOptimisticConversationTurn, isQueuedConversationTurn, kernelQueuesInput, mergeTranscript, retireFollowedThoughts, type Conversation, type ConversationTurn, type OptimisticConversationTurn, type TranscriptEntry } from './conversation.js';
+import { createSerialWriter } from './conversation-models.js';
+import { plannerQueueWriteFailure, sendPlannerInputOperation } from './conversation-commands.js';
 
 function conversation(overrides: Partial<Conversation> = {}): Conversation {
   return { provider: 'codex' as const,

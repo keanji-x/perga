@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { recoverSessionOperation } from './conversation.js';
+import { recoverSessionOperation } from './conversation-commands.js';
 import { conversationStopTurn, conversationCommandEnabled, deriveConversationAction } from './conversation-action.js';
 
 const baseline = Object.freeze({ readError: null, readonlyReason: null, canReopen: false, state: 'idle' as const,

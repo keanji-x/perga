@@ -7,7 +7,8 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 import { page } from 'vitest/browser';
 
-import { FOLLOW_INSTALLATION_DEFAULT, type ModelCatalog } from '../../../../../core/domain/conversation.ts';
+import { FOLLOW_INSTALLATION_DEFAULT } from '../../../../../core/domain/conversation.ts';
+import { type ModelCatalog } from '../../../../../core/domain/conversation-models.ts';
 import { ModelPill } from './model-pill.tsx';
 
 afterEach(async () => { cleanup(); await page.viewport(1280, 720); });

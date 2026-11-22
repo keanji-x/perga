@@ -1,6 +1,7 @@
 import { expect, it } from 'vitest';
 
-import { MAX_ATTACHMENTS_PER_MESSAGE, SYSTEM_PRESENTATION_LABELS, type TranscriptEntry } from './conversation.js';
+import { MAX_ATTACHMENTS_PER_MESSAGE } from './conversation-commands.js';
+import { SYSTEM_PRESENTATION_LABELS, type TranscriptEntry } from './conversation.js';
 import {
   editedTurnMessageIds, editedTurnRefill, isLatestTurn, isSameComposer,
   withoutEditedTurn, withRefill,

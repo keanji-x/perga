@@ -18,9 +18,8 @@ import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts'
 import { toArea } from '../../../../core/domain/area.ts';
 import { ApiError,NotSentError } from '../../../../core/domain/failure-class.ts';
 import { RecoveryAccess } from '../../../../core/domain/recovery/access.ts';
-import {
-readTrackReport,TRACK_REPORT_CARD_KIND,type TaskVerdict,
-} from '../../../../core/domain/report.ts';
+import { readTrackReport, TRACK_REPORT_CARD_KIND } from '../../../../core/domain/report.ts';
+import { type TaskVerdict } from '../../../../core/domain/report-verdicts.ts';
 import { NEUTRAL_ACTIVITY } from '../../../../core/domain/track.ts';
 import { createRecoveryTransports } from '../../systems/recovery/transport.ts';
 import { areaListQueryOptions, useWorkspace } from './workspace-queries.ts';

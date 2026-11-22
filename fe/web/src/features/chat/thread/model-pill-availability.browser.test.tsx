@@ -7,7 +7,8 @@ import { expect, it, vi } from 'vitest';
 import { page } from 'vitest/browser';
 
 import type { ProviderAvailability } from '../../../../../core/domain/agent-providers.ts';
-import { FOLLOW_INSTALLATION_DEFAULT, type ModelCatalog } from '../../../../../core/domain/conversation.ts';
+import { FOLLOW_INSTALLATION_DEFAULT } from '../../../../../core/domain/conversation.ts';
+import { type ModelCatalog } from '../../../../../core/domain/conversation-models.ts';
 import { ModelPill } from './model-pill.tsx';
 
 const REASON = 'not logged in — run `claude /login` with CLAUDE_CONFIG_DIR=/home/owner/.local/share/claude-planner';

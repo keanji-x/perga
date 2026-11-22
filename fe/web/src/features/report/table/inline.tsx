@@ -4,7 +4,7 @@ import { flushTableEdgesClassName, insetTableRowClassName } from '../../../ui/ma
 import type { ReactNode } from 'react';
 
 import { parseSourceCitationCell, type ReportSourceLinkTarget } from '../../../../../core/domain/report-source.ts';
-import type { InlineTableBlockPayload } from '../../../../../core/domain/report.ts';
+import type { InlineTableBlockPayload } from '../../../../../core/domain/report-payloads.ts';
 import { ReportSourceLinkPreview, type ReportLinkPreviewResources } from '../link-preview/public.tsx';
 import styles from './table.module.css';
 

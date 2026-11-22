@@ -4,12 +4,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { AgentProvider } from '../../../../../core/api/schemas.ts';
 import type { ProviderAvailability } from '../../../../../core/domain/agent-providers.ts';
-import {
-  FOLLOW_INSTALLATION_DEFAULT,
-  modelCatalogOperation,
-  type ModelCatalog,
-} from '../../../../../core/domain/conversation.ts';
-import { ModelPill, PlannerRolePill, type ModelGroup } from './model-pill.tsx';
+import { FOLLOW_INSTALLATION_DEFAULT } from '../../../../../core/domain/conversation.ts';
+import { modelCatalogOperation, type ModelCatalog } from '../../../../../core/domain/conversation-models.ts';
+import { ModelPill, PlannerRolePill } from './model-pill.tsx';
+import { type ModelGroup } from './model-selection.ts';
 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 

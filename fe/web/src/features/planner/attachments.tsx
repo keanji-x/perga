@@ -15,9 +15,7 @@ import { Icon } from '../../ui/icon/public.tsx';
 import type {
   PlannerAttachment, UploadAttachmentResponse,
 } from '../../../../core/api/generated/wire.js';
-import {
-  ATTACHABLE_IMAGE_TYPES, MAX_ATTACHMENTS_PER_MESSAGE, TOO_MANY_IMAGES,
-} from '../../../../core/domain/conversation.js';
+import { ATTACHABLE_IMAGE_TYPES, MAX_ATTACHMENTS_PER_MESSAGE, TOO_MANY_IMAGES } from '../../../../core/domain/conversation-commands.js';
 import styles from './attachments.module.css';
 
 /** One upload, already bound to a card. A function rather than a transport: `performApiRequest` has two sanctioned call sites and a feature module is neither. */

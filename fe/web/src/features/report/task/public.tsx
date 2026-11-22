@@ -1,6 +1,7 @@
 import type { ReactNode, ComponentProps } from 'react';
 import { ProseBlock } from '../document/content.tsx';
-import { boundedStatusDetail, type ReportTaskRow, type TaskBlockPayload } from '../../../../../core/domain/report.ts';
+import { boundedStatusDetail, type ReportTaskRow } from '../../../../../core/domain/report.ts';
+import { type TaskBlockPayload } from '../../../../../core/domain/report-payloads.ts';
 import { taskStatusPhrase } from '../../../../../core/view/track-page.ts';
 import { useState } from '../../../ui/state/public.ts';
 import { SpringRotation } from '../../../ui/motion/rotation.tsx';

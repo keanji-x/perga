@@ -223,3 +223,49 @@ it('retains full-file selection and search state when a grammar replaces text no
   expect(view.state.selection.main.head).toBe(20);
   expect(getSearchQuery(view.state).search).toBe('main');
 });
+
+it('preserves the native view, search and scroll across theme updates and destroys it on unmount', async () => {
+  const text = Array.from({ length: 200 }, (_, index) => `const item${index} = ${index};`).join('\n');
+  let adapter: PaneSearchAdapter | null = null;
+  const ready = (value: PaneSearchAdapter | null) => { adapter = value; };
+  const { container, rerender, unmount } = render(<CodePane path="large.ts" text={text} theme="light" onSearchAdapterReady={ready} />);
+  container.style.height = '200px';
+  container.style.display = 'flex';
+  const editor = container.querySelector<HTMLElement>('[role="textbox"]');
+  expect(editor).not.toBeNull();
+  const view = EditorView.findFromDOM(editor!);
+  expect(view).not.toBeNull();
+  await waitFor(() => { expect(view!.state.facet(language)?.name).toBe('typescript'); });
+  adapter!.setQuery('item100');
+  await waitFor(() => { expect(view!.scrollDOM.scrollHeight).toBeGreaterThan(view!.scrollDOM.clientHeight); });
+  view!.scrollDOM.scrollTop = 120;
+  expect(view!.scrollDOM.scrollTop).toBe(120);
+  const before = view!.state.selection.main;
+  const destroy = vi.spyOn(view!, 'destroy');
+  rerender(<CodePane path="large.ts" text={text} theme="dark" onSearchAdapterReady={ready} />);
+  expect(EditorView.findFromDOM(editor!)).toBe(view);
+  expect(view!.state.facet(EditorView.darkTheme)).toBe(true);
+  expect(view!.state.facet(EditorState.readOnly)).toBe(true);
+  expect(getSearchQuery(view!.state).search).toBe('item100');
+  expect(view!.state.selection.main).toEqual(before);
+  expect(view!.scrollDOM.scrollTop).toBe(120);
+  expect(destroy).not.toHaveBeenCalled();
+  unmount();
+  expect(destroy).toHaveBeenCalledTimes(1);
+  expect(adapter).toBeNull();
+});
+
+it('keeps next and previous search keyboard bindings inside the read-only editor', () => {
+  let adapter: PaneSearchAdapter | null = null;
+  const { container } = render(<CodePane path="notes.txt" text="one one one" theme="light" onSearchAdapterReady={value => { adapter = value; }} />);
+  const editor = container.querySelector<HTMLElement>('[role="textbox"]')!;
+  const view = EditorView.findFromDOM(editor)!;
+  adapter!.setQuery('one');
+  editor.focus();
+  expect(view.state.selection.main.from).toBe(0);
+  editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'F3', bubbles: true, cancelable: true }));
+  expect(view.state.selection.main.from).toBe(4);
+  editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'F3', shiftKey: true, bubbles: true, cancelable: true }));
+  expect(view.state.selection.main.from).toBe(0);
+  expect(view.state.doc.toString()).toBe('one one one');
+});

@@ -1,9 +1,8 @@
 // Both inline and live tables obey the same table-only contract.
 import type { ReactNode } from 'react';
 import type { ReportSourceLinkTarget } from '../../../../../core/domain/report-source.ts';
-import {
-  inlineTableBlockPayloadSchema, isLiveTablePayload, type TableBlockPayload,
-} from '../../../../../core/domain/report.ts';
+import { inlineTableBlockPayloadSchema } from '../../../../../core/domain/report-table.ts';
+import { isLiveTablePayload, type TableBlockPayload } from '../../../../../core/domain/report-payloads.ts';
 import { LivePlaceholder } from '../live/placeholder.tsx';
 import type { ReportLinkPreviewResources } from '../link-preview/public.tsx';
 import { InlineTable } from './inline.tsx';

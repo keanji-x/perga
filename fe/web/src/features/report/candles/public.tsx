@@ -2,7 +2,7 @@
 // `oklch()` custom properties reliably). CN polarity: up is red and hollow, down is green and solid.
 
 import { useState } from '../../../ui/state/public.ts';
-import type { ChartCandlesPayload } from '../../../../../core/domain/report.ts';
+import type { ChartCandlesPayload } from '../../../../../core/domain/report-payloads.ts';
 import { CandlesFigure, formatPrice } from './figure.tsx';
 import styles from './candles.module.css';
 

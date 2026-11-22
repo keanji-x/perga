@@ -2,7 +2,7 @@
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import type { ChartSeriesPayload } from '../../../../../core/domain/report.ts';
+import type { ChartSeriesPayload } from '../../../../../core/domain/report-payloads.ts';
 import type { OkResolvedSeries, OkSeriesEntry, SeriesEntry, SeriesResolution } from '../../../../../core/domain/report-series.ts';
 import { ReportSeriesBlock } from './public.tsx';
 
