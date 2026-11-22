@@ -53,9 +53,6 @@ export function SeamlessHtmlWidget({
   data,
   chrome = 'seamless',
   initialHeight = 140,
-  selectedId,
-  selectionKey,
-  onSelect,
   onOpenFile,
   onOpenWorker,
 }: Readonly<{
@@ -64,9 +61,6 @@ export function SeamlessHtmlWidget({
   data: unknown;
   chrome?: 'seamless' | 'framed';
   initialHeight?: number;
-  selectedId?: string;
-  selectionKey?: string;
-  onSelect?: (key: string, value: string) => void;
   onOpenFile?: (path: string) => void;
   onOpenWorker?: (sessionId: string) => void;
 }>) {
@@ -79,8 +73,8 @@ export function SeamlessHtmlWidget({
     setScheme(theme.scheme);
     if (targetWindow == null) return;
     targetWindow.postMessage({ type: 'perga:theme', ...theme }, '*');
-    targetWindow.postMessage({ type: 'perga:data', data, selectedId }, '*');
-  }, [data, selectedId]);
+    targetWindow.postMessage({ type: 'perga:data', data }, '*');
+  }, [data]);
 
   useEffect(() => {
     pushState(frameRef.current?.contentWindow);
@@ -117,14 +111,6 @@ export function SeamlessHtmlWidget({
           }
         } else if (kind === 'open_session' && typeof record.sessionId === 'string' && record.sessionId.trim() !== '') {
           onOpenWorker?.(record.sessionId.trim());
-        } else if (kind === 'select' && typeof record.value === 'string') {
-          const val = record.value.trim();
-          const key = typeof record.key === 'string' && record.key.trim() !== ''
-            ? record.key.trim()
-            : (selectionKey ?? 'default');
-          if (val !== '' && val.length <= 128 && key.length <= 64) {
-            onSelect?.(key, val);
-          }
         }
       }
     };
@@ -145,7 +131,7 @@ export function SeamlessHtmlWidget({
       observer.disconnect();
       media?.removeEventListener?.('change', onSchemeChange);
     };
-  }, [pushState, selectionKey, onSelect, onOpenFile, onOpenWorker]);
+  }, [pushState, onOpenFile, onOpenWorker]);
 
   return (
     <figure className={styles.host}>

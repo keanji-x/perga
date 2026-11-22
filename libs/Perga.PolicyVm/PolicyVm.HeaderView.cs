@@ -13,24 +13,23 @@ public sealed partial class PolicyVm
     {
         try
         {
-            var bundle = TemplateBundle.Parse(policy.JsSource);
-            using var engine = CreateSandboxedEngine(ExecutionTimeoutMs, bundle);
-            var rawDef = LoadDefaultTemplateObject(engine, bundle);
-            var jsInputs = BuildEffectiveJsInputs(engine, rawDef, ctx.Inputs);
-            var def = ResolveEffectiveDefinition(engine, rawDef, jsInputs);
-            if (def.Get("headerView") is not Function hook)
-                return null;
-            var context = BuildTemplateContextObject(engine, def, ctx.TrackId, ctx.Inputs, state);
-            var value = engine.Call(hook, def, [context]);
-            if (!value.IsObject() || value.IsArray())
-                return null;
-            var json = JsValueToJsonElement(engine, value, defaultJson: "null");
-            if (!ValidHeaderView(json))
-                return null;
-            return System.Text.Json.JsonSerializer.Deserialize<TemplateHeaderView>(json, new JsonSerializerOptions
-            {
-                PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-            });
+            return EvaluateWithEffectiveDefinition<TemplateHeaderView?>(policy, ctx.Inputs, "HeaderView",
+                (engine, _, def, _, _) =>
+                {
+                    if (def.Get("headerView") is not Function hook)
+                        return null;
+                    var context = BuildTemplateContextObject(engine, def, ctx.TrackId, ctx.Inputs, state);
+                    var value = engine.Call(hook, def, [context]);
+                    if (!value.IsObject() || value.IsArray())
+                        return null;
+                    var json = JsValueToJsonElement(engine, value, defaultJson: "null");
+                    if (!ValidHeaderView(json))
+                        return null;
+                    return System.Text.Json.JsonSerializer.Deserialize<TemplateHeaderView>(json, new JsonSerializerOptions
+                    {
+                        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+                    });
+                });
         }
         catch (Exception)
         {

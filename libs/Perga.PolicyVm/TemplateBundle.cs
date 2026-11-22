@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using System.Text;
 using System.Text.Json;
 using Jint;
@@ -33,6 +34,17 @@ public sealed record TemplateBundle(
         "tsconfig.json", "jsconfig.json", "package.json", "package-lock.json"
     };
 
+    internal const string InheritedSnapshotFormat = "perga.snapshot.v1";
+    internal const string VersionedSnapshotFormat = "perga.snapshot.v2";
+
+    internal abstract record SnapshotDefinition
+    {
+        internal sealed record Versioned(TemplateBundle Source, bool? Legacy) : SnapshotDefinition;
+        internal sealed record Inherited(TemplateBundle Parent, TemplateBundle Child) : SnapshotDefinition;
+    }
+
+    internal SnapshotDefinition? Snapshot { get; private init; }
+
     public string EntrySource => RawSnapshotSource ?? Files[EntryPath];
 
     public bool HasMultiFileSources => IsMultiFile || (SnapshotMultiFileLeaves is { Count: > 0 });
@@ -65,10 +77,10 @@ public sealed record TemplateBundle(
 
             return new TemplateBundle(
                 EntryPath: "template.perga.js",
-                Files: new Dictionary<string, string>(StringComparer.Ordinal)
+                Files: new ReadOnlyDictionary<string, string>(new Dictionary<string, string>(StringComparer.Ordinal)
                 {
                     ["template.perga.js"] = source
-                },
+                }),
                 IsMultiFile: false);
         }
 
@@ -136,7 +148,7 @@ public sealed record TemplateBundle(
             throw new InvalidOperationException($"Template bundle entry file '{entry}' was not found in 'files'.");
         }
 
-        return new TemplateBundle(entry, files, IsMultiFile: true);
+        return new TemplateBundle(entry, new ReadOnlyDictionary<string, string>(files), IsMultiFile: true);
     }
 
     private static bool TryParseSnapshot(string source, int depth, out TemplateBundle bundle)
@@ -168,7 +180,7 @@ public sealed record TemplateBundle(
             }
 
             var format = formatEl.GetString();
-            if (string.Equals(format, "perga.snapshot.v2", StringComparison.Ordinal))
+            if (string.Equals(format, VersionedSnapshotFormat, StringComparison.Ordinal))
             {
                 if (!root.TryGetProperty("source", out var innerSourceEl) ||
                     innerSourceEl.ValueKind != JsonValueKind.String ||
@@ -186,14 +198,17 @@ public sealed record TemplateBundle(
 
                 bundle = new TemplateBundle(
                     EntryPath: "__snapshot__.json",
-                    Files: innerAssets,
+                    Files: new ReadOnlyDictionary<string, string>(innerAssets),
                     IsMultiFile: false,
-                    SnapshotMultiFileLeaves: innerLeaves.Count > 0 ? innerLeaves : null,
-                    RawSnapshotSource: source);
+                    SnapshotMultiFileLeaves: innerLeaves.Count > 0 ? innerLeaves.AsReadOnly() : null,
+                    RawSnapshotSource: source)
+                {
+                    Snapshot = new SnapshotDefinition.Versioned(inner, ReadSnapshotToolNameVersion(root)),
+                };
                 return true;
             }
 
-            if (!string.Equals(format, "perga.snapshot.v1", StringComparison.Ordinal))
+            if (!string.Equals(format, InheritedSnapshotFormat, StringComparison.Ordinal))
             {
                 return false;
             }
@@ -225,13 +240,21 @@ public sealed record TemplateBundle(
 
             bundle = new TemplateBundle(
                 EntryPath: "__snapshot__.json",
-                Files: mergedAssets,
+                Files: new ReadOnlyDictionary<string, string>(mergedAssets),
                 IsMultiFile: false,
-                SnapshotMultiFileLeaves: leaves.Count > 0 ? leaves : null,
-                RawSnapshotSource: source);
+                SnapshotMultiFileLeaves: leaves.Count > 0 ? leaves.AsReadOnly() : null,
+                RawSnapshotSource: source)
+            {
+                Snapshot = new SnapshotDefinition.Inherited(left, right),
+            };
             return true;
         }
     }
+
+    internal static bool? ReadSnapshotToolNameVersion(JsonElement root) =>
+        root.TryGetProperty("toolNameVersion", out var version) &&
+        version.ValueKind == JsonValueKind.Number && version.TryGetInt32(out var number) && number is 1 or 2
+            ? number == 1 : null;
 
     private static void AppendMultiFileLeaves(TemplateBundle source, List<TemplateBundle> leaves)
     {

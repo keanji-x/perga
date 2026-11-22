@@ -1,7 +1,8 @@
 import type { ReactNode } from 'react';
 import type {
   CheckpointItem,
-  CheckpointsBlockPayload,
+  CheckpointMetric,
+  CheckpointTrigger,
 } from '../../../../../core/domain/report-checkpoints.ts';
 import type { ReportTaskRow } from '../../../../../core/domain/report.ts';
 import { useState } from '../../../ui/state/public.ts';
@@ -37,24 +38,22 @@ type GroupedBucket = Readonly<{
   items: readonly CheckpointItem[];
 }>;
 
-function groupVisibleItems(items: readonly CheckpointItem[]): readonly GroupedBucket[] {
+function groupVisibleItems(items: readonly CheckpointItem[], groups: readonly string[]): readonly GroupedBucket[] {
   const hasGroups = items.some((item) => item.group != null && item.group.trim() !== '');
   if (!hasGroups) {
     return [{ group: null, items }];
   }
-  const buckets: { group: string; items: CheckpointItem[] }[] = [];
-  const byName = new Map<string, CheckpointItem[]>();
+  const byName = new Map<string, CheckpointItem[]>(groups.map((name) => [name.trim(), []]));
   for (const item of items) {
     const name = item.group != null && item.group.trim() !== '' ? item.group.trim() : '其他';
     let list = byName.get(name);
     if (list === undefined) {
       list = [];
       byName.set(name, list);
-      buckets.push({ group: name, items: list });
     }
     list.push(item);
   }
-  return buckets;
+  return Array.from(byName, ([group, entries]) => ({ group, items: entries })).filter((bucket) => bucket.items.length > 0);
 }
 
 export function ReportCheckpointsChronicle({
@@ -64,7 +63,14 @@ export function ReportCheckpointsChronicle({
   renderMarkdown,
   onOpenWorker,
 }: Readonly<{
-  payload: CheckpointsBlockPayload;
+  payload: Readonly<{
+    items: readonly CheckpointItem[];
+    title?: string | null;
+    summary?: string | null;
+    groups?: readonly string[] | null;
+    metrics?: readonly CheckpointMetric[] | null;
+    triggers?: readonly CheckpointTrigger[] | null;
+  }>;
   taskRows?: readonly ReportTaskRow[];
   renderText?: (text: string) => ReactNode;
   renderMarkdown?: (markdown: string, key: string) => ReactNode;
@@ -83,10 +89,13 @@ export function ReportCheckpointsChronicle({
     ? payload.items
     : payload.items.slice(0, INITIAL_VISIBLE_COUNT);
   const hiddenCount = payload.items.length - visibleItems.length;
-  const buckets = groupVisibleItems(visibleItems);
+  const buckets = groupVisibleItems(visibleItems, payload.groups ?? []);
 
   return (
     <section className={styles.root} aria-label={payload.title ?? '事件时间线'}>
+      {payload.summary != null && payload.summary !== '' && (
+        renderMarkdown?.(payload.summary, 'chronicle-summary') ?? <p>{text(payload.summary)}</p>
+      )}
       {payload.metrics != null && payload.metrics.length > 0 && (
         <EditorialMetricsStrip
           metrics={payload.metrics}

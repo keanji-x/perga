@@ -3,7 +3,7 @@ export const schema = (t) => ({
   ticker: t.string(),
   valuation: t.object({
     unit: t.string(),
-    currentPrice: t.number(),
+    currentPrice: t.number().optional(),
     currentLabel: t.string().optional(),
     targets: t.array(t.object({
       price: t.number(),
@@ -38,13 +38,7 @@ export const initial = (inputs) => ({
   ticker: inputs.ticker,
   valuation: {
     unit: "$",
-    currentPrice: 137.5,
-    currentLabel: "现价",
-    targets: [
-      { price: 118, assumption: "云厂 CapEx 放缓、ASIC 分流加速，毛利率回落至 70%" },
-      { price: 172, emphasis: true, assumption: "Blackwell / Rubin 按期放量，DC 收入维持 ~35% 增速" },
-      { price: 225, assumption: "推理 Token 需求指数级扩张，主权 AI 与物理 AI 放量" },
-    ],
+    targets: [],
   },
   events: [],
 });

@@ -26,7 +26,6 @@ export default defineTemplate({
         initial: () => initial(inputs),
       },
       report: {
-        humanReadOnly: true,
         template: "./report.md",
         views,
       },

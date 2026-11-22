@@ -119,7 +119,6 @@ export function ReportDocument({
   arrivalAnchorId, taskVerdicts, taskRows, renderTaskExecution,
 }: ReportDocumentProps) {
   const compactViewport = useCompactViewport();
-  const [widgetSelections, setWidgetSelections] = useState<Readonly<Record<string, string>>>({});
   const prepared = useMemo(() => preparation ?? prepareReportDocument(report), [preparation, report]);
   if (prepared.report !== report) throw new Error('Report preparation does not match the displayed report');
   const { referenceRepository } = prepared;
@@ -206,10 +205,6 @@ export function ReportDocument({
               linkPreview={linkPreview}
               resolveOverlay={resolveOverlay}
               templateViews={templateViews}
-              widgetSelections={widgetSelections}
-              onSelectWidget={(key, value) => {
-                setWidgetSelections((prev) => (prev[key] === value ? prev : { ...prev, [key]: value }));
-              }}
               resolveSeries={resolveSeries}
               resolvePreview={resolvePreview}
               previewViewports={previewViewports}
@@ -312,7 +307,7 @@ function ReportReference({ blocks, backlinkCounts, tasks, verdicts, renderTaskEx
 
 /** One block, plus the sidenote that belongs to it. Reports are read-only publications. */
 function BlockSlot({
-  slot, backlinks, onOpenLink, onOpenFileLink, onOpenWorker, taskRows, onOpenSourceLink, fileRoot, fileBasePath, linkPreview, referenceRepository, resolveOverlay, templateViews, widgetSelections, onSelectWidget, resolveSeries,
+  slot, backlinks, onOpenLink, onOpenFileLink, onOpenWorker, taskRows, onOpenSourceLink, fileRoot, fileBasePath, linkPreview, referenceRepository, resolveOverlay, templateViews, resolveSeries,
   resolvePreview, previewViewports, sourceInsertion,
 }: {
   referenceRepository: ReferenceRepository | null;
@@ -328,8 +323,6 @@ function BlockSlot({
   linkPreview?: ReportLinkPreviewResources;
   resolveOverlay?: ReportDocumentProps['resolveOverlay'];
   templateViews?: ReportDocumentProps['templateViews'];
-  widgetSelections?: Readonly<Record<string, string>>;
-  onSelectWidget?: (key: string, value: string) => void;
   resolveSeries?: ReportDocumentProps['resolveSeries'];
   resolvePreview?: ReportDocumentProps['resolvePreview'];
   previewViewports?: PreviewViewportStore;
@@ -355,7 +348,7 @@ function BlockSlot({
           : <BlockBody block={block} taskRows={taskRows} referenceRepository={referenceRepository} onOpenLink={onOpenLink}
               onOpenFileLink={onOpenFileLink} onOpenWorker={onOpenWorker} fileRoot={fileRoot} fileBasePath={fileBasePath}
               onOpenSourceLink={onOpenSourceLink} linkPreview={linkPreview}
-              resolveOverlay={resolveOverlay} templateViews={templateViews} widgetSelections={widgetSelections} onSelectWidget={onSelectWidget} resolveSeries={resolveSeries} resolvePreview={resolvePreview}
+              resolveOverlay={resolveOverlay} templateViews={templateViews} resolveSeries={resolveSeries} resolvePreview={resolvePreview}
               previewViewports={previewViewports} />}
         {!prose && sourceInsertion?.content}
       </div>
@@ -370,7 +363,7 @@ function BlockSlot({
 
 /** One bad block may not cost the page: an unknown kind or an unparsable payload degrades to one line. */
 function BlockBody({
-  block, task, taskRows, renderTaskExecution, referenceRepository, onOpenLink, onOpenFileLink, onOpenWorker, fileRoot, fileBasePath, onOpenSourceLink, linkPreview, resolveOverlay, templateViews, widgetSelections, onSelectWidget, resolveSeries, resolvePreview, previewViewports,
+  block, task, taskRows, renderTaskExecution, referenceRepository, onOpenLink, onOpenFileLink, onOpenWorker, fileRoot, fileBasePath, onOpenSourceLink, linkPreview, resolveOverlay, templateViews, resolveSeries, resolvePreview, previewViewports,
 }: {
   referenceRepository: ReferenceRepository | null;
   onOpenLink?: (target: ReportLinkTarget) => void;
@@ -384,8 +377,6 @@ function BlockBody({
   linkPreview?: ReportLinkPreviewResources;
   resolveOverlay?: ReportDocumentProps['resolveOverlay'];
   templateViews?: ReportDocumentProps['templateViews'];
-  widgetSelections?: Readonly<Record<string, string>>;
-  onSelectWidget?: (key: string, value: string) => void;
   resolveSeries?: ReportDocumentProps['resolveSeries'];
   resolvePreview?: ReportDocumentProps['resolvePreview'];
   previewViewports?: PreviewViewportStore;
@@ -426,8 +417,6 @@ function BlockBody({
           payload={block.payload}
           projection={templateViews}
           taskRows={taskRows}
-          selectedId={block.payload.selectionKey !== undefined ? widgetSelections?.[block.payload.selectionKey] : undefined}
-          onSelect={onSelectWidget}
           renderText={renderText}
           renderMarkdown={(markdown, key) => (
             <ProseBlock markdown={markdown} blockId={key} compact {...textContext} />

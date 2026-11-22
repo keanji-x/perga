@@ -26,7 +26,6 @@ public sealed class TemplateV2BundleAndSchemaTests
                     return {
                       data: { schema, initial: () => initial(inputs) },
                       report: {
-                        humanReadOnly: true,
                         template: "./report.md",
                         views
                       },
@@ -102,7 +101,6 @@ public sealed class TemplateV2BundleAndSchemaTests
         var compiled = _vm.Compile(bundleSource);
 
         Assert.Equal("sample-v2", compiled.TemplateId);
-        Assert.True(compiled.Manifest.HumanReadOnly);
         Assert.Contains("perga-block widget", compiled.Manifest.InitialReportMarkdown);
         Assert.Equal(["priceAxis", "eventList"], compiled.Manifest.ViewNames);
         Assert.Equal("Daily check for ${inputs.ticker}", Assert.Single(_vm.ResolveFlow(compiled, JsonSerializer.Deserialize<JsonElement>("{}"))).Do.Prompt);
@@ -214,6 +212,30 @@ public sealed class TemplateV2BundleAndSchemaTests
         Assert.Empty(projection.Diagnostics);
         if (packageName == "agents-delivery") Assert.Empty(projection.Views);
         else Assert.NotEmpty(projection.Views);
+    }
+
+    [Fact]
+    public void SnapshotReuseKeepsModuleStateEvaluationLocal()
+    {
+        var source = TemplateBundle.BundleHeader + JsonSerializer.Serialize(new
+        {
+            files = new Dictionary<string, string>
+            {
+                ["template.perga.js"] = """
+                    import { next } from "./counter.js";
+                    export default defineTemplate({
+                      id: "snapshot-counter", title: "Counter", initialState: () => ({ count: next() }),
+                    });
+                    """,
+                ["counter.js"] = "let count = 0; export const next = () => ++count;",
+            },
+        });
+        var compiled = _vm.Compile(PolicyVm.WithToolNameVersion(source, legacy: true));
+        var reconstructed = new CompiledPolicy(compiled.TemplateId, compiled.JsSource, compiled.Manifest);
+        foreach (var policy in new[] { compiled, compiled, reconstructed, reconstructed })
+        {
+            Assert.Equal(1, _vm.InitState(policy, default).Output.GetProperty("count").GetInt32());
+        }
     }
 
     [Fact]
@@ -618,7 +640,6 @@ public sealed class TemplateV2BundleAndSchemaTests
                   after() {
                     return "parent note";
                   },
-                  report: { humanReadOnly: true },
                   tasks: {
                     routing: [
                       { when: { role: "review" }, model: inputs.reviewModel, access: "read_only", enforce: true },
@@ -650,7 +671,6 @@ public sealed class TemplateV2BundleAndSchemaTests
 
         foreach (var policy in new[] { inherited, reloaded })
         {
-            Assert.True(policy.Manifest.HumanReadOnly);
             var routeRule = Assert.Single(policy.Manifest.Routing);
             Assert.Equal("safe-model", routeRule.Model);
             Assert.True(routeRule.Enforce);

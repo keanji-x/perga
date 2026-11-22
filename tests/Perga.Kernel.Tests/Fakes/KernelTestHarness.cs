@@ -1427,8 +1427,7 @@ internal sealed class ConfigurableFakePolicyVm : IPolicyVm
             policy.TemplateId,
             new Dictionary<string, JsonElement>(StringComparer.Ordinal),
             new Dictionary<string, string>(StringComparer.Ordinal),
-            [],
-            policy.Manifest.HumanReadOnly);
+            []);
 }
 
 internal sealed class ScriptableFakeAgentSession : IAgentSession

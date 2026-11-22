@@ -36,15 +36,6 @@ export interface TaskRoutingRuleSpec {
   enforce?: boolean;
 }
 
-export interface CheckpointSpec {
-  id: string;
-  title: string;
-  role?: string;
-  access?: "read_only" | "read_write";
-  dependsOn?: string[];
-  docPath?: string;
-}
-
 export interface SchemaNode {
   readonly __pergaSchema: true;
   optional(): SchemaNode;
@@ -132,24 +123,15 @@ export interface FlowNode {
 }
 
 export interface PergaTemplateSetupResult<TState = Record<string, any>, TInputs = Record<string, any>, TData = Record<string, any>> {
-  plugins?: string[];
+  /** Core declarations resolved for the Track's inputs. */
+  /** Initial flow.v1 nodes with runtime interpolation in supported text fields. */
+  flow?: FlowNode[];
   data?: {
     schema?: ((t: SchemaBuilder) => Record<string, SchemaNode>) | SchemaNode;
     initial?: TData | ((inputs: TInputs) => TData);
   };
-  initialState?: (inputs: TInputs) => TState;
-  headerView?: (ctx: TemplateContext<TState, TInputs>) => TemplateHeaderView;
-  before?: (action: { type: string; role?: string; access?: string; provider?: string; model?: string; arguments?: Record<string, any>; [key: string]: any }, ctx: TemplateContext<TState, TInputs>) => GuardDecision;
-  after?: (event: { type: string; [key: string]: any }, ctx: TemplateContext<TState, TInputs>) => string | null | void;
-  checkpoints?: CheckpointSpec[];
-  workspace?: {
-    driver?: string;
-    lowerCacheDirs?: string[];
-    onCreateCmd?: string;
-    onCloseCmd?: string;
-  };
   report?: {
-    humanReadOnly?: boolean;
+    /** Package-relative Markdown seeded on Track creation. Supports ${inputs.key}. */
     template?: string;
     views?: Record<string, (data: TData, kernel: KernelFactsSnapshot) => unknown>;
     maxProseChars?: number;
@@ -168,8 +150,19 @@ export interface PergaTemplateSetupResult<TState = Record<string, any>, TInputs 
     boundTaskId?: string;
     contextUsageRatio: number;
   } }) => string | void;
-  /** Initial flow.v1 nodes. Runtime text fields support ${inputs.key}. */
-  flow?: FlowNode[];
+
+  /** Advanced policy and lifecycle hooks. */
+  initialState?: (inputs: TInputs) => TState;
+  headerView?: (ctx: TemplateContext<TState, TInputs>) => TemplateHeaderView;
+  before?: (action: { type: string; role?: string; access?: string; provider?: string; model?: string; arguments?: Record<string, any>; [key: string]: any }, ctx: TemplateContext<TState, TInputs>) => GuardDecision;
+  after?: (event: { type: string; [key: string]: any }, ctx: TemplateContext<TState, TInputs>) => string | null | void;
+  workspace?: {
+    driver?: string;
+    lowerCacheDirs?: string[];
+    onCreateCmd?: string;
+    onCloseCmd?: string;
+  };
+  plugins?: string[];
 }
 
 export interface PergaTemplateDefinition<TState = Record<string, any>, TInputs = Record<string, any>, TData = Record<string, any>>
@@ -177,13 +170,15 @@ export interface PergaTemplateDefinition<TState = Record<string, any>, TInputs =
   id: string;
   title: string;
   description?: string;
+  /** Input declarations and input-dependent configuration. */
+  inputs?: Record<string, { type: "string" | "number" | "boolean" | "enum"; values?: string[]; default?: any; optional?: boolean; label?: string }>;
+  setup?: (inputs: TInputs) => PergaTemplateSetupResult<TState, TInputs, TData>;
+
   /** 1 uses original prefixed tool names and 2 uses canonical names.
    * Catalog files and old snapshots default to 1, while new inline sources default to 2. */
   toolNameVersion?: 1 | 2;
   /** Catalog base; snapshots freeze its complete source. Child keyed declarations take precedence. */
   extends?: string;
-  inputs?: Record<string, { type: "string" | "number" | "boolean" | "enum"; values?: string[]; default?: any; optional?: boolean; label?: string }>;
-  setup?: (inputs: TInputs) => PergaTemplateSetupResult<TState, TInputs, TData>;
 }
 
 declare global {

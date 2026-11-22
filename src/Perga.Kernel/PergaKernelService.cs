@@ -639,10 +639,15 @@ public sealed partial class PergaKernelService : IPergaKernel
         var templateInputs = JsonHelpers.EnsureClonedObject(req.TemplateInputs);
         var templateState = JsonHelpers.EmptyObject;
         var templateData = JsonHelpers.EmptyObject;
+        var initialReportMarkdown = string.Empty;
         if (policy is not null)
         {
             TemplateFlow.ValidateInputs(_policyVm, policy, templateInputs);
-            try { templateData = _policyVm.InitData(policy, templateInputs); }
+            try
+            {
+                templateData = _policyVm.InitData(policy, templateInputs);
+                initialReportMarkdown = _policyVm.InterpolateInputs(policy, policy.Manifest.InitialReportMarkdown, templateInputs);
+            }
             catch (InvalidOperationException ex) { throw KernelException.InvalidArgument(ex.Message); }
             var initEval = _policyVm.InitState(policy, templateInputs);
             templateState = initEval.Output.ValueKind != JsonValueKind.Undefined
@@ -651,7 +656,7 @@ public sealed partial class PergaKernelService : IPergaKernel
         }
 
         var initialReport = _reportEngine.Parse(
-            policy?.Manifest.InitialReportMarkdown ?? string.Empty,
+            initialReportMarkdown,
             docRev: 0,
             summary: string.Empty);
 

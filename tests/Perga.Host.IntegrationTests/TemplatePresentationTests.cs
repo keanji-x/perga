@@ -42,7 +42,26 @@ public sealed class TemplatePresentationTests
             Assert.False(string.IsNullOrWhiteSpace(track.GetProperty("templateTitle").GetString()));
             Assert.False(track.TryGetProperty("templateHeaderView", out var header) && header.ValueKind == JsonValueKind.Object);
             Assert.False(track.TryGetProperty("templateSchedules", out _));
+
+            var views = await host.AuthenticatedClient.GetFromJsonAsync<JsonElement>($"/api/v1/tracks/{trackId}/views");
+            Assert.False(views.TryGetProperty("humanReadOnly", out _));
         }
+    }
+
+    [Fact]
+    public async Task EquityResearchReportUsesTheSelectedTicker()
+    {
+        await using var host = new PergaHostTestCluster();
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        var area = await kernel.CreateAreaAsync(new("Research", DefaultCwd: host.DataDir));
+        var created = await kernel.CreateTrackAsync(new(area.Id, TemplateId: "equity-research",
+            TemplateInputs: JsonSerializer.SerializeToElement(new { ticker = "AAPL" })));
+
+        var report = await host.AuthenticatedClient.GetFromJsonAsync<JsonElement>($"/api/v1/tracks/{created.Track.Id}/report");
+        var markdown = report.GetProperty("renderedMarkdown").GetString();
+        Assert.Contains("AAPL", markdown);
+        Assert.DoesNotContain("NVDA", markdown);
+        Assert.DoesNotContain("${inputs.ticker}", markdown);
     }
 
     [Theory]

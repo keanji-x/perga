@@ -238,7 +238,7 @@
         const rawPoints = currentData && Array.isArray(currentData.points) ? currentData.points : [];
         const points = rawPoints.filter((p) => p && typeof p.value === "number" && Number.isFinite(p.value));
         if (points.length === 0) {
-          app.textContent = "";
+          app.textContent = "价格与估值区间待录入。";
           reportHeight();
           return;
         }

@@ -8,12 +8,10 @@ namespace Perga.PolicyVm;
 
 public sealed partial class PolicyVm
 {
-    private const string VersionedSnapshotFormat = "perga.snapshot.v2";
-
     public static string WithToolNameVersion(string source, bool legacy) =>
         ReadToolNameVersion(source) is not null
             ? source
-            : JsonSerializer.Serialize(new { format = VersionedSnapshotFormat, toolNameVersion = legacy ? 1 : 2, source });
+            : JsonSerializer.Serialize(new { format = TemplateBundle.VersionedSnapshotFormat, toolNameVersion = legacy ? 1 : 2, source });
 
     public static (string Source, bool Legacy)? ReadToolNameVersion(string source)
     {
@@ -26,99 +24,67 @@ public sealed partial class PolicyVm
     private static (string Source, bool Legacy)? ReadToolNameVersion(JsonElement root)
     {
         if (!root.TryGetProperty("format", out var format) || format.ValueKind != JsonValueKind.String ||
-            format.GetString() != VersionedSnapshotFormat)
+            format.GetString() != TemplateBundle.VersionedSnapshotFormat)
             return null;
         if (!root.TryGetProperty("source", out var source) || source.ValueKind != JsonValueKind.String ||
-            string.IsNullOrWhiteSpace(source.GetString()) || !root.TryGetProperty("toolNameVersion", out var version) ||
-            version.ValueKind != JsonValueKind.Number || !version.TryGetInt32(out var number) || number is not (1 or 2))
+            string.IsNullOrWhiteSpace(source.GetString()) || TemplateBundle.ReadSnapshotToolNameVersion(root) is not { } legacy)
             throw new InvalidOperationException("Invalid template snapshot tool-name version or source.");
-        return (source.GetString()!, number == 1);
+        return (source.GetString()!, legacy);
     }
 
     // Snapshots contain source modules rather than serialized functions. Every base is frozen.
     public static string Inherit(CompiledPolicy parent, string childSource) =>
-        System.Text.Json.JsonSerializer.Serialize(new { format = "perga.snapshot.v1", sources = new[] { parent.JsSource, childSource } });
+        System.Text.Json.JsonSerializer.Serialize(new { format = TemplateBundle.InheritedSnapshotFormat, sources = new[] { parent.JsSource, childSource } });
 
     private readonly record struct LoadedDefinition(JsValue Definition, bool LegacyBefore, bool LegacyAfter);
 
     private static LoadedDefinition LoadDefinition(Engine engine, TemplateBundle bundle)
     {
         engine.Execute(DefinitionHelpers);
-        if (bundle.IsMultiFile)
-        {
-            var legacyToolNames = false;
-            var definition = engine.Modules.Import(bundle.EntryPath).Get("default");
-            RejectLegacyHooks(definition);
-            if (definition is ObjectInstance sourceDefinition)
-            {
-                if (sourceDefinition.HasProperty("toolNameVersion"))
-                {
-                    var version = sourceDefinition.Get("toolNameVersion");
-                    if (!version.IsNumber() || version.AsNumber() is not (1 or 2))
-                        throw new InvalidOperationException("template.toolNameVersion must be the integer 1 or 2.");
-                    legacyToolNames = version.AsNumber() == 1;
-                }
-                ReadFlow(engine, sourceDefinition);
-            }
-            return new(engine.Invoke("__adaptTemplate", definition), legacyToolNames, legacyToolNames);
-        }
-
         var index = 0;
         var snapBundleIndex = 0;
-        LoadedDefinition Load(string text, int depth = 0, bool legacyToolNames = false)
+        var loaded = Load(bundle, legacyToolNames: false);
+        return loaded with { Definition = engine.Invoke("__adaptTemplate", loaded.Definition) };
+
+        LoadedDefinition Load(TemplateBundle source, bool legacyToolNames)
         {
-            if (depth > MaxRecursionDepth) throw new InvalidOperationException("Template inheritance exceeds the maximum depth.");
-            while (text.AsSpan().TrimStart().StartsWith("{", StringComparison.Ordinal))
+            if (source.Snapshot is TemplateBundle.SnapshotDefinition.Versioned versioned)
             {
-                using var doc = JsonDocument.Parse(text);
-                if (ReadToolNameVersion(doc.RootElement) is { } versioned)
-                {
-                    text = versioned.Source;
-                    legacyToolNames = versioned.Legacy;
-                    continue;
-                }
-                if (doc.RootElement.TryGetProperty("format", out var format) && format.GetString() == "perga.snapshot.v1")
-                {
-                    var sources = doc.RootElement.GetProperty("sources").EnumerateArray().ToArray();
-                    if (sources.Length != 2) throw new InvalidOperationException("Invalid template snapshot.");
-                    var parent = Load(sources[0].GetString()!, depth + 1, legacyToolNames);
-                    var child = Load(sources[1].GetString()!, depth + 1, legacyToolNames);
-                    var merged = engine.Invoke("__mergeTemplate", parent.Definition, child.Definition);
-                    return new(merged.Get("definition"),
-                        merged.Get("beforeFromChild").AsBoolean() ? child.LegacyBefore : parent.LegacyBefore,
-                        merged.Get("afterFromChild").AsBoolean() ? child.LegacyAfter : parent.LegacyAfter);
-                }
-                text = "export default " + text + ";";
-                break;
+                return Load(versioned.Source, versioned.Legacy ??
+                    throw new InvalidOperationException("Invalid template snapshot tool-name version or source."));
             }
-            if (text.StartsWith(TemplateBundle.BundleHeader, StringComparison.Ordinal))
+
+            if (source.Snapshot is TemplateBundle.SnapshotDefinition.Inherited inherited)
             {
-                var leaves = bundle.SnapshotMultiFileLeaves
-                    ?? throw new InvalidOperationException("Snapshot multi-file template bundle metadata is missing.");
-                if (snapBundleIndex >= leaves.Count)
-                    throw new InvalidOperationException("Snapshot multi-file template bundle index is out of range.");
-                var leaf = leaves[snapBundleIndex];
-                var entrySpec = $"__snap_{snapBundleIndex}/{leaf.EntryPath}";
-                snapBundleIndex++;
-                var bundledDef = engine.Modules.Import(entrySpec).Get("default");
-                RejectLegacyHooks(bundledDef);
-                if (bundledDef is ObjectInstance bundledObj)
-                {
-                    if (bundledObj.HasProperty("toolNameVersion"))
-                    {
-                        var version = bundledObj.Get("toolNameVersion");
-                        if (!version.IsNumber() || version.AsNumber() is not (1 or 2))
-                            throw new InvalidOperationException("template.toolNameVersion must be the integer 1 or 2.");
-                        legacyToolNames = version.AsNumber() == 1;
-                    }
-                    ReadFlow(engine, bundledObj);
-                }
-                return new(bundledDef, legacyToolNames, legacyToolNames);
+                var parent = Load(inherited.Parent, legacyToolNames);
+                var child = Load(inherited.Child, legacyToolNames);
+                var merged = engine.Invoke("__mergeTemplate", parent.Definition, child.Definition);
+                return new(merged.Get("definition"),
+                    merged.Get("beforeFromChild").AsBoolean() ? child.LegacyBefore : parent.LegacyBefore,
+                    merged.Get("afterFromChild").AsBoolean() ? child.LegacyAfter : parent.LegacyAfter);
             }
-            var name = $"template-{index++}.perga.js";
-            engine.Modules.Add(name, text);
-            var definition = engine.Modules.Import(name).Get("default");
-            // Validate every source before merging: a child must not hide a legacy base hook.
+
+            string entry;
+            if (source.IsMultiFile)
+            {
+                entry = bundle.IsMultiFile ? source.EntryPath : $"__snap_{snapBundleIndex++}/{source.EntryPath}";
+            }
+            else
+            {
+                var text = source.EntrySource;
+                if (text.AsSpan().TrimStart().StartsWith("{", StringComparison.Ordinal))
+                {
+                    using var document = JsonDocument.Parse(text);
+                    if (document.RootElement.TryGetProperty("format", out var format))
+                        _ = format.GetString();
+                    text = "export default " + text + ";";
+                }
+                entry = $"template-{index++}.perga.js";
+                engine.Modules.Add(entry, text);
+            }
+
+            var definition = engine.Modules.Import(entry).Get("default");
+            // Validate each source before merging so a child cannot hide an invalid base.
             RejectLegacyHooks(definition);
             if (definition is ObjectInstance sourceDefinition)
             {
@@ -133,8 +99,6 @@ public sealed partial class PolicyVm
             }
             return new(definition, legacyToolNames, legacyToolNames);
         }
-        var loaded = Load(bundle.EntrySource);
-        return loaded with { Definition = engine.Invoke("__adaptTemplate", loaded.Definition) };
     }
 
     private static void RejectLegacyHooks(JsValue definition)
@@ -160,13 +124,8 @@ public sealed partial class PolicyVm
     }
 
     public PolicyEvalResult<GuardDecision> Before(CompiledPolicy policy, string action, string trackId,
-        JsonElement data, JsonElement inputs, JsonElement state) => ExecuteSandboxed("Before", () =>
+        JsonElement data, JsonElement inputs, JsonElement state) => EvaluateWithEffectiveDefinition(policy, inputs, "Before", (engine, _, def, _, _) =>
     {
-        var bundle = TemplateBundle.Parse(policy.JsSource);
-        using var engine = CreateSandboxedEngine(ExecutionTimeoutMs, bundle);
-        var rawDef = LoadDefaultTemplateObject(engine, bundle);
-        var jsInputs = BuildEffectiveJsInputs(engine, rawDef, inputs);
-        var def = ResolveEffectiveDefinition(engine, rawDef, jsInputs);
         var ctx = BuildTemplateContextObject(engine, def, trackId, inputs, state);
         var payload = ParseJsJson(engine, data.GetRawText());
         var value = engine.Invoke("__beforeTemplate", def, action, payload, ctx);
@@ -175,13 +134,8 @@ public sealed partial class PolicyVm
     });
 
     public PolicyEvalResult<string?> After(CompiledPolicy policy, string eventName, string trackId,
-        JsonElement data, JsonElement inputs, JsonElement state) => ExecuteSandboxed("After", () =>
+        JsonElement data, JsonElement inputs, JsonElement state) => EvaluateWithEffectiveDefinition(policy, inputs, "After", (engine, _, def, _, _) =>
     {
-        var bundle = TemplateBundle.Parse(policy.JsSource);
-        using var engine = CreateSandboxedEngine(ExecutionTimeoutMs, bundle);
-        var rawDef = LoadDefaultTemplateObject(engine, bundle);
-        var jsInputs = BuildEffectiveJsInputs(engine, rawDef, inputs);
-        var def = ResolveEffectiveDefinition(engine, rawDef, jsInputs);
         var ctx = BuildTemplateContextObject(engine, def, trackId, inputs, state);
         var payload = ParseJsJson(engine, data.GetRawText());
         var result = def.Get("after") is Function hook

@@ -7,7 +7,6 @@ export default defineTemplate({
     testCmd: { type: "string", default: "dotnet test Perga.sln", label: "全量回归门禁命令" },
   },
   report: {
-    humanReadOnly: true,
     template: "./report.md",
   },
   setup(inputs) {

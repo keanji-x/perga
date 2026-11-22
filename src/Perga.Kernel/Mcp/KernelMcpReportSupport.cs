@@ -456,7 +456,7 @@ internal static class KernelMcpReportSupport
             },
             "widget": {
               "required": ["use", "view"],
-              "notes": "Template v2 data-bound view block. use is 'builtin:stepper', 'builtin:list', 'builtin:table', 'builtin:detail', or a package-relative './widgets/*.html' path (optional height, chrome: 'seamless'|'framed', selectionKey, title).",
+              "notes": "Template v2 data-bound view block. use is 'builtin:flow', 'builtin:list', 'builtin:table', or a package-relative './widgets/*.html' path (optional height, chrome: 'seamless'|'framed', title).",
               "example": {
                 "use": "./widgets/range-axis.html",
                 "view": "rangeAxis",

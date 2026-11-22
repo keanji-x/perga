@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Jint;
 using Jint.Native;
@@ -11,6 +12,8 @@ namespace Perga.PolicyVm;
 
 public sealed partial class PolicyVm : IPolicyVm
 {
+    private static readonly ConditionalWeakTable<CompiledPolicy, TemplateBundle> PolicyBundles = new();
+
     private const long MaxMemoryBytes = 16L * 1024 * 1024;
     private const int MaxStatementBudget = 10_000;
     private const int CompileTimeoutMs = 500;
@@ -97,7 +100,6 @@ public sealed partial class PolicyVm : IPolicyVm
             // Report spec
             int? maxProseChars = null;
             var sections = new List<SectionRule>();
-            var humanReadOnly = false;
             var viewNames = new List<string>();
             if (TryGetOptionalObject(def, "report", "template.report", out var reportObj))
             {
@@ -107,7 +109,6 @@ public sealed partial class PolicyVm : IPolicyVm
                     throw new InvalidOperationException("template.report.maxProseChars must be positive when specified.");
                 }
 
-                humanReadOnly = ReadOptionalBool(reportObj, "humanReadOnly", "template.report.humanReadOnly") ?? false;
                 sections = ParseSectionRules(reportObj);
                 if (TryGetOptionalObject(reportObj, "views", "template.report.views", out var viewsObj))
                 {
@@ -125,7 +126,6 @@ public sealed partial class PolicyVm : IPolicyVm
             }
 
             var initialReportMarkdown = ResolveInitialReportMarkdown(def, bundle);
-            var checkpoints = ParseCheckpoints(def);
             ValidateCrossFileReferencesAndInitialData(
                 engine, def, defaultInputsJs, bundle, initialReportMarkdown, viewNames, tHelper, skipCrossFileChecks: !string.IsNullOrWhiteSpace(extendsId));
 
@@ -159,12 +159,11 @@ public sealed partial class PolicyVm : IPolicyVm
                 Extends: ReadOptionalString(rawDef, "extends", "template.extends"),
                 HasHeaderView: !def.Get("headerView").IsUndefined(),
                 InitialReportMarkdown: initialReportMarkdown,
-                Checkpoints: checkpoints.Count > 0 ? checkpoints : null,
-                ViewNames: viewNames.Count > 0 ? viewNames : null,
-                HumanReadOnly: humanReadOnly);
+                ViewNames: viewNames.Count > 0 ? viewNames : null);
 
-            return new CompiledPolicy(id, jsModuleSource, manifest,
-                loaded.LegacyBefore, loaded.LegacyAfter);
+            var policy = new CompiledPolicy(id, jsModuleSource, manifest, loaded.LegacyBefore, loaded.LegacyAfter);
+            PolicyBundles.Add(policy, bundle);
+            return policy;
         }, CompileTimeoutMs);
     }
 
@@ -172,14 +171,8 @@ public sealed partial class PolicyVm : IPolicyVm
     {
         ArgumentNullException.ThrowIfNull(policy);
 
-        return ExecuteSandboxed("InitState", () =>
+        return EvaluateWithEffectiveDefinition(policy, inputs, "InitState", (engine, _, def, jsInputs, _) =>
         {
-            var bundle = TemplateBundle.Parse(policy.JsSource);
-            using var engine = CreateSandboxedEngine(ExecutionTimeoutMs, bundle);
-            var rawDef = LoadDefaultTemplateObject(engine, bundle);
-            var jsInputs = BuildEffectiveJsInputs(engine, rawDef, inputs);
-            var def = ResolveEffectiveDefinition(engine, rawDef, jsInputs);
-
             var initialStateFn = def.Get("initialState");
             if (initialStateFn.IsUndefined() || initialStateFn.IsNull())
             {
@@ -213,14 +206,8 @@ public sealed partial class PolicyVm : IPolicyVm
         ArgumentNullException.ThrowIfNull(policy);
         ArgumentNullException.ThrowIfNull(ctx);
 
-        return ExecuteSandboxed("TurnContext", () =>
+        return EvaluateWithEffectiveDefinition(policy, ctx.Inputs, "TurnContext", (engine, _, def, _, _) =>
         {
-            var bundle = TemplateBundle.Parse(policy.JsSource);
-            using var engine = CreateSandboxedEngine(ExecutionTimeoutMs, bundle);
-            var rawDef = LoadDefaultTemplateObject(engine, bundle);
-            var jsInputs = BuildEffectiveJsInputs(engine, rawDef, ctx.Inputs);
-            var def = ResolveEffectiveDefinition(engine, rawDef, jsInputs);
-
             var hookVal = def.Get("turnContext");
             if (hookVal.IsUndefined() || hookVal.IsNull())
             {
@@ -279,11 +266,22 @@ public sealed partial class PolicyVm : IPolicyVm
         return engine;
     }
 
-    private static ObjectInstance LoadDefaultTemplateObject(Engine engine, string jsModuleSource) =>
-        LoadDefaultTemplateObject(engine, TemplateBundle.Parse(jsModuleSource));
-
-    private static ObjectInstance LoadDefaultTemplateObject(Engine engine, TemplateBundle bundle) =>
-        ValidateDefaultTemplateObject(LoadDefinition(engine, bundle).Definition);
+    private static T EvaluateWithEffectiveDefinition<T>(
+        CompiledPolicy policy,
+        JsonElement inputs,
+        string phase,
+        Func<Engine, TemplateBundle, ObjectInstance, JsValue, JsValue, T> evaluate) =>
+        ExecuteSandboxed(phase, () =>
+        {
+            // Use policy identity so record copies with modified source load their own bundle.
+            var bundle = PolicyBundles.GetValue(policy, static compiled => TemplateBundle.Parse(compiled.JsSource));
+            using var engine = CreateSandboxedEngine(ExecutionTimeoutMs, bundle);
+            var schemaBuilder = engine.GetValue("t");
+            var rawDef = ValidateDefaultTemplateObject(LoadDefinition(engine, bundle).Definition);
+            var jsInputs = BuildEffectiveJsInputs(engine, rawDef, inputs);
+            var def = ResolveEffectiveDefinition(engine, rawDef, jsInputs);
+            return evaluate(engine, bundle, def, jsInputs, schemaBuilder);
+        });
 
     private static ObjectInstance ValidateDefaultTemplateObject(JsValue defaultExport)
     {

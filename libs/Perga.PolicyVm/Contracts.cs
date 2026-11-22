@@ -14,14 +14,6 @@ public sealed record SectionRule(
     bool OmitIfEmpty = false,
     IReadOnlyList<string>? EditableBy = null);
 
-public sealed record CheckpointSpec(
-    string Id,
-    string Title,
-    string? Role = null,
-    string? Access = null,
-    IReadOnlyList<string>? DependsOn = null,
-    string? DocPath = null);
-
 public sealed record DataValidationError(
     string Path,
     string Message);
@@ -40,7 +32,6 @@ public sealed record TemplateViewsProjection(
     IReadOnlyDictionary<string, JsonElement> Views,
     IReadOnlyDictionary<string, string> Widgets,
     IReadOnlyList<TemplateViewDiagnostic> Diagnostics,
-    bool HumanReadOnly = false,
     long DataRev = 0,
     long FlowRev = 0,
     JsonElement? Flow = null);
@@ -64,9 +55,7 @@ public sealed record CompiledTemplateManifest(
     string? Extends = null,
     bool HasHeaderView = false,
     string InitialReportMarkdown = "",
-    IReadOnlyList<CheckpointSpec>? Checkpoints = null,
-    IReadOnlyList<string>? ViewNames = null,
-    bool HumanReadOnly = false);
+    IReadOnlyList<string>? ViewNames = null);
 
 public sealed record CompiledPolicy(
     string TemplateId,

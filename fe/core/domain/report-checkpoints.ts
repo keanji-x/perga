@@ -73,7 +73,7 @@ const checkpointMetricPointSchema = z.strictObject({
   note: max2048CodePoints(z.string()).nullish(),
 });
 
-const checkpointMetricSchema = z.strictObject({
+export const checkpointMetricSchema = z.strictObject({
   code: max2048CodePoints(z.string().min(1)).nullish(),
   label: max2048CodePoints(z.string().min(1)),
   tag: max2048CodePoints(z.string()).nullish(),

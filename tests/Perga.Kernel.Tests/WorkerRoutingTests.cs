@@ -57,7 +57,7 @@ public sealed class WorkerRoutingTests
     }
 
     [Fact]
-    public async Task TemplateV2_DataPatch_Views_HumanReadOnly_And_SetupInputsRouting_EnforcedEndToEnd()
+    public async Task TemplateV2_DataPatch_Views_And_SetupInputsRouting_EnforcedEndToEnd()
     {
         await using var ctx = new KernelTestContext(policyVm: new Perga.PolicyVm.PolicyVm());
         ctx.AgentRuntime.Providers = [new ProviderStatus("codex", true, "1.0.0", null, ["o3-pro", "gpt-5"])];
@@ -78,7 +78,6 @@ public sealed class WorkerRoutingTests
                         initial: () => ({ price: 100 }),
                       },
                       report: {
-                        humanReadOnly: true,
                         template: "./report.md",
                         views: {
                           summary: (data) => ({ currentPrice: data.price, items: [] }),
@@ -132,7 +131,6 @@ public sealed class WorkerRoutingTests
 
         var views = await ctx.Kernel.GetTrackViewsAsync(track.Track.Id);
         Assert.Equal(1, views.DataRev);
-        Assert.True(views.HumanReadOnly);
         Assert.Equal(148.5, views.Views["summary"].GetProperty("currentPrice").GetDouble());
 
         // 3b. MCP perga_report_read automatically includes projected templateViews for widget tracks

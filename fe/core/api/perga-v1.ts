@@ -121,9 +121,7 @@ export const compiledTemplateManifestDtoSchema = z.object({
   hasHeaderView: z.boolean().default(false),
   initialReportMarkdown: z.string().nullish().transform((v) => v ?? ''),
   routing: z.array(z.unknown()).nullish(),
-  checkpoints: z.array(z.unknown()).nullish(),
   viewNames: z.array(z.string()).nullish(),
-  humanReadOnly: z.boolean().nullish().transform((v) => v ?? false),
 }).transform((raw) => ({
   ...raw,
   title: raw.title ?? raw.id,
