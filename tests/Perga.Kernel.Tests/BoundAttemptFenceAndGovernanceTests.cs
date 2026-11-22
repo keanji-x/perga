@@ -40,8 +40,31 @@ public sealed class BoundAttemptFenceAndGovernanceTests
         Assert.Equal(worker ? 1 : 0, (await ctx.Kernel.ListTasksAsync(trackId)).Count);
     }
 
+    [Theory]
+    [InlineData("table")]
+    [InlineData("view")]
+    [InlineData("html")]
+    public async Task ReportCommitRejectsRetiredFencesInSectionReplacement(string kind)
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        var trackId = snap.Track.Id;
+        var lead = snap.Track.LeadSessionId!;
+        var initial = await ctx.Kernel.ReadReportAsync(trackId, lead);
+        var report = await ctx.Kernel.CommitReportAsync(trackId, lead, new(initial.Anchor,
+            [new BlockOp.ReplaceSectionOp("Progress", "# Progress\n\nOriginal prose.")]));
+
+        var failure = await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.CommitReportAsync(trackId, lead,
+            new(report.Anchor, [new BlockOp.ReplaceSectionOp("Progress", "# Progress\n\n" + RetiredFence(kind))])));
+        Assert.Equal(KernelErrorCode.InvalidArgument, failure.Code);
+        Assert.Contains("perga-block widget", failure.Message);
+        var persisted = await ctx.Kernel.ReadReportAsync(trackId, lead);
+        Assert.Equal(report.DocRev, persisted.DocRev);
+        Assert.Contains("Original prose.", persisted.RenderedMarkdown);
+    }
+
     [Fact]
-    public async Task HistoricalReportTaskBlocksRemainReadableButCannotBeRewritten()
+    public async Task CreateTrackRejectsRetiredBlocksInTemplateReport()
     {
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
         var files = new Dictionary<string, string>
@@ -49,32 +72,54 @@ public sealed class BoundAttemptFenceAndGovernanceTests
             ["template.perga.js"] = """
                 export default defineTemplate({id:'historical', title:'Historical', report:{template:'./report.md'}});
                 """,
-            ["report.md"] = """
-                # History
-
-                ```perga-block task
-                {"task_key":"legacy","goal_or_cmd":"historical"}
-                ```
-                """
+            ["report.md"] = "# History\n\n" + RetiredFence("table")
         };
         ctx.Kernel.Templates.RegisterTemplate(TemplateBundle.BundleHeader +
             System.Text.Json.JsonSerializer.Serialize(new { entry = "template.perga.js", files }));
-        var (_, snap) = await ctx.CreateDefaultTrackAsync(templateId: "historical");
+        var area = await ctx.Kernel.CreateAreaAsync(new("Historical Report", DefaultCwd: "/workspace/demo"));
+        var failure = await Assert.ThrowsAsync<KernelException>(() =>
+            ctx.Kernel.CreateTrackAsync(new(area.Id, TemplateId: "historical")));
+        Assert.Equal(KernelErrorCode.InvalidArgument, failure.Code);
+        Assert.Contains("perga-block widget", failure.Message);
+        Assert.Empty(await ctx.Kernel.ListTracksAsync(area.Id));
+    }
+
+    [Fact]
+    public async Task HistoricalReportBlocksRemainReadableButCannotBeRewritten()
+    {
+        await using var ctx = new KernelTestContext();
+        var (area, snap) = await ctx.CreateDefaultTrackAsync();
         var trackId = snap.Track.Id;
         var lead = snap.Track.LeadSessionId!;
+        await ctx.Kernel.WaitForTrackIdleAsync(trackId);
+        await ctx.Kernel.Actors.RemoveAndDisposeAsync(trackId);
+        var history = ctx.ReportEngine.Parse("# History\n\n" +
+            string.Join("\n\n", new[] { "task", "table", "checkpoints" }.Select(RetiredFence)) +
+            "\n\n# Progress\n\nOriginal prose.", docRev: 1);
+        await ctx.Store.SaveReportAsync(trackId, history, ctx.ReportEngine.CompressZstd(history.Blocks),
+            lead, "Historical import", new(null, area.Id, trackId, "report.updated",
+                TestJson.Parse("""{"docRev":1}"""), ctx.Time.GetUtcNow().ToUnixTimeMilliseconds()), default);
         var read = await ctx.Kernel.ReadReportAsync(trackId, lead);
-        var legacy = Assert.Single(read.Blocks, block => block.Kind == ReportBlockKind.Task);
+        var legacy = read.Blocks.Where(block => block.Kind != ReportBlockKind.Prose).ToArray();
+        Assert.Equal(new[] { ReportBlockKind.Task, ReportBlockKind.Table, ReportBlockKind.Checkpoints },
+            legacy.Select(block => block.Kind));
         Assert.Empty(read.Tasks);
-        var failure = await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.CommitReportAsync(trackId, lead,
-            new(read.Anchor, [new BlockOp.UpsertBlockOp(legacy.Id, ReportBlockKind.Task, null,
-                TestJson.Parse("""{"task_key":"legacy","goal_or_cmd":"replacement"}"""))])));
-        Assert.Equal(KernelErrorCode.InvalidArgument, failure.Code);
+        foreach (var block in legacy)
+        {
+            var failure = await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.CommitReportAsync(trackId, lead,
+                new(read.Anchor, [new BlockOp.UpsertBlockOp(block.Id, block.Kind, null, TestJson.Parse("""{"changed":true}"""))])));
+            Assert.Equal(KernelErrorCode.InvalidArgument, failure.Code);
+        }
 
         var after = await ctx.Kernel.CommitReportAsync(trackId, lead,
-            new(read.Anchor, [new BlockOp.UpsertBlockOp(null, ReportBlockKind.Prose, "Progress.", null)]));
-        Assert.Equal(legacy.Rev, Assert.Single(after.Blocks, block => block.Id == legacy.Id).Rev);
+            new(read.Anchor, [new BlockOp.ReplaceSectionOp("Progress", "# Progress\n\nNew prose.")]));
+        Assert.Equal(legacy, after.Blocks.Where(block => block.Kind != ReportBlockKind.Prose));
+        Assert.Contains("New prose.", after.RenderedMarkdown);
         Assert.Empty(after.Tasks);
     }
+
+    private static string RetiredFence(string kind) =>
+        "```perga-block " + kind + "\n{\"historical\":true}\n```";
 
     [Fact]
     public async Task GuardReportCommit_SupportsAllowDenyAndAskHumanSuspension()

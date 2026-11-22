@@ -169,6 +169,44 @@ public sealed class PolicyAdmissionRegressionTests
     }
 
     [Fact]
+    public async Task ChangedPolicyDataInvalidatesAnOpenVcsToolApproval()
+    {
+        await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
+        var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
+        var caller = Caller(snapshot);
+        await SetPolicy(ctx, caller, """
+            export default { id: 'vcs-approval', title: 'VCS approval', data: { initial: { locked: false } },
+              before(action, ctx) {
+                if (action.type !== 'tool.restore_op') return Allow();
+                return ctx.data.locked ? Deny('Workspace locked') : AskHuman('Restore workspace?');
+              } };
+            """);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var ct = timeout.Token;
+        var args = TestJson.Parse("""{"opId":"test-operation"}""");
+        var guard = ctx.Kernel.GuardMcpToolCallAsync(caller.TrackId, caller.SessionId, "vcs", "restore_op", args, ct);
+        ApprovalDto? approval = null;
+        while (approval is null)
+        {
+            approval = (await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId, ct)).PendingApprovals.SingleOrDefault();
+            if (approval is null) await Task.Delay(10, ct);
+        }
+
+        await KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller, KernelMcpToolNames.DataPatch,
+            TestJson.Parse("""{"patch":{"locked":true}}"""), ct);
+        await ctx.Kernel.RespondInteractionAsync(approval.SessionId, approval.Id, new(ExecutionId: approval.ExecutionId,
+            OptionId: approval.Options.Single(o => o.IsApproval).Id), new InteropPrincipal.Human(), ct);
+
+        var error = await Assert.ThrowsAsync<KernelException>(() => guard.WaitAsync(ct));
+        Assert.Equal(KernelErrorCode.PolicyDenied, error.Code);
+        Assert.Equal("Active policy or template data changed during approval.", error.Message);
+        var retry = await Assert.ThrowsAsync<KernelException>(() =>
+            ctx.Kernel.GuardMcpToolCallAsync(caller.TrackId, caller.SessionId, "vcs", "restore_op", args, ct));
+        Assert.Equal(KernelErrorCode.PolicyDenied, retry.Code);
+        Assert.Equal("Workspace locked", retry.Message);
+    }
+
+    [Fact]
     public async Task StopExpiresTemplateReportApprovalAndRejectsLateDecisions()
     {
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());

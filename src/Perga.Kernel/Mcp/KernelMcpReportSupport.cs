@@ -377,9 +377,10 @@ internal static class KernelMcpReportSupport
               "notes": "Write standard Markdown, including native tables, code fences and links."
             },
             "widget": {
-              "required": ["use"],
-              "notes": "Use builtin:flow, builtin:list, builtin:table, or a package-relative ./widgets/*.html path. Set view for data-bound widgets. Optional fields include height, chrome (seamless or framed), and title.",
-              "example": { "use": "./widgets/range-axis.html", "view": "rangeAxis", "height": 210, "chrome": "seamless" }
+              "required": ["use", "view"],
+              "notes": "Use builtin:flow, builtin:list, builtin:table, or a package-relative ./widgets/*.html path. Set view to flow for builtin:flow and to the template view name for other widgets. Optional fields include height, chrome (seamless or framed), and title.",
+              "example": { "use": "./widgets/range-axis.html", "view": "valuationAxis", "height": 210, "chrome": "seamless" },
+              "flowExample": { "use": "builtin:flow", "view": "flow" }
             }
           }
         }

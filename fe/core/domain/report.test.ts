@@ -93,10 +93,17 @@ describe('readTrackReport', () => {
     },
   );
 
-  it('decodes a widget from the Host markdown field when payload is absent', () => {
+  it('decodes the documented builtin:flow example from the Host markdown field', () => {
     const payload = { use: 'builtin:flow', view: 'flow' };
     const report = readTrackReport([card({ payload: { blocks: [{ id: 'flow', kind: 'widget', markdown: JSON.stringify(payload) }] } })]);
     expect(report?.blocks).toEqual([{ id: 'flow', kind: 'widget', payload }]);
+  });
+
+  it('marks builtin:flow without the required view field as unsupported', () => {
+    const report = readTrackReport([card({ payload: { blocks: [
+      { id: 'flow', kind: 'widget', payload: { use: 'builtin:flow' } },
+    ] } })]);
+    expect(report?.blocks).toEqual([{ id: 'flow', kind: 'unsupported', declaredKind: 'widget' }]);
   });
 });
 

@@ -154,7 +154,11 @@ public sealed class McpReportErgonomicsIntegrationTests
         using var outlineDoc = JsonDocument.Parse(outlineText);
         Assert.Equal(2, outlineDoc.RootElement.GetProperty("sections").GetArrayLength());
         Assert.False(outlineDoc.RootElement.TryGetProperty("renderedMarkdown", out _));
-        Assert.True(outlineDoc.RootElement.TryGetProperty("blockContract", out _));
+        var widgetContract = outlineDoc.RootElement.GetProperty("blockContract").GetProperty("kinds").GetProperty("widget");
+        Assert.Equal(new[] { "use", "view" }, widgetContract.GetProperty("required").EnumerateArray().Select(key => key.GetString()));
+        var flowExample = widgetContract.GetProperty("flowExample");
+        Assert.Equal("builtin:flow", flowExample.GetProperty("use").GetString());
+        Assert.Equal("flow", flowExample.GetProperty("view").GetString());
 
         // 4. Verify HTTP GET and PUT /api/v1/tracks/{trackId}/report* remain unchanged (no 'changes' field)
         var httpReport = await client.GetFromJsonAsync<JsonElement>($"/api/v1/tracks/{trackId}/report", ct);

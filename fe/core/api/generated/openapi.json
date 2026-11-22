@@ -1055,87 +1055,12 @@
         "required": [],
         "type": "object"
       },
-      "CheckpointSpec": {
-        "properties": {
-          "access": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "dependsOn": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "docPath": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "id": {
-            "type": "string"
-          },
-          "role": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "title": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "access",
-          "dependsOn",
-          "docPath",
-          "id",
-          "role",
-          "title"
-        ],
-        "type": "object"
-      },
       "CompiledTemplateManifest": {
         "properties": {
           "afterWorkerDoneCmd": {
             "anyOf": [
               {
                 "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "checkpoints": {
-            "anyOf": [
-              {
-                "items": {
-                  "$ref": "#/components/schemas/CheckpointSpec"
-                },
-                "type": "array"
               },
               {
                 "type": "null"
@@ -1172,9 +1097,6 @@
           "hasHeaderView": {
             "type": "boolean"
           },
-          "humanReadOnly": {
-            "type": "boolean"
-          },
           "id": {
             "type": "string"
           },
@@ -1182,28 +1104,12 @@
             "type": "string"
           },
           "inputsSchema": {},
-          "maxProseChars": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
           "requireGateForReadWrite": {
             "type": "boolean"
           },
           "routing": {
             "items": {
               "$ref": "#/components/schemas/TaskRoutingRule"
-            },
-            "type": "array"
-          },
-          "sections": {
-            "items": {
-              "$ref": "#/components/schemas/SectionRule"
             },
             "type": "array"
           },
@@ -1262,20 +1168,16 @@
         },
         "required": [
           "afterWorkerDoneCmd",
-          "checkpoints",
           "defaultPlugins",
           "description",
           "extends",
           "flow",
           "hasHeaderView",
-          "humanReadOnly",
           "id",
           "initialReportMarkdown",
           "inputsSchema",
-          "maxProseChars",
           "requireGateForReadWrite",
           "routing",
-          "sections",
           "title",
           "viewNames",
           "workspaceCloseCmd",
@@ -3547,35 +3449,6 @@
         "required": [],
         "type": "object"
       },
-      "SectionRule": {
-        "properties": {
-          "editableBy": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "h1": {
-            "type": "string"
-          },
-          "omitIfEmpty": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "editableBy",
-          "h1",
-          "omitIfEmpty"
-        ],
-        "type": "object"
-      },
       "SendSessionMessageRequest": {
         "additionalProperties": false,
         "properties": {
@@ -5088,9 +4961,6 @@
           "flowRev": {
             "type": "integer"
           },
-          "humanReadOnly": {
-            "type": "boolean"
-          },
           "templateId": {
             "type": "string"
           },
@@ -5110,7 +4980,6 @@
           "diagnostics",
           "flow",
           "flowRev",
-          "humanReadOnly",
           "templateId",
           "views",
           "widgets"
@@ -5523,7 +5392,6 @@
             ]
           },
           "templateInputs": {},
-          "templateState": {},
           "templateTitle": {
             "anyOf": [
               {
@@ -5566,7 +5434,6 @@
           "templateHeaderView",
           "templateId",
           "templateInputs",
-          "templateState",
           "templateTitle",
           "title",
           "updatedAtMs",

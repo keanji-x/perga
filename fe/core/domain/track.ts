@@ -7,7 +7,7 @@ import { z } from 'zod';
 
 import type { AgentProvider, WorkspaceIsolation } from './presentation-types.js';
 import { compiledTemplateManifestDtoSchema, overlaysListDtoSchema, terminalDtoSchema, trackAggregateSnapshotDtoSchema, trackDtoSchema, trackWorkspaceOptionsDtoSchema, type TrackDto, type AgentSessionDto, type AskDto, type TaskDto, type TerminalDto, type TrackAggregateSnapshotDto, type TrackWorkspaceOptionsDto } from '../api/perga-v1.js';
-import { cardSchema,overlaySchema } from "../api/schemas.js";
+import { cardSchema } from '../api/schemas.js';
 import type { ApiFailure,ApiOperation } from '../api/types.js';
 import {
 activityStateOf,type ActivityItem,type ActivityState,type AttentionKind,type CardActivity,

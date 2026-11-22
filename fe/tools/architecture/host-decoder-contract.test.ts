@@ -34,3 +34,15 @@ it('keeps runtime DTO decoder fields aligned with the independently exported Hos
   }
   expect(compared).toBeGreaterThan(10);
 });
+
+it('keeps the current template fixture complete according to the Host manifest schema', () => {
+  const document = JSON.parse(readFileSync(new URL('../../core/api/generated/openapi.json', import.meta.url), 'utf8')) as {
+    components: { schemas: { CompiledTemplateManifest: { required: string[] } } };
+  };
+  const fixtures = JSON.parse(readFileSync(new URL('../../core/api/fixtures/unified-host-payloads.json', import.meta.url), 'utf8')) as {
+    currentTemplate: { manifest: Record<string, unknown> };
+  };
+  expect(Object.keys(fixtures.currentTemplate.manifest).sort())
+    .toEqual(document.components.schemas.CompiledTemplateManifest.required);
+  expect(decoders.trackTemplateSnapshotSchema.safeParse(fixtures.currentTemplate).success).toBe(true);
+});

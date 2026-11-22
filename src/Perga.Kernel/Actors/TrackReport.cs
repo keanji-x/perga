@@ -121,31 +121,9 @@ public sealed partial class TrackActor
         {
             var editorRole = actor.RequireSessionCore(callerSessionId).IsLead ? "lead" : "subagent";
             var preview = actor._reportEngine.ApplyCommit(_report, request.Anchor, request.Ops, request.Summary);
-            var historicalBlocks = _report.Blocks.Where(block => IsRetiredBlock(block.Kind))
-                .ToDictionary(block => block.Id, StringComparer.Ordinal);
-            foreach (var block in preview.NextDocument.Blocks)
-            {
-                if (historicalBlocks.TryGetValue(block.Id, out var previous))
-                {
-                    if (previous.Kind == block.Kind && previous.Rev == block.Rev && previous.SectionH1 == block.SectionH1 &&
-                        previous.Markdown == block.Markdown && JsonHelpers.JsonEquals(previous.Payload, block.Payload))
-                        continue;
-                    RejectRetiredBlock(previous.Kind);
-                }
-                if (IsRetiredBlock(block.Kind))
-                    RejectRetiredBlock(block.Kind);
-            }
-
+            ReportAuthoring.Validate(preview.NextDocument, _report);
             return (preview, editorRole);
         }
-
-        private static bool IsRetiredBlock(ReportBlockKind kind) =>
-            kind is ReportBlockKind.Task or ReportBlockKind.Checkpoints;
-
-        private static void RejectRetiredBlock(ReportBlockKind kind) =>
-            throw KernelException.InvalidArgument(kind == ReportBlockKind.Task
-                ? "Author tasks in flow.json and submit them with flow_commit."
-                : "Use Markdown prose or a widget instead of authoring a checkpoints block.");
 
         private async Task<ReportReadResult> FinalizeReportCommitCoreAsync(
             ReportCommitResult commitResult,

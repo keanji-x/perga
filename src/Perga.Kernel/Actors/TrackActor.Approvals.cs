@@ -484,13 +484,17 @@ public sealed partial class TrackActor
                 return ApplyGuardDecisionCore(eval, caller.Id, approvalTurn, ct, toolName, arguments);
             }, ct).ConfigureAwait(false);
 
-            if (askSuspension is null)
+            if (askSuspension is not null)
             {
-                return authorizedPolicyGeneration;
+                await RequirePolicyApprovalAsync(askSuspension, ct).ConfigureAwait(false);
+                return await EnqueueAsync(_ =>
+                {
+                    if (_policyGeneration != authorizedPolicyGeneration)
+                        throw KernelException.PolicyDenied("Active policy or template data changed during approval.");
+                    return Task.FromResult(authorizedPolicyGeneration);
+                }, ct).ConfigureAwait(false);
             }
 
-
-            await RequirePolicyApprovalAsync(askSuspension, ct).ConfigureAwait(false);
             return authorizedPolicyGeneration;
         }
         finally

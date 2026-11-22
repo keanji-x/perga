@@ -652,6 +652,7 @@ public sealed partial class PergaKernelService : IPergaKernel
             initialReportMarkdown,
             docRev: 0,
             summary: string.Empty);
+        ReportAuthoring.Validate(initialReport);
 
         var enabledPlugins = req.EnabledPlugins?.ToArray()
                              ?? policy?.Manifest.DefaultPlugins.ToArray()
