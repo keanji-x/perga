@@ -21,6 +21,37 @@ namespace Perga.Host.IntegrationTests;
 public sealed class ExecutionTargetIntegrationTests
 {
     [Theory]
+    [InlineData("user@host", "host", 22)]
+    [InlineData("user@host:1773", "host", 1773)]
+    [InlineData("ssh://user@host:2222", "host", 2222)]
+    [InlineData("user@[::1]:2222", "::1", 2222)]
+    [InlineData("user@host:0", null, 0)]
+    [InlineData("user@host:65536", null, 0)]
+    [InlineData("user@host/foo", null, 0)]
+    [InlineData("user:pass@host", null, 0)]
+    public async Task DynamicSshTarget_ParsesEndpoint(string target, string? host, int port)
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"perga-endpoint-{Guid.NewGuid():N}");
+        try
+        {
+            var probe = new StubSshProbe();
+            await using var factory = new IsolatedPergaHostFactory(root, configureServices: services =>
+            {
+                services.RemoveAll<ISshTargetConnectivityProbe>();
+                services.AddSingleton<ISshTargetConnectivityProbe>(probe);
+            });
+            using var client = factory.CreateClient();
+            var response = await client.PostAsJsonAsync("/api/v1/targets", new { target });
+            Assert.Equal(host is null ? HttpStatusCode.BadRequest : HttpStatusCode.Created, response.StatusCode);
+            if (host is null) return;
+            var config = probe.LastConfig!;
+            Assert.Equal(("user", host, port), (config.User, config.Host, config.Port));
+            Assert.Equal(config.Label, new SshTargetConfig("configured", new ExecutionTargetOptions { User = "user", Host = host, Port = port }).Label);
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, recursive: true); }
+    }
+
+    [Theory]
     [InlineData(0)]
     [InlineData(127)]
     public async Task RawFile_EmptyHeader_ReturnsPreconditionFailed(int exitCode)
@@ -544,8 +575,12 @@ public sealed class ExecutionTargetIntegrationTests
     {
         public SshProbeResult NextResult { get; set; } = new(true, "/home/stub", null);
 
-        public Task<SshProbeResult> ProbeAsync(SshTargetConfig config, CancellationToken ct = default) =>
-            Task.FromResult(NextResult);
+        public SshTargetConfig? LastConfig { get; private set; }
+        public Task<SshProbeResult> ProbeAsync(SshTargetConfig config, CancellationToken ct = default)
+        {
+            LastConfig = config;
+            return Task.FromResult(NextResult);
+        }
     }
 
     private sealed class FakeExecutionEnvironment : IExecutionEnvironment

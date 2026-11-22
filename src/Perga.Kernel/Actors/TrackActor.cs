@@ -44,6 +44,7 @@ public sealed partial class TrackActor : IAsyncDisposable
     private bool _hydrated;
     private bool _closingTrack;
     private TrackDto _track = null!;
+    private volatile string? _executionTargetId;
     private ReportDocument _report = null!;
     private CompiledPolicy? _policy;
     private string? _policyUnavailableReason;
@@ -180,13 +181,13 @@ public sealed partial class TrackActor : IAsyncDisposable
         }, ct);
     }
 
-    public Task<string> GetExecutionTargetIdAsync(CancellationToken ct = default) =>
-        EnqueueAsync(async _ =>
-        {
-            var track = await _store.GetTrackAsync(TrackId, ct).ConfigureAwait(false)
-                ?? throw KernelException.NotFound($"Track '{TrackId}' not found.");
-            return track.ExecutionTargetId;
-        }, ct);
+    public async Task<string> GetExecutionTargetIdAsync(CancellationToken ct = default)
+    {
+        if (_executionTargetId is { } targetId) return targetId;
+        var track = await _store.GetTrackAsync(TrackId, ct).ConfigureAwait(false)
+            ?? throw KernelException.NotFound($"Track '{TrackId}' not found.");
+        return _executionTargetId = track.ExecutionTargetId;
+    }
 
     public async Task<MountedWorkspace> EnsureMountedAsync(CancellationToken ct = default)
     {
@@ -1686,6 +1687,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                        ?? throw KernelException.NotFound($"Track '{TrackId}' not found.");
 
         _track = snapshot.Track;
+        _executionTargetId = _track.ExecutionTargetId;
         _report = snapshot.Report;
         _templateSnapshotSource = snapshot.TemplateSnapshotSource;
         _presentedTemplateSnapshotSource = TemplateHost.InspectSource(_templateSnapshotSource);
