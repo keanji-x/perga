@@ -6,7 +6,6 @@ import type { ReportPreparationPort } from '../../features/report/document/prepa
 import { TrackPending } from '../../features/track/page/pending.tsx';
 
 import { Banner } from '@astryxdesign/core/Banner';
-import { trackDtoToWire } from '../../../../core/api/track-projection.ts';
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import {
@@ -53,7 +52,7 @@ export function TrackRoute({ transport, unauthorized, cardRuntime, recentFiles, 
   /* One `Track` per detail read, not per render: the body memoises on it. */
   const detailData = detail.data;
   const track = useMemo(
-    () => detailData === undefined ? null : toTrack(trackDtoToWire(detailData.track), trackActivityFromSnapshot(detailData)),
+    () => detailData === undefined ? null : toTrack(detailData.track, trackActivityFromSnapshot(detailData)),
     [detailData],
   );
   const requestedCard = detail.data?.sessions.find(session => session.id === openRequest?.id);

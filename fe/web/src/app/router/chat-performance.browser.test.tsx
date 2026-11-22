@@ -79,7 +79,7 @@ function mount(count: number) {
     await Promise.resolve();
     requests.push(request);
     let body: unknown = [];
-    if (request.path === '/api/v1/areas') body = [{ id: track.areaId, name: 'Performance', color: '#123456', sort: 1, kind: 'user', created_at: 1, updated_at: 1 }];
+    if (request.path === '/api/v1/areas') body = [{ id: track.areaId, name: 'Performance', color: '#123456', sortOrder: 1, kind: 'user', createdAtMs: 1, updatedAtMs: 1 }];
     if (request.path === `/api/v1/areas/${track.areaId}/tracks?includeClosed=true`) body = [track];
     if (request.path === `/api/v1/tracks/${track.id}`) body = fixtureSnapshot(track, [session]);
     if (request.path === `/api/v1/tracks/${track.id}/sessions`) body = [session];

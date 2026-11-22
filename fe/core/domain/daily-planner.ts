@@ -2,56 +2,56 @@
 import { z } from 'zod';
 import type { ApiOperation } from '../api/types.ts';
 
-export const dailyTrackSchema = z.object({ date: z.string().refine(isDailyDate), time_zone: z.string(), track_id: z.string() });
+export const dailyTrackSchema = z.object({ date: z.string().refine(isDailyDate), timeZone: z.string(), trackId: z.string() });
 export type DailyTrack = z.infer<typeof dailyTrackSchema>;
 export const reportChangeSchema = z.object({
-  track_id: z.string(), track_title: z.string(), area_id: z.string(), area_name: z.string(),
-  edit_count: z.number(), first_event_id: z.number(), last_event_id: z.number(),
-  summary_before: z.string(), summary_after: z.string(), patch: z.string(), patch_truncated: z.boolean(),
+  trackId: z.string(), trackTitle: z.string(), areaId: z.string(), areaName: z.string(),
+  editCount: z.number(), firstEventId: z.number(), lastEventId: z.number(),
+  summaryBefore: z.string(), summaryAfter: z.string(), patch: z.string(), patchTruncated: z.boolean(),
 });
 export type ReportChange = z.infer<typeof reportChangeSchema>;
-const reportChangesSchema = z.object({
-  date: z.string(), timezone: z.string(), through_event_id: z.number(),
-  changes: z.array(reportChangeSchema), next_cursor: z.string().nullable(),
+export const reportChangesSchema = z.object({
+  date: z.string(), timezone: z.string(), throughEventId: z.number(),
+  changes: z.array(reportChangeSchema), nextCursor: z.string().nullable(),
 });
 export type ReportChangesPage = z.infer<typeof reportChangesSchema>;
-const reportEditsSchema = z.object({
-  edits: z.array(z.object({ event_id: z.number(), at: z.number(), edit: z.object({
-    track_id: z.string(), edit_id: z.string(), summary_before: z.string(), summary_after: z.string(),
-    body_before: z.string(), body_after: z.string(),
-  }) })), next_cursor: z.string().nullable(),
+export const reportEditsSchema = z.object({
+  edits: z.array(z.object({ eventId: z.number(), at: z.number(), edit: z.object({
+    trackId: z.string(), editId: z.string(), summaryBefore: z.string(), summaryAfter: z.string(),
+    bodyBefore: z.string(), bodyAfter: z.string(),
+  }) })), nextCursor: z.string().nullable(),
 });
 export type ReportEditsPage = z.infer<typeof reportEditsSchema>;
 export type ReportEditEntry = ReportEditsPage['edits'][number];
 
 export function dailyTrackOperation(date?: string): ApiOperation<DailyTrack | null> {
-  return { method: 'GET', path: `/api/today/daily${date === undefined ? '' : `?date=${encodeURIComponent(date)}`}`, responseSchema: dailyTrackSchema.nullable() };
+  return { method: 'GET', path: `/api/v1/today/daily${date === undefined ? '' : `?date=${encodeURIComponent(date)}`}`, responseSchema: dailyTrackSchema.nullable() };
 }
 
 export const todayCalendarDaySchema = z.object({
   date: z.string().refine(isDailyDate),
-  has_daily_track: z.boolean(),
-  has_report: z.boolean(),
+  hasDailyTrack: z.boolean(),
+  hasReport: z.boolean(),
 });
 export type TodayCalendarDay = z.infer<typeof todayCalendarDaySchema>;
 
 export const todayScheduleItemSchema = z.object({
   id: z.string(),
   date: z.string().refine(isDailyDate),
-  track_id: z.string(),
-  track_title: z.string(),
+  trackId: z.string(),
+  trackTitle: z.string(),
   title: z.string(),
-  schedule_kind: z.enum(['once', 'cron']),
-  cron_expr: z.string().nullable(),
+  scheduleKind: z.enum(['once', 'cron']),
+  cronExpr: z.string().nullable(),
   timezone: z.string(),
-  next_fire_at_ms: z.number(),
+  nextFireAtMs: z.number(),
   state: z.string(),
 });
 export type TodayScheduleItem = z.infer<typeof todayScheduleItemSchema>;
 
 export const todayCalendarSchema = z.object({
   today: z.string().refine(isDailyDate),
-  time_zone: z.string(),
+  timeZone: z.string(),
   start: z.string().refine(isDailyDate),
   end: z.string().refine(isDailyDate),
   days: z.array(todayCalendarDaySchema),
@@ -62,17 +62,17 @@ export type TodayCalendar = z.infer<typeof todayCalendarSchema>;
 export function todayCalendarOperation(start: string, end: string): ApiOperation<TodayCalendar> {
   return {
     method: 'GET',
-    path: `/api/today/calendar?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`,
+    path: `/api/v1/today/calendar?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`,
     responseSchema: todayCalendarSchema,
   };
 }
 export function reportChangesOperation(date: string, page?: Readonly<{ cursor: string; through: number }>): ApiOperation<ReportChangesPage> {
-  const suffix = page === undefined ? '' : `&cursor=${encodeURIComponent(page.cursor)}&through_event_id=${page.through}`;
-  return { method: 'GET', path: `/api/today/report-changes?date=${encodeURIComponent(date)}${suffix}`, responseSchema: reportChangesSchema };
+  const suffix = page === undefined ? '' : `&cursor=${encodeURIComponent(page.cursor)}&throughEventId=${page.through}`;
+  return { method: 'GET', path: `/api/v1/today/report-changes?date=${encodeURIComponent(date)}${suffix}`, responseSchema: reportChangesSchema };
 }
 export function reportEditsOperation(date: string, trackId: string, through: number, cursor?: string): ApiOperation<ReportEditsPage> {
   const suffix = cursor === undefined ? '' : `&cursor=${encodeURIComponent(cursor)}`;
-  return { method: 'GET', path: `/api/today/report-edits?date=${encodeURIComponent(date)}&track_id=${encodeURIComponent(trackId)}&through_event_id=${through}${suffix}`, responseSchema: reportEditsSchema };
+  return { method: 'GET', path: `/api/v1/today/report-edits?date=${encodeURIComponent(date)}&trackId=${encodeURIComponent(trackId)}&throughEventId=${through}${suffix}`, responseSchema: reportEditsSchema };
 }
 
 /** Date-only arithmetic, independent of the browser's local zone. */

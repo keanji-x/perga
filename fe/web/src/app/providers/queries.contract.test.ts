@@ -12,7 +12,7 @@ import { createElement,type ReactNode } from 'react';
 import { afterEach,describe,expect,it,vi } from 'vitest';
 import { z } from 'zod';
 
-import { areaSchema } from '../../../../core/api/schemas.ts';
+import { areaDtoSchema } from '../../../../core/api/perga-v1.ts';
 import type { ApiRequest,ApiTransportPort,ApiTransportResponse } from '../../../../core/api/types.ts';
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { toArea } from '../../../../core/domain/area.ts';
@@ -52,12 +52,11 @@ function ok(body: unknown): ApiTransportResponse {
   return { status: 200, statusText: 'OK', body };
 }
 
-const systemArea = { id: 'sys', name: 'system', color: '#000', sort: 0, kind: 'system', created_at: 1, updated_at: 1 };
-const userArea = { id: 'c1', name: 'Work', color: '#5B8DEF', sort: 2, kind: 'user', created_at: 1, updated_at: 1 };
+const userArea = { id: 'c1', name: 'Work', color: '#5B8DEF', sortOrder: 2, kind: 'user', createdAtMs: 1, updatedAtMs: 1 };
 const unauthorized = createUnauthorizedChannel({ enqueue: (task) => task() });
-const baseTrackWire = { workspace: { isolation: 'none' as const, kind: 'attached' as const, path: '/tmp', frozen_at: null },
-  id: 'w1', area_id: 'c1', title: 'Ship it', sort: 1, cwd: '/tmp',
-  pinned_at: null, closed_at: null, created_at: 1, updated_at: 2,
+const baseTrackWire = { workspaceDriver: 'direct', workspaceSpec: {},
+  id: 'w1', areaId: 'c1', title: 'Ship it', sortOrder: 1, cwd: '/tmp',
+  pinnedAtMs: null, closedAtMs: null, createdAtMs: 1, updatedAtMs: 2,
 };
 
 afterEach(() => { cleanup(); onlineManager.setOnline(true); });
@@ -105,15 +104,15 @@ describe('writes never queue an offline submission, in either build', () => {
   });
 });
 
-describe('E2E-INV-SHELL-003 the system area never reaches the workspace surface', () => {
-  it('filters a system area out of the list the shell renders', async () => {
-    const { transport } = recordingTransport(() => ok([systemArea, userArea]));
+describe('Host area list projection', () => {
+  it('renders the user Areas supplied by Host', async () => {
+    const { transport } = recordingTransport(() => ok([userArea]));
     const areas = await areaListQueryOptions(transport, unauthorized).queryFn({ signal: new AbortController().signal });
     expect(areas.map((area) => area.id)).toEqual(['c1']);
   });
 
-  it('yields zero area rows for a fresh workspace that only has the system area', async () => {
-    const { transport } = recordingTransport(() => ok([systemArea]));
+  it('keeps an empty Host area list empty', async () => {
+    const { transport } = recordingTransport(() => ok([]));
     expect(await areaListQueryOptions(transport, unauthorized).queryFn({ signal: new AbortController().signal })).toEqual([]);
   });
 
@@ -151,8 +150,8 @@ describe('failure channel', () => {
   });
 
   it('keeps neutral tracks readable while exporting an overlay failure', async () => {
-    const track = { workspace: { isolation: 'none' as const, kind: 'attached' as const, path: '/tmp', frozen_at: null }, id: 'w1', area_id: 'c1', title: 'Task', sort: 1, cwd: '/tmp',
-      pinned_at: null, closed_at: null, created_at: 1, updated_at: 1 };
+    const track = { workspaceDriver: 'direct', workspaceSpec: {}, id: 'w1', areaId: 'c1', title: 'Task', sortOrder: 1, cwd: '/tmp',
+      pinnedAtMs: null, closedAtMs: null, createdAtMs: 1, updatedAtMs: 1 };
     const { transport } = recordingTransport((request) => {
       if (request.path === '/api/v1/areas') return ok([userArea]);
       if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return ok([track]);
@@ -344,14 +343,13 @@ describe('delete mutation wiring', () => {
 
   it('writes an Area PATCH response through before its background refetch', async () => {
     const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
-    const original = toArea(areaSchema.parse(userArea));
+    const original = toArea(areaDtoSchema.parse(userArea));
     client.setQueryData(queryKeys.areas(), [original]);
     const updatedWire = {
       ...userArea,
       name: 'Studio',
-      default_template_id: 'small-change',
-      default_cwd: '/srv/studio',
-      updated_at: original.updatedAt + 1,
+      defaultCwd: '/srv/studio',
+      updatedAtMs: original.updatedAt + 1,
     };
     const transport: ApiTransportPort = { send: () => Promise.resolve(ok(updatedWire)) };
     const { result } = renderHook(() => useAreaMutations(transport, unauthorized), {
@@ -364,14 +362,14 @@ describe('delete mutation wiring', () => {
 
     expect(client.getQueryData<ReturnType<typeof toArea>[]>(queryKeys.areas())).toEqual([
       expect.objectContaining({
-        name: 'Studio', defaultTemplateId: 'small-change', defaultCwd: '/srv/studio',
+        name: 'Studio', defaultTemplateId: null, defaultCwd: '/srv/studio',
       }),
     ]);
   });
 
   it('invalidates Areas after a failed PATCH', async () => {
     const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
-    client.setQueryData(queryKeys.areas(), [toArea(areaSchema.parse(userArea))]);
+    client.setQueryData(queryKeys.areas(), [toArea(areaDtoSchema.parse(userArea))]);
     let releaseRefetch!: () => void;
     const refetchHeld = new Promise<void>((resolve) => { releaseRefetch = resolve; });
     const invalidate = vi.spyOn(client, 'invalidateQueries').mockReturnValue(refetchHeld);
@@ -394,7 +392,7 @@ describe('delete mutation wiring', () => {
 
   it('does not let a delayed Area PATCH response overwrite a newer event row', async () => {
     const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
-    const original = toArea(areaSchema.parse(userArea));
+    const original = toArea(areaDtoSchema.parse(userArea));
     client.setQueryData(queryKeys.areas(), [original]);
 
     const responseWire = {
@@ -572,9 +570,9 @@ describe('track create folders cache', () => {
     const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
     client.setQueryData(queryKeys.areaFolders('c1'), []);
     const transport: ApiTransportPort = {
-      send: () => Promise.resolve(ok({ workspace: { isolation: 'none' as const, kind: 'attached' as const, path: '', frozen_at: null },
-        id: 'w1', area_id: 'c1', title: 'Ship', sort: 0, created_at: 1, updated_at: 1,
-      })),
+      send: () => Promise.resolve(ok({ track: { workspaceDriver: 'direct', workspaceSpec: {},
+        id: 'w1', areaId: 'c1', title: 'Ship', sortOrder: 0, createdAtMs: 1, updatedAtMs: 1,
+      }, report: { docRev: 0, summary: '', blocks: [] }, sessions: [], tasks: [], openAsks: [] })),
     };
     const wrapper = ({ children }: { children: ReactNode }) =>
       createElement(QueryClientProvider, { client }, children);

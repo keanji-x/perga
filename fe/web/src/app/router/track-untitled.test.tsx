@@ -69,7 +69,7 @@ function setup(options: Options = {}) {
       }
       if (request.path === '/api/overlays?entity_kind=track') return Promise.resolve(ok([]));
       if (request.path === '/api/v1/templates') return Promise.resolve(ok([]));
-      if (request.method === 'POST' && request.path === '/api/v1/tracks') return Promise.resolve(ok(created));
+      if (request.method === 'POST' && request.path === '/api/v1/tracks') return Promise.resolve(ok(fixtureSnapshot(created, [...createdSessions])));
       const patched = request.method === 'PATCH' ? details.get(request.path.slice('/api/v1/tracks/'.length)) : undefined;
       if (patched !== undefined) {
         return Promise.resolve(ok({ ...patched.track, ...(request.body as object) }));

@@ -1,7 +1,7 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import type { z } from 'zod';
 
-import type { ReadReceipt as GeneratedReceipt, ReadReceipts as GeneratedReceipts } from '../api/generated/wire.js';
+import type { ReadReceipt as GeneratedReceipt, ReadReceipts as GeneratedReceipts } from './presentation-types.js';
 import {
   isUnread, isTrackUnread, markReadOperation, markUnreadOperation, readReceiptSchema, readReceiptsOperation, readReceiptsSchema, toReadState,
   withMarkedRead, withMarkedUnread, withReceipt, type ReadState,

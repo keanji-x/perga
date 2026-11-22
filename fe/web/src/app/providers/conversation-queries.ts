@@ -1,4 +1,4 @@
-import type { ConversationCursor,ConversationLiveReplies } from '../../../../core/api/generated/wire.ts';
+import type { ConversationCursor, ConversationLiveReplies } from '../../../../core/domain/presentation-types.ts';
 import { conversationItemsOperation,conversationRunOperation } from '../../../../core/domain/conversation-display.ts';
 import { conversationLiveOperation } from '../../../../core/domain/conversation-live.ts';
 import { queryKeys } from './query-keys.ts';

@@ -2,7 +2,7 @@ import { useCallback, useMemo, useRef } from 'react';
 import { onlineManager } from '@tanstack/react-query';
 
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
-import type { PlannerAttachment } from '../../../../core/api/generated/wire.ts';
+import type { PlannerAttachment } from '../../../../core/domain/presentation-types.ts';
 import { type SentPlannerInput } from '../../../../core/domain/conversation-commands.ts';
 import { type TranscriptEntry } from '../../../../core/domain/conversation.ts';
 import { KeyedSendFailure, retryUnknownSend, sendFailureCode, sendFailureMessage, SEND_FAILURES, SEND_RETRIES } from '../../../../core/domain/conversation-delivery.ts';

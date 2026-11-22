@@ -37,10 +37,10 @@ export function setupWorkbench({ cards: initial = [] as CardWire[], defer = fals
     const receipt = await receipts.reply(request);
     if (receipt !== undefined) return receipt;
     const { path, method } = request;
-    if (path === '/api/today/daily') return ok({ date: '2026-10-17', time_zone: 'Asia/Shanghai', track_id: track.id });
+    if (path === '/api/v1/today/daily') return ok({ date: '2026-10-17', timeZone: 'Asia/Shanghai', trackId: track.id });
     if (path === '/api/v1/bootstrap') return ok(fixtureBootstrap());
     if (path.startsWith('/api/v1/bootstrap?scope=managed')) return ok({ version: 'test', providers: [{ provider: 'codex', available: true, version: null, reason: null, models: [] }], templates: [], areas: [] });
-    if (path === '/api/v1/areas') return ok([{ id: 'area', name: 'Work', color: '#123456', sort: 1, kind: 'user', created_at: 1, updated_at: 1 }]);
+    if (path === '/api/v1/areas') return ok([{ id: 'area', name: 'Work', color: '#123456', sortOrder: 1, kind: 'user', createdAtMs: 1, updatedAtMs: 1 }]);
     if (path === '/api/v1/areas/area/tracks?includeClosed=true') return ok([track]);
     if (path === '/api/settings') return ok({});
     if (path === '/api/v1/tracks/other') return ok(fixtureSnapshot({ ...track, id: 'other', title: 'Other track' }));

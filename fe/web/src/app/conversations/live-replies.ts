@@ -4,7 +4,7 @@ import { hashKey, notifyManager, useQuery, useQueryClient } from '@tanstack/reac
 import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
 
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
-import type { HarnessLiveReplies, HarnessPhaseTag } from '../../../../core/api/generated/wire.ts';
+import type { HarnessLiveReplies, HarnessPhaseTag } from '../../../../core/domain/presentation-types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import type { ConversationActivity, TranscriptEntry } from '../../../../core/domain/conversation.ts';
 import {
@@ -21,7 +21,7 @@ import { useState } from '../../ui/state/public.ts';
 
 const NO_COPIES: readonly LiveReplyCopy[] = Object.freeze([]);
 
-type HeldCopies = Readonly<{ cardId: string; read: number; copies: readonly LiveReplyCopy[]; lastReply: HarnessLiveReplies | import('../../../../core/api/generated/wire.ts').ConversationLiveReplies | null }>;
+type HeldCopies = Readonly<{ cardId: string; read: number; copies: readonly LiveReplyCopy[]; lastReply: HarnessLiveReplies | import('../../../../core/domain/presentation-types.ts').ConversationLiveReplies | null }>;
 
 /**
  * The open conversation's streamed replies (#1923 S2), as agent turns for the transcript's tail.

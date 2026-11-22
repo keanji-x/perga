@@ -12,9 +12,7 @@ import { VStack } from '@astryxdesign/core/VStack';
 
 import { Icon } from '../../ui/icon/public.tsx';
 
-import type {
-  PlannerAttachment, UploadAttachmentResponse,
-} from '../../../../core/api/generated/wire.js';
+import type { PlannerAttachment, UploadAttachmentResponse } from '../../../../core/domain/presentation-types.ts';
 import { ATTACHABLE_IMAGE_TYPES, MAX_ATTACHMENTS_PER_MESSAGE, TOO_MANY_IMAGES } from '../../../../core/domain/conversation-commands.js';
 import styles from './attachments.module.css';
 

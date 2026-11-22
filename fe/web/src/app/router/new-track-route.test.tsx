@@ -47,8 +47,8 @@ const FOLDER_PLACEHOLDER = 'Perga workspace';
 const FOLDER_CHIP_NAME = `Repo: ${FOLDER_PLACEHOLDER}`;
 
 
-const AREA = { id: 'c1', name: 'Work', color: '#5B8DEF', sort: 1, kind: 'user', created_at: 1, updated_at: 1 };
-const OTHER = { id: 'c2', name: 'Reading', color: '#8B7FE8', sort: 2, kind: 'user', created_at: 1, updated_at: 1 };
+const AREA = { id: 'c1', name: 'Work', color: '#5B8DEF', sortOrder: 1, kind: 'user', createdAtMs: 1, updatedAtMs: 1 };
+const OTHER = { id: 'c2', name: 'Reading', color: '#8B7FE8', sortOrder: 2, kind: 'user', createdAtMs: 1, updatedAtMs: 1 };
 
 const LISTING = {
   path: '/srv/app', parent: '/srv', entries: [{ name: 'crates', is_dir: true }],
@@ -84,8 +84,8 @@ function harness(options: {
   templates?: readonly import('../../../../core/domain/track.ts').TrackTemplate[];
   heldTemplates?: Promise<void>;
 
-  areaDefaults?: Readonly<{ default_template_id: string | null; default_cwd: string | null }>;
-  otherAreaDefaults?: Readonly<{ default_template_id: string | null; default_cwd: string | null }>;
+  areaDefaults?: Readonly<{ default_template_id: string | null; defaultCwd: string | null }>;
+  otherAreaDefaults?: Readonly<{ default_template_id: string | null; defaultCwd: string | null }>;
   trackCreate?: ApiTransportResponse;
   /** Ordered create outcomes for retry/recovery paths that cross Area scope. */
   trackCreateSequence?: readonly ApiTransportResponse[];
@@ -130,7 +130,7 @@ function harness(options: {
       }
       if (request.path === '/api/plugins') return Promise.resolve({ status: 200, statusText: 'OK', body: [] });
       if (request.path.includes('/mentions?')) return Promise.resolve({ status: 200, statusText: 'OK', body: { tags: [], tracks: [], blocks: [] } });
-      const posted = request.body as { area_id?: string } | undefined;
+      const posted = request.body as { areaId?: string } | undefined;
       if (request.method === 'POST' && request.path === '/api/v1/tracks' && options.loseFirstCreateAck && !firstCreateAckLost) {
         firstCreateAckLost = true;
         return Promise.reject(new Error('Connection closed after server commit'));
@@ -147,7 +147,7 @@ function harness(options: {
         return options.heldCreate.then(() => ({
           status: 201,
           statusText: 'Created',
-          body: { ...TRACK_ROW, area_id: posted?.area_id ?? 'c1' },
+          body: fixtureSnapshot({ ...TRACK_ROW, areaId: posted?.areaId ?? 'c1' }),
         }));
       }
       if (options.submittedStorage !== undefined && request.method === 'POST' && request.path === '/api/v1/sessions/card-planner/messages') {
@@ -217,7 +217,7 @@ function harness(options: {
       ]
         : request.path.startsWith('/api/v1/fs/listdir') ? LISTING
           : request.method === 'POST' && request.path === '/api/v1/tracks'
-            ? { ...TRACK_ROW, area_id: posted?.area_id ?? 'c1' }
+            ? fixtureSnapshot({ ...TRACK_ROW, areaId: posted?.areaId ?? 'c1' })
             : [];
       return Promise.resolve({ status: 200, statusText: 'OK', body });
     },
@@ -481,7 +481,7 @@ describe('Track creation drafts survive navigation', () => {
 
   it.each(['offline', 'rate-limit', 'folder-conflict', 'discovery'] as const)('keeps an earlier unconfirmed request after a later %s rejection', async (rejection) => {
     const { sent } = harness({ loseFirstCreateAck: true,
-      otherAreaDefaults: { default_template_id: null, default_cwd: '/srv/app' },
+      otherAreaDefaults: { default_template_id: null, defaultCwd: '/srv/app' },
       trackCreateSequence: rejection === 'offline' ? undefined : [
         rejection === 'rate-limit'
           ? { status: 429, statusText: 'Too Many Requests', body: { error: 'rate limited' } }
@@ -842,8 +842,8 @@ describe('the new-track page is a route reached from Area groups', () => {
   it('remounts the route when switching directly between Areas and takes only the new Area defaults', async () => {
     const { sent } = harness({
 
-      areaDefaults: { default_template_id: 'small-change', default_cwd: '/srv/work-a' },
-      otherAreaDefaults: { default_template_id: null, default_cwd: '/srv/work-b' },
+      areaDefaults: { default_template_id: 'small-change', defaultCwd: '/srv/work-a' },
+      otherAreaDefaults: { default_template_id: null, defaultCwd: '/srv/work-b' },
     });
     await userEvent.click(await screen.findByRole('button', { name: 'New track in Work' }));
     await findComposer();
@@ -950,7 +950,7 @@ describe('the new-track page is a route reached from Area groups', () => {
     const message = '  Read it exactly  ';
     const { sent } = harness({
 
-      areaDefaults: { default_template_id: 'small-change', default_cwd: '/srv/ area ' },
+      areaDefaults: { default_template_id: 'small-change', defaultCwd: '/srv/ area ' },
     });
     await userEvent.click(await screen.findByRole('button', { name: 'New track in Work' }));
     expect(await findComposer()).toBeTruthy();
@@ -974,7 +974,7 @@ describe('the new-track page is a route reached from Area groups', () => {
   it('lets one Track clear Area defaults back to a new managed folder', async () => {
     const { sent } = harness({
 
-      areaDefaults: { default_template_id: 'small-change', default_cwd: '/srv/area-default' },
+      areaDefaults: { default_template_id: 'small-change', defaultCwd: '/srv/area-default' },
     });
     await userEvent.click(await screen.findByRole('button', { name: 'New track in Work' }));
     expect(await findComposer()).toBeTruthy();
@@ -1050,10 +1050,10 @@ describe('the new-track page is a route reached from Area groups', () => {
     async (conflictKind) => {
     const { sent } = harness({
 
-      otherAreaDefaults: { default_template_id: null, default_cwd: '/srv/app' },
+      otherAreaDefaults: { default_template_id: null, defaultCwd: '/srv/app' },
       trackCreateSequence: [
         { status: 409, statusText: 'Conflict', body: { ...CONFLICT, conflict_kind: conflictKind } },
-        { status: 201, statusText: 'Created', body: { ...TRACK_ROW, area_id: 'c1' } },
+        { status: 201, statusText: 'Created', body: fixtureSnapshot({ ...TRACK_ROW, areaId: 'c1' }) },
       ],
     });
     await userEvent.click(await screen.findByRole('button', { name: 'New track in Reading' }));
@@ -1083,13 +1083,13 @@ describe('the new-track page is a route reached from Area groups', () => {
   it('unlocks the draft when vanished directory consent is rejected as invalid input', async () => {
     const { sent } = harness({
 
-      otherAreaDefaults: { default_template_id: null, default_cwd: '/srv/app' },
+      otherAreaDefaults: { default_template_id: null, defaultCwd: '/srv/app' },
       trackCreateSequence: [
         { status: 409, statusText: 'Conflict', body: CONFLICT },
         { status: 400, statusText: 'Bad Request', body: {
           code: 'bad_request', error: 'The authorized folder claim no longer covers this cwd',
         } },
-        { status: 201, statusText: 'Created', body: { ...TRACK_ROW, area_id: 'c2' } },
+        { status: 201, statusText: 'Created', body: fixtureSnapshot({ ...TRACK_ROW, areaId: 'c2' }) },
       ],
     });
     await userEvent.click(await screen.findByRole('button', { name: 'New track in Reading' }));
@@ -1130,10 +1130,10 @@ describe('the new-track page is a route reached from Area groups', () => {
   it('uses the visible current draft when the owning-Area recovery is clicked', async () => {
     const { sent } = harness({
 
-      otherAreaDefaults: { default_template_id: null, default_cwd: '/srv/app' },
+      otherAreaDefaults: { default_template_id: null, defaultCwd: '/srv/app' },
       trackCreateSequence: [
         { status: 409, statusText: 'Conflict', body: CONFLICT },
-        { status: 201, statusText: 'Created', body: { ...TRACK_ROW, area_id: 'c1' } },
+        { status: 201, statusText: 'Created', body: fixtureSnapshot({ ...TRACK_ROW, areaId: 'c1' }) },
       ],
     });
     await userEvent.click(await screen.findByRole('button', { name: 'New track in Reading' }));
@@ -1161,10 +1161,10 @@ describe('the new-track page is a route reached from Area groups', () => {
   it('withdraws the owning-Area recovery when the conflicting folder changes', async () => {
     const { sent } = harness({
 
-      otherAreaDefaults: { default_template_id: null, default_cwd: '/srv/app' },
+      otherAreaDefaults: { default_template_id: null, defaultCwd: '/srv/app' },
       trackCreateSequence: [
         { status: 409, statusText: 'Conflict', body: CONFLICT },
-        { status: 201, statusText: 'Created', body: { ...TRACK_ROW, area_id: 'c2' } },
+        { status: 201, statusText: 'Created', body: fixtureSnapshot({ ...TRACK_ROW, areaId: 'c2' }) },
       ],
     });
     await userEvent.click(await screen.findByRole('button', { name: 'New track in Reading' }));
@@ -1594,7 +1594,7 @@ it('leaves a pasted template reference to the first message when no catalog was 
 it('keeps Perga creation implicit even when templates and an Area default exist', async () => {
   const { sent } = harness({
     path: '/area/c1/new',
-    areaDefaults: { default_template_id: 'dev', default_cwd: null },
+    areaDefaults: { default_template_id: 'dev', defaultCwd: null },
     templates: [{ id: 'dev', title: 'Development', description: null, tasks: [], availability: { status: 'ready' } }],
   });
   const composer = await findComposer();

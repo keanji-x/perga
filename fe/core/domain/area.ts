@@ -2,16 +2,11 @@
 
 import { z } from 'zod';
 
-import { areaDtoSchema,executionTargetDtoSchema,type AreaDto,type ExecutionTargetDto } from "../api/perga-v1.js";
-import { areaSchema } from "../api/schemas.js";
+import { areaDtoSchema, executionTargetDtoSchema, type AreaDto, type ExecutionTargetDto } from '../api/perga-v1.js';
 import type { ApiOperation } from '../api/types.js';
 import type { FailureTable,WriteClass,WriteText } from './failure-class.js';
 
-export type AreaKind = z.infer<typeof areaSchema>['kind'];
-export type AreaWire = z.infer<typeof areaSchema>;
-export type PergaAreaWire = AreaWire & Readonly<{
-  execution_target_id?: string;
-}>;
+export type AreaKind = 'user' | 'system';
 export type { ExecutionTargetDto };
 
 export type Area = Readonly<{
@@ -27,24 +22,12 @@ export type Area = Readonly<{
   updatedAt: number;
 }>;
 
-export function toArea(wire: PergaAreaWire | AreaDto): Area {
-  if ('sortOrder' in wire) return {
+export function toArea(wire: AreaDto): Area {
+  return {
     id: wire.id, name: wire.name, color: wire.color, sort: wire.sortOrder,
     kind: 'user', defaultTemplateId: null, defaultCwd: wire.defaultCwd ?? null,
     ...(wire.executionTargetId !== undefined ? { executionTargetId: wire.executionTargetId } : {}),
     createdAt: wire.createdAtMs, updatedAt: wire.updatedAtMs,
-  };
-  return {
-    id: wire.id,
-    name: wire.name,
-    color: wire.color,
-    sort: wire.sort,
-    kind: wire.kind,
-    defaultTemplateId: wire.default_template_id,
-    defaultCwd: wire.default_cwd,
-    ...(wire.execution_target_id !== undefined ? { executionTargetId: wire.execution_target_id } : {}),
-    createdAt: wire.created_at,
-    updatedAt: wire.updated_at,
   };
 }
 
@@ -57,8 +40,8 @@ export function newestArea(current: Area, incoming: Area): Area {
   return incoming;
 }
 
-export function areaListOperation(): ApiOperation<(PergaAreaWire | AreaDto)[]> {
-  return { method: 'GET', path: '/api/v1/areas', responseSchema: z.array(z.union([areaDtoSchema, areaSchema])) };
+export function areaListOperation(): ApiOperation<AreaDto[]> {
+  return { method: 'GET', path: '/api/v1/areas', responseSchema: z.array(areaDtoSchema) };
 }
 
 /** The system area must never reach a user-visible surface; this is the client-side half of the server filter. */
@@ -147,7 +130,7 @@ export const AREA_CREATE_TEXT: WriteText = Object.freeze({
 });
 
 /** One key identifies one exact creation intent, including every retry. */
-export function createAreaOperation(body: NewAreaBody, idempotencyKey: string): ApiOperation<PergaAreaWire | AreaDto> {
+export function createAreaOperation(body: NewAreaBody, idempotencyKey: string): ApiOperation<AreaDto> {
   const wireBody = {
     name: body.name,
     color: body.color,
@@ -161,11 +144,11 @@ export function createAreaOperation(body: NewAreaBody, idempotencyKey: string): 
     path: '/api/v1/areas',
     body: wireBody,
     headers: { 'Idempotency-Key': idempotencyKey },
-    responseSchema: z.union([areaDtoSchema, areaSchema]),
+    responseSchema: areaDtoSchema,
   };
 }
 
-export function updateAreaOperation(areaId: string, body: AreaPatchBody): ApiOperation<PergaAreaWire | AreaDto> {
+export function updateAreaOperation(areaId: string, body: AreaPatchBody): ApiOperation<AreaDto> {
   const wireBody = {
     ...(body.name !== undefined ? { name: body.name } : {}),
     ...(body.color !== undefined ? { color: body.color } : {}),
@@ -182,7 +165,7 @@ export function updateAreaOperation(areaId: string, body: AreaPatchBody): ApiOpe
     method: 'PATCH',
     path: `/api/v1/areas/${encodeURIComponent(areaId)}`,
     body: wireBody,
-    responseSchema: z.union([areaDtoSchema, areaSchema]),
+    responseSchema: areaDtoSchema,
   };
 }
 

@@ -14,7 +14,7 @@ import { ThemeProvider } from '../theme/public.tsx';
 import { createAppRouter } from './public.tsx';
 import { bootTestCardRuntime } from './test-card-runtime.ts';
 
-const AREA = { id: 'c1', name: 'Work', color: '#000', sort: 1, kind: 'user', created_at: 1, updated_at: 1 };
+const AREA = { id: 'c1', name: 'Work', color: '#000', sortOrder: 1, kind: 'user', createdAtMs: 1, updatedAtMs: 1 };
 const TRACK = fixtureTrack('w1', { areaId: 'c1', title: 'Release', cwd: '/tmp', sortOrder: 1, closedAtMs: null, createdAtMs: 1, updatedAtMs: 2 });
 const PLANNER = { id: 'planner-1', track_id: 'w1', kind: 'codex', title: 'Planner chat', sort: 1, payload: { planner_harness: true }, deletable: false, created_at: 1, updated_at: 2 };
 const ASSISTANT = fixtureSession('assistant-1', 'w1', { title: 'Side chat' });

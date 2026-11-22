@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useSyncExternalStore, type ReactNode } from 'react';
 import { FOLLOW_INSTALLATION_DEFAULT, type ModelSelection } from '../../../../core/domain/conversation.ts';
 import { permissionModeAfterProviderChange } from '../../../../core/domain/planner-permission-mode.ts';
-import type { AgentProvider } from '../../../../core/api/generated/wire.ts';
+import type { AgentProvider } from '../../../../core/domain/presentation-types.ts';
 import type { Area } from '../../../../core/domain/area.ts';
 import type { NewTrackBody } from '../../../../core/domain/track.ts';
 import type { NewTrackFormState } from '../../features/area/new-track/public.tsx';

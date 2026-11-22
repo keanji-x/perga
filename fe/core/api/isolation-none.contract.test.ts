@@ -1,11 +1,6 @@
-import { describe,expectTypeOf,it } from 'vitest';
-import type { TrackWire,WorkspaceIsolation } from './generated/wire.ts';
-import type { WireEvent } from './schemas.ts';
-
-describe('workspace isolation wire contracts', () => {
-  it('requires the projected isolation for track reads and events', () => {
-    expectTypeOf<TrackWire['workspace']['isolation']>().toEqualTypeOf<WorkspaceIsolation>();
-    expectTypeOf<Extract<WireEvent, { ev: 'track.updated' }>['data']['workspace']['isolation']>()
-      .toEqualTypeOf<WorkspaceIsolation>();
-  });
+import { expectTypeOf, it } from 'vitest';
+import type { TrackDto } from './perga-v1.js';
+import type { WireEvent } from './schemas.js';
+it('shares the Host DTO between HTTP and event consumers', () => {
+  expectTypeOf<Extract<WireEvent, { ev: 'track.updated' }>['data']>().toExtend<TrackDto>();
 });

@@ -10,7 +10,7 @@ import { applyEventEffects } from '../events/query-invalidation-adapter.ts';
 import { conversationHistoryQueryOptions as pageOptions } from '../providers/conversation-queries.ts';
 import { latestHistory as applyLatestPage,earlierReadingPosition,historyRows,observedWindow as observePage,useTranscriptHistory,useTranscriptReads,type History } from './history.ts';
 
-import type { ConversationCursor } from '../../../../core/api/generated/wire.ts';
+import type { ConversationCursor } from '../../../../core/domain/presentation-types.ts';
 import type { ConversationDisplayItem,ConversationPage } from '../../../../core/domain/conversation-display.ts';
 type Row = ConversationDisplayItem;
 function cursor(position: number): ConversationCursor {

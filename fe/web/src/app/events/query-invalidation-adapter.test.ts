@@ -4,7 +4,7 @@ import { describe,expect,expectTypeOf,it,vi } from 'vitest';
 import { wireEventSchema } from '../../../../core/api/schemas.ts';
 import type { ApiRequest,ApiTransportResponse } from '../../../../core/api/types.ts';
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
-import type { AreaWire } from '../../../../core/domain/area.ts';
+import type { AreaDto } from '../../../../core/api/perga-v1.ts';
 import type { CacheWrite } from '../../../../core/events/invalidation-plan.ts';
 import { invalidationPlanFor } from '../../../../core/events/invalidation-plan.ts';
 import type { EventEffect } from '../../../../core/events/reducer.ts';
@@ -133,7 +133,7 @@ describe('query invalidation adapter', () => {
   });
 
   it('write-through replaces one existing area and preserves every other row', () => {
-    expectTypeOf<Extract<CacheWrite, { mode: 'replace-existing-area' }>['value']>().toEqualTypeOf<AreaWire>();
+    expectTypeOf<Extract<CacheWrite, { mode: 'replace-existing-area' }>['value']>().toEqualTypeOf<AreaDto>();
     const old = {
       id: 'c1', name: 'old', color: '#111', sort: 1, kind: 'user',
       defaultTemplateId: null, defaultCwd: null, createdAt: 10, updatedAt: 20,
@@ -146,14 +146,14 @@ describe('query invalidation adapter', () => {
     applyEventEffects(client, [{ type: 'write-through', writes: [{
       key: ['areas'], mode: 'replace-existing-area',
       value: {
-        id: 'c1', name: 'new', color: '#abc', sort: 3, kind: 'user',
-        default_template_id: 'small-change', default_cwd: '/srv/work', created_at: 10, updated_at: 30,
+        id: 'c1', name: 'new', color: '#abc', sortOrder: 3, folders: [] as string[],
+        defaultCwd: '/srv/work', createdAtMs: 10, updatedAtMs: 30,
       },
     }] }]);
     expect(areas()).toEqual([
       {
         id: 'c1', name: 'new', color: '#abc', sort: 3, kind: 'user',
-        defaultTemplateId: 'small-change', defaultCwd: '/srv/work', createdAt: 10, updatedAt: 30,
+        defaultTemplateId: null, defaultCwd: '/srv/work', createdAt: 10, updatedAt: 30,
       },
       other,
     ]);
@@ -163,14 +163,14 @@ describe('query invalidation adapter', () => {
   it('write-through ignores an older area event that arrives after a newer cache version', () => {
     const current = {
       id: 'c1', name: 'newer', color: '#111', sort: 1, kind: 'user',
-      defaultTemplateId: 'small-change', defaultCwd: '/srv/new', createdAt: 10, updatedAt: 30,
+      defaultTemplateId: null, defaultCwd: '/srv/new', createdAt: 10, updatedAt: 30,
     } as const;
     const { client, areas } = recordingClient([current]);
     applyEventEffects(client, [{ type: 'write-through', writes: [{
       key: ['areas'], mode: 'replace-existing-area',
       value: {
-        id: 'c1', name: 'older', color: '#abc', sort: 3, kind: 'user',
-        default_template_id: 'investigation', default_cwd: '/srv/old', created_at: 10, updated_at: 20,
+        id: 'c1', name: 'older', color: '#abc', sortOrder: 3, folders: [] as string[],
+        defaultCwd: '/srv/old', createdAtMs: 10, updatedAtMs: 20,
       },
     }] }]);
     expect(areas()).toEqual([current]);
@@ -185,12 +185,12 @@ describe('query invalidation adapter', () => {
     applyEventEffects(client, [{ type: 'write-through', writes: [{
       key: ['areas'], mode: 'replace-existing-area',
       value: {
-        id: 'c1', name: 'after', color: '#abc', sort: 3, kind: 'user',
-        default_template_id: 'small-change', default_cwd: '/srv/work', created_at: 10, updated_at: 20,
+        id: 'c1', name: 'after', color: '#abc', sortOrder: 3, folders: [] as string[],
+        defaultCwd: '/srv/work', createdAtMs: 10, updatedAtMs: 20,
       },
     }] }]);
     expect(areas()?.[0]).toMatchObject({
-      name: 'after', defaultTemplateId: 'small-change', defaultCwd: '/srv/work', updatedAt: 20,
+      name: 'after', defaultTemplateId: null, defaultCwd: '/srv/work', updatedAt: 20,
     });
   });
 
@@ -203,8 +203,8 @@ describe('query invalidation adapter', () => {
     applyEventEffects(client, [{ type: 'write-through', writes: [{
       key: ['areas'], mode: 'replace-existing-area',
       value: {
-        id: 'missing', name: 'phantom', color: '#abc', sort: 3, kind: 'user',
-        default_template_id: null, default_cwd: null, created_at: 10, updated_at: 30,
+        id: 'missing', name: 'phantom', color: '#abc', sortOrder: 3, folders: [] as string[],
+        defaultCwd: null, createdAtMs: 10, updatedAtMs: 30,
       },
     }] }]);
     expect(areas()).toEqual([existing]);
@@ -216,8 +216,8 @@ describe('query invalidation adapter', () => {
     applyEventEffects(client, [{ type: 'write-through', writes: [{
       key: ['areas'], mode: 'replace-existing-area',
       value: {
-        id: 'missing', name: 'phantom', color: '#abc', sort: 3, kind: 'user',
-        default_template_id: null, default_cwd: null, created_at: 10, updated_at: 30,
+        id: 'missing', name: 'phantom', color: '#abc', sortOrder: 3, folders: [] as string[],
+        defaultCwd: null, createdAtMs: 10, updatedAtMs: 30,
       },
     }] }]);
     expect(areas()).toBeUndefined();
@@ -236,8 +236,8 @@ describe('query invalidation adapter', () => {
 
   it('turns a real area.updated plan into an area-list invalidation', () => {
     const area = {
-      id: 'c1', name: 'Area', color: '#fff', sort: 0, kind: 'user',
-      default_template_id: null, default_cwd: null, created_at: 1, updated_at: 2,
+      id: 'c1', name: 'Area', color: '#fff', sortOrder: 0, folders: [] as string[],
+      defaultCwd: null, createdAtMs: 1, updatedAtMs: 2,
     } as const;
     const plan = invalidationPlanFor({ ev: 'area.updated', data: area });
     const { calls, client } = recordingClient();

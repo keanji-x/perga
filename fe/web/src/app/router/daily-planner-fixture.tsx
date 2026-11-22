@@ -1,6 +1,6 @@
 import { Profiler,StrictMode,type ReactNode } from 'react';
 import type { SessionIdentity } from '../../../../core/api/auth.ts';
-import type { AgentProvider } from '../../../../core/api/generated/wire.ts';
+import type { AgentProvider } from '../../../../core/domain/presentation-types.ts';
 import { prepareReportDocument,type ReportPreparationPort } from '../../features/report/document/preparation.ts';
 import { SessionGate } from '../auth/session-gate.tsx';
 import { conversationCardId } from './conversation-read-data.ts';
@@ -40,15 +40,15 @@ export function renderDailyFixture({ history, identity, routeProbe, withTranspor
     if (request.path === '/api/v1/areas') return ok(emptyWorkspace ? [] : [projectArea]);
     if (request.path === '/api/v1/areas/daily-area/tracks?includeClosed=true') return ok([track]);
     if (request.path === '/api/v1/areas/project-area/tracks?includeClosed=true') return ok([project]);
-    if (request.path.startsWith('/api/today/daily')) {
+    if (request.path.startsWith('/api/v1/today/daily')) {
       const date = new URL(request.path, 'http://fixture').searchParams.get('date');
-      return ok(date === null || date === '2026-10-04' ? { date: '2026-10-04', time_zone: 'Asia/Shanghai', track_id: track.id } : null);
+      return ok(date === null || date === '2026-10-04' ? { date: '2026-10-04', timeZone: 'Asia/Shanghai', trackId: track.id } : null);
     }
-    if (request.path.startsWith('/api/today/calendar')) {
+    if (request.path.startsWith('/api/v1/today/calendar')) {
       const params = new URL(request.path, 'http://fixture').searchParams;
       const start = params.get('start') ?? '2026-09-28';
       const end = params.get('end') ?? '2026-10-04';
-      const days: Array<{ date: string; has_daily_track: boolean; has_report: boolean }> = [];
+      const days: Array<{ date: string; hasDailyTrack: boolean; hasReport: boolean }> = [];
       const cursor = new Date(`${start}T12:00:00Z`);
       const limit = new Date(`${end}T12:00:00Z`);
       while (cursor <= limit && days.length < 62) {
@@ -56,20 +56,20 @@ export function renderDailyFixture({ history, identity, routeProbe, withTranspor
         const hasDaily = day === '2026-10-04';
         days.push({
           date: day,
-          has_daily_track: hasDaily,
-          has_report: hasDaily && (reportBody === undefined || reportBody.trim().length > 0),
+          hasDailyTrack: hasDaily,
+          hasReport: hasDaily && (reportBody === undefined || reportBody.trim().length > 0),
         });
         cursor.setUTCDate(cursor.getUTCDate() + 1);
       }
-      return ok({ today: '2026-10-04', time_zone: 'Asia/Shanghai', start, end, days, schedules: [] });
+      return ok({ today: '2026-10-04', timeZone: 'Asia/Shanghai', start, end, days, schedules: [] });
     }
     if (request.path === '/api/v1/tracks/daily') return ok(fixtureSnapshot(track, sessions, report));
     if (request.path === '/api/v1/tracks/daily/sessions') return ok(sessions);
     if (request.path === '/api/v1/tracks/project') return ok(fixtureSnapshot(project, [], fixtureReport('# Project result\n\nRelease is ready.\n')));
-    if (request.path.startsWith('/api/today/report-changes')) return failChanges
+    if (request.path.startsWith('/api/v1/today/report-changes')) return failChanges
       ? { status: 500, statusText: 'Error', body: { error: 'Report history unavailable' } }
-      : ok({ date: '2026-10-03', timezone: 'Asia/Shanghai', through_event_id: 42, next_cursor: null, changes: [{ track_id: project.id, track_title: project.title, area_id: projectArea.id, area_name: projectArea.name, edit_count: 2, first_event_id: 10, last_event_id: 42, summary_before: 'In progress', summary_after: 'Ready', patch: '--- a/report.md\n+++ b/report.md\n@@ -1 +1 @@\n-Building\n+Release is ready.\n', patch_truncated: false }] });
-    if (request.path.startsWith('/api/today/report-edits')) return ok({ next_cursor: null, edits: [{ event_id: 42, at: Date.parse('2026-10-03T01:00:00Z'), edit: { track_id: project.id, edit_id: 'edit-42', summary_before: 'In progress', summary_after: 'Ready', body_before: '# Before release\n\nBuilding', body_after: '# After release\n\nRelease is ready.' } }] });
+      : ok({ date: '2026-10-03', timezone: 'Asia/Shanghai', throughEventId: 42, nextCursor: null, changes: [{ trackId: project.id, trackTitle: project.title, areaId: projectArea.id, areaName: projectArea.name, editCount: 2, firstEventId: 10, lastEventId: 42, summaryBefore: 'In progress', summaryAfter: 'Ready', patch: '--- a/report.md\n+++ b/report.md\n@@ -1 +1 @@\n-Building\n+Release is ready.\n', patchTruncated: false }] });
+    if (request.path.startsWith('/api/v1/today/report-edits')) return ok({ nextCursor: null, edits: [{ eventId: 42, at: Date.parse('2026-10-03T01:00:00Z'), edit: { trackId: project.id, editId: 'edit-42', summaryBefore: 'In progress', summaryAfter: 'Ready', bodyBefore: '# Before release\n\nBuilding', bodyAfter: '# After release\n\nRelease is ready.' } }] });
     if (request.path.includes('/sessions/') && request.path.includes('/items?')) return ok(sessionPage(sessions.find(session => session.id === conversationCardId(request.path)) ?? card));
     if (request.path.startsWith('/api/v1/overlays?')) return ok({ tracks: [] });
     if (request.path === '/api/plugins') return ok([]);

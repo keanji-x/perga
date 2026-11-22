@@ -19,7 +19,7 @@ describe('invalidation plan contract', () => {
   });
 
   it('refreshes active task diagnostics when a budget or admission setting changes', () => {
-    const event = { ev: 'track.updated', data: { id: 'track-7', area_id: 'area-1' } } as Extract<
+    const event = { ev: 'track.updated', data: { id: 'track-7', areaId: 'area-1' } } as Extract<
       WireEvent,
       { ev: 'track.updated' }
     >;

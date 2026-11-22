@@ -99,8 +99,8 @@ describe('EventBridge contracts', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Retry live updates' }));
     await waitFor(() => expect(record.startCalls).toBe(1));
     emit(eventFrame(1, { ev: 'area.updated', data: {
-      id: 'c2', name: 'Live area', color: '#123456', sort: 2, kind: 'user',
-      default_template_id: null, default_cwd: null, created_at: 1, updated_at: 1,
+      id: 'c2', name: 'Live area', color: '#123456', sortOrder: 2, kind: 'user',
+      default_template_id: null, defaultCwd: null, createdAtMs: 1, updatedAtMs: 1,
     } }));
     await waitFor(() => expect(client.getQueryData(['areas'])).toEqual(['Initial area', 'Live area']));
     expect(fetchAreas).toHaveBeenCalledTimes(2);

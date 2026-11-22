@@ -22,7 +22,7 @@ afterEach(() => {
 
 const unauthorized = createUnauthorizedChannel({ enqueue: (task) => task() });
 const ok = (body: unknown): ApiTransportResponse => ({ status: 200, statusText: 'OK', body });
-const AREA = { id: 'c1', name: 'Work', color: '#000', sort: 1, kind: 'user', created_at: 1, updated_at: 1 };
+const AREA = { id: 'c1', name: 'Work', color: '#000', sortOrder: 1, kind: 'user', createdAtMs: 1, updatedAtMs: 1 };
 const track = (id: string, title: string, sort: number) => (fixtureTrack(id, { areaId: 'c1', title: title, cwd: '/tmp', sortOrder: sort, closedAtMs: null, createdAtMs: 1, updatedAtMs: 2 }));
 const TRACKS = [track('w1', 'Track one', 1), track('w2', 'Track two', 2)];
 

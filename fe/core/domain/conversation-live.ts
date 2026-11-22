@@ -4,8 +4,8 @@
 // be briefly absent: on Codex's systemError branch the phase turns `wedged` before the partial row
 // is stored, so the copy can retire a moment before that row arrives.
 
-import type { ConversationLiveReplies,HarnessLiveReplies,HarnessPhaseTag } from '../api/generated/wire.js';
-import { sessionItemsPageDtoSchema } from "../api/perga-v1.js";
+import type { ConversationLiveReplies, HarnessLiveReplies, HarnessPhaseTag } from './presentation-types.js';
+import { sessionItemsPageDtoSchema } from '../api/perga-v1.js';
 import type { ApiOperation } from '../api/types.js';
 import type { ConversationTurn } from './conversation.js';
 

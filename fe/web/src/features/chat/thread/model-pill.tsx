@@ -17,7 +17,7 @@ import { VisuallyHidden } from '@astryxdesign/core/VisuallyHidden';
 
 import { useCallback, useEffect, useRef, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 
-import type { AgentProvider } from '../../../../../core/api/generated/wire.ts';
+import type { AgentProvider } from '../../../../../core/domain/presentation-types.ts';
 import type { PermissionModeOptionDto } from '../../../../../core/api/perga-v1.ts';
 import { unavailableCreationNote } from '../../../../../core/domain/agent-providers.ts';
 import type { ModelSelection } from '../../../../../core/domain/conversation.ts';

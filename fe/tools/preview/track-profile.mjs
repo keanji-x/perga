@@ -128,14 +128,14 @@ async function verifyBuild() {
     }
   }
 }
-const area = { id: 'profile-area', name: 'Profile area', color: '#6574cd', sort: 0, kind: 'user', created_at: 1, updated_at: 1 };
+const area = { id: 'profile-area', name: 'Profile area', color: '#6574cd', sortOrder: 0, kind: 'user', createdAtMs: 1, updatedAtMs: 1 };
 const tracks = [
-  { id: 'small', area_id: area.id, title: 'Small track', sort: 0, cwd: '/workspace',
-    workspace: { isolation: 'worktree', kind: 'attached', path: '/workspace', frozen_at: null, worktree: '/workspace/.worktrees/small' },
-    pinned_at: null, closed_at: null, admin_granted_at: null, created_at: 1, updated_at: 2 },
-  { id: 'large', area_id: area.id, title: 'Large track', sort: 1, cwd: '/workspace',
-    workspace: { isolation: 'worktree', kind: 'attached', path: '/workspace', frozen_at: null, worktree: '/workspace/.worktrees/large' },
-    pinned_at: null, closed_at: null, admin_granted_at: null, created_at: 1, updated_at: 2 },
+  { id: 'small', areaId: area.id, title: 'Small track', sortOrder: 0, cwd: '/workspace',
+    workspaceDriver: 'vcs-workspace', workspaceSpec: {worktreePath: '/workspace/.worktrees/small'},
+    pinnedAtMs: null, closedAtMs: null, admin_granted_at: null, createdAtMs: 1, updatedAtMs: 2 },
+  { id: 'large', areaId: area.id, title: 'Large track', sortOrder: 1, cwd: '/workspace',
+    workspaceDriver: 'vcs-workspace', workspaceSpec: {worktreePath: '/workspace/.worktrees/large'},
+    pinnedAtMs: null, closedAtMs: null, admin_granted_at: null, createdAtMs: 1, updatedAtMs: 2 },
 ];
 const fixture = tracks.map(track => ({ id: track.id, title: track.title, count: track.id === 'large' ? count : 2 }));
 /** @param {string} id @param {number} size */
@@ -240,7 +240,7 @@ try {
     else if (['/api/plugins', '/api/track-templates', '/api/agent-providers', '/api/agent-providers/managed', '/api/overlays', '/api/areas/closed'].includes(path)) body = [];
     else if (path === '/api/models') body = { models: [], default: { model: null, reasoning_effort: null, supported_reasoning_efforts: null },
       default_source: 'unknown', source: 'live', fetched_at_ms: 1 };
-    else if (path.startsWith('/api/today/daily')) body = null;
+    else if (path.startsWith('/api/v1/today/daily')) body = null;
     else {
       recorded.handled = false;
       await route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ error: 'Unhandled profile endpoint', code: 'not_found' }) });

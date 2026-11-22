@@ -30,103 +30,103 @@ public static class ApiV1Endpoints
             .WithMetadata(new RequestOriginGuard.BrowserWriteApi());
 
         v1.MapGet("/read-receipts", async (IPergaKernel kernel, CancellationToken ct) =>
-            Results.Json(await kernel.GetReadReceiptsAsync(ct).ConfigureAwait(false), PergaJsonDefaults.ApiOptions));
+            TypedResults.Json(await kernel.GetReadReceiptsAsync(ct).ConfigureAwait(false), PergaJsonDefaults.ApiOptions));
         v1.MapPost("/read-receipts/{kind}/{targetId}/read", async (string kind, string targetId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
         {
             var req = await ReadRequiredJsonBodyAsync<MarkReadRequest>(ctx, ct).ConfigureAwait(false);
-            return Results.Json(await kernel.MarkReadAsync(kind, targetId, req.ReadThroughMs ?? 0, ct).ConfigureAwait(false), PergaJsonDefaults.ApiOptions);
-        });
+            return TypedResults.Json(await kernel.MarkReadAsync(kind, targetId, req.ReadThroughMs ?? 0, ct).ConfigureAwait(false), PergaJsonDefaults.ApiOptions);
+        }).WithMetadata(new JsonRequestContract(typeof(MarkReadRequest), IsOptional: false));
         v1.MapPost("/read-receipts/{kind}/{targetId}/unread", async (string kind, string targetId, IPergaKernel kernel, CancellationToken ct) =>
-            Results.Json(await kernel.MarkUnreadAsync(kind, targetId, ct).ConfigureAwait(false), PergaJsonDefaults.ApiOptions));
+            TypedResults.Json(await kernel.MarkUnreadAsync(kind, targetId, ct).ConfigureAwait(false), PergaJsonDefaults.ApiOptions)).WithMetadata(new NoRequestBody());
 
         // Empty segments do not bind {targetId}; match only literal //read and //unread.
         v1.MapPost("/read-receipts/{kind}/{**emptyTarget:regex(^/(?:read|unread)$)}", () =>
         {
             throw KernelException.InvalidArgument("TargetId cannot be empty.");
-        }).ExcludeFromDescription();
+        }).ExcludeFromDescription().WithMetadata(new NoRequestBody());
 
         // ------------------- System -------------------
         v1.MapGet("/bootstrap", async (bool? refresh, string? card_id, IPergaKernel kernel, CancellationToken ct) =>
         {
             var dto = await kernel.GetBootstrapAsync(refresh ?? false, ct, card_id).ConfigureAwait(false);
-            return Results.Json(dto, PergaJsonDefaults.ApiOptions);
+            return TypedResults.Json(dto, PergaJsonDefaults.ApiOptions);
         });
 
         v1.MapGet("/overlays", async (bool? includeClosed, IPergaKernel kernel, CancellationToken ct) =>
         {
             var overlays = await kernel.GetOverlaysAsync(includeClosed ?? false, ct).ConfigureAwait(false);
-            return Results.Json(overlays, PergaJsonDefaults.ApiOptions);
+            return TypedResults.Json(overlays, PergaJsonDefaults.ApiOptions);
         });
 
         v1.MapGet("/fs/listdir", async (string? path, string? targetId, IPergaKernel kernel, CancellationToken ct) =>
         {
             var listing = await kernel.ListHostDirectoryAsync(path, targetId, ct).ConfigureAwait(false);
-            return Results.Json(listing, PergaJsonDefaults.ApiOptions);
+            return TypedResults.Json(listing, PergaJsonDefaults.ApiOptions);
         });
 
         v1.MapGet("/targets", (IPergaKernel kernel) =>
         {
             var targets = kernel.ExecutionEnvironments.ListTargets();
-            return Results.Json(targets, PergaJsonDefaults.ApiOptions);
+            return TypedResults.Json(targets, PergaJsonDefaults.ApiOptions);
         });
 
         v1.MapPost("/targets", async (HttpContext ctx, IExecutionTargetManager targetManager, CancellationToken ct) =>
         {
             var req = await ReadRequiredJsonBodyAsync<CreateExecutionTargetRequest>(ctx, ct).ConfigureAwait(false);
             var created = await targetManager.CreateSshTargetAsync(req, ct).ConfigureAwait(false);
-            return Results.Json(created, PergaJsonDefaults.ApiOptions, statusCode: StatusCodes.Status201Created);
-        });
+            return TypedResults.Json(created, PergaJsonDefaults.ApiOptions, statusCode: StatusCodes.Status201Created);
+        }).WithMetadata(new JsonRequestContract(typeof(CreateExecutionTargetRequest), IsOptional: false)).WithMetadata(new SuccessStatus(201));
 
         v1.MapDelete("/targets/{targetId}", async (string targetId, IExecutionTargetManager targetManager, CancellationToken ct) =>
         {
             var deleted = await targetManager.DeleteTargetAsync(targetId, ct).ConfigureAwait(false);
-            return deleted ? Results.NoContent() : Results.NotFound();
-        });
+            return deleted ? TypedResults.NoContent() : Results.NotFound();
+        }).Produces(204).Produces(404);
 
         v1.MapGet("/targets/{targetId}/providers", async (string targetId, bool? refresh, IPergaKernel kernel, CancellationToken ct) =>
         {
             var providers = await kernel.GetTargetProvidersAsync(targetId, refresh ?? false, ct).ConfigureAwait(false);
-            return Results.Json(providers, PergaJsonDefaults.ApiOptions);
+            return TypedResults.Json(providers, PergaJsonDefaults.ApiOptions);
         });
 
         v1.MapGet("/templates", (IPergaKernel kernel) =>
         {
             var templates = kernel.ListTemplates();
-            return Results.Json(templates, PergaJsonDefaults.ApiOptions);
+            return TypedResults.Json(templates, PergaJsonDefaults.ApiOptions);
         });
 
         // ------------------- Areas -------------------
         v1.MapGet("/areas", async (IPergaKernel kernel, CancellationToken ct) =>
         {
             var areas = await kernel.ListAreasAsync(ct).ConfigureAwait(false);
-            return Results.Json(areas, PergaJsonDefaults.ApiOptions);
+            return TypedResults.Json(areas, PergaJsonDefaults.ApiOptions);
         });
 
         v1.MapPost("/areas", async (HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
         {
             var req = await ReadRequiredJsonBodyAsync<CreateAreaRequest>(ctx, ct).ConfigureAwait(false);
             var created = await kernel.CreateAreaAsync(req, ct, OptionalCreationKey(ctx)).ConfigureAwait(false);
-            return Results.Json(created, PergaJsonDefaults.ApiOptions, statusCode: StatusCodes.Status201Created);
-        });
+            return TypedResults.Json(created, PergaJsonDefaults.ApiOptions, statusCode: StatusCodes.Status201Created);
+        }).WithMetadata(new JsonRequestContract(typeof(CreateAreaRequest), IsOptional: false)).WithMetadata(new SuccessStatus(201)).WithMetadata(new RequestHeader("Idempotency-Key", false));
 
         v1.MapPatch("/areas/{areaId}", async (string areaId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
         {
             var req = await ReadRequiredJsonBodyAsync<PatchAreaRequest>(ctx, ct).ConfigureAwait(false);
             var updated = await kernel.PatchAreaAsync(areaId, req, ct).ConfigureAwait(false);
-            return Results.Json(updated, PergaJsonDefaults.ApiOptions);
-        });
+            return TypedResults.Json(updated, PergaJsonDefaults.ApiOptions);
+        }).WithMetadata(new JsonRequestContract(typeof(PatchAreaRequest), IsOptional: false));
 
         v1.MapDelete("/areas/{areaId}", async (string areaId, IPergaKernel kernel, CancellationToken ct) =>
         {
             await kernel.DeleteAreaAsync(areaId, ct).ConfigureAwait(false);
-            return Results.NoContent();
+            return TypedResults.NoContent();
         });
 
         // ------------------- Tracks -------------------
         v1.MapGet("/areas/{areaId}/workspace-options", async (string areaId, string? cwd, string? templateId, string? targetId, IPergaKernel kernel, CancellationToken ct) =>
         {
             var options = await kernel.GetTrackWorkspaceOptionsAsync(areaId, cwd, templateId, ct, targetId).ConfigureAwait(false);
-            return Results.Json(options, PergaJsonDefaults.ApiOptions);
+            return TypedResults.Json(options, PergaJsonDefaults.ApiOptions);
         });
 
         v1.MapGet("/areas/{areaId}/tracks", async (string areaId, bool? includeClosed, IPergaKernel kernel, CancellationToken ct) =>
@@ -134,58 +134,58 @@ public static class ApiV1Endpoints
             _ = await kernel.GetAreaAsync(areaId, ct).ConfigureAwait(false)
                 ?? throw KernelException.NotFound($"Area '{areaId}' not found.");
             var tracks = await kernel.ListTracksAsync(areaId, includeClosed ?? false, ct).ConfigureAwait(false);
-            return Results.Json(tracks, PergaJsonDefaults.ApiOptions);
+            return TypedResults.Json(tracks, PergaJsonDefaults.ApiOptions);
         }).Produces<IReadOnlyList<TrackDto>>();
 
         v1.MapPost("/tracks", async (HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
         {
             var req = await ReadRequiredJsonBodyAsync<CreateTrackRequest>(ctx, ct).ConfigureAwait(false);
             var snapshot = await kernel.CreateTrackAsync(req, ct, OptionalCreationKey(ctx)).ConfigureAwait(false);
-            return Results.Json(snapshot, PergaJsonDefaults.ApiOptions, statusCode: StatusCodes.Status201Created);
-        }).Produces<TrackAggregateSnapshot>(StatusCodes.Status201Created);
+            return TypedResults.Json(snapshot, PergaJsonDefaults.ApiOptions, statusCode: StatusCodes.Status201Created);
+        }).Produces<TrackAggregateSnapshot>(StatusCodes.Status201Created).WithMetadata(new JsonRequestContract(typeof(CreateTrackRequest), IsOptional: false)).WithMetadata(new SuccessStatus(201)).WithMetadata(new RequestHeader("Idempotency-Key", false));
 
         v1.MapGet("/tracks/{trackId}", async (string trackId, IPergaKernel kernel, CancellationToken ct) =>
         {
             var snapshot = await kernel.GetTrackAggregateAsync(trackId, ct).ConfigureAwait(false);
-            return Results.Json(snapshot, PergaJsonDefaults.ApiOptions);
+            return TypedResults.Json(snapshot, PergaJsonDefaults.ApiOptions);
         }).Produces<TrackAggregateSnapshot>();
 
         v1.MapGet("/tracks/{trackId}/template", async (string trackId, IPergaKernel kernel, CancellationToken ct) =>
         {
             var template = await kernel.Actors.GetOrActivate(trackId).InspectCurrentTemplateAsync(ct).ConfigureAwait(false);
-            return Results.Json(template, PergaJsonDefaults.ApiOptions);
+            return TypedResults.Json(template, PergaJsonDefaults.ApiOptions);
         }).Produces<JsonElement>();
 
         v1.MapDelete("/tracks/{trackId}/template", async (string trackId, IPergaKernel kernel, CancellationToken ct) =>
         {
             var track = await kernel.Actors.GetOrActivate(trackId).ClearTemplateAsync(ct).ConfigureAwait(false);
-            return Results.Json(track, PergaJsonDefaults.ApiOptions);
+            return TypedResults.Json(track, PergaJsonDefaults.ApiOptions);
         }).Produces<TrackDto>();
 
         v1.MapPatch("/tracks/{trackId}/template/inputs", async (string trackId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
         {
             var patch = await ReadRequiredJsonBodyAsync<JsonElement>(ctx, ct).ConfigureAwait(false);
             var track = await kernel.Actors.GetOrActivate(trackId).UpdateTemplateInputsAsync(patch, ct).ConfigureAwait(false);
-            return Results.Json(track, PergaJsonDefaults.ApiOptions);
-        }).Produces<TrackDto>();
+            return TypedResults.Json(track, PergaJsonDefaults.ApiOptions);
+        }).Produces<TrackDto>().WithMetadata(new JsonRequestContract(typeof(JsonElement), IsOptional: false));
 
         v1.MapPost("/tracks/{trackId}/workspace/retry", async (string trackId, IPergaKernel kernel, CancellationToken ct) =>
         {
             await kernel.RetryWorkspaceAsync(trackId, ct).ConfigureAwait(false);
-            return Results.Accepted();
-        });
+            return TypedResults.Accepted((string?)null);
+        }).WithMetadata(new NoRequestBody());
 
         v1.MapPatch("/tracks/{trackId}", async (string trackId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
         {
             var req = await ReadRequiredJsonBodyAsync<PatchTrackRequest>(ctx, ct).ConfigureAwait(false);
             var updated = await kernel.PatchTrackAsync(trackId, req, ct).ConfigureAwait(false);
-            return Results.Json(updated, PergaJsonDefaults.ApiOptions);
-        }).Produces<TrackDto>();
+            return TypedResults.Json(updated, PergaJsonDefaults.ApiOptions);
+        }).Produces<TrackDto>().WithMetadata(new JsonRequestContract(typeof(PatchTrackRequest), IsOptional: false));
 
         v1.MapDelete("/tracks/{trackId}", async (string trackId, IPergaKernel kernel, CancellationToken ct) =>
         {
             await kernel.DeleteTrackAsync(trackId, ct).ConfigureAwait(false);
-            return Results.NoContent();
+            return TypedResults.NoContent();
         });
 
         // ------------------- Workspace & VCS -------------------
@@ -196,7 +196,7 @@ public static class ApiV1Endpoints
                 path,
                 maxBytes ?? (256 * 1024),
                 ct).ConfigureAwait(false);
-            return Results.Json(result, PergaJsonDefaults.ApiOptions);
+            return TypedResults.Json(result, PergaJsonDefaults.ApiOptions);
         });
 
         v1.MapGet("/tracks/{trackId}/files/raw", async (string trackId, string? path, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
@@ -213,32 +213,32 @@ public static class ApiV1Endpoints
                 ctx.Response.Headers["Content-Security-Policy"] = "sandbox";
             }
 
-            return Results.File(stream, contentType, enableRangeProcessing: true);
+            return TypedResults.File(stream, contentType, enableRangeProcessing: true);
         });
 
         v1.MapGet("/tracks/{trackId}/vcs-diff", async (string trackId, string? path, string? fromRev, string? toRev, IPergaKernel kernel, CancellationToken ct) =>
         {
             var diff = await kernel.GetTrackVcsDiffAsync(trackId, fromRev, toRev, path, ct).ConfigureAwait(false);
-            return Results.Json(diff, PergaJsonDefaults.ApiOptions);
+            return TypedResults.Json(diff, PergaJsonDefaults.ApiOptions);
         });
 
         // ------------------- Report & Tasks -------------------
         v1.MapGet("/tracks/{trackId}/report", async (string trackId, IPergaKernel kernel, CancellationToken ct) =>
         {
             var report = await kernel.ReadReportAsync(trackId, callerSessionId: null, ct).ConfigureAwait(false);
-            return Results.Json(report, PergaJsonDefaults.ApiOptions);
+            return TypedResults.Json(report, PergaJsonDefaults.ApiOptions);
         });
 
         v1.MapGet("/tracks/{trackId}/views", async (string trackId, IPergaKernel kernel, CancellationToken ct) =>
         {
             var views = await kernel.GetTrackViewsAsync(trackId, ct).ConfigureAwait(false);
-            return Results.Json(views, PergaJsonDefaults.ApiOptions);
+            return TypedResults.Json(views, PergaJsonDefaults.ApiOptions);
         });
 
         v1.MapGet("/tracks/{trackId}/flow", async (string trackId, IPergaKernel kernel, CancellationToken ct) =>
         {
             var flow = await kernel.GetTrackFlowAsync(trackId, ct).ConfigureAwait(false);
-            return Results.Json(flow, PergaJsonDefaults.ApiOptions);
+            return TypedResults.Json(flow, PergaJsonDefaults.ApiOptions);
         }).Produces<FlowSnapshotDto>();
 
         v1.MapPost("/tracks/{trackId}/flow/commit", async (string trackId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
@@ -248,8 +248,8 @@ public static class ApiV1Endpoints
                 throw KernelException.InvalidArgument("expectedFlowRev must be a non-negative integer.");
             var result = await kernel.CommitTrackFlowAsync(trackId, body.DryRun ?? false, body.ExpectedFlowRev,
                 AuthenticatedSession.Human(ctx), ct, body.Content).ConfigureAwait(false);
-            return Results.Json(result, PergaJsonDefaults.ApiOptions);
-        }).Produces<FlowCommitResultDto>();
+            return TypedResults.Json(result, PergaJsonDefaults.ApiOptions);
+        }).Produces<FlowCommitResultDto>().WithMetadata(new JsonRequestContract(typeof(FlowCommitRequest), IsOptional: true)).WithMetadata(new StrictRequest());
 
         v1.MapPatch("/tracks/{trackId}/data", async (string trackId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
         {
@@ -272,20 +272,20 @@ public static class ApiV1Endpoints
             }
             var result = await kernel.PatchTrackDataAsync(trackId, patch, source: "api", callerSessionId: null,
                 ct: ct, expectedDataRev: expectedDataRev).ConfigureAwait(false);
-            return Results.Json(result, PergaJsonDefaults.ApiOptions);
-        });
+            return TypedResults.Json(result, PergaJsonDefaults.ApiOptions);
+        }).WithMetadata(new JsonRequestContract(typeof(JsonElement), IsOptional: false));
 
         v1.MapPost("/tracks/{trackId}/tasks/{taskKey}/cancel", async (string trackId, string taskKey, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
         {
             var body = await ReadOptionalJsonBodyAsync(ctx, () => new CancelTaskHttpBody(), ct).ConfigureAwait(false);
             var task = await kernel.CancelTaskAsync(trackId, callerSessionId: null, taskKey, body.Reason, ct).ConfigureAwait(false);
-            return Results.Json(task, PergaJsonDefaults.ApiOptions);
-        });
+            return TypedResults.Json(task, PergaJsonDefaults.ApiOptions);
+        }).WithMetadata(new JsonRequestContract(typeof(CancelTaskHttpBody), IsOptional: true));
 
         // ------------------- Unified sessions -------------------
         v1.MapGet("/tracks/{trackId}/sessions", async (string trackId, bool? includeArchived, string? parentSessionId,
             HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
-            Results.Json(await kernel.ListSessionsAsync(trackId, new(includeArchived ?? false, parentSessionId),
+            TypedResults.Json(await kernel.ListSessionsAsync(trackId, new(includeArchived ?? false, parentSessionId),
                 AuthenticatedSession.Human(ctx), ct).ConfigureAwait(false), PergaJsonDefaults.ApiOptions));
 
         v1.MapPost("/tracks/{trackId}/sessions", async (string trackId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
@@ -293,16 +293,16 @@ public static class ApiV1Endpoints
             var key = RequiredMessageKey(ctx);
             var request = await ReadOptionalJsonBodyAsync(ctx, () => new CreateSessionRequest(), ct, SessionJsonOptions).ConfigureAwait(false);
             var (receipt, replay) = await kernel.CreateSessionAsync(trackId, request, key, AuthenticatedSession.Human(ctx), ct).ConfigureAwait(false);
-            return Results.Json(receipt, PergaJsonDefaults.ApiOptions,
+            return TypedResults.Json(receipt, PergaJsonDefaults.ApiOptions,
                 statusCode: replay ? StatusCodes.Status200OK : StatusCodes.Status201Created);
-        });
+        }).WithMetadata(new JsonRequestContract(typeof(CreateSessionRequest), IsOptional: true)).WithMetadata(new SuccessStatus(201, ReplayedAsOk: true)).WithMetadata(new StrictRequest()).WithMetadata(new RequestHeader("Idempotency-Key", true));
 
         v1.MapGet("/sessions/{sessionId}/items", async (string sessionId, long? afterId, long? beforeId, int? limit,
             bool? latest, string? activityTurnId, long? afterSequence, int? waitMs, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
         {
             if (limit is < 1 or > 100 || waitMs is < 0 or > 10000 || afterId is < 0 || beforeId is < 0 || afterSequence is < 0)
                 throw KernelException.InvalidArgument("Invalid session read range.");
-            return Results.Json(await kernel.GetSessionItemsAsync(sessionId,
+            return TypedResults.Json(await kernel.GetSessionItemsAsync(sessionId,
                 new(afterId ?? 0, beforeId, limit ?? 20, latest ?? false, activityTurnId, afterSequence, waitMs ?? 0),
                 AuthenticatedSession.Human(ctx), ct).ConfigureAwait(false), PergaJsonDefaults.ApiOptions);
         });
@@ -310,45 +310,45 @@ public static class ApiV1Endpoints
         v1.MapPatch("/sessions/{sessionId}", async (string sessionId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
         {
             var request = await ReadRequiredJsonBodyAsync<UpdateSessionRequest>(ctx, ct, SessionJsonOptions).ConfigureAwait(false);
-            return Results.Json(await kernel.UpdateSessionAsync(sessionId, request, AuthenticatedSession.Human(ctx), ct).ConfigureAwait(false),
+            return TypedResults.Json(await kernel.UpdateSessionAsync(sessionId, request, AuthenticatedSession.Human(ctx), ct).ConfigureAwait(false),
                 PergaJsonDefaults.ApiOptions);
-        });
+        }).WithMetadata(new JsonRequestContract(typeof(UpdateSessionRequest), IsOptional: false)).WithMetadata(new StrictRequest());
 
         v1.MapPost("/sessions/{sessionId}/messages", async (string sessionId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
         {
             var request = await ReadRequiredJsonBodyAsync<SendSessionMessageRequest>(ctx, ct, SessionJsonOptions).ConfigureAwait(false);
             request = request with { RequestKey = request.Content is not null ? RequiredMessageKey(ctx) : null };
-            return Results.Json(await kernel.SendSessionMessageAsync(sessionId, request, AuthenticatedSession.Human(ctx), ct).ConfigureAwait(false),
+            return TypedResults.Json(await kernel.SendSessionMessageAsync(sessionId, request, AuthenticatedSession.Human(ctx), ct).ConfigureAwait(false),
                 PergaJsonDefaults.ApiOptions);
-        });
+        }).WithMetadata(new JsonRequestContract(typeof(SendSessionMessageRequest), IsOptional: false)).WithMetadata(new StrictRequest()).WithMetadata(new RequestHeader("Idempotency-Key", false));
 
         v1.MapDelete("/sessions/{sessionId}/messages/{messageId}", async (string sessionId, string messageId,
             HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
         {
             await kernel.WithdrawSessionMessageAsync(sessionId, messageId, AuthenticatedSession.Human(ctx), ct).ConfigureAwait(false);
-            return Results.NoContent();
+            return TypedResults.NoContent();
         });
 
         v1.MapPost("/sessions/{sessionId}/control", async (string sessionId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
         {
             var request = await ReadRequiredJsonBodyAsync<SessionControlRequest>(ctx, ct, SessionJsonOptions).ConfigureAwait(false);
-            return Results.Json(await kernel.ControlSessionAsync(sessionId, request, AuthenticatedSession.Human(ctx), ct).ConfigureAwait(false),
+            return TypedResults.Json(await kernel.ControlSessionAsync(sessionId, request, AuthenticatedSession.Human(ctx), ct).ConfigureAwait(false),
                 PergaJsonDefaults.ApiOptions);
-        });
+        }).WithMetadata(new JsonRequestContract(typeof(SessionControlRequest), IsOptional: false)).WithMetadata(new StrictRequest());
 
         v1.MapPost("/sessions/{sessionId}/interactions/{interactionId}/respond", async (string sessionId, string interactionId,
             HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
         {
             var request = await ReadRequiredJsonBodyAsync<RespondInteractionRequest>(ctx, ct, SessionJsonOptions).ConfigureAwait(false);
-            return Results.Json(await kernel.RespondInteractionAsync(sessionId, interactionId, request, AuthenticatedSession.Human(ctx), ct).ConfigureAwait(false),
+            return TypedResults.Json(await kernel.RespondInteractionAsync(sessionId, interactionId, request, AuthenticatedSession.Human(ctx), ct).ConfigureAwait(false),
                 PergaJsonDefaults.ApiOptions);
-        });
+        }).WithMetadata(new JsonRequestContract(typeof(RespondInteractionRequest), IsOptional: false)).WithMetadata(new StrictRequest());
 
         // ------------------- Terminals -------------------
         v1.MapGet("/tracks/{trackId}/terminals", async (string trackId, IPergaKernel kernel, CancellationToken ct) =>
         {
             var terminals = await kernel.ListTerminalsAsync(trackId, ct).ConfigureAwait(false);
-            return Results.Json(terminals, PergaJsonDefaults.ApiOptions);
+            return TypedResults.Json(terminals, PergaJsonDefaults.ApiOptions);
         });
 
         v1.MapPost("/tracks/{trackId}/terminals", async (string trackId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
@@ -362,13 +362,13 @@ public static class ApiV1Endpoints
             }
 
             var created = await kernel.OpenTerminalAsync(trackId, callerSessionId: null, req, ct).ConfigureAwait(false);
-            return Results.Json(created, PergaJsonDefaults.ApiOptions, statusCode: StatusCodes.Status201Created);
-        });
+            return TypedResults.Json(created, PergaJsonDefaults.ApiOptions, statusCode: StatusCodes.Status201Created);
+        }).WithMetadata(new JsonRequestContract(typeof(OpenTerminalRequest), IsOptional: true)).WithMetadata(new SuccessStatus(201)).WithMetadata(new RequestHeader("Idempotency-Key", false));
 
         v1.MapDelete("/tracks/{trackId}/terminals/{termId}", async (string trackId, string termId, IPergaKernel kernel, CancellationToken ct) =>
         {
             _ = await kernel.CloseTerminalAsync(trackId, termId, graceMs: 2000, ct).ConfigureAwait(false);
-            return Results.NoContent();
+            return TypedResults.NoContent();
         });
 
         // ------------------- WebSockets -------------------

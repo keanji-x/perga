@@ -164,7 +164,9 @@
       "waitingReason": null
     },
     "capabilities": null,
-    "pendingInteractions": null
+    "pendingInteractions": null,
+    "runtimeStatus": null,
+    "runtimeTasks": null
   },
   "summary": {
     "session": {

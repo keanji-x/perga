@@ -300,35 +300,35 @@ it.each([1440, 390])('navigates between dates and displays day schedules on perg
   const { router, requests } = renderDailyFixture({
     initial: '/',
     reply: (request) => {
-      if (request.path.startsWith('/api/today/calendar')) {
+      if (request.path.startsWith('/api/v1/today/calendar')) {
         const params = new URL(request.path, 'http://fixture').searchParams;
         const start = params.get('start') ?? '2026-09-28';
         const end = params.get('end') ?? '2026-10-04';
-        const days: Array<{ date: string; has_daily_track: boolean; has_report: boolean }> = [];
+        const days: Array<{ date: string; hasDailyTrack: boolean; hasReport: boolean }> = [];
         const cursor = new Date(`${start}T12:00:00Z`);
         const limit = new Date(`${end}T12:00:00Z`);
         while (cursor <= limit && days.length < 62) {
           const day = cursor.toISOString().slice(0, 10);
           days.push({
             date: day,
-            has_daily_track: day === '2026-10-04',
-            has_report: day === '2026-10-04',
+            hasDailyTrack: day === '2026-10-04',
+            hasReport: day === '2026-10-04',
           });
           cursor.setUTCDate(cursor.getUTCDate() + 1);
         }
         const schedules = start <= '2026-10-03' && end >= '2026-10-03' ? [{
           id: 'sch_oct3',
           date: '2026-10-03',
-          track_id: 'project',
-          track_title: 'Project evidence',
+          trackId: 'project',
+          trackTitle: 'Project evidence',
           title: 'Check release pipeline',
-          schedule_kind: 'once',
-          cron_expr: null,
+          scheduleKind: 'once',
+          cronExpr: null,
           timezone: 'UTC',
-          next_fire_at_ms: Date.parse('2026-10-03T14:30:00Z'),
+          nextFireAtMs: Date.parse('2026-10-03T14:30:00Z'),
           state: 'active',
         }] : [];
-        return { status: 200, statusText: 'OK', body: { today: '2026-10-04', time_zone: 'UTC', start, end, days, schedules } };
+        return { status: 200, statusText: 'OK', body: { today: '2026-10-04', timeZone: 'UTC', start, end, days, schedules } };
       }
       return undefined;
     },
@@ -343,7 +343,7 @@ it.each([1440, 390])('navigates between dates and displays day schedules on perg
   await page.getByRole('radio', { name: 'Month', exact: true }).click();
   await expect.element(page.getByRole('radio', { name: 'Month', exact: true })).toBeChecked();
   await calendar.getByRole('button', { name: 'Next month' }).click();
-  await expect.poll(() => requests.some(r => r.path === '/api/today/calendar?start=2026-11-01&end=2026-11-30')).toBe(true);
+  await expect.poll(() => requests.some(r => r.path === '/api/v1/today/calendar?start=2026-11-01&end=2026-11-30')).toBe(true);
   expect(router.state.location.search).toEqual({ day: undefined });
 
   // Return to October while staying in Month mode and click 2026-10-03 (no daily track, has 1 schedule).

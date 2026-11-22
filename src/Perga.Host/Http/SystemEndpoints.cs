@@ -15,7 +15,7 @@ public static class SystemEndpoints
         {
             ctx.Response.Headers.CacheControl = "no-store";
             var identity = releases.Identity;
-            return Results.Ok(new SystemInfoDto(identity.ReleaseId, identity.WebBuildId, identity.HostBuildId,
+            return TypedResults.Ok(new SystemInfoDto(identity.ReleaseId, identity.WebBuildId, identity.HostBuildId,
                 identity.BridgeBuildId, await store.GetSchemaVersionAsync(ctx.RequestAborted),
                 kernel.DispatchAdmission.Draining, kernel.DispatchAdmission.ActiveDispatches));
         }).RequireAuthorization(PergaAuthPolicies.UserOrManagement);
@@ -23,15 +23,15 @@ public static class SystemEndpoints
         {
             kernel.DispatchAdmission.SetDraining(request.Draining);
             return Results.Json(new SystemDrainResponse(kernel.DispatchAdmission.Draining, kernel.DispatchAdmission.ActiveDispatches), statusCode: 202);
-        }).RequireAuthorization(PergaAuthPolicies.SystemManagementOnly);
+        }).RequireAuthorization(PergaAuthPolicies.SystemManagementOnly).Produces<SystemDrainResponse>(202);
         system.MapPost("/reload", (SystemReloadRequest request, ReleaseSnapshotManager releases) =>
         {
             return Results.Ok(releases.Reload(request.ReleaseId, request.WebBuildId));
-        }).RequireAuthorization(PergaAuthPolicies.SystemManagementOnly);
+        }).RequireAuthorization(PergaAuthPolicies.SystemManagementOnly).Produces<SystemReloadResponse>();
         system.MapGet("/auth-status", async (HttpContext ctx, IAuthStore store, TimeProvider time) =>
         {
             ctx.Response.Headers.CacheControl = "no-store";
             return Results.Ok(await store.GetAuthStatusAsync(time.GetUtcNow().ToUnixTimeMilliseconds(), ctx.RequestAborted));
-        }).RequireAuthorization(PergaAuthPolicies.SystemManagementOnly);
+        }).RequireAuthorization(PergaAuthPolicies.SystemManagementOnly).Produces<SystemAuthStatusDto>();
     }
 }

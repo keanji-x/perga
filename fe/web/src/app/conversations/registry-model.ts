@@ -1,4 +1,4 @@
-import type { KeepConversationInputRequest, AgentProvider } from '../../../../core/api/generated/wire.ts';
+import type { KeepConversationInputRequest, AgentProvider } from '../../../../core/domain/presentation-types.ts';
 import type { Conversation, CreatedConversation, ModelSelection, SideConversation, SubmittedConversationInput, TranscriptEntry } from '../../../../core/domain/conversation.ts';
 import type { ConversationOutboxOp, SendOp } from '../../../../core/domain/conversation-outbox.ts';
 import type { ComposerContent } from '../../../../core/domain/conversation-composer.ts';

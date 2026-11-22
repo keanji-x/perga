@@ -1,4 +1,4 @@
-import type { AskQuestion } from '../../../../core/api/generated/wire.ts';
+import type { AskQuestion } from '../../../../core/domain/presentation-types.ts';
 import { fixtureTrack, fixtureSession, fixtureSnapshot } from './session-contract-fixture.ts';
 import { sessionPage, sessionItem } from './conversation-session-data.ts';
 import { prepareReportDocument } from '../../features/report/document/preparation.ts';

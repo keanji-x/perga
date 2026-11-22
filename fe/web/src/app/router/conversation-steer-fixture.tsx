@@ -1,5 +1,5 @@
 import type { ApiTransportResponse } from '../../../../core/api/types.ts';
-import type { AgentProvider } from '../../../../core/api/generated/wire.ts';
+import type { AgentProvider } from '../../../../core/domain/presentation-types.ts';
 import { sessionItem, sessionPage, sessionTurn } from './conversation-session-data.ts';
 import { fixtureBootstrap, fixtureSession } from './session-contract-fixture.ts';
 import { renderDailyFixture } from './daily-planner-fixture.tsx';

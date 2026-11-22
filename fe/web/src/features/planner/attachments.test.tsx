@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { PlannerAttachment, UploadAttachmentResponse } from '../../../../core/api/generated/wire.ts';
+import type { PlannerAttachment, UploadAttachmentResponse } from '../../../../core/domain/presentation-types.ts';
 import { useState } from '../../ui/state/public.ts';
 import {
   ATTACHED_WORKSPACE_REASON, PlannerAttachButton, PlannerAttachmentDrawer, usePlannerAttachments,

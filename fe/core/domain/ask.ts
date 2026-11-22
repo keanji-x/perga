@@ -4,7 +4,7 @@
 import { z } from 'zod';
 import { askQuestionSchema } from '../api/schemas.js';
 import { askQuestionDtoSchema, sessionInteractionResultSchema } from '../api/perga-v1.js';
-import type { AskAction, AskAnswer } from '../api/generated/wire.js';
+import type { AskAction, AskAnswer } from './presentation-types.js';
 import type { ApiOperation } from '../api/types.js';
 import type { ActivityItem, AskDelivery, AskId, AskQuestion } from './activity.js';
 import { writeFailureText, type FailureTable, type WriteClass, type WriteText } from './failure-class.js';

@@ -1,10 +1,10 @@
 import { describe,expect,it } from 'vitest';
-import { trackDtoToWire } from '../api/track-projection.js';
+
 import { terminalDtoToCardWire } from './track.js';
 
 import { performApiRequest } from '../api/client.js';
 import type { TrackOverlayItemDto } from '../api/perga-v1.js';
-import { trackDtoSchema } from "../api/perga-v1.js";
+import { trackDtoSchema } from '../api/perga-v1.js';
 import { decodeWireEvent,overlaySchema } from '../api/schemas.js';
 import type { Area } from './area.js';
 import { terminalPresentation } from './terminal-presentation.js';
@@ -27,17 +27,17 @@ trackActivityState,
 trackDetailOperation,trackWorkspaceOptionsOperation,
 trackDisplayTitle,
 trackOverlayPayload,
-trackRecentAt,
-trackWireSchema,tracksInAreaOperation,
+trackRecentAt,tracksInAreaOperation,
 updateTrackOperation,
 userVisibleTracks,
 type OverlayWire,
 type Track
 } from './track.js';
 
-const baseWire = { workspace: { isolation: 'none' as const, kind: 'attached' as const, path: '', frozen_at: null },
-  id: 'w1', area_id: 'c1', title: 'Ship it', sort: 1,
-  created_at: 1_000, updated_at: 1_000,
+
+const baseWire = { workspaceDriver: 'direct', workspaceSpec: {},
+  id: 'w1', areaId: 'c1', title: 'Ship it', sortOrder: 1,
+  createdAtMs: 1_000, updatedAtMs: 1_000,
 };
 
 function track(overrides: Partial<Track>): Track {
@@ -77,24 +77,24 @@ describe('independent tool and overlay decode', () => {
 
 describe('track wire decode', () => {
   it('fills the kernel serde defaults so the decoded track has no optional fields', () => {
-    const parsed = trackWireSchema.parse(baseWire);
+    const parsed = trackDtoSchema.parse(baseWire);
     expect(parsed).toMatchObject({
-      cwd: '', pinned_at: null, closed_at: null,
+      cwd: '', workspaceDriver: 'direct',
     });
   });
 
   it('keeps explicit wire values over the defaults', () => {
-    const parsed = trackWireSchema.parse({ ...baseWire, cwd: '/srv', closed_at: 7 });
+    const parsed = trackDtoSchema.parse({ ...baseWire, cwd: '/srv', closedAtMs: 7 });
     expect(parsed.cwd).toBe('/srv');
-    expect(parsed.closed_at).toBe(7);
+    expect(parsed.closedAtMs).toBe(7);
   });
 
   it('drops server fields this slice does not model instead of failing the decode', () => {
-    expect(trackWireSchema.safeParse({ ...baseWire, template_id: null, purpose: null }).success).toBe(true);
+    expect(trackDtoSchema.safeParse({ ...baseWire, template_id: null, purpose: null }).success).toBe(true);
   });
 
   it('maps the wire row onto the camelCase domain shape', () => {
-    expect(toTrack(trackWireSchema.parse({ ...baseWire, pinned_at: 42 }))).toEqual(track({
+    expect(toTrack(trackDtoSchema.parse({ ...baseWire, pinnedAtMs: 42 }))).toEqual(track({
       id: 'w1', areaId: 'c1', title: 'Ship it', cwd: '', isolation: 'none', agentCwd: '', pinnedAt: 42, createdAt: 1_000,
       updatedAt: 1_000,
     }));
@@ -102,13 +102,13 @@ describe('track wire decode', () => {
 
   it('roots the agent at the track worktree when the kernel made one (#1830), else at the checkout', () => {
     const worktree = '/repo/.claude/worktrees/track-w1';
-    const attached = toTrack(trackWireSchema.parse({
-      ...baseWire, cwd: '/repo', workspace: { isolation: 'worktree', kind: 'attached', path: '/repo', frozen_at: 1, worktree },
+    const attached = toTrack(trackDtoSchema.parse({
+      ...baseWire, cwd: '/repo', workspaceDriver: 'vcs-workspace', workspaceSpec: { worktreePath: worktree },
     }));
     expect(attached.cwd).toBe('/repo');
     expect(attached.agentCwd).toBe(worktree);
-    const managed = toTrack(trackWireSchema.parse({
-      ...baseWire, cwd: '/w', workspace: { isolation: 'managed', kind: 'managed', path: '/w', frozen_at: null },
+    const managed = toTrack(trackDtoSchema.parse({
+      ...baseWire, cwd: '/w', workspaceDriver: 'managed',
     }));
     expect(managed.agentCwd).toBe('/w');
   });
@@ -489,7 +489,7 @@ describe('template report projection', () => {
   const dto = () => trackDtoSchema.parse({ id: 'w1', areaId: 'c1', createdAtMs: 1, updatedAtMs: 2, ...template });
 
   it('preserves every template field through the production HTTP projection', () => {
-    expect(toTrack(trackDtoToWire(dto()))).toMatchObject(template);
+    expect(toTrack(dto())).toMatchObject(template);
   });
 
   it('preserves every template field on track.updated events', () => {
@@ -498,7 +498,7 @@ describe('template report projection', () => {
   });
 
   it('defaults omitted template fields for historical rows', () => {
-    expect(toTrack(trackWireSchema.parse(baseWire))).toMatchObject({
+    expect(toTrack(trackDtoSchema.parse(baseWire))).toMatchObject({
       templateId: null, templateTitle: null, templateInputs: {}, templateHeaderView: null,
     });
   });

@@ -1,14 +1,15 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { toTrack, trackWireSchema, type Track } from '../../../../../core/domain/track.js';
+import { toTrack, type Track } from '../../../../../core/domain/track.js';
+import { trackDtoSchema } from '../../../../../core/api/perga-v1.ts';
 import { TemplateProtocolBar } from './public.tsx';
 
 afterEach(cleanup);
 
 function track(template: Partial<Track> = {}): Track {
-  return { ...toTrack(trackWireSchema.parse({ id: 't', area_id: 'a', title: 'Report', sort: 0,
-    workspace: { isolation: 'managed', kind: 'managed', path: '', frozen_at: null }, created_at: 1, updated_at: 1 })), ...template };
+  return { ...toTrack(trackDtoSchema.parse({ id: 't', areaId: 'a', title: 'Report', sortOrder: 0,
+    workspaceDriver: 'managed', workspaceSpec: {}, createdAtMs: 1, updatedAtMs: 1 })), ...template };
 }
 
 describe('TemplateProtocolBar', () => {

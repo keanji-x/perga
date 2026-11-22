@@ -1,104 +1,19 @@
-import { trackDtoToWire } from './track-projection.js';
 // Zod schemas for WS `/api/events` payloads, mirroring the kernel's `Event` enum and entity types.
 // On parse failure, callers log and skip dispatch — never throw.
 import { z } from 'zod';
 
-import {
-  agentSessionDtoSchema,
-  askDtoSchema,
-  decodePergaEventEnvelope,
-  mailDtoSchema,
-  readReceiptDtoSchema,
-  sessionRuntimeStatusPayloadSchema,
-  sessionTaskProgressPayloadSchema,
-  sessionTextDeltaPayloadSchema,
-  sessionThinkingDeltaPayloadSchema,
-  sessionToolProgressPayloadSchema,
-  sessionTurnDtoSchema,
-  systemUpgradeStatusPayloadSchema,
-  terminalDtoSchema,
-  trackDtoSchema,
-  type PergaStreamDelta,
-} from './perga-v1.js';
+import { areaDtoSchema, agentSessionDtoSchema, askDtoSchema, decodePergaEventEnvelope, mailDtoSchema, readReceiptDtoSchema, sessionRuntimeStatusPayloadSchema, sessionTaskProgressPayloadSchema, sessionTextDeltaPayloadSchema, sessionThinkingDeltaPayloadSchema, sessionToolProgressPayloadSchema, sessionTurnDtoSchema, systemUpgradeStatusPayloadSchema, terminalDtoSchema, trackDtoSchema, type PergaStreamDelta } from './perga-v1.js';
 import type { ApiDecodeFailure } from './types.js';
-
-/** `model::AreaKind`. Defaults to `'user'` so legacy wire payloads parse. */
-export const areaKindSchema = z.enum(['user', 'system']).default('user');
-
-/** `model::Area` — area metadata row. */
-export const areaSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  color: z.string(),
-  sort: z.number(),
-  kind: areaKindSchema,
-  default_template_id: z.string().nullable().default(null),
-  default_cwd: z.string().nullable().default(null),
-  execution_target_id: z.string().optional(),
-  created_at: z.number(),
-  updated_at: z.number(),
-});
-
-/** Required server projection, shared by HTTP, events and the domain reader. */
-export const workspaceIsolationSchema = z.enum(['managed', 'worktree', 'none']);
-export const trackWorkspaceSchema = z.object({
-  isolation: workspaceIsolationSchema,
-  kind: z.enum(['managed', 'attached']),
-  path: z.string(),
-  frozen_at: z.number().nullable(),
-  worktree: z.string().optional(),
-});
-
-const trackObjectSchema = z.object({
-  id: z.string(),
-  area_id: z.string(),
-  title: z.string(),
-  sort: z.number(),
-  pinned_at: z.number().nullable().default(null),
-  /** Unix-ms time the track was closed, or `null` while it is open; a pre-#1876 frame has none and reads as open. */
-  closed_at: z.number().nullable().default(null),
-  admin_granted_at: z.number().nullable().default(null),
-  /** Defaulted to `""` for legacy replay payloads; production rows always carry an absolute path. */
-  cwd: z.string().default(''),
-  templateId: trackDtoSchema.shape.templateId,
-  templateTitle: trackDtoSchema.shape.templateTitle,
-  templateInputs: trackDtoSchema.shape.templateInputs.optional(),
-  templateHeaderView: trackDtoSchema.shape.templateHeaderView,
-  template_id: z.string().nullable().default(null),
-  plugin_scope: z.string().nullable().default(null),
-  purpose: z.string().nullable().default(null),
-  /** Opaque bound-template input JSON; the frontend never interprets it. */
-  template_input: z.unknown().default(null),
-  /** Server-owned provenance; both are `null` together for tracks that came from anywhere else. */
-  recipe_id: z.string().nullable().default(null),
-  recipe_revision: z.number().nullable().default(null),
-  /** Server-owned provenance of a Track another Track's Planner created; both `null` together otherwise. */
-  creator_track_id: z.string().nullable().default(null),
-  creator_key: z.string().nullable().default(null),
-  /** The typed workspace; `cwd` above is a projection of `workspace.path`. */
-  workspace: trackWorkspaceSchema,
-  created_at: z.number(),
-  updated_at: z.number(),
-});
-
-export const trackSchema = trackObjectSchema;
 
 export const runtimeKindSchema = z.enum(['terminal', 'managed-assistant']);
 
-export const agentProviderSchema = z.enum(['codex', 'claude', 'opencode', 'grok', 'antigravity']);
+export const agentProviderSchema = z.string().min(1);
 export type AgentProvider = z.infer<typeof agentProviderSchema>;
 
-/** Normalizes Perga wire provider IDs (`"acp:antigravity"`, `"acp:opencode"`) into canonical frontend `AgentProvider` values. */
+/** Provider IDs are opaque runtime identifiers and must round-trip unchanged. */
 export function normalizeWireAgentProvider(raw: unknown): AgentProvider | null {
-  const candidate = typeof raw === 'string' && raw.startsWith('acp:') ? raw.slice(4) : raw;
-  const parsed = agentProviderSchema.safeParse(candidate);
+  const parsed = agentProviderSchema.safeParse(raw);
   return parsed.success ? parsed.data : null;
-}
-
-/** Maps canonical frontend `AgentProvider` values to Perga wire provider IDs (`"acp:antigravity"`, `"acp:opencode"`). */
-export function toWireAgentProvider(provider: AgentProvider): string {
-  if (provider === 'antigravity' || provider === 'opencode') return `acp:${provider}`;
-  return provider;
 }
 
 export const workerSessionStateSchema = z.enum([
@@ -162,7 +77,7 @@ export const overlaySchema = z.object({
 
 export const areaUpdatedSchema = z.object({
   ev: z.literal('area.updated'),
-  data: areaSchema,
+  data: areaDtoSchema,
 });
 
 export const areaDeletedSchema = z.object({
@@ -172,9 +87,7 @@ export const areaDeletedSchema = z.object({
 
 export const trackUpdatedSchema = z.object({
   ev: z.literal('track.updated'),
-  data: trackObjectSchema.extend({
-      agent_message: z.string().optional(),
-    }),
+  data: trackDtoSchema,
 });
 
 export const trackDeletedSchema = z.object({
@@ -292,7 +205,7 @@ export const wireEventSchema = z.discriminatedUnion('ev', [
   z.object({ ev: z.literal('session.task_progress'), data: sessionTaskProgressPayloadSchema }),
 ]);
 
-export type Area = z.infer<typeof areaSchema>;
+export type Area = z.infer<typeof areaDtoSchema>;
 
 export type WireEvent = z.infer<typeof wireEventSchema>;
 
@@ -343,27 +256,8 @@ export function decodeWireEvent(input: unknown): WireEventDecodeResult {
     }
     const evt = perga.event;
     switch (evt.kind) {
-      case 'area.updated': {
-        const a = evt.payload;
-        return {
-          status: 'ready',
-          value: {
-            ev: 'area.updated',
-            data: {
-              id: a.id,
-              name: a.name,
-              color: a.color,
-              sort: a.sortOrder,
-              kind: 'user',
-              default_template_id: null,
-              default_cwd: a.defaultCwd ?? null,
-              ...(a.executionTargetId !== undefined ? { execution_target_id: a.executionTargetId } : {}),
-              created_at: a.createdAtMs,
-              updated_at: a.updatedAtMs,
-            },
-          },
-        };
-      }
+      case 'area.updated':
+        return { status: 'ready', value: { ev: 'area.updated', data: evt.payload } };
       case 'area.deleted':
         return { status: 'ready', value: { ev: 'area.deleted', data: { id: evt.payload.id } } };
       case 'track.deleted':
@@ -371,7 +265,7 @@ export function decodeWireEvent(input: unknown): WireEventDecodeResult {
       case 'track.schedules.updated':
         return { status: 'ready', value: { ev: 'track.schedules.updated', data: evt.payload } };
       case 'track.updated':
-        return { status: 'ready', value: { ev: 'track.updated', data: trackDtoToWire(evt.payload) } };
+        return { status: 'ready', value: { ev: 'track.updated', data: evt.payload } };
       case 'report.updated':
         return { status: 'ready', value: { ev: 'report.updated', data: { track_id: evt.trackId, docRev: evt.payload.docRev, summary: evt.payload.summary } } };
       case 'task.updated':

@@ -1,4 +1,4 @@
-import type { PlannerAttachment } from '../api/generated/wire.js';
+import type { PlannerAttachment } from './presentation-types.js';
 import { isUserConversationTurn, isPlannerTurnContext, type ConversationTurn, type TranscriptEntry } from './conversation.js';
 import { MAX_ATTACHMENTS_PER_MESSAGE } from './conversation-commands.js';
 

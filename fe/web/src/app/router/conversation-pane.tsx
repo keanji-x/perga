@@ -23,8 +23,7 @@ import { HStack } from '@astryxdesign/core/HStack';
 import { useQuery } from '@tanstack/react-query';
 import { createRef,useCallback,useEffect,useMemo,useRef,type Dispatch,type SetStateAction } from 'react';
 
-import type { AgentProvider,AskAnswer } from '../../../../core/api/generated/wire.ts';
-import { trackDtoToWire } from '../../../../core/api/track-projection.ts';
+import type { AgentProvider, AskAnswer } from '../../../../core/domain/presentation-types.ts';
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { approvalsForSession,type PendingApproval } from '../../../../core/domain/approval.ts';
@@ -135,7 +134,7 @@ export function useConversationPane(
     enabled: imageTrackId !== null && source.workspaceRoot === null,
   });
   const imageRoot = source.workspaceRoot
-    ?? (imageTrack.data === undefined ? null : toTrack(trackDtoToWire(imageTrack.data.track)).agentCwd);
+    ?? (imageTrack.data === undefined ? null : toTrack(imageTrack.data.track).agentCwd);
   const conversationFiles = useMemo(() => imageTrackId === null ? null
     : createTrackWorkspaceFilesPort(transport, unauthorized, imageTrackId), [imageTrackId, transport, unauthorized]);
   const imageFiles = useMemo(() => imageRoot === null || conversationFiles === null ? null : ({

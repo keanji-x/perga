@@ -1,539 +1,118 @@
-
-
-export type AgentProvider = "opencode" | "codex" | "claude" | "grok" | "antigravity";
-
-export type Area = { id: AreaId, name: string, color: string, sort: number, kind: AreaKind,
-/**
- * Built-in Track template preselected by the official New Track surface; `None` keeps "No template".
- */
-default_template_id: string | null,
-/**
- * Exact attached Git working directory preselected for a new Track; `None` keeps the server-managed default.
- */
-default_cwd: string | null, execution_target_id?: string, created_at: number, updated_at: number, };
-
-/**
- * One row per claimed directory; `path` is absolute and globally unique across the table. A folder
- * covers every descendant path, and overlapping claims are rejected.
- */
-export type AreaFolder = { id: number, area_id: AreaId, path: string, created_at: number, };
-
-/**
- * Area identifier.
- */
-export type AreaId = string;
-
-/**
- * Whether an area is user-visible or kernel-owned storage scaffolding.
- */
-export type AreaKind = "user" | "system";
-
-/**
- * An explicit user choice with a lifecycle effect; absent on ordinary/native asks.
- */
-export type AskAction = { "kind": "objective_approval_v2", objective: string, standard_hash: string, } | { "kind": "objective_approval", objective: string, standard_hash: string, } | { "kind": "reopen_track", closed_at: number, } | { "kind": "grant_admin" } | { "kind": "track_plugin_access", plugin_id: string, enabled: boolean, manifest_sha256: string, expected_revision: number, } | { "kind": "forge_action", idempotency_key: string, payload_hash: string, };
-
-/**
- * One answer of an `ask.answered` (#2348): the index of a clicked option, or typed text. Clicking
- * an option and typing the same words are different answers.
- */
-export type AskAnswer = { "option": number } | { "text": string };
-
-/**
- * One question of an `ask.requested`: what the user is asked, and the answers offered. The first
- * option is the recommended one; no options means a free-text answer.
- */
-export type AskQuestion = { title: string,
-/**
- * Complete plain-text context frozen with this question. Never clipped by title bounds.
- */
-detail?: string, options: Array<string>, };
-
-/**
- * `<uuid-v4>.<ext>` — an attachment's id *and* its file name. The only constructor is
- * [`AttachmentId::parse`] and `Deserialize` goes through the same gate.
- */
-export type AttachmentId = string;
-
-/**
- * One block of a report of the area; `insert` is ``@`/AreaName/TrackName/report.md#<block_id>` ``.
- */
-export type BlockMention = {
-/**
- * The block's heading in the Report outline; a block with no heading is not offered.
- */
-label: string, block_id: string,
-/**
- * The title of the track whose report holds the block.
- */
-track_title: string, track_id: TrackId, insert: string, };
-
-export type Card = { id: CardId, track_id: TrackId,
-/**
- * `"terminal"` for built-in PTY cards, `"ui://<plugin>/<view>"` for plugin-provided cards.
- * `[legacy]` `"plugin:<plugin-id>:<view-id>"` may still appear on persisted rows.
- */
-kind: string, sort: number,
-/**
- * Opaque JSON blob.
- */
-payload: unknown, title?: string, runtime?: CardRuntimeView,
-/**
- * System-card guard: `true` for user-facing cards, `false` for kernel-owned cards the user cannot
- * remove. Defaults to `true` because `bool::default()` is the unsafe fallback for a deny-by-omission auth bit.
- */
-deletable: boolean, created_at: number, updated_at: number, };
-
-/**
- * Card identifier.
- */
-export type CardId = string;
-
-/**
- * Live runtime projection read from `worker_sessions` when a card is fetched or serialized. Not
- * part of the idempotency contract: it may differ between a first POST response and a retry.
- */
-export type CardRuntimeView = { worker_session_id: string, kind: WorkerSessionKind, status: WorkerSessionState, updated_at_ms?: number, provider?: AgentProvider, terminal_id?: string, thread_id?: string, session_id?: string, source?: string, thread_status?: string,
-/**
- * When the card's last non-interrupted turn ended, or absent when it has none.
- */
-last_turn_completed_ms?: number,
-/**
- * A Claude card's child: the first token `claude --version` printed when it was started
- * (#2516). Absent on other runtimes, and when that run gave no answer.
- */
-claude_version?: string, };
-
-export type ConversationCursor = { contract: ConversationReadContract, card_id: string, source: ConversationCursorSource, position: number, };
-
-export type ConversationCursorSource = "presentation" | "historical_raw";
-
-export type ConversationDisplayIdentity = { "kind": "human", message_id: string, } | { "kind": "system", observation_id: string, } | { "kind": "native", thread_id: string, item_id: string, } | { "kind": "imported", provenance: ImportedProvenance, };
-
-export type ConversationDisplayItem = { cursor: ConversationCursor, source: ConversationDisplaySource, };
-
-export type ConversationDisplaySource = { "kind": "human", message_id: string, revision: number, author: ConversationHumanAuthor, text: string, attachments: Array<PlannerAttachment>, created_at_ms: number, delivery_error?: string | undefined, supplemental?: boolean | undefined, message_status?: "queued" | "sending" | "processing" | "completed" | "failed" | "unconfirmed" | undefined, } | { "kind": "system", observation_id: string, presentation: SystemInputPresentation, text: string, created_at_ms: number, } | { "kind": "native", item: HarnessItem, } | { "kind": "imported_item", item: HarnessItem, provenance: ImportedProvenance, } | { "kind": "historical_raw", item: HarnessItem, } | { "kind": "removed", identity: ConversationDisplayIdentity, };
-
-export type ConversationHumanAuthor = { user_id: string, display_name: string, };
-
-export type ConversationLiveReplies = { contract: ConversationReadContract, turn: ConversationLiveTurn | null, };
-
-export type ConversationLiveTurn = { thread_id: string, turn_id: string, items: Array<HarnessLiveReply>, };
-
-export type ConversationReadContract = "conversation_v1";
-
-/**
- * 409 body for the folder-create conflict case.
- */
-export type FolderConflict = { folder_id: number, area_id: AreaId, conflict_path: string, conflict_kind: FolderConflictKind, };
-
-/**
- * Kind of overlap detected by the `POST /api/areas/:area_id/folders` conflict check.
- */
-export type FolderConflictKind = "equal" | "ancestor" | "descendant";
-
-export type GitHubPreview = { kind: GitHubPreviewKind, number: number, title: string, state: GitHubPreviewState, author: string, labels: Array<string>, excerpt: string, changes: GitHubPullChanges | null, };
-
-export type GitHubPreviewKind = "issue" | "pull";
-
-export type GitHubPreviewState = "open" | "closed" | "merged" | "draft";
-
-export type GitHubPullChanges = { additions: number, deletions: number, changed_files: number, };
-
-/**
- * Why a segment was in the turn: the observation that produced it and the event behind it.
- * `queue_entry` binds identity and actual revision as one fact. Legacy or non-user input
- * has no versioned reference, including released origins that omitted this metadata.
- */
-export type HarnessInputOrigin = {
-/**
- * The observation's serde `type` tag, e.g. `task_completed`, `track_wake`, `user_message`.
- */
-observation: string,
-/**
- * The `events.id` that produced the observation (for a folded entry, the newest one);
- * `null` when no event did, e.g. a user message or the Track goal seed.
- */
-event_id: number | null, queue_entry: HarnessQueueEntryRef | null, };
-
-/**
- * How one segment of a harness `userMessage` should be presented to a human. The rendered English
- * is not a protocol: wording changes must not turn a system update into something the UI attributes to the user.
- */
-export type HarnessInputPresentation = "user" | "system" | "system_worker_turn_finished" | "system_report_edited" | "system_task_completed" | "system_task_failed" | "system_mail" | "system_planner_turn_budget" | "system_planner_context_usage";
-
-/**
- * One observation in the exact order and wording sent to `turn/start`.
- */
-export type HarnessInputSegment = { presentation: HarnessInputPresentation, text: string,
-/**
- * The images this segment carried into `turn/start`.
- */
-attachments: Array<PlannerAttachment>,
-/**
- * The queue entry this segment was built from. Every segment a turn issues or a steer
- * delivers carries one. Absent only on rows written before #2206 and on the echo of a
- * turn an older binary had in flight (its segments were restored from that binary's
- * snapshot, which has no queue entry to name). Trusted per-turn budget segments also
- * have no queue entry: their owner is the persisted start attempt.
- */
-origin?: HarnessInputOrigin, };
-
-/**
- * Kernel-owned cause recorded only for a confirmed interrupted turn.
- * This metadata is separate from the provider's original error payload.
- */
-export type HarnessInterruptionReason = "max_turn_duration";
-
-export type HarnessItem = { id: number, worker_session_id: string, card_id: CardId, track_id: TrackId, thread_id: string, turn_id: string | null, item_uuid: string | null, item_type: string | null, method: string, params: string, input_segments?: Array<HarnessInputSegment>, created_at_ms: number,
-/**
- * Readable reason for a `turn/completed` row: the provider's reduced `error.message`, or a
- * confirmed kernel interruption cause when the provider gives no readable message. `params`
- * retains the raw provider error and kernel cause metadata. `null` without a readable reason.
- */
-turn_error_text: string | null, };
-
-/**
- * `GET /api/cards/{id}/harness/live`: reply text the running turn is streaming and has not stored
- * yet (#1923). Each item leaves this answer once its `item/completed` row is in the transcript.
- */
-export type HarnessLiveReplies = {
-/**
- * The turn the items belong to: the turn that started last, until it ends with nothing left to
- * store; `null` before any turn of this harness and after one that ended so. A turn that ends
- * without settling (`turn/aborted`, an interrupt that times out and wedges) or whose partial
- * reply failed to store keeps its id here, with the replies it still holds, until the next turn
- * starts.
- */
-turn_id: string | null, items: Array<HarnessLiveReply>, };
-
-/**
- * One reply as far as it has streamed.
- */
-export type HarnessLiveReply = {
-/**
- * The `item.id` its `item/completed` row will carry as `item_uuid`.
- */
-item_id: string, text: string, };
-
-export type HarnessPhaseTag = "pending_thread_start" | "idle" | "issuing_turn" | "compacting" | "issuing_interrupt" | "turn_running" | "turn_completed" | "resumed" | "wedged";
-
-/**
- * The actual addressable queue entry and the revision its input was built from.
- */
-export type HarnessQueueEntryRef = { id: string, rev: number, };
-
-/**
- * Written exclusively at the kernel terminal-outcome boundary after confirmation.
- */
-export type HarnessTimeoutEvidence = { "version": "v1", request: HarnessTimeoutRequest, ended_at_ms: number, };
-
-/**
- * All facts are sampled by the watchdog before issuing the interrupt.
- */
-export type HarnessTimeoutRequest = { session_id: string, card_id: string, track_id: string, thread_id: string, turn_id: string, reason: HarnessInterruptionReason, requested_at_ms: number, effective_elapsed_ms: number, budget_ms: number, };
-
-/**
- * Immutable body-free facts, not an authenticated input origin. Digest v1 is
- * SHA-256 of JSON serialization of (original params string, nullable original
- * input_segments string); null and an empty array remain distinct.
- */
-export type ImportedProvenance = { "kind": "unknown_legacy", original_row_id: number, worker_session_id: string, card_id: string, track_id: string, thread_id: string, turn_id: string | null, item_uuid: string | null, item_type: string | null, method: string, created_at_ms: number, original_digest: string, import_boundary_sequence: number, };
-
-export type KeepConversationInputRequest = { carrier_id: string, submission_id: string, attempt_id: string,
-/**
- * Exact decimal revision from the run read, never a JavaScript number.
- */
-revision: string, };
-
-/**
- * The candidates for one query, best first within each group.
- */
-export type MentionCandidates = { tags: Array<TagMention>, tracks: Array<TrackMention>, blocks: Array<BlockMention>, };
-
-export type Overlay = { id: string, plugin_id: string,
-/**
- * `"track"` or `"card"`.
- */
-entity_kind: string, entity_id: string,
-/**
- * Plugin-defined string. Kernel does not interpret.
- */
-kind: string,
-/**
- * Opaque JSON blob.
- */
-payload: unknown, updated_at: number, };
-
-/**
- * One attachment as the frontend sees it in a queue entry or a transcript segment.
- */
-export type PlannerAttachment = { id: AttachmentId,
-/**
- * Derived from `id`, never stored separately.
- */
-contentType: string, size: number,
-/**
- * Where to read the bytes; derived by [`attachment_url`]. The server's host path is NOT here and must not be.
- */
-url: string, };
-
-/**
- * What a Planner card's provider may do outside its sandbox (#2348, #2441): nothing, what the
- * person allows when asked, or anything, with no sandbox at all. Stored on the card as the server-owned payload key `permission_mode`; new Planner
- * cards use their ACP registration’s declared default, or `never` without one; delegated children inherit their parent’s mode. Only `PUT /api/cards/{id}/planner/permission-mode` changes it.
- */
-export type PlannerPermissionMode = string;
-
-/**
- * One target's receipt. `readThroughMs` only rises; `manualUnread` is the reader's explicit
- * "mark unread", cleared by the next mark read.
- */
-export type ReadReceipt = { kind: ReadReceiptKind, targetId: string, readThroughMs: number, manualUnread: boolean, };
-
-/**
- * What a receipt is about: a track, or one conversation. A closed set, checked by the table too.
- */
-export type ReadReceiptKind = "track" | "conversation";
-
-/**
- * `GET /api/read-receipts`: the cutover baseline (activity at or before it is read) and every
- * stored receipt.
- */
-export type ReadReceipts = { baselineMs: number, receipts: Array<ReadReceipt>, };
-
-/**
- * Where a body came from. Stored verbatim as the row's `origin` column.
- */
-export type SourceOrigin = { "kind": "plugin", plugin_id: string, tool: string, args_sha256: string,
-/**
- * Canonicalization version behind `args_sha256` (`v1`: compact serde_json text with sorted keys).
- */
-args_canon: string, content_id?: string, } | { "kind": "manual", url?: string, content_id?: string, };
-
-/**
- * What the body *is*: the Planner's declaration, page-visible. `manual` bodies are the Planner's
- * own and are marked as not kernel-verified.
- */
-export type SourceProvenance = "full_text" | "summary" | "web_page" | "manual";
-
-/**
- * One anchor of a source: `text` is a byte-exact substring of the body (`body[start..end]`, UTF-8 byte offsets).
- */
-export type SourceQuote = { id: string, text: string, start: number, end: number, };
-
-export type SystemInputPresentation = Exclude<HarnessInputPresentation, 'user'>;
-
-/**
- * A report tag of the area; `insert` is ``@`tag:<tag>` ``.
- */
-export type TagMention = {
-/**
- * The tag.
- */
-label: string,
-/**
- * How many of the area's reports carry the tag.
- */
-track_count: number, insert: string, };
-
-export type Track = { id: TrackId, area_id: AreaId, title: string, sort: number, pinned_at: number | null,
-/**
- * Unix-ms time the track was closed, or `None` while it is open. Closed tracks do not schedule.
- */
-closed_at: number | null,
-/**
- * Unix-ms time a person granted Area admin authority; absent on historical events.
- */
-admin_granted_at: number | null,
-/**
- * Wire-compatibility alias of `workspace.path`, serialized as `cwd`; Rust readers must use `workspace.path`.
- */
-cwd: string,
-/**
- * Currently selected Track working method. Switching preserves authored Report content.
- */
-template_id: string | null,
-/**
- * The plugin owning the selected working method. Earlier owners retain manifest-bound grants.
- */
-plugin_scope: string | null,
-/**
- * Server-owned structural marker. Public track creation cannot set this.
- */
-purpose: string | null,
-/**
- * Template input is validated at creation and otherwise remains opaque.
- */
-template_input: unknown,
-/**
- * The user recipe ([`TrackRecipe`]) this track was instantiated from; may name a recipe that no longer exists.
- */
-recipe_id: string | null,
-/**
- * The recipe's `revision` at the moment this track was created.
- */
-recipe_revision: number | null,
-/**
- * The Track whose Planner created this one as a top-level Track; `None` for every other
- * creation. May name a Track that no longer exists.
- */
-creator_track_id: string | null,
-/**
- * The raw idempotency key that creator passed; set exactly when `creator_track_id` is.
- */
-creator_key: string | null, workspace: TrackWorkspace, created_at: number, updated_at: number, };
-
-/**
- * Track identifier.
- */
-export type TrackId = string;
-
-/**
- * A report of the area; `insert` is ``@`/AreaName/TrackName/report.md` ``, the path `neige cat` reads.
- */
-export type TrackMention = {
-/**
- * The track title.
- */
-label: string, track_id: TrackId, insert: string, };
-
-/**
- * A captured source with its body: the raw text the kernel stored, verbatim.
- */
-export type TrackSourceDetail = { source_id: string, provenance: SourceProvenance, origin: SourceOrigin, title: string, published_at?: string, content_id?: string, url?: string, body_bytes: number, body_sha256: string, captured_at: string, quotes: Array<SourceQuote>, body: string, };
-
-/**
- * Transport wrapper; never used for database events or operation payloads.
- */
-export type TrackWire = Track & { workspace: TrackWorkspaceWire };
-
-/**
- * A track's typed workspace. `path` is its single stored path.
- */
-export type TrackWorkspace = { kind: TrackWorkspaceKind,
-/**
- * Absolute path.
- */
-path: string,
-/**
- * One-shot, monotonic. `Some` ⇒ neither `path` nor `kind` may change again. The system-area
- * launchpad stays unfrozen because it is repointed.
- */
-frozen_at: number | null,
-/**
- * The kernel-made git worktree (`<repo_root>/.claude/worktrees/track-<id>`, branch
- * `neige/track-<id>`) an attached track's conversation agents run in. `None` for managed,
- * child and pre-#1830 attached tracks, which run in `path`.
- */
-worktree?: string, };
-
-/**
- * Ownership must be explicit because only managed workspaces may be recycled.
- */
-export type TrackWorkspaceKind = "managed" | "attached";
-
-export type TrackWorkspaceWire = { isolation: WorkspaceIsolation, kind: TrackWorkspaceKind,
-/**
- * Absolute path.
- */
-path: string,
-/**
- * One-shot, monotonic. `Some` ⇒ neither `path` nor `kind` may change again. The system-area
- * launchpad stays unfrozen because it is repointed.
- */
-frozen_at: number | null,
-/**
- * The kernel-made git worktree (`<repo_root>/.claude/worktrees/track-<id>`, branch
- * `neige/track-<id>`) an attached track's conversation agents run in. `None` for managed,
- * child and pre-#1830 attached tracks, which run in `path`.
- */
-worktree?: string, };
-
-/**
- * `201` body of `POST /api/cards/{id}/planner/attachments`.
- */
-export type UploadAttachmentResponse = { attachmentId: AttachmentId, contentType: string, size: number,
-/**
- * Absolute REST path the browser reads the bytes back from. Durable only once the attachment is
- * bound: a staged upload never sent is swept after the 24h orphan TTL, after which this path answers 400.
- */
-url: string, };
-
-export type WorkerSessionKind = "terminal" | "managed-assistant";
-
-/**
- * Session state machine column (`worker_sessions.state`).
- */
-export type WorkerSessionState = "starting" | "running" | "idle" | "turn_pending" | "exited" | "failed" | "superseded";
-
-/**
- * The decoded isolation of a track. This is derived, never stored separately.
- */
-export type WorkspaceIsolation = "managed" | "worktree" | "none";
-
-export type TodayCalendar = { today: string, time_zone: string, start: string, end: string, days: Array<TodayCalendarDay>, schedules: Array<TodayScheduleItem>, };
-
-export type TodayCalendarDay = { date: string, has_daily_track: boolean, has_report: boolean, };
-
-export type TodayScheduleItem = { id: string, date: string, track_id: string, track_title: string, title: string, schedule_kind: "once" | "cron", cron_expr: string | null, timezone: string, next_fire_at_ms: number, state: string, };
-
-export type ReportChangesPage = { date: string, timezone: string, through_event_id: number, changes: Array<ReportChange>, next_cursor: string | null, };
-
-export type ReportChange = { track_id: string, track_title: string, area_id: string, area_name: string, edit_count: number, first_event_id: number, last_event_id: number, summary_before: string, summary_after: string, patch: string, patch_truncated: boolean, };
-
-export type ReportEditsPage = { edits: Array<ReportEditEntry>, next_cursor: string | null, };
-
-export type ReportEditEntry = { event_id: number, at: number, edit: ReportEdit, };
-
-export type ReportEdit = { track_id: string, edit_id: string, summary_before: string, summary_after: string, body_before: string, body_after: string, };
-
-export type BootstrapDto = import('../perga-v1.js').BootstrapDto;
-
-export type AreaDto = import('../perga-v1.js').AreaDto;
-
-export type TrackWorkspaceOptionsDto = import('../perga-v1.js').TrackWorkspaceOptionsDto;
-
-export type TrackAggregateSnapshotDto = import('../perga-v1.js').TrackAggregateSnapshotDto;
-
-export type TrackDto = import('../perga-v1.js').TrackDto;
-
-export type TrackTemplateSnapshot = import('zod').infer<typeof import('../perga-v1.js').trackTemplateSnapshotSchema>;
-
-export type WorkspaceFileResultDto = import('../perga-v1.js').WorkspaceFileResultDto;
-
-export type DiffSummaryDto = import('../perga-v1.js').DiffSummaryDto;
-
-export type ReportReadResultDto = import('../perga-v1.js').ReportReadResultDto;
-
-export type SessionCreationReceipt = import('../perga-v1.js').SessionCreationReceipt;
-
-export type SessionItemsPageDto = import('../perga-v1.js').SessionItemsPageDto;
-
-export type AgentRuntimeStatusDto = import('../perga-v1.js').AgentRuntimeStatusDto;
-
-export type AgentRuntimeTaskDto = import('../perga-v1.js').AgentRuntimeTaskDto;
-
-export type SessionMessageReceipt = import('zod').infer<typeof import('../perga-v1.js').sessionMessageReceiptSchema>;
-
-export type TerminalDto = import('../perga-v1.js').TerminalDto;
-
-export type HostDirListDto = import('../perga-v1.js').HostDirListDto;
-
-export type OverlaysListDto = import('../perga-v1.js').OverlaysListDto;
-
-export type TaskDto = import('../perga-v1.js').TaskDto;
-
-export type AgentSessionDto = import('../perga-v1.js').AgentSessionDto;
-
-export type SystemInfoDto = { releaseId: string; webBuildId: string; hostBuildId: string; bridgeBuildId: string; schemaVersion: number; draining: boolean; activeDispatches: number };
-
-export type SystemDrainResponse = { draining: boolean; activeDispatches: number };
-
-export type SystemReloadResponse = { releaseId: string; webBuildId: string };
-
-export type SessionInteractionResult = import('zod').infer<typeof import('../perga-v1.js').sessionInteractionResultSchema>;
-
-export type ReadReceiptsResponseDto = ReadReceipts;
-
-export type ReadReceiptDto = ReadReceipt;
+// Generated by npm run gen:api from the real Host endpoint table. Do not edit.
+
+export type AgentCompactionDto = { "requestId": string; "started": boolean | null };
+export type AgentIdleActivityDto = { "lastEventAt": number; "since": number };
+export type AgentPendingPromptDto = { "inputId": string; "requestId": string | null; "sinceSeq": number; "stop": AgentStopEvidenceDto | null };
+export type AgentRuntimeStatusDto = { "compaction": AgentCompactionDto | null; "idleActivity": AgentIdleActivityDto | null; "inputId": string | null; "kind": string; "lastTurnOutcome": AgentTurnOutcomeDto | null; "pendingPrompt": AgentPendingPromptDto | null; "phase": string | null; "released": boolean | null; "requestId": string | null; "sinceSeq": number | null; "stop": AgentStopEvidenceDto | null; "toolCallId": string | null; "toolName": string | null; "writing": boolean | null };
+export type AgentRuntimeTaskDto = { "ambient": boolean | null; "background": boolean | null; "childSessionId": string | null; "description": string | null; "error": string | null; "nativeType": string | null; "outputFile": string | null; "seq": number | null; "status": string | null; "summary": string | null; "taskId": string; "taskType": string | null; "toolCallId": string | null; "ts": number | null };
+export type AgentSessionDto = { "archivedAtMs": number | null; "configVersion": number; "contextUsage": SessionContextUsage | null; "createdAtMs": number; "epoch": number; "id": string; "isLead": boolean; "lastNotifiableTurnAtMs": number | null; "model": string | null; "nativeThreadId": string | null; "notifyParent": string; "parentSessionId": string | null; "permissionMode": string | null; "provider": string; "reasoningEffort": string | null; "reconnectInvalidated": boolean; "spawnDepth": number; "status": string; "systemPrompt": string | null; "title": string | null; "trackId": string; "unknownLastError": string | null; "unknownReason": string | null; "unknownTurnId": string | null; "updatedAtMs": number };
+export type AgentStopEvidenceDto = { "abortedOnExit": boolean; "pendingAbortIds": Array<string> };
+export type AgentTurnOutcomeDto = { "credential": string | null; "failure": string | null; "kind": string; "rateLimitType": string | null; "reason": string | null; "resetsAt": string | null; "status": number | null; "structuredOutput": unknown | null };
+export type ApiErrorResponse = { "code": string; "error": string; "nextStep": string | null };
+export type ApprovalChoiceDto = { "id": string; "isApproval": boolean; "label": string };
+export type ApprovalDto = { "arguments": unknown | null; "createdAtMs": number; "delegateSessionId": string | null; "executionId": string; "id": string; "options": Array<ApprovalChoiceDto>; "sessionId": string; "source": string; "title": string; "toolName": string | null; "turnId": string | null };
+export type AreaDto = { "color": string; "createdAtMs": number; "defaultCwd": string | null; "executionTargetId": string; "folders": Array<string>; "id": string; "name": string; "sortOrder": number; "updatedAtMs": number };
+export type AskDto = { "answer": unknown | null; "answeredAtMs": number | null; "createdAtMs": number; "delivery": "wake" | "hold"; "id": string; "questions": Array<AskQuestionDto>; "sessionId": string | null; "status": "open" | "answered" | "withdrawn"; "targetSessionId": string | null; "trackId": string; "turnId": string | null };
+export type AskQuestionDto = { "isMultiSelect": boolean; "options": Array<string>; "question": string };
+export type BootstrapDto = { "areas": Array<AreaDto>; "authRequired": boolean; "databaseId": string; "dbInstanceId": string; "executionTargets": Array<ExecutionTargetDto> | null; "providers": Array<ProviderStatus>; "templates": Array<CompiledTemplateManifest>; "version": string };
+export type CancelTaskHttpBody = { "reason"?: string | null };
+export type CheckpointSpec = { "access": string | null; "dependsOn": Array<string> | null; "docPath": string | null; "id": string; "role": string | null; "title": string };
+export type CompiledTemplateManifest = { "afterWorkerDoneCmd": string | null; "checkpoints": Array<CheckpointSpec> | null; "defaultPlugins": Array<string>; "description": string | null; "extends": string | null; "flow": unknown; "hasHeaderView": boolean; "humanReadOnly": boolean; "id": string; "initialReportMarkdown": string; "inputsSchema": unknown; "maxProseChars": number | null; "requireGateForReadWrite": boolean; "routing": Array<TaskRoutingRule>; "sections": Array<SectionRule>; "title": string; "viewNames": Array<string> | null; "workspaceCloseCmd": string | null; "workspaceCreateCmd": string | null; "workspaceDriver": string | null; "workspaceLowerCacheDirs": Array<string> };
+export type CreateAreaRequest = { "color"?: string | null; "defaultCwd"?: string | null; "executionTargetId"?: string | null; "folders"?: Array<string> | null; "name": string; "sortOrder"?: number | null };
+export type CreateExecutionTargetRequest = { "host"?: string | null; "identityFile"?: string | null; "label"?: string | null; "port"?: number | null; "target"?: string | null; "user"?: string | null; "workspacesRoot"?: string | null };
+export type CreateSessionRequest = { "model"?: string | null; "notifyParent"?: string | null; "permissionMode"?: string | null; "prompt"?: string | null; "provider"?: string | null; "reasoningEffort"?: string | null; "systemPrompt"?: string | null; "title"?: string | null };
+export type CreateTrackRequest = { "areaId": string; "baseRevision"?: string | null; "cwd"?: string | null; "enabledPlugins"?: Array<string> | null; "executionTargetId"?: string | null; "model"?: string | null; "parentAttemptId"?: string | null; "parentTrackId"?: string | null; "permissionMode"?: string | null; "provider"?: string | null; "reasoningEffort"?: string | null; "sortOrder"?: number | null; "templateId"?: string | null; "templateInputs"?: unknown | null; "title"?: string | null; "workspaceDriver"?: string | null; "workspaceOptionId"?: string | null };
+export type DailyReportChangeDto = { "areaId": string; "areaName": string; "editCount": number; "firstEventId": number; "lastEventId": number; "patch": string; "patchTruncated": boolean; "summaryAfter": string; "summaryBefore": string; "trackId": string; "trackTitle": string };
+export type DailyReportChangesPageDto = { "changes": Array<DailyReportChangeDto>; "date": string; "nextCursor": string | null; "throughEventId": number; "timezone": string };
+export type DailyReportEditDto = { "bodyAfter": string; "bodyBefore": string; "editId": string; "summaryAfter": string; "summaryBefore": string; "trackId": string };
+export type DailyReportEditEntryDto = { "at": number; "edit": DailyReportEditDto; "eventId": number };
+export type DailyReportEditsPageDto = { "edits": Array<DailyReportEditEntryDto>; "nextCursor": string | null };
+export type DailyTrackDto = { "date": string; "timeZone": string; "trackId": string };
+export type DiffSummary = { "changedFiles": Array<string>; "diffText": string; "files": Array<VcsDiffFileDto>; "truncated": boolean };
+export type ExecutionTargetDto = { "destination": string | null; "id": string; "isDefault": boolean; "kind": string; "label": string; "removable": boolean };
+export type FlowArchivedNodeProjectionDto = { "archivedAtMs": number; "doKind": string; "finishedAtMs": number | null; "id": string; "model": string | null; "outcome": string; "outcomeSummary": string | null; "runCount": number; "sessionId": string | null; "status": string; "title": string };
+export type FlowCommitRequest = { "content"?: string | null; "dryRun"?: boolean | null; "expectedFlowRev"?: number | null };
+export type FlowCommitResultDto = { "diagnostics": Array<FlowValidationErrorDto>; "dryRun": boolean; "flow": FlowProjectionDto; "flowRev": number; "ok": boolean; "plan": FlowPlanDiffDto };
+export type FlowDependencyProjectionDto = { "node": string; "on": string };
+export type FlowGateCheckProjectionDto = { "command": string | null; "detail": string | null; "label": string; "output": string | null; "status": string };
+export type FlowNodeProjectionDto = { "access": string | null; "after": Array<FlowDependencyProjectionDto>; "at": string | null; "canceled": boolean; "cmd": string | null; "cron": string | null; "doKind": string; "finishedAtMs": number | null; "firedCount": number; "gate": string | null; "gates": Array<FlowGateCheckProjectionDto>; "id": string; "lastFiredAtMs": number | null; "model": string | null; "nextFireAtMs": number | null; "outcome": string; "outcomeSummary": string | null; "prompt": string | null; "provider": string | null; "role": string | null; "runCount": number; "sessionId": string | null; "source": string; "startedAtMs": number | null; "status": string; "targetSession": string | null; "title": string; "tz": string | null; "waitingOn": Array<string>; "watchProgress": FlowWatchProgressDto | null; "whenKind": string };
+export type FlowPlanDiffDto = { "added": Array<string>; "archived": Array<string>; "canceled": Array<string>; "unchanged": Array<string>; "updated": Array<string> };
+export type FlowProjectionDto = { "archived": Array<FlowArchivedNodeProjectionDto>; "filePath": string | null; "nodes": Array<FlowNodeProjectionDto>; "rev": number };
+export type FlowSnapshotDto = { "filePath": string | null; "flowRev": number; "projection": FlowProjectionDto; "spec": unknown };
+export type FlowValidationErrorDto = { "message": string; "path": string; "suggestion": string | null };
+export type FlowWatchProgressDto = { "detail": string | null; "label": string; "lastCheckedAtMs": number | null; "passedChecks": number | null; "probeKind": string; "startedAtMs": number | null; "timeoutAtMs": number | null; "totalChecks": number | null };
+export type GateSpecDto = { "steps": Array<GateStepDto>; "timeoutSecs": number };
+export type GateStepDto = { "cmd": string; "name": string };
+export type HealthStatus = { "service": string; "status": string };
+export type HostDirEntryDto = { "isDir": boolean; "isSymlink": boolean; "name": string };
+export type HostListDirResultDto = { "entries": Array<HostDirEntryDto>; "parent": string | null; "path": string };
+export type LoginRequest = { "password": string | null; "username": string | null };
+export type MarkReadRequest = { "readThroughMs"?: number | null };
+export type NotifiableSessionWatermarkDto = { "lastNotifiableTurnAtMs": number; "sessionId": string };
+export type OpenTerminalRequest = { "args"?: Array<string> | null; "cols"?: number; "cwd"?: string | null; "env"?: { [key: string]: string } | null; "idempotencyKey"?: string | null; "program"?: string | null; "rows"?: number; "title"?: string | null };
+export type PatchAreaRequest = { "clearDefaultCwd"?: boolean; "color"?: string | null; "defaultCwd"?: string | null; "executionTargetId"?: string | null; "folders"?: Array<string> | null; "name"?: string | null; "sortOrder"?: number | null };
+export type PatchTrackRequest = { "closed"?: boolean | null; "enabledPlugins"?: Array<string> | null; "leadSessionId"?: string | null; "pinned"?: boolean | null; "sortOrder"?: number | null; "title"?: string | null };
+export type PendingInteractionDto = { "arguments": unknown | null; "canRespond": boolean; "createdAtMs": number; "executionId": string | null; "id": string; "kind": string; "options": Array<ApprovalChoiceDto> | null; "questions": Array<AskQuestionDto> | null; "sessionId": string; "title": string; "toolName": string | null; "turnId": string | null };
+export type PermissionModeOption = { "description": string; "id": string; "isDefault": boolean; "label": string; "tone": string };
+export type ProviderModelEffort = { "description": string; "reasoningEffort": string };
+export type ProviderModelInfo = { "defaultReasoningEffort": string | null; "description": string; "displayName": string; "isDefault": boolean; "model": string; "supportedReasoningEfforts": Array<ProviderModelEffort> };
+export type ProviderStatus = { "available": boolean; "modelCatalog": Array<ProviderModelInfo> | null; "models": Array<string>; "permissionModes": Array<PermissionModeOption> | null; "provider": string; "reason": string | null; "version": string | null };
+export type QueuedSessionMessageDto = { "id": string; "queuedAtMs": number; "state": string; "text": string };
+export type ReadAnchor = { "docRev": number; "knownBlockRevs": { [key: string]: number }; "wholeDocumentRead": boolean };
+export type ReadReceiptDto = { "kind": string; "manualUnread": boolean; "readThroughMs": number; "targetId": string };
+export type ReadReceiptsResponseDto = { "baselineMs": number; "receipts": Array<ReadReceiptDto> };
+export type ReportBlock = { "id": string; "kind": "prose" | "task" | "html" | "table" | "view" | "checkpoints" | "widget"; "markdown": string | null; "payload": unknown | null; "rev": number; "sectionH1": string | null };
+export type ReportDiagnosticDto = { "blockId": string | null; "code": string; "message": string; "severity": string };
+export type ReportDocument = { "blocks": Array<ReportBlock>; "docRev": number; "leadingComment": string; "summary": string };
+export type ReportReadResult = { "anchor": ReadAnchor; "blocks": Array<ReportBlock>; "dataRev"?: number | null; "diagnostics": Array<ReportDiagnosticDto>; "docRev": number; "renderedMarkdown": string; "summary": string; "tasks": Array<TaskDto> };
+export type RespondInteractionRequest = { "answers"?: unknown | null; "executionId"?: string | null; "optionId"?: string | null };
+export type SectionRule = { "editableBy": Array<string> | null; "h1": string; "omitIfEmpty": boolean };
+export type SendSessionMessageRequest = { "content"?: string | null; "expectedEpoch"?: number | null; "messageId"?: string | null; "mode"?: string; "requestKey"?: string | null; "turnId"?: string | null };
+export type SessionActivityDto = { "events": Array<WorkerActivityEvent>; "reset": boolean; "sequence": number; "text": string; "truncated": boolean; "turnId": string | null };
+export type SessionCapabilitiesDto = { "defaultModel": string | null; "defaultReasoningEffort": string | null; "models": Array<WorkerModelOption>; "permissionModes": Array<PermissionModeOption>; "supportsCompact": boolean; "supportsNativeSteer": boolean; "supportsSessionResume": boolean };
+export type SessionContextUsage = { "observedAtMs": number; "ratio": number | null; "usedTokens": number; "windowTokens": number | null };
+export type SessionControlRequest = { "action": string; "expectedEpoch"?: number | null; "turnId"?: string | null };
+export type SessionCreationReceipt = { "firstInput": SessionInputReceipt | null; "requestKey": string | null; "session": AgentSessionDto };
+export type SessionIdentityDto = { "displayName": string; "expiresAtMs": number; "role": string; "sessionId": string; "userId": string; "username": string };
+export type SessionInputReceipt = { "deliveryState": string; "inputId": string; "messageId": string; "resolvedAtMs": number | null; "sessionId": string; "turnId": string; "turnStatus": string };
+export type SessionInteractionResult = { "id": string; "kind": string };
+export type SessionItemDto = { "createdAtMs": number; "id": number; "kind": string; "messageStatus": string | null; "payload": unknown; "sessionId": string; "turnId": string | null };
+export type SessionItemsPageDto = { "activeTurn": SessionTurnDto | null; "activity": SessionActivityDto | null; "canReopen": boolean; "canSteer": boolean; "capabilities": SessionCapabilitiesDto | null; "hasMoreBefore": boolean; "items": Array<SessionItemDto>; "lastTurn": SessionTurnDto | null; "pendingInteractions": Array<PendingInteractionDto> | null; "permissionModes": Array<PermissionModeOption> | null; "queueHandoffIds": Array<string>; "queuedMessages": Array<QueuedSessionMessageDto>; "readonlyReason": string | null; "runtimeStatus": AgentRuntimeStatusDto | null; "runtimeTasks": Array<AgentRuntimeTaskDto> | null; "session": AgentSessionDto; "state": string; "taskBinding": SessionTaskBindingDto | null; "unknownDetail": SessionUnknownDetailDto | null; "workerPaused": boolean };
+export type SessionMessageReceipt = { "delivery": string; "messageId": string; "replay": boolean; "sessionId": string; "turnId": string | null };
+export type SessionSummaryDto = { "lastTurn": SessionTurnDto | null; "pendingInteractionCount": number; "readonlyReason": string | null; "session": AgentSessionDto; "state": string; "taskId": string | null; "workerPaused": boolean };
+export type SessionTaskBindingDto = { "phase": string; "task": TaskDto; "waitingReason": string | null };
+export type SessionTurnDto = { "completedAtMs": number | null; "epoch": number; "errorText": string | null; "id": string; "input": unknown; "sessionId": string; "startedAtMs": number | null; "status": string; "triggerKind": string; "turnIndex": number; "usage": unknown | null; "userItemId": number | null };
+export type SessionUnknownDetailDto = { "canReconnect": boolean; "canResetContext": boolean; "detail": string; "lastError": string | null; "reason": string; "recovering": boolean };
+export type SystemAuthStatusDto = { "activeSessions": number; "configured": boolean; "disabled": boolean; "displayName": string | null; "schemaVersion": number; "username": string | null };
+export type SystemDrainRequest = { "draining": boolean };
+export type SystemDrainResponse = { "activeDispatches": number; "draining": boolean };
+export type SystemInfoDto = { "activeDispatches": number; "bridgeBuildId": string; "draining": boolean; "hostBuildId": string; "releaseId": string; "schemaVersion": number; "webBuildId": string };
+export type SystemReloadRequest = { "releaseId": string; "webBuildId": string };
+export type SystemReloadResponse = { "releaseId": string; "webBuildId": string };
+export type TaskDto = { "acceptance": string | null; "access": "read_only" | "read_write"; "archivedAtMs": number | null; "blockId": string; "context": unknown | null; "createdAtMs": number; "dependsOn": Array<string>; "finishedAtMs": number | null; "gate": GateSpecDto | null; "gateVerdict": unknown | null; "generation": number; "goalOrCmd": string; "id": string; "kind": string; "meta": unknown | null; "outcome": "none" | "ok" | "attention" | "blocked"; "outcomeSummary": string | null; "provider": string | null; "ready": boolean; "role": string | null; "runCount": number; "semanticNote": string | null; "semanticVerdict": "none" | "accepted" | "rejected"; "sessionId": string | null; "startedAtMs": number | null; "status": "draft" | "pending" | "running" | "verifying" | "done" | "failed" | "canceled"; "statusDetail": string | null; "taskKey": string; "trackId": string; "triggerRunKey": string | null; "updatedAtMs": number; "workerResult": unknown | null };
+export type TaskRoutingRule = { "enforce": boolean; "model": string | null; "provider": string | null; "targetAccess": string | null; "when": TaskRoutingWhen };
+export type TaskRoutingWhen = { "access": string | null; "role": string | null };
+export type TemplateHeaderBadgeDto = { "label": string; "tone": string | null };
+export type TemplateHeaderMetricDto = { "delta": string | null; "label": string; "spark": Array<number> | null; "sub": string | null; "tone": string | null; "value": string };
+export type TemplateHeaderNoticeDto = { "text": string; "tone": string | null };
+export type TemplateHeaderRuleDto = { "label": string; "text": string };
+export type TemplateHeaderViewDto = { "badges": Array<TemplateHeaderBadgeDto> | null; "metrics": Array<TemplateHeaderMetricDto> | null; "notice": TemplateHeaderNoticeDto | null; "rules": Array<TemplateHeaderRuleDto> | null };
+export type TemplateViewDiagnostic = { "message": string; "view": string };
+export type TemplateViewsProjection = { "dataRev": number; "diagnostics": Array<TemplateViewDiagnostic>; "flow": unknown | null; "flowRev": number; "humanReadOnly": boolean; "templateId": string; "views": { [key: string]: unknown }; "widgets": { [key: string]: string } };
+export type TerminalDto = { "createdAtMs": number; "cwd": string; "exitCode": number | null; "exitedAtMs": number | null; "id": string; "idempotencyKey": string | null; "program": string | null; "sessionId": string | null; "status": "running" | "exited"; "title": string; "trackId": string };
+export type TodayCalendarDayDto = { "date": string; "hasDailyTrack": boolean; "hasReport": boolean };
+export type TodayCalendarDto = { "days": Array<TodayCalendarDayDto>; "end": string; "schedules": Array<TodayScheduleItemDto>; "start": string; "timeZone": string; "today": string };
+export type TodayScheduleItemDto = { "cronExpr": string | null; "date": string; "id": string; "nextFireAtMs": number; "scheduleKind": string; "state": string; "timezone": string; "title": string; "trackId": string; "trackTitle": string };
+export type TrackAggregateSnapshot = { "openAsks": Array<AskDto>; "pendingApprovals": Array<ApprovalDto>; "report": ReportDocument; "sessions": Array<AgentSessionDto>; "tasks": Array<TaskDto>; "templateSnapshotSource": string | null; "track": TrackDto; "workspacePreparation": string | null };
+export type TrackDataPatchResult = { "data": unknown; "dataRev": number; "ok": boolean };
+export type TrackDto = { "areaId": string; "closedAtMs": number | null; "createdAtMs": number; "cwd": string; "data": unknown; "dataRev": number; "enabledPlugins": Array<string>; "executionTargetId": string; "flowFileSha256": string | null; "flowRev": number; "flowSpecJson": string | null; "id": string; "leadSessionId": string | null; "parentAttemptId": string | null; "parentTrackId": string | null; "pinnedAtMs": number | null; "sortOrder": number; "templateHeaderView": TemplateHeaderViewDto | null; "templateId": string | null; "templateInputs": unknown; "templateState": unknown; "templateTitle": string | null; "title": string; "updatedAtMs": number; "workspaceDriver": string; "workspaceSpec": unknown };
+export type TrackOverlayDto = { "areaId": string; "hasBlockedSession": boolean; "isWorking": boolean; "notifiableSessions": Array<NotifiableSessionWatermarkDto> | null; "openAskCount": number; "pendingApprovalCount": number; "trackId": string; "updatedAtMs": number; "workspaceFailed": boolean };
+export type TrackOverlaysResponseDto = { "tracks": Array<TrackOverlayDto> };
+export type TrackWorkspaceOptionDto = { "description": string; "id": string; "label": string };
+export type TrackWorkspaceOptionsDto = { "defaultId": string | null; "options": Array<TrackWorkspaceOptionDto> };
+export type UpdateSessionRequest = { "archived"?: boolean | null; "expectedConfigVersion"?: number | null; "model"?: string | null; "permissionMode"?: string | null; "provider"?: string | null; "reasoningEffort"?: string | null; "title"?: string | null };
+export type VcsDiffFileDto = { "headText": string | null; "isBinary": boolean; "patch": string; "path": string; "status": string; "workingText": string | null };
+export type WorkerActivityEvent = { "createdAtMs": number; "kind": string; "payload": unknown; "sequence": number };
+export type WorkerModelOption = { "defaultReasoningEffort": string | null; "id": string; "name": string; "reasoningEfforts": Array<string> };
+export type WorkspaceFileEntryDto = { "isDirectory": boolean; "name": string; "relativePath": string; "sizeBytes": number };
+export type WorkspaceFileResultDto = { "content": string | null; "entries": Array<WorkspaceFileEntryDto> | null; "isBinary": boolean; "isDirectory": boolean; "relativePath": string; "truncated": boolean };

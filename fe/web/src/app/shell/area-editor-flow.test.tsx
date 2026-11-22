@@ -211,7 +211,7 @@ describe('AppShell Area editor flow', () => {
 
   const tooLarge = () => ({ status: 413, statusText: 'Payload Too Large', body: 'request too large' });
   const success = () => ({ status: 201, statusText: 'Created', body: {
-    id: 'new', name: 'Corrected', color: '#5B8DEF', sort: 1, kind: 'user', created_at: 1, updated_at: 1,
+    id: 'new', name: 'Corrected', color: '#5B8DEF', sortOrder: 1, kind: 'user', createdAtMs: 1, updatedAtMs: 1,
   } });
 
   it('releases a first create 413 and submits the corrected body under a new key', async () => {

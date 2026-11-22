@@ -1,4 +1,4 @@
-import type { AgentProvider } from '../api/schemas.ts';
+
 
 /**
  * Legacy Planner presentation only; managed groups use the declared provider identifier.
@@ -8,7 +8,7 @@ import type { AgentProvider } from '../api/schemas.ts';
  * Codex one stays while the daemon is down, saying so. Only codex compacts (`switchNote`).
  * The host supplies the server's blank-creation capability only on the new-track surface.
  */
-export const PROVIDER_PRESENTATION: Readonly<Record<AgentProvider, Readonly<{
+export const PROVIDER_PRESENTATION: Readonly<Record<string, Readonly<{
   label: string; unavailable: string; hiddenUntilKnown: boolean; switchNote: boolean;
 }>>> = Object.freeze({
   codex: Object.freeze({
@@ -31,3 +31,12 @@ export const PROVIDER_PRESENTATION: Readonly<Record<AgentProvider, Readonly<{
     switchNote: false,
   }),
 });
+
+/** Resolve known product labels without changing the runtime provider identity. */
+export function providerPresentation(provider: string) {
+  const labelKey = provider.slice(provider.lastIndexOf(':') + 1);
+  return PROVIDER_PRESENTATION[labelKey] ?? {
+    label: provider, unavailable: `${provider} cannot run on this server right now`,
+    hiddenUntilKnown: false, switchNote: false,
+  };
+}

@@ -2,7 +2,7 @@
 // painters render from it and this file is the authority on the rules and the action wording.
 
 import { terminalPresentation } from '../domain/terminal-presentation.js';
-import { agentProviderSchema } from '../api/schemas.js';
+import { PROVIDER_PRESENTATION } from '../domain/provider-presentation.js';
 import { groupPanelRows, progressRowFinished } from './panel-groups.js';
 import { activityLabelOf, cardActivityOf, cardActivityState, type CardActivity } from '../domain/activity.js';
 import { boundedStatusDetail, type ReportTaskRow } from '../domain/report.js';
@@ -90,7 +90,7 @@ function cardRow(card: CardWire, task: PanelRow | null, activity: TrackPageActiv
   return {
     id: card.id,
     title: name,
-    kind: title !== null || card.kind === 'terminal' || agentProviderSchema.safeParse(card.kind).success ? card.kind : null,
+    kind: title !== null || card.kind === 'terminal' || Object.hasOwn(PROVIDER_PRESENTATION, card.kind) ? card.kind : null,
     badges,
     status,
     activity: rowActivity(activity, card.id),

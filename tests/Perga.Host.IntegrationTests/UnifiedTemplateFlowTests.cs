@@ -374,7 +374,7 @@ public sealed class UnifiedTemplateFlowTests
         Assert.Equal(before.State, after.State);
         Assert.Equal("Check second", after.Prompt);
         var day = host.TimeProvider.GetUtcNow().ToString("yyyy-MM-dd");
-        var calendar = await host.AuthenticatedClient.GetFromJsonAsync<JsonElement>($"/api/today/calendar?start={day}&end={day}");
+        var calendar = await host.AuthenticatedClient.GetFromJsonAsync<JsonElement>($"/api/v1/today/calendar?start={day}&end={day}");
         var occurrences = calendar.GetProperty("schedules").EnumerateArray()
             .Where(item => item.GetProperty("id").GetString() == "flow:pulse").ToArray();
         Assert.NotEmpty(occurrences);

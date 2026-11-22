@@ -13,7 +13,7 @@ import { afterEach, expect, it } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import type { ApiRequest, ApiTransportPort, ApiTransportResponse } from '../../../../core/api/types.ts';
 import type { TrackTemplate } from '../../../../core/domain/track.ts';
-import type { MentionCandidates } from '../../../../core/api/generated/wire.ts';
+import type { MentionCandidates } from '../../../../core/domain/presentation-types.ts';
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { createAppRouter } from './public.tsx';
 import { bootTestCardRuntime } from './test-card-runtime.ts';

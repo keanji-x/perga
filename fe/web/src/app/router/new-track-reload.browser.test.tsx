@@ -21,7 +21,7 @@ import { bootTestCardRuntime } from './test-card-runtime.ts';
 it('opens a confirmed Track after Chromium reloads the draft page', async () => {
   await page.viewport(1280, 800);
   const identity = { userId: 'new-track-reload', displayName: 'Owner', username: 'owner', expiresAtMs: 2000000000000, role: 'owner', sessionId: 'one' } as const;
-  const area = { id: 'work', name: 'Work', color: '#5B8DEF', sort: 1, kind: 'user', created_at: 1, updated_at: 1 };
+  const area = { id: 'work', name: 'Work', color: '#5B8DEF', sortOrder: 1, kind: 'user', createdAtMs: 1, updatedAtMs: 1 };
   const draftKey = createStorageKey('track-create-v1', identity.userId, area.id);
   const firstSendKey = createStorageKey('pending-track-initial-sends-v1');
   const track = fixtureTrack('confirmed', { areaId: area.id, title: 'Confirmed track' });
@@ -34,7 +34,7 @@ it('opens a confirmed Track after Chromium reloads the draft page', async () => 
     requests.push(request);
     if (request.method === 'POST' && request.path === '/api/v1/tracks') {
       await heldCreate;
-      return { status: 201, statusText: 'Created', body: track };
+      return { status: 201, statusText: 'Created', body: fixtureSnapshot(track, [planner]) };
     }
     if (request.path.includes('/workspace-options')) return ok({ defaultId: 'direct', options: [{ id: 'direct', label: 'Direct folder', description: 'Use this folder' }] });
     if (request.path === '/api/v1/areas') return ok([area]);

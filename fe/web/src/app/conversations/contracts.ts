@@ -1,4 +1,4 @@
-import type { AgentProvider, PlannerAttachment } from '../../../../core/api/generated/wire.ts';
+import type { AgentProvider, PlannerAttachment } from '../../../../core/domain/presentation-types.ts';
 import type { PlannerPermissionMode } from '../../../../core/domain/planner-permission-mode.ts';
 import type { Conversation, CreatedConversation, SideConversation, ConversationKind, ConversationState, ModelSelection, PendingQueueEntry, PlannerRunTokenUsage, TranscriptEntry } from '../../../../core/domain/conversation.ts';
 import type { ModelCatalog } from '../../../../core/domain/conversation-models.ts';
@@ -9,7 +9,7 @@ import type { UploadAttachment } from '../../features/planner/attachments.tsx';
 import type { PermissionModeOptionDto } from '../../../../core/api/perga-v1.ts';
 
 export type ConversationStore = Readonly<{
-  answerAsk: (askId: import('../../../../core/domain/activity.ts').AskId, answers: readonly import('../../../../core/api/generated/wire.ts').AskAnswer[]) => Promise<void>;
+  answerAsk: (askId: import('../../../../core/domain/activity.ts').AskId, answers: readonly import('../../../../core/domain/presentation-types.ts').AskAnswer[]) => Promise<void>;
   pendingInteractions: readonly import('../../../../core/api/perga-v1.ts').PendingInteraction[] | null;
   pendingApprovals: readonly import('../../../../core/domain/approval.ts').PendingApproval[] | null;
   session: import('../../../../core/api/perga-v1.ts').AgentSessionDto | null;

@@ -33,7 +33,7 @@ function mount(refuseDiscovery = false) {
       return new Promise(() => undefined);
     }
     const body = request.path === '/api/v1/areas'
-      ? [{ id: 'c1', name: 'Work', color: '#5B8DEF', sort: 1, kind: 'user', created_at: 1, updated_at: 1 }]
+      ? [{ id: 'c1', name: 'Work', color: '#5B8DEF', sortOrder: 1, kind: 'user', createdAtMs: 1, updatedAtMs: 1 }]
       : request.path.startsWith('/api/v1/bootstrap') ? bootstrap : [];
     return Promise.resolve({ status: 200, statusText: 'OK', body });
   } };
@@ -95,7 +95,7 @@ it('clears the mode on a provider switch and hides an empty provider list', asyn
 it.each([false, true])('renders ACP approvals for a null mode (assistant=%s)', async (assistant) => {
   const id = assistant ? 'second-planner' : 'daily-planner';
   const fixture = renderDailyFixture({ initial: '/track/daily?panel=conversations', extraPlanner: assistant,
-    plannerProvider: 'opencode', reply: request => {
+    plannerProvider: 'acp:opencode', reply: request => {
       if (request.path === '/api/v1/bootstrap') return { status: 200, statusText: 'OK', body: {
         assistantProviders: true, conversationInitialInput: true, webCompatVersion: WEB_COMPAT_VERSION,
         minWebCompatVersion: WEB_COMPAT_VERSION, syncEventVersion: 29, dbInstanceId: 'acp-null-mode',
@@ -106,7 +106,7 @@ it.each([false, true])('renders ACP approvals for a null mode (assistant=%s)', a
         ] }],
       } };
       if (assistant && request.path === '/api/v1/tracks/daily/sessions') return { status: 200, statusText: 'OK', body: [
-        { id, trackId: 'daily', title: 'Other conversation', kind: 'track-assistant', provider: 'opencode',
+        { id, trackId: 'daily', title: 'Other conversation', kind: 'track-assistant', provider: 'acp:opencode',
           isLead: false, contextUsage: null, createdAtMs: 1, updatedAtMs: 2, archivedAtMs: null },
       ] };
       if (request.path.startsWith(`/api/v1/sessions/${id}/items?`)) return { status: 200, statusText: 'OK', body: {

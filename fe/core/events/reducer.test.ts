@@ -93,8 +93,8 @@ describe('event reducer behavior', () => {
 
   it('emits complete event effects in write-through, invalidate, remove order', () => {
     const area = {
-      id: 'c1', name: 'new', color: '#abc', sort: 0, kind: 'user',
-      default_template_id: null, default_cwd: null, created_at: 1, updated_at: 2,
+      id: 'c1', name: 'new', color: '#abc', sortOrder: 0, folders: [],
+      defaultCwd: null, createdAtMs: 1, updatedAtMs: 2,
     };
     const updated = reduceEventFrame(
       initialEventState(3),

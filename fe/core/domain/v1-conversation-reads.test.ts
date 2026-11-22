@@ -16,7 +16,7 @@ it('projects the real session items page through both transcript readers', () =>
 
 it('keeps a CLI catalog without a declared default selectable', () => {
   const model = 'gemini-4-neon-high';
-  const catalog = modelCatalogOperation({ kind: 'provider', provider: 'antigravity' }).responseSchema.parse({
+  const catalog = modelCatalogOperation({ kind: 'provider', provider: 'acp:antigravity' }).responseSchema.parse({
     version: 'test',
     providers: [{
       provider: 'acp:antigravity', available: true, models: [model],

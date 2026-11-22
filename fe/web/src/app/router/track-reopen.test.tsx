@@ -19,7 +19,7 @@ afterEach(cleanup);
 
 const unauthorized = createUnauthorizedChannel({ enqueue: (task) => task() });
 const area = {
-  id: 'c1', name: 'Work', color: '#123456', sort: 1, kind: 'user', created_at: 1, updated_at: 1,
+  id: 'c1', name: 'Work', color: '#123456', sortOrder: 1, kind: 'user', createdAtMs: 1, updatedAtMs: 1,
 };
 
 type Harness = Readonly<{ requests: ApiRequest[]; client: QueryClient; healRefetch: () => void }>;

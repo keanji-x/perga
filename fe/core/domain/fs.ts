@@ -3,7 +3,7 @@
 
 import { z } from 'zod';
 
-import { diffSummaryDtoSchema,hostDirListDtoSchema,workspaceFileResultDtoSchema,type DiffSummaryDto } from "../api/perga-v1.js";
+import { diffSummaryDtoSchema, hostDirListDtoSchema, workspaceFileResultDtoSchema, type DiffSummaryDto } from '../api/perga-v1.js';
 import type { ApiOperation } from '../api/types.js';
 import type { FailureTable } from './failure-class.js';
 

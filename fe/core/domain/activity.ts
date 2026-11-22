@@ -39,7 +39,7 @@ export type AskId = string | number;
  */
 export type ActivityItem = ActivityItemBase & Readonly<{
   source: 'ask'; askId: AskId; questions: readonly AskQuestion[]; delivery: AskDelivery;
-  action?: import('../api/generated/wire.js').AskAction;
+  action?: import('./presentation-types.js').AskAction;
 }>;
 
 function inlinePlainText(nodes: readonly NormalizedInline[]): string {

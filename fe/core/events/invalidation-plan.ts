@@ -81,7 +81,7 @@ function policies(): PolicyMap {
     [{ mode: 'area-deleted', areaId: event.data.id }])),
 'track.updated': plan((event) => result([
     eventKeys.overlaysByKind('track'),
-    eventKeys.tracksInArea(event.data.area_id), eventKeys.trackDetail(event.data.id), eventKeys.trackTemplate(event.data.id),
+    eventKeys.tracksInArea(event.data.areaId), eventKeys.trackDetail(event.data.id), eventKeys.trackTemplate(event.data.id),
     eventKeys.trackReportPrefix(),
     eventKeys.trackViews(event.data.id),
   ])),

@@ -191,8 +191,8 @@ export function DailyCalendar({
             const isToday = day === today;
             const isSelected = day === activeSelected;
             const info = daysByDate.get(day);
-            const hasTrack = info?.has_daily_track === true;
-            const hasReport = info?.has_report === true;
+            const hasTrack = info?.hasDailyTrack === true;
+            const hasReport = info?.hasReport === true;
             const scheduleCount = schedulesByDate.get(day)?.length ?? 0;
             return (
               <button
@@ -235,9 +235,9 @@ export function DailyCalendar({
             <h3 className={styles.agendaHeading}>Scheduled · {selectedDaySchedules.length}</h3>
             <ul className={styles.agendaList}>
               {selectedDaySchedules.map((item) => (
-                <li key={`${item.track_id}:${item.id}:${item.date}`} className={styles.agendaItem} data-nc-schedule-state={item.state}>
+                <li key={`${item.trackId}:${item.id}:${item.date}`} className={styles.agendaItem} data-nc-schedule-state={item.state}>
                   <span className={styles.agendaTime}>
-                    {formatScheduleTime(item.next_fire_at_ms, timeZone ?? item.timezone)}
+                    {formatScheduleTime(item.nextFireAtMs, timeZone ?? item.timezone)}
                   </span>
                   <span className={styles.agendaBody}>
                     <span className={styles.agendaTitle}>{item.title}</span>
@@ -246,15 +246,15 @@ export function DailyCalendar({
                         <button
                           type="button"
                           className={styles.agendaTrackButton}
-                          onClick={() => onOpenTrack(item.track_id)}
+                          onClick={() => onOpenTrack(item.trackId)}
                         >
-                          {item.track_title || item.track_id}
+                          {item.trackTitle || item.trackId}
                         </button>
                       ) : (
-                        <span>{item.track_title || item.track_id}</span>
+                        <span>{item.trackTitle || item.trackId}</span>
                       )}
-                      {item.schedule_kind === 'cron' && (
-                        <span className={styles.agendaCron}>{item.cron_expr ?? 'cron'}</span>
+                      {item.scheduleKind === 'cron' && (
+                        <span className={styles.agendaCron}>{item.cronExpr ?? 'cron'}</span>
                       )}
                     </span>
                   </span>

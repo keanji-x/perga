@@ -2,7 +2,7 @@
 
 import { z } from 'zod';
 
-import { bootstrapDtoSchema,permissionModeOptionDtoSchema,providerStatusDtoSchema,type PermissionModeOptionDto,type ProviderStatusDto } from "../api/perga-v1.js";
+import { bootstrapDtoSchema, permissionModeOptionDtoSchema, providerStatusDtoSchema, type PermissionModeOptionDto, type ProviderStatusDto } from '../api/perga-v1.js';
 import { agentProviderSchema,normalizeWireAgentProvider,type AgentProvider } from "../api/schemas.js";
 import type { ApiOperation } from '../api/types.js';
 import { NotSentError,writeClassOf,writeFailureOf,type FailureTable,type WriteClass,type WriteText } from './failure-class.js';

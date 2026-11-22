@@ -10,7 +10,7 @@ import {
 const image = (id: string) => ({ id, contentType: 'image/png', size: 4, url: `/api/cards/c/planner/attachments/${id}` });
 
 /** Typed entry fixtures exercise composer policy independently of transport parsing. */
-type Segment = Readonly<{ presentation: string; text: string; attachments?: readonly import('../api/generated/wire.js').PlannerAttachment[] }>;
+type Segment = Readonly<{ presentation: string; text: string; attachments?: readonly import('./presentation-types.js').PlannerAttachment[] }>;
 const said = (id: number, _turnId: string, segments: readonly Segment[]): TranscriptEntry[] => segments.map((segment, index) =>
   segment.presentation === 'user'
     ? { id: `${id}:${index}`, author: 'you', text: segment.text.replace(/^User says:\n/, '').trim(), attachments: segment.attachments ?? [], atMs: id }

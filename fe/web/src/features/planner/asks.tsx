@@ -10,7 +10,7 @@ import type { AskId } from '../../../../core/domain/activity.ts';
 import {
   answerAskFailureText, askAnswers, askDraftsFor, clampAskAnswer, takesOptionsOnly, type AskDraft, type OpenAsk,
 } from '../../../../core/domain/ask.ts';
-import type { AskAnswer } from '../../../../core/api/generated/wire.ts';
+import type { AskAnswer } from '../../../../core/domain/presentation-types.ts';
 import { OperationFeedback, useOperationFeedback } from '../../ui/operation-feedback/public.tsx';
 import { Icon } from '../../ui/icon/public.tsx';
 import { useState } from '../../ui/state/public.ts';

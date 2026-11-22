@@ -1,7 +1,7 @@
 import { queryKeys } from './query-keys.ts';
 import { useQueryClient } from '@tanstack/react-query';
 import { useRecoveryMutation } from './recovery-mutation.ts';
-import type { AskAnswer } from '../../../../core/api/generated/wire.ts';
+import type { AskAnswer } from '../../../../core/domain/presentation-types.ts';
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { type AskId, type AskQuestion } from '../../../../core/domain/activity.ts';

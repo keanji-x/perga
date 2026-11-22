@@ -1,7 +1,7 @@
 import { mergeTranscript, type ConversationActivity, type ConversationTurn, type OptimisticConversationTurn, type PendingQueueEntry, type TranscriptEntry } from './conversation.js';
 import type { SendFailureKind } from './conversation-delivery.js';
 
-import type { HarnessQueueEntryRef } from '../api/generated/wire.js';
+import type { HarnessQueueEntryRef } from './presentation-types.js';
 
 /** A message submission keeps its session epoch and delivery choice across retries. */
 export type ConversationSendTarget = Readonly<{ epoch: number; queue: boolean }>;

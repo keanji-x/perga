@@ -18,7 +18,7 @@ import { createAppRouter } from './public.tsx';
 import { bootTestCardRuntime } from './test-card-runtime.ts';
 
 const unauthorized = createUnauthorizedChannel({ enqueue: (task) => task() });
-const area = { id: 'c1', name: 'One', color: '#123456', sort: 1, kind: 'user', created_at: 1, updated_at: 1 };
+const area = { id: 'c1', name: 'One', color: '#123456', sortOrder: 1, kind: 'user', createdAtMs: 1, updatedAtMs: 1 };
 const openTrack = fixtureTrack('w1', { areaId: 'c1', title: 'Reliable', cwd: '/tmp', sortOrder: 1, closedAtMs: null, createdAtMs: 1, updatedAtMs: 1 });
 const card = { id: 'k1', track_id: 'w1', kind: 'terminal', title: 'Build log', sort: 1, payload: { terminal_presentation: { source: 'manual', in_workbench: true } },
   deletable: true, created_at: 1, updated_at: 1 };
@@ -40,7 +40,7 @@ function renderApp(path: string, write: (request: ApiRequest, world: World) => P
     if (request.method !== 'GET') { writes.push(request); return write(request, world); }
     reads.push(request.path);
     const track = { ...openTrack, closedAtMs: world.closed ? 2 : null };
-    if (request.path.startsWith('/api/today/daily')) return Promise.resolve(ok(null));
+    if (request.path.startsWith('/api/v1/today/daily')) return Promise.resolve(ok(null));
     if (request.path === '/api/v1/areas') return Promise.resolve(ok([area]));
     if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return Promise.resolve(ok(world.gone ? [] : [track]));
     if (request.path === '/api/v1/tracks/w1' && world.stale) return new Promise<ApiTransportResponse>(() => undefined);

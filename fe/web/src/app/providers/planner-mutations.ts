@@ -1,4 +1,4 @@
-import type { UploadAttachmentResponse } from '../../../../core/api/generated/wire.ts';
+import type { UploadAttachmentResponse } from '../../../../core/domain/presentation-types.ts';
 import { KeyedSendFailure } from '../../../../core/domain/conversation-delivery.ts';
 import { type ConversationRun } from '../../../../core/domain/conversation-display.ts';
 import type { ConversationSendTarget } from '../../../../core/domain/conversation-outbox.ts';
@@ -7,7 +7,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useRef } from 'react';
 import { conversationInputMetadata } from '../../../../core/events/invalidation-plan.ts';
 import { admitTransport } from './recovery-mutation.ts';
-import type { AskAnswer,PlannerPermissionMode } from '../../../../core/api/generated/wire.ts';
+import type { AskAnswer, PlannerPermissionMode } from '../../../../core/domain/presentation-types.ts';
 import type { ApiOperation,ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { type AskId,type AskQuestion } from '../../../../core/domain/activity.ts';

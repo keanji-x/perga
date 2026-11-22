@@ -5,7 +5,7 @@ import { prepareReportDocument } from '../../features/report/document/preparatio
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, RouterProvider } from '@tanstack/react-router';
 import { render } from '@testing-library/react';
-import type { AgentProvider } from '../../../../core/api/generated/wire.ts';
+import type { AgentProvider } from '../../../../core/domain/presentation-types.ts';
 import type { ApiRequest, ApiTransportPort } from '../../../../core/api/types.ts';
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { createAppRouter } from './public.tsx';

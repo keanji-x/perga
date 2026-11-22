@@ -12,7 +12,7 @@
     "build": "npm run theme:check && tsc -b && vite build",
     "typecheck": "tsc -b",
     "test": "vitest run --project platform-independent --project web-dom --maxWorkers=8",
-    "gen:api": "node -e \"console.log('Perga /api/v1 OpenAPI contract is maintained in core/api/generated/openapi.json')\"",
+    "gen:api": "node tools/api/gen-api.mjs",
     "test:browser": "vitest run --project browser --project browser-coarse",
     "lint": "npm run lint:js && npm run lint:css && npm run lint:depcruise",
     "lint:js": "eslint . --max-warnings=0 && node tools/architecture/check-eslint-hygiene.mjs && node tools/architecture/check-tracked-fixtures.mjs && node tools/architecture/check-breakpoint-literals.mjs && node tools/ownership/check-readonly-change-requests.mjs && node tools/test-tier/check-test-tier.mjs",

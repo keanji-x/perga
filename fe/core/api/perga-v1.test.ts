@@ -1,3 +1,4 @@
+import { workspaceForTrack } from '../domain/track.js';
 import { describe,expect,it } from 'vitest';
 import { agentProvidersOperation,managedProvidersOperation } from '../domain/agent-providers.js';
 import { sessionContextUsage } from '../domain/session-context-usage.js';
@@ -21,19 +22,10 @@ import { modelCatalogOperation, setPlannerModelOperation } from '../domain/conve
 import { decodeEventFrame } from '../events/protocol.js';
 import { initialEventState,reduceEventFrame } from '../events/reducer.js';
 import { DEPLOYMENT_OWNER_USER_ID,loginOperation } from './auth.js';
-import {
-agentSessionDtoSchema,
-bootstrapDtoSchema,
-createSessionRequestSchema,
-decodePergaEventEnvelope,
-sessionCreationReceiptSchema,
-trackAggregateSnapshotDtoSchema,
-trackDataPatchResultSchema,
-trackDtoSchema,
-} from './perga-v1.js';
+import { agentSessionDtoSchema, bootstrapDtoSchema, createSessionRequestSchema, decodePergaEventEnvelope, sessionCreationReceiptSchema, trackAggregateSnapshotDtoSchema, trackDataPatchResultSchema, trackDtoSchema } from './perga-v1.js';
 import { decodeWireEvent } from './schemas.js';
 
-import { trackDtoToWire } from '../api/track-projection.js';
+
 import {
 listDirectoryOperation,
 listTrackWorkspaceDirectoryOperation,
@@ -135,8 +127,8 @@ describe('Perga /api/v1 protocol contracts', () => {
     expect(providers).toHaveLength(4);
     expect(providers[0]).toMatchObject({ provider: 'codex', status: 'ready' });
     expect(providers[1]).toMatchObject({ provider: 'claude', status: 'unavailable', reason: 'claude CLI not found' });
-    expect(providers[2]).toMatchObject({ provider: 'antigravity', status: 'ready' });
-    expect(providers[3]).toMatchObject({ provider: 'opencode', status: 'ready' });
+    expect(providers[2]).toMatchObject({ provider: 'acp:antigravity', status: 'ready' });
+    expect(providers[3]).toMatchObject({ provider: 'acp:opencode', status: 'ready' });
 
     const managed = managedProvidersOperation(true);
     expect(managed.path).toBe('/api/v1/bootstrap?scope=managed&refresh=true');
@@ -144,9 +136,9 @@ describe('Perga /api/v1 protocol contracts', () => {
 
     const catalog = modelCatalogOperation({ kind: 'provider', provider: 'codex' }).responseSchema.parse(sampleBootstrap);
     expect(catalog.models.map((m) => m.model)).toEqual(['gpt-5', 'o3']);
-    const agyCatalog = modelCatalogOperation({ kind: 'provider', provider: 'antigravity' }).responseSchema.parse(sampleBootstrap);
+    const agyCatalog = modelCatalogOperation({ kind: 'provider', provider: 'acp:antigravity' }).responseSchema.parse(sampleBootstrap);
     expect(agyCatalog.models.map((m) => m.model)).toEqual(['gemini-3.1-pro', 'gemini-3-flash']);
-    const opencodeCatalog = modelCatalogOperation({ kind: 'provider', provider: 'opencode' }).responseSchema.parse(sampleBootstrap);
+    const opencodeCatalog = modelCatalogOperation({ kind: 'provider', provider: 'acp:opencode' }).responseSchema.parse(sampleBootstrap);
     expect(opencodeCatalog.models.map((m) => m.model)).toEqual(['deepseek/deepseek-r1']);
 
     const templatesOp = trackTemplatesOperation();
@@ -196,7 +188,7 @@ describe('Perga /api/v1 protocol contracts', () => {
   });
 
   it('scopes a card catalog to its provider and reports provider availability', () => {
-    const scope = { kind: 'card' as const, cardId: 'session/a', provider: 'antigravity' as const };
+    const scope = { kind: 'card' as const, cardId: 'session/a', provider: 'acp:antigravity' as const };
     const operation = modelCatalogOperation(scope);
     expect(operation.responseSchema.parse(sampleBootstrap)).toMatchObject({
       source: 'live', models: [{ model: 'gemini-3.1-pro' }, { model: 'gemini-3-flash' }],
@@ -382,20 +374,14 @@ describe('Perga /api/v1 protocol contracts', () => {
     const detailOp = trackDetailOperation('trk_1');
     expect(detailOp.path).toBe('/api/v1/tracks/trk_1');
     const detail = detailOp.responseSchema.parse(snapshotRaw);
-    expect(trackDtoToWire(detail.track).workspace).toEqual({
-      isolation: 'worktree',
-      kind: 'attached',
-      path: '/repo',
-      frozen_at: null,
-      worktree: '/repo/.worktrees/trk_1',
-    });
+    expect(workspaceForTrack(detail.track)).toEqual({ isolation: 'worktree', agentCwd: '/repo/.worktrees/trk_1' });
     expect(detail.report.docRev).toBe(4);
     expect(detail.report.blocks.map(block => [block.id, block.rev])).toEqual([['b_prose1', 2], ['b_task1', 1]]);
     expect(detail.report.blocks.map(block => block.kind)).toEqual(['prose', 'task']);
     const acpDetail = detailOp.responseSchema.parse({ ...snapshotRaw,
       sessions: [{ ...snapshotRaw.sessions[0], provider: 'acp:antigravity' }] });
     expect(agentSessionDtoToConversation(acpDetail.sessions[0]))
-      .toMatchObject({ kind: 'agent', isLead: true, provider: 'antigravity' });
+      .toMatchObject({ kind: 'agent', isLead: true, provider: 'acp:antigravity' });
 
     const activity = trackActivityFromSnapshot(detail);
     expect(activity.working).toBe(true);
@@ -439,14 +425,14 @@ describe('Perga /api/v1 protocol contracts', () => {
 
     const createDirectAcpOp = createTrackOperation({
       area_id: 'area_1',
-      planner_provider: 'antigravity',
+      planner_provider: 'acp:antigravity',
       cwd: '/repo',
       isolation: 'none',
       theme: { fg: [0, 0, 0], bg: [255, 255, 255] },
     }, 'idem-t2');
     expect(createDirectAcpOp.body).toMatchObject({
       areaId: 'area_1',
-      planner_provider: 'antigravity',
+      planner_provider: 'acp:antigravity',
       provider: 'acp:antigravity',
       workspaceDriver: 'direct',
     });
@@ -512,15 +498,15 @@ describe('Perga /api/v1 protocol contracts', () => {
       { ...pageDto.session, id: 'ses_acp1', isLead: false, provider: 'acp:opencode', title: 'ACP Assistant' },
       { ...pageDto.session, id: 'ses_acp2', isLead: false, provider: 'acp:antigravity', title: 'AGY Assistant' },
     ].map(session => agentSessionDtoToConversation(agentSessionDtoSchema.parse(session)));
-    expect(acpConversations.map((c) => c.provider)).toEqual(['opencode', 'antigravity']);
+    expect(acpConversations.map((c) => c.provider)).toEqual(['acp:opencode', 'acp:antigravity']);
 
     const createClaudeConv = createTrackConversationOperation('trk_1', 'Investigate bug', 'idem-s1', 'claude', { model: null, reasoning_effort: null });
     expect(createClaudeConv.path).toBe('/api/v1/tracks/trk_1/sessions');
     expect(createClaudeConv.body).toMatchObject({ provider: 'claude' });
 
-    const createOpencodeConv = createTrackConversationOperation('trk_1', 'ACP help', 'idem-s2', 'opencode', { model: null, reasoning_effort: null });
+    const createOpencodeConv = createTrackConversationOperation('trk_1', 'ACP help', 'idem-s2', 'acp:opencode', { model: null, reasoning_effort: null });
     expect(createOpencodeConv.body).toMatchObject({ provider: 'acp:opencode' });
-    const createAgyConv = createTrackConversationOperation('trk_1', 'AGY help', 'idem-s3', 'antigravity', { model: null, reasoning_effort: null });
+    const createAgyConv = createTrackConversationOperation('trk_1', 'AGY help', 'idem-s3', 'acp:antigravity', { model: null, reasoning_effort: null });
     expect(createAgyConv.body).toMatchObject({ provider: 'acp:antigravity' });
 
     const msgOp = sendPlannerInputOperation('ses_lead', 'Ship it', [], 'idem-m1', true);
@@ -590,21 +576,10 @@ describe('Perga /api/v1 protocol contracts', () => {
       },
       createdAtMs: 2500,
     });
-    expect(trackUpdatedEvt).toMatchObject({
-      status: 'ready',
-      value: {
-        ev: 'track.updated',
-        data: {
-          workspace: {
-            isolation: 'worktree',
-            kind: 'attached',
-            path: '/repo',
-            frozen_at: null,
-            worktree: '/repo/.worktrees/trk_1',
-          },
-        },
-      },
-    });
+    expect(trackUpdatedEvt).toMatchObject({ status: 'ready', value: {
+      ev: 'track.updated', data: { areaId: 'area_1', workspaceDriver: 'vcs-workspace',
+        workspaceSpec: { logicalRoot: '/repo', mergedCwd: '/repo/.worktrees/trk_1' } },
+    } });
   });
 
   it('covers user-journey audit fixes across CHAT, CARD, and SHELL contracts', () => {
