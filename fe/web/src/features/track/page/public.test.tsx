@@ -205,13 +205,13 @@ describe('TrackPage task inventory', () => {
   it('card and task rows paint activity.cards, not runtime status', () => {
     const cards = [
       card({ id: 'busy', title: 'Busy worker', kind: 'codex',
-        runtime: { worker_session_id: 'ws-busy', kind: 'managed-assistant', status: 'running' } }),
+        terminal: { id: 'terminal-test', trackId: 'w1', title: '', cwd: '/tmp', createdAtMs: 1, status: 'running' } }),
       card({ id: 'stale', title: 'Stale worker', kind: 'codex',
-        runtime: { worker_session_id: 'ws-stale', kind: 'managed-assistant', status: 'running' } }),
+        terminal: { id: 'terminal-test', trackId: 'w1', title: '', cwd: '/tmp', createdAtMs: 1, status: 'running' } }),
       card({ id: 'asking', title: 'Asking worker', kind: 'claude',
-        runtime: { worker_session_id: 'ws-asking', kind: 'managed-assistant', status: 'running' } }),
+        terminal: { id: 'terminal-test', trackId: 'w1', title: '', cwd: '/tmp', createdAtMs: 1, status: 'running' } }),
       card({ id: 'independent', title: 'Independent stale resource', kind: 'terminal',
-        runtime: { worker_session_id: 'ws-independent', kind: 'terminal', status: 'running' } }),
+        terminal: { id: 'terminal-test', trackId: 'w1', title: '', cwd: '/tmp', createdAtMs: 1, status: 'running' } }),
     ];
     const tasks = [
       running('impl', 'running', 'busy'),
@@ -250,9 +250,9 @@ describe('TrackPage task inventory', () => {
   it('card and task rows speak the kernel verdict', () => {
     const cards = [
       card({ id: 'busy', title: 'Busy worker', kind: 'codex',
-        runtime: { worker_session_id: 'ws-busy', kind: 'managed-assistant', status: 'running' } }),
+        terminal: { id: 'terminal-test', trackId: 'w1', title: '', cwd: '/tmp', createdAtMs: 1, status: 'running' } }),
       card({ id: 'broken', title: 'Broken worker', kind: 'claude',
-        runtime: { worker_session_id: 'ws-broken', kind: 'managed-assistant', status: 'failed' } }),
+        terminal: { id: 'terminal-test', trackId: 'w1', title: '', cwd: '/tmp', createdAtMs: 1, status: 'failed' } }),
       card({ id: 'quiet', title: 'Quiet card', kind: 'terminal' }),
     ];
     const tasks = [running('impl', 'running', 'busy'), running('doc', 'failed', 'broken'), task('plain', 'ready')];
@@ -657,9 +657,9 @@ describe('TrackPage card inventory', () => {
     expect(screen.getAllByText('notes').length).toBe(1);
   });
 
-  it('marks non-deletable cards as kernel-owned', () => {
-    renderPage({ cards: [card({ id: 'k1', deletable: false }), card({ id: 'k2', deletable: true })] });
-    expect(screen.getAllByText('kernel-owned').length).toBe(1);
+  it('does not invent server ownership for non-removable panels', () => {
+    renderPage({ cards: [card({ id: 'k1', removable: false }), card({ id: 'k2', removable: true })] });
+    expect(screen.queryByText('kernel-owned')).toBeNull();
   });
 
   it('offers no delete when the caller supplies no onDeleteCard', () => {
@@ -689,8 +689,8 @@ describe('TrackPage card inventory', () => {
   it('withholds the delete on a kernel-owned card even when onDeleteCard is supplied', () => {
     renderPage({
       cards: [
-        card({ id: 'k1', title: 'Track report', deletable: false }),
-        card({ id: 'k2', title: 'Build log', deletable: true }),
+        card({ id: 'k1', title: 'Track report', removable: false }),
+        card({ id: 'k2', title: 'Build log', removable: true }),
       ],
       onDeleteCard: vi.fn(),
     });

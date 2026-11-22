@@ -1,8 +1,7 @@
 import { CardFrame } from '../../../ui/card-frame/public.tsx';
-// The file card. Kernel kind `'file-viewer'`, payload `{ path }`. Owns a surface; owns no runtime, so its create is `generic`.
-// `buildPayload` takes only `path`: `title` is a column on the row, not a member of the payload.
+// Client file-viewer panel. Its local descriptor owns a path; it is not a Host resource.
 
-import type { CardComponentProps, CardEntry, KernelCardInput } from '../registry.js';
+import type { CardComponentProps, CardEntry, PanelInput } from '../registry.js';
 import { FileViewer } from '../../fs-viewers/public.tsx';
 import { readHostTheme } from '../../fs-viewers/theme.ts';
 import { CardHead } from '../ui/card-head.tsx';
@@ -71,7 +70,7 @@ export const FILE_VIEWER_CARD_ENTRY = Object.freeze({
       }),
     ]),
   }),
-  fromKernel: (card: KernelCardInput): FileViewerCard | null => {
+  fromPanel: (card: PanelInput): FileViewerCard | null => {
     if (card.kind !== 'file-viewer') return null;
     const path = pathFromPayload(card.payload);
     return path === null

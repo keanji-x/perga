@@ -57,7 +57,7 @@
 - { path: fe/web/src/app/markdown-legacy-differential.test.ts, type: file, owner: app/markdown-migration, readonly: false, basis: "architecture §4.9" }
 - { path: fe/web/src/app/router, type: directory, owner: app/router, readonly: false, basis: "architecture §2" }
 - { path: fe/web/src/app/providers, type: directory, owner: app/providers, readonly: false, basis: "architecture §2" }
-- { path: fe/web/src/app/theme, type: directory, owner: app/theme, readonly: false, basis: "architecture §2; INV-DUP-007" }
+- { path: fe/web/src/app/theme, type: directory, owner: app/theme, readonly: false, basis: "architecture §2; client theme switching" }
 - { path: fe/web/src/app/shell, type: directory, owner: app/shell, readonly: false, basis: "architecture §2" }
 - { path: fe/web/src/app/events, type: directory, owner: app/events, readonly: false, basis: "architecture §4.7" }
 - { path: fe/web/src/app/auth, type: directory, owner: app/auth, readonly: false, basis: "architecture §2 DI/providers" }

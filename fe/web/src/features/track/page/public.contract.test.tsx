@@ -72,7 +72,7 @@ describe('TrackPage delete confirm contract', () => {
 
   it('renders no <a> element anywhere on the page (INV-A11Y-061)', () => {
     const { container } = renderPage({
-      cards: [card({ id: 'k1' }), card({ id: 'k2', title: null, deletable: false })],
+      cards: [card({ id: 'k1' }), card({ id: 'k2', title: null, removable: false })],
       existingCardIds: new Set(['k1', 'k2', 'card-9']),
       tasks: taskRows(),
     }); openInventoryDisclosures(document.body);
@@ -120,7 +120,7 @@ describe('TrackPage delete confirm contract', () => {
     expect(screen.getByRole<HTMLInputElement>('textbox', { name: 'Track title' }).value).toBe('');
   });
 
-  /* Clearing the name is a request on a track: the planner's `neige_track_rename` only fires while the title is empty. On an area the same gesture is a cancel. */
+  /* Clearing the name is a request on a track: the planner's `track_rename` only fires while the title is empty. On an area the same gesture is a cancel. */
   it('asks to clear the name when the box is emptied and committed', async () => {
     const onRenameTrack = vi.fn();
     renderPage({ track: track({ title: 'Alpha' }), onRenameTrack });

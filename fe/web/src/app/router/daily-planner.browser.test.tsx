@@ -288,7 +288,8 @@ it.each([900, 600])('shows the shared masthead above a clean perga composer and 
   expect(calendar.element().getBoundingClientRect().left).toBeGreaterThan(assistant.element().getBoundingClientRect().right);
   expect(page.getByText('Report changes', { exact: true }).query()).toBeNull();
   expect(card.textContent).not.toMatch(/Active tracks/i);
-  expect(card.textContent).not.toContain('Project evidence');
+  // The Report prose legitimately cites this Track; only an extra inventory row would be wrong.
+  expect([...card.querySelectorAll('[data-nc-row]')].some(row => row.textContent?.includes('Project evidence'))).toBe(false);
   await expect.element(page.getByRole('heading', { name: 'Daily report', exact: true })).toBeVisible();
   await expect.element(page.getByText('Prioritize the release.', { exact: false })).toBeVisible();
   expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);

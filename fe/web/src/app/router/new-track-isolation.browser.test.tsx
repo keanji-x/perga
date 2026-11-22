@@ -1,3 +1,4 @@
+import { fixtureBootstrap } from './session-contract-fixture.ts';
 import '../../styles/entry.css';
 import { createMemoryHistory, RouterProvider } from '@tanstack/react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -18,11 +19,19 @@ afterEach(() => { cleanup(); document.getElementById('root')?.remove(); });
 function mount() {
   const creates: ApiRequest[] = [];
   const transport: ApiTransportPort = { send(request) {
+    if (request.path.startsWith('/api/v1/bootstrap')) {
+      const bootstrap = fixtureBootstrap();
+      return Promise.resolve({ status: 200, statusText: 'OK', body: { ...bootstrap,
+        providers: bootstrap.providers.map(provider => ({ ...provider, permissionModes: [
+          { id: 'default', label: 'Ask before executing', description: 'Confirm shell commands', isDefault: true },
+        ] })),
+      } });
+    }
     if (request.path.includes('/workspace-options')) return Promise.resolve({ status: 200, statusText: 'OK', body: { defaultId: 'vcs-workspace', options: [{ id: 'vcs-workspace', label: 'Worktree', description: 'Isolated worktree' }] } });
     if (request.method === 'POST' && request.path === '/api/v1/tracks') {
       creates.push(request);
       return Promise.resolve({ status: 400, statusText: 'Bad Request', body: {
-        code: 'bad_request', error: 'Folder overlaps Neige-owned location /repo/.claude/worktrees/track-other',
+        code: 'bad_request', error: 'Folder overlaps Perga-owned location /repo/.claude/worktrees/track-other',
       } });
     }
     const body = request.path === '/api/v1/areas' ? [{ id: 'a', name: 'Work', color: '#5B8DEF',
@@ -52,7 +61,7 @@ it.each([1280, 390])('composer uses the backend workspace option for attached fo
   await expect.poll(() => creates.length).toBe(1);
   expect(creates[0]?.body).toMatchObject({ cwd: '/repo', workspaceOptionId: 'vcs-workspace' });
   expect(creates[0]?.body).not.toHaveProperty('first_message');
-  await expect.element(page.getByText('Folder overlaps Neige-owned location /repo/.claude/worktrees/track-other')).toBeVisible();
+  await expect.element(page.getByText('Folder overlaps Perga-owned location /repo/.claude/worktrees/track-other')).toBeVisible();
   expect(document.documentElement.scrollWidth).toBe(width);
 });
 

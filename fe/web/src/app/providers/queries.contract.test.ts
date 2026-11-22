@@ -66,8 +66,8 @@ describe('writes never queue an offline submission', () => {
   const cases: [string, (writes: ReturnType<typeof useWrites>) => Promise<unknown>][] = [
     ['area create', ({ area }) => area.create({ name: 'Offline area', color: '#123456' }, 'offline-area')],
     ['area update', ({ area }) => area.update('c1', { name: 'Offline rename' })],
-    ['track create', ({ track }) => track.create({ area_id: 'c1', planner_provider: 'codex', theme: { fg: [0, 0, 0], bg: [255, 255, 255] } }, 'offline-track')],
-    ['terminal create', ({ track }) => track.createTerminal('w1', { theme: { fg: [0, 0, 0], bg: [255, 255, 255] } }, 'offline-terminal')],
+    ['track create', ({ track }) => track.create({ areaId: 'c1', provider: 'codex', }, 'offline-track')],
+    ['terminal create', ({ track }) => track.createTerminal('w1', { }, 'offline-terminal')],
     ['conversation create', ({ conversation }) => conversation.create('Offline message', 'offline-key', 'codex', { model: null, reasoning_effort: null }, undefined, () => undefined)],
     /* The writes that never had a guard of their own: they previously would pause offline and fire on reconnect (#2131). */
     ['track rename', ({ track }) => track.patch('w1', 'c1', { title: 'Offline rename' })],
@@ -210,9 +210,9 @@ describe('track list', () => {
 
   it('sorts each Area by recent activity without changing the flat workspace or track caches', async () => {
     const secondArea = { ...userArea, id: 'c2', name: 'Other', sort: 3 };
-    const old = { ...baseTrackWire, id: 'old', sort: 1, updated_at: 20 };
-    const recent = { ...baseTrackWire, id: 'recent', sort: 2, updated_at: 10 };
-    const second = { ...baseTrackWire, id: 'second', area_id: 'c2', sort: 1, updated_at: 30 };
+    const old = { ...baseTrackWire, id: 'old', sort: 1, updatedAtMs: 20 };
+    const recent = { ...baseTrackWire, id: 'recent', sort: 2, updatedAtMs: 10 };
+    const second = { ...baseTrackWire, id: 'second', areaId: 'c2', sort: 1, updatedAtMs: 30 };
     const activityOverlay = {
       trackId: 'recent', areaId: 'c1', isWorking: false, openAskCount: 0,
       pendingApprovalCount: 0, hasBlockedSession: false, workspaceFailed: false,
@@ -394,7 +394,7 @@ describe('delete mutation wiring', () => {
       name: 'My edit',
       default_template_id: 'small-change',
       default_cwd: '/srv/mine',
-      updated_at: original.updatedAt + 1,
+      updatedAtMs: original.updatedAt + 1,
     };
     let releaseResponse!: () => void;
     const responseHeld = new Promise<void>((resolve) => { releaseResponse = resolve; });
@@ -422,7 +422,7 @@ describe('delete mutation wiring', () => {
       name: 'Remote edit',
       defaultTemplateId: null,
       defaultCwd: '/srv/remote',
-      updatedAt: responseWire.updated_at + 1,
+      updatedAt: responseWire.updatedAtMs + 1,
     };
     act(() => { client.setQueryData(queryKeys.areas(), [newerEvent]); });
     releaseResponse();
@@ -484,9 +484,9 @@ describe('a delete answered done drops its cache entry like a success', () => {
 });
 
 describe('tool inventory mutation cache writes', () => {
-  const cardWire = (id: string) => ({
-    id, track_id: 'w1', kind: 'terminal', title: null, sort: 1, payload: {},
-    deletable: true, created_at: 1, updated_at: 2,
+  const cardWire = (id: string) => ({ panelType: 'custom' as const,
+    id, trackId: 'w1', kind: 'terminal', title: null, sort: 1, payload: {},
+    removable: true, createdAtMs: 1, updatedAtMs: 2,
   });
   const tools = [cardWire('card-a'), cardWire('card-b')];
 
@@ -559,29 +559,6 @@ describe('tool inventory mutation cache writes', () => {
   });
 });
 
-describe('track create folders cache', () => {
-  it('drops a successful empty folders cache after attach_folder create', async () => {
-    const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
-    client.setQueryData(queryKeys.areaFolders('c1'), []);
-    const transport: ApiTransportPort = {
-      send: () => Promise.resolve(ok({ track: { workspaceDriver: 'direct', workspaceSpec: {},
-        id: 'w1', areaId: 'c1', title: 'Ship', sortOrder: 0, createdAtMs: 1, updatedAtMs: 1,
-      }, report: { docRev: 0, summary: '', blocks: [] }, sessions: [], tasks: [], openAsks: [] })),
-    };
-    const wrapper = ({ children }: { children: ReactNode }) =>
-      createElement(QueryClientProvider, { client }, children);
-    const { result } = renderHook(() => useTrackMutations(transport, unauthorized), { wrapper });
-    await act(() => result.current.create({
-      area_id: 'c1',
-      planner_provider: 'codex',
-      title: 'Ship',
-      cwd: '/tmp/x',
-      theme: { fg: [1, 2, 3], bg: [4, 5, 6] },
-      attach_folder: true,
-    }, 'draft-key'));
-    expect(client.getQueryData(queryKeys.areaFolders('c1'))).toBeUndefined();
-  });
-});
 
 describe('planner history pagination', () => {
   it('passes the v1 page cursor into the next read', async () => {

@@ -4,15 +4,16 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ReportTaskRow } from '../../../../../core/domain/track-task-inventory.ts';
-import { NEUTRAL_ACTIVITY, type CardWire } from '../../../../../core/domain/track.ts';
+import { NEUTRAL_ACTIVITY } from '../../../../../core/domain/track.ts';
+import type { PanelItem } from '../../../../../core/domain/panel-item.ts';
 import type { PanelRow, RowModuleView } from '../../../../../core/view/panel.ts';
 import { deriveTrackPageView } from '../../../../../core/view/track-page.ts';
 import { captureContextProjection, manualCard as card, openableCardsOf, renderPage } from './test-fixtures.tsx';
 
-/* The fixture has to give the assertion teeth: a titled and an untitled card, a deletable card with `onDeleteCard` passed, a kernel-owned untitled card, a task with a `statusDetail`, a withdrawn task, a task with a kind and a worker card. Titles, kinds and badge texts are not substrings of one another. */
-const CARDS: readonly CardWire[] = [
-  card({ id: 'card-1', kind: 'shell', title: 'Main pane', deletable: true }),
-  card({ id: 'card-2', kind: 'harness', title: null, deletable: false }),
+/* The fixture has to give the assertion teeth: a titled and an untitled card, a removable card with `onDeleteCard` passed, a kernel-owned untitled card, a task with a `statusDetail`, a withdrawn task, a task with a kind and a worker card. Titles, kinds and badge texts are not substrings of one another. */
+const CARDS: readonly PanelItem[] = [
+  card({ id: 'card-1', kind: 'shell', title: 'Main pane', removable: true }),
+  card({ id: 'card-2', kind: 'harness', title: null, removable: false }),
 ];
 
 const TASKS: readonly ReportTaskRow[] = [
@@ -127,8 +128,8 @@ describe('deriveTrackPageView against the rendered desktop panel', () => {
     const snapshot = await captureContextProjection(container);
     const whole = visibleText(snapshot);
 
-    /* The fixture invariant the untitled-card arm rests on: `card-2` has no title, so its row prints its kind exactly once, and it is not deletable, so no × carries `Delete card harness`. */
-    expect(CARDS[1]).toMatchObject({ title: null, deletable: false });
+    /* The fixture invariant the untitled-card arm rests on: `card-2` has no title, so its row prints its kind exactly once, and it is not removable, so no × carries `Delete card harness`. */
+    expect(CARDS[1]).toMatchObject({ title: null, removable: false });
 
     for (const module of view.desktop.rowModules) {
       expect(whole).toContain(module.title);

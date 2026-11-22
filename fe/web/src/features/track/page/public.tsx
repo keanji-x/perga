@@ -23,8 +23,9 @@ import { DELETE_FAILURES, DELETE_TEXT, writeFailureText } from '../../../../../c
 import type { ReportOutlineItem } from '../../../../../core/domain/report.ts';
 import type { ReportTaskRow } from '../../../../../core/domain/track-task-inventory.ts';
 import {
-  TRACK_PATCH_FAILURES, TRACK_PATCH_TEXT, UNTITLED_TRACK_LABEL, trackActivityState, trackDisplayTitle, type CardWire, type Track,
+  TRACK_PATCH_FAILURES, TRACK_PATCH_TEXT, UNTITLED_TRACK_LABEL, trackActivityState, trackDisplayTitle, type Track,
 } from '../../../../../core/domain/track.ts';
+import type { PanelItem } from '../../../../../core/domain/panel-item.ts';
 import { ActivityIndicator } from '../../../ui/activity-indicator/public.tsx';
 import { DELETE_TRACK_COPY } from '../delete-copy.ts';
 import { EditableTitle, type EditableTitleProps } from '../../../ui/editable-title/public.tsx';
@@ -61,7 +62,7 @@ export type TrackPageProps = Readonly<{
   panelHeader?: ReactNode;
   /** App-composed panel module: shares the desktop card, precedes the report on compact screens. */
   panelContent?: ReactNode;
-  cards: readonly CardWire[];
+  cards: readonly PanelItem[];
   /** Full Track resource identities, including agent sessions and independent tools. */
   existingCardIds: ReadonlySet<string>;
   /** The Track snapshot's task rows with a Report anchor. */
@@ -98,7 +99,7 @@ export type TrackPageProps = Readonly<{
   /** Browser-local file history, composed by the report feature through app. */
   recentFiles?: ReactNode;
   onOpenCard?: (cardId: string) => void;
-  /** Supplying this reveals a delete on every row the kernel says is deletable. The caller owns the confirm: the board offers the identical gesture on the card's own head. */
+  /** Supplying this reveals a delete on every row the kernel says is removable. The caller owns the confirm: the board offers the identical gesture on the card's own head. */
   onDeleteCard?: (cardId: string, origin: DialogOrigin) => void;
   onSetWorkbench?: (cardId: string, inWorkbench: boolean) => void;
   /** Reveal a task's block in the document — the same landing the outline, a
@@ -320,7 +321,7 @@ export function TrackPage({ fillReading = false, showWorkspaceIsolation = true, 
                 <Icon name="arrow-left" />
               </button>
             )}
-            {/* The raw title, with the fallback as the placeholder. `emptyCommit="clear"`: the planner's `neige_track_rename` succeeds only while the title is empty, so clearing the name is a real request here, not a cancel. */}
+            {/* The raw title, with the fallback as the placeholder. `emptyCommit="clear"`: the planner's `track_rename` succeeds only while the title is empty, so clearing the name is a real request here, not a cancel. */}
             <div className={styles.titleSlot} ref={titleSlotRef}>
       <div className={titleInHeader ? styles.mobileHeaderIdentity : styles.titleCluster}
         onFocusCapture={(event) => { lastFocusedTitleRef.current = event.target; }}

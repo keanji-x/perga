@@ -5,8 +5,6 @@ import { z } from 'zod';
 import { areaDtoSchema, agentSessionDtoSchema, askDtoSchema, decodePergaEventEnvelope, mailDtoSchema, readReceiptDtoSchema, sessionRuntimeStatusPayloadSchema, sessionTaskProgressPayloadSchema, sessionTextDeltaPayloadSchema, sessionThinkingDeltaPayloadSchema, sessionToolProgressPayloadSchema, sessionTurnDtoSchema, systemUpgradeStatusPayloadSchema, terminalDtoSchema, trackDtoSchema, type PergaStreamDelta } from './perga-v1.js';
 import type { ApiDecodeFailure } from './types.js';
 
-export const runtimeKindSchema = z.enum(['terminal', 'managed-assistant']);
-
 export const agentProviderSchema = z.string().min(1);
 export type AgentProvider = z.infer<typeof agentProviderSchema>;
 
@@ -15,65 +13,6 @@ export function normalizeWireAgentProvider(raw: unknown): AgentProvider | null {
   const parsed = agentProviderSchema.safeParse(raw);
   return parsed.success ? parsed.data : null;
 }
-
-export const workerSessionStateSchema = z.enum([
-  'starting',
-  'running',
-  'idle',
-  'turn_pending',
-  'failed',
-  'exited',
-  'superseded',
-]);
-export type WorkerSessionState = z.infer<typeof workerSessionStateSchema>;
-
-export const cardRuntimeViewSchema = z.object({
-  worker_session_id: z.string(),
-  kind: runtimeKindSchema,
-  status: workerSessionStateSchema,
-  // Older servers and persisted Card event snapshots do not carry activity time.
-  updated_at_ms: z.number().optional(),
-  provider: agentProviderSchema.optional(),
-  terminal_id: z.string().optional(),
-  thread_id: z.string().optional(),
-  session_id: z.string().optional(),
-  source: z.string().optional(),
-  thread_status: z.string().optional(),
-  // Persisted Card snapshots and cards without a completed turn omit it.
-  last_turn_completed_ms: z.number().optional(),
-  // #2516: a Claude card's child records the version it started on; every other runtime omits it.
-  claude_version: z.string().optional(),
-});
-export type CardRuntimeView = z.infer<typeof cardRuntimeViewSchema>;
-
-/** `model::Card` — card row. `payload` is opaque `serde_json::Value`. */
-export const cardSchema = z.object({
-  id: z.string(),
-  track_id: z.string(),
-  kind: z.string(),
-  // Option<String> is omitted (rather than serialized as null) on the wire.
-  title: z.string().optional(),
-  sort: z.number(),
-  // serde_json::Value on the wire: arbitrary JSON. Kernel never inspects.
-  payload: z.unknown(),
-  runtime: cardRuntimeViewSchema.optional(),
-  // Wire payloads from older servers may omit the field; `.default(true)` mirrors the kernel default.
-  deletable: z.boolean().default(true),
-  created_at: z.number(),
-  updated_at: z.number(),
-});
-
-/** `model::Overlay` — plugin overlay row. `payload` is opaque JSON. */
-export const overlaySchema = z.object({
-  id: z.string(),
-  plugin_id: z.string(),
-  // Documented as "track" | "card" but kept open for forward-compat.
-  entity_kind: z.string(),
-  entity_id: z.string(),
-  kind: z.string(),
-  payload: z.unknown(),
-  updated_at: z.number(),
-});
 
 export const areaUpdatedSchema = z.object({
   ev: z.literal('area.updated'),

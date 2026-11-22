@@ -9,7 +9,7 @@ import type { CardHostCapabilities } from '../contracts.ts';
 import { PathLabel } from '../../../ui/path-label/public.tsx';
 import type { CardHeaderPresentation } from '../registry.js';
 import { CardHead } from '../ui/card-head.tsx';
-import type { WorkerSessionState } from '../../../../../core/api/schemas.js';
+import type { TerminalDto } from '../../../../../core/api/perga-v1.js';
 import { activityLabelOf, cardActivityState, type CardActivity } from '../../../../../core/domain/activity.js';
 
 export function TerminalCardView({
@@ -19,7 +19,7 @@ export function TerminalCardView({
     readonly id: string;
     readonly title: string | null;
     readonly terminalId: string | null;
-    readonly sessionState: WorkerSessionState | null;
+    readonly sessionState: TerminalDto['status'] | null;
     readonly cwd: string | null;
     readonly gateCwd: string | null;
   };

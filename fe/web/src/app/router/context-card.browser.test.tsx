@@ -89,7 +89,7 @@ it('retains finished-worker activity and standalone failure inside folded progre
   await page.viewport(1400, 900);
   renderPage({ track: track({ cards: { worker: 'input' } }),
     cards: [card({ id: 'worker', title: 'Worker' }), card({ id: 'failed', title: 'Build log',
-      runtime: { worker_session_id: 'failed-session', kind: 'terminal', status: 'failed' } })],
+      terminal: { id: 'terminal-test', trackId: 'w1', title: '', cwd: '/tmp', createdAtMs: 1, status: 'failed' } })],
     tasks: [task('Confirm result', 'done', 'worker')],
   });
   const attention = document.querySelector<HTMLElement>('section[aria-label="Progress"]')!;
@@ -259,7 +259,7 @@ it('keeps Planner-managed execution folded without presenting worker failure as 
   const openTask = vi.fn();
   renderPage({ onStartConversation: vi.fn(), onOpenTask: openTask,
     tasks: [task('Check layout', 'failed', 'worker'), task('Update tokens', 'running', null)],
-    cards: [card({ id: 'worker', title: 'Layout worker', runtime: { worker_session_id: 'session', kind: 'terminal', status: 'failed' } })],
+    cards: [card({ id: 'worker', title: 'Layout worker', terminal: { id: 'terminal-test', trackId: 'w1', title: '', cwd: '/tmp', createdAtMs: 1, status: 'failed' } })],
     track: track({ cards: { worker: 'failed' } }),
     conversationContextList: <ChatList context cards={{}} showTrack={false} onOpen={vi.fn()} conversations={[
       { id: 'planner', provider: 'codex', trackId: 'w1', title: 'Planner', isLead: false, kind: 'agent', state: 'idle', updatedAt: 1 },
@@ -304,7 +304,7 @@ it('bounds long conversation and progress lists independently while retaining he
   await page.viewport(1400, 1000);
   const openChat = vi.fn(); const openTask = vi.fn(); const openWorker = vi.fn();
   renderPage({ onStartConversation: vi.fn(), onOpenTask: openTask, onOpenCard: openWorker,
-    cards: Array.from({ length: 30 }, (_, index) => card({ id: `worker-${index}`, updated_at: 30 - index })),
+    cards: Array.from({ length: 30 }, (_, index) => card({ id: `worker-${index}`, updatedAtMs: 30 - index })),
     tasks: Array.from({ length: 30 }, (_, index) => task(`Work ${index}`, 'running', `worker-${index}`)),
     conversationContextList: <ChatList context cards={{}} showTrack={false} onOpen={openChat} conversations={
       Array.from({ length: 30 }, (_, index) => ({ id: `chat-${index}`, provider: 'codex' as const, trackId: 'w1',
@@ -346,7 +346,7 @@ it('bounds long conversation and progress lists independently while retaining he
 
 it('shows a compact real status and keeps finished work after newer running work', async () => {
   await page.viewport(1400, 900);
-  renderPage({ cards: [card({ id: 'old', updated_at: 100 }), card({ id: 'new', updated_at: 200 }), card({ id: 'done', updated_at: 999 })],
+  renderPage({ cards: [card({ id: 'old', updatedAtMs: 100 }), card({ id: 'new', updatedAtMs: 200 }), card({ id: 'done', updatedAtMs: 999 })],
     tasks: [task('Earlier work', 'running', 'old'), task('Latest work', 'running', 'new'), task('Finished work', 'done', 'done')],
   });
   await userEvent.click(document.querySelector<HTMLElement>('[data-nc-work-inventory] button[aria-expanded]')!);

@@ -4,8 +4,9 @@
 import { ApiError,classifyFailure,NotSentError } from '../../../../../core/domain/failure-class.ts';
 import {
 CARD_CREATE_FAILURES,cardCreateText,readKeyedCreateFailure,
-type CardWire,type NewTerminalCardBody,type ThemeRgb,
+type NewTerminalBody,
 } from '../../../../../core/domain/track.ts';
+import type { TerminalDto } from '../../../../../core/api/perga-v1.ts';
 import type { CardAddMenuEntry } from '../../../systems/cards/public.js';
 import type { NewCardValues } from './public.tsx';
 
@@ -13,10 +14,10 @@ import type { NewCardValues } from './public.tsx';
 export type CardDraft = Readonly<{ entry: CardAddMenuEntry; values: NewCardValues }>;
 
 /** One draft's body on its kind's endpoint, built once per intent: an atomic worker endpoint, or the generic create. */
-export type KeyedCardBody = Readonly<{ kind: 'terminal'; body: NewTerminalCardBody }>;
+export type KeyedCardBody = Readonly<{ kind: 'terminal'; body: NewTerminalBody }>;
 
 export type CardCreatePort = Readonly<{
-  createTerminal: (body: NewTerminalCardBody, idempotencyKey: string) => Promise<CardWire>;
+  createTerminal: (body: NewTerminalBody, idempotencyKey: string) => Promise<TerminalDto>;
 }>;
 
 /* Empty is absent, not `""`: the kernel reads an empty `cwd` as "no directory given" but an empty `title` as a real,
@@ -34,21 +35,20 @@ export function sameCardDraft(held: CardDraft, next: CardDraft): boolean {
 }
 
 /**
- * A draft's body: terminal, Codex and Claude on their atomic endpoints, any other kind through the generic create with
- * the entry's claimed kind; `null` for a kind the registry cannot create. Terminal and Claude send no `cwd`: the kernel
- * runs them in the track's workspace.
+ * A draft's body: terminal on its Host endpoint; `null` for an unsupported create kind.
+ * The Host supplies the track workspace when no directory is given.
  */
-export function keyedCardBodyOf({ entry, values }: CardDraft, theme: ThemeRgb): KeyedCardBody | null {
+export function keyedCardBodyOf({ entry, values }: CardDraft): KeyedCardBody | null {
   const title = givenValue(values, 'title');
   const titled = title === undefined ? {} : { title };
-  if (entry.type === 'terminal') return { kind: 'terminal', body: { theme, ...titled } };
+  if (entry.type === 'terminal') return { kind: 'terminal', body: titled };
   return null;
 }
 
 /** Sends one attempt on its kind's endpoint, under its key and the body built at the first press. */
 export function sendCardCreate(
   port: CardCreatePort, { entry }: CardDraft, keyed: Readonly<{ key: string; body: KeyedCardBody }> | null,
-): Promise<CardWire> {
+): Promise<TerminalDto> {
   if (keyed === null) throw new Error(`CardCreateUnsupported(${entry.type})`);
   const { key, body } = keyed;
   return port.createTerminal(body.body, key);

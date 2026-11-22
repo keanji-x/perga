@@ -7,7 +7,8 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { activityLabelOf, type ActivityState } from '../../../../../core/domain/activity.ts';
 import type { ReportTaskRow } from '../../../../../core/domain/track-task-inventory.ts';
-import { NEUTRAL_ACTIVITY, type CardWire } from '../../../../../core/domain/track.ts';
+import { NEUTRAL_ACTIVITY } from '../../../../../core/domain/track.ts';
+import type { PanelItem } from '../../../../../core/domain/panel-item.ts';
 import { MARKER } from '../../../../../core/view/panel.ts';
 import type { PanelRow, RowModuleView } from '../../../../../core/view/panel.ts';
 import { deriveTrackPageView, executionActivityLabelOf } from '../../../../../core/view/track-page.ts';
@@ -18,15 +19,15 @@ import { openInventoryDisclosures, manualCard as card, openableCardsOf, renderPa
 
 afterEach(cleanup);
 
-const CARDS: readonly CardWire[] = [
+const CARDS: readonly PanelItem[] = [
   /* Titled: `title !== kind`, so both fields have a carrier of their own, and the derivation offers a `delete-card` for the capability table to filter away. */
-  card({ id: 'card-1', kind: 'terminal', title: 'Build log', deletable: true }),
+  card({ id: 'card-1', kind: 'terminal', title: 'Build log', removable: true }),
   /* Untitled and kernel-owned: `kind === null`, one badge. */
-  card({ id: 'card-2', kind: 'harness', title: null, deletable: false }),
+  card({ id: 'card-2', kind: 'harness', title: null, removable: false }),
   /* Kernel-owned with a live session no task names, as the planner card is: both badges, a session status. */
   card({
-    id: 'card-3', kind: 'claude', title: 'Planner', deletable: false,
-    runtime: { worker_session_id: 'session-3', kind: 'managed-assistant', status: 'running' },
+    id: 'card-3', kind: 'claude', title: 'Planner', removable: false,
+    terminal: { id: 'terminal-test', trackId: 'w1', title: '', cwd: '/tmp', createdAtMs: 1, status: 'running' },
   }),
 ];
 
@@ -43,7 +44,7 @@ function mobilePanel(container: Element): Element {
 
 /* `openableCards` mirrors `renderPage`'s default so the two sides of each
    comparison below derive from one and the same input. */
-const cardsModule = (cards: readonly CardWire[]) =>
+const cardsModule = (cards: readonly PanelItem[]) =>
   deriveTrackPageView({ existingCardIds: new Set(cards.map(card => card.id)), cards, tasks: [], activity: NEUTRAL_ACTIVITY, openableCards: openableCardsOf(cards, []) }).rowModules.filter((module) => module.key === 'cards');
 
 /* The Tasks fixture, written as `deriveReportTasks` produces its rows; the shape guard re-reads the clauses off the derived rows. */
@@ -100,13 +101,12 @@ beforeAll(() => {
     expect(ROWS.some((row) => row.kind !== null)).toBe(true);
   }
 
-  // badge counts cover zero through two, which is the whole reachable range
+  // badge counts cover zero and one, which is the whole reachable range
   {
     const counts = ROWS.map((row) => row.badges.length);
     expect(counts).toContain(0);
     expect(counts).toContain(1);
-    expect(counts).toContain(2);
-    expect(Math.max(...counts)).toBe(2);
+    expect(Math.max(...counts)).toBe(1);
   }
 
   // the derivation offers both unsupported actions, so filtering them is not vacuous

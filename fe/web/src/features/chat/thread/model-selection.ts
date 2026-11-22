@@ -22,13 +22,10 @@ export type ModelGroup<Provider extends string = AgentProvider> = Readonly<{
   defaultAvailable?: boolean;
 }>;
 
-export function legacyPresentation(provider: string) {
-  return providerPresentation(provider);
-}
 
 /** Managed display needs no provider-specific UI registration. */
 export function providerLabel<Provider extends string>(_group: ModelGroup<Provider> | undefined, provider: Provider): string {
-  return legacyPresentation(provider).label;
+  return providerPresentation(provider).label;
 }
 
 export type CatalogEntry = ModelCatalog['models'][number];
@@ -40,7 +37,7 @@ export type CatalogEntry = ModelCatalog['models'][number];
 export function visibleModelGroups<Provider extends string>(groups: readonly ModelGroup<Provider>[], provider: Provider): readonly ModelGroup<Provider>[] {
   return groups.filter((group) => group.selectionProblem !== undefined || group.provider === provider || (
     group.availability?.status !== 'not_configured'
-    && (!legacyPresentation(group.provider)?.hiddenUntilKnown || (group.availability !== null && group.catalog !== null))));
+    && (!providerPresentation(group.provider)?.hiddenUntilKnown || (group.availability !== null && group.catalog !== null))));
 }
 
 /** The name of the default a catalog says is followed (for Claude, the model its CLI default resolves to), or `null` when it cannot say. */

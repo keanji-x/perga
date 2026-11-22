@@ -31,7 +31,7 @@ describe('cards public behavior', () => {
       ...base,
       type: 'behavior-one',
       claim: { mode: 'exact', kind: 'literal-one' },
-      fromKernel: (raw) => raw.kind === 'literal-one'
+      fromPanel: (raw) => raw.kind === 'literal-one'
         ? { type: 'behavior-one', id: raw.id, payload: { label: 'one' } }
         : null,
     };
@@ -39,7 +39,7 @@ describe('cards public behavior', () => {
       ...base,
       type: 'behavior-two',
       claim: { mode: 'prefix', prefix: 'literal://' },
-      fromKernel: (raw) => raw.kind.startsWith('literal://')
+      fromPanel: (raw) => raw.kind.startsWith('literal://')
         ? { type: 'behavior-two', id: raw.id, payload: { label: 'two' } }
         : null,
       createController: () => ({
@@ -104,7 +104,7 @@ describe('cards public behavior', () => {
       ...base,
       type: 'behavior-one',
       claim: { mode: 'exact', kind: 'released-kind' },
-      fromKernel: (raw) => ({ type: 'behavior-one', id: raw.id, payload: { label: 'stale' } }),
+      fromPanel: (raw) => ({ type: 'behavior-one', id: raw.id, payload: { label: 'stale' } }),
     });
     registry.register({ ...base, type: 'behavior-one' });
     expect(registry.resolve({ id: 'old', kind: 'released-kind', payload: null })).toBeNull();

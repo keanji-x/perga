@@ -1,4 +1,5 @@
-import type { CardWire } from '../../../../../core/domain/track.ts';
+
+import type { PanelItem } from '../../../../../core/domain/panel-item.ts';
 import type { CardRegistry, RegisteredCard } from '../registry.js';
 
 declare module '../registry.js' {
@@ -10,12 +11,12 @@ declare module '../registry.js' {
 
 export type VisibleCardSlot = Readonly<{
   card: RegisteredCard;
-  wire: CardWire;
+  item: PanelItem;
   originalIndex: number;
 }>;
 
 export type UnknownCardSlot = Readonly<{
-  wire: CardWire;
+  item: PanelItem;
   originalIndex: number;
 }>;
 
@@ -26,18 +27,18 @@ export type TrackCardPartition = Readonly<{
 
 export function partitionTrackCards(
   registry: CardRegistry,
-  cards: readonly CardWire[],
+  cards: readonly PanelItem[],
 ): TrackCardPartition {
   const visible: VisibleCardSlot[] = [];
   const unknown: UnknownCardSlot[] = [];
-  cards.forEach((wire, originalIndex) => {
-    const card = registry.resolve(wire);
+  cards.forEach((item, originalIndex) => {
+    const card = registry.resolve(item);
     if (card === null) {
-      if (wire.kind !== 'track-report') unknown.push(Object.freeze({ wire, originalIndex }));
+      if (item.kind !== 'track-report') unknown.push(Object.freeze({ item, originalIndex }));
       return;
     }
     if (registry.get(card.type)?.headless === true) return;
-    visible.push(Object.freeze({ card, wire, originalIndex }));
+    visible.push(Object.freeze({ card, item, originalIndex }));
   });
   return Object.freeze({ visible: Object.freeze(visible), unknown: Object.freeze(unknown) });
 }

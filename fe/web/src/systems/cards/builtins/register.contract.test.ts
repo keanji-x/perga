@@ -1,6 +1,6 @@
 import { describe,expect,it } from 'vitest';
 
-import type { KernelCardInput } from '../registry.js';
+import type { PanelInput } from '../registry.js';
 import { createCardRegistry } from '../registry.js';
 import { FILE_VIEWER_CARD_ENTRY } from './file-viewer.tsx';
 import { partitionTrackCards } from './headless-filter.js';
@@ -103,11 +103,11 @@ describe('builtin card composition contract', () => {
         title: () => 'fixture',
         accessibleName: () => 'fixture',
         create: { mode: 'kernel-minted-only' },
-        fromKernel: (raw) => (raw.kind === 'declared' ? { type: 'declared-headless-fixture', id: raw.id } : null),
+        fromPanel: (raw) => (raw.kind === 'declared' ? { type: 'declared-headless-fixture', id: raw.id } : null),
       });
-      const wire = {
-        id: 'd1', kind: 'declared', track_id: 'w1', title: null, sort: 0, payload: null,
-        deletable: true, created_at: 0, updated_at: 0,
+      const wire = { panelType: 'custom' as const,
+        id: 'd1', kind: 'declared', trackId: 'w1', title: null, sort: 0, payload: null,
+        removable: true, createdAtMs: 0, updatedAtMs: 0,
       };
       const { visible, unknown } = partitionTrackCards(registry, [wire]);
       expect(visible).toEqual([]);
@@ -115,9 +115,9 @@ describe('builtin card composition contract', () => {
     });
   });
 
-  // `partitionTrackCards` looks the entry back up by the resolved card's type, which is only sound while every `fromKernel` mints its own type.
+  // `partitionTrackCards` looks the entry back up by the resolved card's type, which is only sound while every `fromPanel` mints its own type.
   describe('every registered entry mints cards of its own type', () => {
-    const PROBE_BY_TYPE: Readonly<Record<(typeof LANDED)[number], KernelCardInput>> = Object.freeze({
+    const PROBE_BY_TYPE: Readonly<Record<(typeof LANDED)[number], PanelInput>> = Object.freeze({
       terminal: { id: 'probe-term', kind: 'terminal', payload: { terminal_id: 't1' } },
       'track-report': { id: 'probe-report', kind: 'track-report', payload: null },
       'file-viewer': { id: 'probe-file', kind: 'file-viewer', payload: { path: '/tmp/probe.txt' } },
@@ -137,7 +137,7 @@ describe('builtin card composition contract', () => {
       for (const entry of entries) {
         const probe = PROBE_BY_TYPE[entry.type as (typeof LANDED)[number]];
         expect(
-          entry.fromKernel?.(probe)?.type,
+          entry.fromPanel?.(probe)?.type,
           `${entry.type} must mint its own type, or the headless lookup reads another entry`,
         ).toBe(entry.type);
         const card = registry.resolve(probe);

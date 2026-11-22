@@ -4,7 +4,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import type { ReportFileLinkTarget } from '../../../../../core/domain/report-file.ts';
 import type { ReportSourceLinkTarget } from '../../../../../core/domain/report-source.ts';
-import { readTrackReport, type ReportBlock, type TrackReport } from '../../../../../core/domain/report.ts';
+import { readTrackReportPayload, type ReportBlock, type TrackReport } from '../../../../../core/domain/report.ts';
 import { SOURCE_PANEL_COPY } from '../source/public.tsx';
 import { initialBody, splitInitialBody } from './kernel-initial-body.ts';
 import { ReportDocument, ReportTextLink } from './public.tsx';
@@ -278,13 +278,10 @@ describe('ReportDocument', () => {
   describe('typed blocks', () => {
     it('degrades a stored block of the retired view overlay kind to one line and keeps the report', () => {
       const retired = 'view.live';
-      const report = readTrackReport([{
-        id: 'report', kind: 'track-report', track_id: 't', title: null, sort: 0, deletable: false, created_at: 0, updated_at: 0,
-        payload: { body: '', blocks: [
+      const report = readTrackReportPayload({ body: '', blocks: [
           { id: 'b-old', kind: retired, rev: 1, payload: { source: 'perga://plugin/operations/capacity', version: 1 } },
           { id: 'b-2', kind: 'prose', rev: 1, payload: { markdown: 'Still readable.' } },
-        ] },
-      }]);
+        ] });
       const { container } = render(<ReportDocument report={report} empty={EMPTY} />);
       expect(container.querySelector('#b-old')?.textContent).toBe(`unsupported block kind ${retired}`);
       expect(screen.getByText('Still readable.')).toBeTruthy();

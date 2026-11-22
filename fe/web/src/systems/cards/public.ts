@@ -9,7 +9,7 @@ export type {
   CardKindClaim,
   CardRegistry,
   CardSize,
-  KernelCardInput,
+  PanelInput,
   RegisteredCard,
 } from './registry.js';
 export { cardAddMenuEntries, createCardRegistry, FALLBACK_SIZE } from './registry.js';

@@ -136,13 +136,6 @@ describe('selectedReadyTemplateId', () => {
     availability: { status: 'ready' as const },
     tasks: [],
   };
-  const needsPlugin = {
-    id: 'deploy',
-    title: 'Deploy',
-    description: null,
-    availability: { status: 'requires_plugin' as const, plugin_id: 'git', plugin_name: 'Git' },
-    tasks: [],
-  };
   const withInput = {
     id: 'form',
     title: 'Form',
@@ -153,12 +146,12 @@ describe('selectedReadyTemplateId', () => {
   };
 
   it('returns the id only for a single known ready template without input_schema', () => {
-    expect(selectedReadyTemplateId('Run @`template:dev`', [ready, needsPlugin, withInput])).toBe('dev');
-    expect(selectedReadyTemplateId('Run @`template:deploy`', [ready, needsPlugin, withInput])).toBeUndefined();
-    expect(selectedReadyTemplateId('Run @`template:form`', [ready, needsPlugin, withInput])).toBeUndefined();
-    expect(selectedReadyTemplateId('Run @`template:unknown`', [ready, needsPlugin, withInput])).toBeUndefined();
-    expect(selectedReadyTemplateId('Run @`template:dev` and @`template:deploy`', [ready, needsPlugin, withInput])).toBeUndefined();
-    expect(selectedReadyTemplateId('Run @`template:dev` and @`template:dev`', [ready, needsPlugin, withInput])).toBeUndefined();
+    expect(selectedReadyTemplateId('Run @`template:dev`', [ready, withInput])).toBe('dev');
+    expect(selectedReadyTemplateId('Run @`template:deploy`', [ready, withInput])).toBeUndefined();
+    expect(selectedReadyTemplateId('Run @`template:form`', [ready, withInput])).toBeUndefined();
+    expect(selectedReadyTemplateId('Run @`template:unknown`', [ready, withInput])).toBeUndefined();
+    expect(selectedReadyTemplateId('Run @`template:dev` and @`template:deploy`', [ready, withInput])).toBeUndefined();
+    expect(selectedReadyTemplateId('Run @`template:dev` and @`template:dev`', [ready, withInput])).toBeUndefined();
     expect(selectedReadyTemplateId('No templates', [ready])).toBeUndefined();
   });
 });

@@ -1,5 +1,7 @@
+import type { TerminalDto } from '../../../../../core/api/perga-v1.ts';
 import { useEffect, useRef, useSyncExternalStore } from 'react';
-import type { CardWire, NewTerminalCardBody } from '../../../../../core/domain/track.ts';
+import type { NewTerminalBody } from '../../../../../core/domain/track.ts';
+import type { PanelItem } from '../../../../../core/domain/panel-item.ts';
 import { CardDockHost, type BoardHostItem, type CardHost } from '../../../systems/cards/public.js';
 import { useState } from '../../../ui/state/public.ts';
 import { cardCreateEnded, cardCreateFailureText } from '../new-card/create.ts';
@@ -7,10 +9,10 @@ import styles from './workbench.module.css';
 import { DrawerHeader } from '../../../ui/drawer/header.tsx';
 import { useCompactViewport } from '../../../ui/viewport/public.ts';
 
-type TerminalRequest = Readonly<{ key: string; body: NewTerminalCardBody }>;
+type TerminalRequest = Readonly<{ key: string; body: NewTerminalBody }>;
 export type TerminalWorkbenchSession = {
   held: TerminalRequest | null;
-  pending: Promise<CardWire> | null;
+  pending: Promise<TerminalDto> | null;
   selected: string | null;
   epoch: number;
   error: string | null;
@@ -38,15 +40,15 @@ export function createTerminalWorkbenchSessions() {
   } };
 }
 
-/** Track owns selection and the held create intent; app injects transport and key/theme policy. */
+/** Track owns selection and the held create intent; app injects transport and idempotency policy. */
 export function useTerminalWorkbench({ trackId, cards, create, request, session, defaultCardIds, ordinaryCardOpen, onHide }: {
   trackId: string;
   ordinaryCardOpen: boolean;
   onHide: () => void;
   session: TerminalWorkbenchSession;
-  cards: readonly CardWire[];
+  cards: readonly PanelItem[];
   defaultCardIds: ReadonlySet<string>;
-  create: (body: NewTerminalCardBody, key: string) => Promise<CardWire>;
+  create: (body: NewTerminalBody, key: string) => Promise<TerminalDto>;
   request: () => TerminalRequest;
 }) {
   const [open, setOpen] = useState(false);

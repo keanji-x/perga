@@ -6,7 +6,7 @@ import { setupWorkbench, terminalCard } from './terminal-workbench-fixture.tsx';
 afterEach(() => { cleanup(); document.getElementById('root')?.remove(); vi.restoreAllMocks(); });
 
 it('keeps aggregate sessions out of the tools inventory', async () => {
-  setupWorkbench({ cards: [terminalCard('shell', { source: 'manual', in_workbench: true })] });
+  setupWorkbench({ cards: [terminalCard('shell', { source: 'manual', inWorkbench: true })] });
   const workbench = await screen.findByRole('region', { name: 'Workbench' });
   expect(await within(workbench).findByRole('button', { name: /^shell/ })).toBeTruthy();
   expect(within(workbench).queryByRole('button', { name: /Main discussion/ })).toBeNull();
@@ -14,9 +14,9 @@ it('keeps aggregate sessions out of the tools inventory', async () => {
 });
 
 it('opens an inventory terminal in the workbench and hides it without removing it', async () => {
-  const fixture = setupWorkbench({ cards: [terminalCard('shell', { source: 'manual', in_workbench: true })] });
+  const fixture = setupWorkbench({ cards: [terminalCard('shell', { source: 'manual', inWorkbench: true })] });
   await userEvent.click(await screen.findByRole('button', { name: /^shell/ }));
-  await screen.findByText('No terminal session available.');
+  await screen.findByText('Connecting…');
   expect(document.querySelector('[data-nc-card-dock]:not([hidden])')?.getAttribute('data-nc-card-id')).toBe('shell');
   await userEvent.click(screen.getByRole('button', { name: 'Hide terminal' }));
   expect(screen.getByRole('button', { name: /^shell/ })).toBeTruthy();
@@ -27,7 +27,7 @@ it.each(['shell', 'missing'])('retains ?card=%s until the tools read succeeds', 
   let release!: () => void;
   const toolsRead = new Promise<void>(resolve => { release = resolve; });
   const fixture = setupWorkbench({ initialCard: card, toolsRead,
-    cards: [terminalCard('shell', { source: 'manual', in_workbench: true })] });
+    cards: [terminalCard('shell', { source: 'manual', inWorkbench: true })] });
   await screen.findByRole('region', { name: 'Workbench' });
   await waitFor(() => expect(fixture.requests.some(request => request.path === '/api/v1/tracks/workbench/terminals' && request.method === 'GET')).toBe(true));
   expect(fixture.router.state.location.search).toHaveProperty('card', card);
@@ -55,11 +55,11 @@ it('shows the tools empty state while the aggregate still has a conversation', a
 });
 
 it('preserves the tools order and selects an existing terminal without creating one', async () => {
-  const fixture = setupWorkbench({ cards: [terminalCard('first', { source: 'manual', in_workbench: true }), terminalCard('second', { source: 'manual', in_workbench: true })] });
+  const fixture = setupWorkbench({ cards: [terminalCard('first', { source: 'manual', inWorkbench: true }), terminalCard('second', { source: 'manual', inWorkbench: true })] });
   const workbench = await screen.findByRole('region', { name: 'Workbench' });
   await within(workbench).findByRole('button', { name: /^second/ });
   expect(within(workbench).getAllByRole('button').filter(button => /^(first|second)/u.test(button.textContent ?? '')).map(button => button.textContent))
-    .toEqual(['firstterminal', 'secondterminal']);
+    .toEqual(['firstterminalsessionrunningRunning', 'secondterminalsessionrunningRunning']);
   await act(async () => { await fixture.router.navigate({ to: '/track/$trackId', params: { trackId: 'workbench' }, search: { card: 'second' } }); });
   await screen.findByRole('button', { name: 'Hide terminal' });
   expect(fixture.posts()).toEqual([]);

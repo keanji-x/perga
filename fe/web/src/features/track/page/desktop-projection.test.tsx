@@ -6,7 +6,8 @@ import { cleanup, fireEvent, screen, within } from '@testing-library/react';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import type { ReportTaskRow } from '../../../../../core/domain/track-task-inventory.ts';
-import { NEUTRAL_ACTIVITY, type CardWire } from '../../../../../core/domain/track.ts';
+import { NEUTRAL_ACTIVITY } from '../../../../../core/domain/track.ts';
+import type { PanelItem } from '../../../../../core/domain/panel-item.ts';
 import { MARKER } from '../../../../../core/view/panel.ts';
 import type { PanelRow, RowModuleView } from '../../../../../core/view/panel.ts';
 import { deriveTrackPageView } from '../../../../../core/view/track-page.ts';
@@ -18,16 +19,16 @@ import { openInventoryDisclosures, captureContextProjection, manualCard as card,
 
 afterEach(cleanup);
 
-const CARDS: readonly CardWire[] = [
-  /* Titled and deletable: `title !== kind`, a `kind` carrier of its own, and
+const CARDS: readonly PanelItem[] = [
+  /* Titled and removable: `title !== kind`, a `kind` carrier of its own, and
      with `onDeleteCard` passed, both of `delete-card`'s sentences. */
-  card({ id: 'card-1', kind: 'terminal', title: 'Build log', deletable: true }),
+  card({ id: 'card-1', kind: 'terminal', title: 'Build log', removable: true }),
   /* Untitled and kernel-owned: `kind === null`, one badge, no delete. */
-  card({ id: 'card-2', kind: 'harness', title: null, deletable: false }),
+  card({ id: 'card-2', kind: 'harness', title: null, removable: false }),
   /* Kernel-owned with a live session no task names, as the planner card is: both badges, a session status. */
   card({
-    id: 'card-3', kind: 'claude', title: 'Planner', deletable: false,
-    runtime: { worker_session_id: 'session-3', kind: 'managed-assistant', status: 'running' },
+    id: 'card-3', kind: 'claude', title: 'Planner', removable: false,
+    terminal: { id: 'terminal-test', trackId: 'w1', title: '', cwd: '/tmp', createdAtMs: 1, status: 'running' },
   }),
 ];
 
@@ -96,13 +97,12 @@ beforeAll(() => {
     expect(ALL_ROWS.some((row) => row.status !== null && row.status.token === '')).toBe(true);
   }
 
-  // badge counts cover zero through two, which is the whole reachable range
+  // badge counts cover zero and one, which is the whole reachable range
   {
     const counts = ALL_ROWS.map((row) => row.badges.length);
     expect(counts).toContain(0);
     expect(counts).toContain(1);
-    expect(counts).toContain(2);
-    expect(Math.max(...counts)).toBe(2);
+    expect(Math.max(...counts)).toBe(1);
   }
 
   // every action kind the desktop offers appears at least once
