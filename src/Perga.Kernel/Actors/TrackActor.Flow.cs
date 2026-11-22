@@ -324,7 +324,10 @@ public sealed partial class TrackActor
                 return false;
 
             var existing = _taskCoordinator.Snapshot().FirstOrDefault(t => t.TaskKey == node.Id && t.ArchivedAtMs is null);
-            var busy = _activeWatches.Values.Any(watch => watch.NodeId == node.Id) ||
+            // A one-shot can arm behind a replaced watch. Dispatch still waits for that watch to exit.
+            var canArmBehindOldWatch = clock.CronExpr is null && existing is { Status: TaskRunStatus.Pending, Ready: false };
+            var busy = _activeWatches.Values.Any(watch => watch.NodeId == node.Id &&
+                    (!canArmBehindOldWatch || watch.TaskId == existing?.Id)) ||
                 (existing is not null && (_taskCoordinator.HasActiveRun(existing.Id) ||
                     existing.Status is TaskRunStatus.Running or TaskRunStatus.Verifying ||
                     (existing.Status == TaskRunStatus.Pending && existing.Ready)));

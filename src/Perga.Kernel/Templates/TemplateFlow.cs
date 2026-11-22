@@ -24,10 +24,10 @@ internal static class TemplateFlow
         task.Meta is { ValueKind: JsonValueKind.Object } meta &&
         meta.TryGetProperty(DetachedKey, out var detached) && detached.ValueKind == JsonValueKind.True;
 
-    internal static bool HasIndependentSource(TaskDto task) =>
+    internal static string? GetSource(TaskDto task) =>
         task.Context is { ValueKind: JsonValueKind.Object } context &&
         context.TryGetProperty("flowSource", out var source) &&
-        source.ValueKind == JsonValueKind.String && source.GetString() != TrackScheduleSources.Template;
+        source.ValueKind == JsonValueKind.String ? source.GetString() : null;
 
     internal static void ValidateInputs(IPolicyVm vm, CompiledPolicy policy, JsonElement inputs)
     {

@@ -88,8 +88,10 @@ public sealed class UnifiedTemplateFlowTests
             (await host.Services.GetRequiredService<ITrackScheduleStore>().GetAsync(id, "flow:daily-ci-check", default))!.State);
     }
 
-    [Fact]
-    public async Task ReplacementUsesNewBlueprintAndRetainsOldTaskHistoryForSharedId()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ReplacementUsesNewBlueprintAndRearmsRetainedConsumer(bool singleOccurrence)
     {
         await using var host = Host();
         var kernel = host.Services.GetRequiredService<IPergaKernel>();
@@ -99,39 +101,59 @@ public sealed class UnifiedTemplateFlowTests
         var oldSource = Source.Replace("target", "oldTarget", StringComparison.Ordinal);
         var newSource = Source.Replace("unified", "replacement", StringComparison.Ordinal)
             .Replace("target", "newTarget", StringComparison.Ordinal);
+        if (singleOccurrence)
+            newSource = newSource.Replace("tz:'UTC'", "tz:'UTC',maxOccurrences:1", StringComparison.Ordinal);
         await KernelMcpDispatcher.ExecuteGuardedAsync(kernel, principal, KernelMcpToolNames.TrackSet,
             JsonSerializer.SerializeToElement(new { source = oldSource, inputs = new { oldTarget = "old value" } }));
+        await FlowFixture.AddAsync(kernel, id, new FlowNodeSpecDto("consumer",
+            new("wake", Session: "lead", Prompt: "Consume pulse"), When: new(After: [new("pulse", "ok")])));
+        var store = host.Services.GetRequiredService<ITrackReadStore>();
         var before = await kernel.GetTrackFlowAsync(id);
-        host.TimeProvider.SetUtcNow(DateTimeOffset.FromUnixTimeMilliseconds(Assert.Single(before.Projection.Nodes).NextFireAtMs!.Value));
+        host.TimeProvider.SetUtcNow(DateTimeOffset.FromUnixTimeMilliseconds(
+            Assert.Single(before.Projection.Nodes, node => node.Id == "pulse").NextFireAtMs!.Value));
         Assert.Equal(1, await schedules.EvaluateDueSchedulesOnceAsync());
         await kernel.WaitForTrackIdleAsync(id);
-        var first = Assert.Single(await kernel.ListTasksAsync(id));
+        var firstWave = await kernel.ListTasksAsync(id);
+        var first = Assert.Single(firstWave, task => task.TaskKey == "pulse");
+        var consumer = Assert.Single(firstWave, task => task.TaskKey == "consumer");
+        Assert.Equal(TaskRunStatus.Done, consumer.Status);
+        Assert.Equal(1, consumer.RunCount);
+        Assert.Single(host.AgentRuntime.ExecutedTurns, turn => turn.Input.Prompt.Contains("Consume pulse"));
         await KernelMcpDispatcher.ExecuteGuardedAsync(kernel, principal, KernelMcpToolNames.TrackSet,
             JsonSerializer.SerializeToElement(new { source = newSource, inputs = new { newTarget = "new value" } }));
         var after = await kernel.GetTrackFlowAsync(id);
         Assert.Equal(before.FlowRev + 1, after.FlowRev);
-        var node = Assert.Single(after.Projection.Nodes);
+        var node = Assert.Single(after.Projection.Nodes, node => node.Id == "pulse");
         Assert.Equal("Check new value", node.Prompt);
         Assert.Equal(0, node.FiredCount);
+        var retained = Assert.Single((await store.LoadTrackAggregateAsync(id, default))!.Tasks, task => task.Id == consumer.Id);
+        Assert.Null(retained.TriggerRunKey);
         host.TimeProvider.SetUtcNow(DateTimeOffset.FromUnixTimeMilliseconds(node.NextFireAtMs!.Value));
         Assert.Equal(1, await schedules.EvaluateDueSchedulesOnceAsync());
         await kernel.WaitForTrackIdleAsync(id);
-        var tasks = (await host.Services.GetRequiredService<ITrackReadStore>().LoadTrackAggregateAsync(id, default))!.Tasks;
+        var tasks = (await store.LoadTrackAggregateAsync(id, default))!.Tasks;
         var archived = Assert.Single(tasks, task => task.Id == first.Id);
         Assert.NotNull(archived.ArchivedAtMs);
         Assert.Equal(TaskRunStatus.Done, archived.Status);
         Assert.Equal(first.SessionId, archived.SessionId);
         Assert.Equal(TaskRunStatus.Done, Assert.Single(tasks, task => task.TaskKey == "pulse").Status);
+        var secondConsumer = Assert.Single(tasks, task => task.TaskKey == "consumer");
+        Assert.Equal(consumer.Id, secondConsumer.Id);
+        Assert.Equal(TaskRunStatus.Done, secondConsumer.Status);
+        Assert.Equal(2, secondConsumer.RunCount);
         Assert.Collection(host.AgentRuntime.ExecutedTurns,
             turn => Assert.Contains("Check old value", turn.Input.Prompt),
-            turn => Assert.Contains("Check new value", turn.Input.Prompt));
+            turn => Assert.Contains("Consume pulse", turn.Input.Prompt),
+            turn => Assert.Contains("Check new value", turn.Input.Prompt),
+            turn => Assert.Contains("Consume pulse", turn.Input.Prompt));
         Assert.DoesNotContain(host.AgentRuntime.ExecutedTurns, turn => turn.Input.Prompt.Contains("${inputs."));
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task TemplateCannotClaimIndependentFlowId(bool archived)
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task TemplateCannotClaimIndependentFlowId(bool archived, bool preUpgrade)
     {
         await using var host = Host();
         var kernel = host.Services.GetRequiredService<IPergaKernel>();
@@ -139,6 +161,7 @@ public sealed class UnifiedTemplateFlowTests
         var principal = new McpSessionPrincipal("token", id, leadId, true, null, null, []);
         await FlowFixture.AddAsync(kernel, id, new FlowNodeSpecDto("pulse",
             new("run", Prompt: "Independent"), When: new(At: "2099-01-01T00:00:00Z")));
+        var store = host.Services.GetRequiredService<ITrackStore>();
         if (archived)
         {
             await kernel.CancelTaskAsync(id, null, "pulse");
@@ -147,13 +170,27 @@ public sealed class UnifiedTemplateFlowTests
                 content: canceled.Spec.GetRawText())).Ok);
             Assert.NotNull(Assert.Single(await kernel.ListTasksAsync(id)).ArchivedAtMs);
         }
+        if (preUpgrade)
+        {
+            var row = Assert.Single((await store.LoadTrackAggregateAsync(id, default))!.Tasks);
+            await kernel.Actors.RemoveAndDisposeAsync(id);
+            await store.UpsertTaskAsync(row with { Context = JsonSerializer.SerializeToElement(new { flowNode = true }) },
+                null, null, default, suppressDefaultWake: true);
+        }
+        var original = Assert.Single((await store.LoadTrackAggregateAsync(id, default))!.Tasks);
         var before = await kernel.GetTrackFlowAsync(id);
         var error = await Assert.ThrowsAsync<KernelException>(() => KernelMcpDispatcher.ExecuteGuardedAsync(
             kernel, principal, KernelMcpToolNames.TrackSet, JsonSerializer.SerializeToElement(new { source = Source })));
         Assert.Equal(KernelErrorCode.Conflict, error.Code);
         Assert.Contains("pulse", error.Message);
+        if (preUpgrade)
+            Assert.Contains("unknown Flow provenance", error.Message);
         Assert.Equal(before.Spec.GetRawText(), (await kernel.GetTrackFlowAsync(id)).Spec.GetRawText());
         Assert.Null((await kernel.GetTrackAggregateAsync(id)).Track.TemplateId);
+        var preserved = Assert.Single((await store.LoadTrackAggregateAsync(id, default))!.Tasks);
+        Assert.Equal(original.Id, preserved.Id);
+        Assert.Equal(original.ArchivedAtMs, preserved.ArchivedAtMs);
+        Assert.Equal(original.Context?.GetRawText(), preserved.Context?.GetRawText());
     }
 
     [Fact]

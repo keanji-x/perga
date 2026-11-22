@@ -12,6 +12,63 @@ namespace Perga.Kernel.Tests;
 public sealed class ImplicitTemplateToolsTests
 {
     [Fact]
+    public async Task OneShotTemplateReplacementArmsWhileOldWatchShutsDown()
+    {
+        await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        var caller = Caller(snap);
+        var id = snap.Track.Id;
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var stopping = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        ctx.CommandRunner.Handler = async (_, ct) =>
+        {
+            using var registration = ct.Register(() => stopping.TrySetResult());
+            started.TrySetResult();
+            await release.Task;
+            return new ShellCommandResult(0, "", "", false, 1);
+        };
+
+        try
+        {
+            await Call(ctx, caller, KernelMcpToolNames.TrackSet, new { source = """
+                export default {id:'old-watch', title:'Old watch', flow:[
+                  {id:'pulse', do:{kind:'watch', cmd:'old probe'}}
+                ]};
+                """ });
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var old = Assert.Single(await ctx.Kernel.ListTasksAsync(id));
+            var due = ctx.Time.GetUtcNow().AddMinutes(1);
+            await Call(ctx, caller, KernelMcpToolNames.TrackSet, new { source = $$$"""
+                export default {id:'new-wake', title:'New wake', flow:[
+                  {id:'pulse', when:{at:'{{{due:O}}}'}, do:{kind:'wake', session:'lead', prompt:'Run replacement'}}
+                ]};
+                """ });
+            await stopping.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            ctx.Time.Advance(TimeSpan.FromMinutes(1));
+            Assert.Single(await ctx.Kernel.FireDueTrackSchedulesAsync(due.ToUnixTimeMilliseconds()));
+            var row = Assert.Single((await ctx.Store.LoadTrackAggregateAsync(id, default))!.Tasks,
+                task => task.TaskKey == "pulse");
+            Assert.NotEqual(old.Id, row.Id);
+            Assert.Equal(TaskRunStatus.Pending, row.Status);
+            Assert.True(row.Ready);
+            Assert.Equal(0, row.RunCount);
+            var clock = (await ctx.Store.GetAsync(id, "flow:pulse", default))!;
+            Assert.Equal(TrackScheduleStates.Done, clock.State);
+            Assert.Equal(1, clock.FiredCount);
+            Assert.Empty(ctx.AgentRuntime.OpenedSessions);
+        }
+        finally { release.TrySetResult(); }
+
+        await ctx.Kernel.WaitForTrackIdleAsync(id).WaitAsync(TimeSpan.FromSeconds(5));
+        var replacement = Assert.Single(await ctx.Kernel.ListTasksAsync(id), task => task.TaskKey == "pulse");
+        Assert.Equal(TaskRunStatus.Done, replacement.Status);
+        Assert.Equal(1, replacement.RunCount);
+        Assert.Contains("Run replacement", Assert.Single(Assert.Single(ctx.AgentRuntime.OpenedSessions).RecordedInputs).Prompt);
+        Assert.Empty(await ctx.Kernel.FireDueTrackSchedulesAsync(ctx.Time.GetUtcNow().ToUnixTimeMilliseconds()));
+    }
+
+    [Fact]
     public async Task ImmediateWakeRunsWhenItsStartupEventCannotBePublished()
     {
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());

@@ -133,12 +133,20 @@ public sealed partial class TrackActor
         {
             var previous = previousById.GetValueOrDefault(node.Id);
             var task = tasksByKey.GetValueOrDefault(node.Id);
+            var detached = task is not null && TemplateFlow.WasDetached(task);
             if ((previous is not null && previous.Source != TrackScheduleSources.Template) ||
-                (task is not null && (!FlowConstants.IsFlowTask(task) ||
-                    (previous is null && TemplateFlow.HasIndependentSource(task)))))
+                (task is not null && !FlowConstants.IsFlowTask(task)))
                 throw KernelException.Conflict($"Template Flow node '{node.Id}' already belongs to an independent task. Choose a different ID.");
 
-            var detached = task is not null && TemplateFlow.WasDetached(task);
+            if (previous is null && task is not null)
+            {
+                var source = TemplateFlow.GetSource(task);
+                if (source is null && !detached)
+                    throw KernelException.Conflict($"Template Flow node '{node.Id}' is claimed by a task with unknown Flow provenance. Choose a different ID.");
+                if (source is not null && source != TrackScheduleSources.Template)
+                    throw KernelException.Conflict($"Template Flow node '{node.Id}' already belongs to an independent task. Choose a different ID.");
+            }
+
             if (previous is not null)
             {
                 if (!detached && (previous.Canceled || (sameTemplate && TrackFlowReconciler.NodeSpecEquals(previous, node))))
@@ -178,6 +186,24 @@ public sealed partial class TrackActor
         if (policy is not null)
             TemplateFlow.RequireValid(TrackFlowValidator.Validate(spec, _flowSpec, _taskCoordinator.Snapshot(), CollectActiveFlowTaskIdsCore(),
                 _sessions, next.LeadSessionId, policy, _policyVm, next.TemplateInputs, _scheduleCronEvaluator, _timeProvider, replaced));
+
+        if (replaced.Count > 0)
+        {
+            // A fresh task restarts its run count, so its first wave can reuse a retained consumer's key.
+            foreach (var node in spec.Nodes)
+            {
+                if (node.Canceled || seeds.ContainsKey(node.Id) ||
+                    node.When?.After?.Any(dep => replaced.Contains(dep.Node)) != true ||
+                    !tasksByKey.TryGetValue(node.Id, out var task) || task.TriggerRunKey is null)
+                    continue;
+                taskUpdates.Add(task with
+                {
+                    TriggerRunKey = null,
+                    Ready = task.Status != TaskRunStatus.Pending && task.Ready,
+                    UpdatedAtMs = next.UpdatedAtMs
+                });
+            }
+        }
 
         var clocks = policy is null ? [] :
             await RefreshTemplateClockTextCoreAsync(spec, next, policy, ct, replaced).ConfigureAwait(false);
