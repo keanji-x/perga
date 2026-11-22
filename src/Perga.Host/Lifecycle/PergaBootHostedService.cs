@@ -16,19 +16,22 @@ public sealed class PergaBootHostedService : IHostedService
     private readonly ITerminalBridgeClient _terminalClient;
     private readonly PergaHostOptions _options;
     private readonly ILogger<PergaBootHostedService> _logger;
+    private readonly IExecutionTargetManager? _targetManager;
 
     public PergaBootHostedService(
         ITrackStore store,
         IPergaKernel kernel,
         ITerminalBridgeClient terminalClient,
         PergaHostOptions options,
-        ILogger<PergaBootHostedService> logger)
+        ILogger<PergaBootHostedService> logger,
+        IExecutionTargetManager? targetManager = null)
     {
         _store = store;
         _kernel = kernel;
         _terminalClient = terminalClient;
         _options = options;
         _logger = logger;
+        _targetManager = targetManager;
     }
 
     public BootReconcileResult? LastReconcileResult { get; private set; }
@@ -38,6 +41,11 @@ public sealed class PergaBootHostedService : IHostedService
         if (_store is SqliteTrackStore sqliteStore)
         {
             await sqliteStore.InitializeAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        if (_targetManager is not null)
+        {
+            await _targetManager.LoadPersistedTargetsAsync(cancellationToken).ConfigureAwait(false);
         }
 
         if (_options.AutoManageTerminalBridge &&

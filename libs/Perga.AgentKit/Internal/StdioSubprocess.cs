@@ -6,7 +6,7 @@ using Perga.Processes;
 
 namespace Perga.AgentKit.Internal;
 
-internal sealed class StdioSubprocess : IAsyncDisposable
+internal sealed class StdioSubprocess : ISubprocessHandle
 {
     private const int PosixSigInt = 2;
     private const int MaxStderrLines = 64;
@@ -34,6 +34,7 @@ internal sealed class StdioSubprocess : IAsyncDisposable
     }
 
     public int ProcessId => _process.Id;
+    int? ISubprocessHandle.ProcessId => ProcessId;
 
     public bool HasExited
     {
@@ -180,7 +181,7 @@ internal sealed class StdioSubprocess : IAsyncDisposable
         }
     }
 
-    internal bool ShutdownConfirmed { get; private set; }
+    public bool ShutdownConfirmed { get; private set; }
 
     public ValueTask DisposeAsync()
     {

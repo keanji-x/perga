@@ -5,10 +5,10 @@ namespace Perga.VcsKit;
 public sealed partial class VcsService
 {
     internal static bool IsInsideRepository(string path) =>
-        FindNearestVcsRoot(path, ignoreAmbientRoots: false) is not null;
+        FindNearestVcsRoot(LocalWorkspaceFileSystemOps.Instance, path, ignoreAmbientRoots: false) is not null;
 
     internal static bool IsJjOnlySource(string path) =>
-        FindNearestVcsRoot(WorkspaceFileReader.ResolveCanonicalPath(path), ignoreAmbientRoots: false) is { HasJj: true, HasGit: false };
+        FindNearestVcsRoot(LocalWorkspaceFileSystemOps.Instance, WorkspaceFileReader.ResolveCanonicalPath(path), ignoreAmbientRoots: false) is { HasJj: true, HasGit: false };
 
     internal async Task<GitSnapshotSource?> ResolveOverlayGitSourceAsync(
         string source, string? baseRevision, CancellationToken ct)

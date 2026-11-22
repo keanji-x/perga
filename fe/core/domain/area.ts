@@ -2,14 +2,21 @@
 
 import { z } from 'zod';
 
-import { areaDtoSchema, areaSchema, type AreaDto } from '../api/schemas.js';
+import {
+  areaDtoSchema, areaSchema, executionTargetDtoSchema,
+  type AreaDto, type ExecutionTargetDto,
+} from '../api/schemas.js';
 import type { ApiOperation } from '../api/types.js';
 import type { FailureTable, WriteClass, WriteText } from './failure-class.js';
 
 export type AreaKind = z.infer<typeof areaSchema>['kind'];
 export type AreaWire = z.infer<typeof areaSchema>;
+export type PergaAreaWire = AreaWire & Readonly<{
+  execution_target_id?: string;
+}>;
+export type { ExecutionTargetDto };
 
-export function areaDtoToWire(dto: AreaDto): AreaWire {
+export function areaDtoToWire(dto: AreaDto): PergaAreaWire {
   return {
     id: dto.id,
     name: dto.name,
@@ -18,14 +25,15 @@ export function areaDtoToWire(dto: AreaDto): AreaWire {
     kind: 'user',
     default_template_id: null,
     default_cwd: dto.defaultCwd ?? null,
+    ...(dto.executionTargetId !== undefined ? { execution_target_id: dto.executionTargetId } : {}),
     created_at: dto.createdAtMs,
     updated_at: dto.updatedAtMs,
   };
 }
 
-export const areaWireOrDtoSchema: z.ZodType<AreaWire> = z.union([
+export const areaWireOrDtoSchema: z.ZodType<PergaAreaWire> = z.union([
   areaDtoSchema.transform(areaDtoToWire),
-  areaSchema,
+  areaSchema.extend({ execution_target_id: z.string().optional() }),
 ]);
 
 export type Area = Readonly<{
@@ -36,11 +44,12 @@ export type Area = Readonly<{
   kind: AreaKind;
   defaultTemplateId: string | null;
   defaultCwd: string | null;
+  executionTargetId?: string;
   createdAt: number;
   updatedAt: number;
 }>;
 
-export function toArea(wire: AreaWire): Area {
+export function toArea(wire: PergaAreaWire): Area {
   return {
     id: wire.id,
     name: wire.name,
@@ -49,6 +58,7 @@ export function toArea(wire: AreaWire): Area {
     kind: wire.kind,
     defaultTemplateId: wire.default_template_id,
     defaultCwd: wire.default_cwd,
+    ...(wire.execution_target_id !== undefined ? { executionTargetId: wire.execution_target_id } : {}),
     createdAt: wire.created_at,
     updatedAt: wire.updated_at,
   };
@@ -59,10 +69,14 @@ export function toArea(wire: AreaWire): Area {
  * the incoming carrier: historical event logs can contain same-millisecond updates.
  */
 export function newestArea(current: Area, incoming: Area): Area {
-  return current.updatedAt > incoming.updatedAt ? current : incoming;
+  if (current.updatedAt > incoming.updatedAt) return current;
+  if (incoming.executionTargetId === undefined && current.executionTargetId !== undefined) {
+    return { ...incoming, executionTargetId: current.executionTargetId };
+  }
+  return incoming;
 }
 
-export function areaListOperation(): ApiOperation<AreaWire[]> {
+export function areaListOperation(): ApiOperation<PergaAreaWire[]> {
   return { method: 'GET', path: '/api/v1/areas', responseSchema: z.array(areaWireOrDtoSchema) };
 }
 
@@ -87,6 +101,7 @@ export type NewAreaBody = Readonly<{
   sort?: number;
   default_template_id?: string | null;
   default_cwd?: string | null;
+  execution_target_id?: string;
 }>;
 export type AreaPatchBody = Readonly<{
   name?: string;
@@ -94,7 +109,35 @@ export type AreaPatchBody = Readonly<{
   sort?: number;
   default_template_id?: string | null;
   default_cwd?: string | null;
+  execution_target_id?: string;
 }>;
+
+export type CreateExecutionTargetBody = Readonly<{
+  target: string;
+  label?: string;
+  identityFile?: string;
+}>;
+
+export function executionTargetsOperation(): ApiOperation<ExecutionTargetDto[]> {
+  return {
+    method: 'GET',
+    path: '/api/v1/targets',
+    responseSchema: z.array(executionTargetDtoSchema),
+  };
+}
+
+export function createExecutionTargetOperation(body: CreateExecutionTargetBody): ApiOperation<ExecutionTargetDto> {
+  return {
+    method: 'POST',
+    path: '/api/v1/targets',
+    body: {
+      target: body.target,
+      ...(body.label !== undefined && body.label.trim() !== '' ? { label: body.label.trim() } : {}),
+      ...(body.identityFile !== undefined && body.identityFile.trim() !== '' ? { identityFile: body.identityFile.trim() } : {}),
+    },
+    responseSchema: executionTargetDtoSchema,
+  };
+}
 
 /** Perga `/api/v1/bootstrap` always supports keyed Area creation; legacy responses check `areaCreateIdempotency`. */
 export function areaCreationCapabilityOperation(): ApiOperation<'supported' | 'unsupported'> {
@@ -136,13 +179,14 @@ export const AREA_CREATE_TEXT: WriteText = Object.freeze({
 });
 
 /** One key identifies one exact creation intent, including every retry. */
-export function createAreaOperation(body: NewAreaBody, idempotencyKey: string): ApiOperation<AreaWire> {
+export function createAreaOperation(body: NewAreaBody, idempotencyKey: string): ApiOperation<PergaAreaWire> {
   const wireBody = {
     name: body.name,
     color: body.color,
     ...(body.sort !== undefined ? { sortOrder: body.sort } : {}),
     ...(body.default_cwd !== undefined ? { defaultCwd: body.default_cwd } : {}),
     ...(body.default_template_id !== undefined ? { default_template_id: body.default_template_id } : {}),
+    ...(body.execution_target_id !== undefined ? { executionTargetId: body.execution_target_id } : {}),
   };
   return {
     method: 'POST',
@@ -153,7 +197,7 @@ export function createAreaOperation(body: NewAreaBody, idempotencyKey: string): 
   };
 }
 
-export function updateAreaOperation(areaId: string, body: AreaPatchBody): ApiOperation<AreaWire> {
+export function updateAreaOperation(areaId: string, body: AreaPatchBody): ApiOperation<PergaAreaWire> {
   const wireBody = {
     ...(body.name !== undefined ? { name: body.name } : {}),
     ...(body.color !== undefined ? { color: body.color } : {}),
@@ -164,6 +208,7 @@ export function updateAreaOperation(areaId: string, body: AreaPatchBody): ApiOpe
         ? { defaultCwd: body.default_cwd }
         : {}),
     ...(body.default_template_id !== undefined ? { default_template_id: body.default_template_id } : {}),
+    ...(body.execution_target_id !== undefined ? { executionTargetId: body.execution_target_id } : {}),
   };
   return {
     method: 'PATCH',

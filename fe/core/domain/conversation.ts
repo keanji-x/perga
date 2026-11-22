@@ -290,71 +290,89 @@ export type ModelCatalog = z.infer<typeof modelCatalogSchema>;
  */
 export type ModelCatalogScope =
   | Readonly<{ kind: 'card'; cardId: string; provider: AgentProvider }>
-  | Readonly<{ kind: 'provider'; provider: AgentProvider }>;
+  | Readonly<{ kind: 'provider'; provider: AgentProvider; targetId?: string }>;
 
-/** Derives the conversation provider's catalog and availability from `/api/v1/bootstrap`. */
+function providerStatusesToModelCatalog(
+  providers: readonly z.infer<typeof bootstrapDtoSchema>['providers'][number][],
+  provider: AgentProvider,
+): ModelCatalog {
+  const providerStatus = providers.find((p) => normalizeWireAgentProvider(p.provider) === provider);
+  const richCatalog = providerStatus?.modelCatalog ?? [];
+  if (richCatalog.length > 0) {
+    const models = richCatalog.map((entry) => ({
+      id: entry.model,
+      model: entry.model,
+      resolved_model: null,
+      display_name: entry.displayName,
+      description: entry.description,
+      is_default: entry.isDefault,
+      supported_reasoning_efforts: entry.supportedReasoningEfforts.map((effort) => ({
+        reasoning_effort: effort.reasoningEffort,
+        description: effort.description,
+      })),
+      default_reasoning_effort: entry.defaultReasoningEffort,
+    }));
+    const defaultEntry = models.find((entry) => entry.is_default);
+    return {
+      models,
+      default: {
+        model: defaultEntry?.model ?? null,
+        reasoning_effort: defaultEntry?.default_reasoning_effort ?? null,
+        supported_reasoning_efforts: defaultEntry?.supported_reasoning_efforts ?? null,
+      },
+      default_source: defaultEntry ? 'config_read' : 'unknown',
+      source: providerStatus?.available ? 'live' : 'unavailable',
+      fetched_at_ms: Date.now(),
+    };
+  }
+  const providerModels = providerStatus?.models ?? [];
+  const unique = [...new Set(providerModels)];
+  return {
+    models: unique.map((model, index) => ({
+      id: model,
+      model,
+      resolved_model: null,
+      display_name: model,
+      description: '',
+      is_default: index === 0,
+      supported_reasoning_efforts: [],
+      default_reasoning_effort: null,
+    })),
+    default: {
+      model: unique[0] ?? null,
+      reasoning_effort: null,
+      supported_reasoning_efforts: null,
+    },
+    default_source: 'unknown',
+    source: providerStatus?.available ? 'live' : 'unavailable',
+    fetched_at_ms: Date.now(),
+  };
+}
+
+/** Derives the conversation provider's catalog and availability from `/api/v1/bootstrap` or `/api/v1/targets/{targetId}/providers`. */
 export function modelCatalogOperation(
   scope: ModelCatalogScope, options?: Readonly<{ provider?: AgentProvider; refresh?: boolean }>,
 ): ApiOperation<ModelCatalog> {
+  if (scope.kind === 'provider' && scope.targetId !== undefined && scope.targetId !== '' && scope.targetId !== 'local') {
+    const refreshQuery = options?.refresh === true ? '?refresh=true' : '';
+    return {
+      method: 'GET',
+      path: `/api/v1/targets/${encodeURIComponent(scope.targetId)}/providers${refreshQuery}`,
+      responseSchema: bootstrapDtoSchema.shape.providers.transform((providers): ModelCatalog =>
+        providerStatusesToModelCatalog(providers, scope.provider)),
+    };
+  }
   const refreshSuffix = options?.refresh === true ? '&refresh=true' : '';
   return {
     method: 'GET',
     path: scope.kind === 'card'
       ? `/api/v1/bootstrap?card_id=${encodeURIComponent(scope.cardId)}${refreshSuffix}`
       : `/api/v1/bootstrap?provider=${scope.provider}${refreshSuffix}`,
-    responseSchema: z.union([bootstrapDtoSchema.transform((bootstrap): ModelCatalog => {
-      const providerStatus = bootstrap.providers.find((p) => normalizeWireAgentProvider(p.provider) === scope.provider);
-      const richCatalog = providerStatus?.modelCatalog ?? [];
-      if (richCatalog.length > 0) {
-        const models = richCatalog.map((entry) => ({
-          id: entry.model,
-          model: entry.model,
-          resolved_model: null,
-          display_name: entry.displayName,
-          description: entry.description,
-          is_default: entry.isDefault,
-          supported_reasoning_efforts: entry.supportedReasoningEfforts.map((effort) => ({
-            reasoning_effort: effort.reasoningEffort,
-            description: effort.description,
-          })),
-          default_reasoning_effort: entry.defaultReasoningEffort,
-        }));
-        const defaultEntry = models.find((entry) => entry.is_default);
-        return {
-          models,
-          default: {
-            model: defaultEntry?.model ?? null,
-            reasoning_effort: defaultEntry?.default_reasoning_effort ?? null,
-            supported_reasoning_efforts: defaultEntry?.supported_reasoning_efforts ?? null,
-          },
-          default_source: defaultEntry ? 'config_read' : 'unknown',
-          source: providerStatus?.available ? 'live' : 'unavailable',
-          fetched_at_ms: Date.now(),
-        };
-      }
-      const providerModels = providerStatus?.models ?? [];
-      const unique = [...new Set(providerModels)];
-      return {
-        models: unique.map((model, index) => ({
-          id: model,
-          model,
-          resolved_model: null,
-          display_name: model,
-          description: '',
-          is_default: index === 0,
-          supported_reasoning_efforts: [],
-          default_reasoning_effort: null,
-        })),
-        default: {
-          model: unique[0] ?? null,
-          reasoning_effort: null,
-          supported_reasoning_efforts: null,
-        },
-        default_source: 'unknown',
-        source: providerStatus?.available ? 'live' : 'unavailable',
-        fetched_at_ms: Date.now(),
-      };
-    }), modelCatalogSchema]),
+    responseSchema: z.union([
+      bootstrapDtoSchema.transform((bootstrap): ModelCatalog =>
+        providerStatusesToModelCatalog(bootstrap.providers, scope.provider)),
+      modelCatalogSchema,
+    ]),
   };
 }
 

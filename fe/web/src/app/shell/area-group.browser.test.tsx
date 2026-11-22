@@ -19,18 +19,19 @@ function element(node: HTMLElement | null) {
 /* `Show N more` is a row in the Track list, not a footer: same height, same text column. */
 it('puts Show N more on the Track row rhythm, in the Track title column', async () => {
   await page.viewport(1400, 900);
-  const area: Area = { id: 'work', name: 'Work', color: '#5B8DEF', sort: 1, kind: 'user',
+  const area: Area = { id: 'work', name: 'Work', executionTargetId: 'jasper', color: '#5B8DEF', sort: 1, kind: 'user',
     defaultTemplateId: null, defaultCwd: null, createdAt: 1, updatedAt: 1 };
   const tracks: Track[] = Array.from({ length: 7 }, (_, i) => ({
     id: `track-${i}`, areaId: area.id, title: `Row ${i + 1}`, sort: i, cwd: '/tmp', isolation: 'none', agentCwd: '/tmp',
     pinnedAt: null, closedAt: null, createdAt: 1, updatedAt: 1, ...NEUTRAL_ACTIVITY,
   }));
-  render(receipts.wrap(<div style={{ inlineSize: 240 }}><Sidebar areas={[area]} tracksByArea={new Map([[area.id, tracks]])}
+  render(receipts.wrap(<div style={{ inlineSize: 240 }}><Sidebar areas={[area]} executionTargets={[{ id: 'jasper', label: 'Jasper workstation', kind: 'ssh', isDefault: false, removable: false }]} tracksByArea={new Map([[area.id, tracks]])}
     tracks={tracks} currentPath="/" onGo={vi.fn()} onRequestCreateArea={vi.fn()} onRequestEditArea={vi.fn()}
     onDeleteArea={vi.fn()} onNewTrack={vi.fn()} onSetPinned={vi.fn()} onDeleteTrack={vi.fn()}
     onOpenSettings={vi.fn()} onOpenPlugins={vi.fn()} onSignOut={vi.fn()} collapsed={false} onToggleCollapsed={vi.fn()} /></div>));
 
-  const more = element(document.querySelector<HTMLElement>('[aria-label="Show 2 more in Work"]'));
+  await expect.element(page.getByText('Work · Jasper workstation', { exact: true })).toBeVisible();
+  const more = element(document.querySelector<HTMLElement>('[aria-label="Show 2 more in Work · Jasper workstation"]'));
   const lastRow = element(document.querySelector<HTMLElement>('[aria-label^="Track Row 5"]'));
   const lastTitle = element(document.querySelector<HTMLElement>('[title="Row 5"]'));
   expect(more.getBoundingClientRect().height).toBeCloseTo(lastRow.getBoundingClientRect().height, 0);

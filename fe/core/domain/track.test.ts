@@ -5,7 +5,7 @@ import {
   createTrackOperation, deleteCardOperation, hasFailed, isBlankForKernel, isClosed,
   isWorking, needsUserAttention, toTrack, trackActivityFromOverlay, trackActivitiesFromOverlays,
   sortAreaTracksByRecent, trackRecentAt, limitAreaTracks, railAreaTracks, AREA_TRACK_LIMIT,
-  trackActivityState, updateTrackOperation,
+  trackActivityState, updateTrackOperation, trackWorkspaceOptionsOperation,
   NEUTRAL_ACTIVITY, UNTITLED_TRACK_LABEL, trackDisplayTitle, trackWireSchema, tracksInAreaOperation,
   trackDtoToWire, userVisibleTracks, trackOverlayPayload,
   trackDetailOperation, terminalDtoToCardWire, type Track, type OverlayWire,
@@ -525,4 +525,8 @@ describe('template report projection', () => {
       templateId: null, templateTitle: null, templateInputs: {}, templateHeaderView: null,
     });
   });
+});
+
+it('preserves an explicit local workspace target', () => {
+  expect(trackWorkspaceOptionsOperation('area-1', '/tmp/x', undefined, 'local').path).toContain('targetId=local');
 });

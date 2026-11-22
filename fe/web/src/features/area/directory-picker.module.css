@@ -1,0 +1,106 @@
+@layer features {
+  .picker {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  .targetBar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-1);
+  }
+
+  .targetPill,
+  .addTargetPill {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    min-block-size: 1.75rem;
+    max-inline-size: 14rem;
+    padding-block: 0;
+    padding-inline: var(--space-2);
+    border-radius: var(--radius-pill);
+    font: var(--type-ui);
+    cursor: pointer;
+  }
+
+  .targetPill {
+    border: var(--space-px) solid var(--hairline-strong);
+    background: var(--surface-card);
+    color: var(--text-2);
+  }
+
+  .targetPill:hover {
+    background: var(--overlay-hover);
+    color: var(--text);
+  }
+
+  .targetPill[aria-pressed='true'] {
+    border-color: var(--accent);
+    background: var(--overlay-hover);
+    color: var(--text);
+  }
+
+  .targetPillLabel {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .targetBadge {
+    display: inline-flex;
+    align-items: center;
+    min-block-size: 1.75rem;
+    max-inline-size: 16rem;
+    padding-inline: var(--space-2);
+    border: var(--space-px) solid var(--hairline);
+    border-radius: var(--radius-pill);
+    background: var(--surface-card);
+    color: var(--text-2);
+    font: var(--type-metadata);
+  }
+
+  .addTargetPill {
+    border: var(--space-px) dashed var(--hairline-strong);
+    background: transparent;
+    color: var(--text-2);
+  }
+
+  .addTargetPill:hover {
+    border-color: var(--accent);
+    background: var(--overlay-hover);
+    color: var(--text);
+  }
+
+  .targetPill:focus-visible,
+  .addTargetPill:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+
+  .sshForm {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+
+  .sshTitle {
+    margin: 0;
+    font: var(--type-ui);
+    color: var(--text);
+  }
+
+  .sshHint {
+    margin: 0;
+    font: var(--type-metadata);
+    color: var(--text-3);
+  }
+
+  .sshActions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-2);
+  }
+}

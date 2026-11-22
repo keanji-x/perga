@@ -87,4 +87,64 @@ describe('AreaEditorForm', () => {
       name: 'Work', defaultCwd: '/srv/ work ',
     });
   });
+
+  it('switches machines via top capsules in the directory picker, supports adding an SSH machine, and submits both target and folder', async () => {
+    const onSubmit = vi.fn();
+    const listerCalls: string[] = [];
+    const listDirectoryForTarget = (targetId: string) => {
+      listerCalls.push(targetId);
+      return vi.fn((path?: string) =>
+        Promise.resolve({ path: path ?? `/home/${targetId}/work`, parent: '/', entries: [] }));
+    };
+    const onCreateExecutionTarget = vi.fn(() => Promise.resolve({
+      id: 'gpu-box',
+      label: 'gpu-box',
+      kind: 'ssh',
+      isDefault: false,
+      destination: 'dev@10.0.0.8',
+      removable: true,
+    }));
+
+    renderForm({
+      initial: { name: 'Remote Area', defaultCwd: null, executionTargetId: 'local' },
+      targetEditable: true,
+      executionTargets: [
+        { id: 'local', label: 'Local (kenji)', kind: 'local', isDefault: true, destination: null, removable: false },
+        { id: 'jasper', label: 'jasper (local ssh)', kind: 'ssh', isDefault: false, destination: 'jasper@127.0.0.1', removable: false },
+      ],
+      listDirectoryForTarget,
+      onCreateExecutionTarget,
+      submitLabel: 'Create area',
+      onSubmit,
+    });
+
+    // Open folder picker -> machine capsules live at the top of the directory dialog.
+    await userEvent.click(screen.getByRole('button', { name: 'Default folder: Neige workspace' }));
+    expect(screen.getByRole('button', { name: 'Local (kenji)', pressed: true })).toBeTruthy();
+
+    // Switch to existing SSH target capsule.
+    await userEvent.click(screen.getByRole('button', { name: 'jasper (local ssh)' }));
+    await waitFor(() => expect(listerCalls).toContain('jasper'));
+
+    // Click '+' capsule to add a new SSH machine and verify automatic switch to its directory.
+    await userEvent.click(screen.getByRole('button', { name: 'Add SSH machine' }));
+    await userEvent.type(screen.getByLabelText('SSH target'), 'dev@10.0.0.8');
+    await userEvent.type(screen.getByLabelText('Display name (optional)'), 'gpu-box');
+    await userEvent.click(screen.getByRole('button', { name: 'Connect & add' }));
+
+    await waitFor(() => expect(onCreateExecutionTarget).toHaveBeenCalledWith({
+      target: 'dev@10.0.0.8',
+      label: 'gpu-box',
+    }));
+    await waitFor(() => expect(listerCalls).toContain('gpu-box'));
+
+    // Confirm directory selection on the newly added machine.
+    await userEvent.click(await screen.findByRole('button', { name: 'Select this directory' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Create area' }));
+    expect(onSubmit).toHaveBeenCalledWith({
+      name: 'Remote Area',
+      defaultCwd: '/home/gpu-box/work',
+      executionTargetId: 'gpu-box',
+    });
+  });
 });

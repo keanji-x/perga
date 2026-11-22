@@ -8,10 +8,11 @@ import { TextInput } from '@astryxdesign/core/TextInput';
 import { VStack } from '@astryxdesign/core/VStack';
 import { useId, type FormEvent, type RefObject } from 'react';
 
-import { DirectoryPicker } from '../directory-picker.tsx';
+import type { CreateExecutionTargetBody, ExecutionTargetDto } from '../../../../../core/domain/area.ts';
 import type { ListDirectory } from '../../../ui/directory-browser/public.tsx';
 import { useState } from '../../../ui/state/public.ts';
 import { FolderPill } from '../default-pills/public.tsx';
+import { DirectoryPicker } from '../directory-picker.tsx';
 import styles from './area-editor.module.css';
 
 // Astryx's public type does not expose the native `required` constraint, and
@@ -21,11 +22,13 @@ const NATIVE_REQUIRED_INPUT_PROPS = Object.freeze({ required: true });
 export type AreaEditorValues = Readonly<{
   name: string;
   defaultCwd: string | null;
+  executionTargetId?: string;
 }>;
 
 export type AreaEditorPatch = Readonly<{
   name?: string;
   defaultCwd?: string | null;
+  executionTargetId?: string;
 }>;
 
 export type AreaEditorFormProps = Readonly<{
@@ -35,6 +38,10 @@ export type AreaEditorFormProps = Readonly<{
   cancelLabel: string;
   error: string | null;
   listDirectory: ListDirectory;
+  listDirectoryForTarget?: (targetId: string) => ListDirectory;
+  executionTargets?: readonly ExecutionTargetDto[];
+  targetEditable?: boolean;
+  onCreateExecutionTarget?: (body: CreateExecutionTargetBody) => Promise<ExecutionTargetDto>;
   nameInputRef: RefObject<HTMLInputElement | null>;
   submitLabel: string;
   onCancel: () => void;
@@ -45,13 +52,18 @@ export type AreaEditorFormProps = Readonly<{
 export function AreaEditorForm(props: AreaEditorFormProps) {
   const {
     initial, submitting, locked, cancelLabel, error,
-    listDirectory, nameInputRef, submitLabel, onCancel, onSubmit,
+    listDirectory, listDirectoryForTarget, executionTargets, targetEditable = false,
+    onCreateExecutionTarget, nameInputRef, submitLabel, onCancel, onSubmit,
   } = props;
-  const folderId = `${useId()}-default-folder`;
+  const baseId = useId();
+  const folderId = `${baseId}-default-folder`;
   const [name, setName] = useState(initial.name);
   const [cwd, setCwd] = useState(initial.defaultCwd ?? '');
+  const [targetId, setTargetId] = useState(initial.executionTargetId ?? 'local');
   const [browsing, setBrowsing] = useState(false);
   const normalizedName = name.trim();
+  const resolvedTargetLabel = executionTargets?.find((target) => target.id === targetId)?.label ?? targetId;
+  const activeListDirectory = listDirectoryForTarget ? listDirectoryForTarget(targetId) : listDirectory;
 
   const submit = (event: FormEvent<HTMLElement>) => {
     event.preventDefault();
@@ -62,6 +74,7 @@ export function AreaEditorForm(props: AreaEditorFormProps) {
     onSubmit({
       name: normalizedName,
       defaultCwd: cwd === '' ? null : cwd,
+      ...(targetId !== 'local' ? { executionTargetId: targetId } : {}),
     });
   };
 
@@ -82,11 +95,16 @@ export function AreaEditorForm(props: AreaEditorFormProps) {
           <FolderPill
             buttonId={folderId}
             value={cwd}
+            emptyLabel={targetId !== 'local' ? resolvedTargetLabel : undefined}
+            modeSuffix={targetId !== 'local' ? resolvedTargetLabel : undefined}
             controlLabel="Default folder"
             clearLabel="Use a new Neige workspace"
             isDisabled={submitting || locked}
             onBrowse={() => setBrowsing(true)}
-            onClear={() => setCwd('')}
+            onClear={() => {
+              setCwd('');
+              if (targetEditable) setTargetId('local');
+            }}
           />
         </HStack>
         <HStack gap={1} justify="end" className={styles.actions}>
@@ -106,9 +124,20 @@ export function AreaEditorForm(props: AreaEditorFormProps) {
       <DirectoryPicker
         open={browsing}
         initialPath={cwd === '' ? null : cwd}
-        listDirectory={listDirectory}
+        listDirectory={activeListDirectory}
+        listDirectoryForTarget={listDirectoryForTarget}
+        targets={executionTargets}
+        selectedTargetId={targetId}
+        targetEditable={targetEditable}
+        onCreateTarget={onCreateExecutionTarget}
         onCancel={() => setBrowsing(false)}
-        onSelect={(path) => { setCwd(path); setBrowsing(false); }}
+        onSelect={(path, pickedTargetId) => {
+          setCwd(path);
+          if (targetEditable && pickedTargetId !== undefined) {
+            setTargetId(pickedTargetId);
+          }
+          setBrowsing(false);
+        }}
       />
     </VStack>
   );

@@ -136,6 +136,16 @@ export const compiledTemplateManifestDtoSchema = z.object({
 }));
 export type CompiledTemplateManifestDto = z.infer<typeof compiledTemplateManifestDtoSchema>;
 
+export const executionTargetDtoSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  kind: z.string(),
+  isDefault: z.boolean().default(false),
+  destination: z.string().nullish(),
+  removable: z.boolean().default(false),
+});
+export type ExecutionTargetDto = z.infer<typeof executionTargetDtoSchema>;
+
 export const areaDtoSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -145,6 +155,7 @@ export const areaDtoSchema = z.object({
   sortOrder: z.number().default(0),
   createdAtMs: z.number(),
   updatedAtMs: z.number(),
+  executionTargetId: z.string().optional(),
 });
 export type AreaDto = z.infer<typeof areaDtoSchema>;
 
@@ -156,6 +167,7 @@ export const bootstrapDtoSchema = z.object({
   providers: z.array(providerStatusDtoSchema).default([]),
   templates: z.array(compiledTemplateManifestDtoSchema).default([]),
   areas: z.array(areaDtoSchema).default([]),
+  executionTargets: z.array(executionTargetDtoSchema).optional(),
 });
 export type BootstrapDto = z.infer<typeof bootstrapDtoSchema>;
 
@@ -227,6 +239,7 @@ export const trackDtoSchema = z.object({
   sortOrder: z.number().default(0),
   createdAtMs: z.number(),
   updatedAtMs: z.number(),
+  executionTargetId: z.string().optional(),
 });
 export type TrackDto = z.infer<typeof trackDtoSchema>;
 

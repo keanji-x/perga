@@ -1,4 +1,5 @@
 using Perga.Contracts;
+using Perga.Kernel.Ports;
 using Perga.VcsKit;
 
 namespace Perga.Kernel;
@@ -6,13 +7,20 @@ namespace Perga.Kernel;
 public sealed partial class PergaKernelService
 {
     public async Task<TrackWorkspaceOptionsDto> GetTrackWorkspaceOptionsAsync(
-        string areaId, string? cwd, string? templateId, CancellationToken ct)
+        string areaId, string? cwd, string? templateId, CancellationToken ct, string? targetId = null)
     {
         var area = await _store.GetAreaAsync(areaId, ct).ConfigureAwait(false)
             ?? throw KernelException.NotFound($"Area '{areaId}' not found.");
+        var effectiveTargetId = string.IsNullOrWhiteSpace(targetId)
+            ? area.ExecutionTargetId
+            : ExecutionTargetIds.Normalize(targetId);
+        var env = _executionEnvironments.GetRequired(effectiveTargetId);
         var templateDriver = string.IsNullOrWhiteSpace(templateId)
             ? null : Templates.GetRequiredPolicy(templateId).Manifest.WorkspaceDriver;
-        var options = await WorkspaceChoicesAsync(WorkspaceSource(area, cwd), templateDriver, ct).ConfigureAwait(false);
+        var source = string.Equals(effectiveTargetId, area.ExecutionTargetId, StringComparison.Ordinal)
+            ? WorkspaceSource(area, cwd)
+            : (string.IsNullOrWhiteSpace(cwd) ? null : cwd);
+        var options = await WorkspaceChoicesAsync(env, source, templateDriver, ct).ConfigureAwait(false);
         var recommended = options.FirstOrDefault(choice => choice.Option.Id == "managed" ||
             (choice.DriverId != DirectWorkspaceDriver.Id && choice.DriverId != OverlayWorkspaceDriver.Id) ||
             choice.DriverId == templateDriver);
@@ -32,24 +40,24 @@ public sealed partial class PergaKernelService
             : !string.IsNullOrWhiteSpace(templateDriver) ? templateDriver : _options.DefaultWorkspaceDriver;
 
     private async Task<IReadOnlyList<WorkspaceChoice>> WorkspaceChoicesAsync(
-        string? source, string? templateDriver, CancellationToken ct)
+        IExecutionEnvironment env, string? source, string? templateDriver, CancellationToken ct)
     {
         if (source is null)
         {
             var driver = PreferredWorkspaceDriver(null, templateDriver);
-            if (!await _workspaceDrivers.GetRequired(driver).IsAvailableAsync(null, ct).ConfigureAwait(false))
-                throw KernelException.PreconditionFailed($"Workspace driver '{driver}' is unavailable on this Host.");
+            if (!await env.WorkspaceDrivers.GetRequired(driver).IsAvailableAsync(null, ct).ConfigureAwait(false))
+                throw KernelException.PreconditionFailed($"Workspace driver '{driver}' is unavailable on target '{env.Descriptor.Id}'.");
             return [new(new("managed", "Managed workspace", "Create a fresh workspace for this Track."), driver)];
         }
 
-        if (!Directory.Exists(source))
+        if (!await env.Files.DirectoryExistsAsync(source, ct).ConfigureAwait(false))
             throw KernelException.InvalidArgument("The source folder is unavailable. Choose an existing folder.");
 
-        var registered = _workspaceDrivers.RegisteredDrivers;
+        var registered = env.WorkspaceDrivers.RegisteredDrivers;
         var choices = new List<WorkspaceChoice>();
         if (registered.Contains(VcsWorkspaceDriver.Id))
         {
-            foreach (var backend in _vcsService.ListWorkspaceBackends(source))
+            foreach (var backend in await env.Vcs.ListWorkspaceBackendsAsync(source, ct).ConfigureAwait(false))
             {
                 var option = backend switch
                 {
@@ -65,7 +73,7 @@ public sealed partial class PergaKernelService
         if (registered.Contains(DirectWorkspaceDriver.Id))
             choices.Add(new(new("direct", "Use source folder", "Work directly in the selected directory."), DirectWorkspaceDriver.Id));
         if (registered.Contains(OverlayWorkspaceDriver.Id) &&
-            await _workspaceDrivers.GetRequired(OverlayWorkspaceDriver.Id).IsAvailableAsync(source, ct).ConfigureAwait(false))
+            await env.WorkspaceDrivers.GetRequired(OverlayWorkspaceDriver.Id).IsAvailableAsync(source, ct).ConfigureAwait(false))
             choices.Add(new(new(OverlayWorkspaceDriver.Id, "OverlayFS workspace",
                 "Share a source snapshot and keep this Track's changes in a separate writable layer."), OverlayWorkspaceDriver.Id));
         if (choices.Count == 0)

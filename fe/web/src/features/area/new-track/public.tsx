@@ -10,6 +10,7 @@ import { ChatComposer, ChatComposerInput, type ChatComposerTrigger } from '@astr
 import { Icon } from '@astryxdesign/core/Icon';
 import { VStack } from '@astryxdesign/core/VStack';
 
+import type { CreateExecutionTargetBody, ExecutionTargetDto } from '../../../../../core/domain/area.ts';
 import { isBlankForKernel, type TrackTemplate } from '../../../../../core/domain/track.ts';
 import { extractTemplateMentions } from '../../../../../core/domain/mentions.ts';
 import {
@@ -37,6 +38,7 @@ export type NewTrackDraft = Readonly<{
   message: string;
   /** Absolute path, or the key is absent: an empty string would take the attached branch with a path that cannot work. */
   cwd?: string;
+  executionTargetId?: string;
   isolation?: RepoIsolationMode;
   workspaceOptionId?: string;
   templateId?: string;
@@ -46,6 +48,7 @@ export type NewTrackDraft = Readonly<{
 export type NewTrackFormProps = Readonly<{
   workspaceOptions?: Readonly<{
     cwd: string;
+    targetId?: string;
     templateId?: string;
     result: import('../../../../../core/domain/track.ts').TrackWorkspaceOptions | null;
   }>;
@@ -75,8 +78,12 @@ export type NewTrackFormProps = Readonly<{
     onClick: (draft: NewTrackDraft) => void;
   }>;
   initialCwd: string | null;
+  initialExecutionTargetId?: string;
+  executionTargets?: readonly ExecutionTargetDto[];
   /** The folder picker's read port, created at the composition layer. Required: a call site that forgot it would render a picker that silently lists nothing. */
   listDirectory: ListDirectory;
+  listDirectoryForTarget?: (targetId: string) => ListDirectory;
+  onCreateExecutionTarget?: (body: CreateExecutionTargetBody) => Promise<ExecutionTargetDto>;
   onSubmit: (draft: NewTrackDraft) => void;
 }>;
 
@@ -91,6 +98,7 @@ const FOLDER_CLEAR_LABEL = 'Use a Neige workspace instead';
 export type NewTrackFormState = Readonly<{
   message: string;
   cwd: string;
+  executionTargetId?: string;
   isolation?: RepoIsolationMode;
   workspaceOptionId?: string;
   workspaceOptionCwd?: string;
@@ -100,13 +108,17 @@ export type NewTrackFormState = Readonly<{
 }>;
 
 export function NewTrackForm({
-  modelControls, templates, defaultTemplateId, submitting, error, readNotice, initialCwd, listDirectory, onSubmit,
+  modelControls, templates, defaultTemplateId, submitting, error, readNotice, initialCwd,
+  initialExecutionTargetId, executionTargets, listDirectory, listDirectoryForTarget, onCreateExecutionTarget, onSubmit,
   errorAction, initialDraft, onDraftChange, submitBlocked = false, locked = false, mentionTrigger,
   workspaceOptions: workspaceOptionsState,
 }: NewTrackFormProps) {
   const fieldId = useId();
   const [message, setMessage] = useState(initialDraft?.message ?? '');
   const [cwd, setCwd] = useState(initialDraft?.cwd ?? initialCwd ?? '');
+  const [executionTargetId, setExecutionTargetId] = useState(
+    initialDraft?.executionTargetId ?? initialExecutionTargetId ?? 'local',
+  );
   const [isolation, setIsolation] = useState<RepoIsolationMode>(initialDraft?.isolation ?? 'worktree');
   const [workspaceChoice, setWorkspaceChoice] = useState(initialDraft?.workspaceOptionId === undefined ? null
     : { id: initialDraft.workspaceOptionId, cwd: initialDraft.workspaceOptionCwd ?? initialDraft.cwd });
@@ -144,20 +156,27 @@ export function NewTrackForm({
   );
 
   const activeTemplateId = activeTemplate?.id;
+  const hasTargetPicker = executionTargets !== undefined || onCreateExecutionTarget !== undefined;
+  const resolvedTargetLabel = executionTargetId !== 'local'
+    ? (executionTargets?.find((candidate) => candidate.id === executionTargetId)?.label ?? executionTargetId)
+    : undefined;
   const workspaceOptions = workspaceOptionsState === undefined ? undefined
-    : workspaceOptionsState.cwd === cwd && workspaceOptionsState.templateId === activeTemplateId
+    : workspaceOptionsState.cwd === cwd
+      && (workspaceOptionsState.targetId ?? 'local') === executionTargetId
+      && workspaceOptionsState.templateId === activeTemplateId
       ? workspaceOptionsState.result : null;
   const selectedWorkspaceOption = workspaceChoice === null ? workspaceOptions?.defaultId ?? undefined
     : workspaceChoice.cwd === cwd ? workspaceOptions?.options.find((option) => option.id === workspaceChoice.id)?.id : undefined;
 
   useEffect(() => {
     const workspace = workspaceChoice === null ? {} : { workspaceOptionId: workspaceChoice.id, workspaceOptionCwd: workspaceChoice.cwd };
+    const targetField = hasTargetPicker || initialExecutionTargetId !== undefined ? { executionTargetId } : {};
     if (hasTemplates) {
-      onDraftChange?.({ message, cwd, isolation, templateId, templateInputs, activeTemplateId, ...workspace });
+      onDraftChange?.({ message, cwd, ...targetField, isolation, templateId, templateInputs, activeTemplateId, ...workspace });
     } else {
-      onDraftChange?.({ message, cwd, isolation, ...workspace });
+      onDraftChange?.({ message, cwd, ...targetField, isolation, ...workspace });
     }
-  }, [message, cwd, isolation, templateId, templateInputs, activeTemplateId, workspaceChoice, hasTemplates, onDraftChange]);
+  }, [message, cwd, executionTargetId, hasTargetPicker, initialExecutionTargetId, isolation, templateId, templateInputs, activeTemplateId, workspaceChoice, hasTemplates, onDraftChange]);
 
   /* The caret starts in the field. Found by query, not ref: `ChatComposerInput`
    * forwards its DOM `ref` to the wrapper, which is not focusable. Mount-only, so
@@ -181,6 +200,9 @@ export function NewTrackForm({
     return {
       message: text,
       ...(cwd === '' ? {} : { cwd, isolation }),
+      ...(executionTargetId !== (initialExecutionTargetId ?? 'local') || executionTargetId !== 'local'
+        ? { executionTargetId }
+        : {}),
       ...(selectedWorkspaceOption === undefined ? {} : { workspaceOptionId: selectedWorkspaceOption }),
       ...(activeTemplate === undefined
         ? {}
@@ -364,12 +386,17 @@ export function NewTrackForm({
                 {...(triggers === undefined ? {} : { triggers, debounceMs: 0 })} />
             </div>}
             footerActions={<ComposerPreferences browsing={browsing !== null}
-              folder={{ buttonId: folderId, value: cwd, isolation, clearLabel: FOLDER_CLEAR_LABEL,
+              folder={{ buttonId: folderId, value: cwd, targetLabel: resolvedTargetLabel, isolation, clearLabel: FOLDER_CLEAR_LABEL,
                 workspaceOptions, workspaceOptionId: selectedWorkspaceOption,
                 onWorkspaceOptionChange: (id) => setWorkspaceChoice({ id, cwd }),
                 onIsolationChange: setIsolation,
                 onBrowse: (origin) => setBrowsing(origin),
-                onClear: () => { setCwd(''); setIsolation('worktree'); setWorkspaceChoice(null); },
+                onClear: () => {
+                  setCwd('');
+                  if (hasTargetPicker) setExecutionTargetId('local');
+                  setIsolation('worktree');
+                  setWorkspaceChoice(null);
+                },
                 isDisabled: submitting || locked }}
             />}
             /* Model and Create stay together at the trailing edge. */
@@ -429,10 +456,19 @@ export function NewTrackForm({
         open={browsing !== null}
         origin={browsing ?? { kind: 'surface-center' }}
         initialPath={cwd === '' ? null : cwd}
-        listDirectory={listDirectory}
+        listDirectory={listDirectoryForTarget ? listDirectoryForTarget(executionTargetId) : listDirectory}
+        listDirectoryForTarget={listDirectoryForTarget}
+        targets={executionTargets}
+        selectedTargetId={executionTargetId}
+        targetEditable={hasTargetPicker}
+        onCreateTarget={onCreateExecutionTarget}
         onCancel={() => setBrowsing(null)}
-        onSelect={(path) => {
+        onSelect={(path, pickedTargetId) => {
           setCwd(path);
+          if (hasTargetPicker && pickedTargetId !== undefined) {
+            setExecutionTargetId(pickedTargetId);
+          }
+          setWorkspaceChoice(null);
           setBrowsing(null);
         }}
       />

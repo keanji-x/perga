@@ -16,6 +16,7 @@ public sealed class AgentRuntime : IAgentRuntime
     ];
 
     private readonly AgentRuntimeOptions _options;
+    private readonly ISubprocessTransport _transport;
     private readonly ConcurrentDictionary<IAgentSession, byte> _activeSessions = new();
     private readonly ConcurrentDictionary<string, bool> _resumeCapabilities = new(StringComparer.Ordinal);
     private readonly SemaphoreSlim _probeLock = new(1, 1);
@@ -30,6 +31,7 @@ public sealed class AgentRuntime : IAgentRuntime
     {
         ArgumentNullException.ThrowIfNull(options);
         _options = options;
+        _transport = options.SubprocessTransport ?? LocalSubprocessTransport.Instance;
     }
 
     public bool CanResumeSession(string provider)
@@ -117,18 +119,18 @@ public sealed class AgentRuntime : IAgentRuntime
         if (string.IsNullOrWhiteSpace(spec.Cwd))
             throw new ArgumentException("HarnessLaunchSpec.Cwd must not be empty.", nameof(spec));
 
-        var fullCwd = Path.GetFullPath(spec.Cwd);
-        if (!Directory.Exists(fullCwd))
+        var fullCwd = _transport.IsLocal ? Path.GetFullPath(spec.Cwd) : NormalizeRemotePath(spec.Cwd);
+        if (!_transport.DirectoryExists(fullCwd))
             throw new DirectoryNotFoundException($"Workspace Cwd directory does not exist: '{fullCwd}'.");
 
         var provider = NormalizeProviderName(spec.Provider);
         var oarRuntimeId = OarNodeResolver.TryMapProviderToOarRuntime(provider)
             ?? throw new NotSupportedException($"Unsupported provider '{provider}'.");
 
-        var bridgeScript = RequireBridgeScriptPath();
+        var bridgeScript = _transport.ResolveBridgeScriptPath(_options.BridgeScriptPath);
         var (exeOverride, extraEnv) = ResolveOverride(provider, oarRuntimeId);
         var env = BuildProcessEnvironment(extraEnv);
-        var nodeExe = OarNodeResolver.ResolveNode24Executable(_options.NodeExecutablePath, env);
+        var nodeExe = _transport.ResolveNodeExecutable(_options.NodeExecutablePath, env);
 
         var invocation = new CommandInvocation(nodeExe, [bridgeScript], fullCwd, env);
         lock (_sessionSync)
@@ -137,7 +139,8 @@ public sealed class AgentRuntime : IAgentRuntime
             var session = OarAgentSession.Create(
                 invocation, spec with { Provider = provider, Cwd = fullCwd }, oarRuntimeId,
                 exeOverride, _options.HandshakeTimeout, UnregisterSession,
-                initialized => _resumeCapabilities[provider] = initialized.SupportsSessionResume);
+                initialized => _resumeCapabilities[provider] = initialized.SupportsSessionResume,
+                _transport);
             _activeSessions.TryAdd(session, 0);
             return session;
         }
@@ -172,17 +175,17 @@ public sealed class AgentRuntime : IAgentRuntime
 
         try
         {
-            var bridgeScript = RequireBridgeScriptPath();
+            var bridgeScript = _transport.ResolveBridgeScriptPath(_options.BridgeScriptPath);
             var (exeOverride, extraEnv) = ResolveOverride(provider, oarRuntimeId);
             var env = BuildProcessEnvironment(extraEnv);
-            var nodeExe = OarNodeResolver.ResolveNode24Executable(_options.NodeExecutablePath, env);
-            var cwd = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.GetTempPath()));
+            var nodeExe = _transport.ResolveNodeExecutable(_options.NodeExecutablePath, env);
+            var cwd = _transport.TempDirectory;
             var timeout = _options.ProbeTimeout > TimeSpan.Zero ? _options.ProbeTimeout : TimeSpan.FromSeconds(30);
 
             using var probeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             probeCts.CancelAfter(timeout);
 
-            var process = StdioSubprocess.Start(new CommandInvocation(nodeExe, [bridgeScript], cwd, env));
+            var process = _transport.StartInteractive(new CommandInvocation(nodeExe, [bridgeScript], cwd, env));
             await using var rpc = new JsonRpcStdioConnection(
                 process, static (_, _) => { }, static (_, _, _) => { }, static _ => { });
 
@@ -217,14 +220,10 @@ public sealed class AgentRuntime : IAgentRuntime
         }
     }
 
-    private string RequireBridgeScriptPath()
+    private static string NormalizeRemotePath(string rawPath)
     {
-        if (string.IsNullOrWhiteSpace(_options.BridgeScriptPath))
-            throw new InvalidOperationException("OAR bridge script path is not configured. Build tools/perga-oar-bridge or set PERGA_OAR_BRIDGE_SCRIPT.");
-        var full = Path.GetFullPath(_options.BridgeScriptPath);
-        if (!File.Exists(full))
-            throw new FileNotFoundException($"OAR bridge script was not found at '{full}'.", full);
-        return full;
+        var trimmed = rawPath.Trim();
+        return trimmed.Length > 1 ? trimmed.TrimEnd('/') : trimmed;
     }
 
     private (string? ExecutableOverride, IReadOnlyDictionary<string, string>? ExtraEnv) ResolveOverride(string provider, string oarRuntimeId) =>
@@ -233,8 +232,23 @@ public sealed class AgentRuntime : IAgentRuntime
             ? (configured.FileName, configured.Env)
             : (null, null);
 
-    private static Dictionary<string, string> BuildProcessEnvironment(IReadOnlyDictionary<string, string>? overrides)
+    private Dictionary<string, string> BuildProcessEnvironment(IReadOnlyDictionary<string, string>? overrides)
     {
+        if (!_transport.IsLocal)
+        {
+            // Never leak the Host user's HOME/PATH/credentials into another Linux user or remote SSH target.
+            var remoteEnv = new Dictionary<string, string>(StringComparer.Ordinal);
+            if (overrides is not null)
+            {
+                foreach (var (key, value) in overrides)
+                {
+                    remoteEnv[key] = value;
+                }
+            }
+
+            return remoteEnv;
+        }
+
         var env = ChildProcessEnvironment.Capture();
         var comparer = env.Comparer;
 

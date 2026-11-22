@@ -7,9 +7,17 @@ import { serverVersionOperation, modelCatalogQueryOptions, runOperation } from '
 
 export const managedProvidersQueryKey = Object.freeze(['managed-providers'] as const);
 
-export function managedProvidersQueryOptions(transport: ApiTransportPort, unauthorized: UnauthorizedChannel) {
-  return { queryKey: managedProvidersQueryKey,
-    queryFn: ({ signal }: { signal: AbortSignal }) => runOperation(transport, { ...managedProvidersOperation(false), signal }, unauthorized) };
+export function managedProvidersQueryOptions(
+  transport: ApiTransportPort,
+  unauthorized: UnauthorizedChannel,
+  targetId?: string,
+) {
+  const scoped = targetId !== undefined && targetId !== '' && targetId !== 'local';
+  return {
+    queryKey: scoped ? [...managedProvidersQueryKey, targetId] as const : managedProvidersQueryKey,
+    queryFn: ({ signal }: { signal: AbortSignal }) =>
+      runOperation(transport, { ...managedProvidersOperation(false, targetId), signal }, unauthorized),
+  };
 }
 
 /** Backend registrations own the menu membership; catalogs use their reported provider identity. */

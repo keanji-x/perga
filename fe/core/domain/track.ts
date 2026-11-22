@@ -295,6 +295,7 @@ export type NewTrackBody = Readonly<{
   /** Explicit isolation for an attached folder; omitted defaults to `worktree` on the server. */
   isolation?: 'worktree' | 'none';
   workspace_option_id?: string;
+  execution_target_id?: string;
   theme: ThemeRgb;
   /**
    * `false` requires `cwd` to already sit under a claimed folder (409 naming the area otherwise);
@@ -673,10 +674,16 @@ export function retryTrackWorkspaceOperation(trackId: string): ApiOperation<unkn
 
 export type TrackWorkspaceOptions = TrackWorkspaceOptionsDto;
 
-export function trackWorkspaceOptionsOperation(areaId: string, cwd?: string, templateId?: string): ApiOperation<TrackWorkspaceOptions> {
+export function trackWorkspaceOptionsOperation(
+  areaId: string,
+  cwd?: string,
+  templateId?: string,
+  targetId?: string,
+): ApiOperation<TrackWorkspaceOptions> {
   const query = [
     ...(cwd === undefined ? [] : [`cwd=${encodeURIComponent(cwd)}`]),
     ...(templateId ? [`templateId=${encodeURIComponent(templateId)}`] : []),
+    ...(targetId ? [`targetId=${encodeURIComponent(targetId)}`] : []),
   ].join('&');
   return {
     method: 'GET',
@@ -689,7 +696,7 @@ export function trackWorkspaceOptionsOperation(areaId: string, cwd?: string, tem
  * `POST /api/v1/tracks`, keyed per draft on every create.
  */
 export function createTrackOperation(body: NewTrackBody, idempotencyKey: string): ApiOperation<TrackWire> {
-  const { workspace_option_id: workspaceOptionId, ...rest } = body;
+  const { workspace_option_id: workspaceOptionId, execution_target_id: executionTargetId, ...rest } = body;
   const wireBody = {
     ...rest,
     areaId: body.area_id,
@@ -697,6 +704,7 @@ export function createTrackOperation(body: NewTrackBody, idempotencyKey: string)
     ...(workspaceOptionId !== undefined ? { workspaceOptionId } : body.isolation !== undefined
       ? { workspaceDriver: body.isolation === 'worktree' ? 'vcs-workspace' : 'direct' }
       : {}),
+    ...(executionTargetId !== undefined ? { executionTargetId } : {}),
     ...(body.template_id !== undefined ? { templateId: body.template_id } : {}),
     ...(body.template_input !== undefined ? { templateInputs: body.template_input } : {}),
     ...(body.reasoning_effort !== undefined ? { reasoningEffort: body.reasoning_effort } : {}),

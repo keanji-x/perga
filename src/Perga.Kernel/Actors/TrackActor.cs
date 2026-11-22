@@ -23,15 +23,18 @@ public sealed partial class TrackActor : IAsyncDisposable
     private readonly IReportDocEngine _reportEngine;
     private readonly IPolicyVm _policyVm;
     private readonly ITemplateCatalog _templateCatalog;
-    private readonly IAgentRuntime _agentRuntime;
-    private readonly IWorkspaceDriverRegistry _workspaceDrivers;
-    private readonly ITerminalBridgeClient _terminalClient;
+    private readonly IExecutionEnvironmentRegistry _executionEnvironments;
     private readonly IMcpSessionBridge _mcpBridge;
-    private readonly IShellCommandRunner _commandRunner;
     private readonly EventHub _eventHub;
     private readonly KernelOptions _options;
     private readonly TimeProvider _timeProvider;
     private readonly IScheduleCronEvaluator? _scheduleCronEvaluator;
+
+    private IExecutionEnvironment Env => _executionEnvironments.GetRequired(_track.ExecutionTargetId);
+    private IAgentRuntime EffectiveAgentRuntime => _track is null ? _executionEnvironments.Default.AgentRuntime : Env.AgentRuntime;
+    private IWorkspaceDriverRegistry EffectiveWorkspaceDrivers => Env.WorkspaceDrivers;
+    private ITerminalBridgeClient EffectiveTerminalClient => Env.Terminals;
+    private IShellCommandRunner EffectiveCommandRunner => Env.Shell;
 
     private readonly Channel<Func<TrackActor, Task>> _mailbox;
     private readonly CancellationTokenSource _actorShutdownCts = new();
@@ -73,11 +76,8 @@ public sealed partial class TrackActor : IAsyncDisposable
         IReportDocEngine reportEngine,
         IPolicyVm policyVm,
         ITemplateCatalog templateCatalog,
-        IAgentRuntime agentRuntime,
-        IWorkspaceDriverRegistry workspaceDrivers,
-        ITerminalBridgeClient terminalClient,
+        IExecutionEnvironmentRegistry executionEnvironments,
         IMcpSessionBridge mcpBridge,
-        IShellCommandRunner commandRunner,
         EventHub eventHub,
         KernelOptions options,
         TimeProvider timeProvider, IScheduleCronEvaluator? scheduleCronEvaluator)
@@ -90,11 +90,8 @@ public sealed partial class TrackActor : IAsyncDisposable
         _reportEngine = reportEngine;
         _policyVm = policyVm;
         _templateCatalog = templateCatalog;
-        _agentRuntime = agentRuntime;
-        _workspaceDrivers = workspaceDrivers;
-        _terminalClient = terminalClient;
+        _executionEnvironments = executionEnvironments;
         _mcpBridge = mcpBridge;
-        _commandRunner = commandRunner;
         _eventHub = eventHub;
         _options = options;
         _timeProvider = timeProvider;
@@ -182,6 +179,14 @@ public sealed partial class TrackActor : IAsyncDisposable
             return BuildSnapshotCore();
         }, ct);
     }
+
+    public Task<string> GetExecutionTargetIdAsync(CancellationToken ct = default) =>
+        EnqueueAsync(async _ =>
+        {
+            var track = await _store.GetTrackAsync(TrackId, ct).ConfigureAwait(false)
+                ?? throw KernelException.NotFound($"Track '{TrackId}' not found.");
+            return track.ExecutionTargetId;
+        }, ct);
 
     public async Task<MountedWorkspace> EnsureMountedAsync(CancellationToken ct = default)
     {
@@ -499,14 +504,18 @@ public sealed partial class TrackActor : IAsyncDisposable
         }, CancellationToken.None).ConfigureAwait(false);
 
         await CancelAllInFlightTasksAsync("Track deleted.", ct).ConfigureAwait(false);
-        (WorkspaceSpec? Spec, IWorkspaceDriver Driver, string? CloseCmd, string Cwd, string AreaId) teardownInfo = await EnqueueAsync(async _ =>
+        (WorkspaceSpec? Spec, IWorkspaceDriver? Driver, IExecutionEnvironment? Env, string? CloseCmd, string Cwd, string AreaId) teardownInfo = await EnqueueAsync(async _ =>
         {
             // Kill open terminals after Worker shutdown has been confirmed.
+            var env = _executionEnvironments.TryGet(_track.ExecutionTargetId);
             foreach (var term in _terminals.Values.Where(t => t.Status == TerminalStatus.Running).ToArray())
             {
                 try
                 {
-                    await _terminalClient.KillAsync(term.Id, graceMs: 1000, ct).ConfigureAwait(false);
+                    if (env is not null)
+                    {
+                        await env.Terminals.KillAsync(term.Id, graceMs: 1000, ct).ConfigureAwait(false);
+                    }
                     _terminals.Remove(term.Id);
                 }
                 catch
@@ -517,25 +526,25 @@ public sealed partial class TrackActor : IAsyncDisposable
 
             _mcpBridge.RevokeTrack(TrackId);
 
-            var driver = _workspaceDrivers.GetRequired(_track.WorkspaceDriver);
+            var driver = env?.WorkspaceDrivers.GetRequired(_track.WorkspaceDriver);
             var spec = WorkspaceReady ? ExtractWorkspaceSpec(_track) : _workspacePreparation?.Spec;
             var closeCmd = WorkspaceReady ? _policy?.Manifest.WorkspaceCloseCmd : null;
             var cwd = _mountedWorkspace?.MergedCwd ?? _track.Cwd;
             _mountedWorkspace = null;
-            return (spec, driver, closeCmd, cwd, _track.AreaId);
+            return (spec, driver, env, closeCmd, cwd, _track.AreaId);
         }, CancellationToken.None).ConfigureAwait(false);
 
         await _runtimes.CloseAllAsync(_options.SessionStartupTimeout).ConfigureAwait(false);
 
         // Run WorkspaceCloseCmd before tearing down workspace
-        if (!string.IsNullOrWhiteSpace(teardownInfo.CloseCmd))
+        if (!string.IsNullOrWhiteSpace(teardownInfo.CloseCmd) && teardownInfo.Env is not null)
         {
             try
             {
-                var cwd = teardownInfo.Spec is null
+                var cwd = teardownInfo.Spec is null || teardownInfo.Driver is null
                     ? teardownInfo.Cwd
                     : (await teardownInfo.Driver.EnsureMountedAsync(teardownInfo.Spec, ct).ConfigureAwait(false)).MergedCwd;
-                await _commandRunner.RunAsync(
+                await teardownInfo.Env.Shell.RunAsync(
                     new ShellCommandRequest(
                         teardownInfo.CloseCmd,
                         cwd,
@@ -548,7 +557,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             }
         }
 
-        if (teardownInfo.Spec is not null)
+        if (teardownInfo.Spec is not null && teardownInfo.Driver is not null)
         {
             try
             {
@@ -563,7 +572,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         await _store.DeleteTrackAsync(TrackId, ct).ConfigureAwait(false);
         committed();
 
-        if (teardownInfo.Spec is not null)
+        if (teardownInfo.Spec is not null && teardownInfo.Driver is not null)
         {
             try
             {
@@ -1402,7 +1411,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                 Cols: req.Cols,
                 Rows: req.Rows);
 
-            await _terminalClient.EnsureAsync(ensureReq, ct).ConfigureAwait(false);
+            await EffectiveTerminalClient.EnsureAsync(ensureReq, ct).ConfigureAwait(false);
 
             var now = NowMs();
             var terminal = new TerminalDto(
@@ -1436,7 +1445,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             }
         }, ct).ConfigureAwait(false);
 
-        var observed = await _terminalClient.ObserveAsync(req, ct).ConfigureAwait(false);
+        var observed = await EffectiveTerminalClient.ObserveAsync(req, ct).ConfigureAwait(false);
         if (observed.Exited)
         {
             await EnqueueAsync(async _ =>
@@ -1471,7 +1480,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             }
         }, ct).ConfigureAwait(false);
 
-        return await _terminalClient.SendActionAsync(req, ct).ConfigureAwait(false);
+        return await EffectiveTerminalClient.SendActionAsync(req, ct).ConfigureAwait(false);
     }
 
     public async Task ResizeTerminalAsync(string terminalId, ushort cols, ushort rows, CancellationToken ct = default)
@@ -1485,7 +1494,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             }
         }, ct).ConfigureAwait(false);
 
-        await _terminalClient.ResizeAsync(terminalId, cols, rows, ct).ConfigureAwait(false);
+        await EffectiveTerminalClient.ResizeAsync(terminalId, cols, rows, ct).ConfigureAwait(false);
     }
 
     public async Task<TerminalDto> CloseTerminalAsync(string terminalId, int graceMs = 2000, CancellationToken ct = default)
@@ -1499,7 +1508,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             }
         }, ct).ConfigureAwait(false);
 
-        await _terminalClient.KillAsync(terminalId, graceMs, ct).ConfigureAwait(false);
+        await EffectiveTerminalClient.KillAsync(terminalId, graceMs, ct).ConfigureAwait(false);
 
         return await EnqueueAsync(async _ =>
         {
@@ -1732,7 +1741,7 @@ public sealed partial class TrackActor : IAsyncDisposable
     private async Task<MountedWorkspace> EnsureWorkspaceMountedCoreAsync(CancellationToken ct)
     {
         RequireWorkspaceReadyCore();
-        var driver = _workspaceDrivers.GetRequired(_track.WorkspaceDriver);
+        var driver = EffectiveWorkspaceDrivers.GetRequired(_track.WorkspaceDriver);
         if (_mountedWorkspace is not null && !driver.VerifyMountOnAccess)
             return _mountedWorkspace;
 
@@ -2106,7 +2115,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         try
         {
             var timeoutSecs = task.Gate?.TimeoutSecs ?? _options.DefaultHookTimeoutSecs;
-            var cmdRes = await _commandRunner.RunAsync(
+            var cmdRes = await EffectiveCommandRunner.RunAsync(
                 new ShellCommandRequest(task.GoalOrCmd, workspaceCwd, TimeSpan.FromSeconds(Math.Max(1, timeoutSecs)),
                     OutputTailChars: TaskOutputTailChars),
                 ct).ConfigureAwait(false);
@@ -2244,7 +2253,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                 // 1. Run AfterWorkerDoneCmd (if non-empty) in WorkspaceCwd and merge last valid JSON stdout line into task.Meta.
                 if (!string.IsNullOrWhiteSpace(prep.AfterWorkerDoneCmd))
                 {
-                    var hookResult = await _commandRunner.RunAsync(
+                    var hookResult = await EffectiveCommandRunner.RunAsync(
                         new ShellCommandRequest(
                             prep.AfterWorkerDoneCmd!,
                             prep.WorkspaceCwd,
@@ -2262,7 +2271,7 @@ public sealed partial class TrackActor : IAsyncDisposable
 
                     foreach (var step in gateSpec.Steps)
                     {
-                        var res = await _commandRunner.RunAsync(
+                        var res = await EffectiveCommandRunner.RunAsync(
                             new ShellCommandRequest(step.Cmd, prep.WorkspaceCwd, stepTimeout, OutputTailChars: TaskOutputTailChars),
                             verificationToken).ConfigureAwait(false);
 
@@ -2765,7 +2774,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                     }
                 }, ct).ConfigureAwait(false);
             }
-            var handle = await _runtimes.Get(session.Id).EnsureOpenAsync(_agentRuntime,
+            var handle = await _runtimes.Get(session.Id).EnsureOpenAsync(EffectiveAgentRuntime,
                 SessionConfiguration.FromNullable(session.Model, session.ReasoningEffort, session.PermissionMode),
                 session.Provider,
                 () => EnqueueAsync(_ => BuildAgentLaunchSpecCoreAsync(session, overrideSystemPrompt, ct), ct),
@@ -2806,13 +2815,15 @@ public sealed partial class TrackActor : IAsyncDisposable
         var mounted = await EnsureWorkspaceMountedCoreAsync(ct).ConfigureAwait(false);
         var activeTask = TryGetActiveTaskForSessionCore(session.Id);
 
+        var mcpBaseUri = await Env.ResolveMcpBaseUriAsync(_mcpBridge.ResolveBaseUri(), ct).ConfigureAwait(false);
         var mcpReg = _mcpBridge.RegisterSession(
             TrackId,
             session.Id,
             session.IsLead,
             activeTask?.Task.Id,
             activeTask?.Active.RunCount,
-            _track.EnabledPlugins);
+            _track.EnabledPlugins,
+            mcpBaseUri);
 
         var systemPrompt = overrideSystemPrompt ?? BuildDefaultSystemPromptCore(session);
         if (session.SystemPrompt is { } customPrompt) systemPrompt += "\n\n" + customPrompt;

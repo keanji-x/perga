@@ -4,7 +4,7 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { Area } from '../../../../core/domain/area.ts';
+import type { Area, ExecutionTargetDto } from '../../../../core/domain/area.ts';
 import { NEUTRAL_ACTIVITY, type Track } from '../../../../core/domain/track.ts';
 import { createUiPreferences, UiPreferencesProvider } from '../providers/ui-preferences.tsx';
 import { createReadReceiptsKernel, readReceiptsFixture } from '../providers/read-receipts-fixture.tsx';
@@ -31,6 +31,7 @@ function tracks(count: number, areaId = 'c1', prefix = 'T'): Track[] {
 
 type View = Readonly<{
   areas?: readonly Area[];
+  executionTargets?: readonly ExecutionTargetDto[];
   byArea?: ReadonlyMap<string, readonly Track[]>;
   currentPath?: string;
   collapsed?: boolean;
@@ -46,6 +47,7 @@ function renderRail(initial: View, preferences = createUiPreferences()) {
       <UiPreferencesProvider preferences={preferences}>
         <Sidebar
           areas={areas}
+          executionTargets={view.executionTargets}
           tracksByArea={byArea}
           tracks={[...byArea.values()].flat()}
           currentPath={view.currentPath ?? '/'}
@@ -282,4 +284,12 @@ describe('Closed tracks in the rail', () => {
     expect(screen.getByRole('button', { name: 'Collapse area Work' })).toBeTruthy();
     expect(toggle()).toBeNull();
   });
+});
+
+it('replaces a remote target id with its loaded label', () => {
+  const areas = [area({ executionTargetId: 'jasper' })];
+  const rail = renderRail({ areas });
+  expect(screen.getByText('Work · jasper')).toBeTruthy();
+  rail.update({ areas, executionTargets: [{ id: 'jasper', label: 'Jasper workstation', kind: 'ssh', isDefault: false, removable: false }] });
+  expect(screen.getByText('Work · Jasper workstation')).toBeTruthy();
 });

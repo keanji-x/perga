@@ -30,6 +30,7 @@ const REPO_MODES = Object.freeze([
 export type RepoPillProps = Readonly<{
   buttonId?: string;
   value: string;
+  targetLabel?: string;
   isolation: RepoIsolationMode;
   clearLabel: string;
   workspaceOptions?: TrackWorkspaceOptions | null;
@@ -44,6 +45,7 @@ export type RepoPillProps = Readonly<{
 export function RepoPill({
   buttonId,
   value,
+  targetLabel,
   isolation,
   clearLabel,
   workspaceOptions,
@@ -56,12 +58,15 @@ export function RepoPill({
 }: RepoPillProps) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const modeLabel = workspaceOptions?.options.find((option) => option.id === workspaceOptionId)?.label
+    ?? (workspaceOptions === undefined && isolation === 'none' ? '源文件夹' : undefined);
+  const suffixParts = [targetLabel, modeLabel].filter((part): part is string => part !== undefined && part !== '');
   const { visibleLabel, accessibleName } = folderLabelParts({
     value,
+    emptyLabel: targetLabel !== undefined && targetLabel !== '' ? targetLabel : undefined,
     controlLabel: 'Repo',
     showLabel: true,
-    modeSuffix: workspaceOptions?.options.find((option) => option.id === workspaceOptionId)?.label
-      ?? (workspaceOptions === undefined && isolation === 'none' ? '源文件夹' : undefined),
+    modeSuffix: suffixParts.length > 0 ? suffixParts.join(' · ') : undefined,
   });
 
   return (

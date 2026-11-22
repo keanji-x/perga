@@ -6,7 +6,7 @@ import { EmptyState } from '../../ui/empty-state/public.tsx';
 import { useEffect, useRef } from 'react';
 import { DropdownMenu, DropdownMenuItem, DropdownMenuSubMenu } from '@astryxdesign/core/DropdownMenu';
 
-import { visibleAreas, type Area } from '../../../../core/domain/area.ts';
+import { visibleAreas, type Area, type ExecutionTargetDto } from '../../../../core/domain/area.ts';
 import { DELETE_FAILURES, DELETE_TEXT, writeFailureText } from '../../../../core/domain/failure-class.ts';
 import {
   TRACK_PATCH_FAILURES, TRACK_PATCH_TEXT, userVisibleTracks, type Track,
@@ -34,6 +34,7 @@ import { navigationRowClass as rowLayout, navigationRowPresentation } from '../.
 export type SidebarProps = Readonly<{
   shareScope?: ShareScope | null;
   areas: readonly Area[];
+  executionTargets?: readonly ExecutionTargetDto[] | undefined;
   tracksByArea: ReadonlyMap<string, readonly Track[]>;
   tracks: readonly Track[];
   /** The shell's one membership projection, shared with mobile shortcuts. */
@@ -80,7 +81,7 @@ export function initialsOf(label: string): string {
  * as well as in the query layer.
  */
 export function Sidebar({
-  shareScope = null, areas, tracksByArea, tracks, trackGroups: memberships, currentPath, onGo,
+  shareScope = null, areas, executionTargets, tracksByArea, tracks, trackGroups: memberships, currentPath, onGo,
   onShareTrack, onShareArea, onRequestCreateArea, onRequestEditArea, onDeleteArea, onNewTrack, onSetPinned, onDeleteTrack,
   onOpenSettings, onOpenPlugins, onSignOut, hideRecipes = false, collapsed, onToggleCollapsed,
   userLabel = 'You', nowMs, readError = null, activityError = null,
@@ -401,6 +402,7 @@ export function Sidebar({
                 <AreaGroup
                   key={area.id}
                   area={area}
+                  targetLabel={executionTargets?.find((target) => target.id === area.executionTargetId)?.label}
                   management={management(`area:${area.id}`, `Area actions for ${area.name}`)}
                   readReady={readError === null && !readLoading && activityError === null}
                   areaTracks={tracksByArea.get(area.id) ?? []}

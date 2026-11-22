@@ -23,9 +23,10 @@ export function createDirectoryLister(
   transport: ApiTransportPort,
   unauthorized: UnauthorizedChannel,
   pergaMode = false,
+  targetId?: string,
 ): ListDirectory {
   return async (path) => toDirectoryListing(
-    await runOperation(transport, listDirectoryOperation(path, { perga: pergaMode }), unauthorized).catch((error: unknown) => {
+    await runOperation(transport, listDirectoryOperation(path, { perga: pergaMode, targetId }), unauthorized).catch((error: unknown) => {
       throw new Error(readErrorText(error, DIRECTORY_LIST_FAILED), { cause: error });
     }),
     joinDirectoryPath,
