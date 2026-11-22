@@ -1472,26 +1472,6 @@
               }
             ]
           },
-          "parentAttemptId": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "parentTrackId": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
           "permissionMode": {
             "anyOf": [
               {
@@ -5338,26 +5318,6 @@
               }
             ]
           },
-          "parentAttemptId": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "parentTrackId": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
           "pinnedAtMs": {
             "anyOf": [
               {
@@ -5427,8 +5387,6 @@
           "flowSpecJson",
           "id",
           "leadSessionId",
-          "parentAttemptId",
-          "parentTrackId",
           "pinnedAtMs",
           "sortOrder",
           "templateHeaderView",

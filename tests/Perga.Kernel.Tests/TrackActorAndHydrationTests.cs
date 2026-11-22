@@ -26,8 +26,6 @@ public sealed class TrackActorAndHydrationTests
         var seededTrack = new TrackDto(
             Id: "trk_cold",
             AreaId: area.Id,
-            ParentTrackId: null,
-            ParentAttemptId: null,
             Title: "Cold Hydrated Track",
             Cwd: "/stale/unmounted",
             WorkspaceDriver: "direct",

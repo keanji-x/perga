@@ -87,8 +87,12 @@ public sealed class SqliteTrackStoreRoundTripAndCascadeTests
         await store.CreateTrackAsync(parentTrack, initialReport, "export default defineTemplate({ id: 'dev' });", leadSession, ct);
 
         var (childTrackSeed, childReport, childLead) = StorageTestHarness.CreateSeedTrack("trk_child", "area_b", "sess_child_lead");
-        var childTrack = childTrackSeed with { ParentTrackId = "trk_parent", ParentAttemptId = "att_spawn_1" };
+        var childTrack = childTrackSeed;
         await store.CreateTrackAsync(childTrack, childReport, null, childLead, ct);
+        // Released databases may contain these retired nullable fields. Runtime
+        // updates must preserve them, and their historical FK still applies.
+        using var legacyDb = harness.OpenRawInspectConnection();
+        await legacyDb.ExecuteAsync("UPDATE tracks SET parent_track_id='trk_parent', parent_attempt_id='att_spawn_1' WHERE id='trk_child';");
 
         // 3. Subagent sessions, Open/Answered Asks, UpdateTrackAndEmitAsync (leadSessionId switch & close filter)
         var freeSubagent = new AgentSessionDto(
@@ -156,6 +160,8 @@ public sealed class SqliteTrackStoreRoundTripAndCascadeTests
         // Verify ListTracksAsync includeClosed filtering
         var closedChild = childTrack with { ClosedAtMs = 2_500, UpdatedAtMs = 2_500 };
         await store.UpdateTrackAndEmitAsync(closedChild, evt: null, ct);
+        Assert.Equal("trk_parent", await legacyDb.ExecuteScalarAsync<string>("SELECT parent_track_id FROM tracks WHERE id='trk_child';"));
+        Assert.Equal("att_spawn_1", await legacyDb.ExecuteScalarAsync<string>("SELECT parent_attempt_id FROM tracks WHERE id='trk_child';"));
 
         Assert.Single(await store.ListTracksAsync(includeClosed: false, ct: ct));
         Assert.Equal(2, (await store.ListTracksAsync(includeClosed: true, ct: ct)).Count);
@@ -194,7 +200,8 @@ public sealed class SqliteTrackStoreRoundTripAndCascadeTests
 
         var survivingChild = await store.GetTrackAsync("trk_child", ct);
         Assert.NotNull(survivingChild);
-        Assert.Null(survivingChild.ParentTrackId);
+        Assert.Null(await legacyDb.ExecuteScalarAsync<string?>("SELECT parent_track_id FROM tracks WHERE id='trk_child';"));
+        Assert.Equal("att_spawn_1", await legacyDb.ExecuteScalarAsync<string>("SELECT parent_attempt_id FROM tracks WHERE id='trk_child';"));
     }
 
     [Fact]

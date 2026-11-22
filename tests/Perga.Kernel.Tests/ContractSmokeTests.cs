@@ -14,8 +14,6 @@ public sealed class ContractSmokeTests
         var track = new TrackDto(
             "trk_1",
             "area_1",
-            null,
-            null,
             "Demo",
             "/tmp",
             "direct",

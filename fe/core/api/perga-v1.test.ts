@@ -269,8 +269,6 @@ describe('Perga /api/v1 protocol contracts', () => {
       track: {
         id: 'trk_1',
         areaId: 'area_1',
-        parentTrackId: null,
-        parentAttemptId: null,
         title: 'Migrate FE',
         cwd: '/repo/.worktrees/trk_1',
         workspaceDriver: 'vcs-workspace',
@@ -551,8 +549,6 @@ describe('Perga /api/v1 protocol contracts', () => {
       payload: {
         id: 'trk_1',
         areaId: 'area_1',
-        parentTrackId: null,
-        parentAttemptId: null,
         title: 'Migrate FE',
         cwd: '/repo/.worktrees/trk_1',
         workspaceDriver: 'vcs-workspace',

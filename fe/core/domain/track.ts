@@ -381,7 +381,6 @@ export function createTrackOperation(body: NewTrackBody, idempotencyKey: string)
       executionTargetId: body.executionTargetId, baseRevision: body.baseRevision,
       templateId: body.templateId, templateInputs: body.templateInputs,
       enabledPlugins: body.enabledPlugins, sortOrder: body.sortOrder,
-      parentTrackId: body.parentTrackId, parentAttemptId: body.parentAttemptId,
     } satisfies CreateTrackRequest).filter(([, value]) => value !== undefined)),
     headers: { 'Idempotency-Key': idempotencyKey },
     responseSchema: trackAggregateSnapshotDtoSchema.transform((snapshot) => snapshot.track),

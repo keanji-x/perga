@@ -89,8 +89,6 @@ internal sealed class StorageTestHarness : IAsyncDisposable
         var track = new TrackDto(
             Id: trackId,
             AreaId: areaId,
-            ParentTrackId: null,
-            ParentAttemptId: null,
             Title: $"Track {trackId}",
             Cwd: $"/workspace/{trackId}",
             WorkspaceDriver: "direct",

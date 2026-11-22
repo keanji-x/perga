@@ -43,8 +43,6 @@ public sealed record CreateTrackRequest(
     JsonElement? TemplateInputs = null,
     string? Provider = null,
     string? Model = null,
-    string? ParentTrackId = null,
-    string? ParentAttemptId = null,
     IReadOnlyList<string>? EnabledPlugins = null,
     string? BaseRevision = null,
     double? SortOrder = null,
