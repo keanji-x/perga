@@ -1584,6 +1584,16 @@ internal sealed class ScriptableFakeAgentSession : IAgentSession
     }
 
     public void EmitIdleContextUsage(IdleContextUsage usage) => _idleUsageHandler?.Invoke(usage);
+    private Action<UnifiedAgentEvent>? _runtimeActivityHandler;
+    public IReadOnlyList<UnifiedAgentEvent> PendingRuntimeActivity { get; set; } = [];
+    public IReadOnlyList<UnifiedAgentEvent> AttachRuntimeActivityHandler(Action<UnifiedAgentEvent>? handler)
+    {
+        _runtimeActivityHandler = handler;
+        var pending = PendingRuntimeActivity;
+        PendingRuntimeActivity = [];
+        return handler is null ? [] : pending;
+    }
+    public void EmitRuntimeActivity(UnifiedAgentEvent observation) => _runtimeActivityHandler?.Invoke(observation);
 
     public Task<NativeCompactResult> CompactAsync(CancellationToken ct)
     {

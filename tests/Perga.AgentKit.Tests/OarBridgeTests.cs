@@ -28,6 +28,69 @@ public sealed class OarBridgeTests : IDisposable
         try { if (Directory.Exists(_tempDir)) Directory.Delete(_tempDir, recursive: true); } catch { }
     }
 
+    [Fact]
+    public async Task RuntimeActivityReplaysBeforeAttachAndForwardsDuringAndAfterTurns()
+    {
+        File.WriteAllText(_mockBridgePath, MockBridgeScript
+            .Replace("if (req.method === 'session/open') {", """
+                if (req.method === 'session/open') {
+                  send({jsonrpc:'2.0',method:'oar/event',params:{kind:'task_started',taskId:'background',taskType:'shell',background:true}});
+                  send({jsonrpc:'2.0',method:'oar/event',params:{kind:'agent_status',status:{kind:'idle',activity:{since:1,lastEventAt:2}}}});
+                """)
+            .Replace("if (req.method === 'session/prompt') {", """
+                if (req.method === 'session/prompt') {
+                  send({jsonrpc:'2.0',method:'oar/event',params:{kind:'task_updated',taskId:'background',description:'progress'}});
+                  send({jsonrpc:'2.0',method:'oar/event',params:{kind:'agent_status',status:{kind:'running',sinceSeq:3,phase:{tool:'shell',callId:'call',writing:true}}}});
+                  send({jsonrpc:'2.0',method:'oar/event',params:{kind:'task_ended',taskId:'background',status:'completed',summary:'done'}});
+                  setTimeout(() => send({jsonrpc:'2.0',method:'oar/event',params:{kind:'agent_status',status:{kind:'idle',lastTurnOutcome:{kind:'completed'},activity:{since:4,lastEventAt:5}}}}),100);
+                  setTimeout(() => send({jsonrpc:'2.0',method:'oar/event',params:{kind:'exited',code:0}}),200);
+                """));
+        await using var runtime = new AgentRuntime(new AgentRuntimeOptions { BridgeScriptPath = _mockBridgePath });
+        await using var session = runtime.CreateSession(new HarnessLaunchSpec("codex", null, _workspaceDir,
+            null, null, new Dictionary<string, McpServerConfig>()));
+        await session.InitializeAsync(CancellationToken.None);
+        var idle = new TaskCompletionSource<AgentRuntimeStatus>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var exited = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var live = new System.Collections.Concurrent.ConcurrentQueue<UnifiedAgentEvent>();
+        var pending = session.AttachRuntimeActivityHandler(observation =>
+        {
+            live.Enqueue(observation);
+            if (observation is UnifiedAgentEvent.AgentStatusChanged { Status.IdleActivity.Since: 4 } changed)
+                idle.TrySetResult(changed.Status);
+            if (observation is UnifiedAgentEvent.RuntimeExited) exited.TrySetResult();
+        });
+        Assert.Contains(pending, observation => observation is UnifiedAgentEvent.TaskStarted { Task.TaskId: "background" });
+        Assert.Contains(pending, observation => observation is UnifiedAgentEvent.AgentStatusChanged { Status.IdleActivity.LastEventAt: 2 });
+        var streamed = new List<UnifiedAgentEvent>();
+        await foreach (var observation in session.StreamTurnAsync(new TurnInput("hello", "runtime-test"), default))
+            streamed.Add(observation);
+        Assert.Contains(streamed, observation => observation is UnifiedAgentEvent.TaskUpdated);
+        Assert.Contains(streamed, observation => observation is UnifiedAgentEvent.TaskEnded { Task.Summary: "done" });
+        Assert.Contains(streamed, observation => observation is UnifiedAgentEvent.AgentStatusChanged
+            { Status.Phase: "tool", Status.ToolName: "shell", Status.Writing: true });
+        Assert.Equal("completed", (await idle.Task.WaitAsync(TimeSpan.FromSeconds(5))).LastTurnOutcome?.Kind);
+        await exited.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(5, live.Count);
+        Assert.Empty(session.AttachRuntimeActivityHandler(null));
+    }
+
+    [Fact]
+    public async Task ExitDuringOpenSuppressesInitialAndSubsequentRuntimeStatus()
+    {
+        File.WriteAllText(_mockBridgePath, MockBridgeScript
+            .Replace("if (req.method === 'session/open') {", """
+                if (req.method === 'session/open') {
+                  send({jsonrpc:'2.0',method:'oar/event',params:{kind:'exited',code:0}});
+                  send({jsonrpc:'2.0',method:'oar/event',params:{kind:'agent_status',status:{kind:'idle'}}});
+                """)
+            .Replace("supportsNativeSteer: true, supportsNativeCompact: openRuntime", "agentStatus: {kind:'idle'}, supportsNativeSteer: true, supportsNativeCompact: openRuntime"));
+        await using var runtime = new AgentRuntime(new AgentRuntimeOptions { BridgeScriptPath = _mockBridgePath });
+        await using var session = runtime.CreateSession(new HarnessLaunchSpec("codex", null, _workspaceDir,
+            null, null, new Dictionary<string, McpServerConfig>()));
+        await session.InitializeAsync(CancellationToken.None);
+        Assert.IsType<UnifiedAgentEvent.RuntimeExited>(Assert.Single(session.AttachRuntimeActivityHandler(_ => { })));
+    }
+
     [Theory]
     [InlineData("codex", "codex")]
     [InlineData("claude", "claude")]

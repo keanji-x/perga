@@ -57,6 +57,11 @@ public sealed record ApprovalOption(
 
 public abstract record UnifiedAgentEvent
 {
+    public sealed record TaskStarted(AgentRuntimeTask Task) : UnifiedAgentEvent;
+    public sealed record TaskUpdated(AgentRuntimeTask Task) : UnifiedAgentEvent;
+    public sealed record TaskEnded(AgentRuntimeTask Task) : UnifiedAgentEvent;
+    public sealed record AgentStatusChanged(AgentRuntimeStatus Status) : UnifiedAgentEvent;
+    public sealed record RuntimeExited : UnifiedAgentEvent;
     public sealed record TurnAccepted(string? NativeTurnId) : UnifiedAgentEvent;
     public sealed record ThreadBound(string NativeThreadId) : UnifiedAgentEvent;
     public sealed record TextDelta(string Delta) : UnifiedAgentEvent;
@@ -117,6 +122,25 @@ public sealed record IdleContextUsage(
 
 public enum SteerDelivery { Accepted, Declined, Unconfirmed }
 
+public sealed record AgentRuntimeTask(string TaskId, string? TaskType = null, string? NativeType = null,
+    string? Description = null, string? ToolCallId = null, string? ChildSessionId = null,
+    bool? Background = null, bool? Ambient = null, string? Status = null, string? Error = null,
+    string? Summary = null, string? OutputFile = null, long? Seq = null, long? Ts = null);
+
+public sealed record AgentIdleActivity(long Since, long LastEventAt);
+public sealed record AgentTurnOutcome(string Kind, string? Failure = null, string? Reason = null,
+    int? Status = null, string? Credential = null, string? ResetsAt = null, string? RateLimitType = null,
+    JsonElement? StructuredOutput = null);
+public sealed record AgentStopEvidence(IReadOnlyList<string> PendingAbortIds, bool AbortedOnExit);
+public sealed record AgentCompaction(string RequestId, bool? Started = null);
+public sealed record AgentPendingPrompt(string InputId, long SinceSeq, string? RequestId = null,
+    AgentStopEvidence? Stop = null);
+public sealed record AgentRuntimeStatus(string Kind, string? Phase = null, string? ToolName = null,
+    string? ToolCallId = null, bool? Writing = null, long? SinceSeq = null, string? RequestId = null,
+    string? InputId = null, bool? Released = null, AgentTurnOutcome? LastTurnOutcome = null,
+    AgentIdleActivity? IdleActivity = null, AgentPendingPrompt? PendingPrompt = null,
+    AgentStopEvidence? Stop = null, AgentCompaction? Compaction = null);
+
 public interface IAgentSession : IAsyncDisposable
 {
     /// <summary>Runs the protocol handshake. The caller retains ownership if initialization fails.</summary>
@@ -130,6 +154,7 @@ public interface IAgentSession : IAsyncDisposable
     ValueTask<bool> ResolveNativeCompactSupportAsync(CancellationToken ct) =>
         ValueTask.FromResult(SupportsNativeCompact);
     IReadOnlyList<IdleContextUsage> AttachIdleContextUsageHandler(Action<IdleContextUsage>? handler) => [];
+    IReadOnlyList<UnifiedAgentEvent> AttachRuntimeActivityHandler(Action<UnifiedAgentEvent>? handler) => [];
     WorkerProviderConfiguration? WorkerConfiguration => null;
     bool ShutdownConfirmed => true;
     bool SupportsSessionResume => false;

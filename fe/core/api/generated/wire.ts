@@ -522,6 +522,10 @@ export type SessionCreationReceipt = import('../perga-v1.js').SessionCreationRec
 
 export type SessionItemsPageDto = import('../perga-v1.js').SessionItemsPageDto;
 
+export type AgentRuntimeStatusDto = import('../perga-v1.js').AgentRuntimeStatusDto;
+
+export type AgentRuntimeTaskDto = import('../perga-v1.js').AgentRuntimeTaskDto;
+
 export type SessionMessageReceipt = import('zod').infer<typeof import('../perga-v1.js').sessionMessageReceiptSchema>;
 
 export type TerminalDto = import('../perga-v1.js').TerminalDto;

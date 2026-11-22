@@ -284,6 +284,8 @@ export function useConversationStore(
     },
     session: run.data?.session ?? null,
     sessionState, readonlyReason,
+    runtimeStatus: run.data?.runtimeStatus ?? null,
+    runtimeTasks: run.data?.runtimeTasks ?? null,
     canReopen: run.data?.canReopen ?? false,
     taskId: run.data?.taskBinding?.task.id ?? null,
     workerPaused: run.data?.workerPaused ?? false,

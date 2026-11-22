@@ -13,8 +13,19 @@ internal sealed class LiveContextUsage
     public IdleContextUsage? TrailingWithWindow { get; set; }
 }
 
+internal sealed class LiveRuntimeActivity
+{
+    public int Epoch { get; set; }
+    public bool Exited { get; set; }
+    public AgentRuntimeStatusDto? Status { get; set; }
+    public Dictionary<string, AgentRuntimeTaskDto> Tasks { get; } = new(StringComparer.Ordinal);
+    public Dictionary<string, long> EndedOrder { get; } = new(StringComparer.Ordinal);
+    public long NextTaskSequence { get; set; }
+}
+
 internal sealed record OpenSessionHandle(IAgentSession Agent, HarnessLaunchSpec LaunchSpec,
-    SessionConfiguration Selection, ConfirmedConfiguration? Confirmation, LiveContextUsage ContextUsage, long Generation);
+    SessionConfiguration Selection, ConfirmedConfiguration? Confirmation, LiveContextUsage ContextUsage, long Generation,
+    LiveRuntimeActivity RuntimeActivity);
 
 // Provider methods are called only while holding the gate, never the snapshot lock.
 internal sealed class SessionRuntime
@@ -27,6 +38,7 @@ internal sealed class SessionRuntime
     private ConfirmedConfiguration? _confirmation;
     private LiveContextUsage _contextUsage = new();
     private long _generation;
+    private LiveRuntimeActivity _runtimeActivity = new();
     private CancellationTokenSource? _launchCts;
     private string? _launchTurnId;
     private bool _shutdownUnconfirmed;
@@ -52,7 +64,7 @@ internal sealed class SessionRuntime
     }
 
     private OpenSessionHandle? SnapshotCore() =>
-        _agent is null ? null : new(_agent, _spec!, _selection!, _confirmation, _contextUsage, _generation);
+        _agent is null ? null : new(_agent, _spec!, _selection!, _confirmation, _contextUsage, _generation, _runtimeActivity);
     public LiveContextUsage ContextUsage
     {
         get
@@ -181,6 +193,8 @@ internal sealed class SessionRuntime
         var agent = Snapshot?.Agent;
         if (agent is null) return;
         agent.AttachIdleContextUsageHandler(null);
+        agent.AttachRuntimeActivityHandler(null);
+        lock (_sync) _runtimeActivity = new();
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
         deadline.CancelAfter(timeout);
         try
@@ -240,6 +254,7 @@ internal sealed class SessionRuntime
                 _confirmation = null;
                 _contextUsage = new();
                 _generation++;
+                _runtimeActivity = new();
             }
             await agent.InitializeAsync(deadline.Token).WaitAsync(deadline.Token).ConfigureAwait(false);
             if (spec.ResumeNativeThreadId is not null && agent.NativeThreadId != spec.ResumeNativeThreadId)

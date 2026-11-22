@@ -1,6 +1,7 @@
-import { awaitTurnEnd } from "@botiverse/oar/observe";
+import { awaitTurnEnd, eventsOf, initialStatus, reduceStatus, type StatusState } from "@botiverse/oar/observe";
 import {
   type Event,
+  type AgentStatus,
   type InstallationSnapshot,
   type RawEvent,
   type Runtime,
@@ -20,6 +21,7 @@ import {
   listEnabledModels,
   parseToolArgs,
   rpcError,
+  statusEmissionKey,
   toValidInputId,
   withCodexSandboxEnv,
 } from "./bridge-helpers.ts";
@@ -60,6 +62,8 @@ export class OarBridgeServer {
   private _unsubRaw: (() => void) | null = null;
   private _pendingSystemPrompt: string | null = null;
   private _activeTurn: ActiveTurnCollector | null = null;
+  private _lastAgentStatus: AgentStatus | null = null;
+  private _statusState: StatusState = initialStatus;
 
   private _slashCompactAdvertised = false;
   private _availableCommandsObserved = false;
@@ -340,12 +344,15 @@ export class OarBridgeServer {
       supportsNativeCompact: nativeCompact || this._slashCompactAdvertised,
       supportsSessionResume: true,
       contextUsage: buildUsagePayload(session),
+      ...(typeof session.status === "function" ? { agentStatus: session.status().value } : {}),
       sessionConfiguration,
     };
   }
 
   private attachSessionListeners(session: Session): void {
     const observeRaw = (record: RawEvent): void => {
+      this._statusState = reduceStatus(this._statusState, record, session.id);
+      this.emitAgentStatus(session);
       const hasCompact = inspectAcpAvailableCommands(record);
       if (hasCompact !== null) {
         if (hasCompact) {
@@ -363,6 +370,10 @@ export class OarBridgeServer {
     const existing = session.records();
     for (const record of existing) {
       observeRaw(record);
+      for (const event of eventsOf(record)) {
+        if (event.kind === "task_started" || event.kind === "task_updated" || event.kind === "task_ended")
+          this.onSessionEvent(session, event);
+      }
     }
 
     const lastSeq = existing.length > 0 ? existing[existing.length - 1]!.seq : -1;
@@ -374,6 +385,7 @@ export class OarBridgeServer {
     this._unsubEvents = session.events(
       (event: Event) => {
         this.onSessionEvent(session, event);
+        this.emitAgentStatus(session);
       },
       { cursor: { sessionId: session.id, afterSeq: lastSeq } },
     );
@@ -386,6 +398,11 @@ export class OarBridgeServer {
     const isRoot = event.agentPath.length === 0;
 
     switch (event.kind) {
+      case "task_started":
+      case "task_updated":
+      case "task_ended":
+        this.emitEvent({ ...event });
+        break;
       case "text_delta":
         if (!isRoot) return;
         if (this._activeTurn?.captureText) {
@@ -680,7 +697,23 @@ export class OarBridgeServer {
     }
   }
 
+  private emitAgentStatus(session: Session): void {
+    if (this._session !== session || typeof session.status !== "function") return;
+    const { inputAdmission, adapterQueue, compactionState, ...status } = this._statusState;
+    void inputAdmission;
+    void adapterQueue;
+    void compactionState;
+    const previous = this._lastAgentStatus;
+    if (previous && statusEmissionKey(previous) === statusEmissionKey(status) &&
+      !(status.kind === "idle" && status.activity && previous.kind === "idle" && previous.activity &&
+        status.activity.lastEventAt - previous.activity.lastEventAt >= 1000)) return;
+    this._lastAgentStatus = status;
+    this.emitEvent({ kind: "agent_status", status });
+  }
+
   private async closeSessionInternal(): Promise<void> {
+    this._lastAgentStatus = null;
+    this._statusState = initialStatus;
     this._unsubEvents?.();
     this._unsubEvents = null;
     this._unsubRaw?.();

@@ -110,6 +110,8 @@ function policies(): PolicyMap {
       : [eventKeys.trackViewsPrefix()]),
   ])),
 'system.upgrade_status': noop('The upgrade store consumes system status independently of query caches.'),
+'session.runtime_status': plan((event) => result([eventKeys.plannerRun(event.data.sessionId)])),
+'session.task_progress': plan((event) => result([eventKeys.plannerRun(event.data.sessionId)])),
 'session.updated': plan((event) => {
     const sessionId = event.data.session?.id;
     return result([

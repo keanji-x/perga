@@ -500,6 +500,7 @@ export function useConversationPane(
         focusInput={panePresented && (draftOpen || (open !== null && composerFocusFor === open.id))}
         contextTitle={scope?.title}
         sessionHeader={open === null ? undefined : <ConversationSessionHeader session={store.session} state={store.sessionState}
+          runtimeStatus={store.runtimeStatus} runtimeTasks={store.runtimeTasks}
           taskId={store.taskId} readonlyReason={store.readonlyReason} workerPaused={store.workerPaused}
           compactEnabled={commandEnabled('compact') && store.manualCompactSupported}
           resetEnabled={commandEnabled('reset')}

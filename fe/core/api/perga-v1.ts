@@ -470,6 +470,34 @@ export type UpdateSessionRequest = z.infer<typeof updateSessionRequestSchema>;
 export type SendSessionMessageRequest = z.infer<typeof sendSessionMessageRequestSchema>;
 export type SessionControlRequest = z.infer<typeof sessionControlRequestSchema>;
 export type RespondInteractionRequest = z.infer<typeof respondInteractionRequestSchema>;
+export const agentRuntimeTaskSchema = z.object({
+  taskId: z.string(), taskType: z.string().nullish(), nativeType: z.string().nullish(),
+  description: z.string().nullish(), toolCallId: z.string().nullish(), childSessionId: z.string().nullish(),
+  background: z.boolean().nullish(), ambient: z.boolean().nullish(), status: z.string().nullish(),
+  error: z.string().nullish(), summary: z.string().nullish(), outputFile: z.string().nullish(),
+  seq: z.number().nullish(), ts: z.number().nullish(),
+});
+const agentStopEvidenceSchema = z.object({ pendingAbortIds: z.array(z.string()), abortedOnExit: z.boolean() });
+export const agentRuntimeStatusSchema = z.object({
+  kind: z.string(), phase: z.string().nullish(), toolName: z.string().nullish(), toolCallId: z.string().nullish(),
+  writing: z.boolean().nullish(), sinceSeq: z.number().nullish(), requestId: z.string().nullish(),
+  inputId: z.string().nullish(), released: z.boolean().nullish(),
+  lastTurnOutcome: z.object({ kind: z.string(), failure: z.string().nullish(), reason: z.string().nullish(),
+    status: z.number().nullish(), credential: z.string().nullish(), resetsAt: z.string().nullish(),
+    rateLimitType: z.string().nullish(), structuredOutput: z.unknown().optional() }).nullish(),
+  idleActivity: z.object({ since: z.number(), lastEventAt: z.number() }).nullish(),
+  pendingPrompt: z.object({ inputId: z.string(), sinceSeq: z.number(), requestId: z.string().nullish(),
+    stop: agentStopEvidenceSchema.nullish() }).nullish(),
+  stop: agentStopEvidenceSchema.nullish(),
+  compaction: z.object({ requestId: z.string(), started: z.boolean().nullish() }).nullish(),
+});
+export const sessionRuntimeStatusPayloadSchema = z.object({ sessionId: z.string(), status: agentRuntimeStatusSchema.nullish() });
+export const sessionTaskProgressPayloadSchema = z.object({ sessionId: z.string(), task: agentRuntimeTaskSchema });
+export type SessionRuntimeStatusPayload = z.infer<typeof sessionRuntimeStatusPayloadSchema>;
+export type SessionTaskProgressPayload = z.infer<typeof sessionTaskProgressPayloadSchema>;
+export type AgentRuntimeStatusDto = z.infer<typeof agentRuntimeStatusSchema>;
+export type AgentRuntimeTaskDto = z.infer<typeof agentRuntimeTaskSchema>;
+
 export const sessionSummarySchema = z.object({
   session: agentSessionDtoSchema, state: z.enum(['idle', 'running', 'stopping', 'compacting', 'unknown']),
   taskId: z.string().nullish(), readonlyReason: z.enum(['archived', 'track_closed', 'waiting_task', 'task_verifying', 'task_finished']).nullable(), workerPaused: z.boolean(), lastTurn: sessionTurnDtoSchema.nullish(), pendingInteractionCount: z.number().int(),
@@ -518,6 +546,8 @@ export const sessionItemsPageDtoSchema = z.object({
   pendingInteractions: z.array(pendingInteractionSchema).nullish(),
   taskBinding: z.object({ task: taskDtoSchema, phase: z.string(), waitingReason: z.string().nullish() }).nullish(),
   permissionModes: z.array(permissionModeOptionDtoSchema).nullish(),
+  runtimeStatus: agentRuntimeStatusSchema.nullish(),
+  runtimeTasks: z.array(agentRuntimeTaskSchema).nullish(),
 });
 export type SessionItemsPageDto = z.infer<typeof sessionItemsPageDtoSchema>;
 
@@ -701,6 +731,8 @@ export const pergaPersistentEventKindSchema = z.enum([
 export type PergaPersistentEventKind = z.infer<typeof pergaPersistentEventKindSchema>;
 
 export const pergaTransientEventKindSchema = z.enum([
+  'session.runtime_status',
+  'session.task_progress',
   'system.upgrade_status',
   'session.text_delta',
   'session.thinking_delta',
@@ -767,6 +799,8 @@ export type PergaPersistentEvent =
   | Readonly<{ kind: 'terminal.changed'; eventId: number; areaId: string | null; trackId: string | null; payload: TerminalDto; createdAtMs: number }>;
 
 export type PergaEventDecodeResult =
+  | Readonly<{ status: 'ready'; kind: 'runtime-status'; payload: z.infer<typeof sessionRuntimeStatusPayloadSchema> }>
+  | Readonly<{ status: 'ready'; kind: 'task-progress'; payload: z.infer<typeof sessionTaskProgressPayloadSchema> }>
   | Readonly<{ status: 'ready'; kind: 'read-receipt'; payload: z.infer<typeof readReceiptDtoSchema> }>
   | Readonly<{ status: 'ready'; kind: 'session-state'; trackId: string; sessionId: string }>
   | Readonly<{ status: 'ready'; kind: 'approvals'; trackId: string; sessionId: string }>
@@ -794,6 +828,16 @@ export function decodePergaEventEnvelope(input: unknown): PergaEventDecodeResult
     };
   }
   const { eventId, areaId, trackId, kind, payload, createdAtMs } = base.data;
+  if (kind === 'session.runtime_status') {
+    const parsed = sessionRuntimeStatusPayloadSchema.safeParse(payload);
+    return parsed.success ? { status: 'ready', kind: 'runtime-status', payload: parsed.data }
+      : { status: 'failed', error: { kind: 'decode', message: 'Invalid runtime status', cause: parsed.error } };
+  }
+  if (kind === 'session.task_progress') {
+    const parsed = sessionTaskProgressPayloadSchema.safeParse(payload);
+    return parsed.success ? { status: 'ready', kind: 'task-progress', payload: parsed.data }
+      : { status: 'failed', error: { kind: 'decode', message: 'Invalid runtime task', cause: parsed.error } };
+  }
   if (kind === 'read_receipt.updated') {
     const parsed = readReceiptDtoSchema.safeParse(payload);
     if (!parsed.success) return { status: 'failed', error: { kind: 'decode', message: 'Invalid read receipt', cause: parsed.error } };
