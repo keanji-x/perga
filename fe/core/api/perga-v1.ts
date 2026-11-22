@@ -183,8 +183,6 @@ export type TrackDataPatchResult = z.infer<typeof trackDataPatchResultSchema>;
 export const trackDtoSchema = z.object({
   id: z.string(),
   areaId: z.string(),
-  parentTrackId: z.string().nullish(),
-  parentAttemptId: z.string().nullish(),
   title: z.string().nullish().transform((v) => v ?? ''),
   cwd: z.string().nullish().transform((v) => v ?? ''),
   workspaceDriver: z.string().default('direct'),

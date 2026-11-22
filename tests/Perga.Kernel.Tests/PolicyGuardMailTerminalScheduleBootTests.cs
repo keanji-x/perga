@@ -185,7 +185,7 @@ public sealed class PolicyGuardMailTerminalScheduleBootTests
 
         // Open track with an in-flight Running task
         var openTrack = new TrackDto(
-            "trk_boot_open", area.Id, null, null, "Open Interrupted Track", "/repo/open", "direct",
+            "trk_boot_open", area.Id, "Open Interrupted Track", "/repo/open", "direct",
             emptyJson, "ses_open_lead", null, emptyJson, [], ClosedAtMs: null, PinnedAtMs: null, 0, 1000, 1000);
         var openLead = new AgentSessionDto(
             "ses_open_lead", "trk_boot_open", true, "Lead", "codex", null, null, 1, "idle", null, 1000, 1000);
@@ -202,7 +202,7 @@ public sealed class PolicyGuardMailTerminalScheduleBootTests
 
         // Closed track with an interrupted turn -> should be reconciled in DB, NOT woken!
         var closedTrack = new TrackDto(
-            "trk_boot_closed", area.Id, null, null, "Closed Track", "/repo/closed", "direct",
+            "trk_boot_closed", area.Id, "Closed Track", "/repo/closed", "direct",
             emptyJson, "ses_closed_lead", null, emptyJson, [], ClosedAtMs: 2000, PinnedAtMs: null, 0, 1000, 2000);
         var closedLead = new AgentSessionDto(
             "ses_closed_lead", "trk_boot_closed", true, "Lead", "codex", null, null, 1, "running", null, 1000, 1000);
