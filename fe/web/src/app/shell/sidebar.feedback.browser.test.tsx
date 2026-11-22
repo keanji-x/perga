@@ -1,30 +1,29 @@
-import { AreaEditorForm } from '../../features/area/editor/public.tsx';
+import '../../styles/entry.css';
 import { useRef } from 'react';
-import { NativeReportView } from '../../features/report/native/public.tsx';
-import { RecipeEditor } from '../../features/report/recipe/public.tsx';
-import { NewTrackForm } from '../../features/area/new-track/public.tsx';
-import { AddCardMenu, NewCardForm } from '../../features/track/new-card/public.tsx';
-import type { CardAddMenuEntry } from '../../systems/cards/public.ts';
-import { nativeViewPayloadSchema } from '../../../../core/domain/report-view.ts';
 import source from '../../../../core/domain/fixtures/native-view-v1.json?raw';
-import { Dialog, type DialogOrigin } from '../../ui/dialog/public.tsx';
-import { useState } from '../../ui/state/public.ts';
+import { nativeViewPayloadSchema } from '../../../../core/domain/report-view.ts';
+import { AreaEditorForm } from '../../features/area/editor/public.tsx';
+import { NewTrackForm } from '../../features/area/new-track/public.tsx';
+import { NativeReportView } from '../../features/report/native/public.tsx';
+import { AddCardMenu,NewCardForm } from '../../features/track/new-card/public.tsx';
 import { renderPage } from '../../features/track/page/test-fixtures.tsx';
+import type { CardAddMenuEntry } from '../../systems/cards/public.ts';
+import { Dialog,type DialogOrigin } from '../../ui/dialog/public.tsx';
+import { useState } from '../../ui/state/public.ts';
 // #2175-17: a failed sidebar write (here, a pin the server refused) is said in the rail as the Astryx error banner, in
 // a real engine, light and dark.
-import { cleanup, render, screen } from '@testing-library/react';
-import { page, userEvent } from 'vitest/browser';
-import { afterEach, expect, it, vi } from 'vitest';
+import { cleanup,render,screen } from '@testing-library/react';
+import { afterEach,expect,it,vi } from 'vitest';
+import { page,userEvent } from 'vitest/browser';
 
 import type { Area } from '../../../../core/domain/area.ts';
 import { ApiError } from '../../../../core/domain/failure-class.ts';
-import { NEUTRAL_ACTIVITY, type Track } from '../../../../core/domain/track.ts';
-import '../../styles/entry.css';
-import { ThemeProvider } from '../theme/public.tsx';
-import { createUiPreferences, UiPreferencesProvider } from '../providers/ui-preferences.tsx';
-import { SidebarFixture as Sidebar } from './sidebar-fixture.tsx';
-import styles from './shell.module.css';
+import { NEUTRAL_ACTIVITY,type Track } from '../../../../core/domain/track.ts';
 import { readReceiptsFixture } from '../providers/read-receipts-fixture.tsx';
+import { createUiPreferences,UiPreferencesProvider } from '../providers/ui-preferences.tsx';
+import { ThemeProvider } from '../theme/public.tsx';
+import styles from './shell.module.css';
+import { SidebarFixture as Sidebar } from './sidebar-fixture.tsx';
 
 const receipts = readReceiptsFixture();
 
@@ -95,18 +94,6 @@ it('opens actual Native fullscreen from the unpressed action and keeps its inspe
   await page.screenshot({ path: 'test-results/dialog-native.png' });
   await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
   expect(screen.queryByRole('dialog')).toBeNull();
-});
-it('anchors actual Recipe delete and cancels without calling its business port', async () => {
-  const remove = vi.fn(() => Promise.resolve());
-  render(<RecipeEditor recipe={{ id: 'r', title: 'Ship', body: 'Checklist', revision: 1, created_at: 1, updated_at: 1 }}
-    theme="light" onWrite={vi.fn()} onDelete={remove} onClose={vi.fn()} onCreated={null} />);
-  const action = screen.getByRole('button', { name: 'Delete' });
-  await userEvent.click(action);
-  await anchorIs(action.parentElement!);
-  await expect.element(page.getByRole('button', { name: 'Cancel', exact: true })).toHaveFocus();
-  await page.screenshot({ path: 'test-results/dialog-recipe-delete.png' });
-  await userEvent.keyboard('{Escape}');
-  expect(remove).not.toHaveBeenCalled();
 });
 function CardEntry() {
   const [origin, setOrigin] = useState<DialogOrigin | null>(null);

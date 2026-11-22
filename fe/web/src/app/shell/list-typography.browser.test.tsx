@@ -1,7 +1,7 @@
+import '../../styles/entry.css';
 import { cleanup, render } from '@testing-library/react';
 import { page } from 'vitest/browser';
 import { afterEach, expect, it, vi } from 'vitest';
-import '../../styles/entry.css';
 import type { Area } from '../../../../core/domain/area.ts';
 import { NEUTRAL_ACTIVITY, type Track } from '../../../../core/domain/track.ts';
 import { deriveTrackPageView } from '../../../../core/view/track-page.ts';
@@ -92,7 +92,7 @@ it.each(['light', 'dark'])('uses the same named type hierarchy in both %s side p
 it('uses configured sidebar density and uses compact single-line contextual tool entries', async () => {
   await page.viewport(1400, 900); draw();
   const today = element(document.querySelector<HTMLElement>('[aria-current="page"]'));
-  const recipes = element(document.querySelector<HTMLElement>('[title="Recipes"]')).closest('button')!;
+  const recipes = element(document.querySelector<HTMLElement>('[title="Today"]')).closest('button')!;
   const area = element(document.querySelector<HTMLElement>('[aria-label="Collapse area Work"]'));
   const rows = [
     element(document.querySelector<HTMLElement>('[aria-label^="Track Left first"]')),

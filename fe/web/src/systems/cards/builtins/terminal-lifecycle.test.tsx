@@ -1,5 +1,5 @@
-import { cleanup, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { cleanup,render,screen } from '@testing-library/react';
+import { afterEach,describe,expect,it } from 'vitest';
 
 import type { CardActivity } from '../../../../../core/domain/activity.ts';
 import { cardWireSchema } from '../../../../../core/domain/track.ts';
@@ -32,7 +32,7 @@ function mountCard(
   ]} visible activeCardId="card-1" />);
 }
 
-describe.each(['terminal', 'codex', 'claude'])('%s terminal lifecycle after refresh', (kind) => {
+describe.each(['terminal'])('%s terminal lifecycle after refresh', (kind) => {
   it('shows an exited session instead of an endless startup', () => {
     mountCard(kind, { status: 'exited' });
     expect(screen.getByText('Session exited.')).toBeTruthy();

@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { sessionSteeringOutcome, unlistedPendingInputCount, pendingQueueWithCurrentHumanVersions, pendingQueueOwnsHumanEntry } from './conversation-queue-controls.js';
+import { describe,expect,it } from 'vitest';
+import { pendingQueueOwnsHumanEntry,pendingQueueWithCurrentHumanVersions,sessionSteeringOutcome } from './conversation-queue-controls.js';
 
 describe('canonical queued message controls', () => {
   it('reconciles only listed own Human identities and preserves queue position', () => {
@@ -13,12 +13,6 @@ describe('canonical queued message controls', () => {
     expect(pendingQueueOwnsHumanEntry({...source,human:{...source.human,revision:1}},versions)).toBe(true);
     expect(pendingQueueOwnsHumanEntry(source,versions)).toBe(true);
     expect(pendingQueueOwnsHumanEntry({...source,human:{...source.human,revision:3}},versions)).toBe(false);
-  });
-  it('counts Human and System pending input once by kind and exact revision', () => {
-    const inputs=[{kind:'human' as const,message_id:'same',revision:2,queue_position:0,queued_at_ms:1},
-      {kind:'system' as const,observation_id:'same',queue_position:1,queued_at_ms:2}];
-    expect(unlistedPendingInputCount(inputs,[{entry_id:'same',rev:2,text:'queued',queued_at_ms:1}])).toBe(1);
-    expect(unlistedPendingInputCount(inputs,[{entry_id:'same',rev:1,text:'old',queued_at_ms:1}])).toBe(2);
   });
 });
 

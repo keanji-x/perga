@@ -1,11 +1,11 @@
-import { cleanup, render } from '@testing-library/react';
-import { page, userEvent } from 'vitest/browser';
-import { afterEach, expect, it, vi } from 'vitest';
-
 import '../../../styles/entry.css';
-import { mentionQueryOf, mentionSuggestionsOf, type MentionSearch } from '../../../../../core/domain/mentions.ts';
-import { ChatComposer } from './public.tsx';
+import { cleanup,render } from '@testing-library/react';
+import { afterEach,expect,it,vi } from 'vitest';
+import { page,userEvent } from 'vitest/browser';
+
+import { mentionQueryOf,type MentionSearch } from '../../../../../core/domain/mentions.ts';
 import { useMentionTrigger } from './mention-trigger.tsx';
+import { ChatComposer } from './public.tsx';
 
 afterEach(cleanup);
 
@@ -18,11 +18,15 @@ function Composer({ search, onSend }: { search: MentionSearch; onSend: (text: st
 
 it.each([1200])('shows readable type entrances and enters each filtered list by mouse at %ipx', async (width) => {
   await page.viewport(width, 900);
-  const search = vi.fn<MentionSearch>((query) => Promise.resolve(mentionSuggestionsOf({
-    tags: [{ label: 'release', track_count: 2, insert: '@`tag:release`' }],
-    tracks: [{ label: 'Release notes', track_id: 't1', insert: '@`/研发/Release notes/report.md`' }],
-    blocks: [{ label: 'Checklist', block_id: 'b1', track_id: 't1', track_title: 'Release notes', insert: '@`/研发/Release notes/report.md#b1`' }],
-  }, mentionQueryOf(query))));
+  const search = vi.fn<MentionSearch>((query) => {
+    const kind = mentionQueryOf(query).kind;
+    const suggestions = [
+      { id: 'tag', kind: 'tag' as const, label: '#release', chip: '#release', detail: '2 tracks', insert: '@`tag:release`' },
+      { id: 'track', kind: 'track' as const, label: 'Release notes', chip: 'Release notes', detail: null, insert: '@`/研发/Release notes/report.md`' },
+      { id: 'block', kind: 'block' as const, label: 'Checklist', chip: 'Checklist', detail: 'Release notes', insert: '@`/研发/Release notes/report.md#b1`' },
+    ];
+    return Promise.resolve(suggestions.filter(item => kind === null || item.kind === kind));
+  });
   render(<Composer search={search} onSend={vi.fn()} />);
   const field = page.getByRole('combobox', { name: 'Message' });
   await field.click();

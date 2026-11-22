@@ -1,17 +1,17 @@
 import type { ParsedLocation } from '@tanstack/react-router';
-import { createElement, useLayoutEffect } from 'react';
-import { act, cleanup, waitFor } from '@testing-library/react';
+import { act,cleanup,waitFor } from '@testing-library/react';
+import { createElement,useLayoutEffect } from 'react';
+import { afterEach,describe,expect,it,vi } from 'vitest';
 import { renderDailyFixture } from './daily-planner-fixture.tsx';
-import { useDraftBackOwner, type NavigationSource } from './draft-back-owner.tsx';
-import { useGo, useNewTrackBack } from './navigation.ts';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { useDraftBackOwner,type NavigationSource } from './draft-back-owner.tsx';
+import { useGo,useNewTrackBack } from './navigation.ts';
 
 import {
-  cardIdFromLocation, cardIdFromSearchString, filePathFromLocation, filePathFromSearchString,
-  fromFromLocation, fromFromSearchString,
-  hasFilePushedMarker, hasPanelPushedMarker, hasPlannerOpenMarker,
-  panelFromLocation, panelFromSearchString, pathFor,
-  renderedMobilePanel, sameTrackSearch, validateTrackSearch,
+cardIdFromLocation,cardIdFromSearchString,filePathFromLocation,filePathFromSearchString,
+fromFromLocation,fromFromSearchString,
+hasFilePushedMarker,hasPanelPushedMarker,hasPlannerOpenMarker,
+panelFromLocation,panelFromSearchString,pathFor,
+renderedMobilePanel,sameTrackSearch,validateTrackSearch,
 } from './navigation.ts';
 
 describe('cardIdFromSearchString', () => {
@@ -47,7 +47,7 @@ describe('filePathFromSearchString', () => {
 
 describe('pathFor', () => {
   it('gives the mobile Network category a dedicated URL', () => {
-    expect(pathFor({ name: 'settings-network' })).toBe('/settings/network');
+    expect(pathFor({ name: 'settings-appearance' })).toBe('/settings/appearance');
     expect(pathFor({ name: 'settings' })).toBe('/settings');
   });
   it('does not embed the card query in the path', () => {

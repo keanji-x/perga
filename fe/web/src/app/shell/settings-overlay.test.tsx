@@ -2,17 +2,17 @@ import { prepareReportDocument } from '../../features/report/document/preparatio
 // @vitest-environment jsdom
 // The Settings panel is one element for the whole visit, not one per section; only
 // the real router can produce the navigation that would destroy it.
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { RouterProvider, createMemoryHistory } from '@tanstack/react-router';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { QueryClient,QueryClientProvider } from '@tanstack/react-query';
+import { RouterProvider,createMemoryHistory } from '@tanstack/react-router';
+import { cleanup,render,screen,waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach,beforeEach,describe,expect,it,vi } from 'vitest';
 
-import type { ApiTransportPort, ApiTransportResponse } from '../../../../core/api/types.ts';
+import type { ApiTransportPort,ApiTransportResponse } from '../../../../core/api/types.ts';
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
-import { ThemeProvider } from '../theme/public.tsx';
 import { createAppRouter } from '../router/public.tsx';
 import { bootTestCardRuntime } from '../router/test-card-runtime.ts';
+import { ThemeProvider } from '../theme/public.tsx';
 import { settingsSectionForPath } from './settings-overlay.tsx';
 
 const unauthorized = createUnauthorizedChannel({ enqueue: (task) => task() });
@@ -63,12 +63,12 @@ function renderApp(initialEntry: string) {
 
 describe('settingsSectionForPath', () => {
   it('maps every settings path to a pane and nothing else to one', () => {
-    expect(settingsSectionForPath('/settings')).toBe('network');
+    expect(settingsSectionForPath('/settings')).toBe('appearance');
     // General left with the task-concurrency control (#1830 S2b).
     expect(settingsSectionForPath('/settings/general')).toBeNull();
-    expect(settingsSectionForPath('/settings/network')).toBe('network');
+    expect(settingsSectionForPath('/settings/network')).toBeNull();
     expect(settingsSectionForPath('/settings/appearance')).toBe('appearance');
-    expect(settingsSectionForPath('/settings/plugins')).toBe('plugins');
+    expect(settingsSectionForPath('/settings/plugins')).toBeNull();
     expect(settingsSectionForPath('/settings/about')).toBe('about');
     // A stale bookmark to a removed route must leave the dialog shut, not open it on a fallback pane.
     expect(settingsSectionForPath('/settings/templates')).toBeNull();
@@ -86,8 +86,8 @@ describe('Settings overlay', () => {
     const dialog = await screen.findByRole('dialog', { name: 'Settings' });
     dialog.setAttribute('data-nc-test-marked', '');
 
-    await userEvent.click(screen.getByRole('button', { name: 'Plugins' }));
-    await screen.findByRole('heading', { name: 'Plugins' });
+    await userEvent.click(screen.getByRole('button', { name: 'Planners' }));
+    await screen.findByRole('heading', { name: 'Planners' });
     // Same node, not merely a node: a remounted panel replays the entrance animation.
     expect(screen.getByRole('dialog', { name: 'Settings' })).toBe(dialog);
 
@@ -98,9 +98,9 @@ describe('Settings overlay', () => {
   });
 
   it('opens on a deep link and closes to Today', async () => {
-    const router = renderApp('/settings/plugins');
+    const router = renderApp('/settings/planners');
     await screen.findByRole('dialog', { name: 'Settings' });
-    expect(screen.getByRole('button', { name: 'Plugins' }).getAttribute('aria-current')).toBe('page');
+    expect(screen.getByRole('button', { name: 'Planners' }).getAttribute('aria-current')).toBe('page');
 
     await userEvent.click(screen.getByRole('button', { name: 'Close' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Settings' })).toBeNull());

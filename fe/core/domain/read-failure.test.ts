@@ -1,11 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe,expect,it } from 'vitest';
 
 import type { ApiFailure } from '../api/types.js';
-import { ApiError, classifyFailure } from './failure-class.js';
-import { FILE_READ_FAILURES } from './fs.js';
 import { RECHECK_TEXT } from './agent-providers.js';
-import { CONNECTOR_CHECK_TEXT } from './plugins.js';
-import { PROBE_FAILURES, probeFailureText, READ_FAILURES, readErrorText, readFailureOf, readFailureText } from './read-failure.js';
+import { ApiError,classifyFailure } from './failure-class.js';
+import { FILE_READ_FAILURES } from './fs.js';
+import { PROBE_FAILURES,probeFailureText,READ_FAILURES,readErrorText,readFailureOf,readFailureText } from './read-failure.js';
 
 const http = (status: number, code = 'http_error', message = 'the server said why'): ApiFailure =>
   ({ kind: 'http', status, code, message, body: { error: message, code } });
@@ -84,7 +83,9 @@ describe('the filesystem read classes', () => {
 });
 
 /* #2175 S7: the one rule both read-only probes (Recheck, connector check) say their failures by. */
-describe.each([['Recheck', RECHECK_TEXT], ['connector check', CONNECTOR_CHECK_TEXT]] as const)('a failed %s', (_probe, text) => {
+describe.each([
+['Recheck', RECHECK_TEXT]
+] as const)('a failed %s', (_probe, text) => {
   it('is frozen', () => {
     expect(Object.isFrozen(PROBE_FAILURES) && Object.isFrozen(PROBE_FAILURES.rules) && Object.isFrozen(text)).toBe(true);
   });

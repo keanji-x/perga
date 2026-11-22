@@ -1,17 +1,15 @@
-import { fixtureSession } from '../router/session-contract-fixture.ts';
-import { sessionPage, sessionItem } from '../router/conversation-session-data.ts';
-import { MutationObserver, QueryClient, QueryObserver } from '@tanstack/react-query';
-import { describe, expect, expectTypeOf, it, vi } from 'vitest';
+import { QueryClient,QueryObserver } from '@tanstack/react-query';
+import { describe,expect,expectTypeOf,it,vi } from 'vitest';
 
-import type { AreaWire } from '../../../../core/domain/area.ts';
 import { wireEventSchema } from '../../../../core/api/schemas.ts';
+import type { ApiRequest,ApiTransportResponse } from '../../../../core/api/types.ts';
+import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
+import type { AreaWire } from '../../../../core/domain/area.ts';
 import type { CacheWrite } from '../../../../core/events/invalidation-plan.ts';
 import { invalidationPlanFor } from '../../../../core/events/invalidation-plan.ts';
 import type { EventEffect } from '../../../../core/events/reducer.ts';
-import type { ApiRequest, ApiTransportResponse, ApiTransportPort, ApiAbortSignal } from '../../../../core/api/types.ts';
-import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
-import { trackBacklinksQueryOptions, trackDetailQueryOptions, conversationHistoryQueryOptions, queryKeys } from '../providers/queries.ts';
-import { applyEventEffects, type QueryCachePort } from './query-invalidation-adapter.ts';
+import { queryKeys,trackDetailQueryOptions } from '../providers/queries.ts';
+import { applyEventEffects,type QueryCachePort } from './query-invalidation-adapter.ts';
 
 type Call = Readonly<{ op: 'reset' | 'invalidate' | 'remove' | 'set' | 'clear'; queryKey?: readonly unknown[] }>;
 
@@ -40,152 +38,6 @@ function recordingClient(initialAreas?: readonly ReturnType<typeof import('../..
 }
 
 describe('query invalidation adapter', () => {
-  it('replaces the initial backlinks read after a report edit even when transport ignores abort', async () => {
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    const reads: { request: ApiRequest; release: () => void }[] = [];
-    const transport: ApiTransportPort = { send: request => new Promise(resolve => {
-      const body = { backlinks: reads.length === 0 ? [] : [{ src_track_id: 'source',
-        src_track_title: 'Source', src_block_id: 'block', label: 'New citation', updated_at: 1 }],
-      truncated: false, skipped_sources: 0 };
-      reads.push({ request, release: () => resolve({ status: 200, statusText: 'OK', body }) });
-    }) };
-    const options = trackBacklinksQueryOptions(transport, 'target', createUnauthorizedChannel({ enqueue: task => task() }));
-    const unsubscribe = new QueryObserver(client, options).subscribe(() => undefined);
-    try {
-      expect(reads).toHaveLength(1);
-      expect(client.getQueryData(options.queryKey)).toBeUndefined();
-      const plan = invalidationPlanFor({ ev: 'track.report_edited', data: {
-        track_id: 'source', card_id: 'report', author: 'assistant', edit_id: 'edit',
-        summary_before: '', summary_after: '', body_before: '', body_after: 'New citation',
-      } });
-      applyEventEffects(client, [{ type: 'invalidate', keys: plan.invalidate }]);
-      await settleReads();
-      reads[1]?.release();
-      await settleReads();
-      reads[0].release(); // The pre-event response arrives last and must never win.
-      await settleReads();
-      expect(reads).toHaveLength(2);
-      expect(reads[0].request.signal?.aborted).toBe(true);
-      expect(client.getQueryData(options.queryKey)).toMatchObject({ backlinks: [{ label: 'New citation' }] });
-      expect(client.getQueryState(options.queryKey)?.fetchStatus).toBe('idle');
-    } finally { unsubscribe(); client.clear(); }
-  });
-
-  it.each(['plugins', 'track-templates', 'plugin-data'] as const)(
-    'cancels %s reads before invalidating without interrupting a user mutation', async head => {
-      const client = new QueryClient();
-      const key = head === 'plugin-data' ? queryKeys.pluginDataPrefix('calendar') : [head];
-      const cancel = vi.spyOn(client, 'cancelQueries');
-      const invalidate = vi.spyOn(client, 'invalidateQueries');
-      let finish!: () => void;
-      const mutation = new MutationObserver(client, { mutationKey: key,
-        mutationFn: () => new Promise<string>(resolve => { finish = () => resolve('saved'); }) });
-      const pending = mutation.mutate();
-      await settleReads();
-      try {
-        const plan = invalidationPlanFor(head === 'plugin-data'
-          ? { ev: 'plugin.data.changed', data: { plugin_id: 'calendar' } }
-          : { ev: 'plugin.state', data: { id: 'calendar', state: 'running' } });
-        applyEventEffects(client, [{ type: 'invalidate', keys: plan.invalidate }]);
-        await settleReads();
-        expect(cancel).toHaveBeenCalledWith({ queryKey: key });
-        expect(invalidate).toHaveBeenCalledWith({ queryKey: key });
-        const cancelledAt = cancel.mock.calls.findIndex(([filters]) => filters?.queryKey?.[0] === head);
-        const invalidatedAt = invalidate.mock.calls.findIndex(([filters]) => filters?.queryKey?.[0] === head);
-        expect(cancel.mock.invocationCallOrder[cancelledAt]).toBeLessThan(invalidate.mock.invocationCallOrder[invalidatedAt]);
-        expect(mutation.getCurrentResult().status).toBe('pending');
-        finish();
-        await expect(pending).resolves.toBe('saved');
-      } finally { finish(); await pending; client.clear(); }
-    },
-  );
-
-  it('invalidates backlinks for every cached track after another track report is edited', async () => {
-    const client = new QueryClient();
-    const keys = [queryKeys.trackBacklinks('target-a'), queryKeys.trackBacklinks('target-b')];
-    for (const key of [...keys, queryKeys.plugins()]) client.setQueryData(key, []);
-    const plan = invalidationPlanFor({
-      ev: 'track.report_edited',
-      data: { track_id: 'source', card_id: 'report', author: 'assistant', edit_id: 'edit',
-        summary_before: '', summary_after: '', body_before: '', body_after: 'references changed' },
-    });
-    applyEventEffects(client, [{ type: 'invalidate', keys: plan.invalidate }]);
-    await settleReads();
-    for (const key of keys) expect(client.getQueryState(key)?.isInvalidated).toBe(true);
-    expect(client.getQueryState(queryKeys.plugins())?.isInvalidated).toBe(false);
-    client.clear();
-  });
-
-  it.each([queryKeys.plugins(), queryKeys.trackTemplates()])('invalidates %j on plugin state changes', async (head) => {
-    const client = new QueryClient();
-    const key = [head];
-    client.setQueryData(key, []);
-    const plan = invalidationPlanFor({ ev: 'plugin.state', data: {
-      id: 'calendar', state: 'running',
-    } });
-    applyEventEffects(client, [{ type: 'invalidate', keys: plan.invalidate }]);
-    await settleReads();
-    expect(client.getQueryState(key)?.isInvalidated).toBe(true);
-    client.clear();
-  });
-
-  it('invalidates all calendar windows on plugin data changes without touching other plugins', async () => {
-    const client = new QueryClient();
-    const keys = [
-      ['plugin-data', 'calendar', '2026-10-01', '2026-11-01', 'UTC'],
-      ['plugin-data', 'calendar', '2026-10-23', '2026-10-24', 'UTC'],
-    ];
-    const foreign = ['plugin-data', 'other', 'window'];
-    for (const key of [...keys, foreign]) client.setQueryData(key, []);
-    const plan = invalidationPlanFor({ ev: 'plugin.data.changed', data: { plugin_id: 'calendar' } });
-    applyEventEffects(client, [{ type: 'invalidate', keys: plan.invalidate }]);
-    await settleReads();
-    for (const key of keys) expect(client.getQueryState(key)?.isInvalidated).toBe(true);
-    expect(client.getQueryState(foreign)?.isInvalidated).toBe(false);
-    client.clear();
-  });
-
-  /* Missing links are silent when they break: an unplanned key is discarded here without a warning. */
-  it('turns a report edit into a refresh of reports, backlinks and the edited track', () => {
-    const event = wireEventSchema.parse({
-      ev: 'track.report_edited',
-      data: {
-        track_id: 'lp', card_id: 'report-card', author: 'assistant', edit_id: 'edit-1',
-        summary_before: '', summary_after: 'today', body_before: '', body_after: '# today',
-      },
-    });
-    const mapped = invalidationPlanFor(event).invalidate;
-    expect(mapped).toContainEqual(queryKeys.trackReportPrefix());
-    expect(mapped).toContainEqual(queryKeys.trackBacklinksPrefix());
-    expect(mapped).toContainEqual(queryKeys.trackDetail('lp'));
-  });
-
-  /* The bare track-report key is the point: dropping it would leave the TASKS panel dead for these
-   * events. Parsed through `wireEventSchema`; the track id is only inside the opaque task id. */
-  it.each([
-    ['task.dispatched', { idempotency_key: 'w-7:alpha', kind: 'codex' }],
-    ['task.completed', { notification: 'notify', idempotency_key: 'w-7:alpha', result: null, artifacts: [] }],
-    ['task.failed', { notification: 'notify', idempotency_key: 'w-7:alpha', reason: 'gate red' }],
-    ['task.gate_result', {
-      task_id: 'w-7:alpha', idempotency_key: 'w-7:alpha', passed: false,
-      log_tail: '', log_path: '/tmp/gate.log', attempt: 1,
-    }],
-  ] as const)('reaches the task-verdict cache for %s, whose track id is only inside its task id', (ev, data) => {
-    const event = wireEventSchema.parse({ ev, data });
-    expect(event.data).toMatchObject({ idempotency_key: 'w-7:alpha' });
-    const plan = invalidationPlanFor(event);
-    const mapped = plan.invalidate;
-    expect(mapped).toContainEqual(queryKeys.trackReportPrefix());
-  });
-
-  it('maps a task-plan cancellation event to its track report query', () => {
-    const event = wireEventSchema.parse({
-      ev: 'plan.updated',
-      data: { track_id: 'w-7', changed_keys: ['alpha'], agent_message: 'canceled' },
-    });
-    const mapped = invalidationPlanFor(event).invalidate;
-    expect(mapped).toEqual([queryKeys.trackReport('w-7')]);
-  });
 
   it('invalidates each planned key of an invalidate effect', async () => {
     const { calls, client } = recordingClient();
@@ -392,83 +244,6 @@ describe('query invalidation adapter', () => {
     expect(calls).toEqual([{ op: 'invalidate', queryKey: queryKeys.areas() }]);
   });
 
-  /* Parsed through `wireEventSchema`, not cast: `track_id` is required on the wire, and a `{ card_id }`
-   * stub once planned `['track-conversations', undefined]` and froze the wrong expectation. */
-  it('turns each real harness plan into its exact live query invalidations', async () => {
-    const base = { worker_session_id: 'r-1', card_id: 'card-1', track_id: 'track-1' } as const;
-    const expected = [
-      [
-        { ...base, item_db_id: 1, item_uuid: null, item_type: null, turn_id: null, method: 'x' },
-        'harness.item.added', [queryKeys.harnessItems('card-1')],
-      ],
-      [
-        { ...base, old_phase: 'idle', new_phase: 'turn_running' },
-        'harness.phase.changed',
-        [queryKeys.plannerRun('card-1'), queryKeys.harnessItems('card-1'), queryKeys.trackDetail('track-1')],
-      ],
-      [
-        { ...base, cleared_item_count: 12, cleared_params_bytes: 3400, card_age_ms_at_clear: 86400000 },
-        'harness.transcript.cleared',
-        [queryKeys.harnessItems('card-1'), queryKeys.plannerRun('card-1'), queryKeys.trackDetail('track-1')],
-      ],
-      [
-        { ...base, char_count: 3 }, 'harness.user_message.enqueued',
-        [
-          queryKeys.harnessItems('card-1'), queryKeys.plannerRun('card-1'),
-          queryKeys.trackDetail('track-1'),
-        ],
-      ],
-    ] as const;
-    for (const [data, ev, keys] of expected) {
-      const plan = invalidationPlanFor(wireEventSchema.parse({ ev, data }));
-      const { calls, client } = recordingClient();
-      applyEventEffects(client, [{ type: 'invalidate', keys: plan.invalidate }]);
-      const expectedCalls = keys.map((queryKey) => ({ op: 'invalidate', queryKey }));
-      await vi.waitFor(() => {
-        expect(calls).toHaveLength(expectedCalls.length);
-        expect(calls).toEqual(expect.arrayContaining(expectedCalls));
-      });
-    }
-  });
-
-  /* Exact call lists, not `toContainEqual`: "the key is in there somewhere" is what let the seam open. */
-  it('drives session metadata invalidations onto the aggregate query', async () => {
-    const event = wireEventSchema.parse({
-      ev: 'worker_session.started',
-      data: {
-        worker_session_id: 'r-1', card_id: 'card-1', kind: 'codex',
-        agent_provider: 'codex', status: 'starting',
-      },
-    });
-    const plan = invalidationPlanFor(event, { findTrackOwningCard: () => 'track-1' });
-    const { calls, client } = recordingClient();
-    applyEventEffects(client, [{ type: 'invalidate', keys: plan.invalidate }]);
-    await Promise.resolve();
-    expect(calls).toEqual([
-      { op: 'invalidate', queryKey: queryKeys.overlaysByKind('card') },
-      { op: 'invalidate', queryKey: queryKeys.trackDetail('track-1') },
-      { op: 'invalidate', queryKey: queryKeys.trackReport('track-1') },
-      { op: 'invalidate', queryKey: queryKeys.trackDetail('track-1') },
-    ]);
-  });
-
-  /* Unresolved runtime events refresh aggregates through the shared prefix. */
-  it('drives the aggregate prefix onto the client when no track resolves', async () => {
-    const event = wireEventSchema.parse({
-      ev: 'worker_session.status_changed',
-      data: { worker_session_id: 'r-1', card_id: 'card-1', old_status: 'starting', new_status: 'running' },
-    });
-    const plan = invalidationPlanFor(event, { findTrackOwningCard: () => null });
-    const { calls, client } = recordingClient();
-    applyEventEffects(client, [{ type: 'invalidate', keys: plan.invalidate }]);
-    await Promise.resolve();
-    expect(calls).toEqual([
-      { op: 'invalidate', queryKey: queryKeys.overlaysByKind('card') },
-      { op: 'invalidate', queryKey: queryKeys.trackReportPrefix() },
-      { op: 'invalidate', queryKey: queryKeys.trackDetailPrefix() },
-    ]);
-  });
-
   it('turns a real track.deleted plan into tree diagnostics refresh plus ordinary cleanup', async () => {
     const plan = invalidationPlanFor({
       ev: 'track.deleted',
@@ -513,14 +288,8 @@ function metadataRead(respectsAbort = false, trackId = 'track-1') {
 }
 
 function inputEvent(kind: 'deleted' | 'edited' | 'cleared' | 'persisted' | 'presentation', trackId = 'track-1') {
-  const base = { card_id: 'card-1', track_id: trackId, worker_session_id: 'runtime' };
-  return wireEventSchema.parse(kind === 'presentation'
-    ? { ev: 'harness.presentation.changed', data: { card_id: 'card-1', track_id: trackId, cursor: { contract: 'conversation_v1', card_id: 'card-1', source: 'presentation', position: 1 } } }
-    : kind === 'cleared'
-    ? { ev: 'harness.transcript.cleared', data: { ...base, cleared_item_count: 1, cleared_params_bytes: 20, card_age_ms_at_clear: 100 } }
-    : kind === 'persisted'
-      ? { ev: 'harness.item.added', data: { ...base, item_db_id: 1, item_uuid: null, item_type: 'userMessage', turn_id: null, method: 'item/completed' } }
-      : { ev: 'harness.queue.changed', data: { ...base, entry_id: 'first', change: kind, actor: { kind: 'User' } } });
+  return wireEventSchema.parse({ ev: 'session.updated', data: { track_id: trackId,
+    session: { id: 'card-1', trackId, provider: 'codex', status: 'idle', contextUsage: null, title: kind, createdAtMs: 1, updatedAtMs: 2 } } });
 }
 
 function refreshInput(client: QueryClient, kind: Parameters<typeof inputEvent>[0], trackId = 'track-1') {
@@ -605,26 +374,3 @@ for (const surface of ['detail'] as const) {
     } finally { client.clear(); }
   });
 }
-it('presentation event replaces an in-flight old empty conversation page before its late response', async () => {
-  const client=new QueryClient({defaultOptions:{queries:{retry:false}}});
-  const reads:Array<{finish:(value:ApiTransportResponse)=>void;signal:ApiAbortSignal|undefined}>=[];
-  const transport:ApiTransportPort={send:request=>new Promise(resolve=>reads.push({finish:resolve,signal:request.signal}))};
-  const unauthorized=createUnauthorizedChannel({enqueue:task=>task()});
-  const options=conversationHistoryQueryOptions(transport,'card',unauthorized);
-  const observer=new QueryObserver(client,{...options,queryFn:({signal})=>options.queryFn({position:{kind:'latest'},signal})});
-  const release=observer.subscribe(()=>undefined);
-  await vi.waitFor(()=>expect(reads).toHaveLength(1));
-  const cursor={contract:'conversation_v1',card_id:'card',source:'presentation',position:1} as const;
-  const event=wireEventSchema.parse({ev:'harness.presentation.changed',data:{card_id:'card',track_id:'track',cursor}});
-  applyEventEffects(client,[{type:'invalidate',keys:invalidationPlanFor(event).invalidate}]);
-  await vi.waitFor(()=>expect(reads).toHaveLength(2));
-  expect(reads[0].signal?.aborted).toBe(true);
-  const page=sessionPage(fixtureSession('card','track'),[sessionItem('card',1,'already saved','user')]);
-  reads[1].finish({status:200,statusText:'OK',body:page});
-  await vi.waitFor(()=>expect(observer.getCurrentResult().data?.items).toMatchObject([{source:{kind:'human',text:'already saved'}}]));
-  const confirmed=observer.getCurrentResult().data;
-  reads[0].finish({status:200,statusText:'OK',body:{...page,items:[]}});
-  await Promise.resolve();await Promise.resolve();
-  expect(observer.getCurrentResult().data).toBe(confirmed);
-  release();client.clear();
-});

@@ -1,19 +1,18 @@
 import type { RecoveryAccess } from '../../../../core/domain/recovery/access.ts';
-import {
-  createCardLifecycleStore,
-  sameGeometry,
-} from './lifecycle.js';
 import type {
-  CardController,
-  CardFilesPort,
-  CardGeometry,
-  ClaudeCardPort,
-  CardHostCapabilities,
-  CardLifecycleWriter,
-  CardRuntimeCommand,
-  CardSlotStore,
+CardController,
+CardFilesPort,
+CardGeometry,
+CardHostCapabilities,
+CardLifecycleWriter,
+CardRuntimeCommand,
+CardSlotStore,
 } from './contracts.js';
-import type { CardRegistry, RegisteredCard } from './registry.js';
+import {
+createCardLifecycleStore,
+sameGeometry,
+} from './lifecycle.js';
+import type { CardRegistry,RegisteredCard } from './registry.js';
 import { createCardInstanceResolver } from './resolver.js';
 
 export interface CardHostWriter {
@@ -50,8 +49,6 @@ export interface CardHostOptions {
    */
   files?: CardFilesPort;
   recovery?: RecoveryAccess;
-  /** A Claude card's Update and Resume (#2516); omitted, Claude cards offer neither. */
-  claude?: ClaudeCardPort;
 }
 
 function connectController(
@@ -146,7 +143,6 @@ export function createCardHost(registry: CardRegistry, options: CardHostOptions 
         slots,
         files: options.files ?? null,
         recovery: options.recovery ?? null,
-        claude: options.claude ?? null,
         emit(command: CardRuntimeCommand) {
           if (command.type === 'refresh') writer.bumpRefresh();
         },
@@ -189,4 +185,4 @@ export function createCardHost(registry: CardRegistry, options: CardHostOptions 
   });
 }
 
-export type { CardFilesPort, CardHostCapabilities, CardSlotStore } from './contracts.js';
+export type { CardFilesPort,CardHostCapabilities,CardSlotStore } from './contracts.js';

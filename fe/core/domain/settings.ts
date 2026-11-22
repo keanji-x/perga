@@ -1,23 +1,7 @@
 // Workspace settings: a flat string map the kernel stores verbatim.
 
-import { z } from 'zod';
 
-import type { ApiOperation } from '../api/types.js';
-import type { FailureTable, WriteClass, WriteText } from './failure-class.js';
-
-export const settingsBagSchema = z.object({ settings: z.record(z.string(), z.string()) });
-export type SettingsBag = z.infer<typeof settingsBagSchema>;
-
-/** `null` clears a key. Send it explicitly rather than relying on the kernel also treating `""` as a delete. */
-export type SettingsPatch = Readonly<Record<string, string | null>>;
-
-export function settingsOperation(): ApiOperation<SettingsBag> {
-  return { method: 'GET', path: '/api/settings', responseSchema: settingsBagSchema };
-}
-
-export function putSettingsOperation(settings: SettingsPatch): ApiOperation<SettingsBag> {
-  return { method: 'PUT', path: '/api/settings', body: { settings }, responseSchema: settingsBagSchema };
-}
+import type { FailureTable,WriteClass,WriteText } from './failure-class.js';
 
 /**
  * `PUT /api/settings`, a per-key merge. A 400 rejects an invalid Planner duration before any key
@@ -30,11 +14,6 @@ export const SETTINGS_FAILURES: FailureTable<WriteClass> = Object.freeze({
 });
 
 export const SETTINGS_TEXT: WriteText = Object.freeze({ refused: 'It was not saved.', unknown: 'The save is unconfirmed.' });
-
-export const HTTP_PROXY_KEY = 'http_proxy';
-export const HTTPS_PROXY_KEY = 'https_proxy';
-
-export const PLANNER_TURN_DURATION_KEY = 'planner_max_turn_duration_minutes';
 export const DEFAULT_PLANNER_TURN_DURATION_MINUTES = 30;
 export const PLANNER_TURN_DURATION_ERROR = 'Enter a whole number from 1 to 240 minutes (ASCII digits).';
 
@@ -50,33 +29,5 @@ export function plannerTurnDuration(value: string | undefined):
   return { ok: true, minutes, isDefault: false };
 }
 
-/** One-key patch; null explicitly resets even corrupt storage. */
-export function plannerTurnDurationPatch(value: string | null): SettingsPatch {
-  if (value === null) return { [PLANNER_TURN_DURATION_KEY]: null };
-  const parsed = plannerTurnDuration(value);
-  if (!parsed.ok) throw new Error(parsed.error);
-  return { [PLANNER_TURN_DURATION_KEY]: String(parsed.minutes) };
-}
-
-export const MAIL_PER_HOUR_KEY = 'mail_per_hour';
-const DEFAULT_MAIL_PER_HOUR = '5/h';
-const MAIL_PER_HOUR_ERROR = 'Enter a limit like 5/h, using a whole number from 1 to 1000.';
-
-export function mailPerHour(value: string | undefined):
-  | Readonly<{ ok: true; text: string }>
-  | Readonly<{ ok: false; error: string }> {
-  if (value === undefined) return { ok: true, text: DEFAULT_MAIL_PER_HOUR };
-  const count = value.slice(0, -2);
-  const limit = Number(count);
-  if (!value.endsWith('/h') || /[^0-9]/.test(count) || limit < 1 || limit > 1000) {
-    return { ok: false, error: MAIL_PER_HOUR_ERROR };
-  }
-  return { ok: true, text: `${limit}/h` };
-}
-
-export function mailPerHourPatch(value: string | null): SettingsPatch {
-  if (value === null) return { [MAIL_PER_HOUR_KEY]: null };
-  const parsed = mailPerHour(value);
-  if (!parsed.ok) throw new Error(parsed.error);
-  return { [MAIL_PER_HOUR_KEY]: parsed.text };
-}
+/** Local settings editor values; no server settings transport. */
+export type SettingsPatch = Readonly<Record<string, string | null>>;

@@ -1,10 +1,22 @@
-import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { act,cleanup,fireEvent,screen,waitFor,within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach,expect,it,vi } from 'vitest';
 import { queryKeys } from '../providers/queries.ts';
-import { openTerminalCommand, terminalCommandInput, setupWorkbench, terminalCard } from './terminal-workbench-fixture.tsx';
+import { openTerminalCommand,setupWorkbench,terminalCard,terminalCommandInput } from './terminal-workbench-fixture.tsx';
 
-afterEach(() => { cleanup(); document.getElementById('root')?.remove(); vi.restoreAllMocks(); });
+const { mountedHost } = vi.hoisted(() => ({ mountedHost: vi.fn() }));
+vi.mock('../../systems/cards/public.js', async (load) => {
+  const actual = await load<typeof import('../../systems/cards/public.js')>();
+  return { ...actual, createCardHost: (...args: Parameters<typeof actual.createCardHost>) => {
+    const host = actual.createCardHost(...args);
+    return { ...host, mount: (...mountArgs: Parameters<typeof host.mount>) => {
+      mountedHost();
+      return host.mount(...mountArgs);
+    } };
+  } };
+});
+
+afterEach(() => { mountedHost.mockClear(); cleanup(); document.getElementById('root')?.remove(); vi.restoreAllMocks(); });
 
 it.each(['main', 'draft'] as const)('dispatches /terminal from the %s pane to the latest committed card list and pending intent', async pane => {
   const fixture = setupWorkbench({ defer: true, failure: 'definite' });
@@ -49,7 +61,7 @@ it.each(['main', 'draft'] as const)('dispatches /terminal from the %s pane to th
 
 it('deduplicates pending commands and retains the host when hidden', async () => {
   const fixture = setupWorkbench({ defer: true });
-  const mount = vi.spyOn(fixture.runtime.host, 'mount');
+  const mount = mountedHost;
   const entry = await terminalCommandInput();
   expect(screen.getByRole('region', { name: 'Workbench' }).textContent).toContain('还没有工具');
   expect(screen.getByRole('region', { name: 'Conversations' }).contains(entry)).toBe(false);
@@ -107,7 +119,7 @@ it('accepts /terminal in an empty draft and refuses arguments without sending', 
 
 it('switches existing ordinary terminals without a board double mount or implicit replacement', async () => {
   const fixture = setupWorkbench({ cards: [terminalCard('first', { source: 'manual', in_workbench: true }), terminalCard('second', { source: 'manual', in_workbench: true })] });
-  const mount = vi.spyOn(fixture.runtime.host, 'mount');
+  const mount = mountedHost;
   await openTerminalCommand();
   await userEvent.click(within(screen.getByRole('region', { name: 'Workbench' })).getByRole('button', { name: /^second/ }));
   expect(mount).toHaveBeenCalledTimes(2);
@@ -259,7 +271,7 @@ it.each(['success', 'definite', 'unknown'] as const)('settles %s in a returned o
 
 it('retains each unvisited deletion fallback lazily through hide and repeated list changes', async () => {
   const fixture = setupWorkbench({ cards: [terminalCard('first', { source: 'manual', in_workbench: true }), terminalCard('second', { source: 'manual', in_workbench: true }), terminalCard('third', { source: 'manual', in_workbench: true })] });
-  const mount = vi.spyOn(fixture.runtime.host, 'mount');
+  const mount = mountedHost;
   await terminalCommandInput();
   expect(mount).toHaveBeenCalledTimes(0);
   await openTerminalCommand();
@@ -284,7 +296,7 @@ it('retains each unvisited deletion fallback lazily through hide and repeated li
 
 it('retains visible list-refresh fallbacks without attaching hidden unvisited terminals', async () => {
   const fixture = setupWorkbench({ cards: [terminalCard('first', { source: 'manual', in_workbench: true }), terminalCard('second', { source: 'manual', in_workbench: true }), terminalCard('third', { source: 'manual', in_workbench: true })] });
-  const mount = vi.spyOn(fixture.runtime.host, 'mount');
+  const mount = mountedHost;
   await terminalCommandInput();
   await openTerminalCommand();
   fixture.cards.splice(0, 1);
@@ -389,15 +401,15 @@ it('keeps Agent terminals temporary and creates a manual terminal for an unquali
     .toEqual({ terminal_presentation: { source: 'agent', in_workbench: false } });
 });
 
-it('moves terminal membership through the API without changing immutable creation source', async () => {
+it('keeps terminal membership in local preferences without changing immutable creation source', async () => {
   const fixture = setupWorkbench({ cards: [terminalCard('agent-shell', { source: 'agent', in_workbench: false })] });
   const temporary = await screen.findByRole('region', { name: 'Temporary terminals' });
   await userEvent.click(within(temporary).getByRole('button', { name: 'Temporary terminals' }));
   await userEvent.click(within(temporary).getByRole('button', { name: 'Actions for agent-shell' }));
   await userEvent.click(screen.getByRole('menuitem', { name: 'Add to Workbench' }));
   await waitFor(() => expect(within(screen.getByRole('region', { name: 'Workbench' })).getByRole('button', { name: /^agent-shell/ })).toBeTruthy());
-  expect(fixture.cards[0].payload).toEqual({ terminal_presentation: { source: 'agent', in_workbench: true } });
-  expect(fixture.requests.filter(request => request.method === 'PATCH').map(request => request.body)).toEqual([{ in_workbench: true }]);
+  expect(fixture.cards[0].payload).toEqual({ terminal_presentation: { source: 'agent', in_workbench: false } });
+  expect(fixture.requests.filter(request => request.method === 'PATCH')).toEqual([]);
   const workbench = screen.getByRole('region', { name: 'Workbench' });
   await userEvent.click(within(workbench).getByRole('button', { name: 'Actions for agent-shell' }));
   await userEvent.click(screen.getByRole('menuitem', { name: 'Remove from Workbench' }));

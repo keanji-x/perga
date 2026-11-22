@@ -1,12 +1,12 @@
-import { fixtureTrack, fixtureSnapshot, fixtureReport } from './session-contract-fixture.ts';
-import { act, cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { act,cleanup,fireEvent,screen,waitFor } from '@testing-library/react';
+import { afterEach,beforeEach,expect,it,vi } from 'vitest';
+import type { TrackAggregateSnapshotDto } from "../../../../core/api/perga-v1.ts";
 import * as markdown from '../../../../core/markdown/public.ts';
-import type { TrackAggregateSnapshotDto } from '../../../../core/api/schemas.ts';
-import { useReadReceipts } from '../providers/read-receipts.tsx';
-import { createReadReceiptsKernel } from '../providers/read-receipts-fixture.tsx';
 import { queryKeys } from '../providers/queries.ts';
+import { createReadReceiptsKernel } from '../providers/read-receipts-fixture.tsx';
+import { useReadReceipts } from '../providers/read-receipts.tsx';
 import { renderDailyFixture } from './daily-planner-fixture.tsx';
+import { fixtureReport,fixtureSnapshot,fixtureTrack } from './session-contract-fixture.ts';
 
 const SOURCE = '# Prepared report\n\nStored **evidence** with a [reference](https://github.com/example/project/issues/1).';
 function setup() {

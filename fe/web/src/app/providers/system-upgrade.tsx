@@ -1,9 +1,10 @@
-import { useEffect, useSyncExternalStore } from 'react';
-import { systemInfoOperation } from '../../../../core/domain/system-upgrade.ts';
-import { runOperation } from './queries.ts';
+import { useQuery } from '@tanstack/react-query';
+import { useEffect,useSyncExternalStore } from 'react';
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
-import { useConnectionStatus, useSystemUpgradeStore } from './connection-status.tsx';
+import { systemInfoOperation } from '../../../../core/domain/system-upgrade.ts';
+import { useConnectionStatus,useSystemUpgradeStore } from './connection-status.tsx';
+import { runOperation } from './queries.ts';
 
 const emptyStore = Object.freeze({ read: () => null, subscribe: () => () => {} });
 export function useSystemUpgrade() {
@@ -11,30 +12,27 @@ export function useSystemUpgrade() {
   return useSyncExternalStore(store?.subscribe ?? emptyStore.subscribe, store?.read ?? emptyStore.read);
 }
 
-/** Authenticated app assembly owns polling. A connection transition restarts the read immediately. */
+/** Foreground reads reconcile missed events; the store rejects reads older than a WS observation. */
 export function SystemUpgradeMonitor({ transport, unauthorized }: Readonly<{
   transport: ApiTransportPort; unauthorized: UnauthorizedChannel;
 }>) {
   const store = useSystemUpgradeStore();
   const connected = useConnectionStatus()?.connected;
+  const { refetch } = useQuery({
+    queryKey: ['system-info'],
+    enabled: store !== null,
+    queryFn: async ({ signal }) => {
+      const revision = store?.revision();
+      const info = await runOperation(transport, { ...systemInfoOperation(), signal, timeoutMs: 10_000 }, unauthorized);
+      if (!signal.aborted) store?.acceptInfo(info, revision);
+      return info;
+    },
+    refetchInterval: 5000,
+    refetchIntervalInBackground: false,
+    retry: false,
+  });
   useEffect(() => {
-    if (!store) return;
-    const controller = new AbortController();
-    let pending = false;
-    async function refresh() {
-      if (pending || !store) return;
-      pending = true;
-      const revision = store.revision();
-      try {
-        const info = await runOperation(transport, { ...systemInfoOperation(), signal: controller.signal, timeoutMs: 10_000 }, unauthorized);
-        if (!controller.signal.aborted) store.acceptInfo(info, revision);
-      } catch {
-        // Keep the last observation while the Host restarts; polling retries the read.
-      } finally { pending = false; }
-    }
-    void refresh();
-    const interval = setInterval(() => { void refresh(); }, 5000);
-    return () => { controller.abort(); clearInterval(interval); };
-  }, [store, transport, unauthorized, connected]);
+    if (connected) void refetch();
+  }, [connected, refetch]);
   return null;
 }

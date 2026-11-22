@@ -1,7 +1,7 @@
+import '../../styles/entry.css';
 import { prepareReportDocument } from '../../features/report/document/preparation.ts';
 // The grouped model picker on the real new-track route, in a real engine: a Claude pick sets the
 // Planner's provider and model, drops a Codex effort and offers its own levels (#1822), and the row still fits a phone (#1810).
-import '../../styles/entry.css';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider, createMemoryHistory } from '@tanstack/react-router';
 import { cleanup, render } from '@testing-library/react';
@@ -20,6 +20,7 @@ const AREA = { id: 'c1', name: 'Work', color: '#5B8DEF', sortOrder: 1, createdAt
 function mount(providers = ['codex', 'claude', 'opencode']) {
   const creates: ApiRequest[] = [];
   const transport: ApiTransportPort = { async send(request) {
+    if (request.path.includes('/workspace-options')) return Promise.resolve({ status: 200, statusText: 'OK', body: { defaultId: 'direct', options: [{ id: 'direct', label: 'Direct folder', description: 'Use this folder' }] } });
     if (request.method === 'POST' && request.path === '/api/v1/tracks') {
       creates.push(request);
       return new Promise<ApiTransportResponse>(() => undefined);

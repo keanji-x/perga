@@ -1,6 +1,6 @@
-import { describe, expect, expectTypeOf, it } from 'vitest';
+import { describe,expect,expectTypeOf,it } from 'vitest';
 
-import type { EventFrame, EventMeta, EventSubscriptionFrame, Topic } from './protocol.js';
+import type { EventFrame,EventMeta,EventSubscriptionFrame,Topic } from './protocol.js';
 import { decodeEventFrame } from './protocol.js';
 
 describe('event protocol contract', () => {
@@ -41,28 +41,5 @@ describe('event protocol contract', () => {
     expectTypeOf<EventFrame['type']>().toEqualTypeOf<
       'event' | 'malformed-event' | 'replay-complete' | 'snapshot-required'
     >();
-  });
-
-  it('normalizes both legacy worker-request event names before schema decoding', () => {
-    const codex = decodeEventFrame({
-      ev: 'codex.job_requested',
-      data: { idempotency_key: 'job-1', goal: 'work', context: {} },
-      _id: 1,
-      eventVersion: 1,
-    });
-    const terminal = decodeEventFrame({
-      ev: 'terminal.job_requested',
-      data: { idempotency_key: 'job-2', cmd: 'test' },
-      _id: 2,
-      eventVersion: 1,
-    });
-    expect(codex).toMatchObject({
-      status: 'ready',
-      frame: { type: 'event', event: { ev: 'codex.worker_requested' } },
-    });
-    expect(terminal).toMatchObject({
-      status: 'ready',
-      frame: { type: 'event', event: { ev: 'terminal.worker_requested' } },
-    });
   });
 });

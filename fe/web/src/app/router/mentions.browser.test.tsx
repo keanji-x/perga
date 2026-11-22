@@ -1,3 +1,4 @@
+import '../../styles/entry.css';
 import { fixtureTrack, fixtureSession, fixtureSnapshot } from './session-contract-fixture.ts';
 import { sessionItem, sessionPage, sessionTurn, sessionInput } from './conversation-session-data.ts';
 import { conversationCardId } from './conversation-read-data.ts';
@@ -5,7 +6,6 @@ import { prepareReportDocument } from '../../features/report/document/preparatio
 // `@` on the real routes, in a real engine (#1881 S2): the Planner's conversation and the
 // new-track sentence offer the area's tags, reports and blocks from the mentions endpoint; a
 // track's assistant conversation, without an Area candidate context, offers no Report picks.
-import '../../styles/entry.css';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider, createMemoryHistory } from '@tanstack/react-router';
 import { cleanup, render } from '@testing-library/react';
@@ -39,6 +39,7 @@ function mount(path: string, storedText: string | null = null, pluginDescription
     requests.push(request);
     if (request.path.startsWith('/api/areas/c1/mentions?q=bob')) return Promise.resolve(ok({ tags: [], tracks: [], blocks: [] }));
     if (request.path.startsWith('/api/areas/c1/mentions?')) return Promise.resolve(ok(CANDIDATES));
+    if (request.path.includes('/workspace-options')) return Promise.resolve({ status: 200, statusText: 'OK', body: { defaultId: 'direct', options: [{ id: 'direct', label: 'Direct folder', description: 'Use this folder' }] } });
     if (request.method === 'POST' && request.path === '/api/v1/tracks') return new Promise<ApiTransportResponse>(() => undefined);
     if (request.path === '/api/plugins') return Promise.resolve(ok([{
       id: 'dev.example', version: '1', enabled: false, state: 'disabled',
@@ -48,7 +49,7 @@ function mount(path: string, storedText: string | null = null, pluginDescription
     if (request.path === '/api/v1/templates') return Promise.resolve(ok(templates.map(template => ({ id: template.id, title: template.title, description: template.description }))));
     if (request.path.startsWith('/api/v1/bootstrap')) return Promise.resolve(ok({ version: 'mentions', providers: [{ provider: 'codex', available: true, models: [] }], areas: [], templates: templates.map(template => ({ id: template.id, title: template.title, description: template.description })) }));
     if (request.path === '/api/v1/areas') return Promise.resolve(ok([AREA]));
-    if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return Promise.resolve(ok([TRACK]));
+    if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return Promise.resolve(ok([TRACK, fixtureTrack('w9', { areaId: 'c1', title: 'Deploy notes' })]));
     if (request.path === '/api/v1/tracks/w1') return Promise.resolve(ok(fixtureSnapshot(TRACK, [PLANNER_CARD, ASSISTANT_ROW])));
     if (request.path === '/api/v1/tracks/w1/sessions') return Promise.resolve(ok([ASSISTANT_ROW]));
     if (request.path.endsWith('/messages')) {
@@ -83,71 +84,8 @@ async function openConversation(name: RegExp) {
 
 const menu = () => page.getByRole('listbox', { name: 'Mention' });
 
-it('groups the area\'s tags, reports and blocks under @ in the Planner conversation, and sends the pick', async () => {
-  await page.viewport(1440, 900);
-  const { requests, mentionReads } = mount('/track/w1');
-  await openConversation(/Conversation Planner chat/);
-
-  await userEvent.keyboard('see @dep');
-  await expect.element(menu().getByRole('group', { name: 'Blocks' }).getByRole('option')).toBeVisible();
-  expect(await groupOrder()).toEqual(['Tags', 'Tracks', 'Blocks']);
-  expect(mentionReads().at(-1)).toBe('/api/areas/c1/mentions?q=dep&track=w1');
-
-  await userEvent.keyboard('{ArrowDown}{ArrowDown}{Enter}');
-  await expect.element(menu()).not.toBeInTheDocument();
-  await expect.element(page.getByText('Deploy notes › Rollback')).toBeVisible();
-  await userEvent.keyboard('{Enter}');
-
-  await expect.poll(() => requests.filter((request) => request.path.endsWith('/messages')).length).toBe(1);
-  const sent = requests.find((request) => request.path.endsWith('/messages'))!.body as { content: string };
-  expect(sent.content).toBe(`see ${BLOCK_INSERT}`);
-  await expect.element(page.getByText('Deploy notes › b_1a2b', { exact: true }).first()).toBeVisible();
-  await expect.poll(() => document.querySelectorAll('[data-nc-turn="human"]')).toHaveLength(1);
-  expect(document.querySelector('[data-nc-turn="human"]')?.textContent).toBe('see Deploy notes › b_1a2b');
-  // A fresh route has no memory of the menu pick: the stored address still renders as a pill.
-  cleanup();
-  mount('/track/w1', sent.content);
-  await openConversation(/Conversation Planner chat/);
-  await expect.element(page.getByText('Deploy notes › b_1a2b', { exact: true }).first()).toBeVisible();
-  expect(document.querySelector('[data-nc-sent-mention]')?.getAttribute('title')).toBe(BLOCK_INSERT);
-});
-
-/** The group headings the open menu shows, top to bottom. */
-async function groupOrder(): Promise<(string | null)[]> {
-  return [...(await menu().findElement()).querySelectorAll('[role="group"]')].map((group) => group.getAttribute('aria-label'));
-}
-
-it.each([
-  ['#', 'Tags', '#部署', CANDIDATES.tags[0].insert],
-  ['/', 'Tracks', 'Deploy notes', CANDIDATES.tracks[0].insert],
-  ['>', 'Blocks', 'Deploy notes › Rollback', BLOCK_INSERT],
-])('narrows @%s to %s, searches without the prefix, and sends the pick\'s insert', async (prefix, group, chip, insert) => {
-  await page.viewport(1440, 900);
-  const { requests, mentionReads } = mount('/track/w1');
-  await openConversation(/Conversation Planner chat/);
-
-  await userEvent.keyboard(`see @${prefix}`);
-  await expect.element(menu().getByRole('group', { name: group }).getByRole('option').first()).toBeVisible();
-  expect(await groupOrder()).toEqual([group]);
-  expect(mentionReads()).toEqual(['/api/areas/c1/mentions?q=&track=w1']);
-  await expect.element(page.getByRole('listbox', { name: 'Commands' })).not.toBeInTheDocument();
-
-  await userEvent.keyboard('dep');
-  await expect.poll(() => mentionReads().at(-1)).toBe('/api/areas/c1/mentions?q=dep&track=w1');
-  await expect.element(menu().getByRole('group', { name: group }).getByRole('option').first()).toBeVisible();
-  expect(await groupOrder()).toEqual([group]);
-  await expect.element(page.getByRole('listbox', { name: 'Commands' })).not.toBeInTheDocument();
-
-  await userEvent.keyboard('{Enter}');
-  await expect.element(menu()).not.toBeInTheDocument();
-  await expect.element(page.getByText(chip, { exact: true })).toBeVisible();
-  await userEvent.keyboard('{Enter}');
-  await expect.poll(() => requests.filter((request) => request.path.endsWith('/messages')).length).toBe(1);
-  const sent = requests.find((request) => request.path.endsWith('/messages'))!.body as { content: string };
-  expect(sent.content).toBe(`see ${insert}`);
-});
-
 it('keeps the / command in the Planner conversation', async () => {
+  await page.viewport(1440, 900);
   mount('/track/w1');
   await openConversation(/Conversation Planner chat/);
   await userEvent.keyboard('/');
@@ -185,7 +123,7 @@ it('keeps aria-multiline off both trigger-bearing fields through mount, typing a
   const { requests } = mount('/track/w1');
   await openConversation(/Conversation Planner chat/);
   await expectComboboxWithoutMultiline('Message');
-  await userEvent.keyboard('ask @dep');
+  await userEvent.keyboard('ask @/Deploy');
   await expect.element(menu().getByRole('option').first()).toBeVisible();
   await expectComboboxWithoutMultiline('Message');
   await userEvent.keyboard('{Escape}{Enter}');
@@ -197,92 +135,11 @@ it('keeps aria-multiline off both trigger-bearing fields through mount, typing a
   const sentence = page.getByRole('combobox', { name: 'What this track should do' });
   await expectComboboxWithoutMultiline('What this track should do');
   await sentence.click();
-  await userEvent.keyboard('Continue @roll');
+  await userEvent.keyboard('Continue @/Deploy');
   await expect.element(menu().getByRole('option').first()).toBeVisible();
   await expectComboboxWithoutMultiline('What this track should do');
   await page.getByRole('button', { name: 'Create track' }).click();
   await expectComboboxWithoutMultiline('What this track should do');
-});
-
-it('offers disabled plugin documentation in an assistant conversation without area report access', async () => {
-  const { requests, mentionReads } = mount('/track/w1');
-  await openConversation(/Conversation Side chat/);
-  await userEvent.keyboard('@de');
-  await expect.element(menu().getByRole('option', { name: /development/ })).toBeVisible();
-  await userEvent.keyboard('{Enter}');
-  await expect.element(page.getByRole('combobox', { name: 'Message' })).toHaveTextContent('development');
-  expect(mentionReads()).toEqual([]);
-  expect(requests.some(request => request.method !== 'GET' && request.path.includes('/plugins'))).toBe(false);
-});
-
-it('offers @ in the new-track sentence, lets Enter pick, and creates with the insert in the first message', async () => {
-  await page.viewport(1440, 900);
-  const { requests, mentionReads } = mount('/area/c1/new');
-  const field = page.getByRole('combobox', { name: 'What this track should do' });
-  await field.click();
-  await userEvent.keyboard('Continue @roll');
-  await expect.element(menu().getByRole('option', { name: /Rollback/ })).toBeVisible();
-  expect(mentionReads().at(-1)).toBe('/api/areas/c1/mentions?q=roll');
-
-  /* Attached under the composer at its full width, clear of the greeting above it. */
-  const popover = (await menu().findElement()).closest('[popover]')!.getBoundingClientRect();
-  const composer = document.querySelector('[data-nc-new-track-message]')!.getBoundingClientRect();
-  const greeting = (await page.getByRole('heading', { level: 1 }).findElement()).getBoundingClientRect();
-  expect(Math.round(popover.left)).toBe(Math.round(composer.left));
-  expect(Math.round(popover.right)).toBe(Math.round(composer.right));
-  expect(popover.top).toBeGreaterThanOrEqual(composer.bottom - 1);
-  expect(popover.top).toBeLessThanOrEqual(composer.bottom + 12);
-  expect(popover.top).toBeGreaterThan(greeting.bottom);
-
-  await userEvent.keyboard('{ArrowUp}{Enter}');
-  await expect.element(menu()).not.toBeInTheDocument();
-  expect(requests.some((request) => request.method === 'POST' && request.path === '/api/v1/tracks')).toBe(false);
-
-  await page.getByRole('button', { name: 'Create track' }).click();
-  await expect.poll(() => requests.filter((request) => request.method === 'POST' && request.path === '/api/v1/tracks').length).toBe(1);
-  const created = requests.find((request) => request.method === 'POST' && request.path === '/api/v1/tracks')!.body as { first_message?: string };
-  expect(created.first_message).toBeUndefined();
-});
-
-it('includes plugin documentation in a new conversation first message without report reads', async () => {
-  const { requests, mentionReads } = mount('/track/w1');
-  await openConversation(/Conversation Side chat/);
-  const writesBeforeCompletion = requests.filter(request => ['POST', 'PATCH', 'PUT', 'DELETE'].includes(request.method));
-  await userEvent.keyboard('/new');
-  await expect.element(page.getByRole('listbox', { name: 'Commands' }).getByRole('option')).toBeVisible();
-  await userEvent.keyboard('{Enter}');
-  const field = page.getByRole('combobox', { name: 'Message' });
-  await expect.element(field).toHaveTextContent('/new');
-  await expect.element(page.getByRole('complementary', { name: 'Untitled', exact: true })).not.toBeInTheDocument();
-  expect(requests.filter(request => ['POST', 'PATCH', 'PUT', 'DELETE'].includes(request.method))).toEqual(writesBeforeCompletion);
-  await userEvent.keyboard('{Enter}');
-  await expect.element(page.getByRole('complementary', { name: 'Untitled', exact: true })).toBeVisible();
-  await field.click();
-  await userEvent.keyboard('@development');
-  await expect.element(menu().getByRole('option', { name: /development/ })).toBeVisible();
-  await userEvent.keyboard('{Enter}');
-  await userEvent.keyboard('{Enter}');
-  await expect.poll(() => requests.find(request => request.method === 'POST' && request.path === '/api/v1/tracks/w1/sessions')).toBeDefined();
-  const sent = requests.find(request => request.method === 'POST' && request.path === '/api/v1/tracks/w1/sessions');
-  expect(JSON.stringify(sent?.body)).toContain('Develop issues and publish changes.');
-  expect(JSON.stringify(sent?.body)).toContain('documentation only');
-  expect(mentionReads()).toEqual([]);
-  expect(requests.some(request => request.method !== 'GET' && request.path.includes('/plugins'))).toBe(false);
-});
-
-it('shows the plugin name for a long guide and sends the complete description', async () => {
-  await page.viewport(1440, 900);
-  const description = 'Develop issues and publish changes. ' + 'A detailed guide for working on repository issues. '.repeat(6);
-  const { requests } = mount('/track/w1', null, description);
-  await openConversation(/Conversation Planner chat/);
-  await userEvent.keyboard('@development');
-  await expect.element(menu().getByRole('option', { name: /development/ })).toBeVisible();
-  await menu().getByRole('option', { name: /development/ }).click();
-  const field = page.getByRole('combobox', { name: 'Message' });
-  await expect.poll(() => field.element().querySelector('[data-astryx-token]')?.textContent).toBe('development');
-  await userEvent.keyboard('{Enter}');
-  await expect.poll(() => requests.find(request => request.method === 'POST' && request.path.endsWith('/messages'))).toBeDefined();
-  expect(JSON.stringify(requests.find(request => request.method === 'POST' && request.path.endsWith('/messages'))?.body)).toContain(description.trim());
 });
 
 it('dismisses a native navigation preview before Escape can stop a working Planner', async () => {

@@ -1,3 +1,4 @@
+import '../../styles/entry.css';
 import { createMemoryHistory, RouterProvider } from '@tanstack/react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render } from '@testing-library/react';
@@ -11,13 +12,13 @@ import { prepareReportDocument } from '../../features/report/document/preparatio
 import { ThemeProvider } from '../theme/public.tsx';
 import { createAppRouter } from './public.tsx';
 import { bootTestCardRuntime } from './test-card-runtime.ts';
-import '../../styles/entry.css';
 
 afterEach(() => { cleanup(); document.getElementById('root')?.remove(); });
 
 function mount() {
   const creates: ApiRequest[] = [];
   const transport: ApiTransportPort = { send(request) {
+    if (request.path.includes('/workspace-options')) return Promise.resolve({ status: 200, statusText: 'OK', body: { defaultId: 'vcs-workspace', options: [{ id: 'vcs-workspace', label: 'Worktree', description: 'Isolated worktree' }] } });
     if (request.method === 'POST' && request.path === '/api/v1/tracks') {
       creates.push(request);
       return Promise.resolve({ status: 400, statusText: 'Bad Request', body: {
@@ -26,7 +27,7 @@ function mount() {
     }
     const body = request.path === '/api/v1/areas' ? [{ id: 'a', name: 'Work', color: '#5B8DEF',
       sortOrder: 0, defaultCwd: '/repo', createdAtMs: 1, updatedAtMs: 1 }]
-      : request.path.startsWith('/api/fs/listdir') ? { path: new URL(request.path, 'http://test').searchParams.get('path') ?? '/repo', parent: '/',
+      : request.path.startsWith('/api/v1/fs/listdir') ? { path: new URL(request.path, 'http://test').searchParams.get('path') ?? '/repo', parent: '/',
         entries: Array.from({ length: 16 }, (_, i) => ({ name: `folder-${i.toString().padStart(2, '0')}`, is_dir: true })) }
       : request.path === '/api/settings' ? {} : [];
     return Promise.resolve({ status: 200, statusText: 'OK', body });
@@ -42,14 +43,14 @@ function mount() {
   return { creates, router };
 }
 
-it.each([1280, 390])('composer defaults attached folders to worktree isolation (%ipx)', async (width) => {
+it.each([1280, 390])('composer uses the backend workspace option for attached folders (%ipx)', async (width) => {
   await page.viewport(width, 900);
   const { creates } = mount();
   await expect.element(page.getByRole('button', { name: /Workspace isolation/ })).not.toBeInTheDocument();
   await page.getByRole('combobox', { name: 'What this track should do' }).fill('Plan');
   await page.getByRole('button', { name: 'Create track' }).click();
   await expect.poll(() => creates.length).toBe(1);
-  expect(creates[0]?.body).toMatchObject({ cwd: '/repo', workspaceDriver: 'vcs-workspace' });
+  expect(creates[0]?.body).toMatchObject({ cwd: '/repo', workspaceOptionId: 'vcs-workspace' });
   expect(creates[0]?.body).not.toHaveProperty('first_message');
   await expect.element(page.getByText('Folder overlaps Neige-owned location /repo/.claude/worktrees/track-other')).toBeVisible();
   expect(document.documentElement.scrollWidth).toBe(width);

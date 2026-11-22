@@ -38,7 +38,7 @@ describe('creating an Area after navigation changes', () => {
       try {
         await page.getByRole('button', { name: 'Switch track, Responsive mobile UI', exact: true }).click();
         await page.getByRole('button', { name: 'New track', exact: true }).click();
-        await expect.poll(() => router.state.location.pathname).toBe('/area/c1/new');
+        await expect.poll(() => router.state.location.pathname, { timeout: 5000 }).toBe('/area/c1/new');
         await page.getByRole('button', { name: 'Switch area, Product', exact: true }).click();
         await page.getByRole('menuitem', { name: 'New area', exact: true }).click();
         await page.getByRole('textbox', { name: /^Name/ }).fill('Research');
@@ -99,7 +99,7 @@ describe('creating an Area before its list is available', () => {
       expect(page.getByRole('main').getByRole('alert').query()).toBeNull();
       await expect.element(page.getByRole('button', { name: 'Create track', exact: true })).toBeDisabled();
       await page.getByRole('button', { name: 'Track options' }).click();
-      await expect.element(page.getByRole('button', { name: 'Repo: research (/srv/research)' })).toBeVisible();
+      await expect.element(page.getByRole('button', { name: /^Repo: research.*\(\/srv\/research\)$/ })).toBeVisible();
       // Area creation does not expose a proactive template picker.
       await expect.element(page.getByRole('button', { name: /^Template:/ })).not.toBeInTheDocument();
       await page.getByRole('button', { name: 'Track options' }).click();

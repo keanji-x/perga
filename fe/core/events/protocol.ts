@@ -1,4 +1,4 @@
-import { decodeWireEvent, type WireEvent } from '../api/schemas.js';
+import { decodeWireEvent,type WireEvent } from '../api/schemas.js';
 import type { ApiDecodeFailure } from '../api/types.js';
 
 export type Topic = '*' | `area:${string}` | `track:${string}` | `card:${string}`;
@@ -19,12 +19,6 @@ export type EventFrameDecodeResult =
 
 function finiteNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
-}
-
-function normalizeLegacyEvent(input: Record<string, unknown>): Record<string, unknown> {
-  if (input.ev === 'codex.job_requested') return { ...input, ev: 'codex.worker_requested' };
-  if (input.ev === 'terminal.job_requested') return { ...input, ev: 'terminal.worker_requested' };
-  return input;
 }
 
 export function eventSubscriptionFrame(
@@ -61,8 +55,7 @@ export function decodeEventFrame(input: unknown): EventFrameDecodeResult {
     return { status: 'ready', frame: { type: 'snapshot-required' } };
   }
 
-  const normalized = normalizeLegacyEvent(envelope);
-  const decoded = decodeWireEvent(normalized);
+  const decoded = decodeWireEvent(envelope);
   const id = finiteNumber(envelope.eventId) ?? finiteNumber(envelope._id);
   const eventVersion = finiteNumber(envelope.eventVersion);
   if (decoded.status === 'failed') {

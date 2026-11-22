@@ -1,15 +1,15 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { createMemoryHistory, RouterProvider } from '@tanstack/react-router';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, expect, it } from 'vitest';
-import type { ApiRequest, ApiTransportPort, ApiTransportResponse } from '../../../../core/api/types.ts';
+import { QueryClient,QueryClientProvider } from '@tanstack/react-query';
+import { createMemoryHistory,RouterProvider } from '@tanstack/react-router';
+import { cleanup,fireEvent,render,screen,waitFor } from '@testing-library/react';
+import { afterEach,expect,it } from 'vitest';
+import type { ApiRequest,ApiTransportPort,ApiTransportResponse } from '../../../../core/api/types.ts';
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
+import { prepareReportDocument } from '../../features/report/document/preparation.ts';
+import { withReadReceipts } from '../providers/read-receipts-fixture.tsx';
 import { ThemeProvider } from '../theme/public.tsx';
 import { createAppRouter } from './public.tsx';
+import { fixtureReport,fixtureSnapshot,fixtureTrack } from './session-contract-fixture.ts';
 import { bootTestCardRuntime } from './test-card-runtime.ts';
-import { withReadReceipts } from '../providers/read-receipts-fixture.tsx';
-import { fixtureSnapshot, fixtureTrack, fixtureReport } from './session-contract-fixture.ts';
-import { prepareReportDocument } from '../../features/report/document/preparation.ts';
 
 afterEach(() => { cleanup(); document.getElementById('root')?.remove(); });
 
@@ -40,7 +40,7 @@ it('loads the current manifest and sends typed edits through the production rout
   } };
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   const router = createAppRouter({ prepareReport: prepareReportDocument, transport: withReadReceipts(transport), client, cards: bootTestCardRuntime(),
-    pergaMode: true, unauthorized: createUnauthorizedChannel({ enqueue: task => task() }), onSignOut: () => undefined });
+    unauthorized: createUnauthorizedChannel({ enqueue: task => task() }), onSignOut: () => undefined });
   router.update({ history: createMemoryHistory({ initialEntries: ['/next/track/protocol'] }) });
   const container = document.createElement('div'); container.id = 'root'; document.body.append(container);
   render(<QueryClientProvider client={client}><ThemeProvider storage={{ getItem: () => null, setItem: () => undefined }}>

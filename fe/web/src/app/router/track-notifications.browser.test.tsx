@@ -1,11 +1,11 @@
 import '../../styles/entry.css';
 import { cleanup } from '@testing-library/react';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach,expect,it } from 'vitest';
 import { page } from 'vitest/browser';
 import { createReadReceiptsKernel } from '../providers/read-receipts-fixture.tsx';
 import { sessionPage } from './conversation-session-data.ts';
 import { renderDailyFixture } from './daily-planner-fixture.tsx';
-import { fixtureReport, fixtureSession, fixtureSnapshot, fixtureTrack } from './session-contract-fixture.ts';
+import { fixtureReport,fixtureSession,fixtureSnapshot,fixtureTrack } from './session-contract-fixture.ts';
 
 afterEach(cleanup);
 
@@ -14,7 +14,7 @@ it.each([1200, 390])('acknowledges a conversation update through the status entr
   const receipts = createReadReceiptsKernel({ baselineMs: 0 });
   const track = fixtureTrack('project', { areaId: 'project-area', leadSessionId: 'project-planner' });
   const planner = fixtureSession('project-planner', track.id, { isLead: true, title: 'Project conversation', lastNotifiableTurnAtMs: 20 });
-  const mount = () => renderDailyFixture({ pergaMode: true, initial: '/track/project', receipts, reply: request => {
+  const mount = () => renderDailyFixture({ initial: '/track/project', receipts, reply: request => {
     if (request.path === '/api/v1/tracks/project') return { status: 200, statusText: 'OK', body: fixtureSnapshot(track, [planner]) };
     if (request.path.includes('/project-planner/items?')) return { status: 200, statusText: 'OK', body: sessionPage(planner) };
     return undefined;
@@ -56,7 +56,7 @@ it.each(['payload', 'fenced Markdown'])('keeps historical task failures out of h
     ? { markdown: '', payload: { ...description, id: 'verify-fix' } }
     : { markdown: ['```json', JSON.stringify({ ...description, task_key: 'verify-fix' }), '```'].join('\n'), payload: null };
   const report = { ...fixtureReport(), blocks: [{ id: 'b_9065', kind: 'task', rev: 1, ...task }] };
-  renderDailyFixture({ pergaMode: true, initial: '/track/project', reply: request => {
+  renderDailyFixture({ initial: '/track/project', reply: request => {
     if (request.path !== '/api/v1/tracks/project' && request.path !== '/api/v1/tracks/project/report') return undefined;
     return { status: 200, statusText: 'OK', body: { ...fixtureSnapshot(track, [planner], report), tasks: [{
       trackId: track.id, kind: 'agent', status: 'failed', createdAtMs: 1, updatedAtMs: 2,
@@ -69,5 +69,5 @@ it.each(['payload', 'fenced Markdown'])('keeps historical task failures out of h
   expect(page.getByRole('region', { name: 'Notifications', exact: true }).query()).toBeNull();
   await page.getByRole('button', { name: 'Progress', exact: true }).click();
   await expect.element(page.getByText('Failed', { exact: true })).toBeVisible();
-  await expect.element(page.getByRole('button', { name: /verify-fix/ })).toHaveAccessibleDescription('failed — The host stopped during this attempt.');
+  await expect.element(page.getByRole('button', { name: /verify-fix/ })).toHaveAccessibleDescription('Failed — The host stopped during this attempt.');
 });

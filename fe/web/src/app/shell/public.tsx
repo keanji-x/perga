@@ -1,16 +1,14 @@
-import { SystemUpgradeBannerHost } from './system-upgrade-banner.tsx';
-import type { ShareScope } from '../../../../core/api/generated/wire.ts';
-import { useShareManagementDialog, type ShareSelection } from '../providers/share-management.tsx';
-import { LayerDismissal } from '../../ui/dialog/public.tsx';
 import { LayerDepthProvider } from '@astryxdesign/core/Layer';
 import type { DialogOrigin } from '../../ui/dialog/public.tsx';
-import { sidebarTrackGroups } from './sidebar-track-groups.ts';
-import { useMobileNavigationPresence } from './mobile-navigation-presence.ts';
+import { LayerDismissal } from '../../ui/dialog/public.tsx';
 import { floatingControlClassName } from '../../ui/floating-control/public.ts';
 import { Icon } from '../../ui/icon/public.tsx';
-import { useVisibleViewport } from '../../ui/viewport/public.ts';
-import { useCommittedCallback } from '../../ui/state/committed-callback.ts';
 import { mobileFontClassName } from '../../ui/mobile-font/public.ts';
+import { useCommittedCallback } from '../../ui/state/committed-callback.ts';
+import { useVisibleViewport } from '../../ui/viewport/public.ts';
+import { useMobileNavigationPresence } from './mobile-navigation-presence.ts';
+import { sidebarTrackGroups } from './sidebar-track-groups.ts';
+import { SystemUpgradeBannerHost } from './system-upgrade-banner.tsx';
 // The layout shell every route renders inside: the workspace rail plus the matched
 // route's outlet. The shell owns the workspace read and the area/track mutations;
 // `Sidebar` stays presentational.
@@ -19,46 +17,44 @@ import { Outlet, useRouter, type RouterHistory } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
 import { createContext, useContext, useEffect, useRef, useCallback, useLayoutEffect, useMemo, type ReactNode } from 'react';
 
-import { useUiPreferences } from '../providers/ui-preferences.tsx';
-import { useReadReceipts } from '../providers/read-receipts.tsx';
-import { MARK_UNREAD_TEXT, READ_RECEIPT_FAILURES } from '../../../../core/domain/read-receipts.ts';
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
-import { TRACK_PATCH_FAILURES, TRACK_PATCH_TEXT, trackDisplayTitle } from '../../../../core/domain/track.ts';
-import { OperationFeedback, useOperationFeedback } from '../../ui/operation-feedback/public.tsx';
+import type { Area,NewAreaBody } from '../../../../core/domain/area.ts';
+import { AREA_CREATE_FAILURES,AREA_CREATE_TEXT,AREA_PATCH_FAILURES,AREA_PATCH_TEXT,visibleAreas } from '../../../../core/domain/area.ts';
+import type { Conversation } from '../../../../core/domain/conversation.ts';
+import { ApiError,classifyFailure,NotSentError,refusedText,writeFailureOf,writeFailureText } from '../../../../core/domain/failure-class.ts';
+import { MARK_UNREAD_TEXT,READ_RECEIPT_FAILURES } from '../../../../core/domain/read-receipts.ts';
 import type { Track } from '../../../../core/domain/track.ts';
-import { AREA_CREATE_FAILURES, AREA_CREATE_TEXT, AREA_PATCH_FAILURES, AREA_PATCH_TEXT, visibleAreas } from '../../../../core/domain/area.ts';
-import { ApiError, classifyFailure, NotSentError, refusedText, writeFailureOf, writeFailureText } from '../../../../core/domain/failure-class.ts';
-import type { Area, NewAreaBody } from '../../../../core/domain/area.ts';
+import { TRACK_PATCH_FAILURES,TRACK_PATCH_TEXT,trackDisplayTitle } from '../../../../core/domain/track.ts';
 import {
-  AreaEditorForm, type AreaEditorPatch, type AreaEditorValues,
+AreaEditorForm,type AreaEditorPatch,type AreaEditorValues,
 } from '../../features/area/editor/public.tsx';
 import { AREA_PALETTE } from '../../features/area/palette.ts';
 import { Dialog } from '../../ui/dialog/public.tsx';
-import { useState } from '../../ui/state/public.ts';
-import { createDirectoryLister } from '../providers/directory.ts';
-import { workspaceActivityErrorText, workspaceReadErrorText } from '../providers/query-read-feedback.ts';
-import {
-  AreaCreatePreflightError, executionTargetsQueryOptions, useAreaMutations, useCreateExecutionTarget,
-  useTrackMutations, useWorkspace,
-} from '../providers/queries.ts';
-import { useKeyedIntent, type KeyedRequest } from '../providers/idempotency-key.ts';
-import { routeParamFromPath, useCurrentPath, useGo, useNewTrackBack, useRouteCardId, useRouteFilePath, useTrackPanelNavigation } from '../router/navigation.ts';
-import { useNewTrackDraftArea, usePrepareNewTrack } from '../router/new-track-drafts.tsx';
-import { useCompactViewport } from '../../ui/viewport/public.ts';
-import { MobileWorkspaceHeader } from './mobile-header.tsx';
-import { MobileTracks } from './mobile-tracks.tsx';
-import { MobilePages } from './mobile-pages.tsx';
-import { SettingsOverlay, settingsSectionForPath } from './settings-overlay.tsx';
-import { useDrawerWidthHost } from './drawer-width.tsx';
 import type { DrawerResize } from '../../ui/drawer/public.tsx';
-import { Sidebar } from './sidebar.tsx';
-import { ProviderAuthenticationNotice } from './provider-authentication.tsx';
-import styles from './shell.module.css';
-import type { Conversation } from '../../../../core/domain/conversation.ts';
-import { MobileHistory } from './mobile-history.tsx';
 import { EdgeSwipe } from '../../ui/edge-swipe/public.tsx';
+import { OperationFeedback,useOperationFeedback } from '../../ui/operation-feedback/public.tsx';
+import { useState } from '../../ui/state/public.ts';
+import { useCompactViewport } from '../../ui/viewport/public.ts';
+import { createDirectoryLister } from '../providers/directory.ts';
+import { useKeyedIntent,type KeyedRequest } from '../providers/idempotency-key.ts';
+import {
+AreaCreatePreflightError,executionTargetsQueryOptions,useCreateExecutionTarget,useAreaMutations,useTrackMutations,useWorkspace,
+} from '../providers/queries.ts';
+import { workspaceActivityErrorText,workspaceReadErrorText } from '../providers/query-read-feedback.ts';
+import { useReadReceipts } from '../providers/read-receipts.tsx';
+import { useUiPreferences } from '../providers/ui-preferences.tsx';
+import { routeParamFromPath,useCurrentPath,useGo,useNewTrackBack,useRouteCardId,useRouteFilePath,useTrackPanelNavigation } from '../router/navigation.ts';
+import { useNewTrackDraftArea,usePrepareNewTrack } from '../router/new-track-drafts.tsx';
+import { useDrawerWidthHost } from './drawer-width.tsx';
+import { MobileWorkspaceHeader } from './mobile-header.tsx';
 import { useMobileHistoryData } from './mobile-history-data.ts';
+import { MobileHistory } from './mobile-history.tsx';
+import { MobilePages } from './mobile-pages.tsx';
+import { MobileTracks } from './mobile-tracks.tsx';
+import { SettingsOverlay,settingsSectionForPath } from './settings-overlay.tsx';
+import styles from './shell.module.css';
+import { Sidebar } from './sidebar.tsx';
 
 type Scope = Readonly<{
   track: Pick<Track, 'id' | 'areaId' | 'title'>;
@@ -104,28 +100,17 @@ export function useMobileConversationOwner(owner: Scope) {
   }, [register, scope]);
 }
 
-type ShareAccess = Readonly<{ shareLinkId: string; scope: ShareScope }>;
-const ShareScopeContext = createContext<ShareAccess | null>(null);
-export function ShareScopeProvider({ value, children }: { value: ShareAccess | null; children: ReactNode }) {
-  return <ShareScopeContext.Provider value={value}>{children}</ShareScopeContext.Provider>;
-}
-export function useShareScope() { return useContext(ShareScopeContext); }
-
-const ShareContext = createContext<((selection: ShareSelection) => void) | null>(null);
-export function useShareManagement() { return useContext(ShareContext); }
-
 const CreateAreaContext = createContext<((origin: DialogOrigin) => void) | null>(null);
 export function useRequestCreateArea() { return useContext(CreateAreaContext); }
 
 export type AppShellProps = Readonly<{
-  shareScope?: ShareScope | null;
   transport: ApiTransportPort;
   unauthorized: UnauthorizedChannel;
   onOpenSettings: () => void;
   /** Settings › Plugins, from the rail's account menu. */
   onOpenPlugins?: (() => void) | undefined;
   onSignOut?: (() => void) | undefined;
-  pergaMode?: boolean;
+
   /** Pinned by tests so `pinned_at` assertions are stable. */
   nowMs?: number;
   userLabel?: string;
@@ -168,31 +153,24 @@ export function useOpenMobileSection(): OpenMobileSection {
 }
 
 export function AppShell({
-  transport, unauthorized, onOpenSettings, onOpenPlugins, onSignOut, pergaMode = false, nowMs, userLabel, shareScope = null,
+  transport, unauthorized, onOpenSettings, onSignOut, nowMs, userLabel,
 }: AppShellProps) {
   const router = useRouter();
-  const { openShare, shareDialog } = useShareManagementDialog(transport, unauthorized);
   const fullWorkspace = useWorkspace(transport, unauthorized);
-  const workspace = useMemo(() => shareScope === null ? fullWorkspace : {
-    ...fullWorkspace,
-    areas: fullWorkspace.areas.filter(area => shareScope.kind === 'area' ? area.id === shareScope.id : fullWorkspace.tracks.some(track => track.id === shareScope.id && track.areaId === area.id)),
-    tracks: fullWorkspace.tracks.filter(track => shareScope.kind === 'track' ? track.id === shareScope.id : track.areaId === shareScope.id),
-    tracksByArea: new Map([...fullWorkspace.tracksByArea].filter(([id]) => shareScope.kind === 'area' && id === shareScope.id)),
-  }, [fullWorkspace, shareScope]);
+  const workspace = fullWorkspace;
   const areaMutations = useAreaMutations(transport, unauthorized);
   const prepareNewTrack = usePrepareNewTrack();
   const trackMutations = useTrackMutations(transport, unauthorized);
   const pinFeedback = useOperationFeedback();
-  const listDirectory = createDirectoryLister(transport, unauthorized, pergaMode);
+  const listDirectory = createDirectoryLister(transport, unauthorized);
   const executionTargetsQuery = useQuery({
     ...executionTargetsQueryOptions(transport, unauthorized),
-    enabled: pergaMode,
     retry: false,
   });
   const createExecutionTarget = useCreateExecutionTarget(transport, unauthorized);
   const listDirectoryForTarget = useCallback(
-    (targetId: string) => createDirectoryLister(transport, unauthorized, pergaMode, targetId),
-    [transport, unauthorized, pergaMode],
+    (targetId: string) => createDirectoryLister(transport, unauthorized, targetId),
+    [transport, unauthorized],
   );
   /* The create form is locked while a request is held, so every press resends the held key and body (#2131). */
   const areaIntent = useKeyedIntent<null, NewAreaBody>(() => true);
@@ -202,7 +180,7 @@ export function AppShell({
   const [areaEditorError, setAreaEditorError] = useState<string | null>(null);
   const areaEditorNameRef = useRef<HTMLInputElement | null>(null);
   const currentPath = useCurrentPath();
-  const settingsOpen = settingsSectionForPath(currentPath, pergaMode) !== null;
+  const settingsOpen = settingsSectionForPath(currentPath) !== null;
   const routeCardId = useRouteCardId();
   const routeFilePath = useRouteFilePath();
   const mobileOverlayRoute = typeof routeCardId === 'string' || typeof routeFilePath === 'string';
@@ -454,9 +432,9 @@ export function AppShell({
   const mobileNavigationLabel = mobileSection?.kind === 'pages' ? 'Pages' : 'Tracks and settings';
 
   const shell = (
-    <div className={`${styles.shell} ${narrowRail ? mobileFontClassName : ''} ${narrowRail && (settingsOpen || mobileOverlayRoute) ? styles.settingsPageShell : ''} ${shareScope?.kind === 'track' ? styles.shellTrackOnly : railCollapsed ? styles.shellCollapsed : styles.shellExpanded}`}>
+    <div className={`${styles.shell} ${narrowRail ? mobileFontClassName : ''} ${narrowRail && (settingsOpen || mobileOverlayRoute) ? styles.settingsPageShell : ''} ${railCollapsed ? styles.shellCollapsed : styles.shellExpanded}`}>
       {dismissalLayer}
-      {narrowRail && !settingsOpen && !mobileOverlayRoute && <MobileWorkspaceHeader shareMode={shareScope !== null}
+      {narrowRail && !settingsOpen && !mobileOverlayRoute && <MobileWorkspaceHeader
         areas={areas}
         activeArea={liveActiveArea ?? (newTrackArea === undefined ? areas[0] : undefined)}
         draftArea={newTrackArea}
@@ -472,13 +450,13 @@ export function AppShell({
         actionsHostRef={setMobileHeaderActionsHost}
         titleHostRef={setMobileHeaderTitleHost}
       />}
-      {shareScope?.kind !== 'track' && narrowRail && !settingsOpen && !mobileOverlayRoute && <button type="button"
+      {narrowRail && !settingsOpen && !mobileOverlayRoute && <button type="button"
         className={`${styles.workspaceOpener} ${floatingControlClassName}`} aria-label="Open workspace"
         hidden={workspaceInteractive || historyOpen || conversationScope?.conversationOpen === true}
         style={{ bottom: `calc(${visibleViewport.bottomInset}px + var(--space-4) + env(safe-area-inset-bottom))` }}
         onClick={() => openMobileSection({ kind: 'areas', areaId: activeArea?.id })}><Icon name="folder" /></button>}
       <EdgeSwipe enabled={narrowRail && !settingsOpen && !mobileOverlayRoute && !mobileNavOpen && !historyOpen} onSwipe={() => setHistoryOpen(true)} />
-      {narrowRail && <MobileHistory shareMode={shareScope !== null} owner={historyOwner.token} open={historyOpen} onOpenChange={setHistoryOpen}
+      {narrowRail && <MobileHistory  owner={historyOwner.token} open={historyOpen} onOpenChange={setHistoryOpen}
         selectedConversationId={conversationScope?.selectedConversationId ?? null}
         trackGroups={trackGroups} currentTrackId={conversationScope?.track.id}
         isUnread={isUnread} tracksLoading={readLoading || workspace.overlaysLoading} tracksError={readError ?? workspaceActivityErrorText(workspace)} onRetryTracks={retryRead}
@@ -491,7 +469,7 @@ export function AppShell({
         scopeLabel={conversationScope === null ? '当前 Track' : `当前 Track · ${trackDisplayTitle(conversationScope.track.title)}`}
         accountLabel={userLabel ?? '账号'} accountInitial={userLabel?.slice(0, 1) ?? '我'}
         onSignOut={onSignOut === undefined ? undefined : () => { closeMobileSection(); onSignOut(); }} />}
-      {shareScope?.kind !== 'track' && <div ref={mobileNavigationFrameRef} className={styles.navigationFrame}>
+      {<div ref={mobileNavigationFrameRef} className={styles.navigationFrame}>
       <div
         ref={mobileNavigationRef}
         id="mobile-workspace-navigation"
@@ -506,7 +484,7 @@ export function AppShell({
       >
         <div className={styles.navigationPanel}>
           <div className={styles.navigationContent}>
-          {narrowRail && shareScope === null ? (
+          {narrowRail ? (
             <LayerDepthProvider>{mobileSection?.kind === 'pages' ? (
               <MobilePages
                 areaId={navigationArea?.id}
@@ -558,7 +536,7 @@ export function AppShell({
                 }}
               />
             ) : null}</LayerDepthProvider>
-          ) : <Sidebar shareScope={shareScope} executionTargets={executionTargetsQuery.data}
+          ) : <Sidebar executionTargets={executionTargetsQuery.data}
             trackGroups={trackGroups}
             collapsed={railCollapsed}
             onToggleCollapsed={() => preferences.setRailCollapsed(!railCollapsed)}
@@ -571,8 +549,8 @@ export function AppShell({
             activityError={workspaceActivityErrorText(workspace)}
             onRetryRead={retryRead}
             onGo={navigateFromRail}
-            onShareTrack={pergaMode ? undefined : (track, origin) => openShare({ scope: { kind: 'track', id: track.id }, title: track.title, origin })}
-            onShareArea={pergaMode ? undefined : (area, origin) => openShare({ scope: { kind: 'area', id: area.id }, title: area.name, origin })}
+            onShareTrack={undefined}
+            onShareArea={undefined}
             onRequestCreateArea={requestCreateArea}
             onRequestEditArea={requestEditArea}
             onDeleteArea={(areaId, signal) => areaMutations.remove(areaId, signal)}
@@ -588,9 +566,8 @@ export function AppShell({
               await trackMutations.remove(trackId, areaId, signal);
             }}
             onOpenSettings={() => { closeMobileSection(); onOpenSettings(); }}
-            onOpenPlugins={pergaMode || onOpenPlugins === undefined ? undefined : () => { closeMobileSection(); onOpenPlugins(); }}
+            onOpenPlugins={undefined}
             onSignOut={onSignOut === undefined ? undefined : () => { closeMobileSection(); onSignOut(); }}
-            hideRecipes={pergaMode}
             userLabel={userLabel}
           />}
           </div>
@@ -600,12 +577,11 @@ export function AppShell({
       </div>
       </div>
       }<main ref={drawerWidth.mainRef} className={styles.main} style={drawerWidth.style} inert={mobileDialogActive} aria-hidden={mobileDialogActive ? true : undefined}>
-        {shareScope === null && <SystemUpgradeBannerHost />}
+        {<SystemUpgradeBannerHost />}
         {/* One flex item. Routes compose ErrorBox + page + Drawer as siblings;
             `:first-child` on `.main` would flex the banner, not the page. */}
         <div key={currentPath} className={styles.stage} hidden={narrowRail && settingsOpen}>
-          {shareScope === null && <ProviderAuthenticationNotice transport={transport} unauthorized={unauthorized}
-            onOpenPlanners={() => { closeMobileSection(); go({ name: 'settings-planners' }); }} />}
+
           <CreateAreaContext.Provider value={requestCreateArea}>
             <MobileSectionContext.Provider value={openMobileSection}>
               <MobileHeaderActionsContext.Provider value={narrowRail ? mobileHeaderActionsHost : null}>
@@ -617,7 +593,7 @@ export function AppShell({
           </CreateAreaContext.Provider>
         </div>
         {/* Above the keyed route stage so settings panes survive tab changes and resizing. */}
-        {shareScope === null && <SettingsOverlay transport={transport} unauthorized={unauthorized} pergaMode={pergaMode} />}
+        {<SettingsOverlay transport={transport} unauthorized={unauthorized} />}
       </main>
       <Dialog purpose="form" origin={areaEditorTarget?.origin ?? { kind: 'surface-center' }}
         open={areaEditorTarget !== null}
@@ -647,8 +623,8 @@ export function AppShell({
             listDirectory={listDirectory}
             listDirectoryForTarget={listDirectoryForTarget}
             executionTargets={executionTargetsQuery.data}
-            targetEditable={pergaMode}
-            onCreateExecutionTarget={pergaMode ? createExecutionTarget : undefined}
+            targetEditable
+            onCreateExecutionTarget={createExecutionTarget}
             nameInputRef={areaEditorNameRef}
             submitLabel={areaEditorTarget.kind === 'edit' ? 'Save changes'
               : areaCreateRequest === null ? 'Create area' : 'Try again'}
@@ -664,5 +640,5 @@ export function AppShell({
       </Dialog>
     </div>
   );
-  return shareScope === null ? <ShareContext.Provider value={openShare}>{shell}{shareDialog}</ShareContext.Provider> : shell;
+  return shell;
 }

@@ -1,25 +1,20 @@
 import { z } from 'zod';
 
-import {
-  agentSessionDtoSchema,
-  bootstrapDtoSchema,
-  normalizeWireAgentProvider,
-  toWireAgentProvider,
-  type AgentSessionDto,
-} from '../api/schemas.js';
+import { agentSessionDtoSchema,bootstrapDtoSchema,type AgentSessionDto } from "../api/perga-v1.js";
+import { normalizeWireAgentProvider,toWireAgentProvider } from "../api/schemas.js";
 
-import { sessionCreationReceiptSchema, sessionMessageReceiptSchema, sessionSummarySchema, type SessionInputReceipt } from '../api/perga-v1.js';
+import { sessionCreationReceiptSchema,sessionMessageReceiptSchema,sessionSummarySchema,type SessionInputReceipt } from '../api/perga-v1.js';
 
 import type {
-  AgentProvider, HarnessInputPresentation,
-  HarnessInterruptionReason,
-  HarnessPhaseTag,
-  HarnessTimeoutEvidence,
-  PlannerAttachment, SystemInputPresentation, UploadAttachmentResponse,
+AgentProvider,HarnessInputPresentation,
+HarnessInterruptionReason,
+HarnessPhaseTag,
+HarnessTimeoutEvidence,
+PlannerAttachment,SystemInputPresentation
 } from '../api/generated/wire.js';
-import type { ApiFailure, ApiOperation } from '../api/types.js';
+import type { ApiFailure,ApiOperation } from '../api/types.js';
 
-import { classifyFailure, failureReason, refusedText, type FailureTable, type WriteFailure, type WriteText } from './failure-class.js';
+import { classifyFailure,failureReason,refusedText,type FailureTable,type WriteFailure,type WriteText } from './failure-class.js';
 
 /** A frozen discussion source; does not name a provider session. */
 export type SideConversation = Readonly<{ source_card_id: string; context: string }>;
@@ -537,24 +532,6 @@ export const PLANNER_ATTACHMENT_FAILURES: FailureTable<WriteFailure> = Object.fr
 
 /** What a failed upload says (`refusalText`): not uploaded, or, when it may have been stored, could not be. */
 export const UPLOAD_TEXT = Object.freeze({ refused: 'The image was not uploaded.', unknown: 'The image could not be uploaded.' });
-
-/**
- * Upload one image as raw bytes; `content-type` here is merged *over* the `application/json` the
- * client adds for any body.
- */
-export function uploadPlannerAttachmentOperation(
-  cardId: string, bytes: Uint8Array, contentType: string,
-): ApiOperation<UploadAttachmentResponse> {
-  return {
-    method: 'POST',
-    path: `/api/cards/${encodeURIComponent(cardId)}/planner/attachments`,
-    body: bytes,
-    headers: { 'content-type': contentType },
-    responseSchema: z.object({
-      attachmentId: z.string(), contentType: z.string(), size: z.number(), url: z.string(),
-    }),
-  };
-}
 
 export type PlannerQueueEditOutcome =
   | Readonly<{ kind: 'done'; entry: PendingQueueEntry }>

@@ -1,9 +1,4 @@
-import { isUserConversationTurn, type PlannerQueueWriteOutcome, type TranscriptEntry } from './conversation.js';
-
-/** Count each canonical pending identity once, whether listed or reference-only. */
-export function unlistedPendingInputCount(inputs: readonly import('../api/generated/wire.js').ConversationPendingInput[], entries: readonly import('./conversation.js').PendingQueueEntry[]): number {
-  return inputs.filter(input => input.kind !== 'human' || !entries.some(entry => entry.entry_id === input.message_id && entry.rev >= input.revision)).length;
-}
+import { isUserConversationTurn,type PlannerQueueWriteOutcome,type TranscriptEntry } from './conversation.js';
 
 /** A newer immutable Human version updates an existing listed row, never invents pending work. */
 export function pendingQueueWithCurrentHumanVersions(entries: readonly import('./conversation.js').PendingQueueEntry[], turns: readonly import('./conversation.js').ConversationMessage[]): readonly import('./conversation.js').PendingQueueEntry[] {

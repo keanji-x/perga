@@ -1,12 +1,12 @@
-import { useLayoutEffect, useMemo, useRef, type ReactNode } from 'react';
-import type { ReportDocumentDto } from '../../../../core/api/schemas.ts';
-import { useState } from '../../ui/state/public.ts';
+import { useLayoutEffect,useMemo,useRef,type ReactNode } from 'react';
+import type { ReportDocumentDto } from "../../../../core/api/perga-v1.ts";
+import { revealReportAnchor } from '../../features/report/anchor/public.ts';
+import type { ReportPreparationPort } from '../../features/report/document/preparation.ts';
+import { ReportDocument,type ReportDocumentProps } from '../../features/report/document/public.tsx';
+import { useReportPreparation } from '../../features/report/document/resource.ts';
 import { useContentAdmission } from '../../ui/content-presentation/public.ts';
 import { ErrorBox } from '../../ui/error-box/public.tsx';
-import { ReportDocument, type ReportDocumentProps } from '../../features/report/document/public.tsx';
-import { useReportPreparation } from '../../features/report/document/resource.ts';
-import type { ReportPreparationPort } from '../../features/report/document/preparation.ts';
-import { revealReportAnchor } from '../../features/report/anchor/public.ts';
+import { useState } from '../../ui/state/public.ts';
 import { useViewReadReceipt } from '../providers/read-receipts.tsx';
 import { useTrackReportCache } from './track-view-state.tsx';
 

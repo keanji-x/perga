@@ -190,6 +190,11 @@ describe('AppShell Area editor flow', () => {
       if (request.path === '/api/v1/bootstrap') {
         return Promise.resolve({ status: 200, statusText: 'OK', body: { areaCreateIdempotency: true } });
       }
+      if (request.method === 'GET' && request.path === '/api/v1/targets') {
+        return Promise.resolve({ status: 200, statusText: 'OK', body: [
+          { id: 'local', label: 'Local', kind: 'local', isDefault: true, removable: false },
+        ] });
+      }
       writes.push(request);
       const reply = replies.shift();
       if (reply === undefined) throw new Error('Unexpected Area write');

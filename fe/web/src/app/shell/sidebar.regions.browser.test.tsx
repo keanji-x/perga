@@ -1,10 +1,10 @@
+import '../../styles/entry.css';
 import { useState } from '../../ui/state/public.ts';
 import { cleanup, fireEvent, render } from '@testing-library/react';
 import { commands, page, userEvent } from 'vitest/browser';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { Area } from '../../../../core/domain/area.ts';
 import { NEUTRAL_ACTIVITY, type Track } from '../../../../core/domain/track.ts';
-import '../../styles/entry.css';
 import { createUiPreferences, UiPreferencesProvider } from '../providers/ui-preferences.tsx';
 import { createReadReceiptsKernel, readReceiptsFixture } from '../providers/read-receipts-fixture.tsx';
 import { ThemeProvider } from '../theme/public.tsx';
@@ -76,7 +76,7 @@ function reachable(element: Element) {
 
 it('scrolls folders with the wheel while primary navigation, shortcuts and account stay fixed', async () => {
   await scene(900);
-  const fixed = ['Today', 'Recipes', 'Collapse Pinned', 'Collapse Focus', 'Open settings'].map(name => button(name).element());
+  const fixed = ['Today', 'Collapse Pinned', 'Collapse Focus', 'Open settings'].map(name => button(name).element());
   const before = fixed.map(top);
   const first = button('Collapse area Folder 0').element();
   const folders = first.closest<HTMLElement>('[data-nc-sidebar-scrollport]')!;
@@ -84,8 +84,8 @@ it('scrolls folders with the wheel while primary navigation, shortcuts and accou
   expect(folders.clientTop).toBeGreaterThan(0);
   expect(folders.clientTop).toBeLessThanOrEqual(1);
   const firstTop = top(first);
+  expect(top(fixed[1])).toBeLessThan(firstTop);
   expect(top(fixed[2])).toBeLessThan(firstTop);
-  expect(top(fixed[3])).toBeLessThan(firstTop);
   await commands.wheelScroll('[aria-label="Collapse area Folder 0"]', 600);
   await expect.poll(() => top(first)).toBeLessThan(firstTop - 100);
   expect(top(folders)).toBe(boundaryTop);
@@ -132,7 +132,7 @@ it.each([900, 400])('keeps long shortcuts and folders independently reachable at
   }
   first.focus();
   reachable(first);
-  const fixed = ['Today', 'Recipes', 'Open settings'].map(name => button(name).element());
+  const fixed = ['Today', 'Open settings'].map(name => button(name).element());
   fixed.forEach(reachable);
   // Navigating from a shortcut reveals the canonical current row only in the folder scrollport.
   await page.getByRole('group', { name: 'Pinned', exact: true }).getByRole('button', { name: /^Track Task/ }).first().click();
@@ -210,7 +210,7 @@ it.each([200, 250])('reveals complete operation rows through nested scrollports 
     row.focus();
     reachable(row);
   }
-  for (const name of ['Collapse area Folder 0', 'New area', 'Today', 'Recipes', 'Open settings']) {
+  for (const name of ['Collapse area Folder 0', 'New area', 'Today', 'Open settings']) {
     const target = button(name);
     target.element().focus();
     reachable(target.element());
@@ -228,7 +228,7 @@ it.each([200, 250])('keeps folders reachable without shortcuts and after collaps
   const { preferences } = await scene(height, false, false, true);
   const folders = button('New area').element().closest<HTMLElement>('[data-nc-sidebar-scrollport]')!;
   expect(folders.clientTop).toBeGreaterThan(0);
-  expect(top(folders)).toBeGreaterThan(button('Recipes').element().getBoundingClientRect().bottom);
+  expect(top(folders)).toBeGreaterThan(button('Today').element().getBoundingClientRect().bottom);
   const newArea = button('New area');
   newArea.element().focus();
   await userEvent.keyboard('{Shift>}{Tab}{/Shift}{Tab}');
@@ -283,14 +283,13 @@ it.each([200, 250])('keeps long shortcuts actionable with Areas hidden at height
 });
 
 
-it('uses the Today/Recipes cadence and label column for adjacent collapsed folder headings', async () => {
+it('uses the Today cadence and label column for adjacent collapsed folder headings', async () => {
   const { preferences } = await scene(900);
   for (const label of ['Pinned', 'Focus', 'area Folder 0', 'area Folder 1']) {
     await button(`Collapse ${label}`).click();
   }
   const today = button('Today').element();
-  const recipes = button('Recipes').element();
-  const stride = top(recipes) - top(today);
+  const stride = today.getBoundingClientRect().height + 2;
   const textLeft = (row: Element) => {
     const range = document.createRange();
     range.selectNodeContents(row.querySelector('[title]')!);
@@ -301,12 +300,12 @@ it('uses the Today/Recipes cadence and label column for adjacent collapsed folde
     const focus = button('Expand Focus').element();
     const first = button('Expand area Folder 0').element();
     const second = button('Expand area Folder 1').element();
-    for (const row of [recipes, pinned, focus, first, second]) {
+    for (const row of [pinned, focus, first, second]) {
       reachable(row);
       expect(row.getBoundingClientRect().height).toBe(today.getBoundingClientRect().height);
       expect(textLeft(row)).toBeCloseTo(textLeft(today), 1);
     }
-    expect(Math.min(top(pinned), top(focus)) - top(recipes)).toBeCloseTo(stride, 1);
+    expect(Math.min(top(pinned), top(focus)) - top(today)).toBeCloseTo(stride, 1);
     expect(Math.abs(top(focus) - top(pinned))).toBeCloseTo(stride, 1);
     expect(top(second) - top(first)).toBeCloseTo(stride, 1);
     const folders = first.closest<HTMLElement>('[data-nc-sidebar-scrollport]')!;
@@ -323,5 +322,5 @@ it('uses the Today/Recipes cadence and label column for adjacent collapsed folde
   checkRows();
   preferences.setSidebarGroupVisible('focus', false);
   await expect.element(button('Expand Focus')).not.toBeInTheDocument();
-  expect(top(button('Expand Pinned').element()) - top(recipes)).toBeCloseTo(stride, 1);
+  expect(top(button('Expand Pinned').element()) - top(today)).toBeCloseTo(stride, 1);
 });

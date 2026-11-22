@@ -1,18 +1,18 @@
 // The `ListDirectory` port the directory browser takes as a prop, bound to the real transport; the
 // composition layer is the one place that may hold both the operation and the browser's path-joining rule.
 
-import {
-  gitDiffOperation, gitStatusOperation, listDirectoryOperation, listTrackWorkspaceDirectoryOperation,
-  rawFileUrl, readFileOperation, readTrackWorkspaceFileOperation, toDirectoryListing,
-  trackVcsDiffOperation, trackWorkspaceRawFileUrl,
-  type CardFilesPort, type DirectoryListingWire, type GitDiffWire, type GitStatusWire, type ReadFileWire, type WorkspaceFilePort,
-} from '../../../../core/domain/fs.ts';
-import { workspaceFileResultDtoSchema } from '../../../../core/api/schemas.ts';
-import { ApiError } from '../../../../core/domain/failure-class.ts';
+import { workspaceFileResultDtoSchema } from "../../../../core/api/perga-v1.ts";
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
-import { DIRECTORY_LIST_FAILED, joinDirectoryPath, type ListDirectory } from '../../ui/directory-browser/public.tsx';
+import { ApiError } from '../../../../core/domain/failure-class.ts';
+import {
+listDirectoryOperation,listTrackWorkspaceDirectoryOperation,
+readTrackWorkspaceFileOperation,toDirectoryListing,
+trackVcsDiffOperation,trackWorkspaceRawFileUrl,
+type CardFilesPort,type DirectoryListingWire,type GitDiffWire,type GitStatusWire,type ReadFileWire,type WorkspaceFilePort
+} from '../../../../core/domain/fs.ts';
 import { readErrorText } from '../../../../core/domain/read-failure.ts';
+import { DIRECTORY_LIST_FAILED,joinDirectoryPath,type ListDirectory } from '../../ui/directory-browser/public.tsx';
 import { runOperation } from './queries.ts';
 
 /**
@@ -22,30 +22,14 @@ import { runOperation } from './queries.ts';
 export function createDirectoryLister(
   transport: ApiTransportPort,
   unauthorized: UnauthorizedChannel,
-  pergaMode = false,
   targetId?: string,
 ): ListDirectory {
   return async (path) => toDirectoryListing(
-    await runOperation(transport, listDirectoryOperation(path, { perga: pergaMode, targetId }), unauthorized).catch((error: unknown) => {
+    await runOperation(transport, listDirectoryOperation(path, { targetId }), unauthorized).catch((error: unknown) => {
       throw new Error(readErrorText(error, DIRECTORY_LIST_FAILED), { cause: error });
     }),
     joinDirectoryPath,
   );
-}
-
-/** The same reads, as the port a card is handed: plain functions, no query cache in front of a filesystem that is already the source of truth. */
-export function createCardFilesPort(
-  transport: ApiTransportPort,
-  unauthorized: UnauthorizedChannel,
-  shareLinkId?: string,
-): CardFilesPort {
-  return Object.freeze({
-    listDirectory: (path) => runOperation(transport, listDirectoryOperation(path), unauthorized),
-    readFile: (path) => runOperation(transport, readFileOperation(path), unauthorized),
-    gitStatus: (path) => runOperation(transport, gitStatusOperation(path), unauthorized),
-    gitDiff: (path, oldPath) => runOperation(transport, gitDiffOperation(path, oldPath), unauthorized),
-    rawUrl: path => withShareLink(rawFileUrl(path), shareLinkId),
-  });
 }
 
 /** Reads for agent-authored Report links; never accepts an absolute root from the browser — the kernel applies containment. */
@@ -53,7 +37,6 @@ export function createTrackWorkspaceFilesPort(
   transport: ApiTransportPort,
   unauthorized: UnauthorizedChannel,
   trackId: string,
-  shareLinkId?: string,
 ): WorkspaceFilePort {
   return Object.freeze({
     readFile: (path) => runOperation(
@@ -61,7 +44,7 @@ export function createTrackWorkspaceFilesPort(
       readTrackWorkspaceFileOperation(trackId, path),
       unauthorized,
     ),
-    rawUrl: (path) => withShareLink(trackWorkspaceRawFileUrl(trackId, path), shareLinkId),
+    rawUrl: (path) => trackWorkspaceRawFileUrl(trackId, path),
   });
 }
 
@@ -86,7 +69,6 @@ export function createTrackCardFilesPort(
   unauthorized: UnauthorizedChannel,
   trackId: string,
   workspaceRoot: string,
-  shareLinkId?: string,
 ): CardFilesPort {
   const root = normalizeWorkspaceRoot(workspaceRoot);
   return Object.freeze({
@@ -184,13 +166,6 @@ export function createTrackCardFilesPort(
         truncated: diff.truncated,
       };
     },
-    rawUrl: (targetPath) => withShareLink(
-      trackWorkspaceRawFileUrl(trackId, toWorkspaceRelative(root, targetPath), { raw: true }),
-      shareLinkId,
-    ),
+    rawUrl: (targetPath) => trackWorkspaceRawFileUrl(trackId, toWorkspaceRelative(root, targetPath)),
   });
-}
-
-function withShareLink(url: string, id?: string): string {
-  return id === undefined ? url : `${url}${url.includes('?') ? '&' : '?'}share_link=${encodeURIComponent(id)}`;
 }

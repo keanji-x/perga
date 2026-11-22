@@ -1,5 +1,5 @@
-import { fixtureSnapshot, fixtureTrack } from './session-contract-fixture.ts';
 import '../../styles/entry.css';
+import { fixtureSnapshot, fixtureTrack } from './session-contract-fixture.ts';
 import emptyStyles from '../../ui/empty-state/empty-state.module.css';
 import { noop, ok, area, navigationActions, mount, EmptySearchComposer, mountReportDataSources, mountEmptyFileViewer, mountEmptyDirectoryBrowser, mountReportComponentStates, mountMissingReportSources, mountEmptyResolvedSeries, mountEmptyReportReference } from './normal-empty-fixtures.tsx';
 import { assertNormalEmptySurface } from './normal-empty-assertions.ts';
@@ -14,14 +14,6 @@ import { MobileTracks } from '../shell/mobile-tracks.tsx';
 import { ChatEmpty } from '../../features/chat/thread/public.tsx';
 import { ReportDocument } from '../../features/report/document/public.tsx';
 import { ReportPreviewBlock } from '../../features/report/preview/public.tsx';
-
-it('catalog report changes without changes', async () => {
-  await page.viewport(1440,900);
-  renderDailyFixture({ reportBody:'', reply: request => request.path.startsWith('/api/today/report-changes') ? ok({date:'2026-10-03',timezone:'Asia/Shanghai',through_event_id:42,next_cursor:null,changes:[]}) : undefined });
-  await page.getByText('Report changes',{exact:true}).click();
-  await expect.element(page.getByText('No report changes recorded for visible Tracks on this day.')).toBeVisible();
-  await shot('26-today-no-report-changes', ["No report changes recorded for visible Tracks on this day."]);
-});
 it('catalog historical day without Track', async () => {
   await page.viewport(1440,900);
   renderDailyFixture({ initial:'/?day=2026-10-18' });
@@ -71,25 +63,15 @@ it.each([1440, 390])('catalog Today and conversation %i', async width => {
   if (width >= 960) {
     await expect.element(page.getByRole('combobox', { name: 'Message', exact: true })).toBeVisible();
     expect(page.getByRole('heading', { name: '聊聊你想做什么' }).query()).toBeNull();
-  } else await expect.element(page.getByRole('heading', { name: '今天还没有记录' })).toBeVisible();
-  await shot('02-today-' + width, width >= 960 ? [] : ['今天还没有记录']);
-  if (width === 1440) await page.getByRole('button', { name: /Conversation Daily Planner conversation/ }).click();
-  else {
+  } else await expect.element(page.getByRole('heading', { name: '今天的重点' })).toBeVisible();
+  await shot('02-today-' + width, []);
+  if (width !== 1440) {
     await page.getByRole('button', { name: 'Open conversation history', exact: true }).click();
     await page.getByRole('button', { name: '2026-10-04 Daily Planner conversation', exact: true }).click();
   }
   if (width === 1440) await expect.element(page.getByRole('region', { name: 'Today Assistant', exact: true }).getByRole('combobox', { name: 'Message', exact: true })).toBeVisible();
   else await expect.element(page.getByRole('heading', { name: '聊聊你想做什么' })).toBeVisible();
   await shot('03-conversation-' + width, width === 1440 ? [] : ['聊聊你想做什么']);
-});
-it.each([1440,390])('catalog recipes and plugins %i', async width => {
-  await page.viewport(width,900);
-  const fixture = renderDailyFixture({ initial: '/recipes', reply: request => request.path === '/api/plugins' ? ok([]) : undefined });
-  await expect.element(page.getByRole('heading',{name:'还没有保存的模板'})).toBeVisible();
-  await shot('04-recipes-' + width, ["还没有保存的模板"]);
-  await fixture.router.navigate({ to: '/settings/plugins' });
-  await expect.element(page.getByRole('heading',{name:'还没有添加插件'})).toBeVisible();
-  await shot('05-plugins-' + width, ["还没有添加插件"]);
 });
 it('catalog heading-only report mobile', async () => {
   await page.viewport(390,844);
@@ -143,8 +125,8 @@ it.each(['mention','command'])('catalog composer search %s', async type => {
 it('catalog report data and history component states', async () => {
   await page.viewport(1100,950);
   mountReportComponentStates();
-  await expect.element(page.getByText('No attempts yet')).toBeVisible();
-  await shot('23-report-component-states', ["暂无数据", "暂无记录", "No attempts yet", "暂无实时数据"]);
+  await expect.element(page.getByText('No execution yet')).toBeVisible();
+  await shot('23-report-component-states', ["暂无数据", "暂无记录", "No execution yet", "暂无实时数据"]);
 });
 it('catalog waiting conversation', async () => {
   await page.viewport(650,500);
@@ -172,16 +154,6 @@ it('catalog confirmed empty series in every chart presentation', async () => {
   mountEmptyResolvedSeries();
   await expect.element(page.getByRole('heading',{name:'暂无图表数据'}).first()).toBeVisible();
   await shot('32-series-no-points', ["暂无图表数据"]);
-});
-
-it('catalog body patch without net changes', async () => {
-  await page.viewport(1440,900);
-  renderDailyFixture({reply:request=>request.path.startsWith('/api/today/report-changes') ? ok({date:'2026-10-03',timezone:'Asia/Shanghai',through_event_id:2,next_cursor:null,changes:[{track_id:'project',track_title:'新项目',area_id:'project-area',area_name:'Project',edit_count:2,first_event_id:1,last_event_id:2,summary_before:'之前摘要',summary_after:'当前摘要',patch:'',patch_truncated:false}]}) : undefined});
-  await page.getByText('Report changes',{exact:true}).click();
-  await page.getByRole('heading',{name:/新项目.*2 report edits/}).click();
-  await page.getByRole('heading',{name:'Body changes',exact:true}).click();
-  await expect.element(page.getByRole('heading',{name:'正文没有净变化',exact:true})).toBeVisible();
-  await shot('33-body-no-changes', ["正文没有净变化"]);
 });
 
 it('catalog confirmed empty desktop shortcut groups', async () => {

@@ -1,14 +1,14 @@
-import { useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import { useRef } from 'react';
+import type { TrackAggregateSnapshotDto } from "../../../../core/api/perga-v1.ts";
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
-import type { TrackAggregateSnapshotDto } from '../../../../core/api/schemas.ts';
-import { NotSentError, writeFailureOf } from '../../../../core/domain/failure-class.ts';
-import { plannerSwitchFailure, PLANNER_SWITCH_UNCONFIRMED } from '../../../../core/domain/planner-switch.ts';
+import { NotSentError,writeFailureOf } from '../../../../core/domain/failure-class.ts';
+import { PLANNER_SWITCH_UNCONFIRMED,plannerSwitchFailure } from '../../../../core/domain/planner-switch.ts';
 import { useCommittedCallback } from '../../ui/state/committed-callback.ts';
-import { usePlannerSwitchMutation } from '../providers/planner-switch-mutation.ts';
-import { queryKeys, trackDetailQueryOptions } from '../providers/queries.ts';
 import type { PlannerConversationScope } from '../conversations/contracts.ts';
+import { usePlannerSwitchMutation } from '../providers/planner-switch-mutation.ts';
+import { queryKeys,trackDetailQueryOptions } from '../providers/queries.ts';
 
 /** Owns one pane's human intent; scope is the selected conversation, never the page Track. */
 export function usePlannerSwitchControl(transport: ApiTransportPort, unauthorized: UnauthorizedChannel, scope: PlannerConversationScope | null) {

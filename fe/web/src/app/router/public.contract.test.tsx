@@ -1,18 +1,18 @@
-import { prepareReportDocument } from '../../features/report/document/preparation.ts';
 import { pendingConversationIds } from '../../../../core/domain/conversation-summary.ts';
+import { prepareReportDocument } from '../../features/report/document/preparation.ts';
 // @vitest-environment jsdom
 // Invariants owned by the route tree.
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { RouterProvider, createMemoryHistory } from '@tanstack/react-router';
-import { cleanup, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { QueryClient,QueryClientProvider } from '@tanstack/react-query';
+import { RouterProvider,createMemoryHistory } from '@tanstack/react-router';
+import { cleanup,render,screen } from '@testing-library/react';
+import { afterEach,describe,expect,it,vi } from 'vitest';
 
-import type { ApiRequest, ApiTransportPort, ApiTransportResponse } from '../../../../core/api/types.ts';
+import type { ApiRequest,ApiTransportPort,ApiTransportResponse } from '../../../../core/api/types.ts';
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { ThemeProvider } from '../theme/public.tsx';
-import { createAppRouter, createRouteTree } from './public.tsx';
+import { pathFor,routeParamFromPath,type NavTarget } from './navigation.ts';
+import { createAppRouter,createRouteTree } from './public.tsx';
 import { bootTestCardRuntime } from './test-card-runtime.ts';
-import { pathFor, routeParamFromPath, type NavTarget } from './navigation.ts';
 
 const AREA = { id: 'c1', name: 'Work', color: '#5B8DEF', sort: 1, kind: 'user', created_at: 1, updated_at: 1 };
 const unauthorized = createUnauthorizedChannel({ enqueue: (task) => task() });
@@ -93,9 +93,8 @@ describe('route registration', () => {
 
   it('registers the product routes', () => {
     expect(registeredPaths()).toEqual([
-      '/', '/today/legacy', '/area/$areaId/new', '/track/$trackId', '/recipes',
-      '/settings', '/settings/network', '/settings/plugins', '/settings/planners', '/settings/mail', '/settings/appearance',
-      '/settings/about',
+      '/', '/area/$areaId/new', '/track/$trackId', '/settings',
+      '/settings/planners', '/settings/appearance', '/settings/about',
     ]);
   });
 
@@ -104,15 +103,15 @@ describe('route registration', () => {
          a compile error; the union does not exist at runtime. */
     const samples: { [K in NavTarget['name']]: Extract<NavTarget, { name: K }> } = {
       'today': { name: 'today' },
-      'today-legacy': { name: 'today-legacy' },
+
       'new-track': { name: 'new-track', areaId: 'c1' },
       'track': { name: 'track', trackId: 'w1' },
-      'recipes': { name: 'recipes' },
+
       'settings': { name: 'settings' },
-      'settings-network': { name: 'settings-network' },
-      'settings-plugins': { name: 'settings-plugins' },
+
+
       'settings-planners': { name: 'settings-planners' },
-      'settings-mail': { name: 'settings-mail' },
+
       'settings-appearance': { name: 'settings-appearance' },
       'settings-about': { name: 'settings-about' },
     };

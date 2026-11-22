@@ -1,39 +1,24 @@
-import { type NotifiableSessionWatermark, type TrackOverlayItemDto } from '../api/perga-v1.js';
+import { type NotifiableSessionWatermark,type TrackOverlayItemDto } from '../api/perga-v1.js';
+import { trackDtoToWire } from '../api/track-projection.js';
 import type { TerminalPresentation } from './terminal-presentation.js';
 // Track: the unit of work the product is organised around — wire decode, open or closed,
 // and the pure predicates several surfaces must agree on.
 
 import { z } from 'zod';
 
+import type { AgentProvider,WorkspaceIsolation } from '../api/generated/wire.js';
+import { compiledTemplateManifestDtoSchema,overlaysListDtoSchema,terminalDtoSchema,trackAggregateSnapshotDtoSchema,trackDtoSchema,trackWorkspaceOptionsDtoSchema,type AgentSessionDto,type AskDto,type TaskDto,type TerminalDto,type TrackAggregateSnapshotDto,type TrackWorkspaceOptionsDto } from "../api/perga-v1.js";
+import { cardSchema,overlaySchema,toWireAgentProvider,trackWorkspaceSchema } from "../api/schemas.js";
+import type { ApiFailure,ApiOperation } from '../api/types.js';
 import {
-  cardSchema,
-  compiledTemplateManifestDtoSchema,
-  overlaySchema,
-  overlaysListDtoSchema,
-  terminalDtoSchema,
-  toWireAgentProvider,
-  trackAggregateSnapshotDtoSchema,
-  trackDtoSchema,
-  trackWorkspaceSchema,
-  trackWorkspaceOptionsDtoSchema,
-  type AgentSessionDto,
-  type AskDto,
-  type TaskDto,
-  type TerminalDto,
-  type TrackAggregateSnapshotDto,
-  type TrackWorkspaceOptionsDto,
-  type TrackDto,
-} from '../api/schemas.js';
-import type { AgentProvider, WorkspaceIsolation } from '../api/generated/wire.js';
-import type { ApiFailure, ApiOperation } from '../api/types.js';
-import {
-  activityStateOf, type ActivityItem, type ActivityState, type AttentionKind, type CardActivity,
+activityStateOf,type ActivityItem,type ActivityState,type AttentionKind,type CardActivity,
 } from './activity.js';
-import { visibleAreas, type Area } from './area.js';
+import { visibleAreas,type Area } from './area.js';
 import { normalizeAskQuestions } from './ask.js';
 import {
-  casAttempts, classifyFailure, NotSentError, refusedText, writeFailureOf,
-  type FailureTable, type Landed, type WriteClass, type WriteFailure, type WriteText,
+classifyFailure,NotSentError,refusedText,writeFailureOf,
+type FailureTable,
+type WriteClass,type WriteFailure,type WriteText
 } from './failure-class.js';
 
 /**
@@ -352,64 +337,6 @@ export function trackTemplatesOperation(): ApiOperation<TrackTemplate[]> {
   };
 }
 
-/** A user-defined starting point for a new track — a `track_recipes` row. */
-export const trackRecipeSchema = z.object({
-  id: z.string(),
-  /** Picker label *and* the instantiated report's summary — one field on the
-   *  kernel side too, so the editor edits one thing. */
-  title: z.string(),
-  /** Saved report content and instructions. The planner derives tasks from the actual request. */
-  body: z.string(),
-  /** Optimistic-lock anchor a `PUT` must echo as `if_revision`. */
-  revision: z.number(),
-  created_at: z.number(),
-  updated_at: z.number(),
-});
-export type TrackRecipe = z.infer<typeof trackRecipeSchema>;
-
-export function trackRecipesOperation(): ApiOperation<TrackRecipe[]> {
-  return { method: 'GET', path: '/api/track-recipes', responseSchema: z.array(trackRecipeSchema) };
-}
-
-/** One recipe as stored: what a save whose answer was lost is read back through. */
-export function trackRecipeOperation(recipeId: string): ApiOperation<TrackRecipe> {
-  return { method: 'GET', path: `/api/track-recipes/${encodeURIComponent(recipeId)}`, responseSchema: trackRecipeSchema };
-}
-
-/** `POST /api/track-recipes`, keyed per save intent: a retry under the key answers with the recipe the first attempt saved. */
-export function createTrackRecipeOperation(
-  body: Readonly<{ title: string; body: string }>,
-  idempotencyKey: string,
-): ApiOperation<TrackRecipe> {
-  return {
-    method: 'POST', path: '/api/track-recipes', body, headers: { 'Idempotency-Key': idempotencyKey }, responseSchema: trackRecipeSchema,
-  };
-}
-
-/**
- * Whole-document replace gated on `revision`. The response is the stored row, which may differ
- * from the bytes sent (fences re-rendered, tombstones dropped): render what comes back.
- */
-export function updateTrackRecipeOperation(
-  recipeId: string,
-  body: Readonly<{ title: string; body: string; if_revision: number }>,
-): ApiOperation<TrackRecipe> {
-  return {
-    method: 'PUT',
-    path: `/api/track-recipes/${encodeURIComponent(recipeId)}`,
-    body,
-    responseSchema: trackRecipeSchema,
-  };
-}
-
-export function deleteTrackRecipeOperation(recipeId: string): ApiOperation<undefined> {
-  return {
-    method: 'DELETE',
-    path: `/api/track-recipes/${encodeURIComponent(recipeId)}`,
-    responseSchema: z.undefined(),
-  };
-}
-
 /**
  * A keyed create's failure classes: also `stuck`, a create the kernel stopped part way and never drives again
  * (`operation_stuck`, #2175). What it made may exist, and a retry under its key only replays the same answer, so it is
@@ -432,62 +359,6 @@ export function readKeyedCreateFailure(
   return { is, text: is === 'refused' ? refusedText(failure, text.refused) : text[is] };
 }
 
-/**
- * What a failed `POST /api/track-recipes` says: 400 (an empty title, a body that would not parse, a malformed key), 403
- * (not the user), 413 and 422 are answered before anything is stored; a key bound to another body
- * (`idempotency_key_reused`) or a create that failed for good under its key (`operation_failed`) can never store this
- * one; a create that stopped part way (`operation_stuck`) may have stored it, but its key only replays that. All are
- * final, so the next save mints a new key. Anything else may have made the recipe: the key is kept, and Try again
- * resends the same key and body, which the kernel answers with the recipe the first attempt made (#2131).
- */
-export const RECIPE_CREATE_FAILURES: FailureTable<KeyedCreateClass> = Object.freeze({
-  rules: Object.freeze([
-    Object.freeze({ code: 'idempotency_key_reused', is: 'refused' as const }),
-    Object.freeze({ code: 'operation_failed', is: 'refused' as const }),
-    Object.freeze({ code: 'operation_stuck', is: 'stuck' as const }),
-    Object.freeze({ status: Object.freeze([400, 403, 413, 422]), is: 'refused' as const }),
-  ]),
-  unauthorized: 'refused',
-  otherwise: 'unknown',
-});
-
-export const RECIPE_CREATE_TEXT: KeyedCreateText = Object.freeze({
-  refused: 'The recipe was not created.',
-  unknown: 'Creating the recipe is unconfirmed. Try again to check the same recipe.',
-  stuck: 'Creating the recipe stopped part way, so the recipe may exist. Check your recipes before saving it again.',
-});
-
-/**
- * What a failed `PUT /api/track-recipes/{id}` says. A 409 is the `if_revision` CAS lost: `stale`, nothing was stored. 400,
- * 403, 404 (the recipe is gone), 413 and 422 are refusals answered before anything is stored. Anything else may have
- * stored the save; saving again is safe, because it is gated on the same revision.
- */
-export const RECIPE_SAVE_FAILURES: FailureTable<WriteFailure | 'stale'> = Object.freeze({
-  rules: Object.freeze([
-    Object.freeze({ status: Object.freeze([409]), is: 'stale' as const }),
-    Object.freeze({ status: Object.freeze([400, 403, 404, 413, 422]), is: 'refused' as const }),
-  ]),
-  unauthorized: 'refused',
-  otherwise: 'unknown',
-});
-
-export const RECIPE_SAVE_TEXT: WriteText = Object.freeze({
-  refused: 'The recipe was not saved.', unknown: 'Saving the recipe is unconfirmed. Save again to check.',
-});
-
-/** One recipe writer's saves: a save retried after an unknown outcome and answered 409 is read back first. */
-export function recipeSaveAttempts() {
-  return casAttempts(RECIPE_SAVE_FAILURES);
-}
-
-/**
- * Whether the `stored` recipe holds exactly what one save sent, which is how a save whose answer was lost is known to have
- * landed. Compared as sent: a body the server rewrote on the way in (a fence re-rendered) does not match, and stays stale.
- */
-export function recipeSaveLanded(stored: TrackRecipe, sent: Readonly<{ title: string; body: string }>): Landed<TrackRecipe> {
-  return stored.title === sent.title && stored.body === sent.body ? { stored } : null;
-}
-
 export type TrackPatchBody = Readonly<{
   admin?: boolean;
   title?: string;
@@ -500,55 +371,6 @@ export type TrackPatchBody = Readonly<{
   closed?: boolean;
 }>;
 
-export function trackDtoToWire(dto: TrackDto): TrackWire {
-  const spec = typeof dto.workspaceSpec === 'object' && dto.workspaceSpec !== null
-    ? (dto.workspaceSpec as Record<string, unknown>)
-    : {};
-  const worktreePath = typeof spec.mergedCwd === 'string' && spec.mergedCwd !== ''
-    ? spec.mergedCwd
-    : typeof spec.worktreePath === 'string' && spec.worktreePath !== ''
-      ? spec.worktreePath
-      : typeof spec.workspacePath === 'string' && spec.workspacePath !== ''
-        ? spec.workspacePath
-        : undefined;
-  const logicalRoot = typeof spec.logicalRoot === 'string' && spec.logicalRoot !== ''
-    ? spec.logicalRoot
-    : dto.cwd;
-  const isWorktree = dto.workspaceDriver === 'vcs-workspace'
-    || dto.workspaceDriver === 'vcs'
-    || dto.workspaceDriver === 'git-worktree'
-    || dto.workspaceDriver === 'jj'
-    || dto.workspaceDriver === 'worktree';
-  const isAttachedNone = (dto.workspaceDriver === 'direct' || dto.workspaceDriver === 'none') && dto.cwd !== '';
-  const workspace = isWorktree
-    ? {
-      isolation: 'worktree' as const,
-      kind: 'attached' as const,
-      path: logicalRoot,
-      frozen_at: null,
-      ...(worktreePath !== undefined ? { worktree: worktreePath } : {}),
-    }
-    : isAttachedNone
-      ? { isolation: 'none' as const, kind: 'attached' as const, path: dto.cwd, frozen_at: null }
-      : { isolation: 'managed' as const, kind: 'managed' as const, path: dto.cwd, frozen_at: null };
-  return {
-    id: dto.id,
-    area_id: dto.areaId,
-    title: dto.title,
-    sort: dto.sortOrder,
-    cwd: dto.cwd,
-    workspace,
-    pinned_at: dto.pinnedAtMs ?? null,
-    closed_at: dto.closedAtMs ?? null,
-    admin_granted_at: null,
-    created_at: dto.createdAtMs,
-    updated_at: dto.updatedAtMs,
-    templateId: dto.templateId ?? null,
-    templateTitle: dto.templateTitle ?? null,
-    templateInputs: dto.templateInputs ?? {},
-    templateHeaderView: dto.templateHeaderView ?? null,
-  };
-}
 
 const trackWireOrDtoSchema: z.ZodType<TrackWire> = z.union([
   trackDtoSchema.transform(trackDtoToWire),
@@ -814,12 +636,6 @@ export type NewTerminalCardBody = Readonly<{
   env?: Readonly<Record<string, string>>;
 }>;
 
-/** Changes inventory membership only; source and terminal lifecycle remain server-owned. */
-export function setTerminalWorkbenchOperation(cardId: string, inWorkbench: boolean): ApiOperation<CardWire> {
-  return { method: 'PATCH', path: `/api/cards/${encodeURIComponent(cardId)}/terminal-workbench`,
-    body: { in_workbench: inWorkbench }, responseSchema: cardWireSchema };
-}
-
 export function listTrackTerminalsOperation(trackId: string): ApiOperation<CardWire[]> {
   return {
     method: 'GET',
@@ -867,70 +683,6 @@ export function deleteTerminalOperation(trackId: string, termId: string): ApiOpe
   };
 }
 
-/** `theme` is required by the kernel (422 without it): the daemon answers codex's OSC 10/11 probe with these colours. */
-export type NewCodexCardBody = Readonly<{
-  theme: ThemeRgb;
-  title?: string | null;
-  cwd?: string;
-  prompt?: string;
-  sort?: number | null;
-}>;
-
-/** `POST /api/tracks/:id/codex-cards`, keyed per add-card intent like the terminal create. */
-export function createCodexCardOperation(
-  trackId: string,
-  body: NewCodexCardBody,
-  idempotencyKey: string,
-): ApiOperation<CardWire> {
-  return {
-    method: 'POST',
-    path: `/api/tracks/${encodeURIComponent(trackId)}/codex-cards`,
-    body,
-    headers: { 'Idempotency-Key': idempotencyKey },
-    responseSchema: cardWireSchema,
-  };
-}
-
-/** `theme` is required as for Codex. No `cwd`: the kernel runs the card in the track's workspace, as for a terminal (#2516). */
-export type NewClaudeCardBody = Readonly<{
-  theme: ThemeRgb;
-  title?: string | null;
-}>;
-
-/** `POST /api/tracks/:id/claude-cards` (#2516), keyed per add-card intent like the terminal create. */
-export function createClaudeCardOperation(
-  trackId: string,
-  body: NewClaudeCardBody,
-  idempotencyKey: string,
-): ApiOperation<CardWire> {
-  return {
-    method: 'POST',
-    path: `/api/tracks/${encodeURIComponent(trackId)}/claude-cards`,
-    body,
-    headers: { 'Idempotency-Key': idempotencyKey },
-    responseSchema: cardWireSchema,
-  };
-}
-
-/** `POST /api/tracks/:id/cards` — direct create for kinds that own no runtime; worker kinds have atomic endpoints of their own. */
-export type NewCardBody = Readonly<{
-  kind: string;
-  payload?: unknown;
-  title?: string | null;
-  sort?: number | null;
-}>;
-
-/** `POST /api/tracks/:id/cards`, keyed per add-card intent like the terminal create. */
-export function createCardOperation(trackId: string, body: NewCardBody, idempotencyKey: string): ApiOperation<CardWire> {
-  return {
-    method: 'POST',
-    path: `/api/tracks/${encodeURIComponent(trackId)}/cards`,
-    body,
-    headers: { 'Idempotency-Key': idempotencyKey },
-    responseSchema: cardWireSchema,
-  };
-}
-
 /**
  * What a failed card create says: 400, 403, 404 and 422 refuse the body, the track or the plugin before anything is
  * made; a key bound to another body (`idempotency_key_reused`) can never make this one; `conflict` is only a create the
@@ -956,15 +708,6 @@ export function cardCreateText(label: string): KeyedCreateText {
     refused: `The ${label} card was not created.`,
     unknown: `Creating the ${label} card is unconfirmed.`,
     stuck: `Creating the ${label} card stopped part way, so the card may exist. Check the track before creating another.`,
-  };
-}
-
-/** The kernel refuses this for a card it owns (`deletable === false`). */
-export function deleteCardOperation(cardId: string): ApiOperation<undefined> {
-  return {
-    method: 'DELETE',
-    path: `/api/cards/${encodeURIComponent(cardId)}`,
-    responseSchema: z.undefined(),
   };
 }
 

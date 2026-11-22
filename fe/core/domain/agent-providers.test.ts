@@ -33,3 +33,21 @@ it('rejects malformed v1 provider status and requires the bootstrap version', ()
     expect(operation.responseSchema.safeParse({ ...bootstrap, providers: [{ provider: 'codex', available: 'yes' }] }).success).toBe(false);
   }
 });
+
+
+it('reads remote provider status arrays and retains refresh and target identity', () => {
+  const target = 'ssh/user &host';
+  for (const refresh of [false, true]) {
+    const availability = agentProvidersOperation(refresh, target);
+    const managed = managedProvidersOperation(refresh, target);
+    const path = '/api/v1/targets/ssh%2Fuser%20%26host/providers' + (refresh ? '?refresh=true' : '');
+    expect(availability.path).toBe(path);
+    expect(managed.path).toBe(path);
+    expect(availability.responseSchema.parse(bootstrap.providers).map(item => item.provider))
+      .toEqual(['claude', 'codex', 'opencode']);
+    expect(managed.responseSchema.parse(bootstrap.providers)[1].availability)
+      .toMatchObject({ provider: 'codex', status: 'unavailable', reason: 'Sign in first' });
+    expect(availability.responseSchema.safeParse(bootstrap).success).toBe(false);
+    expect(managed.responseSchema.safeParse(bootstrap).success).toBe(false);
+  }
+});

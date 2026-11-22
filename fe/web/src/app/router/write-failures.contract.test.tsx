@@ -1,21 +1,21 @@
-import { fixtureSnapshot, fixtureTrack } from './session-contract-fixture.ts';
 import { prepareReportDocument } from '../../features/report/document/preparation.ts';
+import { fixtureSnapshot,fixtureTrack } from './session-contract-fixture.ts';
 // @vitest-environment jsdom
 // #2131 S1: every non-chat write on these surfaces settles through one runner and reads its failure through the write's
 // table. A lost answer shows the write's fixed state, never transport text or a connection sentence, and a DELETE retried
 // after one and answered 404 is done.
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { RouterProvider, createMemoryHistory } from '@tanstack/react-router';
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { QueryClient,QueryClientProvider } from '@tanstack/react-query';
+import { RouterProvider,createMemoryHistory } from '@tanstack/react-router';
+import { cleanup,render,screen,waitFor,within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach,describe,expect,it } from 'vitest';
 
-import type { ApiRequest, ApiTransportPort, ApiTransportResponse } from '../../../../core/api/types.ts';
+import type { ApiRequest,ApiTransportPort,ApiTransportResponse } from '../../../../core/api/types.ts';
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
+import { withReadReceipts } from '../providers/read-receipts-fixture.tsx';
 import { ThemeProvider } from '../theme/public.tsx';
 import { createAppRouter } from './public.tsx';
 import { bootTestCardRuntime } from './test-card-runtime.ts';
-import { withReadReceipts } from '../providers/read-receipts-fixture.tsx';
 
 const unauthorized = createUnauthorizedChannel({ enqueue: (task) => task() });
 const area = { id: 'c1', name: 'One', color: '#123456', sort: 1, kind: 'user', created_at: 1, updated_at: 1 };
@@ -36,6 +36,7 @@ function renderApp(path: string, write: (request: ApiRequest, world: World) => P
   const writes: ApiRequest[] = [];
   const reads: string[] = [];
   const transport: ApiTransportPort = { send(request) {
+      if (request.path.includes('/workspace-options')) return Promise.resolve({ status: 200, statusText: 'OK', body: { defaultId: 'direct', options: [{ id: 'direct', label: 'Direct folder', description: 'Use this folder' }] } });
     if (request.method !== 'GET') { writes.push(request); return write(request, world); }
     reads.push(request.path);
     const track = { ...openTrack, closedAtMs: world.closed ? 2 : null };

@@ -1,7 +1,7 @@
 import { z } from 'zod';
-import type { ApiAbortSignal, ApiOperation } from '../api/types.js';
-import type { GitHubReference } from './issue-url.js';
 import type { GitHubPreview as GitHubPreviewWire } from '../api/generated/wire.js';
+import type { ApiAbortSignal } from '../api/types.js';
+import type { GitHubReference } from './issue-url.js';
 
 export const githubPreviewSchema: z.ZodType<GitHubPreviewWire> = z.object({
   kind: z.enum(['issue', 'pull']), number: z.number().int().positive(), title: z.string(),
@@ -15,11 +15,3 @@ export type GitHubPreview = GitHubPreviewWire;
 export type GitHubPreviewPort = Readonly<{
   read(target: GitHubReference, signal: ApiAbortSignal): Promise<GitHubPreview>;
 }>;
-export function githubPreviewOperation(target: GitHubReference, signal?: ApiAbortSignal): ApiOperation<GitHubPreview> {
-  return {
-    method: 'GET',
-    path: `/api/github/preview?owner=${encodeURIComponent(target.owner)}&repo=${encodeURIComponent(target.name)}&kind=${target.kind}&number=${target.number}`,
-    responseSchema: githubPreviewSchema,
-    ...(signal === undefined ? {} : { signal }),
-  };
-}

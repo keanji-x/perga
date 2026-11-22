@@ -5,7 +5,7 @@
 
 import { z } from 'zod';
 
-import type { ApiFailure, ApiOperation } from '../api/types.js';
+import type { ApiFailure } from '../api/types.js';
 
 export const SERIES_DETAILS = Object.freeze(['full', 'summary'] as const);
 export type SeriesDetail = (typeof SERIES_DETAILS)[number];
@@ -88,17 +88,6 @@ export type SeriesResolution =
   | Readonly<{ status: 'error'; failure: ApiFailure | null }>
   | Readonly<{ status: 'stale-rev'; current_rev: number }>
   | ResolvedSeries;
-
-export function trackReportSeriesOperation(
-  trackId: string, blockId: string, rev: number, detail: SeriesDetail,
-): ApiOperation<ResolvedSeries> {
-  const query = `rev=${encodeURIComponent(String(rev))}&detail=${encodeURIComponent(detail)}`;
-  return {
-    method: 'GET',
-    path: `/api/tracks/${encodeURIComponent(trackId)}/report/series/${encodeURIComponent(blockId)}?${query}`,
-    responseSchema: resolvedSeriesSchema,
-  };
-}
 
 export function isOkSeriesEntry(entry: SeriesEntry): entry is OkSeriesEntry {
   return entry.status === 'ok';

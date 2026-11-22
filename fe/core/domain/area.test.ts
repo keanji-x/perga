@@ -1,11 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { describe,expect,it } from 'vitest';
 
 import { areaSchema } from '../api/schemas.js';
 
 import {
-  areaCreationCapabilityOperation, createAreaOperation, asFolderConflict, areaFolderWireSchema, areaFoldersOperation, areaListOperation, areaOf,
-  folderConflictMessage, newestArea, sortedAreaFolders, sortedAreas, toArea, toAreaFolder,
-  updateAreaOperation, visibleAreas, type Area, type AreaFolder,
+areaFolderWireSchema,areaFoldersOperation,areaListOperation,areaOf,
+asFolderConflict,
+createAreaOperation,
+folderConflictMessage,newestArea,sortedAreaFolders,sortedAreas,toArea,toAreaFolder,
+updateAreaOperation,visibleAreas,type Area,type AreaFolder
 } from './area.js';
 
 const baseWire = { id: 'c1', name: 'Work', color: '#5B8DEF', sort: 1, created_at: 1, updated_at: 1 };
@@ -52,16 +54,6 @@ describe('area wire decode', () => {
     expect(toArea(parsed)).toMatchObject({
       defaultTemplateId: 'small-change', defaultCwd: '/srv/work',
     });
-  });
-
-  it('requires explicit capability proof from older and malformed version responses', () => {
-    const operation = areaCreationCapabilityOperation();
-    expect(operation).toMatchObject({ method: 'GET', path: '/api/v1/bootstrap' });
-    for (const wire of [{}, { areaCreateIdempotency: false }, { areaCreateIdempotency: 'true' }]) {
-      expect(operation.responseSchema.parse(wire)).toBe('unsupported');
-    }
-    expect(operation.responseSchema.parse({ areaCreateIdempotency: true })).toBe('supported');
-    expect(operation.responseSchema.parse({ version: '0.1.0' })).toBe('supported');
   });
 
   it('carries the caller-owned creation identity independently of the payload', () => {

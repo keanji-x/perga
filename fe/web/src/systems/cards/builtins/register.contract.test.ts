@@ -1,13 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { describe,expect,it } from 'vitest';
 
 import type { KernelCardInput } from '../registry.js';
 import { createCardRegistry } from '../registry.js';
-import { CLAUDE_CARD_ENTRY } from './claude.ts';
-import { CODEX_CARD_ENTRY } from './codex.ts';
 import { FILE_VIEWER_CARD_ENTRY } from './file-viewer.tsx';
 import { partitionTrackCards } from './headless-filter.js';
 import type { BuiltinCardType } from './register.js';
-import { BUILTIN_CARD_ORDER, registerAvailableBuiltinCards } from './register.js';
+import { BUILTIN_CARD_ORDER,registerAvailableBuiltinCards } from './register.js';
 import { TERMINAL_CARD_ENTRY } from './terminal.js';
 import { TRACK_REPORT_CARD_ENTRY } from './track-report.js';
 
@@ -18,18 +16,18 @@ declare module '../registry.js' {
 }
 
 const LANDED = Object.freeze([
-  'terminal', 'codex', 'claude', 'track-report', 'file-viewer',
+  'terminal', 'track-report', 'file-viewer',
 ] as const);
 
 describe('builtin card composition contract', () => {
   it('[INV-CARD-225] pins the seven-item order tuple', () => {
     // Insertion order is the fallback-scan order, so this literal is the resolution semantics.
     expect([...BUILTIN_CARD_ORDER]).toEqual([
-      'terminal', 'codex', 'claude', 'track-report',
-      'file-viewer', 'iframe', 'plugin-iframe',
+      'terminal', 'track-report',
+      'file-viewer',
     ]);
-    expect(BUILTIN_CARD_ORDER).toHaveLength(7);
-    expect(new Set(BUILTIN_CARD_ORDER).size).toBe(7);
+    expect(BUILTIN_CARD_ORDER).toHaveLength(3);
+    expect(new Set(BUILTIN_CARD_ORDER).size).toBe(3);
   });
 
   it('registers only the entries that exist, with no placeholders for the two that do not', () => {
@@ -41,8 +39,6 @@ describe('builtin card composition contract', () => {
       else expect(registry.get(type), `${type} must be absent, not a placeholder`).toBeUndefined();
     }
     expect(registry.get('terminal')).toBe(TERMINAL_CARD_ENTRY);
-    expect(registry.get('codex')).toBe(CODEX_CARD_ENTRY);
-    expect(registry.get('claude')).toBe(CLAUDE_CARD_ENTRY);
     expect(registry.get('track-report')).toBe(TRACK_REPORT_CARD_ENTRY);
     expect(registry.get('file-viewer')).toBe(FILE_VIEWER_CARD_ENTRY);
   });
@@ -54,19 +50,18 @@ describe('builtin card composition contract', () => {
     const tupleIndexes = registered.map((type) => BUILTIN_CARD_ORDER.indexOf(type as never));
     expect(tupleIndexes).not.toContain(-1);
     expect([...tupleIndexes]).toEqual([...tupleIndexes].sort((left, right) => left - right));
-    expect(tupleIndexes).toEqual([0, 1, 2, 3, 4]);
+    expect(tupleIndexes).toEqual([0, 1, 2]);
     const skipped = BUILTIN_CARD_ORDER
       .map((type, index) => ({ type, index }))
       .filter(({ type }) => !(registered as readonly string[]).includes(type));
-    expect(skipped.map(({ type }) => type)).toEqual(['iframe', 'plugin-iframe']);
-    expect(Math.min(...skipped.map(({ index }) => index))).toBeGreaterThan(Math.max(...tupleIndexes));
+    expect(skipped.map(({ type }) => type)).toEqual([]);
   });
 
   // `headless` is optional on the interface; a spurious declaration deletes every card of that type, a missing one shows an empty card.
   describe('headless is declared on the entry, and the declaration is what filters', () => {
     const HEADLESS_BY_TYPE: Readonly<Record<BuiltinCardType, boolean>> = Object.freeze({
-      terminal: false, codex: false, claude: false,
-      'track-report': true, 'file-viewer': false, iframe: false, 'plugin-iframe': false,
+      terminal: false,
+      'track-report': true, 'file-viewer': false,
     });
     const bootedProductionRegistry = () => {
       const registry = createCardRegistry();
@@ -124,8 +119,6 @@ describe('builtin card composition contract', () => {
   describe('every registered entry mints cards of its own type', () => {
     const PROBE_BY_TYPE: Readonly<Record<(typeof LANDED)[number], KernelCardInput>> = Object.freeze({
       terminal: { id: 'probe-term', kind: 'terminal', payload: { terminal_id: 't1' } },
-      codex: { id: 'probe-codex', kind: 'codex', payload: { terminal_id: 't3' } },
-      claude: { id: 'probe-claude', kind: 'claude', payload: { terminal_id: 't2' } },
       'track-report': { id: 'probe-report', kind: 'track-report', payload: null },
       'file-viewer': { id: 'probe-file', kind: 'file-viewer', payload: { path: '/tmp/probe.txt' } },
     });

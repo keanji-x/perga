@@ -1,38 +1,38 @@
-import type { ShareScope } from '../../../../core/api/generated/wire.ts';
 import type { DialogOrigin } from '../../ui/dialog/public.tsx';
-import type { SidebarTrackGroups } from './sidebar-track-groups.ts';
 import { EmptyState } from '../../ui/empty-state/public.tsx';
+import type { SidebarTrackGroups } from './sidebar-track-groups.ts';
 // The workspace rail: shared groups with owner-defined membership and actions.
-import { useEffect, useRef } from 'react';
-import { DropdownMenu, DropdownMenuItem, DropdownMenuSubMenu } from '@astryxdesign/core/DropdownMenu';
+import { DropdownMenu,DropdownMenuItem,DropdownMenuSubMenu } from '@astryxdesign/core/DropdownMenu';
+import { useEffect,useRef } from 'react';
 
-import { visibleAreas, type Area, type ExecutionTargetDto } from '../../../../core/domain/area.ts';
-import { DELETE_FAILURES, DELETE_TEXT, writeFailureText } from '../../../../core/domain/failure-class.ts';
+import { visibleAreas,type Area,type ExecutionTargetDto } from '../../../../core/domain/area.ts';
+import { DELETE_FAILURES,DELETE_TEXT,writeFailureText } from '../../../../core/domain/failure-class.ts';
+import { MARK_UNREAD_TEXT,READ_RECEIPT_FAILURES } from '../../../../core/domain/read-receipts.ts';
 import {
-  TRACK_PATCH_FAILURES, TRACK_PATCH_TEXT, userVisibleTracks, type Track,
+TRACK_PATCH_FAILURES,TRACK_PATCH_TEXT,userVisibleTracks,type Track,
 } from '../../../../core/domain/track.ts';
-import { deleteAreaCopy, DELETE_TRACK_COPY } from '../../ui/confirm-dialog/copy.ts';
+import { SIDEBAR_SECTION_IDS,moveSidebarGroup,type SidebarGroupId,type SidebarMove,type SidebarSectionId } from '../../../../core/view/sidebar-layout.ts';
+import { DELETE_TRACK_COPY,deleteAreaCopy } from '../../ui/confirm-dialog/copy.ts';
 import { Icon } from '../../ui/icon/public.tsx';
 import { ListText } from '../../ui/list-typography/public.tsx';
 import { Menu } from '../../ui/menu/public.tsx';
-import { ConnectionIndicator } from './connection-indicator.tsx';
+import { navigationRowPresentation,navigationRowClass as rowLayout } from '../../ui/navigation-row/public.ts';
 import {
-  OperationFeedback, DeleteConfirmDialog, useDeleteConfirm, useOperationFeedback,
+DeleteConfirmDialog,
+OperationFeedback,
+useDeleteConfirm,useOperationFeedback,
 } from '../../ui/operation-feedback/public.tsx';
-import { useUiPreferences } from '../providers/ui-preferences.tsx';
+import { TypedDeleteBody,useTypedConfirm } from '../../ui/typed-confirm/public.tsx';
 import { useReadReceipts } from '../providers/read-receipts.tsx';
-import { MARK_UNREAD_TEXT, READ_RECEIPT_FAILURES } from '../../../../core/domain/read-receipts.ts';
-import { TypedDeleteBody, useTypedConfirm } from '../../ui/typed-confirm/public.tsx';
+import { useUiPreferences } from '../providers/ui-preferences.tsx';
 import type { NavTarget } from '../router/navigation.ts';
 import { routeParamFromPath } from '../router/navigation.ts';
-import { SIDEBAR_SECTION_IDS, moveSidebarGroup, type SidebarGroupId, type SidebarMove, type SidebarSectionId } from '../../../../core/view/sidebar-layout.ts';
 import { AreaGroup } from './area-group.tsx';
-import { SidebarTrackGroup, revealSidebarRow, type GroupManagement } from './sidebar-group.tsx';
+import { ConnectionIndicator } from './connection-indicator.tsx';
 import styles from './shell.module.css';
-import { navigationRowClass as rowLayout, navigationRowPresentation } from '../../ui/navigation-row/public.ts';
+import { SidebarTrackGroup,revealSidebarRow,type GroupManagement } from './sidebar-group.tsx';
 
 export type SidebarProps = Readonly<{
-  shareScope?: ShareScope | null;
   areas: readonly Area[];
   executionTargets?: readonly ExecutionTargetDto[] | undefined;
   tracksByArea: ReadonlyMap<string, readonly Track[]>;
@@ -56,7 +56,6 @@ export type SidebarProps = Readonly<{
   /** The shell never signs out itself; the owner of the session does. `undefined` in single-owner mode. */
   onSignOut?: (() => void) | undefined;
   /** Hides the unimplemented Recipes row on Perga v1 servers. */
-  hideRecipes?: boolean;
   /** Owned by the shell: collapsing changes the shell grid, not just the rail. */
   collapsed: boolean;
   onToggleCollapsed: () => void;
@@ -81,9 +80,9 @@ export function initialsOf(label: string): string {
  * as well as in the query layer.
  */
 export function Sidebar({
-  shareScope = null, areas, executionTargets, tracksByArea, tracks, trackGroups: memberships, currentPath, onGo,
+  areas, executionTargets, tracksByArea, tracks, trackGroups: memberships, currentPath, onGo,
   onShareTrack, onShareArea, onRequestCreateArea, onRequestEditArea, onDeleteArea, onNewTrack, onSetPinned, onDeleteTrack,
-  onOpenSettings, onOpenPlugins, onSignOut, hideRecipes = false, collapsed, onToggleCollapsed,
+  onOpenSettings, onOpenPlugins, onSignOut, collapsed, onToggleCollapsed,
   userLabel = 'You', nowMs, readError = null, activityError = null,
   readLoading = false, onRetryRead = () => undefined,
 }: SidebarProps) {
@@ -157,7 +156,6 @@ export function Sidebar({
   const activeTrackId = routeParamFromPath(currentPath, '/track/') ?? null;
   const primaryNavPresentation = navigationRowPresentation({ kind: 'entry', depth: 0 });
   const todayActive = currentPath === '/';
-  const recipesActive = currentPath === '/recipes' || currentPath.startsWith('/recipes/');
 
   const deletingArea = userAreas.find((area) => area.id === areaConfirm.target);
   const typed = useTypedConfirm(deletingArea?.name ?? '');
@@ -242,7 +240,7 @@ export function Sidebar({
       onDelete: trackConfirm.request,
       trackRowRef: (trackId: string, element: HTMLButtonElement | null) => setTrackRef(groupKey, trackId, element),
       trackActions: (track: Track) => ({
-        onShare: shareScope === null && onShareTrack !== undefined && areas.some(area => area.id === track.areaId && area.kind === 'user')
+        onShare: onShareTrack !== undefined && areas.some(area => area.id === track.areaId && area.kind === 'user')
           ? (_id: string, origin: DialogOrigin) => onShareTrack(track, origin) : undefined,
         areaPinned: preferences.areaTrackPinned(track.areaId, track.id),
         onSetPinned: handleSetPinned,
@@ -252,13 +250,6 @@ export function Sidebar({
     };
   };
 
-  if (shareScope !== null) return <nav className={styles.rail} aria-label="Workspace">
-    {userAreas.filter(area => shareScope.kind === 'area' && area.id === shareScope.id).map(area => <SidebarTrackGroup
-      key={area.id} icon="folder" emptyState={null} management={management(`area:${area.id}`, `Track list actions for ${area.name}`)} title={area.name} label={area.name} level="section" expanded onToggle={() => {}}
-      tracks={tracksByArea.get(area.id) ?? []} areas={[area]} activeTrackId={activeTrackId} markCurrent
-      {...{ ...rowPropsFor(`area:${area.id}`), onDelete: undefined }}
-      actions={<button type="button" onClick={() => onNewTrack(area.id)}>+ New Track</button>} />)}
-  </nav>;
 
   return (
     <nav ref={railRef} className={`${rowLayout('row')} ${styles.rail} ${collapsed ? styles.railCollapsed : ''}`} aria-label="Workspace">
@@ -358,22 +349,7 @@ export function Sidebar({
                 <ListText tone={primaryNavPresentation.tone} emphasis={todayActive ? 'selected' : 'medium'} className={styles.areaName} title="Today">Today</ListText>
               </button>
             </div>
-            {!hideRecipes && (
-              <div className={`${styles.areaRowWrap} ${primaryNavPresentation.className}`}>
-                <button
-                  type="button"
-                  data-nc-role="row"
-                  className={`${styles.areaRow} ${styles.primaryNavRow} ${recipesActive ? styles.primaryNavActive : ''} ${rowLayout('content')}`}
-                  aria-current={recipesActive ? 'page' : undefined}
-                  onClick={() => onGo({ name: 'recipes' })}
-                >
-                  <span className={`${styles.primaryNavIcon} ${rowLayout('leading')}`} aria-hidden="true">
-                    <Icon name="tasks" size="md" />
-                  </span>
-                  <ListText tone={primaryNavPresentation.tone} emphasis={recipesActive ? 'selected' : 'medium'} className={styles.areaName} title="Recipes">Recipes</ListText>
-                </button>
-              </div>
-            )}
+
           </div>
           <div className={styles.sidebarSections}>
           {shownShortcuts.length > 0 && <div className={styles.shortcuts} data-nc-sidebar-scrollport="">

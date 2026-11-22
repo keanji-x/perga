@@ -1,8 +1,8 @@
 import type { QueryClient } from '@tanstack/react-query';
 
-import type { InvalidationContext } from '../../../../core/events/invalidation-plan.ts';
-import type { TrackAggregateSnapshotDto } from '../../../../core/api/schemas.ts';
+import type { TrackAggregateSnapshotDto } from "../../../../core/api/perga-v1.ts";
 import type { CardWire } from '../../../../core/domain/track.ts';
+import type { InvalidationContext } from '../../../../core/events/invalidation-plan.ts';
 
 /** Resolves card-scoped events from track details already present in the cache. */
 export function trackLookupContext(client: Pick<QueryClient, 'getQueriesData'>): InvalidationContext {

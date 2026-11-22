@@ -3,7 +3,7 @@
 
 import { z } from 'zod';
 
-import { diffSummaryDtoSchema, hostDirListDtoSchema, workspaceFileResultDtoSchema, type DiffSummaryDto } from '../api/schemas.js';
+import { diffSummaryDtoSchema,hostDirListDtoSchema,workspaceFileResultDtoSchema,type DiffSummaryDto } from "../api/perga-v1.js";
 import type { ApiOperation } from '../api/types.js';
 import type { FailureTable } from './failure-class.js';
 
@@ -24,14 +24,14 @@ export type DirectoryListingWire = z.infer<typeof directoryListingWireSchema>;
 /** `path` omitted starts the walk at the server's `$HOME`; the query key is left off rather than sent empty. */
 export function listDirectoryOperation(
   path?: string,
-  options?: Readonly<{ perga?: boolean; targetId?: string }>,
+  options?: Readonly<{ targetId?: string }>,
 ): ApiOperation<DirectoryListingWire> {
-  const base = options?.perga === true ? '/api/v1/fs/listdir' : '/api/fs/listdir';
+  const base = '/api/v1/fs/listdir';
   const params: string[] = [];
   if (path !== undefined && path !== '') {
     params.push(`path=${encodeURIComponent(path)}`);
   }
-  if (options?.perga === true && options.targetId !== undefined && options.targetId !== '' && options.targetId !== 'local') {
+  if (options?.targetId !== undefined && options.targetId !== '' && options.targetId !== 'local') {
     params.push(`targetId=${encodeURIComponent(options.targetId)}`);
   }
   const query = params.length === 0 ? '' : `?${params.join('&')}`;
@@ -61,19 +61,6 @@ const readFileWireSchema = z.object({
   truncated: z.boolean(),
 });
 export type ReadFileWire = z.infer<typeof readFileWireSchema>;
-
-export function readFileOperation(path: string): ApiOperation<ReadFileWire> {
-  return {
-    method: 'GET',
-    path: `/api/fs/readfile?path=${encodeURIComponent(path)}`,
-    responseSchema: readFileWireSchema,
-  };
-}
-
-/** The URL an `<img>` reads an image file from; the browser fetches it itself, with the session cookie. */
-export function rawFileUrl(path: string): string {
-  return `/api/fs/readfile-raw?path=${encodeURIComponent(path)}`;
-}
 
 /** A Track-scoped read via `GET /api/v1/tracks/{trackId}/files`: the kernel owns the workspace root. */
 export function readTrackWorkspaceFileOperation(
@@ -143,9 +130,8 @@ export function trackVcsDiffOperation(
 export function trackWorkspaceRawFileUrl(
   trackId: string,
   path: string,
-  options?: Readonly<{ raw?: boolean }>,
 ): string {
-  const endpoint = options?.raw === true || trackId.startsWith('trk_') ? 'files/raw' : 'files';
+  const endpoint = 'files/raw';
   return `/api/v1/tracks/${encodeURIComponent(trackId)}/${endpoint}?path=${encodeURIComponent(path)}`;
 }
 
@@ -156,50 +142,9 @@ export type WorkspaceFilePort = Readonly<{
 }>;
 
 /** `status` is the kernel's word: modified / added / deleted / untracked / renamed. */
-const gitChangedFileWireSchema = z.object({
-  path: z.string(),
-  status: z.string(),
-  old_path: z.string().optional(),
-});
-export type GitChangedFileWire = z.infer<typeof gitChangedFileWireSchema>;
-
-const gitStatusWireSchema = z.object({
-  repo_root: z.string(),
-  files: z.array(gitChangedFileWireSchema),
-});
-export type GitStatusWire = z.infer<typeof gitStatusWireSchema>;
-
-export function gitStatusOperation(path: string): ApiOperation<GitStatusWire> {
-  return {
-    method: 'GET',
-    path: `/api/fs/gitstatus?path=${encodeURIComponent(path)}`,
-    responseSchema: gitStatusWireSchema,
-  };
-}
-
-/**
- * Both sides of one changed file, as text. `head_text` is null for a file not in HEAD and
- * `working_text` null for a deleted one.
- */
-const gitDiffWireSchema = z.object({
-  path: z.string(),
-  status: z.string(),
-  head_text: z.string().nullable(),
-  working_text: z.string().nullable(),
-  truncated: z.boolean(),
-});
-export type GitDiffWire = z.infer<typeof gitDiffWireSchema>;
-
-export function gitDiffOperation(path: string, oldPath?: string): ApiOperation<GitDiffWire> {
-  const query = oldPath === undefined || oldPath === ''
-    ? `path=${encodeURIComponent(path)}`
-    : `path=${encodeURIComponent(path)}&old_path=${encodeURIComponent(oldPath)}`;
-  return {
-    method: 'GET',
-    path: `/api/fs/gitdiff?${query}`,
-    responseSchema: gitDiffWireSchema,
-  };
-}
+export type GitChangedFileWire = Readonly<{ path: string; status: string; old_path?: string }>;
+export type GitStatusWire = Readonly<{ repo_root: string; files: readonly GitChangedFileWire[] }>;
+export type GitDiffWire = Readonly<{ path: string; status: string; head_text: string | null; working_text: string | null; truncated: boolean }>;
 
 /**
  * The filesystem reads a card may make, as a port: `systems/**` holds no transport, so the reads

@@ -1,10 +1,10 @@
+import '../../styles/entry.css';
 import { cleanup, render } from '@testing-library/react';
 import { page, userEvent } from 'vitest/browser';
 import { afterEach, expect, it, vi } from 'vitest';
 
 import type { Area } from '../../../../core/domain/area.ts';
 import { NEUTRAL_ACTIVITY, type Track } from '../../../../core/domain/track.ts';
-import '../../styles/entry.css';
 import { useState } from '../../ui/state/public.ts';
 import { ThemeProvider } from '../theme/public.tsx';
 import styles from './shell.module.css';
@@ -221,7 +221,7 @@ it('reveals the current track above the account row, not behind it', async () =>
 
 it('keeps every control reached by Tab clear of the account row', async () => {
   const { avatar } = await renderRail();
-  document.querySelector<HTMLElement>('[title="Recipes"]')!.closest('button')!.focus();
+  document.querySelector<HTMLElement>('[title="Today"]')!.closest('button')!.focus();
   let checked = 0;
   for (let step = 0; step < 400 && document.activeElement !== avatar; step += 1) {
     await userEvent.tab();

@@ -1,6 +1,6 @@
 import '../../styles/entry.css';
 import { cleanup } from '@testing-library/react';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach,expect,it } from 'vitest';
 import { page } from 'vitest/browser';
 import { renderDailyFixture } from './daily-planner-fixture.tsx';
 
@@ -12,7 +12,6 @@ afterEach(() => {
 it('renders Host workspace choices and requires a new choice when the selected mode disappears', async () => {
   await page.viewport(1280, 850);
   const fixture = renderDailyFixture({
-    pergaMode: true,
     initial: '/area/project-area/new',
     reply: (request) => {
       const ok = (body: unknown) => ({ status: 200, statusText: 'OK', body });

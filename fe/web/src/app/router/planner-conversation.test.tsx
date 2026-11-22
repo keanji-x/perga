@@ -1,23 +1,23 @@
 import type { SessionItemDto } from '../../../../core/api/perga-v1.ts';
 import { prepareReportDocument } from '../../features/report/document/preparation.ts';
 import { conversationCardId } from './conversation-read-data.ts';
-import { sessionInput, sessionItem, sessionPage, sessionTurn } from './conversation-session-data.ts';
-import { fixtureBootstrap, fixtureSession, fixtureSnapshot, fixtureTrack } from './session-contract-fixture.ts';
+import { sessionInput,sessionItem,sessionPage,sessionTurn } from './conversation-session-data.ts';
+import { fixtureBootstrap,fixtureSession,fixtureSnapshot,fixtureTrack } from './session-contract-fixture.ts';
 // @vitest-environment jsdom
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient,QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider } from '@tanstack/react-router';
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { act,cleanup,fireEvent,render,screen,waitFor,within } from '@testing-library/react';
+import { afterEach,beforeEach,expect,it,vi } from 'vitest';
 
 import { wireEventSchema } from '../../../../core/api/schemas.ts';
-import type { ApiRequest, ApiTransportPort, ApiTransportResponse } from '../../../../core/api/types.ts';
+import type { ApiRequest,ApiTransportPort,ApiTransportResponse } from '../../../../core/api/types.ts';
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { HARNESS_ITEMS_PAGE_LIMIT as TRANSCRIPT_PAGE_LIMIT } from '../../../../core/domain/conversation.ts';
 import { invalidationPlanFor } from '../../../../core/events/invalidation-plan.ts';
 import { applyEventEffects } from '../events/query-invalidation-adapter.ts';
 import { queryKeys } from '../providers/queries.ts';
 import { ThemeProvider } from '../theme/public.tsx';
-import { APP_BASEPATH, createAppRouter } from './public.tsx';
+import { APP_BASEPATH,createAppRouter } from './public.tsx';
 import { bootTestCardRuntime } from './test-card-runtime.ts';
 
 /* A send's automatic retries wait no real time here; how long they back off is not under test. */
@@ -138,7 +138,7 @@ it('refreshes a mounted agent catalog when its first turn settles', async () => 
   await openConversation();
   await waitFor(() => expect(client.getQueryData(queryKeys.modelCatalog({ kind: 'card', cardId: CARD.id, provider: 'opencode' }))).toMatchObject({ models: [] }));
   configured = true;
-  const event = wireEventSchema.parse({ ev: 'harness.phase.changed', data: { worker_session_id: 'runtime', card_id: CARD.id, track_id: TRACK.id, old_phase: 'turn_running', new_phase: 'turn_completed' } });
+  const event = wireEventSchema.parse({ ev: 'turn.completed', data: { track_id: TRACK.id, turn: { id: 'turn-1', sessionId: CARD.id, status: 'completed', startedAtMs: 1, completedAtMs: 2 } } });
   act(() => applyEventEffects(client, [{ type: 'invalidate', keys: invalidationPlanFor(event).invalidate }]));
   await waitFor(() => expect(within(drawerElement()).getByRole('button', { name: /^Model:/ }).hasAttribute('disabled')).toBe(false));
   expect(client.getQueryData(queryKeys.modelCatalog({ kind: 'card', cardId: CARD.id, provider: 'opencode' }))).toMatchObject({ source: 'live' });
@@ -156,9 +156,9 @@ it('renders local screenshot references from planner history using the agent wor
   });
   await openConversation();
   await waitFor(() => expect(screen.getByRole('img', { name: 'Screenshot' }).getAttribute('src'))
-    .toBe('/api/v1/tracks/w1/files?path=screenshots%2Fpage.png'));
+    .toBe('/api/v1/tracks/w1/files/raw?path=screenshots%2Fpage.png'));
   expect(screen.getByRole('img', { name: 'Detail' }).getAttribute('src'))
-    .toBe('/api/v1/tracks/w1/files?path=screenshots%2Fdetail.png');
+    .toBe('/api/v1/tracks/w1/files/raw?path=screenshots%2Fdetail.png');
 });
 
 it('binds the same relative screenshot path to the newly opened conversation track', async () => {
@@ -167,12 +167,12 @@ it('binds the same relative screenshot path to the newly opened conversation tra
   }])) : undefined);
   await openConversation();
   expect((await screen.findByRole('img', { name: 'Screenshot' })).getAttribute('src'))
-    .toBe('/api/v1/tracks/w1/files?path=screenshots%2Fpage.png');
+    .toBe('/api/v1/tracks/w1/files/raw?path=screenshots%2Fpage.png');
   await act(async () => { await router.navigate({ to: '/track/w2' }); });
   fireEvent.click(await screen.findByRole('button', { name: 'Conversation Second chat' }));
   const secondDrawer = await screen.findByRole('complementary', { name: 'Second chat' });
   expect((await within(secondDrawer).findByRole('img', { name: 'Screenshot' })).getAttribute('src'))
-    .toBe('/api/v1/tracks/w2/files?path=screenshots%2Fpage.png');
+    .toBe('/api/v1/tracks/w2/files/raw?path=screenshots%2Fpage.png');
 });
 
 it('does not repeat the run phase above the composer while the planner is working', async () => {
@@ -222,7 +222,7 @@ it('offers exactly the close, the resize edge, Send, the model picker, the role,
       .map((button) => button.getAttribute('aria-label') ?? button.textContent);
     /* Bootstrap declares no models, so the trigger reads `Model: Default` and no effort control appears; Cancel/Save live inside the closed popover. */
     expect([...names].sort()).toEqual([
-      'Attach an image', 'Cancel', 'Close conversation', 'Model: Default', 'Role: Member', 'Save', 'Send', '会话操作',
+      'Attach an image', 'Cancel', 'Close conversation', 'Model: Default', 'Save', 'Send', '会话操作',
     ]);
     /* One shell contract and one shared host edge serve the conversation layout. */
     expect(screen.getAllByRole('separator').map((edge) => edge.getAttribute('aria-label'))).toEqual(['Resize conversation']);

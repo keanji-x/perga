@@ -1,10 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe,expect,it } from 'vitest';
 
-import { parseReportLink } from './report.js';
 import { parseReportFileLink } from './report-file.js';
 import {
-  parseReportSourceLink, parseSourceCitationCell, sourceHighlight, trackSourceDetailSchema, trackSourceOperation,
+parseReportSourceLink,parseSourceCitationCell,sourceHighlight
 } from './report-source.js';
+import { parseReportLink } from './report.js';
 
 describe('parseReportSourceLink', () => {
   it('reads a well-formed citation, with and without an anchor', () => {
@@ -144,28 +144,5 @@ describe('sourceHighlight', () => {
     expect(sourceHighlight({ body, quotes }, 'q3')).toBeNull();
     expect(sourceHighlight({ body, quotes }, 'q2')).toBeNull();
     expect(sourceHighlight({ body, quotes: [{ id: 'q1', text: '', start: 0, end: 0 }] }, 'q1')).toBeNull();
-  });
-});
-
-describe('trackSourceOperation', () => {
-  it('names the detail route and decodes the row with its body', () => {
-    const operation = trackSourceOperation('w 1', 'src_2c9e0a1b');
-    expect(operation.method).toBe('GET');
-    expect(operation.path).toBe('/api/tracks/w%201/sources/src_2c9e0a1b');
-    const row = {
-      source_id: 'src_2c9e0a1b', provenance: 'summary',
-      origin: { kind: 'plugin', plugin_id: 'p', tool: 'get_report', args_sha256: 'ab', args_canon: 'v1', content_id: '752972' },
-      title: 'Mikko 全球市场日志 9-13', published_at: '2026-09-13', content_id: '752972',
-      body_bytes: 12, body_sha256: 'cd', captured_at: '2026-09-14T00:00:00Z',
-      quotes: [{ id: 'q1', text: 'abc', start: 0, end: 3 }], body: 'abc def',
-      extra_field_the_kernel_added: true,
-    };
-    const decoded = trackSourceDetailSchema.parse(row);
-    expect(decoded.provenance).toBe('summary');
-    expect(decoded.body).toBe('abc def');
-    expect(decoded.quotes[0]?.id).toBe('q1');
-    expect('extra_field_the_kernel_added' in decoded).toBe(false);
-    expect(() => trackSourceDetailSchema.parse({ ...row, provenance: 'guess' })).toThrow();
-    expect(() => trackSourceDetailSchema.parse({ ...row, body: undefined })).toThrow();
   });
 });

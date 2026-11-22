@@ -1,19 +1,10 @@
 // One category roster drives desktop navigation, the mobile index and page titles.
 import { Icon as AstryxIcon } from '@astryxdesign/core/Icon';
-import { List, ListItem } from '@astryxdesign/core/List';
+import { List,ListItem } from '@astryxdesign/core/List';
 import { MobileListGroup } from '../../ui/mobile-list/public.tsx';
 import styles from './settings.module.css';
 
 export const SETTINGS_SECTIONS = Object.freeze([
-  Object.freeze({ id: 'network', label: 'Network', icon: 'externalLink' }),
-  Object.freeze({ id: 'appearance', label: 'Appearance', icon: 'viewColumns' }),
-  Object.freeze({ id: 'plugins', label: 'Plugins', icon: 'wrench' }),
-  Object.freeze({ id: 'planners', label: 'Planners', icon: 'checkDouble' }),
-  Object.freeze({ id: 'mail', label: 'Mail', icon: 'clock' }),
-  Object.freeze({ id: 'about', label: 'About', icon: 'info' }),
-] as const);
-
-export const PERGA_SETTINGS_SECTIONS = Object.freeze([
   Object.freeze({ id: 'appearance', label: 'Appearance', icon: 'viewColumns' }),
   Object.freeze({ id: 'planners', label: 'Planners', icon: 'checkDouble' }),
   Object.freeze({ id: 'about', label: 'About', icon: 'info' }),

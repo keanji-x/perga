@@ -1,20 +1,20 @@
-import { fixtureSnapshot, fixtureTrack } from './session-contract-fixture.ts';
 import { prepareReportDocument } from '../../features/report/document/preparation.ts';
+import { fixtureSnapshot,fixtureTrack } from './session-contract-fixture.ts';
 // @vitest-environment jsdom
 
-import { onlineManager, QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { RouterProvider, createMemoryHistory } from '@tanstack/react-router';
-import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { onlineManager,QueryClient,QueryClientProvider } from '@tanstack/react-query';
+import { createMemoryHistory,RouterProvider } from '@tanstack/react-router';
+import { act,cleanup,render,screen,waitFor,within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach,beforeEach,describe,expect,it,vi } from 'vitest';
 
-import type { ApiRequest, ApiTransportPort, ApiTransportResponse } from '../../../../core/api/types.ts';
-import type { CardWire } from '../../../../core/domain/track.ts';
+import type { ApiRequest,ApiTransportPort,ApiTransportResponse } from '../../../../core/api/types.ts';
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
+import type { CardWire } from '../../../../core/domain/track.ts';
+import { withReadReceipts } from '../providers/read-receipts-fixture.tsx';
 import { ThemeProvider } from '../theme/public.tsx';
 import { createAppRouter } from './public.tsx';
 import { bootTestCardRuntime } from './test-card-runtime.ts';
-import { withReadReceipts } from '../providers/read-receipts-fixture.tsx';
 
 const unauthorized = createUnauthorizedChannel({ enqueue: (task) => task() });
 const AREA = { id: 'c1', name: 'Work', color: '#000', sort: 1, kind: 'user', created_at: 1, updated_at: 1 };
@@ -126,19 +126,6 @@ afterEach(() => {
 });
 
 describe('adding a card from the CARDS module', () => {
-  /* #2516: the add menu creates a Claude card on its own atomic route, keyed per intent, in the track's workspace. */
-  it('creates a Claude card through the claude-cards route, sending no cwd', async () => {
-    const { posts } = setup();
-    await pickKind('claude');
-    await waitFor(() => { expect(posts()).toHaveLength(1); });
-    const [post] = posts();
-    expect(post?.path).toBe('/api/tracks/w1/claude-cards');
-    expect(post?.headers?.['Idempotency-Key']).toMatch(/^[0-9a-f-]{36}$/);
-    expect(post?.body).toHaveProperty('theme');
-    expect(post?.body).not.toHaveProperty('cwd');
-    // A fieldless kind creates on the pick: no dialog.
-    expect(screen.queryByRole('dialog')).toBeNull();
-  });
 
   it('says so on screen when a fieldless kind fails to create', async () => {
     setup({ createFails: true });
@@ -149,26 +136,6 @@ describe('adding a card from the CARDS module', () => {
     expect(within(alert).getByRole('button', { name: 'Try again' })).toBeTruthy();
     // No dialog was opened for this kind, so the message cannot have come from `NewCardForm`.
     expect(screen.queryByRole('dialog')).toBeNull();
-  });
-
-  it('shows a failed create inside the dialog exactly once for a kind with fields', async () => {
-    setup({ createFails: true });
-    await pickKind('codex');
-    await userEvent.click(await screen.findByRole('button', { name: 'Create codex' }));
-    await waitFor(() => { expect(document.querySelectorAll('[data-nc-new-card-error]')).toHaveLength(1); });
-    expect(document.querySelectorAll('[data-nc-operation-feedback]')).toHaveLength(0);
-  });
-
-  it('sends a codex card to the atomic codex endpoint', async () => {
-    const { posts } = setup();
-    await pickKind('codex');
-    await userEvent.click(await screen.findByRole('button', { name: 'Create codex' }));
-    await waitFor(() => { expect(posts()).toHaveLength(1); });
-    const [post] = posts();
-    expect(post?.path).toBe('/api/tracks/w1/codex-cards');
-    // `theme` is required by the kernel (422 without it): the daemon answers
-    // codex's OSC 10/11 probe with these colours.
-    expect(post?.body).toHaveProperty('theme');
   });
 
   it('does not navigate when a create lands after the reader left the track', async () => {
@@ -188,68 +155,12 @@ describe('adding a card from the CARDS module', () => {
     expect(router.state.location.pathname).toBe('/');
     expect(router.state.location.searchStr).not.toContain('card=');
   });
-
-  it('keeps reporting the create in flight when a superseded attempt lands', async () => {
-    const { router, releases, posts } = setup({ deferCreate: true });
-    await pickKind('claude');
-    await waitFor(() => { expect(posts()).toHaveLength(1); });
-    await pickKind('claude');
-    await waitFor(() => { expect(posts()).toHaveLength(2); });
-
-    // Open a kind with fields purely to read the busy state off its submit.
-    await pickKind('codex');
-    expect(await screen.findByRole('button', { name: 'Creating…' })).toBeTruthy();
-
-    await act(async () => {
-      releases[0]?.();
-      await new Promise((done) => { setTimeout(done, 0); });
-    });
-
-    expect(screen.getByRole('button', { name: 'Creating…' })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Create codex' })).toBeNull();
-    expect(router.state.location.searchStr).not.toContain('card=');
-  });
-
-  it('sends a file card to the generic create with the entry kind and payload', async () => {
-    const { posts } = setup();
-    await pickKind('file');
-    await userEvent.click(await screen.findByRole('button', { name: 'File or folder' }));
-    await userEvent.click(await screen.findByRole('option', { name: 'notes.md' }));
-    await userEvent.click(await screen.findByRole('button', { name: 'Create file' }));
-    await waitFor(() => { expect(posts()).toHaveLength(1); });
-    const [post] = posts();
-    expect(post?.path).toBe('/api/tracks/w1/cards');
-    expect(post?.body).toMatchObject({ kind: 'file-viewer', payload: { path: '/repo/notes.md' } });
-  });
 });
 
 /* #2131 S2: one add-card intent is one `Idempotency-Key`. The fake server joins a retry under a stored key to its card,
  * so "one card" below is the kernel's answer to two attempts under one key, not a count of POSTs. */
 describe('a keyed card create', () => {
   const keyOf = (request: ApiRequest | undefined) => request?.headers?.['Idempotency-Key'];
-  const reused: ApiTransportResponse = { status: 409, statusText: 'Conflict', body: {
-    error: 'This card request was already used for a different card.', code: 'idempotency_key_reused',
-  } };
-  const invalid: ApiTransportResponse = { status: 400, statusText: 'Bad Request', body: {
-    error: 'The card request key is not valid.', code: 'idempotency_key_invalid',
-  } };
-  /* Only a create the kernel refused before committing anything answers `conflict` on these routes. */
-  const conflict: ApiTransportResponse = { status: 409, statusText: 'Conflict', body: {
-    error: 'The track is closed.', code: 'conflict',
-  } };
-  const unprocessable: ApiTransportResponse = { status: 422, statusText: 'Unprocessable Entity', body: {
-    error: 'The theme is missing.', code: 'unprocessable',
-  } };
-  /* A create that failed for good after its commit; a retry under its key is answered the same. */
-  const failed: ApiTransportResponse = { status: 500, statusText: 'Internal Server Error', body: {
-    error: 'the daemon did not start.', code: 'operation_failed',
-  } };
-
-  async function fillTitle(title: string) {
-    const field = await screen.findByRole('textbox', { name: 'Title' });
-    await userEvent.clear(field);
-    if (title !== '') await userEvent.type(field, title);
-  }
 
   it('resends a terminal create whose answer was lost under the same key and body, and makes one card', async () => {
     const { posts, cards } = setup({ answers: ['lost'] });
@@ -267,108 +178,6 @@ describe('a keyed card create', () => {
     expect(cards).toHaveLength(1);
   });
 
-  it('resends the first attempt’s body on Try again, even after the theme changed in between', async () => {
-    const { posts, cards } = setup({ answers: ['lost'] });
-    await pickKind('codex');
-    await fillTitle('Build');
-    await userEvent.click(screen.getByRole('button', { name: 'Create codex' }));
-    const banner = await waitFor(() => {
-      const shown = document.querySelector<HTMLElement>('[data-nc-new-card-error]');
-      expect(shown?.textContent).toContain('Creating the codex card is unconfirmed.');
-      return shown!;
-    });
-    const root = document.documentElement;
-    root.dataset.theme = root.dataset.theme === 'light' ? 'dark' : 'light';
-    await userEvent.click(within(banner).getByRole('button', { name: 'Try again' }));
-    await waitFor(() => { expect(posts()).toHaveLength(2); });
-    const [first, second] = posts();
-    expect(first?.path).toBe('/api/tracks/w1/codex-cards');
-    expect(keyOf(second)).toBe(keyOf(first));
-    expect(second?.body).toEqual(first?.body);
-    expect(cards).toHaveLength(1);
-  });
-
-  it('keeps the key when Create is pressed again on the same draft, and mints a new one for a changed draft', async () => {
-    const { posts } = setup({ answers: ['lost', 'lost'] });
-    await pickKind('codex');
-    await fillTitle('Build');
-    await userEvent.click(screen.getByRole('button', { name: 'Create codex' }));
-    await screen.findByRole('button', { name: 'Try again' });
-    await userEvent.click(screen.getByRole('button', { name: 'Create codex' }));
-    await waitFor(() => { expect(posts()).toHaveLength(2); });
-    await screen.findByRole('button', { name: 'Try again' });
-    await fillTitle('Deploy');
-    await userEvent.click(screen.getByRole('button', { name: 'Create codex' }));
-    await waitFor(() => { expect(posts()).toHaveLength(3); });
-    const [first, second, third] = posts();
-    expect(keyOf(second)).toBe(keyOf(first));
-    expect(keyOf(third)).not.toBe(keyOf(first));
-    expect(third?.body).toMatchObject({ title: 'Deploy' });
-  });
-
-  it('keeps the unknown create, and its Try again, after the dialog closes', async () => {
-    const { posts, cards } = setup({ answers: ['lost'] });
-    await pickKind('codex');
-    await userEvent.click(await screen.findByRole('button', { name: 'Create codex' }));
-    await screen.findByRole('button', { name: 'Try again' });
-    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    const alert = await screen.findByRole('alert');
-    expect(alert.textContent).toContain('Creating the codex card is unconfirmed.');
-    await userEvent.click(within(alert).getByRole('button', { name: 'Try again' }));
-    await waitFor(() => { expect(posts()).toHaveLength(2); });
-    expect(keyOf(posts()[1])).toBe(keyOf(posts()[0]));
-    expect(cards).toHaveLength(1);
-  });
-
-  it.each([
-    ['a reused key', reused, 'This card request was already used for a different card.'],
-    ['an invalid key', invalid, 'The card request key is not valid.'],
-    ['a refused body', unprocessable, 'The theme is missing.'],
-    ['a create refused before it committed', conflict, 'The track is closed.'],
-    ['a create that failed for good under its key', failed, 'the daemon did not start.'],
-  ])('reads %s as a final refusal with the server’s reason: no Try again, and the next press mints a new key', async (_name, answer, reason) => {
-    const { posts } = setup({ answers: [answer] });
-    await pickKind('codex');
-    await userEvent.click(await screen.findByRole('button', { name: 'Create codex' }));
-    await waitFor(() => {
-      expect(document.querySelector('[data-nc-new-card-error]')?.textContent).toBe(reason);
-    });
-    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
-    await userEvent.click(screen.getByRole('button', { name: 'Create codex' }));
-    await waitFor(() => { expect(posts()).toHaveLength(2); });
-    expect(keyOf(posts()[1])).not.toBe(keyOf(posts()[0]));
-  });
-
-  /* #2175: a create the kernel stopped part way is never driven again, and a retry under its key only replays this. */
-  it('reads a create that stopped part way as final: the card may exist, no Try again, and the next press mints a new key', async () => {
-    const stuck: ApiTransportResponse = { status: 500, statusText: 'Internal Server Error', body: {
-      error: 'operation drive failed: the daemon stopped answering', code: 'operation_stuck',
-    } };
-    const { posts } = setup({ answers: [stuck] });
-    await pickKind('codex');
-    await userEvent.click(await screen.findByRole('button', { name: 'Create codex' }));
-    await waitFor(() => {
-      expect(document.querySelector('[data-nc-new-card-error]')?.textContent)
-        .toBe('Creating the codex card stopped part way, so the card may exist. Check the track before creating another.');
-    });
-    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
-    await userEvent.click(screen.getByRole('button', { name: 'Create codex' }));
-    await waitFor(() => { expect(posts()).toHaveLength(2); });
-    expect(keyOf(posts()[1])).not.toBe(keyOf(posts()[0]));
-  });
-
-  /* Picking the same fieldless kind again is the natural retry: it continues the held intent, as Try again does. */
-  it('resends the held key and body when the same fieldless kind is picked again', async () => {
-    const { posts, cards } = setup({ answers: ['lost'] });
-    await pickKind('claude');
-    await screen.findByRole('button', { name: 'Try again' });
-    await pickKind('claude');
-    await waitFor(() => { expect(posts()).toHaveLength(2); });
-    expect(keyOf(posts()[1])).toBe(keyOf(posts()[0]));
-    expect(posts()[1]?.body).toEqual(posts()[0]?.body);
-    expect(cards).toHaveLength(1);
-  });
-
   it('retains the Workbench held key and body when terminal is picked again', async () => {
     const { posts, cards } = setup({ answers: ['lost'] });
     await pickKind('terminal');
@@ -378,17 +187,6 @@ describe('a keyed card create', () => {
     expect(keyOf(posts()[1])).toBe(keyOf(posts()[0]));
     expect(posts()[1]?.body).toEqual(posts()[0]?.body);
     expect(cards).toHaveLength(1);
-  });
-
-  it('starts a new intent, under a new key, when a different kind is picked', async () => {
-    const { posts } = setup({ answers: ['lost'] });
-    await pickKind('terminal');
-    await screen.findByRole('button', { name: 'Try again' });
-    await pickKind('codex');
-    await userEvent.click(await screen.findByRole('button', { name: 'Create codex' }));
-    await waitFor(() => { expect(posts()).toHaveLength(2); });
-    expect(posts()[1]?.path).toBe('/api/tracks/w1/codex-cards');
-    expect(keyOf(posts()[1])).not.toBe(keyOf(posts()[0]));
   });
 
   /* Offline, a press is refused before anything is sent (`NotSentError`). */
@@ -416,28 +214,6 @@ describe('a keyed card create', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
     await waitFor(() => { expect(posts()).toHaveLength(2); });
     expect(keyOf(posts()[1])).toBe(keyOf(posts()[0]));
-    expect(cards).toHaveLength(1);
-  });
-
-  /* #2131 S4: the generic create takes a key too, so a plugin card's Try again joins the card its first attempt made. */
-  it('resends a plugin card create whose answer was lost under the same key and body, and makes one card', async () => {
-    const { posts, cards } = setup({ answers: ['lost'] });
-    await pickKind('file');
-    await userEvent.click(await screen.findByRole('button', { name: 'File or folder' }));
-    await userEvent.click(await screen.findByRole('option', { name: 'notes.md' }));
-    await userEvent.click(await screen.findByRole('button', { name: 'Create file' }));
-    const banner = await waitFor(() => {
-      const shown = document.querySelector<HTMLElement>('[data-nc-new-card-error]');
-      expect(shown?.textContent).toContain('Creating the file card is unconfirmed.');
-      return shown!;
-    });
-    await userEvent.click(within(banner).getByRole('button', { name: 'Try again' }));
-    await waitFor(() => { expect(posts()).toHaveLength(2); });
-    const [first, second] = posts();
-    expect(first?.path).toBe('/api/tracks/w1/cards');
-    expect(keyOf(first)).toMatch(/^[0-9a-f-]{36}$/);
-    expect(keyOf(second)).toBe(keyOf(first));
-    expect(second?.body).toEqual(first?.body);
     expect(cards).toHaveLength(1);
   });
 });

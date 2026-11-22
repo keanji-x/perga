@@ -1,11 +1,11 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, expect, it, vi } from 'vitest';
-import * as markdown from '../../../../../core/markdown/public.ts';
-import { deriveReportOutline, readReportDocument, trackReportLinkUrl, type TrackReport } from '../../../../../core/domain/report.ts';
-import type { ReportDocumentDto } from '../../../../../core/api/schemas.ts';
+import { cleanup,fireEvent,render,screen } from '@testing-library/react';
+import { afterEach,expect,it,vi } from 'vitest';
+import type { ReportDocumentDto } from "../../../../../core/api/perga-v1.ts";
 import { reportDocumentReferenceRepository } from '../../../../../core/domain/report-references.ts';
-import { createReportPreparationCache, prepareProse, prepareReportDocument } from './preparation.ts';
+import { deriveReportOutline,readReportDocument,trackReportLinkUrl,type TrackReport } from '../../../../../core/domain/report.ts';
+import * as markdown from '../../../../../core/markdown/public.ts';
 import { PreparedProseBlock } from './content.tsx';
+import { createReportPreparationCache,prepareProse,prepareReportDocument } from './preparation.ts';
 import { ReportDocument } from './public.tsx';
 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });

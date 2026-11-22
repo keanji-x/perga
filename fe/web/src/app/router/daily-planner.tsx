@@ -1,29 +1,24 @@
-import { DailyCalendar, type CalendarViewMode } from '../../features/today/daily-calendar.tsx';
+import { DailyCalendar,type CalendarViewMode } from '../../features/today/daily-calendar.tsx';
 import { CenteredComposerIntroduction } from '../../ui/drawer/centered-composer-introduction.tsx';
 import { EmptyState } from '../../ui/empty-state/public.tsx';
 import { Icon } from '../../ui/icon/public.tsx';
 import { useCompactViewport } from '../../ui/viewport/public.ts';
 import styles from './daily-planner.module.css';
 // Reuse the Track route body; this composition only resolves dates and report evidence.
-import { useCallback, useLayoutEffect, useRef, type ReactNode, type RefObject } from 'react';
-import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
+import { useInfiniteQuery,useQuery } from '@tanstack/react-query';
+import { useCallback,useLayoutEffect,useRef,type ReactNode,type RefObject } from 'react';
+import type { TrackAggregateSnapshotDto } from "../../../../core/api/perga-v1.ts";
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
-import type { TrackAggregateSnapshotDto } from '../../../../core/api/schemas.ts';
-import { dailyTrackOperation, isDailyDate, localDailyDate, reportChangesOperation, reportEditsOperation, shiftDailyDate, startOfDailyWeek, supervisorSnapshotOperation, todayCalendarOperation, type ReportChange } from '../../../../core/domain/daily-planner.ts';
-import { PanelCard } from '../../ui/panel-card/public.tsx';
-import { DEPLOYMENT_OWNER_USER_ID } from '../../../../core/api/auth.ts';
-import { supervisorDetails, supervisorReport } from '../../../../core/domain/supervisor-view.ts';
-import { SupervisorWaitChart } from '../../features/today/supervisor-wait.tsx';
-import { ReportDocument } from '../../features/report/document/public.tsx';
-import { useCurrentUser } from '../auth/current-user.tsx';
-import { ReportDetails } from '../../features/report/document/details.tsx';
-import { ReportChangeDetails, ReportEditDetails } from '../../features/report/changes/public.tsx';
+import { dailyTrackOperation,isDailyDate,localDailyDate,reportChangesOperation,reportEditsOperation,shiftDailyDate,startOfDailyWeek,todayCalendarOperation,type ReportChange } from '../../../../core/domain/daily-planner.ts';
 import { ApiError } from '../../../../core/domain/failure-class.ts';
 import { readErrorText } from '../../../../core/domain/read-failure.ts';
+import { ReportChangeDetails,ReportEditDetails } from '../../features/report/changes/public.tsx';
+import { ReportDetails } from '../../features/report/document/details.tsx';
 import { ErrorBox } from '../../ui/error-box/public.tsx';
+import { PanelCard } from '../../ui/panel-card/public.tsx';
 import { useState } from '../../ui/state/public.ts';
-import { runOperation, trackDetailQueryOptions } from '../providers/queries.ts';
+import { runOperation,trackDetailQueryOptions } from '../providers/queries.ts';
 
 type DailyCenterView = 'assistant' | 'changes' | 'supervisor';
 
@@ -36,8 +31,8 @@ export type DailyCenterPresentation = Readonly<{
   render: (assistant: ReactNode) => ReactNode;
 }>;
 
-export function DailyTodayRoute({ transport, unauthorized, selectedDate, onOpenTrack, onSelectDate, renderTrack, pergaMode = false }: Readonly<{
-  transport: ApiTransportPort; unauthorized: UnauthorizedChannel; selectedDate?: string; pergaMode?: boolean;
+export function DailyTodayRoute({ transport, unauthorized, selectedDate, onOpenTrack, onSelectDate, renderTrack, }: Readonly<{
+  transport: ApiTransportPort; unauthorized: UnauthorizedChannel; selectedDate?: string;
   onOpenTrack: (trackId: string) => void;
   onSelectDate?: (date: string | undefined) => void;
   renderTrack: (detail: TrackAggregateSnapshotDto, evidence: ReactNode, panelContent: ReactNode, intro: ReactNode, supervisor: ReactNode, center?: DailyCenterPresentation) => ReactNode;
@@ -56,8 +51,7 @@ export function DailyTodayRoute({ transport, unauthorized, selectedDate, onOpenT
     else if (restoreGuide.current) (from === 'changes' ? changesGuide.current : supervisorGuide.current)?.focus();
     restoreGuide.current = false;
   }, [view]);
-  const user = useCurrentUser();
-  const showSupervisor = !pergaMode && user?.userId === DEPLOYMENT_OWNER_USER_ID;
+  const showSupervisor = false;
   const isDefaultToday = selectedDate === undefined;
   const isInvalidDate = selectedDate !== undefined && !isDailyDate(selectedDate);
   const validSelectedDate = isInvalidDate ? undefined : selectedDate;
@@ -87,7 +81,7 @@ export function DailyTodayRoute({ transport, unauthorized, selectedDate, onOpenT
   });
   const calendar = useQuery({
     queryKey: ['daily-calendar', visibleRange.start, visibleRange.end],
-    enabled: pergaMode,
+    enabled: true,
     queryFn: () => runOperation(transport, todayCalendarOperation(visibleRange.start, visibleRange.end), unauthorized),
     refetchInterval: 30_000,
   });
@@ -105,7 +99,7 @@ export function DailyTodayRoute({ transport, unauthorized, selectedDate, onOpenT
   const calendarErrorNotice = calendar.isError
     ? readErrorText(calendar.error, 'Calendar data could not be loaded.')
     : undefined;
-  const calendarNode = pergaMode ? (
+  const calendarNode = (
     <DailyCalendar
       today={serverToday}
       selectedDate={isInvalidDate ? null : (validSelectedDate ?? serverToday)}
@@ -119,10 +113,10 @@ export function DailyTodayRoute({ transport, unauthorized, selectedDate, onOpenT
       onVisibleRangeChange={handleRangeChange}
       onOpenTrack={onOpenTrack}
     />
-  ) : undefined;
+  );
   const trackId = daily.data?.track_id;
   const detail = useQuery({ ...trackDetailQueryOptions(transport, trackId ?? '', unauthorized), enabled: trackId !== undefined });
-  const supervisor = !pergaMode && isDefaultToday && <DailySupervisor transport={transport} unauthorized={unauthorized} />;
+  const supervisor = false;
   const withCalendarShell = (content: ReactNode) => (
     <>{supervisor}{calendarNode !== undefined ? (
       <div className={styles.missingDayLayout}>
@@ -144,8 +138,7 @@ export function DailyTodayRoute({ transport, unauthorized, selectedDate, onOpenT
   if (detail.data === undefined || detail.data.track.id !== trackId) return withCalendarShell(<p role="status">Loading daily Track…</p>);
   const date = daily.data.date;
   return renderTrack({ ...detail.data, track: { ...detail.data.track, title: date } },
-    pergaMode ? null : <DailyReportChanges key={date} isToday={isDefaultToday} date={shiftDailyDate(date, -1)}
-      transport={transport} unauthorized={unauthorized} onOpenTrack={onOpenTrack} />,
+    null,
     calendarNode,
     <header className={styles.reportIntro}><h2>{isDefaultToday ? '今天的重点' : '当天的重点'}</h2><p>让工作更轻松，也更有条理。</p></header>,
     supervisor,
@@ -154,13 +147,7 @@ export function DailyTodayRoute({ transport, unauthorized, selectedDate, onOpenT
       presented: view === 'assistant',
       onOpenAssistant: () => setView('assistant'),
       emptyIntroduction: <CenteredComposerIntroduction title="今天想推进什么？" />,
-      footerPrefix: pergaMode ? null : <nav className={styles.guide} aria-label="Today views">
-        <button ref={changesGuide} type="button" onClick={() => setView('changes')}><span>Report changes</span><Icon name="chevron-right" size="sm" /></button>
-        {showSupervisor && <>
-          <span className={styles.guideSep} aria-hidden="true">·</span>
-          <button ref={supervisorGuide} type="button" onClick={() => setView('supervisor')}><span>Daily Supervisor</span><Icon name="chevron-right" size="sm" /></button>
-        </>}
-      </nav>,
+      footerPrefix: null,
       render: (assistant) => <TodayCenter view={view} backRef={backRef} onBack={() => { restoreGuide.current = true; setView('assistant'); }} assistant={assistant}
         changes={<DailyReportChanges key={date} standalone isToday date={shiftDailyDate(date, -1)} transport={transport} unauthorized={unauthorized} onOpenTrack={onOpenTrack} />}
         supervisor={showSupervisor ? supervisor : undefined} />,
@@ -186,31 +173,6 @@ function TodayCenter({ assistant, changes, supervisor, view, backRef, onBack }: 
       </div>
     </section>}
   </div>;
-}
-
-function DailySupervisor({ transport, unauthorized }: Readonly<{ transport: ApiTransportPort; unauthorized: UnauthorizedChannel }>) {
-  const user = useCurrentUser();
-  const isOwner = user?.userId === DEPLOYMENT_OWNER_USER_ID;
-  const snapshot = useQuery({
-    queryKey: ['daily-supervisor', user?.userId],
-    queryFn: () => runOperation(transport, supervisorSnapshotOperation(), unauthorized),
-    enabled: isOwner,
-    refetchInterval: isOwner ? 30_000 : false,
-  });
-  if (!isOwner) return null;
-
-  if (snapshot.isError) return <ErrorBox message="无法读取当前实例状态。" onRetry={() => { void snapshot.refetch(); }} />;
-  if (snapshot.data === undefined) return <p role="status">正在读取实例状态…</p>;
-
-  return <section aria-label="Daily Supervisor">
-    <ReportDocument report={supervisorReport(snapshot.data)} empty={null} />
-    <SupervisorWaitChart writes={snapshot.data.database_writes} observedAt={snapshot.data.observed_at_ms}
-      bucketMs={snapshot.data.write_bucket_ms} bucketCount={snapshot.data.write_bucket_count} />
-    <ReportDetails title="实例明细" layout="appendix">
-      <dl>{supervisorDetails(snapshot.data).map(({ label, value }) =>
-        <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
-    </ReportDetails>
-  </section>;
 }
 
 function DailyReportChanges({ date, isToday, transport, unauthorized, onOpenTrack, standalone = false }: Readonly<{

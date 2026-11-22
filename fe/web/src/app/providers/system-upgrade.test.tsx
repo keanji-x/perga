@@ -1,15 +1,14 @@
-import { ServerCompatGate, WEB_COMPAT_VERSION } from './public.tsx';
-import { QueryClient } from '@tanstack/react-query';
-import { DB_INSTANCE_ID_KEY, DATABASE_ID_KEY } from '../../../../core/keys/storage.ts';
-import { SystemUpgradeProvider } from './connection-status.tsx';
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, expect, it, vi } from 'vitest';
+import { focusManager,QueryClient,QueryClientProvider } from '@tanstack/react-query';
+import { act,cleanup,render,screen,waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
-import { SystemUpgradeMonitor, useSystemUpgrade } from './system-upgrade.tsx';
-import { ConnectionStatusScope } from './connection-status.tsx';
+import { afterEach,expect,it,vi } from 'vitest';
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
+import { DATABASE_ID_KEY,DB_INSTANCE_ID_KEY } from '../../../../core/keys/storage.ts';
+import { ConnectionStatusScope,SystemUpgradeProvider } from './connection-status.tsx';
+import { ServerCompatGate,WEB_COMPAT_VERSION } from './public.tsx';
+import { SystemUpgradeMonitor,useSystemUpgrade } from './system-upgrade.tsx';
 
-afterEach(() => { cleanup(); vi.useRealTimers(); });
+afterEach(() => { cleanup(); focusManager.setFocused(undefined); vi.useRealTimers(); });
 function Observation() {
   const state = useSystemUpgrade();
   return <output>{state?.info?.webBuildId}:{String(state?.webRefreshAvailable)}</output>;
@@ -23,9 +22,10 @@ it('reads on startup, polls, refreshes immediately on reconnect, and cleans up',
   function Connection({ connected, children }: { connected: boolean; children: ReactNode }) {
     return <ConnectionStatusScope value={{ connected, label: '', detail: '' }}>{children}</ConnectionStatusScope>;
   }
-  const content = (connected: boolean) => <SystemUpgradeProvider><Connection connected={connected}>
+  const client = new QueryClient();
+  const content = (connected: boolean) => <QueryClientProvider client={client}><SystemUpgradeProvider><Connection connected={connected}>
     <SystemUpgradeMonitor transport={transport} unauthorized={unauthorized} /><Observation />
-  </Connection></SystemUpgradeProvider>;
+  </Connection></SystemUpgradeProvider></QueryClientProvider>;
   const mounted = render(content(false));
   await act(async () => { await vi.advanceTimersByTimeAsync(0); });
   expect(screen.getByRole('status').textContent).toBe('web-1:false');
@@ -36,6 +36,9 @@ it('reads on startup, polls, refreshes immediately on reconnect, and cleans up',
   expect(send.mock.calls.length).toBe(startupReads + 1);
   expect(screen.getByRole('status').textContent).toBe('web-2:true');
   await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+  expect(send.mock.calls.length).toBe(startupReads + 2);
+  focusManager.setFocused(false);
+  await act(async () => { await vi.advanceTimersByTimeAsync(15000); });
   expect(send.mock.calls.length).toBe(startupReads + 2);
   mounted.unmount();
   await act(async () => { await vi.advanceTimersByTimeAsync(10000); });

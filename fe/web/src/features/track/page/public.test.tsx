@@ -205,11 +205,11 @@ describe('TrackPage task inventory', () => {
   it('card and task rows paint activity.cards, not runtime status', () => {
     const cards = [
       card({ id: 'busy', title: 'Busy worker', kind: 'codex',
-        runtime: { worker_session_id: 'ws-busy', kind: 'codex', status: 'running' } }),
+        runtime: { worker_session_id: 'ws-busy', kind: 'managed-assistant', status: 'running' } }),
       card({ id: 'stale', title: 'Stale worker', kind: 'codex',
-        runtime: { worker_session_id: 'ws-stale', kind: 'codex', status: 'running' } }),
+        runtime: { worker_session_id: 'ws-stale', kind: 'managed-assistant', status: 'running' } }),
       card({ id: 'asking', title: 'Asking worker', kind: 'claude',
-        runtime: { worker_session_id: 'ws-asking', kind: 'claude', status: 'running' } }),
+        runtime: { worker_session_id: 'ws-asking', kind: 'managed-assistant', status: 'running' } }),
       card({ id: 'independent', title: 'Independent stale resource', kind: 'terminal',
         runtime: { worker_session_id: 'ws-independent', kind: 'terminal', status: 'running' } }),
     ];
@@ -250,9 +250,9 @@ describe('TrackPage task inventory', () => {
   it('card and task rows speak the kernel verdict', () => {
     const cards = [
       card({ id: 'busy', title: 'Busy worker', kind: 'codex',
-        runtime: { worker_session_id: 'ws-busy', kind: 'codex', status: 'running' } }),
+        runtime: { worker_session_id: 'ws-busy', kind: 'managed-assistant', status: 'running' } }),
       card({ id: 'broken', title: 'Broken worker', kind: 'claude',
-        runtime: { worker_session_id: 'ws-broken', kind: 'claude', status: 'failed' } }),
+        runtime: { worker_session_id: 'ws-broken', kind: 'managed-assistant', status: 'failed' } }),
       card({ id: 'quiet', title: 'Quiet card', kind: 'terminal' }),
     ];
     const tasks = [running('impl', 'running', 'busy'), running('doc', 'failed', 'broken'), task('plain', 'ready')];

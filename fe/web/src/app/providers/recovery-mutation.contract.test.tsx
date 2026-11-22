@@ -1,42 +1,15 @@
-import { useTestConversationRegistry } from './permission-registry-fixture.ts';
-import { QueryClient, QueryClientProvider, MutationCache, onlineManager } from '@tanstack/react-query';
-import { renderHook, cleanup, act, waitFor } from '@testing-library/react';
+import { onlineManager,QueryClient,QueryClientProvider } from '@tanstack/react-query';
+import { cleanup,renderHook } from '@testing-library/react';
 import type { ReactNode } from 'react';
-import { afterEach, expect, it, vi } from 'vitest';
-import { RecoveryAccess } from '../../../../core/domain/recovery/access.ts';
+import { afterEach,expect,it,vi } from 'vitest';
 import type { ApiTransportResponse } from '../../../../core/api/types.ts';
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
+import { RecoveryAccess } from '../../../../core/domain/recovery/access.ts';
 import { createRecoveryTransports } from '../../systems/recovery/transport.ts';
-import { NO_UPLOAD, usePlannerAttachments, type AttachmentStore, type UploadState } from '../../features/planner/attachments.tsx';
-import type { PlannerAttachment } from '../../../../core/api/generated/wire.ts';
-import { useState } from '../../ui/state/public.ts';
-import { useSettingsMutation, usePlannerMutations, usePluginMutations, queryKeys } from './queries.ts';
-
-
-/** The caller's per-card composer images and uploads, as the router keeps them in the conversation registry. */
-function useCardImages(cardId: string): AttachmentStore {
-  const [byCard, setByCard] = useState<Readonly<Record<string, readonly PlannerAttachment[]>>>({});
-  const [uploads, setUploads] = useState<Readonly<Record<string, UploadState>>>({});
-  return {
-    items: byCard[cardId] ?? [], update: (card, next) => setByCard((current) => ({ ...current, [card]: next(current[card] ?? []) })),
-    upload: uploads[cardId] ?? NO_UPLOAD, editUpload: (card, next) => setUploads((current) => ({ ...current, [card]: next(current[card] ?? NO_UPLOAD) })),
-  };
-}
+import { useTestConversationRegistry } from './permission-registry-fixture.ts';
+import { usePlannerMutations } from './queries.ts';
 
 afterEach(() => { cleanup(); onlineManager.setOnline(true); vi.unstubAllGlobals(); });
-it('offline production settings write rejects before mutation admission and never resumes a paused mutation', async () => {
-  vi.stubGlobal('__NC_BUNDLED__', true); onlineManager.setOnline(false);
-  const access = new RecoveryAccess(); access.change('offline'); const send = vi.fn();
-  const transport = createRecoveryTransports({ send }, access).business;
-  const client = new QueryClient();
-  const { result } = renderHook(() => useSettingsMutation(transport, createUnauthorizedChannel({ enqueue: task => task() })), {
-    wrapper: ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>,
-  });
-  await expect(result.current({})).rejects.toThrow();
-  expect(client.getMutationCache().getAll()).toHaveLength(0);
-  access.change('connected'); onlineManager.setOnline(true); await client.resumePausedMutations();
-  expect(send).not.toHaveBeenCalled();
-});
 it('queued production model selections retain their original permit across recovery', async () => {
   vi.stubGlobal('__NC_BUNDLED__', true);
   const access = new RecoveryAccess(); access.change('connected');
@@ -51,102 +24,4 @@ it('queued production model selections retain their original permit across recov
   expect(send).toHaveBeenCalledOnce(); access.invalidate('recovering'); access.change('connected');
   finish({ status: 200, statusText: 'OK', body: { id: 'card-a', trackId: 'track-a', provider: 'codex', model: 'first', createdAtMs: 1, updatedAtMs: 2 } });
   await first; await second; expect(send).toHaveBeenCalledOnce();
-});
-
-
-it.each(['enable', 'uninstall'] as const)('releases the %s lease on a retained plugin hook after generation loss without committing stale effects', async (action) => {
-  vi.stubGlobal('__NC_BUNDLED__', true);
-  const access = new RecoveryAccess(); access.change('connected');
-  let reject!: (error: Error) => void;
-  const send = vi.fn(() => new Promise<ApiTransportResponse>((_resolve, fail) => { reject = fail; }));
-  const transport = createRecoveryTransports({ send }, access).business;
-  const client = new QueryClient(); const invalidate = vi.spyOn(client, 'invalidateQueries');
-  const { result } = renderHook(() => usePluginMutations(transport, createUnauthorizedChannel({ enqueue: task => task() })), {
-    wrapper: ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>,
-  });
-  act(() => { if (action === 'enable') result.current.setEnabled('plugin-a', true); else result.current.uninstall('plugin-a'); });
-  await waitFor(() => expect(result.current.pendingIds.has('plugin-a')).toBe(true));
-  act(() => { access.invalidate('recovering'); access.change('connected'); reject(new Error('old request disconnected')); });
-  await waitFor(() => expect(client.getMutationCache().getAll()[0]?.state.status).toBe('error'));
-  expect(result.current.pendingIds.has('plugin-a')).toBe(false);
-  expect(result.current.errors.size).toBe(0); expect(result.current.effectBoundaryIds.size).toBe(0);
-  expect(invalidate).not.toHaveBeenCalled();
-});
-it('does not allocate a plugin pending lease when generation changes before onMutate executes', async () => {
-  vi.stubGlobal('__NC_BUNDLED__', true);
-  const access = new RecoveryAccess(); access.change('connected'); const send = vi.fn();
-  const transport = createRecoveryTransports({ send }, access).business; // A real Query cache hook defers onMutate; no copy of the mutation implementation.
-  const client = new QueryClient({ mutationCache: new MutationCache({ onMutate: () => Promise.resolve() }) });
-  const { result } = renderHook(() => usePluginMutations(transport, createUnauthorizedChannel({ enqueue: task => task() })), {
-    wrapper: ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>,
-  });
-  act(() => { result.current.setEnabled('plugin-a', true); access.invalidate('recovering'); access.change('connected'); });
-  await waitFor(() => expect(client.getMutationCache().getAll()[0]?.state.status).toBe('error'));
-  expect(send).not.toHaveBeenCalled(); expect(result.current.pendingIds.size).toBe(0);
-});
-
-it('a stale onMutate cannot erase an existing plugin error', async () => {
-  vi.stubGlobal('__NC_BUNDLED__', true);
-  const access = new RecoveryAccess(); access.change('connected');
-  const send = vi.fn(() => Promise.reject(new Error('existing refusal')));
-  const transport = createRecoveryTransports({ send }, access).business; // A real Query cache hook defers onMutate; no copy of the mutation implementation.
-  const client = new QueryClient({ mutationCache: new MutationCache({ onMutate: () => Promise.resolve() }) });
-  const { result } = renderHook(() => usePluginMutations(transport, createUnauthorizedChannel({ enqueue: task => task() })), {
-    wrapper: ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>,
-  });
-  act(() => result.current.setEnabled('plugin-a', true));
-  await waitFor(() => expect(result.current.errors.has('plugin-a')).toBe(true));
-  const previous = result.current.errors.get('plugin-a');
-  act(() => { result.current.setEnabled('plugin-a', false); access.invalidate('recovering'); access.change('connected'); });
-  await waitFor(() => expect(client.getMutationCache().getAll()[1]?.state.status).toBe('error'));
-  expect(result.current.errors.get('plugin-a')).toBe(previous);
-  expect(result.current.pendingIds.size).toBe(0); expect(send).toHaveBeenCalledOnce();
-});
-it('releasing an old plugin lease preserves a newer pending intent on the same row', async () => {
-  vi.stubGlobal('__NC_BUNDLED__', true);
-  const access = new RecoveryAccess(); access.change('connected');
-  const pending: { resolve(reply: ApiTransportResponse): void; reject(error: Error): void }[] = [];
-  const send = vi.fn(() => new Promise<ApiTransportResponse>((resolve, reject) => { pending.push({ resolve, reject }); }));
-  const transport = createRecoveryTransports({ send }, access).business; const client = new QueryClient();
-  const invalidate = vi.spyOn(client, 'invalidateQueries');
-  const { result } = renderHook(() => usePluginMutations(transport, createUnauthorizedChannel({ enqueue: task => task() })), {
-    wrapper: ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>,
-  });
-  act(() => result.current.setEnabled('plugin-a', true)); await waitFor(() => expect(send).toHaveBeenCalledOnce());
-  act(() => { access.invalidate('recovering'); access.change('connected'); result.current.setEnabled('plugin-a', false); });
-  await waitFor(() => expect(send).toHaveBeenCalledTimes(2));
-  act(() => pending[0].reject(new Error('old failure')));
-  await waitFor(() => expect(client.getMutationCache().getAll()[0]?.state.status).toBe('error'));
-  expect(result.current.pendingIds.has('plugin-a')).toBe(true); expect(invalidate).not.toHaveBeenCalled();
-  act(() => pending[1].resolve({ status: 200, statusText: 'OK', body: { id: 'plugin-a', enabled: false } }));
-  await waitFor(() => expect(result.current.pendingIds.size).toBe(0));
-  expect(result.current.errors.size).toBe(0); expect(result.current.effectBoundaryIds.has('plugin-a')).toBe(true);
-  expect(invalidate.mock.calls.map(([options]) => options?.queryKey)).toEqual([queryKeys.plugins()]);
-});
-
-
-it.each([1, 2])('does not upload %i old picked files after their asynchronous read crosses a recovery generation', async (count) => {
-  vi.stubGlobal('__NC_BUNDLED__', true);
-  const access = new RecoveryAccess(); access.change('connected');
-  const send = vi.fn(() => Promise.resolve({ status: 200, statusText: 'OK', body: {
-    attachmentId: 'image-a', contentType: 'image/png', size: 1, url: '/image-a',
-  } }));
-  const transport = createRecoveryTransports({ send }, access).business; const client = new QueryClient();
-  const channel = createUnauthorizedChannel({ enqueue: task => task() });
-  const { result } = renderHook(() => {
-    const mutations = usePlannerMutations(transport, 'card-a', 'track-a', channel, useTestConversationRegistry());
-    const images = useCardImages('card-a');
-    return usePlannerAttachments(mutations.uploadAttachment, 'card-a', images);
-  }, { wrapper: ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider> });
-  let read!: (bytes: ArrayBuffer) => void;
-  const file = new File([], 'picked.png', { type: 'image/png' });
-  Object.defineProperty(file, 'arrayBuffer', { value: () => new Promise<ArrayBuffer>(resolve => { read = resolve; }) });
-  let done!: Promise<void[]>;
-  act(() => {
-    done = Promise.all([result.current.attach(file), ...Array.from({ length: count - 1 }, () =>
-      result.current.attach(new File([new Uint8Array([1])], 'queued.png', { type: 'image/png' })))]);
-  });
-  act(() => { access.invalidate('recovering'); access.change('connected'); read(new Uint8Array([1]).buffer); });
-  await act(() => done);
-  expect(send).not.toHaveBeenCalled(); expect(result.current.items).toHaveLength(0);
 });

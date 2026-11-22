@@ -1,36 +1,43 @@
-import { isTrackUnread, toReadState } from '../../../../core/domain/read-receipts.ts';
-import { useTestConversationRegistry } from './permission-registry-fixture.ts';
+import { isTrackUnread,toReadState } from '../../../../core/domain/read-receipts.ts';
+import { sessionItem,sessionPage } from '../router/conversation-session-data.ts';
 import { fixtureSession } from '../router/session-contract-fixture.ts';
-import { sessionPage, sessionItem } from '../router/conversation-session-data.ts';
+import { useTestConversationRegistry } from './permission-registry-fixture.ts';
 
 // @vitest-environment jsdom
 // Invariants owned by the shared query layer.
 
-import { onlineManager, QueryClient, QueryClientProvider, QueryObserver } from '@tanstack/react-query';
-import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createElement, type ReactNode } from 'react';
+import { onlineManager,QueryClient,QueryClientProvider,QueryObserver } from '@tanstack/react-query';
+import { act,cleanup,renderHook,waitFor } from '@testing-library/react';
+import { createElement,type ReactNode } from 'react';
+import { afterEach,describe,expect,it,vi } from 'vitest';
 import { z } from 'zod';
 
-import type { ApiRequest, ApiTransportPort, ApiTransportResponse } from '../../../../core/api/types.ts';
-import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { areaSchema } from '../../../../core/api/schemas.ts';
+import type { ApiRequest,ApiTransportPort,ApiTransportResponse } from '../../../../core/api/types.ts';
+import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { toArea } from '../../../../core/domain/area.ts';
+import { ApiError,NotSentError } from '../../../../core/domain/failure-class.ts';
+import { RecoveryAccess } from '../../../../core/domain/recovery/access.ts';
 import {
-  readTrackReport, TRACK_REPORT_CARD_KIND, type TaskVerdict,
+readTrackReport,TRACK_REPORT_CARD_KIND,type TaskVerdict,
 } from '../../../../core/domain/report.ts';
 import { NEUTRAL_ACTIVITY } from '../../../../core/domain/track.ts';
-import { RecoveryAccess } from '../../../../core/domain/recovery/access.ts';
 import { createRecoveryTransports } from '../../systems/recovery/transport.ts';
-import { coordinateRecoveryQueries } from './recovery-queries.ts';
-import { ApiError, NotSentError } from '../../../../core/domain/failure-class.ts';
 import {
-  areaListQueryOptions, conversationHistoryQueryOptions as transcriptQueryOptions, queryKeys, runOperation, taskVerdictsRefetchInterval,
-  trackOverlaysQueryOptions, trackDetailQueryOptions,
-  useAreaMutations, usePlannerMutations, useTrackMutations, useWorkspace, tracksInAreaQueryOptions,
-  useTrackConversationMutations, useTrackRecipeMutations,
-  seriesRefetchInterval, trackReportSeriesQueryOptions, trackSourceQueryOptions, type SeriesRead,
+areaListQueryOptions,modelCatalogQueryOptions,
+queryKeys,runOperation,
+taskVerdictsRefetchInterval,
+trackDetailQueryOptions,
+trackOverlaysQueryOptions,
+tracksInAreaQueryOptions,
+conversationHistoryQueryOptions as transcriptQueryOptions,
+useAreaMutations,usePlannerMutations,
+useTrackConversationMutations,
+useTrackMutations,useWorkspace
 } from './queries.ts';
+import { agentProvidersQueryOptions } from './agent-providers.ts';
+import { managedProvidersQueryOptions } from './managed-providers.ts';
+import { coordinateRecoveryQueries } from './recovery-queries.ts';
 
 function recordingTransport(reply: (request: ApiRequest) => ApiTransportResponse) {
   const paths: string[] = [];
@@ -57,27 +64,11 @@ const baseTrackWire = { workspace: { isolation: 'none' as const, kind: 'attached
 
 afterEach(() => { cleanup(); onlineManager.setOnline(true); });
 
-describe('Area creation capability', () => {
-  it.each([{}, { areaCreateIdempotency: false }, { areaCreateIdempotency: 'true' }])(
-    'refuses to POST before an older or malformed server proves safe creation: %j', async (version) => {
-      const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
-      const send = vi.fn(() => Promise.resolve(ok(version)));
-      const { result } = renderHook(() => useAreaMutations({ send }, unauthorized), {
-        wrapper: ({ children }: { children: ReactNode }) => createElement(QueryClientProvider, { client }, children),
-      });
-      await expect(result.current.create({ name: 'Safe', color: '#123456' }, 'safe-key')).rejects.toThrow();
-      expect(send.mock.calls).toHaveLength(1);
-      expect(send.mock.calls[0]).toEqual([expect.objectContaining({ method: 'GET', path: '/api/v1/bootstrap' })]);
-    },
-  );
-});
-
 describe('writes never queue an offline submission, in either build', () => {
   function useWrites(transport: ApiTransportPort) {
     return {
       area: useAreaMutations(transport, unauthorized),
       track: useTrackMutations(transport, unauthorized),
-      recipe: useTrackRecipeMutations(transport, unauthorized),
       conversation: useTrackConversationMutations(transport, 'w1', unauthorized),
     };
   }
@@ -86,10 +77,6 @@ describe('writes never queue an offline submission, in either build', () => {
     ['area update', ({ area }) => area.update('c1', { name: 'Offline rename' })],
     ['track create', ({ track }) => track.create({ area_id: 'c1', planner_provider: 'codex', theme: { fg: [0, 0, 0], bg: [255, 255, 255] } }, 'offline-track')],
     ['terminal create', ({ track }) => track.createTerminal('w1', { theme: { fg: [0, 0, 0], bg: [255, 255, 255] } }, 'offline-terminal')],
-    ['codex create', ({ track }) => track.createCodex('w1', { theme: { fg: [0, 0, 0], bg: [255, 255, 255] } }, 'offline-codex')],
-    ['card create', ({ track }) => track.createCard('w1', { kind: 'note', title: 'Offline note', payload: {} }, 'offline-card')],
-    ['recipe create', ({ recipe }) => recipe.create({ title: 'Offline recipe', body: '' }, 'offline-recipe')],
-    ['recipe save', ({ recipe }) => recipe.save('recipe-1', { title: 'Offline recipe', body: '', if_revision: 1 })],
     ['conversation create', ({ conversation }) => conversation.create('Offline message', 'offline-key', 'codex', { model: null, reasoning_effort: null }, undefined, () => undefined)],
     /* The writes that never had a guard of their own: in the web build they used to pause offline and fire on reconnect (#2131). */
     ['track rename', ({ track }) => track.patch('w1', 'c1', { title: 'Offline rename' })],
@@ -98,7 +85,6 @@ describe('writes never queue an offline submission, in either build', () => {
     ['track delete', ({ track }) => track.remove('w1', 'c1')],
     ['card delete', ({ track }) => track.removeCard('w1', 'card-1')],
     ['area delete', ({ area }) => area.remove('c1')],
-    ['recipe delete', ({ recipe }) => recipe.remove('recipe-1')],
     ['ask answer', ({ track }) => track.answerAsk('w1', 1, [{ option: 0 }])],
   ];
   it.each(cases)('rejects %s before dispatch and does not replay it on reconnect', async (_name, submit) => {
@@ -408,103 +394,6 @@ describe('delete mutation wiring', () => {
     expect(settled).toBe(true);
   });
 
-  it('invalidates Areas after a failed POST that may already have committed', async () => {
-    const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
-    client.setQueryData(queryKeys.areas(), [toArea(areaSchema.parse(userArea))]);
-    let releaseRefetch!: () => void;
-    const refetchHeld = new Promise<void>((resolve) => { releaseRefetch = resolve; });
-    const invalidate = vi.spyOn(client, 'invalidateQueries').mockReturnValue(refetchHeld);
-    const transport: ApiTransportPort = {
-      send: (request) => request.path === '/api/v1/bootstrap'
-        ? Promise.resolve(ok({ areaCreateIdempotency: true })) : Promise.reject(new Error('POST response lost')),
-    };
-    const { result } = renderHook(() => useAreaMutations(transport, unauthorized), {
-      wrapper: mutationWrapper(client),
-    });
-
-    const pending = result.current.create({ name: 'Reading', color: '#5B8DEF' }, 'reading-key');
-    let settled = false;
-    void pending.then(() => { settled = true; }, () => { settled = true; });
-    await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.areas() }));
-    expect(settled).toBe(false);
-    releaseRefetch();
-    await expect(pending).rejects.toBeInstanceOf(ApiError);
-    expect(settled).toBe(true);
-  });
-
-  it('resolves Area creation before its background list refresh settles', async () => {
-    const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
-    client.setQueryData(queryKeys.areas(), [toArea(areaSchema.parse(userArea))]);
-    let releaseRefetch!: () => void;
-    const refetchHeld = new Promise<void>((resolve) => { releaseRefetch = resolve; });
-    const invalidate = vi.spyOn(client, 'invalidateQueries').mockReturnValue(refetchHeld);
-    const createdWire = {
-      ...userArea,
-      id: 'c-new',
-      name: 'Reading',
-      default_template_id: null,
-      default_cwd: null,
-    };
-    const transport: ApiTransportPort = {
-      send: (request) => Promise.resolve(ok(
-        request.path === '/api/v1/bootstrap' ? { areaCreateIdempotency: true } : createdWire,
-      )),
-    };
-    const { result } = renderHook(() => useAreaMutations(transport, unauthorized), {
-      wrapper: mutationWrapper(client),
-    });
-
-    const created = await act(() => result.current.create({ name: 'Reading', color: '#5B8DEF' }, 'reading-key'));
-    expect(created).toMatchObject({ id: 'c-new', name: 'Reading' });
-    await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.areas() }));
-    releaseRefetch();
-  });
-
-  it('aborts an in-flight initial Area list read when Area creation succeeds so the replacement read includes the created Area', async () => {
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-    });
-    const createdWire = {
-      ...userArea,
-      id: 'c-new',
-      name: 'Reading',
-      sort: userArea.sort + 1,
-      default_template_id: null,
-      default_cwd: null,
-    };
-    let releaseInitial!: () => void;
-    const initialHeld = new Promise<void>((resolve) => { releaseInitial = resolve; });
-    let initialRead = true;
-    const transport: ApiTransportPort = {
-      send: async (request) => {
-        if (request.path === '/api/v1/bootstrap') return ok({ areaCreateIdempotency: true });
-        if (request.path === '/api/v1/areas' && request.method === 'POST') return ok(createdWire);
-        if (request.path === '/api/v1/areas' && request.method === 'GET' && initialRead) {
-          initialRead = false;
-          await initialHeld;
-          return ok([userArea]);
-        }
-        return ok([userArea, createdWire]);
-      },
-    };
-    const observer = new QueryObserver(client, areaListQueryOptions(transport, unauthorized));
-    const unsubscribe = observer.subscribe(() => undefined);
-    try {
-      const { result } = renderHook(() => useAreaMutations(transport, unauthorized), {
-        wrapper: mutationWrapper(client),
-      });
-
-      const created = await act(() => result.current.create({ name: 'Reading', color: '#5B8DEF' }, 'reading-key'));
-      expect(created).toMatchObject({ id: 'c-new', name: 'Reading' });
-      releaseInitial();
-      await waitFor(() => expect(client.getQueryData<ReturnType<typeof toArea>[]>(queryKeys.areas())?.map((area) => area.id))
-        .toEqual(['c1', 'c-new']));
-    } finally {
-      releaseInitial();
-      unsubscribe();
-    }
-  });
-
   it('does not let a delayed Area PATCH response overwrite a newer event row', async () => {
     const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
     const original = toArea(areaSchema.parse(userArea));
@@ -550,121 +439,6 @@ describe('delete mutation wiring', () => {
     await act(async () => { await pending; });
 
     expect(client.getQueryData(queryKeys.areas())).toEqual([newerEvent]);
-  });
-
-  it('writes a created Area into an empty cache before the zero-state opener disappears', async () => {
-    const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
-    client.setQueryData(queryKeys.areas(), []);
-    const createdWire = {
-      ...userArea,
-      id: 'c-new',
-      name: 'Reading',
-      default_template_id: null,
-      default_cwd: null,
-    };
-    const transport: ApiTransportPort = { send: (request) => Promise.resolve(ok(
-      request.path === '/api/v1/bootstrap' ? { areaCreateIdempotency: true } : createdWire,
-    )) };
-    const { result } = renderHook(() => useAreaMutations(transport, unauthorized), {
-      wrapper: mutationWrapper(client),
-    });
-
-    await act(() => result.current.create({ name: 'Reading', color: '#5B8DEF' }, 'reading-key'));
-
-    expect(client.getQueryData<ReturnType<typeof toArea>[]>(queryKeys.areas()))
-      .toEqual([expect.objectContaining({ id: 'c-new', name: 'Reading' })]);
-  });
-
-  it('does not let a delayed Area POST response overwrite a newer event row', async () => {
-    const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
-    client.setQueryData(queryKeys.areas(), []);
-    const responseWire = {
-      ...userArea,
-      id: 'c-new',
-      name: 'Reading',
-      default_template_id: null,
-      default_cwd: null,
-      updated_at: 2,
-    };
-    let releaseResponse!: () => void;
-    const responseHeld = new Promise<void>((resolve) => { releaseResponse = resolve; });
-    const send = vi.fn(async (request: ApiRequest) => {
-      if (request.path === '/api/v1/bootstrap') return ok({ areaCreateIdempotency: true });
-      await responseHeld;
-      return ok(responseWire);
-    });
-    const transport: ApiTransportPort = { send };
-    const { result } = renderHook(() => useAreaMutations(transport, unauthorized), {
-      wrapper: mutationWrapper(client),
-    });
-
-    let pending!: ReturnType<typeof result.current.create>;
-    act(() => { pending = result.current.create({ name: 'Reading', color: '#5B8DEF' }, 'reading-key'); });
-    await waitFor(() => expect(send).toHaveBeenCalledTimes(2));
-
-    const newerEvent = {
-      ...toArea(areaSchema.parse(responseWire)),
-      name: 'Reading list',
-      defaultTemplateId: 'small-change',
-      defaultCwd: '/srv/reading',
-      updatedAt: 3,
-    };
-    act(() => { client.setQueryData(queryKeys.areas(), [newerEvent]); });
-    releaseResponse();
-    await act(async () => { await pending; });
-
-    await expect(pending).resolves.toEqual(newerEvent);
-    expect(client.getQueryData(queryKeys.areas())).toEqual([newerEvent]);
-  });
-
-  it('does not promote one created Area into a complete list when the cache is uninitialized', async () => {
-    const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
-    const createdWire = {
-      ...userArea,
-      id: 'c-new',
-      name: 'Reading',
-      default_template_id: null,
-      default_cwd: null,
-    };
-    const transport: ApiTransportPort = { send: (request) => Promise.resolve(ok(
-      request.path === '/api/v1/bootstrap' ? { areaCreateIdempotency: true } : createdWire,
-    )) };
-    const { result } = renderHook(() => useAreaMutations(transport, unauthorized), {
-      wrapper: mutationWrapper(client),
-    });
-
-    await act(() => result.current.create({ name: 'Reading', color: '#5B8DEF' }, 'reading-key'));
-
-    expect(client.getQueryData(queryKeys.areas())).toBeUndefined();
-    expect(client.getQueryState(queryKeys.areas())).toBeUndefined();
-  });
-
-  it('preserves a failed no-data Area list instead of replacing it with one created row', async () => {
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-    });
-    await expect(client.fetchQuery({
-      queryKey: queryKeys.areas(),
-      queryFn: () => Promise.reject(new Error('areas unavailable')),
-    })).rejects.toThrow('areas unavailable');
-    const createdWire = {
-      ...userArea,
-      id: 'c-new',
-      name: 'Reading',
-      default_template_id: null,
-      default_cwd: null,
-    };
-    const transport: ApiTransportPort = { send: (request) => Promise.resolve(ok(
-      request.path === '/api/v1/bootstrap' ? { areaCreateIdempotency: true } : createdWire,
-    )) };
-    const { result } = renderHook(() => useAreaMutations(transport, unauthorized), {
-      wrapper: mutationWrapper(client),
-    });
-
-    await act(() => result.current.create({ name: 'Reading', color: '#5B8DEF' }, 'reading-key'));
-
-    expect(client.getQueryData(queryKeys.areas())).toBeUndefined();
-    expect(client.getQueryState(queryKeys.areas())?.status).toBe('error');
   });
 
   it('does not turn an acknowledged planner send into a send failure when refresh fails', async () => {
@@ -793,38 +567,6 @@ describe('tool inventory mutation cache writes', () => {
     await act(() => result.current.removeCard('w1', 'card-a'));
     expect(client.getQueryData(queryKeys.trackTools('w1'))).toBeUndefined();
   });
-
-  it('writes a created card into the cached inventory so the board can draw it at once', async () => {
-    const created = cardWire('card-new');
-    const transport: ApiTransportPort = {
-      send: (request) => (request.method === 'POST'
-        ? Promise.resolve(ok(created))
-        : new Promise<ApiTransportResponse>(() => undefined)),
-    };
-    const { client, result } = mounted(transport);
-    client.setQueryData(queryKeys.trackTools('w1'), tools);
-
-    await act(() => result.current.createCard('w1', { kind: 'file-viewer', payload: { path: '/x' } }, 'card-key'));
-
-    expect(client.getQueryData<typeof tools>(queryKeys.trackTools('w1'))?.map((card) => card.id))
-      .toEqual(['card-a', 'card-b', 'card-new']);
-  });
-
-  /* A replayed create answers with a row the cache already holds. */
-  it('does not duplicate a card the cached inventory already carries', async () => {
-    const transport: ApiTransportPort = {
-      send: (request) => (request.method === 'POST'
-        ? Promise.resolve(ok(cardWire('card-b')))
-        : new Promise<ApiTransportResponse>(() => undefined)),
-    };
-    const { client, result } = mounted(transport);
-    client.setQueryData(queryKeys.trackTools('w1'), tools);
-
-    await act(() => result.current.createCodex('w1', { theme: { fg: [0, 0, 0], bg: [1, 1, 1] } }, 'replayed-key'));
-
-    expect(client.getQueryData<typeof tools>(queryKeys.trackTools('w1'))?.map((card) => card.id))
-      .toEqual(['card-a', 'card-b']);
-  });
 });
 
 describe('track create folders cache', () => {
@@ -927,86 +669,6 @@ describe('task-verdict poll interval', () => {
     expect(taskVerdictsRefetchInterval(blocks([declaration('b-1', 'deleted')]))(state({
       data: [{ blockId: '', key: 'deleted', schedulable: true, status: 'running', workerCardId: 'c-9' }],
     }))).toBe(3000);
-  });
-});
-
-/* The key carries the block's rev and the query turns a 409 into a value, so a report edit refetches
- * only the blocks it changed and a query that outran the document waits instead of failing. */
-describe('chart.series query', () => {
-  const pending = { status: 'pending', view: 'line', field: 'close', period: 'day', range: '1Y' };
-  const signal = new AbortController().signal;
-
-  it('keys by track, block and rev, and asks for the full row by default', async () => {
-    const { transport, paths } = recordingTransport(() => ok(pending));
-    const options = trackReportSeriesQueryOptions(transport, 'w1', 'b-1', 4, unauthorized);
-    expect(options.queryKey).toEqual(['track-report-series', 'w1', 'b-1', 4]);
-    expect(options.queryKey[0]).not.toBe(queryKeys.trackReportPrefix()[0]);
-    expect(options.staleTime).toBeGreaterThan(0);
-    await expect(options.queryFn({ signal })).resolves.toEqual(pending);
-    expect(paths).toEqual(['/api/tracks/w1/report/series/b-1?rev=4&detail=full']);
-    await trackReportSeriesQueryOptions(transport, 'w1', 'b-1', 4, unauthorized, 'summary').queryFn({ signal });
-    expect(paths[1]).toBe('/api/tracks/w1/report/series/b-1?rev=4&detail=summary');
-  });
-
-  it('stale rev 409 is a wait, not an error', async () => {
-    const { transport } = recordingTransport(() => ({ status: 409, statusText: 'Conflict', body: { current_rev: 5 } }));
-    const options = trackReportSeriesQueryOptions(transport, 'w1', 'b-1', 4, unauthorized);
-    // Resolves, so react-query has nothing to retry; the block reads `stale-rev` and waits.
-    await expect(options.queryFn({ signal })).resolves.toEqual({ status: 'stale-rev', current_rev: 5 });
-    // Every other failure is still a failure.
-    const failing = recordingTransport(() => ({ status: 500, statusText: 'Internal Server Error', body: {} }));
-    await expect(trackReportSeriesQueryOptions(failing.transport, 'w1', 'b-1', 4, unauthorized).queryFn({ signal }))
-      .rejects.toBeInstanceOf(ApiError);
-    const notFound = recordingTransport(() => ({ status: 404, statusText: 'Not Found', body: {} }));
-    await expect(trackReportSeriesQueryOptions(notFound.transport, 'w1', 'b-1', 4, unauthorized).queryFn({ signal }))
-      .rejects.toBeInstanceOf(ApiError);
-  });
-
-  it('polls only while the row is pending, and backs off after two minutes of it', () => {
-    const state = (data: SeriesRead | undefined, dataUpdateCount = 1) => ({ state: { data, dataUpdateCount } });
-    expect(seriesRefetchInterval(state(pending as SeriesRead))).toBe(3000);
-    expect(seriesRefetchInterval(state(pending as SeriesRead, 40))).toBe(3000);
-    expect(seriesRefetchInterval(state(pending as SeriesRead, 41))).toBe(30_000);
-    expect(seriesRefetchInterval(state({ status: 'stale-rev', current_rev: 5 }))).toBe(false);
-    expect(seriesRefetchInterval(state({ ...pending, status: 'unavailable', reason: 'x', resolved_at: 't' } as SeriesRead))).toBe(false);
-    expect(seriesRefetchInterval(state({
-      ...pending, status: 'ok', as_of: '2026-09-11', resolved_at: 't', pinned: true, series: [],
-    } as SeriesRead))).toBe(false);
-    expect(seriesRefetchInterval(state(undefined, 0))).toBe(false);
-  });
-});
-
-/* The 404 is data: a dangling citation is a state the design admits. */
-describe('track source query', () => {
-  const signal = new AbortController().signal;
-  const row = {
-    source_id: 'src_2c9e0a1b', provenance: 'summary',
-    origin: { kind: 'plugin', plugin_id: 'p', tool: 't', args_sha256: 'ab', args_canon: 'v1' },
-    title: 'T', body_bytes: 3, body_sha256: 'cd', captured_at: '2026-09-14T00:00:00Z',
-    quotes: [{ id: 'q1', text: 'abc', start: 0, end: 3 }], body: 'abc',
-  };
-
-  it('keys by track and source id, under its own prefix, and never refetches on focus', async () => {
-    const { transport, paths } = recordingTransport(() => ok(row));
-    const options = trackSourceQueryOptions(transport, 'w1', 'src_2c9e0a1b', unauthorized);
-    expect(options.queryKey).toEqual(['track-source', 'w1', 'src_2c9e0a1b']);
-    expect(options.queryKey).toEqual(queryKeys.trackSource('w1', 'src_2c9e0a1b'));
-    expect(options.queryKey[0]).not.toBe(queryKeys.trackReportPrefix()[0]);
-    expect(options.refetchOnWindowFocus).toBe(false);
-    await expect(options.queryFn({ signal })).resolves.toMatchObject({ status: 'found', source: { body: 'abc', provenance: 'summary' } });
-    expect(paths).toEqual(['/api/tracks/w1/sources/src_2c9e0a1b']);
-  });
-
-  it('a 404 is a missing source, not an error; every other failure still fails', async () => {
-    const notFound = recordingTransport(() => ({ status: 404, statusText: 'Not Found', body: { error: 'source not found', code: 'not_found' } }));
-    await expect(trackSourceQueryOptions(notFound.transport, 'w1', 'src_0badf00d', unauthorized).queryFn({ signal }))
-      .resolves.toEqual({ status: 'missing' });
-    const failing = recordingTransport(() => ({ status: 500, statusText: 'Internal Server Error', body: {} }));
-    await expect(trackSourceQueryOptions(failing.transport, 'w1', 'src_0badf00d', unauthorized).queryFn({ signal }))
-      .rejects.toBeInstanceOf(ApiError);
-    const malformed = recordingTransport(() => ok({ ...row, body: 7 }));
-    await expect(trackSourceQueryOptions(malformed.transport, 'w1', 'src_2c9e0a1b', unauthorized).queryFn({ signal }))
-      .rejects.toBeInstanceOf(ApiError);
   });
 });
 
@@ -1138,4 +800,36 @@ describe('input metadata mutation reconciliation', () => {
       }
     },
   );
+});
+
+
+it('isolates cached availability, managed capabilities and models between execution targets', async () => {
+  const { transport, paths } = recordingTransport(request => {
+    const remote = request.path.startsWith('/api/v1/targets/');
+    const providers = [{ provider: 'codex', available: !remote, reason: remote ? 'Remote offline' : null,
+      version: null, models: [remote ? 'remote-model' : 'local-model'] }];
+    return ok(remote ? providers : { version: 'test', providers, templates: [], areas: [] });
+  });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+  try {
+    const localAvailability = await client.fetchQuery(agentProvidersQueryOptions(transport, unauthorized, 'local'));
+    const remoteAvailability = await client.fetchQuery(agentProvidersQueryOptions(transport, unauthorized, 'ssh/remote'));
+    expect(localAvailability[0].status).toBe('ready');
+    expect(remoteAvailability[0]).toMatchObject({ status: 'unavailable', reason: 'Remote offline' });
+    const localManaged = await client.fetchQuery(managedProvidersQueryOptions(transport, unauthorized, 'local'));
+    const remoteManaged = await client.fetchQuery(managedProvidersQueryOptions(transport, unauthorized, 'ssh/remote'));
+    expect(localManaged[0].availability.status).toBe('ready');
+    expect(remoteManaged[0].availability.status).toBe('unavailable');
+    const localCatalog = await client.fetchQuery(modelCatalogQueryOptions(transport,
+      { kind: 'provider', provider: 'codex', targetId: 'local' }, unauthorized));
+    const remoteCatalog = await client.fetchQuery(modelCatalogQueryOptions(transport,
+      { kind: 'provider', provider: 'codex', targetId: 'ssh/remote' }, unauthorized));
+    expect(localCatalog.models.map(model => model.model)).toEqual(['local-model']);
+    expect(remoteCatalog.models.map(model => model.model)).toEqual(['remote-model']);
+    expect(paths).toEqual([
+      '/api/v1/bootstrap?scope=providers', '/api/v1/targets/ssh%2Fremote/providers',
+      '/api/v1/bootstrap?scope=managed', '/api/v1/targets/ssh%2Fremote/providers',
+      '/api/v1/bootstrap?provider=codex', '/api/v1/targets/ssh%2Fremote/providers',
+    ]);
+  } finally { client.clear(); }
 });

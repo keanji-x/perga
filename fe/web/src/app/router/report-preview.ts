@@ -2,15 +2,12 @@
 // previews, answered per `preview` block by its `key`. Only a report that has a preview
 // block polls at all.
 
-import { useQuery, type UseQueryResult } from '@tanstack/react-query';
-import { useCallback, useMemo } from 'react';
+import { type UseQueryResult } from '@tanstack/react-query';
+import { useMemo } from 'react';
 
-import type { ApiTransportPort } from '../../../../core/api/types.ts';
-import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
-import type { PreviewResolution, ReportBlock, TrackPreviews } from '../../../../core/domain/report.ts';
-import type { PreviewViewportStore } from '../../features/report/preview/public.tsx';
 import { readFailureOf } from '../../../../core/domain/read-failure.ts';
-import { trackPreviewsQueryOptions } from '../providers/queries.ts';
+import type { PreviewResolution,TrackPreviews } from '../../../../core/domain/report.ts';
+import type { PreviewViewportStore } from '../../features/report/preview/public.tsx';
 import { useUiPreferences } from '../providers/ui-preferences.tsx';
 
 export type PreviewResolver = (key: string) => PreviewResolution;
@@ -27,21 +24,6 @@ export function previewResolutionOf(
     return { status: 'error', failure: readFailureOf(result.error) };
   }
   return { status: 'loading' };
-}
-
-export function useReportPreviewResolver(
-  transport: ApiTransportPort, trackId: string, blocks: readonly ReportBlock[] | null,
-  unauthorized: UnauthorizedChannel, disabled = false,
-): PreviewResolver {
-  const hasPreview = useMemo(() => !disabled && (blocks ?? []).some((block) => block.kind === 'preview'), [blocks, disabled]);
-  const { data, isError, error } = useQuery({
-    ...trackPreviewsQueryOptions(transport, trackId, unauthorized),
-    enabled: hasPreview,
-  });
-  return useCallback(
-    (key: string) => disabled ? { status: 'missing' } : previewResolutionOf({ data, isError, error }, key),
-    [data, disabled, isError, error],
-  );
 }
 
 /** The track's preview blocks remember the reader's device choice in the display preferences, per track and key. */

@@ -1,13 +1,13 @@
 // @vitest-environment jsdom
-import { QueryClient, QueryObserver } from '@tanstack/react-query';
-import { cleanup, render, waitFor } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { QueryClient,QueryObserver } from '@tanstack/react-query';
+import { cleanup,render,waitFor } from '@testing-library/react';
+import { afterEach,describe,expect,it,vi } from 'vitest';
 
-import { ApiError } from '../../../core/domain/failure-class.ts';
 import type { ApiTransportPort } from '../../../core/api/types.ts';
+import { ApiError } from '../../../core/domain/failure-class.ts';
 import { createFakeSocketFactory } from '../systems/events/fake-socket.ts';
 import { WebSocketDriver } from '../systems/events/websocket-driver.ts';
-import { createBrowserEventComposition, createEventComposition } from './composition.ts';
+import { createBrowserEventComposition,createEventComposition } from './composition.ts';
 import { EventBridge } from './events/event-bridge.tsx';
 
 const transport: ApiTransportPort = { send: () => Promise.reject(new Error('unused')) };
@@ -15,11 +15,8 @@ function storage() {
   const values = new Map<string, string>();
   return { values, getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, value); }, removeItem: (key: string) => { values.delete(key); } };
 }
-function cardAdded(id: number, trackId = 'track_1'): string {
-  return JSON.stringify({
-    ev: 'card.added', _id: id, eventVersion: 1,
-    data: { id: 'card_1', track_id: trackId, kind: 'terminal', sort: 5, payload: {}, created_at: 1000, updated_at: 2000 },
-  });
+function cardAdded(id: number, trackId = 'track-1') {
+  return { _id: id, eventVersion: 3, ev: 'task.updated', data: { track_id: trackId } };
 }
 
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
