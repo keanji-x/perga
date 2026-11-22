@@ -21,6 +21,263 @@ namespace Perga.Host.IntegrationTests;
 
 public sealed class ExecutionTargetIntegrationTests
 {
+    [Fact]
+    public async Task RemoteMcpTunnel_ReusesRestartsAndDisposesSsh()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        using var fixture = new RemoteSshFixture();
+        await fixture.WriteSshAsync($$"""
+            echo "$*" >> '{{fixture.Root}}/args'
+            echo $$ >> '{{fixture.Root}}/pids'
+            count=$(wc -l < '{{fixture.Root}}/pids')
+            case " $* " in
+              *" -o LogLevel=INFO "*) echo "Allocated port $((43209 + count)) for remote forward to 127.0.0.1:4240" >&2 ;;
+              *) echo "LogLevel=INFO required" >&2; exit 1 ;;
+            esac
+            exec sleep 120
+            """);
+        await using var env = new SshExecutionEnvironment(fixture.Config);
+        Assert.Equal("http://127.0.0.1:43210/mcp", await env.ResolveMcpBaseUriAsync("http://0.0.0.0:4240/mcp/"));
+        Assert.Equal("http://127.0.0.1:43210/mcp", await env.ResolveMcpBaseUriAsync("http://0.0.0.0:4240/mcp/"));
+        var pids = await File.ReadAllLinesAsync(Path.Combine(fixture.Root, "pids"));
+        Assert.Single(pids);
+        using var first = System.Diagnostics.Process.GetProcessById(int.Parse(pids[0]));
+        first.Kill();
+        await first.WaitForExitAsync();
+        Assert.Equal("http://127.0.0.1:43211/mcp", await env.ResolveMcpBaseUriAsync("http://0.0.0.0:4240/mcp/"));
+        pids = await File.ReadAllLinesAsync(Path.Combine(fixture.Root, "pids"));
+        Assert.Equal(2, pids.Length);
+        using var second = System.Diagnostics.Process.GetProcessById(int.Parse(pids[1]));
+        var args = await File.ReadAllTextAsync(Path.Combine(fixture.Root, "args"));
+        Assert.Contains("-N -o LogLevel=INFO -o ExitOnForwardFailure=yes -R 127.0.0.1:0:127.0.0.1:4240 --", args);
+        Assert.DoesNotContain("ControlMaster=auto", args);
+        Assert.Contains("-o ControlMaster=no", args);
+        Assert.Contains("-o ControlPath=none", args);
+        Assert.Contains("-o ControlPersist=no", args);
+        await env.DisposeAsync();
+        Assert.True(second.HasExited);
+    }
+
+    [Fact]
+    public async Task RemoteMcpTunnel_FailureIncludesStderr_AndOverrideSkipsSsh()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        using var fixture = new RemoteSshFixture();
+        await fixture.WriteSshAsync($$"""
+            echo $$ > '{{fixture.Root}}/pid'
+            echo 'remote forwarding denied' >&2
+            exit 255
+            """);
+        await using (var env = new SshExecutionEnvironment(fixture.Config))
+        {
+            var ex = await Assert.ThrowsAsync<KernelException>(() => env.ResolveMcpBaseUriAsync("http://127.0.0.1:4240"));
+            Assert.Equal(KernelErrorCode.PreconditionFailed, ex.Code);
+            Assert.Contains("remote forwarding denied", ex.Message);
+            Assert.Contains("AllowTcpForwarding", ex.Message);
+            var pid = int.Parse(await File.ReadAllTextAsync(Path.Combine(fixture.Root, "pid")));
+            Assert.Throws<ArgumentException>(() => System.Diagnostics.Process.GetProcessById(pid));
+        }
+        File.Delete(Path.Combine(fixture.Root, "pid"));
+        fixture.Options.McpBaseUriOverride = "http://explicit.example:4240/";
+        await using var overridden = new SshExecutionEnvironment(new SshTargetConfig("remote", fixture.Options));
+        Assert.Equal("http://explicit.example:4240", await overridden.ResolveMcpBaseUriAsync("http://127.0.0.1:4240"));
+        Assert.False(File.Exists(Path.Combine(fixture.Root, "pid")));
+    }
+
+    [Fact]
+    public async Task RemoteMcpTunnel_RejectsHttpsWithoutStartingSsh()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        using var fixture = new RemoteSshFixture();
+        var marker = Path.Combine(fixture.Root, "started");
+        await fixture.WriteSshAsync($"touch {SshCommandBuilder.QuotePosix(marker)}");
+        await using var env = new SshExecutionEnvironment(fixture.Config);
+        var ex = await Assert.ThrowsAsync<KernelException>(() => env.ResolveMcpBaseUriAsync("https://perga.example:4240"));
+        Assert.Equal(KernelErrorCode.PreconditionFailed, ex.Code);
+        Assert.Contains("McpBaseUriOverride", ex.Message);
+        Assert.False(File.Exists(marker));
+    }
+
+    [Fact]
+    public async Task StageFile_RejectsTruncatedUpload_AndRepairsTruncatedCache()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        using var fixture = new RemoteSshFixture();
+        var localPath = Path.Combine(fixture.Root, "payload");
+        var bytes = Encoding.UTF8.GetBytes("complete payload");
+        await File.WriteAllBytesAsync(localPath, bytes);
+        await fixture.WriteSshAsync("""
+            for arg do last=$arg; done
+            case "$last" in
+              *'cat >'*) head -c 3 | sh -c "$last" ;;
+              *) exec sh -c "$last" ;;
+            esac
+            """);
+        await Assert.ThrowsAsync<IOException>(() => SshCommandBuilder.StageFileAsync(
+            fixture.Config, localPath, "payload", ".bin", executable: false));
+        var runtime = Path.Combine(fixture.Root, ".perga-runtime");
+        Assert.Empty(Directory.GetFiles(runtime));
+
+        await fixture.WriteSshAsync("for arg do last=$arg; done\nexec sh -c \"$last\"");
+        var staged = await SshCommandBuilder.StageFileAsync(fixture.Config, localPath, "payload", ".bin", executable: false);
+        Assert.Equal(bytes, await File.ReadAllBytesAsync(staged));
+        await File.WriteAllBytesAsync(staged, bytes[..3]);
+        Assert.Equal(staged, await SshCommandBuilder.StageFileAsync(fixture.Config, localPath, "payload", ".bin", executable: false));
+        Assert.Equal(bytes, await File.ReadAllBytesAsync(staged));
+        Assert.Empty(Directory.GetFiles(runtime, "*.tmp.*"));
+    }
+
+    [Fact]
+    public async Task RemoteMcpTunnel_CancellationKillsStartupProcess()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        using var fixture = new RemoteSshFixture();
+        await fixture.WriteSshAsync($$"""
+            echo $$ > '{{fixture.Root}}/pid'
+            exec sleep 120
+            """);
+        await using var env = new SshExecutionEnvironment(fixture.Config);
+        using var ct = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var pending = env.ResolveMcpBaseUriAsync("http://127.0.0.1:4240", ct.Token);
+        var pidFile = Path.Combine(fixture.Root, "pid");
+        int pid;
+        while (!File.Exists(pidFile) || !int.TryParse(File.ReadAllText(pidFile).Trim(), out pid))
+            await Task.Delay(10, ct.Token);
+        using var process = System.Diagnostics.Process.GetProcessById(pid);
+        ct.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);
+        Assert.True(process.HasExited);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RemoteTerminalBridge_StagesMatchingArchitecture_RejectsMismatch(bool mismatch)
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        var arch = System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture switch
+        {
+            System.Runtime.InteropServices.Architecture.X64 => "x86_64",
+            System.Runtime.InteropServices.Architecture.Arm64 => "aarch64",
+            _ => null
+        };
+        if (arch is null) return;
+        using var fixture = new RemoteSshFixture();
+        var localBin = Path.Combine(fixture.Root, "host-bridge");
+        await File.WriteAllTextAsync(localBin, "#!/bin/sh\necho 'staged bridge invoked' >&2\nexit 1\n");
+        await fixture.WriteSshAsync($$"""
+            for arg do last=$arg; done
+            case "$last" in
+              *'command -v perga-term-bridge'*) exit 1 ;;
+              *'uname -sm'*) echo '{{(mismatch ? "Darwin arm64" : "Linux " + arch)}}'; exit 0 ;;
+            esac
+            exec sh -c "$last"
+            """);
+        var config = new SshTargetConfig("remote", fixture.Options, hostTerminalBridgeExecutablePath: localBin);
+        await using var client = new SshTerminalBridgeClient(config);
+        try
+        {
+            var ex = await Assert.ThrowsAsync<TerminalBridgeException>(() => client.EnsureAsync(
+                new TermEnsureRequest("term", "sh", [], fixture.Root, new Dictionary<string, string>()), CancellationToken.None));
+            var runtime = Path.Combine(fixture.Root, ".perga-runtime");
+            if (mismatch)
+            {
+                Assert.Contains("architecture mismatch", ex.Message);
+                Assert.Contains("TerminalBridgeExecutablePath", ex.Message);
+                Assert.False(Directory.Exists(runtime));
+            }
+            else
+            {
+                Assert.Contains("staged bridge invoked", ex.Message);
+                var staged = Assert.Single(Directory.GetFiles(runtime, "perga-term-bridge-*"));
+                var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(await File.ReadAllBytesAsync(localBin)))[..12].ToLowerInvariant();
+                Assert.Equal("perga-term-bridge-" + hash, Path.GetFileName(staged));
+                Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute, File.GetUnixFileMode(staged));
+                Assert.Equal(await File.ReadAllBytesAsync(localBin), await File.ReadAllBytesAsync(staged));
+            }
+        }
+        finally
+        {
+            if (Directory.Exists(config.ControlDir)) Directory.Delete(config.ControlDir, true);
+        }
+    }
+
+    [Fact]
+    public async Task RemoteTerminalBridge_UnameFailurePreservesStderr()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        using var fixture = new RemoteSshFixture();
+        await fixture.WriteSshAsync("""
+            for arg do last=$arg; done
+            case "$last" in
+              *'command -v perga-term-bridge'*) exit 1 ;;
+              *'uname -sm'*) echo 'connection lost during uname' >&2; exit 255 ;;
+            esac
+            """);
+        await using var client = new SshTerminalBridgeClient(fixture.Config);
+        var ex = await Assert.ThrowsAsync<TerminalBridgeException>(() => client.EnsureAsync(
+            new TermEnsureRequest("term", "sh", [], fixture.Root, new Dictionary<string, string>()), CancellationToken.None));
+        Assert.Contains("connection lost during uname", ex.Message);
+        Assert.DoesNotContain("architecture mismatch", ex.Message);
+    }
+
+    [Theory]
+    [InlineData(null, null)]
+    [InlineData("  ", null)]
+    [InlineData(" /host/bridge ", "/host/bridge")]
+    public void SshTargetConfig_NormalizesHostTerminalBridgePath(string? input, string? expected)
+    {
+        var config = new SshTargetConfig("remote", new ExecutionTargetOptions { User = "test" },
+            hostTerminalBridgeExecutablePath: input);
+        Assert.Equal(expected, config.HostTerminalBridgeExecutablePath);
+    }
+
+    [Fact]
+    public async Task SshConnectivityProbe_ReportsMissingPython()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        using var fixture = new RemoteSshFixture();
+        await fixture.WriteSshAsync($$"""
+            echo "$*" > '{{fixture.Root}}/args'
+            echo PERGA_MISSING_PYTHON3 >&2
+            exit 42
+            """);
+        var result = await new ProcessSshTargetConnectivityProbe().ProbeAsync(fixture.Config);
+        Assert.False(result.Success);
+        Assert.Contains("missing 'python3'", result.ErrorMessage);
+        Assert.Contains("command -v python3", await File.ReadAllTextAsync(Path.Combine(fixture.Root, "args")));
+    }
+
+    private sealed class RemoteSshFixture : IDisposable
+    {
+        public string Root { get; } = Path.Combine(Path.GetTempPath(), $"perga-remote-{Guid.NewGuid():N}");
+        public ExecutionTargetOptions Options { get; }
+        public SshTargetConfig Config { get; }
+
+        public RemoteSshFixture()
+        {
+            Directory.CreateDirectory(Root);
+            Options = new ExecutionTargetOptions
+            {
+                Host = "remote.example", User = "test", WorkspacesRoot = Root, SshExecutablePath = Path.Combine(Root, "ssh")
+            };
+            Config = new SshTargetConfig("remote", Options);
+        }
+
+        public async Task WriteSshAsync(string body)
+        {
+            await File.WriteAllTextAsync(Options.SshExecutablePath!, "#!/bin/sh\n" + body + "\n");
+            if (!OperatingSystem.IsWindows())
+                File.SetUnixFileMode(Options.SshExecutablePath!, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+
+        public void Dispose()
+        {
+            Directory.Delete(Root, true);
+            if (Directory.Exists(Config.ControlDir)) Directory.Delete(Config.ControlDir, true);
+        }
+    }
+
     [Theory]
     [InlineData("user@host", "host", 22)]
     [InlineData("user@host:1773", "host", 1773)]

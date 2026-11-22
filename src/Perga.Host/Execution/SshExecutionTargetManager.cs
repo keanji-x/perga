@@ -23,7 +23,7 @@ public sealed class ProcessSshTargetConnectivityProbe : ISshTargetConnectivityPr
         ArgumentNullException.ThrowIfNull(config);
         var args = SshCommandBuilder.BuildSshExecArguments(
             config,
-            "printf '%s' \"$HOME\"",
+            "command -v python3 >/dev/null 2>&1 || { echo 'PERGA_MISSING_PYTHON3' >&2; exit 42; }; printf '%s' \"$HOME\"",
             enableControlMaster: false);
 
         using var process = new Process
@@ -54,6 +54,9 @@ public sealed class ProcessSshTargetConnectivityProbe : ISshTargetConnectivityPr
             await process.WaitForExitAsync(timeoutCts.Token).ConfigureAwait(false);
             var stdout = (await stdoutTask.ConfigureAwait(false)).Trim();
             var stderr = (await stderrTask.ConfigureAwait(false)).Trim();
+
+            if (process.ExitCode == 42 || stderr.Contains("PERGA_MISSING_PYTHON3", StringComparison.Ordinal))
+                return new SshProbeResult(false, null, "Connected via SSH, but remote host is missing 'python3' (required for remote directory browsing and workspace file access).");
 
             if (process.ExitCode != 0)
             {
@@ -181,7 +184,8 @@ public sealed class SshExecutionTargetManager : IExecutionTargetManager
                     WorkspacesRoot = explicitWorkspacesRoot ?? "/tmp"
                 },
                 hostOarBridgeScriptPath: _options.OarBridgeScriptPath,
-                removable: true);
+                removable: true,
+                hostTerminalBridgeExecutablePath: _options.TerminalBridgeExecutablePath);
         }
         catch (ArgumentException ex)
         {
@@ -394,5 +398,6 @@ public sealed class SshExecutionTargetManager : IExecutionTargetManager
                 WorkspacesRoot = item.WorkspacesRoot
             },
             hostOarBridgeScriptPath: _options.OarBridgeScriptPath,
-            removable: true);
+            removable: true,
+            hostTerminalBridgeExecutablePath: _options.TerminalBridgeExecutablePath);
 }

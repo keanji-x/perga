@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -81,6 +82,29 @@ public static partial class SshCommandBuilder
         }
     }
 
+    public static async Task<string> StageFileAsync(
+        SshTargetConfig config, string localPath, string remoteFilePrefix, string extension,
+        bool executable, CancellationToken ct = default)
+    {
+        var bytes = await File.ReadAllBytesAsync(localPath, ct).ConfigureAwait(false);
+        var hash = Convert.ToHexString(SHA256.HashData(bytes))[..12].ToLowerInvariant();
+        var runtimeDir = $"{config.WorkspacesRoot.TrimEnd('/')}/.perga-runtime";
+        var stagedPath = $"{runtimeDir}/{remoteFilePrefix}-{hash}{extension}";
+        var qStaged = QuotePosix(stagedPath);
+        var (exists, _, _) = await RunTextAsync(config,
+            $"[ -f {qStaged} ] && [ \"$(wc -c < {qStaged})\" -eq {bytes.Length} ]" + (executable ? $" && [ -x {qStaged} ]" : ""), ct: ct).ConfigureAwait(false);
+        if (exists == 0) return stagedPath;
+
+        var qTemp = QuotePosix($"{stagedPath}.tmp.{Guid.NewGuid():N}");
+        var script = $"umask 077; trap {QuotePosix($"rm -f -- {qTemp}")} EXIT; " +
+            $"mkdir -p -- {QuotePosix(runtimeDir)} && cat > {qTemp} && [ \"$(wc -c < {qTemp})\" -eq {bytes.Length} ]" +
+            (executable ? $" && chmod 700 -- {qTemp}" : "") + $" && mv -f -- {qTemp} {qStaged}";
+        var (code, _, stderr) = await RunBytesAsync(config, script, bytes, ct).ConfigureAwait(false);
+        if (code != 0)
+            throw new IOException($"Failed to stage file onto target '{config.TargetId}' at '{stagedPath}': {stderr.Trim()}");
+        return stagedPath;
+    }
+
     public static bool IsValidPosixEnvName(string name) =>
         !string.IsNullOrEmpty(name) && ValidPosixEnvNameRegex().IsMatch(name);
 
@@ -159,6 +183,15 @@ public static partial class SshCommandBuilder
             args.Add("ControlPersist=120");
             args.Add("-o");
             args.Add($"ControlPath={config.ControlPath}");
+        }
+        else
+        {
+            args.Add("-o");
+            args.Add("ControlMaster=no");
+            args.Add("-o");
+            args.Add("ControlPath=none");
+            args.Add("-o");
+            args.Add("ControlPersist=no");
         }
 
         return args;

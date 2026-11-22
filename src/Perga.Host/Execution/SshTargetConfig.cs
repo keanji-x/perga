@@ -19,6 +19,7 @@ public sealed class SshTargetConfig
     public string? OarNodeExecutablePath { get; }
     public string? OarBridgeScriptPath { get; }
     public string? HostOarBridgeScriptPath { get; }
+    public string? HostTerminalBridgeExecutablePath { get; }
     public string? McpBaseUriOverride { get; }
     public string SshExecutablePath { get; }
     public IReadOnlyDictionary<string, string> ExtraEnv { get; }
@@ -43,7 +44,8 @@ public sealed class SshTargetConfig
         string targetId,
         ExecutionTargetOptions options,
         string? hostOarBridgeScriptPath = null,
-        bool removable = false)
+        bool removable = false,
+        string? hostTerminalBridgeExecutablePath = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(targetId);
         ArgumentNullException.ThrowIfNull(options);
@@ -98,6 +100,9 @@ public sealed class SshTargetConfig
         HostOarBridgeScriptPath = string.IsNullOrWhiteSpace(hostOarBridgeScriptPath)
             ? null
             : hostOarBridgeScriptPath.Trim();
+        HostTerminalBridgeExecutablePath = string.IsNullOrWhiteSpace(hostTerminalBridgeExecutablePath)
+            ? null
+            : hostTerminalBridgeExecutablePath.Trim();
         McpBaseUriOverride = string.IsNullOrWhiteSpace(options.McpBaseUriOverride)
             ? null
             : options.McpBaseUriOverride.Trim();
