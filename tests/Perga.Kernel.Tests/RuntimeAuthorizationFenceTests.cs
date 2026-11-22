@@ -48,9 +48,10 @@ public sealed class RuntimeAuthorizationFenceTests
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task MailRechecksSenderAtRecipientsCommit(bool policyChanges)
+    [InlineData("revoke")]
+    [InlineData("policy")]
+    [InlineData("stop")]
+    public async Task MailRechecksSenderAtRecipientsCommit(string change)
     {
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
         var (_, from) = await ctx.CreateDefaultTrackAsync();
@@ -61,6 +62,7 @@ public sealed class RuntimeAuthorizationFenceTests
         var recipient = ctx.Kernel.Actors.GetOrActivate(to.Track.Id);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var ct = deadline.Token;
+        var originatingTurn = change == "stop" ? await StartStoppableTurnAsync(ctx, caller.SessionId, ct) : null;
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var blocked = recipient.EnqueueAsync(_ => release.Task, ct);
         var send = ctx.Kernel.SendMailAsync(from.Track.Id, caller.SessionId, to.Track.Id, "Subject", "Body", ct,
@@ -68,9 +70,14 @@ public sealed class RuntimeAuthorizationFenceTests
         try
         {
             await sender.EnqueueAsync(_ => Task.CompletedTask, ct);
-            if (policyChanges)
+            if (change == "policy")
                 await ctx.Kernel.InvokeKernelMcpToolAsync(caller, KernelMcpToolNames.TrackSet,
                     TestJson.FromObject(new { source = "export default {id:'fresh',title:'Fresh'};" }), ct);
+            else if (originatingTurn is not null)
+            {
+                await StopAndWaitForIdleAsync(ctx, caller.SessionId, originatingTurn, ct);
+                Assert.Equal(caller.Token, ctx.RuntimeCaller(caller.SessionId).Token);
+            }
             else
                 await ctx.Kernel.ControlSessionAsync(caller.SessionId, new("reset_context"), Human, ct);
         }
@@ -78,7 +85,7 @@ public sealed class RuntimeAuthorizationFenceTests
 
         await blocked;
         var error = await Assert.ThrowsAsync<KernelException>(() => send.WaitAsync(ct));
-        Assert.Equal(policyChanges ? KernelErrorCode.PolicyDenied : KernelErrorCode.Conflict, error.Code);
+        Assert.Equal(change == "policy" ? KernelErrorCode.PolicyDenied : KernelErrorCode.Conflict, error.Code);
         Assert.Empty(await ctx.Kernel.ListMailsAsync(to.Track.Id, ct: ct));
     }
 
@@ -211,8 +218,10 @@ public sealed class RuntimeAuthorizationFenceTests
         Assert.Equal(child.Epoch, (await ctx.Kernel.GetSessionItemsAsync(child.Id, new(), Human, ct)).Session.Epoch);
     }
 
-    [Fact]
-    public async Task QueuedSteerChecksCallerAgainAndHistoricalTurnIdReturnsConflict()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task QueuedSteerChecksCallerAgainAndHistoricalTurnIdReturnsConflict(bool stops)
     {
         await using var ctx = new KernelTestContext();
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
@@ -226,6 +235,7 @@ public sealed class RuntimeAuthorizationFenceTests
         ctx.AgentRuntime.TurnScript = (_, _, token) => HoldTurnAsync(streaming, finishStream.Task, token);
         await ctx.Kernel.SendSessionMessageAsync(child.Id, new("next", "next"), Human, ct);
         await streaming.Task.WaitAsync(ct);
+        var originatingTurn = stops ? await StartStoppableTurnAsync(ctx, caller.SessionId, ct) : null;
         var active = (await ctx.Kernel.GetSessionItemsAsync(child.Id, new(), Human, ct)).ActiveTurn!;
         var stale = await Assert.ThrowsAsync<KernelException>(() => SendSteer("stale", previous.Id));
         Assert.Equal(KernelErrorCode.Conflict, stale.Code);
@@ -247,7 +257,13 @@ public sealed class RuntimeAuthorizationFenceTests
                 Mode: "steer", TurnId: active.Id), authorization, ct);
             await ctx.Kernel.Actors.GetOrActivate(snapshot.Track.Id).EnqueueAsync(_ => Task.CompletedTask, ct);
             Assert.False(blocked.IsCompleted);
-            ctx.Kernel.McpSessionBridge.RevokeSession(caller.SessionId, caller.RuntimeBindingId);
+            if (originatingTurn is not null)
+            {
+                await StopAndWaitForIdleAsync(ctx, caller.SessionId, originatingTurn, ct);
+                Assert.Equal(caller.Token, ctx.RuntimeCaller(caller.SessionId).Token);
+            }
+            else
+                ctx.Kernel.McpSessionBridge.RevokeSession(caller.SessionId, caller.RuntimeBindingId);
             finishSteering.TrySetResult();
             var error = await Assert.ThrowsAsync<KernelException>(() => blocked.WaitAsync(ct));
             Assert.Equal(KernelErrorCode.Conflict, error.Code);
@@ -281,25 +297,7 @@ public sealed class RuntimeAuthorizationFenceTests
         ctx.AgentRuntime.TurnScript = (_, _, token) => HoldTurnAsync(streaming, finishStream.Task, token);
         await ctx.Kernel.SendSessionMessageAsync(child.Id, new("work", "start"), Human, ct);
         await streaming.Task.WaitAsync(ct);
-        string? callerTurnId = null;
-        if (stops)
-        {
-            var callerStream = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            var callerStopped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            var source = Assert.Single(ctx.AgentRuntime.OpenedSessions, session => session.LaunchSpec.StateKey == caller.SessionId);
-            source.RequiresTerminalStop = true;
-            source.OnCancelTurn = () => callerStopped.TrySetResult();
-            ctx.AgentRuntime.TurnScript = (_, _, token) => HoldCallerAsync(token);
-            async IAsyncEnumerable<UnifiedAgentEvent> HoldCallerAsync([EnumeratorCancellation] CancellationToken token)
-            {
-                callerStream.TrySetResult();
-                await Task.WhenAny(callerStopped.Task, finishStream.Task).WaitAsync(token);
-                yield return new UnifiedAgentEvent.TurnInterrupted();
-            }
-            await ctx.Kernel.SendSessionMessageAsync(caller.SessionId, new("caller work", "caller-work"), Human, ct);
-            await callerStream.Task.WaitAsync(ct);
-            callerTurnId = (await ctx.Kernel.GetSessionItemsAsync(caller.SessionId, new(), Human, ct)).ActiveTurn!.Id;
-        }
+        var originatingTurn = stops ? await StartStoppableTurnAsync(ctx, caller.SessionId, ct) : null;
         var active = (await ctx.Kernel.GetSessionItemsAsync(child.Id, new(), Human, ct)).ActiveTurn!;
         var provider = Assert.Single(ctx.AgentRuntime.OpenedSessions, session => session.LaunchSpec.StateKey == child.Id);
         var queued = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -316,11 +314,9 @@ public sealed class RuntimeAuthorizationFenceTests
         try
         {
             await queued.Task.WaitAsync(ct);
-            if (stops)
+            if (originatingTurn is not null)
             {
-                await ctx.Kernel.ControlSessionAsync(caller.SessionId, new("stop", TurnId: callerTurnId), Human, ct);
-                while ((await ctx.Kernel.GetSessionItemsAsync(caller.SessionId, new(), Human, ct)).ActiveTurn is not null)
-                    await Task.Delay(5, ct);
+                await StopAndWaitForIdleAsync(ctx, caller.SessionId, originatingTurn, ct);
                 Assert.Equal(caller.Token, ctx.RuntimeCaller(caller.SessionId).Token);
             }
             else
@@ -335,6 +331,38 @@ public sealed class RuntimeAuthorizationFenceTests
             permitStdin.TrySetResult();
             finishStream.TrySetResult();
         }
+    }
+
+    [Fact]
+    public async Task HumanSteerRejectedBeforeWritingHasRejectedReceipt()
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var ct = deadline.Token;
+        var sessionId = snapshot.Track.LeadSessionId!;
+        await ctx.OpenMcpCallerAsync(sessionId, ct);
+        var turnId = await StartStoppableTurnAsync(ctx, sessionId, ct);
+        var provider = Assert.Single(ctx.AgentRuntime.OpenedSessions);
+        var waiting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        provider.WaitForSteerWrite = token =>
+        {
+            waiting.TrySetResult();
+            return release.Task.WaitAsync(token);
+        };
+        var request = new SendSessionMessageRequest("late steer", "late-steer", Mode: "steer", TurnId: turnId);
+        var steering = ctx.Kernel.SendSessionMessageAsync(sessionId, request, Human, ct);
+        try
+        {
+            await waiting.Task.WaitAsync(ct);
+            await StopAndWaitForIdleAsync(ctx, sessionId, turnId, ct);
+        }
+        finally { release.TrySetResult(); }
+
+        Assert.Equal("rejected", (await steering.WaitAsync(ct)).Delivery);
+        Assert.Equal("rejected", (await ctx.Kernel.SendSessionMessageAsync(sessionId, request, Human, ct)).Delivery);
+        Assert.Empty(provider.SteeredMessages);
     }
 
     [Theory]
@@ -428,6 +456,45 @@ public sealed class RuntimeAuthorizationFenceTests
         public void UpdateLeadStatus(string trackId, string? newLeadSessionId) => _inner.UpdateLeadStatus(trackId, newLeadSessionId);
         public void UpdateTrackPlugins(string trackId, IReadOnlyList<string> enabledPlugins) => _inner.UpdateTrackPlugins(trackId, enabledPlugins);
         public void RevokeTrack(string trackId) => _inner.RevokeTrack(trackId);
+    }
+
+    private static async Task<string> StartStoppableTurnAsync(KernelTestContext ctx, string sessionId, CancellationToken ct)
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var stopped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var provider = Assert.Single(ctx.AgentRuntime.OpenedSessions, session => session.LaunchSpec.StateKey == sessionId);
+        provider.RequiresTerminalStop = true;
+        provider.OnCancelTurn = () => stopped.TrySetResult();
+        var previous = ctx.AgentRuntime.TurnScript;
+        ctx.AgentRuntime.TurnScript = (_, _, token) => StreamAsync(token);
+
+        async IAsyncEnumerable<UnifiedAgentEvent> StreamAsync([EnumeratorCancellation] CancellationToken token)
+        {
+            entered.TrySetResult();
+            await stopped.Task.WaitAsync(token);
+            yield return new UnifiedAgentEvent.TurnInterrupted();
+        }
+
+        try
+        {
+            await ctx.Kernel.SendSessionMessageAsync(sessionId, new("caller work", "caller-work"), Human, ct);
+            await entered.Task.WaitAsync(ct);
+            return (await ctx.Kernel.GetSessionItemsAsync(sessionId, new(), Human, ct)).ActiveTurn!.Id;
+        }
+        finally { ctx.AgentRuntime.TurnScript = previous; }
+    }
+
+    private static async Task StopAndWaitForIdleAsync(KernelTestContext ctx, string sessionId, string turnId, CancellationToken ct)
+    {
+        await ctx.Kernel.ControlSessionAsync(sessionId, new("stop", TurnId: turnId), Human, ct);
+        var page = await ctx.Kernel.GetSessionItemsAsync(sessionId, new(), Human, ct);
+        while (page.ActiveTurn is not null)
+        {
+            await Task.Delay(5, ct);
+            page = await ctx.Kernel.GetSessionItemsAsync(sessionId, new(), Human, ct);
+        }
+        Assert.Equal("idle", page.State);
+        Assert.Equal("interrupted", page.LastTurn?.Status);
     }
 
     private static async IAsyncEnumerable<UnifiedAgentEvent> HoldTurnAsync(TaskCompletionSource streaming,

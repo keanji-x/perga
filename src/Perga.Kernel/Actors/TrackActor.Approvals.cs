@@ -272,29 +272,16 @@ public sealed partial class TrackActor
         string delivery = "expired";
         try
         {
-            if (principal is InteropPrincipal.Session)
-            {
-                delivery = "aborted";
-                await EnqueueAsync(_ =>
+            var send = principal is InteropPrincipal.Session
+                ? await EnqueueAsync(_ =>
                 {
+                    delivery = "aborted";
+                    ct.ThrowIfCancellationRequested();
                     RequireInteropCore(principal, RequireSessionCore(pending.Dto.SessionId), write: true);
-                    return Task.CompletedTask;
-                }, ct).ConfigureAwait(false);
-                delivery = "expired";
-            }
-            Func<Task>? send;
-            lock (_approvalAdmission)
-            lock (pending.StopControl?.Sync ?? pending.Control.Sync)
-            lock (pending.Control.Sync)
-            {
-                if (_approvalAdmissionClosed || pending.StopControl?.StopRequested == true || pending.Control.Phase != ExecutionPhase.Running ||
-                    !TryDetachApprovalLocked(pending))
-                    throw KernelException.Conflict("The execution ended before the decision could be delivered.");
-
-                // Claim the provider request before Stop can cancel it. Writing the reply
-                // can block and must run outside both locks.
-                send = pending.ClaimDelivery(choice);
-            }
+                    delivery = "expired";
+                    return Task.FromResult(ClaimDelivery());
+                }, _actorShutdownCts.Token).ConfigureAwait(false)
+                : ClaimDelivery();
 
             NotifyApprovalsChanged(pending.Dto.SessionId);
             if (send is null)
@@ -311,6 +298,20 @@ public sealed partial class TrackActor
             _ = TrackBackgroundJob(() => RecordApprovalDeliveryAsync(pending.Dto, delivery));
         }
         return pending.Dto;
+
+        Func<Task>? ClaimDelivery()
+        {
+            lock (_approvalAdmission)
+            lock (pending.StopControl?.Sync ?? pending.Control.Sync)
+            lock (pending.Control.Sync)
+            {
+                if (_approvalAdmissionClosed || pending.StopControl?.StopRequested == true || pending.Control.Phase != ExecutionPhase.Running ||
+                    !TryDetachApprovalLocked(pending))
+                    throw KernelException.Conflict("The execution ended before the decision could be delivered.");
+
+                return pending.ClaimDelivery(choice);
+            }
+        }
     }
 
     private async Task RecordApprovalDeliveryAsync(ApprovalDto approval, string delivery)

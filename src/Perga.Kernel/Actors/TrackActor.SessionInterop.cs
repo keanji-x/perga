@@ -35,11 +35,12 @@ public sealed partial class TrackActor
 
     // Also used at the recipient's mail commit point. Read only lifecycle state
     // that is safe to observe without entering the sender's mailbox.
-    private void RequireRuntimeWriteFence(InteropPrincipal.Session identity, OpenSessionHandle open, bool authorized = true)
+    private void RequireRuntimeWriteFence(InteropPrincipal.Session identity, OpenSessionHandle open, bool authorized = true,
+        ActiveTurnState? originatingTurn = null)
     {
         var runtime = _runtimes.Get(identity.SessionId);
         if (_disposed || _track.ClosedAtMs is not null || _closingTrack || _deletingTrack ||
-            runtime.IsDisposing || runtime.IsShutdownUnconfirmed ||
+            runtime.IsDisposing || runtime.IsShutdownUnconfirmed || originatingTurn?.Interrupted == true ||
             _scheduler.TryGetActive(identity.SessionId, out var active) && active.Interrupted ||
             _mcpBridge.ResolveToken(identity.Token) is not { } credential ||
             credential.TrackId != TrackId || credential.SessionId != identity.SessionId ||

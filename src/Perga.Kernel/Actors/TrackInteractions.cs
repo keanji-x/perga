@@ -200,6 +200,8 @@ public sealed partial class TrackActor
                 }
 
                 var open = authorization is null ? null : actor.RequireRuntimeBindingCore(authorization);
+                var originatingTurn = authorization is not null && actor._scheduler.TryGetActive(authorization.SessionId, out var active)
+                    ? active : null;
                 var now = actor.NowMs();
                 var mail = new MailDto(
                     Id: $"mail_{Guid.NewGuid():N}",
@@ -210,7 +212,7 @@ public sealed partial class TrackActor
                     ReadAtMs: null,
                     CreatedAtMs: now,
                     ReplyToMailId: replyToMailId);
-                return (mail, open is null ? null : () => actor.RequireRuntimeWriteFence(authorization!, open));
+                return (mail, open is null ? null : () => actor.RequireRuntimeWriteFence(authorization!, open, originatingTurn: originatingTurn));
             }, ct).ConfigureAwait(false);
 
             await deliverToTargetTrack(mail, authorizeDelivery, ct).ConfigureAwait(false);

@@ -11,7 +11,7 @@ public sealed partial class TrackActor
     private static readonly TimeSpan SteeringRequestTimeout = TimeSpan.FromSeconds(15);
 
     private async Task<SteeringResult> RunSteeringAsync(Task? previous, SessionMessage message,
-        string turnId, bool queued, long startedAt, InteropPrincipal caller)
+        string turnId, bool queued, long startedAt, InteropPrincipal caller, ActiveTurnState? originatingTurn)
     {
         var ct = _actorShutdownCts.Token;
         if (previous is not null)
@@ -21,7 +21,7 @@ public sealed partial class TrackActor
         KernelException? authorizationFailure = null;
         try
         {
-            var delivery = await AttemptSteeringAsync(message, turnId, startedAt, caller, ct).ConfigureAwait(false);
+            var delivery = await AttemptSteeringAsync(message, turnId, startedAt, caller, originatingTurn, ct).ConfigureAwait(false);
             outcome = delivery switch
             {
                 SteerDelivery.Accepted => "delivered",
@@ -116,19 +116,18 @@ public sealed partial class TrackActor
         _ => "unconfirmed",
     });
 
-    private async Task<SteerDelivery?> AttemptSteeringAsync(SessionMessage message, string turnId, long startedAt, InteropPrincipal caller, CancellationToken ct)
+    private async Task<SteerDelivery?> AttemptSteeringAsync(SessionMessage message, string turnId, long startedAt,
+        InteropPrincipal caller, ActiveTurnState? originatingTurn, CancellationToken ct)
     {
-        var (target, callingTurn) = await EnqueueAsync<(ActiveTurnState? Target, ActiveTurnState? Caller)>(_ =>
+        var target = await EnqueueAsync(_ =>
         {
             var session = RequireSessionCore(message.SessionId);
             RequireInteropCore(caller, session, write: true);
             _taskCoordinator.RequireDispatchWorkspace(session);
             if (_taskCoordinator.IsSessionFrozenForDispatchCore(session))
-                return Task.FromResult<(ActiveTurnState?, ActiveTurnState?)>((null, null));
+                return Task.FromResult<ActiveTurnState?>(null);
             _scheduler.TryGetActive(message.SessionId, out var current);
-            var source = caller is InteropPrincipal.Session identity && _scheduler.TryGetActive(identity.SessionId, out var active)
-                ? active : null;
-            return Task.FromResult((current is not null && current.TurnDto.Id == turnId && !current.Interrupted ? current : null, source));
+            return Task.FromResult(current is not null && current.TurnDto.Id == turnId && !current.Interrupted ? current : null);
         }, ct).ConfigureAwait(false);
         var remaining = SteeringRequestTimeout - _timeProvider.GetElapsedTime(startedAt);
         if (remaining <= TimeSpan.Zero) return SteerDelivery.Unconfirmed;
@@ -139,7 +138,7 @@ public sealed partial class TrackActor
         deadline.CancelAfter(remaining < SteeringTimeout ? remaining : SteeringTimeout);
         Task AuthorizeWriteAsync(CancellationToken token) => EnqueueAsync(_ =>
         {
-            if (callingTurn?.Interrupted == true)
+            if (originatingTurn?.Interrupted == true)
                 throw KernelException.Conflict("The originating turn stopped before steering was written.");
             var session = RequireSessionCore(message.SessionId);
             RequireInteropCore(caller, session, write: true);
@@ -152,6 +151,11 @@ public sealed partial class TrackActor
         {
             return await target.AgentSession.SteerAsync(turnId, message.Content, deadline.Token, AuthorizeWriteAsync)
                 .WaitAsync(deadline.Token).ConfigureAwait(false);
+        }
+        catch (KernelException) when (caller is InteropPrincipal.Human)
+        {
+            // A rejected write fence leaves the transport untouched.
+            return SteerDelivery.Declined;
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
