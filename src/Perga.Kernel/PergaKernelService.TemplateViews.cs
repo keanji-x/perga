@@ -17,8 +17,9 @@ public sealed partial class PergaKernelService
         bool dryRun,
         long? expectedFlowRev,
         InteropPrincipal caller,
-        CancellationToken ct = default) =>
-        Actors.GetOrActivate(trackId).CommitFlowAsync(dryRun, expectedFlowRev, caller, ct);
+        CancellationToken ct = default,
+        string? content = null) =>
+        Actors.GetOrActivate(trackId).CommitFlowAsync(dryRun, expectedFlowRev, caller, ct, content);
 
     public Task<TrackDataPatchResult> PatchTrackDataAsync(
         string trackId,

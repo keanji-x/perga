@@ -202,7 +202,7 @@ public sealed partial class TrackActor
         }
 
         var watchCts = CancellationTokenSource.CreateLinkedTokenSource(_actorShutdownCts.Token);
-        var watchState = new ActiveWatchState(task.Id, node.Id, nextRunCount, watchCts, initialProgress);
+        var watchState = new ActiveWatchState(task.Id, node.Id, nextRunCount, watchCts, node.Do.PrChecks.HasValue, initialProgress);
         _activeWatches[task.Id] = watchState;
 
         var interpolatedCmd = InterpolateFlowTextCore(node.Do.Cmd);
@@ -419,7 +419,8 @@ public sealed partial class TrackActor
             }
 
             var task = _tasks.FirstOrDefault(t => t.Id == watchState.TaskId);
-            if (task is null) return;
+            if (watchState.Cts.IsCancellationRequested || task?.Status != TaskRunStatus.Running)
+                return;
             var updated = task with
             {
                 Meta = JsonHelpers.ToElement(new { watchProgress = progress }),
@@ -446,8 +447,11 @@ public sealed partial class TrackActor
                 return;
             }
 
-            var now = NowMs();
             var task = RequireTaskCore(watchState.TaskId);
+            if (watchState.Cts.IsCancellationRequested || task.Status != TaskRunStatus.Running)
+                return;
+
+            var now = NowMs();
             var settled = task with
             {
                 Status = TaskRunStatus.Done,

@@ -224,33 +224,24 @@ internal static class TrackFlowReconciler
 
         while (queue.TryDequeue(out var id))
         {
-            if (nodesById[id].When?.After is not { } dependencies)
-                continue;
-            foreach (var dependency in dependencies)
+            var node = nodesById[id];
+            foreach (var dependency in node.When?.After ?? [])
             {
                 if (nodesById.ContainsKey(dependency.Node) && retained.Add(dependency.Node))
                     queue.Enqueue(dependency.Node);
             }
-        }
 
-        // While a non-canceled upstream remains retained (e.g. a sibling branch is still pending/running),
-        // keep its mismatched alternative branches alive too so a review verdict (`task_reject`/`task_accept`)
-        // on that upstream can still activate them. Once the whole upstream chain finishes, all branches archive together.
-        bool retainedChanged;
-        do
-        {
-            retainedChanged = false;
-            foreach (var id in unreachable)
+            // Retain alternatives of a surviving upstream while its review verdict can change.
+            // Enqueue each alternative so its other prerequisites survive too.
+            if (!node.Canceled && downstream.TryGetValue(id, out var dependents))
             {
-                if (retained.Contains(id) || nodesById[id].When?.After is not { Count: > 0 } deps)
-                    continue;
-                if (deps.Any(d => retained.Contains(d.Node) && nodesById.TryGetValue(d.Node, out var up) && !up.Canceled))
+                foreach (var dependent in dependents)
                 {
-                    retained.Add(id);
-                    retainedChanged = true;
+                    if (unreachable.Contains(dependent) && retained.Add(dependent))
+                        queue.Enqueue(dependent);
                 }
             }
-        } while (retainedChanged);
+        }
 
         eligible.UnionWith(nodesById.Keys.Where(id => !retained.Contains(id)));
         return eligible;
@@ -461,7 +452,7 @@ internal static class TrackFlowReconciler
                 return (
                     "flow_watch",
                     d.Cmd ?? $"prChecks:{d.PrChecks}",
-                    AccessMode.ReadOnly,
+                    d.PrChecks.HasValue ? AccessMode.ReadOnly : AccessMode.ReadWrite,
                     null,
                     null,
                     null,

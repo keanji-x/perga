@@ -813,6 +813,253 @@ public sealed class TrackFlowTests
         Assert.Null(finalNode.NextFireAtMs);
     }
 
+
+    [Fact]
+    public async Task GcRetainsAllPrerequisitesOfAlternativeOutcomeJoin()
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        var trackId = snap.Track.Id;
+        var path = (await ctx.Kernel.GetTrackFlowAsync(trackId)).FilePath!;
+        var hold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        ctx.CommandRunner.Handler = async (req, ct) =>
+        {
+            if (req.Command == "hold")
+                await hold.Task.WaitAsync(ct);
+            return new ShellCommandResult(0, "", "", false, 1);
+        };
+
+        await File.WriteAllTextAsync(path, """
+            {"rev":0,"nodes":[
+              {"id":"a","do":{"kind":"run","cmd":"a"}},
+              {"id":"b","do":{"kind":"run","cmd":"b"}},
+              {"id":"sibling","when":{"after":["a"]},"do":{"kind":"run","cmd":"hold"}},
+              {"id":"join","when":{"after":[{"node":"a","on":"attention"},"b"]},"do":{"kind":"run","cmd":"join"}}
+            ]}
+            """);
+        try
+        {
+            Assert.True((await ctx.Kernel.CommitTrackFlowAsync(trackId, false, 0, Human)).Ok);
+            await WaitUntilAsync(() => Task.FromResult(ctx.CommandRunner.ExecutedCommands.Any(cmd => cmd.Command == "hold")));
+
+            var flow = await ctx.Kernel.GetTrackFlowAsync(trackId);
+            Assert.Equal(new[] { "a", "b", "join", "sibling" }, flow.Projection.Nodes.Select(node => node.Id).Order());
+            Assert.Empty(flow.Projection.Archived);
+            var preview = await ctx.Kernel.CommitTrackFlowAsync(trackId, true, flow.FlowRev, Human);
+            Assert.True(preview.Ok, JsonSerializer.Serialize(preview.Diagnostics));
+        }
+        finally
+        {
+            hold.TrySetResult();
+        }
+        await ctx.Kernel.WaitForTrackIdleAsync(trackId);
+    }
+
+    [Fact]
+    public async Task PendingConsumerRefreshesWaveKeyWithReverseDeclarationOrder()
+    {
+        var forge = new FakeGitHubForgeService();
+        await using var ctx = new KernelTestContext(gitHubForgeService: forge);
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        var trackId = snap.Track.Id;
+        var path = (await ctx.Kernel.GetTrackFlowAsync(trackId)).FilePath!;
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        ctx.CommandRunner.Handler = async (req, ct) =>
+        {
+            if (req.Command == "hold")
+                await release.Task.WaitAsync(ct);
+            return new ShellCommandResult(0, "", "", false, 1);
+        };
+        await File.WriteAllTextAsync(path, """
+            {"rev":0,"nodes":[
+              {"id":"finish","when":{"after":["prepare"]},"do":{"kind":"run","cmd":"finish"}},
+              {"id":"prepare","when":{"after":["cron"]},"do":{"kind":"watch","prChecks":2}},
+              {"id":"cron","when":{"cron":"* * * * *","tz":"UTC"},"do":{"kind":"watch","prChecks":1}},
+              {"id":"hold","do":{"kind":"run","cmd":"hold"}}
+            ]}
+            """);
+        try
+        {
+            Assert.True((await ctx.Kernel.CommitTrackFlowAsync(trackId, false, 0, Human)).Ok);
+            await WaitUntilAsync(() => Task.FromResult(ctx.CommandRunner.ExecutedCommands.Any(cmd => cmd.Command == "hold")));
+            for (var wave = 1; wave <= 2; wave++)
+            {
+                ctx.Time.Advance(TimeSpan.FromMinutes(2));
+                await ctx.Kernel.FireDueTrackSchedulesAsync(ctx.Time.GetUtcNow().ToUnixTimeMilliseconds());
+                await WaitUntilAsync(async () =>
+                {
+                    var flow = await ctx.Kernel.GetTrackFlowAsync(trackId);
+                    return flow.Projection.Nodes.Any(node => node.Id == "prepare" && node.RunCount == wave && node.Status == "done");
+                });
+            }
+            Assert.DoesNotContain(ctx.CommandRunner.ExecutedCommands, cmd => cmd.Command == "finish");
+        }
+        finally
+        {
+            release.TrySetResult();
+        }
+        await ctx.Kernel.WaitForTrackIdleAsync(trackId);
+        Assert.Single(ctx.CommandRunner.ExecutedCommands, cmd => cmd.Command == "finish");
+        var final = await ctx.Kernel.GetTrackFlowAsync(trackId);
+        Assert.Contains(final.Projection.Nodes, node => node.Id == "finish" && node.Status == "done" && node.RunCount == 1);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(75)]
+    public async Task QueuedWatchResultCannotChangeCanceledTask(int exitCode)
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        var trackId = snap.Track.Id;
+        var path = (await ctx.Kernel.GetTrackFlowAsync(trackId)).FilePath!;
+        var probe = new TaskCompletionSource<ShellCommandResult>();
+        ctx.CommandRunner.Handler = (_, _) => probe.Task;
+        const string original = """
+            {"rev":0,"nodes":[
+              {"id":"watch","do":{"kind":"watch","cmd":"probe"}},
+              {"id":"consumer","when":{"after":["watch"]},"do":{"kind":"run","cmd":"consumer"}}
+            ]}
+            """;
+        await File.WriteAllTextAsync(path, original);
+        Assert.True((await ctx.Kernel.CommitTrackFlowAsync(trackId, false, 0, Human)).Ok);
+        await WaitUntilAsync(() => Task.FromResult(ctx.CommandRunner.ExecutedCommands.Any(cmd => cmd.Command == "probe")));
+        await File.WriteAllTextAsync(path, original.Replace("\"rev\":0", "\"rev\":1", StringComparison.Ordinal)
+            .Replace("\"id\":\"watch\",", "\"id\":\"watch\",\"canceled\":true,", StringComparison.Ordinal));
+
+        var releaseMailbox = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var mailboxHold = ctx.Kernel.Actors.GetOrActivate(trackId).EnqueueAsync(_ => releaseMailbox.Task);
+        var cancel = ctx.Kernel.CommitTrackFlowAsync(trackId, false, 1, Human);
+        try
+        {
+            // Resume the probe inline while cancellation is in front of its result in the mailbox.
+            probe.SetResult(new ShellCommandResult(exitCode, "returned before cancellation", "", false, 1));
+        }
+        finally
+        {
+            releaseMailbox.TrySetResult();
+        }
+        await mailboxHold;
+        Assert.True((await cancel.WaitAsync(TimeSpan.FromSeconds(5))).Ok);
+        var flow = await ctx.Kernel.GetTrackFlowAsync(trackId);
+        var archived = Assert.Single(flow.Projection.Archived, node => node.Id == "watch");
+        Assert.Equal("canceled", archived.Status);
+        var track = await ctx.Kernel.GetTrackAggregateAsync(trackId);
+        var task = Assert.Single(track.Tasks, task => task.TaskKey == "watch");
+        Assert.DoesNotContain("returned before cancellation", task.Meta?.GetRawText() ?? "");
+        Assert.DoesNotContain(ctx.CommandRunner.ExecutedCommands, req => req.Command == "consumer");
+    }
+
+    [Fact]
+    public async Task CancelingAndChangingAWatchKeepsItsStartedWorkspaceLeaseUntilExit()
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        var trackId = snap.Track.Id;
+        var path = (await ctx.Kernel.GetTrackFlowAsync(trackId)).FilePath!;
+        var stopping = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var exit = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        ctx.CommandRunner.Handler = async (req, ct) =>
+        {
+            if (req.Command == "probe")
+            {
+                using var registration = ct.Register(() => stopping.TrySetResult());
+                await exit.Task;
+            }
+            return new ShellCommandResult(0, "", "", false, 1);
+        };
+        await File.WriteAllTextAsync(path, """
+            {"rev":0,"nodes":[
+              {"id":"watch","do":{"kind":"watch","cmd":"probe"}}
+            ]}
+            """);
+        Assert.True((await ctx.Kernel.CommitTrackFlowAsync(trackId, false, 0, Human)).Ok);
+        await WaitUntilAsync(() => Task.FromResult(ctx.CommandRunner.ExecutedCommands.Any(cmd => cmd.Command == "probe")));
+        await File.WriteAllTextAsync(path, """
+            {"rev":1,"nodes":[
+              {"id":"watch","canceled":true,"do":{"kind":"watch","prChecks":1}},
+              {"id":"next","do":{"kind":"run","cmd":"next"}}
+            ]}
+            """);
+        var cancel = ctx.Kernel.CommitTrackFlowAsync(trackId, false, 1, Human);
+        try
+        {
+            await stopping.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var track = await ctx.Kernel.GetTrackAggregateAsync(trackId);
+            Assert.Equal(TaskRunStatus.Pending, Assert.Single(track.Tasks, task => task.TaskKey == "next").Status);
+        }
+        finally
+        {
+            exit.TrySetResult();
+        }
+        Assert.True((await cancel.WaitAsync(TimeSpan.FromSeconds(5))).Ok);
+        await ctx.Kernel.WaitForTrackIdleAsync(trackId);
+        Assert.Single(ctx.CommandRunner.ExecutedCommands, req => req.Command == "next");
+    }
+
+    [Fact]
+    public async Task WatchAccessMatchesProbeWorkspaceUsage()
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        var trackId = snap.Track.Id;
+        var path = (await ctx.Kernel.GetTrackFlowAsync(trackId)).FilePath!;
+        await File.WriteAllTextAsync(path, """
+            {"rev":0,"nodes":[
+              {"id":"shell","when":{"cron":"* * * * *"},"do":{"kind":"watch","cmd":"probe"}},
+              {"id":"forge","when":{"cron":"* * * * *"},"do":{"kind":"watch","prChecks":1}}
+            ]}
+            """);
+        Assert.True((await ctx.Kernel.CommitTrackFlowAsync(trackId, false, 0, Human)).Ok);
+        var track = await ctx.Kernel.GetTrackAggregateAsync(trackId);
+        Assert.Equal(AccessMode.ReadWrite, Assert.Single(track.Tasks, task => task.TaskKey == "shell").Access);
+        Assert.Equal(AccessMode.ReadOnly, Assert.Single(track.Tasks, task => task.TaskKey == "forge").Access);
+    }
+
+    [Theory]
+    [InlineData("1s", false)]
+    [InlineData("5s", true)]
+    public void WatchIntervalFloorMatchesPublishedSchema(string interval, bool accepted)
+    {
+        using var schema = ReadPublishedFlowSchema();
+        var watchVariants = schema.RootElement.GetProperty("$defs").GetProperty("do").GetProperty("oneOf").EnumerateArray()
+            .Select(variant => variant.GetProperty("properties"))
+            .Where(properties => properties.GetProperty("kind").GetProperty("const").GetString() == "watch").ToArray();
+        Assert.Equal(2, watchVariants.Length);
+        foreach (var properties in watchVariants)
+        {
+            var pattern = properties.GetProperty("interval").GetProperty("pattern").GetString()!;
+            Assert.Equal(accepted, System.Text.RegularExpressions.Regex.IsMatch(interval, pattern));
+            var probe = properties.TryGetProperty("prChecks", out _) ? "\"prChecks\":1" : "\"cmd\":\"probe\"";
+            var (spec, _) = TrackFlowParser.Parse($$"""
+                {"rev":0,"nodes":[{"id":"watch","do":{"kind":"watch",{{probe}},"interval":"{{interval}}" } }]}
+                """);
+            Assert.Equal(accepted, spec is not null);
+        }
+    }
+
+    [Theory]
+    [InlineData(2147483647L, true)]
+    [InlineData(2147483648L, false)]
+    public void WatchPrNumberBoundsMatchPublishedSchema(long pr, bool accepted)
+    {
+        using var schema = ReadPublishedFlowSchema();
+        var constraint = schema.RootElement.GetProperty("$defs").GetProperty("do").GetProperty("oneOf").EnumerateArray()
+            .Select(variant => variant.GetProperty("properties"))
+            .Single(properties => properties.TryGetProperty("prChecks", out _)).GetProperty("prChecks");
+        Assert.Equal(accepted, pr >= constraint.GetProperty("minimum").GetInt64() && pr <= constraint.GetProperty("maximum").GetInt64());
+        var (spec, _) = TrackFlowParser.Parse($$"""
+            {"rev":0,"nodes":[{"id":"watch","do":{"kind":"watch","prChecks":{{pr}} } }]}
+            """);
+        Assert.Equal(accepted, spec is not null);
+    }
+
+    private static JsonDocument ReadPublishedFlowSchema()
+    {
+        using var stream = typeof(TrackFlowFileStore).Assembly.GetManifestResourceStream("Perga.FlowSchemaV1")!;
+        return JsonDocument.Parse(stream);
+    }
+
     [Fact]
     public void TrackFlowFileStore_RejectsPathTraversalAndSymlinks()
     {

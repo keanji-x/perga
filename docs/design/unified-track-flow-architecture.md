@@ -60,14 +60,16 @@ PR #112 已将底层理顺为单向 `Task -> SessionId` 并退役了 `TaskAttemp
 ## 三、五个核心架构拍板
 
 ### 1. 唯一调度文件 + 防误删 + 后台安全 GC（彻底解决文件膨胀）
-- **文件位置与权限**：`{DataDir}/tracks/{trackId}/flow.json`（托管在 Perga `DataDir` 下，零污染用户 Git 仓、支持非 Git 目录、物理隔离非 governance Worker）。假设 Planner/Lead 权限为 `full`，直接用原生 `read_file` / `edit_file` 编辑草稿。
-- **极简 2 参数提交门禁**（零三头兜底参数）：
+- **文件位置与权限**：`{DataDir}/tracks/{trackId}/flow.json` 由 Host 托管。能访问该路径的 Lead 可直接编辑草稿。SSH Lead 可用 `flow_read()` 读取已提交的规格和版本，再通过 MCP 提交 JSON 文本。
+- **统一提交门禁**：
   ```ts
   flow_commit({
     dryRun?: boolean,           // 默认 false；true = 全图校验并返回 Plan Diff，零副作用
     expectedFlowRev?: number,   // 可选 CAS；省略时校验文件头 rev == 当前 flow_rev
+    content?: string,          // JSON 草稿；省略时读取 Host 上的 flow.json
   })
   ```
+- MCP 和 HTTP 使用同一校验与提交路径。显式提交文本时，SQLite 事务记录提交时 Host 文件的 hash，随后投影规范化文件。若文件在这期间更新，保留更新的草稿。重启可在 hash 仍匹配时完成投影。
 - **防误删与显式 `canceled`**：
   - 任何**尚未终结的节点**（`pending` / `running` / `verifying` / `waiting`）或**活跃周期规则（`cron`）**，**禁止直接从 `flow.json` 删掉**——若 `flow_commit` 发现活跃节点缺失，直接拒绝提交，防止 AI 编辑漏行误杀正在跑的工作。
   - 意图取消必须显式设置 `"canceled": true` 并 `flow_commit`（内核中止活跃 Run / 停用触发器）。

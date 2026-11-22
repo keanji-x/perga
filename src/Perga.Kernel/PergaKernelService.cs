@@ -79,7 +79,7 @@ public partial interface IPergaKernel : IAsyncDisposable
     Task<ReportReadResult> ReadReportAsync(string trackId, string? callerSessionId = null, CancellationToken ct = default);
     Task<TemplateViewsProjection> GetTrackViewsAsync(string trackId, CancellationToken ct = default);
     Task<FlowSnapshotDto> GetTrackFlowAsync(string trackId, CancellationToken ct = default);
-    Task<FlowCommitResultDto> CommitTrackFlowAsync(string trackId, bool dryRun, long? expectedFlowRev, InteropPrincipal caller, CancellationToken ct = default);
+    Task<FlowCommitResultDto> CommitTrackFlowAsync(string trackId, bool dryRun, long? expectedFlowRev, InteropPrincipal caller, CancellationToken ct = default, string? content = null);
     Task<TrackDataPatchResult> PatchTrackDataAsync(string trackId, JsonElement patch, string source, string? callerSessionId = null, CancellationToken ct = default, long? expectedDataRev = null);
     Task<IReadOnlyList<ReportBlock>> GetReportRevisionBlocksAsync(string trackId, int docRev, CancellationToken ct = default);
     Task<ReportReadResult> UpdateReportBlockByHumanAsync(string trackId, string blockId, HumanBlockUpdateRequest req, CancellationToken ct = default);

@@ -61,7 +61,8 @@ public sealed partial class TrackActor
         bool dryRun,
         long? expectedFlowRev,
         InteropPrincipal caller,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string? content = null)
     {
         var (result, cleanup) = await EnqueueAsync<(FlowCommitResultDto, Task)>(async _ =>
         {
@@ -71,19 +72,27 @@ public sealed partial class TrackActor
                 throw KernelException.Conflict("Cannot commit flow on a closed Track.");
 
             RequirePolicyAvailableCore();
-            var (rawText, draftSha) = _flowFileStore.ReadFlowFile(TrackId);
+            var (rawText, draftSha) = content is null
+                ? _flowFileStore.ReadFlowFile(TrackId)
+                : (content.TrimStart('\uFEFF'), (string?)null);
             var (parsedSpec, errors) = TrackFlowParser.Parse(rawText);
             if (parsedSpec is not null)
             {
                 var expectedRev = expectedFlowRev ?? parsedSpec.Rev;
                 if (expectedRev != _track.FlowRev)
-                    throw KernelException.Conflict($"Flow revision conflict: expected {expectedRev}, current {_track.FlowRev}. Re-read flow.json and retry.");
+                    throw KernelException.Conflict($"Flow revision conflict: expected {expectedRev}, current {_track.FlowRev}. Read the current flow using flow_read or flow.json and retry.");
 
                 errors = TrackFlowValidator.Validate(
                     parsedSpec, _flowSpec, _tasks, CollectActiveFlowTaskIdsCore(), _sessions,
                     _track.LeadSessionId, _policy, _policyVm, _track.TemplateInputs, _scheduleCronEvaluator, _timeProvider);
                 if (errors.Count == 0)
+                {
+                    // An explicit submission replaces the current Host draft. Keep its hash
+                    // so projection and restart recovery still preserve any newer file edit.
+                    if (content is not null && !dryRun)
+                        draftSha = _flowFileStore.TryReadFlowFile(TrackId)?.Sha256;
                     return await ApplyFlowSpecCoreAsync(parsedSpec, dryRun, draftSha, ct).ConfigureAwait(false);
+                }
             }
 
             var projection = await BuildFlowProjectionCoreAsync(ct).ConfigureAwait(false);
@@ -395,11 +404,6 @@ public sealed partial class TrackActor
                     ReplaceTaskInMemoryCore(disarmed);
                     tasksByKey[node.Id] = disarmed;
                 }
-                continue;
-            }
-
-            if (task.Status == TaskRunStatus.Pending && task.Ready)
-            {
                 continue;
             }
 

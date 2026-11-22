@@ -150,6 +150,11 @@ public sealed record FlowCommitResultDto(
     IReadOnlyList<FlowValidationErrorDto> Diagnostics,
     FlowProjectionDto Flow);
 
+public sealed record FlowCommitRequest(
+    bool? DryRun = null,
+    long? ExpectedFlowRev = null,
+    string? Content = null);
+
 public sealed record FlowSnapshotDto(
     long FlowRev,
     string? FilePath,

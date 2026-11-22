@@ -15,7 +15,7 @@ public static class TaskGraphScheduler
         IReadOnlyList<TaskDto> tasks,
         bool allowParallelWriteLeases = false,
         FlowSpecDto? flowSpec = null,
-        IReadOnlySet<string>? activeWatchTaskIds = null)
+        bool hasActiveCommandWatch = false)
     {
         if (tasks.Count == 0)
         {
@@ -25,24 +25,21 @@ public static class TaskGraphScheduler
         var byKey = new Dictionary<string, TaskDto>(tasks.Count, StringComparer.Ordinal);
         var byId = new Dictionary<string, TaskDto>(tasks.Count, StringComparer.Ordinal);
         var flowNodesById = flowSpec?.Nodes.ToDictionary(n => n.Id, StringComparer.Ordinal);
-        var hasInFlightReadWrite = false;
+        // A canceled command watch can still own the workspace while its process exits.
+        var hasInFlightReadWrite = hasActiveCommandWatch;
         var hasInFlightReadOnly = false;
 
         foreach (var task in tasks)
         {
-            var watchStillInFlight = activeWatchTaskIds is not null && activeWatchTaskIds.Contains(task.Id);
-            if (task.ArchivedAtMs is not null && !watchStillInFlight)
+            if (task.ArchivedAtMs is not null)
             {
                 continue;
             }
 
-            if (task.ArchivedAtMs is null)
-            {
-                byKey[task.TaskKey] = task;
-                byId[task.Id] = task;
-            }
+            byKey[task.TaskKey] = task;
+            byId[task.Id] = task;
 
-            if (task.Status is TaskRunStatus.Running or TaskRunStatus.Verifying || watchStillInFlight)
+            if (task.Status is TaskRunStatus.Running or TaskRunStatus.Verifying)
             {
                 if (IsWorkspaceLockExempt(task))
                 {

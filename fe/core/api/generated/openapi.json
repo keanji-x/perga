@@ -958,6 +958,7 @@
       "get": {
         "responses": {
           "200": {
+            "description": "Current track flow snapshot and projection",
             "content": {
               "application/json": {
                 "schema": {
@@ -1024,6 +1025,13 @@
                     ],
                     "format": "int64",
                     "minimum": 0
+                  },
+                  "content": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "Flow JSON text. Omit to read the Host's flow.json."
                   }
                 }
               }

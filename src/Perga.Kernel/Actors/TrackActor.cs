@@ -1618,7 +1618,8 @@ public sealed partial class TrackActor : IAsyncDisposable
                 }
 
                 var providerDiscovery = mcpServer == "perga" && toolName == KernelMcpToolNames.ProviderList;
-                var previewOnly = providerDiscovery;
+                var flowRead = mcpServer == "perga" && toolName == KernelMcpToolNames.FlowRead;
+                var previewOnly = providerDiscovery || flowRead;
                 if (mcpServer == "perga" && toolName == KernelMcpToolNames.TrackSet)
                     previewOnly = ValidateTemplateSetArguments(arguments);
                 if (mcpServer == "perga" && toolName == KernelMcpToolNames.FlowCommit &&
@@ -1638,6 +1639,8 @@ public sealed partial class TrackActor : IAsyncDisposable
                 }), _track.TemplateInputs, _track.TemplateState);
                 if (providerDiscovery && eval.Output is GuardDecision.AskHuman)
                     throw KernelException.PolicyDenied("Provider discovery is read-only and cannot request approval.");
+                if (flowRead && eval.Output is GuardDecision.AskHuman)
+                    throw KernelException.PolicyDenied("Reading flow is read-only and cannot request approval.");
                 if (eval.Output is GuardDecision.AskHuman)
                     RequireApprovalOrigin(sessionId, approvalTurn, origin);
                 // An allowed replacement initializes its own state atomically. Denied or
@@ -1948,8 +1951,8 @@ public sealed partial class TrackActor : IAsyncDisposable
         do
         {
             preparationFailed = false;
-            var activeWatchIds = _activeWatches.Count > 0 ? _activeWatches.Keys.ToHashSet(StringComparer.Ordinal) : null;
-            var schedulable = TaskGraphScheduler.ComputeSchedulable(_tasks, flowSpec: _flowSpec, activeWatchTaskIds: activeWatchIds);
+            var hasActiveCommandWatch = _activeWatches.Values.Any(watch => !watch.IsWorkspaceExempt);
+            var schedulable = TaskGraphScheduler.ComputeSchedulable(_tasks, flowSpec: _flowSpec, hasActiveCommandWatch: hasActiveCommandWatch);
             foreach (var task in schedulable)
             {
                 if (task.Kind == "flow_wake" && FlowConstants.IsFlowTask(task))
@@ -3506,7 +3509,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             ? "\n\nTemplates are optional and implicit. If useful, discover them with template_list, inspect a template or the authoring contract with template_read, inspect the active snapshot with template_read(__current__), apply or preview with track_set (templateId or JSON/.perga.js source, inputs, dryRun), detach with clear, and update inputs with template_update_inputs (preserves state)."
             : string.Empty;
         var flowGuide = session.IsLead
-            ? $"\n\n## Track Flow Orchestration\n- Source of truth: `{_flowFileStore.GetFlowFilePath(TrackId)}` (current `flowRev`: {_track.FlowRev}).\n- Edit `flow.json` directly with `when` (`after` / `cron` / `at`) × `do` (`run` / `wake` / `watch`), then validate via `flow_commit(dryRun: true)` before calling `flow_commit()`.\n- Never silently delete active/running/cron nodes from `flow.json` — set `\"canceled\": true` explicitly instead.\n- Terminal orphan one-shot nodes are archived automatically by background GC without touching dirty drafts."
+            ? $"\n\n## Track Flow Orchestration\n- The Host manages `{_flowFileStore.GetFlowFilePath(TrackId)}` (current `flowRev`: {_track.FlowRev}).\n- Use `when` (`after` / `cron` / `at`) and `do` (`run` / `wake` / `watch`) to declare nodes. If you can access the Host file, edit it and use `flow_commit(dryRun: true)` before `flow_commit()`.\n- From SSH or when the Host file is unavailable, call `flow_read()` for the current spec and revision, then pass the edited JSON text as `content` and the read revision as `expectedFlowRev` to `flow_commit`. Validate the same arguments with `dryRun: true` first.\n- To stop an active or recurring node, set `\"canceled\": true` and commit.\n- Background GC archives terminal one-shot nodes with no remaining dependents and preserves uncommitted drafts."
             : string.Empty;
         const string unboundGovernanceNote =
             "Use session_list/create/read/update/send/withdraw/control/respond to manage child conversations. Create accepts an optional task contract; reuse requestKey for retries. Use provider_list to discover available providers, models, reasoning efforts, and permission modes. Only control your direct children; the Lead can also manage other sessions. Never stop, reset or archive yourself. Answer delegated asks and approvals with session_respond; the human can always take over.";

@@ -23,10 +23,6 @@ public sealed record RejectTaskHttpBody(
     string? Note = null,
     bool? ReQueue = null);
 
-public sealed record CommitFlowHttpBody(
-    bool? DryRun = null,
-    long? ExpectedFlowRev = null);
-
 public static class ApiV1Endpoints
 {
     private static readonly JsonSerializerOptions SessionJsonOptions = new(PergaJsonDefaults.ApiOptions)
@@ -271,11 +267,11 @@ public static class ApiV1Endpoints
 
         v1.MapPost("/tracks/{trackId}/flow/commit", async (string trackId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
         {
-            var body = await ReadOptionalJsonBodyAsync(ctx, () => new CommitFlowHttpBody(), ct, SessionJsonOptions).ConfigureAwait(false);
+            var body = await ReadOptionalJsonBodyAsync(ctx, () => new FlowCommitRequest(), ct, SessionJsonOptions).ConfigureAwait(false);
             if (body.ExpectedFlowRev is < 0)
                 throw KernelException.InvalidArgument("expectedFlowRev must be a non-negative integer.");
             var result = await kernel.CommitTrackFlowAsync(trackId, body.DryRun ?? false, body.ExpectedFlowRev,
-                new InteropPrincipal.Human(), ct).ConfigureAwait(false);
+                new InteropPrincipal.Human(), ct, body.Content).ConfigureAwait(false);
             return Results.Json(result, PergaJsonDefaults.ApiOptions);
         }).Produces<FlowCommitResultDto>();
 

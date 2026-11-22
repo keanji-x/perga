@@ -213,12 +213,14 @@ internal sealed class ActiveWatchState(
     string nodeId,
     int runCount,
     CancellationTokenSource cts,
+    bool isWorkspaceExempt,
     FlowWatchProgressDto initialProgress)
 {
     public string TaskId { get; } = taskId;
     public string NodeId { get; } = nodeId;
     public int RunCount { get; } = runCount;
     public CancellationTokenSource Cts { get; } = cts;
+    public bool IsWorkspaceExempt { get; } = isWorkspaceExempt;
     public FlowWatchProgressDto Progress { get; set; } = initialProgress;
     public Task? Execution { get; set; }
 }

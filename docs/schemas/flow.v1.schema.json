@@ -159,6 +159,7 @@
             "prChecks": {
               "type": "integer",
               "minimum": 1,
+              "maximum": 2147483647,
               "description": "GitHub PR number to monitor via Perga VCS checks."
             },
             "repo": {
@@ -171,7 +172,7 @@
             },
             "interval": {
               "type": "string",
-              "pattern": "^[1-9][0-9]*[smh]$",
+              "pattern": "^(([5-9]|[1-9][0-9]+)s|[1-9][0-9]*[mh])$",
               "default": "60s",
               "description": "Polling interval for watch probes (e.g. 30s, 60s, 2m; minimum 5s)."
             },
@@ -195,7 +196,7 @@
             },
             "interval": {
               "type": "string",
-              "pattern": "^[1-9][0-9]*[smh]$",
+              "pattern": "^(([5-9]|[1-9][0-9]+)s|[1-9][0-9]*[mh])$",
               "default": "60s",
               "description": "Polling interval for watch probes (e.g. 30s, 60s, 2m; minimum 5s)."
             },

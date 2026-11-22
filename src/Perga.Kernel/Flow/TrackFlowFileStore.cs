@@ -109,18 +109,27 @@ public sealed class TrackFlowFileStore
         return (flowPath, created, sha);
     }
 
-    public (string Content, string Sha256) ReadFlowFile(string trackId)
+    public (string Content, string Sha256) ReadFlowFile(string trackId) =>
+        TryReadFlowFile(trackId)
+        ?? throw KernelException.NotFound($"Flow specification file '{GetFlowFilePath(trackId)}' does not exist.");
+
+    public (string Content, string Sha256)? TryReadFlowFile(string trackId)
     {
         var flowPath = GetFlowFilePath(trackId);
         AssertContainedNoSymlinks(flowPath);
         if (!File.Exists(flowPath))
-        {
-            throw KernelException.NotFound($"Flow specification file '{flowPath}' does not exist.");
-        }
+            return null;
 
-        var bytes = File.ReadAllBytes(flowPath);
-        var content = Encoding.UTF8.GetString(bytes).TrimStart('\uFEFF');
-        return (content, Convert.ToHexStringLower(SHA256.HashData(bytes)));
+        try
+        {
+            var bytes = File.ReadAllBytes(flowPath);
+            var content = Encoding.UTF8.GetString(bytes).TrimStart('\uFEFF');
+            return (content, Convert.ToHexStringLower(SHA256.HashData(bytes)));
+        }
+        catch (IOException ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+        {
+            return null;
+        }
     }
 
     public (bool Written, string? NewSha256) TryWriteFlowFileIfUnmodified(

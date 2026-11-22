@@ -35,11 +35,13 @@ export function ReportReferencePreview({ transport, unauthorized, target, ...nav
   const query = useQuery(trackDetailQueryOptions(transport, target.trackId, unauthorized));
   if (query.data !== undefined) {
     const report = readReportDocument(query.data.report);
-    if (report === null) return <EmptyReportReference />;
-    const block = target.blockId === null ? null : report.blocks?.find(candidate => candidate.id === target.blockId);
-    if (target.blockId !== null && block === undefined) return <p>报告中没有这条引用指向的内容。</p>;
+    const allowAutoFlow = target.blockId === null;
+    if (!allowAutoFlow && report === null) return <EmptyReportReference />;
+    const block = report?.blocks?.find(candidate => candidate.id === target.blockId);
+    if (!allowAutoFlow && block === undefined) return <p>报告中没有这条引用指向的内容。</p>;
     return <ReferenceDocument transport={transport} unauthorized={unauthorized} target={target}
-      detail={query.data} report={block == null ? report : { summary: '', body: '', blocks: [block] }} allowAutoFlow={block == null} {...navigation} />;
+      detail={query.data} report={block === undefined ? report ?? { summary: '', body: '', blocks: [] }
+        : { summary: '', body: '', blocks: [block] }} allowAutoFlow={allowAutoFlow} {...navigation} />;
   }
   if (query.isError) return <ErrorBox message={readFailureText(readFailureOf(query.error), '无法读取报告。')}
     onRetry={() => { void query.refetch(); }} />;

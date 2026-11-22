@@ -30,6 +30,7 @@ public static class KernelMcpToolNames
     public const string ScheduleList = "schedule_list";
 
     // Governance tools (BoundTaskId == null ONLY)
+    public const string FlowRead = "flow_read";
     public const string FlowCommit = "flow_commit";
     public const string TaskCancel = "task_cancel";
     public const string TaskAccept = "task_accept";
@@ -72,6 +73,7 @@ public static class KernelMcpToolNames
         TerminalRead,
         TerminalInput,
         ScheduleList,
+        FlowRead,
         FlowCommit,
         TaskCancel,
         TaskAccept,
@@ -127,7 +129,7 @@ public static class KernelMcpCatalog
     }
 
     public static bool IsGovernanceOnly(string toolName) => toolName is
-        KernelMcpToolNames.FlowCommit or
+        KernelMcpToolNames.FlowRead or KernelMcpToolNames.FlowCommit or
         KernelMcpToolNames.TaskCancel or KernelMcpToolNames.TaskAccept or KernelMcpToolNames.TaskReject or
         KernelMcpToolNames.SessionCreate or KernelMcpToolNames.SessionUpdate or KernelMcpToolNames.SessionSend or
         KernelMcpToolNames.SessionWithdraw or KernelMcpToolNames.SessionControl or KernelMcpToolNames.SessionRespond or
@@ -146,7 +148,7 @@ public static class KernelMcpCatalog
         KernelMcpToolNames.TaskFail;
 
     public static bool IsLeadOnly(string toolName) => toolName is
-        KernelMcpToolNames.FlowCommit or KernelMcpToolNames.SystemUpgradeCheck or KernelMcpToolNames.SystemUpgradeApply or KernelMcpToolNames.SystemUpgradeRollback;
+        KernelMcpToolNames.FlowRead or KernelMcpToolNames.FlowCommit or KernelMcpToolNames.SystemUpgradeCheck or KernelMcpToolNames.SystemUpgradeApply or KernelMcpToolNames.SystemUpgradeRollback;
 
     private static IReadOnlyList<McpToolDescriptor> BuildDescriptors()
     {
@@ -204,8 +206,10 @@ public static class KernelMcpCatalog
                 Schema("""{"type":"object","additionalProperties":false,"required":["title","prompt"],"properties":{"id":{"type":"string"},"title":{"type":"string"},"prompt":{"type":"string"},"runAt":{"type":"string"},"runAtMs":{"type":"integer"},"cron":{"type":"string"},"timezone":{"type":"string"},"maxOccurrences":{"type":"integer","minimum":1}}}"""), localWrite),
             new(KernelMcpToolNames.ScheduleCancel, "Cancel an active schedule on this track and drop any pending wake for it (governance only).",
                 Schema("""{"type":"object","additionalProperties":false,"required":["scheduleId"],"properties":{"scheduleId":{"type":"string"}}}"""), localIdempotentWrite),
+            new(KernelMcpToolNames.FlowRead, "Read the Track's committed flow spec, current revision, Host file path, and live projection (Lead only).",
+                Schema("""{"type":"object","additionalProperties":false,"properties":{}}"""), readOnlyLocal),
             new(KernelMcpToolNames.FlowCommit,
-                "Validate and commit {DataDir}/tracks/{trackId}/flow.json as the Track's single orchestration source of truth (governance only).\n" +
+                "Validate and commit a flow JSON draft supplied as content or read from the Host's flow.json (Lead only).\n" +
                 "Cheatsheet:\n" +
                 "- Root: { rev, nodes: [{ id, title?, source?, when?, do, canceled? }] }\n" +
                 "- when (omit = run once immediately): { after: [\"id\" | { node, on?: ok|attention|blocked|any }], on? } | { cron, tz?, maxOccurrences? } | { at: ISO-8601 }\n" +
@@ -215,7 +219,7 @@ public static class KernelMcpCatalog
                 "- Reusing an existing ses_... preserves NativeThreadId & context.\n" +
                 "- Never silently delete active/running/cron nodes — set canceled:true explicitly; terminal orphan one-shot nodes are archived by background GC.\n" +
                 "- Pass dryRun:true first to inspect plan diff & diagnostics with zero side effects.",
-                Schema("""{"type":"object","additionalProperties":false,"properties":{"dryRun":{"type":"boolean","description":"Validate flow.json and return plan diff without side effects. Defaults to false."},"expectedFlowRev":{"type":"integer","minimum":0,"description":"Optional CAS guard; defaults to flow.json rev."}}}"""), localWrite),
+                Schema("""{"type":"object","additionalProperties":false,"properties":{"dryRun":{"type":"boolean","description":"Validate the draft and return the plan diff. Defaults to false."},"expectedFlowRev":{"type":"integer","minimum":0,"description":"Expected committed revision. Defaults to the draft rev."},"content":{"type":["string","null"],"description":"Flow JSON text. Omit to read the Host's flow.json."}}}"""), localWrite),
             new(KernelMcpToolNames.TaskCancel, "Cancel a task and stop any active execution (task parent or Track Lead).",
                 Schema("""{"type":"object","required":["taskKey"],"properties":{"taskKey":{"type":"string"},"reason":{"type":"string"}}}"""), localWrite),
             new(KernelMcpToolNames.TaskAccept, "Record semantic acceptance verdict on a task (task parent or Track Lead).",
@@ -364,7 +368,7 @@ public static class KernelMcpDispatcher
             .ConfigureAwait(false);
 
         var result = await ExecuteAuthorizedAsync(kernel, caller, toolName, args, expectedPolicyGeneration, origin, ct).ConfigureAwait(false);
-        if (toolName != KernelMcpToolNames.ProviderList &&
+        if (toolName is not (KernelMcpToolNames.ProviderList or KernelMcpToolNames.FlowRead) &&
             !(toolName is (KernelMcpToolNames.TrackSet or KernelMcpToolNames.FlowCommit) && args.TryGetProperty("dryRun", out var dry) && dry.ValueKind == JsonValueKind.True))
             await kernel.Actors.GetOrActivate(caller.TrackId).AfterMcpToolCallAsync("perga", toolName,
                 JsonHelpers.ToElement(new { arguments = args, result }), ct).ConfigureAwait(false);
@@ -551,6 +555,13 @@ public static class KernelMcpDispatcher
                 return JsonHelpers.ToElement(res);
             }
 
+            case KernelMcpToolNames.FlowRead:
+            {
+                RejectUnknownArgs(args, ToolSchema(toolName));
+                var snapshot = await kernel.GetTrackFlowAsync(caller.TrackId, ct).ConfigureAwait(false);
+                return JsonHelpers.ToElement(new { snapshot.FlowRev, FlowPath = snapshot.FilePath, snapshot.Spec, snapshot.Projection });
+            }
+
             case KernelMcpToolNames.FlowCommit:
             {
                 RejectUnknownArgs(args, ToolSchema(toolName));
@@ -563,8 +574,9 @@ public static class KernelMcpDispatcher
                 }
 
                 var expectedFlowRev = IntegerArg(args, "expectedFlowRev", 0, long.MaxValue);
+                var content = OptionalTypedStringArg(args, ["content"]);
                 var res = await kernel.CommitTrackFlowAsync(caller.TrackId, dryRun, expectedFlowRev,
-                    Principal(caller) with { AuthorizedPolicyGeneration = expectedPolicyGeneration }, ct)
+                    Principal(caller) with { AuthorizedPolicyGeneration = expectedPolicyGeneration }, ct, content)
                     .ConfigureAwait(false);
                 return JsonHelpers.ToElement(res);
             }
