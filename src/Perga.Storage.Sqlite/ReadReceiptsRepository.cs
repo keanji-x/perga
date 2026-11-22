@@ -3,12 +3,20 @@ using Perga.Contracts;
 
 namespace Perga.Storage.Sqlite;
 
-public sealed partial class SqliteTrackStore
+/// <summary>Monotonic read receipts and manual unread markers.</summary>
+internal sealed class ReadReceiptsRepository
 {
+    private readonly SqliteStoreContext _context;
+
+    internal ReadReceiptsRepository(SqliteStoreContext context)
+    {
+        _context = context;
+    }
+
     public async Task<ReadReceiptsResponseDto> GetReadReceiptsAsync(CancellationToken ct = default)
     {
-        EnsureInitialized();
-        await using var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);
+        _context.EnsureInitialized();
+        await using var conn = await _context.OpenReadConnectionAsync(ct).ConfigureAwait(false);
         var baseline = await conn.QuerySingleAsync<long>(new CommandDefinition(
             "SELECT baseline_ms FROM read_receipt_meta WHERE id = 1;", cancellationToken: ct)).ConfigureAwait(false);
         var receipts = await conn.QueryAsync<ReadReceiptRow>(new CommandDefinition(
@@ -34,10 +42,10 @@ public sealed partial class SqliteTrackStore
 
     private Task<ReadReceiptDto> WriteReadReceiptAsync(string kind, string targetId, long readThroughMs, bool manualUnread, CancellationToken ct)
     {
-        EnsureInitialized();
+        _context.EnsureInitialized();
         if (kind is not ("track" or "conversation") || string.IsNullOrWhiteSpace(targetId) || readThroughMs < 0)
             throw new ArgumentException("Invalid read receipt.");
-        return _writer.EnqueueAsync<ReadReceiptDto>(async (conn, tx, innerCt) =>
+        return _context.Writer.EnqueueAsync<ReadReceiptDto>(async (conn, tx, innerCt) =>
             (await conn.QuerySingleAsync<ReadReceiptRow>(new CommandDefinition("""
                 INSERT INTO read_receipts(kind, target_id, read_through_ms, manual_unread, updated_at_ms)
                 VALUES (@Kind, @TargetId, @ReadThroughMs, @ManualUnread, @Now)
@@ -46,6 +54,6 @@ public sealed partial class SqliteTrackStore
                     manual_unread = excluded.manual_unread, updated_at_ms = excluded.updated_at_ms
                 RETURNING kind AS Kind, target_id AS TargetId, read_through_ms AS ReadThroughMs, manual_unread AS ManualUnread;
                 """, new { Kind = kind, TargetId = targetId, ReadThroughMs = readThroughMs, ManualUnread = manualUnread,
-                    Now = _timeProvider.GetUtcNow().ToUnixTimeMilliseconds() }, tx, cancellationToken: innerCt)).ConfigureAwait(false)).ToDto(), ct);
+                    Now = _context.TimeProvider.GetUtcNow().ToUnixTimeMilliseconds() }, tx, cancellationToken: innerCt)).ConfigureAwait(false)).ToDto(), ct);
     }
 }

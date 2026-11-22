@@ -4,11 +4,21 @@ using Perga.Kernel.Ports;
 
 namespace Perga.Storage.Sqlite;
 
-public sealed partial class SqliteTrackStore
+/// <summary>Atomic epoch recovery, message/wake archival and resume boundaries.</summary>
+internal sealed class SessionResumeRepository
 {
+    private readonly SqliteStoreContext _context;
+    private readonly SessionRepository _sessionRepository;
+
+    internal SessionResumeRepository(SqliteStoreContext context, SessionRepository sessionRepository)
+    {
+        _context = context;
+        _sessionRepository = sessionRepository;
+    }
+
     public Task CompleteSessionResumeAsync(AgentSessionDto session, PersistedSessionInput? unresolved,
         EventEnvelopeDto sessionEvent, int expectedEpoch, CancellationToken ct, SessionItemDto? boundary = null) =>
-        _writer.EnqueueAsync(async (conn, tx, token) =>
+        _context.Writer.EnqueueAsync(async (conn, tx, token) =>
         {
             var opEpoch = expectedEpoch;
             var currentEpoch = await conn.QuerySingleAsync<int>(new CommandDefinition(
@@ -45,10 +55,10 @@ public sealed partial class SqliteTrackStore
                     tx, cancellationToken: token)).ConfigureAwait(false);
             }
             if (unresolved is not null)
-                await MarkSessionInputResolvedAsync(conn, tx, unresolved, session.UpdatedAtMs, token).ConfigureAwait(false);
-            await UpsertSessionInternalAsync(conn, tx, session, token).ConfigureAwait(false);
+                await SessionInputsRepository.MarkSessionInputResolvedAsync(conn, tx, unresolved, session.UpdatedAtMs, token).ConfigureAwait(false);
+            await SessionRepository.UpsertSessionInternalAsync(conn, tx, session, token).ConfigureAwait(false);
             if (boundary is not null)
-                await InsertSessionItemsAsync(conn, tx, session.TrackId, [boundary], token).ConfigureAwait(false);
-            await InsertEventInternalAsync(conn, tx, sessionEvent, token).ConfigureAwait(false);
+                await _sessionRepository.InsertSessionItemsAsync(conn, tx, session.TrackId, [boundary], token).ConfigureAwait(false);
+            await EventRepository.InsertEventInternalAsync(conn, tx, sessionEvent, token).ConfigureAwait(false);
         }, ct);
 }

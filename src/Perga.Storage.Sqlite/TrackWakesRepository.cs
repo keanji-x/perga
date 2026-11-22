@@ -1,31 +1,41 @@
+using System.Text.Json;
 using Dapper;
 using Microsoft.Data.Sqlite;
-using Perga.Kernel.Ports;
 using Perga.Contracts;
-using System.Text.Json;
+using Perga.Kernel.Ports;
 
 namespace Perga.Storage.Sqlite;
 
-public sealed partial class SqliteTrackStore : ITrackWakeStore
+/// <summary>Wake coalescing, claiming, retry exhaustion and boot recovery.</summary>
+internal sealed class TrackWakesRepository
 {
-    public ITrackWakeStore TrackWakes => this;
+    private readonly SqliteStoreContext _context;
+    private readonly SessionRepository _sessionRepository;
+
+    internal TrackWakesRepository(SqliteStoreContext context, SessionRepository sessionRepository)
+    {
+        _context = context;
+        _sessionRepository = sessionRepository;
+    }
+
     private const string WakeSelect = """
         SELECT ordinal AS Ordinal, id AS Id, track_id AS TrackId, target_session_id AS TargetSessionId,
             kind AS Kind, coalesce_key AS CoalesceKey, payload_json AS PayloadJson, state AS State,
             reason AS Reason, turn_id AS TurnId, attempts AS Attempts, created_at_ms AS CreatedAtMs,
             updated_at_ms AS UpdatedAtMs FROM track_wakes
         """;
-    // Mirrors TrackWakeKinds.IsCritical: critical wakes are requeued on boot, the rest are dropped.
+
     private const string CriticalKindsSql =
         $"'{TrackWakeKinds.Mail}','{TrackWakeKinds.TaskSettled}','{TrackWakeKinds.AskAnswered}'";
+
     private const string NonCriticalKindsSql =
         $"'{TrackWakeKinds.Schedule}','{TrackWakeKinds.ReportEdited}','{TrackWakeKinds.Boot}'";
 
     public Task EnqueueAsync(TrackWakeRequest request, CancellationToken ct) =>
-        _writer.EnqueueAsync(async (conn, tx, token) => await EnqueueWakeInternalAsync(conn, tx, request,
-            _timeProvider.GetUtcNow().ToUnixTimeMilliseconds(), token).ConfigureAwait(false), ct);
+        _context.Writer.EnqueueAsync(async (conn, tx, token) => await EnqueueWakeInternalAsync(conn, tx, request,
+            _context.TimeProvider.GetUtcNow().ToUnixTimeMilliseconds(), token).ConfigureAwait(false), ct);
 
-    private static async Task EnqueueWakeInternalAsync(SqliteConnection conn, SqliteTransaction tx,
+    internal static async Task EnqueueWakeInternalAsync(SqliteConnection conn, SqliteTransaction tx,
         TrackWakeRequest request, long now, CancellationToken ct)
     {
         if (!await conn.ExecuteScalarAsync<bool>(new CommandDefinition(
@@ -42,7 +52,7 @@ public sealed partial class SqliteTrackStore : ITrackWakeStore
             tx, cancellationToken: ct)).ConfigureAwait(false);
     }
 
-    private static async Task EnqueueWakeOnceInternalAsync(SqliteConnection conn, SqliteTransaction tx,
+    internal static async Task EnqueueWakeOnceInternalAsync(SqliteConnection conn, SqliteTransaction tx,
         TrackWakeRequest request, long now, CancellationToken ct)
     {
         if (await conn.ExecuteScalarAsync<bool>(new CommandDefinition(
@@ -53,16 +63,16 @@ public sealed partial class SqliteTrackStore : ITrackWakeStore
 
     public async Task<IReadOnlyList<TrackWake>> ListAsync(string trackId, CancellationToken ct)
     {
-        EnsureInitialized();
-        await using var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);
+        _context.EnsureInitialized();
+        await using var conn = await _context.OpenReadConnectionAsync(ct).ConfigureAwait(false);
         return (await conn.QueryAsync<TrackWake>(new CommandDefinition(WakeSelect +
             " WHERE track_id=@TrackId ORDER BY ordinal;", new { TrackId = trackId }, cancellationToken: ct)).ConfigureAwait(false)).AsList();
     }
 
     public async Task<IReadOnlyList<string>> ListPendingTracksAsync(CancellationToken ct)
     {
-        EnsureInitialized();
-        await using var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);
+        _context.EnsureInitialized();
+        await using var conn = await _context.OpenReadConnectionAsync(ct).ConfigureAwait(false);
         return (await conn.QueryAsync<string>(new CommandDefinition($"""
             SELECT DISTINCT w.track_id FROM track_wakes w JOIN tracks t ON t.id=w.track_id
             WHERE w.state='{TrackWakeStates.Pending}' AND t.closed_at_ms IS NULL ORDER BY w.track_id;
@@ -70,7 +80,7 @@ public sealed partial class SqliteTrackStore : ITrackWakeStore
     }
 
     public Task<IReadOnlyList<TrackWake>> ClaimBatchAsync(string trackId, string targetSessionId, int limit, CancellationToken ct) =>
-        _writer.EnqueueAsync<IReadOnlyList<TrackWake>>(async (conn, tx, token) =>
+        _context.Writer.EnqueueAsync<IReadOnlyList<TrackWake>>(async (conn, tx, token) =>
         {
             await DropExhaustedWakesAsync(conn, tx, trackId, null, token).ConfigureAwait(false);
             var wakes = (await conn.QueryAsync<TrackWake>(new CommandDefinition(WakeSelect + $"""
@@ -82,7 +92,7 @@ public sealed partial class SqliteTrackStore : ITrackWakeStore
                 """, new { TrackId = trackId, TargetSessionId = targetSessionId, Limit = Math.Clamp(limit, 1, 32) },
                 tx, cancellationToken: token)).ConfigureAwait(false)).AsList();
             if (wakes.Count == 0) return wakes;
-            var now = _timeProvider.GetUtcNow().ToUnixTimeMilliseconds();
+            var now = _context.TimeProvider.GetUtcNow().ToUnixTimeMilliseconds();
             await conn.ExecuteAsync(new CommandDefinition($"""
                 UPDATE track_wakes SET state='{TrackWakeStates.Delivering}', attempts=attempts+1, updated_at_ms=@Now WHERE id IN @Ids;
                 """, new { Ids = wakes.Select(w => w.Id), Now = now }, tx, cancellationToken: token)).ConfigureAwait(false);
@@ -96,7 +106,7 @@ public sealed partial class SqliteTrackStore : ITrackWakeStore
             (includeDelivering ? " WHERE state IN ('pending','delivering')" : " WHERE state='pending'") +
             " AND attempts >= 3 AND (@TrackId IS NULL OR track_id=@TrackId)" +
             (ids is null ? ";" : " AND id IN @Ids;"), new { TrackId = trackId, Ids = ids }, tx, cancellationToken: ct)).ConfigureAwait(false)).AsList();
-        var now = _timeProvider.GetUtcNow().ToUnixTimeMilliseconds();
+        var now = _context.TimeProvider.GetUtcNow().ToUnixTimeMilliseconds();
         foreach (var wake in exhausted)
         {
             var target = wake.TargetSessionId ?? await conn.ExecuteScalarAsync<string?>(new CommandDefinition(
@@ -108,7 +118,7 @@ public sealed partial class SqliteTrackStore : ITrackWakeStore
                     v = 1, content = wake.PayloadJson, wakeId = wake.Id, wakeKind = wake.Kind,
                     status = "interrupted", archived = true, reason = "max_attempts_exceeded"
                 }), now);
-                await InsertSessionItemsAsync(conn, tx, wake.TrackId, [item], ct).ConfigureAwait(false);
+                await _sessionRepository.InsertSessionItemsAsync(conn, tx, wake.TrackId, [item], ct).ConfigureAwait(false);
             }
             await conn.ExecuteAsync(new CommandDefinition(
                 "UPDATE track_wakes SET state='dropped',reason='max_attempts_exceeded',updated_at_ms=@Now WHERE id=@Id;",
@@ -118,12 +128,15 @@ public sealed partial class SqliteTrackStore : ITrackWakeStore
 
     public Task MarkDoneAsync(IReadOnlyList<TrackWake> batch, string reason, string turnId, CancellationToken ct) =>
         TransitionWakesAsync(batch, TrackWakeStates.Done, reason, turnId, ct);
+
     public Task MarkDroppedAsync(IReadOnlyList<TrackWake> batch, string reason, string? turnId, CancellationToken ct) =>
         TransitionWakesAsync(batch, TrackWakeStates.Dropped, reason, turnId, ct);
+
     public Task LinkTurnAsync(IReadOnlyList<TrackWake> batch, string turnId, CancellationToken ct) =>
         TransitionWakesAsync(batch, TrackWakeStates.Delivering, null, turnId, ct);
+
     private Task TransitionWakesAsync(IReadOnlyList<TrackWake> batch, string state, string? reason, string? turnId, CancellationToken ct) =>
-        _writer.EnqueueAsync(async (conn, tx, token) =>
+        _context.Writer.EnqueueAsync(async (conn, tx, token) =>
         {
             if (batch.Count == 0) return;
             if (reason == "max_attempts_exceeded")
@@ -132,18 +145,18 @@ public sealed partial class SqliteTrackStore : ITrackWakeStore
                 UPDATE track_wakes SET state=@State, reason=@Reason, turn_id=COALESCE(@TurnId,turn_id), updated_at_ms=@Now
                 WHERE id IN @Ids AND state='{TrackWakeStates.Delivering}';
                 """, new { Ids = batch.Select(w => w.Id), State = state, Reason = reason, TurnId = turnId,
-                    Now = _timeProvider.GetUtcNow().ToUnixTimeMilliseconds() }, tx, cancellationToken: token)).ConfigureAwait(false);
+                    Now = _context.TimeProvider.GetUtcNow().ToUnixTimeMilliseconds() }, tx, cancellationToken: token)).ConfigureAwait(false);
         }, ct);
 
     public Task<bool> CancelPendingWakeAsync(string trackId, string wakeId, CancellationToken ct) =>
-        _writer.EnqueueAsync(async (conn, tx, token) => await conn.ExecuteAsync(new CommandDefinition($"""
+        _context.Writer.EnqueueAsync(async (conn, tx, token) => await conn.ExecuteAsync(new CommandDefinition($"""
             UPDATE track_wakes SET state='{TrackWakeStates.Dropped}', reason='{TrackWakeReasons.Canceled}', updated_at_ms=@Now
             WHERE track_id=@TrackId AND id=@Id AND state='{TrackWakeStates.Pending}';
-            """, new { TrackId = trackId, Id = wakeId, Now = _timeProvider.GetUtcNow().ToUnixTimeMilliseconds() },
+            """, new { TrackId = trackId, Id = wakeId, Now = _context.TimeProvider.GetUtcNow().ToUnixTimeMilliseconds() },
             tx, cancellationToken: token)).ConfigureAwait(false) == 1, ct);
 
     public Task<IReadOnlyList<string>> RecoverOnBootAsync(CancellationToken ct) =>
-        _writer.EnqueueAsync<IReadOnlyList<string>>(async (conn, tx, token) =>
+        _context.Writer.EnqueueAsync<IReadOnlyList<string>>(async (conn, tx, token) =>
         {
             var affected = (await conn.QueryAsync<string>(new CommandDefinition(
                 $"SELECT DISTINCT track_id FROM track_wakes WHERE state='{TrackWakeStates.Delivering}';", transaction: tx, cancellationToken: token)).ConfigureAwait(false)).AsList();
@@ -157,7 +170,7 @@ public sealed partial class SqliteTrackStore : ITrackWakeStore
                 WHERE state='{TrackWakeStates.Delivering}' AND kind IN ({NonCriticalKindsSql});
                 UPDATE track_wakes SET state='{TrackWakeStates.Pending}', reason='{TrackWakeReasons.BootRequeued}', turn_id=NULL, updated_at_ms=@Now
                 WHERE state='{TrackWakeStates.Delivering}' AND kind IN ({CriticalKindsSql});
-                """, new { Now = _timeProvider.GetUtcNow().ToUnixTimeMilliseconds() }, tx, cancellationToken: token)).ConfigureAwait(false);
+                """, new { Now = _context.TimeProvider.GetUtcNow().ToUnixTimeMilliseconds() }, tx, cancellationToken: token)).ConfigureAwait(false);
             return affected;
         }, ct);
 }

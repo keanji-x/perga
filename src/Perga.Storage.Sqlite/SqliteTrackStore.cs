@@ -1,33 +1,38 @@
-using System.Text;
 using System.Text.Json;
-using Dapper;
-using Microsoft.Data.Sqlite;
 using Perga.Contracts;
-using Perga.Kernel;
 using Perga.Kernel.Ports;
 using Perga.ReportDoc;
 
 namespace Perga.Storage.Sqlite;
 
-/// <summary>
-/// Full SQLite WAL implementation of <see cref="ITrackStore"/> and <see cref="ITrackReadStore"/>
-/// backed by <see cref="SqliteSingleWriter"/> micro-batching, lock-free <c>Mode=ReadOnly</c> snapshot readers,
-/// <c>&gt; 64 KB</c> Zstd cold blob offloading, and deterministic sliding-window GC.
-/// </summary>
-public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
+/// <summary>SQLite port facade. Domain repositories share one storage lifetime and writer.</summary>
+public sealed class SqliteTrackStore : ITrackStore, IAsyncDisposable, ISessionInputStore, ISessionMessageStore, ITrackScheduleStore, ITrackWakeStore, ITodayReadStore, ISystemUpgradeStore
 {
-    private readonly SqliteStorageOptions _options;
-    private readonly SqliteMigrator _migrator;
-    private readonly SqliteSingleWriter _writer;
-    private readonly ColdBlobStore _coldBlobStore;
-    private readonly SqliteJsonUpcaster _upcaster;
-    private readonly TimeProvider _timeProvider;
-    private readonly string _readConnectionString;
-    private readonly SemaphoreSlim _initLock = new(1, 1);
-
-    private string _databaseId = string.Empty;
-    private bool _initialized;
-    private int _disposed;
+    private readonly SqliteStoreContext _context;
+    private readonly MaintenanceRepository _maintenanceRepository;
+    private readonly SessionInputsRepository _sessionInputsRepository;
+    private readonly TodayRepository _todayRepository;
+    private readonly ReadReceiptsRepository _readReceiptsRepository;
+    private readonly SessionMessagesRepository _sessionMessagesRepository;
+    private readonly SystemUpgradeRepository _systemUpgradeRepository;
+    private readonly ExecutionTargetsRepository _executionTargetsRepository;
+    private readonly SessionResumeRepository _sessionResumeRepository;
+    private readonly AreaRepository _areaRepository;
+    private readonly TrackCreationRepository _trackCreationRepository;
+    private readonly TrackReadRepository _trackReadRepository;
+    private readonly TrackUpdateRepository _trackUpdateRepository;
+    private readonly TrackDeletionRepository _trackDeletionRepository;
+    private readonly ReportRepository _reportRepository;
+    private readonly TaskRepository _taskRepository;
+    private readonly SessionRepository _sessionRepository;
+    private readonly CorrespondenceRepository _correspondenceRepository;
+    private readonly TerminalRepository _terminalRepository;
+    private readonly EventRepository _eventRepository;
+    private readonly OverlayRepository _overlayRepository;
+    private readonly BootRecoveryRepository _bootRecoveryRepository;
+    private readonly TrackSchedulesRepository _trackSchedulesRepository;
+    private readonly TrackWakesRepository _trackWakesRepository;
+    private readonly CreationRepository _creationRepository;
 
     public SqliteTrackStore(
         string dbPath,
@@ -50,36 +55,36 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
         TimeProvider? timeProvider = null,
         SqliteJsonUpcaster? upcaster = null)
     {
-        ArgumentNullException.ThrowIfNull(options);
-        ArgumentException.ThrowIfNullOrWhiteSpace(options.DbPath);
-
-        _options = options;
-        _timeProvider = timeProvider ?? TimeProvider.System;
-        _upcaster = upcaster ?? SqliteJsonUpcaster.Default;
-        _migrator = migrator ?? new SqliteMigrator(timeProvider: _timeProvider);
-        _writer = new SqliteSingleWriter(options);
-        _coldBlobStore = new ColdBlobStore(options, _upcaster);
-
-        var readCsb = new SqliteConnectionStringBuilder
-        {
-            DataSource = options.GetFullDbPath(),
-            Mode = SqliteOpenMode.ReadOnly,
-            Pooling = true,
-            DefaultTimeout = options.BusyTimeoutSeconds
-        };
-        _readConnectionString = readCsb.ToString();
+        _context = new SqliteStoreContext(options, migrator, timeProvider, upcaster);
+        _maintenanceRepository = new MaintenanceRepository(_context);
+        _sessionRepository = new SessionRepository(_context);
+        _taskRepository = new TaskRepository(_context, _sessionRepository);
+        _trackReadRepository = new TrackReadRepository(_context, _taskRepository);
+        _sessionInputsRepository = new SessionInputsRepository(_context, _sessionRepository, _trackReadRepository);
+        _todayRepository = new TodayRepository(_context);
+        _readReceiptsRepository = new ReadReceiptsRepository(_context);
+        _sessionMessagesRepository = new SessionMessagesRepository(_context, _sessionRepository);
+        _correspondenceRepository = new CorrespondenceRepository(_context);
+        _systemUpgradeRepository = new SystemUpgradeRepository(_context, _correspondenceRepository);
+        _executionTargetsRepository = new ExecutionTargetsRepository(_context);
+        _sessionResumeRepository = new SessionResumeRepository(_context, _sessionRepository);
+        _areaRepository = new AreaRepository(_context);
+        _trackCreationRepository = new TrackCreationRepository(_context, _taskRepository);
+        _trackUpdateRepository = new TrackUpdateRepository(_context, _taskRepository);
+        _trackDeletionRepository = new TrackDeletionRepository(_context);
+        _reportRepository = new ReportRepository(_context);
+        _terminalRepository = new TerminalRepository(_context);
+        _eventRepository = new EventRepository(_context);
+        _overlayRepository = new OverlayRepository(_context);
+        _bootRecoveryRepository = new BootRecoveryRepository(_context);
+        _trackSchedulesRepository = new TrackSchedulesRepository(_context, _taskRepository);
+        _trackWakesRepository = new TrackWakesRepository(_context, _sessionRepository);
+        _creationRepository = new CreationRepository(_context);
     }
 
-    public SqliteStorageOptions Options => _options;
-    public SqliteJsonUpcaster Upcaster => _upcaster;
-    public string DatabaseId
-    {
-        get
-        {
-            EnsureInitialized();
-            return _databaseId;
-        }
-    }
+    public SqliteStorageOptions Options => _context.Options;
+    public SqliteJsonUpcaster Upcaster => _context.Upcaster;
+    public string DatabaseId => _context.DatabaseId;
 
     public static async Task<SqliteTrackStore> OpenAsync(
         string dbPath,
@@ -99,587 +104,204 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
         }
     }
 
-    public async Task InitializeAsync(CancellationToken ct = default)
-    {
-        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-        if (_initialized)
-        {
-            return;
-        }
+    public Task InitializeAsync(CancellationToken ct = default) => _context.InitializeAsync(ct);
+    public ValueTask DisposeAsync() => _context.DisposeAsync();
 
-        await _initLock.WaitAsync(ct).ConfigureAwait(false);
-        try
-        {
-            if (_initialized)
-            {
-                return;
-            }
+    public ISessionInputStore SessionInputs => this;
+    public ISessionMessageStore SessionMessages => this;
+    public ITrackScheduleStore? TrackSchedules => this;
+    public ITrackWakeStore TrackWakes => this;
 
-            Directory.CreateDirectory(_options.ResolveDataDir());
-            var fullDbPath = _options.GetFullDbPath();
-            var dbExistedBeforeInit = File.Exists(fullDbPath);
-            await _migrator.MigrateAsync(fullDbPath, ct).ConfigureAwait(false);
-            await _writer.InitializeAsync(ct).ConfigureAwait(false);
-            _databaseId = ResolveOrCreateDatabaseId(fullDbPath, dbExistedBeforeInit);
-            _initialized = true;
-        }
-        finally
-        {
-            _initLock.Release();
-        }
-    }
+    public Task<DbMaintenanceStatsDto> RunMaintenancePassAsync(long nowMs, CancellationToken ct) =>
+        _maintenanceRepository.RunMaintenancePassAsync(nowMs, ct);
 
-    // -------------------------------------------------------------------------
-    // Areas
-    // -------------------------------------------------------------------------
+    public Task<int> PruneTrackWakesAsync(long nowMs, CancellationToken ct) =>
+        _maintenanceRepository.PruneTrackWakesAsync(nowMs, ct);
 
-    public async Task<IReadOnlyList<AreaDto>> ListAreasAsync(CancellationToken ct)
-    {
-        EnsureInitialized();
-        await using var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);
-        var rows = await conn.QueryAsync<AreaRow>(
-            new CommandDefinition(
-                """
-                SELECT id AS Id,
-                       name AS Name,
-                       color AS Color,
-                       default_cwd AS DefaultCwd,
-                       folders_json AS FoldersJson,
-                       sort_order AS SortOrder,
-                       created_at_ms AS CreatedAtMs,
-                       updated_at_ms AS UpdatedAtMs,
-                       execution_target_id AS ExecutionTargetId
-                FROM areas
-                WHERE is_system = 0
-                ORDER BY sort_order ASC, created_at_ms ASC, id ASC;
-                """,
-                cancellationToken: ct)).ConfigureAwait(false);
+    public Task<int> PruneTrackSchedulesAsync(long nowMs, CancellationToken ct) =>
+        _maintenanceRepository.PruneTrackSchedulesAsync(nowMs, ct);
 
-        return rows.Select(MapArea).ToList();
-    }
+    public Task<bool> HasSessionTurnAsync(string sessionId, string turnId, CancellationToken ct) =>
+        _sessionInputsRepository.HasSessionTurnAsync(sessionId, turnId, ct);
 
-    public async Task<AreaDto?> GetAreaAsync(string areaId, CancellationToken ct)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(areaId);
-        EnsureInitialized();
+    public Task<int> GetLastTurnIndexAsync(string sessionId, CancellationToken ct) =>
+        _sessionInputsRepository.GetLastTurnIndexAsync(sessionId, ct);
 
-        await using var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);
-        var row = await conn.QuerySingleOrDefaultAsync<AreaRow>(
-            new CommandDefinition(
-                """
-                SELECT id AS Id,
-                       name AS Name,
-                       color AS Color,
-                       default_cwd AS DefaultCwd,
-                       folders_json AS FoldersJson,
-                       sort_order AS SortOrder,
-                       created_at_ms AS CreatedAtMs,
-                       updated_at_ms AS UpdatedAtMs,
-                       execution_target_id AS ExecutionTargetId
-                FROM areas
-                WHERE id = @AreaId;
-                """,
-                new { AreaId = areaId },
-                cancellationToken: ct)).ConfigureAwait(false);
+    public Task<PersistedSessionInput?> FindByKeyAsync(string sessionId, string key, CancellationToken ct) =>
+        _sessionInputsRepository.FindByKeyAsync(sessionId, key, ct);
 
-        return row is null ? null : MapArea(row);
-    }
+    public Task<PersistedSessionInput?> FindByIdAsync(string sessionId, string inputId, CancellationToken ct) =>
+        _sessionInputsRepository.FindByIdAsync(sessionId, inputId, ct);
 
-    public Task<AreaDto> UpsertAreaAsync(AreaDto area, CancellationToken ct)
-    {
-        ArgumentNullException.ThrowIfNull(area);
-        EnsureInitialized();
+    public Task<PersistedSessionInput?> FindUnresolvedAsync(string sessionId, CancellationToken ct) =>
+        _sessionInputsRepository.FindUnresolvedAsync(sessionId, ct);
 
-        return _writer.EnqueueAsync<AreaDto>(
-            async (conn, tx, innerCt) =>
-            {
-                await UpsertAreaInternalAsync(conn, tx, area, innerCt).ConfigureAwait(false);
-                var persisted = await conn.QuerySingleAsync<AreaRow>(
-                    new CommandDefinition(
-                        """
-                        SELECT id AS Id,
-                               name AS Name,
-                               color AS Color,
-                               default_cwd AS DefaultCwd,
-                               folders_json AS FoldersJson,
-                               sort_order AS SortOrder,
-                               created_at_ms AS CreatedAtMs,
-                               updated_at_ms AS UpdatedAtMs,
-                               execution_target_id AS ExecutionTargetId
-                        FROM areas
-                        WHERE id = @Id;
-                        """,
-                        new { area.Id },
-                        transaction: tx,
-                        cancellationToken: innerCt)).ConfigureAwait(false);
+    public Task<IReadOnlyList<PersistedSessionInput>> ListAcceptedTrackInputsAsync(string trackId, CancellationToken ct) =>
+        _sessionInputsRepository.ListAcceptedTrackInputsAsync(trackId, ct);
 
-                return MapArea(persisted);
-            },
-            ct);
-    }
+    public Task<StoredSessionCreation?> FindCreationAsync(SessionCreateIntent intent, CancellationToken ct) =>
+        _sessionInputsRepository.FindCreationAsync(intent, ct);
 
-    private static async Task UpsertAreaInternalAsync(SqliteConnection conn, SqliteTransaction tx, AreaDto area, CancellationToken ct)
-    {
-        var foldersJson = SqliteJsonUpcaster.SerializeStringList(area.Folders);
-        var executionTargetId = string.IsNullOrWhiteSpace(area.ExecutionTargetId) ? "local" : area.ExecutionTargetId.Trim();
-        await conn.ExecuteAsync(
-            new CommandDefinition(
-                """
-                INSERT INTO areas (id, name, color, default_cwd, folders_json, sort_order, created_at_ms, updated_at_ms, execution_target_id)
-                VALUES (@Id, @Name, @Color, @DefaultCwd, @FoldersJson, @SortOrder, @CreatedAtMs, @UpdatedAtMs, @ExecutionTargetId)
-                ON CONFLICT(id) DO UPDATE SET
-                    name = excluded.name,
-                    color = excluded.color,
-                    default_cwd = excluded.default_cwd,
-                    folders_json = excluded.folders_json,
-                    sort_order = excluded.sort_order,
-                    execution_target_id = excluded.execution_target_id,
-                    updated_at_ms = excluded.updated_at_ms;
-                """,
-                new
-                {
-                    area.Id,
-                    area.Name,
-                    area.Color,
-                    area.DefaultCwd,
-                    FoldersJson = foldersJson,
-                    area.SortOrder,
-                    area.CreatedAtMs,
-                    area.UpdatedAtMs,
-                    ExecutionTargetId = executionTargetId
-                },
-                transaction: tx,
-                cancellationToken: ct)).ConfigureAwait(false);
-    }
+    public Task<PersistedSessionInput> AcceptAsync(
+        AgentSessionDto session, SessionInputRequest request, EventEnvelopeDto sessionEvent, CancellationToken ct) =>
+        _sessionInputsRepository.AcceptAsync(session, request, sessionEvent, ct);
 
-    public async Task DeleteAreaAsync(string areaId, CancellationToken ct, bool requireEmpty = false)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(areaId);
-        EnsureInitialized();
+    public Task<PersistedSessionInput?> PromoteQueuedBatchAsync(AgentSessionDto session, SessionMessage message,
+        EventEnvelopeDto sessionEvent, CancellationToken ct) =>
+        _sessionInputsRepository.PromoteQueuedBatchAsync(session, message, sessionEvent, ct);
 
-        var cascadedTrackIds = await _writer.EnqueueAsync<IReadOnlyList<string>>(
-            async (conn, tx, innerCt) =>
-            {
-                var trackIds = (await conn.QueryAsync<string>(
-                    new CommandDefinition(
-                        "SELECT id FROM tracks WHERE area_id = @AreaId;",
-                        new { AreaId = areaId },
-                        transaction: tx,
-                        cancellationToken: innerCt)).ConfigureAwait(false)).ToList();
+    public Task<PersistedSessionInput?> CreateAsync(
+        SessionCreateIntent intent, AgentSessionDto session, SessionInputRequest? firstInput,
+        EventEnvelopeDto sessionEvent, CancellationToken ct) =>
+        _sessionInputsRepository.CreateAsync(intent, session, firstInput, sessionEvent, ct);
 
-                if (requireEmpty && trackIds.Count != 0)
-                    throw Perga.Kernel.KernelException.Conflict("This Area has Tracks that must be removed before deletion.");
+    public Task<bool> ClaimAsync(
+        PersistedSessionInput input, AgentSessionDto session, EventEnvelopeDto sessionEvent, CancellationToken ct) =>
+        _sessionInputsRepository.ClaimAsync(input, session, sessionEvent, ct);
 
-                await conn.ExecuteAsync(
-                    new CommandDefinition(
-                        "DELETE FROM areas WHERE id = @AreaId;",
-                        new { AreaId = areaId },
-                        transaction: tx,
-                        cancellationToken: innerCt)).ConfigureAwait(false);
+    public Task MarkDeliveredAsync(PersistedSessionInput input, string? nativeThreadId, string? providerTurnId, CancellationToken ct) =>
+        _sessionInputsRepository.MarkDeliveredAsync(input, nativeThreadId, providerTurnId, ct);
 
-                return trackIds;
-            },
-            ct).ConfigureAwait(false);
+    public Task SettleAsync(
+        PersistedSessionInput input, string delivery, SessionTurnDto turn, IReadOnlyList<SessionItemDto> items,
+        AgentSessionDto session, IReadOnlyList<EventEnvelopeDto> events, CancellationToken ct) =>
+        _sessionInputsRepository.SettleAsync(input, delivery, turn, items, session, events, ct);
 
-        foreach (var trackId in cascadedTrackIds)
-        {
-            _coldBlobStore.DeleteTrackBlobsDirectory(trackId);
-        }
-    }
+    public Task ResolveAsync(
+        PersistedSessionInput input, AgentSessionDto session, EventEnvelopeDto sessionEvent, CancellationToken ct) =>
+        _sessionInputsRepository.ResolveAsync(input, session, sessionEvent, ct);
 
-    // -------------------------------------------------------------------------
-    // Tracks & Aggregates
-    // -------------------------------------------------------------------------
+    public Task<IReadOnlyList<(string TrackId, PersistedSessionInput Input)>> RecoverSessionInputsAsync(CancellationToken ct) =>
+        _sessionInputsRepository.RecoverSessionInputsAsync(ct);
+
+    public Task<string?> GetDailyTrackIdAsync(string date, CancellationToken ct) =>
+        _todayRepository.GetDailyTrackIdAsync(date, ct);
+
+    public Task<IReadOnlyList<DailyTrackCalendarPresence>> ListDailyTrackPresenceAsync(
+        IReadOnlyList<string> dates, CancellationToken ct) =>
+        _todayRepository.ListDailyTrackPresenceAsync(dates, ct);
+
+    public Task<IReadOnlyList<TodayScheduleEntry>> ListCalendarSchedulesInWindowAsync(
+        long startMs, long endMs, CancellationToken ct) =>
+        _todayRepository.ListCalendarSchedulesInWindowAsync(startMs, endMs, ct);
+
+    public Task<IReadOnlyList<DailyReportRevision>> ListDailyReportRevisionsAsync(
+        long startMs, long endMs, long throughEventId, CancellationToken ct) =>
+        _todayRepository.ListDailyReportRevisionsAsync(startMs, endMs, throughEventId, ct);
+
+    public Task<ReadReceiptsResponseDto> GetReadReceiptsAsync(CancellationToken ct = default) =>
+        _readReceiptsRepository.GetReadReceiptsAsync(ct);
+
+    public Task<ReadReceiptDto> MarkReadAsync(string kind, string targetId, long readThroughMs, CancellationToken ct = default) =>
+        _readReceiptsRepository.MarkReadAsync(kind, targetId, readThroughMs, ct);
+
+    public Task<ReadReceiptDto> MarkUnreadAsync(string kind, string targetId, CancellationToken ct = default) =>
+        _readReceiptsRepository.MarkUnreadAsync(kind, targetId, ct);
+
+    Task<SessionMessage?> ISessionMessageStore.FindAsync(string sessionId, string authorId, string requestKey, CancellationToken ct) =>
+        ((ISessionMessageStore)_sessionMessagesRepository).FindAsync(sessionId, authorId, requestKey, ct);
+
+    Task<SessionMessage?> ISessionMessageStore.GetAsync(string sessionId, string messageId, CancellationToken ct) =>
+        ((ISessionMessageStore)_sessionMessagesRepository).GetAsync(sessionId, messageId, ct);
+
+    Task<SessionMessage?> ISessionMessageStore.NextAsync(string sessionId, CancellationToken ct) =>
+        ((ISessionMessageStore)_sessionMessagesRepository).NextAsync(sessionId, ct);
+
+    Task ISessionMessageStore.InsertAsync(SessionMessage message, CancellationToken ct) =>
+        ((ISessionMessageStore)_sessionMessagesRepository).InsertAsync(message, ct);
+
+    Task<bool> ISessionMessageStore.TransitionAsync(SessionMessage message, string expected, CancellationToken ct) =>
+        ((ISessionMessageStore)_sessionMessagesRepository).TransitionAsync(message, expected, ct);
+
+    Task<string?> ISessionMessageStore.FindQueuedSteerAsync(SessionMessage message, string turnId, CancellationToken ct) =>
+        ((ISessionMessageStore)_sessionMessagesRepository).FindQueuedSteerAsync(message, turnId, ct);
+
+    Task<bool> ISessionMessageStore.ClaimQueuedSteerAsync(SessionMessage message, string turnId, CancellationToken ct) =>
+        ((ISessionMessageStore)_sessionMessagesRepository).ClaimQueuedSteerAsync(message, turnId, ct);
+
+    Task<string> ISessionMessageStore.SettleQueuedSteerAsync(SessionMessage message, string turnId, string outcome,
+        SessionItemDto? item, CancellationToken ct) =>
+        ((ISessionMessageStore)_sessionMessagesRepository).SettleQueuedSteerAsync(message, turnId, outcome, item, ct);
+
+    Task<bool> ISessionMessageStore.DeliverSteerAsync(SessionMessage message, SessionItemDto item, CancellationToken ct) =>
+        ((ISessionMessageStore)_sessionMessagesRepository).DeliverSteerAsync(message, item, ct);
+
+    Task<IReadOnlyList<SessionMessage>> ISessionMessageStore.ListQueueAsync(string sessionId, CancellationToken ct) =>
+        ((ISessionMessageStore)_sessionMessagesRepository).ListQueueAsync(sessionId, ct);
+
+    Task<IReadOnlyList<string>> ISessionMessageStore.ListHandoffsAsync(string sessionId, CancellationToken ct) =>
+        ((ISessionMessageStore)_sessionMessagesRepository).ListHandoffsAsync(sessionId, ct);
+
+    Task<IReadOnlyList<(string TrackId, string SessionId)>> ISessionMessageStore.ListRecoverableQueuesAsync(CancellationToken ct) =>
+        ((ISessionMessageStore)_sessionMessagesRepository).ListRecoverableQueuesAsync(ct);
+
+    public Task<int> GetSchemaVersionAsync(CancellationToken ct) =>
+        _systemUpgradeRepository.GetSchemaVersionAsync(ct);
+
+    public Task<IReadOnlyList<string>> PrepareUpgradeNotificationRetriesAsync(CancellationToken ct) =>
+        _systemUpgradeRepository.PrepareUpgradeNotificationRetriesAsync(ct);
+
+    public Task AcknowledgeUpgradeNotificationAsync(string mailId, CancellationToken ct) =>
+        _systemUpgradeRepository.AcknowledgeUpgradeNotificationAsync(mailId, ct);
+
+    public Task MarkUpgradeNotificationFailedAsync(string mailId, string error, CancellationToken ct) =>
+        _systemUpgradeRepository.MarkUpgradeNotificationFailedAsync(mailId, error, ct);
+
+    public Task<bool> ConsumeUpgradeReceiptAsync(SystemUpgradeReceipt receipt, CancellationToken ct) =>
+        _systemUpgradeRepository.ConsumeUpgradeReceiptAsync(receipt, ct);
+
+    public Task<IReadOnlyList<StoredExecutionTarget>> ListExecutionTargetsAsync(CancellationToken ct = default) =>
+        _executionTargetsRepository.ListExecutionTargetsAsync(ct);
+
+    public Task<StoredExecutionTarget> UpsertExecutionTargetAsync(StoredExecutionTarget target, CancellationToken ct = default) =>
+        _executionTargetsRepository.UpsertExecutionTargetAsync(target, ct);
+
+    public Task<bool> DeleteExecutionTargetAsync(string targetId, CancellationToken ct = default) =>
+        _executionTargetsRepository.DeleteExecutionTargetAsync(targetId, ct);
+
+    public Task CompleteSessionResumeAsync(AgentSessionDto session, PersistedSessionInput? unresolved,
+        EventEnvelopeDto sessionEvent, int expectedEpoch, CancellationToken ct, SessionItemDto? boundary = null) =>
+        _sessionResumeRepository.CompleteSessionResumeAsync(session, unresolved, sessionEvent, expectedEpoch, ct, boundary);
+
+    public Task<IReadOnlyList<AreaDto>> ListAreasAsync(CancellationToken ct) =>
+        _areaRepository.ListAreasAsync(ct);
+
+    public Task<AreaDto?> GetAreaAsync(string areaId, CancellationToken ct) =>
+        _areaRepository.GetAreaAsync(areaId, ct);
+
+    public Task<AreaDto> UpsertAreaAsync(AreaDto area, CancellationToken ct) =>
+        _areaRepository.UpsertAreaAsync(area, ct);
+
+    public Task DeleteAreaAsync(string areaId, CancellationToken ct, bool requireEmpty = false) =>
+        _areaRepository.DeleteAreaAsync(areaId, ct, requireEmpty);
 
     public Task<string> CreateTrackAsync(TrackDto track, ReportDocument report, string? templateSnapshot,
         AgentSessionDto lead, CancellationToken ct) =>
-        CreateTrackAsync(new(track, report, templateSnapshot, lead, [], null, null, []), null, ct);
+        _trackCreationRepository.CreateTrackAsync(track, report, templateSnapshot, lead, ct);
 
-    public Task<string> CreateTrackAsync(TrackCreation creation, ResourceCreationKey? key, CancellationToken ct)
-    {
-        var (track, initialReport, templateSnapshot, initialLeadSession, tasks, firstInput, preparation, events, dailyDate, systemArea) = creation;
-        EnsureInitialized();
+    public Task<string> CreateTrackAsync(TrackCreation creation, ResourceCreationKey? key, CancellationToken ct) =>
+        _trackCreationRepository.CreateTrackAsync(creation, key, ct);
 
-        var leadSessionId = string.IsNullOrWhiteSpace(track.LeadSessionId)
-            ? initialLeadSession.Id
-            : track.LeadSessionId;
-
-        var workspaceSpecJson = SqliteJsonUpcaster.SerializeElement(track.WorkspaceSpec);
-        var templateInputsJson = SqliteJsonUpcaster.SerializeElement(track.TemplateInputs);
-        var templateStateJson = SqliteJsonUpcaster.SerializeElement(track.TemplateState);
-        var dataJson = SqliteJsonUpcaster.SerializeElement(track.Data);
-        var enabledPluginsJson = SqliteJsonUpcaster.SerializeStringList(track.EnabledPlugins);
-        var blocksJson = SqliteJsonUpcaster.SerializeReportBlocks(initialReport.Blocks);
-        var initialBlocksZstd = SqliteJsonUpcaster.CompressReportBlocksZstd(initialReport.Blocks);
-
-        return _writer.EnqueueAsync<string>(
-            async (conn, tx, innerCt) =>
-            {
-                if (dailyDate is not null)
-                {
-                    var existing = await conn.ExecuteScalarAsync<string?>(new CommandDefinition(
-                        "SELECT track_id FROM daily_tracks WHERE date = @Date;", new { Date = dailyDate }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
-                    if (existing is not null) return existing;
-                    ArgumentNullException.ThrowIfNull(systemArea);
-                    await UpsertAreaInternalAsync(conn, tx, systemArea, innerCt).ConfigureAwait(false);
-                    await conn.ExecuteAsync(new CommandDefinition("UPDATE areas SET is_system = 1 WHERE id = @Id;",
-                        new { systemArea.Id }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
-                }
-                var replay = await FindCreationInternalAsync(conn, tx, key, innerCt).ConfigureAwait(false);
-                if (replay is not null)
-                    return replay;
-                if (await conn.ExecuteScalarAsync<string?>(new CommandDefinition(
-                    "SELECT id FROM areas WHERE id = @AreaId;", new { track.AreaId }, tx, cancellationToken: innerCt)).ConfigureAwait(false) is null)
-                    throw Perga.Kernel.KernelException.NotFound($"Area '{track.AreaId}' not found.");
-
-                var trackExecutionTargetId = string.IsNullOrWhiteSpace(track.ExecutionTargetId)
-                    ? "local"
-                    : track.ExecutionTargetId.Trim();
-                await conn.ExecuteAsync(
-                    new CommandDefinition(
-                        """
-                        INSERT INTO tracks (
-                            id, area_id, parent_track_id, parent_attempt_id, title, cwd,
-                            workspace_driver, workspace_spec_json, lead_session_id,
-                            template_id, template_snapshot, template_inputs_json, template_state_json, data_json, data_rev,
-                            flow_spec_json, flow_rev, flow_file_sha256,
-                            enabled_plugins_json, closed_at_ms, pinned_at_ms, sort_order,
-                            created_at_ms, updated_at_ms, execution_target_id
-                        )
-                        VALUES (
-                            @Id, @AreaId, @ParentTrackId, @ParentAttemptId, @Title, @Cwd,
-                            @WorkspaceDriver, @WorkspaceSpecJson, @LeadSessionId,
-                            @TemplateId, @TemplateSnapshot, @TemplateInputsJson, @TemplateStateJson, @DataJson, @DataRev,
-                            @FlowSpecJson, @FlowRev, @FlowFileSha256,
-                            @EnabledPluginsJson, @ClosedAtMs, @PinnedAtMs, @SortOrder,
-                            @CreatedAtMs, @UpdatedAtMs, @ExecutionTargetId
-                        );
-                        """,
-                        new
-                        {
-                            track.Id,
-                            track.AreaId,
-                            track.ParentTrackId,
-                            track.ParentAttemptId,
-                            track.Title,
-                            track.Cwd,
-                            track.WorkspaceDriver,
-                            WorkspaceSpecJson = workspaceSpecJson,
-                            LeadSessionId = leadSessionId,
-                            track.TemplateId,
-                            TemplateSnapshot = templateSnapshot,
-                            TemplateInputsJson = templateInputsJson,
-                            TemplateStateJson = templateStateJson,
-                            DataJson = dataJson,
-                            track.DataRev,
-                            FlowSpecJson = string.IsNullOrWhiteSpace(track.FlowSpecJson) ? """{"rev":0,"nodes":[]}""" : track.FlowSpecJson,
-                            track.FlowRev,
-                            track.FlowFileSha256,
-                            EnabledPluginsJson = enabledPluginsJson,
-                            track.ClosedAtMs,
-                            track.PinnedAtMs,
-                            track.SortOrder,
-                            track.CreatedAtMs,
-                            track.UpdatedAtMs,
-                            ExecutionTargetId = trackExecutionTargetId
-                        },
-                        transaction: tx,
-                        cancellationToken: innerCt)).ConfigureAwait(false);
-
-                await conn.ExecuteAsync(
-                    new CommandDefinition(
-                        """
-                        INSERT INTO reports (track_id, doc_rev, summary, leading_comment, blocks_json, updated_at_ms)
-                        VALUES (@TrackId, @DocRev, @Summary, @LeadingComment, @BlocksJson, @UpdatedAtMs);
-                        """,
-                        new
-                        {
-                            TrackId = track.Id,
-                            initialReport.DocRev,
-                            initialReport.Summary,
-                            initialReport.LeadingComment,
-                            BlocksJson = blocksJson,
-                            track.UpdatedAtMs
-                        },
-                        transaction: tx,
-                        cancellationToken: innerCt)).ConfigureAwait(false);
-
-                await conn.ExecuteAsync(
-                    new CommandDefinition(
-                        """
-                        INSERT INTO report_revisions (track_id, doc_rev, author_session_id, message, blocks_zstd, created_at_ms)
-                        VALUES (@TrackId, @DocRev, @AuthorSessionId, @Message, @BlocksZstd, @CreatedAtMs);
-                        """,
-                        new
-                        {
-                            TrackId = track.Id,
-                            initialReport.DocRev,
-                            AuthorSessionId = initialLeadSession.Id,
-                            Message = "Initial report",
-                            BlocksZstd = initialBlocksZstd,
-                            track.CreatedAtMs
-                        },
-                        transaction: tx,
-                        cancellationToken: innerCt)).ConfigureAwait(false);
-
-                await conn.ExecuteAsync(new CommandDefinition(
-                    "UPDATE report_revisions SET summary = @Summary, leading_comment = @LeadingComment WHERE track_id = @Id AND doc_rev = @DocRev;",
-                    new { track.Id, initialReport.DocRev, initialReport.Summary, initialReport.LeadingComment }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
-                if (dailyDate is not null)
-                    await conn.ExecuteAsync(new CommandDefinition(
-                        "INSERT INTO daily_tracks (date, track_id, created_at_ms) VALUES (@Date, @Id, @CreatedAtMs);",
-                        new { Date = dailyDate, track.Id, track.CreatedAtMs }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
-                await UpsertSessionInternalAsync(conn, tx, initialLeadSession, innerCt).ConfigureAwait(false);
-                foreach (var task in tasks)
-                    await UpsertTaskInternalAsync(conn, tx, task, innerCt).ConfigureAwait(false);
-                var input = firstInput is null ? null
-                    : await InsertInputAsync(conn, tx, initialLeadSession, firstInput, innerCt).ConfigureAwait(false);
-                if (preparation is not null)
-                    await conn.ExecuteAsync(new CommandDefinition(
-                    "INSERT INTO track_workspace_preparations VALUES (@Id, @Intent);",
-                    new { track.Id, Intent = JsonSerializer.Serialize(preparation) }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
-                await InsertResourceReceiptAsync(conn, tx, key, track.Id, track.CreatedAtMs, input?.Receipt.InputId, innerCt).ConfigureAwait(false);
-                foreach (var clock in creation.FlowClocks)
-                    await UpsertFlowScheduleInternalAsync(conn, tx, clock, innerCt).ConfigureAwait(false);
-                foreach (var evt in events)
-                    await InsertEventInternalAsync(conn, tx, evt, innerCt).ConfigureAwait(false);
-                return track.Id;
-            },
-            ct);
-    }
-
-
-    public async Task<IReadOnlyList<TrackDto>> ListTracksAsync(
+    public Task<IReadOnlyList<TrackDto>> ListTracksAsync(
         string? areaId = null,
         bool includeClosed = false,
-        CancellationToken ct = default)
-    {
-        EnsureInitialized();
-        await using var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);
+        CancellationToken ct = default) =>
+        _trackReadRepository.ListTracksAsync(areaId, includeClosed, ct);
 
-        var sql = new StringBuilder(
-            """
-            SELECT t.id AS Id,
-                   t.area_id AS AreaId,
-                   t.parent_track_id AS ParentTrackId,
-                   t.parent_attempt_id AS ParentAttemptId,
-                   t.title AS Title,
-                   t.cwd AS Cwd,
-                   t.workspace_driver AS WorkspaceDriver,
-                   t.workspace_spec_json AS WorkspaceSpecJson,
-                   t.lead_session_id AS LeadSessionId,
-                   t.template_id AS TemplateId,
-                   t.template_snapshot AS TemplateSnapshot,
-                   t.template_inputs_json AS TemplateInputsJson,
-                   t.template_state_json AS TemplateStateJson,
-                   t.data_json AS DataJson,
-                   t.data_rev AS DataRev,
-                   t.flow_spec_json AS FlowSpecJson,
-                   t.flow_rev AS FlowRev,
-                   t.flow_file_sha256 AS FlowFileSha256,
-                   t.enabled_plugins_json AS EnabledPluginsJson,
-                   t.closed_at_ms AS ClosedAtMs,
-                   t.pinned_at_ms AS PinnedAtMs,
-                   t.sort_order AS SortOrder,
-                   t.created_at_ms AS CreatedAtMs,
-                   t.updated_at_ms AS UpdatedAtMs,
-                   t.execution_target_id AS ExecutionTargetId
-            FROM tracks t
-            WHERE 1 = 1
-            """);
+    public Task<TrackDto?> GetTrackAsync(string trackId, CancellationToken ct) =>
+        _trackReadRepository.GetTrackAsync(trackId, ct);
 
-        if (!string.IsNullOrWhiteSpace(areaId))
-        {
-            sql.Append(" AND t.area_id = @AreaId");
-        }
-
-        if (!includeClosed)
-        {
-            sql.Append(" AND t.closed_at_ms IS NULL");
-        }
-
-        sql.Append(" ORDER BY CASE WHEN t.pinned_at_ms IS NOT NULL THEN 0 ELSE 1 END ASC, t.sort_order ASC, t.created_at_ms ASC, t.id ASC;");
-
-        var rows = await conn.QueryAsync<TrackRow>(
-            new CommandDefinition(
-                sql.ToString(),
-                new { AreaId = areaId },
-                cancellationToken: ct)).ConfigureAwait(false);
-
-        return rows.Select(MapTrack).ToList();
-    }
-
-    public async Task<TrackDto?> GetTrackAsync(string trackId, CancellationToken ct)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(trackId);
-        EnsureInitialized();
-
-        await using var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);
-        var row = await QueryTrackRowAsync(conn, tx: null, trackId, ct).ConfigureAwait(false);
-        return row is null ? null : MapTrack(row);
-    }
-
-    public async Task<TrackAggregateSnapshot?> LoadTrackAggregateAsync(string trackId, CancellationToken ct)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(trackId);
-        EnsureInitialized();
-
-        await using var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);
-        await using var tx = conn.BeginTransaction(deferred: true);
-
-        var trackRow = await QueryTrackRowAsync(conn, tx, trackId, ct).ConfigureAwait(false);
-        if (trackRow is null)
-        {
-            return null;
-        }
-
-        var trackDto = MapTrack(trackRow);
-
-        var reportRow = await conn.QuerySingleOrDefaultAsync<ReportRow>(
-            new CommandDefinition(
-                """
-                SELECT track_id AS TrackId,
-                       doc_rev AS DocRev,
-                       summary AS Summary,
-                       leading_comment AS LeadingComment,
-                       blocks_json AS BlocksJson,
-                       updated_at_ms AS UpdatedAtMs
-                FROM reports
-                WHERE track_id = @TrackId;
-                """,
-                new { TrackId = trackId },
-                transaction: tx,
-                cancellationToken: ct)).ConfigureAwait(false);
-
-        var reportDoc = reportRow is null
-            ? new ReportDocument(0, string.Empty, string.Empty, Array.Empty<ReportBlock>())
-            : new ReportDocument(
-                DocRev: (int)reportRow.DocRev,
-                Summary: reportRow.Summary,
-                LeadingComment: reportRow.LeadingComment,
-                Blocks: SqliteJsonUpcaster.DeserializeReportBlocks(reportRow.BlocksJson));
-
-        var taskRows = await conn.QueryAsync<TaskRow>(
-            new CommandDefinition(
-                """
-                SELECT id AS Id,
-                       track_id AS TrackId,
-                       block_id AS BlockId,
-                       task_key AS TaskKey,
-                       generation AS Generation,
-                       kind AS Kind,
-                       provider AS Provider,
-                       role AS Role,
-                       access_mode AS AccessMode,
-                       ready AS Ready,
-                       depends_on_json AS DependsOnJson,
-                       goal_or_cmd AS GoalOrCmd,
-                       context_json AS ContextJson,
-                       acceptance AS Acceptance,
-                       gate_json AS GateJson,
-                       status AS Status,
-                       status_detail AS StatusDetail,
-                       semantic_verdict AS SemanticVerdict,
-                       semantic_note AS SemanticNote,
-                       session_id AS SessionId,
-                       run_count AS RunCount,
-                       worker_result_json AS WorkerResultJson,
-                       meta_json AS MetaJson,
-                       gate_verdict_json AS GateVerdictJson,
-                       started_at_ms AS StartedAtMs,
-                       finished_at_ms AS FinishedAtMs,
-                       outcome AS Outcome,
-                       outcome_summary AS OutcomeSummary,
-                       trigger_run_key AS TriggerRunKey,
-                       archived_at_ms AS ArchivedAtMs,
-                       created_at_ms AS CreatedAtMs,
-                       updated_at_ms AS UpdatedAtMs
-                FROM tasks
-                WHERE track_id = @TrackId
-                ORDER BY created_at_ms ASC, id ASC;
-                """,
-                new { TrackId = trackId },
-                transaction: tx,
-                cancellationToken: ct)).ConfigureAwait(false);
-
-        var sessionRows = await conn.QueryAsync<SessionRow>(
-            new CommandDefinition(
-                """
-                SELECT id AS Id,
-                       track_id AS TrackId,
-                       title AS Title,
-                       provider AS Provider,
-                       model AS Model,
-                       reasoning_effort AS ReasoningEffort,
-                       native_thread_id AS NativeThreadId,
-                       epoch AS Epoch,
-                       status AS Status,
-                       context_used_tokens AS ContextUsedTokens,
-                       context_window_tokens AS ContextWindowTokens,
-                       context_usage_at_ms AS ContextUsageAtMs,
-                       archived_at_ms AS ArchivedAtMs,
-                       created_at_ms AS CreatedAtMs,
-                       updated_at_ms AS UpdatedAtMs,
-                       permission_mode AS PermissionMode,
-                       unknown_reason AS UnknownReason, unknown_turn_id AS UnknownTurnId,
-                       (SELECT MAX(t.completed_at_ms) FROM session_turns t WHERE t.session_id = agent_sessions.id
-                        AND LOWER(t.status) IN ('completed', 'failed') AND t.completed_at_ms IS NOT NULL) AS LastNotifiableTurnAtMs,
-                       unknown_last_error AS UnknownLastError, reconnect_invalidated AS ReconnectInvalidated,
-                       parent_session_id AS ParentSessionId, spawn_depth AS SpawnDepth,
-                       config_version AS ConfigVersion, notify_parent AS NotifyParent, system_prompt AS SystemPrompt
-                FROM agent_sessions
-                WHERE track_id = @TrackId
-                ORDER BY created_at_ms ASC, id ASC;
-                """,
-                new { TrackId = trackId },
-                transaction: tx,
-                cancellationToken: ct)).ConfigureAwait(false);
-
-        var openAskRows = await conn.QueryAsync<AskRow>(
-            new CommandDefinition(
-                """
-                SELECT id AS Id,
-                       track_id AS TrackId,
-                       status AS Status,
-                       questions_json AS QuestionsJson,
-                       answer_json AS AnswerJson,
-                       created_at_ms AS CreatedAtMs,
-                       answered_at_ms AS AnsweredAtMs,
-                       delivery AS Delivery, session_id AS SessionId, turn_id AS TurnId, target_session_id AS TargetSessionId
-                FROM asks
-                WHERE track_id = @TrackId AND LOWER(status) = 'open'
-                ORDER BY created_at_ms ASC, id ASC;
-                """,
-                new { TrackId = trackId },
-                transaction: tx,
-                cancellationToken: ct)).ConfigureAwait(false);
-
-        return new TrackAggregateSnapshot(
-            Track: trackDto,
-            Report: reportDoc,
-            Tasks: taskRows.Select(MapTask).ToList(),
-            Sessions: sessionRows.Select(r => MapSession(r, trackDto.LeadSessionId)).ToList(),
-            OpenAsks: openAskRows.Select(MapAsk).ToList(),
-            TemplateSnapshotSource: trackRow.TemplateSnapshot);
-    }
+    public Task<TrackAggregateSnapshot?> LoadTrackAggregateAsync(string trackId, CancellationToken ct) =>
+        _trackReadRepository.LoadTrackAggregateAsync(trackId, ct);
 
     public Task UpdateTrackAndEmitAsync(TrackDto track, EventEnvelopeDto? evt, CancellationToken ct, bool writeData = false) =>
-        UpdateTrackCoreAsync(track, null, evt, ct, writeData: writeData);
+        _trackUpdateRepository.UpdateTrackAndEmitAsync(track, evt, ct, writeData);
 
     public Task UpdateTrackTemplateAndEmitAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto evt, CancellationToken ct, bool writeData = false, TrackFlowUpdate? flow = null) =>
-        UpdateTrackCoreAsync(track, templateSnapshot, evt, ct, replaceTemplateSnapshot: true, writeData, flow);
+        _trackUpdateRepository.UpdateTrackTemplateAndEmitAsync(track, templateSnapshot, evt, ct, writeData, flow);
 
-    public Task RecordFlowFileHashAsync(string trackId, long flowRev, string sha256, CancellationToken ct)
-    {
-        EnsureInitialized();
-        return _writer.EnqueueAsync(async (conn, tx, token) =>
-        {
-            await conn.ExecuteAsync(new CommandDefinition(
-                "UPDATE tracks SET flow_file_sha256=@Sha256 WHERE id=@TrackId AND flow_rev=@FlowRev;",
-                new { TrackId = trackId, FlowRev = flowRev, Sha256 = sha256 }, tx, cancellationToken: token))
-                .ConfigureAwait(false);
-        }, ct);
-    }
+    public Task RecordFlowFileHashAsync(string trackId, long flowRev, string sha256, CancellationToken ct) =>
+        _trackUpdateRepository.RecordFlowFileHashAsync(trackId, flowRev, sha256, ct);
 
     public Task CommitTrackFlowAsync(
         TrackDto track,
@@ -688,216 +310,11 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
         IReadOnlyList<TrackScheduleDto> activeFlowSchedules,
         IReadOnlyList<string> canceledFlowScheduleIds,
         IReadOnlyList<EventEnvelopeDto> events,
-        CancellationToken ct)
-    {
-        ArgumentNullException.ThrowIfNull(track);
-        ArgumentNullException.ThrowIfNull(upsertedTasks);
-        ArgumentNullException.ThrowIfNull(activeFlowSchedules);
-        ArgumentNullException.ThrowIfNull(canceledFlowScheduleIds);
-        ArgumentNullException.ThrowIfNull(events);
-        EnsureInitialized();
+        CancellationToken ct) =>
+        _trackUpdateRepository.CommitTrackFlowAsync(track, expectedFlowRev, upsertedTasks, activeFlowSchedules, canceledFlowScheduleIds, events, ct);
 
-        return _writer.EnqueueAsync(
-            async (conn, tx, innerCt) =>
-            {
-                await CommitTrackFlowInternalAsync(conn, tx, track, expectedFlowRev, upsertedTasks,
-                    activeFlowSchedules, canceledFlowScheduleIds, innerCt).ConfigureAwait(false);
-                foreach (var evt in events)
-                {
-                    await InsertEventInternalAsync(conn, tx, evt, innerCt).ConfigureAwait(false);
-                }
-            },
-            ct);
-    }
-
-    private async Task CommitTrackFlowInternalAsync(
-        SqliteConnection conn, SqliteTransaction tx, TrackDto track, long expectedFlowRev,
-        IReadOnlyList<TaskDto> upsertedTasks, IReadOnlyList<TrackScheduleDto> activeFlowSchedules,
-        IReadOnlyList<string> canceledFlowScheduleIds, CancellationToken innerCt)
-    {
-        var updated = await conn.ExecuteAsync(new CommandDefinition(
-            """
-            UPDATE tracks
-            SET flow_spec_json = @FlowSpecJson,
-                flow_rev = @FlowRev,
-                flow_file_sha256 = @FlowFileSha256,
-                updated_at_ms = @UpdatedAtMs
-            WHERE id = @Id AND flow_rev = @ExpectedFlowRev;
-            """,
-            new
-            {
-                FlowSpecJson = string.IsNullOrWhiteSpace(track.FlowSpecJson) ? FlowSyntax.DefaultFlowSpecJson : track.FlowSpecJson,
-                track.FlowRev,
-                track.FlowFileSha256,
-                track.UpdatedAtMs,
-                track.Id,
-                ExpectedFlowRev = expectedFlowRev
-            },
-            transaction: tx,
-            cancellationToken: innerCt)).ConfigureAwait(false);
-        if (updated == 0)
-        {
-            throw KernelException.Conflict(
-                $"Flow revision conflict: expected {expectedFlowRev}, but the track flow was modified concurrently.");
-        }
-
-        foreach (var task in upsertedTasks)
-        {
-            await UpsertTaskInternalAsync(conn, tx, task, innerCt).ConfigureAwait(false);
-        }
-
-        foreach (var schedule in activeFlowSchedules)
-        {
-            await UpsertFlowScheduleInternalAsync(conn, tx, schedule, innerCt).ConfigureAwait(false);
-        }
-
-        foreach (var scheduleId in canceledFlowScheduleIds)
-        {
-            await conn.ExecuteAsync(new CommandDefinition(
-                $"""
-                UPDATE track_schedules
-                SET state = '{TrackScheduleStates.Canceled}', next_fire_at_ms = NULL, updated_at_ms = @Now
-                WHERE track_id = @TrackId AND id = @ScheduleId AND node_key IS NOT NULL AND state = '{TrackScheduleStates.Active}';
-                """,
-                new { TrackId = track.Id, ScheduleId = scheduleId, Now = track.UpdatedAtMs },
-                transaction: tx,
-                cancellationToken: innerCt)).ConfigureAwait(false);
-        }
-
-        if (activeFlowSchedules.Count > 0 || canceledFlowScheduleIds.Count > 0)
-        {
-            await InsertSchedulesEventAsync(conn, tx, track.Id, track.UpdatedAtMs, innerCt).ConfigureAwait(false);
-        }
-    }
-
-    private Task UpdateTrackCoreAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto? evt, CancellationToken ct, bool replaceTemplateSnapshot = false, bool writeData = false, TrackFlowUpdate? flow = null)
-    {
-        ArgumentNullException.ThrowIfNull(track);
-        EnsureInitialized();
-
-        var workspaceSpecJson = SqliteJsonUpcaster.SerializeElement(track.WorkspaceSpec);
-        var templateInputsJson = SqliteJsonUpcaster.SerializeElement(track.TemplateInputs);
-        var templateStateJson = SqliteJsonUpcaster.SerializeElement(track.TemplateState);
-        var dataJson = writeData ? SqliteJsonUpcaster.SerializeElement(track.Data) : null;
-        var enabledPluginsJson = SqliteJsonUpcaster.SerializeStringList(track.EnabledPlugins);
-
-        return _writer.EnqueueAsync(
-            async (conn, tx, innerCt) =>
-            {
-                if (writeData)
-                {
-                    var expectedRev = checked(track.DataRev - 1);
-                    var updated = await conn.ExecuteAsync(new CommandDefinition(
-                        "UPDATE tracks SET data_json = @DataJson, data_rev = @DataRev WHERE id = @Id AND data_rev = @ExpectedDataRev;",
-                        new { DataJson = dataJson, track.DataRev, track.Id, ExpectedDataRev = expectedRev }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
-                    if (updated == 0)
-                        throw KernelException.Conflict($"Data revision conflict: expected {expectedRev}, but the track data was modified concurrently.");
-                }
-
-                await conn.ExecuteAsync(
-                    new CommandDefinition(
-                        """
-                        UPDATE tracks
-                        SET area_id = @AreaId,
-                            parent_track_id = @ParentTrackId,
-                            parent_attempt_id = @ParentAttemptId,
-                            title = @Title,
-                            cwd = @Cwd,
-                            workspace_driver = @WorkspaceDriver,
-                            workspace_spec_json = @WorkspaceSpecJson,
-                            lead_session_id = @LeadSessionId,
-                            template_snapshot = CASE WHEN @ReplaceTemplateSnapshot = 1 THEN @TemplateSnapshot ELSE template_snapshot END,
-                            template_id = @TemplateId,
-                            template_inputs_json = @TemplateInputsJson,
-                            template_state_json = @TemplateStateJson,
-                            enabled_plugins_json = @EnabledPluginsJson,
-                            closed_at_ms = @ClosedAtMs,
-                            pinned_at_ms = @PinnedAtMs,
-                            sort_order = @SortOrder,
-                            updated_at_ms = @UpdatedAtMs
-                        WHERE id = @Id;
-                        """,
-                        new
-                        {
-                            track.Id,
-                            track.AreaId,
-                            track.ParentTrackId,
-                            track.ParentAttemptId,
-                            track.Title,
-                            track.Cwd,
-                            track.WorkspaceDriver,
-                            WorkspaceSpecJson = workspaceSpecJson,
-                            track.LeadSessionId,
-                            track.TemplateId,
-                            TemplateSnapshot = templateSnapshot,
-                            ReplaceTemplateSnapshot = replaceTemplateSnapshot ? 1 : 0,
-                            TemplateInputsJson = templateInputsJson,
-                            TemplateStateJson = templateStateJson,
-                            EnabledPluginsJson = enabledPluginsJson,
-                            track.ClosedAtMs,
-                            track.PinnedAtMs,
-                            track.SortOrder,
-                            track.UpdatedAtMs
-                        },
-                        transaction: tx,
-                        cancellationToken: innerCt)).ConfigureAwait(false);
-
-                if (flow is not null)
-                    await CommitTrackFlowInternalAsync(conn, tx, track, flow.ExpectedRev, flow.Tasks,
-                        flow.Clocks, [], innerCt).ConfigureAwait(false);
-                if (track.ClosedAtMs is not null)
-                    await conn.ExecuteAsync(new CommandDefinition($"""
-                        UPDATE track_wakes SET state='{TrackWakeStates.Dropped}', reason='{TrackWakeReasons.TrackClosed}', updated_at_ms=@Now
-                        WHERE track_id=@TrackId AND state IN ('{TrackWakeStates.Pending}','{TrackWakeStates.Delivering}');
-                        """, new { TrackId = track.Id, Now = track.UpdatedAtMs }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
-
-                if (track.ClosedAtMs is not null)
-                {
-                    var canceled = await conn.ExecuteAsync(new CommandDefinition($"""
-                        UPDATE track_schedules SET state='{TrackScheduleStates.Canceled}', next_fire_at_ms=NULL, updated_at_ms=@Now
-                        WHERE track_id=@TrackId AND state='{TrackScheduleStates.Active}';
-                        """, new { TrackId = track.Id, Now = track.UpdatedAtMs }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
-                    if (canceled > 0) await InsertSchedulesEventAsync(conn, tx, track.Id, track.UpdatedAtMs, innerCt).ConfigureAwait(false);
-                }
-
-                if (evt is not null)
-                {
-                    await InsertEventInternalAsync(conn, tx, evt, innerCt).ConfigureAwait(false);
-                }
-            },
-            ct);
-    }
-
-    public async Task DeleteTrackAsync(string trackId, CancellationToken ct)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(trackId);
-        EnsureInitialized();
-
-        await _writer.EnqueueAsync(
-            async (conn, tx, innerCt) =>
-            {
-                await conn.ExecuteAsync(
-                    new CommandDefinition(
-                        "DELETE FROM tracks WHERE id = @TrackId;",
-                        new { TrackId = trackId },
-                        transaction: tx,
-                        cancellationToken: innerCt)).ConfigureAwait(false);
-            },
-            ct).ConfigureAwait(false);
-
-        try
-        {
-            _coldBlobStore.DeleteTrackBlobsDirectory(trackId);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            System.Diagnostics.Trace.TraceWarning("Could not clean up blobs for deleted Track {0}: {1}", trackId, ex.Message);
-        }
-    }
-
-    // -------------------------------------------------------------------------
-    // Reports & Revisions
-    // -------------------------------------------------------------------------
+    public Task DeleteTrackAsync(string trackId, CancellationToken ct) =>
+        _trackDeletionRepository.DeleteTrackAsync(trackId, ct);
 
     public Task SaveReportAsync(
         string trackId,
@@ -907,128 +324,14 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
         string commitMessage,
         JsonElement nextTemplateState,
         EventEnvelopeDto evt,
-        CancellationToken ct)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(trackId);
-        ArgumentNullException.ThrowIfNull(report);
-        ArgumentNullException.ThrowIfNull(compressedRevisionBlocks);
-        ArgumentNullException.ThrowIfNull(commitMessage);
-        ArgumentNullException.ThrowIfNull(evt);
-        EnsureInitialized();
+        CancellationToken ct) =>
+        _reportRepository.SaveReportAsync(trackId, report, compressedRevisionBlocks, authorSessionId, commitMessage, nextTemplateState, evt, ct);
 
-        var blocksJson = SqliteJsonUpcaster.SerializeReportBlocks(report.Blocks);
-        var effectiveBlocksZstd = compressedRevisionBlocks.Length > 0
-            ? compressedRevisionBlocks
-            : SqliteJsonUpcaster.CompressReportBlocksZstd(report.Blocks);
-        var nextTemplateStateJson = SqliteJsonUpcaster.SerializeElement(nextTemplateState);
-        var nowMs = evt.CreatedAtMs > 0 ? evt.CreatedAtMs : _timeProvider.GetUtcNow().ToUnixTimeMilliseconds();
-
-        return _writer.EnqueueAsync(
-            async (conn, tx, innerCt) =>
-            {
-                var previous = await conn.QuerySingleAsync<TodayPreviousReport>(new CommandDefinition(
-                    "SELECT blocks_json AS Blocks, summary AS Summary, leading_comment AS Comment FROM reports WHERE track_id = @TrackId;",
-                    new { TrackId = trackId }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
-                var beforeBlocks = SqliteJsonUpcaster.CompressReportBlocksZstd(SqliteJsonUpcaster.DeserializeReportBlocks(previous.Blocks));
-                await conn.ExecuteAsync(
-                    new CommandDefinition(
-                        """
-                        INSERT INTO reports (track_id, doc_rev, summary, leading_comment, blocks_json, updated_at_ms)
-                        VALUES (@TrackId, @DocRev, @Summary, @LeadingComment, @BlocksJson, @UpdatedAtMs)
-                        ON CONFLICT(track_id) DO UPDATE SET
-                            doc_rev = excluded.doc_rev,
-                            summary = excluded.summary,
-                            leading_comment = excluded.leading_comment,
-                            blocks_json = excluded.blocks_json,
-                            updated_at_ms = excluded.updated_at_ms;
-                        """,
-                        new
-                        {
-                            TrackId = trackId,
-                            report.DocRev,
-                            report.Summary,
-                            report.LeadingComment,
-                            BlocksJson = blocksJson,
-                            UpdatedAtMs = nowMs
-                        },
-                        transaction: tx,
-                        cancellationToken: innerCt)).ConfigureAwait(false);
-
-                await conn.ExecuteAsync(
-                    new CommandDefinition(
-                        """
-                        INSERT INTO report_revisions (track_id, doc_rev, author_session_id, message, blocks_zstd, created_at_ms)
-                        VALUES (@TrackId, @DocRev, @AuthorSessionId, @Message, @BlocksZstd, @CreatedAtMs)
-                        ON CONFLICT(track_id, doc_rev) DO UPDATE SET
-                            author_session_id = excluded.author_session_id,
-                            message = excluded.message,
-                            blocks_zstd = excluded.blocks_zstd,
-                            created_at_ms = excluded.created_at_ms;
-                        """,
-                        new
-                        {
-                            TrackId = trackId,
-                            report.DocRev,
-                            AuthorSessionId = authorSessionId,
-                            Message = commitMessage,
-                            BlocksZstd = effectiveBlocksZstd,
-                            CreatedAtMs = nowMs
-                        },
-                        transaction: tx,
-                        cancellationToken: innerCt)).ConfigureAwait(false);
-
-                await conn.ExecuteAsync(
-                    new CommandDefinition(
-                        """
-                        UPDATE tracks
-                        SET template_state_json = @NextTemplateStateJson,
-                            updated_at_ms = @UpdatedAtMs
-                        WHERE id = @TrackId;
-                        """,
-                        new
-                        {
-                            TrackId = trackId,
-                            NextTemplateStateJson = nextTemplateStateJson,
-                            UpdatedAtMs = nowMs
-                        },
-                        transaction: tx,
-                        cancellationToken: innerCt)).ConfigureAwait(false);
-
-                var reportEventId = await InsertEventInternalAsync(conn, tx, evt, innerCt).ConfigureAwait(false);
-                await conn.ExecuteAsync(new CommandDefinition(
-                    "UPDATE report_revisions SET event_id = @EventId, summary = @Summary, leading_comment = @LeadingComment, before_blocks_zstd = @BeforeBlocks, summary_before = @BeforeSummary, leading_comment_before = @BeforeComment WHERE track_id = @TrackId AND doc_rev = @DocRev;",
-                    new { EventId = reportEventId, TrackId = trackId, report.DocRev, report.Summary, report.LeadingComment, BeforeBlocks = beforeBlocks, BeforeSummary = previous.Summary, BeforeComment = previous.Comment }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
-                if (authorSessionId is null)
-                    await EnqueueWakeInternalAsync(conn, tx, TrackWakeRequests.Report(trackId, report.DocRev, evt.Payload), nowMs, innerCt).ConfigureAwait(false);
-            },
-            ct);
-    }
-
-    public async Task<IReadOnlyList<ReportBlock>> GetReportRevisionBlocksAsync(
+    public Task<IReadOnlyList<ReportBlock>> GetReportRevisionBlocksAsync(
         string trackId,
         int docRev,
-        CancellationToken ct)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(trackId);
-        EnsureInitialized();
-
-        await using var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);
-        var compressed = await conn.ExecuteScalarAsync<byte[]?>(
-            new CommandDefinition(
-                """
-                SELECT blocks_zstd
-                FROM report_revisions
-                WHERE track_id = @TrackId AND doc_rev = @DocRev;
-                """,
-                new { TrackId = trackId, DocRev = docRev },
-                cancellationToken: ct)).ConfigureAwait(false);
-
-        return SqliteJsonUpcaster.DecompressReportBlocksZstd(compressed);
-    }
-
-    // -------------------------------------------------------------------------
-    // Tasks
-    // -------------------------------------------------------------------------
+        CancellationToken ct) =>
+        _reportRepository.GetReportRevisionBlocksAsync(trackId, docRev, ct);
 
     public Task UpsertTaskAsync(
         TaskDto task,
@@ -1040,1643 +343,159 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
         string? wakePrompt = null,
         SessionMessage? initialMessage = null,
         bool writeNewRunBoundary = false,
-        bool suppressDefaultWake = false)
-    {
-        ArgumentNullException.ThrowIfNull(task);
-        EnsureInitialized();
+        bool suppressDefaultWake = false) =>
+        _taskRepository.UpsertTaskAsync(task, nextTemplateState, evt, ct, session, sessionEvent, wakePrompt, initialMessage, writeNewRunBoundary, suppressDefaultWake);
 
-        var nextTemplateStateJson = nextTemplateState.HasValue
-            ? SqliteJsonUpcaster.SerializeElement(nextTemplateState.Value)
-            : null;
+    public Task UpsertSessionAsync(AgentSessionDto session, EventEnvelopeDto? evt, CancellationToken ct) =>
+        _sessionRepository.UpsertSessionAsync(session, evt, ct);
 
-        return _writer.EnqueueAsync(
-            async (conn, tx, innerCt) =>
-            {
-                if (session is not null)
-                {
-                    await UpsertSessionInternalAsync(conn, tx, session, innerCt).ConfigureAwait(false);
-                    if (writeNewRunBoundary)
-                    {
-                        await InsertSessionItemsAsync(conn, tx, session.TrackId, [new SessionItemDto(0, session.Id, null,
-                            "epoch_boundary", System.Text.Json.JsonSerializer.SerializeToElement(new { epoch = session.Epoch, reason = "new_run" }), session.UpdatedAtMs)], innerCt).ConfigureAwait(false);
-                    }
-                }
+    public Task<string?> FindTrackIdBySessionAsync(string sessionId, CancellationToken ct) =>
+        _sessionRepository.FindTrackIdBySessionAsync(sessionId, ct);
 
-                await UpsertTaskInternalAsync(conn, tx, task, innerCt).ConfigureAwait(false);
-
-                if (sessionEvent is not null)
-                    await InsertEventInternalAsync(conn, tx, sessionEvent, innerCt).ConfigureAwait(false);
-                if (initialMessage is not null)
-                    await InsertSessionMessageAsync(conn, tx, initialMessage, innerCt).ConfigureAwait(false);
-
-                if (task.FinishedAtMs is not null && task.SessionId is not null)
-                {
-                    await conn.ExecuteAsync(new CommandDefinition("""
-                        UPDATE session_messages SET delivery = 'interrupted'
-                        WHERE session_id = @SessionId AND delivery = 'queued';
-                        """, new { task.SessionId }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
-                }
-
-                if (nextTemplateStateJson is not null)
-                {
-                    await conn.ExecuteAsync(
-                        new CommandDefinition(
-                            """
-                            UPDATE tracks
-                            SET template_state_json = @NextTemplateStateJson,
-                                updated_at_ms = @UpdatedAtMs
-                            WHERE id = @TrackId;
-                            """,
-                            new
-                            {
-                                task.TrackId,
-                                NextTemplateStateJson = nextTemplateStateJson,
-                                UpdatedAtMs = task.UpdatedAtMs
-                            },
-                            transaction: tx,
-                            cancellationToken: innerCt)).ConfigureAwait(false);
-                }
-
-                if (task.FinishedAtMs is not null && !suppressDefaultWake)
-                {
-                    var child = task.SessionId is null ? null : await conn.QuerySingleOrDefaultAsync<(string? Parent, string Notify)?>(new CommandDefinition(
-                        "SELECT parent_session_id, notify_parent FROM agent_sessions WHERE id=@Id;", new { Id = task.SessionId }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
-                    if (child?.Parent is { } parentId && child.Value.Notify == "task_settled" &&
-                        await conn.ExecuteScalarAsync<bool>(new CommandDefinition(
-                            "SELECT EXISTS(SELECT 1 FROM agent_sessions WHERE id=@Id AND archived_at_ms IS NULL);", new { Id = parentId }, tx, cancellationToken: innerCt)).ConfigureAwait(false))
-                        await EnqueueWakeOnceInternalAsync(conn, tx, TrackWakeRequests.TaskSettled(task, wakePrompt) with { TargetSessionId = parentId }, task.UpdatedAtMs, innerCt).ConfigureAwait(false);
-                    else if (child is null || child.Value.Parent is null)
-                        await EnqueueWakeOnceInternalAsync(conn, tx, TrackWakeRequests.TaskSettled(task, wakePrompt), task.UpdatedAtMs, innerCt).ConfigureAwait(false);
-                }
-                if (evt is not null)
-                {
-                    await InsertEventInternalAsync(conn, tx, evt, innerCt).ConfigureAwait(false);
-                }
-            },
-            ct);
-    }
-
-    // -------------------------------------------------------------------------
-    // Sessions, Turns, & Items
-    // -------------------------------------------------------------------------
-
-    public Task UpsertSessionAsync(AgentSessionDto session, EventEnvelopeDto? evt, CancellationToken ct)
-    {
-        ArgumentNullException.ThrowIfNull(session);
-        EnsureInitialized();
-
-        return _writer.EnqueueAsync(
-            async (conn, tx, innerCt) =>
-            {
-                await UpsertSessionInternalAsync(conn, tx, session, innerCt).ConfigureAwait(false);
-                if (session.IsLead)
-                {
-                    await conn.ExecuteAsync(
-                        new CommandDefinition(
-                            "UPDATE tracks SET lead_session_id = @SessionId WHERE id = @TrackId AND lead_session_id IS NULL;",
-                            new { SessionId = session.Id, session.TrackId },
-                            transaction: tx,
-                            cancellationToken: innerCt)).ConfigureAwait(false);
-                }
-
-                if (evt is not null)
-                {
-                    await InsertEventInternalAsync(conn, tx, evt, innerCt).ConfigureAwait(false);
-                }
-            },
-            ct);
-    }
-
-    public async Task<string?> FindTrackIdBySessionAsync(string sessionId, CancellationToken ct)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
-        EnsureInitialized();
-
-        await using var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);
-        return await conn.ExecuteScalarAsync<string?>(
-            new CommandDefinition(
-                "SELECT track_id FROM agent_sessions WHERE id = @SessionId;",
-                new { SessionId = sessionId },
-                cancellationToken: ct)).ConfigureAwait(false);
-    }
-
-    public async Task RecordTurnAndItemsAsync(
+    public Task RecordTurnAndItemsAsync(
         SessionTurnDto turn,
         IReadOnlyList<SessionItemDto> newItems,
         AgentSessionDto? updatedSession,
-        CancellationToken ct)
-    {
-        _ = await RecordTurnAndItemsWithIdsAsync(turn, newItems, updatedSession, ct).ConfigureAwait(false);
-    }
+        CancellationToken ct) =>
+        _sessionRepository.RecordTurnAndItemsAsync(turn, newItems, updatedSession, ct);
 
     public Task<(SessionTurnDto Turn, IReadOnlyList<long> ItemIds)> RecordTurnAndItemsWithIdsAsync(
         SessionTurnDto turn,
         IReadOnlyList<SessionItemDto> newItems,
         AgentSessionDto? updatedSession,
-        CancellationToken ct = default, SessionMessage? dispatchMessage = null)
-    {
-        ArgumentNullException.ThrowIfNull(turn);
-        ArgumentNullException.ThrowIfNull(newItems);
-        EnsureInitialized();
-
-        var inputJson = SqliteJsonUpcaster.SerializeElement(turn.Input);
-        var usageJson = SqliteJsonUpcaster.SerializeNullableElement(turn.Usage);
-
-        return _writer.EnqueueAsync<(SessionTurnDto, IReadOnlyList<long>)>(
-            async (conn, tx, innerCt) =>
-            {
-                await conn.ExecuteAsync(
-                    new CommandDefinition(
-                        """
-                        INSERT INTO session_turns (
-                            id, session_id, turn_index, epoch,
-                            trigger_kind, input_json, status, usage_json, error_text,
-                            started_at_ms, completed_at_ms
-                        )
-                        VALUES (
-                            @Id, @SessionId, @TurnIndex, @Epoch,
-                            @TriggerKind, @InputJson, @Status, @UsageJson, @ErrorText,
-                            @StartedAtMs, @CompletedAtMs
-                        )
-                        ON CONFLICT(id) DO UPDATE SET
-                            epoch = excluded.epoch,
-                            trigger_kind = excluded.trigger_kind,
-                            input_json = excluded.input_json,
-                            status = excluded.status,
-                            usage_json = excluded.usage_json,
-                            error_text = excluded.error_text,
-                            completed_at_ms = excluded.completed_at_ms;
-                        """,
-                        new
-                        {
-                            turn.Id,
-                            turn.SessionId,
-                            turn.TurnIndex,
-                            turn.Epoch,
-                            turn.TriggerKind,
-                            InputJson = inputJson,
-                            turn.Status,
-                            UsageJson = usageJson,
-                            turn.ErrorText,
-                            turn.StartedAtMs,
-                            turn.CompletedAtMs
-                        },
-                        transaction: tx,
-                        cancellationToken: innerCt)).ConfigureAwait(false);
-
-                long? messageOrdinal = null;
-                if (dispatchMessage is not null)
-                {
-                    if (!await TransitionMessageAsync(conn, tx, dispatchMessage with { TurnId = turn.Id, Delivery = "dispatching" },
-                        "dispatching", innerCt).ConfigureAwait(false))
-                        throw new InvalidOperationException("The claimed message no longer belongs to this dispatch.");
-                    messageOrdinal = await ReadMessageOrdinalAsync(conn, tx, dispatchMessage, innerCt).ConfigureAwait(false);
-                }
-
-                if (updatedSession is not null)
-                {
-                    await UpsertSessionInternalAsync(conn, tx, updatedSession, innerCt).ConfigureAwait(false);
-                }
-
-                IReadOnlyList<long> insertedIds = [];
-                long? userItemId = turn.UserItemId;
-                if (newItems.Count > 0)
-                {
-                    var trackId = updatedSession?.TrackId ?? await conn.ExecuteScalarAsync<string?>(
-                        new CommandDefinition(
-                            "SELECT track_id FROM agent_sessions WHERE id = @SessionId;",
-                            new { turn.SessionId },
-                            transaction: tx,
-                            cancellationToken: innerCt)).ConfigureAwait(false);
-
-                    insertedIds = await InsertSessionItemsAsync(conn, tx, trackId, newItems, innerCt, messageOrdinal).ConfigureAwait(false);
-                    for (var i = 0; i < newItems.Count; i++)
-                    {
-                        if (userItemId is null && string.Equals(newItems[i].Kind, "user", StringComparison.Ordinal))
-                        {
-                            userItemId = insertedIds[i];
-                            break;
-                        }
-                    }
-                }
-
-                userItemId ??= await conn.ExecuteScalarAsync<long?>(
-                    new CommandDefinition(
-                        "SELECT id FROM session_items WHERE turn_id = @TurnId AND kind = 'user' ORDER BY id ASC LIMIT 1;",
-                        new { TurnId = turn.Id },
-                        transaction: tx,
-                        cancellationToken: innerCt)).ConfigureAwait(false);
-
-                var resolvedTurn = userItemId == turn.UserItemId ? turn : turn with { UserItemId = userItemId };
-                return (resolvedTurn, insertedIds);
-            },
-            ct);
-    }
+        CancellationToken ct = default, SessionMessage? dispatchMessage = null) =>
+        _sessionRepository.RecordTurnAndItemsWithIdsAsync(turn, newItems, updatedSession, ct, dispatchMessage);
 
     public Task<IReadOnlyList<long>> AppendSessionItemsAsync(
         string sessionId,
         IReadOnlyList<SessionItemDto> newItems,
-        CancellationToken ct = default)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
-        ArgumentNullException.ThrowIfNull(newItems);
-        EnsureInitialized();
+        CancellationToken ct = default) =>
+        _sessionRepository.AppendSessionItemsAsync(sessionId, newItems, ct);
 
-        if (newItems.Count == 0)
-        {
-            return Task.FromResult<IReadOnlyList<long>>([]);
-        }
-
-        return _writer.EnqueueAsync<IReadOnlyList<long>>(
-            async (conn, tx, innerCt) =>
-            {
-                var trackId = await conn.ExecuteScalarAsync<string?>(
-                    new CommandDefinition(
-                        "SELECT track_id FROM agent_sessions WHERE id = @SessionId;",
-                        new { SessionId = sessionId },
-                        transaction: tx,
-                        cancellationToken: innerCt)).ConfigureAwait(false);
-
-                return await InsertSessionItemsAsync(conn, tx, trackId, newItems, innerCt).ConfigureAwait(false);
-            },
-            ct);
-    }
-
-    private async Task<IReadOnlyList<long>> InsertSessionItemsAsync(
-        SqliteConnection conn, SqliteTransaction tx, string? trackId, IReadOnlyList<SessionItemDto> items, CancellationToken ct, long? messageOrdinal = null)
-    {
-        var ids = new List<long>(items.Count);
-        foreach (var item in items)
-        {
-            var payloadJson = !string.IsNullOrWhiteSpace(trackId)
-                ? _coldBlobStore.StoreOrInline(trackId, item.Payload)
-                : SqliteJsonUpcaster.SerializeElement(item.Payload);
-
-            var insertedId = await conn.ExecuteScalarAsync<long>(
-                new CommandDefinition(
-                    """
-                    INSERT INTO session_items (session_id, turn_id, kind, payload_json, created_at_ms, message_ordinal)
-                    VALUES (@SessionId, @TurnId, @Kind, @PayloadJson, @CreatedAtMs, @MessageOrdinal);
-                    SELECT last_insert_rowid();
-                    """,
-                    new
-                    {
-                        item.SessionId,
-                        item.TurnId,
-                        item.Kind,
-                        PayloadJson = payloadJson,
-                        item.CreatedAtMs,
-                        MessageOrdinal = item.Kind == "user" ? messageOrdinal : null
-                    },
-                    transaction: tx,
-                    cancellationToken: ct)).ConfigureAwait(false);
-            ids.Add(insertedId);
-        }
-
-        return ids;
-    }
-
-    public async Task<IReadOnlyList<SessionTurnDto>> ListSessionTurnsAsync(
+    public Task<IReadOnlyList<SessionTurnDto>> ListSessionTurnsAsync(
         string sessionId,
-        CancellationToken ct = default)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
-        EnsureInitialized();
+        CancellationToken ct = default) =>
+        _sessionRepository.ListSessionTurnsAsync(sessionId, ct);
 
-        await using var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);
-        var rows = await conn.QueryAsync<SessionTurnRow>(
-            new CommandDefinition(
-                """
-                SELECT id AS Id,
-                       session_id AS SessionId,
-                       turn_index AS TurnIndex,
-                       epoch AS Epoch,
-                       trigger_kind AS TriggerKind,
-                       input_json AS InputJson,
-                       status AS Status,
-                       usage_json AS UsageJson,
-                       error_text AS ErrorText,
-                       started_at_ms AS StartedAtMs,
-                       completed_at_ms AS CompletedAtMs
-                FROM session_turns
-                WHERE session_id = @SessionId
-                ORDER BY turn_index ASC, started_at_ms ASC;
-                """,
-                new { SessionId = sessionId },
-                cancellationToken: ct)).ConfigureAwait(false);
-
-        return rows.Select(MapTurn).ToList();
-    }
-
-    public async Task<IReadOnlyList<SessionItemDto>> ListSessionItemsAsync(
+    public Task<IReadOnlyList<SessionItemDto>> ListSessionItemsAsync(
         string sessionId,
         long afterId = 0,
         int limit = 100,
-        CancellationToken ct = default, bool latest = false, long? beforeId = null)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
-        EnsureInitialized();
+        CancellationToken ct = default, bool latest = false, long? beforeId = null) =>
+        _sessionRepository.ListSessionItemsAsync(sessionId, afterId, limit, ct, latest, beforeId);
 
-        var reverse = latest || beforeId is not null;
-        var clampedLimit = Math.Max(1, limit);
-        await using var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);
-        var rows = await conn.QueryAsync<SessionItemRow>(
-            new CommandDefinition(
-                $"""
-                SELECT item.id AS Id,
-                       item.session_id AS SessionId,
-                       item.turn_id AS TurnId,
-                       item.kind AS Kind,
-                       CASE WHEN input.id IS NULL OR input.kind = 'worker' OR input.turn_id IS NULL THEN item.payload_json
-                            ELSE json_object('v', 1, 'content', input.content, 'triggerKind', 'user', 'inputId', input.id)
-                       END AS PayloadJson,
-                       item.created_at_ms AS CreatedAtMs,
-                       CASE WHEN item.turn_id IS NULL AND json_extract(item.payload_json,'$.archived') = 1 THEN json_extract(item.payload_json,'$.status') ELSE turn.status END AS TurnStatus,
-                       CASE WHEN input.delivery = 'queued' THEN 'accepted' ELSE input.delivery END AS InputDelivery
-                FROM session_items item
-                LEFT JOIN session_messages input ON input.ordinal = item.message_ordinal
-                LEFT JOIN session_turns turn ON turn.session_id = item.session_id AND turn.id = item.turn_id
-                WHERE item.session_id = @SessionId
-                  AND item.id > @AfterId AND (@BeforeId IS NULL OR item.id < @BeforeId)
-                ORDER BY item.id {(reverse ? "DESC" : "ASC")}
-                LIMIT @Limit;
-                """,
-                new
-                {
-                    SessionId = sessionId,
-                    AfterId = afterId,
-                    BeforeId = beforeId,
-                    Limit = clampedLimit
-                },
-                cancellationToken: ct)).ConfigureAwait(false);
+    public Task UpsertAskAsync(AskDto ask, EventEnvelopeDto evt, CancellationToken ct) =>
+        _correspondenceRepository.UpsertAskAsync(ask, evt, ct);
 
-        return (reverse ? rows.Reverse() : rows).Select(MapSessionItem).ToList();
-    }
+    public Task<AskDto?> GetAskAsync(string askId, CancellationToken ct = default) =>
+        _correspondenceRepository.GetAskAsync(askId, ct);
 
-    // -------------------------------------------------------------------------
-    // Asks, Mails, Terminals, & Events
-    // -------------------------------------------------------------------------
+    public Task UpsertMailAsync(MailDto mail, EventEnvelopeDto evt, CancellationToken ct, bool requestWake = true) =>
+        _correspondenceRepository.UpsertMailAsync(mail, evt, ct, requestWake);
 
-    public Task UpsertAskAsync(AskDto ask, EventEnvelopeDto evt, CancellationToken ct)
-    {
-        ArgumentNullException.ThrowIfNull(ask);
-        ArgumentNullException.ThrowIfNull(evt);
-        EnsureInitialized();
-
-        var status = SqliteJsonUpcaster.FormatAskStatus(ask.Status);
-        var questionsJson = SqliteJsonUpcaster.SerializeAskQuestions(ask.Questions);
-        var answerJson = SqliteJsonUpcaster.SerializeNullableElement(ask.Answer);
-
-        return _writer.EnqueueAsync(
-            async (conn, tx, innerCt) =>
-            {
-                await conn.ExecuteAsync(
-                    new CommandDefinition(
-                        """
-                        INSERT INTO asks (id, track_id, status, questions_json, answer_json, created_at_ms, answered_at_ms, delivery, session_id, turn_id, target_session_id)
-                        VALUES (@Id, @TrackId, @Status, @QuestionsJson, @AnswerJson, @CreatedAtMs, @AnsweredAtMs, @Delivery, @SessionId, @TurnId, @TargetSessionId)
-                        ON CONFLICT(id) DO UPDATE SET
-                            status = excluded.status,
-                            questions_json = excluded.questions_json,
-                            answer_json = excluded.answer_json,
-                            answered_at_ms = excluded.answered_at_ms;
-                        """,
-                        new
-                        {
-                            ask.Id,
-                            ask.TrackId,
-                            Status = status,
-                            QuestionsJson = questionsJson,
-                            AnswerJson = answerJson,
-                            ask.CreatedAtMs,
-                            ask.AnsweredAtMs,
-                            Delivery = ask.Delivery.ToString().ToLowerInvariant(),
-                            ask.SessionId,
-                            ask.TurnId, ask.TargetSessionId
-                        },
-                        transaction: tx,
-                        cancellationToken: innerCt)).ConfigureAwait(false);
-
-                if (ask.Delivery == AskDelivery.Wake && ask.AnsweredAtMs is not null)
-                    await EnqueueWakeOnceInternalAsync(conn, tx, TrackWakeRequests.Ask(ask), ask.AnsweredAtMs.Value, innerCt).ConfigureAwait(false);
-                await InsertEventInternalAsync(conn, tx, evt, innerCt).ConfigureAwait(false);
-            },
-            ct);
-    }
-
-    public async Task<AskDto?> GetAskAsync(string askId, CancellationToken ct = default)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(askId);
-        EnsureInitialized();
-
-        await using var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);
-        var row = await conn.QuerySingleOrDefaultAsync<AskRow>(
-            new CommandDefinition(
-                """
-                SELECT id AS Id,
-                       track_id AS TrackId,
-                       status AS Status,
-                       questions_json AS QuestionsJson,
-                       answer_json AS AnswerJson,
-                       created_at_ms AS CreatedAtMs,
-                       answered_at_ms AS AnsweredAtMs,
-                       delivery AS Delivery, session_id AS SessionId, turn_id AS TurnId, target_session_id AS TargetSessionId
-                FROM asks
-                WHERE id = @AskId;
-                """,
-                new { AskId = askId },
-                cancellationToken: ct)).ConfigureAwait(false);
-
-        return row is null ? null : MapAsk(row);
-    }
-
-    public Task UpsertMailAsync(MailDto mail, EventEnvelopeDto evt, CancellationToken ct, bool requestWake = true)
-    {
-        ArgumentNullException.ThrowIfNull(mail);
-        ArgumentNullException.ThrowIfNull(evt);
-        EnsureInitialized();
-
-        return _writer.EnqueueAsync(
-            async (conn, tx, innerCt) =>
-            {
-                var isNew = !await conn.ExecuteScalarAsync<bool>(new CommandDefinition(
-                    "SELECT EXISTS(SELECT 1 FROM mails WHERE id=@Id);", new { mail.Id }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
-                await conn.ExecuteAsync(
-                    new CommandDefinition(
-                        """
-                        INSERT INTO mails (id, from_track_id, to_track_id, summary, body, read_at_ms, created_at_ms, reply_to_mail_id, wake_pending)
-                        VALUES (@Id, @FromTrackId, @ToTrackId, @Summary, @Body, @ReadAtMs, @CreatedAtMs, @ReplyToMailId, 0)
-                        ON CONFLICT(id) DO UPDATE SET
-                            summary = excluded.summary,
-                            body = excluded.body,
-                            read_at_ms = excluded.read_at_ms,
-                            wake_pending = 0;
-                        """,
-                        new
-                        {
-                            mail.Id,
-                            RequestWake = requestWake,
-                            mail.ReplyToMailId,
-                            mail.FromTrackId,
-                            mail.ToTrackId,
-                            mail.Summary,
-                            mail.Body,
-                            mail.ReadAtMs,
-                            mail.CreatedAtMs
-                        },
-                        transaction: tx,
-                        cancellationToken: innerCt)).ConfigureAwait(false);
-
-                if (requestWake && isNew)
-                    await EnqueueWakeOnceInternalAsync(conn, tx, TrackWakeRequests.Mail(mail), mail.CreatedAtMs, innerCt).ConfigureAwait(false);
-                await InsertEventInternalAsync(conn, tx, evt, innerCt).ConfigureAwait(false);
-            },
-            ct);
-    }
-
-    public Task MarkMailReadAsync(string mailId, long readAtMs, CancellationToken ct = default)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(mailId);
-        EnsureInitialized();
-
-        return _writer.EnqueueAsync(
-            async (conn, tx, innerCt) =>
-            {
-                await conn.ExecuteAsync(
-                    new CommandDefinition(
-                        "UPDATE mails SET read_at_ms = COALESCE(read_at_ms, @ReadAtMs) WHERE id = @MailId;",
-                        new { MailId = mailId, ReadAtMs = readAtMs },
-                        transaction: tx,
-                        cancellationToken: innerCt)).ConfigureAwait(false);
-            },
-            ct);
-    }
+    public Task MarkMailReadAsync(string mailId, long readAtMs, CancellationToken ct = default) =>
+        _correspondenceRepository.MarkMailReadAsync(mailId, readAtMs, ct);
 
     public Task AcknowledgeMailWakeAsync(string mailId, CancellationToken ct) =>
-        _writer.EnqueueAsync(async (conn, tx, token) =>
-        {
-            await conn.ExecuteAsync(new CommandDefinition(
-                $"""
-                UPDATE mails SET wake_pending = 0 WHERE id = @mailId;
-                UPDATE system_upgrade_receipts SET notification_status = CASE
-                    WHEN EXISTS (SELECT 1 FROM mails m JOIN tracks t ON t.id = m.to_track_id
-                        WHERE m.id = @mailId AND t.closed_at_ms IS NULL) THEN 'notified' ELSE 'target_unavailable' END
-                    WHERE '{UpgradeMailIdPrefix}' || job_id = @mailId;
-                """,
-                new { mailId }, tx, cancellationToken: token)).ConfigureAwait(false);
-        }, ct);
+        _correspondenceRepository.AcknowledgeMailWakeAsync(mailId, ct);
 
-    private const string MailSelect = """
-        SELECT id AS Id, from_track_id AS FromTrackId, to_track_id AS ToTrackId,
-               summary AS Summary, body AS Body, read_at_ms AS ReadAtMs,
-               created_at_ms AS CreatedAtMs, reply_to_mail_id AS ReplyToMailId
-        FROM mails
-        """;
+    public Task<MailDto?> FindReceivedMailAsync(string trackId, string mailId, CancellationToken ct) =>
+        _correspondenceRepository.FindReceivedMailAsync(trackId, mailId, ct);
 
-    public async Task<MailDto?> FindReceivedMailAsync(string trackId, string mailId, CancellationToken ct)
-    {
-        EnsureInitialized();
-        await using var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);
-        var row = await conn.QuerySingleOrDefaultAsync<MailRow>(new CommandDefinition(
-            MailSelect + " WHERE id = @mailId AND to_track_id = @trackId;",
-            new { trackId, mailId }, cancellationToken: ct)).ConfigureAwait(false);
-        return row is null ? null : MapMail(row);
-    }
+    public Task<IReadOnlyList<MailDto>> ListMailsAsync(string trackId, bool unreadOnly = false, CancellationToken ct = default) =>
+        _correspondenceRepository.ListMailsAsync(trackId, unreadOnly, ct);
 
-    public Task<IReadOnlyList<MailDto>> ListMailsAsync(string trackId, bool unreadOnly = false, CancellationToken ct = default)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(trackId);
-        var filter = unreadOnly ? " AND read_at_ms IS NULL" : "";
-        return QueryMailsAsync(" WHERE to_track_id = @trackId" + filter + " ORDER BY created_at_ms DESC, id;", new { trackId }, ct);
-    }
+    public Task UpsertTerminalAsync(TerminalDto terminal, EventEnvelopeDto? evt, CancellationToken ct) =>
+        _terminalRepository.UpsertTerminalAsync(terminal, evt, ct);
 
-    private async Task<IReadOnlyList<MailDto>> QueryMailsAsync(string clause, object? parameters, CancellationToken ct)
-    {
-        EnsureInitialized();
-        await using var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);
-        var rows = await conn.QueryAsync<MailRow>(new CommandDefinition(MailSelect + clause,
-            parameters, cancellationToken: ct)).ConfigureAwait(false);
-        return rows.Select(MapMail).ToList();
-    }
+    public Task DeleteTerminalAsync(string trackId, string terminalId, EventEnvelopeDto? evt, CancellationToken ct) =>
+        _terminalRepository.DeleteTerminalAsync(trackId, terminalId, evt, ct);
 
-    public Task UpsertTerminalAsync(TerminalDto terminal, EventEnvelopeDto? evt, CancellationToken ct)
-    {
-        ArgumentNullException.ThrowIfNull(terminal);
-        EnsureInitialized();
+    public Task<IReadOnlyList<TerminalDto>> ListTerminalsAsync(string trackId, CancellationToken ct) =>
+        _terminalRepository.ListTerminalsAsync(trackId, ct);
 
-        var status = SqliteJsonUpcaster.FormatTerminalStatus(terminal.Status);
-
-        return _writer.EnqueueAsync(
-            async (conn, tx, innerCt) =>
-            {
-                await conn.ExecuteAsync(
-                    new CommandDefinition(
-                        """
-                        INSERT INTO terminals (
-                            id, track_id, session_id, idempotency_key, title,
-                            program, cwd, status, exit_code, created_at_ms, exited_at_ms
-                        )
-                        VALUES (
-                            @Id, @TrackId, @SessionId, @IdempotencyKey, @Title,
-                            @Program, @Cwd, @Status, @ExitCode, @CreatedAtMs, @ExitedAtMs
-                        )
-                        ON CONFLICT(id) DO UPDATE SET
-                            session_id = excluded.session_id,
-                            idempotency_key = excluded.idempotency_key,
-                            title = excluded.title,
-                            program = excluded.program,
-                            cwd = excluded.cwd,
-                            status = excluded.status,
-                            exit_code = excluded.exit_code,
-                            exited_at_ms = excluded.exited_at_ms;
-                        """,
-                        new
-                        {
-                            terminal.Id,
-                            terminal.TrackId,
-                            terminal.SessionId,
-                            terminal.IdempotencyKey,
-                            terminal.Title,
-                            terminal.Program,
-                            terminal.Cwd,
-                            Status = status,
-                            terminal.ExitCode,
-                            terminal.CreatedAtMs,
-                            terminal.ExitedAtMs
-                        },
-                        transaction: tx,
-                        cancellationToken: innerCt)).ConfigureAwait(false);
-
-                if (evt is not null)
-                {
-                    await InsertEventInternalAsync(conn, tx, evt, innerCt).ConfigureAwait(false);
-                }
-            },
-            ct);
-    }
-
-    public Task DeleteTerminalAsync(string trackId, string terminalId, EventEnvelopeDto? evt, CancellationToken ct)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(trackId);
-        ArgumentException.ThrowIfNullOrWhiteSpace(terminalId);
-        EnsureInitialized();
-
-        return _writer.EnqueueAsync(
-            async (conn, tx, innerCt) =>
-            {
-                await conn.ExecuteAsync(
-                    new CommandDefinition(
-                        "DELETE FROM terminals WHERE id = @TerminalId AND track_id = @TrackId;",
-                        new { TerminalId = terminalId, TrackId = trackId },
-                        transaction: tx,
-                        cancellationToken: innerCt)).ConfigureAwait(false);
-
-                if (evt is not null)
-                {
-                    await InsertEventInternalAsync(conn, tx, evt, innerCt).ConfigureAwait(false);
-                }
-            },
-            ct);
-    }
-
-    public async Task<IReadOnlyList<TerminalDto>> ListTerminalsAsync(string trackId, CancellationToken ct)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(trackId);
-        EnsureInitialized();
-
-        await using var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);
-        var rows = await conn.QueryAsync<TerminalRow>(
-            new CommandDefinition(
-                """
-                SELECT id AS Id,
-                       track_id AS TrackId,
-                       session_id AS SessionId,
-                       idempotency_key AS IdempotencyKey,
-                       title AS Title,
-                       program AS Program,
-                       cwd AS Cwd,
-                       status AS Status,
-                       exit_code AS ExitCode,
-                       created_at_ms AS CreatedAtMs,
-                       exited_at_ms AS ExitedAtMs
-                FROM terminals
-                WHERE track_id = @TrackId
-                ORDER BY created_at_ms ASC, id ASC;
-                """,
-                new { TrackId = trackId },
-                cancellationToken: ct)).ConfigureAwait(false);
-
-        return rows.Select(MapTerminal).ToList();
-    }
-
-    public async Task<string?> FindTrackIdByTerminalAsync(string terminalId, CancellationToken ct)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(terminalId);
-        EnsureInitialized();
-
-        await using var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);
-        return await conn.QuerySingleOrDefaultAsync<string>(
-            new CommandDefinition(
-                "SELECT track_id FROM terminals WHERE id = @TerminalId;",
-                new { TerminalId = terminalId },
-                cancellationToken: ct)).ConfigureAwait(false);
-    }
+    public Task<string?> FindTrackIdByTerminalAsync(string terminalId, CancellationToken ct) =>
+        _terminalRepository.FindTrackIdByTerminalAsync(terminalId, ct);
 
     public Task AppendEventAsync(EventEnvelopeDto evt, CancellationToken ct) =>
-        AppendEventWithIdAsync(evt, ct);
+        _eventRepository.AppendEventAsync(evt, ct);
 
-    public Task<EventEnvelopeDto> AppendEventWithIdAsync(EventEnvelopeDto evt, CancellationToken ct = default)
-    {
-        ArgumentNullException.ThrowIfNull(evt);
-        EnsureInitialized();
+    public Task<EventEnvelopeDto> AppendEventWithIdAsync(EventEnvelopeDto evt, CancellationToken ct = default) =>
+        _eventRepository.AppendEventWithIdAsync(evt, ct);
 
-        return _writer.EnqueueAsync<EventEnvelopeDto>(
-            async (conn, tx, innerCt) =>
-            {
-                var id = await InsertEventInternalAsync(conn, tx, evt, innerCt).ConfigureAwait(false);
-                return evt with { EventId = id };
-            },
-            ct);
-    }
+    public Task<long> GetEventTipIdAsync(CancellationToken ct) =>
+        _eventRepository.GetEventTipIdAsync(ct);
 
-    public async Task<long> GetEventTipIdAsync(CancellationToken ct)
-    {
-        EnsureInitialized();
-        await using var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);
-        return await conn.ExecuteScalarAsync<long>(new CommandDefinition(
-            // AUTOINCREMENT retains the last committed identity after maintenance deletes rows.
-            "SELECT COALESCE((SELECT seq FROM sqlite_sequence WHERE name = 'events'), 0)", cancellationToken: ct)).ConfigureAwait(false);
-    }
-
-    public async Task<IReadOnlyList<EventEnvelopeDto>> ListEventsSinceAsync(
+    public Task<IReadOnlyList<EventEnvelopeDto>> ListEventsSinceAsync(
         long sinceEventId,
         string? trackId = null,
         int limit = 500,
-        CancellationToken ct = default)
-    {
-        EnsureInitialized();
-        var clampedLimit = Math.Max(1, limit);
+        CancellationToken ct = default) =>
+        _eventRepository.ListEventsSinceAsync(sinceEventId, trackId, limit, ct);
 
-        await using var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);
-        var sql = string.IsNullOrWhiteSpace(trackId)
-            ? """
-              SELECT id AS Id,
-                     area_id AS AreaId,
-                     track_id AS TrackId,
-                     kind AS Kind,
-                     payload_json AS PayloadJson,
-                     created_at_ms AS CreatedAtMs
-              FROM events
-              WHERE id > @SinceEventId
-              ORDER BY id ASC
-              LIMIT @Limit;
-              """
-            : """
-              SELECT id AS Id,
-                     area_id AS AreaId,
-                     track_id AS TrackId,
-                     kind AS Kind,
-                     payload_json AS PayloadJson,
-                     created_at_ms AS CreatedAtMs
-              FROM events
-              WHERE track_id = @TrackId AND id > @SinceEventId
-              ORDER BY id ASC
-              LIMIT @Limit;
-              """;
-
-        var rows = await conn.QueryAsync<EventRow>(
-            new CommandDefinition(
-                sql,
-                new
-                {
-                    SinceEventId = sinceEventId,
-                    TrackId = trackId,
-                    Limit = clampedLimit
-                },
-                cancellationToken: ct)).ConfigureAwait(false);
-
-        return rows.Select(MapEvent).ToList();
-    }
-
-    private static readonly string ListTrackOverlaysSql = $$"""
-        SELECT tr.id AS TrackId,
-               tr.area_id AS AreaId,
-               tr.closed_at_ms AS ClosedAtMs,
-               CASE WHEN EXISTS (
-                   SELECT 1 FROM agent_sessions s WHERE s.track_id = tr.id AND s.archived_at_ms IS NULL
-                   AND LOWER(s.status) IN ('queued', 'running', 'stopping', 'compacting')
-               ) OR EXISTS (
-                   SELECT 1 FROM tasks t WHERE t.track_id = tr.id AND LOWER(t.status) IN ('running', 'verifying')
-               ) OR EXISTS (
-                   SELECT 1 FROM track_workspace_preparations p WHERE p.track_id = tr.id
-                   AND json_extract(p.intent_json, '$.Phase') IN ({{(int)WorkspacePreparationPhase.Pending}}, {{(int)WorkspacePreparationPhase.Provisioning}}, {{(int)WorkspacePreparationPhase.Mounting}}, {{(int)WorkspacePreparationPhase.Initializing}}, {{(int)WorkspacePreparationPhase.Provisioned}})
-               ) THEN 1 ELSE 0 END AS IsWorking,
-               (SELECT COUNT(1) FROM asks a WHERE a.track_id = tr.id AND LOWER(a.status) = 'open') AS OpenAskCount,
-               CASE WHEN EXISTS (
-                   SELECT 1 FROM agent_sessions s WHERE s.track_id = tr.id AND s.archived_at_ms IS NULL
-                   AND LOWER(s.status) = 'unknown' AND (
-                       NOT EXISTS (SELECT 1 FROM tasks tk WHERE tk.session_id = s.id AND (tk.kind <> 'flow_wake' OR tk.block_id <> 'flow:' || tk.task_key OR json_type(tk.context_json, '$.flowNode') IS NOT 'true') AND LOWER(tk.status) IN ('pending', 'running', 'verifying'))
-                       OR EXISTS (SELECT 1 FROM tasks tk WHERE tk.session_id = s.id AND LOWER(tk.status) IN ('running', 'verifying'))
-                   )
-               ) THEN 1 ELSE 0 END AS HasBlockedSession,
-               CASE WHEN EXISTS (
-                   SELECT 1 FROM track_workspace_preparations p WHERE p.track_id = tr.id
-                   AND json_extract(p.intent_json, '$.Phase') IN ({{(int)WorkspacePreparationPhase.Failed}}, {{(int)WorkspacePreparationPhase.Unknown}})
-               ) THEN 1 ELSE 0 END AS WorkspaceFailed,
-               MAX(
-                   tr.updated_at_ms,
-                   COALESCE((SELECT MAX(s2.updated_at_ms) FROM agent_sessions s2 WHERE s2.track_id = tr.id), tr.updated_at_ms),
-                   COALESCE((SELECT MAX(t2.updated_at_ms) FROM tasks t2 WHERE t2.track_id = tr.id), tr.updated_at_ms),
-                   COALESCE((SELECT MAX(COALESCE(a2.answered_at_ms, a2.created_at_ms)) FROM asks a2 WHERE a2.track_id = tr.id), tr.updated_at_ms),
-                   COALESCE((SELECT MAX(m2.created_at_ms) FROM mails m2 WHERE m2.to_track_id = tr.id), tr.updated_at_ms)
-               ) AS UpdatedAtMs
-        FROM tracks tr
-        WHERE (@IncludeClosed = 1 OR tr.closed_at_ms IS NULL)
-        ORDER BY tr.updated_at_ms DESC, tr.id ASC;
-        """;
-
-    public async Task<IReadOnlyList<TrackOverlayDto>> ListTrackOverlaysAsync(
+    public Task<IReadOnlyList<TrackOverlayDto>> ListTrackOverlaysAsync(
         bool includeClosed = false,
-        CancellationToken ct = default)
-    {
-        EnsureInitialized();
-        await using var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);
-        var rows = await conn.QueryAsync<TrackOverlayRow>(
-            new CommandDefinition(
-                ListTrackOverlaysSql,
-                new { IncludeClosed = includeClosed ? 1 : 0 },
-                cancellationToken: ct)).ConfigureAwait(false);
+        CancellationToken ct = default) =>
+        _overlayRepository.ListTrackOverlaysAsync(includeClosed, ct);
 
-        var watermarks = (await conn.QueryAsync<OverlayWatermarkRow>(new CommandDefinition("""
-            SELECT s.track_id AS TrackId, s.id AS SessionId, MAX(t.completed_at_ms) AS LastNotifiableTurnAtMs
-            FROM agent_sessions s JOIN session_turns t ON t.session_id = s.id
-            JOIN tracks tr ON tr.id = s.track_id
-            WHERE s.archived_at_ms IS NULL AND NOT EXISTS (SELECT 1 FROM tasks tk WHERE tk.session_id = s.id AND (tk.kind <> 'flow_wake' OR tk.block_id <> 'flow:' || tk.task_key OR json_type(tk.context_json, '$.flowNode') IS NOT 'true') AND LOWER(tk.status) IN ('pending', 'running', 'verifying'))
-              AND LOWER(t.status) IN ('completed', 'failed') AND t.completed_at_ms IS NOT NULL
-              AND (@IncludeClosed = 1 OR tr.closed_at_ms IS NULL)
-            GROUP BY s.track_id, s.id ORDER BY s.id;
-            """, new { IncludeClosed = includeClosed ? 1 : 0 }, cancellationToken: ct)).ConfigureAwait(false))
-            .ToLookup(r => r.TrackId);
-        return rows.Select(r => new TrackOverlayDto(r.TrackId, r.AreaId,
-            r.ClosedAtMs is null && r.IsWorking != 0,
-            r.ClosedAtMs is null ? (int)r.OpenAskCount : 0, 0,
-            r.ClosedAtMs is null && r.HasBlockedSession != 0,
-            r.ClosedAtMs is null && r.WorkspaceFailed != 0, r.UpdatedAtMs,
-            watermarks[r.TrackId].Select(w => new NotifiableSessionWatermarkDto(w.SessionId, w.LastNotifiableTurnAtMs)).ToArray())).ToList();
-    }
+    public Task<IReadOnlyList<string>> MarkInFlightInterruptedOnBootAsync(CancellationToken ct) =>
+        _bootRecoveryRepository.MarkInFlightInterruptedOnBootAsync(ct);
 
-    private sealed class OverlayWatermarkRow
-    {
-        public string TrackId { get; init; } = "";
-        public string SessionId { get; init; } = "";
-        public long LastNotifiableTurnAtMs { get; init; }
-    }
+    public Task<TrackScheduleDto?> GetAsync(string trackId, string scheduleId, CancellationToken ct) =>
+        _trackSchedulesRepository.GetAsync(trackId, scheduleId, ct);
 
-    // -------------------------------------------------------------------------
-    // Boot Reconciliation
-    // -------------------------------------------------------------------------
+    public Task<IReadOnlyList<TrackScheduleDto>> ListForTrackAsync(string trackId, bool includeTerminal, CancellationToken ct) =>
+        _trackSchedulesRepository.ListForTrackAsync(trackId, includeTerminal, ct);
 
-    public Task<IReadOnlyList<string>> MarkInFlightInterruptedOnBootAsync(CancellationToken ct)
-    {
-        EnsureInitialized();
-        var nowMs = _timeProvider.GetUtcNow().ToUnixTimeMilliseconds();
+    public Task<IReadOnlyList<FiredTrackSchedule>> ListDueFlowClocksAsync(long nowMs, CancellationToken ct) =>
+        _trackSchedulesRepository.ListDueFlowClocksAsync(nowMs, ct);
 
-        return _writer.EnqueueAsync<IReadOnlyList<string>>(
-            async (conn, tx, innerCt) =>
-            {
-                var affectedTrackIds = (await conn.QueryAsync<string>(
-                    new CommandDefinition(
-                        """
-                        SELECT DISTINCT tr.id
-                        FROM tracks tr
-                        WHERE (
-                              EXISTS (
-                                  SELECT 1 FROM tasks task
-                                  WHERE task.track_id = tr.id
-                                    AND task.status IN ('running', 'verifying')
-                              )
-                              OR EXISTS (
-                                  SELECT 1 FROM session_turns t
-                                  JOIN agent_sessions s ON s.id = t.session_id
-                                  WHERE s.track_id = tr.id
-                                    AND LOWER(t.status) IN ('running', 'verifying')
-                              )
-                              OR EXISTS (
-                                  SELECT 1 FROM agent_sessions s2
-                                  WHERE s2.track_id = tr.id
-                                    AND LOWER(s2.status) IN ('running', 'verifying')
-                              )
-                          )
-                        ORDER BY tr.id ASC;
-                        """,
-                        transaction: tx,
-                        cancellationToken: innerCt)).ConfigureAwait(false)).ToList();
+    public Task<bool> CommitFlowFireAsync(TrackScheduleDto nextClock, long expectedDueAtMs, TaskDto? armedTask,
+        EventEnvelopeDto taskEvent, CancellationToken ct) =>
+        _trackSchedulesRepository.CommitFlowFireAsync(nextClock, expectedDueAtMs, armedTask, taskEvent, ct);
 
-                await conn.ExecuteAsync(
-                    new CommandDefinition(
-                        """
-                        UPDATE session_messages SET delivery = 'interrupted'
-                        WHERE delivery = 'queued' AND session_id IN (
-                            SELECT session_id FROM tasks WHERE status IN ('running', 'verifying') AND session_id IS NOT NULL
-                        );
-                        UPDATE agent_sessions
-                        SET archived_at_ms = COALESCE(archived_at_ms, @NowMs), updated_at_ms = @NowMs,
-                            status = CASE WHEN status IN ('queued', 'running') THEN 'idle' ELSE status END
-                        WHERE id IN (
-                            SELECT session_id FROM tasks WHERE status IN ('running', 'verifying') AND session_id IS NOT NULL
-                                AND NOT (block_id = 'flow:' || task_key AND json_type(context_json, '$.flowNode') IS 'true' AND (kind = 'flow_wake' OR json_type(context_json, '$.reuseSession') IS 'true'))
-                        );
-                        UPDATE tasks
-                        SET status = 'failed',
-                            status_detail = 'The host stopped during this task.',
-                            outcome = CASE WHEN block_id = 'flow:' || task_key AND json_type(context_json, '$.flowNode') IS 'true' THEN 'blocked' ELSE outcome END,
-                            outcome_summary = CASE WHEN block_id = 'flow:' || task_key AND json_type(context_json, '$.flowNode') IS 'true' THEN 'The host stopped during this task.' ELSE outcome_summary END,
-                            finished_at_ms = COALESCE(finished_at_ms, @NowMs),
-                            updated_at_ms = @NowMs
-                        WHERE status IN ('running', 'verifying') AND NOT (kind = 'flow_watch' AND block_id = 'flow:' || task_key AND json_type(context_json, '$.flowNode') IS 'true');
-                        """,
-                        new { NowMs = nowMs },
-                        transaction: tx,
-                        cancellationToken: innerCt)).ConfigureAwait(false);
+    public Task EnqueueAsync(TrackWakeRequest request, CancellationToken ct) =>
+        _trackWakesRepository.EnqueueAsync(request, ct);
 
-                await conn.ExecuteAsync(
-                    new CommandDefinition(
-                        """
-                        UPDATE session_turns
-                        SET status = 'unknown',
-                            completed_at_ms = COALESCE(completed_at_ms, @NowMs)
-                        WHERE LOWER(status) IN ('running', 'verifying');
-                        """,
-                        new { NowMs = nowMs },
-                        transaction: tx,
-                        cancellationToken: innerCt)).ConfigureAwait(false);
+    public Task<IReadOnlyList<TrackWake>> ListAsync(string trackId, CancellationToken ct) =>
+        _trackWakesRepository.ListAsync(trackId, ct);
 
-                await conn.ExecuteAsync(
-                    new CommandDefinition(
-                        """
-                        UPDATE agent_sessions
-                        SET status = 'unknown', unknown_reason = 'host_restarted',
-                            unknown_turn_id = (SELECT id FROM session_turns WHERE session_id = agent_sessions.id ORDER BY turn_index DESC LIMIT 1),
-                            updated_at_ms = @NowMs
-                        WHERE LOWER(status) IN ('running', 'verifying', 'stopping', 'compacting');
-                        """,
-                        new { NowMs = nowMs },
-                        transaction: tx,
-                        cancellationToken: innerCt)).ConfigureAwait(false);
+    public Task<IReadOnlyList<string>> ListPendingTracksAsync(CancellationToken ct) =>
+        _trackWakesRepository.ListPendingTracksAsync(ct);
 
-                foreach (var trackId in affectedTrackIds)
-                    if (await conn.ExecuteScalarAsync<bool>(new CommandDefinition(
-                        "SELECT EXISTS(SELECT 1 FROM tracks WHERE id=@Id AND lead_session_id IS NOT NULL);",
-                        new { Id = trackId }, tx, cancellationToken: innerCt)).ConfigureAwait(false))
-                        await EnqueueWakeInternalAsync(conn, tx, TrackWakeRequests.Boot(trackId), nowMs, innerCt).ConfigureAwait(false);
-                return affectedTrackIds;
-            },
-            ct);
-    }
+    public Task<IReadOnlyList<TrackWake>> ClaimBatchAsync(string trackId, string targetSessionId, int limit, CancellationToken ct) =>
+        _trackWakesRepository.ClaimBatchAsync(trackId, targetSessionId, limit, ct);
 
-    // -------------------------------------------------------------------------
-    // Internal SQL & Mapping Helpers
-    // -------------------------------------------------------------------------
+    public Task MarkDoneAsync(IReadOnlyList<TrackWake> batch, string reason, string turnId, CancellationToken ct) =>
+        _trackWakesRepository.MarkDoneAsync(batch, reason, turnId, ct);
 
-    private static async Task<TrackRow?> QueryTrackRowAsync(
-        SqliteConnection conn,
-        SqliteTransaction? tx,
-        string trackId,
-        CancellationToken ct)
-    {
-        return await conn.QuerySingleOrDefaultAsync<TrackRow>(
-            new CommandDefinition(
-                """
-                SELECT t.id AS Id,
-                       t.area_id AS AreaId,
-                       t.parent_track_id AS ParentTrackId,
-                       t.parent_attempt_id AS ParentAttemptId,
-                       t.title AS Title,
-                       t.cwd AS Cwd,
-                       t.workspace_driver AS WorkspaceDriver,
-                       t.workspace_spec_json AS WorkspaceSpecJson,
-                       t.lead_session_id AS LeadSessionId,
-                       t.template_id AS TemplateId,
-                       t.template_snapshot AS TemplateSnapshot,
-                       t.template_inputs_json AS TemplateInputsJson,
-                       t.template_state_json AS TemplateStateJson,
-                       t.data_json AS DataJson,
-                       t.data_rev AS DataRev,
-                       t.flow_spec_json AS FlowSpecJson,
-                       t.flow_rev AS FlowRev,
-                       t.flow_file_sha256 AS FlowFileSha256,
-                       t.enabled_plugins_json AS EnabledPluginsJson,
-                       t.closed_at_ms AS ClosedAtMs,
-                       t.pinned_at_ms AS PinnedAtMs,
-                       t.sort_order AS SortOrder,
-                       t.created_at_ms AS CreatedAtMs,
-                       t.updated_at_ms AS UpdatedAtMs,
-                       t.execution_target_id AS ExecutionTargetId
-                FROM tracks t
-                WHERE t.id = @TrackId;
-                """,
-                new { TrackId = trackId },
-                transaction: tx,
-                cancellationToken: ct)).ConfigureAwait(false);
-    }
+    public Task MarkDroppedAsync(IReadOnlyList<TrackWake> batch, string reason, string? turnId, CancellationToken ct) =>
+        _trackWakesRepository.MarkDroppedAsync(batch, reason, turnId, ct);
 
-    private async Task UpsertTaskInternalAsync(
-        SqliteConnection conn,
-        SqliteTransaction tx,
-        TaskDto task,
-        CancellationToken ct)
-    {
-        // Guard against an updated Id replacing an existing (track_id, task_key) row while preserving normal in-place Id updates.
-        await conn.ExecuteAsync(
-            new CommandDefinition(
-                "DELETE FROM tasks WHERE track_id = @TrackId AND task_key = @TaskKey AND id != @Id;",
-                new { task.TrackId, task.TaskKey, task.Id },
-                transaction: tx,
-                cancellationToken: ct)).ConfigureAwait(false);
+    public Task LinkTurnAsync(IReadOnlyList<TrackWake> batch, string turnId, CancellationToken ct) =>
+        _trackWakesRepository.LinkTurnAsync(batch, turnId, ct);
 
-        await conn.ExecuteAsync(
-            new CommandDefinition(
-                """
-                INSERT INTO tasks (
-                    id, track_id, block_id, task_key, generation, kind, provider, role,
-                    access_mode, ready, depends_on_json, goal_or_cmd, context_json,
-                    acceptance, gate_json, status, status_detail, semantic_verdict,
-                    semantic_note, session_id, run_count, worker_result_json, meta_json,
-                    gate_verdict_json, started_at_ms, finished_at_ms,
-                    outcome, outcome_summary, trigger_run_key, archived_at_ms,
-                    created_at_ms, updated_at_ms
-                )
-                VALUES (
-                    @Id, @TrackId, @BlockId, @TaskKey, @Generation, @Kind, @Provider, @Role,
-                    @AccessMode, @Ready, @DependsOnJson, @GoalOrCmd, @ContextJson,
-                    @Acceptance, @GateJson, @Status, @StatusDetail, @SemanticVerdict,
-                    @SemanticNote, @SessionId, @RunCount, @WorkerResultJson, @MetaJson,
-                    @GateVerdictJson, @StartedAtMs, @FinishedAtMs,
-                    @Outcome, @OutcomeSummary, @TriggerRunKey, @ArchivedAtMs,
-                    @CreatedAtMs, @UpdatedAtMs
-                )
-                ON CONFLICT(id) DO UPDATE SET
-                    block_id = excluded.block_id,
-                    task_key = excluded.task_key,
-                    generation = excluded.generation,
-                    kind = excluded.kind,
-                    provider = excluded.provider,
-                    role = excluded.role,
-                    access_mode = excluded.access_mode,
-                    ready = excluded.ready,
-                    depends_on_json = excluded.depends_on_json,
-                    goal_or_cmd = excluded.goal_or_cmd,
-                    context_json = excluded.context_json,
-                    acceptance = excluded.acceptance,
-                    gate_json = excluded.gate_json,
-                    status = excluded.status,
-                    status_detail = excluded.status_detail,
-                    semantic_verdict = excluded.semantic_verdict,
-                    semantic_note = excluded.semantic_note,
-                    session_id = excluded.session_id,
-                    run_count = excluded.run_count,
-                    worker_result_json = excluded.worker_result_json,
-                    meta_json = excluded.meta_json,
-                    gate_verdict_json = excluded.gate_verdict_json,
-                    started_at_ms = excluded.started_at_ms,
-                    finished_at_ms = excluded.finished_at_ms,
-                    outcome = excluded.outcome,
-                    outcome_summary = excluded.outcome_summary,
-                    trigger_run_key = excluded.trigger_run_key,
-                    archived_at_ms = excluded.archived_at_ms,
-                    updated_at_ms = excluded.updated_at_ms;
-                """,
-                new
-                {
-                    task.Id,
-                    task.TrackId,
-                    task.BlockId,
-                    task.TaskKey,
-                    task.Generation,
-                    task.Kind,
-                    task.Provider,
-                    task.Role,
-                    AccessMode = SqliteJsonUpcaster.FormatAccessMode(task.Access),
-                    Ready = task.Ready ? 1 : 0,
-                    DependsOnJson = SqliteJsonUpcaster.SerializeStringList(task.DependsOn),
-                    task.GoalOrCmd,
-                    ContextJson = SqliteJsonUpcaster.SerializeNullableElement(task.Context),
-                    task.Acceptance,
-                    GateJson = SqliteJsonUpcaster.SerializeGateSpec(task.Gate),
-                    Status = SqliteJsonUpcaster.FormatTaskStatus(task.Status),
-                    task.StatusDetail,
-                    SemanticVerdict = SqliteJsonUpcaster.FormatSemanticVerdict(task.SemanticVerdict),
-                    task.SemanticNote,
-                    task.SessionId,
-                    task.RunCount,
-                    WorkerResultJson = SqliteJsonUpcaster.SerializeNullableElement(task.WorkerResult),
-                    MetaJson = task.Meta.HasValue ? SqliteJsonUpcaster.SerializeElement(task.Meta.Value) : "{}",
-                    GateVerdictJson = _coldBlobStore.StoreOrInlineNullable(task.TrackId, task.GateVerdict),
-                    task.StartedAtMs,
-                    task.FinishedAtMs,
-                    Outcome = SqliteJsonUpcaster.FormatFlowOutcome(task.Outcome),
-                    task.OutcomeSummary,
-                    task.TriggerRunKey,
-                    task.ArchivedAtMs,
-                    task.CreatedAtMs,
-                    task.UpdatedAtMs
-                },
-                transaction: tx,
-                cancellationToken: ct)).ConfigureAwait(false);
-    }
+    public Task<bool> CancelPendingWakeAsync(string trackId, string wakeId, CancellationToken ct) =>
+        _trackWakesRepository.CancelPendingWakeAsync(trackId, wakeId, ct);
 
-    private static Task UpsertSessionInternalAsync(
-        SqliteConnection conn,
-        SqliteTransaction tx,
-        AgentSessionDto session,
-        CancellationToken ct)
-    {
-        return conn.ExecuteAsync(
-            new CommandDefinition(
-                """
-                INSERT INTO agent_sessions (
-                    id, track_id, title,
-                    provider, model, reasoning_effort, native_thread_id, epoch, status,
-                    context_used_tokens, context_window_tokens, context_usage_at_ms,
-                    archived_at_ms, created_at_ms, updated_at_ms, permission_mode,
-                    unknown_reason, unknown_turn_id, unknown_last_error, reconnect_invalidated,
-                    parent_session_id, spawn_depth, config_version, notify_parent, system_prompt
-                )
-                VALUES (
-                    @Id, @TrackId, @Title,
-                    @Provider, @Model, @ReasoningEffort, @NativeThreadId, @Epoch, @Status,
-                    @ContextUsedTokens, @ContextWindowTokens, @ContextUsageAtMs,
-                    @ArchivedAtMs, @CreatedAtMs, @UpdatedAtMs, @PermissionMode,
-                    @UnknownReason, @UnknownTurnId, @UnknownLastError, @ReconnectInvalidated,
-                    @ParentSessionId, @SpawnDepth, @ConfigVersion, @NotifyParent, @SystemPrompt
-                )
-                ON CONFLICT(id) DO UPDATE SET
-                    title = excluded.title,
-                    provider = excluded.provider,
-                    model = excluded.model,
-                    reasoning_effort = excluded.reasoning_effort,
-                    native_thread_id = excluded.native_thread_id,
-                    epoch = excluded.epoch,
-                    status = excluded.status,
-                    context_used_tokens = excluded.context_used_tokens,
-                    context_window_tokens = excluded.context_window_tokens,
-                    context_usage_at_ms = excluded.context_usage_at_ms,
-                    archived_at_ms = excluded.archived_at_ms,
-                    updated_at_ms = excluded.updated_at_ms,
-                    permission_mode = excluded.permission_mode,
-                    unknown_reason = excluded.unknown_reason, unknown_turn_id = excluded.unknown_turn_id,
-                    unknown_last_error = excluded.unknown_last_error, reconnect_invalidated = excluded.reconnect_invalidated,
-                    parent_session_id = excluded.parent_session_id, spawn_depth = excluded.spawn_depth,
-                    config_version = excluded.config_version, notify_parent = excluded.notify_parent, system_prompt = excluded.system_prompt;
-                """,
-                new
-                {
-                    session.Id,
-                    session.TrackId,
-                    session.Title,
-                    session.Provider,
-                    session.Model,
-                    session.ReasoningEffort,
-                    session.NativeThreadId,
-                    session.Epoch,
-                    session.Status,
-                    ContextUsedTokens = session.ContextUsage?.UsedTokens,
-                    ContextWindowTokens = session.ContextUsage?.WindowTokens,
-                    ContextUsageAtMs = session.ContextUsage?.ObservedAtMs,
-                    session.ArchivedAtMs,
-                    session.CreatedAtMs,
-                    session.UpdatedAtMs,
-                    session.PermissionMode, session.UnknownReason, session.UnknownTurnId,
-                    session.UnknownLastError, session.ReconnectInvalidated, session.ParentSessionId,
-                    session.SpawnDepth, session.ConfigVersion, session.NotifyParent, session.SystemPrompt
-                },
-                transaction: tx,
-                cancellationToken: ct));
-    }
+    public Task<IReadOnlyList<string>> RecoverOnBootAsync(CancellationToken ct) =>
+        _trackWakesRepository.RecoverOnBootAsync(ct);
 
-    private static Task<long> InsertEventInternalAsync(
-        SqliteConnection conn,
-        SqliteTransaction tx,
-        EventEnvelopeDto evt,
-        CancellationToken ct)
-    {
-        return conn.ExecuteScalarAsync<long>(
-            new CommandDefinition(
-                """
-                INSERT INTO events (area_id, track_id, kind, payload_json, created_at_ms)
-                VALUES (@AreaId, @TrackId, @Kind, @PayloadJson, @CreatedAtMs);
-                SELECT last_insert_rowid();
-                """,
-                new
-                {
-                    evt.AreaId,
-                    evt.TrackId,
-                    evt.Kind,
-                    PayloadJson = SqliteJsonUpcaster.SerializeElement(evt.Payload),
-                    evt.CreatedAtMs
-                },
-                transaction: tx,
-                cancellationToken: ct));
-    }
+    public Task<string?> FindCreationAsync(ResourceCreationKey key, CancellationToken ct) =>
+        _creationRepository.FindCreationAsync(key, ct);
 
-    private async Task<SqliteConnection> OpenReadConnectionAsync(CancellationToken ct)
-    {
-        var conn = new SqliteConnection(_readConnectionString);
-        try
-        {
-            await conn.OpenAsync(ct).ConfigureAwait(false);
-            var busyMs = Math.Max(1, _options.BusyTimeoutSeconds) * 1000;
-            await conn.ExecuteAsync(
-                new CommandDefinition(
-                    $"PRAGMA busy_timeout = {busyMs}; PRAGMA query_only = ON; PRAGMA temp_store = MEMORY;",
-                    cancellationToken: ct)).ConfigureAwait(false);
-            return conn;
-        }
-        catch
-        {
-            await conn.DisposeAsync().ConfigureAwait(false);
-            throw;
-        }
-    }
+    public Task<string> CreateAreaAsync(AreaDto area, ResourceCreationKey? key, CancellationToken ct, EventEnvelopeDto? evt = null) =>
+        _creationRepository.CreateAreaAsync(area, key, ct, evt);
 
-    private void EnsureInitialized()
-    {
-        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-        if (!_initialized)
-        {
-            throw new InvalidOperationException("SqliteTrackStore has not been initialized. Call InitializeAsync first.");
-        }
-    }
+    public Task<WorkspacePreparation?> GetWorkspacePreparationAsync(string trackId, CancellationToken ct) =>
+        _creationRepository.GetWorkspacePreparationAsync(trackId, ct);
 
-    private static AreaDto MapArea(AreaRow r) =>
-        new(
-            Id: r.Id,
-            Name: r.Name,
-            Color: r.Color,
-            DefaultCwd: r.DefaultCwd,
-            Folders: SqliteJsonUpcaster.DeserializeStringList(r.FoldersJson),
-            SortOrder: r.SortOrder,
-            CreatedAtMs: r.CreatedAtMs,
-            UpdatedAtMs: r.UpdatedAtMs,
-            ExecutionTargetId: string.IsNullOrWhiteSpace(r.ExecutionTargetId) ? "local" : r.ExecutionTargetId);
+    public Task<IReadOnlyList<string>> RecoverWorkspacePreparationsAsync(CancellationToken ct) =>
+        _creationRepository.RecoverWorkspacePreparationsAsync(ct);
 
-    private TrackDto MapTrack(TrackRow r) =>
-        new(
-            Id: r.Id,
-            AreaId: r.AreaId,
-            ParentTrackId: r.ParentTrackId,
-            ParentAttemptId: r.ParentAttemptId,
-            Title: r.Title,
-            Cwd: r.Cwd,
-            WorkspaceDriver: r.WorkspaceDriver,
-            WorkspaceSpec: _upcaster.UpcastObjectOrElement(r.WorkspaceSpecJson, "tracks.workspace_spec_json"),
-            LeadSessionId: r.LeadSessionId,
-            TemplateId: r.TemplateId,
-            TemplateInputs: _upcaster.UpcastObjectOrElement(r.TemplateInputsJson, "tracks.template_inputs_json"),
-            TemplateState: _upcaster.UpcastObjectOrElement(r.TemplateStateJson, "tracks.template_state_json"),
-            Data: _upcaster.UpcastObjectOrElement(r.DataJson, "tracks.data_json"),
-            DataRev: r.DataRev,
-            FlowRev: r.FlowRev,
-            FlowSpecJson: r.FlowSpecJson,
-            FlowFileSha256: r.FlowFileSha256,
-            EnabledPlugins: SqliteJsonUpcaster.DeserializeStringList(r.EnabledPluginsJson),
-            ClosedAtMs: r.ClosedAtMs,
-            PinnedAtMs: r.PinnedAtMs,
-            SortOrder: r.SortOrder,
-            CreatedAtMs: r.CreatedAtMs,
-            UpdatedAtMs: r.UpdatedAtMs,
-            ExecutionTargetId: string.IsNullOrWhiteSpace(r.ExecutionTargetId) ? "local" : r.ExecutionTargetId);
+    public Task<bool> TryClaimWorkspacePreparationAsync(string trackId, WorkspacePreparationPhase expected, WorkspacePreparation claimed, CancellationToken ct) =>
+        _creationRepository.TryClaimWorkspacePreparationAsync(trackId, expected, claimed, ct);
 
-    private TaskDto MapTask(TaskRow r) =>
-        new(
-            Id: r.Id,
-            TrackId: r.TrackId,
-            BlockId: r.BlockId,
-            TaskKey: r.TaskKey,
-            Generation: (int)r.Generation,
-            Kind: r.Kind,
-            Provider: r.Provider,
-            Role: r.Role,
-            Access: SqliteJsonUpcaster.ParseAccessMode(r.AccessMode),
-            Ready: r.Ready != 0,
-            DependsOn: SqliteJsonUpcaster.DeserializeStringList(r.DependsOnJson),
-            GoalOrCmd: r.GoalOrCmd,
-            Context: SqliteJsonUpcaster.ParseNullableElement(r.ContextJson),
-            Acceptance: r.Acceptance,
-            Gate: SqliteJsonUpcaster.DeserializeGateSpec(r.GateJson),
-            Status: SqliteJsonUpcaster.ParseTaskStatus(r.Status),
-            StatusDetail: r.StatusDetail,
-            SemanticVerdict: SqliteJsonUpcaster.ParseSemanticVerdict(r.SemanticVerdict),
-            SemanticNote: r.SemanticNote,
-            SessionId: r.SessionId,
-            RunCount: (int)r.RunCount,
-            WorkerResult: SqliteJsonUpcaster.ParseNullableElement(r.WorkerResultJson),
-            Meta: _upcaster.UpcastObjectOrElement(r.MetaJson, "tasks.meta_json"),
-            GateVerdict: _coldBlobStore.HydrateNullable(r.GateVerdictJson, "tasks.gate_verdict_json"),
-            StartedAtMs: r.StartedAtMs,
-            FinishedAtMs: r.FinishedAtMs,
-            Outcome: SqliteJsonUpcaster.ParseFlowOutcome(r.Outcome),
-            OutcomeSummary: r.OutcomeSummary,
-            TriggerRunKey: r.TriggerRunKey,
-            ArchivedAtMs: r.ArchivedAtMs,
-            CreatedAtMs: r.CreatedAtMs,
-            UpdatedAtMs: r.UpdatedAtMs);
-
-    private static AgentSessionDto MapSession(SessionRow r, string? leadSessionId) =>
-        new(
-            Id: r.Id,
-            TrackId: r.TrackId,
-            IsLead: !string.IsNullOrWhiteSpace(leadSessionId) &&
-                    string.Equals(r.Id, leadSessionId, StringComparison.Ordinal),
-            Title: r.Title,
-            Provider: r.Provider,
-            Model: r.Model,
-            NativeThreadId: r.NativeThreadId,
-            Epoch: (int)r.Epoch,
-            Status: r.Status,
-            ContextUsage: r.ContextUsedTokens is { } used && r.ContextUsageAtMs is { } observedAt
-                ? new SessionContextUsage(used, r.ContextWindowTokens, observedAt)
-                : null,
-            ArchivedAtMs: r.ArchivedAtMs,
-            CreatedAtMs: r.CreatedAtMs,
-            UpdatedAtMs: r.UpdatedAtMs,
-            ReasoningEffort: r.ReasoningEffort,
-            PermissionMode: r.PermissionMode, UnknownReason: r.UnknownReason, UnknownTurnId: r.UnknownTurnId,
-            UnknownLastError: r.UnknownLastError, ReconnectInvalidated: r.ReconnectInvalidated,
-            ParentSessionId: r.ParentSessionId, SpawnDepth: r.SpawnDepth, ConfigVersion: r.ConfigVersion,
-            NotifyParent: r.NotifyParent, SystemPrompt: r.SystemPrompt, LastNotifiableTurnAtMs: r.LastNotifiableTurnAtMs);
-
-    private static SessionTurnDto MapTurn(SessionTurnRow r) =>
-        new(
-            Id: r.Id,
-            SessionId: r.SessionId,
-            TurnIndex: (int)r.TurnIndex,
-            Epoch: (int)r.Epoch,
-            TriggerKind: r.TriggerKind,
-            Input: SqliteJsonUpcaster.ParseElementOrDefault(r.InputJson),
-            Status: r.Status,
-            Usage: SqliteJsonUpcaster.ParseNullableElement(r.UsageJson),
-            ErrorText: r.ErrorText,
-            StartedAtMs: r.StartedAtMs,
-            CompletedAtMs: r.CompletedAtMs);
-
-    private SessionItemDto MapSessionItem(SessionItemRow r) =>
-        new(
-            Id: r.Id,
-            SessionId: r.SessionId,
-            TurnId: r.TurnId,
-            Kind: r.Kind,
-            Payload: _coldBlobStore.Hydrate(r.PayloadJson, "session_items.payload_json"),
-            CreatedAtMs: r.CreatedAtMs) { TurnStatus = r.TurnStatus, InputDelivery = r.InputDelivery };
-
-    private static AskDto MapAsk(AskRow r) =>
-        new(
-            Id: r.Id,
-            TrackId: r.TrackId,
-            Status: SqliteJsonUpcaster.ParseAskStatus(r.Status),
-            Questions: SqliteJsonUpcaster.DeserializeAskQuestions(r.QuestionsJson),
-            Answer: SqliteJsonUpcaster.ParseNullableElement(r.AnswerJson),
-            CreatedAtMs: r.CreatedAtMs,
-            AnsweredAtMs: r.AnsweredAtMs,
-            Delivery: r.Delivery switch { "hold" => AskDelivery.Hold, "wake" => AskDelivery.Wake, _ => throw new InvalidOperationException("Invalid ask delivery.") },
-            SessionId: r.SessionId,
-            TurnId: r.TurnId, TargetSessionId: r.TargetSessionId);
-
-    private static MailDto MapMail(MailRow r) =>
-        new(
-            Id: r.Id,
-            FromTrackId: r.FromTrackId,
-            ToTrackId: r.ToTrackId,
-            Summary: r.Summary,
-            Body: r.Body,
-            ReadAtMs: r.ReadAtMs,
-            CreatedAtMs: r.CreatedAtMs,
-            ReplyToMailId: r.ReplyToMailId);
-
-    private static TerminalDto MapTerminal(TerminalRow r) =>
-        new(
-            Id: r.Id,
-            TrackId: r.TrackId,
-            SessionId: r.SessionId,
-            IdempotencyKey: r.IdempotencyKey,
-            Title: r.Title,
-            Program: r.Program,
-            Cwd: r.Cwd,
-            Status: SqliteJsonUpcaster.ParseTerminalStatus(r.Status),
-            ExitCode: r.ExitCode.HasValue ? (int)r.ExitCode.Value : null,
-            CreatedAtMs: r.CreatedAtMs,
-            ExitedAtMs: r.ExitedAtMs);
-
-    private EventEnvelopeDto MapEvent(EventRow r) =>
-        new(
-            EventId: r.Id,
-            AreaId: r.AreaId,
-            TrackId: r.TrackId,
-            Kind: r.Kind,
-            Payload: _upcaster.UpcastObjectOrElement(r.PayloadJson, "events.payload_json"),
-            CreatedAtMs: r.CreatedAtMs);
-
-    public async ValueTask DisposeAsync()
-    {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0)
-        {
-            return;
-        }
-
-        await _writer.DisposeAsync().ConfigureAwait(false);
-
-        using (var poolClearConn = new SqliteConnection(_readConnectionString))
-        {
-            SqliteConnection.ClearPool(poolClearConn);
-        }
-
-        _initLock.Dispose();
-    }
-
-    // -------------------------------------------------------------------------
-    // Internal Dapper Row Types (using Int64 for SQLite INTEGER columns)
-    // -------------------------------------------------------------------------
-
-    private sealed class AreaRow
-    {
-        public string Id { get; init; } = string.Empty;
-        public string Name { get; init; } = string.Empty;
-        public string Color { get; init; } = string.Empty;
-        public string? DefaultCwd { get; init; }
-        public string FoldersJson { get; init; } = "[]";
-        public double SortOrder { get; init; }
-        public long CreatedAtMs { get; init; }
-        public long UpdatedAtMs { get; init; }
-        public string ExecutionTargetId { get; init; } = "local";
-    }
-
-    private sealed class TrackRow
-    {
-        public string Id { get; init; } = string.Empty;
-        public string AreaId { get; init; } = string.Empty;
-        public string? ParentTrackId { get; init; }
-        public string? ParentAttemptId { get; init; }
-        public string Title { get; init; } = string.Empty;
-        public string Cwd { get; init; } = string.Empty;
-        public string WorkspaceDriver { get; init; } = "direct";
-        public string WorkspaceSpecJson { get; init; } = "{}";
-        public string? LeadSessionId { get; init; }
-        public string? TemplateId { get; init; }
-        public string? TemplateSnapshot { get; init; }
-        public string TemplateInputsJson { get; init; } = "{}";
-        public string TemplateStateJson { get; init; } = "{}";
-        public string DataJson { get; init; } = "{}";
-        public long DataRev { get; init; }
-        public string FlowSpecJson { get; init; } = """{"rev":0,"nodes":[]}""";
-        public long FlowRev { get; init; }
-        public string? FlowFileSha256 { get; init; }
-        public string EnabledPluginsJson { get; init; } = "[]";
-        public long? ClosedAtMs { get; init; }
-        public long? PinnedAtMs { get; init; }
-        public double SortOrder { get; init; }
-        public long CreatedAtMs { get; init; }
-        public long UpdatedAtMs { get; init; }
-        public string ExecutionTargetId { get; init; } = "local";
-    }
-
-
-    private sealed class ReportRow
-    {
-        public string TrackId { get; init; } = string.Empty;
-        public long DocRev { get; init; }
-        public string Summary { get; init; } = string.Empty;
-        public string LeadingComment { get; init; } = string.Empty;
-        public string BlocksJson { get; init; } = "[]";
-        public long UpdatedAtMs { get; init; }
-    }
-
-    private sealed class TaskRow
-    {
-        public string Id { get; init; } = string.Empty;
-        public string TrackId { get; init; } = string.Empty;
-        public string BlockId { get; init; } = string.Empty;
-        public string TaskKey { get; init; } = string.Empty;
-        public long Generation { get; init; }
-        public string Kind { get; init; } = string.Empty;
-        public string? Provider { get; init; }
-        public string? Role { get; init; }
-        public string AccessMode { get; init; } = "read_write";
-        public long Ready { get; init; }
-        public string DependsOnJson { get; init; } = "[]";
-        public string GoalOrCmd { get; init; } = string.Empty;
-        public string? ContextJson { get; init; }
-        public string? Acceptance { get; init; }
-        public string? GateJson { get; init; }
-        public string Status { get; init; } = "pending";
-        public string? StatusDetail { get; init; }
-        public string SemanticVerdict { get; init; } = "none";
-        public string? SemanticNote { get; init; }
-        public string? SessionId { get; init; }
-        public long RunCount { get; init; }
-        public string? WorkerResultJson { get; init; }
-        public string MetaJson { get; init; } = "{}";
-        public string? GateVerdictJson { get; init; }
-        public long? StartedAtMs { get; init; }
-        public long? FinishedAtMs { get; init; }
-        public string Outcome { get; init; } = "none";
-        public string? OutcomeSummary { get; init; }
-        public string? TriggerRunKey { get; init; }
-        public long? ArchivedAtMs { get; init; }
-        public long CreatedAtMs { get; init; }
-        public long UpdatedAtMs { get; init; }
-    }
-
-    private sealed class SessionRow
-    {
-        public long? LastNotifiableTurnAtMs { get; init; }
-        public string? ParentSessionId { get; init; }
-        public int SpawnDepth { get; init; }
-        public long ConfigVersion { get; init; }
-        public string NotifyParent { get; init; } = "none";
-        public string? SystemPrompt { get; init; }
-        public string? UnknownReason { get; init; }
-        public string? UnknownTurnId { get; init; }
-        public string? UnknownLastError { get; init; }
-        public bool ReconnectInvalidated { get; init; }
-        public string Id { get; init; } = string.Empty;
-        public string TrackId { get; init; } = string.Empty;
-        public string? Title { get; init; }
-        public string Provider { get; init; } = string.Empty;
-        public string? Model { get; init; }
-        public string? ReasoningEffort { get; init; }
-        public string? NativeThreadId { get; init; }
-        public long Epoch { get; init; }
-        public string Status { get; init; } = "idle";
-        public long? ContextUsedTokens { get; init; }
-        public long? ContextWindowTokens { get; init; }
-        public long? ContextUsageAtMs { get; init; }
-        public long? ArchivedAtMs { get; init; }
-        public long CreatedAtMs { get; init; }
-        public long UpdatedAtMs { get; init; }
-        public string? PermissionMode { get; init; }
-    }
-
-    private sealed class SessionTurnRow
-    {
-        public string Id { get; init; } = string.Empty;
-        public string SessionId { get; init; } = string.Empty;
-        public long TurnIndex { get; init; }
-        public long Epoch { get; init; }
-        public string TriggerKind { get; init; } = string.Empty;
-        public string InputJson { get; init; } = "{}";
-        public string Status { get; init; } = string.Empty;
-        public string? UsageJson { get; init; }
-        public string? ErrorText { get; init; }
-        public long? StartedAtMs { get; init; }
-        public long? CompletedAtMs { get; init; }
-    }
-
-    private sealed class SessionItemRow
-    {
-        public long Id { get; init; }
-        public string SessionId { get; init; } = string.Empty;
-        public string? TurnId { get; init; }
-        public string Kind { get; init; } = string.Empty;
-        public string PayloadJson { get; init; } = "{}";
-        public long CreatedAtMs { get; init; }
-        public string? TurnStatus { get; init; }
-        public string? InputDelivery { get; init; }
-    }
-
-    private sealed class AskRow
-    {
-        public string? TargetSessionId { get; init; }
-        public string Delivery { get; init; } = string.Empty;
-        public string? SessionId { get; init; }
-        public string? TurnId { get; init; }
-        public string Id { get; init; } = string.Empty;
-        public string TrackId { get; init; } = string.Empty;
-        public string Status { get; init; } = "open";
-        public string QuestionsJson { get; init; } = "[]";
-        public string? AnswerJson { get; init; }
-        public long CreatedAtMs { get; init; }
-        public long? AnsweredAtMs { get; init; }
-    }
-
-    private sealed class MailRow
-    {
-        public string? ReplyToMailId { get; init; }
-        public string Id { get; init; } = string.Empty;
-        public string FromTrackId { get; init; } = string.Empty;
-        public string ToTrackId { get; init; } = string.Empty;
-        public string Summary { get; init; } = string.Empty;
-        public string Body { get; init; } = string.Empty;
-        public long? ReadAtMs { get; init; }
-        public long CreatedAtMs { get; init; }
-    }
-
-    private sealed class TerminalRow
-    {
-        public string Id { get; init; } = string.Empty;
-        public string TrackId { get; init; } = string.Empty;
-        public string? SessionId { get; init; }
-        public string? IdempotencyKey { get; init; }
-        public string Title { get; init; } = "Terminal";
-        public string? Program { get; init; }
-        public string Cwd { get; init; } = string.Empty;
-        public string Status { get; init; } = string.Empty;
-        public long? ExitCode { get; init; }
-        public long CreatedAtMs { get; init; }
-        public long? ExitedAtMs { get; init; }
-    }
-
-    private sealed class EventRow
-    {
-        public long Id { get; init; }
-        public string? AreaId { get; init; }
-        public string? TrackId { get; init; }
-        public string Kind { get; init; } = string.Empty;
-        public string PayloadJson { get; init; } = "{}";
-        public long CreatedAtMs { get; init; }
-    }
-
-    private static string ResolveOrCreateDatabaseId(string fullDbPath, bool dbExistedBeforeInit)
-    {
-        var idFilePath = fullDbPath + ".id";
-        if (dbExistedBeforeInit && File.Exists(idFilePath))
-        {
-            try
-            {
-                var existing = File.ReadAllText(idFilePath, Encoding.UTF8).Trim();
-                if (!string.IsNullOrWhiteSpace(existing))
-                {
-                    return existing;
-                }
-            }
-            catch (IOException)
-            {
-                // Fall through to mint a new database ID.
-            }
-        }
-
-        var created = Guid.NewGuid().ToString("N");
-        try
-        {
-            File.WriteAllText(idFilePath, created, Encoding.UTF8);
-        }
-        catch (IOException)
-        {
-            // Best-effort persistence on read-only filesystems.
-        }
-
-        return created;
-    }
-
-    private sealed class TrackOverlayRow
-    {
-        public string TrackId { get; init; } = string.Empty;
-        public string AreaId { get; init; } = string.Empty;
-        public long IsWorking { get; init; }
-        public long OpenAskCount { get; init; }
-        public long? ClosedAtMs { get; init; }
-        public long HasBlockedSession { get; init; }
-        public long WorkspaceFailed { get; init; }
-        public long UpdatedAtMs { get; init; }
-    }
-
+    public Task SaveWorkspacePreparationAsync(string trackId, WorkspacePreparation preparation, TrackDto? readyTrack, EventEnvelopeDto? evt, CancellationToken ct) =>
+        _creationRepository.SaveWorkspacePreparationAsync(trackId, preparation, readyTrack, evt, ct);
 }

@@ -7,32 +7,40 @@ using Perga.Kernel.Ports;
 
 namespace Perga.Storage.Sqlite;
 
-public sealed partial class SqliteTrackStore
+/// <summary>Idempotent resource receipts, Area creation and workspace preparation recovery.</summary>
+internal sealed class CreationRepository
 {
+    private readonly SqliteStoreContext _context;
+
+    internal CreationRepository(SqliteStoreContext context)
+    {
+        _context = context;
+    }
+
     public async Task<string?> FindCreationAsync(ResourceCreationKey key, CancellationToken ct)
     {
-        EnsureInitialized();
-        await using var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);
+        _context.EnsureInitialized();
+        await using var conn = await _context.OpenReadConnectionAsync(ct).ConfigureAwait(false);
         return await FindCreationInternalAsync(conn, null, key, ct).ConfigureAwait(false);
     }
 
     public Task<string> CreateAreaAsync(AreaDto area, ResourceCreationKey? key, CancellationToken ct, EventEnvelopeDto? evt = null)
     {
-        EnsureInitialized();
-        return _writer.EnqueueAsync(async (conn, tx, innerCt) =>
+        _context.EnsureInitialized();
+        return _context.Writer.EnqueueAsync(async (conn, tx, innerCt) =>
         {
             var replay = await FindCreationInternalAsync(conn, tx, key, innerCt).ConfigureAwait(false);
             if (replay is not null)
                 return replay;
-            await UpsertAreaInternalAsync(conn, tx, area, innerCt).ConfigureAwait(false);
+            await AreaRepository.UpsertAreaInternalAsync(conn, tx, area, innerCt).ConfigureAwait(false);
             await InsertResourceReceiptAsync(conn, tx, key, area.Id, area.CreatedAtMs, null, innerCt).ConfigureAwait(false);
             if (evt is not null)
-                await InsertEventInternalAsync(conn, tx, evt, innerCt).ConfigureAwait(false);
+                await EventRepository.InsertEventInternalAsync(conn, tx, evt, innerCt).ConfigureAwait(false);
             return area.Id;
         }, ct);
     }
 
-    private static async Task<string?> FindCreationInternalAsync(
+    internal static async Task<string?> FindCreationInternalAsync(
         SqliteConnection conn, SqliteTransaction? tx, ResourceCreationKey? key, CancellationToken ct)
     {
         if (key is null)
@@ -41,7 +49,7 @@ public sealed partial class SqliteTrackStore
             """
             SELECT resource_id AS Id, request_hash AS Hash FROM creation_receipts
             WHERE author_id = @Author AND operation = @Operation AND scope_id = @ScopeId AND request_key = @Key;
-            """, new { Author = OwnerAuthor, key.Operation, key.ScopeId, key.Key }, tx, cancellationToken: ct)).ConfigureAwait(false);
+            """, new { Author = SessionInputsRepository.OwnerAuthor, key.Operation, key.ScopeId, key.Key }, tx, cancellationToken: ct)).ConfigureAwait(false);
         if (row is not null && row.Hash != key.Hash)
             throw new KernelException(KernelErrorCode.IdempotencyKeyReused, "This request key was already used with different input.");
         return row?.Id;
@@ -49,18 +57,18 @@ public sealed partial class SqliteTrackStore
 
     private sealed record ResourceCreationRow(string Id, string Hash);
 
-    private static Task InsertResourceReceiptAsync(SqliteConnection conn, SqliteTransaction tx,
+    internal static Task InsertResourceReceiptAsync(SqliteConnection conn, SqliteTransaction tx,
         ResourceCreationKey? key, string id, long createdAt, string? inputId, CancellationToken ct) =>
         key is null ? Task.CompletedTask : conn.ExecuteAsync(new CommandDefinition(
             """
             INSERT INTO creation_receipts (author_id, operation, scope_id, request_key, request_hash, resource_id, first_input_id, created_at_ms)
             VALUES (@Author, @Operation, @ScopeId, @Key, @Hash, @Id, @InputId, @CreatedAt);
-            """, new { Author = OwnerAuthor, key.Operation, key.ScopeId, key.Key, key.Hash, Id = id, InputId = inputId, CreatedAt = createdAt },
+            """, new { Author = SessionInputsRepository.OwnerAuthor, key.Operation, key.ScopeId, key.Key, key.Hash, Id = id, InputId = inputId, CreatedAt = createdAt },
             tx, cancellationToken: ct));
 
     public async Task<WorkspacePreparation?> GetWorkspacePreparationAsync(string trackId, CancellationToken ct)
     {
-        await using var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);
+        await using var conn = await _context.OpenReadConnectionAsync(ct).ConfigureAwait(false);
         var json = await conn.ExecuteScalarAsync<string?>(new CommandDefinition(
             "SELECT intent_json FROM track_workspace_preparations WHERE track_id = @TrackId;",
             new { TrackId = trackId }, cancellationToken: ct)).ConfigureAwait(false);
@@ -68,7 +76,7 @@ public sealed partial class SqliteTrackStore
     }
 
     public Task<IReadOnlyList<string>> RecoverWorkspacePreparationsAsync(CancellationToken ct) =>
-        _writer.EnqueueAsync<IReadOnlyList<string>>(async (conn, tx, innerCt) =>
+        _context.Writer.EnqueueAsync<IReadOnlyList<string>>(async (conn, tx, innerCt) =>
         {
             await conn.ExecuteAsync(new CommandDefinition(
                 """
@@ -99,7 +107,7 @@ public sealed partial class SqliteTrackStore
         }, ct);
 
     public Task<bool> TryClaimWorkspacePreparationAsync(string trackId, WorkspacePreparationPhase expected, WorkspacePreparation claimed, CancellationToken ct) =>
-        _writer.EnqueueAsync(async (conn, tx, innerCt) =>
+        _context.Writer.EnqueueAsync(async (conn, tx, innerCt) =>
             await conn.ExecuteAsync(new CommandDefinition(
                 """
                 UPDATE track_workspace_preparations SET intent_json = @Intent
@@ -109,7 +117,7 @@ public sealed partial class SqliteTrackStore
                 tx, cancellationToken: innerCt)).ConfigureAwait(false) == 1, ct);
 
     public Task SaveWorkspacePreparationAsync(string trackId, WorkspacePreparation preparation, TrackDto? readyTrack, EventEnvelopeDto? evt, CancellationToken ct) =>
-        _writer.EnqueueAsync(async (conn, tx, innerCt) =>
+        _context.Writer.EnqueueAsync(async (conn, tx, innerCt) =>
         {
             var updated = await conn.ExecuteAsync(new CommandDefinition(
                 "UPDATE track_workspace_preparations SET intent_json = @Intent WHERE track_id = @TrackId;",
@@ -122,6 +130,6 @@ public sealed partial class SqliteTrackStore
                     new { TrackId = trackId, readyTrack.Cwd, Spec = readyTrack.WorkspaceSpec.GetRawText() },
                     tx, cancellationToken: innerCt)).ConfigureAwait(false);
             if (evt is not null)
-                await InsertEventInternalAsync(conn, tx, evt, innerCt).ConfigureAwait(false);
+                await EventRepository.InsertEventInternalAsync(conn, tx, evt, innerCt).ConfigureAwait(false);
         }, ct);
 }
