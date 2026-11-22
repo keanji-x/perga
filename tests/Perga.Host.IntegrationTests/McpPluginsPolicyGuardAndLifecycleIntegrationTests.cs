@@ -75,16 +75,20 @@ public sealed class McpPluginsPolicyGuardAndLifecycleIntegrationTests
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task DisabledPluginCannotDispatchAfterApprovalOrClientInitialization(bool duringApproval)
+    [InlineData(false, "test-plugin")]
+    [InlineData(true, "test-plugin")]
+    [InlineData(false, "perga")]
+    [InlineData(true, "PeRgA")]
+    [InlineData(false, "vcs")]
+    [InlineData(true, "VcS")]
+    public async Task DisabledPluginCannotDispatchAfterApprovalOrClientInitialization(bool duringApproval, string pluginId)
     {
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         var ct = deadline.Token;
         await using var host = new PergaHostTestCluster();
         var kernel = host.Services.GetRequiredService<IPergaKernel>();
         var (track, lead) = await host.CreateTrackAsync();
-        await kernel.PatchTrackAsync(track, new(EnabledPlugins: ["test-plugin"]), ct);
+        await kernel.PatchTrackAsync(track, new(EnabledPlugins: [pluginId]), ct);
         var caller = await kernel.OpenMcpCallerAsync(lead, ct);
         if (duringApproval)
             await kernel.InvokeKernelMcpToolAsync(caller, KernelMcpToolNames.TrackSet, JsonSerializer.SerializeToElement(new
@@ -95,8 +99,8 @@ public sealed class McpPluginsPolicyGuardAndLifecycleIntegrationTests
         var upstream = new PausedPluginInitialization();
         using var client = new HttpClient(upstream);
         await using var router = new McpPluginRouter(kernel, new PergaHostOptions(), client);
-        router.RegisterPlugin(new("test-plugin", "http", "http://plugin.test/mcp"));
-        var backend = router.TryCreateBackend("test-plugin")!;
+        router.RegisterPlugin(new(pluginId, "http", "http://plugin.test/mcp"));
+        var backend = router.TryCreateBackend(pluginId)!;
         var pending = backend.CallToolAsync(caller, "update", McpToolResultFormatter.EmptyObject, ct);
         try
         {
@@ -118,7 +122,7 @@ public sealed class McpPluginsPolicyGuardAndLifecycleIntegrationTests
                 await upstream.Initializing.Task.WaitAsync(ct);
                 await kernel.PatchTrackAsync(track, new(EnabledPlugins: []), ct);
             }
-            Assert.Contains("test-plugin", caller.EnabledPlugins);
+            Assert.Contains(pluginId, caller.EnabledPlugins);
         }
         finally { upstream.Resume.TrySetResult(); }
 

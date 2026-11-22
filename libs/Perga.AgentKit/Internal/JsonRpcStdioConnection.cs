@@ -65,7 +65,7 @@ internal sealed class JsonRpcStdioConnection : IAsyncDisposable
         };
 
     public async Task<JsonElement> SendRequestAsync(string method, object? parameters, CancellationToken ct,
-        Action<JsonElement>? observeResult = null)
+        Action<JsonElement>? observeResult = null, Func<CancellationToken, Task>? beforeWrite = null)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         var numericId = Interlocked.Increment(ref _nextRequestId);
@@ -107,7 +107,7 @@ internal sealed class JsonRpcStdioConnection : IAsyncDisposable
         var json = JsonSerializer.Serialize(envelope);
         try
         {
-            await _process.WriteLineAsync(json, ct).ConfigureAwait(false);
+            await _process.WriteLineAsync(json, ct, beforeWrite).ConfigureAwait(false);
         }
         catch
         {

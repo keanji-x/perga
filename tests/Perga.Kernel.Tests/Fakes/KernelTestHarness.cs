@@ -872,10 +872,11 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
             return Task.FromResult(_mailsByToTrack.GetValueOrDefault(trackId)?.Find(mail => mail.Id == mailId));
     }
 
-    public Task UpsertMailAsync(MailDto mail, EventEnvelopeDto evt, CancellationToken ct, bool requestWake = true)
+    public Task UpsertMailAsync(MailDto mail, EventEnvelopeDto evt, CancellationToken ct, bool requestWake = true, Action? beforeWrite = null)
     {
         lock (_gate)
         {
+            beforeWrite?.Invoke();
             if (!_mailsByToTrack.TryGetValue(mail.ToTrackId, out var list))
             {
                 list = [];
@@ -1453,6 +1454,7 @@ internal sealed class ScriptableFakeAgentSession : IAgentSession
     public int CompactCalls { get; private set; }
     public bool Disposed { get; private set; }
     public bool CancelCalled { get; private set; }
+    public bool RequiresTerminalStop { get; set; }
     public Action? OnCancelTurn { get; set; }
     public ConcurrentQueue<string> SteeredMessages { get; } = new();
     public ConcurrentQueue<(string RequestId, bool Approved, string? Reason)> Approvals { get; } = new();
@@ -1586,16 +1588,19 @@ internal sealed class ScriptableFakeAgentSession : IAgentSession
             : Task.FromResult(new NativeCompactResult(null, "Context compacted."));
     }
 
+    public Func<CancellationToken, Task>? WaitForSteerWrite { get; set; }
     public SteerDelivery SteerResult { get; set; } = SteerDelivery.Accepted;
     public Func<string, CancellationToken, Task<SteerDelivery>>? SteerHandler { get; set; }
 
-    public Task<SteerDelivery> SteerAsync(string turnCorrelationId, string message, CancellationToken ct)
+    public async Task<SteerDelivery> SteerAsync(string turnCorrelationId, string message, CancellationToken ct, Func<CancellationToken, Task>? beforeWrite = null)
     {
         if (!SupportsNativeSteer)
-            return Task.FromResult(SteerDelivery.Declined);
+            return SteerDelivery.Declined;
 
+        if (WaitForSteerWrite is { } wait) await wait(ct);
+        if (beforeWrite is not null) await beforeWrite(ct);
         SteeredMessages.Enqueue(message);
-        return SteerHandler?.Invoke(message, ct) ?? Task.FromResult(SteerResult);
+        return SteerHandler is { } handler ? await handler(message, ct) : SteerResult;
     }
 
     private bool? _shutdownConfirmed;

@@ -87,7 +87,7 @@ internal sealed class CorrespondenceRepository
         return row is null ? null : MapAsk(row);
     }
 
-    public Task UpsertMailAsync(MailDto mail, EventEnvelopeDto evt, CancellationToken ct, bool requestWake = true)
+    public Task UpsertMailAsync(MailDto mail, EventEnvelopeDto evt, CancellationToken ct, bool requestWake = true, Action? beforeWrite = null)
     {
         ArgumentNullException.ThrowIfNull(mail);
         ArgumentNullException.ThrowIfNull(evt);
@@ -98,6 +98,7 @@ internal sealed class CorrespondenceRepository
             {
                 var isNew = !await conn.ExecuteScalarAsync<bool>(new CommandDefinition(
                     "SELECT EXISTS(SELECT 1 FROM mails WHERE id=@Id);", new { mail.Id }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
+                beforeWrite?.Invoke();
                 await conn.ExecuteAsync(
                     new CommandDefinition(
                         """

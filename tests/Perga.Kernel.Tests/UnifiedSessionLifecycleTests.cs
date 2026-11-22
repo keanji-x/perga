@@ -547,6 +547,47 @@ public sealed class UnifiedSessionLifecycleTests
         await ctx.Kernel.WaitForTrackIdleAsync(snapshot.Track.Id);
     }
 
+    [Fact]
+    public async Task FormerLeadCannotRespondToAnotherSessionsApprovalAfterAudit()
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
+        var trackId = snapshot.Track.Id;
+        var lead = await ctx.OpenMcpCallerAsync(snapshot.Track.LeadSessionId!);
+        var caller = await ctx.AuthorizeAsync(lead);
+        var successor = (await ctx.Kernel.CreateSessionAsync(trackId, new(), "successor", Human, default)).Receipt.Session;
+        var target = (await ctx.Kernel.CreateSessionAsync(trackId, new(), "independent-target", Human, default)).Receipt.Session;
+        Assert.Null(target.ParentSessionId);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        ctx.AgentRuntime.TurnScript = (provider, _, ct) => provider.LaunchSpec.StateKey == target.Id
+            ? Approval(release.Task, ct) : Completed();
+        await ctx.Kernel.SendSessionMessageAsync(target.Id, new("request approval", "approval"), Human, default);
+        try
+        {
+            var page = await WaitForPage(ctx, target.Id, page => page.PendingInteractions?.Count == 1);
+            var approval = Assert.Single(page.PendingInteractions!);
+            ctx.Store.BeforeEventAppend = async evt =>
+            {
+                if (evt.Kind == KernelEventKinds.ApprovalDecided)
+                    await ctx.Kernel.PatchTrackAsync(trackId, new(LeadSessionId: successor.Id));
+            };
+
+            var rejected = await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.RespondInteractionAsync(
+                target.Id, approval.Id, new(approval.ExecutionId, "approve"), caller, default));
+            Assert.Equal(KernelErrorCode.Forbidden, rejected.Code);
+            Assert.Equal(lead.RuntimeBindingId, ctx.RuntimeCaller(lead.SessionId).RuntimeBindingId);
+            Assert.Single((await ctx.Kernel.GetSessionItemsAsync(target.Id, new(), Human, default)).PendingInteractions!);
+            var provider = Assert.Single(ctx.AgentRuntime.OpenedSessions, session => session.LaunchSpec.StateKey == target.Id);
+            Assert.Empty(provider.Approvals);
+
+            ctx.Store.BeforeEventAppend = null;
+            await ctx.Kernel.RespondInteractionAsync(target.Id, approval.Id, new(approval.ExecutionId, "approve"), Human, default);
+            Assert.Single(provider.Approvals);
+        }
+        finally { release.TrySetResult(); }
+        await ctx.Kernel.WaitForTrackIdleAsync(trackId);
+    }
+
     private static async IAsyncEnumerable<UnifiedAgentEvent> Approval(Task release,
         [EnumeratorCancellation] CancellationToken ct)
     {

@@ -121,8 +121,8 @@ public partial interface IPergaKernel : IAsyncDisposable
 
     // MCP Policy Guard, Tool Dispatch & Schedules
     Task<string> GuardMcpToolCallAsync(McpSessionPrincipal caller, string mcpServer, string toolName, JsonElement arguments,
-        CancellationToken ct = default, bool write = true);
-    Task EnsureMcpAuthorizationAsync(McpSessionPrincipal caller, string generation, string mcpServer, string toolName, CancellationToken ct = default);
+        CancellationToken ct = default, bool write = true, bool isPlugin = false);
+    Task EnsureMcpAuthorizationAsync(McpSessionPrincipal caller, string generation, string mcpServer, string toolName, CancellationToken ct = default, bool isPlugin = false);
     Task<JsonElement> InvokeKernelMcpToolAsync(McpSessionPrincipal caller, string toolName, JsonElement arguments, CancellationToken ct = default);
     Task<bool> CancelPendingWakeAsync(string trackId, string wakeId, CancellationToken ct = default);
     Task<IReadOnlyList<FiredTrackSchedule>> FireDueTrackSchedulesAsync(long nowMs, CancellationToken ct = default);
@@ -1098,11 +1098,11 @@ public sealed partial class PergaKernelService : IPergaKernel
     // ------------------- MCP Policy Guard, Tool Dispatch & Schedules -------------------
 
     public Task<string> GuardMcpToolCallAsync(McpSessionPrincipal caller, string mcpServer, string toolName,
-        JsonElement arguments, CancellationToken ct = default, bool write = true) =>
-        Actors.GetOrActivate(caller.TrackId).GuardMcpToolCallAsync(caller, mcpServer, toolName, arguments, ct, write);
+        JsonElement arguments, CancellationToken ct = default, bool write = true, bool isPlugin = false) =>
+        Actors.GetOrActivate(caller.TrackId).GuardMcpToolCallAsync(caller, mcpServer, toolName, arguments, ct, write, isPlugin);
 
-    public Task EnsureMcpAuthorizationAsync(McpSessionPrincipal caller, string generation, string mcpServer, string toolName, CancellationToken ct = default) =>
-        Actors.GetOrActivate(caller.TrackId).EnsureMcpAuthorizationAsync(caller, generation, mcpServer, toolName, ct);
+    public Task EnsureMcpAuthorizationAsync(McpSessionPrincipal caller, string generation, string mcpServer, string toolName, CancellationToken ct = default, bool isPlugin = false) =>
+        Actors.GetOrActivate(caller.TrackId).EnsureMcpAuthorizationAsync(caller, generation, mcpServer, toolName, ct, isPlugin);
 
     public Task<JsonElement> InvokeKernelMcpToolAsync(
         McpSessionPrincipal caller,

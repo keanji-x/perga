@@ -103,8 +103,10 @@ public sealed partial class TrackActor
         if (observation is UnifiedAgentEvent.TextDelta or UnifiedAgentEvent.ThinkingDelta
             or UnifiedAgentEvent.ToolCallStarted or UnifiedAgentEvent.ToolCallCompleted)
         {
-            // The adapter can release its prompt stream before we commit the turn.
-            if (_scheduler.HasActive(sessionId)) state.OutputAwaitingSettlement.Enqueue(observation);
+            // Starting turns have not entered the adapter yet, so this output precedes
+            // their reply. After dispatch the stream can end before durable settlement.
+            if (_scheduler.TryGetActive(sessionId, out var turn) && turn.PromptDispatchStarted)
+                state.OutputAwaitingSettlement.Enqueue(observation);
             else await ApplyRuntimeOutputCoreAsync(session, state, observation).ConfigureAwait(false);
             return;
         }
@@ -165,7 +167,7 @@ public sealed partial class TrackActor
         }
     }
 
-    private async Task ReleaseSettledTurnCoreAsync(AgentSessionDto session, string turnId)
+    private async Task ReleaseTurnAndDrainRuntimeOutputCoreAsync(AgentSessionDto session, string turnId)
     {
         if (!_scheduler.TryGetActive(session.Id, out var active) || active.TurnDto.Id != turnId) return;
         _scheduler.RemoveActive(session.Id);
@@ -190,6 +192,7 @@ public sealed partial class TrackActor
 
     private const int RuntimeOutputMaxCharacters = 16 * 1024;
     private static readonly TimeSpan RuntimeOutputQuietPeriod = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan RuntimeOutputMaxWait = TimeSpan.FromSeconds(5);
 
     private async Task BufferRuntimeOutputCoreAsync(AgentSessionDto session, LiveRuntimeActivity state, string kind, string delta)
     {
@@ -197,18 +200,20 @@ public sealed partial class TrackActor
         if (state.OutputKind != kind)
             await FlushRuntimeOutputCoreAsync(session, state).ConfigureAwait(false);
         state.OutputKind = kind;
+        state.LastOutputTimestamp = _timeProvider.GetTimestamp();
+        if (state.Output.Length == 0) state.FirstOutputTimestamp = state.LastOutputTimestamp;
         state.Output.Append(delta);
-        if (state.Output.Length >= RuntimeOutputMaxCharacters)
+        var delay = RuntimeOutputFlushDelay(state);
+        if (state.Output.Length >= RuntimeOutputMaxCharacters || delay <= TimeSpan.Zero)
         {
             await FlushRuntimeOutputCoreAsync(session, state).ConfigureAwait(false);
             return;
         }
-        state.LastOutputTimestamp = _timeProvider.GetTimestamp();
         state.OutputTimer ??= _timeProvider.CreateTimer(_state =>
         {
             if (!_disposed) _ = EnqueueRuntimeObservationAsync(() => FlushQuietRuntimeOutputCoreAsync(session.Id, state));
         }, null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
-        state.OutputTimer.Change(RuntimeOutputQuietPeriod, Timeout.InfiniteTimeSpan);
+        state.OutputTimer.Change(delay, Timeout.InfiniteTimeSpan);
     }
 
     private Task FlushQuietRuntimeOutputCoreAsync(string sessionId, LiveRuntimeActivity state)
@@ -218,10 +223,18 @@ public sealed partial class TrackActor
             !_sessions.TryGetValue(sessionId, out var session) || session.Epoch != state.Epoch)
             return Task.CompletedTask;
 
-        var remaining = RuntimeOutputQuietPeriod - _timeProvider.GetElapsedTime(state.LastOutputTimestamp);
+        var remaining = RuntimeOutputFlushDelay(state);
         if (remaining <= TimeSpan.Zero) return FlushRuntimeOutputCoreAsync(session, state);
         state.OutputTimer.Change(remaining, Timeout.InfiniteTimeSpan);
         return Task.CompletedTask;
+    }
+
+    private TimeSpan RuntimeOutputFlushDelay(LiveRuntimeActivity state)
+    {
+        var now = _timeProvider.GetTimestamp();
+        var quiet = RuntimeOutputQuietPeriod - _timeProvider.GetElapsedTime(state.LastOutputTimestamp, now);
+        var maxWait = RuntimeOutputMaxWait - _timeProvider.GetElapsedTime(state.FirstOutputTimestamp, now);
+        return quiet < maxWait ? quiet : maxWait;
     }
 
     private Task FlushRuntimeOutputCoreAsync(AgentSessionDto session) =>

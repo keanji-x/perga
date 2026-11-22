@@ -232,8 +232,7 @@ public sealed partial class TrackActor
 
                 await actor._eventHub.EnsureInitializedFromStoreAsync(actor._store, ct).ConfigureAwait(false);
                 var requestWake = actor._track.ClosedAtMs is null && actor._track.LeadSessionId is not null;
-                authorizeDelivery?.Invoke();
-                await actor._store.UpsertMailAsync(mail, evt, ct, requestWake).ConfigureAwait(false);
+                await actor._store.UpsertMailAsync(mail, evt, ct, requestWake, beforeWrite: authorizeDelivery).ConfigureAwait(false);
                 await actor._eventHub.PublishSyncedAfterStoreWriteAsync(actor._store, evt, CancellationToken.None).ConfigureAwait(false);
                 return requestWake;
             }, ct).ConfigureAwait(false);

@@ -8,7 +8,8 @@ public interface ISubprocessHandle : IAsyncDisposable
     bool HasExited { get; }
     bool ShutdownConfirmed { get; }
     int? TryGetExitCode();
-    Task WriteLineAsync(string line, CancellationToken ct);
+    // Check beforeWrite after acquiring the transport writer and before emitting any bytes.
+    Task WriteLineAsync(string line, CancellationToken ct, Func<CancellationToken, Task>? beforeWrite = null);
     ValueTask<string?> ReadStdoutLineAsync(CancellationToken ct);
     string GetStderrSummary();
     bool SendInterruptSignal();

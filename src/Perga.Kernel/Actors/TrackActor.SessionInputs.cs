@@ -212,7 +212,7 @@ public sealed partial class TrackActor
                 throw;
         }
         _sessions[session.Id] = session;
-        await ReleaseSettledTurnCoreAsync(session, turn.Id).ConfigureAwait(false);
+        await ReleaseTurnAndDrainRuntimeOutputCoreAsync(session, turn.Id).ConfigureAwait(false);
         await PublishInputEventAsync(turnEvent).ConfigureAwait(false);
     }
 

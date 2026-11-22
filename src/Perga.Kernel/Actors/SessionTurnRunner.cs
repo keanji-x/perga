@@ -518,9 +518,9 @@ public sealed partial class TrackActor
                     {
                         if (!actor._scheduler.TryGetActive(active.SessionId, out var current) || !ReferenceEquals(current, active))
                             return;
-                        active.RuntimeActivity.OutputAwaitingSettlement.Clear();
                         if (active.Interrupted && !active.CloseRuntimeOnStop && !HasStopEvidence(active))
                         {
+                            active.RuntimeActivity.OutputAwaitingSettlement.Clear();
                             var session = actor.RequireSessionCore(active.SessionId);
                             if (!work.IsDurable)
                             {
@@ -532,7 +532,8 @@ public sealed partial class TrackActor
                             actor._scheduler.RemoveActive(active.SessionId);
                             return;
                         }
-                        actor._scheduler.RemoveActive(active.SessionId);
+                        await actor.ReleaseTurnAndDrainRuntimeOutputCoreAsync(actor.RequireSessionCore(active.SessionId), active.TurnDto.Id)
+                            .ConfigureAwait(false);
                         await work.OnTurnAbandonedCoreAsync().ConfigureAwait(false);
                     }, CancellationToken.None).ConfigureAwait(false);
             }

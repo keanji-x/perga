@@ -183,15 +183,21 @@ public sealed partial class TrackActor
             {
                 await using var events = active.AgentSession.StreamTurnAsync(input, observation.Token)
                     .GetAsyncEnumerator(observation.Token);
-                ValueTask<bool> read;
-                lock (active.Control.Sync)
+                var read = await EnqueueAsync<ValueTask<bool>>(async _ =>
                 {
-                    if (active.Control.Phase != ExecutionPhase.Starting)
-                        return;
-                    active.Control.Phase = ExecutionPhase.Running;
-                    // Enter the adapter before allowing Stop to target this binding.
-                    read = events.MoveNextAsync();
-                }
+                    observation.Token.ThrowIfCancellationRequested();
+                    await FlushRuntimeOutputCoreAsync(RequireSessionCore(active.SessionId)).ConfigureAwait(false);
+                    lock (active.Control.Sync)
+                    {
+                        if (active.Control.Phase != ExecutionPhase.Starting)
+                            return new ValueTask<bool>(false);
+                        observation.Token.ThrowIfCancellationRequested();
+                        active.PromptDispatchStarted = true;
+                        active.Control.Phase = ExecutionPhase.Running;
+                        // Enter the adapter before allowing Stop to target this binding.
+                        return events.MoveNextAsync();
+                    }
+                }, _actorShutdownCts.Token).ConfigureAwait(false);
 
                 while (await read.ConfigureAwait(false))
                 {
@@ -290,7 +296,7 @@ public sealed partial class TrackActor
         }
         finally
         {
-            await ReleaseSettledTurnCoreAsync(session, turn.Id).ConfigureAwait(false);
+            await ReleaseTurnAndDrainRuntimeOutputCoreAsync(session, turn.Id).ConfigureAwait(false);
         }
     }
 
@@ -312,6 +318,7 @@ public sealed partial class TrackActor
         public CancellationTokenSource TurnCts { get; } = turnCts;
         public ExecutionControl Control { get; } = new(starting: true);
         public TurnActivity Activity { get; } = new();
+        public bool PromptDispatchStarted { get; set; }
         public bool CloseRuntimeOnStop { get; set; }
         public long OpenGeneration { get; } = openGeneration;
         public bool CloseRuntimeOnSettle { get; set; }

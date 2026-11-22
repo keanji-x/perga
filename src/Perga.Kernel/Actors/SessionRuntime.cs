@@ -21,6 +21,7 @@ internal sealed class LiveRuntimeActivity
     public string? OutputKind { get; set; }
     public StringBuilder Output { get; } = new();
     public ITimer? OutputTimer { get; set; }
+    public long FirstOutputTimestamp { get; set; }
     public long LastOutputTimestamp { get; set; }
     public long? LastIdleActivityTimestamp { get; set; }
     public bool Exited { get; set; }

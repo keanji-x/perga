@@ -268,6 +268,78 @@ public sealed class RuntimeAuthorizationFenceTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public async Task SteerCannotBeWrittenAfterCallerLosesAuthorityInProviderQueue(bool stops)
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var ct = deadline.Token;
+        var caller = await ctx.OpenMcpCallerAsync(snapshot.Track.LeadSessionId!, ct);
+        var child = (await ctx.Kernel.CreateSessionAsync(snapshot.Track.Id, new(), "child", Human, ct)).Receipt.Session;
+        var streaming = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finishStream = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        ctx.AgentRuntime.TurnScript = (_, _, token) => HoldTurnAsync(streaming, finishStream.Task, token);
+        await ctx.Kernel.SendSessionMessageAsync(child.Id, new("work", "start"), Human, ct);
+        await streaming.Task.WaitAsync(ct);
+        string? callerTurnId = null;
+        if (stops)
+        {
+            var callerStream = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var callerStopped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var source = Assert.Single(ctx.AgentRuntime.OpenedSessions, session => session.LaunchSpec.StateKey == caller.SessionId);
+            source.RequiresTerminalStop = true;
+            source.OnCancelTurn = () => callerStopped.TrySetResult();
+            ctx.AgentRuntime.TurnScript = (_, _, token) => HoldCallerAsync(token);
+            async IAsyncEnumerable<UnifiedAgentEvent> HoldCallerAsync([EnumeratorCancellation] CancellationToken token)
+            {
+                callerStream.TrySetResult();
+                await Task.WhenAny(callerStopped.Task, finishStream.Task).WaitAsync(token);
+                yield return new UnifiedAgentEvent.TurnInterrupted();
+            }
+            await ctx.Kernel.SendSessionMessageAsync(caller.SessionId, new("caller work", "caller-work"), Human, ct);
+            await callerStream.Task.WaitAsync(ct);
+            callerTurnId = (await ctx.Kernel.GetSessionItemsAsync(caller.SessionId, new(), Human, ct)).ActiveTurn!.Id;
+        }
+        var active = (await ctx.Kernel.GetSessionItemsAsync(child.Id, new(), Human, ct)).ActiveTurn!;
+        var provider = Assert.Single(ctx.AgentRuntime.OpenedSessions, session => session.LaunchSpec.StateKey == child.Id);
+        var queued = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var permitStdin = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        provider.WaitForSteerWrite = token =>
+        {
+            queued.TrySetResult();
+            return permitStdin.Task.WaitAsync(token);
+        };
+        var steer = ctx.Kernel.InvokeKernelMcpToolAsync(caller, KernelMcpToolNames.SessionSend, TestJson.FromObject(new
+        {
+            sessionId = child.Id, content = "queued steer", requestKey = "queued-steer", mode = "steer", turnId = active.Id
+        }), ct);
+        try
+        {
+            await queued.Task.WaitAsync(ct);
+            if (stops)
+            {
+                await ctx.Kernel.ControlSessionAsync(caller.SessionId, new("stop", TurnId: callerTurnId), Human, ct);
+                while ((await ctx.Kernel.GetSessionItemsAsync(caller.SessionId, new(), Human, ct)).ActiveTurn is not null)
+                    await Task.Delay(5, ct);
+                Assert.Equal(caller.Token, ctx.RuntimeCaller(caller.SessionId).Token);
+            }
+            else
+                ctx.Kernel.McpSessionBridge.RevokeSession(caller.SessionId, caller.RuntimeBindingId);
+            permitStdin.TrySetResult();
+            var error = await Assert.ThrowsAsync<KernelException>(() => steer.WaitAsync(ct));
+            Assert.Equal(KernelErrorCode.Conflict, error.Code);
+            Assert.Empty(provider.SteeredMessages);
+        }
+        finally
+        {
+            permitStdin.TrySetResult();
+            finishStream.TrySetResult();
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public async Task AskPublicationFailureDoesNotLeaveAnIdleEvictionWaiter(bool canceled)
     {
         var idleTimeout = TimeSpan.FromMinutes(1);

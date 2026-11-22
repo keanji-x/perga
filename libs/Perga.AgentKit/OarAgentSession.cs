@@ -349,20 +349,32 @@ public sealed class OarAgentSession : IAgentSession
             _ => false
         };
 
-    public async Task<SteerDelivery> SteerAsync(string turnCorrelationId, string message, CancellationToken ct)
+    public async Task<SteerDelivery> SteerAsync(string turnCorrelationId, string message, CancellationToken ct, Func<CancellationToken, Task>? beforeWrite = null)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         if (!SupportsNativeSteer || string.IsNullOrWhiteSpace(message)) return SteerDelivery.Declined;
+        var rejectedBeforeWrite = false;
+        async Task AuthorizeWriteAsync(CancellationToken token)
+        {
+            try { await beforeWrite!(token).ConfigureAwait(false); }
+            catch
+            {
+                rejectedBeforeWrite = true;
+                throw;
+            }
+        }
+
         try
         {
             var result = await _rpc.SendRequestAsync("session/steer",
-                new { message, correlationId = turnCorrelationId }, ct).ConfigureAwait(false);
+                new { message, correlationId = turnCorrelationId }, ct,
+                beforeWrite: beforeWrite is null ? null : AuthorizeWriteAsync).ConfigureAwait(false);
             return string.Equals(TryGetString(result, "delivery"), "accepted", StringComparison.OrdinalIgnoreCase)
                 ? SteerDelivery.Accepted
                 : SteerDelivery.Declined;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
-        catch { return SteerDelivery.Unconfirmed; }
+        catch when (!rejectedBeforeWrite) { return SteerDelivery.Unconfirmed; }
     }
 
     public async ValueTask DisposeAsync()

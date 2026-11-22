@@ -277,13 +277,15 @@ public sealed class SshSubprocessTransport : ISubprocessTransport
             catch { return null; }
         }
 
-        public async Task WriteLineAsync(string line, CancellationToken ct)
+        public async Task WriteLineAsync(string line, CancellationToken ct, Func<CancellationToken, Task>? beforeWrite = null)
         {
             ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
             await _stdinLock.WaitAsync(ct).ConfigureAwait(false);
             try
             {
+                if (beforeWrite is not null) await beforeWrite(ct).ConfigureAwait(false);
                 ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+                ct.ThrowIfCancellationRequested();
                 await _process.StandardInput.WriteLineAsync(line.AsMemory(), ct).ConfigureAwait(false);
                 await _process.StandardInput.FlushAsync(ct).ConfigureAwait(false);
             }

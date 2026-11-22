@@ -9,6 +9,103 @@ namespace Perga.Kernel.Tests;
 public sealed class SessionRuntimeActivityTests
 {
     [Fact]
+    public async Task BackgroundOutputDuringActivationPrecedesTheNewTurnsReply()
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
+        var id = snapshot.Track.LeadSessionId!;
+        var human = new InteropPrincipal.Human();
+        await ctx.OpenMcpCallerAsync(id);
+        var provider = Assert.Single(ctx.AgentRuntime.OpenedSessions);
+        var emitted = false;
+        // Only the activation upsert writes a running session through this store method.
+        // The durable input claim uses SessionInputs.ClaimAsync.
+        ctx.Store.OnBeforeUpsertSession = session =>
+        {
+            if (session.Id != id || session.Status != "running" || emitted) return;
+            emitted = true;
+            Assert.Single(provider.RecordedInputs);
+            provider.EmitRuntimeActivity(new UnifiedAgentEvent.ToolCallStarted("in-activation", "tool", TestJson.Parse("{}")));
+            provider.EmitRuntimeActivity(new UnifiedAgentEvent.TextDelta("trailing activity before prompt"));
+        };
+
+        var next = await ctx.SendAndWaitForTurnAsync(id, new("next", "activation-next"));
+        var page = await ctx.Kernel.GetSessionItemsAsync(id, new(), human, default);
+        var reply = Assert.Single(page.Items, item => item.TurnId == next.Id && item.Kind == "assistant_text");
+        Assert.True(emitted);
+        var background = page.Items.Where(item => item.TurnId is null).ToArray();
+        Assert.Equal(["tool_call", "assistant_text"], background.Select(item => item.Kind));
+        Assert.All(background, item => Assert.True(item.Id < reply.Id));
+    }
+
+    [Fact]
+    public async Task AbandonedWakeTurnDrainsAcceptedRuntimeOutputBeforeReturningToIdle()
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
+        var id = snapshot.Track.LeadSessionId!;
+        var trackId = snapshot.Track.Id;
+        var human = new InteropPrincipal.Human();
+        await ctx.OpenMcpCallerAsync(id);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var abandon = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
+        var buffered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        ctx.AgentRuntime.TurnScript = Stream;
+        async IAsyncEnumerable<UnifiedAgentEvent> Stream(ScriptableFakeAgentSession provider, TurnInput input,
+            [EnumeratorCancellation] CancellationToken ct)
+        {
+            provider.EmitRuntimeActivity(new UnifiedAgentEvent.ToolCallStarted("before-abandon", "tool", TestJson.Parse("{}")));
+            var page = await ctx.Kernel.GetSessionItemsAsync(id, new(), human, ct);
+            Assert.NotNull(page.ActiveTurn);
+            Assert.DoesNotContain(page.Items, item => item.TurnId is null);
+            buffered.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+            yield break;
+        }
+
+        await ctx.Store.TrackWakes.EnqueueAsync(
+            Perga.Kernel.Ports.TrackWakeRequests.Prompt(trackId, "test", "abandoned-wake", "Wake") with { TargetSessionId = id },
+            deadline.Token);
+        var wake = ctx.Kernel.Actors.GetOrActivate(trackId).PokePendingWakesAsync(abandon.Token);
+        try { await buffered.Task.WaitAsync(deadline.Token); }
+        finally { abandon.Cancel(); }
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => wake.WaitAsync(deadline.Token));
+        var idle = await ctx.Kernel.GetSessionItemsAsync(id, new(), human, deadline.Token);
+        Assert.Equal("idle", idle.Session.Status);
+        Assert.Null(idle.ActiveTurn);
+        var tool = Assert.Single(idle.Items, item => item.TurnId is null);
+        Assert.Equal("before-abandon", tool.Payload.GetProperty("callId").GetString());
+    }
+
+    [Fact]
+    public async Task SlowContinuousBackgroundTextFlushesAfterFiveSeconds()
+    {
+        var time = new ManualOutputClock();
+        await using var ctx = new KernelTestContext(timeProvider: time);
+        var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
+        var id = snapshot.Track.LeadSessionId!;
+        await ctx.OpenMcpCallerAsync(id);
+        var provider = Assert.Single(ctx.AgentRuntime.OpenedSessions);
+        var human = new InteropPrincipal.Human();
+        for (var index = 0; index < 10; index++)
+        {
+            provider.EmitRuntimeActivity(new UnifiedAgentEvent.ThinkingDelta("x"));
+            var page = await ctx.Kernel.GetSessionItemsAsync(id, new(), human, default);
+            if (index < 9) Assert.DoesNotContain(page.Items, item => item.TurnId is null);
+            else Assert.Equal(new string('x', 10), Assert.Single(page.Items, item => item.TurnId is null).Payload.GetProperty("text").GetString());
+            time.Advance(TimeSpan.FromMilliseconds(600));
+        }
+    }
+
+    private sealed class ManualOutputClock : TimeProvider
+    {
+        private long _ticks;
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+        public override long GetTimestamp() => Interlocked.Read(ref _ticks);
+        public void Advance(TimeSpan duration) => Interlocked.Add(ref _ticks, duration.Ticks);
+    }
+
+    [Fact]
     public async Task ImmediateBackgroundOutputFollowsFinalTurnReplyInStorage()
     {
         await using var ctx = new KernelTestContext();

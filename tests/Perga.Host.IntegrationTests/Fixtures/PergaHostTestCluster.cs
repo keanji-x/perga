@@ -304,8 +304,9 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
             return Task.FromResult(outcome);
         }
 
-        public async Task<SteerDelivery> SteerAsync(string turnCorrelationId, string message, CancellationToken ct)
+        public async Task<SteerDelivery> SteerAsync(string turnCorrelationId, string message, CancellationToken ct, Func<CancellationToken, Task>? beforeWrite = null)
         {
+            if (beforeWrite is not null) await beforeWrite(ct);
             var accepted = _owner._steerHandler is null || await _owner._steerHandler(message).WaitAsync(ct);
             return accepted ? SteerDelivery.Accepted : SteerDelivery.Declined;
         }

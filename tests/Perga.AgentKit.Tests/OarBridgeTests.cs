@@ -29,6 +29,45 @@ public sealed class OarBridgeTests : IDisposable
     }
 
     [Fact]
+    public async Task SteerRechecksAuthorityAfterAcquiringRealStdinLock()
+    {
+        File.WriteAllText(_mockBridgePath, MockBridgeScript.Replace(
+            "if (req.method === 'session/steer') {", """
+            if (req.method === 'session/steer') {
+              fs.appendFileSync(req.params.message + '/steer-was-written', 'written');
+            """));
+        await using var runtime = new AgentRuntime(new AgentRuntimeOptions { BridgeScriptPath = _mockBridgePath });
+        await using var session = Assert.IsType<OarAgentSession>(runtime.CreateSession(new HarnessLaunchSpec(
+            "codex", null, _workspaceDir, null, null, new Dictionary<string, McpServerConfig>())));
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var ct = deadline.Token;
+        await session.InitializeAsync(ct);
+        var stdinLock = (SemaphoreSlim)typeof(StdioSubprocess)
+            .GetField("_stdinLock", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .GetValue(session.Subprocess)!;
+        var checks = 0;
+        var allowed = true;
+        await stdinLock.WaitAsync(ct);
+        Task<SteerDelivery> pending;
+        try
+        {
+            pending = session.SteerAsync("turn", _workspaceDir, ct, _ =>
+            {
+                checks++;
+                return allowed ? Task.CompletedTask : Task.FromException(new InvalidOperationException("Runtime authority revoked."));
+            });
+            Assert.False(pending.IsCompleted);
+            Assert.Equal(0, checks);
+            allowed = false;
+        }
+        finally { stdinLock.Release(); }
+        var failure = await Assert.ThrowsAsync<InvalidOperationException>(() => pending.WaitAsync(ct));
+        Assert.Equal("Runtime authority revoked.", failure.Message);
+        Assert.Equal(1, checks);
+        Assert.False(File.Exists(Path.Combine(_workspaceDir, "steer-was-written")));
+    }
+
+    [Fact]
     public async Task RuntimeActivityReplaysBeforeAttachAndForwardsDuringAndAfterTurns()
     {
         File.WriteAllText(_mockBridgePath, MockBridgeScript

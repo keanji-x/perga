@@ -363,11 +363,11 @@ public sealed class McpPluginRouter : IAsyncDisposable
                     _pluginId,
                     toolName,
                     normalizedArgs,
-                    ct).ConfigureAwait(false);
+                    ct, isPlugin: true).ConfigureAwait(false);
 
                 var client = await _router.GetOrOpenClientAsync(_pluginId, ct).ConfigureAwait(false);
                 return await client.CallToolAsync(toolName, normalizedArgs,
-                    token => _router._kernel.EnsureMcpAuthorizationAsync(caller, generation, _pluginId, toolName, token), ct).ConfigureAwait(false);
+                    token => _router._kernel.EnsureMcpAuthorizationAsync(caller, generation, _pluginId, toolName, token, isPlugin: true), ct).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
