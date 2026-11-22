@@ -1,4 +1,5 @@
-import { expect, test } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { test } from './helpers/workspace-test.ts';
 import { sessionItem, sessionPage } from '../web/src/app/router/conversation-session-data.ts';
 import { createArea, createTrack, trackSnapshot } from './helpers/seed.js';
 

@@ -287,12 +287,12 @@ public sealed class LegacyTemplateHydrationTests
             var store = reopened.Services.GetRequiredService<ITrackStore>();
             Assert.Equal(TaskRunStatus.Pending, Assert.Single((await store.LoadTrackAggregateAsync(trackId, default))!.Tasks).Status);
             Assert.Empty(reopened.AgentRuntime.ExecutedTurns);
-            using var inspect = await reopened.Client.GetAsync($"/api/v1/tracks/{trackId}/template");
+            using var inspect = await reopened.AuthenticatedClient.GetAsync($"/api/v1/tracks/{trackId}/template");
             Assert.Equal(HttpStatusCode.OK, inspect.StatusCode);
             var current = await inspect.Content.ReadFromJsonAsync<JsonElement>();
             Assert.Equal(snapshot, current.GetProperty("snapshot").GetString());
             Assert.False(current.TryGetProperty("manifest", out _));
-            using var clear = await reopened.Client.DeleteAsync($"/api/v1/tracks/{trackId}/template");
+            using var clear = await reopened.AuthenticatedClient.DeleteAsync($"/api/v1/tracks/{trackId}/template");
             Assert.Equal(HttpStatusCode.OK, clear.StatusCode);
             var detached = await clear.Content.ReadFromJsonAsync<TrackDto>(PergaJsonDefaults.ApiOptions);
             Assert.Null(detached!.TemplateId);
@@ -312,13 +312,13 @@ public sealed class LegacyTemplateHydrationTests
         var kernel = host.Services.GetRequiredService<IPergaKernel>();
         var area = await kernel.CreateAreaAsync(new("Clear", DefaultCwd: host.DataDir));
         var trackId = (await kernel.CreateTrackAsync(new(area.Id, TemplateId: "agents-delivery"))).Track.Id;
-        using var clear = await host.Client.DeleteAsync($"/api/v1/tracks/{trackId}/template");
+        using var clear = await host.AuthenticatedClient.DeleteAsync($"/api/v1/tracks/{trackId}/template");
         Assert.Equal(HttpStatusCode.OK, clear.StatusCode);
         Assert.Null((await kernel.GetTrackAggregateAsync(trackId)).Track.TemplateId);
         var closedId = (await kernel.CreateTrackAsync(new(area.Id, TemplateId: "agents-delivery"))).Track.Id;
-        using var close = await host.Client.PatchAsJsonAsync($"/api/v1/tracks/{closedId}", new { closed = true });
+        using var close = await host.AuthenticatedClient.PatchAsJsonAsync($"/api/v1/tracks/{closedId}", new { closed = true });
         Assert.Equal(HttpStatusCode.OK, close.StatusCode);
-        using var refused = await host.Client.DeleteAsync($"/api/v1/tracks/{closedId}/template");
+        using var refused = await host.AuthenticatedClient.DeleteAsync($"/api/v1/tracks/{closedId}/template");
         Assert.Equal(HttpStatusCode.Conflict, refused.StatusCode);
         Assert.Equal("agents-delivery", (await kernel.GetTrackAggregateAsync(closedId)).Track.TemplateId);
     }
@@ -362,7 +362,7 @@ public sealed class LegacyTemplateHydrationTests
 
             await using var reopened = new PergaHostTestCluster(explicitDataDir: directory.FullName);
             var restarted = reopened.Services.GetRequiredService<IPergaKernel>();
-            using var response = await reopened.Client.GetAsync($"/api/v1/areas/{areaId}/tracks");
+            using var response = await reopened.AuthenticatedClient.GetAsync($"/api/v1/areas/{areaId}/tracks");
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             var areaTracks = await response.Content.ReadFromJsonAsync<TrackDto[]>(PergaJsonDefaults.ApiOptions);
             Assert.Equal(2, areaTracks!.Length);
@@ -382,7 +382,7 @@ public sealed class LegacyTemplateHydrationTests
             Assert.Contains(reopened.AgentRuntime.ExecutedTurns,
                 turn => turn.Input.Prompt.Contains("HEALTHY_SIBLING_PULSE", StringComparison.Ordinal));
 
-            Assert.Equal(HttpStatusCode.OK, (await reopened.Client.GetAsync($"/api/v1/tracks/{legacyTrackId}")).StatusCode);
+            Assert.Equal(HttpStatusCode.OK, (await reopened.AuthenticatedClient.GetAsync($"/api/v1/tracks/{legacyTrackId}")).StatusCode);
             var dispatchError = await Assert.ThrowsAsync<KernelException>(() =>
                 FlowFixture.AppendAsync(restarted, legacyTrackId, new FlowNodeSpecDto("blocked", new("run", Prompt: "Must not dispatch"))));
             Assert.Contains("guardToolCall", dispatchError.Message);
@@ -444,11 +444,11 @@ public sealed class LegacyTemplateHydrationTests
             var restarted = reopened.Services.GetRequiredService<IPergaKernel>();
             var aggregate = await restarted.GetTrackAggregateAsync(trackId);
             Assert.Equal(snapshot, aggregate.TemplateSnapshotSource);
-            using var inspect = await reopened.Client.GetAsync($"/api/v1/tracks/{trackId}/template");
+            using var inspect = await reopened.AuthenticatedClient.GetAsync($"/api/v1/tracks/{trackId}/template");
             inspect.EnsureSuccessStatusCode();
             var current = await inspect.Content.ReadFromJsonAsync<JsonElement>();
             Assert.Equal(snapshot, current.GetProperty("snapshot").GetString());
-            Assert.Equal(HttpStatusCode.OK, (await reopened.Client.GetAsync($"/api/v1/tracks/{trackId}")).StatusCode);
+            Assert.Equal(HttpStatusCode.OK, (await reopened.AuthenticatedClient.GetAsync($"/api/v1/tracks/{trackId}")).StatusCode);
             var dispatchError = await Assert.ThrowsAsync<KernelException>(() =>
                 FlowFixture.AppendAsync(restarted, trackId, new FlowNodeSpecDto("blocked", new("run", Prompt: "Must not dispatch"))));
             Assert.Equal(KernelErrorCode.PolicyDenied, dispatchError.Code);

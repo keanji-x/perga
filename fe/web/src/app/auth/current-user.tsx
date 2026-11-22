@@ -1,10 +1,17 @@
-/** Read-only projection of the existing verified whoami owner. No probe or authority is issued here. */
-import { createContext, useContext, useMemo, type ReactNode } from 'react';
+import { createContext, useContext, type ReactNode } from 'react';
 import type { SessionIdentity } from '../../../../core/api/auth.ts';
-type CurrentUserIdentity=Readonly<Pick<SessionIdentity,'userId'|'displayName'>>;
-const CurrentUser = createContext<CurrentUserIdentity | null>(null);
+
+const CurrentUser = createContext<Readonly<SessionIdentity> | null>(null);
+const SignOut = createContext<((sessionId: string) => void) | null>(null);
+
 export function CurrentUserScope({ value, children }: { value: SessionIdentity; children: ReactNode }) {
-  const current=useMemo(()=>({userId:value.userId,displayName:value.displayName}),[value.userId,value.displayName]);
-  return <CurrentUser.Provider value={current}>{children}</CurrentUser.Provider>;
+  return <CurrentUser.Provider value={value}>{children}</CurrentUser.Provider>;
 }
-export function useCurrentUser(): CurrentUserIdentity | null { return useContext(CurrentUser); }
+
+export function useCurrentUser(): Readonly<SessionIdentity> | null { return useContext(CurrentUser); }
+
+export function SignOutScope({ value, children }: { value: (sessionId: string) => void; children: ReactNode }) {
+  return <SignOut.Provider value={value}>{children}</SignOut.Provider>;
+}
+
+export function useSignOut() { return useContext(SignOut); }

@@ -1,3 +1,4 @@
+using Perga.Host.Auth;
 using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json;
@@ -137,36 +138,27 @@ public static class McpStreamableHttpEndpoints
 
     public static IEndpointRouteBuilder MapPergaMcpEndpoints(this IEndpointRouteBuilder endpoints)
     {
-        var mcp = endpoints.MapGroup("/mcp");
+        var mcp = endpoints.MapGroup("/mcp").RequireAuthorization(PergaAuthPolicies.McpSessionOnly);
 
         mcp.MapMethods("/kernel", ["POST", "GET", "DELETE"], (
             HttpContext ctx,
-            IMcpSessionBridge bridge,
             KernelMcpBackend backend,
             McpTransportSessionManager sessions) =>
-            HandleMcpEndpointAsync(ctx, bridge, backend, sessions, preAuthorizeAsync: null));
+            HandleAuthorizedMcpAsync(ctx, ctx.Features.Get<McpSessionPrincipal>()!, backend, sessions, preAuthorizeAsync: null));
 
         mcp.MapMethods("/vcs", ["POST", "GET", "DELETE"], (
             HttpContext ctx,
-            IMcpSessionBridge bridge,
             VcsMcpBackend backend,
             McpTransportSessionManager sessions) =>
-            HandleMcpEndpointAsync(ctx, bridge, backend, sessions, preAuthorizeAsync: null));
+            HandleAuthorizedMcpAsync(ctx, ctx.Features.Get<McpSessionPrincipal>()!, backend, sessions, preAuthorizeAsync: null));
 
         mcp.MapMethods("/p/{pluginId}", ["POST", "GET", "DELETE"], async (
             string pluginId,
             HttpContext ctx,
-            IMcpSessionBridge bridge,
             McpPluginRouter pluginRouter,
             McpTransportSessionManager sessions) =>
         {
-            var principal = AuthenticateCaller(ctx, bridge);
-            if (principal is null)
-            {
-                await HttpErrorHandling.Unauthorized().ExecuteAsync(ctx).ConfigureAwait(false);
-                return;
-            }
-
+            var principal = ctx.Features.Get<McpSessionPrincipal>()!;
             var backend = pluginRouter.TryCreateBackend(pluginId);
             if (backend is null)
             {
@@ -184,23 +176,6 @@ public static class McpStreamableHttpEndpoints
         });
 
         return endpoints;
-    }
-
-    private static async Task HandleMcpEndpointAsync(
-        HttpContext ctx,
-        IMcpSessionBridge bridge,
-        IMcpToolBackend backend,
-        McpTransportSessionManager sessions,
-        Func<CancellationToken, Task>? preAuthorizeAsync)
-    {
-        var principal = AuthenticateCaller(ctx, bridge);
-        if (principal is null)
-        {
-            await HttpErrorHandling.Unauthorized().ExecuteAsync(ctx).ConfigureAwait(false);
-            return;
-        }
-
-        await HandleAuthorizedMcpAsync(ctx, principal, backend, sessions, preAuthorizeAsync).ConfigureAwait(false);
     }
 
     private static async Task HandleAuthorizedMcpAsync(
@@ -488,7 +463,7 @@ public static class McpStreamableHttpEndpoints
         }
     }
 
-    private static McpSessionPrincipal? AuthenticateCaller(HttpContext ctx, IMcpSessionBridge bridge)
+    internal static McpSessionPrincipal? AuthenticateCaller(HttpContext ctx, IMcpSessionBridge bridge)
     {
         var authHeader = GetHeaderValue(ctx, "Authorization");
         if (string.IsNullOrWhiteSpace(authHeader) ||

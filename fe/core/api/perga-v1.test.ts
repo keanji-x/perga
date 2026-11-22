@@ -126,7 +126,7 @@ describe('Perga /api/v1 protocol contracts', () => {
 
   it('decodes GET /api/v1/bootstrap for auth, providers, models, and templates', () => {
     expect(bootstrapOperation().path).toBe('/api/v1/bootstrap');
-    expect(whoamiOperation().path).toBe('/api/v1/bootstrap?scope=whoami');
+    expect(whoamiOperation().path).toBe('/api/v1/auth/session');
     const parsed = bootstrapDtoSchema.parse(sampleBootstrap);
     expect(parsed.version).toBe('0.1.0');
 
@@ -608,8 +608,7 @@ describe('Perga /api/v1 protocol contracts', () => {
   });
 
   it('covers user-journey audit fixes across CHAT, CARD, and SHELL contracts', () => {
-    // SHELL-02: GET loginOperation never includes a request body
-    expect(loginOperation({ username: 'u', password: 'p' })).not.toHaveProperty('body');
+    expect(loginOperation({ username: 'u', password: 'p' })).toHaveProperty('body', { username: 'u', password: 'p' });
 
     // CHAT-03, CHAT-04 & CHAT-05: 10-minute timeout, SessionInputReceipt -> entry_id, and null-entryId outbox retirement
     const sendOp = sendPlannerInputOperation('ses_lead', 'Ship Perga', [], 'idem-1');

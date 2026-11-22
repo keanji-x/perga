@@ -5,6 +5,7 @@ import {
   bootstrapOperation,
   loginRequestSchema,
   loginOperation,
+  logoutOperation,
   sessionIdentitySchema,
   whoamiOperation,
 } from './auth.js';
@@ -23,28 +24,19 @@ describe('core/api auth contract', () => {
     }
   });
 
-  it('freezes the bootstrap and whoami operations on Perga /api/v1/bootstrap', () => {
+  it('keeps bootstrap and session discovery on separate endpoints', () => {
     expect(bootstrapOperation()).toMatchObject({ method: 'GET', path: '/api/v1/bootstrap' });
-    expect(whoamiOperation()).toMatchObject({ method: 'GET', path: '/api/v1/bootstrap?scope=whoami' });
-    const parsed = whoamiOperation().responseSchema.parse({
-      version: '1.0.0',
-      providers: [],
-      templates: [],
-      areas: [],
-    });
-    expect(parsed).toEqual({
-      userId: 'local-owner',
-      displayName: 'Local Operator',
-      role: 'owner',
-      sessionId: 'perga-1.0.0',
-    });
+    expect(whoamiOperation()).toMatchObject({ method: 'GET', path: '/api/v1/auth/session', expectedStatuses: [200] });
+    expect(whoamiOperation().responseSchema.safeParse({ version: '1.0.0', providers: [], templates: [], areas: [] }).success)
+      .toBe(false);
   });
 
-  it.each([
-    ['method', 'GET'],
-    ['path', '/api/v1/bootstrap?scope=whoami'],
-    ['body', undefined],
-  ] as const)('freezes the login probe operation without sending a GET body: %s', (field, expected) => {
-    expect(loginOperation({ username: 'u', password: 'p' })[field]).toEqual(expected);
+  it('publishes the exact login and guarded logout requests', () => {
+    const body = { username: 'u', password: 'p' };
+    expect(loginOperation(body)).toMatchObject({ method: 'POST', path: '/api/v1/auth/login', body, expectedStatuses: [200] });
+    expect(logoutOperation('aus_test')).toMatchObject({
+      method: 'POST', path: '/api/v1/auth/logout', headers: { 'X-Perga-Session-Id': 'aus_test' }, expectedStatuses: [204],
+    });
+    expect(logoutOperation()).not.toHaveProperty('headers');
   });
 });

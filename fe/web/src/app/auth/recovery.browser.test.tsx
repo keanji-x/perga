@@ -58,7 +58,7 @@ it.each(['before', 'after'] as const)('cold saved Track and hot reconnect retain
   expect(screen.getByRole('heading', { name: 'Track' })).toBeTruthy(); expect(fetchVersion).not.toHaveBeenCalled();
   expect(fixture.requests).toHaveLength(0);
   await page.screenshot({ path: '../../../../test-results/1712-cold-track-390.png' });
-  act(() => finish({ userId: 'owner', displayName: 'Owner', role: 'owner', sessionId: 's' }));
+  act(() => finish({ userId: 'owner', displayName: 'Owner', username: 'owner', expiresAtMs: 2000000000000, role: 'owner', sessionId: 's' }));
   await page.getByText('Reference', { exact: true }).click();
   await page.getByText('calculation-example', { exact: true }).click();
   await screen.findByText(fixture.goal);
@@ -72,7 +72,7 @@ it.each(['before', 'after'] as const)('cold saved Track and hot reconnect retain
   expect(document.querySelector('[data-nc-track-page]')).toBe(track);
   expect(screen.getByText(fixture.goal)).toBeTruthy(); expect(() => access.capture()).toThrow();
   await page.screenshot({ path: '../../../../test-results/1712-hot-retry-390.png' });
-  act(() => finish({ userId: 'owner', displayName: 'Owner', role: 'owner', sessionId: 's' }));
+  act(() => finish({ userId: 'owner', displayName: 'Owner', username: 'owner', expiresAtMs: 2000000000000, role: 'owner', sessionId: 's' }));
   await waitFor(() => expect(access.read().phase).toBe('syncing')); act(replay); await waitFor(() => expect(access.read().phase).toBe('connected')); await painted();
   expect(document.querySelector('[data-nc-track-page]')).toBe(track);
   expect(screen.getByText('已连接')).toBeTruthy();

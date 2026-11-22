@@ -49,7 +49,7 @@ it.each([
 ])('keeps saved effort after a model PUT and refetch ($model, running=$running)', async ({ model, running }) => {
   await page.viewport(1280, 844);
   const fixture = renderSessionFixture({ initial: '/track/daily?panel=conversations', reply: request => {
-    if (request.path.startsWith('/api/v1/bootstrap') && !request.path.includes('scope=whoami')) return sessionReply({
+    if (request.path.startsWith('/api/v1/bootstrap')) return sessionReply({
       version: 'test', templates: [], areas: [], providers: [{ provider: 'codex', available: true, models: ['test-model'],
         modelCatalog: [{ model: 'test-model', displayName: 'Test model', description: '', isDefault: true,
           defaultReasoningEffort: 'low', supportedReasoningEfforts: ['low', 'high'].map(reasoningEffort => ({ reasoningEffort, description: '' })) }],

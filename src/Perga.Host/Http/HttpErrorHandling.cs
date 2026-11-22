@@ -36,10 +36,10 @@ public static class HttpErrorHandling
 
             KernelException kex => MapKernelException(kex),
 
-            BadHttpRequestException badHttp => Results.Json(
+            BadHttpRequestException { StatusCode: < 500 } badHttp => Results.Json(
                 new ApiErrorResponse("bad_request", badHttp.Message, null),
                 PergaJsonDefaults.ApiOptions,
-                statusCode: StatusCodes.Status400BadRequest),
+                statusCode: badHttp.StatusCode),
 
             JsonException jsonEx => Results.Json(
                 new ApiErrorResponse("invalid_json", jsonEx.Message, null),
@@ -57,7 +57,7 @@ public static class HttpErrorHandling
                 statusCode: StatusCodes.Status400BadRequest),
 
             _ => Results.Json(
-                new ApiErrorResponse("internal_error", ex.Message, null),
+                new ApiErrorResponse("internal_error", "An unexpected server error occurred.", null),
                 PergaJsonDefaults.ApiOptions,
                 statusCode: StatusCodes.Status500InternalServerError)
         };
@@ -73,9 +73,17 @@ public static class HttpErrorHandling
         {
             // Client aborted the HTTP connection.
         }
-        catch (Exception ex) when (!context.Response.HasStarted)
+        catch (Exception ex)
         {
             var mapped = MapException(ex);
+            if (context.Response.HasStarted || mapped is IStatusCodeHttpResult { StatusCode: >= 500 })
+                context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(HttpErrorHandling).FullName!)
+                    .LogError(ex, "Unhandled exception processing {Method} {Path}", context.Request.Method, context.Request.Path);
+            if (context.Response.HasStarted)
+                throw;
+
+            context.Response.Headers.Remove("Set-Cookie");
+            context.Response.Headers.Remove("X-Perga-Session-Id");
             await mapped.ExecuteAsync(context).ConfigureAwait(false);
         }
     }

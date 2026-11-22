@@ -43,6 +43,7 @@ internal sealed class MaintenanceRepository
 
         await PruneTrackWakesAsync(nowMs, ct).ConfigureAwait(false);
         await PruneTrackSchedulesAsync(nowMs, ct).ConfigureAwait(false);
+        await PruneAuthSessionsAsync(nowMs, ct).ConfigureAwait(false);
         var prunedEvents = await PruneEventsAsync(nowMs, ct).ConfigureAwait(false);
         var thinnedRevisions = await RunMaintenanceBatchesAsync(
             () => ThinReportRevisionsAsync(nowMs, ct), MaintenanceBatchSize).ConfigureAwait(false);
@@ -58,6 +59,19 @@ internal sealed class MaintenanceRepository
             CompactedTasks = compactedTasks,
             ReclaimedBlobs = reclaimedBlobs
         };
+    }
+
+    public Task<int> PruneAuthSessionsAsync(long nowMs, CancellationToken ct)
+    {
+        const int batchSize = 100;
+        var cutoff = nowMs - (long)TimeSpan.FromDays(7).TotalMilliseconds;
+        return RunMaintenanceBatchesAsync(() => _context.Writer.EnqueueAsync<int>(async (conn, tx, token) =>
+            await conn.ExecuteAsync(new CommandDefinition("""
+                DELETE FROM auth_sessions WHERE id IN (
+                    SELECT id FROM auth_sessions WHERE expires_at_ms < @Cutoff OR revoked_at_ms < @Cutoff
+                    LIMIT @BatchSize
+                );
+                """, new { Cutoff = cutoff, BatchSize = batchSize }, tx, cancellationToken: token)), ct), batchSize);
     }
 
     private static async Task<int> RunMaintenanceBatchesAsync(Func<Task<int>> runBatch, int batchSize)

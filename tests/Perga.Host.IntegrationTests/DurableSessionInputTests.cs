@@ -43,22 +43,22 @@ public sealed class DurableSessionInputTests
                     new("frozen-recovery", "hash", "recover selection"),
                     new(null, null, trackId, KernelEventKinds.SessionUpdated,
                         JsonSerializer.SerializeToElement(selected), selected.UpdatedAtMs), CancellationToken.None)).Receipt;
-                using var update = await host.Client.PatchAsJsonAsync($"/api/v1/sessions/{sessionId}", new { model = "B", reasoningEffort = "high" });
+                using var update = await host.AuthenticatedClient.PatchAsJsonAsync($"/api/v1/sessions/{sessionId}", new { model = "B", reasoningEffort = "high" });
                 update.EnsureSuccessStatusCode();
             }
-            await using (var reopened = new PergaHostTestCluster(directory.FullName))
+            var sampled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            async IAsyncEnumerable<UnifiedAgentEvent> Stream(HarnessLaunchSpec spec, TurnInput input,
+                [EnumeratorCancellation] CancellationToken ct)
             {
-                var sampled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-                var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-                reopened.AgentRuntime.SetTurnHandler(Stream);
-                async IAsyncEnumerable<UnifiedAgentEvent> Stream(HarnessLaunchSpec spec, TurnInput input,
-                    [EnumeratorCancellation] CancellationToken ct)
-                {
-                    yield return new UnifiedAgentEvent.ContextUsageUpdated(new TokenUsage(10, 5, 0, 1000, UsedTokens: 950));
-                    sampled.TrySetResult();
-                    await release.Task.WaitAsync(ct);
-                    yield return new UnifiedAgentEvent.TurnCompleted(new TokenUsage(10, 5, 0, 1000, UsedTokens: 990));
-                }
+                yield return new UnifiedAgentEvent.ContextUsageUpdated(new TokenUsage(10, 5, 0, 1000, UsedTokens: 950));
+                sampled.TrySetResult();
+                await release.Task.WaitAsync(ct);
+                yield return new UnifiedAgentEvent.TurnCompleted(new TokenUsage(10, 5, 0, 1000, UsedTokens: 990));
+            }
+            await using (var reopened = new PergaHostTestCluster(directory.FullName,
+                configureAgentRuntime: agent => agent.SetTurnHandler(Stream)))
+            {
                 var resumed = reopened.Services.GetRequiredService<IPergaKernel>();
                 var idle = resumed.WaitForTrackIdleAsync(trackId);
                 try
@@ -106,7 +106,7 @@ public sealed class DurableSessionInputTests
             await using (var host = new PergaHostTestCluster(directory.FullName))
             {
                 (trackId, sessionId) = await host.CreateTrackAsync();
-                using var accepted = await SendAsync(host.Client, $"/api/v1/sessions/{sessionId}/messages",
+                using var accepted = await SendAsync(host.AuthenticatedClient, $"/api/v1/sessions/{sessionId}/messages",
                     "same-message", new { content = "Keep one turn" });
                 Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
                 using var receipt = JsonDocument.Parse(await accepted.Content.ReadAsStringAsync());
@@ -116,13 +116,13 @@ public sealed class DurableSessionInputTests
             }
 
             await using var reopened = new PergaHostTestCluster(directory.FullName);
-            using var replay = await SendAsync(reopened.Client, $"/api/v1/sessions/{sessionId}/messages",
+            using var replay = await SendAsync(reopened.AuthenticatedClient, $"/api/v1/sessions/{sessionId}/messages",
                 "same-message", new { content = "Keep one turn" });
             Assert.Equal(HttpStatusCode.OK, replay.StatusCode);
             using var replayReceipt = JsonDocument.Parse(await replay.Content.ReadAsStringAsync());
             Assert.Equal(turnId, replayReceipt.RootElement.GetProperty("turnId").GetString());
             Assert.Equal("delivered", replayReceipt.RootElement.GetProperty("delivery").GetString());
-            using var mismatch = await SendAsync(reopened.Client, $"/api/v1/sessions/{sessionId}/messages",
+            using var mismatch = await SendAsync(reopened.AuthenticatedClient, $"/api/v1/sessions/{sessionId}/messages",
                 "same-message", new { content = "Keep one turn", mode = "queue" });
             Assert.Equal(HttpStatusCode.Conflict, mismatch.StatusCode);
             Assert.Empty(reopened.AgentRuntime.ExecutedTurns);
@@ -160,8 +160,8 @@ public sealed class DurableSessionInputTests
 
                 var url = $"/api/v1/tracks/{trackId}/sessions";
                 var results = await Task.WhenAll(
-                    SendAsync(host.Client, url, "create-key", request),
-                    SendAsync(host.Client, url, "create-key", request));
+                    SendAsync(host.AuthenticatedClient, url, "create-key", request),
+                    SendAsync(host.AuthenticatedClient, url, "create-key", request));
                 using var initial = Assert.Single(results, result => result.StatusCode == HttpStatusCode.Created);
                 using var replay = Assert.Single(results, result => result.StatusCode == HttpStatusCode.OK);
                 created = (await initial.Content.ReadFromJsonAsync<SessionCreationReceipt>(PergaJsonDefaults.ApiOptions))!;
@@ -170,8 +170,8 @@ public sealed class DurableSessionInputTests
                 Assert.Equal(created.Session.Id, duplicate.Session.Id);
                 Assert.Equal(created.FirstInput.InputId, duplicate.FirstInput!.InputId);
                 await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
-                await AssertUserItemAsync(host.Client, created.FirstInput, request.prompt);
-                using var mismatch = await SendAsync(host.Client, url, "create-key", new { prompt = "different" });
+                await AssertUserItemAsync(host.AuthenticatedClient, created.FirstInput, request.prompt);
+                using var mismatch = await SendAsync(host.AuthenticatedClient, url, "create-key", new { prompt = "different" });
                 Assert.Equal(HttpStatusCode.Conflict, mismatch.StatusCode);
                 release.SetResult();
                 await host.Services.GetRequiredService<IPergaKernel>().WaitForTrackIdleAsync(trackId);
@@ -179,17 +179,17 @@ public sealed class DurableSessionInputTests
             }
 
             await using var reopened = new PergaHostTestCluster(directory.FullName);
-            using var response = await SendAsync(reopened.Client, $"/api/v1/tracks/{trackId}/sessions", "create-key", request);
+            using var response = await SendAsync(reopened.AuthenticatedClient, $"/api/v1/tracks/{trackId}/sessions", "create-key", request);
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             var recovered = (await response.Content.ReadFromJsonAsync<SessionCreationReceipt>(PergaJsonDefaults.ApiOptions))!;
             Assert.Equal(created.Session.Id, recovered.Session.Id);
             Assert.Equal(created.FirstInput!.InputId, recovered.FirstInput!.InputId);
             Assert.Equal("completed", recovered.FirstInput.TurnStatus);
             Assert.Empty(reopened.AgentRuntime.ExecutedTurns);
-            await AssertUserItemAsync(reopened.Client, recovered.FirstInput, request.prompt);
-            using var delete = await reopened.Client.DeleteAsync($"/api/v1/tracks/{trackId}");
+            await AssertUserItemAsync(reopened.AuthenticatedClient, recovered.FirstInput, request.prompt);
+            using var delete = await reopened.AuthenticatedClient.DeleteAsync($"/api/v1/tracks/{trackId}");
             Assert.Equal(HttpStatusCode.NoContent, delete.StatusCode);
-            using var gone = await SendAsync(reopened.Client, $"/api/v1/tracks/{trackId}/sessions", "create-key", request);
+            using var gone = await SendAsync(reopened.AuthenticatedClient, $"/api/v1/tracks/{trackId}/sessions", "create-key", request);
             Assert.Equal(HttpStatusCode.Gone, gone.StatusCode);
         }
         finally
@@ -212,19 +212,19 @@ public sealed class DurableSessionInputTests
             await using (var host = new PergaHostTestCluster(directory.FullName))
             {
                 (trackId, _) = await host.CreateTrackAsync();
-                using var response = await SendAsync(host.Client, $"/api/v1/tracks/{trackId}/sessions", "legacy-key", request);
+                using var response = await SendAsync(host.AuthenticatedClient, $"/api/v1/tracks/{trackId}/sessions", "legacy-key", request);
                 Assert.Equal(HttpStatusCode.Created, response.StatusCode);
                 created = (await response.Content.ReadFromJsonAsync<SessionCreationReceipt>(PergaJsonDefaults.ApiOptions))!;
             }
 
             await using var reopened = new PergaHostTestCluster(directory.FullName);
             var path = $"/api/v1/tracks/{trackId}/sessions";
-            using var replay = await SendAsync(reopened.Client, path, "legacy-key", request);
+            using var replay = await SendAsync(reopened.AuthenticatedClient, path, "legacy-key", request);
             Assert.Equal(HttpStatusCode.OK, replay.StatusCode);
             var recovered = (await replay.Content.ReadFromJsonAsync<SessionCreationReceipt>(PergaJsonDefaults.ApiOptions))!;
             Assert.Equal(created.Session.Id, recovered.Session.Id);
             Assert.Null(recovered.FirstInput);
-            using var mismatch = await SendAsync(reopened.Client, path, "legacy-key", request with { reasoningEffort = "high" });
+            using var mismatch = await SendAsync(reopened.AuthenticatedClient, path, "legacy-key", request with { reasoningEffort = "high" });
             Assert.Equal(HttpStatusCode.Conflict, mismatch.StatusCode);
             Assert.Empty(reopened.AgentRuntime.ExecutedTurns);
         }
@@ -243,11 +243,11 @@ public sealed class DurableSessionInputTests
         var (trackId, _) = await host.CreateTrackAsync();
         var path = $"/api/v1/tracks/{trackId}/sessions";
         var request = new { title = "Assistant", provider = "codex", model = "chosen", reasoningEffort };
-        using var created = await SendAsync(host.Client, path, "effort-key", request);
+        using var created = await SendAsync(host.AuthenticatedClient, path, "effort-key", request);
         Assert.Equal(HttpStatusCode.Created, created.StatusCode);
-        using var replay = await SendAsync(host.Client, path, "effort-key", request with { reasoningEffort = "low" });
+        using var replay = await SendAsync(host.AuthenticatedClient, path, "effort-key", request with { reasoningEffort = "low" });
         Assert.Equal(HttpStatusCode.OK, replay.StatusCode);
-        using var mismatch = await SendAsync(host.Client, path, "effort-key", request with { reasoningEffort = "high" });
+        using var mismatch = await SendAsync(host.AuthenticatedClient, path, "effort-key", request with { reasoningEffort = "high" });
         Assert.Equal(HttpStatusCode.Conflict, mismatch.StatusCode);
     }
 
@@ -286,7 +286,7 @@ public sealed class DurableSessionInputTests
             await using var reopened = new PergaHostTestCluster(directory.FullName);
             await reopened.Services.GetRequiredService<IPergaKernel>().WaitForTrackIdleAsync(trackId);
             var path = $"/api/v1/sessions/{sessionId}/items";
-            var receipt = (await reopened.Client.GetFromJsonAsync<SessionItemsPageDto>(path, PergaJsonDefaults.ApiOptions))!;
+            var receipt = (await reopened.AuthenticatedClient.GetFromJsonAsync<SessionItemsPageDto>(path, PergaJsonDefaults.ApiOptions))!;
             if (state == "accepted")
             {
                 Assert.Equal("completed", receipt.LastTurn!.Status);
@@ -300,14 +300,14 @@ public sealed class DurableSessionInputTests
             Assert.Equal("unknown", receipt.LastTurn!.Status);
             Assert.Equal("unconfirmed", Assert.Single(receipt.Items, i => i.Kind == "user").MessageStatus);
             Assert.Empty(reopened.AgentRuntime.ExecutedTurns);
-            using var busy = await SendAsync(reopened.Client, $"/api/v1/sessions/{sessionId}/messages", "new-key", new { content = "Next" });
+            using var busy = await SendAsync(reopened.AuthenticatedClient, $"/api/v1/sessions/{sessionId}/messages", "new-key", new { content = "Next" });
             Assert.Equal(HttpStatusCode.Conflict, busy.StatusCode);
-            using var resolve = await reopened.Client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/control", new { action = "reset_context" });
+            using var resolve = await reopened.AuthenticatedClient.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/control", new { action = "reset_context" });
             resolve.EnsureSuccessStatusCode();
-            var resolved = await reopened.Client.GetFromJsonAsync<SessionItemsPageDto>(path, PergaJsonDefaults.ApiOptions);
+            var resolved = await reopened.AuthenticatedClient.GetFromJsonAsync<SessionItemsPageDto>(path, PergaJsonDefaults.ApiOptions);
             Assert.NotNull((await reopened.Services.GetRequiredService<ITrackStore>().SessionInputs.FindByIdAsync(sessionId, "fixture-input", default))!.Receipt.ResolvedAtMs);
             Assert.Equal("unknown", resolved!.LastTurn!.Status);
-            using var next = await SendAsync(reopened.Client, $"/api/v1/sessions/{sessionId}/messages", "new-key", new { content = "Next" });
+            using var next = await SendAsync(reopened.AuthenticatedClient, $"/api/v1/sessions/{sessionId}/messages", "new-key", new { content = "Next" });
             Assert.Equal(HttpStatusCode.OK, next.StatusCode);
             await reopened.Services.GetRequiredService<IPergaKernel>().WaitForTrackIdleAsync(trackId);
             Assert.Null(Assert.Single(reopened.AgentRuntime.ExecutedTurns).Spec.ResumeNativeThreadId);
@@ -345,19 +345,19 @@ public sealed class DurableSessionInputTests
             }
 
             await using var host = new PergaHostTestCluster(directory.FullName);
-            using var firstPage = await host.Client.GetAsync($"/api/v1/sessions/{sessionId}/items?afterId=999&limit=2");
+            using var firstPage = await host.AuthenticatedClient.GetAsync($"/api/v1/sessions/{sessionId}/items?afterId=999&limit=2");
             using var history = JsonDocument.Parse(await firstPage.Content.ReadAsStringAsync());
             Assert.Equal(new long[] { 1000, 1001 },
                 history.RootElement.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("id").GetInt64()));
-            using var latest = await host.Client.GetAsync($"/api/v1/sessions/{sessionId}/items?latest=true&limit=2");
+            using var latest = await host.AuthenticatedClient.GetAsync($"/api/v1/sessions/{sessionId}/items?latest=true&limit=2");
             using var latestPage = JsonDocument.Parse(await latest.Content.ReadAsStringAsync());
             Assert.Equal(new long[] { 1000, 1001 },
                 latestPage.RootElement.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("id").GetInt64()));
-            using var earlier = await host.Client.GetAsync($"/api/v1/sessions/{sessionId}/items?beforeId=1000&limit=2");
+            using var earlier = await host.AuthenticatedClient.GetAsync($"/api/v1/sessions/{sessionId}/items?beforeId=1000&limit=2");
             using var earlierPage = JsonDocument.Parse(await earlier.Content.ReadAsStringAsync());
             Assert.Equal(new long[] { 998, 999 },
                 earlierPage.RootElement.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("id").GetInt64()));
-            using var accepted = await SendAsync(host.Client, $"/api/v1/sessions/{sessionId}/messages", "long-history", new { content = "Turn three" });
+            using var accepted = await SendAsync(host.AuthenticatedClient, $"/api/v1/sessions/{sessionId}/messages", "long-history", new { content = "Turn three" });
             Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
             var receipt = (await accepted.Content.ReadFromJsonAsync<SessionMessageReceipt>(PergaJsonDefaults.ApiOptions))!;
             Assert.StartsWith("trn_000003_", receipt.TurnId);
@@ -397,16 +397,16 @@ public sealed class DurableSessionInputTests
             """);
 
         var path = $"/api/v1/sessions/{sessionId}/messages";
-        using var accepted = await SendAsync(host.Client, path, "failed-finalization", new { content = "Once" });
+        using var accepted = await SendAsync(host.AuthenticatedClient, path, "failed-finalization", new { content = "Once" });
         Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
         var initial = (await accepted.Content.ReadFromJsonAsync<SessionMessageReceipt>(PergaJsonDefaults.ApiOptions))!;
         await host.Services.GetRequiredService<IPergaKernel>().WaitForTrackIdleAsync(trackId);
-        var outcome = (await host.Client.GetFromJsonAsync<SessionItemsPageDto>($"/api/v1/sessions/{sessionId}/items", PergaJsonDefaults.ApiOptions))!;
+        var outcome = (await host.AuthenticatedClient.GetFromJsonAsync<SessionItemsPageDto>($"/api/v1/sessions/{sessionId}/items", PergaJsonDefaults.ApiOptions))!;
         Assert.Equal("unknown", outcome.LastTurn!.Status);
         Assert.Equal(initial.TurnId, outcome.LastTurn!.Id);
-        using var duplicate = await SendAsync(host.Client, path, "failed-finalization", new { content = "Once" });
+        using var duplicate = await SendAsync(host.AuthenticatedClient, path, "failed-finalization", new { content = "Once" });
         Assert.Equal(HttpStatusCode.OK, duplicate.StatusCode);
-        using var blocked = await SendAsync(host.Client, path, "different", new { content = "Next" });
+        using var blocked = await SendAsync(host.AuthenticatedClient, path, "different", new { content = "Next" });
         Assert.Equal(HttpStatusCode.Conflict, blocked.StatusCode);
         Assert.Single(host.AgentRuntime.ExecutedTurns);
     }
@@ -453,7 +453,7 @@ public sealed class DurableSessionInputTests
         }
 
         var messages = $"/api/v1/sessions/{sessionId}/messages";
-        using var accepted = await SendAsync(host.Client, messages, "initial-key", new { content = "initial" });
+        using var accepted = await SendAsync(host.AuthenticatedClient, messages, "initial-key", new { content = "initial" });
         Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
         var initial = (await accepted.Content.ReadFromJsonAsync<SessionMessageReceipt>(PergaJsonDefaults.ApiOptions))!;
         await turnStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -461,7 +461,7 @@ public sealed class DurableSessionInputTests
         Task<SessionMessageReceipt> SteerAsync(string content) => PostSteerAsync(initial.TurnId!, content);
         async Task<SessionMessageReceipt> PostSteerAsync(string turnId, string content)
         {
-            using var response = await SendAsync(host.Client, messages, Guid.NewGuid().ToString("N"), new { mode = "steer", turnId, content });
+            using var response = await SendAsync(host.AuthenticatedClient, messages, Guid.NewGuid().ToString("N"), new { mode = "steer", turnId, content });
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             return (await response.Content.ReadFromJsonAsync<SessionMessageReceipt>(PergaJsonDefaults.ApiOptions))!;
         }
@@ -478,11 +478,11 @@ public sealed class DurableSessionInputTests
             await kernel.WaitForTrackIdleAsync(trackId);
             Assert.Single(host.AgentRuntime.ExecutedTurns);
 
-            using var invalid = await SendAsync(host.Client, messages, Guid.NewGuid().ToString("N"),
+            using var invalid = await SendAsync(host.AuthenticatedClient, messages, Guid.NewGuid().ToString("N"),
                 new { mode = "steer", turnId = "invented-turn", content = "must not run" });
             Assert.Equal(HttpStatusCode.NotFound, invalid.StatusCode);
 
-            using var stale = await SendAsync(host.Client, messages, Guid.NewGuid().ToString("N"),
+            using var stale = await SendAsync(host.AuthenticatedClient, messages, Guid.NewGuid().ToString("N"),
                 new { mode = "steer", turnId = initial.TurnId, content = "Do not retarget" });
             Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
             await kernel.WaitForTrackIdleAsync(trackId);
@@ -544,9 +544,9 @@ public sealed class DurableSessionInputTests
 
         var messages = $"/api/v1/sessions/{sessionId}/messages";
         async Task<SessionItemsPageDto> ReadPageAsync() =>
-            (await host.Client.GetFromJsonAsync<SessionItemsPageDto>($"/api/v1/sessions/{sessionId}/items",
+            (await host.AuthenticatedClient.GetFromJsonAsync<SessionItemsPageDto>($"/api/v1/sessions/{sessionId}/items",
                 PergaJsonDefaults.ApiOptions))!;
-        using var accepted = await SendAsync(host.Client, messages, "initial", new { content = "initial" });
+        using var accepted = await SendAsync(host.AuthenticatedClient, messages, "initial", new { content = "initial" });
         var initial = (await accepted.Content.ReadFromJsonAsync<SessionMessageReceipt>(PergaJsonDefaults.ApiOptions))!;
         Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
         Assert.Equal(initial.MessageId, initial.MessageId);
@@ -556,7 +556,7 @@ public sealed class DurableSessionInputTests
 
         async Task<SessionMessageReceipt> QueueAsync(string text, HttpStatusCode expected)
         {
-            using var response = await SendAsync(host.Client, messages, text, new { content = text, mode = "queue" });
+            using var response = await SendAsync(host.AuthenticatedClient, messages, text, new { content = text, mode = "queue" });
             Assert.Equal(expected, response.StatusCode);
             Assert.Null(response.Headers.Location);
             return (await response.Content.ReadFromJsonAsync<SessionMessageReceipt>(PergaJsonDefaults.ApiOptions))!;
@@ -567,14 +567,14 @@ public sealed class DurableSessionInputTests
             var first = await QueueAsync("first queued", HttpStatusCode.OK);
             var second = await QueueAsync("second queued", HttpStatusCode.OK);
             Assert.Equal(first with { Replay = true }, await QueueAsync("first queued", HttpStatusCode.OK));
-            using var stored = await host.Client.GetAsync($"/api/v1/sessions/{sessionId}/inputs/{first.MessageId}");
+            using var stored = await host.AuthenticatedClient.GetAsync($"/api/v1/sessions/{sessionId}/inputs/{first.MessageId}");
             Assert.Equal(HttpStatusCode.NotFound, stored.StatusCode);
             var page = await ReadPageAsync();
             Assert.Equal(new[] { first.MessageId, second.MessageId }, page.QueuedMessages.Select(message => message.Id));
             Assert.Equal(supportsSteering, page.CanSteer);
             Assert.False(steerStarted.Task.IsCompleted);
 
-            var attempt = host.Client.PostAsJsonAsync(
+            var attempt = host.AuthenticatedClient.PostAsJsonAsync(
                 messages, new { messageId = first.MessageId, mode = "steer", turnId = initial.TurnId });
             if (supportsSteering)
                 await steerStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -593,7 +593,7 @@ public sealed class DurableSessionInputTests
             var beforeProvider = await ReadPageAsync();
             Assert.DoesNotContain(beforeProvider.QueuedMessages, message => message.Id == second.MessageId);
             Assert.Contains(second.MessageId, beforeProvider.QueueHandoffIds);
-            using var tooLate = await host.Client.DeleteAsync($"{messages}/{second.MessageId}");
+            using var tooLate = await host.AuthenticatedClient.DeleteAsync($"{messages}/{second.MessageId}");
             Assert.Equal(HttpStatusCode.Conflict, tooLate.StatusCode);
             Assert.Equal("sending", Assert.Single(beforeProvider.Items, item => item.Kind == "user" &&
                 item.Payload.TryGetProperty("inputId", out var id) && id.GetString() == second.MessageId).MessageStatus);
@@ -614,7 +614,7 @@ public sealed class DurableSessionInputTests
             if (supportsSteering)
             {
                 Assert.Equal("unconfirmed", Assert.Single(final.QueuedMessages).State);
-                using var removed = await host.Client.DeleteAsync($"{messages}/{first.MessageId}");
+                using var removed = await host.AuthenticatedClient.DeleteAsync($"{messages}/{first.MessageId}");
                 Assert.Equal(HttpStatusCode.NoContent, removed.StatusCode);
                 Assert.Empty((await ReadPageAsync()).QueuedMessages);
             }

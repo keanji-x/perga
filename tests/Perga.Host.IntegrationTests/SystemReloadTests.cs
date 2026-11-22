@@ -32,7 +32,7 @@ public sealed class SystemReloadTests
         Assert.Equal("no-cache", oldHtml.Headers.CacheControl!.ToString());
         Assert.Contains("old", await oldHtml.Content.ReadAsStringAsync());
         installation.Activate("new");
-        using var response = await host.Client.PostAsJsonAsync("/api/v1/system/reload", new { releaseId = "new", webBuildId = "web-new" });
+        using var response = await host.ManagementClient.PostAsJsonAsync("/api/v1/system/reload", new { releaseId = "new", webBuildId = "web-new" });
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var after = await Info(host);
         Assert.Equal("new", after.ReleaseId);
@@ -93,7 +93,7 @@ public sealed class SystemReloadTests
                 break;
         }
         installation.Activate("new");
-        using var response = await host.Client.PostAsJsonAsync("/api/v1/system/reload", new { releaseId = failure == "identity" ? "wrong" : "new", webBuildId = "web-new" });
+        using var response = await host.ManagementClient.PostAsJsonAsync("/api/v1/system/reload", new { releaseId = failure == "identity" ? "wrong" : "new", webBuildId = "web-new" });
         Assert.False(response.IsSuccessStatusCode);
         Assert.Equal("old", (await Info(host)).ReleaseId);
         Assert.Contains("old", await host.Client.GetStringAsync("/"));
@@ -138,13 +138,13 @@ public sealed class SystemReloadTests
             configureHostOptions: options => options.InstallationRoot = installation.Root);
         Assert.Equal("old", (await Info(host)).ReleaseId);
         installation.Activate("new");
-        using var response = await host.Client.PostAsJsonAsync("/api/v1/system/reload", new { releaseId = "new", webBuildId = "web-new" });
+        using var response = await host.ManagementClient.PostAsJsonAsync("/api/v1/system/reload", new { releaseId = "new", webBuildId = "web-new" });
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Contains("updated bytes", await host.Client.GetStringAsync("/"));
     }
 
     private static async Task<SystemInfoDto> Info(PergaHostTestCluster host) =>
-        (await host.Client.GetFromJsonAsync<SystemInfoDto>("/api/v1/system/info", PergaJsonDefaults.ApiOptions))!;
+        (await host.ManagementClient.GetFromJsonAsync<SystemInfoDto>("/api/v1/system/info", PergaJsonDefaults.ApiOptions))!;
 
     private sealed class Installation : IDisposable
     {

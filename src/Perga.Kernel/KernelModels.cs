@@ -14,7 +14,7 @@ public sealed record BootstrapDto(
     IReadOnlyList<AreaDto> Areas,
     string DatabaseId = "",
     string DbInstanceId = "",
-    bool AuthRequired = false,
+    bool AuthRequired = true,
     IReadOnlyList<ExecutionTargetDto>? ExecutionTargets = null);
 
 public sealed record CreateAreaRequest(

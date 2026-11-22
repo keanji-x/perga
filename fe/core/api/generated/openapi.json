@@ -9,6 +9,277 @@
     "version": "0.1.0"
   },
   "paths": {
+    "/healthz": {
+      "get": {
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Host is available",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "status",
+                    "service"
+                  ],
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "const": "ok"
+                    },
+                    "service": {
+                      "type": "string",
+                      "const": "perga"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/login": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "operationId": "auth_login",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AuthLoginRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PergaSessionIdentity"
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              },
+              "Vary": {
+                "schema": {
+                  "type": "string",
+                  "const": "Cookie"
+                }
+              },
+              "Set-Cookie": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Session cookie for this transport. HTTPS uses __Host-perga_session."
+              },
+              "X-Perga-Session-Id": {
+                "schema": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid JSON or missing credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PergaApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid username or password",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PergaApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner unconfigured, insecure transport, or disallowed browser origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PergaApiErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request exceeds 4096 bytes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PergaApiErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Expected application/json",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PergaApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Login throttled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PergaApiErrorResponse"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/session": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "operationId": "auth_session",
+        "responses": {
+          "200": {
+            "description": "Verified session identity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PergaSessionIdentity"
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              },
+              "Vary": {
+                "schema": {
+                  "type": "string",
+                  "const": "Cookie"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PergaApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Insecure transport or disallowed browser origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PergaApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/logout": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "operationId": "auth_logout",
+        "security": [
+          {
+            "pergaSessionCookie": []
+          },
+          {}
+        ],
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Perga-Session-Id",
+            "required": false,
+            "description": "If supplied, an active session must match this ID for revocation and cookie removal.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Logout processed. A stale session ID preserves the current cookie.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              },
+              "Vary": {
+                "schema": {
+                  "type": "string",
+                  "const": "Cookie"
+                }
+              },
+              "Set-Cookie": {
+                "description": "Expires the session cookie when cleared.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Insecure transport or disallowed browser origin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PergaApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/today/calendar": {
       "get": {
         "tags": [
@@ -333,13 +604,6 @@
         "parameters": [
           {
             "name": "card_id",
-            "in": "query",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "scope",
             "in": "query",
             "schema": {
               "type": "string"
@@ -1817,8 +2081,26 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Missing or invalid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PergaApiErrorResponse"
+                }
+              }
+            }
           }
-        }
+        },
+        "security": [
+          {
+            "pergaSessionCookie": []
+          },
+          {
+            "systemManagementBearer": []
+          }
+        ]
       }
     },
     "/api/v1/system/drain": {
@@ -1837,6 +2119,16 @@
                 }
               }
             }
+          },
+          "403": {
+            "description": "System management credentials required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PergaApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "requestBody": {
@@ -1848,7 +2140,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "systemManagementBearer": []
+          }
+        ]
       }
     },
     "/api/v1/system/reload": {
@@ -1867,6 +2164,16 @@
                 }
               }
             }
+          },
+          "403": {
+            "description": "System management credentials required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PergaApiErrorResponse"
+                }
+              }
+            }
           }
         },
         "requestBody": {
@@ -1878,7 +2185,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "systemManagementBearer": []
+          }
+        ]
       }
     },
     "/api/v1/tracks/{trackId}/template/inputs": {
@@ -2259,10 +2571,164 @@
           }
         }
       }
+    },
+    "/api/v1/system/auth-status": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "operationId": "system_auth_status",
+        "security": [
+          {
+            "systemManagementBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Owner and session status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemAuthStatusDto"
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "System management credentials required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PergaApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "PergaSessionIdentity": {
+        "type": "object",
+        "required": [
+          "sessionId",
+          "userId",
+          "username",
+          "displayName",
+          "role",
+          "expiresAtMs"
+        ],
+        "properties": {
+          "sessionId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "userId": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "expiresAtMs": {
+            "type": "integer"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PergaApiErrorResponse": {
+        "type": "object",
+        "required": [
+          "code",
+          "error",
+          "nextStep"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          },
+          "nextStep": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "SystemAuthStatusDto": {
+        "type": "object",
+        "required": [
+          "schemaVersion",
+          "configured",
+          "username",
+          "displayName",
+          "disabled",
+          "activeSessions"
+        ],
+        "properties": {
+          "schemaVersion": {
+            "type": "integer"
+          },
+          "configured": {
+            "type": "boolean"
+          },
+          "username": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "displayName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "disabled": {
+            "type": "boolean"
+          },
+          "activeSessions": {
+            "type": "integer"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AuthLoginRequest": {
+        "type": "object",
+        "required": [
+          "username",
+          "password"
+        ],
+        "properties": {
+          "username": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string",
+            "writeOnly": true
+          }
+        },
+        "additionalProperties": false
+      },
       "TodayCalendar": {
         "type": "object",
         "required": [
@@ -6657,16 +7123,21 @@
       }
     },
     "securitySchemes": {
-      "session": {
+      "pergaSessionCookie": {
         "type": "apiKey",
         "in": "cookie",
-        "name": "calm-session"
+        "name": "perga_session",
+        "description": "On HTTPS the cookie is named __Host-perga_session."
+      },
+      "systemManagementBearer": {
+        "type": "http",
+        "scheme": "bearer"
       }
     }
   },
   "security": [
     {
-      "session": []
+      "pergaSessionCookie": []
     }
   ],
   "tags": [

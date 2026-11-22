@@ -20,9 +20,9 @@ public sealed class ReadReceiptIntegrationTests
     public async Task EmptyReceiptTargetReturnsBadRequest(string action)
     {
         await using var cluster = new PergaHostTestCluster();
-        var response = await cluster.Client.PostAsJsonAsync($"/api/v1/read-receipts/track//{action}", new { });
+        var response = await cluster.AuthenticatedClient.PostAsJsonAsync($"/api/v1/read-receipts/track//{action}", new { });
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-        var unknown = await cluster.Client.PostAsJsonAsync($"/api/v1/read-receipts/track/a/b/{action}", new { });
+        var unknown = await cluster.AuthenticatedClient.PostAsJsonAsync($"/api/v1/read-receipts/track/a/b/{action}", new { });
         Assert.Equal(HttpStatusCode.NotFound, unknown.StatusCode);
     }
 
@@ -39,13 +39,13 @@ public sealed class ReadReceiptIntegrationTests
         using var command = conn.CreateCommand();
         command.CommandText = "CREATE TRIGGER reject_receipt BEFORE INSERT ON read_receipts BEGIN SELECT RAISE(ABORT, 'test failure'); END;";
         await command.ExecuteNonQueryAsync();
-        var failed = await cluster.Client.PostAsJsonAsync("/api/v1/read-receipts/track/t/read", new { readThroughMs = 100 });
+        var failed = await cluster.AuthenticatedClient.PostAsJsonAsync("/api/v1/read-receipts/track/t/read", new { readThroughMs = 100 });
         Assert.Equal(HttpStatusCode.InternalServerError, failed.StatusCode);
         Assert.False(events.Reader.TryRead(out _));
         Assert.Empty((await store.GetReadReceiptsAsync()).Receipts);
         command.CommandText = "DROP TRIGGER reject_receipt;";
         await command.ExecuteNonQueryAsync();
-        Assert.Equal(HttpStatusCode.OK, (await cluster.Client.PostAsync("/api/v1/read-receipts/track/t/unread", null)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await cluster.AuthenticatedClient.PostAsync("/api/v1/read-receipts/track/t/unread", null)).StatusCode);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var evt = await events.Reader.ReadAsync(timeout.Token);
         Assert.Equal("t", evt.TrackId);
@@ -63,7 +63,7 @@ public sealed class ReadReceiptIntegrationTests
             long baseline;
             await using (var cluster = new PergaHostTestCluster(explicitDataDir: dir))
             {
-                var client = cluster.Client;
+                var client = cluster.AuthenticatedClient;
                 baseline = (await client.GetFromJsonAsync<ReadReceiptsResponseDto>("/api/v1/read-receipts", PergaJsonDefaults.ApiOptions))!.BaselineMs;
                 var kernel = cluster.Services.GetRequiredService<IPergaKernel>();
                 using var events = kernel.EventBus.Subscribe();
@@ -96,7 +96,7 @@ public sealed class ReadReceiptIntegrationTests
                 Assert.Equal(HttpStatusCode.OK, (await client.PostAsJsonAsync("/api/v1/read-receipts/track/t/read", new { })).StatusCode);
             }
             await using var restarted = new PergaHostTestCluster(explicitDataDir: dir);
-            var after = await restarted.Client.GetFromJsonAsync<ReadReceiptsResponseDto>("/api/v1/read-receipts", PergaJsonDefaults.ApiOptions);
+            var after = await restarted.AuthenticatedClient.GetFromJsonAsync<ReadReceiptsResponseDto>("/api/v1/read-receipts", PergaJsonDefaults.ApiOptions);
             Assert.Equal(baseline, after!.BaselineMs);
             Assert.Equal(100, Assert.Single(after.Receipts, r => r.TargetId == "session-a").ReadThroughMs);
         }

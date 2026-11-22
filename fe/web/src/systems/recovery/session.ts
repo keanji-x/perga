@@ -10,7 +10,7 @@ export type RecoverySessionPorts = Readonly<{
   access: RecoveryAccess; storage: RecoveryStorage; origin: string; compatibleVersion: number;
   identity(signal: AbortSignal): Promise<SessionIdentity>;
   version(signal: AbortSignal): Promise<RecoveryVersion>;
-  logout(signal: AbortSignal): Promise<unknown>;
+  logout(signal: AbortSignal, sessionId: string): Promise<unknown>;
   clear(): void; online(): boolean; visible(): boolean;
   adoptScope(scope: string): void;
 }>;
@@ -233,7 +233,8 @@ export class RecoverySession {
     // No deferred logout queue: make at most one bounded attempt while online.
     if (identity !== null && this.ports.online()) {
       const controller = new AbortController();
-      try { await this.deadline(this.ports.logout, controller); } catch { /* local denial remains authoritative */ }
+      try { await this.deadline(signal => this.ports.logout(signal, identity.sessionId), controller); }
+      catch { /* local denial remains authoritative */ }
     }
   }
   takePresentation(): RecoveryContext | null { const value = this.presentation; this.presentation = null; return value; }

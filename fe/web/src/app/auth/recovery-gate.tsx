@@ -1,6 +1,6 @@
 import { QueryClientProvider,type QueryClient } from '@tanstack/react-query';
 import { useEffect,type ReactNode } from 'react';
-import { whoamiOperation } from '../../../../core/api/auth.ts';
+import { logoutOperation, whoamiOperation } from '../../../../core/api/auth.ts';
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { RecoveryAccess } from '../../../../core/domain/recovery/access.ts';
@@ -26,7 +26,8 @@ export function RecoveryGate({ children, transport, unauthorized, client, runtim
     access: new RecoveryAccess(), storage: runtime.storage, origin: window.location.origin, compatibleVersion: WEB_COMPAT_VERSION,
     identity: (signal) => runOperation(transport, { ...whoamiOperation(), signal }, undefined),
     adoptScope: () => undefined,
-    version: () => runtime.fetchVersion(), logout: () => Promise.resolve(),
+    version: () => runtime.fetchVersion(),
+    logout: (signal, sessionId) => runOperation(transport, { ...logoutOperation(sessionId), signal }, undefined),
     clear: () => clearSessionArtifacts(client, cursorStore, runtime), online: () => navigator.onLine, visible: () => !document.hidden,
   }));
   const state = useRecoveryState(session.access);

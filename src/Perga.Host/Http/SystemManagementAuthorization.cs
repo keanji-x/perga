@@ -1,4 +1,3 @@
-using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using Perga.Host.Configuration;
@@ -46,21 +45,30 @@ public sealed class SystemManagementAuthorization
             _configuredDigest = Convert.FromHexString(verifier);
     }
 
+    internal bool VerifyDirectLoopbackSystemRequest(HttpContext context)
+    {
+        var request = context.Request;
+        return request.Path.StartsWithSegments("/api/v1/system", out var subpath) && subpath.HasValue &&
+            context.Features.Get<RawTransport>() is { } raw && raw.IsDirectLoopback(context) &&
+            RawTransport.IsLoopbackHost(request.Host.Host) && !request.Headers.ContainsKey("Origin") &&
+            !request.Headers.Keys.Any(name => name.StartsWith("Sec-Fetch-", StringComparison.OrdinalIgnoreCase)) &&
+            Verify(context);
+    }
+
     public bool Verify(HttpContext context)
     {
         if (context.Request.Headers.ContainsKey("Origin") || context.Request.Headers.ContainsKey("Sec-Fetch-Site"))
         {
-            if (!Uri.TryCreate(context.Request.Headers.Origin.ToString(), UriKind.Absolute, out var origin) ||
-                origin.GetLeftPart(UriPartial.Authority) != context.Request.Scheme + "://" + context.Request.Host ||
-                context.Request.Headers["Sec-Fetch-Site"] == "cross-site") return false;
+            if (!RequestOriginGuard.TryOrigin(context.Request.Headers.Origin.ToString(), out var origin) ||
+                !RequestOriginGuard.TryOrigin($"{context.Request.Scheme}://{context.Request.Host}", out var ownOrigin) ||
+                origin != ownOrigin || context.Request.Headers["Sec-Fetch-Site"] == "cross-site") return false;
         }
-        var local = context.Connection.RemoteIpAddress is { } remote && IPAddress.IsLoopback(remote);
-        // TestServer has no socket peer. The Host name must also be loopback, preventing DNS rebinding.
-        local |= context.Connection.RemoteIpAddress is null;
-        var localHost = context.Request.Host.Host;
-        local &= localHost == "localhost" || IPAddress.TryParse(localHost, out var address) && IPAddress.IsLoopback(address);
-        if ((!local || context.Request.Headers.Any(h => h.Key.Equals("Forwarded", StringComparison.OrdinalIgnoreCase) ||
-                h.Key.StartsWith("X-Forwarded-", StringComparison.OrdinalIgnoreCase))) && !context.Request.IsHttps) return false;
+
+        var raw = context.Features.Get<RawTransport>();
+        var local = RawTransport.IsLoopback(raw?.RemoteIp ?? context.Connection.RemoteIpAddress) &&
+            RawTransport.IsLoopbackHost(context.Request.Host.Host);
+        if (!context.Request.IsHttps && (!local || raw?.HasForwardedHeaders == true))
+            return false;
         var auth = context.Request.Headers.Authorization.ToString();
         if (!auth.StartsWith("Bearer ", StringComparison.Ordinal))
         {

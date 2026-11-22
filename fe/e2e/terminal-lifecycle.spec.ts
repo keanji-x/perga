@@ -15,6 +15,8 @@ test('refreshing an exited terminal shows its final state while secondary reads 
     const path = new URL(route.request().url()).pathname;
     let body: unknown;
     switch (path) {
+      case '/api/v1/auth/session': body = { sessionId: 'terminal-fixture', userId: 'owner',
+        username: 'owner', displayName: 'Owner', role: 'owner', expiresAtMs: 2000000000000 }; break;
       case '/api/v1/bootstrap': body = fixtureBootstrap(); break;
       case '/api/v1/areas': body = [area]; break;
       case '/api/v1/areas/area-1/tracks': body = [track]; break;

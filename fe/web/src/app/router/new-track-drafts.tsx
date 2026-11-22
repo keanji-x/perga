@@ -8,7 +8,7 @@ import type { NewTrackFormState } from '../../features/area/new-track/public.tsx
 import type { PlannerRole } from '../../features/chat/thread/model-pill.tsx';
 import { useState } from '../../ui/state/public.ts';
 import { mintIdempotencyKey } from '../providers/idempotency-key.ts';
-import { createStorageKey } from '../../../../core/keys/storage.ts';
+import { TRACK_CREATE_DRAFTS_KEY } from '../../../../core/keys/storage.ts';
 import { useCurrentUser } from '../auth/current-user.tsx';
 import { TRACK_CREATE_TEXT } from '../../../../core/domain/track.ts';
 
@@ -43,7 +43,7 @@ export type NewTrackSession = Readonly<{
 }>;
 
 function createDraftStore(submittedStorage?: () => Storage, userId?: string) {
-  const keyOf = (areaId: string) => createStorageKey('track-create-v1', encodeURIComponent(userId ?? ''), encodeURIComponent(areaId));
+  const keyOf = (areaId: string) => `${TRACK_CREATE_DRAFTS_KEY}:${encodeURIComponent(userId ?? '')}:${encodeURIComponent(areaId)}`;
   const readSubmittedDraft = (areaId: string): SubmittedTrackDraft | null => {
     if (submittedStorage === undefined || !userId) return null;
     try {

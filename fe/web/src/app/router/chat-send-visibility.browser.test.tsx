@@ -34,7 +34,7 @@ it.each([
   let finish: (response: ApiTransportResponse) => void = () => {};
   const held = new Promise<ApiTransportResponse>((resolve) => { finish = resolve; });
   let rows = history;
-  const { client, requests } = renderSessionFixture({ initial, identity: { userId: 'local-owner', displayName: 'Visibility User', role: 'owner', sessionId: 'visibility-session' }, reply: (request) => {
+  const { client, requests } = renderSessionFixture({ initial, identity: { userId: 'local-owner', displayName: 'Visibility User', username: 'owner', expiresAtMs: 2000000000000, role: 'owner', sessionId: 'visibility-session' }, reply: (request) => {
     const url = new URL(request.path, 'http://fixture');
     if (url.pathname.endsWith('/items') && !url.searchParams.has('view')) return { status: 200, statusText: 'OK', body: conversationPage(rows) };
     if (request.path.endsWith('/messages')) return held;
@@ -91,7 +91,7 @@ it('keeps the reading place when an existing send is retried under its same key'
   const held = new Promise<ApiTransportResponse>((resolve) => { finish = resolve; });
   let attempts = 0;
   const rejected: ApiTransportResponse = { status: 429, statusText: 'Too Many Requests', body: { code: 'rate_limited', error: 'Wait before retrying.' } };
-  const { requests } = renderSessionFixture({ initial: '/track/daily', identity: { userId: 'local-owner', displayName: 'Visibility User', role: 'owner', sessionId: 'visibility-session' }, reply: (request) => {
+  const { requests } = renderSessionFixture({ initial: '/track/daily', identity: { userId: 'local-owner', displayName: 'Visibility User', username: 'owner', expiresAtMs: 2000000000000, role: 'owner', sessionId: 'visibility-session' }, reply: (request) => {
     const url = new URL(request.path, 'http://fixture');
     if (url.pathname.endsWith('/items') && !url.searchParams.has('view')) return { status: 200, statusText: 'OK', body: conversationPage(history) };
     if (request.path.endsWith('/messages')) return ++attempts === 1 ? rejected : held;

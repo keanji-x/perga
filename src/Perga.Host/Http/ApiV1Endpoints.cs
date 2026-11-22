@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.AspNetCore.StaticFiles;
 using Perga.Contracts;
+using Perga.Host.Auth;
 using Perga.Host.Serialization;
 using Perga.Host.WebSockets;
 using Perga.Kernel;
@@ -25,7 +26,8 @@ public static class ApiV1Endpoints
 
     public static IEndpointRouteBuilder MapPergaApiV1(this IEndpointRouteBuilder endpoints)
     {
-        var v1 = endpoints.MapGroup("/api/v1");
+        var v1 = endpoints.MapGroup("/api/v1").RequireAuthorization(PergaAuthPolicies.UserSession)
+            .WithMetadata(new RequestOriginGuard.BrowserWriteApi());
 
         v1.MapGet("/read-receipts", async (IPergaKernel kernel, CancellationToken ct) =>
             Results.Json(await kernel.GetReadReceiptsAsync(ct).ConfigureAwait(false), PergaJsonDefaults.ApiOptions));
@@ -44,9 +46,9 @@ public static class ApiV1Endpoints
         }).ExcludeFromDescription();
 
         // ------------------- System -------------------
-        v1.MapGet("/bootstrap", async (string? scope, bool? refresh, string? card_id, IPergaKernel kernel, CancellationToken ct) =>
+        v1.MapGet("/bootstrap", async (bool? refresh, string? card_id, IPergaKernel kernel, CancellationToken ct) =>
         {
-            var dto = await kernel.GetBootstrapAsync(scope, refresh ?? false, ct, card_id).ConfigureAwait(false);
+            var dto = await kernel.GetBootstrapAsync(refresh ?? false, ct, card_id).ConfigureAwait(false);
             return Results.Json(dto, PergaJsonDefaults.ApiOptions);
         });
 
@@ -245,7 +247,7 @@ public static class ApiV1Endpoints
             if (body.ExpectedFlowRev is < 0)
                 throw KernelException.InvalidArgument("expectedFlowRev must be a non-negative integer.");
             var result = await kernel.CommitTrackFlowAsync(trackId, body.DryRun ?? false, body.ExpectedFlowRev,
-                new InteropPrincipal.Human(), ct, body.Content).ConfigureAwait(false);
+                AuthenticatedSession.Human(ctx), ct, body.Content).ConfigureAwait(false);
             return Results.Json(result, PergaJsonDefaults.ApiOptions);
         }).Produces<FlowCommitResultDto>();
 
@@ -282,33 +284,33 @@ public static class ApiV1Endpoints
 
         // ------------------- Unified sessions -------------------
         v1.MapGet("/tracks/{trackId}/sessions", async (string trackId, bool? includeArchived, string? parentSessionId,
-            IPergaKernel kernel, CancellationToken ct) =>
+            HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
             Results.Json(await kernel.ListSessionsAsync(trackId, new(includeArchived ?? false, parentSessionId),
-                new InteropPrincipal.Human(), ct).ConfigureAwait(false), PergaJsonDefaults.ApiOptions));
+                AuthenticatedSession.Human(ctx), ct).ConfigureAwait(false), PergaJsonDefaults.ApiOptions));
 
         v1.MapPost("/tracks/{trackId}/sessions", async (string trackId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
         {
             var key = RequiredMessageKey(ctx);
             var request = await ReadOptionalJsonBodyAsync(ctx, () => new CreateSessionRequest(), ct, SessionJsonOptions).ConfigureAwait(false);
-            var (receipt, replay) = await kernel.CreateSessionAsync(trackId, request, key, new InteropPrincipal.Human(), ct).ConfigureAwait(false);
+            var (receipt, replay) = await kernel.CreateSessionAsync(trackId, request, key, AuthenticatedSession.Human(ctx), ct).ConfigureAwait(false);
             return Results.Json(receipt, PergaJsonDefaults.ApiOptions,
                 statusCode: replay ? StatusCodes.Status200OK : StatusCodes.Status201Created);
         });
 
         v1.MapGet("/sessions/{sessionId}/items", async (string sessionId, long? afterId, long? beforeId, int? limit,
-            bool? latest, string? activityTurnId, long? afterSequence, int? waitMs, IPergaKernel kernel, CancellationToken ct) =>
+            bool? latest, string? activityTurnId, long? afterSequence, int? waitMs, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
         {
             if (limit is < 1 or > 100 || waitMs is < 0 or > 10000 || afterId is < 0 || beforeId is < 0 || afterSequence is < 0)
                 throw KernelException.InvalidArgument("Invalid session read range.");
             return Results.Json(await kernel.GetSessionItemsAsync(sessionId,
                 new(afterId ?? 0, beforeId, limit ?? 20, latest ?? false, activityTurnId, afterSequence, waitMs ?? 0),
-                new InteropPrincipal.Human(), ct).ConfigureAwait(false), PergaJsonDefaults.ApiOptions);
+                AuthenticatedSession.Human(ctx), ct).ConfigureAwait(false), PergaJsonDefaults.ApiOptions);
         });
 
         v1.MapPatch("/sessions/{sessionId}", async (string sessionId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
         {
             var request = await ReadRequiredJsonBodyAsync<UpdateSessionRequest>(ctx, ct, SessionJsonOptions).ConfigureAwait(false);
-            return Results.Json(await kernel.UpdateSessionAsync(sessionId, request, new InteropPrincipal.Human(), ct).ConfigureAwait(false),
+            return Results.Json(await kernel.UpdateSessionAsync(sessionId, request, AuthenticatedSession.Human(ctx), ct).ConfigureAwait(false),
                 PergaJsonDefaults.ApiOptions);
         });
 
@@ -316,21 +318,21 @@ public static class ApiV1Endpoints
         {
             var request = await ReadRequiredJsonBodyAsync<SendSessionMessageRequest>(ctx, ct, SessionJsonOptions).ConfigureAwait(false);
             request = request with { RequestKey = request.Content is not null ? RequiredMessageKey(ctx) : null };
-            return Results.Json(await kernel.SendSessionMessageAsync(sessionId, request, new InteropPrincipal.Human(), ct).ConfigureAwait(false),
+            return Results.Json(await kernel.SendSessionMessageAsync(sessionId, request, AuthenticatedSession.Human(ctx), ct).ConfigureAwait(false),
                 PergaJsonDefaults.ApiOptions);
         });
 
         v1.MapDelete("/sessions/{sessionId}/messages/{messageId}", async (string sessionId, string messageId,
-            IPergaKernel kernel, CancellationToken ct) =>
+            HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
         {
-            await kernel.WithdrawSessionMessageAsync(sessionId, messageId, new InteropPrincipal.Human(), ct).ConfigureAwait(false);
+            await kernel.WithdrawSessionMessageAsync(sessionId, messageId, AuthenticatedSession.Human(ctx), ct).ConfigureAwait(false);
             return Results.NoContent();
         });
 
         v1.MapPost("/sessions/{sessionId}/control", async (string sessionId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
         {
             var request = await ReadRequiredJsonBodyAsync<SessionControlRequest>(ctx, ct, SessionJsonOptions).ConfigureAwait(false);
-            return Results.Json(await kernel.ControlSessionAsync(sessionId, request, new InteropPrincipal.Human(), ct).ConfigureAwait(false),
+            return Results.Json(await kernel.ControlSessionAsync(sessionId, request, AuthenticatedSession.Human(ctx), ct).ConfigureAwait(false),
                 PergaJsonDefaults.ApiOptions);
         });
 
@@ -338,7 +340,7 @@ public static class ApiV1Endpoints
             HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
         {
             var request = await ReadRequiredJsonBodyAsync<RespondInteractionRequest>(ctx, ct, SessionJsonOptions).ConfigureAwait(false);
-            return Results.Json(await kernel.RespondInteractionAsync(sessionId, interactionId, request, new InteropPrincipal.Human(), ct).ConfigureAwait(false),
+            return Results.Json(await kernel.RespondInteractionAsync(sessionId, interactionId, request, AuthenticatedSession.Human(ctx), ct).ConfigureAwait(false),
                 PergaJsonDefaults.ApiOptions);
         });
 

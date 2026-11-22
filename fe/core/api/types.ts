@@ -26,6 +26,8 @@ export type ApiTransportResponse = Readonly<{
   status: number;
   statusText: string;
   body: unknown;
+  /** Response header names are lowercase. */
+  headers?: Readonly<Record<string, string>>;
 }>;
 
 /** A ticket is captured before accepting an intent, never when draining a queue. */
@@ -60,6 +62,8 @@ export type HttpFailure = Readonly<{
    * is. Absent on every refusal of the request as a whole, the only answers the server sends without it.
    */
   field?: string;
+  nextStep?: string;
+  retryAfterSeconds?: number;
   body?: unknown;
 }>;
 
@@ -86,6 +90,8 @@ export type ApiOperation<T> = Readonly<{
   method: ApiMethod;
   path: string;
   responseSchema: z.ZodType<T>;
+  expectedStatuses?: readonly number[];
+  validateResponse?(value: T, response: ApiTransportResponse): boolean;
   body?: unknown;
   /** Request headers the operation itself needs, merged over the `content-type` the client adds for a body. */
   headers?: Readonly<Record<string, string>>;

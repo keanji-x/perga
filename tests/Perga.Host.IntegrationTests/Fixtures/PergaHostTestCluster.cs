@@ -373,11 +373,13 @@ public sealed class FakeGitHubForgeService : IGitHubForgeService
 public sealed class PergaHostTestCluster : IAsyncDisposable
 {
     private readonly bool _ownsTempDir;
+    private readonly Lazy<HttpClient> _authenticatedClient;
 
     public PergaHostTestCluster(
         string? explicitDataDir = null,
         Action<PergaHostOptions>? configureHostOptions = null,
-        Action<IServiceCollection>? configureExtraServices = null)
+        Action<IServiceCollection>? configureExtraServices = null,
+        Action<ScriptableAgentRuntime>? configureAgentRuntime = null)
     {
         if (string.IsNullOrWhiteSpace(explicitDataDir))
         {
@@ -393,6 +395,7 @@ public sealed class PergaHostTestCluster : IAsyncDisposable
 
         TimeProvider = new AdvanceableTimeProvider();
         AgentRuntime = new ScriptableAgentRuntime();
+        configureAgentRuntime?.Invoke(AgentRuntime);
         ForgeService = new FakeGitHubForgeService();
 
         Factory = new IsolatedPergaHostFactory(DataDir, configureHostOptions, services =>
@@ -411,10 +414,17 @@ public sealed class PergaHostTestCluster : IAsyncDisposable
 
         Client = Factory.CreateClient(new WebApplicationFactoryClientOptions
         {
-            AllowAutoRedirect = false
+            AllowAutoRedirect = false,
+            HandleCookies = false
+        });
+        _authenticatedClient = new(() => BrowserAuthentication.CreateAuthenticatedClientAsync(Factory).GetAwaiter().GetResult());
+        ManagementClient = Factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false,
+            HandleCookies = false
         });
         var management = Factory.Services.GetRequiredService<Perga.Host.Http.SystemManagementAuthorization>();
-        Client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", File.ReadAllText(management.TokenFilePath).Trim());
+        ManagementClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", File.ReadAllText(management.TokenFilePath).Trim());
     }
 
     public string DataDir { get; }
@@ -423,15 +433,18 @@ public sealed class PergaHostTestCluster : IAsyncDisposable
     public FakeGitHubForgeService ForgeService { get; }
     public WebApplicationFactory<Program> Factory { get; }
     public HttpClient Client { get; }
+    public HttpClient AuthenticatedClient => _authenticatedClient.Value;
+    public string SessionCookie => AuthenticatedClient.DefaultRequestHeaders.GetValues("Cookie").Single();
+    public HttpClient ManagementClient { get; }
     public IServiceProvider Services => Factory.Services;
 
     public async Task<(string TrackId, string SessionId)> CreateTrackAsync()
     {
-        using var areaResponse = await Client.PostAsJsonAsync("/api/v1/areas",
+        using var areaResponse = await AuthenticatedClient.PostAsJsonAsync("/api/v1/areas",
             new { name = "Test area", defaultCwd = DataDir });
         Assert.True(areaResponse.IsSuccessStatusCode, await areaResponse.Content.ReadAsStringAsync());
         var area = (await areaResponse.Content.ReadFromJsonAsync<AreaDto>(PergaJsonDefaults.ApiOptions))!;
-        using var trackResponse = await Client.PostAsJsonAsync("/api/v1/tracks",
+        using var trackResponse = await AuthenticatedClient.PostAsJsonAsync("/api/v1/tracks",
             new { areaId = area.Id, cwd = DataDir });
         Assert.True(trackResponse.IsSuccessStatusCode, await trackResponse.Content.ReadAsStringAsync());
         using var snapshot = JsonDocument.Parse(await trackResponse.Content.ReadAsStringAsync());
@@ -444,6 +457,11 @@ public sealed class PergaHostTestCluster : IAsyncDisposable
     public async Task<WebSocket> ConnectEventsWebSocketAsync(string query = "", CancellationToken ct = default)
     {
         var wsClient = Factory.Server.CreateWebSocketClient();
+        wsClient.ConfigureRequest = request =>
+        {
+            request.Headers["Origin"] = "http://localhost";
+            request.Headers.Cookie = SessionCookie;
+        };
         var uri = new Uri($"ws://localhost/api/v1/events{query}");
         return await wsClient.ConnectAsync(uri, ct);
     }
@@ -451,6 +469,11 @@ public sealed class PergaHostTestCluster : IAsyncDisposable
     public async Task<WebSocket> ConnectTerminalWebSocketAsync(string termId, CancellationToken ct = default)
     {
         var wsClient = Factory.Server.CreateWebSocketClient();
+        wsClient.ConfigureRequest = request =>
+        {
+            request.Headers["Origin"] = "http://localhost";
+            request.Headers.Cookie = SessionCookie;
+        };
         var uri = new Uri($"ws://localhost/api/v1/terminals/{Uri.EscapeDataString(termId)}/ws");
         return await wsClient.ConnectAsync(uri, ct);
     }
@@ -537,6 +560,9 @@ public sealed class PergaHostTestCluster : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         Client.Dispose();
+        ManagementClient.Dispose();
+        if (_authenticatedClient.IsValueCreated)
+            AuthenticatedClient.Dispose();
         await Factory.DisposeAsync();
 
         if (_ownsTempDir && Directory.Exists(DataDir))

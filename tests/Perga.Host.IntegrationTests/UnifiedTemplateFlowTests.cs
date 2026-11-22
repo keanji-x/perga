@@ -47,7 +47,7 @@ public sealed class UnifiedTemplateFlowTests
         await kernel.WaitForTrackIdleAsync(id);
         var first = Assert.Single(await kernel.ListTasksAsync(id));
         Assert.Equal(TaskRunStatus.Done, first.Status);
-        using (var response = await host.Client.DeleteAsync($"/api/v1/tracks/{id}/template"))
+        using (var response = await host.AuthenticatedClient.DeleteAsync($"/api/v1/tracks/{id}/template"))
             response.EnsureSuccessStatusCode();
         if (archiveBeforeReapply)
         {
@@ -252,7 +252,7 @@ public sealed class UnifiedTemplateFlowTests
         }
         finally
         {
-            using var response = await host.Client.DeleteAsync($"/api/v1/tracks/{id}/template");
+            using var response = await host.AuthenticatedClient.DeleteAsync($"/api/v1/tracks/{id}/template");
             response.EnsureSuccessStatusCode();
         }
         await canceled.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -318,7 +318,7 @@ public sealed class UnifiedTemplateFlowTests
                     JsonSerializer.SerializeToElement(new { source = Source }));
                 break;
             case "http":
-                using (var response = await host.Client.DeleteAsync($"/api/v1/tracks/{id}/template"))
+                using (var response = await host.AuthenticatedClient.DeleteAsync($"/api/v1/tracks/{id}/template"))
                     response.EnsureSuccessStatusCode();
                 break;
         }
@@ -363,7 +363,7 @@ public sealed class UnifiedTemplateFlowTests
 
         await KernelMcpDispatcher.ExecuteGuardedAsync(kernel, principal, KernelMcpToolNames.TrackSet,
             JsonSerializer.SerializeToElement(new { source, inputs = new { target = "second" } }));
-        var views = await host.Client.GetFromJsonAsync<JsonElement>($"/api/v1/tracks/{id}/views");
+        var views = await host.AuthenticatedClient.GetFromJsonAsync<JsonElement>($"/api/v1/tracks/{id}/views");
         Assert.Equal(initial.FlowRev, views.GetProperty("flowRev").GetInt64());
         var node = Assert.Single(views.GetProperty("flow").GetProperty("nodes").EnumerateArray());
         Assert.Equal("Pulse second", node.GetProperty("title").GetString());
@@ -374,7 +374,7 @@ public sealed class UnifiedTemplateFlowTests
         Assert.Equal(before.State, after.State);
         Assert.Equal("Check second", after.Prompt);
         var day = host.TimeProvider.GetUtcNow().ToString("yyyy-MM-dd");
-        var calendar = await host.Client.GetFromJsonAsync<JsonElement>($"/api/today/calendar?start={day}&end={day}");
+        var calendar = await host.AuthenticatedClient.GetFromJsonAsync<JsonElement>($"/api/today/calendar?start={day}&end={day}");
         var occurrences = calendar.GetProperty("schedules").EnumerateArray()
             .Where(item => item.GetProperty("id").GetString() == "flow:pulse").ToArray();
         Assert.NotEmpty(occurrences);
@@ -472,7 +472,7 @@ public sealed class UnifiedTemplateFlowTests
 
                 draftPath = fired.FilePath!;
                 await File.WriteAllTextAsync(draftPath, draft);
-                using var patch = await host.Client.PatchAsJsonAsync($"/api/v1/tracks/{id}/template/inputs", new { target = "second" });
+                using var patch = await host.AuthenticatedClient.PatchAsJsonAsync($"/api/v1/tracks/{id}/template/inputs", new { target = "second" });
                 patch.EnsureSuccessStatusCode();
                 var refreshed = await kernel.GetTrackFlowAsync(id);
                 Assert.Equal(revision, refreshed.FlowRev);
@@ -538,7 +538,7 @@ public sealed class UnifiedTemplateFlowTests
         var kernel = host.Services.GetRequiredService<IPergaKernel>();
         kernel.Templates.RegisterTemplate(Source);
         var area = await kernel.CreateAreaAsync(new("Inputs",DefaultCwd:host.DataDir));
-        using var badCreate = await host.Client.PostAsJsonAsync("/api/v1/tracks",new {areaId=area.Id,templateId="unified",templateInputs=new {target=42}});
+        using var badCreate = await host.AuthenticatedClient.PostAsJsonAsync("/api/v1/tracks",new {areaId=area.Id,templateId="unified",templateInputs=new {target=42}});
         Assert.Equal(HttpStatusCode.BadRequest,badCreate.StatusCode);
         var created = await kernel.CreateTrackAsync(new(area.Id));
         var id = created.Track.Id;
@@ -550,7 +550,7 @@ public sealed class UnifiedTemplateFlowTests
         var badMcpPatch = await Assert.ThrowsAsync<KernelException>(()=>KernelMcpDispatcher.ExecuteGuardedAsync(kernel,principal,KernelMcpToolNames.TemplateUpdateInputs,
             JsonSerializer.SerializeToElement(new {inputs=new {target=1}})));
         Assert.Equal(KernelErrorCode.InvalidArgument,badMcpPatch.Code);
-        using var badPatch = await host.Client.PatchAsJsonAsync($"/api/v1/tracks/{id}/template/inputs",new {target=1});
+        using var badPatch = await host.AuthenticatedClient.PatchAsJsonAsync($"/api/v1/tracks/{id}/template/inputs",new {target=1});
         Assert.Equal(HttpStatusCode.BadRequest,badPatch.StatusCode);
         Assert.Equal("Check first",Assert.Single((await kernel.GetTrackFlowAsync(id)).Projection.Nodes).Prompt);
     }
@@ -571,13 +571,13 @@ public sealed class UnifiedTemplateFlowTests
             TemplateInputs: JsonSerializer.SerializeToElement(new { optional = "clear", required = "keep", defaulted = "override" })));
         var id = created.Track.Id;
         var url = $"/api/v1/tracks/{id}/template/inputs";
-        using var cleared = await host.Client.PatchAsJsonAsync(url, new Dictionary<string, object?> { ["optional"] = null, ["defaulted"] = null });
+        using var cleared = await host.AuthenticatedClient.PatchAsJsonAsync(url, new Dictionary<string, object?> { ["optional"] = null, ["defaulted"] = null });
         cleared.EnsureSuccessStatusCode();
         var inputs = (await kernel.GetTrackAggregateAsync(id)).Track.TemplateInputs;
         Assert.False(inputs.TryGetProperty("optional", out _));
         Assert.False(inputs.TryGetProperty("defaulted", out _));
         Assert.Equal("keep", inputs.GetProperty("required").GetString());
-        using var rejected = await host.Client.PatchAsJsonAsync(url, new Dictionary<string, object?> { ["required"] = null });
+        using var rejected = await host.AuthenticatedClient.PatchAsJsonAsync(url, new Dictionary<string, object?> { ["required"] = null });
         Assert.Equal(HttpStatusCode.BadRequest, rejected.StatusCode);
         Assert.Equal(inputs.GetRawText(), (await kernel.GetTrackAggregateAsync(id)).Track.TemplateInputs.GetRawText());
     }

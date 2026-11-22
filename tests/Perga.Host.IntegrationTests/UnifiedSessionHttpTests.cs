@@ -70,7 +70,7 @@ public sealed class UnifiedSessionHttpTests
         await using var host = new PergaHostTestCluster();
         using var request = new HttpRequestMessage(new HttpMethod(method), "/api/v1/" + path)
         { Content = JsonContent.Create(new { }) };
-        using var response = await host.Client.SendAsync(request);
+        using var response = await host.AuthenticatedClient.SendAsync(request);
         Assert.True(response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.MethodNotAllowed,
             $"{method} {path}: {response.StatusCode}");
     }
@@ -81,22 +81,22 @@ public sealed class UnifiedSessionHttpTests
         await using var host = new PergaHostTestCluster();
         var (trackId, _) = await host.CreateTrackAsync();
         var path = $"/api/v1/tracks/{trackId}/sessions";
-        using var missing = await host.Client.PostAsJsonAsync(path, new { });
+        using var missing = await host.AuthenticatedClient.PostAsJsonAsync(path, new { });
         await Error(missing, HttpStatusCode.BadRequest, "invalid_argument");
-        using var created = await Post(host.Client, path, "create", new { title = "Assistant" });
+        using var created = await Post(host.AuthenticatedClient, path, "create", new { title = "Assistant" });
         Assert.Equal(HttpStatusCode.Created, created.StatusCode);
         var receipt = (await created.Content.ReadFromJsonAsync<SessionCreationReceipt>(PergaJsonDefaults.ApiOptions))!;
         Assert.Equal("create", receipt.RequestKey);
         Assert.Null(receipt.FirstInput);
-        using var replay = await Post(host.Client, path, "create", new { title = "Assistant" });
+        using var replay = await Post(host.AuthenticatedClient, path, "create", new { title = "Assistant" });
         Assert.Equal(HttpStatusCode.OK, replay.StatusCode);
         Assert.Equal(receipt.Session.Id, (await replay.Content.ReadFromJsonAsync<SessionCreationReceipt>(PergaJsonDefaults.ApiOptions))!.Session.Id);
-        using var conflict = await Post(host.Client, path, "create", new { title = "Changed" });
+        using var conflict = await Post(host.AuthenticatedClient, path, "create", new { title = "Changed" });
         await Error(conflict, HttpStatusCode.Conflict, "conflict");
         var sessionPath = $"/api/v1/sessions/{receipt.Session.Id}";
         async Task<AgentSessionDto> Update(object body)
         {
-            using var response = await host.Client.PatchAsJsonAsync(sessionPath, body);
+            using var response = await host.AuthenticatedClient.PatchAsJsonAsync(sessionPath, body);
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             return (await response.Content.ReadFromJsonAsync<AgentSessionDto>(PergaJsonDefaults.ApiOptions))!;
         }
@@ -109,26 +109,26 @@ public sealed class UnifiedSessionHttpTests
         Assert.Null(reset.ReasoningEffort);
         Assert.Equal("never", reset.PermissionMode);
         Assert.Equal(configured.ConfigVersion + 1, reset.ConfigVersion);
-        using var stale = await host.Client.PatchAsJsonAsync(sessionPath, new { expectedConfigVersion = configured.ConfigVersion, model = "stale" });
+        using var stale = await host.AuthenticatedClient.PatchAsJsonAsync(sessionPath, new { expectedConfigVersion = configured.ConfigVersion, model = "stale" });
         await Error(stale, HttpStatusCode.Conflict, "conflict");
-        using var noMessageKey = await host.Client.PostAsJsonAsync(sessionPath + "/messages", new { content = "Hello" });
+        using var noMessageKey = await host.AuthenticatedClient.PostAsJsonAsync(sessionPath + "/messages", new { content = "Hello" });
         await Error(noMessageKey, HttpStatusCode.BadRequest, "invalid_argument");
-        using var sent = await Post(host.Client, sessionPath + "/messages", "message", new { content = "Hello" });
+        using var sent = await Post(host.AuthenticatedClient, sessionPath + "/messages", "message", new { content = "Hello" });
         Assert.Equal(HttpStatusCode.OK, sent.StatusCode);
         var message = (await sent.Content.ReadFromJsonAsync<SessionMessageReceipt>(PergaJsonDefaults.ApiOptions))!;
         Assert.False(message.Replay);
         Assert.NotNull(message.TurnId);
         await host.Services.GetRequiredService<IPergaKernel>().WaitForTrackIdleAsync(trackId);
-        using var repeated = await Post(host.Client, sessionPath + "/messages", "message", new { content = "Hello" });
+        using var repeated = await Post(host.AuthenticatedClient, sessionPath + "/messages", "message", new { content = "Hello" });
         var repeatedMessage = (await repeated.Content.ReadFromJsonAsync<SessionMessageReceipt>(PergaJsonDefaults.ApiOptions))!;
         Assert.True(repeatedMessage.Replay);
         Assert.Equal(message.MessageId, repeatedMessage.MessageId);
         Assert.Equal("delivered", repeatedMessage.Delivery);
-        using var badControl = await host.Client.PostAsJsonAsync(sessionPath + "/control", new { action = "invented" });
+        using var badControl = await host.AuthenticatedClient.PostAsJsonAsync(sessionPath + "/control", new { action = "invented" });
         await Error(badControl, HttpStatusCode.BadRequest, "invalid_argument");
-        using var promote = await host.Client.PostAsJsonAsync(sessionPath + "/messages", new { messageId = "missing", mode = "steer", turnId = message.TurnId });
+        using var promote = await host.AuthenticatedClient.PostAsJsonAsync(sessionPath + "/messages", new { messageId = "missing", mode = "steer", turnId = message.TurnId });
         await Error(promote, HttpStatusCode.NotFound, "not_found");
-        using var badRead = await host.Client.GetAsync(sessionPath + "/items?waitMs=10001");
+        using var badRead = await host.AuthenticatedClient.GetAsync(sessionPath + "/items?waitMs=10001");
         await Error(badRead, HttpStatusCode.BadRequest, "invalid_argument");
     }
 
@@ -153,11 +153,11 @@ public sealed class UnifiedSessionHttpTests
         var path = $"/api/v1/sessions/{sessionId}";
         try
         {
-            using var sent = await Post(host.Client, path + "/messages", "activity", new { content = "Work" });
+            using var sent = await Post(host.AuthenticatedClient, path + "/messages", "activity", new { content = "Work" });
             sent.EnsureSuccessStatusCode();
             await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            var before = (await host.Client.GetFromJsonAsync<SessionItemsPageDto>(path + "/items", PergaJsonDefaults.ApiOptions))!;
-            var waiting = host.Client.GetFromJsonAsync<SessionItemsPageDto>(path + $"/items?activityTurnId={before.Activity!.TurnId}&afterSequence={before.Activity.Sequence}&waitMs=10000", PergaJsonDefaults.ApiOptions);
+            var before = (await host.AuthenticatedClient.GetFromJsonAsync<SessionItemsPageDto>(path + "/items", PergaJsonDefaults.ApiOptions))!;
+            var waiting = host.AuthenticatedClient.GetFromJsonAsync<SessionItemsPageDto>(path + $"/items?activityTurnId={before.Activity!.TurnId}&afterSequence={before.Activity.Sequence}&waitMs=10000", PergaJsonDefaults.ApiOptions);
             Assert.NotSame(waiting, await Task.WhenAny(waiting, Task.Delay(100)));
             release.TrySetResult();
             var after = (await waiting.WaitAsync(TimeSpan.FromSeconds(5)))!;
@@ -173,7 +173,7 @@ public sealed class UnifiedSessionHttpTests
             ask = (await kernel.GetTrackAggregateAsync(trackId, timeout.Token)).OpenAsks.FirstOrDefault();
             if (ask is null) await Task.Delay(10, timeout.Token);
         }
-        using var response = await host.Client.PostAsJsonAsync(path + $"/interactions/{ask.Id}/respond", new { answers = new[] { "yes" } });
+        using var response = await host.AuthenticatedClient.PostAsJsonAsync(path + $"/interactions/{ask.Id}/respond", new { answers = new[] { "yes" } });
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(new SessionInteractionResult(ask.Id, "ask"), await response.Content.ReadFromJsonAsync<SessionInteractionResult>(PergaJsonDefaults.ApiOptions));
         Assert.Equal("yes", (await asking.WaitAsync(TimeSpan.FromSeconds(5)))[0].GetString());

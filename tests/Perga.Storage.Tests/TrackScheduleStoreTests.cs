@@ -108,7 +108,7 @@ public sealed class TrackScheduleStoreTests
 
             await new SqliteMigrator().MigrateAsync(path);
             await new SqliteMigrator().MigrateAsync(path);
-            Assert.Equal(25L, await conn.ExecuteScalarAsync<long>("SELECT MAX(version) FROM schema_migrations;"));
+            Assert.Equal(SqliteMigrator.CurrentSchemaVersion, await conn.ExecuteScalarAsync<long>("SELECT MAX(version) FROM schema_migrations;"));
             Assert.Equal(17L, await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM pragma_table_info('track_schedules');"));
             Assert.Equal("Area", await conn.ExecuteScalarAsync<string>("SELECT name FROM areas WHERE id='area';"));
             Assert.Equal("area", await conn.ExecuteScalarAsync<string>("SELECT area_id FROM tracks WHERE id='track';"));

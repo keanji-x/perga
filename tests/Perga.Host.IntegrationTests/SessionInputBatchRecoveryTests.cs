@@ -60,14 +60,14 @@ public sealed class SessionInputBatchRecoveryTests
                 Assert.Single(await store.ListEventsSinceAsync(0, trackId), e => e.Kind == KernelEventKinds.TurnCompleted);
                 foreach (var id in new[] { "first", "second" })
                 {
-                    var page = (await reopened.Client.GetFromJsonAsync<SessionItemsPageDto>($"/api/v1/sessions/{sessionId}/items", PergaJsonDefaults.ApiOptions))!;
+                    var page = (await reopened.AuthenticatedClient.GetFromJsonAsync<SessionItemsPageDto>($"/api/v1/sessions/{sessionId}/items", PergaJsonDefaults.ApiOptions))!;
                     var item = Assert.Single(page.Items, i => i.Kind == "user" && i.Payload.GetProperty("inputId").GetString() == id);
                     Assert.Equal(turnId, item.TurnId);
                     Assert.Equal(interrupted ? "unconfirmed" : "completed", item.MessageStatus);
                 }
                 if (interrupted)
                 {
-                    using var unlock = await reopened.Client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/control", new { action = "reset_context" });
+                    using var unlock = await reopened.AuthenticatedClient.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/control", new { action = "reset_context" });
                     Assert.Equal(HttpStatusCode.OK, unlock.StatusCode);
                     foreach (var id in new[] { "first", "second" })
                         Assert.NotNull((await store.SessionInputs.FindByIdAsync(sessionId, id, default))!.Receipt.ResolvedAtMs);
@@ -75,7 +75,7 @@ public sealed class SessionInputBatchRecoveryTests
                     using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/sessions/{sessionId}/messages")
                     { Content = JsonContent.Create(new { content = "After unlock" }) };
                     request.Headers.Add("Idempotency-Key", "after-unlock");
-                    using var response = await reopened.Client.SendAsync(request);
+                    using var response = await reopened.AuthenticatedClient.SendAsync(request);
                     Assert.Equal(HttpStatusCode.OK, response.StatusCode);
                     await kernel.WaitForTrackIdleAsync(trackId);
                     Assert.Equal("After unlock", Assert.Single(reopened.AgentRuntime.ExecutedTurns).Input.Prompt);

@@ -84,7 +84,7 @@ public sealed class SessionModelTests
                 await kernel.WaitForTrackIdleAsync(trackId);
                 host.AgentRuntime.ConfigureHandler = _ => new SessionConfigurationOutcome.Rejected(
                     ConfigurationFailureCode.InvalidAcknowledgement, "effort rejected", new(null, null, false));
-                using var response = await host.Client.PatchAsJsonAsync($"/api/v1/sessions/{sessionId}", new { model = "  ", reasoningEffort = " high " });
+                using var response = await host.AuthenticatedClient.PatchAsJsonAsync($"/api/v1/sessions/{sessionId}", new { model = "  ", reasoningEffort = " high " });
                 response.EnsureSuccessStatusCode();
                 await kernel.SendSessionMessageAsync(sessionId, new(Content: "rebind", RequestKey: "rejected-rebind"), new InteropPrincipal.Human(), default);
                 await kernel.WaitForTrackIdleAsync(trackId);
@@ -115,7 +115,7 @@ public sealed class SessionModelTests
         host.AgentRuntime.ConfigureHandler = _ => unsupported
             ? new SessionConfigurationOutcome.Unsupported(ConfigurationDimension.Effort, "effort unavailable")
             : new SessionConfigurationOutcome.Rejected(ConfigurationFailureCode.InvalidAcknowledgement, "effort rejected", new(null, null, false));
-        using var response = await host.Client.PatchAsJsonAsync($"/api/v1/sessions/{sessionId}", new { model = (string?)null, reasoningEffort = "high" });
+        using var response = await host.AuthenticatedClient.PatchAsJsonAsync($"/api/v1/sessions/{sessionId}", new { model = (string?)null, reasoningEffort = "high" });
         response.EnsureSuccessStatusCode();
         Assert.Equal(opens, host.AgentRuntime.OpenedSessions.Count);
         Assert.Equal(prompts, host.AgentRuntime.ExecutedTurns.Count);
@@ -156,9 +156,9 @@ public sealed class SessionModelTests
                 await kernel.SendSessionMessageAsync(sessionId, new(Content: "hold turn", RequestKey: "effort-readback"), new InteropPrincipal.Human(), default);
                 await started.Task.WaitAsync(TimeSpan.FromSeconds(10));
             }
-            using var response = await host.Client.PatchAsJsonAsync($"/api/v1/sessions/{sessionId}", new { model, reasoningEffort = "high" });
+            using var response = await host.AuthenticatedClient.PatchAsJsonAsync($"/api/v1/sessions/{sessionId}", new { model, reasoningEffort = "high" });
             response.EnsureSuccessStatusCode();
-            var page = await host.Client.GetFromJsonAsync<SessionItemsPageDto>($"/api/v1/sessions/{sessionId}/items?view=run", PergaJsonDefaults.ApiOptions);
+            var page = await host.AuthenticatedClient.GetFromJsonAsync<SessionItemsPageDto>($"/api/v1/sessions/{sessionId}/items?view=run", PergaJsonDefaults.ApiOptions);
             Assert.Equal(model, page!.Session.Model);
             Assert.Equal("high", page.Session.ReasoningEffort);
             Assert.Equal(running, page.ActiveTurn is not null);
@@ -188,7 +188,7 @@ public sealed class SessionModelTests
                 Assert.Equal(250, sampled.ContextUsage?.UsedTokens);
                 Assert.NotNull(sampled.ContextUsage?.ObservedAtMs);
 
-                using var response = await host.Client.PatchAsJsonAsync($"/api/v1/sessions/{sessionId}", new { model = "next-model" });
+                using var response = await host.AuthenticatedClient.PatchAsJsonAsync($"/api/v1/sessions/{sessionId}", new { model = "next-model" });
                 response.EnsureSuccessStatusCode();
                 var switched = await response.Content.ReadFromJsonAsync<AgentSessionDto>(PergaJsonDefaults.ApiOptions);
                 Assert.Null(switched!.ContextUsage);
@@ -280,7 +280,7 @@ public sealed class SessionModelTests
 
         static async Task<JsonDocument> ReadUsagePageAsync(PergaHostTestCluster host, string sessionId)
         {
-            using var response = await host.Client.GetAsync($"/api/v1/sessions/{sessionId}/items");
+            using var response = await host.AuthenticatedClient.GetAsync($"/api/v1/sessions/{sessionId}/items");
             response.EnsureSuccessStatusCode();
             return JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         }
@@ -295,7 +295,7 @@ public sealed class SessionModelTests
         await using var host = new PergaHostTestCluster();
         var (_, sessionId) = await host.CreateTrackAsync();
         using var content = new StringContent(body, Encoding.UTF8, "application/json");
-        using var response = await host.Client.PatchAsync($"/api/v1/sessions/{sessionId}", content);
+        using var response = await host.AuthenticatedClient.PatchAsync($"/api/v1/sessions/{sessionId}", content);
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         Assert.Equal(code, json.RootElement.GetProperty("code").GetString());
@@ -361,9 +361,9 @@ public sealed class SessionModelTests
             await using (var host = new PergaHostTestCluster(directory.FullName))
             {
                 (trackId, sessionId) = await host.CreateTrackAsync();
-                using var modeResponse = await host.Client.PatchAsJsonAsync($"/api/v1/sessions/{sessionId}", new { permissionMode = "full" });
+                using var modeResponse = await host.AuthenticatedClient.PatchAsJsonAsync($"/api/v1/sessions/{sessionId}", new { permissionMode = "full" });
                 Assert.Equal(HttpStatusCode.OK, modeResponse.StatusCode);
-                using var response = await host.Client.PatchAsJsonAsync($"/api/v1/sessions/{sessionId}", new { model = "chosen-model", reasoningEffort = "high" });
+                using var response = await host.AuthenticatedClient.PatchAsJsonAsync($"/api/v1/sessions/{sessionId}", new { model = "chosen-model", reasoningEffort = "high" });
                 Assert.Equal(HttpStatusCode.OK, response.StatusCode);
                 using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
                 Assert.Equal(sessionId, json.RootElement.GetProperty("id").GetString());
@@ -375,7 +375,7 @@ public sealed class SessionModelTests
                 Assert.Equal("high", session.ReasoningEffort);
                 Assert.Equal("full", session.PermissionMode);
                 Assert.Null(session.ContextUsage);
-                using var missing = await host.Client.PutAsJsonAsync("/api/v1/sessions/missing", new { model = "chosen-model" });
+                using var missing = await host.AuthenticatedClient.PutAsJsonAsync("/api/v1/sessions/missing", new { model = "chosen-model" });
                 Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
             }
             await using var reopened = new PergaHostTestCluster(directory.FullName);
@@ -385,7 +385,7 @@ public sealed class SessionModelTests
             Assert.Equal("high", restored.ReasoningEffort);
             Assert.Equal("full", restored.PermissionMode);
             Assert.Null(restored.ContextUsage);
-            using var reset = await reopened.Client.PatchAsJsonAsync($"/api/v1/sessions/{sessionId}", new { model = (string?)null, reasoningEffort = (string?)null });
+            using var reset = await reopened.AuthenticatedClient.PatchAsJsonAsync($"/api/v1/sessions/{sessionId}", new { model = (string?)null, reasoningEffort = (string?)null });
             Assert.Equal(HttpStatusCode.OK, reset.StatusCode);
             var cleared = await reset.Content.ReadFromJsonAsync<AgentSessionDto>(PergaJsonDefaults.ApiOptions);
             Assert.Null(cleared!.Model);
@@ -415,9 +415,9 @@ public sealed class SessionModelTests
                 if (!lead)
                     sessionId = ((await kernel.CreateSessionAsync(trackId, new CreateSessionRequest(Provider: "codex"), Guid.NewGuid().ToString("N"), new InteropPrincipal.Human(), default)).Receipt.Session).Id;
                 await kernel.UpdateSessionAsync(sessionId, new(Model: new("chosen"), ReasoningEffort: new("low")), new InteropPrincipal.Human(), default);
-                using var permission = await host.Client.PatchAsJsonAsync($"/api/v1/sessions/{sessionId}", new { permissionMode = "full" });
+                using var permission = await host.AuthenticatedClient.PatchAsJsonAsync($"/api/v1/sessions/{sessionId}", new { permissionMode = "full" });
                 permission.EnsureSuccessStatusCode();
-                using var response = await host.Client.PatchAsJsonAsync($"/api/v1/sessions/{sessionId}",
+                using var response = await host.AuthenticatedClient.PatchAsJsonAsync($"/api/v1/sessions/{sessionId}",
                     new { model = (string?)null, reasoningEffort = " high " });
                 response.EnsureSuccessStatusCode();
                 var selected = (await response.Content.ReadFromJsonAsync<AgentSessionDto>(PergaJsonDefaults.ApiOptions))!;
@@ -436,7 +436,7 @@ public sealed class SessionModelTests
                 Assert.Null(launch.Model);
                 Assert.Equal("high", launch.ReasoningEffort);
                 Assert.Equal("full", launch.PermissionMode);
-                using var clearEffort = await reopened.Client.PatchAsJsonAsync($"/api/v1/sessions/{sessionId}",
+                using var clearEffort = await reopened.AuthenticatedClient.PatchAsJsonAsync($"/api/v1/sessions/{sessionId}",
                     new { model = "chosen", reasoningEffort = (string?)null });
                 clearEffort.EnsureSuccessStatusCode();
                 var cleared = (await clearEffort.Content.ReadFromJsonAsync<AgentSessionDto>(PergaJsonDefaults.ApiOptions))!;
@@ -461,7 +461,7 @@ public sealed class SessionModelTests
         var dispatch = await FlowFixture.StartWorkerAsync(kernel, trackId, "worker-model-boundary", "Inspect safely");
         await kernel.WaitForTrackIdleAsync(trackId);
         var worker = Assert.Single(await kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), default), s => s.TaskId == dispatch.Task!.Id).Session;
-        using var response = await host.Client.PatchAsJsonAsync($"/api/v1/sessions/{worker.Id}",
+        using var response = await host.AuthenticatedClient.PatchAsJsonAsync($"/api/v1/sessions/{worker.Id}",
             new { model = "gpt-5.4", reasoningEffort = "high" });
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var unchanged = Assert.Single((await kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray(), s => s.Id == worker.Id);

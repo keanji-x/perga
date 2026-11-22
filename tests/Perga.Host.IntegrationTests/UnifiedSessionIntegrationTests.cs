@@ -16,7 +16,7 @@ public sealed class UnifiedSessionIntegrationTests
             Content = JsonContent.Create(new { prompt = "Inspect", task = new { } })
         };
         request.Headers.Add("Idempotency-Key", "retired-task");
-        using var response = await host.Client.SendAsync(request);
+        using var response = await host.AuthenticatedClient.SendAsync(request);
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 }

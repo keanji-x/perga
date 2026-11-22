@@ -36,6 +36,44 @@ describe('production login assembly', () => {
     expect((await screen.findByRole('alert')).textContent).toBe(reason);
   });
 
+  it('shows the owner setup guidance returned by the Host', async () => {
+    const transport = { send: vi.fn().mockResolvedValue({
+      status: 403, statusText: 'Forbidden', body: {
+        code: 'auth_not_configured', error: 'Perga has no owner account.',
+        nextStep: 'Run perga-ctl auth init-owner on the Perga host.',
+      },
+    }) };
+    render(<LoginPage login={(username, password, signal) => loginWithTransport(transport, username, password, signal)} reload={vi.fn()} />);
+    await userEvent.type(screen.getByLabelText('Username'), 'owner');
+    await userEvent.type(screen.getByLabelText('Password'), 'secret');
+    await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+    expect((await screen.findByRole('alert')).textContent)
+      .toBe('Perga has no owner account. Run perga-ctl auth init-owner on the Perga host.');
+  });
+
+  it('shows a Retry-After countdown when throttled with Retry-After header', async () => {
+    const transport = { send: vi.fn().mockResolvedValue({
+      status: 429, statusText: 'Too Many Requests',
+      headers: { 'retry-after': '12' },
+      body: { code: 'login_throttled', error: 'Too many login attempts.' },
+    }) };
+    render(<LoginPage login={(username, password, signal) => loginWithTransport(transport, username, password, signal)} reload={vi.fn()} />);
+    await userEvent.type(screen.getByLabelText('Username'), 'owner');
+    await userEvent.type(screen.getByLabelText('Password'), 'secret');
+    await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+    expect(await screen.findByText('Try again in 12 seconds.')).toBeTruthy();
+  });
+
+  it('rejects whitespace-only credentials locally without calling transport', async () => {
+    const transport = { send: vi.fn() };
+    render(<LoginPage login={(username, password, signal) => loginWithTransport(transport, username, password, signal)} reload={vi.fn()} />);
+    await userEvent.type(screen.getByLabelText('Username'), '   ');
+    await userEvent.type(screen.getByLabelText('Password'), '   ');
+    await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+    expect((await screen.findByRole('alert')).textContent).toBe('Enter your username and password.');
+    expect(transport.send).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['a lost answer', () => Promise.reject(new TypeError('Failed to fetch'))],
     ['a 5xx', () => Promise.resolve({ status: 502, statusText: 'Bad Gateway', body: null })],

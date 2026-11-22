@@ -21,7 +21,7 @@ public sealed class McpKernelAndVcsIntegrationTests
     public async Task McpStreamableHttp_Auth_Initialize_Batch_PostSse_And_GetSseStream_WorkEndToEnd()
     {
         await using var cluster = new PergaHostTestCluster();
-        var client = cluster.Client;
+        var client = cluster.AuthenticatedClient;
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         var ct = cts.Token;
 
@@ -173,7 +173,7 @@ public sealed class McpKernelAndVcsIntegrationTests
     public async Task McpKernel_ToolVisibility_And_BoundAttemptFences_WorkEndToEnd()
     {
         await using var cluster = new PergaHostTestCluster();
-        var client = cluster.Client;
+        var client = cluster.AuthenticatedClient;
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(25));
         var ct = cts.Token;
 
@@ -562,7 +562,7 @@ public sealed class McpKernelAndVcsIntegrationTests
     public async Task McpVcs_All9Tools_AgainstRealJujutsuRepo_And_GitHubForge_WorkEndToEnd()
     {
         await using var cluster = new PergaHostTestCluster();
-        var client = cluster.Client;
+        var client = cluster.AuthenticatedClient;
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         var ct = cts.Token;
 
@@ -704,7 +704,7 @@ public sealed class McpKernelAndVcsIntegrationTests
     public async Task McpKernel_ToolsList_PublishesTruthfulAnnotationsForLeadAndBoundWorkers()
     {
         await using var cluster = new PergaHostTestCluster();
-        var client = cluster.Client;
+        var client = cluster.AuthenticatedClient;
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         var ct = cts.Token;
 

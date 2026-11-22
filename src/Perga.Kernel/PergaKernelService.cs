@@ -32,7 +32,7 @@ public partial interface IPergaKernel : IAsyncDisposable
 
     // System & Bootstrap
     Task<BootstrapDto> GetBootstrapAsync(CancellationToken ct = default);
-    Task<BootstrapDto> GetBootstrapAsync(string? scope, bool refresh = false, CancellationToken ct = default, string? card_id = null);
+    Task<BootstrapDto> GetBootstrapAsync(bool refresh, CancellationToken ct = default, string? card_id = null);
     Task<IReadOnlyList<ProviderStatus>> GetTargetProvidersAsync(string targetId, bool refresh = false, CancellationToken ct = default);
     Task<TrackProvidersDto> ListProvidersForTrackAsync(string trackId, string? provider = null,
         bool refresh = false, bool includeUnavailable = false, CancellationToken ct = default);
@@ -225,37 +225,25 @@ public sealed partial class PergaKernelService : IPergaKernel
     // ------------------- System & Bootstrap -------------------
 
     public Task<BootstrapDto> GetBootstrapAsync(CancellationToken ct = default) =>
-        GetBootstrapAsync(scope: null, refresh: false, ct);
+        GetBootstrapAsync(refresh: false, ct);
 
     public async Task<BootstrapDto> GetBootstrapAsync(
-        string? scope,
-        bool refresh = false,
+        bool refresh,
         CancellationToken ct = default,
         string? card_id = null)
     {
-        var isWhoAmIScope = string.Equals(scope?.Trim(), "whoami", StringComparison.OrdinalIgnoreCase);
         var areasTask = _store.ListAreasAsync(ct);
-
-        IReadOnlyList<ProviderStatus> providers;
-        if (isWhoAmIScope)
+        var targetId = ExecutionTargetIds.Local;
+        if (!string.IsNullOrWhiteSpace(card_id))
         {
-            providers = [];
-            await areasTask.ConfigureAwait(false);
+            var trackId = await _store.FindTrackIdBySessionAsync(card_id, ct).ConfigureAwait(false);
+            var track = trackId is null ? null : await _store.GetTrackAsync(trackId, ct).ConfigureAwait(false);
+            targetId = track?.ExecutionTargetId ?? ExecutionTargetIds.Local;
         }
-        else
-        {
-            var targetId = ExecutionTargetIds.Local;
-            if (!string.IsNullOrWhiteSpace(card_id))
-            {
-                var trackId = await _store.FindTrackIdBySessionAsync(card_id, ct).ConfigureAwait(false);
-                var track = trackId is null ? null : await _store.GetTrackAsync(trackId, ct).ConfigureAwait(false);
-                targetId = track?.ExecutionTargetId ?? ExecutionTargetIds.Local;
-            }
 
-            var providersTask = GetCachedOrProbeProvidersAsync(targetId, refresh, ct);
-            await Task.WhenAll(providersTask, areasTask).ConfigureAwait(false);
-            providers = (await providersTask.ConfigureAwait(false)).Providers;
-        }
+        var providersTask = GetCachedOrProbeProvidersAsync(targetId, refresh, ct);
+        await Task.WhenAll(providersTask, areasTask).ConfigureAwait(false);
+        var providers = (await providersTask.ConfigureAwait(false)).Providers;
 
         var databaseId = !string.IsNullOrWhiteSpace(_store.DatabaseId)
             ? _store.DatabaseId
@@ -268,7 +256,7 @@ public sealed partial class PergaKernelService : IPergaKernel
             Areas: await areasTask.ConfigureAwait(false),
             DatabaseId: databaseId,
             DbInstanceId: ProcessDbInstanceId,
-            AuthRequired: false,
+            AuthRequired: true,
             ExecutionTargets: _executionEnvironments.ListTargets());
     }
 

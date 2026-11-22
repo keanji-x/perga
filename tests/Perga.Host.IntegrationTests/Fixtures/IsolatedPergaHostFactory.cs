@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
@@ -43,6 +44,7 @@ internal sealed class IsolatedPergaHostFactory(
                 configureOptions?.Invoke(options);
                 return options;
             });
+            services.PostConfigure<PasswordHasherOptions>(options => options.IterationCount = 1_000);
             services.RemoveAll<IOverlayMounts>();
             services.AddSingleton<IOverlayMounts, UnavailableOverlayMounts>();
             configureServices?.Invoke(services);

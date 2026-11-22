@@ -47,7 +47,7 @@ public sealed class TrackCreationTests
         var path = $"/api/v1/sessions/{sessionId}";
 
         async Task<SessionItemsPageDto> ReadPageAsync() =>
-            (await host.Client.GetFromJsonAsync<SessionItemsPageDto>(path + "/items", PergaJsonDefaults.ApiOptions))!;
+            (await host.AuthenticatedClient.GetFromJsonAsync<SessionItemsPageDto>(path + "/items", PergaJsonDefaults.ApiOptions))!;
 
         var cold = await ReadPageAsync();
         Assert.Null(cold.PermissionModes);
@@ -63,14 +63,14 @@ public sealed class TrackCreationTests
         Assert.Equal(host.AgentRuntime.AcpPermissionModes, open.PermissionModes);
         Assert.Single(host.AgentRuntime.OpenedSessions);
 
-        using var update = await host.Client.PatchAsJsonAsync(path, new { permissionMode = "act" });
+        using var update = await host.AuthenticatedClient.PatchAsJsonAsync(path, new { permissionMode = "act" });
         update.EnsureSuccessStatusCode();
         var updated = await ReadPageAsync();
         Assert.Equal("act", updated.Session.PermissionMode);
         Assert.Equal(host.AgentRuntime.AcpPermissionModes, updated.PermissionModes);
         Assert.Single(host.AgentRuntime.OpenedSessions);
 
-        using var changeProvider = await host.Client.PatchAsJsonAsync(path, new { provider = "codex" });
+        using var changeProvider = await host.AuthenticatedClient.PatchAsJsonAsync(path, new { provider = "codex" });
         changeProvider.EnsureSuccessStatusCode();
         var switched = await ReadPageAsync();
         Assert.Null(switched.PermissionModes);
@@ -114,9 +114,9 @@ public sealed class TrackCreationTests
             using var firstMsg = await PostAsync(host, $"/api/v1/sessions/{sessionId}/messages", "frozen-input",
                 new { content = "frozen input" });
             Assert.Equal(HttpStatusCode.OK, firstMsg.StatusCode);
-            using var update = await host.Client.PatchAsJsonAsync($"/api/v1/sessions/{sessionId}", new { model = "B", reasoningEffort = "high" });
+            using var update = await host.AuthenticatedClient.PatchAsJsonAsync($"/api/v1/sessions/{sessionId}", new { model = "B", reasoningEffort = "high" });
             update.EnsureSuccessStatusCode();
-            using var permission = await host.Client.PatchAsJsonAsync($"/api/v1/sessions/{sessionId}", new { permissionMode = "full" });
+            using var permission = await host.AuthenticatedClient.PatchAsJsonAsync($"/api/v1/sessions/{sessionId}", new { permissionMode = "full" });
             permission.EnsureSuccessStatusCode();
             Assert.Empty(host.AgentRuntime.ExecutedTurns);
         }
@@ -145,21 +145,21 @@ public sealed class TrackCreationTests
         await using var host = new PergaHostTestCluster(
             configureExtraServices: services => services.AddSingleton<IVcsService>(vcs));
         var areaId = await CreateAreaAsync(host);
-        using var inherited = await host.Client.GetAsync($"/api/v1/areas/{areaId}/workspace-options");
+        using var inherited = await host.AuthenticatedClient.GetAsync($"/api/v1/areas/{areaId}/workspace-options");
         Assert.Equal("copy", (await ReadAsync(inherited)).GetProperty("defaultId").GetString());
-        using var cleared = await host.Client.GetAsync($"/api/v1/areas/{areaId}/workspace-options?cwd=");
+        using var cleared = await host.AuthenticatedClient.GetAsync($"/api/v1/areas/{areaId}/workspace-options?cwd=");
         Assert.Equal("managed", (await ReadAsync(cleared)).GetProperty("defaultId").GetString());
         var source = Path.Combine(host.DataDir, "colocated");
         Directory.CreateDirectory(Path.Combine(source, ".git"));
         await File.WriteAllTextAsync(Path.Combine(source, ".git", "HEAD"), "ref: refs/heads/main\n");
         var optionsPath = $"/api/v1/areas/{areaId}/workspace-options?cwd={Uri.EscapeDataString(source)}";
-        using var gitOnly = await host.Client.GetAsync(optionsPath);
+        using var gitOnly = await host.AuthenticatedClient.GetAsync(optionsPath);
         Assert.Equal("git", (await ReadAsync(gitOnly)).GetProperty("defaultId").GetString());
         Assert.False(Directory.Exists(Path.Combine(source, ".jj")));
         Assert.Empty(process.Calls);
 
         Directory.CreateDirectory(Path.Combine(source, ".jj", "repo"));
-        using var colocated = await host.Client.GetAsync(optionsPath);
+        using var colocated = await host.AuthenticatedClient.GetAsync(optionsPath);
         var options = await ReadAsync(colocated);
         Assert.Equal("jj", options.GetProperty("defaultId").GetString());
         Assert.Equal(new[] { "jj", "git", "direct" },
@@ -174,14 +174,14 @@ public sealed class TrackCreationTests
         Assert.Equal(HttpStatusCode.Conflict, unsupported.StatusCode);
         using var failure = JsonDocument.Parse(await unsupported.Content.ReadAsStringAsync());
         Assert.Equal("precondition_failed", failure.RootElement.GetProperty("code").GetString());
-        using var tracks = await host.Client.GetAsync($"/api/v1/areas/{areaId}/tracks");
+        using var tracks = await host.AuthenticatedClient.GetAsync($"/api/v1/areas/{areaId}/tracks");
         Assert.Empty((await ReadAsync(tracks)).EnumerateArray());
 
         var body = new { areaId, cwd = source, workspaceOptionId = "git" };
         using var created = await PostAsync(host, "/api/v1/tracks", "chosen-git", body);
         var id = (await ReadAsync(created)).GetProperty("track").GetProperty("id").GetString()!;
         await host.Services.GetRequiredService<IPergaKernel>().WaitForTrackIdleAsync(id).WaitAsync(Deadline);
-        using var ready = await host.Client.GetAsync($"/api/v1/tracks/{id}");
+        using var ready = await host.AuthenticatedClient.GetAsync($"/api/v1/tracks/{id}");
         var spec = (await ReadAsync(ready)).GetProperty("track").GetProperty("workspaceSpec");
         Assert.Equal("GitWorktree", spec.GetProperty("metadata").GetProperty("Kind").GetString());
         using var replay = await PostAsync(host, "/api/v1/tracks", "chosen-git", body);
@@ -195,7 +195,7 @@ public sealed class TrackCreationTests
             new { areaId, cwd = "", workspaceOptionId = "managed" });
         var managedId = (await ReadAsync(managed)).GetProperty("track").GetProperty("id").GetString()!;
         await host.Services.GetRequiredService<IPergaKernel>().WaitForTrackIdleAsync(managedId).WaitAsync(Deadline);
-        using var managedReady = await host.Client.GetAsync($"/api/v1/tracks/{managedId}");
+        using var managedReady = await host.AuthenticatedClient.GetAsync($"/api/v1/tracks/{managedId}");
         var managedSpec = (await ReadAsync(managedReady)).GetProperty("track").GetProperty("workspaceSpec");
         Assert.True(managedSpec.GetProperty("managedEmptyWorkspace").GetBoolean());
     }
@@ -237,11 +237,11 @@ public sealed class TrackCreationTests
         await runner.Entered.Task.WaitAsync(Deadline);
         try
         {
-            using var read = await host.Client.GetAsync($"/api/v1/tracks/{trackId}").WaitAsync(Deadline);
+            using var read = await host.AuthenticatedClient.GetAsync($"/api/v1/tracks/{trackId}").WaitAsync(Deadline);
             Assert.Equal("pending", (await ReadAsync(read)).GetProperty("workspacePreparation").GetString());
-            using var patch = await host.Client.PatchAsJsonAsync($"/api/v1/tracks/{trackId}", new { title = "Renamed while pending" }).WaitAsync(Deadline);
+            using var patch = await host.AuthenticatedClient.PatchAsJsonAsync($"/api/v1/tracks/{trackId}", new { title = "Renamed while pending" }).WaitAsync(Deadline);
             Assert.Equal("Renamed while pending", (await ReadAsync(patch)).GetProperty("title").GetString());
-            using var before = await host.Client.GetAsync($"/api/v1/sessions/{leadId}/items").WaitAsync(Deadline);
+            using var before = await host.AuthenticatedClient.GetAsync($"/api/v1/sessions/{leadId}/items").WaitAsync(Deadline);
             var beforePage = await ReadAsync(before);
             Assert.Empty(beforePage.GetProperty("items").EnumerateArray());
             Assert.Empty(beforePage.GetProperty("queuedMessages").EnumerateArray());
@@ -255,7 +255,7 @@ public sealed class TrackCreationTests
             Assert.Equal(HttpStatusCode.Conflict, conflict.StatusCode);
             using var error = JsonDocument.Parse(await conflict.Content.ReadAsStringAsync());
             Assert.Equal("idempotency_key_reused", error.RootElement.GetProperty("code").GetString());
-            using var tracks = await host.Client.GetAsync($"/api/v1/areas/{areaId}/tracks");
+            using var tracks = await host.AuthenticatedClient.GetAsync($"/api/v1/areas/{areaId}/tracks");
             Assert.Single((await ReadAsync(tracks)).EnumerateArray());
         }
         finally
@@ -266,10 +266,10 @@ public sealed class TrackCreationTests
         await host.Services.GetRequiredService<IPergaKernel>().WaitForTrackIdleAsync(trackId!).WaitAsync(Deadline);
         Assert.Equal(1, runner.Invocations);
         Assert.Single(host.AgentRuntime.ExecutedTurns);
-        using var ready = await host.Client.GetAsync($"/api/v1/tracks/{trackId}");
+        using var ready = await host.AuthenticatedClient.GetAsync($"/api/v1/tracks/{trackId}");
         Assert.Equal("Renamed while pending", (await ReadAsync(ready)).GetProperty("track").GetProperty("title").GetString());
 
-        using var deletion = await host.Client.DeleteAsync($"/api/v1/tracks/{trackId}");
+        using var deletion = await host.AuthenticatedClient.DeleteAsync($"/api/v1/tracks/{trackId}");
         deletion.EnsureSuccessStatusCode();
         using var deletedReplay = await PostAsync(host, "/api/v1/tracks", "track-draft", request);
         Assert.Equal(HttpStatusCode.Gone, deletedReplay.StatusCode);
@@ -288,11 +288,11 @@ public sealed class TrackCreationTests
         var leadId = createdDoc.GetProperty("track").GetProperty("leadSessionId").GetString()!;
         var kernel = host.Services.GetRequiredService<IPergaKernel>();
         await kernel.WaitForTrackIdleAsync(trackId).WaitAsync(Deadline);
-        using var failed = await host.Client.GetAsync($"/api/v1/tracks/{trackId}");
+        using var failed = await host.AuthenticatedClient.GetAsync($"/api/v1/tracks/{trackId}");
         Assert.Equal("failed", (await ReadAsync(failed)).GetProperty("workspacePreparation").GetString());
         Assert.Empty(host.AgentRuntime.ExecutedTurns);
 
-        using var retry = await host.Client.PostAsync($"/api/v1/tracks/{trackId}/workspace/retry", null);
+        using var retry = await host.AuthenticatedClient.PostAsync($"/api/v1/tracks/{trackId}/workspace/retry", null);
         Assert.Equal(HttpStatusCode.Accepted, retry.StatusCode);
         runner.Release.TrySetResult(0);
         await kernel.WaitForTrackIdleAsync(trackId).WaitAsync(Deadline);
@@ -321,13 +321,13 @@ public sealed class TrackCreationTests
         using var queued = await PostAsync(host, $"/api/v1/sessions/{leadId}/messages", "defer-while-closed",
             new { content = "Wait until this Track is open" });
         Assert.Equal(HttpStatusCode.OK, queued.StatusCode);
-        using var closed = await host.Client.PatchAsJsonAsync(url, new { closed = true });
+        using var closed = await host.AuthenticatedClient.PatchAsJsonAsync(url, new { closed = true });
         closed.EnsureSuccessStatusCode();
         runner.Release.TrySetResult(0);
         await kernel.WaitForTrackIdleAsync(trackId).WaitAsync(Deadline);
         Assert.Empty(host.AgentRuntime.ExecutedTurns);
 
-        using var reopened = await host.Client.PatchAsJsonAsync(url, new { closed = false });
+        using var reopened = await host.AuthenticatedClient.PatchAsJsonAsync(url, new { closed = false });
         reopened.EnsureSuccessStatusCode();
         await kernel.WaitForTrackIdleAsync(trackId).WaitAsync(Deadline);
         Assert.Single(host.AgentRuntime.ExecutedTurns);
@@ -360,7 +360,7 @@ public sealed class TrackCreationTests
 
         using var replay = await PostAsync(host, "/api/v1/tracks", "write-failure", request);
         Assert.Equal("unknown", (await ReadAsync(replay)).GetProperty("workspacePreparation").GetString());
-        using var retry = await host.Client.PostAsync($"{url}/workspace/retry", null);
+        using var retry = await host.AuthenticatedClient.PostAsync($"{url}/workspace/retry", null);
         Assert.Equal(HttpStatusCode.Conflict, retry.StatusCode);
         Assert.Equal(1, runner.Invocations);
         Assert.Empty(host.AgentRuntime.ExecutedTurns);
@@ -392,7 +392,7 @@ public sealed class TrackCreationTests
             var snapshot = await ReadAsync(replay);
             Assert.Equal(trackId, snapshot.GetProperty("track").GetProperty("id").GetString());
             Assert.Equal("unknown", snapshot.GetProperty("workspacePreparation").GetString());
-            using var retry = await restarted.Client.PostAsync($"/api/v1/tracks/{trackId}/workspace/retry", null);
+            using var retry = await restarted.AuthenticatedClient.PostAsync($"/api/v1/tracks/{trackId}/workspace/retry", null);
             Assert.Equal(HttpStatusCode.Conflict, retry.StatusCode);
             Assert.Equal(0, restartedRunner.Invocations);
             Assert.Empty(restarted.AgentRuntime.ExecutedTurns);
@@ -428,7 +428,7 @@ public sealed class TrackCreationTests
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, path) { Content = JsonContent.Create(body) };
         request.Headers.Add("Idempotency-Key", key);
-        return await host.Client.SendAsync(request);
+        return await host.AuthenticatedClient.SendAsync(request);
     }
 
     private static async Task<JsonElement> ReadAsync(HttpResponseMessage response)

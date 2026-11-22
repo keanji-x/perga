@@ -117,7 +117,7 @@ function setup(reply?: Reply, storage?: UiPreferenceStorage, recovery?: Recovery
         const response = await reply(request);
         if (response) return response;
       }
-      if (request.path.startsWith('/api/v1/bootstrap') && !request.path.includes('scope=whoami')) return ok(fixtureBootstrap());
+      if (request.path.startsWith('/api/v1/bootstrap')) return ok(fixtureBootstrap());
       if (request.path === '/api/v1/areas') return ok([AREA]);
       if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return ok([TRACK, BARE_TRACK]);
       if (request.path === '/api/overlays?entity_kind=track') return ok([]);
@@ -1491,7 +1491,7 @@ describe('registry write-through', () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false, structuralSharing: false } } });
     const view = (scope: typeof SCOPE | null) => (
       <QueryClientProvider client={client}>
-        <CurrentUserScope value={{ userId: DEPLOYMENT_OWNER_USER_ID, displayName: 'Owner', role: 'owner', sessionId: 'test' }}><ConversationProvider>
+        <CurrentUserScope value={{ userId: DEPLOYMENT_OWNER_USER_ID, displayName: 'Owner', username: 'owner', expiresAtMs: 2000000000000, role: 'owner', sessionId: 'test' }}><ConversationProvider>
           <RegistryProbe />
           <StoreProbe scope={scope} />
         </ConversationProvider></CurrentUserScope>
@@ -1545,7 +1545,7 @@ describe('registry write-through', () => {
       return null;
     }
     const client = new QueryClient({ defaultOptions: { queries: { retry: false, structuralSharing: false } } });
-    render(<QueryClientProvider client={client}><CurrentUserScope value={{ userId: DEPLOYMENT_OWNER_USER_ID, displayName: 'Owner', role: 'owner', sessionId: 'test' }}><ConversationProvider><Probe /></ConversationProvider></CurrentUserScope></QueryClientProvider>);
+    render(<QueryClientProvider client={client}><CurrentUserScope value={{ userId: DEPLOYMENT_OWNER_USER_ID, displayName: 'Owner', username: 'owner', expiresAtMs: 2000000000000, role: 'owner', sessionId: 'test' }}><ConversationProvider><Probe /></ConversationProvider></CurrentUserScope></QueryClientProvider>);
     await waitFor(() => expect(store.historyReady).toBe(true));
     await act(async () => { void store.send(ASSISTANT_CARD.id, 'maybe stored', [], true); await Promise.resolve(); });
     await waitFor(() => expect(store.failedSend?.delivery).toBe('unknown'));
@@ -1581,7 +1581,7 @@ describe('registry write-through', () => {
     }
     const client = new QueryClient({ defaultOptions: { queries: { retry: false, structuralSharing: false } } });
     const view = (scope: typeof SCOPE) => (
-      <QueryClientProvider client={client}><CurrentUserScope value={{ userId: DEPLOYMENT_OWNER_USER_ID, displayName: 'Owner', role: 'owner', sessionId: 'test' }}><ConversationProvider><StoreProbe scope={scope} /></ConversationProvider></CurrentUserScope></QueryClientProvider>
+      <QueryClientProvider client={client}><CurrentUserScope value={{ userId: DEPLOYMENT_OWNER_USER_ID, displayName: 'Owner', username: 'owner', expiresAtMs: 2000000000000, role: 'owner', sessionId: 'test' }}><ConversationProvider><StoreProbe scope={scope} /></ConversationProvider></CurrentUserScope></QueryClientProvider>
     );
     const { rerender } = render(view(SCOPE));
     await waitFor(() => expect(latest?.sendBlocked).toBe(false));
@@ -1617,7 +1617,7 @@ describe('registry write-through', () => {
     }
     const client = new QueryClient({ defaultOptions: { queries: { retry: false, structuralSharing: false } } });
     const view = (scope: typeof SCOPE) => (
-      <QueryClientProvider client={client}><CurrentUserScope value={{ userId: DEPLOYMENT_OWNER_USER_ID, displayName: 'Owner', role: 'owner', sessionId: 'test' }}><ConversationProvider><StoreProbe scope={scope} /></ConversationProvider></CurrentUserScope></QueryClientProvider>
+      <QueryClientProvider client={client}><CurrentUserScope value={{ userId: DEPLOYMENT_OWNER_USER_ID, displayName: 'Owner', username: 'owner', expiresAtMs: 2000000000000, role: 'owner', sessionId: 'test' }}><ConversationProvider><StoreProbe scope={scope} /></ConversationProvider></CurrentUserScope></QueryClientProvider>
     );
     const { rerender } = render(view(SCOPE));
     await act(async () => { latest?.setModel({ model: 'gpt-x', reasoning_effort: null }); await Promise.resolve(); });
@@ -1799,7 +1799,7 @@ describe('registry write-through', () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false, structuralSharing: false } } });
     const view = (instance: string | null) => (
       <QueryClientProvider client={client}>
-        <CurrentUserScope value={{ userId: DEPLOYMENT_OWNER_USER_ID, displayName: 'Owner', role: 'owner', sessionId: 'test' }}><ConversationProvider>
+        <CurrentUserScope value={{ userId: DEPLOYMENT_OWNER_USER_ID, displayName: 'Owner', username: 'owner', expiresAtMs: 2000000000000, role: 'owner', sessionId: 'test' }}><ConversationProvider>
           <RegistryProbe />
           {instance === null ? null : <StoreProbe key={instance} />}
         </ConversationProvider></CurrentUserScope>

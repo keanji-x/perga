@@ -25,7 +25,7 @@ export function serverVersionOperation(): ApiOperation<ServerVersionInfo> {
     responseSchema: z.union([
       bootstrapDtoSchema.transform((bootstrap): ServerVersionInfo => ({
         pergaV1: true,
-        authRequired: bootstrap.authRequired ?? false,
+        authRequired: bootstrap.authRequired ?? true,
         assistantProviders: true,
         conversationCreateModel: true,
         conversationInitialInput: true,

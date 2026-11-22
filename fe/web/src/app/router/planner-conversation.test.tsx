@@ -68,7 +68,7 @@ function setup(reply?: Reply) {
         const response = await reply(request);
         if (response) return response;
       }
-      if (request.path.startsWith('/api/v1/bootstrap') && !request.path.includes('scope=whoami')) return ok(fixtureBootstrap());
+      if (request.path.startsWith('/api/v1/bootstrap')) return ok(fixtureBootstrap());
       if (request.path === '/api/v1/areas') return ok([AREA]);
       if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return ok([TRACK, TRACK_B]);
       if (request.path === '/api/overlays?entity_kind=track') return ok([]);

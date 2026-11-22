@@ -101,8 +101,9 @@ export function useConversationStore(
   const rememberedEntries = history.data === undefined ? rememberedSource : null;
   const queueWriteOut = useConversationQueueWriteOut(scope === null ? null : cardId);
   const viewerId = currentUser?.userId ?? null;
-  const historyEntries = useMemo(() => rememberedEntries ?? buildConversationTranscript(displayItems, viewerId),
-    [displayItems, rememberedEntries, viewerId]);
+  const viewerIsOwner = currentUser?.role === 'owner';
+  const historyEntries = useMemo(() => rememberedEntries ?? buildConversationTranscript(displayItems, viewerId, viewerIsOwner),
+    [displayItems, rememberedEntries, viewerId, viewerIsOwner]);
   const serverTurns = useMemo(() => historyEntries.filter(isConversationMessage), [historyEntries]);
   const servedQueue = useMemo(() => run.data === undefined ? EMPTY_PENDING_QUEUE : conversationPendingQueue(run.data), [run.data]);
   const queueOps = useConversationSendOps(scope === null ? null : cardId);

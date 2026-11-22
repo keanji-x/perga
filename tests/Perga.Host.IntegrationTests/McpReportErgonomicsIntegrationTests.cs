@@ -16,7 +16,7 @@ public sealed class McpReportErgonomicsIntegrationTests
     public async Task McpKernel_ReportSchemas_CompactCommit_And_ScopedRead_WorkOverHttp()
     {
         await using var cluster = new PergaHostTestCluster();
-        var client = cluster.Client;
+        var client = cluster.AuthenticatedClient;
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var ct = cts.Token;
 

@@ -30,7 +30,7 @@ function bundled(kernel: ReadReceiptsKernel, children: ReactNode) {
     syncEventVersion: 20, dbInstanceId: 'boot', databaseId: 'db' };
   const fetchVersion = () => Promise.resolve(version);
   const session = new RecoverySession({ access, storage, origin: 'https://server.test', compatibleVersion: WEB_COMPAT_VERSION,
-    version: fetchVersion, identity: () => Promise.resolve({ userId: 'owner', displayName: 'Owner', role: 'owner', sessionId: 'session' }),
+    version: fetchVersion, identity: () => Promise.resolve({ userId: 'owner', displayName: 'Owner', username: 'owner', expiresAtMs: 2000000000000, role: 'owner', sessionId: 'session' }),
     adoptScope: () => undefined, logout: () => Promise.resolve(), clear: () => undefined,
     online: () => true, visible: () => !document.hidden });
   const business = createRecoveryTransports(kernel.transport, access).business;

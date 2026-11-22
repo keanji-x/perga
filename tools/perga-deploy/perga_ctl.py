@@ -17,13 +17,14 @@ import tempfile
 import time
 import uuid
 
-from perga_platform import DeployError, Http, atomic_json, identifier, read_json, run_command, sync_dir
+from perga_platform import DeployError, Http, atomic_json, command_env, identifier, read_json, run_command, sync_dir
 from perga_config import has_provisioned_config, load_config, write_default_config
 from perga_manifest import COMPONENTS, ReleaseStaging, make_manifest, verify_release
 from perga_sqlite import DatabaseRecovery, schema_version, validate_database
 from perga_systemd import SystemdInstallation, launch_detached
 
 TERMINAL = {'succeeded', 'rolled-back', 'failed'}
+AUTH_COMMANDS = ('init-owner', 'passwd', 'rename-owner', 'disable-owner', 'enable-owner', 'revoke-sessions', 'status')
 
 
 class Controller(DatabaseRecovery, SystemdInstallation, ReleaseStaging):
@@ -43,14 +44,14 @@ class Controller(DatabaseRecovery, SystemdInstallation, ReleaseStaging):
         self.runtime.mkdir(exist_ok=True, mode=0o700)
 
     @contextlib.contextmanager
-    def lock(self):
+    def lock(self, shared=False):
         self.init_runtime()
         fd = os.open(self.runtime / 'upgrade.lock', os.O_CREAT | os.O_RDWR, 0o600)
         try:
             try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(fd, (fcntl.LOCK_SH if shared else fcntl.LOCK_EX) | fcntl.LOCK_NB)
             except BlockingIOError as exc:
-                raise DeployError('another deployment holds upgrade.lock') from exc
+                raise DeployError('another deployment holds upgrade.lock or an auth command is active') from exc
             yield fd
         finally:
             os.close(fd)
@@ -102,6 +103,23 @@ class Controller(DatabaseRecovery, SystemdInstallation, ReleaseStaging):
                 return
             if state.get('phase') not in TERMINAL:
                 raise DeployError('unfinished upgrade; run doctor and rollback before retrying')
+
+    def auth(self, args):
+        self.idle()
+        with self.lock(shared=True):
+            self.idle()
+            self.current()
+            command = [str(self.root / 'current/host/Perga.Host'), 'auth', args.auth_command, '--db-path', str(self.db)]
+            for name in ('username', 'display_name'):
+                if (value := getattr(args, name, None)) is not None:
+                    command.extend(['--' + name.replace('_', '-'), value])
+            for flag in ('allow_migrate', 'password_stdin'):
+                if getattr(args, flag, False):
+                    command.append('--' + flag.replace('_', '-'))
+            env = command_env()
+            if 'TERM' in os.environ:
+                env['TERM'] = os.environ['TERM']
+            return subprocess.run(command, env=env, check=False).returncode
 
     def install(self, args):
         with self.lock():
@@ -420,10 +438,21 @@ def parser():
     p.add_argument('--name', default='perga')
     p.add_argument('--timeout', type=float, default=60)
     sub = p.add_subparsers(dest='command', required=True)
-    for name in ('install', 'adopt', 'configure-services', 'status', 'check', 'upgrade', 'apply', 'rollback', 'doctor'):
+    for name in ('install', 'adopt', 'configure-services', 'status', 'check', 'upgrade', 'apply', 'rollback', 'doctor', 'auth'):
         command = sub.add_parser(name)
         for option, kind in (('root', str), ('name', str), ('timeout', float)):
             command.add_argument('--' + option, type=kind, default=argparse.SUPPRESS)
+        if name == 'auth':
+            auth = command.add_subparsers(dest='auth_command', required=True)
+            for action in AUTH_COMMANDS:
+                action_parser = auth.add_parser(action)
+                if action in ('init-owner', 'rename-owner'):
+                    action_parser.add_argument('--username', required=True)
+                    action_parser.add_argument('--display-name')
+                if action in ('init-owner', 'passwd'):
+                    action_parser.add_argument('--password-stdin', action='store_true')
+                if action != 'status':
+                    action_parser.add_argument('--allow-migrate', action='store_true')
         if name in ('install', 'check', 'upgrade', 'apply'):
             sources = command.add_mutually_exclusive_group(required=name != 'check')
             for source in ('tarball', 'repo', 'release'):
@@ -452,6 +481,8 @@ def main(argv=None):
         ctl = Controller(args.root, args.name, timeout=args.timeout)
         if not math.isfinite(args.timeout) or args.timeout < 0:
             raise DeployError('timeout must be nonnegative')
+        if args.command == 'auth':
+            return ctl.auth(args)
         if args.command in ('upgrade', 'rollback') and not args.wait:
             result = launch_detached(ctl, args)
         elif args.command in ('upgrade', 'apply'):

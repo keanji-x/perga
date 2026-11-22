@@ -63,7 +63,7 @@ public sealed class UnifiedSessionMigrationTests
             await Assert.ThrowsAsync<SqliteException>(() => upgraded.ExecuteAsync("UPDATE agent_sessions SET notify_parent='invalid' WHERE id='worker';"));
             Assert.Equal("session-create", await upgraded.ExecuteScalarAsync<string>("SELECT operation FROM creation_receipts WHERE request_key='create';"));
             Assert.Equal(0, await upgraded.ExecuteScalarAsync<int>("SELECT count(*) FROM creation_receipts WHERE operation='session';"));
-            Assert.Equal(25, await upgraded.ExecuteScalarAsync<int>("SELECT MAX(version) FROM schema_migrations;"));
+            Assert.Equal(SqliteMigrator.CurrentSchemaVersion, await upgraded.ExecuteScalarAsync<int>("SELECT MAX(version) FROM schema_migrations;"));
             Assert.Equal("worker", await upgraded.ExecuteScalarAsync<string>("SELECT session_id FROM tasks WHERE id='task';"));
             Assert.Equal(0, await upgraded.ExecuteScalarAsync<int>("SELECT count(*) FROM sqlite_master WHERE name='task_attempts';"));
             if (version == 20)

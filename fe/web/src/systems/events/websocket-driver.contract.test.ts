@@ -51,6 +51,23 @@ describe('WebSocketDriver contracts', () => {
     ]);
   });
 
+  it.each([1006, 1008])('rechecks each established session when its socket closes with %i', async code => {
+    vi.useFakeTimers();
+    const probe = vi.fn(() => Promise.reject(unauthorized));
+    const notify = vi.fn();
+    const { driver, fake, sink } = harness({ probe, notify });
+    for (const count of [1, 2]) {
+      driver.start(configuration, 'ws://example/api/v1/events', sink);
+      const socket = fake.sockets.at(-1)!;
+      socket.open();
+      socket.onclose?.(new CloseEvent('close', { code }));
+      await drain();
+      expect(probe).toHaveBeenCalledTimes(count);
+      expect(notify).toHaveBeenCalledTimes(count);
+      driver.stop();
+    }
+  });
+
   it('T-D4 stays connecting on open and becomes connected only before replay-complete delivery', () => {
     const { driver, fake, sink, states, frames } = harness();
     driver.start(configuration, 'ws://example/api/events', sink);
@@ -111,7 +128,7 @@ describe('WebSocketDriver contracts', () => {
     vi.advanceTimersByTime(1); expect(fake.constructionCount).toBe(before + 1);
   });
 
-  it('T-D7 probes only a connection that closes before open', async () => {
+  it('T-D7 probes failed handshakes and ignores ordinary closes after open', async () => {
     vi.useFakeTimers();
     const probe = vi.fn(() => Promise.resolve());
     const { driver, fake, sink } = harness({ probe });

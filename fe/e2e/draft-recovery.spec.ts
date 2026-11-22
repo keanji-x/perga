@@ -1,4 +1,5 @@
-import { expect, test } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { test } from './helpers/workspace-test.ts';
 import { createArea } from './helpers/seed.js';
 import { trackAggregateSnapshotDtoSchema, trackDtoSchema } from '../core/api/perga-v1.ts';
 

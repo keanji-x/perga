@@ -13,23 +13,24 @@ function Current() {
 it('has no invented viewer before a verified auth owner supplies identity',()=>{
   render(<Current/>);expect(screen.getByRole('status').textContent).toBe('unknown');
 });
-it('projects actual whoami UID/name and clears old artifacts on a verified UID switch',async()=>{
+it('exposes the verified identity and clears old artifacts on a session switch',async()=>{
   const client=new QueryClient();
   const clear=vi.spyOn(client,'clear');
-  const transport=(userId:string):ApiTransportPort=>({send:()=>Promise.resolve({status:200,statusText:'OK',body:{
-    userId,displayName:userId,role:'owner-looking-label',sessionId:'session-secret-not-for-business-context',
+  const transport=(sessionId:string):ApiTransportPort=>({send:()=>Promise.resolve({status:200,statusText:'OK',body:{
+    userId:'jian',displayName:'Jian',username: 'owner', expiresAtMs: 2000000000000, role:'owner',sessionId,
   }})});
   const unauthorized=createUnauthorizedChannel({enqueue:task=>task()});
   const runtime={deleteDatabase:vi.fn(),idbDatabaseName:'fixture'};
   const cursorStore={clear:vi.fn()};
   const tree=(value:ApiTransportPort)=><SessionGate transport={value} unauthorized={unauthorized} client={client}
     runtime={runtime} cursorStore={cursorStore} renderLogin={()=><p>login</p>} renderError={()=><p>failed</p>}><Current/></SessionGate>;
-  const view=render(tree(transport('jian')));
-  await waitFor(()=>expect(screen.getByRole('status').textContent).toBe('{"userId":"jian","displayName":"jian"}'));
-  expect(screen.getByRole('status').textContent).not.toContain('session-secret');
+  const view=render(tree(transport('first')));
+  await waitFor(()=>expect(JSON.parse(screen.getByRole('status').textContent ?? '')).toMatchObject({
+    userId: 'jian', displayName: 'Jian', role: 'owner', sessionId: 'first',
+  }));
   client.setQueryData(['harness-items','private','conversation_v1'],{old:'private body'});
-  view.rerender(tree(transport('alice')));
-  await waitFor(()=>expect(screen.getByRole('status').textContent).toBe('{"userId":"alice","displayName":"alice"}'));
+  view.rerender(tree(transport('second')));
+  await waitFor(()=>expect(JSON.parse(screen.getByRole('status').textContent ?? '')).toMatchObject({ userId: 'jian', sessionId: 'second' }));
   expect(clear).toHaveBeenCalledOnce();
   expect(client.getQueryData(['harness-items','private','conversation_v1'])).toBeUndefined();
 });

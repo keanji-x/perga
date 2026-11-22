@@ -16,7 +16,7 @@ namespace Perga.Host.IntegrationTests;
 public sealed class ApiV1AuditFixesIntegrationTests
 {
     [Fact]
-    public async Task Bootstrap_ScopeWhoami_Refresh_AndPersistentDatabaseId_WorkEndToEnd()
+    public async Task SessionProbeSkipsProviderProbeAndBootstrapKeepsPersistentDatabaseId()
     {
         var sharedDataDir = Directory.CreateTempSubdirectory("perga-boot-dbid-").FullName;
         try
@@ -26,30 +26,27 @@ public sealed class ApiV1AuditFixesIntegrationTests
 
             await using (var cluster1 = new PergaHostTestCluster(explicitDataDir: sharedDataDir))
             {
-                // 1. ?scope=whoami skips provider probing completely and returns providers: []
-                using var whoamiResp = await cluster1.Client.GetAsync("/api/v1/bootstrap?scope=whoami");
-                Assert.Equal(HttpStatusCode.OK, whoamiResp.StatusCode);
-                using var whoamiDoc = JsonDocument.Parse(await whoamiResp.Content.ReadAsStringAsync());
-                Assert.Equal(0, whoamiDoc.RootElement.GetProperty("providers").GetArrayLength());
+                using var session = await cluster1.AuthenticatedClient.GetAsync("/api/v1/auth/session");
+                Assert.Equal(HttpStatusCode.OK, session.StatusCode);
                 Assert.Equal(0, cluster1.AgentRuntime.ProbeCount);
 
-                firstDatabaseId = whoamiDoc.RootElement.GetProperty("databaseId").GetString()!;
-                firstInstanceId = whoamiDoc.RootElement.GetProperty("dbInstanceId").GetString()!;
-                Assert.False(string.IsNullOrWhiteSpace(firstDatabaseId));
-                Assert.False(string.IsNullOrWhiteSpace(firstInstanceId));
-                Assert.False(whoamiDoc.RootElement.GetProperty("authRequired").GetBoolean());
-
-                // 2. Full /bootstrap probes once and caches within 60s TTL
-                using var boot1 = await cluster1.Client.GetAsync("/api/v1/bootstrap");
+                using var boot1 = await cluster1.AuthenticatedClient.GetAsync("/api/v1/bootstrap");
                 Assert.Equal(HttpStatusCode.OK, boot1.StatusCode);
                 Assert.Equal(1, cluster1.AgentRuntime.ProbeCount);
+                using var bootstrap = JsonDocument.Parse(await boot1.Content.ReadAsStringAsync());
 
-                using var boot2 = await cluster1.Client.GetAsync("/api/v1/bootstrap");
+                firstDatabaseId = bootstrap.RootElement.GetProperty("databaseId").GetString()!;
+                firstInstanceId = bootstrap.RootElement.GetProperty("dbInstanceId").GetString()!;
+                Assert.False(string.IsNullOrWhiteSpace(firstDatabaseId));
+                Assert.False(string.IsNullOrWhiteSpace(firstInstanceId));
+                Assert.True(bootstrap.RootElement.GetProperty("authRequired").GetBoolean());
+
+                using var boot2 = await cluster1.AuthenticatedClient.GetAsync("/api/v1/bootstrap");
                 Assert.Equal(HttpStatusCode.OK, boot2.StatusCode);
                 Assert.Equal(1, cluster1.AgentRuntime.ProbeCount); // Served from 60s cache!
 
                 // 3. ?refresh=true bypasses cache and invokes ProbeProvidersAsync(forceRefresh: true, ct)
-                using var bootRefresh = await cluster1.Client.GetAsync("/api/v1/bootstrap?refresh=true");
+                using var bootRefresh = await cluster1.AuthenticatedClient.GetAsync("/api/v1/bootstrap?refresh=true");
                 Assert.Equal(HttpStatusCode.OK, bootRefresh.StatusCode);
                 Assert.Equal(2, cluster1.AgentRuntime.ProbeCount);
                 Assert.Equal(1, cluster1.AgentRuntime.ForceRefreshProbeCount);
@@ -58,7 +55,7 @@ public sealed class ApiV1AuditFixesIntegrationTests
             // 4. Reopening SQLite on same DataDir preserves exact same databaseId!
             await using (var cluster2 = new PergaHostTestCluster(explicitDataDir: sharedDataDir))
             {
-                using var bootReopen = await cluster2.Client.GetAsync("/api/v1/bootstrap?scope=whoami");
+                using var bootReopen = await cluster2.AuthenticatedClient.GetAsync("/api/v1/bootstrap");
                 Assert.Equal(HttpStatusCode.OK, bootReopen.StatusCode);
                 using var reopenDoc = JsonDocument.Parse(await bootReopen.Content.ReadAsStringAsync());
                 Assert.Equal(firstDatabaseId, reopenDoc.RootElement.GetProperty("databaseId").GetString());
@@ -74,7 +71,7 @@ public sealed class ApiV1AuditFixesIntegrationTests
     public async Task HostListDir_BinaryFiles_RawFilesSecurity_AndDetailedVcsDiff_WorkForGitAndJj()
     {
         await using var cluster = new PergaHostTestCluster();
-        var client = cluster.Client;
+        var client = cluster.AuthenticatedClient;
 
         // 1. GET /api/v1/fs/listdir default ($HOME), explicit sorted dir, 404 missing, 400 file
         using var homeResp = await client.GetAsync("/api/v1/fs/listdir");
@@ -276,9 +273,9 @@ public sealed class ApiV1AuditFixesIntegrationTests
             await RunCmdAsync(root, "git", "commit", "-q", "-m", "initial");
             await using var cluster = new PergaHostTestCluster(Path.Combine(root, "perga-data"));
             cluster.Services.GetRequiredService<IPergaKernel>().Templates.RegisterTemplate(VcsWorkspaceTemplate);
-            using var areaResponse = await cluster.Client.PostAsJsonAsync("/api/v1/areas", new { name = "Blank area" });
+            using var areaResponse = await cluster.AuthenticatedClient.PostAsJsonAsync("/api/v1/areas", new { name = "Blank area" });
             var area = (await areaResponse.Content.ReadFromJsonAsync<AreaDto>(PergaJsonDefaults.ApiOptions))!;
-            using var trackResponse = await cluster.Client.PostAsJsonAsync("/api/v1/tracks",
+            using var trackResponse = await cluster.AuthenticatedClient.PostAsJsonAsync("/api/v1/tracks",
                 new { areaId = area.Id, templateId });
             Assert.Equal(HttpStatusCode.Created, trackResponse.StatusCode);
 
@@ -287,14 +284,14 @@ public sealed class ApiV1AuditFixesIntegrationTests
             Assert.Equal(driver, track.GetProperty("workspaceDriver").GetString());
             var id = track.GetProperty("id").GetString()!;
             await cluster.Services.GetRequiredService<IPergaKernel>().WaitForTrackIdleAsync(id);
-            using var ready = JsonDocument.Parse(await cluster.Client.GetStringAsync($"/api/v1/tracks/{id}"));
+            using var ready = JsonDocument.Parse(await cluster.AuthenticatedClient.GetStringAsync($"/api/v1/tracks/{id}"));
             var cwd = ready.RootElement.GetProperty("track").GetProperty("cwd").GetString()!;
             Assert.Equal(driver == "vcs-workspace", Directory.Exists(Path.Combine(cwd, ".git")));
             Assert.False(File.Exists(Path.Combine(cwd, "parent-only.txt")));
             Directory.CreateDirectory(Path.Combine(cwd, ".git"));
             File.Delete(Path.Combine(cwd, ".git", "HEAD"));
             await File.AppendAllTextAsync(Path.Combine(root, "parent-only.txt"), " changed");
-            using var diff = JsonDocument.Parse(await cluster.Client.GetStringAsync($"/api/v1/tracks/{id}/vcs-diff"));
+            using var diff = JsonDocument.Parse(await cluster.AuthenticatedClient.GetStringAsync($"/api/v1/tracks/{id}/vcs-diff"));
             Assert.Empty(diff.RootElement.GetProperty("changedFiles").EnumerateArray());
         }
         finally
@@ -307,7 +304,7 @@ public sealed class ApiV1AuditFixesIntegrationTests
     public async Task BlankCwdIsolation_IdempotencyHeaders_NonBlockingFirstMessage_PatchSession_AndBeforeIdPagination_WorkEndToEnd()
     {
         await using var cluster = new PergaHostTestCluster();
-        var client = cluster.Client;
+        var client = cluster.AuthenticatedClient;
         cluster.Services.GetRequiredService<IPergaKernel>().Templates.RegisterTemplate(VcsWorkspaceTemplate);
 
         // 1. POST /api/v1/areas with Idempotency-Key + blank DefaultCwd
@@ -502,7 +499,7 @@ public sealed class ApiV1AuditFixesIntegrationTests
     public async Task TaskGovernanceEndpoints_PermanentTerminalDelete_Overlays_AndLifecycleEvents_WorkEndToEnd()
     {
         await using var cluster = new PergaHostTestCluster();
-        var client = cluster.Client;
+        var client = cluster.AuthenticatedClient;
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
 
         var wsDir = Path.Combine(cluster.DataDir, "gov-ws");

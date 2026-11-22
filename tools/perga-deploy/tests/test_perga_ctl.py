@@ -111,6 +111,44 @@ class Harness(unittest.TestCase):
         return [sys.executable, str(self.root / 'bin/perga_host.py'), '--name', 'demo',
                 '--term-socket', '/run/user/1000/demo/term.sock']
 
+    def test_auth_invokes_release_host_once_with_shared_lock_and_inherited_stdio(self):
+        expected = [str(self.root / 'current/host/Perga.Host'), 'auth', 'init-owner',
+                    '--db-path', str(self.controller.db), '--username', 'owner', '--display-name', 'Owner',
+                    '--allow-migrate', '--password-stdin']
+
+        def invoke(command, **kwargs):
+            self.assertEqual(command, expected)
+            self.assertNotIn('stdin', kwargs)
+            self.assertNotIn('stdout', kwargs)
+            self.assertNotIn('stderr', kwargs)
+            self.assertNotIn('PERGA_UNRELATED_SECRET', kwargs['env'])
+            with self.controller.lock(shared=True):
+                with self.assertRaisesRegex(ctl.DeployError, 'upgrade.lock'):
+                    with self.controller.lock():
+                        self.fail('deploy acquired the lock while auth was running')
+            return subprocess.CompletedProcess(command, 17)
+
+        with patch.dict(os.environ, {'PERGA_UNRELATED_SECRET': 'sentinel'}):
+            with patch.object(ctl.subprocess, 'run', side_effect=invoke) as runner:
+                rc = ctl.main(['--root', str(self.root), 'auth', 'init-owner', '--username', 'owner',
+                               '--display-name', 'Owner', '--allow-migrate', '--password-stdin'])
+        self.assertEqual(rc, 17)
+        runner.assert_called_once()
+
+    def test_auth_rejects_active_upgrade_before_running_host(self):
+        args = ctl.parser().parse_args(['auth', 'status'])
+        with self.controller.lock():
+            with patch.object(ctl.subprocess, 'run') as runner:
+                with self.assertRaisesRegex(ctl.DeployError, 'upgrade.lock'):
+                    self.controller.auth(args)
+                runner.assert_not_called()
+
+        self.controller.state({}, 'queued')
+        with patch.object(ctl.subprocess, 'run') as runner:
+            with self.assertRaisesRegex(ctl.DeployError, 'unfinished upgrade'):
+                self.controller.auth(args)
+            runner.assert_not_called()
+
     def test_install_layout_units_and_config(self):
         self.assertEqual(os.readlink(self.root / 'current'), 'releases/r1')
         self.assertEqual(ctl.verify_release(self.root / 'current')['releaseId'], 'r1')

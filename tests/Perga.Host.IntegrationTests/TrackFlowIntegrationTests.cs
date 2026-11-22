@@ -28,13 +28,13 @@ public sealed class TrackFlowIntegrationTests
                 await kernel.Actors.GetOrActivate(trackId).EnsureMountedAsync();
 
                 // 1. GET /views works even without an active template and returns flowRev=0 + flow projection
-                var views0 = await host.Client.GetFromJsonAsync<JsonElement>($"/api/v1/tracks/{trackId}/views");
+                var views0 = await host.AuthenticatedClient.GetFromJsonAsync<JsonElement>($"/api/v1/tracks/{trackId}/views");
                 Assert.Equal(0, views0.GetProperty("flowRev").GetInt64());
                 Assert.Equal(0, views0.GetProperty("flow").GetProperty("rev").GetInt64());
                 Assert.Equal(0, views0.GetProperty("flow").GetProperty("nodes").GetArrayLength());
 
                 // 2. GET /flow materializes flow.json and returns its path
-                var flow0 = await host.Client.GetFromJsonAsync<JsonElement>($"/api/v1/tracks/{trackId}/flow");
+                var flow0 = await host.AuthenticatedClient.GetFromJsonAsync<JsonElement>($"/api/v1/tracks/{trackId}/flow");
                 Assert.Equal(0, flow0.GetProperty("flowRev").GetInt64());
                 flowFilePath = flow0.GetProperty("filePath").GetString()!;
                 Assert.True(File.Exists(flowFilePath));
@@ -60,7 +60,7 @@ public sealed class TrackFlowIntegrationTests
                     }
                     """);
 
-                using var dryResp = await host.Client.PostAsJsonAsync($"/api/v1/tracks/{trackId}/flow/commit",
+                using var dryResp = await host.AuthenticatedClient.PostAsJsonAsync($"/api/v1/tracks/{trackId}/flow/commit",
                     new { dryRun = true, expectedFlowRev = 0 });
                 dryResp.EnsureSuccessStatusCode();
                 var dryBody = await dryResp.Content.ReadFromJsonAsync<JsonElement>();
@@ -70,7 +70,7 @@ public sealed class TrackFlowIntegrationTests
                 Assert.Equal(2, dryBody.GetProperty("plan").GetProperty("added").GetArrayLength());
 
                 // 4. Real commit via HTTP advances flowRev to 1
-                using var commitResp = await host.Client.PostAsJsonAsync($"/api/v1/tracks/{trackId}/flow/commit",
+                using var commitResp = await host.AuthenticatedClient.PostAsJsonAsync($"/api/v1/tracks/{trackId}/flow/commit",
                     new { dryRun = false, expectedFlowRev = 0 });
                 commitResp.EnsureSuccessStatusCode();
                 var commitBody = await commitResp.Content.ReadFromJsonAsync<JsonElement>();
@@ -79,7 +79,7 @@ public sealed class TrackFlowIntegrationTests
                 Assert.Equal(2, commitBody.GetProperty("flow").GetProperty("nodes").GetArrayLength());
 
                 // 5. Stale expectedFlowRev -> 409 Conflict
-                using var staleResp = await host.Client.PostAsJsonAsync($"/api/v1/tracks/{trackId}/flow/commit",
+                using var staleResp = await host.AuthenticatedClient.PostAsJsonAsync($"/api/v1/tracks/{trackId}/flow/commit",
                     new { dryRun = false, expectedFlowRev = 0 });
                 Assert.Equal(HttpStatusCode.Conflict, staleResp.StatusCode);
 
@@ -104,7 +104,7 @@ public sealed class TrackFlowIntegrationTests
                       ]
                     }
                     """);
-                using var cancelResp = await host.Client.PostAsJsonAsync($"/api/v1/tracks/{trackId}/flow/commit",
+                using var cancelResp = await host.AuthenticatedClient.PostAsJsonAsync($"/api/v1/tracks/{trackId}/flow/commit",
                     new { dryRun = false });
                 cancelResp.EnsureSuccessStatusCode();
                 var cancelBody = await cancelResp.Content.ReadFromJsonAsync<JsonElement>();
@@ -118,7 +118,7 @@ public sealed class TrackFlowIntegrationTests
             // Background GC archives the canceled cron node and its now-unreachable downstream branch and advances flowRev.
             await using (var reopened = NewHost(tempDir.FullName))
             {
-                var viewsAfterRestart = await reopened.Client.GetFromJsonAsync<JsonElement>($"/api/v1/tracks/{trackId}/views");
+                var viewsAfterRestart = await reopened.AuthenticatedClient.GetFromJsonAsync<JsonElement>($"/api/v1/tracks/{trackId}/views");
                 Assert.Equal(3, viewsAfterRestart.GetProperty("flowRev").GetInt64());
                 var flow = viewsAfterRestart.GetProperty("flow");
                 Assert.Equal(0, flow.GetProperty("nodes").GetArrayLength());

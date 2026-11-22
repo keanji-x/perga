@@ -86,7 +86,7 @@ it('scopes a bundled workspace by its verified recovery database', async () => {
   let scope = '';
   const recovery = new RecoverySession({ access, storage, origin: 'https://server.test',
     compatibleVersion: WEB_COMPAT_VERSION, version: fetchVersion,
-    identity: () => Promise.resolve({ userId: 'owner', displayName: 'Owner', role: 'owner', sessionId: 'session' }),
+    identity: () => Promise.resolve({ userId: 'owner', displayName: 'Owner', username: 'owner', expiresAtMs: 2000000000000, role: 'owner', sessionId: 'session' }),
     adoptScope: value => { scope = value; preferences.setRecoveryScope(value); },
     logout: () => Promise.resolve(), clear: () => client.clear(), online: () => true, visible: () => true });
   const transport = createRecoveryTransports({ send: () => Promise.reject(new Error('Unexpected business request')) }, access).business;

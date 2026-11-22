@@ -12,7 +12,7 @@ export function renderSendFeedbackFixture({ held = false, lost = false, refused 
   const waiting = new Promise<void>(resolve => { release = resolve; });
   const accepted = new Map<string, { session: AgentSessionDto; receipt: ReturnType<typeof sessionInput> }>();
   const view = renderSessionFixture({ strict, initial: '/track/daily?panel=conversations',
-    identity: { userId: 'local-owner', displayName: 'Owner', role: 'owner', sessionId: 'feedback' },
+    identity: { userId: 'local-owner', displayName: 'Owner', username: 'owner', expiresAtMs: 2000000000000, role: 'owner', sessionId: 'feedback' },
     reply: async request => {
       if (request.method !== 'POST' || !(request.path.endsWith('/messages') || request.path.endsWith('/sessions'))) return undefined;
       const key = request.headers?.['Idempotency-Key'];

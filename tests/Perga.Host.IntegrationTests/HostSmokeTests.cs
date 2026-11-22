@@ -50,7 +50,7 @@ public sealed class HostSmokeTests
             await using var factory = new IsolatedPergaHostFactory(
                 Path.Combine(directory.FullName, "test-data"),
                 configureHost: builder => builder.ConfigureAppConfiguration((_, config) => config.AddCommandLine(arguments)));
-            using var client = factory.CreateClient();
+            using var client = await BrowserAuthentication.CreateAuthenticatedClientAsync(factory);
             using var response = await client.GetAsync("/api/v1/bootstrap?refresh=true");
             response.EnsureSuccessStatusCode();
             using var payload = JsonDocument.Parse(await response.Content.ReadAsStringAsync());

@@ -59,7 +59,7 @@ public sealed class TodayEndpointTests
     public async Task InvalidInputsReturn400(string path)
     {
         await using var host = new PergaHostTestCluster();
-        using var response = await host.Client.GetAsync(path);
+        using var response = await host.AuthenticatedClient.GetAsync(path);
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         var error = await response.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("invalid_argument", error.GetProperty("code").GetString());
@@ -105,13 +105,13 @@ public sealed class TodayEndpointTests
         Assert.Empty((await Get(host, $"/api/today/report-changes?date={previous}")).GetProperty("changes").EnumerateArray());
         var system = await Get(host, $"/api/today/report-edits?date={date}&track_id={daily.GetProperty("track_id").GetString()}&through_event_id={tip}");
         Assert.Empty(system.GetProperty("edits").EnumerateArray());
-        Assert.Equal(HttpStatusCode.NotFound, (await host.Client.GetAsync("/api/today/supervisor")).StatusCode);
-        Assert.Equal(HttpStatusCode.NotFound, (await host.Client.GetAsync("/api/today/launchpad")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await host.AuthenticatedClient.GetAsync("/api/today/supervisor")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await host.AuthenticatedClient.GetAsync("/api/today/launchpad")).StatusCode);
     }
 
     private static async Task<JsonElement> Get(PergaHostTestCluster host, string path)
     {
-        using var response = await host.Client.GetAsync(path);
+        using var response = await host.AuthenticatedClient.GetAsync(path);
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<JsonElement>();
     }

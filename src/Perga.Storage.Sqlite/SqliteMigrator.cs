@@ -72,12 +72,21 @@ public sealed class SqliteMigrationTamperedException : InvalidOperationException
     }
 }
 
+public sealed class SqliteFutureSchemaException(int databaseVersion, int supportedVersion)
+    : InvalidOperationException($"Database schema v{databaseVersion} is newer than supported schema v{supportedVersion}.")
+{
+    public int DatabaseVersion { get; } = databaseVersion;
+    public int SupportedVersion { get; } = supportedVersion;
+}
+
 /// <summary>
 /// Applies byte-frozen SQLite migrations with SHA-256 tamper verification and automatic
 /// <c>{dbPath}.bak-v{current}</c> online backup prior to schema upgrades.
 /// </summary>
 public sealed class SqliteMigrator
 {
+    public const int CurrentSchemaVersion = 26;
+
     private readonly IReadOnlyList<SqliteMigration> _migrations;
     private readonly TimeProvider _timeProvider;
 
@@ -142,73 +151,44 @@ public sealed class SqliteMigrator
         return loaded;
     }
 
-    public async Task MigrateAsync(string dbPath, CancellationToken ct = default)
+    public Task MigrateAsync(string dbPath, CancellationToken ct = default) =>
+        EnsureMigratedAsync(dbPath, allowMigrate: true, ct);
+
+    public async Task EnsureMigratedAsync(string dbPath, bool allowMigrate, CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(dbPath);
         var fullDbPath = Path.GetFullPath(dbPath);
-        var parentDir = Path.GetDirectoryName(fullDbPath);
-        if (!string.IsNullOrEmpty(parentDir))
-        {
-            Directory.CreateDirectory(parentDir);
-        }
-
         var csb = new SqliteConnectionStringBuilder
         {
             DataSource = fullDbPath,
-            Mode = SqliteOpenMode.ReadWriteCreate,
+            Mode = allowMigrate ? SqliteOpenMode.ReadWriteCreate : SqliteOpenMode.ReadOnly,
             Pooling = false,
-            DefaultTimeout = 30
+            DefaultTimeout = allowMigrate ? 30 : 2
         };
 
+        if (!allowMigrate)
+        {
+            if (!File.Exists(fullDbPath))
+                throw new InvalidOperationException("The database does not exist. Start Perga or pass --allow-migrate.");
+
+            await using var reader = new SqliteConnection(csb.ToString());
+            await reader.OpenAsync(ct).ConfigureAwait(false);
+            await reader.ExecuteAsync(new CommandDefinition(
+                "PRAGMA query_only = ON; PRAGMA busy_timeout = 2000;", cancellationToken: ct)).ConfigureAwait(false);
+            var version = await ReadAppliedMigrationsAsync(reader, fullDbPath, ct).ConfigureAwait(false);
+            if (version < _migrations.Count)
+                throw new InvalidOperationException("The database requires migration. Start Perga or pass --allow-migrate.");
+            return;
+        }
+
+        var parentDir = Path.GetDirectoryName(fullDbPath);
+        if (!string.IsNullOrEmpty(parentDir))
+            Directory.CreateDirectory(parentDir);
+        await using var migrationLock = await AcquireMigrationLockAsync(fullDbPath + ".migrate.lock", ct).ConfigureAwait(false);
         await using var conn = new SqliteConnection(csb.ToString());
         await conn.OpenAsync(ct).ConfigureAwait(false);
 
-        var hasMigrationsTable = await conn.ExecuteScalarAsync<long>(
-            new CommandDefinition(
-                "SELECT COUNT(1) FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations';",
-                cancellationToken: ct)).ConfigureAwait(false) > 0;
-
-        var appliedRows = hasMigrationsTable
-            ? (await conn.QueryAsync<AppliedMigrationRow>(
-                new CommandDefinition(
-                    "SELECT version AS Version, name AS Name, checksum_sha256 AS ChecksumSha256, applied_at_ms AS AppliedAtMs FROM schema_migrations ORDER BY version ASC;",
-                    cancellationToken: ct)).ConfigureAwait(false)).ToList()
-            : [];
-
-        var knownByVersion = _migrations.ToDictionary(static m => m.Version);
-        for (var i = 0; i < appliedRows.Count; i++)
-        {
-            var applied = appliedRows[i];
-            var appliedVersion = (int)applied.Version;
-            if (!knownByVersion.TryGetValue(appliedVersion, out var expected))
-            {
-                throw new SqliteMigrationTamperedException(
-                    appliedVersion,
-                    expectedChecksum: null,
-                    actualChecksum: applied.ChecksumSha256,
-                    $"Database '{fullDbPath}' contains unknown applied migration v{appliedVersion} ('{applied.Name}').");
-            }
-
-            if (appliedVersion != i + 1)
-            {
-                throw new SqliteMigrationTamperedException(
-                    appliedVersion,
-                    expected.ChecksumSha256,
-                    applied.ChecksumSha256,
-                    $"Database '{fullDbPath}' has non-contiguous applied migration history at v{appliedVersion}.");
-            }
-
-            if (!string.Equals(applied.ChecksumSha256, expected.ChecksumSha256, StringComparison.OrdinalIgnoreCase))
-            {
-                throw new SqliteMigrationTamperedException(
-                    appliedVersion,
-                    expected.ChecksumSha256,
-                    applied.ChecksumSha256,
-                    $"SHA-256 checksum mismatch for applied migration v{appliedVersion} ('{expected.Name}'): expected {expected.ChecksumSha256}, found {applied.ChecksumSha256}.");
-            }
-        }
-
-        var currentVersion = appliedRows.Count == 0 ? 0 : (int)appliedRows[^1].Version;
+        var currentVersion = await ReadAppliedMigrationsAsync(conn, fullDbPath, ct).ConfigureAwait(false);
         var pending = _migrations.Where(m => m.Version > currentVersion).OrderBy(static m => m.Version).ToList();
 
         if (pending.Count == 0)
@@ -320,6 +300,88 @@ public sealed class SqliteMigrator
         }
 
         await EnsureConnectionPragmasAsync(conn, ct).ConfigureAwait(false);
+    }
+
+    private async Task<int> ReadAppliedMigrationsAsync(SqliteConnection conn, string fullDbPath, CancellationToken ct)
+    {
+        var hasMigrationsTable = await conn.ExecuteScalarAsync<long>(
+            new CommandDefinition(
+                "SELECT COUNT(1) FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations';",
+                cancellationToken: ct)).ConfigureAwait(false) > 0;
+
+        var appliedRows = hasMigrationsTable
+            ? (await conn.QueryAsync<AppliedMigrationRow>(
+                new CommandDefinition(
+                    "SELECT version AS Version, name AS Name, checksum_sha256 AS ChecksumSha256, applied_at_ms AS AppliedAtMs FROM schema_migrations ORDER BY version ASC;",
+                    cancellationToken: ct)).ConfigureAwait(false)).ToList()
+            : [];
+
+        var currentVersion = appliedRows.Count == 0 ? 0 : checked((int)appliedRows[^1].Version);
+        if (currentVersion > _migrations.Count)
+            throw new SqliteFutureSchemaException(currentVersion, _migrations.Count);
+
+        var knownByVersion = _migrations.ToDictionary(static m => m.Version);
+        for (var i = 0; i < appliedRows.Count; i++)
+        {
+            var applied = appliedRows[i];
+            var appliedVersion = (int)applied.Version;
+            if (!knownByVersion.TryGetValue(appliedVersion, out var expected))
+            {
+                throw new SqliteMigrationTamperedException(
+                    appliedVersion,
+                    expectedChecksum: null,
+                    actualChecksum: applied.ChecksumSha256,
+                    $"Database '{fullDbPath}' contains unknown applied migration v{appliedVersion} ('{applied.Name}').");
+            }
+
+            if (appliedVersion != i + 1)
+            {
+                throw new SqliteMigrationTamperedException(
+                    appliedVersion,
+                    expected.ChecksumSha256,
+                    applied.ChecksumSha256,
+                    $"Database '{fullDbPath}' has non-contiguous applied migration history at v{appliedVersion}.");
+            }
+
+            if (!string.Equals(applied.ChecksumSha256, expected.ChecksumSha256, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new SqliteMigrationTamperedException(
+                    appliedVersion,
+                    expected.ChecksumSha256,
+                    applied.ChecksumSha256,
+                    $"SHA-256 checksum mismatch for applied migration v{appliedVersion} ('{expected.Name}'): expected {expected.ChecksumSha256}, found {applied.ChecksumSha256}.");
+            }
+        }
+
+        return currentVersion;
+    }
+
+    internal static async Task<int> ReadVersionAsync(SqliteConnection conn, CancellationToken ct)
+    {
+        var hasHistory = await conn.ExecuteScalarAsync<bool>(new CommandDefinition(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations');",
+            cancellationToken: ct)).ConfigureAwait(false);
+        return hasHistory
+            ? await conn.ExecuteScalarAsync<int>(new CommandDefinition(
+                "SELECT COALESCE(MAX(version), 0) FROM schema_migrations;", cancellationToken: ct)).ConfigureAwait(false)
+            : 0;
+    }
+
+    private static async Task<FileStream> AcquireMigrationLockAsync(string path, CancellationToken ct)
+    {
+        var started = System.Diagnostics.Stopwatch.StartNew();
+        while (true)
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                return new FileStream(path, FileMode.OpenOrCreate, FileAccess.Write, FileShare.None);
+            }
+            catch (IOException ex) when ((ex.HResult & 0xffff) is 11 or 32 or 33 && started.Elapsed < TimeSpan.FromSeconds(30))
+            {
+                await Task.Delay(50, ct).ConfigureAwait(false);
+            }
+        }
     }
 
     private static async Task EnsureConnectionPragmasAsync(SqliteConnection conn, CancellationToken ct)

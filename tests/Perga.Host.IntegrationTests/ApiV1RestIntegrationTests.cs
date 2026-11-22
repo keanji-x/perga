@@ -21,7 +21,7 @@ public sealed class ApiV1RestIntegrationTests
     public async Task Bootstrap_Templates_Areas_And_Tracks_AllRestRoutes_And_WireConventions_WorkEndToEnd()
     {
         await using var cluster = new PergaHostTestCluster();
-        var client = cluster.Client;
+        var client = cluster.AuthenticatedClient;
 
         // 1. GET /api/v1/bootstrap & GET /api/v1/templates
         using var bootResp = await client.GetAsync("/api/v1/bootstrap");
@@ -124,7 +124,7 @@ public sealed class ApiV1RestIntegrationTests
     public async Task Sessions_IdempotencyKey_Steer_Interrupt_Compact_And_AskAnswer_WorkEndToEnd()
     {
         await using var cluster = new PergaHostTestCluster();
-        var client = cluster.Client;
+        var client = cluster.AuthenticatedClient;
 
         var repoDir = Path.Combine(cluster.DataDir, "sess-ws");
         Directory.CreateDirectory(repoDir);
@@ -359,7 +359,7 @@ public sealed class ApiV1RestIntegrationTests
         {
             await using var cluster = new PergaHostTestCluster(
                 configureHostOptions: opts => opts.StaticWebRootDirectory = distDir);
-            var client = cluster.Client;
+            var client = cluster.AuthenticatedClient;
 
             // Initialize a real colocated Jujutsu repository!
             var jjRepo = Path.Combine(cluster.DataDir, "jj-repo");
@@ -424,27 +424,27 @@ public sealed class ApiV1RestIntegrationTests
             Assert.Equal(HttpStatusCode.NoContent, delTermResp.StatusCode);
 
             // 4. Static assets & SPA fallback without intercepting /api/* or /mcp/*
-            using var assetResp = await client.GetAsync("/app.js");
+            using var assetResp = await cluster.Client.GetAsync("/app.js");
             Assert.Equal(HttpStatusCode.OK, assetResp.StatusCode);
             Assert.Contains("console.log('perga')", await assetResp.Content.ReadAsStringAsync());
 
-            using var rootJsResp = await client.GetAsync("/assets/bundle.js");
+            using var rootJsResp = await cluster.Client.GetAsync("/assets/bundle.js");
             Assert.Equal(HttpStatusCode.OK, rootJsResp.StatusCode);
             Assert.Contains("javascript", rootJsResp.Content.Headers.ContentType?.MediaType ?? string.Empty, StringComparison.OrdinalIgnoreCase);
             Assert.Contains("console.log('bundle')", await rootJsResp.Content.ReadAsStringAsync());
 
-            using var removedAlias = await client.GetAsync("/next/assets/bundle.js");
+            using var removedAlias = await cluster.Client.GetAsync("/next/assets/bundle.js");
             Assert.DoesNotContain("console.log('bundle')", await removedAlias.Content.ReadAsStringAsync());
 
-            using var rootCssResp = await client.GetAsync("/assets/bundle.css");
+            using var rootCssResp = await cluster.Client.GetAsync("/assets/bundle.css");
             Assert.Equal(HttpStatusCode.OK, rootCssResp.StatusCode);
             Assert.Equal("text/css", rootCssResp.Content.Headers.ContentType?.MediaType);
 
-            using var manifestResp = await client.GetAsync("/manifest.webmanifest");
+            using var manifestResp = await cluster.Client.GetAsync("/manifest.webmanifest");
             Assert.Equal(HttpStatusCode.OK, manifestResp.StatusCode);
             Assert.Equal("application/manifest+json", manifestResp.Content.Headers.ContentType?.MediaType);
 
-            using var spaRouteResp = await client.GetAsync($"/tracks/{trackId}");
+            using var spaRouteResp = await cluster.Client.GetAsync($"/tracks/{trackId}");
             Assert.Equal(HttpStatusCode.OK, spaRouteResp.StatusCode);
             Assert.Contains("Perga SPA", await spaRouteResp.Content.ReadAsStringAsync());
 
@@ -453,8 +453,10 @@ public sealed class ApiV1RestIntegrationTests
             using var api404Json = JsonDocument.Parse(await api404Resp.Content.ReadAsStringAsync());
             Assert.Equal("not_found", api404Json.RootElement.GetProperty("code").GetString());
 
-            using var mcp404Resp = await client.GetAsync("/mcp/does-not-exist");
-            Assert.Equal(HttpStatusCode.NotFound, mcp404Resp.StatusCode);
+            using var mcpAnonymous = await cluster.Client.GetAsync("/mcp/does-not-exist");
+            Assert.Equal(HttpStatusCode.Unauthorized, mcpAnonymous.StatusCode);
+            using var mcpError = JsonDocument.Parse(await mcpAnonymous.Content.ReadAsStringAsync());
+            Assert.Equal("unauthorized", mcpError.RootElement.GetProperty("code").GetString());
         }
         finally
         {
@@ -517,7 +519,7 @@ public sealed class ApiV1RestIntegrationTests
     public async Task SessionPermissionMode_LeadAndAssistant_PersistsValidatesAndRejectsInvalid()
     {
         await using var cluster = new PergaHostTestCluster();
-        var client = cluster.Client;
+        var client = cluster.AuthenticatedClient;
 
         var areaResp = await client.PostAsJsonAsync("/api/v1/areas", new { name = "PermArea" }, PergaJsonDefaults.ApiOptions);
         areaResp.EnsureSuccessStatusCode();

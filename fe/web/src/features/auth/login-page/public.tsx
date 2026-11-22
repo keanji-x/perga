@@ -1,7 +1,8 @@
-import { useCallback, useId, useLayoutEffect, useRef, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, type ReactNode } from 'react';
 import { useState } from '../../../ui/state/public.ts';
 import styles from './login-page.module.css';
 import type { SessionIdentity } from '../../../../../core/api/auth.ts';
+import { LoginThrottledError } from '../../../../../core/domain/login.ts';
 
 export type LoginPageProps = Readonly<{
   login: (username: string, password: string, signal: AbortSignal) => Promise<SessionIdentity | null>;
@@ -27,18 +28,33 @@ export function LoginPage({ login, reload, onBackToPairing }: LoginPageProps) {
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [retryAt, setRetryAt] = useState<number | null>(null);
+  const [retrySeconds, setRetrySeconds] = useState(0);
   const pending = useRef<AbortController | null>(null);
   const cancel = useCallback(() => {
     const attempt = pending.current; pending.current = null; attempt?.abort();
   }, []);
   useLayoutEffect(() => cancel, [cancel]);
+  useEffect(() => {
+    if (retryAt === null) return;
+    const timer = window.setInterval(() => {
+      const remaining = Math.max(0, Math.ceil((retryAt - Date.now()) / 1000));
+      setRetrySeconds(remaining);
+      if (remaining === 0) window.clearInterval(timer);
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [retryAt]);
 
   return <main className={styles.page}>
     <form className={styles.form} onSubmit={(event) => {
       event.preventDefault();
       if (pending.current !== null) return;
+      if (username.trim() === '' || password.trim() === '') {
+        setError('Enter your username and password.');
+        return;
+      }
       const attempt = new AbortController(); pending.current = attempt;
-      setSubmitting(true); setError(null);
+      setSubmitting(true); setError(null); setRetryAt(null); setRetrySeconds(0);
       void login(username, password, attempt.signal).then((result) => {
         if (attempt.signal.aborted) return;
         if (!result) { setError('Wrong username or password.'); setSubmitting(false); return; }
@@ -46,6 +62,10 @@ export function LoginPage({ login, reload, onBackToPairing }: LoginPageProps) {
         reload();
       }).catch((cause: unknown) => {
         if (attempt.signal.aborted) return;
+        if (cause instanceof LoginThrottledError) {
+          setRetryAt(Date.now() + cause.retryAfterSeconds * 1000);
+          setRetrySeconds(cause.retryAfterSeconds);
+        }
         setError(cause instanceof Error && cause.message ? cause.message : 'Sign-in failed.');
         setSubmitting(false);
       }).finally(() => {
@@ -54,11 +74,12 @@ export function LoginPage({ login, reload, onBackToPairing }: LoginPageProps) {
     }}>
       <h1>Sign in</h1>
       {error !== null && <p role="alert" className={styles.error}>{error}</p>}
+      {retryAt !== null && <p>{retrySeconds > 0 ? `Try again in ${retrySeconds} seconds.` : 'You can try again now.'}</p>}
       <label htmlFor={`${prefix}-username`}>Username</label>
       {/* eslint-disable-next-line jsx-a11y/no-autofocus -- Single-purpose login screen intentionally starts at its first field. */}
-      <input id={`${prefix}-username`} name="username" autoFocus autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} />
+      <input id={`${prefix}-username`} name="username" autoFocus autoComplete="username" required value={username} onChange={(event) => setUsername(event.target.value)} />
       <label htmlFor={`${prefix}-password`}>Password</label>
-      <input id={`${prefix}-password`} name="password" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} />
+      <input id={`${prefix}-password`} name="password" type="password" autoComplete="current-password" required value={password} onChange={(event) => setPassword(event.target.value)} />
       <button type="submit" disabled={submitting}>{submitting ? 'Signing in…' : 'Sign in'}</button>
       {onBackToPairing && <button type="button" onClick={() => { cancel(); onBackToPairing(); }}>返回扫码连接</button>}
     </form>

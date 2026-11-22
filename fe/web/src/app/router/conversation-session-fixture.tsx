@@ -13,7 +13,7 @@ export function renderSessionFixture(options: Parameters<typeof renderDailyFixtu
   const view = renderDailyFixture({ ...options, extraPlanner: true, reply: async request => {
     const custom = await options.reply?.(request);
     if (custom !== undefined) return custom;
-    if (request.path.startsWith('/api/v1/bootstrap') && !request.path.includes('scope=whoami')) return sessionReply({
+    if (request.path.startsWith('/api/v1/bootstrap')) return sessionReply({
       version: 'browser-fixture', providers: [{ provider: 'codex', available: true, version: 'test', reason: null, models: ['test-model'] }],
       templates: [], areas: [],
     });

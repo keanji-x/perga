@@ -45,8 +45,14 @@ public static class EventsWebSocketHandler
             trackId = trackValues.ToString().Trim();
         }
 
-        using var webSocket = await context.WebSockets.AcceptWebSocketAsync().ConfigureAwait(false);
-        using var sessionCts = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted);
+        await AuthenticatedWebSocket.RunAsync(context, (socket, _, close, ct) =>
+            StreamAsync(socket, close, kernel, readStore, since, trackId, ct));
+    }
+
+    private static async Task StreamAsync(WebSocket webSocket, WsSessionCloseCoordinator close, IPergaKernel kernel,
+        ITrackReadStore readStore, long since, string? trackId, CancellationToken lifetime)
+    {
+        using var sessionCts = CancellationTokenSource.CreateLinkedTokenSource(lifetime);
         var ct = sessionCts.Token;
 
         // 1. Subscribe to live EventBus FIRST so zero events can slip into a race window during replay!
@@ -69,7 +75,7 @@ public static class EventsWebSocketHandler
             {
                 // Determine current store tip so subsequent live frames do not duplicate pre-snapshot history.
                 maxDeliveredPersistentId = await readStore.GetEventTipIdAsync(ct).ConfigureAwait(false);
-                await SendJsonFrameAsync(webSocket, new { kind = "_snapshot_required", tipId = maxDeliveredPersistentId }, ct).ConfigureAwait(false);
+                await SendJsonFrameAsync(close, new { kind = "_snapshot_required", tipId = maxDeliveredPersistentId }, ct).ConfigureAwait(false);
             }
             else
             {
@@ -80,11 +86,11 @@ public static class EventsWebSocketHandler
                         maxDeliveredPersistentId = id;
                     }
 
-                    await SendJsonFrameAsync(webSocket, persisted, ct).ConfigureAwait(false);
+                    await SendJsonFrameAsync(close, persisted, ct).ConfigureAwait(false);
                 }
 
                 await SendJsonFrameAsync(
-                    webSocket,
+                    close,
                     new { kind = "_replay_complete", tipId = maxDeliveredPersistentId },
                     ct).ConfigureAwait(false);
             }
@@ -107,7 +113,7 @@ public static class EventsWebSocketHandler
                     maxDeliveredPersistentId = liveId;
                 }
 
-                await SendJsonFrameAsync(webSocket, live, ct).ConfigureAwait(false);
+                await SendJsonFrameAsync(close, live, ct).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException)
@@ -128,20 +134,6 @@ public static class EventsWebSocketHandler
             catch
             {
                 // Ignore receive pump termination errors.
-            }
-
-            if (webSocket.State is WebSocketState.Open or WebSocketState.CloseReceived)
-            {
-                try
-                {
-                    using var closeCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
-                    await webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "closing", closeCts.Token)
-                        .ConfigureAwait(false);
-                }
-                catch
-                {
-                    // Ignore close handshake errors.
-                }
             }
         }
     }
@@ -171,9 +163,9 @@ public static class EventsWebSocketHandler
         }
     }
 
-    private static ValueTask SendJsonFrameAsync<T>(WebSocket webSocket, T payload, CancellationToken ct)
+    private static ValueTask SendJsonFrameAsync<T>(WsSessionCloseCoordinator close, T payload, CancellationToken ct)
     {
         var utf8 = JsonSerializer.SerializeToUtf8Bytes(payload, PergaJsonDefaults.ApiOptions);
-        return webSocket.SendAsync(utf8.AsMemory(), WebSocketMessageType.Text, endOfMessage: true, ct);
+        return close.SendAsync(utf8.AsMemory(), WebSocketMessageType.Text, endOfMessage: true, ct);
     }
 }

@@ -1,4 +1,4 @@
-import { createStorageKey } from '../../../../core/keys/storage.ts';
+import { PENDING_TRACK_INITIAL_SENDS_KEY } from '../../../../core/keys/storage.ts';
 import type { TranscriptEntry, Conversation } from '../../../../core/domain/conversation.ts';
 import { DEPLOYMENT_OWNER_USER_ID } from '../../../../core/api/auth.ts';
 import { isOptimisticConversationTurn } from '../../../../core/domain/conversation.ts';
@@ -115,7 +115,7 @@ function writePendingTrackInitialSends(key: string, map: ById<PendingTrackInitia
 
 /** The only local conversation authority. Commands finish before any observer is notified. */
 export function createConversationOwner(submittedStorage?: () => Storage) {
-  const pendingInitialSendsKey = createStorageKey('pending-track-initial-sends-v1');
+  const pendingInitialSendsKey = PENDING_TRACK_INITIAL_SENDS_KEY;
   const initialRead = readPendingTrackInitialSends(pendingInitialSendsKey, submittedStorage);
   let pendingInitialSendsHydrated = initialRead.ok;
   let pendingInitialSendsDirty = false;

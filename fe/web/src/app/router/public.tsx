@@ -1,9 +1,8 @@
-import { queryKeys } from '../providers/query-keys.ts';
 import { createDraftBackOwner,DraftBackLifecycle,type DraftBackContext } from './draft-back-owner.tsx';
 // Code-based TanStack Router setup, built inside a factory so a test can inject the
 // transport and QueryClient; also the composition point for route-owned surfaces.
 
-import { useQuery,type QueryClient } from '@tanstack/react-query';
+import type { QueryClient } from '@tanstack/react-query';
 import {
 createRootRouteWithContext,createRoute,createRouter,
 useLocation,
@@ -17,12 +16,11 @@ import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import {
 ConversationProvider
 } from '../conversations/public.tsx';
-import { runOperation } from '../providers/query-operation.ts';
+import { useCurrentUser, useSignOut } from '../auth/current-user.tsx';
 import { ReadReceiptsProvider } from '../providers/read-receipts.tsx';
 import {
 createRecentFileHistory,type RecentFileHistory,
 } from '../providers/recent-files.ts';
-import { serverVersionOperation } from '../providers/server-queries.ts';
 import { createUiPreferences,UiPreferencesProvider,type UiPreferences } from '../providers/ui-preferences.tsx';
 import { prefetchAreaList } from '../providers/workspace-queries.ts';
 import { AppShell,MobileConversationProvider } from '../shell/public.tsx';
@@ -44,7 +42,7 @@ export type AppRouterDeps = Readonly<{
   transport: ApiTransportPort;
   unauthorized: UnauthorizedChannel;
   client: QueryClient;
-  onSignOut: () => void;
+  onSignOut?: (() => void) | undefined;
 
   cards: CardRuntime;
   prepareReport: ReportPreparationPort;
@@ -148,15 +146,10 @@ export function createAppRouter(deps: AppRouterDeps) {
   return router;
 }
 
-function ShellRoute({ transport, unauthorized, onSignOut, submittedStorage, }: { submittedStorage?: () => Storage; transport: ApiTransportPort; unauthorized: UnauthorizedChannel; onSignOut: () => void }) {
+function ShellRoute({ transport, unauthorized, onSignOut, submittedStorage, }: { submittedStorage?: () => Storage; transport: ApiTransportPort; unauthorized: UnauthorizedChannel; onSignOut?: (() => void) | undefined }) {
   const go = useGo();
-  const versionQuery = useQuery({
-    queryKey: queryKeys.serverVersion(),
-    queryFn: () => runOperation(transport, serverVersionOperation(), unauthorized),
-    enabled: true,
-    retry: false,
-  });
-  const singleOwner = versionQuery.data?.authRequired !== true;
+  const currentUser = useCurrentUser();
+  const signOut = useSignOut();
   return (
     <ConversationProvider submittedStorage={submittedStorage}><NewTrackDraftProvider submittedStorage={submittedStorage}>
       <AppShell
@@ -164,7 +157,8 @@ function ShellRoute({ transport, unauthorized, onSignOut, submittedStorage, }: {
         unauthorized={unauthorized}
         onOpenSettings={() => go({ name: 'settings' })}
         onOpenPlugins={undefined}
-        onSignOut={singleOwner ? undefined : onSignOut}
+        userLabel={currentUser?.displayName}
+        onSignOut={currentUser === null ? undefined : signOut ? () => signOut(currentUser.sessionId) : onSignOut}
       />
     </NewTrackDraftProvider></ConversationProvider>
   );

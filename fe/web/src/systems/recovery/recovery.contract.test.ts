@@ -10,7 +10,7 @@ import { createRecoveryUnauthorizedChannel } from './unauthorized.ts';
 import { RecoverySession } from './session.ts';
 
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
-const identity: SessionIdentity = Object.freeze({ userId: 'owner', displayName: 'Owner', role: 'owner', sessionId: 'secret-session' });
+const identity: SessionIdentity = Object.freeze({ userId: 'owner', displayName: 'Owner', username: 'owner', expiresAtMs: 2000000000000, role: 'owner', sessionId: 'secret-session' });
 const version = Object.freeze({ webCompatVersion: 28, minWebCompatVersion: 28, syncEventVersion: 3, dbInstanceId: 'db-a' });
 function harness() {
   const values = new Map<string, string>();
