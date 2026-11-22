@@ -1,16 +1,24 @@
 using System.Text.Json;
-using Microsoft.Data.Sqlite;
-using Perga.Kernel.Events;
 using Dapper;
+using Microsoft.Data.Sqlite;
 using Perga.Contracts;
 using Perga.Kernel;
 using Perga.Kernel.Ports;
+using Perga.Kernel.Events;
 
 namespace Perga.Storage.Sqlite;
 
-public sealed partial class SqliteTrackStore : ITrackScheduleStore
+/// <summary>Flow clock persistence and atomic firing with tasks and events.</summary>
+internal sealed class TrackSchedulesRepository
 {
-    public ITrackScheduleStore? TrackSchedules => this;
+    private readonly SqliteStoreContext _context;
+    private readonly TaskRepository _taskRepository;
+
+    internal TrackSchedulesRepository(SqliteStoreContext context, TaskRepository taskRepository)
+    {
+        _context = context;
+        _taskRepository = taskRepository;
+    }
 
     private const string ScheduleSelect = """
         SELECT id AS Id, track_id AS TrackId,
@@ -23,7 +31,7 @@ public sealed partial class SqliteTrackStore : ITrackScheduleStore
         FROM track_schedules
         """;
 
-    private static async Task UpsertFlowScheduleInternalAsync(
+    internal static async Task UpsertFlowScheduleInternalAsync(
         SqliteConnection conn,
         SqliteTransaction tx,
         TrackScheduleDto schedule,
@@ -84,8 +92,8 @@ public sealed partial class SqliteTrackStore : ITrackScheduleStore
 
     public async Task<TrackScheduleDto?> GetAsync(string trackId, string scheduleId, CancellationToken ct)
     {
-        EnsureInitialized();
-        await using var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);
+        _context.EnsureInitialized();
+        await using var conn = await _context.OpenReadConnectionAsync(ct).ConfigureAwait(false);
         var row = await conn.QuerySingleOrDefaultAsync<TrackScheduleRow>(new CommandDefinition(
             ScheduleSelect + " WHERE track_id=@TrackId AND id=@Id;",
             new { TrackId = trackId, Id = scheduleId }, cancellationToken: ct)).ConfigureAwait(false);
@@ -94,8 +102,8 @@ public sealed partial class SqliteTrackStore : ITrackScheduleStore
 
     public async Task<IReadOnlyList<TrackScheduleDto>> ListForTrackAsync(string trackId, bool includeTerminal, CancellationToken ct)
     {
-        EnsureInitialized();
-        await using var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);
+        _context.EnsureInitialized();
+        await using var conn = await _context.OpenReadConnectionAsync(ct).ConfigureAwait(false);
         var filter = includeTerminal ? string.Empty : $" AND state='{TrackScheduleStates.Active}'";
         var rows = await conn.QueryAsync<TrackScheduleRow>(new CommandDefinition(
             ScheduleSelect + $" WHERE track_id=@TrackId{filter} ORDER BY CASE WHEN next_fire_at_ms IS NULL THEN 1 ELSE 0 END, next_fire_at_ms ASC, created_at_ms ASC;",
@@ -105,8 +113,8 @@ public sealed partial class SqliteTrackStore : ITrackScheduleStore
 
     public async Task<IReadOnlyList<FiredTrackSchedule>> ListDueFlowClocksAsync(long nowMs, CancellationToken ct)
     {
-        EnsureInitialized();
-        await using var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);
+        _context.EnsureInitialized();
+        await using var conn = await _context.OpenReadConnectionAsync(ct).ConfigureAwait(false);
         var rows = await conn.QueryAsync<FiredTrackSchedule>(new CommandDefinition("""
             SELECT s.track_id AS TrackId, s.id AS ScheduleId, s.node_key AS NodeKey, s.next_fire_at_ms AS DueAtMs
             FROM track_schedules s
@@ -121,8 +129,8 @@ public sealed partial class SqliteTrackStore : ITrackScheduleStore
     public Task<bool> CommitFlowFireAsync(TrackScheduleDto nextClock, long expectedDueAtMs, TaskDto? armedTask,
         EventEnvelopeDto taskEvent, CancellationToken ct)
     {
-        EnsureInitialized();
-        return _writer.EnqueueAsync(async (conn, tx, token) =>
+        _context.EnsureInitialized();
+        return _context.Writer.EnqueueAsync(async (conn, tx, token) =>
         {
             var updated = await conn.ExecuteAsync(new CommandDefinition("""
                 UPDATE track_schedules
@@ -140,19 +148,19 @@ public sealed partial class SqliteTrackStore : ITrackScheduleStore
                 return false;
             if (armedTask is not null)
             {
-                await UpsertTaskInternalAsync(conn, tx, armedTask, token).ConfigureAwait(false);
-                await InsertEventInternalAsync(conn, tx, taskEvent, token).ConfigureAwait(false);
+                await _taskRepository.UpsertTaskInternalAsync(conn, tx, armedTask, token).ConfigureAwait(false);
+                await EventRepository.InsertEventInternalAsync(conn, tx, taskEvent, token).ConfigureAwait(false);
             }
             await InsertSchedulesEventAsync(conn, tx, nextClock.TrackId, nextClock.UpdatedAtMs, token).ConfigureAwait(false);
             return true;
         }, ct);
     }
 
-    private static async Task InsertSchedulesEventAsync(SqliteConnection conn, SqliteTransaction tx, string trackId, long now, CancellationToken ct)
+    internal static async Task InsertSchedulesEventAsync(SqliteConnection conn, SqliteTransaction tx, string trackId, long now, CancellationToken ct)
     {
         var area = await conn.ExecuteScalarAsync<string>(new CommandDefinition("SELECT area_id FROM tracks WHERE id=@TrackId;",
             new { TrackId = trackId }, tx, cancellationToken: ct)).ConfigureAwait(false);
-        await InsertEventInternalAsync(conn, tx, new EventEnvelopeDto(null, area, trackId, KernelEventKinds.TrackSchedulesUpdated,
+        await EventRepository.InsertEventInternalAsync(conn, tx, new EventEnvelopeDto(null, area, trackId, KernelEventKinds.TrackSchedulesUpdated,
             JsonSerializer.SerializeToElement(new { trackId }), now), ct).ConfigureAwait(false);
     }
 

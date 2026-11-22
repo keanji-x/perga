@@ -1,16 +1,23 @@
 using Dapper;
-using Perga.Contracts;
 using Perga.Kernel.Ports;
 using Perga.ReportDoc;
 
 namespace Perga.Storage.Sqlite;
 
-public sealed partial class SqliteTrackStore : ITodayReadStore
+/// <summary>Read-only daily Track, calendar and report revision projections.</summary>
+internal sealed class TodayRepository
 {
+    private readonly SqliteStoreContext _context;
+
+    internal TodayRepository(SqliteStoreContext context)
+    {
+        _context = context;
+    }
+
     public async Task<string?> GetDailyTrackIdAsync(string date, CancellationToken ct)
     {
-        EnsureInitialized();
-        await using var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);
+        _context.EnsureInitialized();
+        await using var conn = await _context.OpenReadConnectionAsync(ct).ConfigureAwait(false);
         return await conn.ExecuteScalarAsync<string?>(new CommandDefinition(
             "SELECT track_id FROM daily_tracks WHERE date = @Date;", new { Date = date }, cancellationToken: ct)).ConfigureAwait(false);
     }
@@ -20,8 +27,8 @@ public sealed partial class SqliteTrackStore : ITodayReadStore
     {
         if (dates.Count == 0)
             return [];
-        EnsureInitialized();
-        await using var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);
+        _context.EnsureInitialized();
+        await using var conn = await _context.OpenReadConnectionAsync(ct).ConfigureAwait(false);
         var rows = await conn.QueryAsync<DailyPresenceRow>(new CommandDefinition("""
             SELECT d.date AS Date,
                    1 AS HasDailyTrack,
@@ -40,8 +47,8 @@ public sealed partial class SqliteTrackStore : ITodayReadStore
     public async Task<IReadOnlyList<TodayScheduleEntry>> ListCalendarSchedulesInWindowAsync(
         long startMs, long endMs, CancellationToken ct)
     {
-        EnsureInitialized();
-        await using var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);
+        _context.EnsureInitialized();
+        await using var conn = await _context.OpenReadConnectionAsync(ct).ConfigureAwait(false);
         var rows = await conn.QueryAsync<TodayScheduleRow>(new CommandDefinition($"""
             SELECT s.id AS Id, s.track_id AS TrackId, t.title AS TrackTitle,
                    s.title AS Title, s.schedule_kind AS ScheduleKind,
@@ -73,8 +80,8 @@ public sealed partial class SqliteTrackStore : ITodayReadStore
     public async Task<IReadOnlyList<DailyReportRevision>> ListDailyReportRevisionsAsync(
         long startMs, long endMs, long throughEventId, CancellationToken ct)
     {
-        EnsureInitialized();
-        await using var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);
+        _context.EnsureInitialized();
+        await using var conn = await _context.OpenReadConnectionAsync(ct).ConfigureAwait(false);
         var rows = await conn.QueryAsync<TodayRevisionRow>(new CommandDefinition("""
             SELECT coalesce(r.event_id, e.id) AS EventId, r.created_at_ms AS At, t.id AS TrackId, t.title AS TrackTitle,
                    a.id AS AreaId, a.name AS AreaName, r.doc_rev AS DocRev,
@@ -97,13 +104,6 @@ public sealed partial class SqliteTrackStore : ITodayReadStore
         return rows.Select(r => new DailyReportRevision(r.EventId, r.At, r.TrackId, r.TrackTitle,
             r.AreaId, r.AreaName, r.DocRev, r.SummaryBefore, r.SummaryAfter,
             Render(r.BeforeBlocks, r.BeforeComment), Render(r.AfterBlocks, r.AfterComment))).ToArray();
-    }
-
-    private sealed class TodayPreviousReport
-    {
-        public string Blocks { get; set; } = "[]";
-        public string Summary { get; set; } = "";
-        public string Comment { get; set; } = "";
     }
 
     private sealed class TodayRevisionRow

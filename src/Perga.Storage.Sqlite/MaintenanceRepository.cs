@@ -7,22 +7,39 @@ using Perga.Kernel.Ports;
 
 namespace Perga.Storage.Sqlite;
 
-public sealed partial class SqliteTrackStore
+/// <summary>Retention, diagnostic compaction, cold-blob reclamation and checkpointing.</summary>
+internal sealed class MaintenanceRepository
 {
+    private readonly SqliteStoreContext _context;
+
+    internal MaintenanceRepository(SqliteStoreContext context)
+    {
+        _context = context;
+    }
+
     private const long DayMs = 86_400_000L;
+
     private const long EventRetentionWindowMs = 7L * DayMs;
+
     private const long DiagnosticRetentionWindowMs = 14L * DayMs;
+
     private const int EventRetentionMaxRows = 50_000;
+
     private const int EventRetentionPayloadBytes = 32 * 1024 * 1024;
+
     private const int EventPruneBatchSize = 1_000;
+
     private const int ActiveRevisionWindow = 100;
+
     private const int ClosedRevisionWindow = 10;
+
     private const int ToolResultInlineCompactThresholdBytes = 4_096;
+
     private const int MaintenanceBatchSize = 250;
 
     public async Task<DbMaintenanceStatsDto> RunMaintenancePassAsync(long nowMs, CancellationToken ct)
     {
-        EnsureInitialized();
+        _context.EnsureInitialized();
 
         await PruneTrackWakesAsync(nowMs, ct).ConfigureAwait(false);
         await PruneTrackSchedulesAsync(nowMs, ct).ConfigureAwait(false);
@@ -64,7 +81,7 @@ public sealed partial class SqliteTrackStore
         // Both limits produce a single replay boundary. Leave newer events in ID order even
         // when timestamps arrive out of order.
         long cutoff;
-        await using (var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false))
+        await using (var conn = await _context.OpenReadConnectionAsync(ct).ConfigureAwait(false))
         {
             cutoff = await conn.ExecuteScalarAsync<long>(new CommandDefinition(
                 """
@@ -95,7 +112,7 @@ public sealed partial class SqliteTrackStore
         }
 
         return await RunMaintenanceBatchesAsync(
-            () => _writer.EnqueueAsync<int>(
+            () => _context.Writer.EnqueueAsync<int>(
                 async (conn, tx, innerCt) => await conn.ExecuteAsync(new CommandDefinition(
                     """
                     DELETE FROM events WHERE id IN (
@@ -109,7 +126,7 @@ public sealed partial class SqliteTrackStore
 
     public async Task<int> PruneTrackWakesAsync(long nowMs, CancellationToken ct)
     {
-        await _writer.EnqueueAsync(async (conn, tx, token) =>
+        await _context.Writer.EnqueueAsync(async (conn, tx, token) =>
         {
             await conn.ExecuteAsync(new CommandDefinition($"""
                 UPDATE track_wakes SET state='{TrackWakeStates.Dropped}', reason='{TrackWakeReasons.MaintenanceExpired}', updated_at_ms=@Now
@@ -118,7 +135,7 @@ public sealed partial class SqliteTrackStore
                    OR (state='{TrackWakeStates.Delivering}' AND updated_at_ms < @Stale);
                 """, new { Now = nowMs, Stale = nowMs - 14 * DayMs }, tx, cancellationToken: token)).ConfigureAwait(false);
         }, ct).ConfigureAwait(false);
-        return await RunMaintenanceBatchesAsync(() => _writer.EnqueueAsync<int>(async (conn, tx, token) =>
+        return await RunMaintenanceBatchesAsync(() => _context.Writer.EnqueueAsync<int>(async (conn, tx, token) =>
             await conn.ExecuteAsync(new CommandDefinition($"""
                 DELETE FROM track_wakes WHERE ordinal IN (
                     SELECT ordinal FROM (
@@ -131,7 +148,7 @@ public sealed partial class SqliteTrackStore
 
     public async Task<int> PruneTrackSchedulesAsync(long nowMs, CancellationToken ct)
     {
-        await _writer.EnqueueAsync(async (conn, tx, token) =>
+        await _context.Writer.EnqueueAsync(async (conn, tx, token) =>
         {
             await conn.ExecuteAsync(new CommandDefinition($"""
                 UPDATE track_schedules SET state='{TrackScheduleStates.Canceled}', next_fire_at_ms=NULL, updated_at_ms=@Now
@@ -139,7 +156,7 @@ public sealed partial class SqliteTrackStore
                     SELECT 1 FROM tracks t WHERE t.id=track_id AND t.closed_at_ms IS NOT NULL);
                 """, new { Now = nowMs }, tx, cancellationToken: token)).ConfigureAwait(false);
         }, ct).ConfigureAwait(false);
-        return await RunMaintenanceBatchesAsync(() => _writer.EnqueueAsync<int>(async (conn, tx, token) =>
+        return await RunMaintenanceBatchesAsync(() => _context.Writer.EnqueueAsync<int>(async (conn, tx, token) =>
             await conn.ExecuteAsync(new CommandDefinition($"""
                 DELETE FROM track_schedules WHERE rowid IN (
                     SELECT rowid FROM track_schedules
@@ -151,7 +168,7 @@ public sealed partial class SqliteTrackStore
     }
 
     private Task<int> ThinReportRevisionsAsync(long nowMs, CancellationToken ct) =>
-        _writer.EnqueueAsync<int>(
+        _context.Writer.EnqueueAsync<int>(
             async (conn, tx, innerCt) => await conn.ExecuteAsync(new CommandDefinition(
                 """
                 WITH bounds AS MATERIALIZED (
@@ -205,7 +222,7 @@ public sealed partial class SqliteTrackStore
             MaxBytes = ToolResultInlineCompactThresholdBytes,
             BatchSize = MaintenanceBatchSize
         });
-        await using (var reader = await OpenReadConnectionAsync(ct).ConfigureAwait(false))
+        await using (var reader = await _context.OpenReadConnectionAsync(ct).ConfigureAwait(false))
         {
             var ids = (await reader.QueryAsync<long>(new CommandDefinition(
                 "SELECT i.id " + eligible + " ORDER BY i.id LIMIT @BatchSize;",
@@ -218,9 +235,9 @@ public sealed partial class SqliteTrackStore
             parameters.Add("Ids", ids);
         }
 
-        return await _writer.EnqueueAsync<int>(async (conn, tx, innerCt) =>
+        return await _context.Writer.EnqueueAsync<int>(async (conn, tx, innerCt) =>
         {
-            var items = await conn.QueryAsync<SessionItemRow>(new CommandDefinition(
+            var items = await conn.QueryAsync<SessionRepository.SessionItemRow>(new CommandDefinition(
                 "SELECT i.id AS Id, i.kind AS Kind, i.payload_json AS PayloadJson " + eligible + " AND i.id IN @Ids;",
                 parameters, tx, cancellationToken: innerCt)).ConfigureAwait(false);
 
@@ -268,7 +285,7 @@ public sealed partial class SqliteTrackStore
             Cutoff = nowMs - DiagnosticRetentionWindowMs,
             BatchSize = MaintenanceBatchSize
         });
-        await using (var reader = await OpenReadConnectionAsync(ct).ConfigureAwait(false))
+        await using (var reader = await _context.OpenReadConnectionAsync(ct).ConfigureAwait(false))
         {
             var ids = (await reader.QueryAsync<string>(new CommandDefinition(
                 "SELECT id " + eligible + " ORDER BY finished_at_ms, id LIMIT @BatchSize;",
@@ -281,7 +298,7 @@ public sealed partial class SqliteTrackStore
             parameters.Add("Ids", ids);
         }
 
-        return await _writer.EnqueueAsync<int>(async (conn, tx, innerCt) =>
+        return await _context.Writer.EnqueueAsync<int>(async (conn, tx, innerCt) =>
         {
             var tasks = await conn.QueryAsync<TaskDiagnosticRow>(new CommandDefinition(
                 """
@@ -325,7 +342,7 @@ public sealed partial class SqliteTrackStore
             return gateJson;
         }
 
-        var verdict = _coldBlobStore.Hydrate(gateJson, "tasks.gate_verdict_json");
+        var verdict = _context.ColdBlobs.Hydrate(gateJson, "tasks.gate_verdict_json");
         if (JsonNode.Parse(verdict.GetRawText()) is JsonObject gate && gate["steps"] is JsonArray steps)
         {
             var expired = false;
@@ -337,7 +354,7 @@ public sealed partial class SqliteTrackStore
             if (expired)
             {
                 gate["outputExpired"] = true;
-                gateJson = _coldBlobStore.StoreOrInline(task.TrackId, JsonSerializer.SerializeToElement(gate));
+                gateJson = _context.ColdBlobs.StoreOrInline(task.TrackId, JsonSerializer.SerializeToElement(gate));
                 storedGate = (JsonObject)JsonNode.Parse(gateJson)!;
             }
         }
@@ -366,14 +383,14 @@ public sealed partial class SqliteTrackStore
 
     private async Task<int> SweepUnreferencedBlobsAsync(CancellationToken ct)
     {
-        using var files = _coldBlobStore.EnumerateBlobRefs().GetEnumerator();
+        using var files = _context.ColdBlobs.EnumerateBlobRefs().GetEnumerator();
         if (!files.MoveNext())
         {
             return 0;
         }
 
         HashSet<string> refs;
-        await using (var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false))
+        await using (var conn = await _context.OpenReadConnectionAsync(ct).ConfigureAwait(false))
         {
             refs = await ReadColdBlobRefsAsync(conn, ct).ConfigureAwait(false);
         }
@@ -406,14 +423,14 @@ public sealed partial class SqliteTrackStore
     private Task<int> ReclaimBlobsAsync(IReadOnlyList<string> candidates, CancellationToken ct) =>
         // All cold blob writes and inserts run on this writer. Recheck after any
         // queued business writes have committed before deleting the candidate files.
-        _writer.EnqueueNonTransactionalAsync<int>(async (conn, innerCt) =>
+        _context.Writer.EnqueueNonTransactionalAsync<int>(async (conn, innerCt) =>
         {
             var current = await ReadColdBlobRefsAsync(conn, innerCt, candidates).ConfigureAwait(false);
             var reclaimed = 0;
             foreach (var candidate in candidates)
             {
                 innerCt.ThrowIfCancellationRequested();
-                if (!current.Contains(candidate) && _coldBlobStore.DeleteBlobFileIfPresent(candidate))
+                if (!current.Contains(candidate) && _context.ColdBlobs.DeleteBlobFileIfPresent(candidate))
                 {
                     reclaimed++;
                 }
@@ -445,14 +462,14 @@ public sealed partial class SqliteTrackStore
         string TaskId, string TrackId, string? SessionId, string? WorkerResultJson, string? GateVerdictJson);
 
     private Task<int> VacuumAndCheckpointAsync(CancellationToken ct) =>
-        _writer.EnqueueNonTransactionalAsync<int>(
+        _context.Writer.EnqueueNonTransactionalAsync<int>(
             async (conn, innerCt) =>
             {
                 var freeBefore = await conn.ExecuteScalarAsync<long>(
                     new CommandDefinition("PRAGMA freelist_count;", cancellationToken: innerCt)).ConfigureAwait(false);
 
                 var reclaimed = 0;
-                if (freeBefore > _options.FreePageVacuumThreshold)
+                if (freeBefore > _context.Options.FreePageVacuumThreshold)
                 {
                     await conn.ExecuteAsync(
                         new CommandDefinition("PRAGMA incremental_vacuum(500);", cancellationToken: innerCt)).ConfigureAwait(false);

@@ -1,26 +1,36 @@
 using System.Text.Json;
 using Dapper;
 using Perga.Contracts;
-using Perga.Kernel.Events;
 using Perga.Kernel.Ports;
 
 namespace Perga.Storage.Sqlite;
 
-public sealed partial class SqliteTrackStore : ISystemUpgradeStore
+/// <summary>Upgrade receipts and retryable upgrade notification delivery.</summary>
+internal sealed class SystemUpgradeRepository
 {
+    private readonly SqliteStoreContext _context;
+    private readonly CorrespondenceRepository _correspondenceRepository;
+
+    internal SystemUpgradeRepository(SqliteStoreContext context, CorrespondenceRepository correspondenceRepository)
+    {
+        _context = context;
+        _correspondenceRepository = correspondenceRepository;
+    }
+
     private const string UpgradeMailIdPrefix = TrackWakeRequests.SystemUpgradeMailIdPrefix;
+
     private const string UpgradeWakeKeyPrefix = TrackWakeRequests.SystemUpgradeMailKeyPrefix;
 
     public async Task<int> GetSchemaVersionAsync(CancellationToken ct)
     {
-        EnsureInitialized();
-        await using var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);
+        _context.EnsureInitialized();
+        await using var conn = await _context.OpenReadConnectionAsync(ct).ConfigureAwait(false);
         return await conn.ExecuteScalarAsync<int>(new CommandDefinition(
             "SELECT COALESCE(MAX(version), 0) FROM schema_migrations;", cancellationToken: ct)).ConfigureAwait(false);
     }
 
     public Task<IReadOnlyList<string>> PrepareUpgradeNotificationRetriesAsync(CancellationToken ct) =>
-        _writer.EnqueueAsync<IReadOnlyList<string>>(async (conn, tx, token) =>
+        _context.Writer.EnqueueAsync<IReadOnlyList<string>>(async (conn, tx, token) =>
         {
             await conn.ExecuteAsync(new CommandDefinition($"""
                 UPDATE track_wakes SET state='{TrackWakeStates.Pending}', turn_id=NULL, reason='{TrackWakeReasons.UpgradeRetry}'
@@ -52,10 +62,10 @@ public sealed partial class SqliteTrackStore : ISystemUpgradeStore
                 """, transaction: tx, cancellationToken: token)).ConfigureAwait(false)).AsList();
         }, ct);
 
-    public Task AcknowledgeUpgradeNotificationAsync(string mailId, CancellationToken ct) => AcknowledgeMailWakeAsync(mailId, ct);
+    public Task AcknowledgeUpgradeNotificationAsync(string mailId, CancellationToken ct) => _correspondenceRepository.AcknowledgeMailWakeAsync(mailId, ct);
 
     public Task MarkUpgradeNotificationFailedAsync(string mailId, string error, CancellationToken ct) =>
-        _writer.EnqueueAsync(async (conn, tx, token) =>
+        _context.Writer.EnqueueAsync(async (conn, tx, token) =>
         {
             await conn.ExecuteAsync(new CommandDefinition(
                 $"UPDATE system_upgrade_receipts SET notification_status = @Status WHERE '{UpgradeMailIdPrefix}' || job_id = @MailId;",
@@ -64,11 +74,11 @@ public sealed partial class SqliteTrackStore : ISystemUpgradeStore
 
     public Task<bool> ConsumeUpgradeReceiptAsync(SystemUpgradeReceipt receipt, CancellationToken ct)
     {
-        EnsureInitialized();
+        _context.EnsureInitialized();
         var json = JsonSerializer.Serialize(receipt, new JsonSerializerOptions(JsonSerializerDefaults.Web));
-        return _writer.EnqueueAsync<bool>(async (conn, tx, token) =>
+        return _context.Writer.EnqueueAsync<bool>(async (conn, tx, token) =>
         {
-            var now = _timeProvider.GetUtcNow().ToUnixTimeMilliseconds();
+            var now = _context.TimeProvider.GetUtcNow().ToUnixTimeMilliseconds();
             var target = receipt.NotifyTrackId is null ? null : await conn.QuerySingleOrDefaultAsync<string>(new CommandDefinition(
                 "SELECT id FROM tracks WHERE id = @Id AND closed_at_ms IS NULL AND lead_session_id IS NOT NULL;",
                 new { Id = receipt.NotifyTrackId }, tx, cancellationToken: token)).ConfigureAwait(false);
@@ -81,7 +91,7 @@ public sealed partial class SqliteTrackStore : ISystemUpgradeStore
             if (inserted == 0) return false;
             var evt = new EventEnvelopeDto(null, null, target, "system.upgrade_result",
                 JsonSerializer.SerializeToElement(receipt, new JsonSerializerOptions(JsonSerializerDefaults.Web)), now);
-            await InsertEventInternalAsync(conn, tx, evt, token).ConfigureAwait(false);
+            await EventRepository.InsertEventInternalAsync(conn, tx, evt, token).ConfigureAwait(false);
             if (target is not null)
             {
                 await conn.ExecuteAsync(new CommandDefinition("""
@@ -90,7 +100,7 @@ public sealed partial class SqliteTrackStore : ISystemUpgradeStore
                     """, new { Id = TrackWakeRequests.SystemUpgradeMailId(receipt.JobId), Target = target,
                         Summary = "System upgrade " + receipt.Status, Json = json, Now = now }, tx,
                     cancellationToken: token)).ConfigureAwait(false);
-                await EnqueueWakeInternalAsync(conn, tx, TrackWakeRequests.Mail(new MailDto(
+                await TrackWakesRepository.EnqueueWakeInternalAsync(conn, tx, TrackWakeRequests.Mail(new MailDto(
                     TrackWakeRequests.SystemUpgradeMailId(receipt.JobId), "system:upgrade", target,
                     "System upgrade " + receipt.Status, json, null, now)), now, token).ConfigureAwait(false);
             }

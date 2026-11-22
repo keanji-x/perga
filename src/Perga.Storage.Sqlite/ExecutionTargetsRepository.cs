@@ -4,8 +4,16 @@ using Perga.Kernel;
 
 namespace Perga.Storage.Sqlite;
 
-public sealed partial class SqliteTrackStore
+/// <summary>Execution target configuration and referenced-target deletion checks.</summary>
+internal sealed class ExecutionTargetsRepository
 {
+    private readonly SqliteStoreContext _context;
+
+    internal ExecutionTargetsRepository(SqliteStoreContext context)
+    {
+        _context = context;
+    }
+
     private sealed record ExecutionTargetRow(
         string Id,
         string Label,
@@ -33,8 +41,8 @@ public sealed partial class SqliteTrackStore
 
     public async Task<IReadOnlyList<StoredExecutionTarget>> ListExecutionTargetsAsync(CancellationToken ct = default)
     {
-        EnsureInitialized();
-        await using var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);
+        _context.EnsureInitialized();
+        await using var conn = await _context.OpenReadConnectionAsync(ct).ConfigureAwait(false);
         var rows = await conn.QueryAsync<ExecutionTargetRow>(
             new CommandDefinition(
                 """
@@ -59,9 +67,9 @@ public sealed partial class SqliteTrackStore
     public Task<StoredExecutionTarget> UpsertExecutionTargetAsync(StoredExecutionTarget target, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(target);
-        EnsureInitialized();
+        _context.EnsureInitialized();
 
-        return _writer.EnqueueAsync(
+        return _context.Writer.EnqueueAsync(
             async (conn, tx, innerCt) =>
             {
                 await conn.ExecuteAsync(
@@ -114,9 +122,9 @@ public sealed partial class SqliteTrackStore
     public Task<bool> DeleteExecutionTargetAsync(string targetId, CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(targetId);
-        EnsureInitialized();
+        _context.EnsureInitialized();
 
-        return _writer.EnqueueAsync(
+        return _context.Writer.EnqueueAsync(
             async (conn, tx, innerCt) =>
             {
                 var deleted = await conn.ExecuteAsync(
