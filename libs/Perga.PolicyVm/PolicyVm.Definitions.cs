@@ -78,7 +78,7 @@ public sealed partial class PolicyVm
         var effectiveAccess = access ?? roleDerivedAccess ?? "read_write";
         var selectedProvider = provider;
         var selectedModel = model;
-        string? selectedAccess = null;
+        var selectedAccess = access;
         for (var i = 0; i < rules.Count; i++)
         {
             var rule = rules[i];

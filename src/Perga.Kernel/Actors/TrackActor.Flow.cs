@@ -177,7 +177,7 @@ public sealed partial class TrackActor
             }
             else if (proposedById.TryGetValue(id, out var prunedNewNode))
             {
-                var created = TrackFlowReconciler.BuildOrUpdateTaskForNode(TrackId, prunedNewNode, null, now);
+                var created = TrackFlowReconciler.BuildOrUpdateTaskForNode(TrackId, prunedNewNode, null, now, ResolveFlowTaskAccessCore(prunedNewNode));
                 upsertedTasks.Add(TrackFlowReconciler.ArchiveTaskForGc(created, now));
             }
         }
@@ -192,7 +192,7 @@ public sealed partial class TrackActor
             if (existing is not null && previousNodes.TryGetValue(node.Id, out var previous) &&
                 !TrackFlowValidator.WhenEquals(previous.When, node.When))
                 existing = existing with { Ready = false, TriggerRunKey = null };
-            upsertedTasks.Add(TrackFlowReconciler.BuildOrUpdateTaskForNode(TrackId, node, existing, now));
+            upsertedTasks.Add(TrackFlowReconciler.BuildOrUpdateTaskForNode(TrackId, node, existing, now, ResolveFlowTaskAccessCore(node)));
             var schedule = TrackFlowReconciler.BuildScheduleForNode(TrackId, node, now, _scheduleCronEvaluator, _timeProvider);
             if (schedule is not null)
                 schedules.Add(node.Source == "template" && _policy is not null
@@ -345,8 +345,12 @@ public sealed partial class TrackActor
                 State = nextFire is null ? TrackScheduleStates.Done : TrackScheduleStates.Active,
                 UpdatedAtMs = now
             };
-            TaskDto? armed = busy ? null : (existing ?? TrackFlowReconciler.BuildOrUpdateTaskForNode(TrackId, node, null, now)) with
+            var access = busy ? null : ResolveFlowTaskAccessCore(node);
+            var scheduledTask = busy ? null : existing ??
+                TrackFlowReconciler.BuildOrUpdateTaskForNode(TrackId, node, null, now, access);
+            var armed = scheduledTask is null ? null : scheduledTask with
             {
+                Access = access ?? scheduledTask.Access,
                 Ready = true,
                 Status = TaskRunStatus.Pending,
                 StatusDetail = null,
@@ -470,6 +474,7 @@ public sealed partial class TrackActor
 
             var armed = task with
             {
+                Access = ResolveFlowTaskAccessCore(node) ?? task.Access,
                 Ready = true,
                 Status = TaskRunStatus.Pending,
                 StatusDetail = null,
@@ -531,8 +536,17 @@ public sealed partial class TrackActor
         await PublishFlowCommitCoreAsync(events).ConfigureAwait(false);
     }
 
+    private AccessMode? ResolveFlowTaskAccessCore(FlowNodeSpecDto node) =>
+        FlowTaskRouting.ResolveAccess(node, _policy, _policyVm, _track.TemplateInputs, _sessions);
+
     private string? InterpolateFlowTextCore(string? text) =>
         TemplateFlow.Interpolate(text, _track.TemplateInputs, _policy, _policyVm);
+
+    private TaskDto ProjectFlowTaskCore(TaskDto task) => !FlowConstants.IsFlowTask(task) ? task : task with
+    {
+        GoalOrCmd = InterpolateFlowTextCore(task.GoalOrCmd) ?? task.GoalOrCmd,
+        Acceptance = InterpolateFlowTextCore(task.Acceptance)
+    };
 
     private TaskDto InterpolateFlowTaskForExecutionCore(TaskDto task)
     {
@@ -541,8 +555,6 @@ public sealed partial class TrackActor
             return task;
         }
 
-        var goal = InterpolateFlowTextCore(task.GoalOrCmd) ?? task.GoalOrCmd;
-        var acceptance = InterpolateFlowTextCore(task.Acceptance);
         GateSpecDto? gate = task.Gate;
         if (gate is { Steps.Count: > 0 })
         {
@@ -554,7 +566,7 @@ public sealed partial class TrackActor
             };
         }
 
-        return task with { GoalOrCmd = goal, Acceptance = acceptance, Gate = gate };
+        return ProjectFlowTaskCore(task) with { Gate = gate };
     }
 
     private bool HasPendingFlowTaskForSessionCore(string sessionId) =>

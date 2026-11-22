@@ -6,8 +6,11 @@ export default defineTemplate({
   title: "个股长期投研",
   description: "跟踪价格区间、估值和临近事件，持续更新长期投资判断。",
   inputs: {
+    earningsProvider: { type: "string", optional: true, label: "财报分析提供方" },
+    earningsModel: { type: "string", optional: true, label: "财报分析模型" },
     ticker: { type: "string", default: "NVDA", label: "标的代码" },
-    reviewModel: { type: "string", default: "gpt-6.2-soar", label: "异动独立复核模型" },
+    reviewProvider: { type: "string", optional: true, label: "异动独立复核提供方" },
+    reviewModel: { type: "string", optional: true, label: "异动独立复核模型" },
   },
   flow: [{
     id: "weekly-price-refresh",
@@ -31,8 +34,18 @@ export default defineTemplate({
       },
       tasks: {
         routing: [
-          { when: { role: "earnings" }, model: "claude-opus-4", access: "read_only" },
-          { when: { role: "event_review" }, model: inputs.reviewModel, access: "read_only", enforce: true },
+          {
+            when: { role: "earnings" },
+            ...(inputs.earningsProvider ? { provider: inputs.earningsProvider } : {}),
+            ...(inputs.earningsModel ? { model: inputs.earningsModel } : {}),
+            access: "read_only",
+          },
+          {
+            when: { role: "event_review" },
+            ...(inputs.reviewProvider ? { provider: inputs.reviewProvider } : {}),
+            ...(inputs.reviewModel ? { model: inputs.reviewModel } : {}),
+            access: "read_only", enforce: true,
+          },
         ],
       },
     };

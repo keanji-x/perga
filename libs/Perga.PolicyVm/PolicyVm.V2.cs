@@ -127,6 +127,13 @@ public sealed partial class PolicyVm
         EvaluateWithEffectiveDefinition(policy, inputs, "ResolveFlow",
             (engine, _, def, _, _) => ReadFlow(engine, def).Nodes);
 
+    public IReadOnlyList<string> ResolveViewNames(CompiledPolicy policy, JsonElement inputs)
+    {
+        ArgumentNullException.ThrowIfNull(policy);
+        return EvaluateWithEffectiveDefinition(policy, inputs, "ResolveViewNames", (_, _, def, _, _) =>
+            CollectViewNames(def));
+    }
+
     private static (JsonElement Json, IReadOnlyList<FlowNodeSpecDto> Nodes) ReadFlow(Engine engine, ObjectInstance definition)
     {
         var value = definition.Get("flow");
@@ -333,39 +340,15 @@ public sealed partial class PolicyVm
                     throw new InvalidOperationException($"Invalid JSON in perga-block widget inside report template: {ex.Message}", ex);
                 }
 
-                if (payload.ValueKind != JsonValueKind.Object)
+                if (!WidgetPayloadValidator.TryValidatePayload(payload, out var use, out var viewName, out var payloadError))
                 {
-                    throw new InvalidOperationException("perga-block widget payload must be a JSON object.");
+                    throw new InvalidOperationException($"perga-block widget invalid: {payloadError}");
                 }
 
-                var use = payload.TryGetProperty("use", out var useEl) && useEl.ValueKind == JsonValueKind.String
-                    ? useEl.GetString() ?? string.Empty
-                    : string.Empty;
-                if (string.IsNullOrWhiteSpace(use))
+                var refIssues = WidgetPayloadValidator.ValidateReferences(use, viewName, viewSet, bundle);
+                if (refIssues.Count > 0)
                 {
-                    throw new InvalidOperationException("perga-block widget requires a non-empty 'use' field.");
-                }
-
-                if (!use.StartsWith("builtin:", StringComparison.Ordinal))
-                {
-                    if (!bundle.TryGetFile(use, out _))
-                    {
-                        throw new InvalidOperationException(
-                            $"perga-block widget references '{use}', which was not found in the template package.");
-                    }
-                }
-
-                var viewName = payload.TryGetProperty("view", out var viewEl) && viewEl.ValueKind == JsonValueKind.String
-                    ? viewEl.GetString() : null;
-                if (viewName is not null)
-                {
-                    var isKernelFlowBuiltin = string.Equals(use, "builtin:flow", StringComparison.Ordinal) &&
-                                              string.Equals(viewName, "flow", StringComparison.Ordinal);
-                    if (!string.IsNullOrWhiteSpace(viewName) && !isKernelFlowBuiltin && !viewSet.Contains(viewName))
-                    {
-                        throw new InvalidOperationException(
-                            $"perga-block widget references view '{viewName}', which is not declared in report.views.");
-                    }
+                    throw new InvalidOperationException($"perga-block widget invalid: {refIssues[0].Message}");
                 }
             }
         }

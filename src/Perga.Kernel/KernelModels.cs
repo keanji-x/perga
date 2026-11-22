@@ -142,7 +142,14 @@ public sealed record WorkerActivityEvent(long Sequence, string Kind, JsonElement
 
 public sealed record WorkerCompletionOrigin(string Token, string TurnId, string TaskId, int RunCount);
 
-public sealed record TemplateSetResult(TrackDto Track, IReadOnlyList<string> Warnings, bool DryRun);
+public sealed record TemplateSetResult(TrackDto Track, IReadOnlyList<string> Warnings, bool DryRun, TemplateSetPlanDto Plan);
+
+public sealed record TemplateSetPlanDto(
+    TemplateFlowDiffDto FlowDiff, string DataAction, string ReportAction, IReadOnlyList<string> PluginsAdded);
+
+public sealed record TemplateFlowDiffDto(IReadOnlyList<string> Added, IReadOnlyList<string> Updated, IReadOnlyList<string> Canceled);
+
+public sealed record TemplateInputsUpdateResult(TrackDto Track, IReadOnlyList<string> Warnings);
 
 public sealed record OpenTerminalRequest(
     string? Title = null,

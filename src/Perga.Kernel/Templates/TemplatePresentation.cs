@@ -5,10 +5,15 @@ namespace Perga.Kernel.Templates;
 
 internal static class TemplatePresentation
 {
-    internal static TrackDto Project(TrackDto track, CompiledPolicy? policy, IPolicyVm vm)
-    {
-        var view = policy is null ? null : vm.EvaluateHeaderView(policy,
+    internal static HeaderViewEvaluation Evaluate(TrackDto track, CompiledPolicy? policy, IPolicyVm vm) =>
+        policy is null ? new(null, null) : vm.EvaluateHeaderViewWithDiagnostic(policy,
             new PolicyHeaderViewContext(track.Id, track.TemplateInputs), track.Data);
+
+    internal static TrackDto Project(TrackDto track, CompiledPolicy? policy, IPolicyVm vm) =>
+        Project(track, policy, Evaluate(track, policy, vm).View);
+
+    internal static TrackDto Project(TrackDto track, CompiledPolicy? policy, TemplateHeaderView? view)
+    {
         return track with
         {
             TemplateTitle = policy?.Manifest.Title,

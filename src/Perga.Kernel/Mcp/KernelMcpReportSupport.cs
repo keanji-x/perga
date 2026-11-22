@@ -380,7 +380,24 @@ internal static class KernelMcpReportSupport
               "required": ["use", "view"],
               "notes": "Use builtin:flow, builtin:list, builtin:table, or a package-relative ./widgets/*.html path. Set view to flow for builtin:flow and to the template view name for other widgets. Optional fields include height, chrome (seamless or framed), and title.",
               "example": { "use": "./widgets/range-axis.html", "view": "valuationAxis", "height": 210, "chrome": "seamless" },
-              "flowExample": { "use": "builtin:flow", "view": "flow" }
+              "flowExample": { "use": "builtin:flow", "view": "flow" },
+              "builtins": {
+                "builtin:flow": { "view": "flow", "notes": "Displays the committed Track Flow and its execution state." },
+                "builtin:table": { "viewResult": { "metrics": [{ "label": "Cost", "current": "$24" }] } },
+                "builtin:list": { "viewResult": { "items": [{ "id": "review", "title": "Review the change", "status": "pending" }] } }
+              },
+              "iframePostMessage": {
+                "widgetToHost": [
+                  { "type": "perga:ready" },
+                  { "type": "perga:resize", "height": 210 },
+                  { "type": "perga:intent", "kind": "open_file", "path": "README.md" },
+                  { "type": "perga:intent", "kind": "open_session", "sessionId": "ses_example" }
+                ],
+                "hostToWidget": [
+                  { "type": "perga:theme", "scheme": "light | dark", "tokens": ["bg", "paper", "surface", "text", "text2", "text3", "hairline", "accent", "fontSans", "fontSerif", "fontMono"] },
+                  { "type": "perga:data", "data": "Output of the selected template view" }
+                ]
+              }
             }
           }
         }

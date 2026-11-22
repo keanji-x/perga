@@ -231,7 +231,10 @@ public sealed class ImplicitTemplateToolsTests
         var caller = Caller(snap);
         var listed = await Call(ctx, caller, KernelMcpToolNames.TemplateList, new { });
         Assert.Equal("authored", Assert.Single(listed.EnumerateArray()).GetProperty("id").GetString());
-        var inspected = await Call(ctx, caller, KernelMcpToolNames.TemplateRead, new { templateId = "authored" });
+        var summary = await Call(ctx, caller, KernelMcpToolNames.TemplateRead, new { templateId = "authored" });
+        Assert.False(summary.TryGetProperty("jsSource", out _));
+        Assert.Equal("template.perga.js", Assert.Single(summary.GetProperty("files").EnumerateArray()).GetString());
+        var inspected = await Call(ctx, caller, KernelMcpToolNames.TemplateRead, new { templateId = "authored", format = "full" });
         Assert.Equal(Source, inspected.GetProperty("jsSource").GetString());
         Assert.Equal("Authored", inspected.GetProperty("manifest").GetProperty("title").GetString());
         var contract = await Call(ctx, caller, KernelMcpToolNames.TemplateRead, new { });
@@ -287,8 +290,8 @@ public sealed class ImplicitTemplateToolsTests
         Assert.False(ctx.Kernel.Actors.IsTrackActiveInMemory(snap.Track.Id));
         var reloaded = await ctx.Kernel.GetTrackAggregateAsync(snap.Track.Id);
         Assert.Equal(Source, reloaded.TemplateSnapshotSource);
-        var denied = await Assert.ThrowsAsync<KernelException>(() => Call(ctx, caller, KernelMcpToolNames.TemplateList, new { }));
-        Assert.Equal(KernelErrorCode.PolicyDenied, denied.Code);
+        var listed = await Call(ctx, caller, KernelMcpToolNames.TemplateList, new { });
+        Assert.Equal("authored", Assert.Single(listed.EnumerateArray()).GetProperty("id").GetString());
     }
 
     [Fact]

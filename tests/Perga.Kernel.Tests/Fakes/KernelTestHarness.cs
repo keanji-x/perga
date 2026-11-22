@@ -559,7 +559,7 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
         }
     }
 
-    public Task UpdateTrackTemplateAndEmitAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto evt, CancellationToken ct, bool writeData = false, TrackFlowUpdate? flow = null)
+    public Task UpdateTrackTemplateAndEmitAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto evt, CancellationToken ct, bool writeData = false, TrackFlowUpdate? flow = null, TemplateReportSeed? reportSeed = null)
     {
         lock (_gate)
         {
@@ -568,6 +568,9 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
             if (flow is not null)
                 CommitTrackFlow(track, flow.ExpectedRev, flow.Tasks, flow.Clocks, flow.CanceledClockIds, [], flow.ResetClockIds).GetAwaiter().GetResult();
             var commit = UpdateTrackAndEmitAsync(track, evt, ct, writeData);
+            if (reportSeed is not null)
+                SaveReportAsync(track.Id, reportSeed.Document, reportSeed.CompressedBlocks, reportSeed.AuthorSessionId,
+                    "Seed template report", reportSeed.Event, ct).GetAwaiter().GetResult();
             AfterTemplateCommit?.Invoke();
             return commit;
         }

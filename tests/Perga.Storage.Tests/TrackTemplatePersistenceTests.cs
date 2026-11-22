@@ -1,6 +1,8 @@
 using Dapper;
 using Microsoft.Data.Sqlite;
 using Perga.Storage.Sqlite;
+using Perga.Kernel.Ports;
+using Perga.ReportDoc;
 
 namespace Perga.Storage.Tests;
 
@@ -98,4 +100,64 @@ public sealed class TrackTemplatePersistenceTests
         Assert.Equal(track.EnabledPlugins, snapshot.Track.EnabledPlugins);
         Assert.Empty(await harness.Store.ListEventsSinceAsync(0, track.Id));
     }
+    [Fact]
+    public async Task TemplateReportSeedCommitsWithBindingAndRollsBackOnReportEventFailure()
+    {
+        await using var harness = await StorageTestHarness.CreateAsync();
+        var store = harness.Store;
+        await store.UpsertAreaAsync(StorageTestHarness.CreateArea(), default);
+        var (track, _, lead) = StorageTestHarness.CreateSeedTrack();
+        await store.CreateTrackAsync(track, new ReportDocument(0, "", "", []), null, lead, default);
+
+        const string source = "export default defineTemplate({ id: 'seeded', title: 'Seeded' });";
+        var updated = track with
+        {
+            TemplateId = "seeded",
+            Data = StorageTestHarness.Json("""{"count":1}"""),
+            DataRev = 1,
+            FlowRev = 1,
+            FlowSpecJson = """{"rev":1,"nodes":[]}""",
+            UpdatedAtMs = 5000
+        };
+        var report = new ReportDocument(1, "", "",
+            [new ReportBlock("b_seed", 1, ReportBlockKind.Prose, "Start", "# Start", null)]);
+        var trackEvent = StorageTestHarness.CreateEvent("track.updated", track.Id, track.AreaId, createdAtMs: 5000);
+        var reportEvent = StorageTestHarness.CreateEvent("report.updated", track.Id, track.AreaId, createdAtMs: 5000);
+        var seed = new TemplateReportSeed(report, [], lead.Id, reportEvent);
+        using (var conn = harness.OpenRawInspectConnection())
+        {
+            await conn.ExecuteAsync("""
+                CREATE TRIGGER reject_report_event BEFORE INSERT ON events WHEN NEW.kind = 'report.updated'
+                BEGIN SELECT RAISE(ABORT, 'report event failure'); END;
+                """);
+
+            await Assert.ThrowsAsync<SqliteException>(() => store.UpdateTrackTemplateAndEmitAsync(updated, source,
+                trackEvent, default, writeData: true, flow: new(0, [], []), reportSeed: seed));
+            var rolledBack = (await store.LoadTrackAggregateAsync(track.Id, default))!;
+            Assert.Null(rolledBack.TemplateSnapshotSource);
+            Assert.Equal(0, rolledBack.Track.DataRev);
+            Assert.Equal(0, rolledBack.Track.FlowRev);
+            Assert.Equal(0, rolledBack.Report.DocRev);
+            Assert.Empty(await store.GetReportRevisionBlocksAsync(track.Id, 1, default));
+            Assert.Empty(await store.ListEventsSinceAsync(0, track.Id));
+
+            await conn.ExecuteAsync("DROP TRIGGER reject_report_event;");
+        }
+
+        await store.UpdateTrackTemplateAndEmitAsync(updated, source, trackEvent, default,
+            writeData: true, flow: new(0, [], []), reportSeed: seed);
+        await store.DisposeAsync();
+
+        await using var reopened = new SqliteTrackStore(new SqliteStorageOptions { DbPath = harness.DbPath, DataDir = harness.DataDir });
+        await reopened.InitializeAsync();
+        var saved = (await reopened.LoadTrackAggregateAsync(track.Id, default))!;
+        Assert.Equal(source, saved.TemplateSnapshotSource);
+        Assert.Equal(1, saved.Track.DataRev);
+        Assert.Equal(1, saved.Track.FlowRev);
+        Assert.Equal(1, saved.Report.DocRev);
+        Assert.Equal("# Start", Assert.Single(saved.Report.Blocks).Markdown);
+        Assert.Equal("# Start", Assert.Single(await reopened.GetReportRevisionBlocksAsync(track.Id, 1, default)).Markdown);
+        Assert.Equal(["track.updated", "report.updated"], (await reopened.ListEventsSinceAsync(0, track.Id)).Select(evt => evt.Kind));
+    }
+
 }

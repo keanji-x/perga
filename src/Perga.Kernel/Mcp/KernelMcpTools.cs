@@ -131,6 +131,12 @@ public static class KernelMcpCatalog
         KernelMcpToolNames.TemplateUpdateInputs or
         KernelMcpToolNames.TrackSet;
 
+    public static bool IsBeforeHookExemptReadOnly(string toolName) => toolName is
+        KernelMcpToolNames.TemplateList or KernelMcpToolNames.TemplateRead or KernelMcpToolNames.TrackStatus or
+        KernelMcpToolNames.ReportRead or KernelMcpToolNames.FlowRead or KernelMcpToolNames.ProviderList or
+        KernelMcpToolNames.TaskList or KernelMcpToolNames.SessionList or KernelMcpToolNames.SessionRead or
+        KernelMcpToolNames.MailList;
+
     public static bool IsCompletionOnly(string toolName) => toolName is
         KernelMcpToolNames.TaskDone or
         KernelMcpToolNames.TaskFail;
@@ -212,12 +218,12 @@ public static class KernelMcpCatalog
                 Schema("""{"type":"object","required":["title"],"properties":{"title":{"type":"string"}}}"""), localIdempotentWrite),
             new(KernelMcpToolNames.TemplateList, "List concise template summaries (governance only).",
                 Schema("""{"type":"object","properties":{}}"""), readOnlyLocal),
-            new(KernelMcpToolNames.TemplateRead, "Inspect a template manifest and source; use __current__ for the active snapshot, inputs, state, and headerView; omit templateId or use __contract__ for the authoring contract (governance only).",
-                Schema("""{"type":"object","properties":{"templateId":{"type":"string"}}}"""), readOnlyLocal),
-            new(KernelMcpToolNames.TemplateUpdateInputs, "Merge inputs into the active template, preserving state (Track Lead only).",
+            new(KernelMcpToolNames.TemplateRead, "Inspect a template manifest and file list. Use format files for readable sources or full for a round-trippable snapshot. Use __current__ for the active template, inputs, data and header view. Omit templateId or use __contract__ for the authoring contract (governance only).",
+                Schema("""{"type":"object","properties":{"templateId":{"type":"string"},"format":{"enum":["summary","files","full"]},"file":{"type":"string","description":"One package-relative file to return with format files."}}}"""), readOnlyLocal),
+            new(KernelMcpToolNames.TemplateUpdateInputs, "Merge inputs into the active template. Stored business data can be changed with data_patch (Track Lead only).",
                 Schema("""{"type":"object","required":["inputs"],"properties":{"inputs":{"type":"object"}}}"""), localIdempotentWrite),
             new(KernelMcpToolNames.TrackSet, "Apply a templateId, local template package path, or JSON/.perga.js source with inputs. Use dryRun to preview or clear to detach while keeping the report (Track Lead only).",
-                Schema("""{"type":"object","properties":{"templateId":{"type":"string","minLength":1},"source":{"type":"string","minLength":1},"inputs":{"type":"object"},"dryRun":{"type":"boolean"},"clear":{"type":"boolean"},"resetData":{"type":"boolean"}}}"""), localWrite),
+                Schema("""{"type":"object","properties":{"templateId":{"type":"string","minLength":1},"source":{"type":"string","minLength":1},"path":{"type":"string","minLength":1,"description":"Package directory or template file inside the local Track workspace."},"inputs":{"type":"object"},"dryRun":{"type":"boolean"},"clear":{"type":"boolean"},"resetData":{"type":"boolean"},"seedReport":{"type":"boolean","description":"Seed an empty report. Defaults to true when the report is empty and the template provides initial Markdown."}}}"""), localWrite),
             new(KernelMcpToolNames.TrackClose, "Close the current track and cancel active tasks (governance only).",
                 Schema("""{"type":"object","properties":{}}"""), localDestructive),
             new(KernelMcpToolNames.TaskDone, "Submit completed work for the bound task with optional neutral outcome (ok|attention|blocked) and summary, and trigger gate verification (contract subagent only).",
@@ -581,13 +587,23 @@ public static class KernelMcpDispatcher
                     plugins = m.DefaultPlugins, hasFlow = m.Flow.GetArrayLength() > 0, hasHeaderView = m.HasHeaderView }));
 
             case KernelMcpToolNames.TemplateRead:
-                return TemplateStringArg(args, "templateId") == "__current__"
-                    ? await kernel.InspectCurrentTemplateAsync(caller.TrackId, caller.SessionId, ct).ConfigureAwait(false)
-                    : kernel.InspectTemplate(TemplateStringArg(args, "templateId"));
+            {
+                var id = TemplateStringArg(args, "templateId");
+                var format = TemplateStringArg(args, "format");
+                var file = TemplateStringArg(args, "file");
+                return id == "__current__"
+                    ? await kernel.InspectCurrentTemplateAsync(caller.TrackId, caller.SessionId, ct, format, file).ConfigureAwait(false)
+                    : kernel.InspectTemplate(id, format, file);
+            }
 
             case KernelMcpToolNames.TemplateUpdateInputs:
-                return JsonHelpers.ToElement(await kernel.UpdateTemplateInputsAsync(caller.TrackId, caller.SessionId,
-                    args.GetProperty("inputs"), expectedPolicyGeneration, ct).ConfigureAwait(false));
+            {
+                var result = await kernel.UpdateTemplateInputsAsync(caller.TrackId, caller.SessionId,
+                    args.GetProperty("inputs"), expectedPolicyGeneration, ct).ConfigureAwait(false);
+                var response = JsonSerializer.SerializeToNode(result.Track, JsonHelpers.SerializerOptions)!.AsObject();
+                response["warnings"] = JsonSerializer.SerializeToNode(result.Warnings);
+                return JsonSerializer.SerializeToElement(response, JsonHelpers.SerializerOptions);
+            }
 
             case KernelMcpToolNames.TrackSet:
             {
@@ -598,11 +614,15 @@ public static class KernelMcpDispatcher
                     templateId, source, expectedPolicyGeneration, inputs,
                     args.TryGetProperty("dryRun", out var dry) && dry.GetBoolean(),
                     args.TryGetProperty("clear", out var clear) && clear.GetBoolean(), ct,
-                    args.TryGetProperty("resetData", out var reset) && reset.GetBoolean()).ConfigureAwait(false);
-                var response = System.Text.Json.Nodes.JsonNode.Parse(JsonHelpers.ToElement(result.Track).GetRawText())!.AsObject();
+                    args.TryGetProperty("resetData", out var reset) && reset.GetBoolean(),
+                    TemplateStringArg(args, "path"),
+                    args.TryGetProperty("seedReport", out var seedReport) ? seedReport.GetBoolean() : null).ConfigureAwait(false);
+                var response = JsonSerializer.SerializeToNode(result.Track, JsonHelpers.SerializerOptions)!.AsObject();
+                if (result.DryRun) response.Remove("workspaceSpec");
                 response["dryRun"] = result.DryRun;
-                response["warnings"] = System.Text.Json.Nodes.JsonNode.Parse(JsonHelpers.ToElement(result.Warnings).GetRawText());
-                return JsonHelpers.ParseClone(response.ToJsonString());
+                response["warnings"] = JsonSerializer.SerializeToNode(result.Warnings);
+                response["plan"] = JsonSerializer.SerializeToNode(result.Plan, JsonHelpers.SerializerOptions);
+                return JsonSerializer.SerializeToElement(response, JsonHelpers.SerializerOptions);
             }
 
             case KernelMcpToolNames.TrackClose:

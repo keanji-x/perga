@@ -67,7 +67,7 @@ public sealed partial class TrackActor
             return actor.EnqueueAsync(async _ =>
             {
                 await actor.EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
-                return (IReadOnlyList<TaskDto>)_tasks.ToArray();
+                return (IReadOnlyList<TaskDto>)_tasks.Select(actor.ProjectFlowTaskCore).ToArray();
             }, ct);
         }
 
@@ -260,6 +260,20 @@ public sealed partial class TrackActor
                     {
                         var taskRoute = actor.RouteTaskCore(task);
                         route = taskRoute.Route;
+                        if (FlowConstants.IsFlowTask(task) && route.Access is { } effectiveAccess &&
+                            effectiveAccess != FormatAccessModeForPolicy(task.Access))
+                        {
+                            // Persist a changed route before recomputing the workspace concurrency fence.
+                            var updated = task with
+                            {
+                                Access = effectiveAccess == "read_only" ? AccessMode.ReadOnly : AccessMode.ReadWrite,
+                                UpdatedAtMs = actor.NowMs()
+                            };
+                            await PersistAndEmitTaskUpdatedCoreAsync(updated, updated.UpdatedAtMs, ct).ConfigureAwait(false);
+                            ReplaceTaskInMemoryCore(updated);
+                            preparationFailed = true;
+                            break;
+                        }
                         if (!actor.EnsureTaskDispatchApprovedCore(task, route)) continue;
                         if (TrackActor.NeedsTaskProviderCatalog(route))
                         {

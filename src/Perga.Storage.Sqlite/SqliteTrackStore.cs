@@ -72,9 +72,9 @@ public sealed class SqliteTrackStore : ITrackStore, IAsyncDisposable, ISessionIn
         _sessionResumeRepository = new SessionResumeRepository(_context, _sessionRepository);
         _areaRepository = new AreaRepository(_context);
         _trackCreationRepository = new TrackCreationRepository(_context, _taskRepository);
-        _trackUpdateRepository = new TrackUpdateRepository(_context, _taskRepository);
-        _trackDeletionRepository = new TrackDeletionRepository(_context);
         _reportRepository = new ReportRepository(_context);
+        _trackUpdateRepository = new TrackUpdateRepository(_context, _taskRepository, _reportRepository);
+        _trackDeletionRepository = new TrackDeletionRepository(_context);
         _terminalRepository = new TerminalRepository(_context);
         _eventRepository = new EventRepository(_context);
         _overlayRepository = new OverlayRepository(_context);
@@ -302,8 +302,8 @@ public sealed class SqliteTrackStore : ITrackStore, IAsyncDisposable, ISessionIn
     public Task UpdateTrackAndEmitAsync(TrackDto track, EventEnvelopeDto? evt, CancellationToken ct, bool writeData = false) =>
         _trackUpdateRepository.UpdateTrackAndEmitAsync(track, evt, ct, writeData);
 
-    public Task UpdateTrackTemplateAndEmitAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto evt, CancellationToken ct, bool writeData = false, TrackFlowUpdate? flow = null) =>
-        _trackUpdateRepository.UpdateTrackTemplateAndEmitAsync(track, templateSnapshot, evt, ct, writeData, flow);
+    public Task UpdateTrackTemplateAndEmitAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto evt, CancellationToken ct, bool writeData = false, TrackFlowUpdate? flow = null, TemplateReportSeed? reportSeed = null) =>
+        _trackUpdateRepository.UpdateTrackTemplateAndEmitAsync(track, templateSnapshot, evt, ct, writeData, flow, reportSeed);
 
     public Task RecordFlowFileHashAsync(string trackId, long flowRev, string sha256, CancellationToken ct) =>
         _trackUpdateRepository.RecordFlowFileHashAsync(trackId, flowRev, sha256, ct);

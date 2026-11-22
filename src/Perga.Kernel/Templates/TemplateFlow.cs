@@ -43,11 +43,13 @@ internal static class TemplateFlow
 
     internal static TrackFlowUpdate BuildSeedUpdate(
         TrackDto track, long expectedRev, IReadOnlyList<FlowNodeSpecDto> added, CompiledPolicy policy,
-        IPolicyVm vm, IScheduleCronEvaluator? cron, TimeProvider timeProvider)
+        IPolicyVm vm, IScheduleCronEvaluator? cron, TimeProvider timeProvider,
+        IReadOnlyDictionary<string, AgentSessionDto>? sessions = null)
     {
         var now = track.UpdatedAtMs;
         return new(expectedRev, added.Select(node =>
-                TrackFlowReconciler.BuildOrUpdateTaskForNode(track.Id, node, null, now)).ToArray(),
+                TrackFlowReconciler.BuildOrUpdateTaskForNode(track.Id, node, null, now,
+                    FlowTaskRouting.ResolveAccess(node, policy, vm, track.TemplateInputs, sessions))).ToArray(),
             added.Select(node => TrackFlowReconciler.BuildScheduleForNode(track.Id, node, now, cron, timeProvider))
                 .OfType<TrackScheduleDto>().Select(clock => ResolveClockText(clock, track, policy, vm)).ToArray());
     }

@@ -278,9 +278,12 @@ internal static class TrackFlowReconciler
         string trackId,
         FlowNodeSpecDto node,
         TaskDto? existing,
-        long nowMs)
+        long nowMs,
+        AccessMode? routedAccess = null)
     {
         var (kind, goalOrCmd, access, provider, role, gate, acceptance, context) = MapNodeDoToTaskFields(node);
+        access = existing is not null && (node.Canceled || existing.Status is TaskRunStatus.Running or TaskRunStatus.Verifying)
+            ? existing.Access : routedAccess ?? access;
         var dependsOn = node.When?.After is { Count: > 0 } after
             ? after.Select(a => a.Node).Distinct(StringComparer.Ordinal).ToArray()
             : Array.Empty<string>();
@@ -506,7 +509,8 @@ internal static class TrackFlowReconciler
                         {
                             flowNode = true,
                             flowSource = node.Source,
-                            title = node.Title ?? node.Id
+                            title = node.Title ?? node.Id,
+                            explicitAccess = true
                         }));
                 }
 
@@ -525,6 +529,7 @@ internal static class TrackFlowReconciler
                         flowNode = true,
                         flowSource = node.Source,
                         title = node.Title ?? node.Id,
+                        explicitAccess = d.Access is not null,
                         initialModel = d.Model,
                         targetSession = d.Session,
                         reuseSession

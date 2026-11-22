@@ -250,12 +250,12 @@ export interface PergaTemplateSetupResult<TInputs = Record<string, any>, TData =
     initial?: TData | ((inputs: TInputs) => TData);
   };
   report?: ({
-    /** Package-relative Markdown seeded on Track creation. Supports ${inputs.key}. Supply either this or initialMarkdown. */
+    /** Package-relative Markdown seeded on Track creation or when applying a template to a blank report. Supports ${inputs.key}. Supply either this or initialMarkdown. */
     template?: string;
     initialMarkdown?: never;
   } | {
     template?: never;
-    /** Inline Markdown seeded on Track creation. Supports ${inputs.key}. Supply either this or template. */
+    /** Inline Markdown seeded on Track creation or when applying a template to a blank report. Supports ${inputs.key}. Supply either this or template. */
     initialMarkdown?: string;
   }) & {
     views?: Record<string, (data: TData, kernel: KernelFactsSnapshot) => unknown>;
@@ -271,6 +271,7 @@ export interface PergaTemplateSetupResult<TInputs = Record<string, any>, TData =
 
   /** Advanced policy and workspace hooks. */
   headerView?: (ctx: TemplateContext<TInputs, TData>) => TemplateHeaderView;
+  /** Perga read-only introspection and the Lead’s track_set({ clear: true }) bypass this hook. */
   before?: (action: TemplateBeforeAction,
     ctx: TemplateContext<TInputs, TData> & { readonly session?: TemplateSessionContext }) => GuardDecision;
   workspace?: {

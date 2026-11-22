@@ -47,9 +47,9 @@ public sealed partial class TrackActor
                     Summary: _report.Summary,
                     RenderedMarkdown: rendered,
                     Blocks: _report.Blocks,
-                    Tasks: actor._taskCoordinator.Snapshot(),
+                    Tasks: actor._taskCoordinator.Snapshot().Select(actor.ProjectFlowTaskCore).ToArray(),
                     Anchor: anchor,
-                    Diagnostics: [],
+                    Diagnostics: ReportWidgetValidator.Diagnose(_report, actor._policy, actor._policyVm, actor._track.TemplateInputs),
                     DataRev: actor._policy is not null || actor._track.DataRev > 0 ? actor._track.DataRev : null);
             }, ct);
         }
@@ -74,7 +74,7 @@ public sealed partial class TrackActor
                         throw KernelException.PolicyDenied("Active policy changed after authorization.");
                     generation = actor._policyGeneration;
 
-                    var (preview, editorRole) = PreviewReportCommitCore(callerSessionId, request);
+                    var (preview, editorRole, diagnostics) = PreviewReportCommitCore(callerSessionId, request);
                     if (actor._policy is not null)
                     {
                         var prevMd = actor._reportEngine.RenderMarkdown(_report, withMarkers: false);
@@ -82,7 +82,8 @@ public sealed partial class TrackActor
                         var eval = actor._policyVm.Before(actor._policy, "report.commit", actor.TrackId, JsonHelpers.ToElement(new
                         {
                             editorRole, prevMarkdown = prevMd, nextMarkdown = nextMd
-                        }), actor._track.TemplateInputs, actor._track.Data);
+                        }), actor._track.TemplateInputs, actor._track.Data,
+                            actor.BuildPolicySessionContextCore(actor.RequireSessionCore(callerSessionId)));
 
                         if (eval is GuardDecision.Deny denied)
                             throw KernelException.PolicyDenied(denied.Reason);
@@ -94,7 +95,7 @@ public sealed partial class TrackActor
                     }
 
                     return (await FinalizeReportCommitCoreAsync(preview, callerSessionId,
-                        request.CommitMessage ?? $"Report commit ({editorRole})", ct).ConfigureAwait(false), null);
+                        request.CommitMessage ?? $"Report commit ({editorRole})", diagnostics, ct).ConfigureAwait(false), null);
                 }, CancellationToken.None).ConfigureAwait(false);
 
                 if (completed is not null) return completed;
@@ -105,9 +106,9 @@ public sealed partial class TrackActor
                 {
                     if (actor._policyGeneration != generation)
                         throw KernelException.PolicyDenied("Active policy changed during report approval.");
-                    var (preview, editorRole) = PreviewReportCommitCore(callerSessionId, request);
+                    var (preview, editorRole, diagnostics) = PreviewReportCommitCore(callerSessionId, request);
                     return await FinalizeReportCommitCoreAsync(preview, callerSessionId,
-                        request.CommitMessage ?? $"Report commit ({editorRole}, human-approved)", ct).ConfigureAwait(false);
+                        request.CommitMessage ?? $"Report commit ({editorRole}, human-approved)", diagnostics, ct).ConfigureAwait(false);
                 }, ct).ConfigureAwait(false);
             }
             finally
@@ -116,19 +117,22 @@ public sealed partial class TrackActor
             }
         }
 
-        private (ReportCommitResult Preview, string EditorRole)
+        private (ReportCommitResult Preview, string EditorRole, IReadOnlyList<ReportDiagnosticDto> Diagnostics)
             PreviewReportCommitCore(string callerSessionId, ReportCommitRequest request)
         {
             var editorRole = actor.RequireSessionCore(callerSessionId).IsLead ? "lead" : "subagent";
             var preview = actor._reportEngine.ApplyCommit(_report, request.Anchor, request.Ops, request.Summary);
             ReportAuthoring.Validate(preview.NextDocument, _report);
-            return (preview, editorRole);
+            var diagnostics = ReportWidgetValidator.Diagnose(
+                preview.NextDocument, actor._policy, actor._policyVm, actor._track.TemplateInputs, _report, rejectInvalidChanges: true);
+            return (preview, editorRole, diagnostics);
         }
 
         private async Task<ReportReadResult> FinalizeReportCommitCoreAsync(
             ReportCommitResult commitResult,
             string? authorSessionId,
             string commitMessage,
+            IReadOnlyList<ReportDiagnosticDto> diagnostics,
             CancellationToken ct)
         {
             var now = actor.NowMs();
@@ -168,9 +172,9 @@ public sealed partial class TrackActor
                 Summary: _report.Summary,
                 RenderedMarkdown: rendered,
                 Blocks: _report.Blocks,
-                Tasks: actor._taskCoordinator.Snapshot(),
+                Tasks: actor._taskCoordinator.Snapshot().Select(actor.ProjectFlowTaskCore).ToArray(),
                 Anchor: new ReadAnchor(_report.DocRev, knownRevs, WholeDocumentRead: true),
-                Diagnostics: [],
+                Diagnostics: diagnostics,
                 Changes: commitResult.Changes);
         }
     }

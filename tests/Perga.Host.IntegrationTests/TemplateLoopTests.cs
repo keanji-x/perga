@@ -55,7 +55,7 @@ public sealed class TemplateLoopTests
                 var applied = await Call(KernelMcpToolNames.TrackSet, new { templateId = "loop", inputs = new { unit = "km", keep = "retained" } });
                 Assert.Equal("loop", applied.GetProperty("templateId").GetString());
                 await Call(KernelMcpToolNames.TemplateUpdateInputs, new { inputs = new { unit = "m" } });
-                var current = await Call(KernelMcpToolNames.TemplateRead, new { templateId = "__current__" });
+                var current = await Call(KernelMcpToolNames.TemplateRead, new { templateId = "__current__", format = "full" });
                 Assert.Equal(source, current.GetProperty("snapshot").GetString());
                 Assert.Equal("retained", current.GetProperty("inputs").GetProperty("keep").GetString());
                 Assert.Equal(7, current.GetProperty("data").GetProperty("count").GetInt32());

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Perga.AgentKit;
 using Perga.Contracts;
+using Perga.Kernel.Flow;
 using Perga.Kernel.Internal;
 using Perga.Kernel.Ports;
 using Perga.Kernel.Tasks;
@@ -33,7 +34,7 @@ public sealed partial class TrackActor
         }
 
         var route = _policy is null ? new PolicyTaskRoute(provider, model) : _policyVm.RouteTaskDispatch(_policy,
-            task.Role, FormatAccessModeForPolicy(task.Access), provider, model, _track.TemplateInputs);
+            task.Role, ReadTaskRequestedAccessCore(task), provider, model, _track.TemplateInputs);
         if (route.Denial is null)
             route = route with { Model = SessionLaunchValidator.NormalizeRequestedModel(route.Model) };
         if (IsFlowSessionReuse(task) && route.Denial is null && route.Model != model)
@@ -45,10 +46,22 @@ public sealed partial class TrackActor
         return (route with { Provider = session.Provider, Model = session.Model }, usesPreparedDefault);
     }
 
+    private string? ReadTaskRequestedAccessCore(TaskDto task)
+    {
+        if (!FlowConstants.IsFlowTask(task) || task.Kind == "command")
+            return FormatAccessModeForPolicy(task.Access);
+        if (task.Context is { ValueKind: JsonValueKind.Object } context &&
+            context.TryGetProperty("explicitAccess", out var explicitAccess) && explicitAccess.ValueKind == JsonValueKind.False)
+            return null;
+        // A retained Flow task may predate the marker or carry a routed effective access.
+        var node = _flowSpec.Nodes.FirstOrDefault(node => node.Id == task.TaskKey);
+        return node?.Do.Kind == "run" ? FlowTaskRouting.RequestedAccess(node) : FormatAccessModeForPolicy(task.Access);
+    }
+
     private GuardDecision EvaluateTaskDispatchCore(TaskDto task, PolicyTaskRoute route) =>
         _policy is null ? new GuardDecision.Allow() :
         _policyVm.Before(_policy, "task.dispatch", TrackId, JsonHelpers.ToElement(new {
-            taskKey = task.TaskKey, role = task.Role, access = FormatAccessModeForPolicy(task.Access),
+            taskKey = task.TaskKey, role = task.Role, access = route.Access ?? FormatAccessModeForPolicy(task.Access),
             provider = route.Provider, model = route.Model, gate = task.Gate, acceptance = task.Acceptance
         }), _track.TemplateInputs, _track.Data);
 
@@ -61,7 +74,9 @@ public sealed partial class TrackActor
         var evaluation = EvaluateTaskDispatchCore(task, route);
         if (evaluation is GuardDecision.Deny denied)
             throw KernelException.PolicyDenied(denied.Reason);
-        if (_policy.Manifest.RequireGateForReadWrite && task.Access == AccessMode.ReadWrite && (task.Gate is null || task.Gate.Steps.Count == 0))
+        if (_policy.Manifest.RequireGateForReadWrite &&
+            (route.Access ?? FormatAccessModeForPolicy(task.Access)) == "read_write" &&
+            (task.Gate is null || task.Gate.Steps.Count == 0))
             throw KernelException.PolicyDenied("Template policy requires a gate for this task.");
         if (evaluation is GuardDecision.AskHuman ask)
         {

@@ -104,6 +104,8 @@ public interface IPolicyVm
     PolicyTaskRoute RouteTaskDispatch(CompiledPolicy policy, string? role, string? access, string? provider, string? model, JsonElement inputs);
     IReadOnlyList<PolicyTaskRoute> ResolveRoutingTargets(CompiledPolicy policy, JsonElement inputs);
     IReadOnlyList<Perga.Contracts.FlowNodeSpecDto> ResolveFlow(CompiledPolicy policy, JsonElement inputs);
+    IReadOnlyList<string> ResolveViewNames(CompiledPolicy policy, JsonElement inputs) =>
+        policy.Manifest.ViewNames ?? [];
     void ValidateInputs(CompiledPolicy policy, JsonElement inputs);
     string InterpolateInputs(CompiledPolicy policy, string text, JsonElement inputs);
     DataPatchValidationResult ValidateAndPatchData(

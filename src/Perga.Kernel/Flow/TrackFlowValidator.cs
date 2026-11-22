@@ -464,14 +464,12 @@ internal static class TrackFlowValidator
                 (model is not null && model != reusedSession.Model))
                 errors.Add(new($"$.nodes[{index}].do", "Requested provider/model differ from the target session.",
                     "Use the current session provider/model or create a new session."));
-            provider = reusedSession.Provider;
-            model = reusedSession.Model;
         }
         if (policy is null)
             return;
 
-        var route = policyVm.RouteTaskDispatch(policy, node.Do.Role, node.Do.Access, provider, model, templateInputs);
-        if (reusedSession is not null && route.Denial is null && route.Model != model)
+        var route = FlowTaskRouting.Resolve(node, policy, policyVm, templateInputs, reusedSession);
+        if (reusedSession is not null && route.Denial is null && route.Model != reusedSession.Model)
             errors.Add(new($"$.nodes[{index}].do", $"Template routing requires model '{route.Model}' on the target session.",
                 "Use a session configured for the routed model."));
         if (route.Denial is { } denial)

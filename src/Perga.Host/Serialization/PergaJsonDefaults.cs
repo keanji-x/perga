@@ -1,3 +1,4 @@
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -37,6 +38,7 @@ public static class PergaJsonDefaults
     {
         var options = new JsonSerializerOptions(JsonSerializerDefaults.Web)
         {
+            Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
             PropertyNameCaseInsensitive = true,
             DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
