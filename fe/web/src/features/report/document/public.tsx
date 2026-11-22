@@ -9,11 +9,10 @@ import { useState } from '../../../ui/state/public.ts';
 import { PreparedProseBlock, PlainReportText, ProseBlock } from './content.tsx';
 export { ProseBlock, ReportTextLink } from './content.tsx';
 import type { ReferenceRepository } from '../../../../../core/domain/report-references.ts';
-import {
-  deriveReportTasks, isTaskBlock,
-  type PreviewResolution, type ReportBlock, type ReportLinkTarget, type ReportTaskRow, type TaskVerdict,
-  type TemplateViewsProjection, type TemplateViewsState, type TrackReport,
-} from '../../../../../core/domain/report.ts';
+import { deriveReportTasks, isTaskBlock, type ReportBlock, type ReportLinkTarget, type ReportTaskRow, type TrackReport } from '../../../../../core/domain/report.ts';
+import { type PreviewResolution } from '../../../../../core/domain/report-backlinks.ts';
+import { type TaskVerdict } from '../../../../../core/domain/report-verdicts.ts';
+import { type TemplateViewsProjection, type TemplateViewsState } from '../../../../../core/domain/report-widget.ts';
 import {
   type ReportFileLinkTarget,
 } from '../../../../../core/domain/report-file.ts';

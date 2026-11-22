@@ -1,6 +1,6 @@
 import { sessionContextUsage } from './session-context-usage.js';
 import { expect, it } from 'vitest';
-import { modelCatalogOperation } from './conversation.js';
+import { modelCatalogOperation } from './conversation-models.js';
 import { buildConversationTranscript, conversationItemsOperation, conversationRunOperation, conversationRunPhase, conversationRunningTurn, conversationPendingQueue } from './conversation-display.js';
 
 const session = Object.freeze({ lastNotifiableTurnAtMs: null, id: 'session', trackId: 'track', isLead: true, provider: 'codex', model: 'model',

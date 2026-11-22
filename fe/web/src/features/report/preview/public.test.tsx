@@ -3,7 +3,7 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { PreviewResolution } from '../../../../../core/domain/report.ts';
+import type { PreviewResolution } from '../../../../../core/domain/report-backlinks.ts';
 import { previewFrameUrl, ReportPreviewBlock } from './public.tsx';
 
 afterEach(() => {

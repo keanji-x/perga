@@ -12,7 +12,9 @@ import type { ApiOperation,ApiTransportPort } from '../../../../core/api/types.t
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { type AskId,type AskQuestion } from '../../../../core/domain/activity.ts';
 import { answerAskOperation } from '../../../../core/domain/ask.ts';
-import { compactPlannerOperation,createSerialWriter,interruptPlannerOperation,recoverSessionOperation,removeQueuedSessionMessageOperation,sendPlannerInputOperation,setPlannerModelOperation,steerQueuedSessionMessageOperation,type ModelSelection,type ModelSelectionResult } from '../../../../core/domain/conversation.ts';
+import { compactPlannerOperation, interruptPlannerOperation, recoverSessionOperation, removeQueuedSessionMessageOperation, sendPlannerInputOperation, steerQueuedSessionMessageOperation } from '../../../../core/domain/conversation-commands.ts';
+import { createSerialWriter, setPlannerModelOperation, type ModelSelectionResult } from '../../../../core/domain/conversation-models.ts';
+import { type ModelSelection } from '../../../../core/domain/conversation.ts';
 import { ApiError } from '../../../../core/domain/failure-class.ts';
 import { setPlannerPermissionModeOperation,type SetPlannerPermissionModeResponse } from '../../../../core/domain/planner-permission-mode.ts';
 import type { ConversationRegistry } from '../conversations/registry-model.ts';

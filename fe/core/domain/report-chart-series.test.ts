@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { isCalendarDate, readTrackReport, TRACK_REPORT_CARD_KIND } from './report.js';
+import { isCalendarDate } from './report-date.js';
+import { readTrackReport, TRACK_REPORT_CARD_KIND } from './report.js';
 import type { CardWire } from './track.js';
 
 const SOURCE = 'neige://plugin/dev-neige-market/market.series';

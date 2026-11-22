@@ -3,7 +3,6 @@ import { gfmFromMarkdown } from 'mdast-util-gfm';
 import { gfm } from 'micromark-extension-gfm';
 import { mathFromMarkdown } from 'mdast-util-math';
 import { math } from 'micromark-extension-math';
-import { decodeNamedCharacterReference } from 'decode-named-character-reference';
 
 export type MarkdownDepth = 1 | 2 | 3 | 4 | 5 | 6;
 export type MarkdownPosition = Readonly<{
@@ -348,9 +347,8 @@ function htmlBlockStart(line: string): HtmlBlock | null {
   return null;
 }
 
-function diagnosticsFor(markdown: string, root: MdNode): readonly MarkdownDiagnostic[] {
+function diagnosticsFor(lines: readonly string[], root: MdNode): readonly MarkdownDiagnostic[] {
   const diagnostics: MarkdownDiagnostic[] = [];
-  const lines = markdown.replace(/\r\n?/g, '\n').split('\n');
   let openFence: Readonly<{ marker: string; size: number; line: number }> | null = null;
   for (const [index, line] of lines.entries()) {
     if (openFence !== null) {
@@ -393,11 +391,10 @@ function diagnosticsFor(markdown: string, root: MdNode): readonly MarkdownDiagno
 const MAX_MARKDOWN_SOURCE_LENGTH = 2_000_000;
 const MAX_MARKDOWN_NESTING_DEPTH = 64;
 
-function inputLimitDiagnostic(markdown: string): MarkdownDiagnostic | null {
+function inputLimitDiagnostic(markdown: string, lines: readonly string[]): MarkdownDiagnostic | null {
   if (markdown.length > MAX_MARKDOWN_SOURCE_LENGTH) {
     return { kind: 'limit-exceeded', message: 'Markdown source exceeds 2000000 characters', line: 1 };
   }
-  const lines = markdown.replace(/\r\n?/g, '\n').split('\n');
   let openFence: Readonly<{ marker: string; size: number }> | null = null;
   let htmlBlock: HtmlBlock | null = null;
   for (const [index, line] of lines.entries()) {
@@ -463,48 +460,17 @@ function mathExtension(source: string, boundaries: readonly (readonly [number, n
   return extension;
 }
 
-function disambiguateSegment(source: string, mask: string | undefined, boundaries: readonly (readonly [number, number])[]): MdNode {
-  let input = source;
-  let root: MdNode;
-  for (let attempt = 0; ; attempt += 1) {
-    const options = { extensions: [gfm(), mathExtension(input, boundaries)], mdastExtensions: [gfmFromMarkdown(), mathFromMarkdown()] };
-    root = fromMarkdown(input, options) as MdNode;
-    const invalid: number[] = [];
-    const visit = (node: MdNode, inReference = false): void => {
-      if (node.type === 'inlineMath' && node.position?.start.offset !== undefined && node.position.end.offset !== undefined) {
-        const start = node.position.start.offset;
-        const end = node.position.end.offset;
-        if (isInvalidInlineMath(source, start, end) && !inReference) {
-          // A dollar immediately before a number belongs to currency; mask that delimiter
-          // first so a preceding reference label keeps matching its definition.
-          invalid.push(/\d/.test(source[end] ?? '') ? end - 1 : start);
-        }
-      }
-      for (const child of node.children ?? []) visit(child, inReference || node.type === 'linkReference' || node.type === 'imageReference');
-    };
-    visit(root);
-    if (invalid.length === 0 || mask === undefined || attempt === 8) break;
-    const position = invalid[0];
-    input = `${input.slice(0, position)}${mask}${input.slice(position + 1)}`;
-  }
-  return root;
+function disambiguateSegment(source: string, boundaries: readonly (readonly [number, number])[]): MdNode {
+  return fromMarkdown(source, {
+    extensions: [gfm(), mathExtension(source, boundaries)],
+    mdastExtensions: [gfmFromMarkdown(), mathFromMarkdown()],
+  }) as MdNode;
 }
 
 /** Reject currency-like dollar pairs without changing source offsets used by report anchors. */
 function mathRoot(source: string): MdNode {
   const options = { extensions: [gfm(), math()], mdastExtensions: [gfmFromMarkdown(), mathFromMarkdown()] };
   if (!source.includes('$')) return fromMarkdown(source, options) as MdNode;
-  // Currency symbols have the same Unicode punctuation class as '$'; pick one absent from the input.
-  const references = new Set([...source.matchAll(/&(#x[\da-f]+|#\d+|[a-z][\da-z]+);/gi)].flatMap(([, reference]) => {
-    if (reference.startsWith('#')) {
-      const hex = reference[1]?.toLowerCase() === 'x';
-      const value = Number.parseInt(reference.slice(hex ? 2 : 1), hex ? 16 : 10);
-      return Number.isFinite(value) && value > 0 && value <= 0x10ffff ? [String.fromCodePoint(value)] : [];
-    }
-    const decoded = decodeNamedCharacterReference(reference);
-    return decoded === false ? [] : [decoded];
-  }));
-  const mask = Array.from('£¥€₩₹₽₺₴₦₱₫₭₲₵₸₼₾₿').find(symbol => !source.includes(symbol) && !references.has(symbol));
   const boundaries: [number, number][] = [];
   if (source.includes('[')) {
     // Resolve GFM boundaries on the original source so math cannot consume across them.
@@ -528,30 +494,28 @@ function mathRoot(source: string): MdNode {
     };
     visit(gfmRoot);
   }
-  const root = disambiguateSegment(source, mask, boundaries);
+  const root = disambiguateSegment(source, boundaries);
   const restore = (node: MdNode): MdNode => {
     const start = node.position?.start.offset;
     const end = node.position?.end.offset;
     if (node.type === 'paragraph' && node.children?.length === 1 && node.children[0]?.type === 'inlineMath'
       && start !== undefined && end !== undefined && /^\$\$(?!\$)[^\n]+\$\$[\t ]*$/.test(source.slice(start, end))) {
       const value = node.children[0].value;
-      return { ...node, type: 'math', value: value === undefined || mask === undefined ? value : value.replaceAll(mask, '$'), children: undefined };
+      return { ...node, type: 'math', value, children: undefined };
     }
-    // If masking exhausted its budget, preserve unrecognized dollar pairs as literal text.
+    // Keep the final AST guard for parser-extension drift.
     if (node.type === 'inlineMath' && start !== undefined && end !== undefined) {
       const raw = source.slice(start, end);
       if (isInvalidInlineMath(source, start, end)) return { ...node, type: 'text', value: raw };
     }
-    const unmask = (value: string | null | undefined) => value === undefined || value === null || mask === undefined
-      ? value : value.replaceAll(mask, '$');
-    return { ...node, value: unmask(node.value) ?? undefined, alt: unmask(node.alt), url: unmask(node.url) ?? undefined,
-      title: unmask(node.title), identifier: unmask(node.identifier) ?? undefined, label: unmask(node.label), children: node.children?.map(restore) };
+    return { ...node, children: node.children?.map(restore) };
   };
   return restore(root);
 }
 
 export function parse(markdown: string): MarkdownParseResult {
-  const limitDiagnostic = inputLimitDiagnostic(markdown);
+  const lines = markdown.length > MAX_MARKDOWN_SOURCE_LENGTH ? [] : markdown.replace(/\r\n?/g, '\n').split('\n');
+  const limitDiagnostic = inputLimitDiagnostic(markdown, lines);
   if (limitDiagnostic !== null) {
     return {
       status: 'failed',
@@ -572,8 +536,8 @@ export function parse(markdown: string): MarkdownParseResult {
     collectDefinitions(root);
     const value: NormalizedMarkdownAst = {
       type: 'root', dialect: 'gfm', children: normalizeBlocks(root.children, definitions),
-      diagnostics: diagnosticsFor(markdown, root), position: positionOf(root),
-      sourceLines: markdown.replace(/\r\n?/g, '\n').split('\n'),
+      diagnostics: diagnosticsFor(lines, root), position: positionOf(root),
+      sourceLines: lines,
     };
     return {
       status: 'ready',

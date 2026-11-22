@@ -4,7 +4,10 @@ import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { type ResolvedSeries } from '../../../../core/domain/report-series.ts';
 import { type TrackSourceDetail } from '../../../../core/domain/report-source.ts';
-import { deriveReportTasks,hasLiveTaskRun,readTrackViewsOperation,trackTaskVerdictsOperation,type ReportBlock,type TaskVerdict,type TemplateViewsProjection } from '../../../../core/domain/report.ts';
+import { deriveReportTasks, hasLiveTaskRun, trackTaskVerdictsOperation, type ReportBlock } from '../../../../core/domain/report.ts';
+import { readTrackViewsOperation } from '../../../../core/domain/report-operations.ts';
+import { type TaskVerdict } from '../../../../core/domain/report-verdicts.ts';
+import { type TemplateViewsProjection } from '../../../../core/domain/report-widget.ts';
 import { runOperation } from './query-operation.ts';
 export function trackViewsQueryOptions(
   transport: ApiTransportPort,

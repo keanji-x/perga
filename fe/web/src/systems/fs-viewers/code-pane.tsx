@@ -1,24 +1,15 @@
 // The two CodeMirror panes: one file, and one file's two sides. Both are read-only.
 
-import { useEffect, useMemo, useRef } from 'react';
-import CodeMirror from '@uiw/react-codemirror';
-import { useState } from '../../ui/state/public.ts';
-import { useCodeLanguage, type CodeTheme } from '../../ui/code/public.tsx';
-import { githubDark, githubLight } from '@uiw/codemirror-theme-github';
+import { defaultKeymap } from '@codemirror/commands';
+import { bracketMatching, foldGutter, foldKeymap } from '@codemirror/language';
 import { MergeView } from '@codemirror/merge';
-import { EditorView, keymap } from '@codemirror/view';
+import { SearchQuery, closeSearchPanel, findNext, findPrevious, getSearchQuery, highlightSelectionMatches, openSearchPanel, search, searchKeymap, searchPanelOpen, setSearchQuery } from '@codemirror/search';
 import { Compartment, EditorState, Prec } from '@codemirror/state';
-import {
-  SearchQuery,
-  closeSearchPanel,
-  findNext,
-  findPrevious,
-  getSearchQuery,
-  openSearchPanel,
-  search,
-  searchPanelOpen,
-  setSearchQuery,
-} from '@codemirror/search';
+import { EditorView, crosshairCursor, drawSelection, highlightActiveLine, highlightActiveLineGutter, highlightSpecialChars, keymap, lineNumbers, rectangularSelection } from '@codemirror/view';
+import { githubDark, githubLight } from '@uiw/codemirror-theme-github';
+import { useEffect, useMemo, useRef } from 'react';
+import { useCodeLanguage, type CodeTheme } from '../../ui/code/public.tsx';
+import { useState } from '../../ui/state/public.ts';
 
 export type PaneTheme = CodeTheme;
 
@@ -120,7 +111,9 @@ export function CodePane({
   path, text, theme, onSearchAdapterReady, onSearchCount, onSlashOpen,
 }: CodePaneProps) {
   const { support } = useCodeLanguage({ kind: 'filename', value: path }, text);
+  const parentRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
+  const [configuration] = useState(() => new Compartment());
   /* Callbacks live in refs so a caller re-creating them per render cannot tear the editor down. */
   const onSearchAdapterReadyRef = useRef(onSearchAdapterReady);
   const onSearchCountRef = useRef(onSearchCount);
@@ -132,6 +125,14 @@ export function CodePane({
   const extensions = useMemo(
     () => [
       EditorView.lineWrapping,
+      theme === 'dark' ? githubDark : githubLight,
+      EditorState.readOnly.of(true),
+      lineNumbers(), foldGutter(), highlightSpecialChars(), drawSelection(),
+      highlightActiveLine(), highlightActiveLineGutter(), bracketMatching(),
+      rectangularSelection(), crosshairCursor(), highlightSelectionMatches(),
+      EditorState.allowMultipleSelections.of(true),
+      keymap.of([...defaultKeymap, ...searchKeymap, ...foldKeymap]),
+      EditorView.editorAttributes.of({ style: 'height: 100%' }),
       EditorView.contentAttributes.of({ tabindex: '0', 'aria-readonly': 'true', 'aria-label': 'File code' }),
       ...(support === null ? [] : [support]),
       search({ createPanel: emptyPanel }),
@@ -141,45 +142,45 @@ export function CodePane({
         run: () => { onSlashOpenRef.current?.(); return true; },
       }])),
     ],
-    [support],
+    [support, theme],
   );
 
   useEffect(() => {
-    let disposed = false;
-    let adapter: PaneSearchAdapter | null = null;
-    const wire = () => {
-      const view = viewRef.current;
-      if (view === null || disposed) return;
-      adapter = buildCodeSearchAdapter(view, (current, total) => {
-        onSearchCountRef.current?.(current, total);
-      });
-      onSearchAdapterReadyRef.current?.(adapter);
-    };
-    /* `viewRef` is filled by `onCreateEditor`, which has not run on the first pass — hence the microtask. */
-    if (viewRef.current !== null) wire();
-    else queueMicrotask(wire);
+    if (parentRef.current === null) return;
+    const view = new EditorView({
+      parent: parentRef.current,
+      state: EditorState.create({ extensions: configuration.of([]) }),
+    });
+    view.scrollDOM.style.overflow = 'auto';
+    viewRef.current = view;
+    return () => { viewRef.current = null; view.destroy(); };
+  }, [configuration]);
+
+  useEffect(() => {
+    viewRef.current?.dispatch({ effects: configuration.reconfigure(extensions) });
+  }, [configuration, extensions]);
+
+  useEffect(() => {
+    const view = viewRef.current;
+    if (view === null || view.state.doc.toString() === text) return;
+    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text } });
+  }, [text]);
+
+  useEffect(() => {
+    const view = viewRef.current;
+    if (view === null) return;
+    const adapter = buildCodeSearchAdapter(view, (current, total) => {
+      onSearchCountRef.current?.(current, total);
+    });
+    onSearchAdapterReadyRef.current?.(adapter);
     return () => {
-      disposed = true;
-      adapter?.dispose();
+      // The view may already have been destroyed by the owning effect.
+      if (viewRef.current === view) adapter.dispose();
       onSearchAdapterReadyRef.current?.(null);
     };
   }, [path, text]);
 
-  return (
-    <CodeMirror
-      value={text}
-      // Bound the vendor host as this pane's flex item; height sizes only its
-      // editor. The editor scrolls independently of the stationary search row.
-      style={{ flex: 1, minHeight: 0 }}
-      height="100%"
-      theme={theme === 'dark' ? githubDark : githubLight}
-      extensions={extensions}
-      editable={true}
-      readOnly={true}
-      basicSetup={{ lineNumbers: true, foldGutter: true }}
-      onCreateEditor={(view) => { viewRef.current = view; }}
-    />
-  );
+  return <div ref={parentRef} style={{ flex: 1, minHeight: 0 }} />;
 }
 
 /** HEAD on the left, the working tree on the right. `null` on either side is a real state (not in HEAD / deleted), exposed as `data-nc-fs-empty-*`. */

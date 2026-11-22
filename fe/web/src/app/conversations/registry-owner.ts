@@ -1,7 +1,8 @@
 import { createStorageKey } from '../../../../core/keys/storage.ts';
 import type { TranscriptEntry, Conversation } from '../../../../core/domain/conversation.ts';
 import { DEPLOYMENT_OWNER_USER_ID } from '../../../../core/api/auth.ts';
-import { isOptimisticConversationTurn, TOO_MANY_IMAGES } from '../../../../core/domain/conversation.ts';
+import { isOptimisticConversationTurn } from '../../../../core/domain/conversation.ts';
+import { TOO_MANY_IMAGES } from '../../../../core/domain/conversation-commands.ts';
 import { beginSendOp, type ConversationOutboxOp } from '../../../../core/domain/conversation-outbox.ts';
 import { EMPTY_COMPOSER, tookEveryImage, withRefill, type ComposerContent } from '../../../../core/domain/conversation-composer.ts';
 import { NO_UPLOAD, type UploadState } from '../../features/planner/attachments.tsx';

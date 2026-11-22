@@ -1,4 +1,5 @@
-import { isUserConversationTurn,type PlannerQueueWriteOutcome,type TranscriptEntry } from './conversation.js';
+import { isUserConversationTurn, type TranscriptEntry } from './conversation.js';
+import { type PlannerQueueWriteOutcome } from './conversation-commands.js';
 
 /** A newer immutable Human version updates an existing listed row, never invents pending work. */
 export function pendingQueueWithCurrentHumanVersions(entries: readonly import('./conversation.js').PendingQueueEntry[], turns: readonly import('./conversation.js').ConversationMessage[]): readonly import('./conversation.js').PendingQueueEntry[] {

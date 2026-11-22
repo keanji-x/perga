@@ -8,7 +8,8 @@ import { useMemo } from 'react';
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { readFailureOf, readFailureText } from '../../../../core/domain/read-failure.ts';
-import type { ReportBlock, TemplateViewsState } from '../../../../core/domain/report.ts';
+import type { ReportBlock } from '../../../../core/domain/report.ts';
+import type { TemplateViewsState } from '../../../../core/domain/report-widget.ts';
 import { trackViewsQueryOptions } from '../providers/report-queries.ts';
 
 export function useTrackTemplateViews(

@@ -3,8 +3,8 @@
 
 import { ListText } from '../../../ui/list-typography/public.tsx';
 import { ContextItem } from '../../../ui/panel-card/context.tsx';
-import type { TrackBacklink, TrackBacklinks } from '../../../../../core/domain/report.ts';
-import { groupBacklinks } from '../../../../../core/domain/report.ts';
+import type { TrackBacklink, TrackBacklinks } from '../../../../../core/domain/report-backlinks.ts';
+import { groupBacklinks } from '../../../../../core/domain/report-backlinks.ts';
 import styles from './backlinks.module.css';
 
 export type ReportBacklinksProps = Readonly<{

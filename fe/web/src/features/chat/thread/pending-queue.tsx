@@ -1,7 +1,8 @@
 // Queued conversation inputs follow the current status using the existing chat controls.
 import { useLayoutEffect, useRef } from 'react';
 import { Banner } from '@astryxdesign/core/Banner';
-import type { PendingQueueEntry, PlannerQueueWriteOutcome } from '../../../../../core/domain/conversation.ts';
+import type { PendingQueueEntry } from '../../../../../core/domain/conversation.ts';
+import type { PlannerQueueWriteOutcome } from '../../../../../core/domain/conversation-commands.ts';
 import { queueEntryIsAccounted, type QueueDisplayAccounting, type PendingQueueSend } from '../../../../../core/domain/conversation-outbox.ts';
 import { OutgoingMessage } from './outgoing-message.tsx';
 import { MessageActions } from './message-actions.tsx';

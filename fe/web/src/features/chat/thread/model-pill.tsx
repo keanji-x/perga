@@ -1,4 +1,4 @@
-import { PROVIDER_PRESENTATION } from '../../../../../core/domain/provider-presentation.ts';
+import { catalogReason, defaultNameOf, effortsFor, FOLLOW_DEFAULT_LABEL, legacyPresentation, providerLabel, visibleModelGroups, type CatalogEntry, type ModelGroup } from './model-selection.ts';
 // The model picker in a planner conversation's composer footer, and on the new-track page. Presentational:
 // every value is a prop; the queries and the write live in `app/router`. Each provider's catalog is one
 // group; on the new-track page the pick also decides the Planner's provider (#1810), and each group
@@ -6,65 +6,25 @@ import { PROVIDER_PRESENTATION } from '../../../../../core/domain/provider-prese
 // Beside it, a Planner conversation's approval setting (#2348), and the Planner's role on the new-track page and in
 // an existing Planner conversation, triggers of the same kind.
 
-import * as RadixSlider from '@radix-ui/react-slider';
 import { Button } from '@astryxdesign/core/Button';
-import { DropdownMenu, DropdownMenuItem } from '@astryxdesign/core/DropdownMenu';
 import { Divider } from '@astryxdesign/core/Divider';
+import { DropdownMenu, DropdownMenuItem } from '@astryxdesign/core/DropdownMenu';
 import { HStack } from '@astryxdesign/core/HStack';
 import { Icon as AstryxIcon } from '@astryxdesign/core/Icon';
 import { Popover } from '@astryxdesign/core/Popover';
 import { Text } from '@astryxdesign/core/Text';
 import { VisuallyHidden } from '@astryxdesign/core/VisuallyHidden';
+
 import { useCallback, useEffect, useRef, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 
 import type { AgentProvider } from '../../../../../core/api/generated/wire.ts';
 import type { PermissionModeOptionDto } from '../../../../../core/api/perga-v1.ts';
-import {
-  unavailableCreationNote, type ProviderAvailability,
-} from '../../../../../core/domain/agent-providers.ts';
-import type { ModelCatalog, ModelSelection } from '../../../../../core/domain/conversation.ts';
+import { unavailableCreationNote } from '../../../../../core/domain/agent-providers.ts';
+import type { ModelSelection } from '../../../../../core/domain/conversation.ts';
 import { useState } from '../../../ui/state/public.ts';
 import styles from './model-pill.module.css';
-
-const FOLLOW_DEFAULT_LABEL = 'Default';
-
-/**
- * One provider's section of the menu: its catalog, `null` while it loads, and whether the provider can run
- * right now (`GET /api/v1/bootstrap`). `availability` is `null` while that answer is unknown, and for a
- * conversation that already exists: its turns keep issue-time handling (#1817).
- */
-export type ModelGroup<Provider extends string = AgentProvider> = Readonly<{
-  provider: Provider;
-  catalog: ModelCatalog | null;
-  availability: ProviderAvailability | null;
-  /** Server-owned blank track creation capability; omitted for live model changes. */
-  acceptsUnavailableBlankTrack?: boolean;
-  /** Explicit host admission, independent of the Planner create policy; undefined keeps its existing behavior. */
-  selectionProblem?: string | null;
-  /** A provider can expose a current selection without a selectable default. */
-  defaultAvailable?: boolean;
-}>;
-
-function legacyPresentation(provider: string) {
-  return Object.entries(PROVIDER_PRESENTATION).find(([key]) => key === provider)?.[1];
-}
-
-/** Managed display needs no provider-specific UI registration. */
-function providerLabel<Provider extends string>(group: ModelGroup<Provider> | undefined, provider: Provider): string {
-  return group?.selectionProblem !== undefined ? provider : (legacyPresentation(provider)?.label ?? provider);
-}
-
-type CatalogEntry = ModelCatalog['models'][number];
-
-/**
- * The groups a menu shows. The selection's own group always shows, so a pick never passes for another
- * provider's. Any other group is hidden while its provider is `not_configured` on this server.
- */
-function visibleModelGroups<Provider extends string>(groups: readonly ModelGroup<Provider>[], provider: Provider): readonly ModelGroup<Provider>[] {
-  return groups.filter((group) => group.selectionProblem !== undefined || group.provider === provider || (
-    group.availability?.status !== 'not_configured'
-    && (!legacyPresentation(group.provider)?.hiddenUntilKnown || (group.availability !== null && group.catalog !== null))));
-}
+// Keep the shared CSS after Astryx imports: importing the slider earlier changes layer order.
+import { EffortSlider } from './model-effort-slider.tsx';
 
 /** Keep Escape inside a host Dialog, then restore focus only while it still belongs to this pill. */
 function useEscapeFocus(open: boolean, setOpen: (open: boolean) => void, host: RefObject<HTMLSpanElement | null>) {
@@ -109,52 +69,6 @@ function useEscapeFocus(open: boolean, setOpen: (open: boolean) => void, host: R
     });
   };
   return { onEscape, onOpenChange };
-}
-
-/** The name of the default a catalog says is followed (for Claude, the model its CLI default resolves to), or `null` when it cannot say. */
-function defaultNameOf(catalog: ModelCatalog | null): string | null {
-  return catalog?.default_source === 'config_read' || catalog?.default_source === 'config_toml'
-    || catalog?.default_source === 'claude_cli' || catalog?.default_source === 'acp_session'
-    ? catalog.default.model
-    : null;
-}
-
-function catalogReason<Provider extends string>(group: ModelGroup<Provider>): {
-  reason: string | null;
-  refused: boolean;
-  blocked: string | null;
-} {
-  const reason = group.selectionProblem === undefined
-    ? (group.availability?.status === 'unavailable' ? group.availability.reason : null)
-    : group.selectionProblem;
-  const refused = group.selectionProblem !== undefined || group.acceptsUnavailableBlankTrack !== true;
-  const blocked = refused ? reason : null;
-  return { reason, refused, blocked };
-}
-
-function effortsFor<Provider extends string>(
-  group: ModelGroup<Provider> | undefined,
-  modelId: string | null,
-): {
-  efforts: CatalogEntry['supported_reasoning_efforts'];
-  effortDefault: string | null;
-} {
-  const catalog = group?.catalog ?? null;
-  const models = catalog?.models ?? [];
-  const followed = catalog?.default.model == null
-    ? undefined
-    : models.find((model) => model.model === catalog.default.model || model.resolved_model === catalog.default.model);
-  const chosen = modelId === null
-    ? followed
-    : models.find((model) => model.model === modelId);
-  const defaultEfforts = catalog?.default.supported_reasoning_efforts;
-  const efforts = (modelId === null && defaultEfforts != null && defaultEfforts.length > 0
-    ? defaultEfforts
-    : chosen?.supported_reasoning_efforts) ?? [];
-  const effortDefault = modelId === null
-    ? catalog?.default.reasoning_effort !== undefined ? catalog.default.reasoning_effort : chosen?.default_reasoning_effort ?? null
-    : chosen?.default_reasoning_effort ?? null;
-  return { efforts, effortDefault };
 }
 
 export function ModelPill<Provider extends string = AgentProvider>({
@@ -448,62 +362,6 @@ function ModelRow({
         </>
       )}
     </button>
-  );
-}
-
-function EffortSlider({
-  stops, selectedIndex, isDisabled, onChangeIndex,
-}: Readonly<{
-  stops: readonly Readonly<{ value: string | null; label: string }>[];
-  selectedIndex: number;
-  isDisabled: boolean;
-  onChangeIndex: (index: number) => void;
-}>) {
-  const segments = Math.max(1, stops.length - 1);
-
-  return (
-    <RadixSlider.Root
-      className={styles.radixSliderRoot}
-      min={0}
-      max={segments}
-      step={1}
-      value={[selectedIndex]}
-      disabled={isDisabled || stops.length <= 1}
-      aria-label="Reasoning effort"
-      onValueChange={([idx]) => {
-        if (idx === undefined) return;
-        onChangeIndex(idx);
-      }}
-      onValueCommit={([idx]) => {
-        if (idx === undefined) return;
-        onChangeIndex(idx);
-      }}
-    >
-      <RadixSlider.Track className={styles.radixSliderTrack}>
-        <RadixSlider.Range className={styles.radixSliderRange} />
-        {stops.length > 1 && stops.map((stop, idx) => {
-          const tickPos = idx === 0
-            ? '6px'
-            : idx === segments
-              ? 'calc(100% - 6px)'
-              : `${(idx / segments) * 100}%`;
-          return (
-            <span
-              key={stop.value ?? idx}
-              className={styles.radixSliderTick}
-              data-nc-filled={idx <= selectedIndex ? 'true' : 'false'}
-              style={{ insetInlineStart: tickPos }}
-            />
-          );
-        })}
-      </RadixSlider.Track>
-      <RadixSlider.Thumb
-        className={styles.radixSliderThumb}
-        aria-label="Reasoning effort"
-        aria-disabled={isDisabled || stops.length <= 1}
-        aria-valuetext={stops.at(selectedIndex)?.label ?? FOLLOW_DEFAULT_LABEL}
-      />
-    </RadixSlider.Root>
   );
 }
 

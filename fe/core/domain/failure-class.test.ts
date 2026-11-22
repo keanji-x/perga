@@ -5,9 +5,9 @@ import { AREA_CREATE_FAILURES,AREA_PATCH_FAILURES } from './area.js';
 import { ANSWER_ASK_FAILURES } from './ask.js';
 import { SEND_FAILURES } from './conversation-delivery.js';
 import { PLANNER_INTERRUPT_FAILURES } from './conversation-stop.js';
-import {
-CONVERSATION_CREATE_FAILURES,PLANNER_ATTACHMENT_FAILURES,PLANNER_MODEL_FAILURES,PLANNER_QUEUE_WRITE_FAILURES,
-} from './conversation.js';
+import { CONVERSATION_CREATE_FAILURES } from './conversation.js';
+import { PLANNER_ATTACHMENT_FAILURES, PLANNER_QUEUE_WRITE_FAILURES } from './conversation-commands.js';
+import { PLANNER_MODEL_FAILURES } from './conversation-models.js';
 import {
 ApiError,classifyFailure,DELETE_FAILURES,DELETE_TEXT,failureReason,NotSentError,refusalText,refusedText,writeClassOf,
 writeFailureText,

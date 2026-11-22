@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { nativeViewPayloadSchema, resolveLiveSlot } from '../../core/domain/report-view.js';
-import { LIVE_TABLE_SOURCE_PATTERN, readTrackReport, tableBlockPayloadSchema } from '../../core/domain/report.js';
+import { LIVE_TABLE_SOURCE_PATTERN, tableBlockPayloadSchema } from '../../core/domain/report-payloads.js';
+import { readTrackReport } from '../../core/domain/report.js';
 import { inlineTableBlockPayloadSchema } from '../../core/domain/report-table.js';
 import { trackOverlayPayload, type OverlayWire } from '../../core/domain/track.js';
 

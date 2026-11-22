@@ -15,16 +15,9 @@ updateAreaOperation
 } from '../domain/area.js';
 import { answerAskOperation,openAsksOf } from '../domain/ask.js';
 import { buildConversationTranscript,conversationItemsOperation,conversationRunOperation } from '../domain/conversation-display.js';
-import {
-agentSessionDtoToConversation,
-compactPlannerOperation,
-createTrackConversationOperation,
-interruptPlannerOperation,
-modelCatalogOperation,
-sendPlannerInputOperation,
-setConversationArchiveOperation,
-setPlannerModelOperation,
-} from '../domain/conversation.js';
+import { agentSessionDtoToConversation, createTrackConversationOperation, setConversationArchiveOperation } from '../domain/conversation.js';
+import { compactPlannerOperation, interruptPlannerOperation, sendPlannerInputOperation } from '../domain/conversation-commands.js';
+import { modelCatalogOperation, setPlannerModelOperation } from '../domain/conversation-models.js';
 import { decodeEventFrame } from '../events/protocol.js';
 import { initialEventState,reduceEventFrame } from '../events/reducer.js';
 import { DEPLOYMENT_OWNER_USER_ID,loginOperation } from './auth.js';
@@ -49,13 +42,8 @@ trackWorkspaceRawFileUrl,
 } from '../domain/fs.js';
 import { selectedReadyTemplateId } from '../domain/mentions.js';
 import { plannerSwitchOperation } from '../domain/planner-switch.js';
-import {
-readReportDocument,
-readTrackReportOperation,
-readTrackViewsOperation,
-trackTaskVerdictsOperation,
-updateTrackReportBlockOperation,
-} from '../domain/report.js';
+import { readReportDocument, trackTaskVerdictsOperation } from '../domain/report.js';
+import { readTrackReportOperation, readTrackViewsOperation, updateTrackReportBlockOperation } from '../domain/report-operations.js';
 import {
 acceptTaskOperation,
 cancelTaskOperation,

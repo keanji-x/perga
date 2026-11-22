@@ -7,7 +7,7 @@ import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { type AskId, type AskQuestion } from '../../../../core/domain/activity.ts';
 import { decideApprovalOperation, type PendingApproval } from '../../../../core/domain/approval.ts';
 import { answerAskOperation } from '../../../../core/domain/ask.ts';
-import { updateTrackReportBlockOperation, type HumanReportBlockUpdateBody } from '../../../../core/domain/report.ts';
+import { updateTrackReportBlockOperation, type HumanReportBlockUpdateBody } from '../../../../core/domain/report-operations.ts';
 import { runOperation } from './query-operation.ts';
 export function useTrackInputMutations(transport: ApiTransportPort, unauthorized: UnauthorizedChannel) {
   const client = useQueryClient();

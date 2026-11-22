@@ -1,7 +1,8 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { TaskVerdict, TrackReport } from '../../../../../core/domain/report.ts';
+import type { TaskVerdict } from '../../../../../core/domain/report-verdicts.ts';
+import type { TrackReport } from '../../../../../core/domain/report.ts';
 import { ReportDocument } from './public.tsx';
 import { revealReportAnchor } from '../anchor/public.ts';
 

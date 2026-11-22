@@ -3,7 +3,7 @@ import { Icon } from '../../../ui/icon/public.tsx';
 // The `chart.series` block: draws what the kernel resolved (line, normalized, bar, candles).
 // It fetches nothing itself; the data comes through `resolve`, injected by `app/router`.
 
-import type { ChartSeriesPayload } from '../../../../../core/domain/report.ts';
+import type { ChartSeriesPayload } from '../../../../../core/domain/report-payloads.ts';
 import {
   isOkSeriesEntry, minCompleteThrough, rebaseToFirst, seriesCurrencies,
   type OkResolvedSeries, type OkSeriesEntry, type SeriesEntry, type SeriesPoint, type SeriesResolution,

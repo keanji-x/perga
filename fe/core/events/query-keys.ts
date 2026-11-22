@@ -1,4 +1,4 @@
-import type { ModelCatalogScope } from '../domain/conversation.ts';
+import type { ModelCatalogScope } from '../domain/conversation-models.js';
 
 /**
  * Cache addresses for resources reachable by server events. Plans and query registrations

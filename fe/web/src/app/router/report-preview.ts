@@ -6,7 +6,7 @@ import { type UseQueryResult } from '@tanstack/react-query';
 import { useMemo } from 'react';
 
 import { readFailureOf } from '../../../../core/domain/read-failure.ts';
-import type { PreviewResolution,TrackPreviews } from '../../../../core/domain/report.ts';
+import type { PreviewResolution, TrackPreviews } from '../../../../core/domain/report-backlinks.ts';
 import type { PreviewViewportStore } from '../../features/report/preview/public.tsx';
 import { useUiPreferences } from '../providers/ui-preferences.tsx';
 

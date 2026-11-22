@@ -5,7 +5,7 @@ import type { ReactNode } from 'react';
 import { ConversationProvider, useConversationCommands } from './public.tsx';
 import { useConversationOutbox } from './outbox.ts';
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
-import { sendPlannerInputOperation } from '../../../../core/domain/conversation.ts';
+import { sendPlannerInputOperation } from '../../../../core/domain/conversation-commands.ts';
 
 const transport: ApiTransportPort = { send: () => Promise.reject(new Error('unused')) };
 afterEach(() => { cleanup(); vi.useRealTimers(); });

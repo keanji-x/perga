@@ -1,13 +1,9 @@
 import { describe,expect,it } from 'vitest';
 
-import {
-backlinkCountsByBlock,deriveReportOutline,deriveReportTasks,groupBacklinks,hasLiveTaskRun,
-parseReportLink,readTrackReport,TASK_STATUS_DETAIL_LIMIT,
-taskBlockPayloadSchema,
-TRACK_REPORT_CARD_KIND,
-trackTaskVerdictsOperation,
-type TaskVerdict,type TrackBacklink
-} from './report.js';
+import { backlinkCountsByBlock, groupBacklinks, type TrackBacklink } from './report-backlinks.js';
+import { deriveReportOutline, deriveReportTasks, hasLiveTaskRun, parseReportLink, readTrackReport, TASK_STATUS_DETAIL_LIMIT, TRACK_REPORT_CARD_KIND, trackTaskVerdictsOperation } from './report.js';
+import { taskBlockPayloadSchema } from './report-payloads.js';
+import { type TaskVerdict } from './report-verdicts.js';
 import type { CardWire } from './track.js';
 
 function card(overrides: Partial<CardWire> = {}): CardWire {

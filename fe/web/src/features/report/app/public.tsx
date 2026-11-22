@@ -2,7 +2,7 @@
 // the payload schema refuses anything but a same-origin absolute path, and this resolves the URL the
 // way the browser will and asserts the origin again.
 
-import type { AppBlockPayload } from '../../../../../core/domain/report.ts';
+import type { AppBlockPayload } from '../../../../../core/domain/report-payloads.ts';
 import { reportFrameHeight } from '../../../../../core/domain/report-frame.ts';
 import styles from './app.module.css';
 

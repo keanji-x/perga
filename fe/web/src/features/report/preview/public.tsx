@@ -20,7 +20,8 @@ import { useEffect, useLayoutEffect, useRef, type ReactNode } from 'react';
 import { Icon } from '../../../ui/icon/public.tsx';
 import { useState } from '../../../ui/state/public.ts';
 
-import type { PreviewBlockPayload, PreviewResolution } from '../../../../../core/domain/report.ts';
+import type { PreviewBlockPayload } from '../../../../../core/domain/report-payloads.ts';
+import type { PreviewResolution } from '../../../../../core/domain/report-backlinks.ts';
 import { reportFrameHeight } from '../../../../../core/domain/report-frame.ts';
 import { readFailureText } from '../../../../../core/domain/read-failure.ts';
 import styles from './preview.module.css';
