@@ -73,7 +73,6 @@ export function TerminalCardView({
       data-nc-terminal-id={card.terminalId ?? ''}
     >
       <CardHead
-        className="card-drag-handle"
         title={card.title || fallbackTitle}
         status={activity === null && statusText === null && headActions === null ? undefined : <>
           {activity !== null && (

@@ -16,8 +16,8 @@ describe('CardHead (web CardHead DOM contract)', () => {
     expect(screen.getByText('live')).toBeTruthy();
   });
 
-  it('marks a drag-handle head for RGL', () => {
-    render(<CardHead className="card-drag-handle" title="X" />);
-    expect(screen.getAllByText('X')[0]?.closest('[data-nc-card-drag]')).toBeTruthy();
+  it('marks a standalone card head', () => {
+    render(<CardHead  title="X" />);
+    expect(screen.getAllByText('X')[0]?.closest('[data-nc-card-head]')).toBeTruthy();
   });
 });

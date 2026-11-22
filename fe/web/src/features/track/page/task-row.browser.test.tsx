@@ -42,7 +42,7 @@ function renderTasks(
         onOpenCard={onOpenCard}
         onOpenTask={onOpenTask}
         canReopenTrack={false}
-        canCloseTrack={false} adminGrantedAt={null}
+        canCloseTrack={false}
         onRenameTrack={vi.fn()}
         closedControl={{ pending: false, setClosed: () => Promise.resolve(true), feedback: { error: null, clear: () => undefined, run: () => Promise.resolve(true) } }}
         onDeleteTrack={vi.fn()} onTrackDeleted={vi.fn()} existingCardIds={new Set(['c-4'])}

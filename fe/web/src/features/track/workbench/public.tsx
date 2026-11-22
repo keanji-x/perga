@@ -2,7 +2,7 @@ import type { TerminalDto } from '../../../../../core/api/perga-v1.ts';
 import { useEffect, useRef, useSyncExternalStore } from 'react';
 import type { NewTerminalBody } from '../../../../../core/domain/track.ts';
 import type { PanelItem } from '../../../../../core/domain/panel-item.ts';
-import { CardDockHost, type BoardHostItem, type CardHost } from '../../../systems/cards/public.js';
+import { CardDockHost, type CardHostItem, type CardHost } from '../../../systems/cards/public.js';
 import { useState } from '../../../ui/state/public.ts';
 import { cardCreateEnded, cardCreateFailureText } from '../new-card/create.ts';
 import styles from './workbench.module.css';
@@ -135,7 +135,7 @@ export type TerminalWorkbench = ReturnType<typeof useTerminalWorkbench>;
 
 export function TerminalWorkbenchView({ workbench, items, host, visible, onRemove }: {
   workbench: TerminalWorkbench;
-  items: readonly BoardHostItem[];
+  items: readonly CardHostItem[];
   host: CardHost;
   visible: boolean;
   onRemove: (id: string) => void;

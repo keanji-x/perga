@@ -1,7 +1,7 @@
 # Track view state
 
 The router owns a tab-local snapshot per Track. A plain selection of another
-Track resumes its report, desktop-panel and grid scroll offsets, plus its
+Track resumes its report, desktop-panel scroll offsets, plus its
 card/file/mobile-panel destination and Progress disclosure. Progress starts folded;
 manual expansion or collapse resumes independently for each Track. Conversation selection continues to use the
 existing UiPreferencesProvider, including explicit close and reload behavior.
@@ -21,9 +21,8 @@ The keyed Track body renders matching detail and actions immediately. Report
 positions restore in layout after admitted complete report content commits; pending
 geometry is not saved. Reader wheel/touch/scroll keys or a reading gesture suppress
 deferred automatic restoration; header actions do not. Panel readiness is independent,
-with a final board pass after the board's two-frame selected-card reveal. Only resume navigation overrides that
-reveal. Scroll listeners and pending animation frames are disposed with the
-body. Conversation content, failed-send recovery and draft identity remain
+and the active panel no longer has grid placement or a deferred scroll barrier.
+Scroll listeners are disposed with the body. Conversation content, failed-send recovery and draft identity remain
 owned by ConversationProvider; conversation selection remains owned by UiPreferencesProvider.
 
 Acceptance is covered through production entry points:
@@ -33,8 +32,8 @@ Acceptance is covered through production entry points:
 - `track-view-navigation.test.tsx`: mobile-panel and file destinations resume;
   new return sources and close/history semantics remain intact; explicit
   same-card and anchor targets are distinguished from resume.
-- `track-view-state.browser.test.tsx`: real router, shell, report and BoardHost
-  retain independent report/grid offsets through actual sidebar clicks; an
+- `track-view-state.browser.test.tsx`: real router, shell and report
+  retain report offsets through actual sidebar clicks; an
   explicit same-card link still reveals the card.
 - The scroll assertion was mutation-verified by replacing the production
   restored vertical offset with zero: exactly the predicted browser test failed,

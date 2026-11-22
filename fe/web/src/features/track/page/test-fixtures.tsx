@@ -70,7 +70,6 @@ export function renderPage(overrides: Partial<TrackPageProps> & LegacyActions = 
     openableCards: openableCardsOf(cards, tasks),
     canReopenTrack: false,
     canCloseTrack: false,
-    adminGrantedAt: null,
     onRenameTrack: vi.fn(),
     closedControl: { pending: false, setClosed: () => Promise.resolve(true), feedback: { error: null, clear: () => undefined, run: () => Promise.resolve(true) } },
     onDeleteTrack: vi.fn(),

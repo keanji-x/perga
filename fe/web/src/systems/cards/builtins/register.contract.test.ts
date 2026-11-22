@@ -99,7 +99,6 @@ describe('builtin card composition contract', () => {
         type: 'declared-headless-fixture',
         component: () => null,
         headless: true,
-        defaultSize: { w: 4, h: 6, minW: 3, minH: 3 },
         title: () => 'fixture',
         accessibleName: () => 'fixture',
         create: { mode: 'kernel-minted-only' },

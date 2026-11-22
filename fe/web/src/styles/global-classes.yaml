@@ -3,8 +3,8 @@
 # and an unused entry both fail.
 #
 # base.css owns `calm-prose` and `live`; styles/dialog.css owns the nine the
-# frozen dialog primitive hard-codes (§0.2, §0.4 CR-4 / CR-7). The astryx, xterm
-# and react-grid-layout names are the vendor class surfaces this app restyles —
+# frozen dialog primitive hard-codes (§0.2, §0.4 CR-4 / CR-7). Astryx and xterm
+# names are the vendor class surfaces this app restyles —
 # `astryx-text-input` is where astryx's boxed field and base.css's underlined
 # one are reconciled (see astryx-theme.css).
 - astryx-button
@@ -14,7 +14,6 @@
 - astryx-number-input
 - astryx-text-input
 - calm-prose
-- card-drag-handle
 - card-grid-close
 - card-head
 - card-head-icon
@@ -33,7 +32,6 @@
 - card-head-title
 - confirm-dialog-actions
 - confirm-dialog-label
-- cssTransforms
 - dialog-body
 - dialog-child-view
 - dialog-header
@@ -77,17 +75,11 @@
 - fv-tree-list
 - fv-up
 - live
-- react-draggable-dragging
-- react-grid-item
-- react-grid-placeholder
-- react-resizable-handle
-- resizing
 - term
 - term-body
 - term-line
 - tnum
 - track-card
-- track-grid
 - track-grid-wrap
 - xterm
 - xterm-container

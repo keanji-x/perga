@@ -5,7 +5,7 @@ import type { CardActivity } from '../../../../../core/domain/activity.ts';
 import type { PanelItem } from '../../../../../core/domain/panel-item.ts';
 import { createCardHost } from '../host.ts';
 import { createCardRegistry } from '../registry.ts';
-import { BoardHost } from '../ui/board-host.tsx';
+import { ActivePanelHost } from '../ui/active-panel-host.tsx';
 import { partitionTrackCards } from './headless-filter.ts';
 import { registerAvailableBuiltinCards } from './register.ts';
 
@@ -25,7 +25,7 @@ afterEach(cleanup);
 
 /** The card head (`CardHead`'s root, marked as the drag handle) inside the mounted cell. */
 const head = (): HTMLElement => {
-  const found = document.querySelector<HTMLElement>('[data-nc-card-cell] [data-nc-card-drag]');
+  const found = document.querySelector<HTMLElement>('[data-nc-card-cell] [data-nc-card-head]');
   if (found === null) throw new Error('no card head');
   return found;
 };
@@ -40,7 +40,7 @@ function mountConnected(kind: string, activity: CardActivity | null) {
   registerAvailableBuiltinCards(registry);
   const card = partitionTrackCards(registry, [wire]).visible[0]?.card;
   if (card === undefined) throw new Error('Missing built-in card');
-  return render(<BoardHost host={createCardHost(registry)} items={[
+  return render(<ActivePanelHost host={createCardHost(registry)} items={[
     { card, title: kind, originalIndex: 0, deletable: true, activity, notice: null },
   ]} visible activeCardId="card-1" />);
 }

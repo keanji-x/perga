@@ -8,11 +8,10 @@ export type {
   CardEntry,
   CardKindClaim,
   CardRegistry,
-  CardSize,
   PanelInput,
   RegisteredCard,
 } from './registry.js';
-export { cardAddMenuEntries, createCardRegistry, FALLBACK_SIZE } from './registry.js';
+export { cardAddMenuEntries, createCardRegistry } from './registry.js';
 export type {
   CardRecord,
   CardController,
@@ -42,12 +41,9 @@ export type {
   TrackCardPartition,
 } from './builtins/headless-filter.js';
 export { partitionTrackCards } from './builtins/headless-filter.js';
-export { BoardHost } from './ui/board-host.js';
-export type { BoardHostItem } from './ui/board-host.js';
-export { GRID_COLS, GRID_MARGIN, GRID_ROW_HEIGHT, layoutToPositions, packCards, reconcileLayout } from './ui/layout.js';
-export type { GridPlacement, StoredPosition, StoredPositions } from './ui/layout.js';
+export { ActivePanelHost } from './ui/active-panel-host.js';
+export type { CardHostItem } from './ui/card-cell.js';
 
 
-// Development-only composition; uses the same BoardHost and card lifecycle.
 
 export { CardDockHost } from './ui/card-dock-host.js';

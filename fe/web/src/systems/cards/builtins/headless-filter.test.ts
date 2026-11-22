@@ -37,7 +37,6 @@ describe('headless card filtering', () => {
     registry.register({
       type: 'surface-fixture',
       component: () => null,
-      defaultSize: { w: 4, h: 6, minW: 3, minH: 3 },
       title: () => 'fixture',
       accessibleName: () => 'fixture',
       create: { mode: 'kernel-minted-only' },

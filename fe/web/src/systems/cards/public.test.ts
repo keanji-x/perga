@@ -12,7 +12,6 @@ declare module './registry.js' {
 
 const base = {
   component: () => null,
-  defaultSize: Object.freeze({ w: 2, h: 3, minW: 1, minH: 1 }),
   title: () => 'title',
   accessibleName: () => 'accessible',
   create: Object.freeze({ mode: 'kernel-minted-only' } as const),

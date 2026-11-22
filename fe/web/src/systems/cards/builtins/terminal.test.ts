@@ -17,9 +17,6 @@ describe('TERMINAL_CARD_ENTRY', () => {
     })).toBeNull();
   });
 
-  it('uses the web TrackGrid terminal default size', () => {
-    expect(TERMINAL_CARD_ENTRY.defaultSize).toEqual({ w: 6, h: 10, minW: 4, minH: 6 });
-  });
 
   it('registers as a surface-owning built-in', () => {
     const registry = createCardRegistry();

@@ -10,7 +10,6 @@ describe('track-report card entry', () => {
   it('[INV-CARD-201] is headless and kernel-minted only, with no add-panel entry point', () => {
     expect((TRACK_REPORT_CARD_ENTRY.component as unknown as (props: unknown) => unknown)({})).toBeNull();
     expect(TRACK_REPORT_CARD_ENTRY.create).toEqual({ mode: 'kernel-minted-only' });
-    expect(TRACK_REPORT_CARD_ENTRY.defaultSize).toEqual({ w: 1, h: 1, minW: 1, minH: 1 });
   });
 
   it('[INV-CARD-201] takes no claim, so it stays on the insertion-ordered fallback scan', () => {

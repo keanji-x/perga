@@ -1,5 +1,4 @@
-/* Port of web/src/calm.css track-card / term / card-head / TrackGrid RGL
-   overrides. Class names stay the original names so the copied JSX matches. */
+/* Shared panel and dock card chrome. */
 @layer overrides {
   .track-grid-wrap {
     --card-head-pad-v: var(--space-3);
@@ -15,9 +14,6 @@
     overflow: auto;
   }
 
-  .track-grid {
-    margin-bottom: var(--space-4);
-  }
 
   .term {
     margin-bottom: var(--space-5);
@@ -49,6 +45,24 @@
     height: 100%;
   }
 
+  /* ActivePanelHost owns this marker; a panel fills the viewport and its
+     renderer owns scrolling. Hidden retained cells must override display:flex. */
+  [data-nc-active-panel-host] {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  [data-nc-active-panel-host] > .track-card {
+    flex: 1 1 auto;
+    min-block-size: 0;
+    min-inline-size: 0;
+  }
+
+  [data-nc-active-panel-host] > .track-card[hidden] {
+    display: none;
+  }
+
   .track-card > .term {
     display: flex;
     flex: 1;
@@ -64,15 +78,6 @@
     overflow: auto;
   }
 
-  /* Opt-in surface: preserve the user-sized cell and its resize handle, but
-     keep controls and the renderer's nested scrollport inside the board. */
-  [data-nc-card-viewport='board'] > .term {
-    position: sticky;
-    /* Sticky layout precedes the cell's transform. Offset by the grid-owned
-       coordinate so later rows stick at the same board edge as row zero. */
-    top: calc(var(--nc-card-layout-y) * -1px);
-    max-block-size: var(--nc-board-block-size, 100%);
-  }
 
   .track-card > .term.live .term-body {
     min-height: 0;
@@ -83,15 +88,6 @@
     min-height: 0;
   }
 
-  .card-drag-handle {
-    cursor: grab;
-    user-select: none;
-  }
-
-  .card-drag-handle:active,
-  .react-grid-item.react-draggable-dragging .card-drag-handle {
-    cursor: grabbing;
-  }
 
   .card-grid-close {
     font-size: var(--font-step-3-size);
@@ -230,71 +226,4 @@
     color: var(--text-3);
   }
 
-  .react-grid-item,
-  .react-grid-item.cssTransforms {
-    transition: box-shadow var(--motion-quick) var(--ease-feedback);
-    transition-property: box-shadow;
-  }
-
-  .react-grid-item.react-grid-placeholder {
-    background: var(--accent-soft);
-    border: 1px dashed var(--accent);
-    border-radius: var(--radius-lg);
-    opacity: 0.7;
-    z-index: var(--z-raised);
-    transition-duration: var(--motion-quick);
-    transition-timing-function: var(--ease-feedback);
-  }
-
-  [data-theme="dark"] .react-grid-item.react-grid-placeholder {
-    /* stylelint-disable-next-line declaration-property-value-disallowed-list */
-    background: oklch(40% 0.08 245 / 0.35);
-  }
-
-  .react-grid-item.react-draggable-dragging,
-  .react-grid-item.resizing {
-    transition: none;
-  }
-
-  .react-grid-item.react-draggable-dragging {
-    z-index: var(--z-overlay);
-    cursor: grabbing;
-  }
-
-  .react-grid-item.resizing {
-    z-index: var(--z-sticky);
-    opacity: 0.92;
-  }
-
-  .react-resizable-handle {
-    background-image: none;
-    width: 16px;
-    height: 16px;
-    padding: var(--space-0);
-    bottom: 3px;
-    right: 3px;
-    opacity: 0;
-    transition: opacity var(--motion-quick) var(--ease-feedback), color var(--motion-quick) var(--ease-feedback);
-    color: var(--text-4);
-  }
-
-  .react-resizable-handle::after {
-    content: "";
-    position: absolute;
-    right: 4px;
-    bottom: 4px;
-    width: 9px;
-    height: 9px;
-    border-right: 1.5px solid currentColor;
-    border-bottom: 1.5px solid currentColor;
-    border-bottom-right-radius: var(--radius-xs);
-  }
-
-  .react-resizable-handle:hover {
-    color: var(--accent);
-  }
-
-  .react-grid-item:hover > .react-resizable-handle {
-    opacity: 1;
-  }
 }
