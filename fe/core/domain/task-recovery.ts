@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { gateVerdictDtoSchema,taskDtoSchema,type TaskDto } from "../api/perga-v1.js";
+import { gateVerdictDtoSchema, taskDtoSchema, type TaskDto } from '../api/perga-v1.js';
 import type { ApiOperation } from '../api/types.js';
 
 export type PergaGateStepEvidence = Readonly<{

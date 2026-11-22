@@ -23,7 +23,7 @@ public sealed class AuthHttpIntegrationTests
     [Theory]
     [InlineData("/api")]
     [InlineData("/api/v1/bootstrap")]
-    [InlineData("/api/today/daily")]
+    [InlineData("/api/v1/today/daily")]
     [InlineData("/api/unknown")]
     [InlineData("/api/unknown.asset")]
     [InlineData("/mcp")]

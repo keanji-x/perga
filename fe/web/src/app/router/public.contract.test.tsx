@@ -14,7 +14,7 @@ import { pathFor,routeParamFromPath,type NavTarget } from './navigation.ts';
 import { createAppRouter,createRouteTree } from './public.tsx';
 import { bootTestCardRuntime } from './test-card-runtime.ts';
 
-const AREA = { id: 'c1', name: 'Work', color: '#5B8DEF', sort: 1, kind: 'user', created_at: 1, updated_at: 1 };
+const AREA = { id: 'c1', name: 'Work', color: '#5B8DEF', sortOrder: 1, kind: 'user', createdAtMs: 1, updatedAtMs: 1 };
 const unauthorized = createUnauthorizedChannel({ enqueue: (task) => task() });
 
 /** Non-empty on purpose: with zero areas a fan-out in the loader would be unobservable. */
@@ -26,7 +26,7 @@ function recordingTransport(): { transport: ApiTransportPort; paths: string[] } 
       return Promise.resolve({
         status: 200,
         statusText: 'OK',
-        body: request.path === '/api/v1/areas' ? [AREA] : request.path === '/api/today/daily' ? null : [],
+        body: request.path === '/api/v1/areas' ? [AREA] : request.path === '/api/v1/today/daily' ? null : [],
       });
     },
   };

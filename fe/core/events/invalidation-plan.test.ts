@@ -26,7 +26,7 @@ describe('invalidation plan behavior', () => {
   });
 
   it('invalidates track projections and pending diagnostics for track updates', () => {
-    expect(invalidationPlanFor(event({ ev: 'track.updated', data: { id: 'w1', area_id: 'c1' } }))).toEqual({
+    expect(invalidationPlanFor(event({ ev: 'track.updated', data: { id: 'w1', areaId: 'c1' } }))).toEqual({
       invalidate: [
         ['overlays', 'track'], ['tracks', 'c1'], ['track', 'w1'], ['track-template', 'w1'],
         ['track-report'],
@@ -66,7 +66,7 @@ describe('invalidation plan behavior', () => {
 });
 
 it.each([
-  { ev: 'track.updated', data: { id: 't', area_id: 'a' } },
+  { ev: 'track.updated', data: { id: 't', areaId: 'a' } },
   { ev: 'session.updated', data: { track_id: 't', session: { id: 's' } } },
   { ev: 'turn.completed', data: { track_id: 't', turn: { id: 'turn', sessionId: 's' } } },
   { ev: 'ask.changed', data: { track_id: 't' } },

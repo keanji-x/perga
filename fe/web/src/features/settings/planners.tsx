@@ -1,4 +1,4 @@
-import { PROVIDER_PRESENTATION } from '../../../../core/domain/provider-presentation.ts';
+import { providerPresentation } from '../../../../core/domain/provider-presentation.ts';
 // Settings › Planners — whether each Planner provider can run on this server right now, and the fix
 // when one cannot (#1817), plus the next turn's execution budget (#2618).
 
@@ -74,7 +74,7 @@ function describe({ availability: entry, accepts_unavailable_blank_track }: Plan
   if (entry.authentication_notice !== null) return entry.authentication_notice.text;
   if (entry.reason === null) return READY_DESCRIPTION;
   return entry.status === 'unavailable' && accepts_unavailable_blank_track
-    ? `${entry.reason} ${unavailableCreationNote(PROVIDER_PRESENTATION[entry.provider].label)}`
+    ? `${entry.reason} ${unavailableCreationNote(providerPresentation(entry.provider).label)}`
     : entry.reason;
 }
 
@@ -106,7 +106,7 @@ export function PlannersPane({
             {providers.map(({ availability: entry, accepts_unavailable_blank_track }) => (
               <SettingRow
                 key={entry.provider}
-                title={PROVIDER_PRESENTATION[entry.provider].label}
+                title={providerPresentation(entry.provider).label}
                 /* A node, not a string: a string description is cut to one line, and a reason is a fix to read whole. */
                 description={<span className={styles.plannerReason}>
                   {entry.authentication_method !== null && <span>Authentication: {entry.authentication_method}</span>}

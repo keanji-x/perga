@@ -65,7 +65,7 @@ it('creates the declared Codex default despite auth/read and catalog unavailabil
 
 
 it('renders, selects and sends a managed identifier independently of legacy UI labels', async () => {
-  const fixture = renderAssistantProviderFixture({ bootstrap: fixtureBootstrap(['opencode'], ['selected']) });
+  const fixture = renderAssistantProviderFixture({ bootstrap: fixtureBootstrap(['acp:opencode'], ['selected']) });
   await page.getByRole('button', { name: 'New conversation', exact: true }).click();
   const model = page.getByRole('button', { name: /^Model:/ });
   await model.click();

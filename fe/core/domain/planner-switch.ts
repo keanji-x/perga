@@ -1,4 +1,4 @@
-import { trackDtoSchema,type TrackDto } from "../api/perga-v1.js";
+import { trackDtoSchema, type TrackDto } from '../api/perga-v1.js';
 import type { ApiFailure,ApiOperation } from '../api/types.js';
 import { NotSentError } from './failure-class.js';
 

@@ -15,15 +15,26 @@ using Perga.Host.SystemUpgrade;
 if (args is ["auth", ..])
     return await AuthCliCommand.RunAsync(args, Console.In, Console.Out, Console.Error);
 
-var builder = WebApplication.CreateBuilder(args);
+string? exportPath = null;
+if (args.Contains("--export-openapi", StringComparer.Ordinal))
+{
+    if (args is not ["--export-openapi", var destination] || string.IsNullOrWhiteSpace(destination))
+        throw new ArgumentException("Usage: Perga.Host --export-openapi <path>");
+    exportPath = Path.GetFullPath(destination);
+}
+var builder = PergaHttpEndpoints.CreateBuilder(exportPath is null ? args : []);
 
-builder.Services.ConfigureHttpJsonOptions(o => PergaJsonDefaults.ConfigureSerializerOptions(o.SerializerOptions));
-builder.Services.AddPergaHostServices(builder.Configuration, builder.Environment.ContentRootPath);
-
-builder.Services.AddPergaAuthentication();
 // The framework startup filter uses DI options. Perga applies explicit options after capturing the socket.
 builder.Services.PostConfigure<ForwardedHeadersOptions>(framework => framework.ForwardedHeaders = ForwardedHeaders.None);
 var app = builder.Build();
+if (exportPath is not null)
+{
+    app.MapPublishedHttpEndpoints();
+    await File.WriteAllTextAsync(exportPath, OpenApiDocumentExporter.Export(app));
+    await app.DisposeAsync();
+    return 0;
+}
+
 
 var options = app.Services.GetRequiredService<PergaHostOptions>();
 options.ValidateAuth();
@@ -96,11 +107,7 @@ app.UseStaticFiles(new StaticFileOptions
     }
 });
 
-app.MapGet("/healthz", () => Results.Ok(new { status = "ok", service = "perga" })).AllowAnonymous();
-app.MapPergaAuth();
-app.MapPergaApiV1();
-app.MapPergaSystem();
-app.MapTodayEndpoints();
+app.MapPublishedHttpEndpoints();
 app.MapPergaMcpEndpoints();
 
 app.MapFallback("/api/{**path}", (HttpContext ctx) => HttpErrorHandling.NotFound($"Route '{ctx.Request.Path}' was not found."))

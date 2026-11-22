@@ -17,7 +17,7 @@ import { createAppRouter } from './public.tsx';
 import { bootTestCardRuntime } from './test-card-runtime.ts';
 
 const unauthorized = createUnauthorizedChannel({ enqueue: (task) => task() });
-const AREA = { id: 'c1', name: 'Work', color: '#000', sort: 1, kind: 'user', created_at: 1, updated_at: 1 };
+const AREA = { id: 'c1', name: 'Work', color: '#000', sortOrder: 1, kind: 'user', createdAtMs: 1, updatedAtMs: 1 };
 const TRACK = fixtureTrack('w1', { areaId: 'c1', title: 'Test track', cwd: '/tmp', sortOrder: 1, closedAtMs: null, createdAtMs: 1, updatedAtMs: 2 });
 
 function ok(body: unknown): ApiTransportResponse {

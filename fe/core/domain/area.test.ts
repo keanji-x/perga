@@ -1,6 +1,7 @@
 import { describe,expect,it } from 'vitest';
 
-import { areaSchema,decodeWireEvent } from '../api/schemas.js';
+import {decodeWireEvent } from '../api/schemas.js';
+import { areaDtoSchema } from '../api/perga-v1.js';
 
 import {
 areaFolderWireSchema,areaFoldersOperation,areaListOperation,areaOf,
@@ -10,7 +11,7 @@ folderConflictMessage,newestArea,sortedAreaFolders,sortedAreas,toArea,toAreaFold
 updateAreaOperation,visibleAreas,type Area,type AreaFolder
 } from './area.js';
 
-const baseWire = { id: 'c1', name: 'Work', color: '#5B8DEF', sort: 1, created_at: 1, updated_at: 1 };
+const baseWire = { id: 'c1', name: 'Work', color: '#5B8DEF', sortOrder: 1, createdAtMs: 1, updatedAtMs: 1 };
 
 function area(overrides: Partial<Area>): Area {
   return {
@@ -28,44 +29,34 @@ describe('area wire decode', () => {
     });
     expect(decoded.status).toBe('ready');
     if (decoded.status !== 'ready' || decoded.value.ev !== 'area.updated') throw new Error('Expected area.updated');
-    expect(decoded.value.data).toMatchObject({ execution_target_id: 'jasper' });
+    expect(decoded.value.data).toMatchObject({ executionTargetId: 'jasper' });
     const incoming = toArea(decoded.value.data);
     expect(newestArea(area({ executionTargetId: 'local', updatedAt: 1 }), incoming).executionTargetId).toBe('jasper');
   });
 
-  it('uses the same defaults and strips unknown fields on every HTTP response', () => {
+  it('uses the Host DTO decoder for list and mutation responses', () => {
     const input = { ...baseWire, future_field: 'ignored' };
-    const expected = { ...baseWire, kind: 'user', default_template_id: null, default_cwd: null };
+    const expected = { ...baseWire, folders: [] };
     expect(areaListOperation().responseSchema.parse([input])).toEqual([expected]);
     expect(createAreaOperation({ name: 'Work', color: '#5B8DEF' }, 'key').responseSchema.parse(input)).toEqual(expected);
     expect(updateAreaOperation('c1', {}).responseSchema.parse(input)).toEqual(expected);
   });
 
-  it('defaults a pre-#175 payload without kind to user', () => {
-    expect(areaSchema.parse(baseWire)).toMatchObject({
-      kind: 'user', default_template_id: null, default_cwd: null,
-    });
-  });
-
-  it('keeps an explicit system kind', () => {
-    expect(areaSchema.parse({ ...baseWire, kind: 'system' }).kind).toBe('system');
-  });
-
-  it('rejects an unknown kind', () => {
-    expect(areaSchema.safeParse({ ...baseWire, kind: 'kernel' }).success).toBe(false);
+  it('rejects the obsolete snake_case area carrier', () => {
+    expect(areaDtoSchema.safeParse({ id: 'c', name: 'Work', color: '#fff', created_at: 1, updated_at: 2 }).success).toBe(false);
   });
 
   it('maps the wire row onto the camelCase domain shape', () => {
-    expect(toArea(areaSchema.parse(baseWire)))
+    expect(toArea(areaDtoSchema.parse(baseWire)))
       .toEqual(area({ id: 'c1', name: 'Work', color: '#5B8DEF', createdAt: 1, updatedAt: 1 }));
   });
 
   it('preserves both Area defaults as required nullable domain fields', () => {
-    const parsed = areaSchema.parse({
-      ...baseWire, default_template_id: 'small-change', default_cwd: '/srv/work',
+    const parsed = areaDtoSchema.parse({
+      ...baseWire, defaultCwd: '/srv/work',
     });
     expect(toArea(parsed)).toMatchObject({
-      defaultTemplateId: 'small-change', defaultCwd: '/srv/work',
+      defaultTemplateId: null, defaultCwd: '/srv/work',
     });
   });
 

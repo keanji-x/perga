@@ -11,40 +11,6 @@ type JsonObject = Record<string, unknown>;
 
 const METHODS = new Set(['delete', 'get', 'head', 'options', 'patch', 'post', 'put', 'trace']);
 const PATH_ITEM_FIELDS = new Set([...METHODS, 'summary', 'description', 'servers', 'parameters']);
-/* Response schemas with no `wire.ts` counterpart: `gen:api` exports from calm-types only, so a DTO
- * declared in a calm-server route module is typed by a hand-written zod schema in `core/domain/**` instead. */
-const RESPONSE_WIRE_EXCEPTIONS = new Set([
-  'ApprovalDto', 'ErrorBody', 'ExecutionTargetDto', 'GetPlannerRunResponse', 'GitDiffResponse', 'GitStatusResponse',
-  // Route-owned negotiated adapters, decoded by conversation-display.ts and server-queries.ts.
-  // Their exact composition is pinned below; component wire models remain generated.
-  'ConversationItemsReadResponse', 'HarnessLiveReadResponse', 'PlannerRunReadResponse',
-  'InterruptPlannerCardResponse', 'ListdirResponse', 'ModelsResponse', 'PluginDetail', 'PluginListItem',
-  'PlannerInputMutationResponse', 'PlannerInputStaleBody',
-  'PlannerSteerResponse', 'PlannerSteerConflictBody',
-  // Route-owned Planner switch DTOs; this REST-only slice has no frontend mutation consumer yet.
-  // Their response shapes are exercised through the authenticated router's planner_switch_http_ tests.
-  'PlannerSwitchResponse', 'PlannerSwitchRefusalBody',
-  'ReadFileResponse',
-  'ResetPlannerCardResponse', 'SendPlannerInputResponse',
-  'SetPlannerModelResponse',
-  // Route-owned DTO decoded by authenticationRetryResponseSchema in core/domain/agent-providers.ts.
-  'AuthenticationRetryResponse',
-  // Route-owned DTO decoded by compactPlannerOperation in core/domain/conversation.ts.
-  'CompactPlannerResponse',
-  'SettingsBag', 'Terminal',
-  'ThreadCardResolution', 'TodayLaunchpad', 'TodayLaunchpadReportReset', 'TodayLaunchpadResolved',
-  'TodaySummaryStarted',
-  'VersionInfo',
-  'ViewCatalogEntry', 'TrackBacklinksResponse', 'TrackDetail', 'TrackFsContent', 'TrackFsEntry',
-  'TrackReportReadResponse', 'TrackTemplate',
-  // Read-only server DTO, decoded by core/domain/template.ts; its shape is pinned below.
-  'TrackTemplateDetail',
-  'TemplatePluginGuide',
-  // Auth DTOs and common errors are owned by the Host. The session DTO is decoded in core/api/auth.ts.
-  'PergaSessionIdentity', 'PergaApiErrorResponse', 'SystemAuthStatusDto',
-  'ReportSeriesResolved', 'ReportSeriesRevConflict', 'TrackPreviews',
-]);
-
 function object(value: unknown): value is JsonObject {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
@@ -168,7 +134,7 @@ function validateDocument(document: JsonObject, wireSource: string): void {
     (match) => match[1],
   ));
   const missing = [...responseSchemaRefs]
-    .filter((name) => !wireTypes.has(name) && !RESPONSE_WIRE_EXCEPTIONS.has(name))
+    .filter((name) => !wireTypes.has(name))
     .sort();
   if (missing.length > 0) throw new Error(`response schema wire types missing: ${missing.join(', ')}`);
 }
@@ -184,11 +150,11 @@ describe('generated OpenAPI integrity', () => {
     const document = JSON.parse(readFileSync(new URL('../../core/api/generated/openapi.json', import.meta.url), 'utf8')) as JsonObject;
     expect(document.paths).toMatchObject({
       '/api/v1/tracks/{trackId}/flow': {
-        get: { responses: { 200: { description: 'Current track flow snapshot and projection' } } },
+        get: { responses: { 200: { description: 'HTTP 200' } } },
       },
       '/api/v1/tracks/{trackId}/flow/commit': {
         post: { requestBody: { required: false, content: { 'application/json': {
-          schema: { properties: { content: { type: ['string', 'null'] } } },
+          schema: { $ref: '#/components/schemas/FlowCommitRequest' },
         } } } },
       },
     });
@@ -255,7 +221,7 @@ it('publishes the nullable session measurement through the v1 response', () => {
     anyOf: [{ $ref: '#/components/schemas/SessionContextUsage' }, { type: 'null' }],
   });
   expect(AgentSessionDto.properties).not.toHaveProperty('contextUsageInvalidated');
-  expect(SessionContextUsage.required).toEqual(['usedTokens', 'windowTokens', 'observedAtMs', 'ratio']);
+  expect(SessionContextUsage.required).toEqual(['observedAtMs', 'ratio', 'usedTokens', 'windowTokens']);
 });
 
 
@@ -330,7 +296,7 @@ it('matches auth schemas, response statuses, and headers to the Host wire contra
   const document = JSON.parse(readFileSync(new URL('../../core/api/generated/openapi.json', import.meta.url), 'utf8')) as JsonObject;
   const schema = (name: string) => z.fromJSONSchema(resolveRef(document, `#/components/schemas/${name}`) as z.core.JSONSchema.JSONSchema);
   const identity = { sessionId: 'aus_1', userId: 'usr_1', username: 'owner', displayName: 'Owner', role: 'owner', expiresAtMs: 123456789 };
-  for (const decoder of [schema('PergaSessionIdentity'), sessionIdentitySchema]) {
+  for (const decoder of [schema('SessionIdentityDto'), sessionIdentitySchema]) {
     expect(decoder.parse(identity)).toEqual(identity);
     for (const key of Object.keys(identity) as (keyof typeof identity)[]) {
       const partial: Partial<typeof identity> = { ...identity };
@@ -339,12 +305,12 @@ it('matches auth schemas, response statuses, and headers to the Host wire contra
     }
   }
   const credentials = { username: 'owner', password: 'example password' };
-  for (const decoder of [schema('AuthLoginRequest'), loginRequestSchema]) {
+  for (const decoder of [schema('LoginRequest'), loginRequestSchema]) {
     expect(decoder.parse(credentials)).toEqual(credentials);
     expect(decoder.safeParse({ username: 'owner' }).success).toBe(false);
     expect(decoder.safeParse({ ...credentials, sessionId: 'extra' }).success).toBe(false);
   }
-  const apiError = schema('PergaApiErrorResponse');
+  const apiError = schema('ApiErrorResponse');
   const error = { code: 'insecure_transport_required', error: 'An HTTPS connection is required.' };
   expect(apiError.parse({ ...error, nextStep: 'Use HTTPS.' })).toEqual({ ...error, nextStep: 'Use HTTPS.' });
   expect(apiError.safeParse({ ...error, nextStep: null }).success).toBe(true);
@@ -356,7 +322,7 @@ it('matches auth schemas, response statuses, and headers to the Host wire contra
   expect(status.safeParse({ schemaVersion: 26, configured: false }).success).toBe(false);
 
   const login = resolveRef(document, '#/paths/~1api~1v1~1auth~1login/post/responses');
-  expect(Object.keys(login as JsonObject)).toEqual(['200', '400', '401', '403', '413', '415', '429']);
+  expect(Object.keys(login as JsonObject)).toEqual(['200', '400', '401', '403', '413', '415', '429', 'default']);
   expect(login).toMatchObject({
     200: { headers: { 'X-Perga-Session-Id': { schema: { type: 'string' } }, 'Set-Cookie': { schema: { type: 'string' } } } },
     429: { headers: { 'Retry-After': { schema: { type: 'integer' } } } },
@@ -393,7 +359,7 @@ it('matches the Host track report, task, template and flow operations', () => {
 
 it('preserves fractional Unix seconds in upgrade receipts', () => {
   const document = JSON.parse(readFileSync(new URL('../../core/api/generated/openapi.json', import.meta.url), 'utf8')) as JsonObject;
-  expect(resolveRef(document, '#/components/schemas/SystemUpgradeReceipt/properties/finishedAt')).toMatchObject({ type: 'number' });
+  expect(document.paths).not.toHaveProperty('/api/v1/system/upgrade');
   const finishedAt = 1795080000.125;
   expect(systemUpgradeReceiptSchema.parse({ jobId: 'fractional', oldReleaseId: null,
     newReleaseId: 'new', status: 'succeeded', error: null, rollbackError: null,
@@ -442,9 +408,11 @@ it.each([
 it('limits collaborator creation to turn notifications and plain session fields', () => {
   const document = JSON.parse(readFileSync(new URL('../../core/api/generated/openapi.json', import.meta.url), 'utf8')) as JsonObject;
   const published = resolveRef(document, '#/components/schemas/CreateSessionRequest') as z.core.JSONSchema.JSONSchema;
+  expect(createSessionRequestSchema.safeParse({ notifyParent: 'task_settled' }).success).toBe(false);
+  // Host DTO schema describes structure; the Kernel owns notification policy.
   for (const schema of [createSessionRequestSchema, z.fromJSONSchema(published)]) {
     expect(schema.safeParse({ prompt: 'Inspect', notifyParent: 'turn_end' }).success).toBe(true);
-    expect(schema.safeParse({ notifyParent: 'task_settled' }).success).toBe(false);
+
     expect(schema.safeParse({ task: null }).success).toBe(false);
     expect(schema.safeParse({ role: null }).success).toBe(false);
   }
@@ -469,6 +437,5 @@ it('publishes task-owned sessions and epoch message guards without attempt field
   expect(schemas.SendSessionMessageRequest.properties).toHaveProperty('expectedEpoch');
   expect(schemas.TerminalDto.properties).toHaveProperty('sessionId');
   expect(schemas.TerminalDto.properties).not.toHaveProperty('attemptId');
-  expect(schemas.DbMaintenanceStatsDto.properties).toHaveProperty('compactedTasks');
-  expect(schemas.DbMaintenanceStatsDto.properties).not.toHaveProperty('compactedAttempts');
+  expect(schemas).not.toHaveProperty('DbMaintenanceStatsDto'); // Not exposed by HTTP.
 });

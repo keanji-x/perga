@@ -12,7 +12,7 @@ export function useTrackLifecycleMutations(transport: ApiTransportPort, unauthor
     mutationFn: (variables: { body: NewTrackBody; idempotencyKey: string }, transport: ApiTransportPort) =>
       runOperation(transport, createTrackOperation(variables.body, variables.idempotencyKey), unauthorized),
     onSuccess: (track, { body }) => {
-      void client.invalidateQueries({ queryKey: queryKeys.tracksInArea(track.area_id) });
+      void client.invalidateQueries({ queryKey: queryKeys.tracksInArea(track.areaId) });
       // Explicit `attach_folder` mints an area_folders row; drop any cached list so a later read cannot serve a stale empty array.
       if (body.attach_folder) {
         client.removeQueries({ queryKey: queryKeys.areaFolders(body.area_id) });
@@ -24,7 +24,7 @@ export function useTrackLifecycleMutations(transport: ApiTransportPort, unauthor
       runOperation(transport, updateTrackOperation(trackId, body), unauthorized),
     // A patch can move the track: the area the server just reported is refetched too.
     onSuccess: (track, variables) => {
-      if (track.area_id !== variables.areaId) void client.invalidateQueries({ queryKey: queryKeys.tracksInArea(track.area_id) });
+      if (track.areaId !== variables.areaId) void client.invalidateQueries({ queryKey: queryKeys.tracksInArea(track.areaId) });
     },
     // No write-through: the detail's Close / Reopen capabilities are the server's to derive, so the page keeps its last
     // detail until the refetch (or the `track.updated` event's) replaces it whole. `onSettled`: an unknown answer may

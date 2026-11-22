@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { agentSessionDtoSchema } from '../api/perga-v1.js';
-import type { HarnessPhaseTag } from '../api/generated/wire.js';
+import type { HarnessPhaseTag } from './presentation-types.js';
 
 import { agentSessionDtoToConversation, CONVERSATION_CREATE_TEXT, CONVERSATION_NAME_MAX, conversationCreateFailure, conversationName, conversationNameFrom, createTrackConversationOperation, isOptimisticConversationTurn, isQueuedConversationTurn, kernelQueuesInput, mergeTranscript, retireFollowedThoughts, type Conversation, type ConversationTurn, type OptimisticConversationTurn, type TranscriptEntry } from './conversation.js';
 import { createSerialWriter } from './conversation-models.js';
@@ -100,7 +100,7 @@ describe('track conversations', () => {
       provider: 'codex', state: 'starting', updatedAt: 7, archivedAt: null, lastTurnCompletedAt: null,
     });
     expect(agentSessionDtoToConversation({ ...row, isLead: true, provider: 'acp:opencode', status: 'queued' }))
-      .toMatchObject({ kind: 'agent', isLead: true, provider: 'opencode', state: 'turn_pending' });
+      .toMatchObject({ kind: 'agent', isLead: true, provider: 'acp:opencode', state: 'turn_pending' });
   });
 
   it('requires the declared provider on the session DTO', () => {

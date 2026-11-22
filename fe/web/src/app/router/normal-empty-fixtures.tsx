@@ -23,7 +23,7 @@ import { useMentionTrigger } from '../../features/chat/thread/mention-trigger.ts
 export function noop() { return undefined; }
 export const ok = (body: unknown) => ({ status: 200, statusText: 'OK', body });
 export const area = Object.freeze({ id: 'project-area', name: 'Project', color: '#6574cd', sort: 0, kind: 'user' as const, defaultTemplateId: null, defaultCwd: null, createdAt: 1, updatedAt: 1 });
-export const track = Object.freeze({ id: 'project', area_id: 'project-area', title: '新项目', sort: 0, workspace: Object.freeze({ isolation: 'managed', kind: 'managed', path: '/tmp', frozen_at: null }), cwd: '/tmp', pinned_at: null, closed_at: null, created_at: 1, updated_at: 2 });
+export const track = Object.freeze({ id: 'project', areaId: 'project-area', title: '新项目', sortOrder: 0, workspace: Object.freeze({ isolation: 'managed', kind: 'managed', path: '/tmp', frozen_at: null }), cwd: '/tmp', pinnedAtMs: null, closedAtMs: null, createdAtMs: 1, updatedAtMs: 2 });
 export function navigationActions() { return { onBack: noop, onNewTrack: noop, onEditArea: noop, onOpenSettings: noop, onCreateArea: noop }; }
 
 export function mount(node: ReactNode, padded = false) {

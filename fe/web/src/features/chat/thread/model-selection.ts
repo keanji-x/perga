@@ -1,6 +1,6 @@
-import type { AgentProvider } from '../../../../../core/api/generated/wire.ts';
+import type { AgentProvider } from '../../../../../core/domain/presentation-types.ts';
 import { type ProviderAvailability } from '../../../../../core/domain/agent-providers.ts';
-import { PROVIDER_PRESENTATION } from '../../../../../core/domain/provider-presentation.ts';
+import { providerPresentation } from '../../../../../core/domain/provider-presentation.ts';
 import type { ModelCatalog } from './../../../../../core/domain/conversation-models.ts';
 
 export const FOLLOW_DEFAULT_LABEL = 'Default';
@@ -23,12 +23,12 @@ export type ModelGroup<Provider extends string = AgentProvider> = Readonly<{
 }>;
 
 export function legacyPresentation(provider: string) {
-  return Object.entries(PROVIDER_PRESENTATION).find(([key]) => key === provider)?.[1];
+  return providerPresentation(provider);
 }
 
 /** Managed display needs no provider-specific UI registration. */
-export function providerLabel<Provider extends string>(group: ModelGroup<Provider> | undefined, provider: Provider): string {
-  return group?.selectionProblem !== undefined ? provider : (legacyPresentation(provider)?.label ?? provider);
+export function providerLabel<Provider extends string>(_group: ModelGroup<Provider> | undefined, provider: Provider): string {
+  return legacyPresentation(provider).label;
 }
 
 export type CatalogEntry = ModelCatalog['models'][number];

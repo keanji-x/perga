@@ -1,7 +1,7 @@
 // The `ListDirectory` port the directory browser takes as a prop, bound to the real transport; the
 // composition layer is the one place that may hold both the operation and the browser's path-joining rule.
 
-import { workspaceFileResultDtoSchema } from "../../../../core/api/perga-v1.ts";
+import { workspaceFileResultDtoSchema } from '../../../../core/api/perga-v1.ts';
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { ApiError } from '../../../../core/domain/failure-class.ts';
@@ -133,7 +133,6 @@ export function createTrackCardFilesPort(
         ? diff.files.map((entry) => ({
           path: entry.path,
           status: entry.status,
-          ...(entry.oldPath ? { old_path: entry.oldPath } : {}),
         }))
         : diff.changedFiles.map((filePath) => ({ path: filePath, status: 'modified' }));
       return {

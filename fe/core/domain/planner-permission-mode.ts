@@ -4,7 +4,7 @@
 
 import { z } from 'zod';
 import { agentSessionDtoSchema, type AgentSessionDto, type PermissionModeOptionDto } from '../api/perga-v1.js';
-import type { AgentProvider } from '../api/generated/wire.js';
+import type { AgentProvider } from './presentation-types.js';
 import type { ApiOperation } from '../api/types.js';
 import { defaultPermissionModeFor } from './agent-providers.js';
 import type { FailureTable, WriteFailure, WriteText } from './failure-class.js';

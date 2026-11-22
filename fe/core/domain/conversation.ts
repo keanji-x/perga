@@ -1,11 +1,10 @@
 import { z } from 'zod';
 
 import { agentSessionDtoSchema, type AgentSessionDto } from '../api/perga-v1.js';
-import { normalizeWireAgentProvider, toWireAgentProvider } from '../api/schemas.js';
 
 import { sessionCreationReceiptSchema, sessionSummarySchema, type SessionInputReceipt } from '../api/perga-v1.js';
 
-import type { AgentProvider, HarnessInputPresentation, HarnessInterruptionReason, HarnessPhaseTag, HarnessTimeoutEvidence, PlannerAttachment, SystemInputPresentation } from '../api/generated/wire.js';
+import type { AgentProvider, HarnessInputPresentation, HarnessInterruptionReason, HarnessPhaseTag, HarnessTimeoutEvidence, PlannerAttachment, SystemInputPresentation } from './presentation-types.js';
 import type { ApiFailure, ApiOperation } from '../api/types.js';
 
 import { classifyFailure, refusedText, type FailureTable, type WriteText } from './failure-class.js';
@@ -251,7 +250,7 @@ export function setConversationArchiveOperation(
 }
 
 export function agentSessionDtoToConversation(dto: AgentSessionDto): Conversation {
-  const provider = normalizeWireAgentProvider(dto.provider) ?? 'codex';
+  const provider = dto.provider;
   const stateParsed = conversationStateSchema.safeParse(dto.status === 'queued' ? 'turn_pending' : dto.status);
   return {
     id: dto.id,
@@ -287,7 +286,7 @@ export function createTrackConversationOperation(
     body: {
       ...(derivedTitle === null ? {} : { title: derivedTitle }),
       prompt: text,
-      provider: toWireAgentProvider(provider),
+      provider,
       ...(side === undefined ? {} : { systemPrompt: side.context }),
       ...(selection.model === null ? {} : { model: selection.model }),
       ...(selection.reasoning_effort === null ? {} : { reasoningEffort: selection.reasoning_effort }),

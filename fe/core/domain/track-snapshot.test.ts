@@ -1,5 +1,5 @@
 import { expect,it } from 'vitest';
-import { trackAggregateSnapshotDtoSchema } from "../api/perga-v1.js";
+import { trackAggregateSnapshotDtoSchema } from '../api/perga-v1.js';
 import { trackDetailOperation } from './track.js';
 
 it('returns the aggregate and all session identities without synthesizing cards', () => {

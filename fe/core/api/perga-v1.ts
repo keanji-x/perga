@@ -105,7 +105,6 @@ export type SectionRuleDto = z.infer<typeof sectionRuleDtoSchema>;
 export const compiledTemplateManifestDtoSchema = z.object({
   id: z.string(),
   title: z.string().optional(),
-  name: z.string().optional(),
   description: z.string().nullish().transform((v) => v ?? null),
   defaultPlugins: z.array(z.string()).nullish().transform((v) => v ?? []),
   inputsSchema: z.unknown().default({ type: 'object', properties: {} }),
@@ -127,7 +126,7 @@ export const compiledTemplateManifestDtoSchema = z.object({
   humanReadOnly: z.boolean().nullish().transform((v) => v ?? false),
 }).transform((raw) => ({
   ...raw,
-  title: raw.title ?? raw.name ?? raw.id,
+  title: raw.title ?? raw.id,
 }));
 export type CompiledTemplateManifestDto = z.infer<typeof compiledTemplateManifestDtoSchema>;
 
@@ -206,6 +205,9 @@ export const trackDtoSchema = z.object({
   templateState: z.unknown().default({}),
   data: z.record(z.string(), z.unknown()).default({}),
   dataRev: z.number().int().nonnegative().default(0),
+  flowRev: z.number().int().nonnegative().default(0),
+  flowSpecJson: z.string().nullish(),
+  flowFileSha256: z.string().nullish(),
   templateTitle: z.string().nullish(),
   templateHeaderView: templateHeaderViewDtoSchema.nullish(),
   enabledPlugins: z.array(z.string()).default([]),
@@ -225,7 +227,6 @@ export const gateStepSpecDtoSchema = z.object({
 export type GateStepSpecDto = z.infer<typeof gateStepSpecDtoSchema>;
 
 export const gateSpecDtoSchema = z.object({
-  cwd: z.string().nullish(),
   timeoutSecs: z.number().nullish(),
   steps: z.array(gateStepSpecDtoSchema).default([]),
 });
@@ -258,8 +259,7 @@ export const taskDtoSchema = z.object({
   kind: z.string(),
   provider: z.string().nullish(),
   role: z.string().nullish(),
-  access: accessModeSchema.optional(),
-  accessMode: accessModeSchema.optional(),
+  access: accessModeSchema.default('read_write'),
   ready: z.boolean().default(false),
   dependsOn: z.array(z.string()).nullish().transform((v) => v ?? []),
   goalOrCmd: z.string().nullish().transform((v) => v ?? ''),
@@ -283,10 +283,7 @@ export const taskDtoSchema = z.object({
   finishedAtMs: z.number().nullish(),
   createdAtMs: z.number(),
   updatedAtMs: z.number(),
-}).transform((raw) => ({
-  ...raw,
-  access: raw.access ?? raw.accessMode ?? 'read_write',
-}));
+});
 export type TaskDto = z.infer<typeof taskDtoSchema>;
 
 export const reportBlockDtoSchema = z.object({
@@ -607,15 +604,9 @@ export type TrackWorkspaceOptionsDto = z.infer<typeof trackWorkspaceOptionsDtoSc
 
 export const hostDirEntryDtoSchema = z.object({
   name: z.string(),
-  isDir: z.boolean().optional(),
-  is_dir: z.boolean().optional(),
-  isSymlink: z.boolean().optional(),
-  is_symlink: z.boolean().optional(),
-}).transform((raw) => ({
-  name: raw.name,
-  isDir: raw.isDir ?? raw.is_dir ?? false,
-  isSymlink: raw.isSymlink ?? raw.is_symlink ?? false,
-}));
+  isDir: z.boolean(),
+  isSymlink: z.boolean().default(false),
+});
 export type HostDirEntryDto = z.infer<typeof hostDirEntryDtoSchema>;
 
 export const hostDirListDtoSchema = z.object({
@@ -645,7 +636,6 @@ export type WorkspaceFileResultDto = z.infer<typeof workspaceFileResultDtoSchema
 
 export const vcsDiffFileDtoSchema = z.object({
   path: z.string(),
-  oldPath: z.string().nullish(),
   status: z.string().default('modified'),
   patch: z.string().nullish(),
   headText: z.string().nullish(),

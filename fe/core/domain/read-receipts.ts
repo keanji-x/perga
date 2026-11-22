@@ -6,9 +6,7 @@ import { readReceiptDtoSchema, readReceiptsResponseDtoSchema } from '../api/perg
 import type { NotifiableSessionWatermark } from '../api/perga-v1.js';
 import type { ApiOperation } from '../api/types.js';
 import type { FailureTable, WriteClass, WriteText } from './failure-class.js';
-import type {
-  ReadReceipt as ReadReceiptWire, ReadReceiptKind as ReadReceiptKindWire, ReadReceipts as ReadReceiptsWire,
-} from '../api/generated/wire.js';
+import type { ReadReceipt as ReadReceiptWire, ReadReceiptKind as ReadReceiptKindWire, ReadReceipts as ReadReceiptsWire } from './presentation-types.js';
 
 export type ReadReceiptKind = ReadReceiptKindWire;
 export type ReadReceipt = ReadReceiptWire;

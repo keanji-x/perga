@@ -1,3 +1,4 @@
+import type { AreaDto } from '../../../../core/api/perga-v1.ts';
 import { createElement, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
@@ -5,14 +6,14 @@ import { afterEach, expect, it } from 'vitest';
 import type { ApiRequest, ApiTransportPort, ApiTransportResponse } from '../../../../core/api/types.ts';
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { ApiError } from '../../../../core/domain/failure-class.ts';
-import { toArea, type AreaWire } from '../../../../core/domain/area.ts';
+import { toArea } from '../../../../core/domain/area.ts';
 import { invalidationPlanFor } from '../../../../core/events/invalidation-plan.ts';
 import { applyEventEffects } from '../events/query-invalidation-adapter.ts';
 import { queryKeys } from './query-keys.ts';
 import { useAreaMutations } from './area-mutations.ts';
 import { useWorkspace } from './workspace-queries.ts';
 
-const area: AreaWire = { id: 'a1', name: 'Work', color: '#123456', sort: 0, kind: 'user', default_cwd: null, default_template_id: null, created_at: 1, updated_at: 1 };
+const area: AreaDto = { id: 'a1', name: 'Work', color: '#123456', sortOrder: 0, folders: [], defaultCwd: null, createdAtMs: 1, updatedAtMs: 1 };
 const unauthorized = createUnauthorizedChannel({ enqueue: task => task() });
 const ok = (body: unknown): ApiTransportResponse => ({ status: 200, statusText: 'OK', body });
 afterEach(cleanup);

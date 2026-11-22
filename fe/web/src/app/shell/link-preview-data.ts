@@ -60,7 +60,7 @@ export function createEvidencePreviewTransport(): ApiTransportPort {
       const report = trackId === 'reference-demo' ? referencedReport() : evidenceExamples();
       const snapshot: TrackAggregateSnapshotDto = {
         track: { id: trackId, areaId: 'examples', title: trackId === 'reference-demo' ? '另一份报告' : '来源预览',
-          cwd: '/preview', workspaceDriver: 'direct', workspaceSpec: {}, templateInputs: {}, templateState: {}, data: {}, dataRev: 0, enabledPlugins: [], sortOrder: 1, createdAtMs: 1, updatedAtMs: 1 },
+          cwd: '/preview', workspaceDriver: 'direct', workspaceSpec: {}, templateInputs: {}, templateState: {}, data: {}, dataRev: 0, flowRev: 0, enabledPlugins: [], sortOrder: 1, createdAtMs: 1, updatedAtMs: 1 },
         report: { docRev: 1, summary: report.summary, leadingComment: '', blocks: (report.blocks ?? []).map(block => ({
           id: block.id, kind: block.kind, rev: 1, markdown: block.kind === 'prose' ? block.payload.markdown : '', payload: 'payload' in block ? block.payload : null,
         })) }, sessions: [], tasks: [], openAsks: [],

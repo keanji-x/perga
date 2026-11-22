@@ -16,9 +16,9 @@ import { createAppRouter } from './public.tsx';
 import { PANEL_PUSHED_STATE_KEY } from './navigation.ts';
 import { bootTestCardRuntime } from './test-card-runtime.ts';
 
-const AREA = { id: 'c1', name: 'Product', color: '#5B8DEF', sort: 1, kind: 'user', created_at: 1, updated_at: 1 };
+const AREA = { id: 'c1', name: 'Product', color: '#5B8DEF', sortOrder: 1, kind: 'user', createdAtMs: 1, updatedAtMs: 1 };
 /* A second empty Area makes the centered selector’s destination observable. */
-const OTHER_AREA = { id: 'c2', name: 'Second', color: '#8B7FE8', sort: 2, kind: 'user', created_at: 1, updated_at: 1 };
+const OTHER_AREA = { id: 'c2', name: 'Second', color: '#8B7FE8', sortOrder: 2, kind: 'user', createdAtMs: 1, updatedAtMs: 1 };
 const TRACK = fixtureTrack('w1', { areaId: 'c1', title: 'Responsive mobile UI', cwd: '/tmp', sortOrder: 1, closedAtMs: null, createdAtMs: 1, updatedAtMs: 2 });
 const CARD = {
   id: 'card-term', track_id: 'w1', kind: 'terminal', title: 'Build log', sort: 1,
@@ -48,7 +48,7 @@ const ok = (body: unknown): ApiTransportResponse => ({ status: 200, statusText: 
 function setup(path: string) {
   const transport: ApiTransportPort = {
     send(request) {
-      if (request.path.startsWith('/api/today/daily')) return Promise.resolve(ok(null));
+      if (request.path.startsWith('/api/v1/today/daily')) return Promise.resolve(ok(null));
       if (request.path === '/api/v1/areas') return Promise.resolve(ok([AREA, OTHER_AREA]));
       if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return Promise.resolve(ok([TRACK]));
       if (request.path === '/api/v1/areas/c2/tracks?includeClosed=true') return Promise.resolve(ok([]));

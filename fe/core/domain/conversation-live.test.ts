@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { HarnessLiveReplies, HarnessPhaseTag } from '../api/generated/wire.js';
+import type { HarnessLiveReplies, HarnessPhaseTag } from './presentation-types.js';
 import {
   awaitsSettling, conversationLiveOperation, liveReplyTurns, reconcileLiveReplies, replyMayStream,
   type LiveReplyCopy, type LiveReplyObservation, type LiveReplyTranscriptRow,

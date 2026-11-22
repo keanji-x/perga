@@ -44,7 +44,7 @@ it('keeps a historical Perga daily Report readable without triage or Supervisor'
   expect(screen.queryByRole('region', { name: 'Today triage' })).toBeNull();
   expect(screen.queryByText('源文件夹模式 · 未隔离')).toBeNull();
   expect(screen.queryByText('Daily Supervisor')).toBeNull();
-  expect(requests.some(request => request.path === '/api/today/daily?date=2026-10-04')).toBe(true);
+  expect(requests.some(request => request.path === '/api/v1/today/daily?date=2026-10-04')).toBe(true);
   expect(requests.some(request => /\/api\/today\/(supervisor|launchpad)/.test(request.path))).toBe(false);
 });
 
@@ -89,7 +89,7 @@ it('keeps the perga calendar available without a daily track, preserves Month mo
   const { router } = renderDailyFixture({
     initial: '/?day=2026-10-03',
     reply: request => {
-      if (request.path === '/api/today/calendar?start=2026-10-01&end=2026-10-31') {
+      if (request.path === '/api/v1/today/calendar?start=2026-10-01&end=2026-10-31') {
         return { status: 500, statusText: 'Error', body: { error: { code: 'internal', message: 'Calendar unavailable' } } };
       }
       return undefined;

@@ -4,7 +4,7 @@ import type { ConversationCreationSource,PlannerConversationScope } from '../con
 
 import { type ReactNode } from 'react';
 
-import type { AgentProvider,AskAnswer } from '../../../../core/api/generated/wire.ts';
+import type { AgentProvider, AskAnswer } from '../../../../core/domain/presentation-types.ts';
 import { type CardActivity } from '../../../../core/domain/activity.ts';
 import { type PendingApproval } from '../../../../core/domain/approval.ts';
 import { type OpenAsk } from '../../../../core/domain/ask.ts';

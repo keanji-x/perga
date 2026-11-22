@@ -1,8 +1,8 @@
 /** One typed read contract over the existing transcript resource. Display identities are not native turns. */
 
 import { DEPLOYMENT_OWNER_USER_ID } from '../api/auth.js';
-import type { ConversationCursor,ConversationDisplayItem as WireDisplayItem } from '../api/generated/wire.js';
-import { sessionItemsPageDtoSchema,type SessionItemsPageDto } from "../api/perga-v1.js";
+import type { ConversationCursor, ConversationDisplayItem as WireDisplayItem } from './presentation-types.js';
+import { sessionItemsPageDtoSchema, type SessionItemsPageDto } from '../api/perga-v1.js';
 import type { ApiOperation } from '../api/types.js';
 import { thinkingActivityContent,toolActivityContent } from './conversation-activity-content.js';
 import type { LiveReplyTranscriptRow } from './conversation-live.js';
@@ -212,7 +212,7 @@ export function conversationRunOperation(sessionId: string): ApiOperation<Conver
   };
 }
 
-export function conversationRunPhase(run: ConversationRun): import('../api/generated/wire.js').HarnessPhaseTag {
+export function conversationRunPhase(run: ConversationRun): import('./presentation-types.js').HarnessPhaseTag {
   return run.state === 'running' ? 'turn_running' : run.state === 'stopping' ? 'issuing_interrupt'
     : run.state === 'compacting' ? 'compacting' : 'idle';
 }

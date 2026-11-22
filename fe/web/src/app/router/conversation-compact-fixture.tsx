@@ -1,5 +1,5 @@
 import type { ApiTransportResponse } from '../../../../core/api/types.ts';
-import type { AgentProvider } from '../../../../core/api/generated/wire.ts';
+import type { AgentProvider } from '../../../../core/domain/presentation-types.ts';
 import { fixtureSession } from './session-contract-fixture.ts';
 import { sessionItem, sessionPage } from './conversation-session-data.ts';
 import { conversationCardId } from './conversation-read-data.ts';

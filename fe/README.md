@@ -19,10 +19,10 @@ Vite serves `http://localhost:5180/` and proxies `/api` to
 `FE_DEV_HOST` and `FE_DEV_PORT` configure the dev listener. The build in
 `web/dist/` is mounted at `/`. There is no legacy frontend mount.
 
-The Host exposes `/api/v1` and `/api/today`. `core/api/perga-v1.ts` declares
-Perga DTO schemas. `npm run gen:api` currently prints a notice: it does not
-regenerate contracts. Maintain the published OpenAPI snapshot against Host
-routes and run the contract tests when changing it.
+The Host exposes `/api/v1` and `/api/v1/today`. `core/api/perga-v1.ts` declares
+runtime DTO schemas. `npm run gen:api` exports Host OpenAPI and generates
+TypeScript from the registered HTTP contracts. `npm run gen:api -- --check`
+fails on drift; run it and the contract tests after changing contracts.
 
 Browser state uses the `perga` IndexedDB database and `perga:*` keys. No legacy
 browser data is imported. Report source/plugin/wave links use `perga://` and

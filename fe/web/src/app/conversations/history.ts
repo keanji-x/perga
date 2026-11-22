@@ -1,6 +1,6 @@
 import { useCallback, useMemo } from 'react';
 import { useMutation, useMutationState, useQuery, useQueryClient, type QueryState } from '@tanstack/react-query';
-import type { ConversationCursor } from '../../../../core/api/generated/wire.ts';
+import type { ConversationCursor } from '../../../../core/domain/presentation-types.ts';
 import type { TranscriptPosition } from '../providers/conversation-queries.ts';
 import { numberReads } from './read-order.ts';
 import { useState } from '../../ui/state/public.ts';

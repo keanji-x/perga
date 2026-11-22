@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Identity;
+using Perga.Contracts;
 using Perga.Host.Configuration;
 using Perga.Host.Http;
 using Perga.Host.Serialization;
@@ -25,9 +26,18 @@ internal static class AuthEndpoints
     public static void MapPergaAuth(this IEndpointRouteBuilder endpoints)
     {
         var auth = endpoints.MapGroup("/api/v1/auth");
-        auth.MapPost("/login", LoginAsync).AllowAnonymous();
-        auth.MapGet("/session", SessionAsync).RequireAuthorization(PergaAuthPolicies.UserSession);
-        auth.MapPost("/logout", LogoutAsync).AllowAnonymous().WithMetadata(new RequestOriginGuard.BrowserWriteApi());
+        auth.MapPost("/login", LoginAsync).AllowAnonymous()
+            .WithMetadata(new JsonRequestContract(typeof(LoginRequest), IsOptional: false), new StrictRequest())
+            .Produces<SessionIdentityDto>()
+            .Produces<ApiErrorResponse>(400).Produces<ApiErrorResponse>(401).Produces<ApiErrorResponse>(403)
+            .Produces<ApiErrorResponse>(413).Produces<ApiErrorResponse>(415).Produces<ApiErrorResponse>(429)
+            .WithMetadata(new ResponseHeader(200, WebSessionCookie.SessionIdHeader), new ResponseHeader(200, "Set-Cookie"),
+                new ResponseHeader(429, "Retry-After", "integer"));
+        auth.MapGet("/session", SessionAsync).RequireAuthorization(PergaAuthPolicies.UserSession)
+            .Produces<SessionIdentityDto>().Produces<ApiErrorResponse>(401);
+        auth.MapPost("/logout", LogoutAsync).AllowAnonymous().WithMetadata(new RequestOriginGuard.BrowserWriteApi())
+            .WithMetadata(new NoRequestBody(), new OptionalWebSession(), new RequestHeader(WebSessionCookie.SessionIdHeader, false))
+            .Produces(204);
     }
 
     private static async Task LoginAsync(HttpContext context, IAuthStore store, IAuthPasswordHasher hasher,

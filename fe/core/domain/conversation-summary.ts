@@ -1,4 +1,4 @@
-import type { AgentProvider } from '../api/generated/wire.js';
+import type { AgentProvider } from './presentation-types.js';
 import { conversationNameFrom, isOptimisticConversationTurn, type Conversation, type ConversationKind, type ConversationMessage, type ConversationState } from './conversation.js';
 
 /** Everything about the open conversation that does *not* come from its turns. */

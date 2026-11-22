@@ -4,7 +4,6 @@ import type { TrackAggregateSnapshotDto } from "../../../../core/api/perga-v1.ts
 import { EmptyState } from '../../ui/empty-state/public.tsx';
 import { Icon } from '../../ui/icon/public.tsx';
 
-import { trackDtoToWire } from '../../../../core/api/track-projection.ts';
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { readFailureOf,readFailureText } from '../../../../core/domain/read-failure.ts';
@@ -65,7 +64,7 @@ function ReferenceDocument({ transport, unauthorized, target, detail, report: re
   if (referencedReport === null && !hasFlowContent) return <EmptyReportReference />;
 
   const report = referencedReport ?? { summary: '', body: '', blocks: [] };
-  return <ReportDocument report={report} allowAutoFlow={allowAutoFlow} empty={<EmptyReportReference />} fileRoot={toTrack(trackDtoToWire(detail.track)).agentCwd}
+  return <ReportDocument report={report} allowAutoFlow={allowAutoFlow} empty={<EmptyReportReference />} fileRoot={toTrack(detail.track).agentCwd}
     onOpenLink={onOpenLink} onOpenSourceLink={source => onOpenSource(target.trackId, source)}
     onOpenFileLink={file => onOpenFile(target.trackId, file)}
     templateViews={templateViews}

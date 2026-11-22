@@ -109,14 +109,14 @@ export function DailyTodayRoute({ transport, unauthorized, selectedDate, onOpenT
       onModeChange={setCalendarMode}
       days={calendar.data?.days}
       schedules={calendar.data?.schedules}
-      timeZone={calendar.data?.time_zone}
+      timeZone={calendar.data?.timeZone}
       errorNotice={calendarErrorNotice}
       onSelectDate={onSelectDate === undefined ? undefined : handleSelectDate}
       onVisibleRangeChange={handleRangeChange}
       onOpenTrack={onOpenTrack}
     />
   );
-  const trackId = daily.data?.track_id;
+  const trackId = daily.data?.trackId;
   const detail = useQuery({ ...trackDetailQueryOptions(transport, trackId ?? '', unauthorized), enabled: trackId !== undefined });
   const supervisor = false;
   const withCalendarShell = (content: ReactNode) => (
@@ -185,14 +185,14 @@ function DailyReportChanges({ date, isToday, transport, unauthorized, onOpenTrac
   const changes = useInfiniteQuery({ queryKey: queryKeys.dailyReportChanges(date), enabled: open,
     initialPageParam: undefined as Readonly<{ cursor: string; through: number }> | undefined,
     queryFn: ({ pageParam }) => runOperation(transport, reportChangesOperation(date, pageParam), unauthorized),
-    getNextPageParam: (last) => last.next_cursor === null ? undefined : { cursor: last.next_cursor, through: last.through_event_id },
+    getNextPageParam: (last) => last.nextCursor === null ? undefined : { cursor: last.nextCursor, through: last.throughEventId },
   });
   const content = <>
     {changes.isPending && open && <p role="status">Loading report changes…</p>}
     {changes.isError && <ErrorBox message={readErrorText(changes.error, 'Report changes could not be loaded.')} onRetry={() => { void changes.refetch(); }} />}
     {!changes.isError && changes.data?.pages[0]?.changes.length === 0 && <EmptyState variant="compact" icon={<Icon name="file" />} title="No report changes recorded for visible Tracks on this day." description="这一天的报告更新会显示在这里。" />}
-    {changes.data?.pages.flatMap((page) => page.changes.map((change) => <ReportChangeItem key={change.track_id} card={standalone} change={change}
-      date={date} timeZone={page.timezone} through={page.through_event_id} transport={transport} unauthorized={unauthorized} onOpenTrack={onOpenTrack} />))}
+    {changes.data?.pages.flatMap((page) => page.changes.map((change) => <ReportChangeItem key={change.trackId} card={standalone} change={change}
+      date={date} timeZone={page.timezone} through={page.throughEventId} transport={transport} unauthorized={unauthorized} onOpenTrack={onOpenTrack} />))}
     {changes.hasNextPage && <button type="button" disabled={changes.isFetchingNextPage} onClick={() => { void changes.fetchNextPage(); }}>Load more reports</button>}
   </>;
   if (standalone) return <><h2 className={styles.subviewTitle}>Report changes · {date}</h2>{content}</>;
@@ -214,15 +214,15 @@ function ReportChangeItem({ card, change, date, timeZone, through, transport, un
   unauthorized: UnauthorizedChannel; onOpenTrack: (trackId: string) => void;
 }>) {
   const [open, setOpen] = useState(false);
-  const edits = useInfiniteQuery({ queryKey: queryKeys.dailyReportEdits(date, change.track_id, through), enabled: open,
+  const edits = useInfiniteQuery({ queryKey: queryKeys.dailyReportEdits(date, change.trackId, through), enabled: open,
     initialPageParam: undefined as string | undefined,
-    queryFn: ({ pageParam }) => runOperation(transport, reportEditsOperation(date, change.track_id, through, pageParam), unauthorized),
-    getNextPageParam: (last) => last.next_cursor ?? undefined,
+    queryFn: ({ pageParam }) => runOperation(transport, reportEditsOperation(date, change.trackId, through, pageParam), unauthorized),
+    getNextPageParam: (last) => last.nextCursor ?? undefined,
   });
   return <ReportChangeDetails card={card} change={change} onOpenTrack={onOpenTrack} onToggleEdits={setOpen}>
     {edits.isPending && open && <p role="status">Loading edits…</p>}
     {edits.isError && <ErrorBox message={readErrorText(edits.error, 'Edits could not be loaded.')} onRetry={() => { void edits.refetch(); }} />}
-    {edits.data?.pages.flatMap((page) => page.edits.map((entry) => <ReportEditDetails key={entry.event_id}
+    {edits.data?.pages.flatMap((page) => page.edits.map((entry) => <ReportEditDetails key={entry.eventId}
       entry={entry} timeZone={timeZone} onOpenTrack={onOpenTrack} />))}
     {edits.hasNextPage && <button type="button" disabled={edits.isFetchingNextPage} onClick={() => { void edits.fetchNextPage(); }}>Load more edits</button>}
   </ReportChangeDetails>;

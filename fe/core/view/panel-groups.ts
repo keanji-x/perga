@@ -1,4 +1,4 @@
-import { agentProviderSchema } from '../api/schemas.js';
+import { PROVIDER_PRESENTATION } from '../domain/provider-presentation.js';
 import type { PanelRow, RowModuleView } from './panel.js';
 
 export type InventoryGroupKey = keyof typeof GROUPS;
@@ -19,7 +19,7 @@ const GROUPS = Object.freeze({
 export function panelRowGroup(row: PanelRow, kind: RowModuleView['key']): InventoryGroupKey {
   if (kind === 'cards' || kind === 'temporary') {
     if (row.kind === 'terminal') return 'terminals';
-    return agentProviderSchema.safeParse(row.kind).success ? 'agents' : 'other-tools';
+    return row.kind !== null && Object.hasOwn(PROVIDER_PRESENTATION, row.kind) ? 'agents' : 'other-tools';
   }
   if (row.badges.some(badge => badge.struck)) return 'canceled';
   switch (row.status?.token ?? null) {

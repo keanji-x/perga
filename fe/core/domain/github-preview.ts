@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { GitHubPreview as GitHubPreviewWire } from '../api/generated/wire.js';
+import type { GitHubPreview as GitHubPreviewWire } from './presentation-types.js';
 import type { ApiAbortSignal } from '../api/types.js';
 import type { GitHubReference } from './issue-url.js';
 

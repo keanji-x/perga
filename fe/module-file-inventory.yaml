@@ -20,6 +20,7 @@
 - { path: fe/tsconfig.node.json, type: file, owner: tooling/architecture, readonly: true, basis: "TypeScript gate configuration; frozen enforcement control (#997)" }
 - { path: fe/vite.config.ts, type: file, owner: tooling/architecture, readonly: true, basis: "build configuration; frozen enforcement control (#997)" }
 - { path: fe/vitest.config.ts, type: file, owner: tooling/test-tier, readonly: true, basis: "test partition configuration; frozen enforcement control (#997)" }
+- { path: fe/tools/api, type: directory, owner: tooling/api, readonly: false, basis: "C1 Host OpenAPI and TypeScript generation" }
 - { path: fe/tools/architecture, type: directory, owner: tooling/architecture, readonly: false, basis: "architecture §5 repository tree; enforcement infrastructure" }
 - { path: fe/tools/ownership, type: directory, owner: tooling/architecture, readonly: false, basis: "architecture §5 repository tree; ownership enforcement infrastructure" }
 - { path: fe/tools/projection, type: directory, owner: tooling/architecture, readonly: false, basis: "#1234 忠实投影检查器；验证域，故不入 core/web 运行时" }

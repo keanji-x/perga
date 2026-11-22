@@ -61,9 +61,9 @@ or defects in its approach. Track pre-existing defects separately when useful.
   and test failures between local writes and external effects.
 - When changing a contract, check producers, consumers, fixtures and
   published schemas. Run real generators where available.
-  The frontend's `gen:api` currently only prints a notice. For a change to
-  `/api/v1`, update the relevant frontend schema and
-  `fe/core/api/generated/openapi.json` directly and verify against the Host.
+  Run `(cd fe && npm run gen:api)` after HTTP contract changes to regenerate
+  Host OpenAPI and TypeScript. Run `(cd fe && npm run gen:api -- --check)`
+  to fail on drift; keep runtime decoders aligned with the generated contracts.
 - Keep files focused. Treat 800 handwritten lines as a prompt to split by
   responsibility when practical. Avoid unrelated file splits to satisfy a
   number. Add durable checks only for invariants that future changes must

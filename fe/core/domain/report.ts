@@ -60,7 +60,8 @@ function normalizePergaTaskPayload(raw: Record<string, unknown>, blockId: string
       ? raw.type
       : 'agent';
   const provider = typeof raw.provider === 'string' ? raw.provider : undefined;
-  const normalizedProvider = normalizeWireAgentProvider(rawKind === 'agent' ? provider : (provider ?? rawKind));
+  const runtimeProvider = normalizeWireAgentProvider(rawKind === 'agent' ? provider : (provider ?? rawKind));
+  const normalizedProvider = runtimeProvider?.slice(runtimeProvider.lastIndexOf(':') + 1);
   const kind = rawKind === 'terminal' || rawKind === 'command'
     ? 'terminal'
     : rawKind === 'compact'

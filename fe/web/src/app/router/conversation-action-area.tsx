@@ -1,5 +1,5 @@
 import { useEffect, useRef, type RefObject } from 'react';
-import type { AskAnswer } from '../../../../core/api/generated/wire.ts';
+import type { AskAnswer } from '../../../../core/domain/presentation-types.ts';
 import type { AskId } from '../../../../core/domain/activity.ts';
 import type { PendingApproval } from '../../../../core/domain/approval.ts';
 import type { OpenAsk } from '../../../../core/domain/ask.ts';

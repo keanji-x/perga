@@ -1,14 +1,13 @@
-import { type NotifiableSessionWatermark,type TrackOverlayItemDto } from '../api/perga-v1.js';
-import { trackDtoToWire } from '../api/track-projection.js';
+import { type NotifiableSessionWatermark, type TrackOverlayItemDto } from '../api/perga-v1.js';
 import type { TerminalPresentation } from './terminal-presentation.js';
 // Track: the unit of work the product is organised around — wire decode, open or closed,
 // and the pure predicates several surfaces must agree on.
 
 import { z } from 'zod';
 
-import type { AgentProvider,WorkspaceIsolation } from '../api/generated/wire.js';
-import { compiledTemplateManifestDtoSchema,overlaysListDtoSchema,terminalDtoSchema,trackAggregateSnapshotDtoSchema,trackDtoSchema,trackWorkspaceOptionsDtoSchema,type AgentSessionDto,type AskDto,type TaskDto,type TerminalDto,type TrackAggregateSnapshotDto,type TrackWorkspaceOptionsDto } from "../api/perga-v1.js";
-import { cardSchema,overlaySchema,toWireAgentProvider,trackWorkspaceSchema } from "../api/schemas.js";
+import type { AgentProvider, WorkspaceIsolation } from './presentation-types.js';
+import { compiledTemplateManifestDtoSchema, overlaysListDtoSchema, terminalDtoSchema, trackAggregateSnapshotDtoSchema, trackDtoSchema, trackWorkspaceOptionsDtoSchema, type TrackDto, type AgentSessionDto, type AskDto, type TaskDto, type TerminalDto, type TrackAggregateSnapshotDto, type TrackWorkspaceOptionsDto } from '../api/perga-v1.js';
+import { cardSchema,overlaySchema } from "../api/schemas.js";
 import type { ApiFailure,ApiOperation } from '../api/types.js';
 import {
 activityStateOf,type ActivityItem,type ActivityState,type AttentionKind,type CardActivity,
@@ -20,30 +19,6 @@ classifyFailure,NotSentError,refusedText,writeFailureOf,
 type FailureTable,
 type WriteClass,type WriteFailure,type WriteText
 } from './failure-class.js';
-
-/**
- * `cwd` and the `*_at` columns may be absent from the OpenAPI `required` set; the decoder supplies
- * the DB defaults. `closed_at` is null while the track is open.
- */
-export const trackWireSchema = z.object({
-  id: z.string(),
-  area_id: z.string(),
-  title: z.string(),
-  sort: z.number(),
-  cwd: z.string().default(''),
-  workspace: trackWorkspaceSchema,
-  pinned_at: z.number().nullable().default(null),
-  closed_at: z.number().nullable().default(null),
-  /** Unix-ms time a person granted Area admin; `null` otherwise. Absent on historical events, which read as not admin. */
-  admin_granted_at: z.number().nullable().default(null),
-  created_at: z.number(),
-  updated_at: z.number(),
-  templateId: trackDtoSchema.shape.templateId,
-  templateTitle: trackDtoSchema.shape.templateTitle,
-  templateInputs: trackDtoSchema.shape.templateInputs.optional(),
-  templateHeaderView: trackDtoSchema.shape.templateHeaderView,
-});
-export type TrackWire = z.infer<typeof trackWireSchema>;
 
 /** Live activity projection for a track; neutral values mean idle/quiet. */
 export type TrackActivity = Readonly<{
@@ -86,25 +61,41 @@ export type Track = Readonly<{
   createdAt: number;
   updatedAt: number;
   /** Historical snapshots may omit presentation metadata; toTrack supplies neutral defaults. */
-  templateId?: TrackWire['templateId'];
-  templateTitle?: TrackWire['templateTitle'];
-  templateInputs?: TrackWire['templateInputs'];
-  templateHeaderView?: TrackWire['templateHeaderView'];
+  templateId?: TrackDto['templateId'];
+  templateTitle?: TrackDto['templateTitle'];
+  templateInputs?: TrackDto['templateInputs'];
+  templateHeaderView?: TrackDto['templateHeaderView'];
 }> & TrackActivity;
 
-export function toTrack(wire: TrackWire, activity: TrackActivity = NEUTRAL_ACTIVITY): Track {
+/** Workspace interpretation belongs to presentation, never to the HTTP carrier. */
+export function workspaceForTrack(dto: TrackDto): { isolation: WorkspaceIsolation; agentCwd: string } {
+  const spec = typeof dto.workspaceSpec === 'object' && dto.workspaceSpec !== null
+    ? dto.workspaceSpec as Record<string, unknown> : {};
+  const worktreePath = [spec.mergedCwd, spec.worktreePath, spec.workspacePath]
+    .find((path): path is string => typeof path === 'string' && path !== '');
+  const isWorktree = dto.workspaceDriver === 'vcs-workspace'
+    || dto.workspaceDriver === 'vcs' || dto.workspaceDriver === 'git-worktree'
+    || dto.workspaceDriver === 'jj' || dto.workspaceDriver === 'worktree';
+  return {
+    isolation: isWorktree ? 'worktree' : dto.workspaceDriver === 'direct' || dto.workspaceDriver === 'none' ? 'none' : 'managed',
+    agentCwd: isWorktree ? worktreePath ?? dto.cwd : dto.cwd,
+  };
+}
+
+export function toTrack(wire: TrackDto, activity: TrackActivity = NEUTRAL_ACTIVITY): Track {
+  const workspace = workspaceForTrack(wire);
   return {
     id: wire.id,
-    areaId: wire.area_id,
+    areaId: wire.areaId,
     title: wire.title,
-    sort: wire.sort,
+    sort: wire.sortOrder,
     cwd: wire.cwd,
-    agentCwd: wire.workspace.worktree ?? wire.cwd,
-    isolation: wire.workspace.isolation,
-    pinnedAt: wire.pinned_at,
-    closedAt: wire.closed_at,
-    createdAt: wire.created_at,
-    updatedAt: wire.updated_at,
+    agentCwd: workspace.agentCwd,
+    isolation: workspace.isolation,
+    pinnedAt: wire.pinnedAtMs ?? null,
+    closedAt: wire.closedAtMs ?? null,
+    createdAt: wire.createdAtMs,
+    updatedAt: wire.updatedAtMs,
     templateId: wire.templateId ?? null,
     templateTitle: wire.templateTitle ?? null,
     templateInputs: wire.templateInputs ?? {},
@@ -372,11 +363,6 @@ export type TrackPatchBody = Readonly<{
 }>;
 
 
-const trackWireOrDtoSchema: z.ZodType<TrackWire> = z.union([
-  trackDtoSchema.transform(trackDtoToWire),
-  trackWireSchema,
-]);
-
 function askDtoToActivityItem(ask: AskDto): ActivityItem {
   const questions = normalizeAskQuestions(ask.questions);
   return {
@@ -470,11 +456,11 @@ export function trackActivityFromSnapshot(snapshot: TrackAggregateSnapshotDto): 
   };
 }
 
-export function tracksInAreaOperation(areaId: string, includeClosed = true): ApiOperation<TrackWire[]> {
+export function tracksInAreaOperation(areaId: string, includeClosed = true): ApiOperation<TrackDto[]> {
   return {
     method: 'GET',
     path: `/api/v1/areas/${encodeURIComponent(areaId)}/tracks?includeClosed=${includeClosed ? 'true' : 'false'}`,
-    responseSchema: z.array(trackWireOrDtoSchema),
+    responseSchema: z.array(trackDtoSchema),
   };
 }
 
@@ -517,12 +503,12 @@ export function trackWorkspaceOptionsOperation(
 /**
  * `POST /api/v1/tracks`, keyed per draft on every create.
  */
-export function createTrackOperation(body: NewTrackBody, idempotencyKey: string): ApiOperation<TrackWire> {
+export function createTrackOperation(body: NewTrackBody, idempotencyKey: string): ApiOperation<TrackDto> {
   const { workspace_option_id: workspaceOptionId, execution_target_id: executionTargetId, ...rest } = body;
   const wireBody = {
     ...rest,
     areaId: body.area_id,
-    provider: toWireAgentProvider(body.planner_provider),
+    provider: body.planner_provider,
     ...(workspaceOptionId !== undefined ? { workspaceOptionId } : body.isolation !== undefined
       ? { workspaceDriver: body.isolation === 'worktree' ? 'vcs-workspace' : 'direct' }
       : {}),
@@ -536,10 +522,7 @@ export function createTrackOperation(body: NewTrackBody, idempotencyKey: string)
     path: '/api/v1/tracks',
     body: wireBody,
     headers: { 'Idempotency-Key': idempotencyKey },
-    responseSchema: z.union([
-      trackAggregateSnapshotDtoSchema.transform((snapshot) => trackDtoToWire(snapshot.track)),
-      trackWireOrDtoSchema,
-    ]),
+    responseSchema: trackAggregateSnapshotDtoSchema.transform((snapshot) => snapshot.track),
   };
 }
 
@@ -581,7 +564,7 @@ export function trackCreateWorkspaceError(failure: ApiFailure | null): string | 
     + 'but its working directory could not be created. Reconcile the branch and try again here.';
 }
 
-export function updateTrackOperation(trackId: string, body: TrackPatchBody): ApiOperation<TrackWire> {
+export function updateTrackOperation(trackId: string, body: TrackPatchBody): ApiOperation<TrackDto> {
   const wireBody = {
     ...(body.title !== undefined ? { title: body.title } : {}),
     ...(body.closed !== undefined ? { closed: body.closed } : {}),
@@ -599,7 +582,7 @@ export function updateTrackOperation(trackId: string, body: TrackPatchBody): Api
     method: 'PATCH',
     path: `/api/v1/tracks/${encodeURIComponent(trackId)}`,
     body: wireBody,
-    responseSchema: trackWireOrDtoSchema,
+    responseSchema: trackDtoSchema,
   };
 }
 

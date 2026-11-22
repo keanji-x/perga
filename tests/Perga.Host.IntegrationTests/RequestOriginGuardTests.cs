@@ -14,7 +14,7 @@ public sealed class RequestOriginGuardTests
 {
     [Theory]
     [InlineData("/api/v1/areas")]
-    [InlineData("/api/today/calendar")]
+    [InlineData("/api/v1/today/calendar")]
     [InlineData("/mcp")]
     [InlineData("/mcp/kernel")]
     [InlineData("/api/v1/events")]

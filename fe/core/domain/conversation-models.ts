@@ -1,7 +1,6 @@
 import { z } from 'zod';
-import type { AgentProvider } from '../api/generated/wire.js';
+import type { AgentProvider } from './presentation-types.js';
 import { agentSessionDtoSchema, bootstrapDtoSchema, type AgentSessionDto } from '../api/perga-v1.js';
-import { normalizeWireAgentProvider } from '../api/schemas.js';
 import type { ApiOperation } from '../api/types.js';
 import type { ModelSelection } from './conversation.js';
 import { type FailureTable, type WriteFailure } from './failure-class.js';
@@ -60,7 +59,7 @@ function providerStatusesToModelCatalog(
   providers: readonly z.infer<typeof bootstrapDtoSchema>['providers'][number][],
   provider: AgentProvider,
 ): ModelCatalog {
-  const providerStatus = providers.find((p) => normalizeWireAgentProvider(p.provider) === provider);
+  const providerStatus = providers.find((p) => p.provider === provider);
   const richCatalog = providerStatus?.modelCatalog ?? [];
   if (richCatalog.length > 0) {
     const models = richCatalog.map((entry) => ({
@@ -131,7 +130,7 @@ export function modelCatalogOperation(
     method: 'GET',
     path: scope.kind === 'card'
       ? `/api/v1/bootstrap?card_id=${encodeURIComponent(scope.cardId)}${refreshSuffix}`
-      : `/api/v1/bootstrap?provider=${scope.provider}${refreshSuffix}`,
+      : `/api/v1/bootstrap?provider=${encodeURIComponent(scope.provider)}${refreshSuffix}`,
     responseSchema: z.union([
       bootstrapDtoSchema.transform((bootstrap): ModelCatalog =>
         providerStatusesToModelCatalog(bootstrap.providers, scope.provider)),

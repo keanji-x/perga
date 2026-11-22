@@ -13,19 +13,19 @@ export function ReportChangeDetails({ change, onOpenTrack, onToggleEdits, childr
   change: ReportChange; onOpenTrack: (trackId: string) => void;
   onToggleEdits: (open: boolean) => void; children: ReactNode;
 }>) {
-  return <ReportDetails title={change.track_title || 'Untitled Track'}
-    meta={`${change.area_name} · ${change.edit_count} report ${change.edit_count === 1 ? 'edit' : 'edits'}`}
+  return <ReportDetails title={change.trackTitle || 'Untitled Track'}
+    meta={`${change.areaName} · ${change.editCount} report ${change.editCount === 1 ? 'edit' : 'edits'}`}
     layout="grid" variant={card ? 'card' : 'entry'}>
     <div className={styles.content}>
-      <Button label="Open source report" variant="ghost" size="sm" onClick={() => onOpenTrack(change.track_id)}>Open report</Button>
-      {change.summary_before !== change.summary_after && <dl className={styles.fields}>
-        <dt>Previous summary</dt><dd>{change.summary_before || '—'}</dd>
-        <dt>Current summary</dt><dd>{change.summary_after || '—'}</dd>
+      <Button label="Open source report" variant="ghost" size="sm" onClick={() => onOpenTrack(change.trackId)}>Open report</Button>
+      {change.summaryBefore !== change.summaryAfter && <dl className={styles.fields}>
+        <dt>Previous summary</dt><dd>{change.summaryBefore || '—'}</dd>
+        <dt>Current summary</dt><dd>{change.summaryAfter || '—'}</dd>
       </dl>}
       <ReportDetails title="Body changes" layout="grid" variant="entry">
         {change.patch === '' ? <EmptyState variant="compact" icon={<Icon name="file" />} title="正文没有净变化" description="No net body change; individual edits retain the history." />
           : <pre className={styles.patch}><code>{change.patch}</code></pre>}
-        {change.patch_truncated && <p className={styles.note}>Patch shortened. Read individual edits for the full content.</p>}
+        {change.patchTruncated && <p className={styles.note}>Patch shortened. Read individual edits for the full content.</p>}
       </ReportDetails>
       <ReportDetails title="Individual edits" layout="grid" variant="entry" onToggle={onToggleEdits}>{children}</ReportDetails>
     </div>
@@ -39,11 +39,11 @@ export function ReportEditDetails({ entry, timeZone, onOpenTrack }: Readonly<{
   return <ReportDetails title="Report edit" meta={time} layout="grid" variant="entry">
     <div className={styles.content}>
       <ReportDetails title="After" layout="grid" variant="entry">
-        <ReportDocument report={{ summary: entry.edit.summary_after, body: entry.edit.body_after, blocks: null }} empty={null}
+        <ReportDocument report={{ summary: entry.edit.summaryAfter, body: entry.edit.bodyAfter, blocks: null }} empty={null}
           onOpenLink={(target) => onOpenTrack(target.trackId)} />
       </ReportDetails>
       <ReportDetails title="Before" layout="grid" variant="entry">
-        <ReportDocument report={{ summary: entry.edit.summary_before, body: entry.edit.body_before, blocks: null }} empty={null}
+        <ReportDocument report={{ summary: entry.edit.summaryBefore, body: entry.edit.bodyBefore, blocks: null }} empty={null}
           onOpenLink={(target) => onOpenTrack(target.trackId)} />
       </ReportDetails>
     </div>

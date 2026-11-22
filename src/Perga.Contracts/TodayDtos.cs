@@ -1,10 +1,8 @@
-using System.Text.Json.Serialization;
-
 namespace Perga.Contracts;
 
 public sealed record DailyTrackDto(string Date,
-    [property: JsonPropertyName("time_zone")] string TimeZone,
-    [property: JsonPropertyName("track_id")] string TrackId);
+    string TimeZone,
+    string TrackId);
 
 public sealed record DailyReportEditDto(string TrackId, string EditId, string SummaryBefore,
     string SummaryAfter, string BodyBefore, string BodyAfter);
@@ -35,7 +33,7 @@ public sealed record TodayScheduleItemDto(
 
 public sealed record TodayCalendarDto(
     string Today,
-    [property: JsonPropertyName("time_zone")] string TimeZone,
+    string TimeZone,
     string Start,
     string End,
     IReadOnlyList<TodayCalendarDayDto> Days,

@@ -106,7 +106,7 @@ public sealed class TrackScheduleIntegrationTests
     {
         await using var host = new PergaHostTestCluster();
         Assert.Equal(HttpStatusCode.BadRequest,
-            (await host.AuthenticatedClient.GetAsync("/api/today/calendar?start=9999-12-31&end=9999-12-31")).StatusCode);
+            (await host.AuthenticatedClient.GetAsync("/api/v1/today/calendar?start=9999-12-31&end=9999-12-31")).StatusCode);
     }
 
     [Fact]
@@ -120,11 +120,11 @@ public sealed class TrackScheduleIntegrationTests
         var kernel = host.Services.GetRequiredService<IPergaKernel>();
 
         // Ensure today's daily track exists and populate its report.
-        var dailyResp = await host.AuthenticatedClient.GetAsync("/api/today/daily");
+        var dailyResp = await host.AuthenticatedClient.GetAsync("/api/v1/today/daily");
         dailyResp.EnsureSuccessStatusCode();
         using var dailyDoc = JsonDocument.Parse(await dailyResp.Content.ReadAsStringAsync());
         var todayDate = dailyDoc.RootElement.GetProperty("date").GetString()!;
-        var dailyTrackId = dailyDoc.RootElement.GetProperty("track_id").GetString()!;
+        var dailyTrackId = dailyDoc.RootElement.GetProperty("trackId").GetString()!;
 
         var readStore = host.Services.GetRequiredService<ITrackReadStore>();
         var dailyTrack = (await readStore.GetTrackAsync(dailyTrackId, default))!;
@@ -169,17 +169,17 @@ public sealed class TrackScheduleIntegrationTests
             FlowFixture.Wake("every-minute-budget", "Ping",
                 new(Cron: "* * * * *", Tz: TodayCalendar.IanaId(hostZone), MaxOccurrences: 5000), "Heartbeat"));
 
-        var calResp = await host.AuthenticatedClient.GetAsync($"/api/today/calendar?start={todayDate}&end={day3Date}");
+        var calResp = await host.AuthenticatedClient.GetAsync($"/api/v1/today/calendar?start={todayDate}&end={day3Date}");
         calResp.EnsureSuccessStatusCode();
         using var calDoc = JsonDocument.Parse(await calResp.Content.ReadAsStringAsync());
         Assert.Equal(targetLocalDate, calDoc.RootElement.GetProperty("today").GetString());
         var days = calDoc.RootElement.GetProperty("days");
         Assert.Equal(4, days.GetArrayLength());
         Assert.Equal(todayDate, days[0].GetProperty("date").GetString());
-        Assert.True(days[0].GetProperty("has_daily_track").GetBoolean());
-        Assert.True(days[0].GetProperty("has_report").GetBoolean());
+        Assert.True(days[0].GetProperty("hasDailyTrack").GetBoolean());
+        Assert.True(days[0].GetProperty("hasReport").GetBoolean());
         Assert.Equal(targetLocalDate, days[1].GetProperty("date").GetString());
-        Assert.False(days[1].GetProperty("has_daily_track").GetBoolean());
+        Assert.False(days[1].GetProperty("hasDailyTrack").GetBoolean());
 
         var items = calDoc.RootElement.GetProperty("schedules").EnumerateArray().ToArray();
         // Expect 1 one-shot on day1 + 2 expanded daily-standup occurrences (day1 already-fired at 09:00 + day2 upcoming at 09:00; NOT day3 because maxOccurrences=2).
@@ -201,10 +201,10 @@ public sealed class TrackScheduleIntegrationTests
         var checkIn = Assert.Single(items, i => i.GetProperty("id").GetString() == "flow:sch_tomorrow");
         Assert.Equal(targetLocalDate, checkIn.GetProperty("date").GetString());
         Assert.Equal("Release check-in", checkIn.GetProperty("title").GetString());
-        Assert.Equal("Release Track", checkIn.GetProperty("track_title").GetString());
+        Assert.Equal("Release Track", checkIn.GetProperty("trackTitle").GetString());
 
-        Assert.Equal(HttpStatusCode.BadRequest, (await host.AuthenticatedClient.GetAsync("/api/today/calendar?start=2026-11-20&end=2026-11-19")).StatusCode);
-        Assert.Equal(HttpStatusCode.BadRequest, (await host.AuthenticatedClient.GetAsync("/api/today/calendar?start=2026-01-01&end=2026-04-01")).StatusCode);
-        Assert.Equal(HttpStatusCode.BadRequest, (await host.AuthenticatedClient.GetAsync("/api/today/calendar?start=invalid&end=2026-11-20")).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await host.AuthenticatedClient.GetAsync("/api/v1/today/calendar?start=2026-11-20&end=2026-11-19")).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await host.AuthenticatedClient.GetAsync("/api/v1/today/calendar?start=2026-01-01&end=2026-04-01")).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await host.AuthenticatedClient.GetAsync("/api/v1/today/calendar?start=invalid&end=2026-11-20")).StatusCode);
     }
 }

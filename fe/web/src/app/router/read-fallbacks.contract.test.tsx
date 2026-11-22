@@ -17,8 +17,8 @@ import { bootTestCardRuntime } from './test-card-runtime.ts';
 import { withReadReceipts } from '../providers/read-receipts-fixture.tsx';
 
 const areas = [
-  { id: 'c1', name: 'One', color: '#123456', sort: 1, kind: 'user', created_at: 1, updated_at: 1 },
-  { id: 'c2', name: 'Two', color: '#654321', sort: 2, kind: 'user', created_at: 1, updated_at: 1 },
+  { id: 'c1', name: 'One', color: '#123456', sortOrder: 1, kind: 'user', createdAtMs: 1, updatedAtMs: 1 },
+  { id: 'c2', name: 'Two', color: '#654321', sortOrder: 2, kind: 'user', createdAtMs: 1, updatedAtMs: 1 },
 ];
 const unauthorized = createUnauthorizedChannel({ enqueue: (task) => task() });
 const track = fixtureTrack('w1', { areaId: 'c1', title: 'Reliable', cwd: '/tmp', sortOrder: 1, closedAtMs: null, createdAtMs: 1, updatedAtMs: 1 });

@@ -31,7 +31,7 @@ function mount(providers = ['codex', 'claude', 'opencode']) {
     let body: unknown = [];
     if (request.path === '/api/v1/areas') body = [AREA];
     if (request.path.startsWith('/api/v1/bootstrap')) body = { version: 'providers', areas: [AREA], templates: [],
-      providers: providers.map(provider => ({ provider, available: true, version: 'test', models: [`${provider}-model`] })) };
+      providers: providers.map(provider => ({ provider: provider === 'opencode' ? 'acp:opencode' : provider, available: true, version: 'test', models: [`${provider}-model`] })) };
     if (request.path === '/api/settings') body = {};
     return { status: 200, statusText: 'OK', body };
   } };

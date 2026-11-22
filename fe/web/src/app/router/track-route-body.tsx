@@ -20,7 +20,6 @@ import type { ReportPreparationPort } from '../../features/report/document/prepa
 import { TrackReportRegion,useTrackReportArrival,useTrackReportPresentation } from './track-report-presentation.tsx';
 import { useTrackViews,useTrackViewState } from './track-view-state.tsx';
 
-import { trackDtoToWire } from '../../../../core/api/track-projection.ts';
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { cardActivityOf } from '../../../../core/domain/activity.ts';
@@ -120,7 +119,7 @@ export function TrackRouteBody({
   reportEmpty?: ReactNode;
 
 }) {
-  const track = useMemo(() => toTrack(trackDtoToWire(snapshot.track), trackActivityFromSnapshot(snapshot)), [snapshot]);
+  const track = useMemo(() => toTrack(snapshot.track, trackActivityFromSnapshot(snapshot)), [snapshot]);
   const canReopenTrack = snapshot.track.closedAtMs != null;
   const canCloseTrack = !canReopenTrack;
   const toolsQuery = useQuery(trackToolsQueryOptions(transport, snapshot.track.id, unauthorized));

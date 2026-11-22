@@ -6,7 +6,7 @@
 
 import { z } from 'zod';
 
-import type { SourceProvenance,TrackSourceDetail } from '../api/generated/wire.js';
+import type { SourceProvenance, TrackSourceDetail } from './presentation-types.js';
 import type { ApiFailure } from '../api/types.js';
 import { parse,sanitizeAstPolicy,type SafeInline } from '../markdown/public.js';
 
