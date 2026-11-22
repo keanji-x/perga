@@ -15,6 +15,7 @@ builder.Services.AddPergaHostServices(builder.Configuration, builder.Environment
 var app = builder.Build();
 
 app.Use(HttpErrorHandling.InvokeExceptionShieldMiddlewareAsync);
+app.UseMiddleware<RequestOriginGuard>();
 app.UseWebSockets(new WebSocketOptions
 {
     KeepAliveInterval = TimeSpan.FromSeconds(30)
@@ -24,18 +25,15 @@ _ = app.Services.GetRequiredService<SystemManagementAuthorization>();
 var releases = app.Services.GetRequiredService<ReleaseSnapshotManager>();
 var contentTypeProvider = new FileExtensionContentTypeProvider();
 contentTypeProvider.Mappings[".webmanifest"] = "application/manifest+json";
-foreach (var requestPath in new[] { string.Empty, "/next" })
+app.UseDefaultFiles(new DefaultFilesOptions { FileProvider = releases, RequestPath = string.Empty });
+app.UseStaticFiles(new StaticFileOptions
 {
-    app.UseDefaultFiles(new DefaultFilesOptions { FileProvider = releases, RequestPath = requestPath });
-    app.UseStaticFiles(new StaticFileOptions
+    FileProvider = releases, RequestPath = string.Empty, ContentTypeProvider = contentTypeProvider,
+    OnPrepareResponse = ctx =>
     {
-        FileProvider = releases, RequestPath = requestPath, ContentTypeProvider = contentTypeProvider,
-        OnPrepareResponse = ctx =>
-        {
-            if (ctx.File.Name.EndsWith(".html", StringComparison.OrdinalIgnoreCase)) ctx.Context.Response.Headers.CacheControl = "no-cache";
-        }
-    });
-}
+        if (ctx.File.Name.EndsWith(".html", StringComparison.OrdinalIgnoreCase)) ctx.Context.Response.Headers.CacheControl = "no-cache";
+    }
+});
 
 app.MapGet("/healthz", () => Results.Ok(new { status = "ok", service = "perga" }));
 app.MapPergaApiV1();
