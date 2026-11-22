@@ -36,7 +36,6 @@
       "resolvedAtMs": null,
       "messageId": "input"
     },
-    "task": null,
     "requestKey": null
   },
   "emptyCreation": {
@@ -68,7 +67,6 @@
       "systemPrompt": null
     },
     "firstInput": null,
-    "task": null,
     "requestKey": null
   },
   "page": {
@@ -156,7 +154,11 @@
           ]
         },
         "startedAtMs": 1,
-        "finishedAtMs": 2
+        "finishedAtMs": 2,
+        "outcome": "attention",
+        "outcomeSummary": "Validation failed",
+        "triggerRunKey": null,
+        "archivedAtMs": null
       },
       "phase": "failed",
       "waitingReason": null
@@ -284,6 +286,10 @@
       ]
     },
     "startedAtMs": 1,
-    "finishedAtMs": 2
+    "finishedAtMs": 2,
+    "outcome": "attention",
+    "outcomeSummary": "Validation failed",
+    "triggerRunKey": null,
+    "archivedAtMs": null
   }
 }

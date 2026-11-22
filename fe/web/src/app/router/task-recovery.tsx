@@ -2,11 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ReportTaskRow } from '../../../../core/domain/report.ts';
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
-import {
-  acceptTaskOperation,
-  cancelTaskOperation,
-  rejectTaskOperation,
-} from '../../../../core/domain/task-recovery.ts';
+import { cancelTaskOperation } from '../../../../core/domain/task-recovery.ts';
 import { TaskRecoveryDetails } from '../../features/report/task/recovery.tsx';
 import { readErrorText } from '../../../../core/domain/read-failure.ts';
 import { queryKeys } from '../providers/query-keys.ts';
@@ -33,19 +29,14 @@ export function TaskRecovery({ trackId, taskKey, expanded, transport, unauthoriz
       client.invalidateQueries({ queryKey: queryKeys.trackReport(trackId), exact: true }),
     ]);
   };
-  const runTaskAction = (action: 'cancel' | 'accept' | 'reject') => {
+  const cancelTask = () => {
     if (actionPending) return;
     setActionPending(true);
     setActionError(null);
-    const op = action === 'cancel'
-      ? cancelTaskOperation(trackId, taskKey)
-      : action === 'accept'
-        ? acceptTaskOperation(trackId, taskKey)
-        : rejectTaskOperation(trackId, taskKey);
-    void runOperation(transport, op, unauthorized)
+    void runOperation(transport, cancelTaskOperation(trackId, taskKey), unauthorized)
       .then(() => refresh())
       .catch((error: unknown) => {
-        setActionError(readErrorText(error, `Could not ${action} this task.`));
+        setActionError(readErrorText(error, 'Could not cancel this task.'));
       })
       .finally(() => {
         setActionPending(false);
@@ -53,7 +44,6 @@ export function TaskRecovery({ trackId, taskKey, expanded, transport, unauthoriz
   };
   const statusLower = (task?.status ?? '').toLowerCase();
   const canCancel = enableTaskActions && ['pending', 'dispatched', 'running', 'verifying'].includes(statusLower);
-  const canReview = enableTaskActions && ['done', 'failed'].includes(statusLower);
   return <TaskRecoveryDetails
     current={currentTaskExecution(task)}
     task={task}
@@ -66,10 +56,7 @@ export function TaskRecovery({ trackId, taskKey, expanded, transport, unauthoriz
       pending: actionPending,
       error: actionError,
       canCancel,
-      canReview,
-      onCancel: () => runTaskAction('cancel'),
-      onAccept: () => runTaskAction('accept'),
-      onReject: () => runTaskAction('reject'),
+      onCancel: cancelTask,
     } : undefined}
   />;
 }

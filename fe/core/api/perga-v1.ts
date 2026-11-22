@@ -3,6 +3,7 @@
 
 import { z } from 'zod';
 
+import { flowOutcomeSchema } from '../domain/report-flow.js';
 import type { ApiDecodeFailure } from './types.js';
 
 export const systemInfoDtoSchema = z.object({
@@ -101,14 +102,6 @@ export const sectionRuleDtoSchema = z.object({
 });
 export type SectionRuleDto = z.infer<typeof sectionRuleDtoSchema>;
 
-export const scheduleSpecDtoSchema = z.object({
-  id: z.string(),
-  cron: z.string(),
-  timezone: z.string(),
-  staticWakePrompt: z.string().nullish(),
-});
-export type ScheduleSpecDto = z.infer<typeof scheduleSpecDtoSchema>;
-
 export const compiledTemplateManifestDtoSchema = z.object({
   id: z.string(),
   title: z.string().optional(),
@@ -124,7 +117,9 @@ export const compiledTemplateManifestDtoSchema = z.object({
   workspaceCreateCmd: z.string().nullish(),
   workspaceCloseCmd: z.string().nullish(),
   afterWorkerDoneCmd: z.string().nullish(),
-  schedules: z.array(scheduleSpecDtoSchema).nullish().transform((v) => v ?? []),
+  flow: z.array(z.record(z.string(), z.unknown())).default([]),
+  extends: z.string().nullish(),
+  hasHeaderView: z.boolean().default(false),
   initialReportMarkdown: z.string().nullish().transform((v) => v ?? ''),
   routing: z.array(z.unknown()).nullish(),
   checkpoints: z.array(z.unknown()).nullish(),
@@ -182,31 +177,11 @@ export const templateHeaderViewDtoSchema = z.object({
   rules: z.array(z.object({ label: z.string(), text: z.string() })).nullish(),
 });
 
-export const trackScheduleDtoSchema = z.object({
-  id: z.string(), trackId: z.string(), sourceKind: z.string(), scheduleKind: z.enum(['once', 'cron']),
-  title: z.string(), prompt: z.string(), cronExpr: z.string().nullable(), timezone: z.string(),
-  runAtMs: z.number().nullable(), nextFireAtMs: z.number().nullable(), lastFiredAtMs: z.number().nullable(),
-  maxOccurrences: z.number().nullable(), firedCount: z.number(), state: z.enum(['active', 'done', 'canceled']),
-  createdAtMs: z.number(), updatedAtMs: z.number(),
-});
-export type TrackScheduleDto = z.infer<typeof trackScheduleDtoSchema>;
-export const trackScheduleRunDtoSchema = z.object({
-  wakeId: z.string(), scheduleId: z.string().nullable(), state: z.string(), reason: z.string().nullable(),
-  turnId: z.string().nullable(), createdAtMs: z.number(), updatedAtMs: z.number(),
-});
-export const trackSchedulesSnapshotSchema = z.object({
-  schedules: z.array(trackScheduleDtoSchema), recentRuns: z.array(trackScheduleRunDtoSchema),
-});
-export type TrackSchedulesSnapshot = z.infer<typeof trackSchedulesSnapshotSchema>;
-export const setTrackScheduleRequestSchema = z.object({
-  title: z.string(), prompt: z.string(), id: z.string().optional(), cronExpr: z.string().optional(),
-  runAtMs: z.number().optional(), runAt: z.string().optional(), timezone: z.string().optional(),
-  maxOccurrences: z.number().optional(), sourceKind: z.string().optional(),
-});
-export type SetTrackScheduleRequest = z.infer<typeof setTrackScheduleRequestSchema>;
 export const trackTemplateSnapshotSchema = z.object({
-  snapshot: z.string().nullable(), manifest: compiledTemplateManifestDtoSchema.nullable(),
-  inputs: z.unknown(), state: z.unknown(), headerView: templateHeaderViewDtoSchema.nullable(),
+  snapshot: z.string().nullish().transform((v) => v ?? null),
+  manifest: compiledTemplateManifestDtoSchema.nullish().transform((v) => v ?? null),
+  inputs: z.unknown(), state: z.unknown(),
+  headerView: templateHeaderViewDtoSchema.nullish().transform((v) => v ?? null),
 });
 
 export const trackDataPatchResultSchema = z.object({
@@ -295,6 +270,10 @@ export const taskDtoSchema = z.object({
   statusDetail: z.string().nullish(),
   semanticVerdict: semanticVerdictSchema.default('none'),
   semanticNote: z.string().nullish(),
+  outcome: flowOutcomeSchema.optional(),
+  outcomeSummary: z.string().nullish(),
+  triggerRunKey: z.string().nullish(),
+  archivedAtMs: z.number().int().nullish(),
   sessionId: z.string().nullish(),
   runCount: z.number().int().default(0),
   workerResult: z.unknown().nullish(),
@@ -414,7 +393,7 @@ export type SessionInputReceipt = z.infer<typeof sessionInputReceiptSchema>;
 export const sessionCreationReceiptSchema = z.object({
   session: agentSessionDtoSchema,
   firstInput: sessionInputReceiptSchema.nullish(),
-  task: taskDtoSchema.nullish(), requestKey: z.string().nullish(),
+  requestKey: z.string().nullish(),
 }).refine(result => result.firstInput == null || result.firstInput.sessionId === result.session.id);
 
 export type SessionCreationReceipt = z.infer<typeof sessionCreationReceiptSchema>;
@@ -444,13 +423,10 @@ export const approvalChoiceDtoSchema = z.object({
 });
 export type ApprovalChoiceDto = z.infer<typeof approvalChoiceDtoSchema>;
 
-export const sessionTaskRequestSchema = z.object({
-  access: z.enum(['read_only', 'read_write']).nullish(), acceptance: z.string().nullish(), gate: z.string().nullish(), dependsOn: z.array(z.string()).nullish(),
-});
 export const createSessionRequestSchema = z.object({
   title: z.string().nullish(), provider: z.string().nullish(), model: z.string().nullish(), reasoningEffort: z.string().nullish(),
   permissionMode: z.string().nullish(), systemPrompt: z.string().nullish(), prompt: z.string().nullish(),
-  notifyParent: z.enum(['none', 'turn_end', 'task_settled']).nullish(), task: sessionTaskRequestSchema.nullish(), role: z.string().nullish(),
+  notifyParent: z.enum(['none', 'turn_end']).nullish(),
 }).strict();
 export const updateSessionRequestSchema = z.object({
   expectedConfigVersion: z.number().int().nullish(), title: z.string().nullish(), archived: z.boolean().nullish(),

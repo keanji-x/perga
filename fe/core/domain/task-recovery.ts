@@ -55,24 +55,6 @@ export function cancelTaskOperation(trackId: string, key: string): ApiOperation<
   };
 }
 
-export function acceptTaskOperation(trackId: string, key: string, note?: string): ApiOperation<TaskDto | undefined> {
-  return {
-    method: 'POST',
-    path: `/api/v1/tracks/${encodeURIComponent(trackId)}/tasks/${encodeURIComponent(key)}/accept`,
-    body: note === undefined ? {} : { note },
-    responseSchema: z.union([taskDtoSchema, z.undefined()]),
-  };
-}
-
-export function rejectTaskOperation(trackId: string, key: string, note?: string): ApiOperation<TaskDto | undefined> {
-  return {
-    method: 'POST',
-    path: `/api/v1/tracks/${encodeURIComponent(trackId)}/tasks/${encodeURIComponent(key)}/reject`,
-    body: note === undefined ? {} : { note },
-    responseSchema: z.union([taskDtoSchema, z.undefined()]),
-  };
-}
-
 /** Dispatch is preparation; only running means business execution has begun. */
 export function taskStatusLabel(status: string): string {
   switch (status.toLowerCase()) {

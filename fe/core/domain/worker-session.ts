@@ -1,6 +1,5 @@
 import { z } from 'zod';
-import { type SessionActivity, type SessionCapabilities, sessionCreationReceiptSchema } from '../api/perga-v1.js';
-import type { ApiOperation } from '../api/types.js';
+import { type SessionActivity, type SessionCapabilities } from '../api/perga-v1.js';
 import type { ModelCatalog } from './conversation-models.js';
 
 /** A task-bound provider can declare a different model catalog from the installation. */
@@ -51,15 +50,4 @@ export function workerToolActivity(events: SessionActivity['events']) {
     });
   }
   return tools;
-}
-
-export type WorkerDispatchOptions = Readonly<{
-  access?: 'read_only' | 'read_write'; acceptance?: string; dependsOn?: readonly string[]; gate?: string; provider?: string; model?: string;
-}>;
-
-/** A task is optional configuration of the same session creation primitive. */
-export function workerDispatchOperation(trackId: string, key: string, goal: string, options: WorkerDispatchOptions = {}): ApiOperation<z.infer<typeof sessionCreationReceiptSchema>> {
-  const { provider, model, ...task } = options;
-  return { method: 'POST', path: `/api/v1/tracks/${encodeURIComponent(trackId)}/sessions`,
-    headers: { 'Idempotency-Key': key }, body: { prompt: goal, provider, model, task }, responseSchema: sessionCreationReceiptSchema };
 }

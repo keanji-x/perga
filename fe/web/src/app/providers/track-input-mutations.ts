@@ -7,7 +7,6 @@ import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { type AskId, type AskQuestion } from '../../../../core/domain/activity.ts';
 import { decideApprovalOperation, type PendingApproval } from '../../../../core/domain/approval.ts';
 import { answerAskOperation } from '../../../../core/domain/ask.ts';
-import { updateTrackReportBlockOperation, type HumanReportBlockUpdateBody } from '../../../../core/domain/report-operations.ts';
 import { runOperation } from './query-operation.ts';
 export function useTrackInputMutations(transport: ApiTransportPort, unauthorized: UnauthorizedChannel) {
   const client = useQueryClient();
@@ -36,17 +35,8 @@ export function useTrackInputMutations(transport: ApiTransportPort, unauthorized
       void client.invalidateQueries({ queryKey: queryKeys.harnessItems(approval.sessionId) });
     },
   });
-  const updateReportBlock = useRecoveryMutation(transport, {
-    mutationFn: ({ trackId, blockId, body }: { trackId: string; blockId: string; body: HumanReportBlockUpdateBody }, transport: ApiTransportPort) =>
-      runOperation(transport, updateTrackReportBlockOperation(trackId, blockId, body), unauthorized),
-    onSettled: (_result, _error, { trackId }) => {
-      void client.invalidateQueries({ queryKey: queryKeys.trackDetail(trackId) });
-      void client.invalidateQueries({ queryKey: queryKeys.trackReport(trackId) });
-    },
-  });
   return {
     answerAsk: async (trackId: string, askId: AskId, answers: readonly AskAnswer[], questions?: readonly AskQuestion[]) => { await answerAsk.mutateAsync({ trackId, askId, answers, questions }); },
     decideApproval: async (trackId: string, approval: PendingApproval, optionId: string) => { await decideApproval.mutateAsync({ trackId, approval, optionId }); },
-    updateReportBlock: (trackId: string, blockId: string, body: HumanReportBlockUpdateBody) => updateReportBlock.mutateAsync({ trackId, blockId, body }),
   };
 }

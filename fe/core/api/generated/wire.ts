@@ -472,18 +472,6 @@ export type WorkerSessionState = "starting" | "running" | "idle" | "turn_pending
  */
 export type WorkspaceIsolation = "managed" | "worktree" | "none";
 
-/** Perga /api/v1 schedule contracts; aligned with Perga.Contracts/TrackScheduleDtos.cs. */
-export type TrackScheduleDto = {
-  id: string; trackId: string; sourceKind: string; scheduleKind: 'once' | 'cron'; title: string; prompt: string;
-  cronExpr: string | null; timezone: string; runAtMs: number | null; nextFireAtMs: number | null;
-  lastFiredAtMs: number | null; maxOccurrences: number | null; firedCount: number;
-  state: 'active' | 'done' | 'canceled'; createdAtMs: number; updatedAtMs: number;
-};
-export type TrackScheduleRunDto = {
-  wakeId: string; scheduleId: string | null; state: string; reason: string | null;
-  turnId: string | null; createdAtMs: number; updatedAtMs: number;
-};
-
 export type TodayCalendar = { today: string, time_zone: string, start: string, end: string, days: Array<TodayCalendarDay>, schedules: Array<TodayScheduleItem>, };
 
 export type TodayCalendarDay = { date: string, has_daily_track: boolean, has_report: boolean, };
@@ -543,8 +531,6 @@ export type SystemInfoDto = { releaseId: string; webBuildId: string; hostBuildId
 export type SystemDrainResponse = { draining: boolean; activeDispatches: number };
 
 export type SystemReloadResponse = { releaseId: string; webBuildId: string };
-
-export type TrackSchedulesSnapshot = { schedules: TrackScheduleDto[]; recentRuns: TrackScheduleRunDto[] };
 
 export type SessionInteractionResult = import('zod').infer<typeof import('../perga-v1.js').sessionInteractionResultSchema>;
 

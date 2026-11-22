@@ -24,6 +24,7 @@ import { DEPLOYMENT_OWNER_USER_ID,loginOperation } from './auth.js';
 import {
 agentSessionDtoSchema,
 bootstrapDtoSchema,
+createSessionRequestSchema,
 decodePergaEventEnvelope,
 sessionCreationReceiptSchema,
 trackAggregateSnapshotDtoSchema,
@@ -43,11 +44,9 @@ trackWorkspaceRawFileUrl,
 import { selectedReadyTemplateId } from '../domain/mentions.js';
 import { plannerSwitchOperation } from '../domain/planner-switch.js';
 import { readReportDocument, trackTaskVerdictsOperation } from '../domain/report.js';
-import { readTrackReportOperation, readTrackViewsOperation, updateTrackReportBlockOperation } from '../domain/report-operations.js';
+import { readTrackReportOperation, readTrackViewsOperation } from '../domain/report-operations.js';
 import {
-acceptTaskOperation,
 cancelTaskOperation,
-rejectTaskOperation,
 taskEvidence,
 } from '../domain/task-recovery.js';
 import { compilePergaTemplateInputs,parsePergaInputsSchema } from '../domain/template-input.js';
@@ -107,7 +106,7 @@ describe('Perga /api/v1 protocol contracts', () => {
         workspaceCreateCmd: null,
         workspaceCloseCmd: null,
         afterWorkerDoneCmd: null,
-        schedules: [],
+        flow: [],
         initialReportMarkdown: '# Plan\n\nInitial outline.',
       },
     ],
@@ -464,16 +463,6 @@ describe('Perga /api/v1 protocol contracts', () => {
 
     expect(readTrackReportOperation('trk_1').path).toBe('/api/v1/tracks/trk_1/report');
     expect(trackTaskVerdictsOperation('trk_1').path).toBe('/api/v1/tracks/trk_1/report');
-    const blockPut = updateTrackReportBlockOperation('trk_1', 'b_prose1', {
-      docRev: 4,
-      knownBlockRev: 2,
-      kind: 'prose',
-      markdown: '# Updated',
-    });
-    expect(blockPut).toMatchObject({
-      method: 'PUT',
-      path: '/api/v1/tracks/trk_1/report/blocks/b_prose1',
-    });
   });
 
   it('maps Binary Sessions (Lead + Subagent), Terminals, Files, VCS Diff, and WS envelopes', () => {
@@ -770,8 +759,6 @@ describe('Perga /api/v1 protocol contracts', () => {
     expect(evidence.gateSteps[0]?.output).toContain('AssertionError');
     expect(evidence.workerResult).toContain('Partial progress');
     expect(cancelTaskOperation('trk_1', 'build-fe').path).toBe('/api/v1/tracks/trk_1/tasks/build-fe/cancel');
-    expect(acceptTaskOperation('trk_1', 'build-fe').path).toBe('/api/v1/tracks/trk_1/tasks/build-fe/accept');
-    expect(rejectTaskOperation('trk_1', 'build-fe').path).toBe('/api/v1/tracks/trk_1/tasks/build-fe/reject');
 
     const agyReport = readTrackReportOperation('trk_1').responseSchema.parse({
       docRev: 2,
@@ -837,6 +824,7 @@ it('decodes the Host creation receipt without a legacy status URL', () => {
   const operation = createTrackConversationOperation('track', 'Hello', 'create', 'codex', {
     model: null, reasoning_effort: null,
   });
+  expect(createSessionRequestSchema.parse(operation.body)).toEqual(operation.body);
   expect(operation.responseSchema.parse(hostPayloads.creation)).toMatchObject({
     session: hostPayloads.creation.session, sessionInput: hostPayloads.creation.firstInput,
   });
@@ -846,7 +834,7 @@ it('decodes the Host creation receipt without a legacy status URL', () => {
 
 it('decodes task ownership and latest evidence from the C# task fixture', () => {
   const task = taskDtoSchema.parse(hostPayloads.task);
-  expect(task).toMatchObject({ sessionId: 'session', runCount: 2, workerResult: { summary: 'Latest result' } });
+  expect(task).toMatchObject({ sessionId: 'session', runCount: 2, outcome: 'attention', workerResult: { summary: 'Latest result' } });
   expect(taskEvidence(task)).toMatchObject({ gatePassed: false, gateSteps: [{ output: 'Check failed' }] });
   expect(task).not.toHaveProperty('latestAttemptId');
 });
