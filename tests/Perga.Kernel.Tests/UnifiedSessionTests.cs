@@ -25,10 +25,7 @@ public sealed class UnifiedSessionTests
             }
             if (task.Status == TaskRunStatus.Failed) Assert.Null(task.SessionId);
         };
-        var report = await ctx.Kernel.ReadReportAsync(snapshot.Track.Id);
-        await ctx.Kernel.CommitReportAsync(snapshot.Track.Id, snapshot.Track.LeadSessionId!,
-            new(report.Anchor, [new Perga.ReportDoc.BlockOp.UpsertBlockOp(null, Perga.ReportDoc.ReportBlockKind.Task, null,
-                TestJson.FromObject(new { task_key = "initial-failure", ready = true, goal_or_cmd = "inspect" }))]));
+        await FlowFixture.AddAsync(ctx.Kernel, snapshot.Track.Id, FlowFixture.Worker("initial-failure", "inspect"));
         await ctx.Kernel.WaitForTrackIdleAsync(snapshot.Track.Id);
         Assert.True(rejected);
         var failed = Assert.Single((await ctx.Store.LoadTrackAggregateAsync(snapshot.Track.Id, default))!.Tasks);
@@ -98,10 +95,11 @@ public sealed class UnifiedSessionTests
     {
         await using var ctx = new KernelTestContext();
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
-        var created = await ctx.Kernel.CreateSessionAsync(snapshot.Track.Id,
-            new(Prompt: worker ? "inspect" : null, Task: worker ? new() : null), "create", Human, default);
+        var session = worker
+            ? (await FlowFixture.StartWorkerAsync(ctx.Kernel, snapshot.Track.Id, FlowFixture.Worker("create", "inspect"))).Session
+            : (await ctx.Kernel.CreateSessionAsync(snapshot.Track.Id, new(), "create", Human, default)).Receipt.Session;
         await ctx.Kernel.WaitForTrackIdleAsync(snapshot.Track.Id);
-        var id = created.Receipt.Session.Id;
+        var id = session.Id;
         var updated = await ctx.Kernel.UpdateSessionAsync(id, new(ExpectedConfigVersion: 0, Model: new("model")), Human, default);
         Assert.Equal(1, updated.ConfigVersion);
         var failure = await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.UpdateSessionAsync(id,
@@ -119,9 +117,9 @@ public sealed class UnifiedSessionTests
         await using var ctx = new KernelTestContext();
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
         ctx.AgentRuntime.SupportsSessionResume = true;
-        var created = await ctx.Kernel.CreateSessionAsync(snapshot.Track.Id, new(Prompt: "inspect", Task: new()), "task", Human, default);
+        var created = await FlowFixture.StartWorkerAsync(ctx.Kernel, snapshot.Track.Id, FlowFixture.Worker("task", "inspect"));
         await ctx.Kernel.WaitForTrackIdleAsync(snapshot.Track.Id);
-        var id = created.Receipt.Session.Id;
+        var id = created.Session.Id;
         var before = await ctx.Kernel.GetSessionItemsAsync(id, new(), new InteropPrincipal.Human(), default);
         if (action == "reconnect")
         {
@@ -131,58 +129,13 @@ public sealed class UnifiedSessionTests
             await ctx.Kernel.WaitForTrackIdleAsync(snapshot.Track.Id);
         }
         var recovered = await ctx.Kernel.ControlSessionAsync(id, new(action), Human, default);
-        var taskAfter = Assert.Single(await ctx.Kernel.ListTasksAsync(snapshot.Track.Id), t => t.Id == created.Receipt.Task!.Id);
+        var taskAfter = Assert.Single(await ctx.Kernel.ListTasksAsync(snapshot.Track.Id), t => t.Id == created.Task!.Id);
         Assert.Equal(id, taskAfter.SessionId);
         Assert.Equal(1, taskAfter.RunCount);
         Assert.Equal(TaskRunStatus.Running, taskAfter.Status);
         Assert.Equal(action == "reset_context" ? before.Session.Epoch + 1 : before.Session.Epoch, recovered.Epoch);
         Assert.Equal("idle", recovered.Status);
         if (action == "reset_context") Assert.Null(recovered.NativeThreadId);
-    }
-
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task ActivationPreservesCommittedSessionConfiguration(bool blocked)
-    {
-        await using var ctx = new KernelTestContext();
-        ctx.AgentRuntime.Providers = [new("claude", true, "1", null, ["model-a", "model-b"])];
-        var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
-        var blocker = blocked ? (await ctx.Kernel.CreateSessionAsync(snapshot.Track.Id,
-            new(Prompt: "blocker", Provider: "claude", Task: new()), "blocker", Human, default)).Receipt : null;
-        if (blocked) await ctx.Kernel.WaitForTrackIdleAsync(snapshot.Track.Id);
-        var created = (await ctx.Kernel.CreateSessionAsync(snapshot.Track.Id,
-            new(Prompt: "inspect", Provider: "claude", Model: "model-a", PermissionMode: "plan",
-                Task: new(DependsOn: blocker is null ? null : [blocker.Task!.TaskKey])), "config", Human, default)).Receipt;
-        var id = created.Session.Id;
-        if (blocked)
-        {
-            Assert.Equal(0, created.Task!.RunCount);
-            var summary = Assert.Single(await ctx.Kernel.ListSessionsAsync(snapshot.Track.Id, new(), Human, default), s => s.Session.Id == id);
-            Assert.Equal("waiting_task", summary.ReadonlyReason);
-            Assert.Equal(created.Task.Id, summary.TaskId);
-            Assert.Equal("waiting_task", (await ctx.Kernel.GetSessionItemsAsync(id, new(), Human, default)).ReadonlyReason);
-            Assert.Equal(KernelErrorCode.Conflict, (await Assert.ThrowsAsync<KernelException>(() =>
-                ctx.Kernel.SendSessionMessageAsync(id, new(Content: "too early", RequestKey: "early"), Human, default))).Code);
-            await ctx.Kernel.UpdateSessionAsync(id, new(ExpectedConfigVersion: 0, Model: new("model-b"),
-                ReasoningEffort: new("high")), Human, default);
-            await ctx.Kernel.CompleteTaskDoneAsync(snapshot.Track.Id, blocker!.Session.Id);
-            await ctx.Kernel.AcceptTaskAsync(snapshot.Track.Id, null, blocker.Task!.Id);
-        }
-        await ctx.Kernel.WaitForTrackIdleAsync(snapshot.Track.Id);
-        var page = await ctx.Kernel.GetSessionItemsAsync(id, new(), new InteropPrincipal.Human(), default);
-        var session = page.Session;
-        Assert.NotNull(page.TaskBinding);
-        Assert.Equal(1, page.TaskBinding!.Task.RunCount);
-        Assert.Equal("claude", session.Provider);
-        Assert.Equal("plan", session.PermissionMode);
-        Assert.Equal(blocked ? "model-b" : "model-a", session.Model);
-        Assert.Equal(blocked ? "high" : null, session.ReasoningEffort);
-        Assert.Equal(blocked ? 1L : 0L, session.ConfigVersion);
-        var launch = Assert.Single(ctx.AgentRuntime.OpenedSessions, s => s.LaunchSpec.StateKey == id).LaunchSpec;
-        Assert.Equal(session.Model, launch.Model);
-        Assert.Equal("plan", launch.PermissionMode);
-        Assert.Equal(session.ReasoningEffort, launch.ReasoningEffort);
     }
 
     [Theory]
@@ -193,8 +146,7 @@ public sealed class UnifiedSessionTests
     {
         await using var ctx = new KernelTestContext();
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
-        var receipt = (await ctx.Kernel.CreateSessionAsync(snapshot.Track.Id,
-            new(Prompt: "inspect", Task: new()), "settled", Human, default)).Receipt;
+        var receipt = await FlowFixture.StartWorkerAsync(ctx.Kernel, snapshot.Track.Id, FlowFixture.Worker("settled", "inspect"));
         await ctx.Kernel.WaitForTrackIdleAsync(snapshot.Track.Id);
         if (outcome == "done") await ctx.Kernel.CompleteTaskDoneAsync(snapshot.Track.Id, receipt.Session.Id);
         else if (outcome == "failed") await ctx.Kernel.CompleteTaskFailAsync(snapshot.Track.Id, receipt.Session.Id, "failed");

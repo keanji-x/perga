@@ -650,19 +650,7 @@ public sealed class SessionStreamingAndCompactionTests
             return StreamScriptedTurn(session, input, 1, ct);
         };
 
-        var r0 = await ctx.Kernel.ReadReportAsync(trackId, leadId);
-        await ctx.Kernel.CommitReportAsync(trackId, leadId, new ReportCommitRequest(
-            r0.Anchor,
-            [new BlockOp.UpsertBlockOp("b_worker_perm", ReportBlockKind.Task, null, TestJson.FromObject(new
-            {
-                key = "worker-perm",
-                kind = "codex",
-                provider,
-                goal = "Run worker task",
-                ready = true,
-                declared_by = "spec",
-                no_gate_reason = "test"
-            }))]));
+        await FlowFixture.AddAsync(ctx.Kernel, trackId, FlowFixture.Worker("worker-perm", "Run worker task", provider: provider));
 
         var workerSession = await openedWorker.Task.WaitAsync(TimeSpan.FromSeconds(10));
         Assert.Equal(provider.StartsWith("acp:") ? null : "never", workerSession.LaunchSpec.PermissionMode);

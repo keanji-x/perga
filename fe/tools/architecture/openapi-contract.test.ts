@@ -1,9 +1,10 @@
 import { readFileSync } from 'node:fs';
+import { runInNewContext } from 'node:vm';
 import { describe,expect,it } from 'vitest';
 import { z } from 'zod';
 import hostPayloads from '../../core/api/fixtures/unified-host-payloads.json';
-import { systemUpgradeReceiptSchema } from '../../core/api/perga-v1.ts';
-import { compileTemplateInputs } from '../../core/domain/template-input.ts';
+import { createSessionRequestSchema, systemUpgradeReceiptSchema } from '../../core/api/perga-v1.ts';
+import { compilePergaTemplateInputs, parsePergaInputsSchema } from '../../core/domain/template-input.ts';
 
 type JsonObject = Record<string, unknown>;
 
@@ -22,7 +23,7 @@ const RESPONSE_WIRE_EXCEPTIONS = new Set([
   // Route-owned Planner switch DTOs; this REST-only slice has no frontend mutation consumer yet.
   // Their response shapes are exercised through the authenticated router's planner_switch_http_ tests.
   'PlannerSwitchResponse', 'PlannerSwitchRefusalBody',
-  'ReadFileResponse', 'ReportBlockWriteResponse',
+  'ReadFileResponse',
   'ResetPlannerCardResponse', 'SendPlannerInputResponse',
   'SetPlannerModelResponse',
   // Route-owned DTO decoded by authenticationRetryResponseSchema in core/domain/agent-providers.ts.
@@ -272,7 +273,6 @@ it('declares all Perga /api/v1 REST endpoints in openapi.json', () => {
     '/api/v1/tracks/{trackId}/files',
     '/api/v1/tracks/{trackId}/vcs-diff',
     '/api/v1/tracks/{trackId}/report',
-    '/api/v1/tracks/{trackId}/report/blocks/{blockId}',
     '/api/v1/tracks/{trackId}/sessions',
     '/api/v1/sessions/{sessionId}/items',
     '/api/v1/sessions/{sessionId}/messages',
@@ -289,39 +289,29 @@ it('declares all Perga /api/v1 REST endpoints in openapi.json', () => {
   expect(document.paths['/api/v1/tracks/{trackId}/tasks/{taskKey}/attempts']).toBeUndefined();
 });
 
-it('compiles shipped Perga .perga.js template input schemas cleanly', () => {
-  const devSource = readFileSync(new URL('../../../templates/dev.perga.js', import.meta.url), 'utf8');
-  expect(devSource).toContain('id: "dev"');
-  const devInputsSchema = {
-    type: 'object',
-    properties: {
-      baseBranch: { type: 'string', default: 'main', title: 'Upstream base branch' },
-      testCmd: { type: 'string', default: 'dotnet test', title: 'Default verification command' },
-      requirePrReview: { type: 'boolean', default: true, title: 'Require human confirmation before merging PR' },
-      riskLevel: { type: 'string', enum: ['low', 'medium', 'high'], default: 'medium', title: 'Change risk profile' },
-    },
+it('compiles input defaults from the bundled agents-delivery template', () => {
+  const source = readFileSync(new URL('../../../templates/agents-delivery/template.perga.js', import.meta.url), 'utf8');
+  const definition: unknown = runInNewContext(source.replace(/^export default /m, ''), { defineTemplate: (value: unknown) => value });
+  const template = z.object({ id: z.literal('agents-delivery'), inputs: z.unknown() }).parse(definition);
+  expect(compilePergaTemplateInputs(parsePergaInputsSchema(template.inputs), {})).toMatchObject({
+    valid: true, input: { reviewModel: 'gpt-6.2-soar', testCmd: 'dotnet test Perga.sln' },
+  });
+});
+
+it('matches the Host track report, task, template and flow operations', () => {
+  const host = readFileSync(new URL('../../../src/Perga.Host/Http/ApiV1Endpoints.cs', import.meta.url), 'utf8');
+  const document = JSON.parse(readFileSync(new URL('../../core/api/generated/openapi.json', import.meta.url), 'utf8')) as {
+    paths: Record<string, Record<string, unknown>>;
   };
-  const formHeader = `<!-- perga:input-form ${JSON.stringify({
-    version: 1,
-    groups: [{
-      title: 'Development Settings',
-      description: 'Engineering inputs',
-      fields: [
-        { kind: 'text', key: 'baseBranch', label: 'Upstream base branch', default: 'main', required: false, placeholder: 'main', help: '', format: null },
-        { kind: 'text', key: 'testCmd', label: 'Default verification command', default: 'dotnet test', required: false, placeholder: 'dotnet test', help: '', format: null },
-        { kind: 'toggle', key: 'requirePrReview', label: 'Require human confirmation before merging PR', default: 'true', on_value: 'true', off_value: 'false', on_description: 'Ask first', off_description: 'Auto' },
-      ],
-    }],
-  })} -->\n# Goal`;
-  const result = compileTemplateInputs(formHeader, devInputsSchema, {});
-  expect(result.status).toBe('ready');
-  if (result.status === 'ready') {
-    expect(result.input).toEqual({
-      baseBranch: 'main',
-      testCmd: 'dotnet test',
-      requirePrReview: true,
-    });
-  }
+  const governedTrackPath = /^\/api\/v1\/tracks\/\{trackId\}\/(report|tasks|template|flow|schedules)(?:\/|$)/;
+  const expected = [...host.matchAll(/v1\.Map(Get|Post|Patch|Delete|Put)\("([^"]+)"/g)]
+    .map(match => ({ method: match[1].toLowerCase(), path: `/api/v1${match[2]}` }))
+    .filter(({ path }) => governedTrackPath.test(path))
+    .map(({ method, path }) => `${method} ${path}`).sort();
+  const actual = Object.entries(document.paths).filter(([path]) => governedTrackPath.test(path))
+    .flatMap(([path, operations]) => Object.keys(operations).filter(method => METHODS.has(method)).map(method => `${method} ${path}`)).sort();
+  expect(expected).toContain('post /api/v1/tracks/{trackId}/tasks/{taskKey}/cancel');
+  expect(actual).toEqual(expected);
 });
 
 it('preserves fractional Unix seconds in upgrade receipts', () => {
@@ -352,7 +342,7 @@ it('matches the eight session primitives to the production Host routes and remov
 // These fixtures are serialized by the real C# DTOs with PergaJsonDefaults.ApiOptions.
 // Validate the published JSON Schema, including nested refs, rather than the hand-written decoder.
 it.each([
-  ['CreateSessionRequest', { task: null }],
+  ['CreateSessionRequest', { title: null, prompt: 'Inspect the workspace', notifyParent: null }],
   ['SessionCreationReceipt', hostPayloads.creation],
   ['SessionCreationReceipt', hostPayloads.emptyCreation],
   ['SessionItemsPageDto', hostPayloads.page],
@@ -372,6 +362,17 @@ it.each([
 });
 
 
+it('limits collaborator creation to turn notifications and plain session fields', () => {
+  const document = JSON.parse(readFileSync(new URL('../../core/api/generated/openapi.json', import.meta.url), 'utf8')) as JsonObject;
+  const published = resolveRef(document, '#/components/schemas/CreateSessionRequest') as z.core.JSONSchema.JSONSchema;
+  for (const schema of [createSessionRequestSchema, z.fromJSONSchema(published)]) {
+    expect(schema.safeParse({ prompt: 'Inspect', notifyParent: 'turn_end' }).success).toBe(true);
+    expect(schema.safeParse({ notifyParent: 'task_settled' }).success).toBe(false);
+    expect(schema.safeParse({ task: null }).success).toBe(false);
+    expect(schema.safeParse({ role: null }).success).toBe(false);
+  }
+});
+
 it('publishes task-owned sessions and epoch message guards without attempt fields', () => {
   const document = JSON.parse(readFileSync(new URL('../../core/api/generated/openapi.json', import.meta.url), 'utf8')) as {
     components: { schemas: Record<string, { properties: Record<string, unknown> }> };
@@ -379,6 +380,7 @@ it('publishes task-owned sessions and epoch message guards without attempt field
   const schemas = document.components.schemas;
   expect(Object.keys(schemas.TaskDto.properties)).toEqual(expect.arrayContaining([
     'sessionId', 'runCount', 'workerResult', 'meta', 'gateVerdict', 'startedAtMs', 'finishedAtMs',
+    'outcome', 'outcomeSummary', 'triggerRunKey', 'archivedAtMs',
   ]));
   expect(schemas.TaskDto.properties).not.toHaveProperty('latestAttemptId');
   expect(schemas.AgentSessionDto.properties).not.toHaveProperty('boundTaskId');

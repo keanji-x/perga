@@ -228,12 +228,15 @@ public sealed class McpKernelAndVcsIntegrationTests
 
         // 1. Lead gets shared, governance and unified session tools.
         var leadTools = await ListToolNamesAsync(cluster, "/mcp/kernel", leadToken, ct);
-        Assert.Equal(38, leadTools.Count);
         Assert.Contains(KernelMcpToolNames.FlowCommit, leadTools);
         Assert.Contains(KernelMcpToolNames.FlowRead, leadTools);
         Assert.Contains(KernelMcpToolNames.ProviderList, leadTools);
         Assert.Contains(KernelMcpToolNames.DataPatch, leadTools);
-        Assert.Contains(KernelMcpToolNames.TaskAccept, leadTools);
+        Assert.DoesNotContain("task_accept", leadTools);
+        Assert.DoesNotContain("task_reject", leadTools);
+        Assert.DoesNotContain("schedule_list", leadTools);
+        Assert.DoesNotContain("schedule_set", leadTools);
+        Assert.DoesNotContain("schedule_cancel", leadTools);
         Assert.Contains(KernelMcpToolNames.TrackClose, leadTools);
         Assert.Contains(KernelMcpToolNames.TemplateList, leadTools);
         Assert.Contains(KernelMcpToolNames.TemplateRead, leadTools);
@@ -276,50 +279,10 @@ public sealed class McpKernelAndVcsIntegrationTests
             yield return new UnifiedAgentEvent.TurnCompleted(new TokenUsage(20, 10, 0, 100_000));
         }
 
-        // Commit two tasks via report_commit: 'work-1' (ready=true) and 'work-cancel' (ready=false)
-        var (commitText, commitErr) = await CallToolAsync(
-            cluster,
-            "/mcp/kernel",
-            leadToken,
-            KernelMcpToolNames.ReportCommit,
-            new
-            {
-                anchor = anchorElem,
-                summary = "Added contract tasks",
-                ops = new object[]
-                {
-                    new
-                    {
-                        op = "upsert_block",
-                        id = "b_t1",
-                        blockKind = "task",
-                        payload = new
-                        {
-                            taskKey = "work-1",
-                            kind = "subagent",
-                            access = "read_write",
-                            ready = true,
-                            goal = "Implement feature 1"
-                        }
-                    },
-                    new
-                    {
-                        op = "upsert_block",
-                        id = "b_t2",
-                        blockKind = "task",
-                        payload = new
-                        {
-                            taskKey = "work-cancel",
-                            kind = "subagent",
-                            access = "read_only",
-                            ready = false,
-                            goal = "Draft task to cancel"
-                        }
-                    }
-                }
-            },
-            ct);
-        Assert.False(commitErr, commitText);
+        await FlowFixture.AddAsync(kernel, trackAId,
+            new("work-1", new("run", Prompt: "Implement feature 1", Access: "read_write")),
+            new("work-cancel", new("run", Prompt: "Draft task to cancel", Access: "read_only"),
+                When: new(At: "2099-01-01T00:00:00Z")));
 
         var (taskListText, taskListErr) = await CallToolAsync(cluster, "/mcp/kernel", leadToken, KernelMcpToolNames.TaskList, new { }, ct);
         Assert.False(taskListErr);
@@ -332,12 +295,11 @@ public sealed class McpKernelAndVcsIntegrationTests
         // Bound Workers observe sessions and submit their own task results.
         var contractToken = await contractSubagentTokenTcs.Task.WaitAsync(ct);
         var subTools = await ListToolNamesAsync(cluster, "/mcp/kernel", contractToken, ct);
-        Assert.Equal(17, subTools.Count);
         Assert.Contains(KernelMcpToolNames.ProviderList, subTools);
         Assert.Contains(KernelMcpToolNames.DataPatch, subTools);
         Assert.Contains(KernelMcpToolNames.TaskDone, subTools);
         Assert.Contains(KernelMcpToolNames.TaskFail, subTools);
-        Assert.DoesNotContain(KernelMcpToolNames.TaskAccept, subTools);
+        Assert.DoesNotContain("task_accept", subTools);
         Assert.DoesNotContain(KernelMcpToolNames.TaskCancel, subTools);
         Assert.Contains(KernelMcpToolNames.SessionList, subTools);
         Assert.Contains(KernelMcpToolNames.SessionRead, subTools);
@@ -347,14 +309,12 @@ public sealed class McpKernelAndVcsIntegrationTests
         foreach (var (govTool, govArgs) in new (string, object)[]
                  {
                      (KernelMcpToolNames.TaskCancel, new { taskKey = "work-cancel" }),
-                     (KernelMcpToolNames.TaskAccept, new { taskKey = "work-1" }),
-                     (KernelMcpToolNames.TaskReject, new { taskKey = "work-1", note = "bad" }),
                      (KernelMcpToolNames.MailSend, new { toTrackId = trackBId, summary = "hi", body = "hi" }),
                      (KernelMcpToolNames.TrackRename, new { title = "Hijack" }),
                      (KernelMcpToolNames.TrackClose, new { }),
                      (KernelMcpToolNames.TemplateList, new { }),
                      (KernelMcpToolNames.TemplateRead, new { }),
-                     (KernelMcpToolNames.TrackSet, new { templateId = "dev" })
+                     (KernelMcpToolNames.TrackSet, new { templateId = "agents-delivery" })
                  })
         {
             var (_, isFenceErr) = await CallToolAsync(cluster, "/mcp/kernel", contractToken, govTool, govArgs, ct);
@@ -376,7 +336,7 @@ public sealed class McpKernelAndVcsIntegrationTests
                 anchor = subAnchor,
                 ops = new object[]
                 {
-                    new { op = "delete_block", id = "b_t2" }
+                    new { op = "upsert_block", id = "b_t2", blockKind = "task", payload = new { taskKey = "rejected", goal = "Test" } }
                 }
             },
             ct);
@@ -438,26 +398,8 @@ public sealed class McpKernelAndVcsIntegrationTests
             yield return new UnifiedAgentEvent.TurnCompleted(null);
         }
 
-        await CallToolAsync(
-            cluster,
-            "/mcp/kernel",
-            leadToken,
-            KernelMcpToolNames.ReportCommit,
-            new
-            {
-                anchor = failSubReadDoc.RootElement.GetProperty("anchor"),
-                ops = new object[]
-                {
-                    new
-                    {
-                        op = "upsert_block",
-                        id = "b_tfail",
-                        blockKind = "task",
-                        payload = new { taskKey = "work-fail", kind = "subagent", access = "read_only", ready = true, goal = "Will fail" }
-                    }
-                }
-            },
-            ct);
+        await FlowFixture.AddAsync(kernel, trackAId,
+            new FlowNodeSpecDto("work-fail", new("run", Prompt: "Will fail", Access: "read_only")));
 
         var failSubToken = await failTaskTriggeredTcs.Task.WaitAsync(ct);
         var (failResText, failResErr) = await CallToolAsync(
@@ -476,7 +418,7 @@ public sealed class McpKernelAndVcsIntegrationTests
 
         // 4. Exercise remaining shared & governance tools on Lead:
         //    user_ask, terminal_open/read/input, mail_send/ls/cat,
-        //    task_accept, task_reject, task_cancel, track_rename, track_close!
+        //    task_cancel, track_rename, track_close!
 
         // user_ask (suspends until /asks/{askId}/answer)
         var userAskCallTask = CallToolAsync(
@@ -586,25 +528,7 @@ public sealed class McpKernelAndVcsIntegrationTests
         Assert.True(twoAddressesError);
         Assert.Single(await kernel.ListMailsAsync(trackAId, ct: ct));
 
-        // task_accept, task_reject, task_cancel, track_rename, track_close!
-        var (accText, accErr) = await CallToolAsync(
-            cluster,
-            "/mcp/kernel",
-            leadToken,
-            KernelMcpToolNames.TaskAccept,
-            new { taskKey = "work-1", note = "Clean implementation" },
-            ct);
-        Assert.False(accErr, accText);
-
-        var (rejText, rejErr) = await CallToolAsync(
-            cluster,
-            "/mcp/kernel",
-            leadToken,
-            KernelMcpToolNames.TaskReject,
-            new { taskKey = "work-fail", note = "Add fallback logic", reQueue = false },
-            ct);
-        Assert.False(rejErr, rejText);
-
+        // Cancel the pending node and exercise Track governance.
         var (canText, canErr) = await CallToolAsync(
             cluster,
             "/mcp/kernel",

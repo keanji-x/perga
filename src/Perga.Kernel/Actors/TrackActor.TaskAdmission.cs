@@ -15,43 +15,6 @@ public sealed partial class TrackActor
     private readonly HashSet<string> _pendingTaskDispatchApprovals = new(StringComparer.Ordinal);
     private bool _taskProviderProbePending;
 
-    private (TaskDto Task, PolicyTaskRoute Route)[] GetTaskDeclarationsCore(ReportCommitResult preview)
-    {
-        var changedIds = preview.Changes.Where(change => change.Kind == ReportBlockKind.Task && change.CurrentRev is not null && (change.PreviousRev is null || change.CurrentRev != change.PreviousRev))
-            .Select(change => change.Id).ToHashSet(StringComparer.Ordinal);
-        // Use exactly the same JSON/fence parser as report synchronization.
-        return preview.NextDocument.Blocks.Where(block => changedIds.Contains(block.Id))
-            .Select(block => TaskBlockSynchronizer.ParseTaskBlock(TrackId, block, NowMs()))
-            .Where(task => task.Ready)
-            .Select(task => (task, RouteTaskCore(task).Route))
-            .ToArray();
-    }
-
-    private async Task<(List<GuardDecision.AskHuman> Asks, HashSet<string> ApprovedKeys)> AdmitTaskDeclarationsCoreAsync(
-        IReadOnlyList<(TaskDto Task, PolicyTaskRoute Route)> declarations, WorkerDispatchIntent? dispatch,
-        IReadOnlyList<ProviderStatus>? providers, CancellationToken ct)
-    {
-        var asks = new List<GuardDecision.AskHuman>();
-        var approvedKeys = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var (task, declaredRoute) in declarations)
-        {
-            var isDispatch = task.TaskKey == dispatch?.TaskKey;
-            // For a declared model, authorize the ID that the preallocated Worker will launch with.
-            var route = isDispatch && declaredRoute.Model is not null && dispatch?.Session is { } session
-                ? declaredRoute with { Model = session.Model }
-                : declaredRoute;
-            if (route.Denial is { } denial) throw KernelException.PolicyDenied(denial);
-            var eval = EvaluateTaskDispatchCore(task, route);
-            await UpdateTemplateStateIfChangedCoreAsync(eval.NextState, ct).ConfigureAwait(false);
-            if (eval.Output is GuardDecision.Deny denied) throw KernelException.PolicyDenied(denied.Reason);
-            if (eval.Output is GuardDecision.AskHuman ask) asks.Add(ask);
-            if (!isDispatch && NeedsTaskProviderCatalog(route))
-                ValidateTaskProviderModelCore(route, providers!);
-            approvedKeys.Add(task.TaskKey);
-        }
-        return (asks, approvedKeys);
-    }
-
     private (PolicyTaskRoute Route, bool UsesPreparedDefault) RouteTaskCore(TaskDto task)
     {
         RequirePolicyAvailableCore();
@@ -71,10 +34,12 @@ public sealed partial class TrackActor
 
         var route = _policy is null ? new PolicyTaskRoute(provider, model) : _policyVm.RouteTaskDispatch(_policy,
             task.Role, FormatAccessModeForPolicy(task.Access), provider, model, _track.TemplateInputs);
+        if (route.Denial is null)
+            route = route with { Model = SessionLaunchValidator.NormalizeRequestedModel(route.Model) };
         if (IsFlowSessionReuse(task) && route.Denial is null && route.Model != model)
             throw KernelException.PolicyDenied($"Template routing requires model '{route.Model}' on the reuse session.");
         if (session is null) return (route, false);
-        // A preallocated session can carry a Track default that the catalog does not list.
+        // Reused sessions can carry a Track default that the catalog does not list.
         var usesPreparedDefault = route.Model is null && task.RunCount == 0 &&
             session is { ConfigVersion: 0 };
         return (route with { Provider = session.Provider, Model = session.Model }, usesPreparedDefault);

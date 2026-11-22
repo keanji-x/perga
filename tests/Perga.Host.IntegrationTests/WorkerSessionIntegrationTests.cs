@@ -60,9 +60,9 @@ public sealed class WorkerSessionIntegrationTests
         await using var host = new PergaHostTestCluster();
         var kernel = host.Services.GetRequiredService<IPergaKernel>();
         var (trackId, _) = await host.CreateTrackAsync();
-        var dispatched = await kernel.CreateSessionAsync(trackId, new(Prompt: "Inspect the report", Task: new()), "settings", new InteropPrincipal.Human(), ct);
+        var dispatched = await FlowFixture.StartWorkerAsync(kernel, trackId, "settings", "Inspect the report", ct);
         await kernel.WaitForTrackIdleAsync(trackId, ct);
-        var worker = Assert.Single(await kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), ct), summary => summary.TaskId == dispatched.Receipt.Task!.Id).Session;
+        var worker = Assert.Single(await kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), ct), summary => summary.TaskId == dispatched.Task.Id).Session;
         var saved = await kernel.UpdateSessionAsync(worker.Id, new(ExpectedConfigVersion: 0, Model: new("gpt-5.4"), ReasoningEffort: new("high")), new InteropPrincipal.Human(), ct);
         var stored = Assert.Single((await host.Services.GetRequiredService<ITrackStore>().LoadTrackAggregateAsync(trackId, ct))!.Sessions,
             session => session.Id == worker.Id);
@@ -81,9 +81,9 @@ public sealed class WorkerSessionIntegrationTests
         var kernel = host.Services.GetRequiredService<IPergaKernel>();
         var (trackId, _) = await host.CreateTrackAsync();
         host.AgentRuntime.SetTurnHandler(Stream);
-        var dispatched = await kernel.CreateSessionAsync(trackId, new(Prompt: "Measure context", Task: new()), "worker-context", new InteropPrincipal.Human(), ct);
+        var dispatched = await FlowFixture.StartWorkerAsync(kernel, trackId, "worker-context", "Measure context", ct);
         await kernel.WaitForTrackIdleAsync(trackId, ct);
-        var worker = Assert.Single(await kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), ct), summary => summary.TaskId == dispatched.Receipt.Task!.Id).Session;
+        var worker = Assert.Single(await kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), ct), summary => summary.TaskId == dispatched.Task.Id).Session;
         Assert.Equal(1000, worker.ContextUsage?.WindowTokens);
         using var patch = await host.Client.PatchAsJsonAsync($"/api/v1/sessions/{worker.Id}",
             new { expectedConfigVersion = 0, model = "gpt-5.4-mini", reasoningEffort = "low" }, ct);
@@ -123,8 +123,8 @@ public sealed class WorkerSessionIntegrationTests
         host.AgentRuntime.SetSteerHandler(_ => { Interlocked.Increment(ref steers); return Task.FromResult(true); });
         host.AgentRuntime.SetTurnHandler(Turns);
 
-        var dispatched = await kernel.CreateSessionAsync(trackId, new(Prompt: "Inspect the report", Task: new()), "dispatch", new InteropPrincipal.Human(), ct);
-        var worker = Assert.Single(await kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), ct), summary => summary.TaskId == dispatched.Receipt.Task!.Id).Session;
+        var dispatched = await FlowFixture.StartWorkerAsync(kernel, trackId, "dispatch", "Inspect the report", ct);
+        var worker = Assert.Single(await kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), ct), summary => summary.TaskId == dispatched.Task.Id).Session;
         var leadQueue = new { sessionId = worker.Id, content = "Lead follow-up", mode = "queue", requestKey = "lead-queue" };
         try
         {
@@ -188,7 +188,7 @@ public sealed class WorkerSessionIntegrationTests
         var followup = Assert.Single(persisted.Items, item => item.Kind == "user" &&
             item.Payload.GetProperty("content").GetString() == "Lead follow-up");
         Assert.Equal("delivered", followup.InputDelivery);
-        await kernel.CancelTaskAsync(trackId, leadId, dispatched.Receipt.Task!.TaskKey, ct: ct);
+        await kernel.CancelTaskAsync(trackId, leadId, dispatched.Task.TaskKey, ct: ct);
         var (afterCancel, afterCancelError) = await CallFromRunningLeadAsync(host, "/mcp/kernel", lead.Principal.SessionId, KernelMcpToolNames.SessionSend,
             new { sessionId = worker.Id, turnId = "old-turn", content = "Stale steer", mode = "steer", requestKey = "stale" }, ct);
         Assert.True(afterCancelError);
@@ -207,53 +207,6 @@ public sealed class WorkerSessionIntegrationTests
     }
 
     [Fact]
-    public async Task RestartInterruptedWorkerRequeueReusesSessionAndAdvancesEpoch()
-    {
-        var directory = Directory.CreateTempSubdirectory("perga-worker-requeue-");
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-        var ct = timeout.Token;
-        try
-        {
-            AgentSessionDto worker;
-            string taskId;
-            await using (var host = new PergaHostTestCluster(directory.FullName))
-            {
-                var (trackId, _) = await host.CreateTrackAsync();
-                var kernel = host.Services.GetRequiredService<IPergaKernel>();
-                var receipt = await kernel.CreateSessionAsync(trackId, new(Prompt: "Inspect", Task: new()), "restart-requeue", new InteropPrincipal.Human(), ct);
-                taskId = receipt.Receipt.Task!.Id;
-                await kernel.WaitForTrackIdleAsync(trackId, ct);
-                var session = Assert.Single(await kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), ct), s => s.TaskId == taskId).Session;
-                var page = await kernel.GetSessionItemsAsync(session.Id, new(), new InteropPrincipal.Human(), ct);
-                worker = page.Session;
-                // Leave exactly the durable in-flight state a crash would preserve, without a live provider.
-                var store = host.Services.GetRequiredService<ITrackStore>();
-                await store.RecordTurnAndItemsAsync(page.LastTurn! with { Status = "running", CompletedAtMs = null },
-                    [], worker with { Status = "running" }, ct);
-            }
-            await using var reopened = new PergaHostTestCluster(directory.FullName);
-            var resumed = reopened.Services.GetRequiredService<IPergaKernel>();
-            var orphan = (await resumed.GetSessionItemsAsync(worker.Id, new(), new InteropPrincipal.Human(), ct)).Session;
-            Assert.Equal("unknown", orphan.Status);
-            Assert.NotNull(orphan.ArchivedAtMs);
-            var interruptedTask = Assert.Single(await resumed.ListTasksAsync(worker.TrackId, ct), t => t.Id == taskId);
-            Assert.Equal(TaskRunStatus.Failed, interruptedTask.Status);
-            await resumed.RejectTaskAsync(worker.TrackId, null, taskId, "Retry after restart", reQueue: true, ct: ct);
-            await resumed.WaitForTrackIdleAsync(worker.TrackId, ct);
-            var reused = await resumed.GetSessionItemsAsync(worker.Id, new(), new InteropPrincipal.Human(), ct);
-            Assert.Equal(worker.Epoch + 1, reused.Session.Epoch);
-            Assert.Null(reused.Session.ArchivedAtMs);
-            Assert.Equal("completed", reused.LastTurn!.Status);
-            var retriedTask = Assert.Single(await resumed.ListTasksAsync(worker.TrackId, ct), t => t.Id == taskId);
-            Assert.Equal(2, retriedTask.RunCount);
-            Assert.Contains(reused.Items, item => item.Kind == "epoch_boundary" &&
-                item.Payload.GetProperty("reason").GetString() == "new_run");
-            Assert.Single(await resumed.ListSessionsAsync(worker.TrackId, new(IncludeArchived: true), new InteropPrincipal.Human(), ct), s => s.TaskId == taskId);
-        }
-        finally { directory.Delete(recursive: true); }
-    }
-
-    [Fact]
     public async Task RestartInterruptsAcceptedInputToAnInterruptedTaskSession()
     {
         var directory = Directory.CreateTempSubdirectory("perga-legacy-worker-");
@@ -268,9 +221,9 @@ public sealed class WorkerSessionIntegrationTests
                 var track = await host.CreateTrackAsync();
                 trackId = track.TrackId;
                 var kernel = host.Services.GetRequiredService<IPergaKernel>();
-                var receipt = await kernel.CreateSessionAsync(trackId, new(Prompt: "Inspect the report", Task: new()), "task-restart", new InteropPrincipal.Human(), ct);
+                var receipt = await FlowFixture.StartWorkerAsync(kernel, trackId, "task-restart", "Inspect the report", ct);
                 await kernel.WaitForTrackIdleAsync(trackId, ct);
-                var worker = Assert.Single(await kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), ct), summary => summary.TaskId == receipt.Receipt.Task!.Id).Session;
+                var worker = Assert.Single(await kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), ct), summary => summary.TaskId == receipt.Task.Id).Session;
                 var store = host.Services.GetRequiredService<ITrackStore>();
                 var evt = new EventEnvelopeDto(null, null, trackId, KernelEventKinds.SessionUpdated,
                     JsonSerializer.SerializeToElement(worker), worker.UpdatedAtMs);
@@ -289,58 +242,6 @@ public sealed class WorkerSessionIntegrationTests
         {
             directory.Delete(recursive: true);
         }
-    }
-
-    [Fact]
-    public async Task GoalOnlyDispatchUsesSafeDefaultsAndReplaysTheSameTask()
-    {
-        await using var host = new PergaHostTestCluster();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-        var ct = timeout.Token;
-        var kernel = host.Services.GetRequiredService<IPergaKernel>();
-        var area = await kernel.CreateAreaAsync(new CreateAreaRequest("Dispatch", DefaultCwd: host.DataDir), ct);
-        var track = (await kernel.CreateTrackAsync(new CreateTrackRequest(area.Id, Cwd: host.DataDir), ct)).Track;
-        var lead = kernel.McpSessionBridge.RegisterSession(track.Id, track.LeadSessionId!, true, null, null, []);
-        var call = new { prompt = "Inspect the report", task = new { }, requestKey = "dispatch-inspection" };
-        var (first, firstError) = await CallFromRunningLeadAsync(host, "/mcp/kernel", lead.Principal.SessionId, KernelMcpToolNames.SessionCreate, call, ct);
-        Assert.False(firstError, first);
-        var receipt = JsonSerializer.Deserialize<SessionCreationReceipt>(first, PergaJsonDefaults.ApiOptions)!;
-        Assert.Equal(Perga.Contracts.AccessMode.ReadOnly, receipt.Task!.Access);
-        Assert.True(receipt.Task.Ready);
-        Assert.Equal("Inspect the report", receipt.Task.GoalOrCmd);
-        await kernel.WaitForTrackIdleAsync(track.Id, ct);
-        Assert.Single(await kernel.ListSessionsAsync(track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), ct), summary => summary.TaskId == receipt.Task.Id);
-
-        var (replay, replayError) = await CallFromRunningLeadAsync(host, "/mcp/kernel", lead.Principal.SessionId, KernelMcpToolNames.SessionCreate, call, ct);
-        Assert.False(replayError, replay);
-        Assert.Equal(receipt.Task.Id, JsonSerializer.Deserialize<SessionCreationReceipt>(replay, PergaJsonDefaults.ApiOptions)!.Task!.Id);
-        var (_, conflict) = await CallFromRunningLeadAsync(host, "/mcp/kernel", lead.Principal.SessionId, KernelMcpToolNames.SessionCreate,
-            new { prompt = "Different goal", task = new { }, call.requestKey }, ct);
-        Assert.True(conflict);
-        Assert.Single(await kernel.ListTasksAsync(track.Id, ct));
-    }
-
-    [Fact]
-    public async Task GoalOnlyDispatchUsesDevelopmentTemplateSectionAndDefaultValidationCommand()
-    {
-        await using var host = new PergaHostTestCluster();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-        var ct = timeout.Token;
-        var kernel = host.Services.GetRequiredService<IPergaKernel>();
-        var repo = AppContext.BaseDirectory;
-        var area = await kernel.CreateAreaAsync(new CreateAreaRequest("Development dispatch", DefaultCwd: repo), ct);
-        var track = (await kernel.CreateTrackAsync(new CreateTrackRequest(area.Id, Cwd: repo, WorkspaceDriver: "direct", TemplateId: "dev"), ct)).Track;
-        Assert.Empty((await kernel.ReadReportAsync(track.Id, ct: ct)).Blocks);
-        using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/tracks/{track.Id}/sessions")
-        { Content = JsonContent.Create(new { prompt = "Check the test setup", task = new { } }) };
-        request.Headers.Add("Idempotency-Key", "development-task");
-        using var response = await host.Client.SendAsync(request, ct);
-        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
-        var receipt = (await response.Content.ReadFromJsonAsync<SessionCreationReceipt>(PergaJsonDefaults.ApiOptions, ct))!;
-        Assert.Equal(Perga.Contracts.AccessMode.ReadWrite, receipt.Task!.Access);
-        Assert.Equal("dotnet test", Assert.Single(receipt.Task.Gate!.Steps).Cmd);
-        var report = await kernel.ReadReportAsync(track.Id, ct: ct);
-        Assert.Equal("Tasks", Assert.Single(report.Blocks, block => block.Id == receipt.Task.BlockId).SectionH1);
     }
 
     [Fact]
@@ -364,12 +265,8 @@ public sealed class WorkerSessionIntegrationTests
         });
         host.AgentRuntime.SetTurnHandler(WorkerTurns);
 
-        var report = await kernel.ReadReportAsync(track.Id, leadId, ct);
-        await kernel.CommitReportAsync(track.Id, leadId, new ReportCommitRequest(report.Anchor,
-        [
-            new BlockOp.UpsertBlockOp(null, ReportBlockKind.Task, null,
-                JsonSerializer.SerializeToElement(new { task_key = "inspect", ready = true, access = "read_only", goal_or_cmd = "Inspect the report" }))
-        ]), ct);
+        await FlowFixture.AddAsync(kernel, track.Id, new FlowNodeSpecDto("inspect",
+            new("run", Prompt: "Inspect the report", Access: "read_only")));
         var turnId = await firstTurn.Task.WaitAsync(ct);
         var workerSummary = Assert.Single(await kernel.ListSessionsAsync(track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), ct), summary => summary.TaskId is not null);
         var worker = workerSummary.Session;

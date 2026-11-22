@@ -53,7 +53,7 @@ describe('invalidation plan behavior', () => {
     expect(invalidationPlanFor(event({ ev: 'task.updated', data: { track_id: 'w1' } })).invalidate)
       .toContainEqual(['track-views', 'w1']);
     expect(invalidationPlanFor(event({ ev: 'track.schedules.updated', data: { trackId: 'w1' } })).invalidate)
-      .toContainEqual(['track-views', 'w1']);
+      .toEqual([['track-views', 'w1']]);
   });
 
   it('silently ignores an unknown event kind received across versions', () => {

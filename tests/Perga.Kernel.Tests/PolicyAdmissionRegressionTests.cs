@@ -49,9 +49,7 @@ public sealed class PolicyAdmissionRegressionTests
 
     [Theory]
     [InlineData("conversation")]
-    [InlineData("worker")]
     [InlineData("update")]
-    [InlineData("report")]
     public async Task PolicyChangeDuringProbeFencesMutation(string operation)
     {
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
@@ -83,23 +81,11 @@ public sealed class PolicyAdmissionRegressionTests
         var tool = operation switch
         {
             "update" => KernelMcpToolNames.SessionUpdate,
-            "report" => KernelMcpToolNames.ReportCommit,
             _ => KernelMcpToolNames.SessionCreate
         };
-        var report = await ctx.Kernel.ReadReportAsync(track.Id, ct: ct);
         var args = operation switch
         {
-            "report" => TestJson.FromObject(new
-            {
-                anchor = report.Anchor,
-                ops = new[]
-                {
-                    new { op = "upsert_block", blockKind = "task", payload = new
-                        { task_key = "probe", provider = "codex", ready = true, access = "read_only", goal_or_cmd = "Inspect" } }
-                }
-            }),
             "update" => TestJson.FromObject(new { sessionId = child.Id, expectedConfigVersion = 0, model = "chosen" }),
-            "worker" => TestJson.FromObject(new { prompt = "inspect", task = new { } }),
             _ => TestJson.FromObject(new { title = "conversation" })
         };
         var pending = KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller, tool, args, ct);
@@ -154,7 +140,7 @@ public sealed class PolicyAdmissionRegressionTests
     }
 
     [Fact]
-    public async Task StopExpiresAllTemplateReportApprovalsAndRejectsLateDecisions()
+    public async Task StopExpiresTemplateReportApprovalAndRejectsLateDecisions()
     {
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
@@ -166,15 +152,14 @@ public sealed class PolicyAdmissionRegressionTests
         while ((await ctx.Kernel.GetSessionItemsAsync(caller.SessionId, new(), new InteropPrincipal.Human(), timeout.Token)).ActiveTurn is null)
             await Task.Delay(10, timeout.Token);
         var report = await ctx.Kernel.ReadReportAsync(caller.TrackId);
-        var commit = ctx.Kernel.CommitReportAsync(caller.TrackId, caller.SessionId, new(report.Anchor, [
-            new BlockOp.UpsertBlockOp("task", ReportBlockKind.Task, null, TestJson.FromObject(new {
-                task_key = "task", ready = true, access = "read_only", goal_or_cmd = "Inspect" }))]), timeout.Token);
+        var commit = ctx.Kernel.CommitReportAsync(caller.TrackId, caller.SessionId,
+            new(report.Anchor, [new BlockOp.UpsertBlockOp("note", ReportBlockKind.Prose, "Review.", null)]), timeout.Token);
         TrackAggregateSnapshot pending;
         do
         {
             await Task.Delay(10, timeout.Token);
             pending = await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId, timeout.Token);
-        } while (pending.PendingApprovals.Count < 2);
+        } while (pending.PendingApprovals.Count == 0);
         Assert.All(pending.PendingApprovals, approval => Assert.NotNull(approval.TurnId));
         await ctx.Kernel.ControlSessionAsync(caller.SessionId, new("stop", TurnId: (await ctx.Kernel.GetSessionItemsAsync(caller.SessionId, new(), new InteropPrincipal.Human(), default)).ActiveTurn!.Id), new InteropPrincipal.Human(), timeout.Token);
         var error = await Assert.ThrowsAsync<KernelException>(() => commit);
@@ -200,11 +185,7 @@ public sealed class PolicyAdmissionRegressionTests
     [Theory]
     [InlineData("report-deny")]
     [InlineData("report-throw")]
-    [InlineData("task-deny")]
-    [InlineData("task-throw")]
-    [InlineData("provider")]
     [InlineData("manifest")]
-    [InlineData("gate")]
     public async Task RejectedCommit_DoesNotLeaveApprovalAsks(string failure)
     {
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
@@ -212,24 +193,12 @@ public sealed class PolicyAdmissionRegressionTests
         var caller = Caller(snapshot);
         var reportHook = failure == "report-deny" ? "return Deny('report blocked');" :
             failure == "report-throw" ? "throw Error('report failed');" : "return Allow();";
-        var secondTaskHook = failure == "task-deny" ? "return Deny('task blocked');" :
-            failure == "task-throw" ? "throw Error('task failed');" : "return AskHuman('Task approval');";
         await SetPolicy(ctx, caller, "export default {id:'admission',title:'Admission',report:{maxProseChars:" +
-            (failure == "manifest" ? "1" : "10000") + "},tasks:{requireGateForReadWrite:" +
-            (failure == "gate" ? "true" : "false") + "},before(a){if(a.type==='report.commit'){" + reportHook +
-            "}if(a.type==='task.dispatch'){if(a.role==='second'){" + secondTaskHook +
-            "}return AskHuman('Task approval');}return Allow();}};");
+            (failure == "manifest" ? "1" : "10000") + "},before(a){if(a.type==='report.commit'){" + reportHook +
+            "}return Allow();}};");
         var report = await ctx.Kernel.ReadReportAsync(caller.TrackId);
         var error = await Record.ExceptionAsync(() => ctx.Kernel.CommitReportAsync(caller.TrackId, caller.SessionId,
-            new(report.Anchor, [
-                new BlockOp.UpsertBlockOp("first", ReportBlockKind.Task, null, TestJson.FromObject(new {
-                    task_key = "first", ready = true, access = "read_only", goal_or_cmd = "First" })),
-                new BlockOp.UpsertBlockOp("second", ReportBlockKind.Task, null, TestJson.FromObject(new {
-                    task_key = "second", role = "second", ready = true,
-                    access = failure == "gate" ? "read_write" : "read_only", goal_or_cmd = "Second",
-                    provider = failure == "provider" ? "missing-provider" : null })),
-                new BlockOp.UpsertBlockOp("prose", ReportBlockKind.Prose, "Too much prose", null)
-            ])));
+            new(report.Anchor, [new BlockOp.UpsertBlockOp("prose", ReportBlockKind.Prose, "Too much prose", null)])));
         Assert.NotNull(error);
         Assert.Empty((await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId)).PendingApprovals);
         var persisted = (await ctx.Store.LoadTrackAggregateAsync(caller.TrackId, default))!;
@@ -239,34 +208,7 @@ public sealed class PolicyAdmissionRegressionTests
     }
 
     [Fact]
-    public async Task RejectedApproval_CancelsUnansweredSiblingsRegardlessOfOrder()
-    {
-        await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
-        var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
-        var caller = Caller(snapshot);
-        await SetPolicy(ctx, caller, "export default {id:'asks',title:'Asks',before:a=>a.type==='task.dispatch'||a.type==='report.commit'?AskHuman(a.type,{approve:'Approve',deny:'Reject'}):Allow()};");
-        var report = await ctx.Kernel.ReadReportAsync(caller.TrackId);
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        var commit = ctx.Kernel.CommitReportAsync(caller.TrackId, caller.SessionId, new(report.Anchor, [
-            new BlockOp.UpsertBlockOp("task", ReportBlockKind.Task, null, TestJson.FromObject(new {
-                task_key = "task", ready = true, access = "read_only", goal_or_cmd = "Inspect" }))]), timeout.Token);
-        TrackAggregateSnapshot pending;
-        do
-        {
-            await Task.Delay(10, timeout.Token);
-            pending = await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId, timeout.Token);
-        } while (pending.PendingApprovals.Count < 2);
-        // Deny the last ask while the first remains unanswered.
-        var last = pending.PendingApprovals.Last();
-        await ctx.Kernel.RespondInteractionAsync(last.SessionId, last.Id, new(ExecutionId: last.ExecutionId, OptionId: last.Options.Single(o => !o.IsApproval).Id), new InteropPrincipal.Human(), timeout.Token);
-        var error = await Assert.ThrowsAsync<KernelException>(() => commit);
-        Assert.Equal(KernelErrorCode.PolicyDenied, error.Code);
-        Assert.Empty((await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId)).PendingApprovals);
-        Assert.Empty((await ctx.Store.LoadTrackAggregateAsync(caller.TrackId, default))!.OpenAsks);
-    }
-
-    [Fact]
-    public async Task UnclosedTaskFence_StillRunsDispatchGuardBeforeCommit()
+    public async Task UnclosedTaskFenceCannotAuthorTask()
     {
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
@@ -276,7 +218,7 @@ public sealed class PolicyAdmissionRegressionTests
         var error = await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.CommitReportAsync(caller.TrackId, caller.SessionId,
             new(report.Anchor, [new BlockOp.UpsertBlockOp("fenced", ReportBlockKind.Task,
                 "```json\n{\"task_key\":\"fenced\",\"ready\":true,\"access\":\"read_only\",\"goal_or_cmd\":\"Inspect\"}", null)])));
-        Assert.Equal(KernelErrorCode.PolicyDenied, error.Code);
+        Assert.Equal(KernelErrorCode.InvalidArgument, error.Code);
         Assert.Empty(await ctx.Kernel.ListTasksAsync(caller.TrackId));
         Assert.DoesNotContain(await ctx.Kernel.ListSessionsAsync(caller.TrackId, new(IncludeArchived: true), new InteropPrincipal.Human(), default), s => s.TaskId is not null);
     }
@@ -320,9 +262,8 @@ public sealed class PolicyAdmissionRegressionTests
         var caller = Caller(snapshot);
         await SetPolicy(ctx, caller, "export default {id:'settled',title:'Settled',after(e,ctx){if(e.type==='task.settled'){" + hook + "}}};");
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        var receipt = await ctx.Kernel.CreateSessionAsync(caller.TrackId, new(Prompt: "Inspect", Task: new()), "settled", new InteropPrincipal.Human(), timeout.Token);
+        var worker = (await FlowFixture.StartWorkerAsync(ctx.Kernel, caller.TrackId, FlowFixture.Worker("settled", "Inspect"))).Session;
         await ctx.Kernel.WaitForTrackIdleAsync(caller.TrackId, timeout.Token);
-        var worker = Assert.Single(await ctx.Kernel.ListSessionsAsync(caller.TrackId, new(IncludeArchived: true), new InteropPrincipal.Human(), default), s => s.TaskId == receipt.Receipt.Task!.Id).Session;
         ctx.Store.FailTemplateStateUpdate = true;
         var completed = await ctx.Kernel.CompleteTaskDoneAsync(caller.TrackId, worker.Id, TestJson.FromObject(new { summary = "done" }), ct: timeout.Token);
         Assert.Equal(TaskRunStatus.Done, completed.Status);
@@ -339,9 +280,9 @@ public sealed class PolicyAdmissionRegressionTests
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
         await ctx.Kernel.Actors.GetOrActivate(snapshot.Track.Id).UpdateSessionAsync(snapshot.Track.LeadSessionId!, new(Model: new("lead-only-model")), new InteropPrincipal.Human(), default);
         ctx.AgentRuntime.Providers = [new("codex", true, "1", null, ["gpt-5"])];
-        var dispatched = await ctx.Kernel.CreateSessionAsync(snapshot.Track.Id, new(Prompt: "Inspect", Task: new()), "plain", new InteropPrincipal.Human(), default);
-        Assert.NotEqual(TaskRunStatus.Failed, dispatched.Receipt.Task!.Status);
-        Assert.Contains(await ctx.Kernel.ListSessionsAsync(snapshot.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default), s => s.TaskId == dispatched.Receipt.Task!.Id);
+        var dispatched = await FlowFixture.StartWorkerAsync(ctx.Kernel, snapshot.Track.Id, FlowFixture.Worker("plain", "Inspect"));
+        Assert.NotEqual(TaskRunStatus.Failed, dispatched.Task.Status);
+        Assert.Contains(await ctx.Kernel.ListSessionsAsync(snapshot.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default), s => s.TaskId == dispatched.Task.Id);
     }
 
     [Theory]
@@ -355,10 +296,9 @@ public sealed class PolicyAdmissionRegressionTests
             new("claude", true, "1", null, ["sonnet"])];
         await SetPolicy(ctx, Caller(snapshot),
             "export default {id:'route',title:'Route',tasks:{routing:[{when:{},provider:'claude',model:'sonnet'}]}};");
-        var receipt = (await ctx.Kernel.CreateSessionAsync(snapshot.Track.Id,
-            new(Prompt: "Inspect", Provider: explicitSelection ? "codex" : null,
-                Model: explicitSelection ? "gpt-5" : null, Task: new()), "routed-create",
-            new InteropPrincipal.Human(), default)).Receipt;
+        var receipt = await FlowFixture.StartWorkerAsync(ctx.Kernel, snapshot.Track.Id,
+            FlowFixture.Worker("routed-create", "Inspect", provider: explicitSelection ? "codex" : null,
+                model: explicitSelection ? "gpt-5" : null));
         await ctx.Kernel.WaitForTrackIdleAsync(snapshot.Track.Id);
         var session = (await ctx.Kernel.GetSessionItemsAsync(receipt.Session.Id, new(), new InteropPrincipal.Human(), default)).Session;
         Assert.Equal(explicitSelection ? "codex" : "claude", session.Provider);
@@ -370,7 +310,7 @@ public sealed class PolicyAdmissionRegressionTests
     }
 
     [Fact]
-    public async Task WorkerPreservesAnEnforcedProviderAliasInTheReport()
+    public async Task FlowPreservesAnEnforcedProviderAliasInTheSpec()
     {
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
@@ -378,11 +318,11 @@ public sealed class PolicyAdmissionRegressionTests
         await SetPolicy(ctx, Caller(snapshot),
             "export default {id:'alias',title:'Alias',tasks:{routing:[{when:{},provider:'agy',enforce:true}]}};");
 
-        var created = await ctx.Kernel.CreateSessionAsync(snapshot.Track.Id,
-            new(Prompt: "Inspect", Task: new(), Provider: "agy"), "alias", new InteropPrincipal.Human(), default);
-
-        Assert.Equal("agy", created.Receipt.Task!.Provider);
-        Assert.Equal("acp:antigravity", created.Receipt.Session.Provider);
+        var created = await FlowFixture.StartWorkerAsync(ctx.Kernel, snapshot.Track.Id,
+            FlowFixture.Worker("alias", "Inspect", provider: "agy"));
+        Assert.Equal("agy", (await ctx.Kernel.GetTrackFlowAsync(snapshot.Track.Id)).Spec.GetProperty("nodes")[0]
+            .GetProperty("do").GetProperty("provider").GetString());
+        Assert.Equal("acp:antigravity", SessionLaunchValidator.NormalizeProvider(created.Session.Provider));
     }
 
     [Fact]
@@ -395,46 +335,10 @@ public sealed class PolicyAdmissionRegressionTests
         ctx.AgentRuntime.ProbeScript = _ => Task.FromResult<IReadOnlyList<ProviderStatus>>([
             new("codex", true, "1", null, ["gpt-5"]), new("claude", true, "1", null, ["sonnet"])]);
         await SetPolicy(ctx, caller, "export default {id:'route-provider',title:'Route',tasks:{routing:[{when:{},provider:'claude'}]}};");
-        var receipt = await ctx.Kernel.CreateSessionAsync(caller.TrackId, new(Prompt: "Inspect", Task: new()), "route-provider", new InteropPrincipal.Human(), default);
-        var worker = Assert.Single(await ctx.Kernel.ListSessionsAsync(caller.TrackId, new(IncludeArchived: true), new InteropPrincipal.Human(), default), s => s.TaskId == receipt.Receipt.Task!.Id).Session;
-        Assert.Equal("claude", worker.Provider);
-        Assert.Null(worker.Model);
-        Assert.Null(receipt.Receipt.Task!.Provider);
-    }
-
-    [Fact]
-    public async Task SchedulingRouting_SurvivesReportSync_AndProbeOutageIsRetryable()
-    {
-        await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
-        var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
-        var caller = Caller(snapshot);
-        var report = await ctx.Kernel.ReadReportAsync(caller.TrackId);
-        await ctx.Kernel.CommitReportAsync(caller.TrackId, caller.SessionId, new(report.Anchor, [
-            new BlockOp.UpsertBlockOp("blocker", ReportBlockKind.Task, null, TestJson.FromObject(new {
-                task_key = "blocker", ready = false, access = "read_only", goal_or_cmd = "Block" })),
-            new BlockOp.UpsertBlockOp("routed", ReportBlockKind.Task, null, TestJson.FromObject(new {
-                task_key = "routed", ready = true, access = "read_only", goal_or_cmd = "Inspect", depends_on = new[] { "blocker" } }))]));
-        await SetPolicy(ctx, caller, "export default {id:'route',title:'Route',tasks:{routing:[{when:{},provider:'codex',model:'gpt-5'}]}};");
-        var blocker = (await ctx.Kernel.ListTasksAsync(caller.TrackId)).Single(t => t.TaskKey == "blocker");
-        await ctx.Store.UpsertTaskAsync(blocker with { Status = TaskRunStatus.Done }, null, null, default);
-        await ctx.Kernel.Actors.RemoveAndDisposeAsync(caller.TrackId);
-        ctx.AgentRuntime.ProbeScript = _ => throw new IOException("probe offline");
-        await ctx.Kernel.RejectTaskAsync(caller.TrackId, caller.SessionId, "routed", "Retry", reQueue: true);
-        await ctx.Kernel.WaitForTrackIdleAsync(caller.TrackId);
-        var pending = (await ctx.Kernel.ListTasksAsync(caller.TrackId)).Single(t => t.TaskKey == "routed");
-        Assert.Equal(TaskRunStatus.Pending, pending.Status);
-        ctx.AgentRuntime.ProbeScript = _ => Task.FromResult<IReadOnlyList<ProviderStatus>>([new("codex", false, null, "offline", [])]);
-        await ctx.Kernel.RejectTaskAsync(caller.TrackId, caller.SessionId, "routed", "Retry", reQueue: true);
-        await ctx.Kernel.WaitForTrackIdleAsync(caller.TrackId);
-        Assert.Equal(TaskRunStatus.Pending, (await ctx.Kernel.ListTasksAsync(caller.TrackId)).Single(t => t.TaskKey == "routed").Status);
-        ctx.AgentRuntime.ProbeScript = null;
-        report = await ctx.Kernel.ReadReportAsync(caller.TrackId);
-        await ctx.Kernel.CommitReportAsync(caller.TrackId, caller.SessionId,
-            new(report.Anchor, [new BlockOp.UpsertBlockOp("unrelated", ReportBlockKind.Prose, "Unrelated sync", null)]));
-        await ctx.Kernel.WaitForTrackIdleAsync(caller.TrackId);
-        var worker = Assert.Single(await ctx.Kernel.ListSessionsAsync(caller.TrackId, new(IncludeArchived: true), new InteropPrincipal.Human(), default), s => s.TaskId == pending.Id).Session;
-        Assert.Equal("codex", worker.Provider);
-        Assert.Equal("gpt-5", worker.Model);
+        var receipt = await FlowFixture.StartWorkerAsync(ctx.Kernel, caller.TrackId, FlowFixture.Worker("route-provider", "Inspect"));
+        Assert.Equal("claude", receipt.Session.Provider);
+        Assert.Null(receipt.Session.Model);
+        Assert.Null(receipt.Task.Provider);
     }
 
     [Fact]
@@ -475,60 +379,36 @@ public sealed class PolicyAdmissionRegressionTests
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
         var caller = Caller(snapshot);
-        var report = await ctx.Kernel.ReadReportAsync(caller.TrackId);
-        await ctx.Kernel.CommitReportAsync(caller.TrackId, caller.SessionId, new(report.Anchor, [
-            new BlockOp.UpsertBlockOp("blocker", ReportBlockKind.Task, null, TestJson.FromObject(new {
-                task_key = "blocker", ready = false, access = "read_only", goal_or_cmd = "Block" })),
-            new BlockOp.UpsertBlockOp("routed", ReportBlockKind.Task, null, TestJson.FromObject(new {
-                task_key = "routed", ready = true, access = "read_only", goal_or_cmd = "Inspect", depends_on = new[] { "blocker" } }))]));
         await SetPolicy(ctx, caller, "export default {id:'ask',title:'Ask',tasks:{routing:[{when:{},provider:'codex',model:'gpt-5'}]},before:a=>a.type==='task.dispatch'?AskHuman('Approve?',{approve:'Approve',deny:'Reject'}):Allow()};");
-        var blocker = (await ctx.Kernel.ListTasksAsync(caller.TrackId)).Single(t => t.TaskKey == "blocker");
-        await ctx.Store.UpsertTaskAsync(blocker with { Status = TaskRunStatus.Done }, null, null, default);
-        await ctx.Kernel.Actors.RemoveAndDisposeAsync(caller.TrackId);
-        await ctx.Kernel.RejectTaskAsync(caller.TrackId, caller.SessionId, "routed", "Retry", reQueue: true);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await FlowFixture.AddAsync(ctx.Kernel, caller.TrackId, FlowFixture.Worker("routed", "Inspect"));
+        while ((await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId, timeout.Token)).PendingApprovals.Count == 0)
+            await Task.Delay(10, timeout.Token);
         var first = Assert.Single((await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId)).PendingApprovals);
-        report = await ctx.Kernel.ReadReportAsync(caller.TrackId);
+        var report = await ctx.Kernel.ReadReportAsync(caller.TrackId);
         await ctx.Kernel.CommitReportAsync(caller.TrackId, caller.SessionId,
             new(report.Anchor, [new BlockOp.UpsertBlockOp("unrelated", ReportBlockKind.Prose, "Sync", null)]));
         await ctx.Kernel.RespondInteractionAsync(first.SessionId, first.Id, new(ExecutionId: first.ExecutionId, OptionId: first.Options.Single(o => o.IsApproval).Id), new InteropPrincipal.Human(), default);
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         await ctx.Kernel.WaitForTrackIdleAsync(caller.TrackId, timeout.Token);
         Assert.Empty((await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId)).PendingApprovals);
         var worker = Assert.Single(await ctx.Kernel.ListSessionsAsync(caller.TrackId, new(IncludeArchived: true), new InteropPrincipal.Human(), default), summary => summary.TaskId is not null).Session;
         Assert.Equal("gpt-5", worker.Model);
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task SchedulingAsk_CloseThenReopenRequestsFreshApproval(bool cancelSchedulingCaller)
+    [Fact]
+    public async Task SchedulingAsk_CloseThenReopenRequestsFreshApproval()
     {
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
         var caller = Caller(snapshot);
-        var report = await ctx.Kernel.ReadReportAsync(caller.TrackId);
-        await ctx.Kernel.CommitReportAsync(caller.TrackId, caller.SessionId, new(report.Anchor, [
-            new BlockOp.UpsertBlockOp("blocker", ReportBlockKind.Task, null, TestJson.FromObject(new {
-                task_key = "blocker", ready = false, access = "read_only", goal_or_cmd = "Block" })),
-            new BlockOp.UpsertBlockOp("pending", ReportBlockKind.Task, null, TestJson.FromObject(new {
-                task_key = "pending", ready = true, access = "read_only", goal_or_cmd = "Inspect", depends_on = new[] { "blocker" } }))]));
         await SetPolicy(ctx, caller, "export default {id:'ask',title:'Ask',before:a=>a.type==='task.dispatch'?AskHuman('Approve?',{approve:'Approve',deny:'Reject'}):Allow()};");
-        var blocker = (await ctx.Kernel.ListTasksAsync(caller.TrackId)).Single(t => t.TaskKey == "blocker");
-        await ctx.Store.UpsertTaskAsync(blocker with { Status = TaskRunStatus.Done }, null, null, default);
-        await ctx.Kernel.Actors.RemoveAndDisposeAsync(caller.TrackId);
-
-        using var schedulingCaller = new CancellationTokenSource();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        await ctx.Kernel.RejectTaskAsync(caller.TrackId, caller.SessionId, "pending", "Retry", reQueue: true, ct: schedulingCaller.Token);
+        await FlowFixture.AddAsync(ctx.Kernel, caller.TrackId, FlowFixture.Worker("pending", "Inspect"));
+        while ((await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId, timeout.Token)).PendingApprovals.Count == 0)
+            await Task.Delay(10, timeout.Token);
         var first = Assert.Single((await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId)).PendingApprovals);
         var pending = (await ctx.Kernel.ListTasksAsync(caller.TrackId)).Single(t => t.TaskKey == "pending");
         Assert.Equal(TaskRunStatus.Pending, pending.Status);
-        if (cancelSchedulingCaller)
-        {
-            schedulingCaller.Cancel();
-            Assert.Equal(first.Id, Assert.Single((await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId)).PendingApprovals).Id);
-        }
-
         await ctx.Kernel.PatchTrackAsync(caller.TrackId, new(Closed: true), timeout.Token);
         await ctx.Kernel.WaitForTrackIdleAsync(caller.TrackId, timeout.Token);
         Assert.Empty((await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId)).PendingApprovals);

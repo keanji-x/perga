@@ -350,6 +350,10 @@ internal static class TrackFlowReconciler
         };
     }
 
+    internal static (string Title, string Prompt) ScheduleText(FlowNodeSpecDto node) =>
+        (string.IsNullOrWhiteSpace(node.Title) ? node.Id : node.Title,
+            node.Do.Prompt ?? node.Do.Cmd ?? $"Run flow node '{node.Id}'");
+
     public static TrackScheduleDto? BuildScheduleForNode(
         string trackId,
         FlowNodeSpecDto node,
@@ -363,8 +367,7 @@ internal static class TrackFlowReconciler
         }
 
         var scheduleId = FlowConstants.MakeScheduleId(node.Id);
-        var title = string.IsNullOrWhiteSpace(node.Title) ? node.Id : node.Title!;
-        var prompt = node.Do.Prompt ?? node.Do.Cmd ?? $"Run flow node '{node.Id}'";
+        var (title, prompt) = ScheduleText(node);
         var sourceKind = node.Source is TrackScheduleSources.Agent or TrackScheduleSources.User or TrackScheduleSources.Template
             ? node.Source
             : TrackScheduleSources.Agent;
@@ -465,8 +468,8 @@ internal static class TrackFlowReconciler
                         repo = d.Repo,
                         headSha = d.HeadSha,
                         cmd = d.Cmd,
-                        interval = d.Interval ?? FlowConstants.DefaultWatchInterval,
-                        timeout = d.Timeout ?? FlowConstants.DefaultWatchTimeout
+                        interval = d.Interval ?? FlowSyntax.DefaultWatchInterval,
+                        timeout = d.Timeout ?? FlowSyntax.DefaultWatchTimeout
                     }));
 
             default:
@@ -496,7 +499,7 @@ internal static class TrackFlowReconciler
                     "agent",
                     d.Prompt ?? string.Empty,
                     access,
-                    TaskBlockSynchronizer.NormalizeProviderId(d.Provider),
+                    SessionLaunchValidator.NormalizeTaskProviderId(d.Provider),
                     d.Role,
                     gateSpec,
                     d.Acceptance,

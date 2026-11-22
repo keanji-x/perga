@@ -58,7 +58,7 @@ public sealed partial class PolicyVm
                         throw new InvalidOperationException("template.toolNameVersion must be the integer 1 or 2.");
                     legacyToolNames = version.AsNumber() == 1;
                 }
-                ParseSchedules(sourceDefinition);
+                ReadFlow(engine, sourceDefinition);
             }
             return new(engine.Invoke("__adaptTemplate", definition), legacyToolNames, legacyToolNames);
         }
@@ -111,7 +111,7 @@ public sealed partial class PolicyVm
                             throw new InvalidOperationException("template.toolNameVersion must be the integer 1 or 2.");
                         legacyToolNames = version.AsNumber() == 1;
                     }
-                    ParseSchedules(bundledObj);
+                    ReadFlow(engine, bundledObj);
                 }
                 return new(bundledDef, legacyToolNames, legacyToolNames);
             }
@@ -129,7 +129,7 @@ public sealed partial class PolicyVm
                         throw new InvalidOperationException("template.toolNameVersion must be the integer 1 or 2.");
                     legacyToolNames = version.AsNumber() == 1;
                 }
-                ParseSchedules(sourceDefinition);
+                ReadFlow(engine, sourceDefinition);
             }
             return new(definition, legacyToolNames, legacyToolNames);
         }
@@ -273,10 +273,23 @@ public sealed partial class PolicyVm
           const overriddenRoutes = new Set(childRoutes.map(routeKey));
           const baseFields = { ...base };
           const childFields = { ...child };
+          const mergeFlow = (inherited, own) => {
+            for (const flow of [inherited, own]) {
+              if (flow === undefined || flow === null) continue;
+              if (!Array.isArray(flow)) throw new TypeError('template.flow must be an array of Flow nodes.');
+              const ids = new Set();
+              for (const node of flow) {
+                if (!node || typeof node.id !== 'string' || ids.has(node.id))
+                  throw new TypeError('template.flow requires unique node IDs.');
+                ids.add(node.id);
+              }
+            }
+            return keyed(inherited, own, x => x.id);
+          };
           const merged = { ...baseFields, ...childFields, extends: undefined,
             inputs: { ...base.inputs, ...child.inputs },
             plugins: [...new Set([...(base.plugins||[]),...(child.plugins||[])])],
-            schedules: keyed(base.schedules, child.schedules, x => x.id),
+            flow: mergeFlow(base.flow, child.flow),
             report: { ...base.report, ...child.report, sections: keyed(base.report?.sections, child.report?.sections, x => x.h1) },
             tasks: { ...base.tasks, ...child.tasks,
               routing: [...childRoutes, ...(base.tasks?.routing || []).filter(x => !overriddenRoutes.has(routeKey(x)))] }

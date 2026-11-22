@@ -210,7 +210,7 @@ public sealed class SqliteTrackStoreRoundTripAndCascadeTests
         await store.CreateTrackAsync(trackA, reportA, null, leadA, ct);
         await store.CreateTrackAsync(trackB, reportB, null, leadB, ct);
 
-        // 1. SaveReportAndTasksAsync with 2 tasks + Zstd revision blocks
+        // Save a historical Report alongside an independent task history.
         var task1 = new TaskDto(
             Id: "task_1",
             TrackId: "trk_a",
@@ -251,13 +251,15 @@ public sealed class SqliteTrackStoreRoundTripAndCascadeTests
         var rev2Doc = new ReportDocument(2, "Added two tasks", "<!-- lead -->", rev2Blocks);
         var rev2Zstd = SqliteJsonUpcaster.CompressReportBlocksZstd(rev2Blocks);
 
-        await store.SaveReportAndTasksAsync(
+        await store.UpsertTaskAsync(task1, null, null, ct);
+        await store.UpsertTaskAsync(task2, null, null, ct);
+        await store.SaveReportAsync(
             trackId: "trk_a",
             report: rev2Doc,
             compressedRevisionBlocks: rev2Zstd,
             authorSessionId: "sess_a",
             commitMessage: "Add build and lint tasks",
-            syncedTasks: [task1, task2],
+
             nextTemplateState: StorageTestHarness.Json("""{"stage":"planned"}"""),
             evt: StorageTestHarness.CreateEvent("report.updated", "trk_a", "area_1", createdAtMs: 3_100),
             ct: ct);
@@ -267,7 +269,7 @@ public sealed class SqliteTrackStoreRoundTripAndCascadeTests
         Assert.Equal(ReportBlockKind.Task, decompressedRev2[1].Kind);
         Assert.Empty(await store.GetReportRevisionBlocksAsync("trk_a", 999, ct));
 
-        // 2. Settle task_1 with run fields, then re-run SaveReportAndTasksAsync removing task_2 while keeping task_1!
+        // Editing the Report leaves both tasks and their run histories intact.
         var task1Done = task1 with
         {
             Status = TaskRunStatus.Done,
@@ -290,13 +292,13 @@ public sealed class SqliteTrackStoreRoundTripAndCascadeTests
 
         var rev3Blocks = rev2Blocks.Take(2).ToList();
         var rev3Doc = new ReportDocument(3, "Removed obsolete-lint", "<!-- lead -->", rev3Blocks);
-        await store.SaveReportAndTasksAsync(
+        await store.SaveReportAsync(
             trackId: "trk_a",
             report: rev3Doc,
             compressedRevisionBlocks: SqliteJsonUpcaster.CompressReportBlocksZstd(rev3Blocks),
             authorSessionId: "sess_a",
             commitMessage: "Drop obsolete task",
-            syncedTasks: [task1Done],
+
             nextTemplateState: StorageTestHarness.Json("""{"stage":"trimmed"}"""),
             evt: StorageTestHarness.CreateEvent("report.updated", "trk_a", "area_1", createdAtMs: 3_400),
             ct: ct);
@@ -305,7 +307,8 @@ public sealed class SqliteTrackStoreRoundTripAndCascadeTests
         Assert.NotNull(aggA);
         Assert.Equal(3, aggA.Report.DocRev);
         Assert.Equal("trimmed", aggA.Track.TemplateState.GetProperty("stage").GetString());
-        var remainingTask = Assert.Single(aggA.Tasks);
+        Assert.Equal(2, aggA.Tasks.Count);
+        var remainingTask = Assert.Single(aggA.Tasks, t => t.Id == "task_1");
         Assert.Equal("task_1", remainingTask.Id);
         Assert.Equal(SemanticVerdict.Accepted, remainingTask.SemanticVerdict);
         Assert.Equal("sess_a", remainingTask.SessionId);

@@ -192,7 +192,6 @@ public static class TaskGraphScheduler
             }
 
             if (depTask.Status != TaskRunStatus.Done ||
-                depTask.SemanticVerdict == SemanticVerdict.Rejected ||
                 depTask.Outcome is FlowOutcome.Attention or FlowOutcome.Blocked)
             {
                 return false;

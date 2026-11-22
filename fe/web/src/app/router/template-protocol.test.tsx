@@ -15,7 +15,7 @@ afterEach(() => { cleanup(); document.getElementById('root')?.remove(); });
 
 it('loads the current manifest and sends typed edits through the production router', async () => {
   const requests: ApiRequest[] = [];
-  let track = fixtureTrack('protocol', { templateId: 'dev', templateTitle: 'Dev', templateInputs: { count: 2 } });
+  let track = fixtureTrack('protocol', { templateId: 'agents-delivery', templateTitle: 'Delivery', templateInputs: { count: 2 } });
   const ok = (body: unknown): ApiTransportResponse => ({ status: 200, statusText: 'OK', body });
   const transport: ApiTransportPort = { send(request) {
     requests.push(request);
@@ -24,14 +24,9 @@ it('loads the current manifest and sends typed edits through the production rout
       track = { ...track, templateInputs: request.body };
       return Promise.resolve(ok(track));
     }
-    if (request.path === `${base}/template`) return Promise.resolve(ok({ snapshot: 'source', manifest: { id: 'dev', inputsSchema: { count: { type: 'number' } } }, inputs: track.templateInputs, state: {}, headerView: null }));
-    if (request.path.startsWith(`${base}/schedules?`)) return Promise.resolve(ok({ schedules: [], recentRuns: [] }));
-    if (request.path === `${base}/schedules` && request.method === 'POST') return Promise.resolve(ok({
-      id: 'new', trackId: 'protocol', sourceKind: 'user', scheduleKind: 'cron', title: 'Daily', prompt: 'Check',
-      cronExpr: '0 9 * * *', timezone: 'UTC', runAtMs: null, nextFireAtMs: 2000, lastFiredAtMs: null,
-      maxOccurrences: null, firedCount: 0, state: 'active', createdAtMs: 1, updatedAtMs: 2,
-    }));
+    if (request.path === `${base}/template`) return Promise.resolve(ok({ snapshot: 'source', manifest: { id: 'agents-delivery', flow: [], inputsSchema: { count: { type: 'number' } } }, inputs: track.templateInputs, state: {} }));
     if (request.path === base) return Promise.resolve(ok(fixtureSnapshot(track, [], fixtureReport('# Report'))));
+    if (request.path === `${base}/views`) return Promise.resolve(ok({ templateId: 'agents-delivery', views: {}, widgets: {}, diagnostics: [] }));
     if (request.path === `${base}/report`) return Promise.resolve(ok({ taskDiagnostics: [] }));
     if (request.path === '/api/v1/areas') return Promise.resolve(ok([{ id: track.areaId, name: 'Project', color: '#6574cd', sortOrder: 1, createdAtMs: 1, updatedAtMs: 1 }]));
     if (request.path.includes('/tracks?')) return Promise.resolve(ok([track]));
@@ -52,13 +47,7 @@ it('loads the current manifest and sends typed edits through the production rout
   fireEvent.change(count, { target: { value: '4.5' } });
   fireEvent.click(screen.getByRole('button', { name: 'Save inputs' }));
   await waitFor(() => expect(requests.filter(request => request.method === 'PATCH')).toMatchObject([{ path: '/api/v1/tracks/protocol/template/inputs', body: { count: 4.5 } }]));
-  fireEvent.click(screen.getByRole('tab', { name: 'Schedules' }));
-  fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Daily' } });
-  fireEvent.change(screen.getByLabelText('Prompt'), { target: { value: 'Check' } });
-  fireEvent.change(screen.getByLabelText('Schedule type'), { target: { value: 'cron' } });
-  fireEvent.change(screen.getByLabelText('Cron expression'), { target: { value: '0 9 * * *' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Add schedule' }));
-  await waitFor(() => expect(requests.filter(request => request.method === 'POST')).toMatchObject([{ path: '/api/v1/tracks/protocol/schedules', body: { title: 'Daily', prompt: 'Check', cronExpr: '0 9 * * *', timezone: 'UTC' } }]));
-  await waitFor(() => expect(requests.filter(request => request.path.includes('/schedules?')).length).toBeGreaterThan(1));
+  await waitFor(() => expect(requests.filter(request => request.path === '/api/v1/tracks/protocol/views')).toHaveLength(2));
+  expect(screen.getAllByRole('tab').map(tab => tab.textContent)).toEqual(['Inputs']);
   client.clear();
 });

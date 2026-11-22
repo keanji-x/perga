@@ -13,7 +13,7 @@ import { queryKeys } from '../providers/query-keys.ts';
 
 afterEach(cleanup);
 
-function setup(status = 'failed') {
+function setup(status = 'failed', enableTaskActions = false) {
   const requests: ApiRequest[] = [];
   let task = taskDtoSchema.parse({ id: 'task', trackId: 'w1', blockId: 'block', taskKey: 'inspect', kind: 'agent',
     status, sessionId: 'worker', runCount: 2, createdAtMs: 1, updatedAtMs: 2, workerResult: { summary: 'Latest result' },
@@ -30,7 +30,7 @@ function setup(status = 'failed') {
       { id: 'block', kind: 'task', payload: { key: 'inspect', kind: 'codex', declared_by: 'user', ready: true, goal: 'Inspect' } },
     ]));
     return <><output aria-label="Inventory status">{rows[0]?.execution?.label}</output><TaskRecovery trackId="w1" taskKey="inspect" expanded
-      transport={transport} unauthorized={unauthorized} openWorker={vi.fn()} openableWorkerIds={new Set(['worker'])} enableTaskActions /></>;
+      transport={transport} unauthorized={unauthorized} openWorker={vi.fn()} openableWorkerIds={new Set(['worker'])} enableTaskActions={enableTaskActions} /></>;
   }
   render(<QueryClientProvider client={client}><Owner /></QueryClientProvider>);
   return { client, requests, advance: async (status: string) => {
@@ -50,10 +50,11 @@ it('shares the track snapshot between inventory and task details and refreshes l
   expect(screen.getByText('New result')).toBeTruthy();
   expect(screen.queryByText('failed check')).toBeNull();
   expect(screen.getByRole('status', { name: 'Inventory status' }).textContent).toBe('Running');
+  expect(screen.queryByRole('button', { name: 'Cancel task' })).toBeNull();
 });
 
-it('uses task governance routes and refreshes the shared snapshot', async () => {
-  const fixture = setup('running');
+it('cancels a running task when actions are enabled', async () => {
+  const fixture = setup('running', true);
   await userEvent.click(await screen.findByRole('button', { name: 'Cancel task' }));
   await waitFor(() => expect(fixture.requests.some(request => request.path === '/api/v1/tracks/w1/tasks/inspect/cancel' && request.method === 'POST')).toBe(true));
 });

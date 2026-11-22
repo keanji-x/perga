@@ -1,10 +1,9 @@
 import type { TrackAggregateSnapshotDto } from "../../../../core/api/perga-v1.ts";
-import type { ApiOperation } from '../../../../core/api/types.ts';
 import { priorityConversation } from '../../../../core/domain/activity.ts';
 import { DELETE_FAILURES,DELETE_TEXT,writeFailureText } from '../../../../core/domain/failure-class.ts';
 import { terminalPresentation } from '../../../../core/domain/terminal-presentation.ts';
-import { cancelTrackScheduleOperation,setTrackScheduleOperation,trackSchedulesOperation,trackTemplateOperation,triggerTrackScheduleOperation,updateTrackTemplateInputsOperation } from '../../../../core/domain/track-schedules.ts';
-import { trackDetail,trackReport,trackSchedules,trackTemplate,trackViews as trackViewsKey } from '../../../../core/events/query-keys.ts';
+import { trackTemplateOperation, updateTrackTemplateInputsOperation } from '../../../../core/domain/track-template.ts';
+import { trackDetail, trackReport, trackTemplate, trackViews as trackViewsKey } from '../../../../core/events/query-keys.ts';
 import { TemplateProtocolBar } from '../../features/report/template-protocol/public.tsx';
 import { useTrackClosedControl } from '../../features/track/page/closed-control.ts';
 import { TerminalWorkbenchView,useTerminalWorkbench } from '../../features/track/workbench/public.tsx';
@@ -442,16 +441,13 @@ export function TrackRouteBody({
   };
 
   const protocolClient = useQueryClient();
-  const schedulesQuery = useQuery({ queryKey: trackSchedules(track.id), enabled: true,
-    queryFn: ({ signal }) => runOperation(transport, { ...trackSchedulesOperation(track.id), signal }, unauthorized),
-    refetchInterval: query => query.state.data?.recentRuns.some(run => run.state === 'pending' || run.state === 'delivering') ? 2000 : false });
   const templateQuery = useQuery({ queryKey: trackTemplate(track.id), enabled: !!track.templateId,
     queryFn: ({ signal }) => runOperation(transport, { ...trackTemplateOperation(track.id), signal }, unauthorized) });
-  const protocolMutation = useRecoveryMutation(transport, {
-    mutationFn: (operation: ApiOperation<unknown>, admitted) => runOperation(admitted, operation, unauthorized),
+  const inputsMutation = useRecoveryMutation(transport, {
+    mutationFn: (patch: Readonly<Record<string, unknown>>, admitted) =>
+      runOperation(admitted, updateTrackTemplateInputsOperation(track.id, patch), unauthorized),
     onSuccess: async () => {
       await Promise.all([
-        protocolClient.invalidateQueries({ queryKey: trackSchedules(track.id) }),
         protocolClient.invalidateQueries({ queryKey: trackTemplate(track.id) }),
         protocolClient.invalidateQueries({ queryKey: trackDetail(track.id) }),
         protocolClient.invalidateQueries({ queryKey: trackViewsKey(track.id) }),
@@ -459,7 +455,6 @@ export function TrackRouteBody({
       ]);
     },
   });
-  const protocolWrite = async (operation: ApiOperation<unknown>) => { await protocolMutation.mutateAsync(operation); };
   const protocolWritable = snapshot.track.closedAtMs == null;
 
   const hasFlowContent = templateViews?.status === 'ready'
@@ -468,13 +463,10 @@ export function TrackRouteBody({
   const hasDailyReportContent = reportPresentation.visible?.preparation.kind !== 'empty' || hasFlowContent;
 
   const reportRegion = <>
-    <TemplateProtocolBar track={track} schedules={schedulesQuery.data} inputsSchema={templateQuery.data?.manifest?.inputsSchema}
-      loading={schedulesQuery.isLoading || templateQuery.isLoading}
-      error={schedulesQuery.error?.message ?? templateQuery.error?.message}
-      onSaveSchedule={protocolWritable ? request => protocolWrite(setTrackScheduleOperation(track.id, request)) : undefined}
-      onCancelSchedule={protocolWritable ? id => protocolWrite(cancelTrackScheduleOperation(track.id, id)) : undefined}
-      onTriggerSchedule={protocolWritable ? id => protocolWrite(triggerTrackScheduleOperation(track.id, id)) : undefined}
-      onSaveInputs={protocolWritable ? patch => protocolWrite(updateTrackTemplateInputsOperation(track.id, patch)) : undefined} />
+    <TemplateProtocolBar track={track} inputsSchema={templateQuery.data?.manifest?.inputsSchema}
+      loading={templateQuery.isLoading}
+      error={templateQuery.error?.message}
+      onSaveInputs={protocolWritable ? async patch => { await inputsMutation.mutateAsync(patch); } : undefined} />
     {centerActive && !hasDailyReportContent ? null : (
         <TrackReportRegion
         presentation={reportPresentation}

@@ -21,11 +21,6 @@ internal sealed partial class InMemoryTrackStore : ITrackWakeStore
         _trackWakes.Add(new(++_wakeOrdinal, $"wke_{Guid.NewGuid():N}", request.TrackId, request.TargetSessionId,
             request.Kind, request.CoalesceKey, request.Payload.GetRawText(), TrackWakeStates.Pending, null, null, 0, now, now));
     }
-    public Task<IReadOnlyList<TrackWake>> ListScheduleRunsAsync(string trackId, int limit, CancellationToken ct)
-    {
-        lock (_gate) return Task.FromResult<IReadOnlyList<TrackWake>>(_trackWakes.Where(w => w.TrackId == trackId && w.Kind == "schedule").OrderByDescending(w => w.Ordinal).Take(limit).ToArray());
-    }
-
     public Task EnqueueAsync(TrackWakeRequest request, CancellationToken ct)
     { lock (_gate) EnqueueWakeLocked(request); return Task.CompletedTask; }
     public Task<IReadOnlyList<TrackWake>> ListAsync(string trackId, CancellationToken ct)

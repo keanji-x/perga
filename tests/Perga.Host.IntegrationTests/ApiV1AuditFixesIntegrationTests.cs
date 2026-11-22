@@ -255,8 +255,12 @@ public sealed class ApiV1AuditFixesIntegrationTests
         Assert.Equal("modified.txt", singleFiltered.GetProperty("path").GetString());
     }
 
+    private const string VcsWorkspaceTemplate = """
+        export default {id:'vcs-fixture',title:'VCS workspace',workspace:{driver:'vcs-workspace'}};
+        """;
+
     [Theory]
-    [InlineData("dev", "vcs-workspace")]
+    [InlineData("vcs-fixture", "vcs-workspace")]
     [InlineData(null, "direct")]
     public async Task BlankWorkspaceDoesNotUseTheRepositoryContainingTheDataDirectory(string? templateId, string driver)
     {
@@ -271,6 +275,7 @@ public sealed class ApiV1AuditFixesIntegrationTests
             await RunCmdAsync(root, "git", "add", "parent-only.txt");
             await RunCmdAsync(root, "git", "commit", "-q", "-m", "initial");
             await using var cluster = new PergaHostTestCluster(Path.Combine(root, "perga-data"));
+            cluster.Services.GetRequiredService<IPergaKernel>().Templates.RegisterTemplate(VcsWorkspaceTemplate);
             using var areaResponse = await cluster.Client.PostAsJsonAsync("/api/v1/areas", new { name = "Blank area" });
             var area = (await areaResponse.Content.ReadFromJsonAsync<AreaDto>(PergaJsonDefaults.ApiOptions))!;
             using var trackResponse = await cluster.Client.PostAsJsonAsync("/api/v1/tracks",
@@ -303,6 +308,7 @@ public sealed class ApiV1AuditFixesIntegrationTests
     {
         await using var cluster = new PergaHostTestCluster();
         var client = cluster.Client;
+        cluster.Services.GetRequiredService<IPergaKernel>().Templates.RegisterTemplate(VcsWorkspaceTemplate);
 
         // 1. POST /api/v1/areas with Idempotency-Key + blank DefaultCwd
         using var areaReq1 = new HttpRequestMessage(HttpMethod.Post, "/api/v1/areas")
@@ -334,7 +340,7 @@ public sealed class ApiV1AuditFixesIntegrationTests
             {
                 areaId = area1.Id,
                 title = "Isolated Blank Track",
-                templateId = "dev"
+                templateId = "vcs-fixture"
             })
         };
         trackReq1.Headers.Add("Idempotency-Key", "idem-track-1");
@@ -357,7 +363,7 @@ public sealed class ApiV1AuditFixesIntegrationTests
             {
                 areaId = area1.Id,
                 title = "Isolated Blank Track",
-                templateId = "dev"
+                templateId = "vcs-fixture"
             })
         };
         trackReq2.Headers.Add("Idempotency-Key", "idem-track-1");
@@ -520,49 +526,10 @@ public sealed class ApiV1AuditFixesIntegrationTests
         using var trackDoc = JsonDocument.Parse(await trackResp.Content.ReadAsStringAsync(cts.Token));
         var trackId = trackDoc.RootElement.GetProperty("track").GetProperty("id").GetString()!;
 
-        // 1. Add task blocks (one failing command task + one pending task) and verify human governance REST routes
-        using var reportResp = await client.GetAsync($"/api/v1/tracks/{trackId}/report", cts.Token);
-        using var reportDoc = JsonDocument.Parse(await reportResp.Content.ReadAsStringAsync(cts.Token));
-        var docRev = reportDoc.RootElement.GetProperty("docRev").GetInt32();
-
-        using var putFailTask = await client.PutAsJsonAsync(
-            $"/api/v1/tracks/{trackId}/report/blocks/b_fail_gov",
-            new
-            {
-                docRev,
-                knownBlockRev = 0,
-                kind = "task",
-                payload = new
-                {
-                    taskKey = "failing-check",
-                    kind = "terminal",
-                    ready = true,
-                    command = "exit 2",
-                    maxRetries = 1
-                }
-            },
-            cts.Token);
-        Assert.Equal(HttpStatusCode.OK, putFailTask.StatusCode);
-
-        using var putPendingTask = await client.PutAsJsonAsync(
-            $"/api/v1/tracks/{trackId}/report/blocks/b_cancel_gov",
-            new
-            {
-                docRev = docRev + 1,
-                knownBlockRev = 0,
-                kind = "task",
-                payload = new
-                {
-                    taskKey = "cancel-me",
-                    kind = "terminal",
-                    ready = false,
-                    command = "echo noop"
-                }
-            },
-            cts.Token);
-        Assert.Equal(HttpStatusCode.OK, putPendingTask.StatusCode);
-
         var kernel = cluster.Services.GetRequiredService<IPergaKernel>();
+        await FlowFixture.AddAsync(kernel, trackId,
+            new("failing-check", new("run", Cmd: "exit 2", Access: "read_only")),
+            new("cancel-me", new("run", Cmd: "echo noop", Access: "read_only"), When: new(At: "2099-01-01T00:00:00Z")));
         await kernel.WaitForTrackIdleAsync(trackId, cts.Token);
 
         // Historical task failures do not make the Track blocked.
@@ -580,7 +547,7 @@ public sealed class ApiV1AuditFixesIntegrationTests
         Assert.Equal(0, trackOverlay1.GetProperty("pendingApprovalCount").GetInt32());
         Assert.Equal(JsonValueKind.Array, trackOverlay1.GetProperty("notifiableSessions").ValueKind);
 
-        // Human governance REST endpoints: /cancel, /accept, /reject!
+        // Cancel through the task route and check the committed Flow.
         using var cancelResp = await client.PostAsJsonAsync(
             $"/api/v1/tracks/{trackId}/tasks/cancel-me/cancel",
             new { reason = "Skipped by operator" },
@@ -589,23 +556,10 @@ public sealed class ApiV1AuditFixesIntegrationTests
         var canceledTask = (await cancelResp.Content.ReadFromJsonAsync<TaskDto>(PergaJsonDefaults.ApiOptions, cts.Token))!;
         Assert.Equal(TaskRunStatus.Canceled, canceledTask.Status);
 
-        using var acceptResp = await client.PostAsJsonAsync(
-            $"/api/v1/tracks/{trackId}/tasks/failing-check/accept",
-            new { note = "Accepted manually" },
-            cts.Token);
-        Assert.Equal(HttpStatusCode.OK, acceptResp.StatusCode);
-        var acceptedTask = (await acceptResp.Content.ReadFromJsonAsync<TaskDto>(PergaJsonDefaults.ApiOptions, cts.Token))!;
-        Assert.Equal(SemanticVerdict.Accepted, acceptedTask.SemanticVerdict);
-        Assert.Equal("Accepted manually", acceptedTask.SemanticNote);
-
-        using var rejectResp = await client.PostAsJsonAsync(
-            $"/api/v1/tracks/{trackId}/tasks/failing-check/reject",
-            new { note = "Re-marked failed", reQueue = false },
-            cts.Token);
-        Assert.Equal(HttpStatusCode.OK, rejectResp.StatusCode);
-        var rejectedTask = (await rejectResp.Content.ReadFromJsonAsync<TaskDto>(PergaJsonDefaults.ApiOptions, cts.Token))!;
-        Assert.Equal(TaskRunStatus.Failed, rejectedTask.Status);
-        Assert.Equal(SemanticVerdict.Rejected, rejectedTask.SemanticVerdict);
+        Assert.Equal("Skipped by operator", canceledTask.StatusDetail);
+        var canceledFlow = await kernel.GetTrackFlowAsync(trackId, cts.Token);
+        Assert.True(canceledFlow.FlowRev > 1);
+        Assert.DoesNotContain(canceledFlow.Projection.Nodes, node => node.Id == "cancel-me" && !node.Canceled);
 
         // 2. Open terminal and DELETE permanently -> GET /terminals must be empty!
         using var openTermResp = await client.PostAsJsonAsync(

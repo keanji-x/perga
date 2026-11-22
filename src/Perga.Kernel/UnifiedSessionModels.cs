@@ -20,8 +20,6 @@ public sealed class OptionalStringConverter : JsonConverter<OptionalString>
 public sealed record SessionListFilter(bool IncludeArchived = false, string? ParentSessionId = null);
 public sealed record SessionReadQuery(long AfterId = 0, long? BeforeId = null, int Limit = 20,
     bool Latest = false, string? ActivityTurnId = null, long? AfterSequence = null, int WaitMs = 0);
-public sealed record SessionTaskRequest(string? Access = null, string? Acceptance = null, string? Gate = null,
-    IReadOnlyList<string>? DependsOn = null);
 public sealed record UpdateSessionRequest(long? ExpectedConfigVersion = null, string? Title = null, bool? Archived = null,
     string? Provider = null, OptionalString Model = default, OptionalString ReasoningEffort = default,
     OptionalString PermissionMode = default);

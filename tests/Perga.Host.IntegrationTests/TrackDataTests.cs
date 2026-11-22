@@ -148,11 +148,11 @@ public sealed class TrackDataTests
         var created = await kernel.CreateTrackAsync(new(area.Id, TemplateId: template,
             TemplateInputs: JsonSerializer.SerializeToElement(new Dictionary<string, string> { [inputKey] = inputValue })));
 
-        var schedule = Assert.Single(await kernel.ListTrackSchedulesAsync(created.Track.Id));
+        var schedule = Assert.Single((await kernel.GetTrackFlowAsync(created.Track.Id)).Projection.Nodes);
         Assert.Equal(scheduleId, schedule.Id);
-        Assert.Equal("template", schedule.SourceKind);
-        Assert.Equal(cron, schedule.CronExpr);
-        Assert.Equal(timezone, schedule.Timezone);
+        Assert.Equal("template", schedule.Source);
+        Assert.Equal(cron, schedule.Cron);
+        Assert.Equal(timezone, schedule.Tz);
         Assert.Contains(inputValue, schedule.Prompt);
         Assert.NotNull(schedule.NextFireAtMs);
     }

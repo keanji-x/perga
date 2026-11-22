@@ -439,7 +439,8 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                     "INSERT INTO track_workspace_preparations VALUES (@Id, @Intent);",
                     new { track.Id, Intent = JsonSerializer.Serialize(preparation) }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
                 await InsertResourceReceiptAsync(conn, tx, key, track.Id, track.CreatedAtMs, input?.Receipt.InputId, innerCt).ConfigureAwait(false);
-                await SyncTemplateSchedulesAsync(conn, tx, track.Id, creation.TemplateSchedules, track.CreatedAtMs, innerCt).ConfigureAwait(false);
+                foreach (var clock in creation.FlowClocks)
+                    await UpsertFlowScheduleInternalAsync(conn, tx, clock, innerCt).ConfigureAwait(false);
                 foreach (var evt in events)
                     await InsertEventInternalAsync(conn, tx, evt, innerCt).ConfigureAwait(false);
                 return track.Id;
@@ -665,8 +666,8 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
     public Task UpdateTrackAndEmitAsync(TrackDto track, EventEnvelopeDto? evt, CancellationToken ct, bool writeData = false) =>
         UpdateTrackCoreAsync(track, null, evt, ct, writeData: writeData);
 
-    public Task UpdateTrackTemplateAndEmitAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto evt, CancellationToken ct, IReadOnlyList<TrackScheduleDto>? templateSchedules = null, bool refreshPromptsOnly = false, bool writeData = false) =>
-        UpdateTrackCoreAsync(track, templateSnapshot, evt, ct, replaceTemplateSnapshot: true, templateSchedules, refreshPromptsOnly, writeData);
+    public Task UpdateTrackTemplateAndEmitAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto evt, CancellationToken ct, bool writeData = false, TrackFlowUpdate? flow = null) =>
+        UpdateTrackCoreAsync(track, templateSnapshot, evt, ct, replaceTemplateSnapshot: true, writeData, flow);
 
     public Task RecordFlowFileHashAsync(string trackId, long flowRev, string sha256, CancellationToken ct)
     {
@@ -696,65 +697,11 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
         ArgumentNullException.ThrowIfNull(events);
         EnsureInitialized();
 
-        var flowSpecJson = string.IsNullOrWhiteSpace(track.FlowSpecJson) ? """{"rev":0,"nodes":[]}""" : track.FlowSpecJson;
-
         return _writer.EnqueueAsync(
             async (conn, tx, innerCt) =>
             {
-                var updated = await conn.ExecuteAsync(new CommandDefinition(
-                    """
-                    UPDATE tracks
-                    SET flow_spec_json = @FlowSpecJson,
-                        flow_rev = @FlowRev,
-                        flow_file_sha256 = @FlowFileSha256,
-                        updated_at_ms = @UpdatedAtMs
-                    WHERE id = @Id AND flow_rev = @ExpectedFlowRev;
-                    """,
-                    new
-                    {
-                        FlowSpecJson = flowSpecJson,
-                        track.FlowRev,
-                        track.FlowFileSha256,
-                        track.UpdatedAtMs,
-                        track.Id,
-                        ExpectedFlowRev = expectedFlowRev
-                    },
-                    transaction: tx,
-                    cancellationToken: innerCt)).ConfigureAwait(false);
-                if (updated == 0)
-                {
-                    throw KernelException.Conflict(
-                        $"Flow revision conflict: expected {expectedFlowRev}, but the track flow was modified concurrently.");
-                }
-
-                foreach (var task in upsertedTasks)
-                {
-                    await UpsertTaskInternalAsync(conn, tx, task, innerCt).ConfigureAwait(false);
-                }
-
-                foreach (var schedule in activeFlowSchedules)
-                {
-                    await UpsertFlowScheduleInternalAsync(conn, tx, schedule, innerCt).ConfigureAwait(false);
-                }
-
-                foreach (var scheduleId in canceledFlowScheduleIds)
-                {
-                    await conn.ExecuteAsync(new CommandDefinition(
-                        $"""
-                        UPDATE track_schedules
-                        SET state = '{TrackScheduleStates.Canceled}', next_fire_at_ms = NULL, updated_at_ms = @Now
-                        WHERE track_id = @TrackId AND id = @ScheduleId AND node_key IS NOT NULL AND state = '{TrackScheduleStates.Active}';
-                        """,
-                        new { TrackId = track.Id, ScheduleId = scheduleId, Now = track.UpdatedAtMs },
-                        transaction: tx,
-                        cancellationToken: innerCt)).ConfigureAwait(false);
-                }
-
-                if (activeFlowSchedules.Count > 0 || canceledFlowScheduleIds.Count > 0)
-                {
-                    await InsertSchedulesEventAsync(conn, tx, track.Id, track.UpdatedAtMs, innerCt).ConfigureAwait(false);
-                }
-
+                await CommitTrackFlowInternalAsync(conn, tx, track, expectedFlowRev, upsertedTasks,
+                    activeFlowSchedules, canceledFlowScheduleIds, innerCt).ConfigureAwait(false);
                 foreach (var evt in events)
                 {
                     await InsertEventInternalAsync(conn, tx, evt, innerCt).ConfigureAwait(false);
@@ -763,7 +710,67 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
             ct);
     }
 
-    private Task UpdateTrackCoreAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto? evt, CancellationToken ct, bool replaceTemplateSnapshot = false, IReadOnlyList<TrackScheduleDto>? templateSchedules = null, bool refreshPromptsOnly = false, bool writeData = false)
+    private async Task CommitTrackFlowInternalAsync(
+        SqliteConnection conn, SqliteTransaction tx, TrackDto track, long expectedFlowRev,
+        IReadOnlyList<TaskDto> upsertedTasks, IReadOnlyList<TrackScheduleDto> activeFlowSchedules,
+        IReadOnlyList<string> canceledFlowScheduleIds, CancellationToken innerCt)
+    {
+        var updated = await conn.ExecuteAsync(new CommandDefinition(
+            """
+            UPDATE tracks
+            SET flow_spec_json = @FlowSpecJson,
+                flow_rev = @FlowRev,
+                flow_file_sha256 = @FlowFileSha256,
+                updated_at_ms = @UpdatedAtMs
+            WHERE id = @Id AND flow_rev = @ExpectedFlowRev;
+            """,
+            new
+            {
+                FlowSpecJson = string.IsNullOrWhiteSpace(track.FlowSpecJson) ? FlowSyntax.DefaultFlowSpecJson : track.FlowSpecJson,
+                track.FlowRev,
+                track.FlowFileSha256,
+                track.UpdatedAtMs,
+                track.Id,
+                ExpectedFlowRev = expectedFlowRev
+            },
+            transaction: tx,
+            cancellationToken: innerCt)).ConfigureAwait(false);
+        if (updated == 0)
+        {
+            throw KernelException.Conflict(
+                $"Flow revision conflict: expected {expectedFlowRev}, but the track flow was modified concurrently.");
+        }
+
+        foreach (var task in upsertedTasks)
+        {
+            await UpsertTaskInternalAsync(conn, tx, task, innerCt).ConfigureAwait(false);
+        }
+
+        foreach (var schedule in activeFlowSchedules)
+        {
+            await UpsertFlowScheduleInternalAsync(conn, tx, schedule, innerCt).ConfigureAwait(false);
+        }
+
+        foreach (var scheduleId in canceledFlowScheduleIds)
+        {
+            await conn.ExecuteAsync(new CommandDefinition(
+                $"""
+                UPDATE track_schedules
+                SET state = '{TrackScheduleStates.Canceled}', next_fire_at_ms = NULL, updated_at_ms = @Now
+                WHERE track_id = @TrackId AND id = @ScheduleId AND node_key IS NOT NULL AND state = '{TrackScheduleStates.Active}';
+                """,
+                new { TrackId = track.Id, ScheduleId = scheduleId, Now = track.UpdatedAtMs },
+                transaction: tx,
+                cancellationToken: innerCt)).ConfigureAwait(false);
+        }
+
+        if (activeFlowSchedules.Count > 0 || canceledFlowScheduleIds.Count > 0)
+        {
+            await InsertSchedulesEventAsync(conn, tx, track.Id, track.UpdatedAtMs, innerCt).ConfigureAwait(false);
+        }
+    }
+
+    private Task UpdateTrackCoreAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto? evt, CancellationToken ct, bool replaceTemplateSnapshot = false, bool writeData = false, TrackFlowUpdate? flow = null)
     {
         ArgumentNullException.ThrowIfNull(track);
         EnsureInitialized();
@@ -835,8 +842,9 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                         transaction: tx,
                         cancellationToken: innerCt)).ConfigureAwait(false);
 
-                if (replaceTemplateSnapshot)
-                    await SyncTemplateSchedulesAsync(conn, tx, track.Id, templateSchedules ?? [], track.UpdatedAtMs, innerCt, refreshPromptsOnly).ConfigureAwait(false);
+                if (flow is not null)
+                    await CommitTrackFlowInternalAsync(conn, tx, track, flow.ExpectedRev, flow.Tasks,
+                        flow.Clocks, [], innerCt).ConfigureAwait(false);
                 if (track.ClosedAtMs is not null)
                     await conn.ExecuteAsync(new CommandDefinition($"""
                         UPDATE track_wakes SET state='{TrackWakeStates.Dropped}', reason='{TrackWakeReasons.TrackClosed}', updated_at_ms=@Now
@@ -891,23 +899,20 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
     // Reports & Revisions
     // -------------------------------------------------------------------------
 
-    public Task SaveReportAndTasksAsync(
+    public Task SaveReportAsync(
         string trackId,
         ReportDocument report,
         byte[] compressedRevisionBlocks,
         string? authorSessionId,
         string commitMessage,
-        IReadOnlyList<TaskDto> syncedTasks,
         JsonElement nextTemplateState,
         EventEnvelopeDto evt,
-        CancellationToken ct,
-        WorkerDispatchIntent? dispatch = null)
+        CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(trackId);
         ArgumentNullException.ThrowIfNull(report);
         ArgumentNullException.ThrowIfNull(compressedRevisionBlocks);
         ArgumentNullException.ThrowIfNull(commitMessage);
-        ArgumentNullException.ThrowIfNull(syncedTasks);
         ArgumentNullException.ThrowIfNull(evt);
         EnsureInitialized();
 
@@ -972,31 +977,6 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                         transaction: tx,
                         cancellationToken: innerCt)).ConfigureAwait(false);
 
-                if (syncedTasks.Count == 0)
-                {
-                    await conn.ExecuteAsync(
-                        new CommandDefinition(
-                            "DELETE FROM tasks WHERE track_id = @TrackId;",
-                            new { TrackId = trackId },
-                            transaction: tx,
-                            cancellationToken: innerCt)).ConfigureAwait(false);
-                }
-                else
-                {
-                    var keepIds = syncedTasks.Select(static t => t.Id).ToArray();
-                    await conn.ExecuteAsync(
-                        new CommandDefinition(
-                            "DELETE FROM tasks WHERE track_id = @TrackId AND id NOT IN @KeepIds;",
-                            new { TrackId = trackId, KeepIds = keepIds },
-                            transaction: tx,
-                            cancellationToken: innerCt)).ConfigureAwait(false);
-
-                    foreach (var task in syncedTasks)
-                    {
-                        await UpsertTaskInternalAsync(conn, tx, task, innerCt).ConfigureAwait(false);
-                    }
-                }
-
                 await conn.ExecuteAsync(
                     new CommandDefinition(
                         """
@@ -1018,31 +998,8 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                 await conn.ExecuteAsync(new CommandDefinition(
                     "UPDATE report_revisions SET event_id = @EventId, summary = @Summary, leading_comment = @LeadingComment, before_blocks_zstd = @BeforeBlocks, summary_before = @BeforeSummary, leading_comment_before = @BeforeComment WHERE track_id = @TrackId AND doc_rev = @DocRev;",
                     new { EventId = reportEventId, TrackId = trackId, report.DocRev, report.Summary, report.LeadingComment, BeforeBlocks = beforeBlocks, BeforeSummary = previous.Summary, BeforeComment = previous.Comment }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
-                if (authorSessionId is null && dispatch is null)
+                if (authorSessionId is null)
                     await EnqueueWakeInternalAsync(conn, tx, TrackWakeRequests.Report(trackId, report.DocRev, evt.Payload), nowMs, innerCt).ConfigureAwait(false);
-                if (dispatch is not null)
-                {
-                    var dispatched = syncedTasks.Single(task => task.TaskKey == dispatch.TaskKey);
-                    if (dispatch.Session is { } session)
-                    {
-                        var parentDepth = authorSessionId is null ? (int?)null : await conn.ExecuteScalarAsync<int?>(new CommandDefinition(
-                            "SELECT spawn_depth FROM agent_sessions WHERE id=@Id;", new { Id = authorSessionId }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
-                        await UpsertSessionInternalAsync(conn, tx, session with
-                        {
-                            ParentSessionId = authorSessionId,
-                            SpawnDepth = parentDepth is null ? 0 : parentDepth.Value + 1,
-                            NotifyParent = session.NotifyParent
-                        }, innerCt).ConfigureAwait(false);
-                        await conn.ExecuteAsync(new CommandDefinition(
-                            "UPDATE tasks SET session_id = @SessionId WHERE id = @TaskId;",
-                            new { SessionId = session.Id, TaskId = dispatched.Id }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
-                    }
-                    await conn.ExecuteAsync(new CommandDefinition("""
-                        INSERT INTO creation_receipts (author_id, operation, scope_id, request_key, request_hash, resource_id, created_at_ms)
-                        VALUES (@AuthorId, 'session-create', @TrackId, @RequestKey, @RequestHash, @SessionId, @Now);
-                        """, new { dispatch.AuthorId, dispatch.TrackId, dispatch.RequestKey, dispatch.RequestHash, SessionId = dispatch.Session!.Id, Now = nowMs },
-                        tx, cancellationToken: innerCt)).ConfigureAwait(false);
-                }
             },
             ct);
     }

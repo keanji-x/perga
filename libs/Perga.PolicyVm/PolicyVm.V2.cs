@@ -1,3 +1,4 @@
+using Perga.Contracts;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Jint;
@@ -185,6 +186,28 @@ public sealed partial class PolicyVm
                 Diagnostics: diagnostics,
                 HumanReadOnly: policy.Manifest.HumanReadOnly);
         });
+    }
+
+    public IReadOnlyList<FlowNodeSpecDto> ResolveFlow(CompiledPolicy policy, JsonElement inputs) =>
+        ExecuteSandboxed("ResolveFlow", () =>
+        {
+            var bundle = TemplateBundle.Parse(policy.JsSource);
+            using var engine = CreateSandboxedEngine(ExecutionTimeoutMs, bundle);
+            var rawDef = LoadDefaultTemplateObject(engine, bundle);
+            var jsInputs = BuildEffectiveJsInputs(engine, rawDef, inputs);
+            return ReadFlow(engine, ResolveEffectiveDefinition(engine, rawDef, jsInputs)).Nodes;
+        });
+
+    private static (JsonElement Json, IReadOnlyList<FlowNodeSpecDto> Nodes) ReadFlow(Engine engine, ObjectInstance definition)
+    {
+        var value = definition.Get("flow");
+        if (!value.IsUndefined() && !value.IsNull() && !value.IsArray())
+            throw new InvalidOperationException("template.flow must be an array of Flow nodes.");
+        var flow = JsValueToJsonElement(engine, value, "[]");
+        var (spec, errors) = TrackFlowParser.Parse($$"""{"rev":0,"nodes":{{flow.GetRawText()}}}""");
+        if (spec is null)
+            throw new InvalidOperationException($"Invalid template flow: {string.Join("; ", errors.Select(error => $"{error.Path}: {error.Message}"))}");
+        return (flow, spec.Nodes);
     }
 
     private static ObjectInstance ResolveEffectiveDefinition(Engine engine, ObjectInstance rawDef, JsValue jsInputs)

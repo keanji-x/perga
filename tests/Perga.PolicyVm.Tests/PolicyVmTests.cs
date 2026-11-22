@@ -13,7 +13,7 @@ public sealed class PolicyVmTests
         {
             var slnCandidate = Path.Combine(dir.FullName, "Perga.sln");
             var tplCandidate = Path.Combine(dir.FullName, "templates", fileName);
-            if (File.Exists(slnCandidate) && File.Exists(tplCandidate))
+            if (File.Exists(slnCandidate) && Directory.Exists(tplCandidate))
             {
                 return tplCandidate;
             }
@@ -30,28 +30,30 @@ public sealed class PolicyVmTests
         return doc.RootElement.Clone();
     }
 
-    private PolicyEvalResult<string?> FireSchedule(CompiledPolicy policy, string id, JsonElement inputs, JsonElement state)
-    {
-        var spec = policy.Manifest.Schedules.Single(s => s.Id == id);
-        var prompt = _vm.InterpolateInputs(policy, spec.Prompt, inputs);
-        return _vm.After(policy, "schedule.fired", "track", JsonSerializer.SerializeToElement(new { scheduleId = id, sourceKind = "template", prompt }), inputs, state);
-    }
-
     [Theory]
-    [InlineData("dev.perga.js")]
-    [InlineData("investment-research.perga.js")]
-    [InlineData("long-term-goal.perga.js")]
-    public void BuiltInTemplatesStartEmptyWithUsefulHeaders(string name)
+    [InlineData("agents-delivery", null)]
+    [InlineData("equity-research", "weekly-price-refresh")]
+    [InlineData("okr-loop", "daily-ci-check")]
+    public void BuiltInTemplatesProjectFlowAndOnlySeedDeclaredClocks(string name, string? nodeId)
     {
-        var policy = _vm.Compile(File.ReadAllText(ResolveTemplatePath(name)));
-        var inputs = ParseJson("{}");
-        var state = _vm.InitState(policy, inputs).Output;
-        var view = _vm.EvaluateHeaderView(policy, new("track", inputs), state);
-        Assert.NotNull(view);
-        Assert.NotEmpty(view.Badges!);
-        Assert.NotEmpty(view.Metrics!);
-        Assert.NotEmpty(view.Rules!);
-        Assert.NotNull(view.Notice);
+        var policy = _vm.Compile(TemplateBundle.PackDirectory(ResolveTemplatePath(name)));
+        Assert.Contains("builtin:flow", policy.Manifest.InitialReportMarkdown);
+        var nodes = _vm.ResolveFlow(policy, ParseJson("{}"));
+        if (nodeId is null)
+        {
+            Assert.Empty(nodes);
+            Assert.True(policy.Manifest.RequireGateForReadWrite);
+            var review = _vm.RouteTaskDispatch(policy, "review", "read_only", null, null, ParseJson("""{"reviewModel":"custom"}"""));
+            Assert.Equal("custom", review.Model);
+            return;
+        }
+
+        var clock = Assert.Single(nodes);
+        Assert.Equal(nodeId, clock.Id);
+        Assert.NotNull(clock.When?.Cron);
+        Assert.Equal("wake", clock.Do.Kind);
+        Assert.Equal("lead", clock.Do.Session);
+        Assert.Contains("${inputs.", clock.Do.Prompt);
     }
 
     [Fact]
@@ -104,249 +106,6 @@ public sealed class PolicyVmTests
     {
         var policy = _vm.Compile("export default defineTemplate({id: 'view', title: 'View', " + hook + "});");
         Assert.Null(_vm.EvaluateHeaderView(policy, new("track", ParseJson("{}")), ParseJson("{}")));
-    }
-
-    [Fact]
-    public void BuiltInDevTemplate_CompilesAndExecutesFullLifecycleAcrossHooks()
-    {
-        var source = File.ReadAllText(ResolveTemplatePath("dev.perga.js"));
-        var compiled = _vm.Compile(source);
-
-        Assert.Equal("dev", compiled.TemplateId);
-        Assert.Equal("dev", compiled.Manifest.Id);
-        Assert.Equal("vcs-workspace", compiled.Manifest.WorkspaceDriver);
-        Assert.True(compiled.Manifest.RequireGateForReadWrite);
-        Assert.Equal(24000, compiled.Manifest.MaxProseChars);
-        Assert.Contains("node_modules", compiled.Manifest.WorkspaceLowerCacheDirs);
-        Assert.NotEmpty(compiled.Manifest.AfterWorkerDoneCmd!);
-        Assert.Single(compiled.Manifest.Schedules);
-        Assert.NotEmpty(compiled.Manifest.Schedules[0].Prompt);
-
-        var inputs = ParseJson("""{"baseBranch":"release/1.0","riskLevel":"high"}""");
-        var init = _vm.InitState(compiled, inputs);
-        var state = init.NextState;
-        Assert.Equal(0, state.GetProperty("iteration").GetInt32());
-        Assert.False(state.GetProperty("ciVerified").GetBoolean());
-
-        // Turn context includes role, upstream branch, and handover notice at high context usage
-        var turnRes = _vm.PrepareTurn(
-            compiled,
-            new PolicyTurnContext("trk_dev", "ses_lead", IsLead: true, BoundTaskId: null, ContextUsageRatio: 0.82, Inputs: inputs),
-            state);
-        Assert.Contains("release/1.0", turnRes.Output.Context);
-        Assert.Contains("Epoch handover", turnRes.Output.Context);
-
-        // Before tool: pr_merge is denied before read_write gate verification
-        var prematureMerge = _vm.Before(compiled, "tool.pr_merge", "trk_dev",
-            JsonSerializer.SerializeToElement(new {
-                sessionId = "ses_lead",
-                isLead = true,
-                boundTaskId = (object?)null,
-                mcpServer = "vcs",
-                toolName = "pr_merge",
-                arguments = ParseJson("""{"prNumber":12}""")
-            }), inputs, state);
-        var denyMerge = Assert.IsType<GuardDecision.Deny>(prematureMerge.Output);
-        Assert.Contains("ciVerified=false", denyMerge.Reason);
-
-        // After task.settled: read_write task passes gate and records JJ changeId + opId
-        var settled = _vm.After(compiled, "task.settled", "trk_dev",
-            JsonSerializer.SerializeToElement(new {
-                taskKey = "impl-core",
-                accessMode = "read_write",
-                status = "done",
-                workerResult = ParseJson("""{"summary":"Implemented engine"}"""),
-                meta = ParseJson("""{"changeId":"kxyz1234","opId":"op_9988"}"""),
-                gateVerdict = ParseJson("""{"passed":true}""")
-            }), inputs, state);
-        state = settled.NextState;
-
-        Assert.Equal(1, state.GetProperty("iteration").GetInt32());
-        Assert.Equal("kxyz1234", state.GetProperty("latestChangeId").GetString());
-        Assert.Equal("op_9988", state.GetProperty("rollbackOpId").GetString());
-        Assert.True(state.GetProperty("ciVerified").GetBoolean());
-        Assert.Contains("impl-core", settled.Output);
-
-        // Before tool: high-risk publish_pr triggers AskHuman and mutates prPublished=true
-        var publishRes = _vm.Before(compiled, "tool.publish_pr", "trk_dev",
-            JsonSerializer.SerializeToElement(new {
-                sessionId = "ses_lead",
-                isLead = true,
-                boundTaskId = (object?)null,
-                mcpServer = "vcs",
-                toolName = "publish_pr",
-                arguments = ParseJson("{}")
-            }), inputs, state);
-        state = publishRes.NextState;
-        var askPublish = Assert.IsType<GuardDecision.AskHuman>(publishRes.Output);
-        Assert.Contains("release/1.0", askPublish.Title);
-        Assert.True(state.GetProperty("prPublished").GetBoolean());
-
-        // Before tool: now that ciVerified=true and requirePrReview=true (default), pr_merge returns AskHuman
-        var mergeAsk = _vm.Before(compiled, "tool.pr_merge", "trk_dev",
-            JsonSerializer.SerializeToElement(new {
-                sessionId = "ses_lead",
-                isLead = true,
-                boundTaskId = (object?)null,
-                mcpServer = "vcs",
-                toolName = "pr_merge",
-                arguments = ParseJson("""{"prNumber":12}""")
-            }), inputs, state);
-        var askDecision = Assert.IsType<GuardDecision.AskHuman>(mergeAsk.Output);
-        Assert.Equal("Approve & Merge", askDecision.ApproveLabel);
-        Assert.Equal("Hold for Manual Review", askDecision.DenyLabel);
-
-        // Dynamic schedule prompt
-        var wakeRes = FireSchedule(compiled, "upstream-drift-check", inputs, state);
-        Assert.Contains("release/1.0", wakeRes.Output);
-        Assert.Contains("completed tasks: 1", wakeRes.Output);
-    }
-
-    [Fact]
-    public void BuiltInLongTermGoalTemplate_HandlesSchedulesCircuitBreakerAndTrackCloseApproval()
-    {
-        var source = File.ReadAllText(ResolveTemplatePath("long-term-goal.perga.js"));
-        var compiled = _vm.Compile(source);
-
-        Assert.Equal("long-term-goal", compiled.TemplateId);
-        Assert.Equal("direct", compiled.Manifest.WorkspaceDriver);
-        Assert.Equal(2, compiled.Manifest.Schedules.Count);
-        Assert.NotEmpty(compiled.Manifest.Schedules[0].Prompt);
-        Assert.NotNull(compiled.Manifest.Schedules[1].Prompt);
-
-        var inputs = ParseJson("""{"cadence":"daily","targetMetric":"Ship v1.0"}""");
-        var state = _vm.InitState(compiled, inputs).NextState;
-
-        // Dynamic schedule mutates checkInCount in state
-        var checkIn1 = FireSchedule(compiled, "cadence-checkin", inputs, state);
-        state = checkIn1.NextState;
-        Assert.Equal(1, state.GetProperty("checkInCount").GetInt32());
-        Assert.Contains("daily check-in", checkIn1.Output);
-        Assert.Contains("Check-in #1", checkIn1.Output);
-        Assert.Contains("Ship v1.0", checkIn1.Output);
-
-        // Static schedule returns static prompt without mutating state
-        var retro = FireSchedule(compiled, "friday-retrospective", inputs, state);
-        Assert.Equal(compiled.Manifest.Schedules[1].Prompt, retro.Output);
-
-        // 3 consecutive failures trip pausedForHuman circuit breaker
-        for (var i = 1; i <= 3; i++)
-        {
-            var failRes = _vm.After(compiled, "task.settled", "trk_ltg",
-                JsonSerializer.SerializeToElement(new {
-                    taskKey = $"milestone-{i}",
-                    accessMode = "read_write",
-                    status = "failed",
-                    workerResult = (object?)null,
-                    meta = ParseJson("{}"),
-                    gateVerdict = (object?)null
-                }), inputs, state);
-            state = failRes.NextState;
-        }
-
-        Assert.True(state.GetProperty("pausedForHuman").GetBoolean());
-
-        // Cross-track mail blocked while pausedForHuman is active
-        var mailGuard = _vm.Before(compiled, "tool.mail_send", "trk_ltg",
-            JsonSerializer.SerializeToElement(new {
-                sessionId = "ses_1",
-                isLead = true,
-                boundTaskId = (object?)null,
-                mcpServer = "perga",
-                toolName = "mail_send",
-                arguments = ParseJson("{}")
-            }), inputs, state);
-        Assert.IsType<GuardDecision.Deny>(mailGuard.Output);
-
-        // Closing track asks human confirmation
-        var closeGuard = _vm.Before(compiled, "tool.track_close", "trk_ltg",
-            JsonSerializer.SerializeToElement(new {
-                sessionId = "ses_1",
-                isLead = true,
-                boundTaskId = (object?)null,
-                mcpServer = "perga",
-                toolName = "track_close",
-                arguments = ParseJson("{}")
-            }), inputs, state);
-        Assert.IsType<GuardDecision.AskHuman>(closeGuard.Output);
-    }
-
-    [Fact]
-    public void BuiltInInvestmentResearchTemplate_EnforcesPluginsPaperTradingAndReportValidation()
-    {
-        var source = File.ReadAllText(ResolveTemplatePath("investment-research.perga.js"));
-        var compiled = _vm.Compile(source);
-
-        Assert.Equal("investment-research", compiled.TemplateId);
-        Assert.Equal(
-            ["market", "barra", "invest", "paper-trading", "research-archive"],
-            compiled.Manifest.DefaultPlugins);
-
-        var disabledOrdersInputs = ParseJson("""{"tickerOrTheme":"600519.SH","allowPaperOrders":false}""");
-        var state = _vm.InitState(compiled, disabledOrdersInputs).NextState;
-
-        // Read-only paper-trading positions query allowed even when allowPaperOrders=false
-        var readPos = _vm.Before(compiled, "tool.portfolio_positions", "trk_inv",
-            JsonSerializer.SerializeToElement(new {
-                sessionId = "ses_1",
-                isLead = true,
-                boundTaskId = (object?)null,
-                mcpServer = "paper-trading",
-                toolName = "portfolio_positions",
-                arguments = ParseJson("{}")
-            }), disabledOrdersInputs, state);
-        Assert.IsType<GuardDecision.Allow>(readPos.Output);
-
-        // Order placement denied when allowPaperOrders=false
-        var deniedOrder = _vm.Before(compiled, "tool.submit_order", "trk_inv",
-            JsonSerializer.SerializeToElement(new {
-                sessionId = "ses_1",
-                isLead = true,
-                boundTaskId = (object?)null,
-                mcpServer = "paper-trading",
-                toolName = "submit_order",
-                arguments = ParseJson("""{"qty":100}""")
-            }), disabledOrdersInputs, state);
-        Assert.IsType<GuardDecision.Deny>(deniedOrder.Output);
-
-        // Enable allowPaperOrders=true, settle a research task with verifiedSources + convictionScore
-        var enabledInputs = ParseJson("""{"tickerOrTheme":"600519.SH","allowPaperOrders":true}""");
-        var settled = _vm.After(compiled, "task.settled", "trk_inv",
-            JsonSerializer.SerializeToElement(new {
-                taskKey = "dcf-model",
-                accessMode = "read_only",
-                status = "done",
-                workerResult = ParseJson("""{"verifiedSources":4,"convictionScore":82}"""),
-                meta = ParseJson("{}"),
-                gateVerdict = (object?)null
-            }), enabledInputs, state);
-        state = settled.NextState;
-        Assert.Equal(4, state.GetProperty("dataSourcesVerified").GetInt32());
-        Assert.Equal(82, state.GetProperty("convictionScore").GetInt32());
-
-        // Order placement now asks human approval and increments paperOrdersSubmitted
-        var askOrder = _vm.Before(compiled, "tool.submit_order", "trk_inv",
-            JsonSerializer.SerializeToElement(new {
-                sessionId = "ses_1",
-                isLead = true,
-                boundTaskId = (object?)null,
-                mcpServer = "paper-trading",
-                toolName = "submit_order",
-                arguments = ParseJson("""{"qty":100}""")
-            }), enabledInputs, state);
-        Assert.IsType<GuardDecision.AskHuman>(askOrder.Output);
-        Assert.Equal(1, askOrder.NextState.GetProperty("paperOrdersSubmitted").GetInt32());
-
-        // Before report.commit blocks TODO:UNVERIFIED in Executive Thesis
-        var invalidThesis = _vm.Before(compiled, "report.commit", "trk_inv",
-            JsonSerializer.SerializeToElement(new {
-                editorRole = "lead",
-                prevMarkdown = "# Executive Thesis\n\nInitial",
-                nextMarkdown = "# Executive Thesis\n\nTarget EV/EBITDA: TODO:UNVERIFIED",
-                touchedSections = new string[] {"Executive Thesis"},
-                nextProseChars = 60
-            }), enabledInputs, state);
-        Assert.IsType<GuardDecision.Deny>(invalidThesis.Output);
     }
 
     [Fact]
@@ -476,13 +235,13 @@ public sealed class PolicyVmTests
 
         Assert.ThrowsAny<Exception>(() =>
             _vm.Compile("""
-                import dev from "./dev.perga.js";
+                import dev from "./unbundled-module.js";
                 export default defineTemplate({ id: "rel-escape", title: String(dev) });
                 """));
     }
 
     [Fact]
-    public void GlobalHelpers_DefaultInputs_AndUnknownScheduleId_BehaveDeterministically()
+    public void GlobalHelpersReadDefaultInputs()
     {
         var compiled = _vm.Compile("""
             export default defineTemplate({
@@ -499,10 +258,7 @@ public sealed class PolicyVmTests
                   return Deny(`Blocked on ${ctx.inputs.envName}`);
                 }
                 return Allow();
-              },
-              schedules: [
-                { id: "known", cron: "0 * * * *", prompt: "Ping" }
-              ]
+              }
             });
             """);
 
@@ -535,7 +291,5 @@ public sealed class PolicyVmTests
         var deny = Assert.IsType<GuardDecision.Deny>(denyRes.Output);
         Assert.Equal("Blocked on staging", deny.Reason);
 
-        var unknownSched = _vm.After(compiled, "schedule.fired", "track", ParseJson("{}"), emptyInputs, state);
-        Assert.Null(unknownSched.Output);
     }
 }

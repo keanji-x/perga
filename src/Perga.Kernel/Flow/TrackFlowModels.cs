@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Perga.Contracts;
@@ -9,24 +8,10 @@ public static partial class FlowConstants
 {
     public const string FlowBlockIdPrefix = "flow:";
     public const string FlowScheduleIdPrefix = "flow:";
-    public const string DefaultFlowSpecJson = """{"rev":0,"nodes":[]}""";
     public const string SchemaPointer = "../../schemas/flow.v1.schema.json";
-    public const string DefaultWatchInterval = "60s";
-    public const string DefaultWatchTimeout = "60m";
-    public const int MinWatchIntervalSeconds = 5;
-
-    [GeneratedRegex(@"^[a-z0-9][a-z0-9._:-]{0,63}$", RegexOptions.CultureInvariant)]
-    public static partial Regex NodeIdRegex();
-
-    [GeneratedRegex(@"^([1-9][0-9]*)([smh])$", RegexOptions.CultureInvariant)]
-    public static partial Regex DurationRegex();
 
     [GeneratedRegex(@"\$\{inputs\.([A-Za-z0-9_.-]+)\}", RegexOptions.CultureInvariant)]
     public static partial Regex InputInterpolationRegex();
-
-    public static bool IsFlowBlockId(string? blockId) =>
-        !string.IsNullOrWhiteSpace(blockId) &&
-        blockId.StartsWith(FlowBlockIdPrefix, StringComparison.Ordinal);
 
     public static bool IsFlowTask(TaskDto task) =>
         task.BlockId == MakeBlockId(task.TaskKey) &&
@@ -35,40 +20,6 @@ public static partial class FlowConstants
 
     public static string MakeBlockId(string nodeId) => FlowBlockIdPrefix + nodeId;
     public static string MakeScheduleId(string nodeId) => FlowScheduleIdPrefix + nodeId;
-
-    public static bool TryParseDuration(string? raw, out TimeSpan duration)
-    {
-        duration = default;
-        if (string.IsNullOrWhiteSpace(raw))
-        {
-            return false;
-        }
-
-        var match = DurationRegex().Match(raw.Trim());
-        if (!match.Success ||
-            !long.TryParse(match.Groups[1].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var amount) ||
-            amount <= 0)
-        {
-            return false;
-        }
-
-        var unit = match.Groups[2].Value;
-        try
-        {
-            duration = unit switch
-            {
-                "s" => TimeSpan.FromSeconds(amount),
-                "m" => TimeSpan.FromMinutes(amount),
-                "h" => TimeSpan.FromHours(amount),
-                _ => default
-            };
-            return duration > TimeSpan.Zero;
-        }
-        catch (OverflowException)
-        {
-            return false;
-        }
-    }
 
     public static string FormatOutcome(FlowOutcome outcome) => outcome switch
     {
@@ -111,7 +62,7 @@ public static partial class FlowConstants
 
         var effectiveOutcome = depTask.Outcome != FlowOutcome.None
             ? depTask.Outcome
-            : depTask.Status == TaskRunStatus.Failed || depTask.SemanticVerdict == SemanticVerdict.Rejected
+            : depTask.Status == TaskRunStatus.Failed
                 ? FlowOutcome.Attention
                 : FlowOutcome.Ok;
 

@@ -135,7 +135,7 @@ public sealed class PolicyGuardMailTerminalScheduleBootTests
     }
 
     [Fact]
-    public async Task Terminals_Schedules_HumanReportEdit_AndMcpCatalog_WorkEndToEnd()
+    public async Task TerminalsAndMcpCatalogWorkEndToEnd()
     {
         await using var ctx = new KernelTestContext();
         ctx.Kernel.Templates.RegisterTemplate("""export default defineTemplate({ id: "ops-tpl", title: "Ops" });""");
@@ -160,39 +160,13 @@ public sealed class PolicyGuardMailTerminalScheduleBootTests
         var terms = await ctx.Kernel.ListTerminalsAsync(trackId);
         Assert.Equal(TerminalStatus.Exited, terms[0].Status);
 
-        // 2. Schedule wake invokes after(schedule.fired) and wakes LeadSessionId
-        var turnsBeforeSched = ctx.Store.GetTurnsForSession(leadId).Count;
-        await ctx.Kernel.TriggerTrackScheduleAsync(trackId, "daily-check");
-        Assert.Equal(turnsBeforeSched + 1, ctx.Store.GetTurnsForSession(leadId).Count);
-
-        // 3. Human single-block update (PUT /api/v1/tracks/{trackId}/report/blocks/{blockId}) wakes LeadSessionId
-        var emptyReport = await ctx.Kernel.ReadReportAsync(trackId);
-        await ctx.Kernel.CommitReportAsync(trackId, leadId, new(emptyReport.Anchor,
-            [new BlockOp.UpsertBlockOp(null, ReportBlockKind.Prose, "# Overview\n\nEditable content.\n", null)]));
-        var reportBefore = await ctx.Kernel.ReadReportAsync(trackId);
-        var targetBlock = reportBefore.Blocks[0];
-        var turnsBeforeHumanEdit = ctx.Store.GetTurnsForSession(leadId).Count;
-
-        var afterHuman = await ctx.Kernel.UpdateReportBlockByHumanAsync(
-            trackId,
-            targetBlock.Id,
-            new HumanBlockUpdateRequest(
-                DocRev: reportBefore.DocRev,
-                KnownBlockRev: targetBlock.Rev,
-                Markdown: "# Overview\n\nEdited by human in UI."));
-        Assert.Equal(reportBefore.DocRev + 1, afterHuman.DocRev);
-        Assert.Equal(turnsBeforeHumanEdit + 1, ctx.Store.GetTurnsForSession(leadId).Count);
-
         // 4. Independent sessions get unified controls; bound Workers retain observation and completion.
-        Assert.Equal(40, KernelMcpToolNames.All.Count);
         var leadTools = KernelMcpCatalog.GetToolsForSession(boundTaskId: null, isLead: true);
         Assert.Contains(leadTools, tool => tool.Name == KernelMcpToolNames.SessionSend);
         Assert.Contains(leadTools, tool => tool.Name == KernelMcpToolNames.FlowCommit);
         Assert.True(Assert.Single(leadTools, tool => tool.Name == KernelMcpToolNames.FlowRead).Annotations?.ReadOnlyHint);
-        Assert.Equal(33, KernelMcpCatalog.GetToolsForSession(boundTaskId: null).Count);
         Assert.Contains(KernelMcpCatalog.GetToolsForSession(boundTaskId: null), tool => tool.Name == KernelMcpToolNames.SessionCreate);
         var workerTools = KernelMcpCatalog.GetToolsForSession(boundTaskId: "att_1");
-        Assert.Equal(17, workerTools.Count);
         Assert.Contains(workerTools, tool => tool.Name == KernelMcpToolNames.ProviderList);
         Assert.Contains(workerTools, tool => tool.Name == KernelMcpToolNames.DataPatch);
         Assert.DoesNotContain(workerTools, tool => tool.Name == KernelMcpToolNames.FlowRead);

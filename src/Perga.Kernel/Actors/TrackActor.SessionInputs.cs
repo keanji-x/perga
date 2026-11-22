@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Perga.Contracts;
 using Perga.Kernel.Events;
 using Perga.Kernel.Internal;
@@ -8,14 +9,20 @@ namespace Perga.Kernel.Actors;
 
 public sealed partial class TrackActor
 {
-    private async Task<(SessionCreationReceipt Receipt, bool Replay)> CreateConversationAsync(
+    internal async Task<(SessionCreationReceipt Receipt, bool Replay)> CreateConversationAsync(
         CreateSessionRequest request, string key, CancellationToken ct, InteropPrincipal? principal = null)
     {
         ValidateRequestKey(key);
+        if (request.NotifyParent is not (null or "none" or "turn_end"))
+            throw KernelException.InvalidArgument("notifyParent must be 'none' or 'turn_end'.");
         if (request.Prompt is { } prompt && string.IsNullOrWhiteSpace(prompt))
             throw KernelException.InvalidArgument("First message cannot be empty.");
         request = request with { ReasoningEffort = string.IsNullOrWhiteSpace(request.ReasoningEffort) ? null : request.ReasoningEffort.Trim() };
-        var hash = RequestIdentity.Hash(request);
+        // Plain-session retries must still match receipts written before Task and Role were retired.
+        var receiptIdentity = JsonSerializer.SerializeToNode(request)!.AsObject();
+        receiptIdentity["Task"] = null;
+        receiptIdentity["Role"] = null;
+        var hash = RequestIdentity.Hash(receiptIdentity);
         var intent = new SessionCreateIntent(TrackId, key, hash,
             principal is InteropPrincipal.Session identity ? identity.SessionId : InstallationAuthor);
         var caller = principal ?? new InteropPrincipal.Human();

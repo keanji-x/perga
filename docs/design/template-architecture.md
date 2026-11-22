@@ -19,7 +19,7 @@
 
 ## 一、现状诊断：现有模板实现为什么不好用？
 
-检视仓库现有三个内置模板（[dev.perga.js](../../templates/dev.perga.js)、[investment-research.perga.js](../../templates/investment-research.perga.js)、[long-term-goal.perga.js](../../templates/long-term-goal.perga.js)）与运行时契约（[Contracts.cs](../../libs/Perga.PolicyVm/Contracts.cs)、[perga-template.d.ts](../../templates/perga-template.d.ts)），存在 4 个结构性瓶颈：
+收敛前，三个内置单文件模板（`dev.perga.js`、`investment-research.perga.js`、`long-term-goal.perga.js`）与运行时契约（[Contracts.cs](../../libs/Perga.PolicyVm/Contracts.cs)、[perga-template.d.ts](../../templates/perga-template.d.ts)），存在 4 个结构性瓶颈：
 
 1. **Report 沦为纯文本倾倒场**：`initialMarkdown` 只有 4～5 个空泛 H1 标题，AI 只能反复把状态、数字、进度手抄进长篇 Markdown，极易陈旧漂移。
 2. **`TemplateState` 对人不可见、无强校验、不可绑定 VO**：`Track.TemplateState` 目前是无类型 `JsonElement`，只拼进 prompt 给模型看，前端无法订阅，AI 写错字段也不会被拦截。

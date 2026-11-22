@@ -40,14 +40,11 @@ public sealed record TrackCreation(TrackDto Track, ReportDocument Report, string
     AgentSessionDto Lead, IReadOnlyList<TaskDto> Tasks, SessionInputRequest? FirstInput,
     WorkspacePreparation? Preparation, IReadOnlyList<EventEnvelopeDto> Events, string? DailyDate = null, AreaDto? SystemArea = null)
 {
-    public IReadOnlyList<TrackScheduleDto> TemplateSchedules { get; init; } = [];
+    public IReadOnlyList<TrackScheduleDto> FlowClocks { get; init; } = [];
 }
 
-public sealed record WorkerDispatchIntent(string TrackId, string AuthorId, string RequestKey, string RequestHash, string TaskKey, AgentSessionDto? Session = null, InteropPrincipal? Principal = null)
-{
-    public InteropPrincipal Caller => Principal ?? new InteropPrincipal.Human();
-}
-public sealed record StoredWorkerDispatch(string RequestHash, string TaskId);
+public sealed record TrackFlowUpdate(
+    long ExpectedRev, IReadOnlyList<TaskDto> Tasks, IReadOnlyList<TrackScheduleDto> Clocks);
 
 public interface ITrackReadStore
 {
@@ -123,25 +120,18 @@ public interface ITrackStore : ITrackReadStore
         IReadOnlyList<EventEnvelopeDto> events,
         CancellationToken ct) =>
         throw new NotSupportedException("Flow commit is not implemented by this store.");
-    Task UpdateTrackTemplateAndEmitAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto evt, CancellationToken ct, IReadOnlyList<TrackScheduleDto>? templateSchedules = null, bool refreshPromptsOnly = false, bool writeData = false);
+    Task UpdateTrackTemplateAndEmitAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto evt, CancellationToken ct, bool writeData = false, TrackFlowUpdate? flow = null);
     Task DeleteTrackAsync(string trackId, CancellationToken ct);
 
-    Task SaveReportAndTasksAsync(
+    Task SaveReportAsync(
         string trackId,
         ReportDocument report,
         byte[] compressedRevisionBlocks,
         string? authorSessionId,
         string commitMessage,
-        IReadOnlyList<TaskDto> syncedTasks,
         JsonElement nextTemplateState,
         EventEnvelopeDto evt,
-        CancellationToken ct,
-        WorkerDispatchIntent? dispatch = null);
-
-    Task<StoredWorkerDispatch?> FindWorkerDispatchAsync(WorkerDispatchIntent dispatch, CancellationToken ct) =>
-        Task.FromResult<StoredWorkerDispatch?>(null);
-    Task<IReadOnlyList<string>> ListPendingWorkerDispatchTracksAsync(CancellationToken ct) =>
-        Task.FromResult<IReadOnlyList<string>>([]);
+        CancellationToken ct);
 
     Task UpsertTaskAsync(TaskDto task, JsonElement? nextTemplateState, EventEnvelopeDto? evt, CancellationToken ct,
         AgentSessionDto? session = null, EventEnvelopeDto? sessionEvent = null, string? wakePrompt = null,

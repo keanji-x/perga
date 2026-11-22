@@ -438,14 +438,14 @@ public sealed class SystemUpgradeTests
     }
 
     [Fact]
-    public async Task WorkerDispatchStaysPendingUntilDrainIsReopened()
+    public async Task FlowWorkerStaysPendingUntilDrainIsReopened()
     {
         await using var host = new PergaHostTestCluster();
         var (track, _) = await host.CreateTrackAsync();
         var kernel = host.Services.GetRequiredService<IPergaKernel>();
         kernel.DispatchAdmission.SetDraining(true);
-        var dispatched = await kernel.CreateSessionAsync(track, new(Prompt: "Inspect the report", Task: new()), "drained-worker", new InteropPrincipal.Human(), default);
-        Assert.Equal(TaskRunStatus.Pending, dispatched.Receipt.Task!.Status);
+        await FlowFixture.AddAsync(kernel, track, new FlowNodeSpecDto("drained-worker", new("run", Prompt: "Inspect the report")));
+        Assert.Equal(TaskRunStatus.Pending, Assert.Single(await kernel.ListTasksAsync(track)).Status);
         Assert.Empty(host.AgentRuntime.OpenedSessions);
         Assert.Equal(0, kernel.DispatchAdmission.ActiveDispatches);
         kernel.DispatchAdmission.SetDraining(false);

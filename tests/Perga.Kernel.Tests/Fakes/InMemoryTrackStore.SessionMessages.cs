@@ -40,16 +40,7 @@ internal sealed partial class InMemoryTrackStore : ISessionInputStore, ISessionM
                 i.Receipt.TurnStatus == "unknown" && i.Receipt.ResolvedAtMs is null));
     }
 
-    public Task<StoredWorkerDispatch?> FindWorkerDispatchAsync(WorkerDispatchIntent intent, CancellationToken ct)
-    {
-        lock (_gate)
-        {
-            var prior = _sessionCreations.GetValueOrDefault((intent.TrackId, intent.AuthorId, intent.RequestKey));
-            if (prior?.Session is not { } session) return Task.FromResult<StoredWorkerDispatch?>(null);
-            var task = _tasksByTrack.GetValueOrDefault(intent.TrackId)?.FirstOrDefault(t => t.SessionId == session.Id);
-            return Task.FromResult<StoredWorkerDispatch?>(new StoredWorkerDispatch(prior.RequestHash, task?.Id ?? ""));
-        }
-    }
+
 
     public Task<StoredSessionCreation?> FindCreationAsync(SessionCreateIntent intent, CancellationToken ct)
     {

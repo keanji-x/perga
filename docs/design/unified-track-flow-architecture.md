@@ -256,3 +256,18 @@ ALTER TABLE track_schedules ADD COLUMN node_key TEXT;
 | **PR 1：统一 Flow 底座 + `watch` + 会话复用 + 只读 `builtin:flow`** | • 迁移 `0025_track_flow.sql`；<br>• `{DataDir}/tracks/{trackId}/flow.json` 托管 + `flow_commit({dryRun, expectedFlowRev})` + 防误删活跃节点（取消须显式 `canceled: true`）+ 后台安全 GC（`archived_at_ms` + hash 保护不覆写草稿）；<br>• `TrackFlowReconciler`（`when: after/cron/at` × `do: run/wake/watch`，含 `prChecks` 与 `cmd` 探针、`outcome: ok/attention/blocked`）；<br>• 拆开活跃租约与历史外键（解除 `task_finished` 永久封存 + 复用原 `NativeThreadId` 不清上下文）；<br>• Codex/OAR 本地 `perga` MCP 免审批；<br>• `GET /views` 透出 `flow` + 前端纯只读出版物级 `builtin:flow`（含多行均衡周期卡片，并彻底移除 Report 编辑/`Dispatch Worker`/节点取消按钮）。 | 1) 误删活跃节点被 `flow_commit` 拦截，显式 `canceled: true` 正常取消；<br>2) 终结孤立链由后台自动 GC 归档并清理 `flow.json`（不覆写脏草稿）；<br>3) 端到端跑通 `fix -> watch(prChecks) -> attention(fix-ci) / ok(recheck 复用原会话) -> wake(lead)`；<br>4) 跑通 `cron -> cmd(attention) -> triage` 跨波次幂等周期流水线。 |
 | **PR 2：旧入口全量收编 + 三套模板瘦身** | • 退役 `perga-block task` 写入与 `WorkerDispatch` 伪造 `report_commit`；<br>• 清理后端无用 Report 单块编辑端点与双套 `SemanticVerdict`；<br>• `schedule_set` / UI 日程 / `task_cancel` / 模板初始 `flow` 蓝图全量收编至 `TrackFlowReconciler`（`track_schedules` 降级为纯触发时钟表）；<br>• 重构 `templates/agents-delivery/`、`equity-research/`、`okr-loop/` 直接基于 `flow` + `builtin:flow`。 | 1) Report 彻底消灭底部孤立任务卡片；<br>2) `template_update_inputs` 动态插值不改写 `flow.json`；<br>3) 三套内置模板均由统一 `flow` 驱动与呈现。 |
 | **PR 3：模板防呆护栏（零迁移）** | • 运行期 Report 骨架锁（锁模板 `widget`/`flow` 块，禁运行期私插 `perga-block html`）；<br>• `PolicyVm.Compile` 试跑 `report.views` 校验 `builtin:*` 契约；<br>• `track_set(path, dryRun: true)` 本地模板目录校验与预览。 | 1) AI 试图删改模板 `widget` 或私插 `html` 被 `PolicyDenied` 拦截；<br>2) 坏视图模板在 `track_set(path, dryRun: true)` 阶段即被编译拦截。 |
+
+### PR 2 Stage 1 implementation
+
+Report writes validate the resulting document and preserve historical task blocks on
+read. The Kernel creates new contracts through Flow and retains existing task
+history. Flow task cancellation goes through the same commit and shutdown path
+as an edit to a node's `canceled` field.
+
+Applying a template seeds missing blueprint nodes, with template provenance, into
+the existing Flow. A previously committed node keeps its definition and history.
+Template application persists Flow, tasks and clocks within the template update
+transaction before projecting the canonical file. Input patches resolve Flow
+placeholders at execution time and preserve the committed blueprint text and
+uncommitted drafts. The clock runner selects only Flow-owned rows. Released
+migration files and historical database rows remain readable.

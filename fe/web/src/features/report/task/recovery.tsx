@@ -19,10 +19,7 @@ export type TaskRecoveryProps = Readonly<{
     pending: boolean;
     error: string | null;
     canCancel: boolean;
-    canReview: boolean;
     onCancel: () => void;
-    onAccept: () => void;
-    onReject: () => void;
   }>;
 }>;
 
@@ -49,14 +46,6 @@ export function TaskRecoveryDetails({ task, current, loading, loadError,
       {taskActions?.canCancel === true && (
         <Button type="button" variant="secondary" size="sm" label="Cancel task"
           isDisabled={taskActions.pending} onClick={taskActions.onCancel} />
-      )}
-      {taskActions?.canReview === true && (
-        <>
-          <Button type="button" variant="secondary" size="sm" label="Accept task"
-            isDisabled={taskActions.pending} onClick={taskActions.onAccept} />
-          <Button type="button" variant="secondary" size="sm" label="Reject task"
-            isDisabled={taskActions.pending} onClick={taskActions.onReject} />
-        </>
       )}
     </div>}
     {task !== undefined && <TaskEvidenceDetails task={task} openWorker={openWorker} openableWorkerIds={openableWorkerIds} />}

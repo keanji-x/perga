@@ -129,10 +129,10 @@ public sealed class OarKernelIntegrationTests : IDisposable
             Provider: "codex"));
         await ctx.Kernel.Actors.GetOrActivate(snap.Track.Id).EnsureMountedAsync();
 
-        var dispatched = await ctx.Kernel.CreateSessionAsync(snap.Track.Id, new(Prompt: "Run initial worker turn", Task: new(), Provider: "codex"), "worker-settings-dispatch", new InteropPrincipal.Human(), CancellationToken.None);
+        var dispatched = await FlowFixture.StartWorkerAsync(ctx.Kernel, snap.Track.Id, FlowFixture.Worker("worker-settings-dispatch", "Run initial worker turn", provider: "codex"));
         await ctx.Kernel.WaitForTrackIdleAsync(snap.Track.Id);
 
-        var worker = Assert.Single(await ctx.Kernel.ListSessionsAsync(snap.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default), s => s.TaskId == dispatched.Receipt.Task!.Id).Session;
+        var worker = Assert.Single(await ctx.Kernel.ListSessionsAsync(snap.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default), s => s.TaskId == dispatched.Task!.Id).Session;
 
         var itemsPage = await ctx.Kernel.GetSessionItemsAsync(worker.Id, new(), new InteropPrincipal.Human(), default);
         var workerConfig = Assert.IsType<SessionCapabilitiesDto>(itemsPage.Capabilities);
@@ -200,10 +200,10 @@ public sealed class OarKernelIntegrationTests : IDisposable
             Provider: "codex"));
         await ctx.Kernel.Actors.GetOrActivate(snap.Track.Id).EnsureMountedAsync();
 
-        var dispatched = await ctx.Kernel.CreateSessionAsync(snap.Track.Id, new(Prompt: "Run turn with null native effort", Task: new(), Provider: "codex"), "worker-null-effort-dispatch", new InteropPrincipal.Human(), CancellationToken.None);
+        var dispatched = await FlowFixture.StartWorkerAsync(ctx.Kernel, snap.Track.Id, FlowFixture.Worker("worker-null-effort-dispatch", "Run turn with null native effort", provider: "codex"));
         await ctx.Kernel.WaitForTrackIdleAsync(snap.Track.Id);
 
-        var worker = Assert.Single(await ctx.Kernel.ListSessionsAsync(snap.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default), s => s.TaskId == dispatched.Receipt.Task!.Id).Session;
+        var worker = Assert.Single(await ctx.Kernel.ListSessionsAsync(snap.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default), s => s.TaskId == dispatched.Task!.Id).Session;
         var turn = Assert.Single(ctx.Store.GetTurnsForSession(worker.Id));
         Assert.Equal("completed", turn.Status);
 

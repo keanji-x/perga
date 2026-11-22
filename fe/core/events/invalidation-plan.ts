@@ -86,7 +86,6 @@ function policies(): PolicyMap {
     eventKeys.trackViews(event.data.id),
   ])),
   'track.schedules.updated': plan((event) => result([
-    eventKeys.trackSchedules(event.data.trackId),
     eventKeys.trackViews(event.data.trackId),
   ])),
   'track.deleted': plan((event) => result(

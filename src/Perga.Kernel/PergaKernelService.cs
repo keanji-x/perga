@@ -5,6 +5,7 @@ using Perga.Contracts;
 using Perga.Kernel.Actors;
 using Perga.Kernel.Boot;
 using Perga.Kernel.Events;
+using Perga.Kernel.Flow;
 using Perga.Kernel.Internal;
 using Perga.Kernel.Mcp;
 using Perga.Kernel.Ports;
@@ -82,15 +83,12 @@ public partial interface IPergaKernel : IAsyncDisposable
     Task<FlowCommitResultDto> CommitTrackFlowAsync(string trackId, bool dryRun, long? expectedFlowRev, InteropPrincipal caller, CancellationToken ct = default, string? content = null);
     Task<TrackDataPatchResult> PatchTrackDataAsync(string trackId, JsonElement patch, string source, string? callerSessionId = null, CancellationToken ct = default, long? expectedDataRev = null);
     Task<IReadOnlyList<ReportBlock>> GetReportRevisionBlocksAsync(string trackId, int docRev, CancellationToken ct = default);
-    Task<ReportReadResult> UpdateReportBlockByHumanAsync(string trackId, string blockId, HumanBlockUpdateRequest req, CancellationToken ct = default);
     Task<ReportReadResult> CommitReportAsync(string trackId, string callerSessionId, ReportCommitRequest req,
         CancellationToken ct = default, McpExecutionOrigin? origin = null, string? expectedPolicyGeneration = null);
 
     // Tasks, Governance & Completion
     Task<IReadOnlyList<TaskDto>> ListTasksAsync(string trackId, CancellationToken ct = default);
     Task<TaskDto> CancelTaskAsync(string trackId, string? callerSessionId, string taskKeyOrId, string? reason = null, CancellationToken ct = default);
-    Task<TaskDto> AcceptTaskAsync(string trackId, string? callerSessionId, string taskKeyOrId, string? note = null, CancellationToken ct = default);
-    Task<TaskDto> RejectTaskAsync(string trackId, string? callerSessionId, string taskKeyOrId, string note, bool reQueue = false, CancellationToken ct = default);
     Task<TaskDto> CompleteTaskDoneAsync(string trackId, string callerSessionId, JsonElement? workerResult = null, CancellationToken ct = default, WorkerCompletionOrigin? origin = null, FlowOutcome outcome = FlowOutcome.Ok, string? summary = null);
     Task<TaskDto> CompleteTaskFailAsync(string trackId, string callerSessionId, string reason, JsonElement? workerResult = null, CancellationToken ct = default, WorkerCompletionOrigin? origin = null);
 
@@ -122,12 +120,7 @@ public partial interface IPergaKernel : IAsyncDisposable
         CancellationToken ct = default, McpExecutionOrigin? origin = null);
     Task<JsonElement> InvokeKernelMcpToolAsync(McpSessionPrincipal caller, string toolName, JsonElement arguments, CancellationToken ct = default);
     Task<bool> CancelPendingWakeAsync(string trackId, string wakeId, CancellationToken ct = default);
-    Task<TrackSchedulesSnapshot> GetTrackSchedulesAsync(string trackId, bool includeTerminal = false, int runsLimit = 20, CancellationToken ct = default);
-    Task<bool> TriggerTrackScheduleAsync(string trackId, string scheduleId, CancellationToken ct = default);
     Task<IReadOnlyList<FiredTrackSchedule>> FireDueTrackSchedulesAsync(long nowMs, CancellationToken ct = default);
-    Task<TrackScheduleDto> SetTrackScheduleAsync(string trackId, SetTrackScheduleRequest request, CancellationToken ct = default);
-    Task<IReadOnlyList<TrackScheduleDto>> ListTrackSchedulesAsync(string trackId, bool includeTerminal = false, CancellationToken ct = default);
-    Task<bool> CancelTrackScheduleAsync(string trackId, string scheduleId, CancellationToken ct = default);
     Task<TodayCalendarDto> GetTodayCalendarAsync(string startDate, string endDate, CancellationToken ct = default);
 
     // Synchronization helper for tests / shutdown
@@ -660,7 +653,7 @@ public sealed partial class PergaKernelService : IPergaKernel
         var templateData = JsonHelpers.EmptyObject;
         if (policy is not null)
         {
-            TemplateSchedules.ValidateInputs(_policyVm, policy, templateInputs);
+            TemplateFlow.ValidateInputs(_policyVm, policy, templateInputs);
             try { templateData = _policyVm.InitData(policy, templateInputs); }
             catch (InvalidOperationException ex) { throw KernelException.InvalidArgument(ex.Message); }
             var initEval = _policyVm.InitState(policy, templateInputs);
@@ -704,8 +697,7 @@ public sealed partial class PergaKernelService : IPergaKernel
             UpdatedAtMs: now,
             ExecutionTargetId: trackTargetId);
 
-        var leadProvider = string.IsNullOrWhiteSpace(req.Provider) ? _options.DefaultProvider
-            : TaskBlockSynchronizer.NormalizeProviderId(req.Provider) ?? req.Provider.Trim();
+        var leadProvider = SessionLaunchValidator.NormalizeTaskProviderId(req.Provider) ?? _options.DefaultProvider;
         var leadPermissionMode = RuntimePermissionModes.Resolve(leadProvider, req.PermissionMode);
         var leadSession = new AgentSessionDto(
             Id: leadSessionId,
@@ -723,9 +715,20 @@ public sealed partial class PergaKernelService : IPergaKernel
             ReasoningEffort: string.IsNullOrWhiteSpace(req.ReasoningEffort) ? null : req.ReasoningEffort.Trim(),
             PermissionMode: leadPermissionMode);
 
-        var initialTasks = TaskBlockSynchronizer.SyncTasksFromReport(
-            trackId, initialReport, existingTasks: [],
-            requireGateForReadWrite: policy?.Manifest.RequireGateForReadWrite ?? false, nowMs: now).SyncedTasks;
+        TrackFlowUpdate? initialFlow = null;
+        if (policy is not null)
+        {
+            var seed = TemplateFlow.ReadSeedNodes(_policyVm, policy, templateInputs);
+            if (seed.Length > 0)
+            {
+                var spec = new FlowSpecDto(1, seed, FlowConstants.SchemaPointer);
+                TemplateFlow.RequireValid(TrackFlowValidator.Validate(spec, new(0, []), [], new HashSet<string>(),
+                    new Dictionary<string, AgentSessionDto> { [leadSessionId] = leadSession }, leadSessionId,
+                    policy, _policyVm, templateInputs, _scheduleCronEvaluator, _timeProvider));
+                track = track with { FlowRev = spec.Rev, FlowSpecJson = TrackFlowSerializer.SerializeCanonical(spec) };
+                initialFlow = TemplateFlow.BuildSeedUpdate(track, 0, seed, policy, _policyVm, _scheduleCronEvaluator, _timeProvider);
+            }
+        }
         EventEnvelopeDto[] events =
         [
             new(null, area.Id, trackId, KernelEventKinds.TrackUpdated, JsonHelpers.ToElement(TemplatePresentation.Project(track, policy, _policyVm)), now),
@@ -735,8 +738,8 @@ public sealed partial class PergaKernelService : IPergaKernel
         await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
         var id = await _store.CreateTrackAsync(
             new(track, initialReport, policy is null ? null : TemplateHost.Freeze(policy), leadSession,
-                initialTasks, null, preparation, events, dailyDate, systemArea)
-            { TemplateSchedules = TemplateSchedules.Materialize(policy, templateInputs, trackId, now, _policyVm, _scheduleCronEvaluator) },
+                initialFlow?.Tasks ?? [], null, preparation, events, dailyDate, systemArea)
+            { FlowClocks = initialFlow?.Clocks ?? [] },
             key, ct).ConfigureAwait(false);
         var snapshot = await ReadCreatedTrackAsync(id, CancellationToken.None).ConfigureAwait(false);
         if (id == track.Id)
@@ -967,13 +970,6 @@ public sealed partial class PergaKernelService : IPergaKernel
         CancellationToken ct = default) =>
         _store.GetReportRevisionBlocksAsync(trackId, docRev, ct);
 
-    public Task<ReportReadResult> UpdateReportBlockByHumanAsync(
-        string trackId,
-        string blockId,
-        HumanBlockUpdateRequest req,
-        CancellationToken ct = default) =>
-        Actors.GetOrActivate(trackId).UpdateReportBlockByHumanAsync(blockId, req, ct);
-
     public Task<ReportReadResult> CommitReportAsync(
         string trackId,
         string callerSessionId,
@@ -993,23 +989,6 @@ public sealed partial class PergaKernelService : IPergaKernel
         string? reason = null,
         CancellationToken ct = default) =>
         Actors.GetOrActivate(trackId).CancelTaskAsync(callerSessionId, taskKeyOrId, reason, ct);
-
-    public Task<TaskDto> AcceptTaskAsync(
-        string trackId,
-        string? callerSessionId,
-        string taskKeyOrId,
-        string? note = null,
-        CancellationToken ct = default) =>
-        Actors.GetOrActivate(trackId).AcceptTaskAsync(callerSessionId, taskKeyOrId, note, ct);
-
-    public Task<TaskDto> RejectTaskAsync(
-        string trackId,
-        string? callerSessionId,
-        string taskKeyOrId,
-        string note,
-        bool reQueue = false,
-        CancellationToken ct = default) =>
-        Actors.GetOrActivate(trackId).RejectTaskAsync(callerSessionId, taskKeyOrId, note, reQueue, ct);
 
     public Task<TaskDto> CompleteTaskDoneAsync(
         string trackId,

@@ -1037,56 +1037,6 @@ public sealed class TrackFlowTests
         Assert.Single(ctx.CommandRunner.ExecutedCommands, req => req.Command == "next");
     }
 
-    [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task RejectingRunningCommandWatchConflictsUntilProbeReleasesWorkspace(bool reQueue)
-    {
-        await using var ctx = new KernelTestContext();
-        var (_, snap) = await ctx.CreateDefaultTrackAsync();
-        var trackId = snap.Track.Id;
-        var probeStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var releaseProbe = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        ctx.CommandRunner.Handler = async (request, ct) =>
-        {
-            if (request.Command == "probe")
-            {
-                probeStarted.TrySetResult();
-                await releaseProbe.Task.WaitAsync(ct);
-            }
-            return new ShellCommandResult(0, "", "", false, 1);
-        };
-        const string flow = """
-            {"rev":0,"nodes":[
-              {"id":"watch","do":{"kind":"watch","cmd":"probe"}},
-              {"id":"next","do":{"kind":"run","cmd":"next"}}
-            ]}
-            """;
-        try
-        {
-            Assert.True((await ctx.Kernel.CommitTrackFlowAsync(trackId, false, 0, Human, content: flow)).Ok);
-            await probeStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
-
-            var conflict = await Assert.ThrowsAsync<KernelException>(() =>
-                ctx.Kernel.RejectTaskAsync(trackId, null, "watch", "reject while running", reQueue));
-            Assert.Equal(KernelErrorCode.Conflict, conflict.Code);
-            var track = await ctx.Kernel.GetTrackAggregateAsync(trackId);
-            Assert.Equal(TaskRunStatus.Running, Assert.Single(track.Tasks, task => task.TaskKey == "watch").Status);
-            Assert.Equal(TaskRunStatus.Pending, Assert.Single(track.Tasks, task => task.TaskKey == "next").Status);
-            Assert.DoesNotContain(ctx.CommandRunner.ExecutedCommands, cmd => cmd.Command == "next");
-        }
-        finally
-        {
-            releaseProbe.TrySetResult();
-        }
-        await ctx.Kernel.WaitForTrackIdleAsync(trackId).WaitAsync(TimeSpan.FromSeconds(5));
-
-        Assert.Equal(new[] { "probe", "next" }, ctx.CommandRunner.ExecutedCommands.Select(cmd => cmd.Command));
-        var settled = await ctx.Kernel.GetTrackAggregateAsync(trackId);
-        Assert.Equal(TaskRunStatus.Done, Assert.Single(settled.Tasks, task => task.TaskKey == "watch").Status);
-        Assert.Equal(TaskRunStatus.Done, Assert.Single(settled.Tasks, task => task.TaskKey == "next").Status);
-    }
-
     [Fact]
     public async Task WatchAccessMatchesProbeWorkspaceUsage()
     {

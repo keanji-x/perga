@@ -29,7 +29,7 @@
     cursor: pointer;
   }
 
-  .form button, .actions button { padding: var(--space-1) var(--space-2); border: 1px solid var(--hairline); border-radius: var(--radius-sm); background: var(--surface-chip); color: var(--text-2); font: inherit; cursor: pointer; }
+  .form button { padding: var(--space-1) var(--space-2); border: 1px solid var(--hairline); border-radius: var(--radius-sm); background: var(--surface-chip); color: var(--text-2); font: inherit; cursor: pointer; }
   .toggle:hover, .tabs button:hover { background: var(--overlay-hover); }
   .toggle:focus-visible, .tabs button:focus-visible { outline: var(--space-half) solid var(--accent); outline-offset: var(--space-half); }
   .tabs button[aria-selected="true"] { background: var(--surface-chip); color: var(--accent); }
@@ -43,17 +43,12 @@
   .tabs { display: flex; flex-wrap: wrap; gap: var(--space-2); }
   .drawer dt { font-weight: var(--weight-medium); }
   .drawer dd { margin-inline-start: 0; margin-block-end: var(--space-3); white-space: pre-wrap; overflow-wrap: anywhere; }
-  .editor, .form { display: grid; gap: var(--space-3); min-inline-size: 0; }
-  .form { margin-block: var(--space-3); }
+  .form { display: grid; gap: var(--space-3); min-inline-size: 0; margin-block: var(--space-3); }
   .form label { display: grid; gap: var(--space-1); }
   .form input, .form select { min-inline-size: 0; max-inline-size: 100%; padding: var(--space-2); border: 1px solid var(--hairline); border-radius: var(--radius-sm); background: var(--surface-chip); color: var(--text-2); font: inherit; }
   .form input[type="checkbox"] { justify-self: start; }
-  .form button:disabled, .actions button:disabled { color: var(--text-3); cursor: default; }
-  .form :focus-visible, .actions button:focus-visible { outline: var(--space-half) solid var(--accent); outline-offset: var(--space-half); }
-  .actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
-  .scheduleList { list-style: none; padding: 0; }
-  .scheduleList li { padding-block: var(--space-2); overflow-wrap: anywhere; }
-  .scheduleList p { margin-block: var(--space-1); }
+  .form button:disabled { color: var(--text-3); cursor: default; }
+  .form :focus-visible { outline: var(--space-half) solid var(--accent); outline-offset: var(--space-half); }
   .neutral { color: var(--text-2); }
   .accent, .info { color: var(--accent); }
   .pill.accent, .notice.info { background: var(--accent-soft); }

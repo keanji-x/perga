@@ -452,7 +452,7 @@ internal static class TrackFlowValidator
         }
 
         var access = node.Do.Access ?? "read_write";
-        var provider = Perga.Kernel.Tasks.TaskBlockSynchronizer.NormalizeProviderId(node.Do.Provider);
+        var provider = SessionLaunchValidator.NormalizeTaskProviderId(node.Do.Provider);
         var model = node.Do.Model;
         if (reusedSession is not null)
         {

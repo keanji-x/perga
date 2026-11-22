@@ -36,9 +36,9 @@ public sealed class ApiV1RestIntegrationTests
         Assert.Equal(HttpStatusCode.OK, tplResp.StatusCode);
         using var tplDoc = JsonDocument.Parse(await tplResp.Content.ReadAsStringAsync());
         var tplIds = tplDoc.RootElement.EnumerateArray().Select(e => e.GetProperty("id").GetString()).ToArray();
-        Assert.Contains("dev", tplIds);
-        Assert.Contains("long-term-goal", tplIds);
-        Assert.Contains("investment-research", tplIds);
+        Assert.Contains("agents-delivery", tplIds);
+        Assert.Contains("okr-loop", tplIds);
+        Assert.Contains("equity-research", tplIds);
 
         // 2. Areas CRUD: POST (201), GET, PATCH, validation 400, 404
         using var invalidAreaResp = await client.PostAsJsonAsync("/api/v1/areas", new { name = "   " });
@@ -121,138 +121,6 @@ public sealed class ApiV1RestIntegrationTests
     }
 
     [Fact]
-    public async Task Report_HumanBlockEdit_WakesLead_409Conflict_TaskSync_And_Runs_WorkEndToEnd()
-    {
-        await using var cluster = new PergaHostTestCluster();
-        var client = cluster.Client;
-
-        var repoDir = Path.Combine(cluster.DataDir, "report-ws");
-        Directory.CreateDirectory(repoDir);
-
-        using var areaResp = await client.PostAsJsonAsync("/api/v1/areas", new { name = "Reports", defaultCwd = repoDir });
-        var area = (await areaResp.Content.ReadFromJsonAsync<AreaDto>(PergaJsonDefaults.ApiOptions))!;
-
-        using var trackResp = await client.PostAsJsonAsync(
-            "/api/v1/tracks",
-            new { areaId = area.Id, title = "Report Sync Track", cwd = repoDir });
-        using var trackSnap = JsonDocument.Parse(await trackResp.Content.ReadAsStringAsync());
-        var trackId = trackSnap.RootElement.GetProperty("track").GetProperty("id").GetString()!;
-
-        // Seed authored content: new tracks intentionally have an empty report.
-        var seedKernel = cluster.Services.GetRequiredService<IPergaKernel>();
-        var initialReport = await seedKernel.ReadReportAsync(trackId);
-        await seedKernel.CommitReportAsync(trackId, trackSnap.RootElement.GetProperty("track").GetProperty("leadSessionId").GetString()!,
-            new ReportCommitRequest(initialReport.Anchor,
-                [new BlockOp.UpsertBlockOp(null, ReportBlockKind.Prose, "# Overview\n\nAuthored content.", null)]));
-
-        // GET /api/v1/tracks/{trackId}/report
-        using var readResp = await client.GetAsync($"/api/v1/tracks/{trackId}/report");
-        Assert.Equal(HttpStatusCode.OK, readResp.StatusCode);
-        using var readDoc = JsonDocument.Parse(await readResp.Content.ReadAsStringAsync());
-        Assert.Equal(1, readDoc.RootElement.GetProperty("docRev").GetInt32());
-        Assert.True(readDoc.RootElement.TryGetProperty("renderedMarkdown", out _));
-        Assert.True(readDoc.RootElement.TryGetProperty("diagnostics", out _));
-
-        var firstBlock = readDoc.RootElement.GetProperty("blocks")[0];
-        var firstBlockId = firstBlock.GetProperty("id").GetString()!;
-        var firstBlockRev = firstBlock.GetProperty("rev").GetInt32();
-        Assert.Equal("prose", firstBlock.GetProperty("kind").GetString()); // snake_case enum!
-
-        var turnsBeforeEdit = cluster.AgentRuntime.ExecutedTurns.Count;
-
-        // PUT /api/v1/tracks/{trackId}/report/blocks/{blockId} -> updates block & wakes Lead!
-        using var putResp = await client.PutAsJsonAsync(
-            $"/api/v1/tracks/{trackId}/report/blocks/{firstBlockId}",
-            new
-            {
-                docRev = 1,
-                knownBlockRev = firstBlockRev,
-                kind = "prose",
-                markdown = "# Overview\n\nUpdated directly by human in UI.\n",
-                summary = "Human updated overview"
-            });
-        Assert.Equal(HttpStatusCode.OK, putResp.StatusCode);
-        using var updatedReportDoc = JsonDocument.Parse(await putResp.Content.ReadAsStringAsync());
-        Assert.Equal(2, updatedReportDoc.RootElement.GetProperty("docRev").GetInt32());
-        Assert.Equal("Human updated overview", updatedReportDoc.RootElement.GetProperty("summary").GetString());
-        Assert.True(cluster.AgentRuntime.ExecutedTurns.Count > turnsBeforeEdit);
-        Assert.Contains(
-            cluster.AgentRuntime.ExecutedTurns,
-            t => t.Input.Prompt.Contains($"Human updated report block '{firstBlockId}'", StringComparison.Ordinal));
-
-        // Stale knownBlockRev -> 409 Conflict with { code, error, nextStep }
-        using var conflictResp = await client.PutAsJsonAsync(
-            $"/api/v1/tracks/{trackId}/report/blocks/{firstBlockId}",
-            new
-            {
-                docRev = 1,
-                knownBlockRev = firstBlockRev, // stale!
-                markdown = "# Overview\n\nBlind overwrite.\n"
-            });
-        Assert.Equal(HttpStatusCode.Conflict, conflictResp.StatusCode);
-        using var conflictJson = JsonDocument.Parse(await conflictResp.Content.ReadAsStringAsync());
-        Assert.Equal("stale_block_rev", conflictJson.RootElement.GetProperty("code").GetString());
-        Assert.False(string.IsNullOrWhiteSpace(conflictJson.RootElement.GetProperty("error").GetString()));
-        Assert.False(string.IsNullOrWhiteSpace(conflictJson.RootElement.GetProperty("nextStep").GetString()));
-
-        // Insert a command task block via human block upsert and verify snake_case TaskDto enums and latest run evidence.
-        using var addTaskBlockResp = await client.PutAsJsonAsync(
-            $"/api/v1/tracks/{trackId}/report/blocks/b_cmd1",
-            new
-            {
-                docRev = 2,
-                knownBlockRev = 0,
-                kind = "task",
-                payload = new
-                {
-                    taskKey = "verify-echo",
-                    kind = "command",
-                    access = "read_only",
-                    ready = true,
-                    goal = """head -c 90000 /dev/zero | tr '\000' x; printf 'TASK_ATTEMPT_OK\n'""",
-                    gate = new
-                    {
-                        steps = new[] { new { name = "verify", cmd = """head -c 90000 /dev/zero | tr '\000' x >&2; printf 'GATE_OK\n' >&2""" } }
-                    }
-                }
-            });
-        Assert.Equal(HttpStatusCode.OK, addTaskBlockResp.StatusCode);
-        using var afterTaskDoc = JsonDocument.Parse(await addTaskBlockResp.Content.ReadAsStringAsync());
-        var taskJson = afterTaskDoc.RootElement.GetProperty("tasks")[0];
-        Assert.Equal("read_only", taskJson.GetProperty("access").GetString());
-        Assert.Equal("none", taskJson.GetProperty("semanticVerdict").GetString());
-
-        var kernel = cluster.Services.GetRequiredService<IPergaKernel>();
-        await kernel.WaitForTrackIdleAsync(trackId);
-
-        var trackAfter = (await client.GetFromJsonAsync<Perga.Kernel.Ports.TrackAggregateSnapshot>($"/api/v1/tracks/{trackId}", PergaJsonDefaults.ApiOptions))!;
-        var verifyTask = Assert.Single(trackAfter.Tasks, t => t.TaskKey == "verify-echo");
-        Assert.Equal(TaskRunStatus.Done, verifyTask.Status);
-        Assert.Equal(1, verifyTask.RunCount);
-        var result = verifyTask.WorkerResult!.Value;
-        Assert.EndsWith("TASK_ATTEMPT_OK\n", result.GetProperty("stdout").GetString());
-        Assert.True(result.GetProperty("stdoutTruncated").GetBoolean());
-        Assert.InRange(result.GetProperty("stdout").GetString()!.Length, 1, 4096);
-        var gateStep = verifyTask.GateVerdict!.Value.GetProperty("steps")[0];
-        Assert.EndsWith("GATE_OK\n", gateStep.GetProperty("stderr").GetString());
-        Assert.True(gateStep.GetProperty("stderrTruncated").GetBoolean());
-        Assert.InRange(gateStep.GetProperty("stderr").GetString()!.Length, 1, 4096);
-
-        cluster.TimeProvider.Advance(TimeSpan.FromDays(15));
-        var stats = await kernel.RunMaintenancePassAsync();
-        Assert.Equal(1, stats.CompactedTasks);
-        var trackAfterGc = (await client.GetFromJsonAsync<Perga.Kernel.Ports.TrackAggregateSnapshot>($"/api/v1/tracks/{trackId}", PergaJsonDefaults.ApiOptions))!;
-        var compacted = Assert.Single(trackAfterGc.Tasks, t => t.TaskKey == "verify-echo");
-        Assert.Equal(verifyTask.Id, compacted.Id);
-        Assert.Equal(TaskRunStatus.Done, compacted.Status);
-        Assert.True(compacted.GateVerdict!.Value.GetProperty("passed").GetBoolean());
-        Assert.True(compacted.GateVerdict.Value.GetProperty("steps")[0].GetProperty("outputExpired").GetBoolean());
-        Assert.Equal(0, compacted.WorkerResult!.Value.GetProperty("exitCode").GetInt32());
-        Assert.False(compacted.WorkerResult.Value.TryGetProperty("stdout", out _));
-        Assert.Equal(0, (await kernel.RunMaintenancePassAsync()).CompactedTasks);
-    }
-
-    [Fact]
     public async Task Sessions_IdempotencyKey_Steer_Interrupt_Compact_And_AskAnswer_WorkEndToEnd()
     {
         await using var cluster = new PergaHostTestCluster();
@@ -287,7 +155,6 @@ public sealed class ApiV1RestIntegrationTests
         Assert.Null(created.FirstInput);
         var subSession = created.Session;
         Assert.False(subSession.IsLead);
-        Assert.Null(created.Task);
 
         using var listSessionsResp = await client.GetAsync($"/api/v1/tracks/{trackId}/sessions");
         var sessions = (await listSessionsResp.Content.ReadFromJsonAsync<List<SessionSummaryDto>>(PergaJsonDefaults.ApiOptions))!;

@@ -80,8 +80,8 @@ public sealed class TodayEndpointTests
         {
             var doc = engine.Parse(text, rev, summary);
             var at = host.TimeProvider.GetUtcNow().ToUnixTimeMilliseconds();
-            await store.SaveReportAndTasksAsync(id, doc, engine.CompressZstd(doc.Blocks), null, "edit", [],
-                JsonSerializer.SerializeToElement(new { }), new(null, area.Id, id, "report.updated",
+            await store.SaveReportAsync(id, doc, engine.CompressZstd(doc.Blocks), null, "edit",
+            JsonSerializer.SerializeToElement(new { }), new(null, area.Id, id, "report.updated",
                     JsonSerializer.SerializeToElement(new { docRev = rev, summary }), at), default);
         }
         await Save(track.Track.Id, 1, "First", "# Work\n\nBefore.\n");

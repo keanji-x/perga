@@ -22,18 +22,18 @@ public sealed class CronosSnapshotScheduleTests
         });
         var kernel = cluster.Services.GetRequiredService<IPergaKernel>();
         kernel.Templates.RegisterTemplate("""
-            export default defineTemplate({ id:'clashing', title:'Catalog', schedules: [] });
+            export default defineTemplate({ id:'clashing', title:'Catalog', flow: [] });
             """);
         var area = await kernel.CreateAreaAsync(new CreateAreaRequest("Schedules", DefaultCwd: cluster.DataDir));
         var snap = await kernel.CreateTrackAsync(new CreateTrackRequest(area.Id, Cwd: cluster.DataDir));
         var caller = new McpSessionPrincipal("token", snap.Track.Id, snap.Track.LeadSessionId!, true, null, null, []);
         await KernelMcpDispatcher.ExecuteGuardedAsync(kernel, caller, KernelMcpToolNames.TrackSet,
             JsonSerializer.SerializeToElement(new { source = """
-                export default defineTemplate({ id:'clashing', title:'Snapshot', schedules: [
-                  { id:'snapshot-pulse', cron:'* * * * *', timezone:'UTC', prompt:'SNAPSHOT_PULSE' }
+                export default defineTemplate({ id:'clashing', title:'Snapshot', flow: [
+                  { id:'snapshot-pulse', when:{cron:'* * * * *',tz:'UTC'}, do:{kind:'wake',session:'lead',prompt:'SNAPSHOT_PULSE'} }
                 ] });
                 """ }));
-        Assert.Empty(kernel.Templates.TryGetPolicy("clashing")!.Manifest.Schedules);
+        Assert.Equal(0, kernel.Templates.TryGetPolicy("clashing")!.Manifest.Flow.GetArrayLength());
         var scheduler = cluster.Services.GetRequiredService<CronosScheduleHostedService>();
         cluster.TimeProvider.Advance(TimeSpan.FromMinutes(2));
         kernel.DispatchAdmission.SetDraining(true);

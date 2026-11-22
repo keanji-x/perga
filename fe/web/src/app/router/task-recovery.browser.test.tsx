@@ -46,6 +46,9 @@ it('shows latest task evidence and its session on desktop and phone and refreshe
   await page.getByRole('button', { name: 'Open task session' }).click();
   expect(conversation).toBe('worker');
   expect(requests.every(request => request.method === 'GET' && request.path === '/api/v1/tracks/w1')).toBe(true);
+  expect(screen.getAllByRole('button').map(button => button.textContent)).toEqual([
+    'Refresh execution history', 'Open task session',
+  ]);
   await page.viewport(390, 844);
   await expect.element(page.getByRole('button', { name: 'Refresh execution history' })).toBeVisible();
   expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(390);

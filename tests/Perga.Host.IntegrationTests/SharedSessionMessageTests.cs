@@ -134,8 +134,8 @@ public sealed class SharedSessionMessageTests
             {
                 (trackId, _) = await host.CreateTrackAsync();
                 var kernel = host.Services.GetRequiredService<IPergaKernel>();
-                var dispatch = await kernel.CreateSessionAsync(trackId, new(Prompt: "Old Worker goal", Task: new()), "old-worker", new InteropPrincipal.Human(), default);
-                taskId = dispatch.Receipt.Task!.Id;
+                var dispatch = await FlowFixture.StartWorkerAsync(kernel, trackId, "old-worker", "Old Worker goal");
+                taskId = dispatch.Task!.Id;
                 await kernel.WaitForTrackIdleAsync(trackId);
                 worker = Assert.Single(await kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), default), summary => summary.TaskId == taskId).Session;
                 var store = host.Services.GetRequiredService<ITrackStore>().SessionMessages!;
@@ -167,9 +167,9 @@ public sealed class SharedSessionMessageTests
             }
             Assert.DoesNotContain(reopened.AgentRuntime.ExecutedTurns, execution => execution.Input.Prompt.StartsWith("worker-", StringComparison.Ordinal));
 
-            var next = await activeKernel.CreateSessionAsync(trackId, new(Prompt: "New Worker goal", Task: new()), "fresh-worker", new InteropPrincipal.Human(), default);
+            var next = await FlowFixture.StartWorkerAsync(activeKernel, trackId, "fresh-worker", "New Worker goal");
             await activeKernel.WaitForTrackIdleAsync(trackId);
-            var replacement = Assert.Single(await activeKernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), default), summary => summary.TaskId == next.Receipt.Task!.Id).Session;
+            var replacement = Assert.Single(await activeKernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), default), summary => summary.TaskId == next.Task!.Id).Session;
             Assert.NotEqual(old.Id, replacement.Id);
             Assert.Empty((await activeKernel.GetSessionItemsAsync(replacement.Id, new(), new InteropPrincipal.Human(), default)).QueuedMessages);
         }

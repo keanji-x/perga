@@ -27,14 +27,11 @@ public static class KernelMcpToolNames
     public const string TerminalOpen = "terminal_open";
     public const string TerminalRead = "terminal_read";
     public const string TerminalInput = "terminal_input";
-    public const string ScheduleList = "schedule_list";
 
     // Governance tools (BoundTaskId == null ONLY)
     public const string FlowRead = "flow_read";
     public const string FlowCommit = "flow_commit";
     public const string TaskCancel = "task_cancel";
-    public const string TaskAccept = "task_accept";
-    public const string TaskReject = "task_reject";
     public const string MailSend = "mail_send";
     public const string TrackRename = "track_rename";
     public const string TemplateList = "template_list";
@@ -42,8 +39,6 @@ public static class KernelMcpToolNames
     public const string TemplateUpdateInputs = "template_update_inputs";
     public const string TrackSet = "track_set";
     public const string TrackClose = "track_close";
-    public const string ScheduleSet = "schedule_set";
-    public const string ScheduleCancel = "schedule_cancel";
 
     // Contract completion tools (BoundTaskId != null ONLY)
     public const string TaskDone = "task_done";
@@ -72,17 +67,12 @@ public static class KernelMcpToolNames
         TerminalOpen,
         TerminalRead,
         TerminalInput,
-        ScheduleList,
         FlowRead,
         FlowCommit,
         TaskCancel,
-        TaskAccept,
-        TaskReject,
         MailSend,
         TrackRename,
         TrackClose,
-        ScheduleSet,
-        ScheduleCancel,
         TemplateList,
         TemplateRead,
         TemplateUpdateInputs,
@@ -130,7 +120,7 @@ public static class KernelMcpCatalog
 
     public static bool IsGovernanceOnly(string toolName) => toolName is
         KernelMcpToolNames.FlowRead or KernelMcpToolNames.FlowCommit or
-        KernelMcpToolNames.TaskCancel or KernelMcpToolNames.TaskAccept or KernelMcpToolNames.TaskReject or
+        KernelMcpToolNames.TaskCancel or
         KernelMcpToolNames.SessionCreate or KernelMcpToolNames.SessionUpdate or KernelMcpToolNames.SessionSend or
         KernelMcpToolNames.SessionWithdraw or KernelMcpToolNames.SessionControl or KernelMcpToolNames.SessionRespond or
         KernelMcpToolNames.MailSend or
@@ -139,9 +129,7 @@ public static class KernelMcpCatalog
         KernelMcpToolNames.TemplateList or
         KernelMcpToolNames.TemplateRead or
         KernelMcpToolNames.TemplateUpdateInputs or
-        KernelMcpToolNames.TrackSet or
-        KernelMcpToolNames.ScheduleSet or
-        KernelMcpToolNames.ScheduleCancel;
+        KernelMcpToolNames.TrackSet;
 
     public static bool IsCompletionOnly(string toolName) => toolName is
         KernelMcpToolNames.TaskDone or
@@ -200,12 +188,6 @@ public static class KernelMcpCatalog
                 Schema(KernelMcpReportSupport.TerminalReadSchemaJson), readOnlyLocal),
             new(KernelMcpToolNames.TerminalInput, "Send text, keys, paste, or submit action to a terminal.",
                 Schema(KernelMcpReportSupport.TerminalInputSchemaJson), openWorldDestructive),
-            new(KernelMcpToolNames.ScheduleList, "List durable schedules and reminders configured on this track.",
-                Schema("""{"type":"object","additionalProperties":false,"properties":{"includeTerminal":{"type":"boolean"}}}"""), readOnlyLocal),
-            new(KernelMcpToolNames.ScheduleSet, "Create or update a persistent one-shot reminder or recurring cron schedule that wakes this track (governance only).",
-                Schema("""{"type":"object","additionalProperties":false,"required":["title","prompt"],"properties":{"id":{"type":"string"},"title":{"type":"string"},"prompt":{"type":"string"},"runAt":{"type":"string"},"runAtMs":{"type":"integer"},"cron":{"type":"string"},"timezone":{"type":"string"},"maxOccurrences":{"type":"integer","minimum":1}}}"""), localWrite),
-            new(KernelMcpToolNames.ScheduleCancel, "Cancel an active schedule on this track and drop any pending wake for it (governance only).",
-                Schema("""{"type":"object","additionalProperties":false,"required":["scheduleId"],"properties":{"scheduleId":{"type":"string"}}}"""), localIdempotentWrite),
             new(KernelMcpToolNames.FlowRead, "Read the Track's committed flow spec, current revision, Host file path, and live projection (Lead only).",
                 Schema("""{"type":"object","additionalProperties":false,"properties":{}}"""), readOnlyLocal),
             new(KernelMcpToolNames.FlowCommit,
@@ -222,10 +204,6 @@ public static class KernelMcpCatalog
                 Schema("""{"type":"object","additionalProperties":false,"properties":{"dryRun":{"type":"boolean","description":"Validate the draft and return the plan diff. Defaults to false."},"expectedFlowRev":{"type":"integer","minimum":0,"description":"Expected committed revision. Defaults to the draft rev."},"content":{"type":["string","null"],"description":"Flow JSON text. Omit to read the Host's flow.json."}}}"""), localWrite),
             new(KernelMcpToolNames.TaskCancel, "Cancel a task and stop any active execution (task parent or Track Lead).",
                 Schema("""{"type":"object","required":["taskKey"],"properties":{"taskKey":{"type":"string"},"reason":{"type":"string"}}}"""), localWrite),
-            new(KernelMcpToolNames.TaskAccept, "Record semantic acceptance verdict on a task (task parent or Track Lead).",
-                Schema("""{"type":"object","required":["taskKey"],"properties":{"taskKey":{"type":"string"},"note":{"type":"string"}}}"""), localIdempotentWrite),
-            new(KernelMcpToolNames.TaskReject, "Reject a task with review feedback and optionally re-queue (task parent or Track Lead).",
-                Schema("""{"type":"object","required":["taskKey","note"],"properties":{"taskKey":{"type":"string"},"note":{"type":"string"},"reQueue":{"type":"boolean"}}}"""), localWrite),
             new(KernelMcpToolNames.MailSend, "Wake the recipient Lead by specifying exactly one of toTrackId or replyToMailId (a message in your inbox). Governance only.",
                 Schema("""{"type":"object","required":["summary","body"],"properties":{"replyToMailId":{"type":"string"},"toTrackId":{"type":"string"},"summary":{"type":"string"},"body":{"type":"string"}}}"""), localWrite),
             new(KernelMcpToolNames.TrackRename, "Rename the current track (governance only).",
@@ -252,28 +230,19 @@ public static class KernelMcpCatalog
                 }}
                 """), readOnlyLocal),
             new(KernelMcpToolNames.SessionCreate,
-                "Create a child conversation. Omit task for a lightweight multi-turn collaborator sharing the Track workspace. Avoid concurrent writers. " +
-                "Provide task for a formal Task Worker with a Report block, read_only isolation or a read_write lease, dependsOn scheduling, " +
-                "task_done/task_fail completion, gate verification, and task_accept/task_reject review. " +
-                "Call provider_list if unsure of provider, model, reasoningEffort, or permissionMode. Reuse requestKey to retry safely.",
+                "Create a lightweight multi-turn collaborator sharing the Track workspace. Avoid concurrent writers. " +
+                "Declare formal tasks with flow_commit. Call provider_list if unsure of provider, model, reasoningEffort, or permissionMode. Reuse requestKey to retry safely.",
                 Schema("""
                 {"type":"object","additionalProperties":false,"properties":{
                   "title":{"type":"string","description":"Human-readable conversation title."},
-                  "provider":{"type":"string","description":"Provider ID from provider_list. Omit to use the parent provider for a plain child or the routed Track default for a Worker."},
+                  "provider":{"type":"string","description":"Provider ID from provider_list. Omit to use the parent provider."},
                   "model":{"type":"string","description":"Model ID for the target provider. Omit to use inherited or default settings."},
                   "reasoningEffort":{"type":"string","description":"Reasoning effort supported by the selected model. Omit to use inherited or default settings."},
-                  "permissionMode":{"type":"string","description":"Use a native permission mode ID from provider_list. If permissionCatalogSource is dynamic and permissionModes is empty, omit this field to use the provider's workspace default or an applicable inherited mode. Task workspace isolation is controlled by task.access."},
-                  "role":{"type":"string","description":"Worker role used for Track template routing."},
+                  "permissionMode":{"type":"string","description":"Use a native permission mode ID from provider_list. If permissionCatalogSource is dynamic and permissionModes is empty, omit this field to use the provider's workspace default or an applicable inherited mode."},
                   "systemPrompt":{"type":"string","description":"Additional system instructions for this conversation."},
-                  "prompt":{"type":"string","description":"Initial instruction. Omit to create an idle plain child. Required for a Task Worker."},
+                  "prompt":{"type":"string","description":"Initial instruction. Omit to create an idle child."},
                   "requestKey":{"type":"string","description":"Idempotency key scoped to the calling session and Track. Reuse with the same arguments."},
-                  "notifyParent":{"enum":["none","turn_end","task_settled"],"description":"Parent wakeup policy. Notify after a turn or when the task settles. Defaults to none for plain children and task_settled for Workers."},
-                  "task":{"type":"object","additionalProperties":false,"description":"Formal task contract. Omit for a shared-workspace collaborator.","properties":{
-                    "access":{"enum":["read_only","read_write"],"description":"Workspace access. read_only enforces filesystem isolation. read_write requires a write lease."},
-                    "acceptance":{"type":"string","description":"Acceptance criteria recorded in the Report task block."},
-                    "gate":{"type":"string","description":"Verification command run after task completion, subject to Track template policy."},
-                    "dependsOn":{"type":"array","items":{"type":"string"},"description":"Task keys that must complete before this Worker starts."}
-                  }}
+                  "notifyParent":{"enum":["none","turn_end"],"description":"Parent wakeup policy. Notify after a turn. Defaults to none."}
                 }}
                 """), localWrite),
             new(KernelMcpToolNames.SessionRead, "Read conversation state, history, progress and pending interactions.",
@@ -590,26 +559,6 @@ public static class KernelMcpDispatcher
                 return JsonHelpers.ToElement(res);
             }
 
-            case KernelMcpToolNames.TaskAccept:
-            {
-                var taskKey = RequireStringArg(args, ["taskKey", "task_key", "taskId"]);
-                var note = OptionalStringArg(args, ["note"]);
-                var res = await kernel.AcceptTaskAsync(caller.TrackId, caller.SessionId, taskKey, note, ct)
-                    .ConfigureAwait(false);
-                return JsonHelpers.ToElement(res);
-            }
-
-            case KernelMcpToolNames.TaskReject:
-            {
-                var taskKey = RequireStringArg(args, ["taskKey", "task_key", "taskId"]);
-                var note = RequireStringArg(args, ["note", "reason"]);
-                var reQueue = JsonHelpers.TryGetPropertyIgnoreCase(args, ["reQueue", "re_queue"], out var rq) &&
-                              rq.ValueKind == JsonValueKind.True;
-                var res = await kernel.RejectTaskAsync(caller.TrackId, caller.SessionId, taskKey, note, reQueue, ct)
-                    .ConfigureAwait(false);
-                return JsonHelpers.ToElement(res);
-            }
-
             case KernelMcpToolNames.MailSend:
             {
                 var toTrackId = MailAddressArg(args, ["toTrackId", "to_track_id"]);
@@ -632,7 +581,7 @@ public static class KernelMcpDispatcher
             case KernelMcpToolNames.TemplateList:
                 return JsonHelpers.ToElement(kernel.ListTemplates().Select(m => new { id = m.Id, title = m.Title,
                     description = m.Description, inputKeys = m.InputsSchema.EnumerateObject().Select(p => p.Name).ToArray(),
-                    plugins = m.DefaultPlugins, hasSchedules = m.Schedules.Count > 0, hasHeaderView = m.HasHeaderView }));
+                    plugins = m.DefaultPlugins, hasFlow = m.Flow.GetArrayLength() > 0, hasHeaderView = m.HasHeaderView }));
 
             case KernelMcpToolNames.TemplateRead:
                 return TemplateStringArg(args, "templateId") == "__current__"
@@ -663,37 +612,6 @@ public static class KernelMcpDispatcher
             {
                 var res = await kernel.CloseTrackAsync(caller.TrackId, caller.SessionId, ct).ConfigureAwait(false);
                 return JsonHelpers.ToElement(res);
-            }
-
-            case KernelMcpToolNames.ScheduleList:
-            {
-                RejectUnknownArgs(args, ToolSchema(toolName));
-                var includeTerminal = false;
-                if (JsonHelpers.TryGetPropertyIgnoreCase(args, ["includeTerminal"], out var inc) &&
-                    inc.ValueKind != JsonValueKind.Null)
-                {
-                    if (inc.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
-                        throw KernelException.InvalidArgument("'includeTerminal' must be a boolean.");
-                    includeTerminal = inc.GetBoolean();
-                }
-
-                var schedules = await kernel.ListTrackSchedulesAsync(caller.TrackId, includeTerminal, ct).ConfigureAwait(false);
-                return JsonHelpers.ToElement(new { schedules });
-            }
-
-            case KernelMcpToolNames.ScheduleSet:
-            {
-                var req = ParseScheduleSetArgs(args, toolName);
-                var schedule = await kernel.SetTrackScheduleAsync(caller.TrackId, req, ct).ConfigureAwait(false);
-                return JsonHelpers.ToElement(schedule);
-            }
-
-            case KernelMcpToolNames.ScheduleCancel:
-            {
-                RejectUnknownArgs(args, ToolSchema(toolName));
-                var scheduleId = RequireStringArg(args, ["scheduleId"]);
-                var canceled = await kernel.CancelTrackScheduleAsync(caller.TrackId, scheduleId, ct).ConfigureAwait(false);
-                return JsonHelpers.ToElement(new { scheduleId, canceled });
             }
 
             case KernelMcpToolNames.TaskDone:
@@ -781,46 +699,6 @@ public static class KernelMcpDispatcher
         if (elem.ValueKind != JsonValueKind.String)
             throw KernelException.InvalidArgument($"'{keys[0]}' must be a string.");
         return elem.GetString();
-    }
-
-    private static SetTrackScheduleRequest ParseScheduleSetArgs(JsonElement args, string toolName)
-    {
-        RejectUnknownArgs(args, ToolSchema(toolName));
-        var id = OptionalTypedStringArg(args, ["id"]);
-        var title = RequireStringArg(args, ["title"]);
-        var prompt = RequireStringArg(args, ["prompt"]);
-        var cron = OptionalTypedStringArg(args, ["cron"]);
-        var timezone = OptionalTypedStringArg(args, ["timezone"]);
-        var runAt = OptionalTypedStringArg(args, ["runAt"]);
-
-        long? runAtMs = null;
-        if (JsonHelpers.TryGetPropertyIgnoreCase(args, ["runAtMs"], out var msElem) &&
-            msElem.ValueKind != JsonValueKind.Null)
-        {
-            if (msElem.ValueKind != JsonValueKind.Number || !msElem.TryGetInt64(out var parsedMs))
-                throw KernelException.InvalidArgument("'runAtMs' must be an integer Unix millisecond timestamp.");
-            runAtMs = parsedMs;
-        }
-
-        int? maxOccurrences = null;
-        if (JsonHelpers.TryGetPropertyIgnoreCase(args, ["maxOccurrences"], out var maxElem) &&
-            maxElem.ValueKind != JsonValueKind.Null)
-        {
-            if (maxElem.ValueKind != JsonValueKind.Number || !maxElem.TryGetInt32(out var parsedMax) || parsedMax < 1)
-                throw KernelException.InvalidArgument("'maxOccurrences' must be an integer >= 1.");
-            maxOccurrences = parsedMax;
-        }
-
-        return new SetTrackScheduleRequest(
-            Title: title,
-            Prompt: prompt,
-            Id: id,
-            CronExpr: cron,
-            RunAtMs: runAtMs,
-            Timezone: timezone,
-            MaxOccurrences: maxOccurrences,
-            SourceKind: TrackScheduleSources.Agent,
-            RunAt: runAt);
     }
 
     private static ReportCommitRequest ParseReportCommitArgs(JsonElement args)

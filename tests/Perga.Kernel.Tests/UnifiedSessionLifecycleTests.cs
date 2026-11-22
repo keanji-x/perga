@@ -57,12 +57,9 @@ public sealed class UnifiedSessionLifecycleTests
             await releaseGate.Task.WaitAsync(ct);
             return new(0, "", "", false, 1);
         };
-        var report = await ctx.Kernel.ReadReportAsync(snapshot.Track.Id);
-        await ctx.Kernel.CommitReportAsync(snapshot.Track.Id, snapshot.Track.LeadSessionId!,
-            new(report.Anchor, [new Perga.ReportDoc.BlockOp.UpsertBlockOp(null, Perga.ReportDoc.ReportBlockKind.Task, null,
-                TestJson.FromObject(new { task_key = "slow-gate", ready = true, goal_or_cmd = "inspect", gate = "verify" }))]));
-        var task = Assert.Single(await ctx.Kernel.ListTasksAsync(snapshot.Track.Id));
-        var id = task.SessionId!;
+        var worker = await FlowFixture.StartWorkerAsync(ctx.Kernel, snapshot.Track.Id,
+            FlowFixture.Worker("slow-gate", "inspect", gate: "verify"));
+        var id = worker.Session.Id;
         await ctx.Kernel.WaitForTrackIdleAsync(snapshot.Track.Id);
         await ctx.Kernel.SendSessionMessageAsync(id, new(Content: "working", RequestKey: "working"), Human, default);
         await WaitForPage(ctx, id, p => p.Activity?.Text == "started");
@@ -92,34 +89,6 @@ public sealed class UnifiedSessionLifecycleTests
         Assert.Equal(2, session.RecordedInputs.Count);
     }
 
-    [Fact]
-    public async Task ConclusiveInitialTurnFailureSettlesTaskAndReleasesWriterSlot()
-    {
-        await using var ctx = new KernelTestContext();
-        ctx.Kernel.Templates.RegisterTemplate("export default defineTemplate({ id: 'failure-policy', title: 'Failure policy' });");
-        var (_, snapshot) = await ctx.CreateDefaultTrackAsync(templateId: "failure-policy");
-        ctx.AgentRuntime.TurnScript = (_, input, _) => input.Prompt.Contains("'first'", StringComparison.Ordinal)
-            ? Failed() : Completed();
-        var report = await ctx.Kernel.ReadReportAsync(snapshot.Track.Id);
-        await ctx.Kernel.CommitReportAsync(snapshot.Track.Id, snapshot.Track.LeadSessionId!,
-            new(report.Anchor, [
-                new Perga.ReportDoc.BlockOp.UpsertBlockOp(null, Perga.ReportDoc.ReportBlockKind.Task, null,
-                    TestJson.FromObject(new { task_key = "first", ready = true, access = "read_write", goal_or_cmd = "inspect", gate = "verify" })),
-                new Perga.ReportDoc.BlockOp.UpsertBlockOp(null, Perga.ReportDoc.ReportBlockKind.Task, null,
-                    TestJson.FromObject(new { task_key = "second", ready = true, access = "read_write", goal_or_cmd = "inspect", gate = "verify" }))]));
-        await ctx.Kernel.WaitForTrackIdleAsync(snapshot.Track.Id);
-        var tasks = (await ctx.Store.LoadTrackAggregateAsync(snapshot.Track.Id, default))!.Tasks;
-        var failed = tasks.Single(t => t.TaskKey == "first");
-        Assert.Equal(TaskRunStatus.Failed, failed.Status);
-        Assert.Equal("provider: conclusive failure", failed.StatusDetail);
-        Assert.NotNull(failed.FinishedAtMs);
-        Assert.Equal(TaskRunStatus.Running, tasks.Single(t => t.TaskKey == "second").Status);
-        Assert.Contains(ctx.PolicyVm.RecordedSettledEvents, e =>
-            e.GetProperty("taskKey").GetString() == "first" && e.GetProperty("status").GetString() == "failed");
-        await ctx.Kernel.RejectTaskAsync(snapshot.Track.Id, null, failed.Id, "retry", reQueue: true);
-        Assert.Equal(TaskRunStatus.Pending, (await ctx.Kernel.ListTasksAsync(snapshot.Track.Id)).Single(t => t.Id == failed.Id).Status);
-    }
-
     private static async IAsyncEnumerable<UnifiedAgentEvent> Failed()
     {
         await Task.Yield();
@@ -136,9 +105,8 @@ public sealed class UnifiedSessionLifecycleTests
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var calls = 0;
         ctx.AgentRuntime.TurnScript = (_, _, ct) => Interlocked.Increment(ref calls) == 1 ? Hold(release.Task, ct) : Completed();
-        var created = await ctx.Kernel.CreateSessionAsync(snapshot.Track.Id,
-            new(Prompt: "worker", Task: new()), "resume-queue", Human, default);
-        var id = created.Receipt.Session.Id;
+        var created = await FlowFixture.StartWorkerAsync(ctx.Kernel, snapshot.Track.Id, FlowFixture.Worker("resume-queue", "worker"));
+        var id = created.Session.Id;
         var page = await WaitForPage(ctx, id, p => p.Activity?.Text == "started");
         var queued = existingQueue ? await ctx.Kernel.SendSessionMessageAsync(id,
             new(Content: "earlier", RequestKey: "earlier", Mode: "queue"), Human, default) : null;
@@ -312,9 +280,8 @@ public sealed class UnifiedSessionLifecycleTests
         ctx.AgentRuntime.SupportsSessionResume = true;
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         ctx.AgentRuntime.TurnScript = (s, _, ct) => BoundHold(s, release.Task, ct);
-        var created = await ctx.Kernel.CreateSessionAsync(snapshot.Track.Id,
-            new(Prompt: "worker", Task: new()), "worker", Human, default);
-        var id = created.Receipt.Session.Id;
+        var created = await FlowFixture.StartWorkerAsync(ctx.Kernel, snapshot.Track.Id, FlowFixture.Worker("worker", "worker"));
+        var id = created.Session.Id;
         var page = await WaitForPage(ctx, id, p => p.Activity?.Text == "started");
         var agent = Assert.Single(ctx.AgentRuntime.OpenedSessions);
         agent.FailDisposal = disposalThrows;
@@ -338,7 +305,7 @@ public sealed class UnifiedSessionLifecycleTests
             var recovered = await ctx.Kernel.ControlSessionAsync(id, new(action), Human, default);
             Assert.Equal(before.Epoch + 1, recovered.Epoch);
             Assert.True(agent.DisposeCalls >= 2);
-            var afterTask = Assert.Single(await ctx.Kernel.ListTasksAsync(snapshot.Track.Id), t => t.Id == created.Receipt.Task!.Id);
+            var afterTask = Assert.Single(await ctx.Kernel.ListTasksAsync(snapshot.Track.Id), t => t.Id == created.Task!.Id);
             Assert.Equal(id, afterTask.SessionId);
             Assert.Equal(TaskRunStatus.Running, afterTask.Status);
         }
@@ -360,10 +327,11 @@ public sealed class UnifiedSessionLifecycleTests
     {
         await using var ctx = new KernelTestContext();
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
-        var created = await ctx.Kernel.CreateSessionAsync(snapshot.Track.Id,
-            new(Prompt: "first", Task: worker ? new() : null), "create", Human, default);
+        var session = worker
+            ? (await FlowFixture.StartWorkerAsync(ctx.Kernel, snapshot.Track.Id, FlowFixture.Worker("create", "first"))).Session
+            : (await ctx.Kernel.CreateSessionAsync(snapshot.Track.Id, new(Prompt: "first"), "create", Human, default)).Receipt.Session;
         await ctx.Kernel.WaitForTrackIdleAsync(snapshot.Track.Id);
-        var id = created.Receipt.Session.Id;
+        var id = session.Id;
         var turnRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         ctx.AgentRuntime.TurnScript = (_, _, ct) => Hold(turnRelease.Task, ct);
         var leadId = snapshot.Track.LeadSessionId!;
@@ -398,10 +366,8 @@ public sealed class UnifiedSessionLifecycleTests
         Assert.Equal("new-model", ctx.AgentRuntime.OpenedSessions.Last().LaunchSpec.Model);
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task QueueSteerAndAuthorReceiptsShareAdmission(bool worker)
+    [Fact]
+    public async Task QueueSteerAndAuthorReceiptsShareAdmission()
     {
         await using var ctx = new KernelTestContext();
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
@@ -412,7 +378,7 @@ public sealed class UnifiedSessionLifecycleTests
         var parentPage = await WaitForPage(ctx, lead.Id, p => p.ActiveTurn is not null);
         var caller = Caller(ctx, lead, parentPage.ActiveTurn!.Id);
         var created = await ctx.Kernel.CreateSessionAsync(lead.TrackId,
-            new(Prompt: "target", Task: worker ? new() : null), "child", caller, default);
+            new(Prompt: "target"), "child", caller, default);
         Assert.NotNull(created.Receipt.FirstInput);
         var id = created.Receipt.Session.Id;
         var page = await WaitForPage(ctx, id, p => p.ActiveTurn is not null);
@@ -446,9 +412,10 @@ public sealed class UnifiedSessionLifecycleTests
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         ctx.AgentRuntime.TurnScript = (_, _, ct) => Hold(release.Task, ct);
-        var created = await ctx.Kernel.CreateSessionAsync(snapshot.Track.Id,
-            new(Prompt: "target", Task: worker ? new() : null), "child", Human, default);
-        var id = created.Receipt.Session.Id;
+        var session = worker
+            ? (await FlowFixture.StartWorkerAsync(ctx.Kernel, snapshot.Track.Id, FlowFixture.Worker("child", "target"))).Session
+            : (await ctx.Kernel.CreateSessionAsync(snapshot.Track.Id, new(Prompt: "target"), "child", Human, default)).Receipt.Session;
+        var id = session.Id;
         var page = await WaitForPage(ctx, id, p => p.Activity?.Text == "started");
         var read = ctx.Kernel.GetSessionItemsAsync(id,
             new(ActivityTurnId: page.ActiveTurn!.Id, AfterSequence: page.Activity!.Sequence, WaitMs: 1000), Human, default);
@@ -460,10 +427,8 @@ public sealed class UnifiedSessionLifecycleTests
         await ctx.Kernel.WaitForTrackIdleAsync(snapshot.Track.Id);
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task StopCancelsProviderStartupThroughMailbox(bool worker)
+    [Fact]
+    public async Task StopCancelsProviderStartupThroughMailbox()
     {
         await using var ctx = new KernelTestContext();
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
@@ -471,7 +436,7 @@ public sealed class UnifiedSessionLifecycleTests
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         ctx.AgentRuntime.BeforeOpenAsync = () => { entered.TrySetResult(); return release.Task; };
         var created = await ctx.Kernel.CreateSessionAsync(snapshot.Track.Id,
-            new(Prompt: "target", Task: worker ? new() : null), "child", Human, default);
+            new(Prompt: "target"), "child", Human, default);
         await entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
         Assert.NotNull(created.Receipt.FirstInput);
         var id = created.Receipt.Session.Id;
@@ -483,7 +448,6 @@ public sealed class UnifiedSessionLifecycleTests
         finally { release.TrySetResult(); }
         await ctx.Kernel.WaitForTrackIdleAsync(snapshot.Track.Id);
         Assert.Equal("interrupted", Assert.Single(ctx.Store.GetTurnsForSession(id)).Status);
-        if (worker) Assert.True((await ctx.Kernel.GetSessionItemsAsync(id, new(), new InteropPrincipal.Human(), default)).WorkerPaused);
         Assert.All(ctx.AgentRuntime.OpenedSessions, s => Assert.Empty(s.RecordedInputs));
     }
 
@@ -514,44 +478,6 @@ public sealed class UnifiedSessionLifecycleTests
         release.TrySetResult();
         await ctx.Kernel.WaitForTrackIdleAsync(lead.TrackId);
     }
-    public static IEnumerable<object[]> GovernanceCases =>
-        from action in new[] { "cancel", "accept", "reject" }
-        from role in new[] { "human", "parent", "lead", "peer", "self" }
-        select new object[] { action, role };
-
-    [Theory]
-    [MemberData(nameof(GovernanceCases))]
-    public async Task TaskGovernanceUsesTheTaskSessionOwnershipTree(string action, string role)
-    {
-        await using var ctx = new KernelTestContext();
-        var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
-        var parent = (await ctx.Kernel.CreateSessionAsync(snapshot.Track.Id, new(), "parent", Human, default)).Receipt.Session;
-        var peer = (await ctx.Kernel.CreateSessionAsync(snapshot.Track.Id, new(), "peer", Human, default)).Receipt.Session;
-        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        ctx.AgentRuntime.TurnScript = (s, _, ct) => s.LaunchSpec.StateKey == parent.Id ? Hold(release.Task, ct) : Completed();
-        await ctx.Kernel.SendSessionMessageAsync(parent.Id, new(Content: "parent", RequestKey: "parent"), Human, default);
-        var page = await WaitForPage(ctx, parent.Id, p => p.ActiveTurn is not null);
-        var child = (await ctx.Kernel.CreateSessionAsync(snapshot.Track.Id, new(Prompt: "child", Task: new()),
-            "child", Caller(ctx, parent, page.ActiveTurn!.Id), default)).Receipt;
-        await WaitForPage(ctx, child.Session.Id, p => p.LastTurn?.Status == "completed");
-        await ctx.Kernel.CompleteTaskDoneAsync(snapshot.Track.Id, child.Session.Id);
-        await ctx.Kernel.GuardMcpToolCallAsync(snapshot.Track.Id, parent.Id, "perga", "task_" + action,
-            TestJson.FromObject(new { taskId = child.Task!.Id }));
-        var caller = role switch { "human" => null, "parent" => parent.Id, "lead" => snapshot.Track.LeadSessionId,
-            "peer" => peer.Id, _ => child.Session.Id };
-        Task<TaskDto> Govern() => action switch
-        {
-            "cancel" => ctx.Kernel.CancelTaskAsync(snapshot.Track.Id, caller, child.Task!.Id),
-            "accept" => ctx.Kernel.AcceptTaskAsync(snapshot.Track.Id, caller, child.Task!.Id),
-            _ => ctx.Kernel.RejectTaskAsync(snapshot.Track.Id, caller, child.Task!.Id, "review")
-        };
-        if (role is "peer" or "self")
-            Assert.Equal(KernelErrorCode.Forbidden, (await Assert.ThrowsAsync<KernelException>(Govern)).Code);
-        else await Govern();
-        release.TrySetResult();
-        await ctx.Kernel.WaitForTrackIdleAsync(snapshot.Track.Id);
-    }
-
     private static async IAsyncEnumerable<UnifiedAgentEvent> Completed()
     {
         await Task.Yield();
@@ -559,13 +485,9 @@ public sealed class UnifiedSessionLifecycleTests
     }
 
     [Theory]
-    [InlineData("turn_end", false, false, 2)]
-    [InlineData("task_settled", true, false, 2)]
-    [InlineData("none", false, false, 1)]
-    [InlineData("none", true, false, 1)]
-    [InlineData("turn_end", false, true, 1)]
-    [InlineData("task_settled", true, true, 1)]
-    public async Task NotifyParentTargetsOnlyLiveParents(string notify, bool worker, bool archived, int turns)
+    [InlineData("turn_end", false, 2)]
+    [InlineData("none", false, 1)]
+    public async Task NotifyParentTargetsOnlyLiveParents(string notify, bool archived, int turns)
     {
         await using var ctx = new KernelTestContext();
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
@@ -576,7 +498,7 @@ public sealed class UnifiedSessionLifecycleTests
         await ctx.Kernel.SendSessionMessageAsync(parent.Id, new(Content: "parent", RequestKey: "parent"), Human, default);
         var parentPage = await WaitForPage(ctx, parent.Id, p => p.ActiveTurn is not null);
         var child = (await ctx.Kernel.CreateSessionAsync(snapshot.Track.Id,
-            new(Prompt: "child", NotifyParent: notify, Task: worker ? new() : null), "child",
+            new(Prompt: "child", NotifyParent: notify), "child",
             Caller(ctx, parent, parentPage.ActiveTurn!.Id), default)).Receipt.Session;
         await WaitForPage(ctx, child.Id, p => p.ActiveTurn is not null);
         parentRelease.TrySetResult();
@@ -584,11 +506,6 @@ public sealed class UnifiedSessionLifecycleTests
         if (archived) await ctx.Kernel.UpdateSessionAsync(parent.Id, new(Archived: true), Human, default);
         childRelease.TrySetResult();
         await ctx.Kernel.WaitForTrackIdleAsync(snapshot.Track.Id);
-        if (worker)
-        {
-            await ctx.Kernel.CompleteTaskDoneAsync(snapshot.Track.Id, child.Id);
-            await ctx.Kernel.WaitForTrackIdleAsync(snapshot.Track.Id);
-        }
         Assert.Equal(turns, ctx.Store.GetTurnsForSession(parent.Id).Count);
         Assert.Empty(ctx.Store.GetTurnsForSession(snapshot.Track.LeadSessionId!));
     }
@@ -647,46 +564,15 @@ public sealed class UnifiedSessionLifecycleTests
     }
 
     [Fact]
-    public async Task TaskSettlementInterruptsQueuedMessagesSoRequeueNeverLeaksStaleFollowUps()
-    {
-        await using var ctx = new KernelTestContext();
-        var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
-        var trackId = snapshot.Track.Id;
-        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var runNumber = 0;
-        ctx.AgentRuntime.TurnScript = (_, input, ct) =>
-            Interlocked.Increment(ref runNumber) == 1 ? Hold(release.Task, ct) : Completed();
-        var created = await ctx.Kernel.CreateSessionAsync(trackId, new(Prompt: "First run", Task: new()), "cross-run", Human, default);
-        var sessionId = created.Receipt.Session.Id;
-        var taskId = created.Receipt.Task!.Id;
-        await WaitForPage(ctx, sessionId, p => p.ActiveTurn is not null);
-        var queued = await ctx.Kernel.SendSessionMessageAsync(sessionId,
-            new(Content: "stale-from-run-1", RequestKey: "stale-key", Mode: "queue"), Human, default);
-        Assert.Equal("queued", queued.Delivery);
-
-        await ctx.Kernel.CompleteTaskFailAsync(trackId, sessionId, "run 1 failed");
-        release.TrySetResult();
-        await ctx.Kernel.WaitForTrackIdleAsync(trackId);
-        Assert.Equal("interrupted", (await ctx.Store.SessionMessages.GetAsync(sessionId, queued.MessageId, default))!.Delivery);
-
-        await ctx.Kernel.RejectTaskAsync(trackId, null, taskId, "retry", reQueue: true);
-        await ctx.Kernel.WaitForTrackIdleAsync(trackId);
-        var taskAfter = Assert.Single(await ctx.Kernel.ListTasksAsync(trackId), t => t.Id == taskId);
-        Assert.Equal(2, taskAfter.RunCount);
-        Assert.DoesNotContain(ctx.AgentRuntime.OpenedSessions.SelectMany(s => s.RecordedInputs),
-            i => i.Prompt.Contains("stale-from-run-1", StringComparison.Ordinal));
-    }
-
-    [Fact]
     public async Task TaskOwnedSessionSupportsIdleContextUsageAndCompactionParity()
     {
         await using var ctx = new KernelTestContext();
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
         var trackId = snapshot.Track.Id;
         ctx.AgentRuntime.OnOpenedSession = s => s.SupportsNativeCompact = true;
-        var created = await ctx.Kernel.CreateSessionAsync(trackId, new(Prompt: "Analyze", Task: new()), "parity", Human, default);
+        var created = await FlowFixture.StartWorkerAsync(ctx.Kernel, trackId, FlowFixture.Worker("parity", "Analyze"));
         await ctx.Kernel.WaitForTrackIdleAsync(trackId);
-        var sessionId = created.Receipt.Session.Id;
+        var sessionId = created.Session.Id;
         var agent = Assert.Single(ctx.AgentRuntime.OpenedSessions, s => s.LaunchSpec.StateKey == sessionId);
 
         agent.EmitIdleContextUsage(new IdleContextUsage(

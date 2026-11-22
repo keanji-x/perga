@@ -10,7 +10,6 @@ public enum SemanticVerdict { None, Accepted, Rejected }
 public enum AskDelivery { Wake, Hold }
 public enum AskStatus { Open, Answered, Withdrawn }
 public enum TerminalStatus { Running, Exited }
-public enum EditActorKind { Human, Lead, Subagent, System }
 
 public sealed record ExecutionTargetDto(
     string Id,
@@ -159,7 +158,7 @@ public sealed record SessionInputReceipt(
     public string MessageId => InputId;
 }
 
-public sealed record SessionCreationReceipt(AgentSessionDto Session, SessionInputReceipt? FirstInput, TaskDto? Task = null, string? RequestKey = null);
+public sealed record SessionCreationReceipt(AgentSessionDto Session, SessionInputReceipt? FirstInput, string? RequestKey = null);
 
 public sealed record SessionItemDto(
     long Id,

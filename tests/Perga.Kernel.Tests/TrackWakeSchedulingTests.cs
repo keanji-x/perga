@@ -9,23 +9,6 @@ namespace Perga.Kernel.Tests;
 
 public sealed class TrackWakeSchedulingTests
 {
-    [Fact]
-    public async Task OwnerDispatchDoesNotWakeLeadButHumanReportEditDoes()
-    {
-        await using var ctx = new KernelTestContext();
-        var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
-        var id = snapshot.Track.Id;
-        ctx.Kernel.DispatchAdmission.SetDraining(true);
-        await ctx.Kernel.CreateSessionAsync(id, new(Prompt: "Inspect report", Task: new()), "report-wake", new InteropPrincipal.Human(), default);
-        Assert.DoesNotContain(await ctx.Store.TrackWakes.ListAsync(id, default), wake => wake.Kind == "report_edited");
-
-        var report = await ctx.Kernel.ReadReportAsync(id);
-        var block = report.Blocks[0];
-        await ctx.Kernel.UpdateReportBlockByHumanAsync(id, block.Id,
-            new HumanBlockUpdateRequest(report.DocRev, block.Rev, Markdown: "Human report edit"));
-        Assert.Equal("pending", Assert.Single(await ctx.Store.TrackWakes.ListAsync(id, default), wake => wake.Kind == "report_edited").State);
-    }
-
     [Theory]
     [InlineData(null, null, false)]
     [InlineData(null, "", false)]
@@ -38,9 +21,6 @@ public sealed class TrackWakeSchedulingTests
     public async Task BlankScheduleSegmentsSettleWithoutEmptyTurns(string? staticPrompt, string? output, bool withMail)
     {
         await using var ctx = new KernelTestContext();
-        var manifest = ctx.PolicyVm.Compile("export default defineTemplate({id:'schedule-test',title:'Schedule'});").Manifest;
-        ctx.PolicyVm.CustomManifestFactory = _ => manifest with
-        { Schedules = [new ScheduleSpec("daily", "0 9 * * *", "UTC", staticPrompt ?? "stored prompt")] };
         ctx.PolicyVm.OnScheduleFired = (_, _, _, state) => new(state, output);
         ctx.Kernel.Templates.RegisterTemplate("export default defineTemplate({id:'schedule-test',title:'Schedule'});");
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync(templateId: "schedule-test");
@@ -94,9 +74,9 @@ public sealed class TrackWakeSchedulingTests
         {
             if (spec.SystemPrompt?.Contains("BoundTaskId=", StringComparison.Ordinal) == true) throw KernelException.Conflict("Setup refused");
         };
-        var dispatch = await ctx.Kernel.CreateSessionAsync(snapshot.Track.Id, new(Prompt: "Inspect report", Task: new()), "worker", new InteropPrincipal.Human(), default);
+        await FlowFixture.AddAsync(ctx.Kernel, snapshot.Track.Id, FlowFixture.Worker("worker", "Inspect report"));
         await ctx.Kernel.WaitForTrackIdleAsync(snapshot.Track.Id);
-        var worker = Assert.Single(await ctx.Kernel.ListSessionsAsync(snapshot.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default), s => s.Session.Id == dispatch.Receipt.Session.Id).Session;
+        var worker = Assert.Single(await ctx.Kernel.ListSessionsAsync(snapshot.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default), s => !s.Session.IsLead).Session;
         Assert.Empty(ctx.Store.GetTurnsForSession(worker.Id));
         Assert.Empty(await ctx.Store.ListSessionItemsAsync(worker.Id));
     }
