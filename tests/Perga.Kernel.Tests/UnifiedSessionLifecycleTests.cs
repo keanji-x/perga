@@ -79,7 +79,7 @@ public sealed class UnifiedSessionLifecycleTests
             releaseTurn.TrySetResult();
             var page = await WaitForPage(ctx, id, p => p.ActiveTurn is null);
             Assert.Equal(TaskRunStatus.Verifying, Assert.Single(await ctx.Kernel.ListTasksAsync(snapshot.Track.Id)).Status);
-            Assert.Equal("task_finished", page.ReadonlyReason);
+            Assert.Equal("task_verifying", page.ReadonlyReason);
             Assert.Null(ctx.Kernel.McpSessionBridge.ResolveToken(token));
             Assert.Equal("queued", (await ctx.Store.SessionMessages.GetAsync(id, queued.MessageId, default))!.Delivery);
             Assert.Equal(2, session.RecordedInputs.Count);

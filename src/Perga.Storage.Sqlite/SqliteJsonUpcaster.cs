@@ -240,6 +240,22 @@ public sealed class SqliteJsonUpcaster
         _ => SemanticVerdict.None
     };
 
+    public static string FormatFlowOutcome(FlowOutcome outcome) => outcome switch
+    {
+        FlowOutcome.Ok => "ok",
+        FlowOutcome.Attention => "attention",
+        FlowOutcome.Blocked => "blocked",
+        _ => "none"
+    };
+
+    public static FlowOutcome ParseFlowOutcome(string? raw) => raw?.Trim().ToLowerInvariant() switch
+    {
+        "ok" => FlowOutcome.Ok,
+        "attention" => FlowOutcome.Attention,
+        "blocked" => FlowOutcome.Blocked,
+        _ => FlowOutcome.None
+    };
+
     public static string FormatAskStatus(AskStatus status) => status switch
     {
         AskStatus.Open => "open",

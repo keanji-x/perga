@@ -59,7 +59,7 @@ export function useConversationActionArea({ open, options, store, shownComposer,
           <span>无法同步最新对话状态</span><span>{action.message}</span><span>刷新仅重新读取数据。</span>
           <ChatFooterRemedy pending={store.historyLoading || store.runLoading} onClick={() => { if (store.historyError !== null) store.retryHistory(); if (store.runError !== null) store.retryRun(); }}>刷新</ChatFooterRemedy>
         </> : action.kind === 'readonly' ? <>
-          <span>{action.reason === 'archived' ? '对话已归档' : action.reason === 'track_closed' ? 'Track 已关闭' : '对话已结束'}</span>
+          <span>{action.reason === 'archived' ? '对话已归档' : action.reason === 'track_closed' ? 'Track 已关闭' : action.reason === 'task_verifying' ? '任务验证中' : '对话已结束'}</span>
           {archiveError !== null && <ChatFooterError message={archiveError} />}
           {action.canReopen && options?.onArchive !== undefined && <ChatFooterRemedy onClick={() => changeArchive(false)}>恢复对话</ChatFooterRemedy>}
         </> : action.kind === 'unknown' ? <>

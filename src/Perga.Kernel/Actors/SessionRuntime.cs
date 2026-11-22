@@ -261,7 +261,7 @@ internal sealed class SessionRuntime
 
     public async Task<OpenSessionHandle> EnsureOpenAsync(IAgentRuntime runtime, SessionConfiguration desired,
         string provider, Func<Task<HarnessLaunchSpec>> buildSpec, Action<IAgentSession> validate,
-        TimeSpan timeout, CancellationToken ct) => await RunAsync(async owner =>
+        TimeSpan timeout, CancellationToken ct, bool forceReopen = false) => await RunAsync(async owner =>
     {
         if (IsShutdownUnconfirmed)
             throw new KernelException(KernelErrorCode.SessionRecoveryRequired, "Recover the provider session before sending more input.");
@@ -269,9 +269,9 @@ internal sealed class SessionRuntime
         {
             try
             {
-                var outcome = string.Equals(handle.LaunchSpec.Provider, provider, StringComparison.OrdinalIgnoreCase)
+                var outcome = !forceReopen && string.Equals(handle.LaunchSpec.Provider, provider, StringComparison.OrdinalIgnoreCase)
                     ? await handle.Agent.ConfigureAsync(desired, ct).WaitAsync(ct).ConfigureAwait(false)
-                    : new SessionConfigurationOutcome.RequiresReopen("The provider changed.");
+                    : new SessionConfigurationOutcome.RequiresReopen(forceReopen ? "Session credentials changed." : "The provider changed.");
                 if (outcome is SessionConfigurationOutcome.Applied applied)
                 {
                     validate(handle.Agent);

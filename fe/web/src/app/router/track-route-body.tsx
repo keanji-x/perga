@@ -4,7 +4,7 @@ import { priorityConversation } from '../../../../core/domain/activity.ts';
 import { DELETE_FAILURES,DELETE_TEXT,writeFailureText } from '../../../../core/domain/failure-class.ts';
 import { terminalPresentation } from '../../../../core/domain/terminal-presentation.ts';
 import { cancelTrackScheduleOperation,setTrackScheduleOperation,trackSchedulesOperation,trackTemplateOperation,triggerTrackScheduleOperation,updateTrackTemplateInputsOperation } from '../../../../core/domain/track-schedules.ts';
-import { trackDetail,trackSchedules,trackTemplate } from '../../../../core/events/query-keys.ts';
+import { trackDetail,trackReport,trackSchedules,trackTemplate,trackViews as trackViewsKey } from '../../../../core/events/query-keys.ts';
 import { TemplateProtocolBar } from '../../features/report/template-protocol/public.tsx';
 import { useTrackClosedControl } from '../../features/track/page/closed-control.ts';
 import { TerminalWorkbenchView,useTerminalWorkbench } from '../../features/track/workbench/public.tsx';
@@ -97,7 +97,6 @@ import { ReportReferencePreview } from './report-reference.tsx';
 import { ReportSourceInDocument,ReportSourcePreview } from './report-source.tsx';
 import { useTrackTemplateViews } from './report-views.ts';
 import { TaskRecovery,useCurrentTaskRows } from './task-recovery.tsx';
-import { WorkerDispatchControl } from './worker-controls.tsx';
 
 import { useNewTrackCard } from '../../features/track/new-card/controller.tsx';
 import type { CardRuntime } from './card-runtime.ts';
@@ -324,7 +323,7 @@ export function TrackRouteBody({
        report is what makes the kernel fetch the data. */
   /* One polled read of the track's previews, only while the report has a `preview` block. */
   const resolvePreview = () => ({ status: 'missing' as const });
-  const templateViews = useTrackTemplateViews(transport, track.id, reportBlocks, unauthorized);
+  const templateViews = useTrackTemplateViews(transport, track.id, unauthorized);
   const previewViewports = useReportPreviewViewports(track.id);
   /* The cards this route can open, asked of the registry through the list the board
    * draws. A worker card whose kind no entry claims is `unknown` and its `?card=`
@@ -455,11 +454,18 @@ export function TrackRouteBody({
         protocolClient.invalidateQueries({ queryKey: trackSchedules(track.id) }),
         protocolClient.invalidateQueries({ queryKey: trackTemplate(track.id) }),
         protocolClient.invalidateQueries({ queryKey: trackDetail(track.id) }),
+        protocolClient.invalidateQueries({ queryKey: trackViewsKey(track.id) }),
+        protocolClient.invalidateQueries({ queryKey: trackReport(track.id) }),
       ]);
     },
   });
   const protocolWrite = async (operation: ApiOperation<unknown>) => { await protocolMutation.mutateAsync(operation); };
   const protocolWritable = snapshot.track.closedAtMs == null;
+
+  const hasFlowContent = templateViews?.status === 'ready'
+    && templateViews.projection.flow != null
+    && (templateViews.projection.flow.nodes.length > 0 || templateViews.projection.flow.archived.length > 0);
+  const hasDailyReportContent = reportPresentation.visible?.preparation.kind !== 'empty' || hasFlowContent;
 
   const reportRegion = <>
     <TemplateProtocolBar track={track} schedules={schedulesQuery.data} inputsSchema={templateQuery.data?.manifest?.inputsSchema}
@@ -469,7 +475,7 @@ export function TrackRouteBody({
       onCancelSchedule={protocolWritable ? id => protocolWrite(cancelTrackScheduleOperation(track.id, id)) : undefined}
       onTriggerSchedule={protocolWritable ? id => protocolWrite(triggerTrackScheduleOperation(track.id, id)) : undefined}
       onSaveInputs={protocolWritable ? patch => protocolWrite(updateTrackTemplateInputsOperation(track.id, patch)) : undefined} />
-    {centerActive && reportPresentation.visible?.preparation.kind === 'empty' ? null : (
+    {centerActive && !hasDailyReportContent ? null : (
         <TrackReportRegion
         presentation={reportPresentation}
         sourceInsertion={requestedFilePath === null ? sourceInsertion : undefined}
@@ -484,7 +490,7 @@ export function TrackRouteBody({
         renderTaskExecution={(task, expanded) => <TaskRecovery
           key={`${track.id}:${task.key}`} trackId={track.id} taskKey={task.key} expanded={expanded}
           transport={transport} unauthorized={unauthorized}
-          enableTaskActions
+          enableTaskActions={false}
           openableWorkerIds={openableWorkerIds}
           openWorker={(cardId) => {
             if (rows.some((row) => row.id === cardId)) {
@@ -507,18 +513,6 @@ export function TrackRouteBody({
           go({ name: 'track', trackId: track.id, cardId, from: routeFrom });
         }}
         onOpenSourceLink={openReportSource}
-        onSaveProseBlock={report?.docRev !== undefined
-          && !(templateViews?.status === 'ready' && templateViews.projection.humanReadOnly)
-          && !(report?.blocks?.some((block) => block.kind === 'checkpoints' || block.kind === 'widget') ?? false)
-          ? async (blockId, markdown) => {
-            await trackMutations.updateReportBlock(track.id, blockId, {
-              docRev: report.docRev!,
-              knownBlockRev: report.blockRevs?.[blockId] ?? 1,
-              kind: 'prose',
-              markdown,
-            });
-          }
-          : undefined}
         fileRoot={track.agentCwd}
         linkPreview={linkPreview}
         outlineEmpty={reportEmpty}
@@ -535,7 +529,7 @@ export function TrackRouteBody({
       shareLinks={undefined}
       progressDisclosure={progressDisclosure}
       panelHeader={panelContent !== undefined ? <div className={dailyStyles.calendarPanel}>{panelContent}</div> : undefined}
-      panelContent={(centerActive && reportPresentation.visible?.preparation.kind !== 'empty' ? <div className={dailyStyles.reportPanel}><PanelModule title="Daily report" icon="file">{reportRegion}</PanelModule></div> : undefined)}
+      panelContent={centerActive && hasDailyReportContent ? <div className={dailyStyles.reportPanel}><PanelModule title="Daily report" icon="file">{reportRegion}</PanelModule></div> : undefined}
       mobileReportIntro={mobileReportIntro}
       mobilePanelObscured={!centerActive && chat.isOpen}
       mobileHeaderActionsHost={mobileHeaderActionsHost}
@@ -618,9 +612,7 @@ export function TrackRouteBody({
         {center !== undefined && <div className={mobileChatStyles.embeddedSlot} hidden={!centerActive}>
           {center.render(<div ref={setCenterHost} className={mobileChatStyles.embeddedSlot} />)}
         </div>}
-        {!centerActive && <>{false}{(!chat.isOpen || chat.selectedConversationId !== plannerCard?.id) && workspaceNotice}
-        {canCloseTrack && !(report?.blocks?.some((block) => block.kind === 'checkpoints' || block.kind === 'widget') ?? false) &&
-          <WorkerDispatchControl key={track.id} trackId={track.id} transport={transport} unauthorized={unauthorized} />}
+        {!centerActive && <>{(!chat.isOpen || chat.selectedConversationId !== plannerCard?.id) && workspaceNotice}
         {reportRegion}</>}
       </>}
       mobileChatComposer={chat.dock}

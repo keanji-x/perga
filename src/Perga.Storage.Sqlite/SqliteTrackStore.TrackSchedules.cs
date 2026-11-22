@@ -15,9 +15,69 @@ public sealed partial class SqliteTrackStore : ITrackScheduleStore
                prompt AS Prompt, cron_expr AS CronExpr, timezone AS Timezone,
                run_at_ms AS RunAtMs, next_fire_at_ms AS NextFireAtMs, last_fired_at_ms AS LastFiredAtMs,
                max_occurrences AS MaxOccurrences, fired_count AS FiredCount,
-               state AS State, created_at_ms AS CreatedAtMs, updated_at_ms AS UpdatedAtMs
+               state AS State, created_at_ms AS CreatedAtMs, updated_at_ms AS UpdatedAtMs,
+               node_key AS NodeKey
         FROM track_schedules
         """;
+
+    private static async Task UpsertFlowScheduleInternalAsync(
+        Microsoft.Data.Sqlite.SqliteConnection conn,
+        Microsoft.Data.Sqlite.SqliteTransaction tx,
+        TrackScheduleDto schedule,
+        CancellationToken ct)
+    {
+        var existing = await conn.QuerySingleOrDefaultAsync<TrackScheduleRow>(new CommandDefinition(
+            ScheduleSelect + " WHERE track_id=@TrackId AND id=@Id;",
+            new { schedule.TrackId, schedule.Id }, tx, cancellationToken: ct)).ConfigureAwait(false);
+        if (existing is { NodeKey: null })
+            throw KernelException.Conflict($"Schedule ID '{schedule.Id}' belongs to a standalone schedule.");
+        var keepProgress = existing is not null && existing.State != TrackScheduleStates.Canceled &&
+            existing.ScheduleKind == schedule.ScheduleKind &&
+            existing.CronExpr == schedule.CronExpr &&
+            existing.Timezone == schedule.Timezone &&
+            existing.RunAtMs == schedule.RunAtMs;
+        var nextFire = keepProgress
+            ? schedule.MaxOccurrences is { } cap && existing!.FiredCount >= cap
+                ? null : existing!.NextFireAtMs ?? schedule.NextFireAtMs
+            : schedule.NextFireAtMs;
+        var toPersist = keepProgress
+            ? schedule with
+            {
+                State = nextFire is null ? TrackScheduleStates.Done : TrackScheduleStates.Active,
+                NextFireAtMs = nextFire,
+                LastFiredAtMs = existing!.LastFiredAtMs,
+                FiredCount = checked((int)existing.FiredCount),
+                CreatedAtMs = existing.CreatedAtMs
+            }
+            : schedule with { CreatedAtMs = existing?.CreatedAtMs ?? schedule.CreatedAtMs };
+
+        await conn.ExecuteAsync(new CommandDefinition("""
+            INSERT INTO track_schedules(
+                id, track_id, source_kind, schedule_kind, title, prompt,
+                cron_expr, timezone, run_at_ms, next_fire_at_ms, last_fired_at_ms,
+                max_occurrences, fired_count, state, created_at_ms, updated_at_ms, node_key)
+            VALUES(
+                @Id, @TrackId, @SourceKind, @ScheduleKind, @Title, @Prompt,
+                @CronExpr, @Timezone, @RunAtMs, @NextFireAtMs, @LastFiredAtMs,
+                @MaxOccurrences, @FiredCount, @State, @CreatedAtMs, @UpdatedAtMs, @NodeKey)
+            ON CONFLICT(track_id, id) DO UPDATE SET
+                source_kind = excluded.source_kind,
+                schedule_kind = excluded.schedule_kind,
+                title = excluded.title,
+                prompt = excluded.prompt,
+                cron_expr = excluded.cron_expr,
+                timezone = excluded.timezone,
+                run_at_ms = excluded.run_at_ms,
+                next_fire_at_ms = excluded.next_fire_at_ms,
+                last_fired_at_ms = excluded.last_fired_at_ms,
+                max_occurrences = excluded.max_occurrences,
+                fired_count = excluded.fired_count,
+                state = excluded.state,
+                created_at_ms = excluded.created_at_ms,
+                updated_at_ms = excluded.updated_at_ms,
+                node_key = excluded.node_key;
+            """, toPersist, tx, cancellationToken: ct)).ConfigureAwait(false);
+    }
 
     public Task<TrackScheduleDto> UpsertAsync(TrackScheduleDto schedule, CancellationToken ct)
     {
@@ -37,6 +97,8 @@ public sealed partial class SqliteTrackStore : ITrackScheduleStore
                 ScheduleSelect + " WHERE track_id=@TrackId AND id=@Id;",
                 new { schedule.TrackId, schedule.Id }, tx, cancellationToken: token)).ConfigureAwait(false);
 
+            if (existing?.NodeKey is not null)
+                throw KernelException.Conflict($"Schedule ID '{schedule.Id}' belongs to Track Flow.");
             if (existing is not null && existing.State == TrackScheduleStates.Active &&
                 (existing.SourceKind == TrackScheduleSources.Template || schedule.SourceKind == TrackScheduleSources.Template) && existing.SourceKind != schedule.SourceKind)
                 throw KernelException.Conflict($"Schedule ID '{schedule.Id}' belongs to another source.");
@@ -60,11 +122,11 @@ public sealed partial class SqliteTrackStore : ITrackScheduleStore
                 INSERT INTO track_schedules(
                     id, track_id, source_kind, schedule_kind, title, prompt,
                     cron_expr, timezone, run_at_ms, next_fire_at_ms, last_fired_at_ms,
-                    max_occurrences, fired_count, state, created_at_ms, updated_at_ms)
+                    max_occurrences, fired_count, state, created_at_ms, updated_at_ms, node_key)
                 VALUES(
                     @Id, @TrackId, @SourceKind, @ScheduleKind, @Title, @Prompt,
                     @CronExpr, @Timezone, @RunAtMs, @NextFireAtMs, @LastFiredAtMs,
-                    @MaxOccurrences, @FiredCount, @State, @CreatedAtMs, @UpdatedAtMs)
+                    @MaxOccurrences, @FiredCount, @State, @CreatedAtMs, @UpdatedAtMs, @NodeKey)
                 ON CONFLICT(track_id, id) DO UPDATE SET
                     source_kind = excluded.source_kind,
                     schedule_kind = excluded.schedule_kind,
@@ -79,7 +141,8 @@ public sealed partial class SqliteTrackStore : ITrackScheduleStore
                     fired_count = excluded.fired_count,
                     state = excluded.state,
                     created_at_ms = excluded.created_at_ms,
-                    updated_at_ms = excluded.updated_at_ms;
+                    updated_at_ms = excluded.updated_at_ms,
+                    node_key = excluded.node_key;
                 """, toPersist, tx, cancellationToken: token)).ConfigureAwait(false);
 
             var row = await conn.QuerySingleAsync<TrackScheduleRow>(new CommandDefinition(
@@ -120,7 +183,7 @@ public sealed partial class SqliteTrackStore : ITrackScheduleStore
             var existing = await conn.QuerySingleOrDefaultAsync<TrackScheduleRow>(new CommandDefinition(
                 ScheduleSelect + " WHERE track_id=@TrackId AND id=@Id;",
                 new { TrackId = trackId, Id = scheduleId }, tx, cancellationToken: token)).ConfigureAwait(false);
-            if (existing is null || existing.State != TrackScheduleStates.Active)
+            if (existing is null || existing.NodeKey is not null || existing.State != TrackScheduleStates.Active)
                 return false;
 
             await conn.ExecuteAsync(new CommandDefinition($"""
@@ -181,6 +244,7 @@ public sealed partial class SqliteTrackStore : ITrackScheduleStore
                        s.run_at_ms AS RunAtMs, s.next_fire_at_ms AS NextFireAtMs, s.last_fired_at_ms AS LastFiredAtMs,
                        s.max_occurrences AS MaxOccurrences, s.fired_count AS FiredCount,
                        s.state AS State, s.created_at_ms AS CreatedAtMs, s.updated_at_ms AS UpdatedAtMs,
+                       s.node_key AS NodeKey,
                        t.closed_at_ms AS ClosedAtMs
                 FROM track_schedules s
                 JOIN tracks t ON t.id = s.track_id
@@ -205,6 +269,11 @@ public sealed partial class SqliteTrackStore : ITrackScheduleStore
                     continue;
                 }
                 var schedule = row.ToDto();
+                if (schedule.NodeKey is not null)
+                {
+                    fired.Add(new FiredTrackSchedule(schedule.TrackId, schedule.Id, schedule.NodeKey, schedule.NextFireAtMs));
+                    continue;
+                }
                 var nextFiredCount = schedule.FiredCount + 1;
                 long? nextFireAtMs = null;
                 var nextState = TrackScheduleStates.Done;
@@ -232,15 +301,44 @@ public sealed partial class SqliteTrackStore : ITrackScheduleStore
                 }, tx, cancellationToken: token)).ConfigureAwait(false);
 
                 var wakeRequest = TrackWakeRequests.DynamicSchedule(
-                    schedule.TrackId,
-                    schedule.Id,
-                    schedule.Prompt, schedule.SourceKind);
+                    schedule.TrackId, schedule.Id, schedule.Prompt, schedule.SourceKind);
                 await EnqueueWakeInternalAsync(conn, tx, wakeRequest, nowMs, token).ConfigureAwait(false);
+
                 await InsertSchedulesEventAsync(conn, tx, schedule.TrackId, nowMs, token).ConfigureAwait(false);
-                fired.Add(new FiredTrackSchedule(schedule.TrackId, schedule.Id));
+                fired.Add(new FiredTrackSchedule(schedule.TrackId, schedule.Id, schedule.NodeKey));
             }
 
             return fired;
+        }, ct);
+    }
+
+    public Task<bool> CommitFlowFireAsync(TrackScheduleDto nextClock, long expectedDueAtMs, TaskDto? armedTask,
+        EventEnvelopeDto taskEvent, CancellationToken ct)
+    {
+        EnsureInitialized();
+        return _writer.EnqueueAsync(async (conn, tx, token) =>
+        {
+            var updated = await conn.ExecuteAsync(new CommandDefinition("""
+                UPDATE track_schedules
+                SET fired_count=@FiredCount, last_fired_at_ms=@LastFiredAtMs, next_fire_at_ms=@NextFireAtMs,
+                    state=@State, updated_at_ms=@UpdatedAtMs
+                WHERE track_id=@TrackId AND id=@Id AND node_key=@NodeKey
+                    AND state='active' AND next_fire_at_ms=@ExpectedDueAtMs
+                    AND EXISTS (SELECT 1 FROM tracks WHERE id=@TrackId AND closed_at_ms IS NULL);
+                """, new
+                {
+                    nextClock.TrackId, nextClock.Id, nextClock.NodeKey, nextClock.FiredCount, nextClock.LastFiredAtMs,
+                    nextClock.NextFireAtMs, nextClock.State, nextClock.UpdatedAtMs, ExpectedDueAtMs = expectedDueAtMs
+                }, tx, cancellationToken: token)).ConfigureAwait(false);
+            if (updated == 0)
+                return false;
+            if (armedTask is not null)
+            {
+                await UpsertTaskInternalAsync(conn, tx, armedTask, token).ConfigureAwait(false);
+                await InsertEventInternalAsync(conn, tx, taskEvent, token).ConfigureAwait(false);
+            }
+            await InsertSchedulesEventAsync(conn, tx, nextClock.TrackId, nextClock.UpdatedAtMs, token).ConfigureAwait(false);
+            return true;
         }, ct);
     }
 
@@ -268,11 +366,12 @@ public sealed partial class SqliteTrackStore : ITrackScheduleStore
         public string State { get; set; } = "";
         public long CreatedAtMs { get; set; }
         public long UpdatedAtMs { get; set; }
+        public string? NodeKey { get; set; }
 
         public TrackScheduleDto ToDto() => new(
             Id, TrackId, SourceKind, ScheduleKind, Title, Prompt,
             CronExpr, Timezone, RunAtMs, NextFireAtMs, LastFiredAtMs,
             MaxOccurrences.HasValue ? checked((int)MaxOccurrences.Value) : null,
-            checked((int)FiredCount), State, CreatedAtMs, UpdatedAtMs);
+            checked((int)FiredCount), State, CreatedAtMs, UpdatedAtMs, NodeKey);
     }
 }

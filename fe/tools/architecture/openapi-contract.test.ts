@@ -178,6 +178,20 @@ describe('generated OpenAPI integrity', () => {
     validateDocument(document, wire);
   });
 
+  it('publishes flow snapshots and the optional inline JSON commit input', () => {
+    const document = JSON.parse(readFileSync(new URL('../../core/api/generated/openapi.json', import.meta.url), 'utf8')) as JsonObject;
+    expect(document.paths).toMatchObject({
+      '/api/v1/tracks/{trackId}/flow': {
+        get: { responses: { 200: { description: 'Current track flow snapshot and projection' } } },
+      },
+      '/api/v1/tracks/{trackId}/flow/commit': {
+        post: { requestBody: { required: false, content: { 'application/json': {
+          schema: { properties: { content: { type: ['string', 'null'] } } },
+        } } } },
+      },
+    });
+  });
+
   it('rejects malformed templates and nested dangling references', () => {
     for (const path of ['/a/{id}/{id}', '/a/{id', '/a/id}', '/a/{a}{b}', '/a?q=1', '/a#x']) {
       expect(() => parsePath(path)).toThrow();

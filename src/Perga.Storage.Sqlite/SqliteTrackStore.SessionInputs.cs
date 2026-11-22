@@ -313,7 +313,7 @@ public sealed partial class SqliteTrackStore : ISessionInputStore
             }
 
             var queued = await conn.QueryAsync<InputRow>(new CommandDefinition(
-                InputSelect + "\nWHERE i.delivery = 'queued' AND t.status = 'queued' AND s.archived_at_ms IS NULL AND NOT EXISTS (SELECT 1 FROM tasks tk WHERE tk.session_id = s.id) ORDER BY i.ordinal;",
+                InputSelect + "\nWHERE i.delivery = 'queued' AND t.status = 'queued' AND s.archived_at_ms IS NULL AND NOT EXISTS (SELECT 1 FROM tasks tk WHERE tk.session_id = s.id AND (tk.kind <> 'flow_wake' OR tk.block_id <> 'flow:' || tk.task_key OR json_type(tk.context_json, '$.flowNode') IS NOT 'true') AND LOWER(tk.status) IN ('pending', 'running', 'verifying')) ORDER BY i.ordinal;",
                 transaction: tx, cancellationToken: innerCt)).ConfigureAwait(false);
             return GroupInputs(queued).Select(g => (g.First().TrackId, CombineInput(g))).ToArray();
         }, ct);

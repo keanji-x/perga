@@ -312,6 +312,7 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
 
 public sealed class FakeGitHubForgeService : IGitHubForgeService
 {
+    public ConcurrentQueue<(string RepoOrPath, int PrNumber)> CheckedPrs { get; } = new();
     public ConcurrentQueue<(int PrNumber, string ExpectedHeadSha)> MergedPrs { get; } = new();
 
     public Task<PrInfo> PublishPrAsync(PrPublishRequest req, CancellationToken ct)
@@ -326,7 +327,7 @@ public sealed class FakeGitHubForgeService : IGitHubForgeService
 
     public Task<PrChecksStatus> GetPrChecksAsync(string repoOrPath, int prNumber, CancellationToken ct)
     {
-        _ = repoOrPath;
+        CheckedPrs.Enqueue((repoOrPath, prNumber));
         _ = ct;
         return Task.FromResult(new PrChecksStatus(
             PrNumber: prNumber,

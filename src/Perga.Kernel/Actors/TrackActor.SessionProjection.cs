@@ -7,7 +7,7 @@ public sealed partial class TrackActor
 {
     private SessionTaskBindingDto? ReadTaskBindingCore(AgentSessionDto session)
     {
-        if (TryGetOwningTaskCore(session.Id) is not { } task) return null;
+        if (TryGetActiveOwningTaskCore(session.Id) is not { } task) return null;
         var phase = task.Status.ToString().ToLowerInvariant();
         if (_activeTasks.TryGetValue(task.Id, out var active) && active.SessionId == session.Id)
         {

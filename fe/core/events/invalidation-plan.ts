@@ -85,8 +85,11 @@ function policies(): PolicyMap {
     eventKeys.trackReportPrefix(),
     eventKeys.trackViews(event.data.id),
   ])),
-'track.schedules.updated': plan((event) => result([eventKeys.trackSchedules(event.data.trackId)])),
-'track.deleted': plan((event) => result(
+  'track.schedules.updated': plan((event) => result([
+    eventKeys.trackSchedules(event.data.trackId),
+    eventKeys.trackViews(event.data.trackId),
+  ])),
+  'track.deleted': plan((event) => result(
     [
       eventKeys.tracksInArea(event.data.area_id), eventKeys.overlaysByKind('track'),
       eventKeys.trackReportPrefix(),

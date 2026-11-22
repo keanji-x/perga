@@ -259,6 +259,22 @@ public static class ApiV1Endpoints
             return Results.Json(views, PergaJsonDefaults.ApiOptions);
         });
 
+        v1.MapGet("/tracks/{trackId}/flow", async (string trackId, IPergaKernel kernel, CancellationToken ct) =>
+        {
+            var flow = await kernel.GetTrackFlowAsync(trackId, ct).ConfigureAwait(false);
+            return Results.Json(flow, PergaJsonDefaults.ApiOptions);
+        }).Produces<FlowSnapshotDto>();
+
+        v1.MapPost("/tracks/{trackId}/flow/commit", async (string trackId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
+        {
+            var body = await ReadOptionalJsonBodyAsync(ctx, () => new FlowCommitRequest(), ct, SessionJsonOptions).ConfigureAwait(false);
+            if (body.ExpectedFlowRev is < 0)
+                throw KernelException.InvalidArgument("expectedFlowRev must be a non-negative integer.");
+            var result = await kernel.CommitTrackFlowAsync(trackId, body.DryRun ?? false, body.ExpectedFlowRev,
+                new InteropPrincipal.Human(), ct, body.Content).ConfigureAwait(false);
+            return Results.Json(result, PergaJsonDefaults.ApiOptions);
+        }).Produces<FlowCommitResultDto>();
+
         v1.MapPatch("/tracks/{trackId}/data", async (string trackId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
         {
             var patch = await ReadRequiredJsonBodyAsync<JsonElement>(ctx, ct).ConfigureAwait(false);

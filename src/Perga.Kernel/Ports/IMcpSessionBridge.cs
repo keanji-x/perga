@@ -44,6 +44,7 @@ public interface IMcpSessionBridge
     string ResolveBaseUri() => "http://127.0.0.1:5000";
 
     McpSessionPrincipal? ResolveToken(string token);
+    string? GetTokenForSession(string sessionId);
     void UpdateLeadStatus(string trackId, string? newLeadSessionId);
     void UpdateTrackPlugins(string trackId, IReadOnlyList<string> enabledPlugins);
     void RevokeSession(string sessionId);
@@ -120,6 +121,9 @@ public sealed class InMemoryMcpSessionBridge : IMcpSessionBridge
 
         return _byToken.TryGetValue(normalized, out var principal) ? principal : null;
     }
+
+    public string? GetTokenForSession(string sessionId) =>
+        _tokenBySession.TryGetValue(sessionId, out var token) ? token : null;
 
     public void UpdateLeadStatus(string trackId, string? newLeadSessionId)
     {

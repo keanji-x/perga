@@ -12,6 +12,7 @@ using Perga.Host.Execution;
 using Perga.Host.IntegrationTests.Fixtures;
 using Perga.Host.Serialization;
 using Perga.Kernel;
+using Perga.Kernel.Mcp;
 using Perga.Kernel.Ports;
 using Perga.TermClient;
 using Perga.VcsKit;
@@ -298,6 +299,8 @@ public sealed class ExecutionTargetIntegrationTests
         var jasperVcs = new RecordingVcsService();
         var jasperTerminals = new RecordingTerminalBridgeClient();
         var jasperFs = new ScopedFakeFileSystem(jasperRepoDir);
+        var localForge = new FakeGitHubForgeService();
+        var jasperForge = new FakeGitHubForgeService();
         var jasperEnv = new FakeExecutionEnvironment(
             id: "jasper",
             label: "jasper (localhost)",
@@ -305,7 +308,7 @@ public sealed class ExecutionTargetIntegrationTests
             agentRuntime: jasperRuntime,
             vcs: jasperVcs,
             files: jasperFs,
-            terminals: jasperTerminals);
+            terminals: jasperTerminals) { Forge = jasperForge };
 
         string areaId;
         string trackId;
@@ -318,6 +321,8 @@ public sealed class ExecutionTargetIntegrationTests
                 {
                     services.RemoveAll<IAgentRuntime>();
                     services.AddSingleton<IAgentRuntime>(localRuntime);
+                    services.RemoveAll<IGitHubForgeService>();
+                    services.AddSingleton<IGitHubForgeService>(localForge);
                     services.RemoveAll<IExecutionEnvironmentRegistry>();
                     services.AddSingleton<IExecutionEnvironmentRegistry>(sp =>
                     {
@@ -454,6 +459,87 @@ public sealed class ExecutionTargetIntegrationTests
                 Assert.Equal(1, jasperTerminals.EnsureCalls);
                 var resolvedTermClient = await kernel.ResolveTerminalClientAsync(termDto!.Id);
                 Assert.Same(jasperTerminals, resolvedTermClient);
+
+                var flowTurnStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                var finishFlowTurn = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                jasperRuntime.BeforeTurn = async (_, ct) =>
+                {
+                    flowTurnStarted.TrySetResult();
+                    await finishFlowTurn.Task.WaitAsync(ct);
+                };
+                string flowPath;
+                try
+                {
+                    using var flowMessage = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/sessions/{leadSessionId}/messages")
+                    {
+                        Content = JsonContent.Create(new { content = "Author the flow on jasper" })
+                    };
+                    flowMessage.Headers.Add("Idempotency-Key", "msg-jasper-flow");
+                    using var flowMessageResponse = await client.SendAsync(flowMessage);
+                    flowMessageResponse.EnsureSuccessStatusCode();
+                    await flowTurnStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+                    var token = kernel.McpSessionBridge.GetTokenForSession(leadSessionId)!;
+                    var principal = kernel.ObserveMcpExecution(kernel.McpSessionBridge.ResolveToken(token)!);
+                    var flow = await kernel.InvokeKernelMcpToolAsync(principal, KernelMcpToolNames.FlowRead, JsonSerializer.SerializeToElement(new { }));
+                    var rev = flow.GetProperty("flowRev").GetInt64();
+                    flowPath = flow.GetProperty("flowPath").GetString()!;
+                    Assert.Equal(0, rev);
+                    Assert.Empty(flow.GetProperty("spec").GetProperty("nodes").EnumerateArray());
+                    Assert.Empty(flow.GetProperty("projection").GetProperty("nodes").EnumerateArray());
+                    var original = await File.ReadAllTextAsync(flowPath);
+                    const string content = """
+                        {"rev":0,"nodes":[
+                          {"id":"ci","do":{"kind":"watch","prChecks":42}},
+                          {"id":"periodic","when":{"cron":"0 * * * *","tz":"UTC"},"do":{"kind":"watch","prChecks":43}}
+                        ]}
+                        """;
+                    var dryRun = await kernel.InvokeKernelMcpToolAsync(principal, KernelMcpToolNames.FlowCommit,
+                        JsonSerializer.SerializeToElement(new { content, expectedFlowRev = rev, dryRun = true }));
+                    Assert.True(dryRun.GetProperty("ok").GetBoolean());
+                    Assert.Equal(rev, dryRun.GetProperty("flowRev").GetInt64());
+                    Assert.Equal(original, await File.ReadAllTextAsync(flowPath));
+                    Assert.Empty(jasperForge.CheckedPrs);
+
+                    var args = JsonSerializer.SerializeToElement(new { content, expectedFlowRev = rev });
+                    var committed = await kernel.InvokeKernelMcpToolAsync(principal, KernelMcpToolNames.FlowCommit, args);
+                    Assert.True(committed.GetProperty("ok").GetBoolean());
+                    var stale = await Assert.ThrowsAsync<KernelException>(() =>
+                        kernel.InvokeKernelMcpToolAsync(principal, KernelMcpToolNames.FlowCommit, args));
+                    Assert.Equal(KernelErrorCode.Conflict, stale.Code);
+                    Assert.Contains("Flow revision conflict", stale.Message);
+                }
+                finally
+                {
+                    jasperRuntime.BeforeTurn = null;
+                    finishFlowTurn.TrySetResult();
+                }
+                await kernel.WaitForTrackIdleAsync(trackId).WaitAsync(TimeSpan.FromSeconds(10));
+                Assert.Equal((jasperRepoDir, 42), Assert.Single(jasperForge.CheckedPrs));
+                Assert.Empty(localForge.CheckedPrs);
+
+                var projected = await client.GetFromJsonAsync<FlowSnapshotDto>($"/api/v1/tracks/{trackId}/flow", PergaJsonDefaults.ApiOptions);
+                Assert.NotNull(projected);
+                Assert.Equal("periodic", Assert.Single(projected.Projection.Nodes).Id);
+                Assert.Equal("ci", Assert.Single(projected.Projection.Archived).Id);
+                using var canonical = JsonDocument.Parse(await File.ReadAllTextAsync(flowPath));
+                Assert.True(JsonElement.DeepEquals(projected.Spec, canonical.RootElement));
+                var persisted = (await kernel.GetTrackAggregateAsync(trackId)).Track;
+                Assert.Equal(persisted.FlowFileSha256, Perga.Kernel.Flow.TrackFlowFileStore.ComputeSha256Hex(await File.ReadAllTextAsync(flowPath)));
+
+                var updated = $$"""
+                    {"rev":{{projected.FlowRev}},"nodes":[
+                      {"id":"periodic","title":"Hourly CI","when":{"cron":"0 * * * *","tz":"UTC"},"do":{"kind":"watch","prChecks":43} }
+                    ]}
+                    """;
+                using var httpCommit = await client.PostAsJsonAsync($"/api/v1/tracks/{trackId}/flow/commit",
+                    new { expectedFlowRev = projected.FlowRev, content = updated });
+                httpCommit.EnsureSuccessStatusCode();
+                var httpResult = await httpCommit.Content.ReadFromJsonAsync<FlowCommitResultDto>(PergaJsonDefaults.ApiOptions);
+                Assert.NotNull(httpResult);
+                Assert.True(httpResult.Ok);
+                Assert.Equal(projected.FlowRev + 1, httpResult.FlowRev);
+                Assert.Equal("Hourly CI", Assert.Single(httpResult.Flow.Nodes).Title);
             }
 
             // 11. Restart WITHOUT jasper configured: MUST fail with precondition_failed (409), NEVER silently fall back to local!
@@ -610,7 +696,7 @@ public sealed class ExecutionTargetIntegrationTests
         public IAgentRuntime AgentRuntime { get; }
         public IShellCommandRunner Shell { get; }
         public IVcsService Vcs { get; }
-        public IGitHubForgeService? Forge => null;
+        public IGitHubForgeService? Forge { get; init; }
         public IWorkspaceDriverRegistry WorkspaceDrivers { get; }
         public IExecutionFileSystem Files { get; }
         public ITerminalBridgeClient Terminals { get; }

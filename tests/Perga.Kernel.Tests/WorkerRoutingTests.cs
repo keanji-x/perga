@@ -99,7 +99,7 @@ public sealed class WorkerRoutingTests
                         humanReadOnly: true,
                         template: "./report.md",
                         views: {
-                          summary: (data) => ({ currentPrice: data.price }),
+                          summary: (data) => ({ currentPrice: data.price, items: [] }),
                         },
                       },
                       tasks: {

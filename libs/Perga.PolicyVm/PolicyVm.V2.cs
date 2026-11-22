@@ -391,10 +391,13 @@ public sealed partial class PolicyVm
                     }
                 }
 
-                if (payload.TryGetProperty("view", out var viewEl) && viewEl.ValueKind == JsonValueKind.String)
+                var viewName = payload.TryGetProperty("view", out var viewEl) && viewEl.ValueKind == JsonValueKind.String
+                    ? viewEl.GetString() : null;
+                if (viewName is not null)
                 {
-                    var viewName = viewEl.GetString() ?? string.Empty;
-                    if (!string.IsNullOrWhiteSpace(viewName) && !viewSet.Contains(viewName))
+                    var isKernelFlowBuiltin = string.Equals(use, "builtin:flow", StringComparison.Ordinal) &&
+                                              string.Equals(viewName, "flow", StringComparison.Ordinal);
+                    if (!string.IsNullOrWhiteSpace(viewName) && !isKernelFlowBuiltin && !viewSet.Contains(viewName))
                     {
                         throw new InvalidOperationException(
                             $"perga-block widget references view '{viewName}', which is not declared in report.views.");
@@ -403,7 +406,7 @@ public sealed partial class PolicyVm
             }
         }
 
-        // 2. Validate data.initial() against data.schema(t), and trial-run every declared view against initial data.
+        // 2. Validate data.initial() against data.schema(t), and trial-run every declared view against initial data + empty flow.
         JsValue initialDataJs = ParseJsJson(engine, "{}");
         if (TryGetOptionalObject(def, "data", "template.data", out var dataObj))
         {
@@ -430,7 +433,7 @@ public sealed partial class PolicyVm
             TryGetOptionalObject(def, "report", "template.report", out var reportObj) &&
             TryGetOptionalObject(reportObj, "views", "template.report.views", out var viewsObj))
         {
-            var emptyKernel = ParseJsJson(engine, "{\"tasks\":{},\"sessions\":{}}");
+            var emptyKernel = ParseJsJson(engine, "{\"tasks\":{},\"sessions\":{},\"flow\":{\"rev\":0,\"nodes\":[],\"archived\":[]}}");
             foreach (var name in viewNames)
             {
                 var fn = (Function)viewsObj.Get(name);

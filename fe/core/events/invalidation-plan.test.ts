@@ -47,10 +47,12 @@ describe('invalidation plan behavior', () => {
     });
   });
 
-  it('invalidates track-views on report.updated and task.updated', () => {
+  it('invalidates track-views on report.updated, task.updated, and track.schedules.updated', () => {
     expect(invalidationPlanFor(event({ ev: 'report.updated', data: { track_id: 'w1' } })).invalidate)
       .toContainEqual(['track-views', 'w1']);
     expect(invalidationPlanFor(event({ ev: 'task.updated', data: { track_id: 'w1' } })).invalidate)
+      .toContainEqual(['track-views', 'w1']);
+    expect(invalidationPlanFor(event({ ev: 'track.schedules.updated', data: { trackId: 'w1' } })).invalidate)
       .toContainEqual(['track-views', 'w1']);
   });
 

@@ -16,7 +16,8 @@ public sealed record TrackScheduleDto(
     int FiredCount,
     string State,
     long CreatedAtMs,
-    long UpdatedAtMs);
+    long UpdatedAtMs,
+    string? NodeKey = null);
 
 public sealed record SetTrackScheduleRequest(
     string Title,
