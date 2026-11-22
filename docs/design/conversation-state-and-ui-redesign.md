@@ -1,7 +1,6 @@
 # Perga 对话状态机、数据模型与 UI 展示设计（v3）
 
 > **状态**：设计提案（Clean-slate 重构，不保留 Neige 历史兼容）
-> **配套交互 Demo**：[conversation-ui-demo.html](conversation-ui-demo.html)（已内嵌在 Track Report 中）
 
 ---
 

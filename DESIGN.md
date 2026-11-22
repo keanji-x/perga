@@ -38,7 +38,6 @@ Perga 以 Track 为长期工作单元，将会话、任务编排、工作区、�
 - [tools/perga-overlayfs](tools/perga-overlayfs)：OverlayFS 工作区辅助程序。
 - [tools/perga-deploy](tools/perga-deploy)：安装、发布、systemd 与升级控制工具。
 - [templates](templates)：内置包 `agents-delivery`、`equity-research`、`okr-loop`；每包有 `template.perga.js` 与报告骨架，部分包含 schema、views 和 widget。共享类型为 [perga-template.d.ts](templates/perga-template.d.ts)，检查配置为 [tsconfig.json](templates/tsconfig.json)。
-- [plugins](plugins)：当前目录为 `barra`、`invest`、`market`、`paper-trading`、`research-archive`；插件是否向某 Track 暴露由运行配置与授权决定，目录存在不等于默认启用。
 - [fe](fe)：React/TypeScript 浏览器客户端及其构建、测试、架构门禁。
 
 ### 1.2 编译与直接依赖矩阵
