@@ -18,27 +18,3 @@ public sealed record TrackScheduleDto(
     long CreatedAtMs,
     long UpdatedAtMs,
     string? NodeKey = null);
-
-public sealed record SetTrackScheduleRequest(
-    string Title,
-    string Prompt,
-    string? Id = null,
-    string? CronExpr = null,
-    long? RunAtMs = null,
-    string? Timezone = null,
-    int? MaxOccurrences = null,
-    string? SourceKind = null,
-    string? RunAt = null);
-
-public sealed record TrackScheduleRunDto(
-    string WakeId,
-    string? ScheduleId,
-    string State,
-    string? Reason,
-    string? TurnId,
-    long CreatedAtMs,
-    long UpdatedAtMs);
-
-public sealed record TrackSchedulesSnapshot(
-    IReadOnlyList<TrackScheduleDto> Schedules,
-    IReadOnlyList<TrackScheduleRunDto> RecentRuns);

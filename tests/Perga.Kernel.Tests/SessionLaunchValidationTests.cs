@@ -1,3 +1,4 @@
+using Perga.Contracts;
 using Perga.AgentKit;
 using Perga.Kernel.Mcp;
 using Perga.Kernel.Ports;
@@ -17,7 +18,7 @@ public sealed class SessionLaunchValidationTests
         await using var ctx = new KernelTestContext();
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
         var trackId = snapshot.Track.Id;
-        var request = new CreateSessionRequest(Provider: "codex", Prompt: prompt, Task: prompt is null ? null : new());
+        var request = new CreateSessionRequest(Provider: "codex", Prompt: prompt);
 
         var error = await Assert.ThrowsAsync<KernelException>(() =>
             ctx.Kernel.CreateSessionAsync(trackId, request with { Model = " \t " }, "blank", Human, default));
@@ -43,12 +44,11 @@ public sealed class SessionLaunchValidationTests
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync(templateId: "guarded");
         var trackId = snapshot.Track.Id;
 
-        var error = await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.CreateSessionAsync(trackId,
-            new(Prompt: "Inspect workspace", Task: new()), "blocked", Human, default));
-
-        Assert.Equal(KernelErrorCode.PolicyDenied, error.Code);
-        Assert.Equal("Model blocked", error.Message);
-        Assert.Empty(await ctx.Kernel.ListTasksAsync(trackId));
+        await FlowFixture.AddAsync(ctx.Kernel, trackId, FlowFixture.Worker("blocked", "Inspect workspace"));
+        await ctx.Kernel.WaitForTrackIdleAsync(trackId);
+        var task = Assert.Single(await ctx.Kernel.ListTasksAsync(trackId));
+        Assert.Equal(TaskRunStatus.Failed, task.Status);
+        Assert.Contains("Model blocked", task.StatusDetail);
         Assert.Single(await ctx.Kernel.ListSessionsAsync(trackId, new(), Human, default));
     }
 
@@ -240,7 +240,6 @@ public sealed class SessionLaunchValidationTests
 
     [Theory]
     [InlineData("conversation")]
-    [InlineData("worker")]
     [InlineData("update")]
     public async Task BlockedProviderProbeLeavesMailboxAvailable(string operation)
     {
@@ -261,7 +260,6 @@ public sealed class SessionLaunchValidationTests
         Task mutation = operation switch
         {
             "update" => ctx.Kernel.UpdateSessionAsync(track.LeadSessionId!, new(Model: new("gpt-5")), Human, ct),
-            "worker" => ctx.Kernel.CreateSessionAsync(track.Id, new(Provider: "codex", Prompt: "inspect", Task: new()), "worker", Human, ct),
             _ => ctx.Kernel.CreateSessionAsync(track.Id, new(Provider: "codex"), "conversation", Human, ct)
         };
         try
@@ -280,65 +278,12 @@ public sealed class SessionLaunchValidationTests
     }
 
     [Fact]
-    public async Task AcceptedWorkerWaitsWhenProviderGoesOfflineBeforeDependenciesSettle()
-    {
-        await using var ctx = new KernelTestContext();
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        var ct = deadline.Token;
-        var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
-        var trackId = snapshot.Track.Id;
-        var blocker = (await ctx.Kernel.CreateSessionAsync(trackId,
-            new(Prompt: "blocker", Task: new()), "blocker", Human, ct)).Receipt;
-        var request = new CreateSessionRequest(Provider: "codex", Prompt: "inspect",
-            Task: new(DependsOn: [blocker.Task!.TaskKey]));
-        var worker = (await ctx.Kernel.CreateSessionAsync(trackId, request, "worker", Human, ct)).Receipt;
-        await ctx.Kernel.WaitForTrackIdleAsync(trackId, ct);
-
-        ctx.AgentRuntime.Providers = [new("codex", false, null, "offline", [])];
-        await ctx.Kernel.CompleteTaskDoneAsync(trackId, blocker.Session.Id, ct: ct);
-        await ctx.Kernel.WaitForTrackIdleAsync(trackId, ct);
-        Assert.Equal(0, (await ctx.Kernel.ListTasksAsync(trackId, ct)).Single(t => t.Id == worker.Task!.Id).RunCount);
-
-        var probing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        ctx.AgentRuntime.ProbeScript = async token =>
-        {
-            probing.TrySetResult();
-            await release.Task.WaitAsync(token);
-            return ctx.AgentRuntime.Providers;
-        };
-        try
-        {
-            var replay = await ctx.Kernel.CreateSessionAsync(trackId, request, "worker", Human, ct);
-            Assert.True(replay.Replay);
-            Assert.Equal(worker.Session.Id, replay.Receipt.Session.Id);
-            await probing.Task.WaitAsync(ct);
-        }
-        finally
-        {
-            release.TrySetResult();
-        }
-        await ctx.Kernel.WaitForTrackIdleAsync(trackId, ct);
-        Assert.Equal(0, (await ctx.Kernel.ListTasksAsync(trackId, ct)).Single(t => t.Id == worker.Task!.Id).RunCount);
-
-        ctx.AgentRuntime.ProbeScript = null;
-        ctx.AgentRuntime.Providers = [new("codex", true, "1", null, ["gpt-5"])];
-        var recovered = await ctx.Kernel.CreateSessionAsync(trackId, request, "worker", Human, ct);
-        Assert.True(recovered.Replay);
-        Assert.Equal(worker.Session.Id, recovered.Receipt.Session.Id);
-        await ctx.Kernel.WaitForTrackIdleAsync(trackId, ct);
-        Assert.Equal(1, (await ctx.Kernel.ListTasksAsync(trackId, ct)).Single(t => t.Id == worker.Task!.Id).RunCount);
-    }
-
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task CreationReplayDoesNotProbeEvenWhenProviderGoesOffline(bool worker)
+    public async Task CreationReplayDoesNotProbeEvenWhenProviderGoesOffline()
     {
         await using var ctx = new KernelTestContext();
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
         var trackId = snapshot.Track.Id;
-        var request = new CreateSessionRequest(Provider: "codex", Prompt: "inspect", Task: worker ? new() : null);
+        var request = new CreateSessionRequest(Provider: "codex", Prompt: "inspect");
         var (receipt, replay) = await ctx.Kernel.CreateSessionAsync(trackId, request, "replay", Human, default);
         Assert.False(replay);
         await ctx.Kernel.WaitForTrackIdleAsync(trackId);
@@ -349,7 +294,6 @@ public sealed class SessionLaunchValidationTests
 
         Assert.True(result.Replay);
         Assert.Equal(receipt.Session.Id, result.Receipt.Session.Id);
-        Assert.Equal(receipt.Task?.Id, result.Receipt.Task?.Id);
         Assert.Equal(probes, ctx.AgentRuntime.ProviderProbeCalls);
         var error = await Assert.ThrowsAsync<KernelException>(() =>
             ctx.Kernel.CreateSessionAsync(trackId, request, "new-key", Human, default));

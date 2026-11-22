@@ -3,6 +3,8 @@ using System.Text.Json.Nodes;
 using Perga.Contracts;
 using Perga.Kernel.Internal;
 using Perga.Kernel.Events;
+using Perga.Kernel.Flow;
+using Perga.Kernel.Ports;
 using Perga.Kernel.Mcp;
 using Perga.PolicyVm;
 using Perga.Kernel.Templates;
@@ -79,15 +81,28 @@ public sealed partial class TrackActor
             else merged[entry.Name] = JsonNode.Parse(entry.Value.GetRawText());
         }
         var next = _track with { TemplateInputs = JsonHelpers.ParseClone(merged.ToJsonString()), UpdatedAtMs = NowMs() };
-        TemplateSchedules.ValidateInputs(_policyVm, _policy, next.TemplateInputs);
+        TemplateFlow.ValidateInputs(_policyVm, _policy, next.TemplateInputs);
         ValidateTrackDataCompatibilityCore(_policy, next.TemplateInputs, _track.Data,
             "Existing track data is incompatible with the updated template inputs",
             ". Migrate data before changing inputs.");
-        var schedules = TemplateSchedules.Materialize(_policy, next.TemplateInputs, TrackId, next.UpdatedAtMs, _policyVm, _scheduleCronEvaluator);
+        TemplateFlow.ReadSeedNodes(_policyVm, _policy, next.TemplateInputs);
+        TemplateFlow.RequireValid(TrackFlowValidator.Validate(_flowSpec, _flowSpec, _tasks, CollectActiveFlowTaskIdsCore(),
+            _sessions, next.LeadSessionId, _policy, _policyVm, next.TemplateInputs, _scheduleCronEvaluator, _timeProvider));
+        var templateNodes = _flowSpec.Nodes.Where(node => node.Source == TrackScheduleSources.Template)
+            .ToDictionary(node => node.Id, StringComparer.Ordinal);
+        var clocks = (await ListTrackSchedulesSafeCoreAsync(ct).ConfigureAwait(false))
+            .Where(clock => clock.NodeKey is not null && templateNodes.ContainsKey(clock.NodeKey) &&
+                clock.State == TrackScheduleStates.Active)
+            .Select(clock =>
+            {
+                var (title, prompt) = TrackFlowReconciler.ScheduleText(templateNodes[clock.NodeKey!]);
+                return TemplateFlow.ResolveClockText(clock with { Title = title, Prompt = prompt }, next, _policy, _policyVm);
+            }).ToArray();
+        var flow = clocks.Length == 0 ? null : new TrackFlowUpdate(_flowSpec.Rev, [], clocks);
         var evt = new EventEnvelopeDto(null, next.AreaId, TrackId, KernelEventKinds.TrackUpdated,
             JsonHelpers.ToElement(Templates.TemplatePresentation.Project(next, _policy, _policyVm)), next.UpdatedAtMs);
         await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
-        await _store.UpdateTrackTemplateAndEmitAsync(next, _templateSnapshotSource ?? TemplateHost.Freeze(_policy), evt, ct, schedules, refreshPromptsOnly: true).ConfigureAwait(false);
+        await _store.UpdateTrackTemplateAndEmitAsync(next, _templateSnapshotSource ?? TemplateHost.Freeze(_policy), evt, ct, flow: flow).ConfigureAwait(false);
         _track = next;
         _policyGeneration = Guid.NewGuid().ToString("N");
         await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, ct).ConfigureAwait(false);
@@ -104,8 +119,6 @@ public sealed partial class TrackActor
                 KernelMcpToolNames.TaskList => "task_ls",
                 KernelMcpToolNames.MailList => "mail_ls",
                 KernelMcpToolNames.MailRead => "mail_cat",
-                KernelMcpToolNames.ScheduleList => "schedule_ls",
-                KernelMcpToolNames.ScheduleCancel => "schedule_rm",
                 KernelMcpToolNames.TemplateList => "template_ls",
                 KernelMcpToolNames.TemplateRead => "template_cat",
                 _ => toolName

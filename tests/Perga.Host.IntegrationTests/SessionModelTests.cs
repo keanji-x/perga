@@ -458,9 +458,9 @@ public sealed class SessionModelTests
         await using var host = new PergaHostTestCluster();
         var kernel = host.Services.GetRequiredService<IPergaKernel>();
         var (trackId, _) = await host.CreateTrackAsync();
-        var dispatch = await kernel.CreateSessionAsync(trackId, new(Prompt: "Inspect safely", Task: new()), "worker-model-boundary", new InteropPrincipal.Human(), CancellationToken.None);
+        var dispatch = await FlowFixture.StartWorkerAsync(kernel, trackId, "worker-model-boundary", "Inspect safely");
         await kernel.WaitForTrackIdleAsync(trackId);
-        var worker = Assert.Single(await kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), default), s => s.TaskId == dispatch.Receipt.Task!.Id).Session;
+        var worker = Assert.Single(await kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), default), s => s.TaskId == dispatch.Task!.Id).Session;
         using var response = await host.Client.PatchAsJsonAsync($"/api/v1/sessions/{worker.Id}",
             new { model = "gpt-5.4", reasoningEffort = "high" });
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);

@@ -31,7 +31,7 @@ public sealed class WorkerRoutingTests
         """;
 
     [Fact]
-    public async Task CreateSession_AppliesEnforcedRoutingModel_AndBlocksConflicts()
+    public async Task Flow_AppliesEnforcedRoutingModel_AndBlocksConflicts()
     {
         await using var ctx = new KernelTestContext(policyVm: new Perga.PolicyVm.PolicyVm());
         ctx.AgentRuntime.Providers = [new ProviderStatus("codex", true, "1.0.0", null, ["gpt-6.2-soar", "gpt-5"])];
@@ -44,31 +44,13 @@ public sealed class WorkerRoutingTests
             Cwd: "/repo",
             TemplateId: "agents-delivery-routing"));
 
-        // Conflicting model for review role must be blocked with PolicyDenied.
-        var denied = await Assert.ThrowsAsync<KernelException>(() =>
-            ctx.Kernel.CreateSessionAsync(
-                track.Track.Id,
-                new CreateSessionRequest(
-                    Prompt: "Run L2 review",
-                    Model: "gpt-5",
-                    Role: "review",
-                    Task: new SessionTaskRequest(Access: "read_only")),
-                requestKey: "rk-denied",
-                caller: Human,
-                ct: CancellationToken.None));
-        Assert.Equal(KernelErrorCode.PolicyDenied, denied.Code);
-        Assert.Contains("gpt-6.2-soar", denied.Message, StringComparison.Ordinal);
+        var denied = await FlowFixture.AppendAsync(ctx.Kernel, track.Track.Id,
+            FlowFixture.Worker("denied", "Run L2 review", model: "gpt-5", role: "review"));
+        Assert.False(denied.Ok);
+        Assert.Contains(denied.Diagnostics, diagnostic => diagnostic.Message.Contains("gpt-6.2-soar", StringComparison.Ordinal));
 
-        // Omitting model auto-fills from template routing.
-        var (receipt, _) = await ctx.Kernel.CreateSessionAsync(
-            track.Track.Id,
-            new CreateSessionRequest(
-                Prompt: "Run L2 review",
-                Role: "review",
-                Task: new SessionTaskRequest(Access: "read_only")),
-            requestKey: "rk-ok",
-            caller: Human,
-            ct: CancellationToken.None);
+        var receipt = await FlowFixture.StartWorkerAsync(ctx.Kernel, track.Track.Id,
+            FlowFixture.Worker("review", "Run L2 review", role: "review"));
 
         Assert.Equal("codex", receipt.Session.Provider);
         Assert.Equal("gpt-6.2-soar", receipt.Session.Model);
@@ -125,51 +107,14 @@ public sealed class WorkerRoutingTests
             TemplateId: "v2-kernel-e2e",
             TemplateInputs: TestJson.Parse("""{"reviewModel":"o3-pro"}""")));
 
-        // 1. setup(inputs) dynamic routing enforces custom reviewModel AND TargetAccess=read_only
-        var deniedAccess = await Assert.ThrowsAsync<KernelException>(() =>
-            ctx.Kernel.CreateSessionAsync(
-                track.Track.Id,
-                new CreateSessionRequest(
-                    Prompt: "Review",
-                    Role: "review",
-                    Model: "o3-pro",
-                    Task: new SessionTaskRequest(Access: "read_write")),
-                requestKey: "rk-access-denied",
-                caller: Human,
-                ct: CancellationToken.None));
-        Assert.Equal(KernelErrorCode.PolicyDenied, deniedAccess.Code);
-
-        var deniedModel = await Assert.ThrowsAsync<KernelException>(() =>
-            ctx.Kernel.CreateSessionAsync(
-                track.Track.Id,
-                new CreateSessionRequest(
-                    Prompt: "Review",
-                    Role: "review",
-                    Model: "gpt-5",
-                    Task: new SessionTaskRequest(Access: "read_only")),
-                requestKey: "rk-model-denied",
-                caller: Human,
-                ct: CancellationToken.None));
-        Assert.Equal(KernelErrorCode.PolicyDenied, deniedModel.Code);
-
-        // 2. HumanReadOnly blocks PUT report block edit while allowing routed CreateSessionAsync
-        var proseBlock = track.Report.Blocks.First(b => b.Kind == Perga.ReportDoc.ReportBlockKind.Prose);
-        var humanEditDenied = await Assert.ThrowsAsync<KernelException>(() =>
-            ctx.Kernel.UpdateReportBlockByHumanAsync(
-                track.Track.Id,
-                proseBlock.Id,
-                new HumanBlockUpdateRequest(track.Report.DocRev, proseBlock.Rev, Markdown: "Hacked by human")));
-        Assert.Equal(KernelErrorCode.PolicyDenied, humanEditDenied.Code);
-
-        var (okReceipt, _) = await ctx.Kernel.CreateSessionAsync(
-            track.Track.Id,
-            new CreateSessionRequest(
-                Prompt: "Review with custom model",
-                Role: "review",
-                Task: new SessionTaskRequest(Access: "read_only")),
-            requestKey: "rk-ok-v2",
-            caller: Human,
-            ct: CancellationToken.None);
+        var deniedAccess = await FlowFixture.AppendAsync(ctx.Kernel, track.Track.Id,
+            FlowFixture.Worker("bad-access", "Review", "read_write", model: "o3-pro", role: "review"));
+        Assert.False(deniedAccess.Ok);
+        var deniedModel = await FlowFixture.AppendAsync(ctx.Kernel, track.Track.Id,
+            FlowFixture.Worker("bad-model", "Review", model: "gpt-5", role: "review"));
+        Assert.False(deniedModel.Ok);
+        var okReceipt = await FlowFixture.StartWorkerAsync(ctx.Kernel, track.Track.Id,
+            FlowFixture.Worker("review", "Review with custom model", role: "review"));
         Assert.Equal("o3-pro", okReceipt.Session.Model);
         Assert.Equal(AccessMode.ReadOnly, okReceipt.Task!.Access);
 

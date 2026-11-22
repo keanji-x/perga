@@ -5,6 +5,7 @@ using Jint.Native.Function;
 using Jint.Native.Json;
 using Jint.Native.Object;
 using Jint.Runtime;
+using Perga.Contracts;
 
 namespace Perga.PolicyVm;
 
@@ -131,24 +132,13 @@ public sealed partial class PolicyVm : IPolicyVm
             // Tasks spec
             var requireGateForReadWrite = false;
             string? afterWorkerDoneCmd = null;
-            WorkerDispatchDefaults? workerDispatch = null;
             if (TryGetOptionalObject(def, "tasks", "template.tasks", out var tasksObj))
             {
                 requireGateForReadWrite = ReadOptionalBool(tasksObj, "requireGateForReadWrite", "template.tasks.requireGateForReadWrite") ?? false;
                 afterWorkerDoneCmd = ReadOptionalString(tasksObj, "afterWorkerDoneCmd", "template.tasks.afterWorkerDoneCmd");
-                if (TryGetOptionalObject(tasksObj, "dispatch", "template.tasks.dispatch", out var dispatch))
-                {
-                    var access = ReadOptionalString(dispatch, "access", "template.tasks.dispatch.access");
-                    if (access is not (null or "read_only" or "read_write"))
-                        throw new InvalidOperationException("template.tasks.dispatch.access must be read_only or read_write.");
-                    workerDispatch = new WorkerDispatchDefaults(
-                        ReadOptionalString(dispatch, "section", "template.tasks.dispatch.section"), access,
-                        ReadOptionalString(dispatch, "gateInput", "template.tasks.dispatch.gateInput"));
-                }
             }
 
-            // Schedules spec
-            var schedules = ParseSchedules(def);
+            var (flow, _) = ReadFlow(engine, def);
 
             var manifest = new CompiledTemplateManifest(
                 Id: id,
@@ -164,9 +154,8 @@ public sealed partial class PolicyVm : IPolicyVm
                 WorkspaceCreateCmd: workspaceCreateCmd,
                 WorkspaceCloseCmd: workspaceCloseCmd,
                 AfterWorkerDoneCmd: afterWorkerDoneCmd,
-                Schedules: schedules,
+                Flow: flow,
                 Routing: ReadRoutingRules(engine, def),
-                WorkerDispatch: workerDispatch,
                 Extends: ReadOptionalString(rawDef, "extends", "template.extends"),
                 HasHeaderView: !def.Get("headerView").IsUndefined(),
                 InitialReportMarkdown: initialReportMarkdown,
@@ -493,50 +482,6 @@ public sealed partial class PolicyVm : IPolicyVm
             }
 
             list.Add(new SectionRule(h1, omitIfEmpty, editableBy));
-        }
-
-        return list;
-    }
-
-    private static List<ScheduleSpec> ParseSchedules(ObjectInstance def)
-    {
-        var schedulesVal = def.Get("schedules");
-        if (schedulesVal.IsUndefined() || schedulesVal.IsNull())
-        {
-            return [];
-        }
-
-        if (!schedulesVal.IsArray())
-        {
-            throw new InvalidOperationException("template.schedules must be an array.");
-        }
-
-        var list = new List<ScheduleSpec>();
-        var arr = schedulesVal.AsArray();
-        for (uint i = 0; i < arr.Length; i++)
-        {
-            var item = arr.Get(i);
-            if (item is not ObjectInstance schedObj || item.IsArray())
-            {
-                throw new InvalidOperationException($"template.schedules[{i}] must be an object.");
-            }
-
-            var id = ReadRequiredNonEmptyString(schedObj, "id", $"template.schedules[{i}].id");
-            var cron = ReadRequiredNonEmptyString(schedObj, "cron", $"template.schedules[{i}].cron");
-            var timezone = ReadOptionalString(schedObj, "timezone", $"template.schedules[{i}].timezone") ?? "UTC";
-
-            if (schedObj.HasProperty("wakePrompt"))
-                throw new InvalidOperationException("Removed schedules.wakePrompt; use prompt and after(schedule.fired).");
-            var prompt = ReadRequiredNonEmptyString(schedObj, "prompt", $"template.schedules[{i}].prompt");
-            var title = ReadOptionalString(schedObj, "title", $"template.schedules[{i}].title");
-            if (id.Length > 128 || id.Any(char.IsWhiteSpace) || list.Any(s => s.Id == id))
-                throw new InvalidOperationException($"Invalid or duplicate schedule id '{id}'.");
-            var parts = cron.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
-            if (!Cronos.CronExpression.TryParse(cron, parts.Length == 6 ? Cronos.CronFormat.IncludeSeconds : Cronos.CronFormat.Standard, out _))
-                throw new InvalidOperationException($"Invalid cron expression '{cron}'.");
-            if (!TimeZoneInfo.TryFindSystemTimeZoneById(timezone, out _))
-                throw new InvalidOperationException($"Unknown schedule timezone '{timezone}'.");
-            list.Add(new ScheduleSpec(id, cron, timezone, prompt, title));
         }
 
         return list;

@@ -16,13 +16,6 @@ namespace Perga.Host.Http;
 public sealed record CancelTaskHttpBody(
     string? Reason = null);
 
-public sealed record AcceptTaskHttpBody(
-    string? Note = null);
-
-public sealed record RejectTaskHttpBody(
-    string? Note = null,
-    bool? ReQueue = null);
-
 public static class ApiV1Endpoints
 {
     private static readonly JsonSerializerOptions SessionJsonOptions = new(PergaJsonDefaults.ApiOptions)
@@ -174,25 +167,6 @@ public static class ApiV1Endpoints
             return Results.Json(track, PergaJsonDefaults.ApiOptions);
         }).Produces<TrackDto>();
 
-        v1.MapGet("/tracks/{trackId}/schedules", async (string trackId, bool? includeTerminal, int? runsLimit, IPergaKernel kernel, CancellationToken ct) =>
-            Results.Json(await kernel.GetTrackSchedulesAsync(trackId, includeTerminal ?? false, runsLimit ?? 20, ct).ConfigureAwait(false), PergaJsonDefaults.ApiOptions))
-            .Produces<TrackSchedulesSnapshot>();
-
-        v1.MapPost("/tracks/{trackId}/schedules", async (string trackId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
-        {
-            var req = await ReadRequiredJsonBodyAsync<SetTrackScheduleRequest>(ctx, ct).ConfigureAwait(false);
-            if (req.SourceKind is not null and not "user")
-                throw KernelException.InvalidArgument("HTTP schedules must use sourceKind 'user'.");
-            var schedule = await kernel.SetTrackScheduleAsync(trackId, req with { SourceKind = "user" }, ct).ConfigureAwait(false);
-            return Results.Json(schedule, PergaJsonDefaults.ApiOptions);
-        }).Produces<TrackScheduleDto>();
-
-        v1.MapDelete("/tracks/{trackId}/schedules/{scheduleId}", async (string trackId, string scheduleId, IPergaKernel kernel, CancellationToken ct) =>
-            await kernel.CancelTrackScheduleAsync(trackId, scheduleId, ct).ConfigureAwait(false) ? Results.NoContent() : Results.NotFound());
-
-        v1.MapPost("/tracks/{trackId}/schedules/{scheduleId}/trigger", async (string trackId, string scheduleId, IPergaKernel kernel, CancellationToken ct) =>
-            await kernel.TriggerTrackScheduleAsync(trackId, scheduleId, ct).ConfigureAwait(false) ? Results.Accepted() : Results.NotFound());
-
         v1.MapPost("/tracks/{trackId}/workspace/retry", async (string trackId, IPergaKernel kernel, CancellationToken ct) =>
         {
             await kernel.RetryWorkspaceAsync(trackId, ct).ConfigureAwait(false);
@@ -299,32 +273,10 @@ public static class ApiV1Endpoints
             return Results.Json(result, PergaJsonDefaults.ApiOptions);
         });
 
-        v1.MapPut("/tracks/{trackId}/report/blocks/{blockId}", async (string trackId, string blockId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
-        {
-            var req = await ReadRequiredJsonBodyAsync<HumanBlockUpdateRequest>(ctx, ct).ConfigureAwait(false);
-            var updated = await kernel.UpdateReportBlockByHumanAsync(trackId, blockId, req, ct).ConfigureAwait(false);
-            return Results.Json(updated, PergaJsonDefaults.ApiOptions);
-        });
-
         v1.MapPost("/tracks/{trackId}/tasks/{taskKey}/cancel", async (string trackId, string taskKey, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
         {
             var body = await ReadOptionalJsonBodyAsync(ctx, () => new CancelTaskHttpBody(), ct).ConfigureAwait(false);
             var task = await kernel.CancelTaskAsync(trackId, callerSessionId: null, taskKey, body.Reason, ct).ConfigureAwait(false);
-            return Results.Json(task, PergaJsonDefaults.ApiOptions);
-        });
-
-        v1.MapPost("/tracks/{trackId}/tasks/{taskKey}/accept", async (string trackId, string taskKey, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
-        {
-            var body = await ReadOptionalJsonBodyAsync(ctx, () => new AcceptTaskHttpBody(), ct).ConfigureAwait(false);
-            var task = await kernel.AcceptTaskAsync(trackId, callerSessionId: null, taskKey, body.Note, ct).ConfigureAwait(false);
-            return Results.Json(task, PergaJsonDefaults.ApiOptions);
-        });
-
-        v1.MapPost("/tracks/{trackId}/tasks/{taskKey}/reject", async (string trackId, string taskKey, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
-        {
-            var body = await ReadOptionalJsonBodyAsync(ctx, () => new RejectTaskHttpBody(), ct).ConfigureAwait(false);
-            var note = string.IsNullOrWhiteSpace(body.Note) ? "Rejected by user." : body.Note!;
-            var task = await kernel.RejectTaskAsync(trackId, callerSessionId: null, taskKey, note, body.ReQueue ?? false, ct).ConfigureAwait(false);
             return Results.Json(task, PergaJsonDefaults.ApiOptions);
         });
 

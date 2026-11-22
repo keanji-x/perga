@@ -57,9 +57,9 @@ Perga.sln                                 # 统一注册全部 17 个 .csproj �
 ├── templates/                            # 内置动态可编程模板与 TS 类型检查声明（Jint 直接跑 .perga.js）
 │   ├── tsconfig.json                     # { allowJs: true, checkJs: true, noEmit: true, strict: true } (编辑期/CI 强类型校验)
 │   ├── perga-template.d.ts               # PergaTemplateDefinition 与全局辅助函数类型声明
-│   ├── dev.perga.js
-│   ├── long-term-goal.perga.js
-│   └── investment-research.perga.js
+│   ├── agents-delivery/
+│   ├── equity-research/
+│   └── okr-loop/
 │
 ├── scripts/hooks/                        # 供模板可选调用的标准生命周期脚本示例
 └── tests/                                # 8 个测试工程（连同 libs/ 5 个 + src/ 4 个共 17 个 .csproj）

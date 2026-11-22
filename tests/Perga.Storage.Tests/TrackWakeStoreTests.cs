@@ -189,15 +189,16 @@ public sealed class TrackWakeStoreTests
         await Assert.ThrowsAsync<SqliteException>(() => h.Store.UpsertTaskAsync(task, null, evt, default));
         Assert.Equal(0, await db.ExecuteScalarAsync<int>("SELECT count(*) FROM tasks;"));
         var snapshot = (await h.Store.LoadTrackAggregateAsync("trk_1", default))!;
-        await Assert.ThrowsAsync<SqliteException>(() => h.Store.SaveReportAndTasksAsync("trk_1",
-            snapshot.Report with { DocRev = 2 }, [], null, "Human edit", [], snapshot.Track.TemplateState, evt, default));
+        await Assert.ThrowsAsync<SqliteException>(() => h.Store.SaveReportAsync("trk_1",
+            snapshot.Report with { DocRev = 2 }, [], null, "Human edit",
+            snapshot.Track.TemplateState, evt, default));
         Assert.Equal(1, (await h.Store.LoadTrackAggregateAsync("trk_1", default))!.Report.DocRev);
         await db.ExecuteAsync("DROP TRIGGER reject_wake;");
         await h.Store.UpsertTaskAsync(task, null, evt, default);
         await h.Store.UpsertTaskAsync(task, null, evt, default);
         Assert.Single(await h.Store.TrackWakes.ListAsync("trk_1", default), w => w.Kind == "task_settled");
-        await h.Store.SaveReportAndTasksAsync("trk_1", snapshot.Report with { DocRev = 2 }, [], null, "Human edit",
-            [task], snapshot.Track.TemplateState, evt, default);
+        await h.Store.SaveReportAsync("trk_1", snapshot.Report with { DocRev = 2 }, [], null, "Human edit",
+            snapshot.Track.TemplateState, evt, default);
         Assert.Single(await h.Store.TrackWakes.ListAsync("trk_1", default), w => w.Kind == "report_edited");
     }
 

@@ -29,10 +29,7 @@ public sealed class UnifiedSessionHttpTests
             BEGIN SELECT RAISE(ABORT, 'initial run write failed'); END;
             """);
         var kernel = host.Services.GetRequiredService<IPergaKernel>();
-        var report = await kernel.ReadReportAsync(trackId);
-        await kernel.CommitReportAsync(trackId, leadId, new(report.Anchor,
-            [new BlockOp.UpsertBlockOp(null, ReportBlockKind.Task, null, JsonSerializer.SerializeToElement(new
-            { task_key = "write-failure", ready = true, goal_or_cmd = "inspect" }))]));
+        await FlowFixture.AddAsync(kernel, trackId, new FlowNodeSpecDto("write-failure", new("run", Prompt: "inspect")));
         await kernel.WaitForTrackIdleAsync(trackId);
         var failed = Assert.Single(await kernel.ListTasksAsync(trackId));
         Assert.Equal(TaskRunStatus.Failed, failed.Status);
@@ -47,6 +44,13 @@ public sealed class UnifiedSessionHttpTests
     }
 
     [Theory]
+    [InlineData("GET", "tracks/t/schedules")]
+    [InlineData("POST", "tracks/t/schedules")]
+    [InlineData("DELETE", "tracks/t/schedules/s")]
+    [InlineData("POST", "tracks/t/schedules/s/trigger")]
+    [InlineData("PUT", "tracks/t/report/blocks/b")]
+    [InlineData("POST", "tracks/t/tasks/key/accept")]
+    [InlineData("POST", "tracks/t/tasks/key/reject")]
     [InlineData("POST", "tracks/t/tasks/dispatch")]
     [InlineData("GET", "tracks/t/tasks/key/attempts")]
     [InlineData("PUT", "sessions/s/model")]
@@ -83,7 +87,6 @@ public sealed class UnifiedSessionHttpTests
         Assert.Equal(HttpStatusCode.Created, created.StatusCode);
         var receipt = (await created.Content.ReadFromJsonAsync<SessionCreationReceipt>(PergaJsonDefaults.ApiOptions))!;
         Assert.Equal("create", receipt.RequestKey);
-        Assert.Null(receipt.Task);
         Assert.Null(receipt.FirstInput);
         using var replay = await Post(host.Client, path, "create", new { title = "Assistant" });
         Assert.Equal(HttpStatusCode.OK, replay.StatusCode);

@@ -41,7 +41,6 @@ public sealed class McpAnnotationsAndPermissionGuidanceTests
         Assert.Equal(false, byName[KernelMcpToolNames.TerminalOpen].Annotations!.IdempotentHint);
         Assert.Equal(true, byName[KernelMcpToolNames.TerminalInput].Annotations!.DestructiveHint);
         Assert.Equal(true, byName[KernelMcpToolNames.TerminalInput].Annotations!.OpenWorldHint);
-        Assert.Equal(false, byName[KernelMcpToolNames.ScheduleSet].Annotations!.IdempotentHint);
     }
 
     [Fact]
@@ -61,10 +60,7 @@ public sealed class McpAnnotationsAndPermissionGuidanceTests
             s.LaunchSpec.SystemPrompt?.Contains("Lead Session", StringComparison.Ordinal) == true);
         Assert.DoesNotContain("If blocked by missing permissions", leadLaunch.LaunchSpec.SystemPrompt!, StringComparison.Ordinal);
 
-        var report = await ctx.Kernel.ReadReportAsync(snapshot.Track.Id);
-        await ctx.Kernel.CommitReportAsync(snapshot.Track.Id, snapshot.Track.LeadSessionId!,
-            new(report.Anchor, [new BlockOp.UpsertBlockOp(null, ReportBlockKind.Task, null,
-                TestJson.FromObject(new { task_key = "perm-worker", ready = true, goal_or_cmd = "Run checks" }))]));
+        await FlowFixture.AddAsync(ctx.Kernel, snapshot.Track.Id, FlowFixture.Worker("perm-worker", "Run checks"));
 
         await ctx.Kernel.WaitForTrackIdleAsync(snapshot.Track.Id);
 

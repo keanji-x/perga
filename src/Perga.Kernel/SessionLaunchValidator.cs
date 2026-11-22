@@ -4,6 +4,20 @@ namespace Perga.Kernel;
 
 internal static class SessionLaunchValidator
 {
+    internal static string? NormalizeTaskProviderId(string? provider)
+    {
+        if (string.IsNullOrWhiteSpace(provider)) return null;
+        var trimmed = provider.Trim();
+        var normalized = trimmed.ToLowerInvariant();
+        return normalized switch
+        {
+            "antigravity" or "opencode" => $"acp:{normalized}",
+            "codex" or "claude" => normalized,
+            _ when normalized.StartsWith("acp:", StringComparison.Ordinal) => normalized,
+            _ => trimmed
+        };
+    }
+
     internal static string NormalizeProvider(string provider) =>
         AgentRuntime.NormalizeProviderName(provider).ToLowerInvariant();
 

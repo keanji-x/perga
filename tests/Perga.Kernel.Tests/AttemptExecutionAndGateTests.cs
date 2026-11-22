@@ -29,12 +29,8 @@ public sealed class AttemptExecutionAndGateTests
 
         var (_, snap) = await ctx.CreateDefaultTrackAsync();
         var track = snap.Track;
-        var report = await ctx.Kernel.ReadReportAsync(track.Id, ct: ct);
-        await ctx.Kernel.CommitReportAsync(track.Id, track.LeadSessionId!, new ReportCommitRequest(report.Anchor,
-            [new BlockOp.UpsertBlockOp(null, ReportBlockKind.Task, null, TestJson.FromObject(new
-            {
-                task_key = "guarded", ready = true, access = "read_write", goal_or_cmd = "Implement", gate = "verify"
-            }))]), ct);
+        await FlowFixture.AddAsync(ctx.Kernel, track.Id,
+            FlowFixture.Worker("guarded", "Implement", "read_write", gate: "verify"));
         await ctx.Kernel.WaitForTrackIdleAsync(track.Id, ct);
         var guarded = Assert.Single(await ctx.Kernel.ListTasksAsync(track.Id, ct), t => t.TaskKey == "guarded");
         var workerId = guarded.SessionId!;
@@ -93,31 +89,9 @@ public sealed class AttemptExecutionAndGateTests
         var trackId = snap.Track.Id;
         var leadId = snap.Track.LeadSessionId!;
 
-        var r0 = await ctx.Kernel.ReadReportAsync(trackId, leadId);
-        await ctx.Kernel.CommitReportAsync(trackId, leadId, new ReportCommitRequest(
-            r0.Anchor,
-            [
-                new BlockOp.UpsertBlockOp("b_t1", ReportBlockKind.Task, null, TestJson.FromObject(new
-                {
-                    task_key = "step-1-write",
-                    access = "read_write",
-                    ready = true,
-                    goal_or_cmd = "Implement core module",
-                    gate = new
-                    {
-                        timeoutSecs = 60,
-                        steps = new[] { new { name = "unit-tests", cmd = "dotnet test --no-restore" } }
-                    }
-                })),
-                new BlockOp.UpsertBlockOp("b_t2", ReportBlockKind.Task, null, TestJson.FromObject(new
-                {
-                    task_key = "step-2-audit",
-                    access = "read_only",
-                    ready = true,
-                    depends_on = new[] { "step-1-write" },
-                    goal_or_cmd = "Audit core module"
-                }))
-            ]));
+        await FlowFixture.AddAsync(ctx.Kernel, trackId,
+            FlowFixture.Worker("step-1-write", "Implement core module", "read_write", gate: "dotnet test --no-restore"),
+            FlowFixture.Worker("step-2-audit", "Audit core module", after: "step-1-write"));
 
         await ctx.Kernel.WaitForTrackIdleAsync(trackId);
 
@@ -199,19 +173,8 @@ public sealed class AttemptExecutionAndGateTests
         var trackId = snap.Track.Id;
         var leadId = snap.Track.LeadSessionId!;
 
-        var r0 = await ctx.Kernel.ReadReportAsync(trackId, leadId);
-        await ctx.Kernel.CommitReportAsync(trackId, leadId, new ReportCommitRequest(
-            r0.Anchor,
-            [
-                new BlockOp.UpsertBlockOp("b_t1", ReportBlockKind.Task, null, TestJson.FromObject(new
-                {
-                    task_key = "broken-patch",
-                    access = "read_write",
-                    ready = true,
-                    goal_or_cmd = "Patch parser",
-                    gate = new { steps = new[] { new { name = "cargo-test", cmd = "cargo test" } } }
-                }))
-            ]));
+        await FlowFixture.AddAsync(ctx.Kernel, trackId,
+            FlowFixture.Worker("broken-patch", "Patch parser", "read_write", gate: "cargo test"));
 
         await ctx.Kernel.WaitForTrackIdleAsync(trackId);
 
@@ -220,7 +183,7 @@ public sealed class AttemptExecutionAndGateTests
 
         var settled = await ctx.Kernel.CompleteTaskDoneAsync(trackId, brokenTask.SessionId!, TestJson.FromObject(new { ok = true }));
         Assert.Equal(TaskRunStatus.Failed, settled.Status);
-        Assert.Contains("cargo-test", settled.StatusDetail ?? "");
+        Assert.Contains(runnerThrows ? "Unable to start cargo-test." : "gate", settled.StatusDetail ?? "", StringComparison.OrdinalIgnoreCase);
         Assert.NotNull(settled.FinishedAtMs);
 
         // Verify LeadSessionId woken
@@ -235,33 +198,10 @@ public sealed class AttemptExecutionAndGateTests
         var trackId = snap.Track.Id;
         var leadId = snap.Track.LeadSessionId!;
 
-        var r0 = await ctx.Kernel.ReadReportAsync(trackId, leadId);
-        await ctx.Kernel.CommitReportAsync(trackId, leadId, new ReportCommitRequest(
-            r0.Anchor,
-            [
-                new BlockOp.UpsertBlockOp("b_rw1", ReportBlockKind.Task, null, TestJson.FromObject(new
-                {
-                    task_key = "serial-rw-1",
-                    access = "read_write",
-                    ready = true,
-                    goal_or_cmd = "Work 1"
-                })),
-                new BlockOp.UpsertBlockOp("b_rw2", ReportBlockKind.Task, null, TestJson.FromObject(new
-                {
-                    task_key = "serial-rw-2",
-                    access = "read_write",
-                    ready = true,
-                    goal_or_cmd = "Work 2"
-                })),
-                new BlockOp.UpsertBlockOp("b_cmd", ReportBlockKind.Task, null, TestJson.FromObject(new
-                {
-                    task_key = "cmd-task",
-                    kind = "command",
-                    access = "read_only",
-                    ready = true,
-                    goal_or_cmd = "echo ok"
-                }))
-            ]));
+        await FlowFixture.AddAsync(ctx.Kernel, trackId,
+            FlowFixture.Worker("serial-rw-1", "Work 1", "read_write"),
+            FlowFixture.Worker("serial-rw-2", "Work 2", "read_write"),
+            new("cmd-task", new("run", Cmd: "echo ok", Access: "read_only")));
 
         await ctx.Kernel.WaitForTrackIdleAsync(trackId);
 

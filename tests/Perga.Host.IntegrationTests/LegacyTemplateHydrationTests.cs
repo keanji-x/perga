@@ -311,16 +311,16 @@ public sealed class LegacyTemplateHydrationTests
         await using var host = new PergaHostTestCluster();
         var kernel = host.Services.GetRequiredService<IPergaKernel>();
         var area = await kernel.CreateAreaAsync(new("Clear", DefaultCwd: host.DataDir));
-        var trackId = (await kernel.CreateTrackAsync(new(area.Id, TemplateId: "dev"))).Track.Id;
+        var trackId = (await kernel.CreateTrackAsync(new(area.Id, TemplateId: "agents-delivery"))).Track.Id;
         using var clear = await host.Client.DeleteAsync($"/api/v1/tracks/{trackId}/template");
         Assert.Equal(HttpStatusCode.OK, clear.StatusCode);
         Assert.Null((await kernel.GetTrackAggregateAsync(trackId)).Track.TemplateId);
-        var closedId = (await kernel.CreateTrackAsync(new(area.Id, TemplateId: "dev"))).Track.Id;
+        var closedId = (await kernel.CreateTrackAsync(new(area.Id, TemplateId: "agents-delivery"))).Track.Id;
         using var close = await host.Client.PatchAsJsonAsync($"/api/v1/tracks/{closedId}", new { closed = true });
         Assert.Equal(HttpStatusCode.OK, close.StatusCode);
         using var refused = await host.Client.DeleteAsync($"/api/v1/tracks/{closedId}/template");
         Assert.Equal(HttpStatusCode.Conflict, refused.StatusCode);
-        Assert.Equal("dev", (await kernel.GetTrackAggregateAsync(closedId)).Track.TemplateId);
+        Assert.Equal("agents-delivery", (await kernel.GetTrackAggregateAsync(closedId)).Track.TemplateId);
     }
 
     [Fact]
@@ -334,8 +334,8 @@ public sealed class LegacyTemplateHydrationTests
             {
                 var kernel = host.Services.GetRequiredService<IPergaKernel>();
                 kernel.Templates.RegisterTemplate("""
-                    export default defineTemplate({ id:'healthy-sibling', title:'Healthy', schedules: [
-                      { id:'pulse', cron:'* * * * *', timezone:'UTC', prompt:'HEALTHY_SIBLING_PULSE' }
+                    export default defineTemplate({ id:'healthy-sibling', title:'Healthy', flow: [
+                      { id:'pulse', when:{cron:'* * * * *',tz:'UTC'}, do:{kind:'wake',session:'lead',prompt:'HEALTHY_SIBLING_PULSE'} }
                     ] });
                     """);
                 areaId = (await kernel.CreateAreaAsync(new("Legacy siblings", DefaultCwd: directory.FullName))).Id;
@@ -378,12 +378,13 @@ public sealed class LegacyTemplateHydrationTests
             reopened.TimeProvider.Advance(TimeSpan.FromMinutes(2));
             Assert.Equal(1, await scheduler.EvaluateDueSchedulesOnceAsync());
             Assert.Equal(1, scheduler.TriggeredWakeCount);
+            await restarted.WaitForTrackIdleAsync(healthyTrackId);
             Assert.Contains(reopened.AgentRuntime.ExecutedTurns,
                 turn => turn.Input.Prompt.Contains("HEALTHY_SIBLING_PULSE", StringComparison.Ordinal));
 
             Assert.Equal(HttpStatusCode.OK, (await reopened.Client.GetAsync($"/api/v1/tracks/{legacyTrackId}")).StatusCode);
             var dispatchError = await Assert.ThrowsAsync<KernelException>(() =>
-                restarted.CreateSessionAsync(legacyTrackId, new(Prompt: "Must not dispatch", Task: new()), "plain", new InteropPrincipal.Human(), default));
+                FlowFixture.AppendAsync(restarted, legacyTrackId, new FlowNodeSpecDto("blocked", new("run", Prompt: "Must not dispatch"))));
             Assert.Contains("guardToolCall", dispatchError.Message);
             var persisted = await reopened.Services.GetRequiredService<ITrackStore>().LoadTrackAggregateAsync(legacyTrackId, default);
             Assert.Empty(persisted!.Tasks);
@@ -449,7 +450,7 @@ public sealed class LegacyTemplateHydrationTests
             Assert.Equal(snapshot, current.GetProperty("snapshot").GetString());
             Assert.Equal(HttpStatusCode.OK, (await reopened.Client.GetAsync($"/api/v1/tracks/{trackId}")).StatusCode);
             var dispatchError = await Assert.ThrowsAsync<KernelException>(() =>
-                restarted.CreateSessionAsync(trackId, new(Prompt: "Must not dispatch", Task: new()), "plain", new InteropPrincipal.Human(), default));
+                FlowFixture.AppendAsync(restarted, trackId, new FlowNodeSpecDto("blocked", new("run", Prompt: "Must not dispatch"))));
             Assert.Equal(KernelErrorCode.PolicyDenied, dispatchError.Code);
             Assert.Contains(key, dispatchError.Message);
             var caller = new McpSessionPrincipal("token", trackId, aggregate.Track.LeadSessionId!, true, null, null, []);

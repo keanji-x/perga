@@ -33,7 +33,7 @@ public sealed class TemplateLoopTests
     }
 
     [Fact]
-    public async Task DispatchBefore_AskHumanSuspendsWithoutCreatingTask_AndRoutingFillsDefaults()
+    public async Task FlowDispatchWaitsForApprovalBeforeLaunchingWorker()
     {
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
         var (_, snap) = await ctx.CreateDefaultTrackAsync();
@@ -45,31 +45,31 @@ public sealed class TemplateLoopTests
             """;
         await KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller, KernelMcpToolNames.TrackSet, TestJson.FromObject(new { source = asking }));
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        var dispatch = ctx.Kernel.CreateSessionAsync(snap.Track.Id, new(Prompt: "Inspect", Task: new(), Role: "review"), "ask", new InteropPrincipal.Human(), timeout.Token);
+        await FlowFixture.AddAsync(ctx.Kernel, snap.Track.Id, FlowFixture.Worker("ask", "Inspect", role: "review"));
         ApprovalDto? ask = null;
         while (ask is null)
         {
             ask = (await ctx.Kernel.GetTrackAggregateAsync(snap.Track.Id, timeout.Token)).PendingApprovals.FirstOrDefault();
-            if (ask is null)
-            {
-                if (dispatch.IsCompleted) await dispatch;
-                await Task.Delay(10, timeout.Token);
-            }
+            if (ask is null) await Task.Delay(10, timeout.Token);
         }
-        Assert.False(dispatch.IsCompleted);
-        Assert.Empty(await ctx.Kernel.ListTasksAsync(snap.Track.Id, timeout.Token));
-        await ctx.Kernel.RespondInteractionAsync(ask.SessionId, ask.Id, new(ExecutionId: ask.ExecutionId, OptionId: ask.Options.Single(o => o.IsApproval).Id), new InteropPrincipal.Human(), timeout.Token);
-        Assert.Equal("review", (await dispatch).Receipt.Task!.Role);
+        var pending = Assert.Single(await ctx.Kernel.ListTasksAsync(snap.Track.Id, timeout.Token));
+        Assert.Equal("review", pending.Role);
+        Assert.Equal(TaskRunStatus.Pending, pending.Status);
+        Assert.Null(pending.SessionId);
+        await ctx.Kernel.RespondInteractionAsync(ask.SessionId, ask.Id, new(ExecutionId: ask.ExecutionId,
+            OptionId: ask.Options.Single(o => o.IsApproval).Id), new InteropPrincipal.Human(), timeout.Token);
+        await ctx.Kernel.WaitForTrackIdleAsync(snap.Track.Id, timeout.Token);
+        Assert.NotNull((await ctx.Kernel.ListTasksAsync(snap.Track.Id, timeout.Token)).Single().SessionId);
 
         const string rewriting = """
             export default {id:'route',title:'Route',tasks:{routing:[{when:{},provider:'codex',model:'gpt-5'}]}};
             """;
         await KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller, KernelMcpToolNames.TrackSet, TestJson.FromObject(new { source = rewriting }));
-        var rewritten = await ctx.Kernel.CreateSessionAsync(snap.Track.Id, new(Prompt: "Inspect again", Task: new()), "rewrite", new InteropPrincipal.Human(), timeout.Token);
-        var worker = (await ctx.Kernel.ListSessionsAsync(snap.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Single(summary => summary.TaskId == rewritten.Receipt.Task!.Id).Session;
+        var rewritten = await FlowFixture.StartWorkerAsync(ctx.Kernel, snap.Track.Id, FlowFixture.Worker("rewrite", "Inspect again"));
+        var worker = rewritten.Session;
         Assert.Equal("codex", worker.Provider);
         Assert.Equal("gpt-5", worker.Model);
-        Assert.Null(rewritten.Receipt.Task!.Provider);
+        Assert.Null(rewritten.Task.Provider);
     }
 
     [Fact]
@@ -111,14 +111,13 @@ public sealed class TemplateLoopTests
         var caller = new McpSessionPrincipal("token", snapshot.Track.Id, snapshot.Track.LeadSessionId!, true, null, null, []);
         const string source = "export default {id:'deny',title:'Deny',before:a=>a.type==='task.dispatch'?Deny('Blocked after restart'):Allow()};";
         await KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller, KernelMcpToolNames.TrackSet, TestJson.FromObject(new { source }));
-        var report = await ctx.Kernel.ReadReportAsync(snapshot.Track.Id);
-        await ctx.Kernel.CommitReportAsync(snapshot.Track.Id, caller.SessionId, new(report.Anchor,
-            [new BlockOp.UpsertBlockOp(null, ReportBlockKind.Task, null, TestJson.FromObject(new {
-                task_key = "pending", role = "review", ready = false, access = "read_only", goal_or_cmd = "Inspect" }))]));
-        var draft = Assert.Single(await ctx.Kernel.ListTasksAsync(snapshot.Track.Id));
-        await ctx.Store.UpsertTaskAsync(draft with { Ready = true, Status = TaskRunStatus.Pending }, null, null, default);
+        ctx.Kernel.DispatchAdmission.SetDraining(true);
+        await FlowFixture.AddAsync(ctx.Kernel, snapshot.Track.Id, FlowFixture.Worker("pending", "Inspect", role: "review"));
+        Assert.Equal(TaskRunStatus.Pending, Assert.Single(await ctx.Kernel.ListTasksAsync(snapshot.Track.Id)).Status);
         await ctx.Kernel.Actors.RemoveAndDisposeAsync(snapshot.Track.Id);
-        await ctx.Kernel.RejectTaskAsync(snapshot.Track.Id, caller.SessionId, draft.TaskKey, "Retry after restart", reQueue: true);
+        ctx.Kernel.DispatchAdmission.SetDraining(false);
+        await ctx.Kernel.Actors.GetOrActivate(snapshot.Track.Id).TriggerSchedulerAsync();
+        await ctx.Kernel.WaitForTrackIdleAsync(snapshot.Track.Id);
         var failed = Assert.Single(await ctx.Kernel.ListTasksAsync(snapshot.Track.Id));
         Assert.Equal(TaskRunStatus.Failed, failed.Status);
         Assert.Equal("Blocked after restart", failed.StatusDetail);

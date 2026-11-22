@@ -14,10 +14,10 @@ public sealed class TemplatePresentationTests
 {
     [Theory]
     [InlineData(null)]
-    [InlineData("dev")]
-    [InlineData("investment-research")]
-    [InlineData("long-term-goal")]
-    public async Task NewTracksHaveEmptyReports(string? templateId)
+    [InlineData("agents-delivery")]
+    [InlineData("equity-research")]
+    [InlineData("okr-loop")]
+    public async Task NewTracksUseTheirTemplateReport(string? templateId)
     {
         await using var host = new PergaHostTestCluster();
         using var areaResponse = await host.Client.PostAsJsonAsync("/api/v1/areas", new { name = "Presentation" });
@@ -26,16 +26,21 @@ public sealed class TemplatePresentationTests
         using var response = await host.Client.PostAsJsonAsync("/api/v1/tracks", new { areaId = area.GetProperty("id").GetString(), templateId });
         response.EnsureSuccessStatusCode();
         var snapshot = await response.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Empty(snapshot.GetProperty("report").GetProperty("blocks").EnumerateArray());
         var track = snapshot.GetProperty("track");
         var trackId = track.GetProperty("id").GetString();
         using var reportResponse = await host.Client.GetAsync($"/api/v1/tracks/{trackId}/report");
         var report = await reportResponse.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal("", report.GetProperty("renderedMarkdown").GetString());
-        if (templateId is not null)
+        var markdown = report.GetProperty("renderedMarkdown").GetString();
+        if (templateId is null)
         {
+            Assert.Equal("", markdown);
+            Assert.Empty(snapshot.GetProperty("report").GetProperty("blocks").EnumerateArray());
+        }
+        else
+        {
+            Assert.Contains("builtin:flow", markdown);
             Assert.False(string.IsNullOrWhiteSpace(track.GetProperty("templateTitle").GetString()));
-            Assert.Equal(JsonValueKind.Object, track.GetProperty("templateHeaderView").ValueKind);
+            Assert.False(track.TryGetProperty("templateHeaderView", out var header) && header.ValueKind == JsonValueKind.Object);
             Assert.False(track.TryGetProperty("templateSchedules", out _));
         }
     }
@@ -90,7 +95,6 @@ public sealed class TemplatePresentationTests
                             ctx.state.count++;
                             return {metrics: [{label: ctx.trackId, value}]};
                           },
-                          schedules: [{id: 'snapshot-pulse', cron: '0 9 * * *', timezone: 'Asia/Shanghai', prompt: 'Check progress'}]
                         });
                         """, inputs = new { unit = "km" } }));
                 await VerifyProjection(host, areaId, trackId);
@@ -98,7 +102,7 @@ public sealed class TemplatePresentationTests
             await using (var host = new PergaHostTestCluster(explicitDataDir: dataDir))
             {
                 var kernel = host.Services.GetRequiredService<IPergaKernel>();
-                kernel.Templates.RegisterTemplate("export default defineTemplate({id:'snapshot-view', title:'Changed catalog', schedules:[]});");
+                kernel.Templates.RegisterTemplate("export default defineTemplate({id:'snapshot-view', title:'Changed catalog'});");
                 await VerifyProjection(host, areaId, trackId);
                 using var response = await host.Client.PatchAsJsonAsync($"/api/v1/tracks/{trackId}", new { title = "Renamed" });
                 response.EnsureSuccessStatusCode();

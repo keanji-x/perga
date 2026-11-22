@@ -1,7 +1,6 @@
 using System.Text.Json;
-using Perga.Contracts;
 
-namespace Perga.Kernel.Flow;
+namespace Perga.Contracts;
 
 /// <summary>
 /// Strict parser for `flow.json` against `docs/schemas/flow.v1.schema.json`.
@@ -169,7 +168,7 @@ public static class TrackFlowParser
 
     public static FlowSpecDto ParsePersisted(string? flowSpecJson, long flowRev)
     {
-        var (spec, errors) = Parse(flowSpecJson ?? FlowConstants.DefaultFlowSpecJson);
+        var (spec, errors) = Parse(flowSpecJson ?? FlowSyntax.DefaultFlowSpecJson);
         if (spec is null || errors.Count > 0 || spec.Rev != flowRev)
             throw new InvalidOperationException("The stored Track Flow specification and revision are inconsistent.");
         return spec;
@@ -207,7 +206,7 @@ public static class TrackFlowParser
                 "Node is missing required 'id' field.",
                 "Add a lowercase slug id like \"id\": \"fix-r2\"."));
         }
-        else if (!FlowConstants.NodeIdRegex().IsMatch(id))
+        else if (!FlowSyntax.NodeIdRegex().IsMatch(id))
         {
             errors.Add(new FlowValidationErrorDto(
                 $"{path}.id",
@@ -353,7 +352,7 @@ public static class TrackFlowParser
                     if (entry.ValueKind == JsonValueKind.String)
                     {
                         var depId = entry.GetString() ?? string.Empty;
-                        if (!FlowConstants.NodeIdRegex().IsMatch(depId))
+                        if (!FlowSyntax.NodeIdRegex().IsMatch(depId))
                         {
                             errors.Add(new FlowValidationErrorDto(entryPath, $"Invalid upstream node id '{depId}'."));
                         }
@@ -377,7 +376,7 @@ public static class TrackFlowParser
 
                         var depId = ReadOptionalString(entry, "node", $"{entryPath}.node", errors);
                         var depOn = ReadOptionalString(entry, "on", $"{entryPath}.on", errors) ?? effectiveDefaultOn;
-                        if (string.IsNullOrWhiteSpace(depId) || !FlowConstants.NodeIdRegex().IsMatch(depId))
+                        if (string.IsNullOrWhiteSpace(depId) || !FlowSyntax.NodeIdRegex().IsMatch(depId))
                         {
                             errors.Add(new FlowValidationErrorDto($"{entryPath}.node", "after entry requires a valid 'node' id."));
                         }
@@ -666,18 +665,18 @@ public static class TrackFlowParser
         var intervalSpan = TimeSpan.FromSeconds(60);
         if (interval is not null)
         {
-            if (!FlowConstants.TryParseDuration(interval, out intervalSpan))
+            if (!FlowSyntax.TryParseDuration(interval, out intervalSpan))
             {
                 errors.Add(new FlowValidationErrorDto(
                     $"{path}.interval",
                     $"Invalid watch interval '{interval}'.",
                     "Use a duration matching '^[1-9][0-9]*[smh]$' (e.g. '30s', '60s', '2m')."));
             }
-            else if (intervalSpan < TimeSpan.FromSeconds(FlowConstants.MinWatchIntervalSeconds))
+            else if (intervalSpan < TimeSpan.FromSeconds(FlowSyntax.MinWatchIntervalSeconds))
             {
                 errors.Add(new FlowValidationErrorDto(
                     $"{path}.interval",
-                    $"Watch interval '{interval}' is shorter than minimum {FlowConstants.MinWatchIntervalSeconds}s.",
+                    $"Watch interval '{interval}' is shorter than minimum {FlowSyntax.MinWatchIntervalSeconds}s.",
                     "Set 'interval' to at least '5s' (e.g. '30s' or '60s')."));
             }
         }
@@ -685,7 +684,7 @@ public static class TrackFlowParser
         var timeoutSpan = TimeSpan.FromMinutes(60);
         if (timeout is not null)
         {
-            if (!FlowConstants.TryParseDuration(timeout, out timeoutSpan))
+            if (!FlowSyntax.TryParseDuration(timeout, out timeoutSpan))
             {
                 errors.Add(new FlowValidationErrorDto(
                     $"{path}.timeout",
@@ -696,7 +695,7 @@ public static class TrackFlowParser
             {
                 errors.Add(new FlowValidationErrorDto(
                     $"{path}.timeout",
-                    $"Watch timeout '{timeout}' must be greater than or equal to interval '{interval ?? FlowConstants.DefaultWatchInterval}'.",
+                    $"Watch timeout '{timeout}' must be greater than or equal to interval '{interval ?? FlowSyntax.DefaultWatchInterval}'.",
                     "Increase 'timeout' or decrease 'interval'."));
             }
         }

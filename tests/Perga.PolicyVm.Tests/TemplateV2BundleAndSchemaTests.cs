@@ -30,11 +30,11 @@ public sealed class TemplateV2BundleAndSchemaTests
                         template: "./report.md",
                         views
                       },
-                      schedules: [
+                      flow: [
                         {
                           id: "daily-check",
-                          cron: "0 9 * * *",
-                          prompt: "Daily check for " + inputs.ticker
+                          when: { cron: "0 9 * * *" },
+                          do: { kind: "wake", session: "lead", prompt: "Daily check for ${inputs.ticker}" }
                         }
                       ]
                     };
@@ -105,7 +105,7 @@ public sealed class TemplateV2BundleAndSchemaTests
         Assert.True(compiled.Manifest.HumanReadOnly);
         Assert.Contains("perga-block widget", compiled.Manifest.InitialReportMarkdown);
         Assert.Equal(["priceAxis", "eventList"], compiled.Manifest.ViewNames);
-        Assert.Equal("Daily check for NVDA", Assert.Single(compiled.Manifest.Schedules).Prompt);
+        Assert.Equal("Daily check for ${inputs.ticker}", Assert.Single(_vm.ResolveFlow(compiled, JsonSerializer.Deserialize<JsonElement>("{}"))).Do.Prompt);
 
         var inputs = JsonDocument.Parse("""{"ticker":"NVDA"}""").RootElement;
         var init = _vm.InitData(compiled, inputs);
@@ -212,7 +212,8 @@ public sealed class TemplateV2BundleAndSchemaTests
         var projection = _vm.ProjectViews(compiled, inputs, init, emptyKernel);
 
         Assert.Empty(projection.Diagnostics);
-        Assert.NotEmpty(projection.Views);
+        if (packageName == "agents-delivery") Assert.Empty(projection.Views);
+        else Assert.NotEmpty(projection.Views);
     }
 
     [Fact]

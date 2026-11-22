@@ -88,15 +88,6 @@ public sealed record ReportCommitRequest(
     string? Summary = null,
     string? CommitMessage = null);
 
-public sealed record HumanBlockUpdateRequest(
-    int DocRev,
-    int KnownBlockRev,
-    ReportBlockKind? Kind = null,
-    string? Markdown = null,
-    JsonElement? Payload = null,
-    string? Summary = null,
-    string? CommitMessage = null);
-
 public sealed record TrackProvidersDto(
     string DefaultProvider, long ObservedAtMs, IReadOnlyList<TrackProviderEntryDto> Providers);
 
@@ -119,8 +110,7 @@ public sealed record CreateSessionRequest(
     string? Model = null,
     string? ReasoningEffort = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? PermissionMode = null,
-    string? SystemPrompt = null, string? Prompt = null, string? NotifyParent = null,
-    SessionTaskRequest? Task = null, string? Role = null);
+    string? SystemPrompt = null, string? Prompt = null, string? NotifyParent = null);
 
 public sealed record SteeringResult(string InputId, string Delivery);
 

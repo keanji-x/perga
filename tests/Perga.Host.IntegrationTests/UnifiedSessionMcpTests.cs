@@ -48,7 +48,7 @@ public sealed class UnifiedSessionMcpTests
         Assert.Equal(8, tools.Count(t => t.StartsWith("session_", StringComparison.Ordinal)));
         Assert.DoesNotContain("task_dispatch", tools);
         Assert.DoesNotContain(KernelMcpToolNames.SystemUpgradeApply, tools);
-        Assert.Contains(KernelMcpToolNames.TaskAccept, tools);
+        Assert.DoesNotContain("task_accept", tools);
         Assert.DoesNotContain(KernelMcpToolNames.TaskDone, tools);
         var listed = await Success<SessionSummaryDto[]>(host, parentToken, KernelMcpToolNames.SessionList,
             new { parentSessionId = parent.Id }, ct);
@@ -171,7 +171,6 @@ public sealed class UnifiedSessionMcpTests
         var create = new Dictionary<string, object> { [field] = value };
         await AssertLaunchValidationError(host, token, KernelMcpToolNames.SessionCreate, create, code, choice, ct);
         create["prompt"] = "inspect";
-        create["task"] = new { };
         await AssertLaunchValidationError(host, token, KernelMcpToolNames.SessionCreate, create, code, choice, ct);
 
         var update = new Dictionary<string, object>
@@ -231,7 +230,7 @@ public sealed class UnifiedSessionMcpTests
         host.AgentRuntime.SetTurnHandler(HoldTurns);
         var token = await StartCaller(host, kernel, lead, ct);
         var child = await Success<SessionCreationReceipt>(host, token, KernelMcpToolNames.SessionCreate,
-            new { title = "original", prompt = "work", task = new { access = "read_only" } }, ct);
+            new { title = "original", prompt = "work" }, ct);
         var page = await WaitPage(kernel, child.Session.Id, p => p.State == "running", ct);
         var epoch = page.Session.Epoch;
         await Error(host, token, KernelMcpToolNames.SessionSend,
@@ -250,33 +249,34 @@ public sealed class UnifiedSessionMcpTests
     {
         await using var host = new PergaHostTestCluster();
         var kernel = host.Services.GetRequiredService<IPergaKernel>();
-        var (_, lead) = await host.CreateTrackAsync();
+        var (trackId, lead) = await host.CreateTrackAsync();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         var ct = deadline.Token;
         host.AgentRuntime.SetTurnHandler(HoldTurns);
         var token = await StartCaller(host, kernel, lead, ct);
         host.AgentRuntime.SetTurnHandler(Unknown);
         host.AgentRuntime.CompactHandler = _ => Task.FromResult(new NativeCompactResult());
-        var child = await Success<SessionCreationReceipt>(host, token, KernelMcpToolNames.SessionCreate,
-            new { prompt = "lose connection", task = taskBound ? new { access = "read_only" } : null }, ct);
-        await WaitPage(kernel, child.Session.Id, p => p.State == "unknown", ct);
+        var worker = taskBound ? await FlowFixture.StartWorkerAsync(kernel, trackId, "inspect", "lose connection", ct) : default;
+        var child = taskBound ? worker.Session : (await Success<SessionCreationReceipt>(host, token,
+            KernelMcpToolNames.SessionCreate, new { prompt = "lose connection" }, ct)).Session;
+        await WaitPage(kernel, child.Id, p => p.State == "unknown", ct);
         var page = await Success<SessionItemsPageDto>(host, token, KernelMcpToolNames.SessionRead,
-            new { sessionId = child.Session.Id, waitMs = 20 }, ct);
+            new { sessionId = child.Id, waitMs = 20 }, ct);
         Assert.Equal("connection_lost: connection lost", page.LastTurn!.ErrorText);
         Assert.True(page.UnknownDetail!.CanReconnect);
         var recovered = await Success<AgentSessionDto>(host, token, KernelMcpToolNames.SessionControl,
-            new { sessionId = child.Session.Id, action = "reconnect", expectedEpoch = page.Session.Epoch }, ct);
+            new { sessionId = child.Id, action = "reconnect", expectedEpoch = page.Session.Epoch }, ct);
         Assert.Equal("idle", recovered.Status);
         Assert.Equal(page.Session.NativeThreadId, recovered.NativeThreadId);
         await Success<AgentSessionDto>(host, token, KernelMcpToolNames.SessionControl,
-            new { sessionId = child.Session.Id, action = "compact" }, ct);
+            new { sessionId = child.Id, action = "compact" }, ct);
         var reset = await Success<AgentSessionDto>(host, token, KernelMcpToolNames.SessionControl,
-            new { sessionId = child.Session.Id, action = "reset_context" }, ct);
+            new { sessionId = child.Id, action = "reset_context" }, ct);
         Assert.Equal(recovered.Epoch + 1, reset.Epoch);
         if (taskBound)
         {
             var workerToken = kernel.McpSessionBridge.RegisterSession(reset.TrackId, reset.Id, false,
-                child.Task!.Id, 1, []).Principal.Token;
+                worker.Task.Id, 1, []).Principal.Token;
             var tools = await ListToolNamesAsync(host, "/mcp/kernel", workerToken, ct);
             Assert.Contains(KernelMcpToolNames.SessionRead, tools);
             Assert.Contains(KernelMcpToolNames.SessionList, tools);

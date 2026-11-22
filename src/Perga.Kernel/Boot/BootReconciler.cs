@@ -108,10 +108,9 @@ public sealed class BootReconciler : IBootReconciler
             }
         }
 
-        var pendingDispatch = await _store.ListPendingWorkerDispatchTracksAsync(ct).ConfigureAwait(false);
         var flowTracks = (await _store.ListTracksAsync(ct: ct).ConfigureAwait(false))
             .Where(track => track.FlowRev > 0).Select(track => track.Id);
-        foreach (var trackId in pendingDispatch.Concat(flowTracks).Distinct(StringComparer.Ordinal))
+        foreach (var trackId in flowTracks)
         {
             try
             {
@@ -119,7 +118,7 @@ public sealed class BootReconciler : IBootReconciler
             }
             catch (Exception ex) when (!ct.IsCancellationRequested)
             {
-                System.Diagnostics.Trace.TraceWarning("Could not recover Worker dispatch for Track {0}: {1}", trackId, ex.Message);
+                System.Diagnostics.Trace.TraceWarning("Could not recover Flow dispatch for Track {0}: {1}", trackId, ex.Message);
             }
         }
 

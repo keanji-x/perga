@@ -93,6 +93,35 @@ export interface KernelFactsSnapshot {
   }>;
 }
 
+export type FlowOutcomeCondition = "ok" | "attention" | "blocked" | "any";
+
+export type FlowWhen =
+  | { after: string | Array<string | { node: string; on?: FlowOutcomeCondition }>; on?: FlowOutcomeCondition }
+  | { cron: string; tz?: string; maxOccurrences?: number }
+  | { at: string }
+  | Record<string, never>;
+
+export type FlowAction =
+  | ({ kind: "run"; access?: "read_only" | "read_write"; gate?: string; acceptance?: string } & (
+      | { prompt: string; session?: "new" | `ses_${string}`; role?: string; provider?: string; model?: string }
+      | { cmd: string }
+    ))
+  | { kind: "wake"; session: "lead" | `ses_${string}`; prompt: string }
+  | ({ kind: "watch"; interval?: string; timeout?: string } & (
+      | { prChecks: number; repo?: string; headSha?: string }
+      | { cmd: string }
+    ));
+
+export interface FlowNode {
+  id: string;
+  title?: string;
+  /** Seeded nodes receive template provenance. */
+  source?: "agent" | "user" | "template";
+  when?: FlowWhen;
+  do: FlowAction;
+  canceled?: boolean;
+}
+
 export interface PergaTemplateSetupResult<TState = Record<string, any>, TInputs = Record<string, any>, TData = Record<string, any>> {
   plugins?: string[];
   data?: {
@@ -118,7 +147,6 @@ export interface PergaTemplateSetupResult<TState = Record<string, any>, TInputs 
     sections?: SectionSpec[];
   };
   tasks?: {
-    dispatch?: { section?: string; access?: "read_only" | "read_write"; gateInput?: string };
     /** First matching defaults fill omitted fields. enforce denies explicit conflicts.
      * provider/model support ${inputs.key}, including input schema defaults. */
     routing?: TaskRoutingRuleSpec[];
@@ -131,14 +159,8 @@ export interface PergaTemplateSetupResult<TState = Record<string, any>, TInputs 
     boundTaskId?: string;
     contextUsageRatio: number;
   } }) => string | void;
-  /** Declarative prompts support ${inputs.key}; use after(schedule.fired) for stateful decisions. */
-  schedules?: Array<{
-    id: string;
-    cron: string;
-    timezone?: string;
-    title?: string;
-    prompt: string;
-  }>;
+  /** Initial flow.v1 nodes. Runtime text fields support ${inputs.key}. */
+  flow?: FlowNode[];
 }
 
 export interface PergaTemplateDefinition<TState = Record<string, any>, TInputs = Record<string, any>, TData = Record<string, any>>

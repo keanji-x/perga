@@ -6,6 +6,7 @@ using Perga.Kernel.Internal;
 using Perga.Kernel.Mcp;
 using Perga.Kernel.Ports;
 using Perga.Kernel.Templates;
+using Perga.PolicyVm;
 
 namespace Perga.Kernel.Actors;
 
@@ -103,8 +104,46 @@ public sealed partial class TrackActor
         return result;
     }
 
+    private (FlowSpecDto Spec, TrackFlowUpdate? Update) PreviewTemplateFlowCore(TrackDto nextTrack, CompiledPolicy policy)
+    {
+        // A blueprint is an initial declaration. Existing and archived IDs belong to the Track.
+        var knownIds = _flowSpec.Nodes.Select(node => node.Id).Concat(_tasks.Select(task => task.TaskKey))
+            .ToHashSet(StringComparer.Ordinal);
+        var seed = TemplateFlow.ReadSeedNodes(_policyVm, policy, nextTrack.TemplateInputs)
+            .Where(node => !knownIds.Contains(node.Id)).ToArray();
+        var spec = seed.Length == 0 ? _flowSpec :
+            new FlowSpecDto(checked(_flowSpec.Rev + 1), [.. _flowSpec.Nodes, .. seed], FlowConstants.SchemaPointer);
+        TemplateFlow.RequireValid(TrackFlowValidator.Validate(spec, _flowSpec, _tasks, CollectActiveFlowTaskIdsCore(),
+            _sessions, nextTrack.LeadSessionId, policy, _policyVm, nextTrack.TemplateInputs, _scheduleCronEvaluator, _timeProvider));
+        return (spec, seed.Length == 0 ? null :
+            TemplateFlow.BuildSeedUpdate(nextTrack, _flowSpec.Rev, seed, policy, _policyVm, _scheduleCronEvaluator, _timeProvider));
+    }
+
+    private async Task<Task> CancelFlowTaskCoreAsync(TaskDto task, string? reason, CancellationToken ct)
+    {
+        var node = _flowSpec.Nodes.FirstOrDefault(node => node.Id == task.TaskKey);
+        if (task.Status == TaskRunStatus.Canceled)
+        {
+            var runs = _activeTasks.TryGetValue(task.Id, out var active) ? new[] { active } : [];
+            return BeginFlowCancellationCore(runs, [task.TaskKey]);
+        }
+        if (node is null || task.ArchivedAtMs is not null)
+            throw KernelException.Conflict("The flow task is archived.");
+        if (_track.ClosedAtMs is not null)
+            throw KernelException.Conflict("Cannot cancel a Flow node on a closed Track.");
+
+        var proposal = _flowSpec with
+        {
+            Nodes = _flowSpec.Nodes.Select(existing => existing.Id == node.Id ? existing with { Canceled = true } : existing).ToArray()
+        };
+        var (_, cleanup) = await ApplyFlowSpecCoreAsync(proposal, false, _track.FlowFileSha256, ct,
+            task.Id, string.IsNullOrWhiteSpace(reason) ? null : reason.Trim()).ConfigureAwait(false);
+        return cleanup;
+    }
+
     private async Task<(FlowCommitResultDto Result, Task Cleanup)> ApplyFlowSpecCoreAsync(
-        FlowSpecDto proposed, bool dryRun, string? sourceSha, CancellationToken ct)
+        FlowSpecDto proposed, bool dryRun, string? sourceSha, CancellationToken ct,
+        string? canceledTaskId = null, string? cancellationReason = null)
     {
         var prunedIds = TrackFlowReconciler.ComputeGcEligibleNodeIds(proposed, _tasks, CollectActiveFlowTaskIdsCore());
         var plan = TrackFlowReconciler.ComputePlanDiff(_flowSpec, proposed, prunedIds);
@@ -138,7 +177,10 @@ public sealed partial class TrackActor
             {
                 if (existingArchived.ArchivedAtMs is null)
                 {
-                    upsertedTasks.Add(TrackFlowReconciler.ArchiveTaskForGc(existingArchived, now));
+                    var archived = proposedById.TryGetValue(id, out var canceled) && canceled.Canceled
+                        ? TrackFlowReconciler.BuildOrUpdateTaskForNode(TrackId, canceled, existingArchived, now)
+                        : existingArchived;
+                    upsertedTasks.Add(TrackFlowReconciler.ArchiveTaskForGc(archived, now));
                 }
             }
             else if (proposedById.TryGetValue(id, out var prunedNewNode))
@@ -159,22 +201,22 @@ public sealed partial class TrackActor
             upsertedTasks.Add(TrackFlowReconciler.BuildOrUpdateTaskForNode(TrackId, node, existing, now));
             var schedule = TrackFlowReconciler.BuildScheduleForNode(TrackId, node, now, _scheduleCronEvaluator, _timeProvider);
             if (schedule is not null)
-                schedules.Add(schedule);
+                schedules.Add(node.Source == "template" && _policy is not null
+                    ? TemplateFlow.ResolveClockText(schedule, _track with { UpdatedAtMs = now }, _policy, _policyVm)
+                    : schedule);
             else
                 canceledClocks.Add(FlowConstants.MakeScheduleId(node.Id));
         }
 
+        if (canceledTaskId is not null && cancellationReason is not null)
+        {
+            var index = upsertedTasks.FindIndex(task => task.Id == canceledTaskId);
+            if (index >= 0) upsertedTasks[index] = upsertedTasks[index] with { StatusDetail = cancellationReason };
+        }
         var events = await PersistFlowCoreAsync(nextSpec, sourceSha, upsertedTasks, schedules, canceledClocks, now, ct)
             .ConfigureAwait(false);
-        foreach (var run in canceledRuns)
-            BeginTaskCancellationCore(run);
-        var canceledWatches = new List<ActiveWatchState>();
-        foreach (var nodeId in canceledNodes)
-            canceledWatches.AddRange(BeginWatchCancellationForNodeCore(nodeId));
-        var cleanup = canceledRuns.Length > 0 || canceledWatches.Count > 0
-            ? TrackBackgroundJob(() => FinishFlowCancellationAsync(canceledRuns, [.. canceledWatches]))
-            : Task.CompletedTask;
-        if (canceledNodes.Count > 0 && canceledRuns.Length == 0 && canceledWatches.Count == 0)
+        var cleanup = BeginFlowCancellationCore(canceledRuns, canceledNodes);
+        if (canceledNodes.Count > 0 && cleanup == Task.CompletedTask)
             _ = TrackBackgroundJob(() => TriggerSchedulerAsync(_actorShutdownCts.Token));
 
         await PublishFlowCommitCoreAsync(events).ConfigureAwait(false);
@@ -182,6 +224,14 @@ public sealed partial class TrackActor
         await ScheduleEligibleTasksCoreAsync(CancellationToken.None).ConfigureAwait(false);
         var projection = await BuildFlowProjectionCoreAsync(CancellationToken.None).ConfigureAwait(false);
         return (new FlowCommitResultDto(true, false, _track.FlowRev, plan, [], projection), cleanup);
+    }
+
+    private Task BeginFlowCancellationCore(ActiveTaskRunState[] runs, IEnumerable<string> nodeIds)
+    {
+        foreach (var run in runs) BeginTaskCancellationCore(run);
+        var watches = nodeIds.SelectMany(BeginWatchCancellationForNodeCore).ToArray();
+        return runs.Length == 0 && watches.Length == 0 ? Task.CompletedTask :
+            TrackBackgroundJob(() => FinishFlowCancellationAsync(runs, watches));
     }
 
     private async Task FinishFlowCancellationAsync(ActiveTaskRunState[] runs, ActiveWatchState[] watches)
@@ -264,9 +314,10 @@ public sealed partial class TrackActor
         EnqueueAsync(async _ =>
         {
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
-            if (_track.ClosedAtMs is not null || _store.TrackSchedules is not { } store || due.DueAtMs is not { } dueAt)
+            if (_track.ClosedAtMs is not null || _store.TrackSchedules is not { } store)
                 return false;
 
+            var dueAt = due.DueAtMs;
             var clock = await store.GetAsync(TrackId, due.ScheduleId, ct).ConfigureAwait(false);
             var node = _flowSpec.Nodes.FirstOrDefault(n => n.Id == due.NodeKey);
             if (node is null || node.Canceled || clock is null || clock.NodeKey != node.Id ||
@@ -477,27 +528,8 @@ public sealed partial class TrackActor
         await PublishFlowCommitCoreAsync(events).ConfigureAwait(false);
     }
 
-    private string? InterpolateFlowTextCore(string? text)
-    {
-        if (string.IsNullOrEmpty(text))
-        {
-            return text;
-        }
-
-        if (_policy is not null && text.Contains("${inputs.", StringComparison.Ordinal))
-        {
-            try
-            {
-                return _policyVm.InterpolateInputs(_policy, text, _track.TemplateInputs);
-            }
-            catch
-            {
-                // Fall back to pure JSON interpolation if policy VM rejects an unknown input key.
-            }
-        }
-
-        return FlowConstants.InterpolateInputs(text, _track.TemplateInputs);
-    }
+    private string? InterpolateFlowTextCore(string? text) =>
+        TemplateFlow.Interpolate(text, _track.TemplateInputs, _policy, _policyVm);
 
     private TaskDto InterpolateFlowTaskForExecutionCore(TaskDto task)
     {

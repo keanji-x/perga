@@ -72,7 +72,7 @@ Kernel 负责派发、目标校验、会话操作和审批规则。Host 把 HTTP
 2. 接入模型、思考深度和审批模式。覆盖下一轮生效、会话历史延续、人和 Lead 的并发修改、不支持的设置、跨 Track 请求和旧 Lead 权限失效。验证普通设置修改无法绕过要求人类审批的请求。
 3. 接通只填目标的派发。验证模板默认值和显式覆盖、`dev` 的 Gate、并发重放、保存后启动前重启、启动结果未知，以及旧 Task 块的调度。最终按 L2 评审，运行完整 .NET 测试和受影响的浏览器用例。
 
-现有实现入口见 [会话与任务编排](../src/Perga.Kernel/Actors/TrackActor.cs)、[持久化会话输入](../src/Perga.Kernel/Actors/TrackActor.SessionInputs.cs)、[HTTP 接口](../src/Perga.Host/Http/ApiV1Endpoints.cs)、[MCP 工具](../src/Perga.Kernel/Mcp/KernelMcpTools.cs)和 [dev 模板](../templates/dev.perga.js)。
+现有实现入口见 [会话与任务编排](../src/Perga.Kernel/Actors/TrackActor.cs)、[持久化会话输入](../src/Perga.Kernel/Actors/TrackActor.SessionInputs.cs)、[HTTP 接口](../src/Perga.Host/Http/ApiV1Endpoints.cs)、[MCP 工具](../src/Perga.Kernel/Mcp/KernelMcpTools.cs)和 [交付模板](../templates/agents-delivery/)。
 
 ## 首版支持范围
 

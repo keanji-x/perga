@@ -160,7 +160,7 @@ public sealed class TrackFlowIntegrationTests
 
                 // Simulate a process ending after looking up due schedules but before an actor consumes them.
                 var store = host.Services.GetRequiredService<ITrackScheduleStore>();
-                var discovered = await store.FireDueAsync(due.ToUnixTimeMilliseconds(), _ => null, default);
+                var discovered = await store.ListDueFlowClocksAsync(due.ToUnixTimeMilliseconds(), default);
                 Assert.Equal(2, discovered.Count);
                 Assert.All(discovered, item => Assert.Equal(due.ToUnixTimeMilliseconds(), item.DueAtMs));
             }

@@ -352,7 +352,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                     policy = _templateCatalog.GetOrCompileSnapshot(existing);
                 else
                     policy = _templateCatalog.CompileSource(source!);
-                TemplateSchedules.ValidateInputs(_policyVm, policy, nextInputs);
+                TemplateFlow.ValidateInputs(_policyVm, policy, nextInputs);
                 var init = _policyVm.InitState(policy, nextInputs);
                 state = (init.Output.ValueKind != JsonValueKind.Undefined ? init.Output : init.NextState).Clone();
             }
@@ -387,13 +387,15 @@ public sealed partial class TrackActor : IAsyncDisposable
                 EnabledPlugins = _track.EnabledPlugins.Concat(policy.Manifest.DefaultPlugins).Distinct(StringComparer.Ordinal).ToArray(),
                 UpdatedAtMs = now
             };
-            var schedules = TemplateSchedules.Materialize(policy, nextInputs, TrackId, now, _policyVm, _scheduleCronEvaluator);
+            var (nextFlow, flowUpdate) = PreviewTemplateFlowCore(nextTrack, policy);
+            if (flowUpdate is not null)
+                nextTrack = nextTrack with { FlowRev = nextFlow.Rev, FlowSpecJson = TrackFlowSerializer.SerializeCanonical(nextFlow) };
             if (dryRun) return new TemplateSetResult(TemplatePresentation.Project(nextTrack, policy, _policyVm), warnings, true);
             var evt = new EventEnvelopeDto(null, nextTrack.AreaId, TrackId, KernelEventKinds.TrackUpdated,
                 JsonHelpers.ToElement(TemplatePresentation.Project(nextTrack, policy, _policyVm)), now);
             await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
             var snapshotSource = TemplateHost.Freeze(policy);
-            await _store.UpdateTrackTemplateAndEmitAsync(nextTrack, snapshotSource, evt, ct, schedules, writeData: dataRev != _track.DataRev).ConfigureAwait(false);
+            await _store.UpdateTrackTemplateAndEmitAsync(nextTrack, snapshotSource, evt, ct, writeData: dataRev != _track.DataRev, flow: flowUpdate).ConfigureAwait(false);
             _policy = policy;
             _policyUnavailableReason = null;
             _policyGeneration = Guid.NewGuid().ToString("N");
@@ -401,9 +403,20 @@ public sealed partial class TrackActor : IAsyncDisposable
             _presentedTemplateSnapshotSource = TemplateHost.InspectSource(snapshotSource);
             var pluginsChanged = !_track.EnabledPlugins.SequenceEqual(nextTrack.EnabledPlugins, StringComparer.Ordinal);
             _track = nextTrack;
+            if (flowUpdate is not null)
+            {
+                _flowSpec = nextFlow;
+                foreach (var task in flowUpdate.Tasks) ReplaceTaskInMemoryCore(task);
+                await ProjectCommittedFlowFileCoreAsync(CancellationToken.None).ConfigureAwait(false);
+            }
             if (pluginsChanged)
                 _mcpBridge.UpdateTrackPlugins(TrackId, nextTrack.EnabledPlugins);
             await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, ct).ConfigureAwait(false);
+            if (flowUpdate is not null)
+            {
+                await EvaluateFlowAfterTriggersCoreAsync(CancellationToken.None).ConfigureAwait(false);
+                await ScheduleEligibleTasksCoreAsync(CancellationToken.None).ConfigureAwait(false);
+            }
             return new TemplateSetResult(PresentTrackCore(), warnings, false);
         }, ct);
     }
@@ -629,254 +642,87 @@ public sealed partial class TrackActor : IAsyncDisposable
         }, ct);
     }
 
-    public async Task<ReportReadResult> UpdateReportBlockByHumanAsync(
-        string blockId,
-        HumanBlockUpdateRequest req,
-        CancellationToken ct = default)
-    {
-        var commitResult = await CommitReportInternalAsync(
-            EditActorKind.Human,
-            callerSessionId: null,
-            buildOps: currentDoc =>
-            {
-                var existing = currentDoc.Blocks.FirstOrDefault(b => string.Equals(b.Id, blockId, StringComparison.Ordinal));
-                var kind = req.Kind ?? existing?.Kind ?? ReportBlockKind.Prose;
-                var markdown = req.Markdown ?? existing?.Markdown;
-                var payload = req.Payload ?? existing?.Payload;
-
-                var knownRevs = new Dictionary<string, int>(StringComparer.Ordinal);
-                if (existing is not null)
-                {
-                    knownRevs[blockId] = req.KnownBlockRev;
-                }
-
-                var anchor = new ReadAnchor(req.DocRev, knownRevs, WholeDocumentRead: existing is null && req.DocRev == currentDoc.DocRev);
-                var ops = new BlockOp[]
-                {
-                    new BlockOp.UpsertBlockOp(blockId, kind, markdown, payload)
-                };
-
-                return new ReportCommitRequest(
-                    Anchor: anchor,
-                    Ops: ops,
-                    Summary: req.Summary,
-                    CommitMessage: req.CommitMessage ?? $"Human updated block {blockId}");
-            },
-            ct).ConfigureAwait(false);
-
-        await PokePendingWakesAsync(ct).ConfigureAwait(false);
-
-        return commitResult;
-    }
-
-    public Task<ReportReadResult> CommitReportBySessionAsync(
+    public async Task<ReportReadResult> CommitReportBySessionAsync(
         string callerSessionId,
-        ReportCommitRequest req,
+        ReportCommitRequest request,
         CancellationToken ct = default,
         McpExecutionOrigin? origin = null,
         string? expectedPolicyGeneration = null)
     {
-        return CommitReportInternalAsync(
-            actorKind: null,
-            callerSessionId: callerSessionId,
-            buildOps: _ => req,
-            ct: ct,
-            origin: origin,
-            expectedPolicyGeneration: expectedPolicyGeneration);
-    }
-
-    private async Task<ReportReadResult> CommitReportInternalAsync(
-        EditActorKind? actorKind,
-        string? callerSessionId,
-        Func<ReportDocument, ReportCommitRequest> buildOps,
-        CancellationToken ct,
-        WorkerDispatchIntent? dispatch = null,
-        McpExecutionOrigin? origin = null,
-        Func<IReadOnlyList<ProviderStatus>, AgentSessionDto>? prepareWorker = null,
-        string? expectedPolicyGeneration = null)
-    {
-        var approvalTurn = callerSessionId is not null && _scheduler.TryGetActive(callerSessionId, out var callingTurn)
-            ? callingTurn : null;
+        var approvalTurn = _scheduler.TryGetActive(callerSessionId, out var callingTurn) ? callingTurn : null;
         Interlocked.Increment(ref _inFlightExternalOps);
         try
         {
-            IReadOnlyList<ProviderStatus>? providers = null;
-            if (dispatch is not null)
-            {
-                var replay = await EnqueueAsync(async _ =>
-                {
-                    await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
-                    return await TryReplayWorkerDispatchCoreAsync(dispatch, ct).ConfigureAwait(false);
-                }, ct).ConfigureAwait(false);
-                if (replay is not null) return replay;
-                providers = await ProbeSessionProvidersAsync(ct).ConfigureAwait(false);
-            }
-
-            var authorizedGeneration = expectedPolicyGeneration;
-            // Observe mailbox admission even after request cancellation so every approval is reclaimed.
-            Task<(ReportReadResult? Completed, IReadOnlyList<PolicyApproval> Asks, ReportCommitRequest? EffectiveRequest,
-                HashSet<string> ApprovedKeys, bool NeedsProviders)> AdmitReportAsync() => EnqueueAsync<(ReportReadResult?,
-                IReadOnlyList<PolicyApproval>, ReportCommitRequest?, HashSet<string>, bool)>(async _ =>
+            var generation = expectedPolicyGeneration;
+            var (completed, approval) = await EnqueueAsync<(ReportReadResult?, PolicyApproval?)>(async _ =>
             {
                 await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
-                if (dispatch is not null && await TryReplayWorkerDispatchCoreAsync(dispatch, ct).ConfigureAwait(false) is { } replay)
-                    return (replay, [], null, [], false);
                 RequirePolicyAvailableCore();
-                if (authorizedGeneration is not null && authorizedGeneration != _policyGeneration)
+                if (generation is not null && generation != _policyGeneration)
                     throw KernelException.PolicyDenied("Active policy changed after authorization.");
-                authorizedGeneration = _policyGeneration;
-                if (dispatch is not null)
-                    dispatch = dispatch with { Session = prepareWorker!(providers!) };
+                generation = _policyGeneration;
 
-                var (editorRole, boundTaskId) = ResolveEditorIdentityCore(actorKind, callerSessionId);
-                if (dispatch is null &&
-                    string.Equals(editorRole, "human", StringComparison.OrdinalIgnoreCase) &&
-                    _policy?.Manifest.HumanReadOnly == true)
-                {
-                    throw KernelException.PolicyDenied(
-                        "This track template marks the report as read-only for humans; ask the Lead or a Worker to update it.");
-                }
-
-                var effectiveReq = buildOps(_report);
-                TaskBlockSynchronizer.ValidatePreCommitBoundTaskFence(boundTaskId, _report, effectiveReq.Ops);
-                var preview = _reportEngine.ApplyCommit(_report, effectiveReq.Anchor, effectiveReq.Ops, effectiveReq.Summary);
-                TaskBlockSynchronizer.ValidatePostCommitBoundTaskFence(boundTaskId, _report, preview);
-
-                var touchedSections = CollectTouchedSections(_report, preview, effectiveReq.Ops);
-                var nextProseChars = preview.NextDocument.Blocks
-                    .Where(b => b.Kind == ReportBlockKind.Prose)
-                    .Sum(b => b.Markdown?.Length ?? 0);
-
-                ValidateManifestReportRulesCore(editorRole, touchedSections, nextProseChars);
-                // Parse and validate the complete prospective task set before any approval is persisted.
-                var taskPreview = TaskBlockSynchronizer.SyncTasksFromReport(TrackId, preview.NextDocument, _tasks,
-                    _policy?.Manifest.RequireGateForReadWrite ?? false, NowMs());
-                RequireTasksOutsideVerification(_activeTasks.Values.Where(active =>
-                    taskPreview.SupersededOrRemovedActiveTaskIds.Contains(active.TaskId)));
-                var declarations = GetTaskDeclarationsCore(preview);
-                if (providers is null && declarations.Any(entry => entry.Route.Denial is null && NeedsTaskProviderCatalog(entry.Route)))
-                    return (null, [], null, [], true);
-                var taskAdmission = await AdmitTaskDeclarationsCoreAsync(declarations, dispatch, providers, ct).ConfigureAwait(false);
-                var decisions = taskAdmission.Asks;
-
+                var (preview, editorRole, touchedSections, nextProseChars) = PreviewReportCommitCore(callerSessionId, request);
                 if (_policy is not null)
                 {
                     var prevMd = _reportEngine.RenderMarkdown(_report, withMarkers: false);
                     var nextMd = _reportEngine.RenderMarkdown(preview.NextDocument, withMarkers: false);
-                    var eval = _policyVm.Before(_policy, "report.commit", TrackId, JsonHelpers.ToElement(new {
+                    var eval = _policyVm.Before(_policy, "report.commit", TrackId, JsonHelpers.ToElement(new
+                    {
                         editorRole, prevMarkdown = prevMd, nextMarkdown = nextMd, touchedSections, nextProseChars
                     }), _track.TemplateInputs, _track.TemplateState);
                     await UpdateTemplateStateIfChangedCoreAsync(eval.NextState, ct).ConfigureAwait(false);
 
-                    if (eval.Output is GuardDecision.Deny denied) throw KernelException.PolicyDenied(denied.Reason);
-                    if (eval.Output is GuardDecision.AskHuman ask) decisions.Add(ask);
-                }
-                var asks = new List<PolicyApproval>();
-                try
-                {
-                    foreach (var decision in decisions)
+                    if (eval.Output is GuardDecision.Deny denied)
+                        throw KernelException.PolicyDenied(denied.Reason);
+                    if (eval.Output is GuardDecision.AskHuman ask)
                     {
                         RequireApprovalOrigin(callerSessionId, approvalTurn, origin);
-                        asks.Add(ApplyGuardDecisionCore(decision, callerSessionId ?? _track.LeadSessionId, approvalTurn, ct)!);
+                        return (null, ApplyGuardDecisionCore(ask, callerSessionId, approvalTurn, ct)!);
                     }
                 }
-                catch
-                {
-                    foreach (var ask in asks) ExpireApproval(ask.Pending);
-                    throw;
-                }
-                if (asks.Count > 0 || taskPreview.SupersededOrRemovedActiveTaskIds.Count > 0)
-                    return (null, asks, effectiveReq, taskAdmission.ApprovedKeys, false);
 
-                var result = await FinalizeReportCommitCoreAsync(
-                    preview,
-                    callerSessionId,
-                    effectiveReq.CommitMessage ?? $"Report commit ({editorRole})",
-                    ct, dispatch, taskAdmission.ApprovedKeys, providers).ConfigureAwait(false);
-                return (result, [], effectiveReq, taskAdmission.ApprovedKeys, false);
-            }, CancellationToken.None);
-
-            var phase1 = await AdmitReportAsync().ConfigureAwait(false);
-            if (phase1.NeedsProviders)
-            {
-                providers = await ProbeSessionProvidersAsync(ct, KernelErrorCode.Conflict).ConfigureAwait(false);
-                phase1 = await AdmitReportAsync().ConfigureAwait(false);
-            }
-            if (phase1.Completed is not null)
-            {
-                return phase1.Completed;
-            }
-            var effectiveRequest = phase1.EffectiveRequest
-                ?? throw new InvalidOperationException("Report admission did not produce a commit request.");
-
-            try
-            {
-                var remaining = phase1.Asks.ToList();
-                while (remaining.Count > 0)
-                {
-                    var completed = await Task.WhenAny(remaining.Select(ask => ask.Decision)).WaitAsync(ct).ConfigureAwait(false);
-                    var ask = remaining.First(ask => ask.Decision == completed);
-                    await RequirePolicyApprovalAsync(ask, ct).ConfigureAwait(false);
-                    remaining.Remove(ask);
-                }
-            }
-            finally
-            {
-                foreach (var ask in phase1.Asks) ExpireApproval(ask.Pending);
-            }
-
-            var superseded = await EnqueueAsync(_ =>
-            {
-                if (_policyGeneration != authorizedGeneration)
-                    throw KernelException.PolicyDenied("Active policy changed during task/report approval.");
-                var (editorRole, boundTaskId) = ResolveEditorIdentityCore(actorKind, callerSessionId);
-                var request = effectiveRequest;
-                TaskBlockSynchronizer.ValidatePreCommitBoundTaskFence(boundTaskId, _report, request.Ops);
-                var preview = _reportEngine.ApplyCommit(_report, request.Anchor, request.Ops, request.Summary);
-                TaskBlockSynchronizer.ValidatePostCommitBoundTaskFence(boundTaskId, _report, preview);
-                ValidateManifestReportRulesCore(editorRole, CollectTouchedSections(_report, preview, request.Ops),
-                    preview.NextDocument.Blocks.Where(b => b.Kind == ReportBlockKind.Prose).Sum(b => b.Markdown?.Length ?? 0));
-                var sync = TaskBlockSynchronizer.SyncTasksFromReport(TrackId, preview.NextDocument, _tasks,
-                    _policy?.Manifest.RequireGateForReadWrite ?? false, NowMs());
-                var activeRuns = _activeTasks.Values.Where(a => sync.SupersededOrRemovedActiveTaskIds.Contains(a.TaskId)).ToArray();
-                RequireTasksOutsideVerification(activeRuns);
-                ct.ThrowIfCancellationRequested();
-                foreach (var activeRun in activeRuns) BeginTaskCancellationCore(activeRun);
-                return Task.FromResult(activeRuns);
+                return (await FinalizeReportCommitCoreAsync(preview, callerSessionId,
+                    request.CommitMessage ?? $"Report commit ({editorRole})", ct).ConfigureAwait(false), null);
             }, CancellationToken.None).ConfigureAwait(false);
-            foreach (var activeRun in superseded) await CloseCanceledWorkerAsync(activeRun).ConfigureAwait(false);
+
+            if (completed is not null) return completed;
+            try { await RequirePolicyApprovalAsync(approval!, ct).ConfigureAwait(false); }
+            finally { ExpireApproval(approval!.Pending); }
 
             return await EnqueueAsync(async _ =>
             {
-                if (dispatch is not null && await TryReplayWorkerDispatchCoreAsync(dispatch, ct).ConfigureAwait(false) is { } replay)
-                    return replay;
-                if (_policyGeneration != authorizedGeneration)
-                    throw KernelException.PolicyDenied("Active policy changed during task/report approval.");
-                var effectiveReq = effectiveRequest;
-                var (editorRole, boundTaskId) = ResolveEditorIdentityCore(actorKind, callerSessionId);
-                TaskBlockSynchronizer.ValidatePreCommitBoundTaskFence(boundTaskId, _report, effectiveReq.Ops);
-                var verifiedCommit = _reportEngine.ApplyCommit(
-                    _report,
-                    effectiveReq.Anchor,
-                    effectiveReq.Ops,
-                    effectiveReq.Summary);
-                TaskBlockSynchronizer.ValidatePostCommitBoundTaskFence(boundTaskId, _report, verifiedCommit);
-                ValidateManifestReportRulesCore(
-                    editorRole,
-                    CollectTouchedSections(_report, verifiedCommit, effectiveReq.Ops),
-                    verifiedCommit.NextDocument.Blocks.Where(b => b.Kind == ReportBlockKind.Prose).Sum(b => b.Markdown?.Length ?? 0));
-
-                return await FinalizeReportCommitCoreAsync(
-                    verifiedCommit,
-                    callerSessionId,
-                    effectiveReq.CommitMessage ?? $"Report commit ({editorRole}, human-approved)",
-                    ct, dispatch, phase1.ApprovedKeys, providers).ConfigureAwait(false);
+                if (_policyGeneration != generation)
+                    throw KernelException.PolicyDenied("Active policy changed during report approval.");
+                var (preview, editorRole, _, _) = PreviewReportCommitCore(callerSessionId, request);
+                return await FinalizeReportCommitCoreAsync(preview, callerSessionId,
+                    request.CommitMessage ?? $"Report commit ({editorRole}, human-approved)", ct).ConfigureAwait(false);
             }, ct).ConfigureAwait(false);
         }
         finally
         {
             Interlocked.Decrement(ref _inFlightExternalOps);
         }
+    }
+
+    private (ReportCommitResult Preview, string EditorRole, IReadOnlyList<string> TouchedSections, int NextProseChars)
+        PreviewReportCommitCore(string callerSessionId, ReportCommitRequest request)
+    {
+        var editorRole = RequireSessionCore(callerSessionId).IsLead ? "lead" : "subagent";
+        var preview = _reportEngine.ApplyCommit(_report, request.Anchor, request.Ops, request.Summary);
+        var historicalTasks = _report.Blocks.Where(block => block.Kind == ReportBlockKind.Task)
+            .ToDictionary(block => block.Id, StringComparer.Ordinal);
+        if (preview.NextDocument.Blocks.Any(block => historicalTasks.TryGetValue(block.Id, out var previous)
+                ? previous.Kind != block.Kind || previous.Rev != block.Rev || previous.SectionH1 != block.SectionH1 ||
+                    previous.Markdown != block.Markdown || !JsonHelpers.JsonEquals(previous.Payload, block.Payload)
+                : block.Kind == ReportBlockKind.Task))
+            throw KernelException.InvalidArgument("Author tasks in flow.json and submit them with flow_commit.");
+
+        var touchedSections = CollectTouchedSections(_report, preview, request.Ops);
+        var nextProseChars = preview.NextDocument.Blocks.Where(block => block.Kind == ReportBlockKind.Prose)
+            .Sum(block => block.Markdown?.Length ?? 0);
+        ValidateManifestReportRulesCore(editorRole, touchedSections, nextProseChars);
+        return (preview, editorRole, touchedSections, nextProseChars);
     }
 
     // ------------------- Sessions, Streaming Turns & Epoch Compaction -------------------
@@ -892,7 +738,7 @@ public sealed partial class TrackActor : IAsyncDisposable
     }
 
     private AgentSessionDto NewSubagentSessionCore(CreateSessionRequest request, IReadOnlyList<ProviderStatus> providers,
-        bool requireAvailable, AgentSessionDto? parent = null, string? sessionId = null)
+        bool requireAvailable, AgentSessionDto? parent = null)
     {
         var now = NowMs();
         var provider = SessionLaunchValidator.NormalizeProvider(request.Provider ?? parent?.Provider ?? GetDefaultProviderCore());
@@ -910,7 +756,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                 ResolvePermissionCatalogCore(provider, status, parent?.Id));
 
         return new AgentSessionDto(
-            Id: sessionId ?? $"ses_{Guid.NewGuid():N}",
+            Id: $"ses_{Guid.NewGuid():N}",
             TrackId: TrackId,
             IsLead: false,
             Title: string.IsNullOrWhiteSpace(request.Title) ? "Subagent" : request.Title,
@@ -1044,93 +890,27 @@ public sealed partial class TrackActor : IAsyncDisposable
             return updatedTask;
         }
 
-        var cancellation = await EnqueueAsync<(TaskDto? Completed, ActiveTaskRunState? Active)>(async _ =>
+        var cancellation = await EnqueueAsync<(TaskDto? Completed, ActiveTaskRunState? Active, Task Cleanup)>(async _ =>
         {
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
             var task = RequireTaskCore(taskKeyOrId);
             RequireTaskOwnershipCore(callerSessionId, task);
             if (FlowConstants.IsFlowTask(task))
-                throw KernelException.Conflict("Cancel flow nodes by setting canceled: true in flow.json and committing with flow_commit.");
+            {
+                var cleanup = await CancelFlowTaskCoreAsync(task, reason, ct).ConfigureAwait(false);
+                return (RequireTaskCore(task.Id), null, cleanup);
+            }
             var active = _activeTasks.TryGetValue(task.Id, out var found) ? found : null;
             ct.ThrowIfCancellationRequested();
             // A pending task must be canceled atomically, before another mailbox operation can start it.
-            if (active is null) return (await SettleCoreAsync(task, null).ConfigureAwait(false), null);
+            if (active is null) return (await SettleCoreAsync(task, null).ConfigureAwait(false), null, Task.CompletedTask);
             BeginTaskCancellationCore(active);
-            return (null, active);
+            return (null, active, Task.CompletedTask);
         }, CancellationToken.None).ConfigureAwait(false);
+        await cancellation.Cleanup.ConfigureAwait(false);
         if (cancellation.Completed is { } completed) return completed;
         await CloseCanceledWorkerAsync(cancellation.Active!).ConfigureAwait(false);
         return await EnqueueAsync(_ => SettleCoreAsync(RequireTaskCore(taskKeyOrId), cancellation.Active), CancellationToken.None).ConfigureAwait(false);
-    }
-
-    public Task<TaskDto> AcceptTaskAsync(string? callerSessionId, string taskKeyOrId, string? note = null, CancellationToken ct = default)
-    {
-        return EnqueueAsync(async _ =>
-        {
-            await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
-            var task = RequireTaskCore(taskKeyOrId);
-            RequireTaskOwnershipCore(callerSessionId, task);
-
-            var now = NowMs();
-            var updated = task with
-            {
-                SemanticVerdict = SemanticVerdict.Accepted,
-                SemanticNote = note,
-                Outcome = FlowOutcome.Ok,
-                OutcomeSummary = string.IsNullOrWhiteSpace(note) ? task.OutcomeSummary : note.Trim(),
-                UpdatedAtMs = now
-            };
-            ReplaceTaskInMemoryCore(updated);
-            await PersistAndEmitTaskUpdatedCoreAsync(updated, nextTemplateState: null, now, ct).ConfigureAwait(false);
-            await OnTaskSettledFlowHookCoreAsync(updated, ct).ConfigureAwait(false);
-            return updated;
-        }, ct);
-    }
-
-    public Task<TaskDto> RejectTaskAsync(
-        string? callerSessionId,
-        string taskKeyOrId,
-        string note,
-        bool reQueue = false,
-        CancellationToken ct = default)
-    {
-        return EnqueueAsync(async _ =>
-        {
-            await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
-            var task = RequireTaskCore(taskKeyOrId);
-            RequireTaskOwnershipCore(callerSessionId, task);
-            if (_activeTasks.ContainsKey(task.Id) || _activeWatches.ContainsKey(task.Id))
-                throw KernelException.Conflict("Wait for the current task run to finish before rejecting or requeuing the task.");
-            var effectiveNote = string.IsNullOrWhiteSpace(note) ? "Rejected by user." : note.Trim();
-
-            var now = NowMs();
-            var nextStatus = reQueue && task.Ready ? TaskRunStatus.Pending : TaskRunStatus.Failed;
-            var updated = task with
-            {
-                SemanticVerdict = reQueue ? SemanticVerdict.None : SemanticVerdict.Rejected,
-                SemanticNote = effectiveNote,
-                Outcome = reQueue ? FlowOutcome.None : FlowOutcome.Attention,
-                OutcomeSummary = reQueue ? null : effectiveNote,
-                Status = nextStatus,
-                StatusDetail = $"Rejected: {effectiveNote}",
-                FinishedAtMs = nextStatus == TaskRunStatus.Pending ? null : task.FinishedAtMs ?? now,
-                UpdatedAtMs = now
-            };
-            ReplaceTaskInMemoryCore(updated);
-            await PersistAndEmitTaskUpdatedCoreAsync(updated, nextTemplateState: null, now, ct).ConfigureAwait(false);
-
-            if (reQueue)
-            {
-                await EvaluateFlowAfterTriggersCoreAsync(ct).ConfigureAwait(false);
-                await ScheduleEligibleTasksCoreAsync(ct).ConfigureAwait(false);
-            }
-            else
-            {
-                await OnTaskSettledFlowHookCoreAsync(updated, ct).ConfigureAwait(false);
-            }
-
-            return updated;
-        }, ct);
     }
 
     public async Task<TaskDto> CompleteTaskDoneAsync(
@@ -1821,40 +1601,9 @@ public sealed partial class TrackActor : IAsyncDisposable
         ReportCommitResult commitResult,
         string? authorSessionId,
         string commitMessage,
-        CancellationToken ct,
-        WorkerDispatchIntent? dispatch = null, IReadOnlySet<string>? approvedKeys = null,
-        IReadOnlyList<ProviderStatus>? providers = null)
+        CancellationToken ct)
     {
         var now = NowMs();
-        var requireGate = _policy?.Manifest.RequireGateForReadWrite ?? false;
-        var syncOutcome = TaskBlockSynchronizer.SyncTasksFromReport(
-            TrackId,
-            commitResult.NextDocument,
-            _tasks,
-            requireGate,
-            now);
-
-        RequireTasksOutsideVerification(_activeTasks.Values.Where(active =>
-            syncOutcome.SupersededOrRemovedActiveTaskIds.Contains(active.TaskId)));
-        foreach (var supersededTaskId in syncOutcome.SupersededOrRemovedActiveTaskIds)
-        {
-            if (_activeTasks.TryGetValue(supersededTaskId, out var active))
-            {
-                const string reason = "Task contract superseded or removed in report.";
-                BeginTaskCancellationCore(active);
-                await FinalizeCanceledTaskCoreAsync(active, ct).ConfigureAwait(false);
-                var superseded = RequireTaskCore(active.TaskId) with
-                {
-                    Status = TaskRunStatus.Canceled,
-                    StatusDetail = reason,
-                    FinishedAtMs = now,
-                    UpdatedAtMs = now
-                };
-                await PersistAndEmitTaskUpdatedCoreAsync(superseded, null, now, ct).ConfigureAwait(false);
-                ReplaceTaskInMemoryCore(superseded);
-            }
-        }
-
         var compressedBlocks = _reportEngine.CompressZstd(commitResult.NextDocument.Blocks);
         var reportPayload = JsonHelpers.ToElement(new
         {
@@ -1871,43 +1620,21 @@ public sealed partial class TrackActor : IAsyncDisposable
             CreatedAtMs: now);
 
         await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
-        await _store.SaveReportAndTasksAsync(
+        await _store.SaveReportAsync(
             TrackId,
             commitResult.NextDocument,
             compressedBlocks,
             authorSessionId,
             commitMessage,
-            syncOutcome.SyncedTasks,
             _track.TemplateState,
             reportEvt,
-            ct, dispatch).ConfigureAwait(false);
+            ct).ConfigureAwait(false);
 
         _report = commitResult.NextDocument;
-        _tasks.Clear();
-        _tasks.AddRange(syncOutcome.SyncedTasks);
-        if (dispatch?.Session is { } preallocated)
-        {
-            var dispatched = _tasks.Single(t => t.TaskKey == dispatch.TaskKey);
-            var parent = authorSessionId is null ? null : RequireSessionCore(authorSessionId);
-            _sessions[preallocated.Id] = preallocated with
-            {
-                ParentSessionId = parent?.Id,
-                SpawnDepth = parent is null ? 0 : parent.SpawnDepth + 1,
-                NotifyParent = preallocated.NotifyParent
-            };
-            ReplaceTaskInMemoryCore(dispatched with { SessionId = preallocated.Id });
-        }
-        foreach (var admitted in _tasks.Where(t => approvedKeys?.Contains(t.TaskKey) == true))
-            _taskDispatchApprovals[admitted.TaskKey] = (admitted.Generation, _policyGeneration, TaskDispatchFields(admitted));
         var committedCt = _actorShutdownCts.Token;
         await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, reportEvt, committedCt).ConfigureAwait(false);
 
-        var taskEvt = CreateTaskUpdatedEventCore(now);
-        await _store.AppendEventAsync(taskEvt, committedCt).ConfigureAwait(false);
-        await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, taskEvt, committedCt).ConfigureAwait(false);
-
         await AfterPolicyEventCoreAsync("report.commit", reportPayload, committedCt).ConfigureAwait(false);
-        await ScheduleEligibleTasksCoreAsync(committedCt, providers).ConfigureAwait(false);
 
         var rendered = _reportEngine.RenderMarkdown(_report, withMarkers: true);
         var knownRevs = _report.Blocks.ToDictionary(b => b.Id, b => b.Rev, StringComparer.Ordinal);
@@ -1918,7 +1645,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             Blocks: _report.Blocks,
             Tasks: _tasks.ToArray(),
             Anchor: new ReadAnchor(_report.DocRev, knownRevs, WholeDocumentRead: true),
-            Diagnostics: syncOutcome.Diagnostics,
+            Diagnostics: [],
             Changes: commitResult.Changes);
     }
 
@@ -3283,29 +3010,6 @@ public sealed partial class TrackActor : IAsyncDisposable
         return sections.ToArray();
     }
 
-    private (string EditorRole, string? BoundTaskId) ResolveEditorIdentityCore(
-        EditActorKind? actorKind,
-        string? callerSessionId)
-    {
-        if (actorKind == EditActorKind.Human)
-        {
-            return ("human", null);
-        }
-
-        if (actorKind == EditActorKind.System)
-        {
-            return ("system", null);
-        }
-
-        if (!string.IsNullOrEmpty(callerSessionId))
-        {
-            var session = RequireSessionCore(callerSessionId);
-            return (session.IsLead ? "lead" : "subagent", TryGetActiveOwningTaskCore(session.Id)?.Id);
-        }
-
-        return ("system", null);
-    }
-
     private AgentSessionDto RequireSessionCore(string sessionId)
     {
         if (!_sessions.TryGetValue(sessionId, out var session))
@@ -3473,6 +3177,10 @@ public sealed partial class TrackActor : IAsyncDisposable
         return _options.DefaultProvider;
     }
 
+    private string? ResolveTaskWorkerModelCore(string provider) =>
+        SessionLaunchValidator.NormalizeProvider(provider) == SessionLaunchValidator.NormalizeProvider(GetDefaultProviderCore())
+            ? GetDefaultModelCore(provider) : null;
+
     private string? GetDefaultModelCore(string provider)
     {
         var normalized = SessionLaunchValidator.NormalizeProvider(provider);
@@ -3513,7 +3221,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             ? $"\n\n## Track Flow Orchestration\n- The Host manages `{_flowFileStore.GetFlowFilePath(TrackId)}` (current `flowRev`: {_track.FlowRev}).\n- Use `when` (`after` / `cron` / `at`) and `do` (`run` / `wake` / `watch`) to declare nodes. If you can access the Host file, edit it and use `flow_commit(dryRun: true)` before `flow_commit()`.\n- From SSH or when the Host file is unavailable, call `flow_read()` for the current spec and revision, then pass the edited JSON text as `content` and the read revision as `expectedFlowRev` to `flow_commit`. Validate the same arguments with `dryRun: true` first.\n- To stop an active or recurring node, set `\"canceled\": true` and commit.\n- Background GC archives terminal one-shot nodes with no remaining dependents and preserves uncommitted drafts."
             : string.Empty;
         const string unboundGovernanceNote =
-            "Use session_list/create/read/update/send/withdraw/control/respond to manage child conversations. Create accepts an optional task contract; reuse requestKey for retries. Use provider_list to discover available providers, models, reasoning efforts, and permission modes. Only control your direct children; the Lead can also manage other sessions. Never stop, reset or archive yourself. Answer delegated asks and approvals with session_respond; the human can always take over.";
+            "Use session_list/create/read/update/send/withdraw/control/respond to manage child conversations. Use session_create for collaborators and reuse requestKey for retries. Declare formal tasks in Flow and have Workers submit task_done with an outcome. Use provider_list to discover available providers, models, reasoning efforts, and permission modes. Only control your direct children; the Lead can also manage other sessions. Never stop, reset or archive yourself. Answer delegated asks and approvals with session_respond; the human can always take over.";
         var sessionNote = boundTask is null
             ? session.IsLead
                 ? unboundGovernanceNote

@@ -14,15 +14,6 @@ public sealed record SectionRule(
     bool OmitIfEmpty = false,
     IReadOnlyList<string>? EditableBy = null);
 
-public sealed record ScheduleSpec(
-    string Id,
-    string Cron,
-    string Timezone,
-    string Prompt,
-    string? Title = null);
-
-public sealed record WorkerDispatchDefaults(string? Section, string? Access, string? GateInput);
-
 public sealed record CheckpointSpec(
     string Id,
     string Title,
@@ -68,9 +59,8 @@ public sealed record CompiledTemplateManifest(
     string? WorkspaceCreateCmd,
     string? WorkspaceCloseCmd,
     string? AfterWorkerDoneCmd,
-    IReadOnlyList<ScheduleSpec> Schedules,
+    JsonElement Flow,
     IReadOnlyList<TaskRoutingRule> Routing,
-    WorkerDispatchDefaults? WorkerDispatch = null,
     string? Extends = null,
     bool HasHeaderView = false,
     string InitialReportMarkdown = "",
@@ -129,6 +119,7 @@ public interface IPolicyVm
     PolicyEvalResult<PolicyTurnPreparation> PrepareTurn(CompiledPolicy policy, PolicyTurnContext ctx, JsonElement state);
     PolicyTaskRoute RouteTaskDispatch(CompiledPolicy policy, string? role, string access, string? provider, string? model, JsonElement inputs);
     IReadOnlyList<PolicyTaskRoute> ResolveRoutingTargets(CompiledPolicy policy, JsonElement inputs);
+    IReadOnlyList<Perga.Contracts.FlowNodeSpecDto> ResolveFlow(CompiledPolicy policy, JsonElement inputs);
     void ValidateInputs(CompiledPolicy policy, JsonElement inputs);
     string InterpolateInputs(CompiledPolicy policy, string text, JsonElement inputs);
     DataPatchValidationResult ValidateAndPatchData(

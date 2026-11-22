@@ -105,27 +105,9 @@ public sealed class WebSocketsIntegrationTests
         var kernel = cluster.Services.GetRequiredService<IPergaKernel>();
         await kernel.WaitForTrackIdleAsync(trackId, ct);
 
-        // Add a draft task block so task.updated is persisted in events table before WS connects.
-        using var putResp = await client.PutAsJsonAsync(
-            $"/api/v1/tracks/{trackId}/report/blocks/b_tsk1",
-            new
-            {
-                docRev = 0,
-                knownBlockRev = 0,
-                kind = "task",
-                payload = new
-                {
-                    taskKey = "draft-ro",
-                    kind = "subagent",
-                    access = "read_only",
-                    ready = false,
-                    goal = "Inspect docs"
-                }
-            },
-            ct);
-        putResp.EnsureSuccessStatusCode();
-        // The report edit wakes the lead; finish that turn before observing live deltas.
-        await kernel.WaitForTrackIdleAsync(trackId, ct);
+        // Persist a Flow task event before connecting the replay socket.
+        await FlowFixture.AddAsync(kernel, trackId, new FlowNodeSpecDto("draft-ro",
+            new("run", Prompt: "Inspect docs", Access: "read_only"), When: new(At: "2099-01-01T00:00:00Z")));
 
         // Connect WS with ?since=0&trackId={trackId}
         using var ws = await cluster.ConnectEventsWebSocketAsync($"?since=0&trackId={trackId}", ct);

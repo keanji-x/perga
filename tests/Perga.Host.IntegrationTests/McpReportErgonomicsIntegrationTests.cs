@@ -114,17 +114,5 @@ public sealed class McpReportErgonomicsIntegrationTests
         Assert.Equal(1, httpReport.GetProperty("docRev").GetInt32());
         Assert.Contains("Notes text.", httpReport.GetProperty("renderedMarkdown").GetString());
         Assert.False(httpReport.TryGetProperty("changes", out _));
-
-        var firstBlock = httpReport.GetProperty("blocks")[0];
-        var firstBlockId = firstBlock.GetProperty("id").GetString()!;
-        var firstBlockRev = firstBlock.GetProperty("rev").GetInt32();
-        using var putResp = await client.PutAsJsonAsync(
-            $"/api/v1/tracks/{trackId}/report/blocks/{firstBlockId}",
-            new { docRev = 1, knownBlockRev = firstBlockRev, markdown = "Human edited." },
-            ct);
-        putResp.EnsureSuccessStatusCode();
-        using var putDoc = JsonDocument.Parse(await putResp.Content.ReadAsStringAsync(ct));
-        Assert.Equal(2, putDoc.RootElement.GetProperty("docRev").GetInt32());
-        Assert.False(putDoc.RootElement.TryGetProperty("changes", out _));
     }
 }

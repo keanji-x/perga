@@ -28,37 +28,37 @@ public sealed class SessionRuntimeIntegrationTests
             agent.ShutdownConfirmed = false;
             agent.DisposeHandler = async () => { disposing.TrySetResult(); await release.Task; };
         };
-        var first = await ctx.Kernel.CreateSessionAsync(trackId,
-            new(Prompt: "first writer", Task: new(Access: "read_write")), "first", Human, default);
+        var first = await FlowFixture.StartWorkerAsync(ctx.Kernel, trackId, FlowFixture.Worker("first", "first writer", "read_write"));
         await entered.Task.WaitAsync(TimeSpan.FromSeconds(3));
-        var second = await ctx.Kernel.CreateSessionAsync(trackId,
-            new(Prompt: "second writer", Task: new(Access: "read_write")), "second", Human, default);
+        await FlowFixture.AddAsync(ctx.Kernel, trackId, FlowFixture.Worker("second", "second writer", "read_write"));
+        var second = Assert.Single(await ctx.Kernel.ListTasksAsync(trackId), task => task.TaskKey == "second");
         Task cancel = operation switch
         {
             "close" => ctx.Kernel.CloseTrackAsync(trackId, snapshot.Track.LeadSessionId!),
             "delete" => ctx.Kernel.DeleteTrackAsync(trackId),
-            _ => ctx.Kernel.CancelTaskAsync(trackId, null, first.Receipt.Task!.Id)
+            _ => ctx.Kernel.CancelTaskAsync(trackId, null, first.Task.Id)
         };
         try
         {
             await disposing.Task.WaitAsync(TimeSpan.FromSeconds(3));
             // Shutdown must leave the mailbox available for provider callbacks and reads.
             await ctx.Kernel.ReadReportAsync(trackId).WaitAsync(TimeSpan.FromSeconds(2));
-            Assert.Equal(TaskRunStatus.Pending, second.Receipt.Task!.Status);
+            Assert.Equal(TaskRunStatus.Pending, second.Status);
             Assert.Single(ctx.AgentRuntime.OpenedSessions);
             Assert.False(cancel.IsCompleted);
             release.SetResult();
             var error = await Assert.ThrowsAsync<KernelException>(() => cancel);
             Assert.Equal(KernelErrorCode.SessionRecoveryRequired, error.Code);
             var report = await ctx.Kernel.ReadReportAsync(trackId);
-            Assert.Equal(TaskRunStatus.Running, report.Tasks.Single(t => t.Id == first.Receipt.Task!.Id).Status);
-            Assert.Equal(TaskRunStatus.Pending, report.Tasks.Single(t => t.Id == second.Receipt.Task.Id).Status);
+            Assert.Equal(operation == "task" ? TaskRunStatus.Canceled : TaskRunStatus.Running,
+                report.Tasks.Single(t => t.Id == first.Task.Id).Status);
+            Assert.Equal(TaskRunStatus.Pending, report.Tasks.Single(t => t.Id == second.Id).Status);
             Assert.Single(ctx.AgentRuntime.OpenedSessions);
             var agent = ctx.AgentRuntime.OpenedSessions.Single();
             agent.ShutdownConfirmed = true;
             ctx.AgentRuntime.OnOpenedSession = null;
             ctx.AgentRuntime.TurnScript = null;
-            await ctx.Kernel.CancelTaskAsync(trackId, null, first.Receipt.Task!.Id);
+            await ctx.Kernel.CancelTaskAsync(trackId, null, first.Task.Id);
             await ctx.Kernel.WaitForTrackIdleAsync(trackId).WaitAsync(TimeSpan.FromSeconds(3));
             Assert.Equal(2, ctx.AgentRuntime.OpenedSessions.Count);
         }
@@ -89,7 +89,7 @@ public sealed class SessionRuntimeIntegrationTests
         // Drain the reservation even when the canceled caller returned before it ran.
         await actor.EnqueueAsync(_ => Task.CompletedTask);
         var created = await ctx.Kernel.CreateSessionAsync(snapshot.Track.Id,
-            new(Prompt: "after canceled close", Task: new()), "after-close", Human, default);
+            new(Prompt: "after canceled close"), "after-close", Human, default);
         await ctx.Kernel.WaitForTrackIdleAsync(snapshot.Track.Id).WaitAsync(TimeSpan.FromSeconds(3));
         Assert.Equal("completed", Assert.Single(ctx.Store.GetTurnsForSession(created.Receipt.Session.Id)).Status);
         var closed = await actor.CloseTrackBySessionAsync(snapshot.Track.LeadSessionId!).WaitAsync(TimeSpan.FromSeconds(3));
@@ -264,9 +264,10 @@ public sealed class SessionRuntimeIntegrationTests
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         ctx.AgentRuntime.TurnScript = (_, _, ct) => Hold(release.Task, ct);
         using var events = ctx.EventHub.Subscribe(snapshot.Track.Id);
-        var created = await ctx.Kernel.CreateSessionAsync(snapshot.Track.Id,
-            new(Prompt: "hold", Task: worker ? new() : null), "create", Human, default);
-        var id = created.Receipt.Session.Id;
+        var session = worker
+            ? (await FlowFixture.StartWorkerAsync(ctx.Kernel, snapshot.Track.Id, FlowFixture.Worker("create", "hold"))).Session
+            : (await ctx.Kernel.CreateSessionAsync(snapshot.Track.Id, new(Prompt: "hold"), "create", Human, default)).Receipt.Session;
+        var id = session.Id;
         SessionItemsPageDto page;
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         do
@@ -310,9 +311,10 @@ public sealed class SessionRuntimeIntegrationTests
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
         ctx.AgentRuntime.SupportsSessionResume = true;
         ctx.AgentRuntime.TurnScript = (_, _, ct) => Lost(ct);
-        var created = await ctx.Kernel.CreateSessionAsync(snapshot.Track.Id,
-            new(Prompt: "lose stream", Task: worker ? new() : null), "lost", Human, default);
-        var id = created.Receipt.Session.Id;
+        var session = worker
+            ? (await FlowFixture.StartWorkerAsync(ctx.Kernel, snapshot.Track.Id, FlowFixture.Worker("lost", "lose stream"))).Session
+            : (await ctx.Kernel.CreateSessionAsync(snapshot.Track.Id, new(Prompt: "lose stream"), "lost", Human, default)).Receipt.Session;
+        var id = session.Id;
         await ctx.Kernel.WaitForTrackIdleAsync(snapshot.Track.Id);
         var before = (await ctx.Kernel.GetSessionItemsAsync(id, new(), Human, default)).Session;
         Assert.Equal("unknown", before.Status);

@@ -358,7 +358,7 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
             if (firstInput is not null)
                 throw new NotSupportedException("Durable first inputs are tested with SQLite.");
             _tracks.Add(track.Id, track);
-            SyncTemplateSchedulesLocked(track.Id, creation.TemplateSchedules);
+            _trackSchedules.AddRange(creation.FlowClocks);
             _reports[track.Id] = report;
             _revisions[(track.Id, report.DocRev)] = new InMemoryReportDocEngine().CompressZstd(report.Blocks);
             _templateSnapshots[track.Id] = templateSnapshot;
@@ -550,13 +550,14 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
         }
     }
 
-    public Task UpdateTrackTemplateAndEmitAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto evt, CancellationToken ct, IReadOnlyList<TrackScheduleDto>? templateSchedules = null, bool refreshPromptsOnly = false, bool writeData = false)
+    public Task UpdateTrackTemplateAndEmitAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto evt, CancellationToken ct, bool writeData = false, TrackFlowUpdate? flow = null)
     {
         lock (_gate)
         {
             if (FailTemplateUpdate) throw new IOException("template persistence failure");
             _templateSnapshots[track.Id] = templateSnapshot;
-            SyncTemplateSchedulesLocked(track.Id, refreshPromptsOnly ? (templateSchedules ?? []).Where(s => _trackSchedules.Any(old => old.TrackId == track.Id && old.Id == s.Id && old.SourceKind == "template" && old.State == "active")).ToArray() : templateSchedules ?? []);
+            if (flow is not null)
+                CommitTrackFlowAsync(track, flow.ExpectedRev, flow.Tasks, flow.Clocks, [], [], ct).GetAwaiter().GetResult();
             return UpdateTrackAndEmitAsync(track, evt, ct, writeData);
         }
     }
@@ -570,35 +571,21 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
         }
     }
 
-    public Task SaveReportAndTasksAsync(
+    public Task SaveReportAsync(
         string trackId,
         ReportDocument report,
         byte[] compressedRevisionBlocks,
         string? authorSessionId,
         string commitMessage,
-        IReadOnlyList<TaskDto> syncedTasks,
         JsonElement nextTemplateState,
         EventEnvelopeDto evt,
-        CancellationToken ct,
-        WorkerDispatchIntent? dispatch = null)
+        CancellationToken ct)
     {
         lock (_gate)
         {
             _reports[trackId] = report;
-            var taskList = syncedTasks.ToList();
-            if (dispatch?.Session is { } allocated)
-            {
-                var taskIdx = taskList.FindIndex(t => t.TaskKey == dispatch.TaskKey);
-                var parent = authorSessionId is null ? null : _sessions[authorSessionId];
-                allocated = allocated with { ParentSessionId = parent?.Id,
-                    SpawnDepth = parent is null ? 0 : parent.SpawnDepth + 1 };
-                _sessions[allocated.Id] = allocated;
-                taskList[taskIdx] = taskList[taskIdx] with { SessionId = allocated.Id };
-                _sessionCreations[(trackId, dispatch.AuthorId, dispatch.RequestKey)] = new(dispatch.RequestHash, allocated, null);
-            }
-            if (authorSessionId is null && dispatch is null) EnqueueWakeLocked(TrackWakeRequests.Report(trackId, report.DocRev, evt.Payload));
+            if (authorSessionId is null) EnqueueWakeLocked(TrackWakeRequests.Report(trackId, report.DocRev, evt.Payload));
             _revisions[(trackId, report.DocRev)] = compressedRevisionBlocks.ToArray();
-            _tasksByTrack[trackId] = taskList;
 
             if (_tracks.TryGetValue(trackId, out var track))
             {
@@ -1363,7 +1350,7 @@ internal sealed class ConfigurableFakePolicyVm : IPolicyVm
                 WorkspaceCreateCmd: createCmdMatch.Success ? createCmdMatch.Groups[1].Value : null,
                 WorkspaceCloseCmd: closeCmdMatch.Success ? closeCmdMatch.Groups[1].Value : null,
                 AfterWorkerDoneCmd: afterCmdMatch.Success ? afterCmdMatch.Groups[1].Value : null,
-                Schedules: [new ScheduleSpec("daily-check", "0 9 * * *", "UTC", "Static daily check prompt")],
+                Flow: TestJson.Parse("[]"),
                 Routing: []);
         }
 
@@ -1402,6 +1389,8 @@ internal sealed class ConfigurableFakePolicyVm : IPolicyVm
         return OnAfter?.Invoke(policy, eventName, data, state) ?? new(state,
             eventName == "task.settled" ? $"Policy noted {data.GetProperty("taskKey").GetString()} -> {data.GetProperty("status").GetString()}" : null);
     }
+
+    public IReadOnlyList<FlowNodeSpecDto> ResolveFlow(CompiledPolicy policy, JsonElement inputs) => [];
 
     public void ValidateInputs(CompiledPolicy policy, JsonElement inputs) => new PolicyVm.PolicyVm().ValidateInputs(policy, inputs);
     public string InterpolateInputs(CompiledPolicy policy, string text, JsonElement inputs) => new PolicyVm.PolicyVm().InterpolateInputs(policy, text, inputs);

@@ -20,7 +20,7 @@ public sealed partial class PergaKernelService
     public Task<IReadOnlyList<SessionSummaryDto>> ListSessionsAsync(string trackId, SessionListFilter filter, InteropPrincipal caller, CancellationToken ct) =>
         Actors.GetOrActivate(trackId).ListSessionsAsync(filter, caller, ct);
     public Task<(SessionCreationReceipt Receipt, bool Replay)> CreateSessionAsync(string trackId, CreateSessionRequest request,
-        string requestKey, InteropPrincipal caller, CancellationToken ct) => Actors.GetOrActivate(trackId).CreateSessionAsync(request, requestKey, caller, ct);
+        string requestKey, InteropPrincipal caller, CancellationToken ct) => Actors.GetOrActivate(trackId).CreateConversationAsync(request, requestKey, ct, caller);
     public async Task<SessionItemsPageDto> GetSessionItemsAsync(string sessionId, SessionReadQuery query, InteropPrincipal caller, CancellationToken ct) =>
         await Actors.GetOrActivate(await ResolveTrackIdForSessionAsync(sessionId, ct).ConfigureAwait(false))
             .GetSessionItemsAsync(sessionId, query, caller, ct).ConfigureAwait(false);

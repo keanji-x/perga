@@ -69,14 +69,15 @@ public sealed partial class TrackActor
         await PersistAndEmitTaskUpdatedCoreAsync(runningTask, null, now, ct).ConfigureAwait(false);
 
         var runCts = CancellationTokenSource.CreateLinkedTokenSource(_actorShutdownCts.Token);
-        _activeTasks[task.Id] = new ActiveTaskRunState(task.Id, nextRunCount, null, runCts);
+        var active = new ActiveTaskRunState(task.Id, nextRunCount, null, runCts);
+        _activeTasks[task.Id] = active;
         Volatile.Write(ref _activeTaskCount, _activeTasks.Count);
 
         var reservation = Guid.NewGuid();
         _scheduler.Reserve(targetSessionId, reservation);
         var runToken = runCts.Token;
 
-        _ = TrackBackgroundJob(async () =>
+        active.Execution = TrackBackgroundJob(async () =>
         {
             using (admission)
             {
@@ -172,9 +173,9 @@ public sealed partial class TrackActor
         var now = NowMs();
         var priorProgress = task.Status == TaskRunStatus.Running ? TrackFlowProjector.ExtractPersistedWatchProgress(task) : null;
         var nextRunCount = priorProgress is null ? checked(task.RunCount + 1) : task.RunCount;
-        var interval = FlowConstants.TryParseDuration(node.Do.Interval ?? FlowConstants.DefaultWatchInterval, out var parsedInterval)
+        var interval = FlowSyntax.TryParseDuration(node.Do.Interval ?? FlowSyntax.DefaultWatchInterval, out var parsedInterval)
             ? parsedInterval : TimeSpan.FromSeconds(60);
-        var timeout = FlowConstants.TryParseDuration(node.Do.Timeout ?? FlowConstants.DefaultWatchTimeout, out var parsedTimeout)
+        var timeout = FlowSyntax.TryParseDuration(node.Do.Timeout ?? FlowSyntax.DefaultWatchTimeout, out var parsedTimeout)
             ? parsedTimeout : TimeSpan.FromMinutes(60);
         var timeoutAtMs = priorProgress?.TimeoutAtMs ?? checked(now + (long)timeout.TotalMilliseconds);
         var initialProgress = priorProgress ?? new FlowWatchProgressDto(

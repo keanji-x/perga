@@ -89,7 +89,7 @@ public sealed class TemplateRulesTests
     {
         var parent = _vm.Compile("""
             export default {id:'base',title:'Base',plugins:['a','b'],inputs:{one:{type:'string',default:'base'}},
-              schedules:[{id:'pulse',cron:'0 9 * * *',prompt:'base'}],
+              flow:[{id:'pulse',when:{cron:'0 9 * * *'},do:{kind:'wake',session:'lead',prompt:'base'}}],
               report:{maxProseChars:100,sections:[{h1:'Keep'},{h1:'Override',editableBy:['human']}]},
               tasks:{routing:[{when:{role:'review'},model:'base'},{when:{},provider:'codex'}]},
               before(){throw Error('parent before replaced');},after(){throw Error('parent after replaced');},
@@ -97,7 +97,7 @@ public sealed class TemplateRulesTests
             """);
         var policy = _vm.Compile(PolicyVm.Inherit(parent,"""
             export default {id:'child',title:'Child',plugins:['b','c'],inputs:{one:{type:'string',default:'child'},two:{type:'boolean'}},
-              schedules:[{id:'pulse',cron:'0 10 * * *',prompt:'child'}],
+              flow:[{id:'pulse',when:{cron:'0 10 * * *'},do:{kind:'wake',session:'lead',prompt:'child'}}],
               report:{sections:[{h1:'Override',editableBy:['lead']}]},
               tasks:{routing:[{when:{role:'review'},model:'child'}]},
               before(a,ctx){ctx.state.order=['child'];return Allow();},after(e,ctx){ctx.state.after=['child'];},
@@ -108,7 +108,7 @@ public sealed class TemplateRulesTests
         Assert.Equal(100,policy.Manifest.MaxProseChars);
         Assert.Equal(2,policy.Manifest.Sections.Count);
         Assert.Equal("lead",Assert.Single(policy.Manifest.Sections[1].EditableBy!));
-        Assert.Equal("0 10 * * *",Assert.Single(policy.Manifest.Schedules).Cron);
+        Assert.Equal("0 10 * * *",Assert.Single(_vm.ResolveFlow(policy, Json())).When?.Cron);
         Assert.Equal(new PolicyTaskRoute("codex","child"),_vm.RouteTaskDispatch(policy,"review","read_only",null,null,Json()));
         Assert.Equal("[\"child\"]",_vm.Before(policy,"task.dispatch","track",Json(),Json(),Json()).NextState.GetProperty("order").GetRawText());
         Assert.Equal("[\"child\"]",_vm.After(policy,"event","track",Json(),Json(),Json()).NextState.GetProperty("after").GetRawText());

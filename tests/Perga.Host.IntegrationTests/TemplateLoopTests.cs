@@ -133,38 +133,16 @@ public sealed class TemplateLoopTests
             "tasks":{"routing":[{"when":{"role":"review","access":"read_only"},"provider":"claude","model":"${inputs.model}","enforce":true}]}}
             """;
         await KernelMcpDispatcher.ExecuteGuardedAsync(kernel, caller, KernelMcpToolNames.TrackSet, JsonSerializer.SerializeToElement(new { source }));
-        var receipt = await kernel.CreateSessionAsync(trackId, new(Prompt: "Review this", Task: new(), Role: "review"), "route", new InteropPrincipal.Human(), default);
+        var receipt = await FlowFixture.StartWorkerAsync(kernel, trackId, "review", "Review this", role: "review");
         await kernel.WaitForTrackIdleAsync(trackId);
-        Assert.Equal("review", receipt.Receipt.Task!.Role);
-        var worker = Assert.Single(await kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), default), s => s.TaskId == receipt.Receipt.Task!.Id).Session;
-        Assert.Equal("claude", worker.Provider);
-        Assert.Equal("claude-sonnet-4-6", worker.Model);
-        var repeated = await kernel.CreateSessionAsync(trackId, new(Prompt: "Review this", Task: new(), Role: "review"), "route", new InteropPrincipal.Human(), default);
-        Assert.Equal(receipt.Receipt.Task!.Id, repeated.Receipt.Task!.Id);
+        Assert.Equal("review", receipt.Task.Role);
+        Assert.Equal("claude", receipt.Session.Provider);
+        Assert.Equal("claude-sonnet-4-6", receipt.Session.Model);
         var before = await kernel.ReadReportAsync(trackId);
-        var denied = await Assert.ThrowsAsync<KernelException>(() => kernel.CreateSessionAsync(trackId, new(Prompt: "Conflict", Task: new(), Model: "gpt-5.4", Role: "review"), "conflict", new InteropPrincipal.Human(), default));
-        Assert.Equal(KernelErrorCode.PolicyDenied, denied.Code);
+        var denied = await FlowFixture.AppendAsync(kernel, trackId, new FlowNodeSpecDto("conflict",
+            new("run", Prompt: "Conflict", Model: "gpt-5.4", Role: "review", Access: "read_only")));
+        Assert.False(denied.Ok);
         Assert.Equal(before.DocRev, (await kernel.ReadReportAsync(trackId)).DocRev);
-        await KernelMcpDispatcher.ExecuteGuardedAsync(kernel, caller, KernelMcpToolNames.TemplateUpdateInputs,
-            JsonSerializer.SerializeToElement(new { inputs = new { model = "missing-model" } }));
-        var unavailable = await Assert.ThrowsAsync<KernelException>(() => kernel.CreateSessionAsync(trackId, new(Prompt: "Unavailable", Task: new(), Role: "review"), "unavailable", new InteropPrincipal.Human(), default));
-        Assert.Equal(KernelErrorCode.InvalidArgument, unavailable.Code);
-        Assert.Equal(before.DocRev, (await kernel.ReadReportAsync(trackId)).DocRev);
-        await KernelMcpDispatcher.ExecuteGuardedAsync(kernel, caller, KernelMcpToolNames.TemplateUpdateInputs,
-            JsonSerializer.SerializeToElement(new { inputs = new { model = "claude-sonnet-4-6" } }));
-        var report = await kernel.ReadReportAsync(trackId);
-        await kernel.CommitReportAsync(trackId, leadId, new(report.Anchor,
-            [new BlockOp.UpsertBlockOp(null, ReportBlockKind.Task, null, JsonSerializer.SerializeToElement(new
-                { task_key = "authored", kind = "agent", ready = true, role = "review", access = "read_only", goal_or_cmd = "Inspect" }))]));
-        await kernel.WaitForTrackIdleAsync(trackId);
-        var authored = Assert.Single(await kernel.ListTasksAsync(trackId), t => t.TaskKey == "authored");
-        Assert.Equal("review", authored.Role);
-        Assert.Null(authored.Provider);
-        var authoredWorker = Assert.Single(await kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), default), s => s.TaskId == authored.Id).Session;
-        Assert.Equal("claude", authoredWorker.Provider);
-        Assert.Equal("claude-sonnet-4-6", authoredWorker.Model);
-        var authoredBlock = Assert.Single((await kernel.ReadReportAsync(trackId)).Blocks, b => b.Id == authored.BlockId);
-        Assert.False(authoredBlock.Payload!.Value.TryGetProperty("provider", out _));
         var stored = await host.Services.GetRequiredService<ITrackStore>().LoadTrackAggregateAsync(trackId, default);
         Assert.All(stored!.Tasks, task => Assert.Equal("review", task.Role));
     }

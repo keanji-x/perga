@@ -1,3 +1,6 @@
+using System.Text.Json;
+using Microsoft.Data.Sqlite;
+using Perga.Kernel.Events;
 using Dapper;
 using Perga.Contracts;
 using Perga.Kernel;
@@ -21,8 +24,8 @@ public sealed partial class SqliteTrackStore : ITrackScheduleStore
         """;
 
     private static async Task UpsertFlowScheduleInternalAsync(
-        Microsoft.Data.Sqlite.SqliteConnection conn,
-        Microsoft.Data.Sqlite.SqliteTransaction tx,
+        SqliteConnection conn,
+        SqliteTransaction tx,
         TrackScheduleDto schedule,
         CancellationToken ct)
     {
@@ -79,80 +82,6 @@ public sealed partial class SqliteTrackStore : ITrackScheduleStore
             """, toPersist, tx, cancellationToken: ct)).ConfigureAwait(false);
     }
 
-    public Task<TrackScheduleDto> UpsertAsync(TrackScheduleDto schedule, CancellationToken ct)
-    {
-        ArgumentNullException.ThrowIfNull(schedule);
-        EnsureInitialized();
-        return _writer.EnqueueAsync(async (conn, tx, token) =>
-        {
-            var trackRow = await conn.QuerySingleOrDefaultAsync<TrackClosedRow>(new CommandDefinition(
-                "SELECT closed_at_ms AS ClosedAtMs FROM tracks WHERE id=@TrackId;",
-                new { schedule.TrackId }, tx, cancellationToken: token)).ConfigureAwait(false);
-            if (trackRow is null)
-                throw KernelException.NotFound($"Track '{schedule.TrackId}' was not found.");
-            if (trackRow.ClosedAtMs is not null)
-                throw KernelException.Conflict($"Cannot schedule wake on closed track '{schedule.TrackId}'.");
-
-            var existing = await conn.QuerySingleOrDefaultAsync<TrackScheduleRow>(new CommandDefinition(
-                ScheduleSelect + " WHERE track_id=@TrackId AND id=@Id;",
-                new { schedule.TrackId, schedule.Id }, tx, cancellationToken: token)).ConfigureAwait(false);
-
-            if (existing?.NodeKey is not null)
-                throw KernelException.Conflict($"Schedule ID '{schedule.Id}' belongs to Track Flow.");
-            if (existing is not null && existing.State == TrackScheduleStates.Active &&
-                (existing.SourceKind == TrackScheduleSources.Template || schedule.SourceKind == TrackScheduleSources.Template) && existing.SourceKind != schedule.SourceKind)
-                throw KernelException.Conflict($"Schedule ID '{schedule.Id}' belongs to another source.");
-            var toPersist = schedule;
-            if (existing is not null &&
-                existing.State is TrackScheduleStates.Active)
-            {
-                var firedCount = checked((int)existing.FiredCount);
-                if (schedule.MaxOccurrences is { } max && firedCount >= max)
-                    throw KernelException.InvalidArgument($"maxOccurrences ({max}) must exceed current firedCount ({firedCount}).");
-
-                toPersist = schedule with
-                {
-                    FiredCount = firedCount,
-                    LastFiredAtMs = existing.LastFiredAtMs,
-                    CreatedAtMs = existing.CreatedAtMs
-                };
-            }
-
-            await conn.ExecuteAsync(new CommandDefinition("""
-                INSERT INTO track_schedules(
-                    id, track_id, source_kind, schedule_kind, title, prompt,
-                    cron_expr, timezone, run_at_ms, next_fire_at_ms, last_fired_at_ms,
-                    max_occurrences, fired_count, state, created_at_ms, updated_at_ms, node_key)
-                VALUES(
-                    @Id, @TrackId, @SourceKind, @ScheduleKind, @Title, @Prompt,
-                    @CronExpr, @Timezone, @RunAtMs, @NextFireAtMs, @LastFiredAtMs,
-                    @MaxOccurrences, @FiredCount, @State, @CreatedAtMs, @UpdatedAtMs, @NodeKey)
-                ON CONFLICT(track_id, id) DO UPDATE SET
-                    source_kind = excluded.source_kind,
-                    schedule_kind = excluded.schedule_kind,
-                    title = excluded.title,
-                    prompt = excluded.prompt,
-                    cron_expr = excluded.cron_expr,
-                    timezone = excluded.timezone,
-                    run_at_ms = excluded.run_at_ms,
-                    next_fire_at_ms = excluded.next_fire_at_ms,
-                    last_fired_at_ms = excluded.last_fired_at_ms,
-                    max_occurrences = excluded.max_occurrences,
-                    fired_count = excluded.fired_count,
-                    state = excluded.state,
-                    created_at_ms = excluded.created_at_ms,
-                    updated_at_ms = excluded.updated_at_ms,
-                    node_key = excluded.node_key;
-                """, toPersist, tx, cancellationToken: token)).ConfigureAwait(false);
-
-            var row = await conn.QuerySingleAsync<TrackScheduleRow>(new CommandDefinition(
-                ScheduleSelect + " WHERE track_id=@TrackId AND id=@Id;",
-                new { schedule.TrackId, schedule.Id }, tx, cancellationToken: token)).ConfigureAwait(false);
-            await InsertSchedulesEventAsync(conn, tx, schedule.TrackId, schedule.UpdatedAtMs, token).ConfigureAwait(false);
-            return row.ToDto();
-        }, ct);
-    }
-
     public async Task<TrackScheduleDto?> GetAsync(string trackId, string scheduleId, CancellationToken ct)
     {
         EnsureInitialized();
@@ -174,142 +103,19 @@ public sealed partial class SqliteTrackStore : ITrackScheduleStore
         return rows.Select(r => r.ToDto()).ToArray();
     }
 
-    public Task<bool> CancelAsync(string trackId, string scheduleId, CancellationToken ct)
+    public async Task<IReadOnlyList<FiredTrackSchedule>> ListDueFlowClocksAsync(long nowMs, CancellationToken ct)
     {
         EnsureInitialized();
-        var now = _timeProvider.GetUtcNow().ToUnixTimeMilliseconds();
-        return _writer.EnqueueAsync(async (conn, tx, token) =>
-        {
-            var existing = await conn.QuerySingleOrDefaultAsync<TrackScheduleRow>(new CommandDefinition(
-                ScheduleSelect + " WHERE track_id=@TrackId AND id=@Id;",
-                new { TrackId = trackId, Id = scheduleId }, tx, cancellationToken: token)).ConfigureAwait(false);
-            if (existing is null || existing.NodeKey is not null || existing.State != TrackScheduleStates.Active)
-                return false;
-
-            await conn.ExecuteAsync(new CommandDefinition($"""
-                UPDATE track_schedules SET state='{TrackScheduleStates.Canceled}', next_fire_at_ms=NULL, updated_at_ms=@Now
-                WHERE track_id=@TrackId AND id=@Id AND state='{TrackScheduleStates.Active}';
-                """, new { TrackId = trackId, Id = scheduleId, Now = now }, tx, cancellationToken: token)).ConfigureAwait(false);
-
-            var coalesceKey = TrackWakeRequests.TrackScheduleKey(existing.Id);
-            await conn.ExecuteAsync(new CommandDefinition($"""
-                UPDATE track_wakes SET state='{TrackWakeStates.Dropped}', reason='{TrackWakeReasons.Canceled}', updated_at_ms=@Now
-                WHERE track_id=@TrackId AND kind='{TrackWakeKinds.Schedule}' AND coalesce_key=@CoalesceKey AND json_extract(payload_json,'$.scheduleId')=@Id AND state='{TrackWakeStates.Pending}';
-                """, new { TrackId = trackId, Id = scheduleId, CoalesceKey = coalesceKey, Now = now }, tx, cancellationToken: token)).ConfigureAwait(false);
-            await InsertSchedulesEventAsync(conn, tx, trackId, now, token).ConfigureAwait(false);
-            return true;
-        }, ct);
-    }
-
-    public Task<int> CancelActiveForTrackAsync(string trackId, CancellationToken ct)
-    {
-        EnsureInitialized();
-        var now = _timeProvider.GetUtcNow().ToUnixTimeMilliseconds();
-        return _writer.EnqueueAsync(async (conn, tx, token) =>
-        {
-            var updated = await conn.ExecuteAsync(new CommandDefinition($"""
-                UPDATE track_schedules SET state='{TrackScheduleStates.Canceled}', next_fire_at_ms=NULL, updated_at_ms=@Now
-                WHERE track_id=@TrackId AND state='{TrackScheduleStates.Active}';
-                """, new { TrackId = trackId, Now = now }, tx, cancellationToken: token)).ConfigureAwait(false);
-            await conn.ExecuteAsync(new CommandDefinition($"""
-                UPDATE track_wakes SET state='{TrackWakeStates.Dropped}', reason='{TrackWakeReasons.Canceled}', updated_at_ms=@Now
-                WHERE track_id=@TrackId AND kind='{TrackWakeKinds.Schedule}' AND state='{TrackWakeStates.Pending}';
-                """, new { TrackId = trackId, Now = now }, tx, cancellationToken: token)).ConfigureAwait(false);
-            if (updated > 0) await InsertSchedulesEventAsync(conn, tx, trackId, now, token).ConfigureAwait(false);
-            return updated;
-        }, ct);
-    }
-
-    public async Task<IReadOnlyList<FiredTrackSchedule>> FireDueAsync(
-        long nowMs,
-        Func<TrackScheduleDto, long?> computeNextFireAtMs,
-        CancellationToken ct)
-    {
-        ArgumentNullException.ThrowIfNull(computeNextFireAtMs);
-        EnsureInitialized();
-        await using (var read = await OpenReadConnectionAsync(ct).ConfigureAwait(false))
-        {
-            var anyDue = await read.ExecuteScalarAsync<bool>(new CommandDefinition("""
-                SELECT EXISTS(SELECT 1 FROM track_schedules
-                WHERE state='active' AND next_fire_at_ms IS NOT NULL AND next_fire_at_ms <= @Now);
-                """, new { Now = nowMs }, cancellationToken: ct)).ConfigureAwait(false);
-            if (!anyDue) return [];
-        }
-        return await _writer.EnqueueAsync<IReadOnlyList<FiredTrackSchedule>>(async (conn, tx, token) =>
-        {
-            var dueRows = (await conn.QueryAsync<TrackScheduleRow>(new CommandDefinition($"""
-                SELECT s.id AS Id, s.track_id AS TrackId,
-                       s.source_kind AS SourceKind, s.schedule_kind AS ScheduleKind, s.title AS Title,
-                       s.prompt AS Prompt, s.cron_expr AS CronExpr, s.timezone AS Timezone,
-                       s.run_at_ms AS RunAtMs, s.next_fire_at_ms AS NextFireAtMs, s.last_fired_at_ms AS LastFiredAtMs,
-                       s.max_occurrences AS MaxOccurrences, s.fired_count AS FiredCount,
-                       s.state AS State, s.created_at_ms AS CreatedAtMs, s.updated_at_ms AS UpdatedAtMs,
-                       s.node_key AS NodeKey,
-                       t.closed_at_ms AS ClosedAtMs
-                FROM track_schedules s
-                JOIN tracks t ON t.id = s.track_id
-                WHERE s.state='{TrackScheduleStates.Active}' AND s.next_fire_at_ms IS NOT NULL AND s.next_fire_at_ms <= @Now
-                ORDER BY s.next_fire_at_ms ASC, s.id ASC
-                LIMIT 64;
-                """, new { Now = nowMs }, tx, cancellationToken: token)).ConfigureAwait(false)).AsList();
-
-            if (dueRows.Count == 0)
-                return [];
-
-            var fired = new List<FiredTrackSchedule>(dueRows.Count);
-            foreach (var row in dueRows)
-            {
-                if (row.ClosedAtMs is not null)
-                {
-                    await conn.ExecuteAsync(new CommandDefinition("""
-                        UPDATE track_schedules SET state='canceled', next_fire_at_ms=NULL, updated_at_ms=@Now
-                        WHERE track_id=@TrackId AND id=@Id AND state='active';
-                        """, new { row.TrackId, row.Id, Now = nowMs }, tx, cancellationToken: token)).ConfigureAwait(false);
-                    await InsertSchedulesEventAsync(conn, tx, row.TrackId, nowMs, token).ConfigureAwait(false);
-                    continue;
-                }
-                var schedule = row.ToDto();
-                if (schedule.NodeKey is not null)
-                {
-                    fired.Add(new FiredTrackSchedule(schedule.TrackId, schedule.Id, schedule.NodeKey, schedule.NextFireAtMs));
-                    continue;
-                }
-                var nextFiredCount = schedule.FiredCount + 1;
-                long? nextFireAtMs = null;
-                var nextState = TrackScheduleStates.Done;
-                if (schedule.ScheduleKind == TrackScheduleKinds.Cron &&
-                    (!schedule.MaxOccurrences.HasValue || nextFiredCount < schedule.MaxOccurrences.Value))
-                {
-                    nextFireAtMs = computeNextFireAtMs(schedule);
-                    if (nextFireAtMs.HasValue)
-                        nextState = TrackScheduleStates.Active;
-                }
-
-                await conn.ExecuteAsync(new CommandDefinition("""
-                    UPDATE track_schedules
-                    SET fired_count=@FiredCount, last_fired_at_ms=@Now, next_fire_at_ms=@NextFireAtMs,
-                        state=@State, updated_at_ms=@Now
-                    WHERE track_id=@TrackId AND id=@Id AND state='active';
-                    """, new
-                {
-                    schedule.TrackId,
-                    schedule.Id,
-                    FiredCount = nextFiredCount,
-                    Now = nowMs,
-                    NextFireAtMs = nextFireAtMs,
-                    State = nextState
-                }, tx, cancellationToken: token)).ConfigureAwait(false);
-
-                var wakeRequest = TrackWakeRequests.DynamicSchedule(
-                    schedule.TrackId, schedule.Id, schedule.Prompt, schedule.SourceKind);
-                await EnqueueWakeInternalAsync(conn, tx, wakeRequest, nowMs, token).ConfigureAwait(false);
-
-                await InsertSchedulesEventAsync(conn, tx, schedule.TrackId, nowMs, token).ConfigureAwait(false);
-                fired.Add(new FiredTrackSchedule(schedule.TrackId, schedule.Id, schedule.NodeKey));
-            }
-
-            return fired;
-        }, ct);
+        await using var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);
+        var rows = await conn.QueryAsync<FiredTrackSchedule>(new CommandDefinition("""
+            SELECT s.track_id AS TrackId, s.id AS ScheduleId, s.node_key AS NodeKey, s.next_fire_at_ms AS DueAtMs
+            FROM track_schedules s
+            JOIN tracks t ON t.id = s.track_id
+            WHERE s.node_key IS NOT NULL AND s.state = 'active' AND s.next_fire_at_ms <= @Now AND t.closed_at_ms IS NULL
+            ORDER BY s.next_fire_at_ms, s.id, s.track_id
+            LIMIT 64;
+            """, new { Now = nowMs }, cancellationToken: ct)).ConfigureAwait(false);
+        return rows.ToArray();
     }
 
     public Task<bool> CommitFlowFireAsync(TrackScheduleDto nextClock, long expectedDueAtMs, TaskDto? armedTask,
@@ -342,14 +148,16 @@ public sealed partial class SqliteTrackStore : ITrackScheduleStore
         }, ct);
     }
 
-    private sealed class TrackClosedRow
+    private static async Task InsertSchedulesEventAsync(SqliteConnection conn, SqliteTransaction tx, string trackId, long now, CancellationToken ct)
     {
-        public long? ClosedAtMs { get; set; }
+        var area = await conn.ExecuteScalarAsync<string>(new CommandDefinition("SELECT area_id FROM tracks WHERE id=@TrackId;",
+            new { TrackId = trackId }, tx, cancellationToken: ct)).ConfigureAwait(false);
+        await InsertEventInternalAsync(conn, tx, new EventEnvelopeDto(null, area, trackId, KernelEventKinds.TrackSchedulesUpdated,
+            JsonSerializer.SerializeToElement(new { trackId }), now), ct).ConfigureAwait(false);
     }
 
     private sealed class TrackScheduleRow
     {
-        public long? ClosedAtMs { get; set; }
         public string Id { get; set; } = "";
         public string TrackId { get; set; } = "";
         public string SourceKind { get; set; } = "";

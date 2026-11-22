@@ -451,12 +451,11 @@ public sealed class McpPluginsPolicyGuardAndLifecycleIntegrationTests
                     export default defineTemplate({
                       id: "scheduled-monitor",
                       title: "Scheduled Monitor",
-                      schedules: [
+                      flow: [
                         {
                           id: "every-five-min",
-                          cron: "*/5 * * * *",
-                          timezone: "UTC",
-                          prompt: "CRON_PULSE:${inputs.target}"
+                          when: { cron: "*/5 * * * *", tz: "UTC" },
+                          do: { kind: "wake", session: "lead", prompt: "CRON_PULSE:${inputs.target}" }
                         }
                       ]
                     });
