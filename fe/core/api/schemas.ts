@@ -32,6 +32,7 @@ export const areaSchema = z.object({
   kind: areaKindSchema,
   default_template_id: z.string().nullable().default(null),
   default_cwd: z.string().nullable().default(null),
+  execution_target_id: z.string().optional(),
   created_at: z.number(),
   updated_at: z.number(),
 });
@@ -350,6 +351,7 @@ export function decodeWireEvent(input: unknown): WireEventDecodeResult {
               kind: 'user',
               default_template_id: null,
               default_cwd: a.defaultCwd ?? null,
+              ...(a.executionTargetId !== undefined ? { execution_target_id: a.executionTargetId } : {}),
               created_at: a.createdAtMs,
               updated_at: a.updatedAtMs,
             },

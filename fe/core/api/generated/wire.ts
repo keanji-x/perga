@@ -10,7 +10,7 @@ default_template_id: string | null,
 /**
  * Exact attached Git working directory preselected for a new Track; `None` keeps the server-managed default.
  */
-default_cwd: string | null, created_at: number, updated_at: number, };
+default_cwd: string | null, execution_target_id?: string, created_at: number, updated_at: number, };
 
 /**
  * One row per claimed directory; `path` is absolute and globally unique across the table. A folder

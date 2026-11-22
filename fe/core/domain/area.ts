@@ -54,14 +54,11 @@ export function toArea(wire: PergaAreaWire | AreaDto): Area {
  */
 export function newestArea(current: Area, incoming: Area): Area {
   if (current.updatedAt > incoming.updatedAt) return current;
-  if (incoming.executionTargetId === undefined && current.executionTargetId !== undefined) {
-    return { ...incoming, executionTargetId: current.executionTargetId };
-  }
   return incoming;
 }
 
 export function areaListOperation(): ApiOperation<(PergaAreaWire | AreaDto)[]> {
-  return { method: 'GET', path: '/api/v1/areas', responseSchema: z.array(z.union([areaDtoSchema, areaSchema.extend({ execution_target_id: z.string().optional() })])) };
+  return { method: 'GET', path: '/api/v1/areas', responseSchema: z.array(z.union([areaDtoSchema, areaSchema])) };
 }
 
 /** The system area must never reach a user-visible surface; this is the client-side half of the server filter. */
@@ -164,7 +161,7 @@ export function createAreaOperation(body: NewAreaBody, idempotencyKey: string): 
     path: '/api/v1/areas',
     body: wireBody,
     headers: { 'Idempotency-Key': idempotencyKey },
-    responseSchema: z.union([areaDtoSchema, areaSchema.extend({ execution_target_id: z.string().optional() })]),
+    responseSchema: z.union([areaDtoSchema, areaSchema]),
   };
 }
 
@@ -185,7 +182,7 @@ export function updateAreaOperation(areaId: string, body: AreaPatchBody): ApiOpe
     method: 'PATCH',
     path: `/api/v1/areas/${encodeURIComponent(areaId)}`,
     body: wireBody,
-    responseSchema: z.union([areaDtoSchema, areaSchema.extend({ execution_target_id: z.string().optional() })]),
+    responseSchema: z.union([areaDtoSchema, areaSchema]),
   };
 }
 

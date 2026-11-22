@@ -170,11 +170,7 @@ public sealed class SshExecutionFileSystem : IExecutionFileSystem
                     if not stat.S_ISREG(info.st_mode):
                         print(json.dumps({"error": "invalid_argument", "message": "Workspace path is not a regular file."}))
                         sys.exit(0)
-                    fd_link = f"/proc/self/fd/{f.fileno()}"
-                    opened_path = os.path.realpath(fd_link) if os.path.exists(fd_link) else real_cand
-                    if opened_path != real_root and not opened_path.startswith(real_root_sep):
-                        print(json.dumps({"error": "forbidden", "message": "Path escapes workspace root."}))
-                        sys.exit(0)
+                    ensure_fd_contained(f.fileno())
                     total_size = info.st_size
                     data = f.read(max_bytes)
             except PermissionError:
@@ -275,11 +271,7 @@ public sealed class SshExecutionFileSystem : IExecutionFileSystem
                 if not stat.S_ISREG(mode):
                     print(json.dumps({"error": "invalid_argument", "message": "Workspace path is not a regular file."}))
                     sys.exit(0)
-                fd_link = f"/proc/self/fd/{f.fileno()}"
-                opened_path = os.path.realpath(fd_link) if os.path.exists(fd_link) else real_cand
-                if opened_path != real_root and not opened_path.startswith(real_root_sep):
-                    print(json.dumps({"error": "forbidden", "message": "Path escapes workspace root."}))
-                    sys.exit(0)
+                ensure_fd_contained(f.fileno())
                 print(json.dumps({"path": real_cand}), flush=True)
                 shutil.copyfileobj(f, sys.stdout.buffer, 65536)
             """;
@@ -332,6 +324,12 @@ public sealed class SshExecutionFileSystem : IExecutionFileSystem
 
     private const string WorkspacePathScript = """
         import json, os, stat, sys
+        def ensure_fd_contained(fd):
+            fd_link = f"/proc/self/fd/{fd}"
+            if os.path.exists(fd_link) and os.path.commonpath([real_root, os.path.realpath(fd_link)]) != real_root:
+                print(json.dumps({"error": "forbidden", "message": "Path escapes workspace root."}))
+                sys.exit(0)
+
         root_full = os.path.abspath(sys.argv[1])
         raw_path = sys.argv[2]
 

@@ -1,6 +1,6 @@
 import { describe,expect,it } from 'vitest';
 
-import { areaSchema } from '../api/schemas.js';
+import { areaSchema,decodeWireEvent } from '../api/schemas.js';
 
 import {
 areaFolderWireSchema,areaFoldersOperation,areaListOperation,areaOf,
@@ -20,6 +20,19 @@ function area(overrides: Partial<Area>): Area {
 }
 
 describe('area wire decode', () => {
+  it('carries a target change through area.updated decoding and reconciliation', () => {
+    const decoded = decodeWireEvent({
+      kind: 'area.updated', eventId: 1, createdAtMs: 2,
+      payload: { id: 'c1', name: 'Work', color: '#5B8DEF', sortOrder: 1,
+        createdAtMs: 1, updatedAtMs: 2, executionTargetId: 'jasper' },
+    });
+    expect(decoded.status).toBe('ready');
+    if (decoded.status !== 'ready' || decoded.value.ev !== 'area.updated') throw new Error('Expected area.updated');
+    expect(decoded.value.data).toMatchObject({ execution_target_id: 'jasper' });
+    const incoming = toArea(decoded.value.data);
+    expect(newestArea(area({ executionTargetId: 'local', updatedAt: 1 }), incoming).executionTargetId).toBe('jasper');
+  });
+
   it('uses the same defaults and strips unknown fields on every HTTP response', () => {
     const input = { ...baseWire, future_field: 'ignored' };
     const expected = { ...baseWire, kind: 'user', default_template_id: null, default_cwd: null };

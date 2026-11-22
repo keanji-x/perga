@@ -29,10 +29,15 @@ public sealed class SshTargetConfig
 
     public string Destination => $"{User}@{Host}";
 
-    public bool IsLoopbackHost =>
-        string.Equals(Host, "127.0.0.1", StringComparison.Ordinal) ||
-        string.Equals(Host, "localhost", StringComparison.OrdinalIgnoreCase) ||
-        string.Equals(Host, "::1", StringComparison.Ordinal);
+    public bool IsLoopbackHost => IsLoopback(Host);
+
+    internal static bool IsLoopback(string host) =>
+        string.Equals(host, "127.0.0.1", StringComparison.Ordinal) ||
+        string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(host, "::1", StringComparison.Ordinal);
+
+    internal static string DefaultLabel(string user, string host, int port) =>
+        IsLoopback(host) ? user : (port == 22 ? $"{user}@{host}" : $"{user}@{host}:{port}");
 
     public SshTargetConfig(
         string targetId,
@@ -58,7 +63,7 @@ public sealed class SshTargetConfig
         ValidateSshToken(User, "User");
 
         Label = string.IsNullOrWhiteSpace(options.Label)
-            ? (IsLoopbackHost ? $"{User} (local ssh)" : $"{User}@{Host}")
+            ? DefaultLabel(User, Host, Port)
             : options.Label.Trim();
 
         IdentityFile = string.IsNullOrWhiteSpace(options.IdentityFile) ? null : options.IdentityFile.Trim();

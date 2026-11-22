@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Globalization;
 using System.Text;
 using Perga.Contracts;
 using Perga.Host.Configuration;
@@ -160,11 +159,9 @@ public sealed class SshExecutionTargetManager : IExecutionTargetManager
             throw KernelException.InvalidArgument("WorkspacesRoot must be an absolute POSIX path.");
         }
 
-        var isLoopback = string.Equals(host, "127.0.0.1", StringComparison.Ordinal) ||
-                         string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase) ||
-                         string.Equals(host, "::1", StringComparison.Ordinal);
+        var isLoopback = SshTargetConfig.IsLoopback(host);
         var label = string.IsNullOrWhiteSpace(request.Label)
-            ? (isLoopback ? user : (port == 22 ? $"{user}@{host}" : $"{user}@{host}:{port}"))
+            ? SshTargetConfig.DefaultLabel(user, host, port)
             : request.Label.Trim();
 
         // Validate tokens and test SSH connectivity before persisting anything.
@@ -271,73 +268,21 @@ public sealed class SshExecutionTargetManager : IExecutionTargetManager
         if (!string.IsNullOrWhiteSpace(request.Target))
         {
             var raw = request.Target.Trim();
-            if (raw.StartsWith("ssh://", StringComparison.OrdinalIgnoreCase))
+            if (raw.StartsWith("ssh://", StringComparison.OrdinalIgnoreCase)) raw = raw["ssh://".Length..];
+
+            if (raw.Contains('/') ||
+                !Uri.TryCreate($"ssh://{raw}", UriKind.Absolute, out var uri) ||
+                string.IsNullOrEmpty(uri.UserInfo) || uri.UserInfo.Contains(':') ||
+                string.IsNullOrEmpty(uri.DnsSafeHost) ||
+                uri.Query.Length != 0 || uri.Fragment.Length != 0 ||
+                uri.Port is 0 or > 65535)
             {
-                raw = raw["ssh://".Length..];
+                throw KernelException.InvalidArgument("SSH target must be 'user@host' or 'user@host:port', without a password, path, query or fragment.");
             }
 
-            var slashIdx = raw.IndexOf('/');
-            if (slashIdx >= 0)
-            {
-                throw KernelException.InvalidArgument("SSH target should be in the form 'user@host' or 'user@host:port' (without a path).");
-            }
-
-            var atIdx = raw.LastIndexOf('@');
-            if (atIdx <= 0 || atIdx == raw.Length - 1)
-            {
-                throw KernelException.InvalidArgument("SSH target must be in the form 'user@host' or 'user@host:port'.");
-            }
-
-            var parsedUser = raw[..atIdx].Trim();
-            var hostPort = raw[(atIdx + 1)..].Trim();
-            string parsedHost;
-            int? parsedPort = null;
-
-            if (hostPort.StartsWith('['))
-            {
-                var closeIdx = hostPort.IndexOf(']');
-                if (closeIdx <= 1)
-                {
-                    throw KernelException.InvalidArgument("Invalid IPv6 host in SSH target.");
-                }
-
-                parsedHost = hostPort[1..closeIdx];
-                var remainder = hostPort[(closeIdx + 1)..];
-                if (remainder.Length > 0)
-                {
-                    if (!remainder.StartsWith(':') || !int.TryParse(remainder[1..], NumberStyles.None, CultureInfo.InvariantCulture, out var p))
-                    {
-                        throw KernelException.InvalidArgument("Invalid port in SSH target.");
-                    }
-
-                    parsedPort = p;
-                }
-            }
-            else
-            {
-                var colonIdx = hostPort.LastIndexOf(':');
-                if (colonIdx > 0 && hostPort.IndexOf(':') == colonIdx)
-                {
-                    parsedHost = hostPort[..colonIdx];
-                    if (!int.TryParse(hostPort[(colonIdx + 1)..], NumberStyles.None, CultureInfo.InvariantCulture, out var p))
-                    {
-                        throw KernelException.InvalidArgument("Invalid port in SSH target.");
-                    }
-
-                    parsedPort = p;
-                }
-                else
-                {
-                    parsedHost = hostPort;
-                }
-            }
-
-            user ??= parsedUser;
-            host ??= parsedHost;
-            if (request.Port is null && parsedPort is not null)
-            {
-                port = parsedPort.Value;
-            }
+            user ??= uri.UserInfo;
+            host ??= uri.DnsSafeHost;
+            if (request.Port is null && uri.Port != -1) port = uri.Port;
         }
 
         if (string.IsNullOrWhiteSpace(user) || string.IsNullOrWhiteSpace(host))
