@@ -2,7 +2,7 @@ import { LayerDismissal } from '../../../ui/dialog/public.tsx';
 import { LayerDepthProvider } from '@astryxdesign/core/Layer';
 import { useRef, type ReactNode } from 'react';
 
-import { BoardHost, type BoardHostItem, type CardHost } from '../../../systems/cards/public.js';
+import { ActivePanelHost, type CardHostItem, type CardHost } from '../../../systems/cards/public.js';
 import { useState } from '../../../ui/state/public.ts';
 import styles from './grid.module.css';
 
@@ -10,11 +10,11 @@ export function TrackStage({ children }: { children: ReactNode }) {
   return <div className={styles.stage}>{children}</div>;
 }
 
-export function CardGridOverlay({
+export function CardPanelOverlay({
   open, items, host, activeCardId, onClose, onRemoveCard,
 }: {
   open: boolean;
-  items: readonly BoardHostItem[];
+  items: readonly CardHostItem[];
   host: CardHost;
   activeCardId: string | null;
   onClose?: () => void;
@@ -44,7 +44,7 @@ export function CardGridOverlay({
     >
       {everOpened
         ? (
-          <BoardHost
+          <ActivePanelHost
             host={host}
             items={items}
             activeCardId={activeCardId}

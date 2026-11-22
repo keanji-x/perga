@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { ReportTaskRow } from '../domain/track-task-inventory.js';
-import { NEUTRAL_ACTIVITY, type CardWire } from '../domain/track.js';
+import { NEUTRAL_ACTIVITY } from '../domain/track.js';
+import type { PanelItem } from '../domain/panel-item.js';
 import { deriveTrackPageView } from './track-page.js';
 
-const worker = (id: string): CardWire => ({
-  id, track_id: 'track', kind: 'terminal', title: id, sort: 0,
-  payload: { terminal_presentation: { source: 'manual', in_workbench: false } },
-  deletable: true, created_at: 0, updated_at: 0,
+const worker = (id: string): PanelItem => ({ panelType: 'custom' as const,
+  id, trackId: 'track', kind: 'terminal', title: id, sort: 0,
+  payload: {  }, presentation: { source: 'manual', inWorkbench: false },
+  removable: true, createdAtMs: 0, updatedAtMs: 0,
 });
 const task = (blockId: string, workerCardId: string | null, status = 'done'): ReportTaskRow => ({
   blockId, key: blockId, state: 'ready', declaration: null, status, statusDetail: null,

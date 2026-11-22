@@ -2,10 +2,10 @@ import { cleanup,render,screen,within } from '@testing-library/react';
 import { afterEach,describe,expect,it,vi } from 'vitest';
 
 import type { CardActivity } from '../../../../../core/domain/activity.ts';
-import { cardWireSchema } from '../../../../../core/domain/track.ts';
+import type { PanelItem } from '../../../../../core/domain/panel-item.ts';
 import { createCardHost } from '../host.ts';
 import { createCardRegistry } from '../registry.ts';
-import { BoardHost } from '../ui/board-host.tsx';
+import { ActivePanelHost } from '../ui/active-panel-host.tsx';
 import { partitionTrackCards } from './headless-filter.ts';
 import { registerAvailableBuiltinCards } from './register.ts';
 
@@ -25,22 +25,22 @@ afterEach(cleanup);
 
 /** The card head (`CardHead`'s root, marked as the drag handle) inside the mounted cell. */
 const head = (): HTMLElement => {
-  const found = document.querySelector<HTMLElement>('[data-nc-card-cell] [data-nc-card-drag]');
+  const found = document.querySelector<HTMLElement>('[data-nc-card-cell] [data-nc-card-head]');
   if (found === null) throw new Error('no card head');
   return found;
 };
 
 function mountConnected(kind: string, activity: CardActivity | null) {
-  const wire = cardWireSchema.parse({
-    id: 'card-1', track_id: 'track-1', kind, title: null, sort: 1,
-    payload: {}, deletable: true, created_at: 1, updated_at: 2,
-    runtime: { worker_session_id: 'run-1', kind: 'terminal', status: 'running', terminal_id: 'pty' },
-  });
+  const wire: PanelItem = { panelType: 'custom' as const,
+    id: 'card-1', trackId: 'track-1', kind, title: null, sort: 1,
+    payload: {}, removable: true, createdAtMs: 1, updatedAtMs: 2,
+    terminal: { id: 'terminal-test', trackId: 'w1', title: '', cwd: '/tmp', createdAtMs: 1, status: 'running' },
+  };
   const registry = createCardRegistry();
   registerAvailableBuiltinCards(registry);
   const card = partitionTrackCards(registry, [wire]).visible[0]?.card;
   if (card === undefined) throw new Error('Missing built-in card');
-  return render(<BoardHost host={createCardHost(registry)} items={[
+  return render(<ActivePanelHost host={createCardHost(registry)} items={[
     { card, title: kind, originalIndex: 0, deletable: true, activity, notice: null },
   ]} visible activeCardId="card-1" />);
 }

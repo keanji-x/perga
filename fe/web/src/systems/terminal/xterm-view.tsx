@@ -188,7 +188,7 @@ export const XtermView = forwardRef<XtermViewHandle, XtermViewProps>(function Xt
         latestThemeRef.current === 'dark' ? DARK_THEME : LIGHT_THEME,
       fontFamily: MONO_STACK,
       fontSize: TERMINAL_FONT_SIZE,
-      // Mirrors `SCROLLBACK_MAX_LINES` in `crates/calm-server/src/terminal_renderer/mod.rs`; keep in lockstep.
+      // Bound the local xterm scrollback retained for this terminal view.
       scrollback: 2000,
       convertEol: true,
       allowProposedApi: true,
@@ -391,7 +391,7 @@ export const XtermView = forwardRef<XtermViewHandle, XtermViewProps>(function Xt
         sendBinary(encodeTerminalInputFrame(d));
       });
 
-      // One fit per animation frame: RGL's resize handle fires the ResizeObserver on every mousemove, which shows as a 1-2px shake.
+      // Coalesce resize observations to one fit per frame to avoid pixel jitter.
       let pending = false;
       let resizeFrame: number | null = null;
       let sawInitialResizeObservation = false;

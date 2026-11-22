@@ -34,7 +34,6 @@ describe('cardAddMenuEntries', () => {
   const declaring = (mode: 'kernel-minted-only' | 'catalog' | 'generic'): CardEntry => ({
     type: `fixture-${mode}`,
     component: () => null,
-    defaultSize: Object.freeze({ w: 4, h: 6, minW: 3, minH: 3 }),
     claim: Object.freeze({ mode: 'exact', kind: `fixture-${mode}` } as const),
     title: () => 'Fixture',
     accessibleName: () => 'Fixture',

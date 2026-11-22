@@ -23,8 +23,9 @@ import { DELETE_FAILURES, DELETE_TEXT, writeFailureText } from '../../../../../c
 import type { ReportOutlineItem } from '../../../../../core/domain/report.ts';
 import type { ReportTaskRow } from '../../../../../core/domain/track-task-inventory.ts';
 import {
-  TRACK_PATCH_FAILURES, TRACK_PATCH_TEXT, UNTITLED_TRACK_LABEL, trackActivityState, trackDisplayTitle, type CardWire, type Track,
+  TRACK_PATCH_FAILURES, TRACK_PATCH_TEXT, UNTITLED_TRACK_LABEL, trackActivityState, trackDisplayTitle, type Track,
 } from '../../../../../core/domain/track.ts';
+import type { PanelItem } from '../../../../../core/domain/panel-item.ts';
 import { ActivityIndicator } from '../../../ui/activity-indicator/public.tsx';
 import { DELETE_TRACK_COPY } from '../delete-copy.ts';
 import { EditableTitle, type EditableTitleProps } from '../../../ui/editable-title/public.tsx';
@@ -39,7 +40,6 @@ import { PanelCard } from '../../../ui/panel-card/public.tsx';
 import { useState } from '../../../ui/state/public.ts';
 import { deriveTrackPageView } from '../../../../../core/view/track-page.ts';
 import type { RowModuleView, TrackPageView } from '../../../../../core/view/panel.ts';
-import { TrackAdminBadge } from '../admin-badge/public.tsx';
 import { TrackClosedBadge } from '../closed-badge/public.tsx';
 import { makeDesktopPainter, paintDesktopPanel, type DesktopPainterDeps } from './desktop-painter.tsx';
 import { makeMobilePainter, paintMobileModule } from './mobile-painter.tsx';
@@ -61,7 +61,7 @@ export type TrackPageProps = Readonly<{
   panelHeader?: ReactNode;
   /** App-composed panel module: shares the desktop card, precedes the report on compact screens. */
   panelContent?: ReactNode;
-  cards: readonly CardWire[];
+  cards: readonly PanelItem[];
   /** Full Track resource identities, including agent sessions and independent tools. */
   existingCardIds: ReadonlySet<string>;
   /** The Track snapshot's task rows with a Report anchor. */
@@ -75,8 +75,6 @@ export type TrackPageProps = Readonly<{
   report?: ReactNode;
   /** A compact reading introduction supplied by the page owner. */
   mobileReportIntro?: ReactNode;
-  /** `REFERENCED BY` — omitted entirely when nothing cites this track. */
-  backlinks?: ReactNode;
   conversationList?: ReactNode;
   /** App-composed desktop conversation items; mobile retains its own history list. */
   conversationContextList?: ReactNode;
@@ -98,7 +96,7 @@ export type TrackPageProps = Readonly<{
   /** Browser-local file history, composed by the report feature through app. */
   recentFiles?: ReactNode;
   onOpenCard?: (cardId: string) => void;
-  /** Supplying this reveals a delete on every row the kernel says is deletable. The caller owns the confirm: the board offers the identical gesture on the card's own head. */
+  /** Supplying this reveals a delete on every row the kernel says is removable. The caller owns the confirm: the board offers the identical gesture on the card's own head. */
   onDeleteCard?: (cardId: string, origin: DialogOrigin) => void;
   onSetWorkbench?: (cardId: string, inWorkbench: boolean) => void;
   /** Reveal a task's block in the document — the same landing the outline, a
@@ -123,7 +121,6 @@ export type TrackPageProps = Readonly<{
   canReopenTrack: boolean;
   canCloseTrack: boolean;
   /** The server's `admin_granted_at`: the Admin badge. The role is changed in the Planner conversation's composer. */
-  adminGrantedAt: number | null;
   onRenameTrack?: (title: string) => void | Promise<void>;
   closedControl?: TrackClosedControl;
   onDeleteTrack?: (signal: AbortSignal) => void | Promise<void>;
@@ -139,12 +136,12 @@ function rowModule(view: TrackPageView, key: RowModuleView['key']): RowModuleVie
 }
 
 export function TrackPage({ fillReading = false, showWorkspaceIsolation = true, mobileReportIntro, mobileChatComposer,
-  panelHeader, panelContent, progressDisclosure, track, cards, existingCardIds, tasks, openableCards, outlineItems = [], report, backlinks, conversationList, conversationContextList,
+  panelHeader, panelContent, progressDisclosure, track, cards, existingCardIds, tasks, openableCards, outlineItems = [], report, conversationList, conversationContextList,
   shareLinks, onShareTrack, onStartConversation, showConversationAction = true, conversationOpen = false, mobilePanelObscured, unread = false, onReply,
   cardsAction, recentFiles, onOpenCard, onDeleteCard, onSetWorkbench, onOpenTask, onOpenOutline, board, onCloseBoard, fileViewer,
   panel = null, onOpenPanel, onClosePanel,
   mobileBackLabel = 'Pages', onMobileBack, mobileHeaderActionsHost = null, mobileHeaderTitleHost = null, mobileTitleReadView,
-  canReopenTrack, canCloseTrack, adminGrantedAt, onRenameTrack, closedControl, onDeleteTrack, onTrackDeleted,
+  canReopenTrack, canCloseTrack, onRenameTrack, closedControl, onDeleteTrack, onTrackDeleted,
 }: TrackPageProps) {
   const compactViewport = useCompactViewport();
   const headerActionsHost = compactViewport ? mobileHeaderActionsHost : null;
@@ -224,7 +221,7 @@ export function TrackPage({ fillReading = false, showWorkspaceIsolation = true, 
   const desktopConversations = conversationContextList ?? conversationList;
   const hasDesktopConversations = desktopConversations !== undefined || onStartConversation !== undefined;
   const desktopPainter = makeDesktopPainter({ cardsAction, onOpenCard, onOpenTask, onDeleteCard, onSetWorkbench, progressDisclosure,
-    suppressEmpty: desktopConversations !== undefined || onStartConversation !== undefined || recentFiles !== undefined || backlinks !== undefined,
+    suppressEmpty: desktopConversations !== undefined || onStartConversation !== undefined || recentFiles !== undefined,
   });
   const [desktopActionsOpen, setDesktopActionsOpen] = useState(false);
   const desktopActionsRef = useRef<HTMLButtonElement | null>(null);
@@ -320,7 +317,7 @@ export function TrackPage({ fillReading = false, showWorkspaceIsolation = true, 
                 <Icon name="arrow-left" />
               </button>
             )}
-            {/* The raw title, with the fallback as the placeholder. `emptyCommit="clear"`: the planner's `neige_track_rename` succeeds only while the title is empty, so clearing the name is a real request here, not a cancel. */}
+            {/* The raw title, with the fallback as the placeholder. `emptyCommit="clear"`: the planner's `track_rename` succeeds only while the title is empty, so clearing the name is a real request here, not a cancel. */}
             <div className={styles.titleSlot} ref={titleSlotRef}>
       <div className={titleInHeader ? styles.mobileHeaderIdentity : styles.titleCluster}
         onFocusCapture={(event) => { lastFocusedTitleRef.current = event.target; }}
@@ -335,7 +332,6 @@ export function TrackPage({ fillReading = false, showWorkspaceIsolation = true, 
             controls={controls} host={mobileHeaderTitleHost} view={mobileTitleReadView} register={registerMobileTitleEdit} /> : undefined} />}</h1>
         {showWorkspaceIsolation && track.isolation === 'none' && <ExplanationBadge label={NO_ISOLATION_LABEL}>{NO_ISOLATION_EXPLANATION}</ExplanationBadge>}
         {!titleInHeader && <TrackClosedBadge closedAt={track.closedAt} />}
-        {!titleInHeader && <TrackAdminBadge adminGrantedAt={adminGrantedAt} />}
         {/* Shared track activity and conversation unread state. */}
         {!titleInHeader && <ActivityIndicator state={activity} />}
       </div>
@@ -393,7 +389,7 @@ export function TrackPage({ fillReading = false, showWorkspaceIsolation = true, 
         <MobileHeader
           title={trackDisplayTitle(track.title)}
           titleText={<TrackTitle track={track} />}
-          meta={<>{showWorkspaceIsolation && track.isolation === 'none' && <ExplanationBadge label={NO_ISOLATION_LABEL}>{NO_ISOLATION_EXPLANATION}</ExplanationBadge>}<TrackClosedBadge closedAt={track.closedAt} /><TrackAdminBadge adminGrantedAt={adminGrantedAt} /></>}
+          meta={<>{showWorkspaceIsolation && track.isolation === 'none' && <ExplanationBadge label={NO_ISOLATION_LABEL}>{NO_ISOLATION_EXPLANATION}</ExplanationBadge>}<TrackClosedBadge closedAt={track.closedAt} /></>}
           level={1}
           backLabel={closeSurface === undefined ? mobileBackLabel : 'Report'}
           onBack={closeSurface ?? onMobileBack}
@@ -495,8 +491,8 @@ export function TrackPage({ fillReading = false, showWorkspaceIsolation = true, 
               {!compactViewport && panelContent !== undefined && <div className={inventoryStyles.panelContext}>{panelContent}</div>}
               {paintDesktopPanel(desktopPainter, panelView.desktop)}
               {!compactViewport && shareLinks}
-              {(recentFiles !== undefined || backlinks !== undefined) && <ContextGroup title="Related" collapsible>
-                <div className={inventoryStyles.relatedContent}>{recentFiles}{backlinks}</div>
+              {recentFiles !== undefined && <ContextGroup title="Related" collapsible>
+                <div className={inventoryStyles.relatedContent}>{recentFiles}</div>
               </ContextGroup>}
             </ContextFrame>
           </PanelCard>

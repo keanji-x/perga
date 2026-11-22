@@ -1,6 +1,0 @@
-trackedTest: gate-fixtures/unassigned.spec.ts
-projects:
-  - name: browser
-    include: [tools/test-tier/layout.browser.test.ts]
-    exclude: []
-expected: tracked tests outside every test project

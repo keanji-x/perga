@@ -6,7 +6,7 @@ import type {
   CardEntry,
   CardHostCapabilities,
   CardWheelTargetDecl,
-  KernelCardInput,
+  PanelInput,
   RegisteredCard,
 } from './public.js';
 import { createCardHost, createCardRegistry } from './public.js';
@@ -22,7 +22,6 @@ declare module './registry.js' {
 }
 
 const component = () => null;
-const size = Object.freeze({ w: 4, h: 6, minW: 3, minH: 3 });
 const create = Object.freeze({ mode: 'kernel-minted-only' } as const);
 
 function entry(
@@ -32,11 +31,10 @@ function entry(
   return {
     type,
     component,
-    defaultSize: size,
     title: () => type,
     accessibleName: () => type,
     create,
-    fromKernel: (card) => {
+    fromPanel: (card) => {
       if (card.kind !== 'shared-kernel') return null;
       return type === 'contract-alpha'
         ? { type: 'contract-alpha', id: card.id, payload: { value: 1 } }
@@ -116,12 +114,12 @@ describe('cards public contract', () => {
 
   it('[INV-CARD-073] dispatches exact, longest prefix, then untried fallback', () => {
     const registry = createCardRegistry();
-    const exact = vi.fn((raw: KernelCardInput) => raw.kind === 'k' ? { type: 'contract-alpha' as const, id: raw.id, payload: { value: 1 } } : null);
-    const short = vi.fn((raw: KernelCardInput) => raw.id === '3' ? null : { type: 'contract-prefix' as const, id: raw.id, payload: null });
-    const deep = vi.fn((raw: KernelCardInput) => raw.id === '3' ? null : { type: 'contract-deep' as const, id: raw.id, payload: null });
-    const fallback = vi.fn((raw: KernelCardInput) => raw.id === '3' ? null : { type: 'contract-fallback' as const, id: raw.id, payload: null });
-    const make = (type: CardEntry['type'], claim: CardEntry['claim'], fromKernel: NonNullable<CardEntry['fromKernel']>) => ({
-      component, defaultSize: size, title: () => type, accessibleName: () => type, create, type, claim, fromKernel,
+    const exact = vi.fn((raw: PanelInput) => raw.kind === 'k' ? { type: 'contract-alpha' as const, id: raw.id, payload: { value: 1 } } : null);
+    const short = vi.fn((raw: PanelInput) => raw.id === '3' ? null : { type: 'contract-prefix' as const, id: raw.id, payload: null });
+    const deep = vi.fn((raw: PanelInput) => raw.id === '3' ? null : { type: 'contract-deep' as const, id: raw.id, payload: null });
+    const fallback = vi.fn((raw: PanelInput) => raw.id === '3' ? null : { type: 'contract-fallback' as const, id: raw.id, payload: null });
+    const make = (type: CardEntry['type'], claim: CardEntry['claim'], fromPanel: NonNullable<CardEntry['fromPanel']>) => ({
+      component, title: () => type, accessibleName: () => type, create, type, claim, fromPanel,
     }) satisfies CardEntry;
     registry.register(make('contract-alpha', { mode: 'exact', kind: 'k' }, exact));
     registry.register(make('contract-prefix', { mode: 'prefix', prefix: 'k' }, short));

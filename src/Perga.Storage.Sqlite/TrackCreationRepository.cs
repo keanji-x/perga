@@ -65,7 +65,7 @@ internal sealed class TrackCreationRepository
                     new CommandDefinition(
                         """
                         INSERT INTO tracks (
-                            id, area_id, parent_track_id, parent_attempt_id, title, cwd,
+                            id, area_id, title, cwd,
                             workspace_driver, workspace_spec_json, lead_session_id,
                             template_id, template_snapshot, template_inputs_json, template_state_json, data_json, data_rev,
                             flow_spec_json, flow_rev, flow_file_sha256,
@@ -73,7 +73,7 @@ internal sealed class TrackCreationRepository
                             created_at_ms, updated_at_ms, execution_target_id
                         )
                         VALUES (
-                            @Id, @AreaId, @ParentTrackId, @ParentAttemptId, @Title, @Cwd,
+                            @Id, @AreaId, @Title, @Cwd,
                             @WorkspaceDriver, @WorkspaceSpecJson, @LeadSessionId,
                             @TemplateId, @TemplateSnapshot, @TemplateInputsJson, '{}', @DataJson, @DataRev,
                             @FlowSpecJson, @FlowRev, @FlowFileSha256,
@@ -85,8 +85,6 @@ internal sealed class TrackCreationRepository
                         {
                             track.Id,
                             track.AreaId,
-                            track.ParentTrackId,
-                            track.ParentAttemptId,
                             track.Title,
                             track.Cwd,
                             track.WorkspaceDriver,

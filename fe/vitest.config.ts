@@ -134,8 +134,7 @@ export default defineConfig({
         test: {
           name: 'browser-coarse',
           include: ['**/*.coarse.browser.test.{ts,tsx}'],
-          /* `tools/architecture/fixtures/**` holds deliberately broken sources, and `check-test-tier.mjs` drops
-           * it from `trackedTests`, so a coarse-suffixed file there would run while invisible to the partition check. */
+          /* Architecture fixtures contain deliberately broken sources, not runnable tests. */
           exclude: ['tools/architecture/fixtures/**'],
           setupFiles,
           browser: {

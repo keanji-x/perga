@@ -2,10 +2,10 @@ import { cleanup,render,screen } from '@testing-library/react';
 import { afterEach,describe,expect,it } from 'vitest';
 
 import type { CardActivity } from '../../../../../core/domain/activity.ts';
-import { cardWireSchema } from '../../../../../core/domain/track.ts';
+import type { PanelItem } from '../../../../../core/domain/panel-item.ts';
 import { createCardHost } from '../host.ts';
 import { createCardRegistry } from '../registry.ts';
-import { BoardHost } from '../ui/board-host.tsx';
+import { ActivePanelHost } from '../ui/active-panel-host.tsx';
 import { partitionTrackCards } from './headless-filter.ts';
 import { registerAvailableBuiltinCards } from './register.ts';
 
@@ -18,16 +18,16 @@ function mountCard(
   kind: string, runtime?: { status: string; terminal_id?: string }, payload: unknown = {},
   activity: CardActivity | null = null,
 ) {
-  const wire = cardWireSchema.parse({
-    id: 'card-1', track_id: 'track-1', kind, title: null, sort: 1,
-    payload, deletable: true, created_at: 1, updated_at: 2,
-    ...(runtime === undefined ? {} : { runtime: { worker_session_id: 'run-1', kind: 'terminal', ...runtime } }),
-  });
+  const wire: PanelItem = { panelType: 'custom' as const,
+    id: 'card-1', trackId: 'track-1', kind, title: null, sort: 1,
+    payload, removable: true, createdAtMs: 1, updatedAtMs: 2,
+    ...(runtime === undefined ? {} : { terminal: { id: runtime?.terminal_id ?? 'terminal-test', trackId: 'w1', title: '', cwd: typeof payload === 'object' && payload !== null && 'cwd' in payload ? String(payload.cwd) : '/tmp', createdAtMs: 1, ...runtime } }),
+  };
   const registry = createCardRegistry();
   registerAvailableBuiltinCards(registry);
   const card = partitionTrackCards(registry, [wire]).visible[0]?.card;
   if (card === undefined) throw new Error('Missing built-in card');
-  return render(<BoardHost host={createCardHost(registry)} items={[
+  return render(<ActivePanelHost host={createCardHost(registry)} items={[
     { card, title: kind, originalIndex: 0, deletable: true, activity, notice: null },
   ]} visible activeCardId="card-1" />);
 }
@@ -40,12 +40,11 @@ describe.each(['terminal'])('%s terminal lifecycle after refresh', (kind) => {
     expect(headIndicator()).toBeNull();
   });
 
-  it('keeps both execution directories visible after the session exits', () => {
+  it('keeps the Host working directory visible after exit', () => {
     mountCard(kind, { status: 'exited' }, {
       cwd: '/repo/worker-checkout', gate_cwd: '/repo/gate-checkout', terminal_id: 'stale-pty',
     });
     expect(screen.getByText('/repo/worker-checkout')).toBeTruthy();
-    expect(screen.getByText('/repo/gate-checkout')).toBeTruthy();
     expect(screen.getByText('Session exited.')).toBeTruthy();
     expect(headIndicator()).toBeNull();
     expect(document.querySelector('[data-nc-terminal-id="stale-pty"]')).toBeNull();
@@ -54,11 +53,6 @@ describe.each(['terminal'])('%s terminal lifecycle after refresh', (kind) => {
   it('shows a failed session instead of an endless startup', () => {
     mountCard(kind, { status: 'failed' });
     expect(screen.getByText('Session failed.')).toBeTruthy();
-  });
-
-  it('only announces startup when the runtime is starting', () => {
-    mountCard(kind, { status: 'starting' });
-    expect(screen.getByText(`Starting ${kind}…`)).toBeTruthy();
   });
 
   it('does not promise startup when there is no session', () => {
@@ -79,11 +73,6 @@ describe.each(['terminal'])('%s terminal lifecycle after refresh', (kind) => {
     expect(document.querySelector('[data-nc-terminal-id="stale-pty"]')).toBeNull();
     expect(screen.getByText('Connecting…')).toBeTruthy();
     expect(headIndicator()).toBeNull();
-  });
-
-  it('still resolves legacy payload identity when no runtime is projected', () => {
-    mountCard(kind, undefined, { terminal_id: 'legacy-pty' });
-    expect(document.querySelector('[data-nc-terminal-id="legacy-pty"]')).not.toBeNull();
   });
 
   it('shows replaced sessions without promising a new terminal', () => {

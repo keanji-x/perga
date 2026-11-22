@@ -6,11 +6,11 @@ import type { CardHost, CardHostCapabilities, MountedCard } from '../host.js';
 import type { CardActivity } from '../../../../../core/domain/activity.js';
 import { CardHead } from './card-head.tsx';
 
-export type BoardHostItem = Readonly<{
+export type CardHostItem = Readonly<{
   card: RegisteredCard;
   title: string;
   originalIndex: number;
-  /** The kernel's `deletable` bit; absent means deletable (older servers omit it, matching `cardWireSchema`'s `.default(true)`). */
+  /** Client surface removal capability; omitted leaves removal available. */
   deletable?: boolean;
   /** The kernel's activity verdict, or `null` when the board has no overlay to read. */
   activity: CardActivity | null;
@@ -18,7 +18,7 @@ export type BoardHostItem = Readonly<{
   notice: string | null;
 }>;
 
-function cardWithTitle(item: BoardHostItem): RegisteredCard {
+function cardWithTitle(item: CardHostItem): RegisteredCard {
   const card = item.card;
   if (!('title' in card)) return card;
   const current = (card as { title: string | null }).title;
@@ -28,7 +28,7 @@ function cardWithTitle(item: BoardHostItem): RegisteredCard {
 
 export function CardCell({ host, item, focused, visible, onRemove, header }: {
   host: CardHost;
-  item: BoardHostItem;
+  item: CardHostItem;
   focused: boolean;
   visible: boolean;
   onRemove?: () => void;
@@ -81,7 +81,6 @@ export function CardCell({ host, item, focused, visible, onRemove, header }: {
         {/* No entry claims an unknown card, so the delete action is drawn here rather than by the absent component. */}
         <CardHead
           header={header}
-          className="card-drag-handle"
           title={item.title}
           onDelete={onRemove}
           deleteLabel={`Delete card ${item.title}`}

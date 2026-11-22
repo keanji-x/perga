@@ -106,8 +106,7 @@ never a filled button beside it: a filled button beside a title reads as an
 action *on* the thing, not as the way back out of it.
 
 **The overlay is top-aligned, not centred.** `.dialog-overlay-wide` hard-codes
-`align-items: start` and lives in `styles/`, which is frozen; changing it needs
-an `OWNERSHIP-CHANGE` trailer against an issue. The pane's `min-block-size`
+`align-items: start` and lives in the styles layer. The pane's `min-block-size`
 floor is the mitigation available from this layer, and it is not centring.
 
 ## Planners is read-only apart from Recheck (#1817)

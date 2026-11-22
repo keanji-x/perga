@@ -6,7 +6,7 @@ import '../../../styles/entry.css';
 import { Drawer } from '../../../ui/drawer/public.tsx';
 import { createCardHost } from '../host.ts';
 import { createCardRegistry } from '../registry.ts';
-import { BoardHost } from '../ui/board-host.tsx';
+import { ActivePanelHost } from '../ui/active-panel-host.tsx';
 import { registerAvailableBuiltinCards } from './register.ts';
 
 // The PTY transport is outside this layout regression. Keep its mounted leaf
@@ -18,7 +18,7 @@ vi.mock('../../terminal/surface.tsx', () => ({
 afterEach(cleanup);
 
 it('preserves attached terminal geometry and output when its session exits', async () => {
-  // The Grid is a desktop surface; mobile routes do not offer it.
+  // Measure the standalone panel in a bounded viewport.
   await browserPage.viewport(1200, 800);
   const registry = createCardRegistry();
   registerAvailableBuiltinCards(registry);
@@ -27,12 +27,12 @@ it('preserves attached terminal geometry and output when its session exits', asy
     const card = registry.resolve({
       id: 'card-1', kind: 'terminal',
       payload: { cwd: '/repo/worker-checkout', gate_cwd: '/repo/gate-checkout' },
-      runtime: { worker_session_id: 'run-1', kind: 'terminal', status, terminal_id: 'pty-1' },
+      terminal: { id: 'pty', trackId: 'w1', title: '', cwd: '/repo/worker-checkout', createdAtMs: 1, status },
     });
     if (card === null) throw new Error('Missing terminal');
-    return <BoardHost host={host} items={[
+    return <div style={{ display: 'flex', height: 600 }}><ActivePanelHost host={host} items={[
       { card, title: 'Terminal', originalIndex: 0, deletable: true, activity: null, notice: null },
-    ]} visible activeCardId="card-1" />;
+    ]} visible activeCardId="card-1" /></div>;
   };
   const { rerender } = render(board('running'));
   const output = screen.getByTestId('retained-output');
@@ -45,7 +45,6 @@ it('preserves attached terminal geometry and output when its session exits', asy
   rerender(board('exited'));
   expect(screen.getByText('Session exited.')).toBeTruthy();
   expect(screen.getByText('/repo/worker-checkout')).toBeTruthy();
-  expect(screen.getByText('/repo/gate-checkout')).toBeTruthy();
   expect(document.querySelector('[data-nc-card-cell] [data-nc-activity]')).toBeNull();
   expect(screen.getByTestId('retained-output')).toBe(output);
   expect(getComputedStyle(body).padding).toBe('0px');
@@ -67,7 +66,7 @@ for (const theme of ['light', 'dark'] as const) {
       const card = registry.resolve({ id: 'chrome-terminal', kind: 'terminal', payload: {} });
       if (card === null) throw new Error('Missing terminal');
       render(<div style={{ position: 'relative', width: 1100, height: 700, containerType: 'inline-size' }}>
-        <BoardHost host={createCardHost(registry)} items={[
+        <ActivePanelHost host={createCardHost(registry)} items={[
           { card, title: 'Terminal', originalIndex: 0, activity: null, notice: null },
         ]} visible activeCardId={card.id} />
         <Drawer open title="Conversation" onClose={() => {}}>Conversation content</Drawer>

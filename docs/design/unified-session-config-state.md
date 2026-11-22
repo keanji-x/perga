@@ -54,9 +54,7 @@ successful remote execution. No inference about older installations is needed.
 | `SessionTurnRunner.cs` | Ordinary durable input overrides provider/model/effort together from acceptance, while current permission remains policy. Worker settings resolve separately and enter `TurnInput`. Preparation failure settles accepted input without prompting. |
 | Test fakes | Kernel `Fakes/KernelTestHarness.cs` returns a switch boolean and records only model. Host `Fixtures/PergaHostTestCluster.cs` returns its runtime boolean without applying effort. Both can hide configuration/readback defects. |
 
-The existing designs [session-model-selection](session-model-selection.md) and
-[postmerge-model-effort](postmerge-model-effort.md) establish desired-state
-persistence and acceptance snapshots. Preserve those invariants; refine runtime
+Preserve desired-state persistence and acceptance snapshots; refine runtime
 confirmation rather than changing HTTP semantics.
 
 ## Internal contract and state

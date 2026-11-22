@@ -4,14 +4,14 @@
  * `@layer ui` and not `features`: this is a system's component, composed by a
  * card rather than by a route, so it must sort below anything a feature says
  * about the same box. CardFrame owns outer paint and rounded clipping for
- * File and Terminal alike; styles/track-grid.css owns board/head layout.
+ * File and Terminal alike; styles/track-grid.css owns panel/head layout.
  *
  * CodeMirror paints itself: its `.cm-*` rules are injected at runtime and are
  * not ours to layer. What is here is the frame around it.
  */
 @layer ui {
-  /* The CardFrame root adds file layout: the head is the grid cell's drag
-     handle and the viewer takes the rest in a column that can shrink. */
+  /* The CardFrame root adds file layout: the head and viewer
+     form a column that can shrink to the available panel viewport. */
   .fv-card {
     display: flex;
     flex-direction: column;

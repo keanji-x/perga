@@ -6,7 +6,6 @@ import { DepthFeedback } from '../../ui/motion/depth-feedback.tsx';
 import type { ReportTaskRow } from '../../../../core/domain/track-task-inventory.ts';
 import { ChatList } from '../../features/chat/list/public.tsx';
 import { RecentFiles } from '../../features/report/recent-files/public.tsx';
-import { ReportBacklinks } from '../../features/report/backlinks/public.tsx';
 import { AddCardMenu } from '../../features/track/new-card/public.tsx';
 import { manualCard as card, renderPage, track } from '../../features/track/page/test-fixtures.tsx';
 
@@ -19,7 +18,7 @@ const task = (blockId: string, status: string, workerCardId: string | null): Rep
 it('keeps execution details and related entries in one card with single-line rows', async () => {
   await page.viewport(1400, 900);
   const openTask = vi.fn(); const openCard = vi.fn(); const deleteCard = vi.fn();
-  const openFile = vi.fn(); const openSource = vi.fn(); const openChat = vi.fn();
+  const openFile = vi.fn(); const openChat = vi.fn();
   renderPage({
     track: track({ cards: { worker: 'input' } }),
     cards: [card({ id: 'worker', kind: 'codex', title: 'Worker session' }),
@@ -30,10 +29,6 @@ it('keeps execution details and related entries in one card with single-line row
       { id: 'planner', provider: 'codex', trackId: 'w1', title: 'Planner', isLead: false, kind: 'agent', state: 'idle', updatedAt: 1 },
     ]} />,
     recentFiles: <RecentFiles inline paths={['docs/notes.md']} onOpen={openFile} />,
-    backlinks: <ReportBacklinks inline trackId="w1" onOpen={openSource} backlinks={{
-      backlinks: [{ src_track_id: 'source', src_track_title: 'Design notes', src_block_id: 'citation', label: 'Layout', updated_at: 1 }],
-      truncated: true, skipped_sources: 1,
-    }} />,
   });
   const root = document.querySelector<HTMLElement>('[data-nc-desktop-panel]')!;
   expect(root.children).toHaveLength(1);
@@ -76,10 +71,6 @@ it('keeps execution details and related entries in one card with single-line row
   await userEvent.click(related.querySelector('button[aria-expanded]')!);
   await page.getByRole('button', { name: 'Open docs/notes.md', exact: true }).click();
   expect(openFile).toHaveBeenCalledWith('docs/notes.md');
-  await page.getByRole('button', { name: 'Referenced by Design notes', exact: true }).click();
-  expect(openSource).toHaveBeenCalledWith('source', 'citation');
-  await expect.element(page.getByText('Some backlinks are not shown.')).toBeVisible();
-  await expect.element(page.getByText('1 source report could not be read.')).toBeVisible();
   for (const row of related.querySelectorAll('button')) expect(row.getBoundingClientRect().height).toBe(28);
   await page.getByRole('button', { name: 'Finished review', exact: true }).click();
   expect(openTask).toHaveBeenLastCalledWith('Finished review');
@@ -89,7 +80,7 @@ it('retains finished-worker activity and standalone failure inside folded progre
   await page.viewport(1400, 900);
   renderPage({ track: track({ cards: { worker: 'input' } }),
     cards: [card({ id: 'worker', title: 'Worker' }), card({ id: 'failed', title: 'Build log',
-      runtime: { worker_session_id: 'failed-session', kind: 'terminal', status: 'failed' } })],
+      terminal: { id: 'terminal-test', trackId: 'w1', title: '', cwd: '/tmp', createdAtMs: 1, status: 'failed' } })],
     tasks: [task('Confirm result', 'done', 'worker')],
   });
   const attention = document.querySelector<HTMLElement>('section[aria-label="Progress"]')!;
@@ -222,21 +213,15 @@ it('does not leave an empty work spacer between conversations and related conten
 });
 
 
-it('distinguishes recent files from incoming references in single-line related entries', async () => {
+it('keeps recent files readable in single-line related entries', async () => {
   await page.viewport(1400, 900);
   const path = 'docs/a-long-directory/context-card-information-and-layout-notes.md';
-  const source = 'A long source page title about the context card information hierarchy';
-  const openFile = vi.fn(); const openSource = vi.fn();
+  const openFile = vi.fn();
   renderPage({ recentFiles: <RecentFiles inline paths={[path]} onOpen={openFile} />,
-    backlinks: <ReportBacklinks inline trackId="w1" onOpen={openSource} backlinks={{
-      backlinks: [{ src_track_id: 'source', src_track_title: source, src_block_id: 'citation', label: 'Layout', updated_at: 1 }],
-      truncated: false, skipped_sources: 0,
-    }} />,
   });
   await page.getByRole('button', { name: 'Related', exact: true }).click();
   const file = page.getByRole('button', { name: `Open ${path}`, exact: true }).element();
-  const reference = page.getByRole('button', { name: `Referenced by ${source}`, exact: true }).element();
-  for (const [row, relation] of [[file, 'Recent'], [reference, 'References this']] as const) {
+  for (const [row, relation] of [[file, 'Recent']] as const) {
     const metadata = [...row.querySelectorAll('span')].find(span => span.textContent === relation)!;
     expect(metadata).toBeDefined();
     expect(metadata.getBoundingClientRect().height).toBe(16);
@@ -247,10 +232,8 @@ it('distinguishes recent files from incoming references in single-line related e
     expect(label.getBoundingClientRect().right).toBeLessThan(metadata.getBoundingClientRect().left);
   }
   expect(file.querySelector('svg')!.classList.contains('lucide-file')).toBe(true);
-  expect(reference.querySelector('svg')!.classList.contains('lucide-link2')).toBe(true);
   expect(file.getAttribute('title')).toContain(path);
   await userEvent.click(file); expect(openFile).toHaveBeenCalledWith(path);
-  await userEvent.click(reference); expect(openSource).toHaveBeenCalledWith('source', 'citation');
 });
 
 
@@ -259,7 +242,7 @@ it('keeps Planner-managed execution folded without presenting worker failure as 
   const openTask = vi.fn();
   renderPage({ onStartConversation: vi.fn(), onOpenTask: openTask,
     tasks: [task('Check layout', 'failed', 'worker'), task('Update tokens', 'running', null)],
-    cards: [card({ id: 'worker', title: 'Layout worker', runtime: { worker_session_id: 'session', kind: 'terminal', status: 'failed' } })],
+    cards: [card({ id: 'worker', title: 'Layout worker', terminal: { id: 'terminal-test', trackId: 'w1', title: '', cwd: '/tmp', createdAtMs: 1, status: 'failed' } })],
     track: track({ cards: { worker: 'failed' } }),
     conversationContextList: <ChatList context cards={{}} showTrack={false} onOpen={vi.fn()} conversations={[
       { id: 'planner', provider: 'codex', trackId: 'w1', title: 'Planner', isLead: false, kind: 'agent', state: 'idle', updatedAt: 1 },
@@ -304,7 +287,7 @@ it('bounds long conversation and progress lists independently while retaining he
   await page.viewport(1400, 1000);
   const openChat = vi.fn(); const openTask = vi.fn(); const openWorker = vi.fn();
   renderPage({ onStartConversation: vi.fn(), onOpenTask: openTask, onOpenCard: openWorker,
-    cards: Array.from({ length: 30 }, (_, index) => card({ id: `worker-${index}`, updated_at: 30 - index })),
+    cards: Array.from({ length: 30 }, (_, index) => card({ id: `worker-${index}`, updatedAtMs: 30 - index })),
     tasks: Array.from({ length: 30 }, (_, index) => task(`Work ${index}`, 'running', `worker-${index}`)),
     conversationContextList: <ChatList context cards={{}} showTrack={false} onOpen={openChat} conversations={
       Array.from({ length: 30 }, (_, index) => ({ id: `chat-${index}`, provider: 'codex' as const, trackId: 'w1',
@@ -346,7 +329,7 @@ it('bounds long conversation and progress lists independently while retaining he
 
 it('shows a compact real status and keeps finished work after newer running work', async () => {
   await page.viewport(1400, 900);
-  renderPage({ cards: [card({ id: 'old', updated_at: 100 }), card({ id: 'new', updated_at: 200 }), card({ id: 'done', updated_at: 999 })],
+  renderPage({ cards: [card({ id: 'old', updatedAtMs: 100 }), card({ id: 'new', updatedAtMs: 200 }), card({ id: 'done', updatedAtMs: 999 })],
     tasks: [task('Earlier work', 'running', 'old'), task('Latest work', 'running', 'new'), task('Finished work', 'done', 'done')],
   });
   await userEvent.click(document.querySelector<HTMLElement>('[data-nc-work-inventory] button[aria-expanded]')!);

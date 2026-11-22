@@ -40,10 +40,10 @@ function contrast(first: Rgb, second: Rgb): number {
   return (high + 0.05) / (low + 0.05);
 }
 
-it('keeps Referenced by readable without a decorative heading icon and retains its source link', async () => {
+it('keeps Related readable without a decorative heading icon and retains its source link', async () => {
   await browserPage.viewport(1280, 900);
   const follow = vi.fn();
-  renderPage({ backlinks: <a href="#source" onClick={event => { event.preventDefault(); follow(); }}>Source report</a> });
+  renderPage({ recentFiles: <a href="#source" onClick={event => { event.preventDefault(); follow(); }}>Source report</a> });
   const heading = browserPage.getByText('Related', { exact: true });
   await expect.element(heading).toBeVisible();
   expect(heading.element().querySelector('svg')).toBeNull();
@@ -100,7 +100,7 @@ describe('Track actions menu text geometry', () => {
         renderPage({
           track: track({ title: 'A deliberately long track title '.repeat(12), closedAt: closed ? 5 : null }),
           canReopenTrack: closed,
-          canCloseTrack: !closed, adminGrantedAt: null,
+          canCloseTrack: !closed,
         });
         // 390px exercises TrackPage's production MobileHeader / MoreMenu path.
         const actions = browserPage.getByRole('button', {
@@ -196,7 +196,7 @@ describe('the track closed status in the page header', () => {
         tasks={[]}
         openableCards={new Set()}
         canReopenTrack={closed}
-        canCloseTrack={!closed} adminGrantedAt={null}
+        canCloseTrack={!closed}
         onRenameTrack={vi.fn()}
         closedControl={closedControl}
         onDeleteTrack={vi.fn()} onTrackDeleted={vi.fn()} existingCardIds={new Set<string>()}

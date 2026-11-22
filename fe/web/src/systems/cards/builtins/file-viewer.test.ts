@@ -11,14 +11,14 @@ const entry = FILE_VIEWER_CARD_ENTRY as CardEntry<FileViewerCard>;
 
 describe('FILE_VIEWER_CARD_ENTRY', () => {
   it('resolves a kernel file-viewer row into the path it carries', () => {
-    expect(entry.fromKernel?.({ id: 'f1', kind: 'file-viewer', payload: { path: '/repo/notes.md' } }))
+    expect(entry.fromPanel?.({ id: 'f1', kind: 'file-viewer', payload: { path: '/repo/notes.md' } }))
       .toEqual({ type: 'file-viewer', id: 'f1', title: null, path: '/repo/notes.md' });
   });
 
   it('refuses a row whose payload carries no usable path', () => {
     for (const payload of [null, undefined, {}, { path: '' }, { path: 7 }, 'x', { path: null }]) {
       expect(
-        entry.fromKernel?.({ id: 'f1', kind: 'file-viewer', payload }),
+        entry.fromPanel?.({ id: 'f1', kind: 'file-viewer', payload }),
         `${JSON.stringify(payload)} must not resolve`,
       ).toBeNull();
     }
@@ -26,7 +26,7 @@ describe('FILE_VIEWER_CARD_ENTRY', () => {
 
   it('claims only its own kernel kind', () => {
     expect(entry.claim).toEqual({ mode: 'exact', kind: 'file-viewer' });
-    expect(entry.fromKernel?.({ id: 'x', kind: 'terminal', payload: { path: '/repo' } })).toBeNull();
+    expect(entry.fromPanel?.({ id: 'x', kind: 'terminal', payload: { path: '/repo' } })).toBeNull();
   });
 
   /* `generic` routes this kind through `POST /api/tracks/:id/cards`; `registerCard` refuses a generic entry without an exact claim, since the claim supplies the `kind`. */

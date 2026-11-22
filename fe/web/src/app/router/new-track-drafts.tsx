@@ -5,7 +5,6 @@ import type { AgentProvider } from '../../../../core/domain/presentation-types.t
 import type { Area } from '../../../../core/domain/area.ts';
 import type { NewTrackBody } from '../../../../core/domain/track.ts';
 import type { NewTrackFormState } from '../../features/area/new-track/public.tsx';
-import type { PlannerRole } from '../../features/chat/thread/model-pill.tsx';
 import { useState } from '../../ui/state/public.ts';
 import { mintIdempotencyKey } from '../providers/idempotency-key.ts';
 import { TRACK_CREATE_DRAFTS_KEY } from '../../../../core/keys/storage.ts';
@@ -29,17 +28,12 @@ export type NewTrackSession = Readonly<{
   permissionMode: string | null;
   /** A selection from `provider`'s catalog; set together with `provider` by one pick. */
   model: ModelSelection;
-  /** `admin` creates an Area admin Track (`admin: true`); `member` sends no `admin` key. */
-  role: PlannerRole;
   key: string;
   creating: boolean;
   request: TrackCreationRequest | null;
   createdTrackId: string | null;
   error: string | null;
   canRetryAsNewTrack: boolean;
-  folderConflict: Readonly<{
-    ownerAreaId: string; areaName: string; folderId: number; cwd: string;
-  }> | null;
 }>;
 
 function createDraftStore(submittedStorage?: () => Storage, userId?: string) {
@@ -50,7 +44,7 @@ function createDraftStore(submittedStorage?: () => Storage, userId?: string) {
       const value: unknown = JSON.parse(submittedStorage().getItem(keyOf(areaId)) ?? 'null');
       if (typeof value !== 'object' || value === null) return null;
       const { key, body, message, createdTrackId } = value as Partial<TrackCreationRequest> & { createdTrackId?: unknown };
-      if (typeof key !== 'string' || body?.area_id !== areaId
+      if (typeof key !== 'string' || body?.areaId !== areaId
         || (message !== undefined && typeof message !== 'string')) return null;
       return {
         request: { key, body, ...(message === undefined ? {} : { message }) },
@@ -86,22 +80,21 @@ function createDraftStore(submittedStorage?: () => Storage, userId?: string) {
           defaultTemplateId: area.defaultTemplateId,
         },
         form: request === null ? null : {
-          message: request.message ?? '', cwd: request.body.cwd ?? '', isolation: request.body.isolation,
-          workspaceOptionId: request.body.workspace_option_id,
-          executionTargetId: request.body.execution_target_id,
-          templateId: request.body.template_id ?? null,
-          templateInputs: Object.fromEntries(Object.entries(request.body.template_input ?? {}).flatMap(([key, value]) =>
+          message: request.message ?? '', cwd: request.body.cwd ?? '', isolation: (request.body.workspaceDriver === 'direct' ? 'none' : 'worktree'),
+          workspaceOptionId: request.body.workspaceOptionId ?? undefined,
+          executionTargetId: request.body.executionTargetId ?? undefined,
+          templateId: request.body.templateId ?? null,
+          templateInputs: Object.fromEntries(Object.entries(request.body.templateInputs ?? {}).flatMap(([key, value]) =>
             typeof value === 'number' ? [[key, String(value)]]
               : typeof value === 'string' || typeof value === 'boolean' ? [[key, value]] : [])),
         },
-        provider: request?.body.planner_provider ?? 'codex',
+        provider: request?.body.provider ?? 'codex',
         permissionMode: request?.body.permissionMode ?? null,
         model: request === null ? FOLLOW_INSTALLATION_DEFAULT : {
-          model: request.body.model ?? null, reasoning_effort: request.body.reasoning_effort ?? null,
+          model: request.body.model ?? null, reasoning_effort: request.body.reasoningEffort ?? null,
         },
-        role: request?.body.admin ? 'admin' : 'member',
         key: request?.key ?? mintIdempotencyKey(), creating: false, request, createdTrackId,
-        error: request === null || createdTrackId !== null ? null : TRACK_CREATE_TEXT.unknown, canRetryAsNewTrack: false, folderConflict: null,
+        error: request === null || createdTrackId !== null ? null : TRACK_CREATE_TEXT.unknown, canRetryAsNewTrack: false,
       });
       notify();
     },

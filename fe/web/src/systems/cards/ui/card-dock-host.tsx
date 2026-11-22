@@ -1,12 +1,12 @@
 import type { CardHost } from '../host.js';
-import type { BoardHostItem } from './board-host.tsx';
+import type { CardHostItem } from './card-cell.tsx';
 import type { CardHeaderPresentation } from '../registry.js';
 import { CardCell } from './card-cell.tsx';
 
 /** A retained single-card surface. The caller excludes these IDs from other hosts. */
 export function CardDockHost({ host, item, visible, focused, onRemove, header }: {
   host: CardHost;
-  item: BoardHostItem;
+  item: CardHostItem;
   visible: boolean;
   focused: boolean;
   onRemove?: () => void;

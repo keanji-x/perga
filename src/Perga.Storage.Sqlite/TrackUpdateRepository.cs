@@ -155,8 +155,6 @@ internal sealed class TrackUpdateRepository
                         """
                         UPDATE tracks
                         SET area_id = @AreaId,
-                            parent_track_id = @ParentTrackId,
-                            parent_attempt_id = @ParentAttemptId,
                             title = @Title,
                             cwd = @Cwd,
                             workspace_driver = @WorkspaceDriver,
@@ -176,8 +174,6 @@ internal sealed class TrackUpdateRepository
                         {
                             track.Id,
                             track.AreaId,
-                            track.ParentTrackId,
-                            track.ParentAttemptId,
                             track.Title,
                             track.Cwd,
                             track.WorkspaceDriver,

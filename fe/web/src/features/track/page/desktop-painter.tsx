@@ -1,3 +1,4 @@
+import { providerPresentation } from '../../../../../core/domain/provider-presentation.ts';
 import inventoryStyles from './inventory.module.css';
 import { EmptyState } from '../../../ui/empty-state/public.tsx';
 import { inventoryEmptyContent } from './empty-content.tsx';
@@ -123,7 +124,7 @@ function taskRow(row: PanelRow, deps: DesktopPainterDeps): ReactNode {
       {revealControl}
       {/* `title` describes the destination without touching the accessible name, which stays the visible word (WCAG 2.5.3). */}
       {row.kind !== null && (open === null
-        ? <ListText tone="secondary" className={inventoryStyles.taskKind} title={row.kind} {...mark(MARKER.field, FIELD.kind)}><InventoryKind kind={row.kind} /></ListText>
+        ? <ListText tone="secondary" className={inventoryStyles.taskKind} title={providerPresentation(row.kind).label} {...mark(MARKER.field, FIELD.kind)}><InventoryKind kind={row.kind} /></ListText>
         : (
           <ListText as="button" tone="secondary"
             className={inventoryStyles.taskKindButton}
@@ -150,7 +151,7 @@ function ContextRow({ row, deps }: { row: PanelRow; deps: DesktopPainterDeps }) 
   const icon = row.kind === null ? (isTask ? 'tasks' : 'file') : <InventoryIcon kind={row.kind} />;
   const statusLabel = progressStatusLabel(row);
   const attention = !isTask && (row.activity === 'attention' || row.activity === 'failed') ? activityLabelOf(row.activity) : null;
-  const detail = [row.title, row.kind, row.status?.phrase, executionActivityLabelOf(row.activity)].filter(Boolean).join(' · ');
+  const detail = [row.title, row.kind === null ? null : providerPresentation(row.kind).label, row.status?.phrase, executionActivityLabelOf(row.activity)].filter(Boolean).join(' · ');
   return <li ref={sourceRef} key={row.id} title={detail} {...mark(MARKER.row, row.id)}>
     <ContextItem icon={icon} label={<span className={row.badges.some(badge => badge.struck) ? inventoryStyles.taskWithdrawn : undefined}
         {...mark(MARKER.field, FIELD.title)}>{row.title}</span>}

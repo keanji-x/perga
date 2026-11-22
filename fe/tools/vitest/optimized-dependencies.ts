@@ -9,7 +9,6 @@ export const OPTIMIZED_DEPENDENCIES = Object.freeze([
   '@codemirror/state',
   '@codemirror/view',
   'motion',
-  'react-grid-layout/core',
   '@astryxdesign/core/Switch',
   '@tanstack/react-query',
   '@tanstack/react-router',

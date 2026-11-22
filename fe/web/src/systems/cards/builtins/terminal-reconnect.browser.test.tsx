@@ -7,7 +7,7 @@ import '../../../styles/entry.css';
 import { encodeTerminalInputFrame, TERMINAL_FRAME_CONTROL_JSON } from '../../terminal/protocol.ts';
 import { createCardHost } from '../host.ts';
 import { createCardRegistry } from '../registry.ts';
-import { BoardHost } from '../ui/board-host.tsx';
+import { ActivePanelHost } from '../ui/active-panel-host.tsx';
 import { registerAvailableBuiltinCards } from './register.ts';
 
 // Load the real lazy chunk before timing socket behavior; cold Vite compilation
@@ -52,11 +52,11 @@ function mountTerminal(status: 'running' | 'starting' = 'running', width?: numbe
   const registry = createCardRegistry();
   registerAvailableBuiltinCards(registry);
   const card = registry.resolve({ id: 'card-1', kind: 'terminal', payload: {},
-    runtime: { worker_session_id: 'run-1', kind: 'terminal', status, terminal_id: 'pty-1' },
+    terminal: { id: 'pty-1', trackId: 'w1', title: '', cwd: '/tmp', createdAtMs: 1, status },
   });
   if (card === null) throw new Error('Missing terminal');
   const host = createCardHost(registry);
-  const board = (next: string | null) => <div style={{ width }}><BoardHost host={host} items={[
+  const board = (next: string | null) => <div style={{ display: 'flex', width, height: 600 }}><ActivePanelHost host={host} items={[
     { card, title: 'Terminal', originalIndex: 0, deletable: true, activity: null, notice: next },
   ]} visible activeCardId="card-1" onRemoveCard={() => {}} /></div>;
   const mounted = render(board(notice));
@@ -65,7 +65,7 @@ function mountTerminal(status: 'running' | 'starting' = 'running', width?: numbe
 
 /* The head's activity indicator. Its absence after a successful connect is the
    assertion that matters here (#1722 §5.3, INV-APP-118): the kernel's verdict
-   is `BoardHostItem.activity`, `null` in every mount below, and a socket
+   is `CardHostItem.activity`, `null` in every mount below, and a socket
    coming up must not paint one — the connection is this tab's, not the
    card's work. */
 const headIndicator = () => document.querySelector('[data-nc-card-cell] [data-nc-activity]');
@@ -73,7 +73,7 @@ const headIndicator = () => document.querySelector('[data-nc-card-cell] [data-nc
    not ended, only `connected` prints no text (`Connecting…` / `Disconnected` /
    `Connection error` are the other three) — so "no text" is the positive
    evidence that the socket came up before the indicator is asserted absent. */
-const headStatusText = () => document.querySelector('[data-nc-card-drag] [role="status"]')?.textContent ?? null;
+const headStatusText = () => document.querySelector('[data-nc-card-head] [role="status"]')?.textContent ?? null;
 
 function buffer() {
   return (window as unknown as { __xtermDumps__?: Record<string, () => string> }).__xtermDumps__?.['pty-1']?.() ?? '';
@@ -179,7 +179,7 @@ it('keeps input and the same attachment while the notice shows, changes and clea
 it('keeps the terminal title and disconnected status separate in a 171px card', async () => {
   await page.viewport(390, 844);
   const sockets = terminalTransport();
-  mountTerminal('running', 356);
+  mountTerminal('running', 171);
   await waitFor(() => expect(sockets).toHaveLength(1));
   act(() => sockets[0].disconnect());
   await screen.findByText('Disconnected');
@@ -209,4 +209,46 @@ it('keeps the disconnected status on the title row when the terminal is wide', a
   const statusRect = status.getBoundingClientRect();
   expect(statusRect.top).toBeCloseTo(titleRect.top, 0);
   expect(statusRect.left).toBeGreaterThanOrEqual(titleRect.right);
+});
+
+it.each([1200, 420])('retains real PTY attachments and terminal DOM through panel switch/hide/reopen (%i)', async (width) => {
+  await page.viewport(width, 800);
+  const sockets = terminalTransport();
+  const registry = createCardRegistry();
+  registerAvailableBuiltinCards(registry);
+  const host = createCardHost(registry);
+  const items = ['one', 'two', 'unvisited'].map((id, originalIndex) => {
+    const card = registry.resolve({ id, kind: 'terminal', payload: {},
+      terminal: { id: `pty-${id}`, trackId: 'w1', title: id, cwd: '/tmp', createdAtMs: 1, status: 'running' },
+    });
+    if (card === null) throw new Error('Missing terminal');
+    return { card, title: id, originalIndex, activity: null, notice: null };
+  });
+  const scene = (activeCardId: string | null, visible: boolean) => <div style={{ display: 'flex', height: 600 }}>
+    <ActivePanelHost host={host} items={items} activeCardId={activeCardId} visible={visible} />
+  </div>;
+  const view = render(scene(null, false));
+  expect(sockets).toHaveLength(0);
+  view.rerender(scene('one', true));
+  await waitFor(() => expect(sockets).toHaveLength(1));
+  act(() => sockets[0].open('First process output'));
+  const firstInput = document.querySelector<HTMLElement>('[data-nc-card-id="one"] textarea')!;
+  await waitFor(() => expect(document.activeElement).toBe(firstInput));
+  view.rerender(scene('two', true));
+  await waitFor(() => expect(sockets).toHaveLength(2));
+  act(() => sockets[1].open('Second process output'));
+  const secondInput = document.querySelector<HTMLElement>('[data-nc-card-id="two"] textarea')!;
+  await waitFor(() => expect(document.activeElement).toBe(secondInput));
+  expect(firstInput.isConnected).toBe(true);
+  expect(host.resolve('one')?.lifecycle.getSnapshot()).toMatchObject({ visible: false, focused: false });
+  view.rerender(scene(null, false));
+  expect(sockets.every(socket => socket.readyState === 1)).toBe(true);
+  expect(firstInput.isConnected && secondInput.isConnected).toBe(true);
+  view.rerender(scene('one', true));
+  await waitFor(() => expect(document.activeElement).toBe(firstInput));
+  expect(document.querySelector('[data-nc-card-id="one"] textarea')).toBe(firstInput);
+  expect(sockets).toHaveLength(2);
+  expect(host.resolve('unvisited')).toBeNull();
+  view.unmount();
+  expect(sockets.every(socket => socket.readyState === 3)).toBe(true);
 });

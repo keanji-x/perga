@@ -8,7 +8,8 @@ import type { ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ReportTaskRow } from '../../../../../core/domain/track-task-inventory.ts';
-import { NEUTRAL_ACTIVITY, type CardWire } from '../../../../../core/domain/track.ts';
+import { NEUTRAL_ACTIVITY } from '../../../../../core/domain/track.ts';
+import type { PanelItem } from '../../../../../core/domain/panel-item.ts';
 import { MARKER } from '../../../../../core/view/panel.ts';
 import type { RowModuleView, RowPainter } from '../../../../../core/view/panel.ts';
 import { deriveTrackPageView } from '../../../../../core/view/track-page.ts';
@@ -42,9 +43,9 @@ afterEach(() => {
   mode = 'wrap';
 });
 
-const CARDS: readonly CardWire[] = [
-  card({ id: 'card-1', kind: 'terminal', title: 'Build log', deletable: true }),
-  card({ id: 'card-2', kind: 'harness', title: null, deletable: false }),
+const CARDS: readonly PanelItem[] = [
+  card({ id: 'card-1', kind: 'terminal', title: 'Build log', removable: true }),
+  card({ id: 'card-2', kind: 'harness', title: null, removable: false }),
 ];
 
 /** Strings only the painted Cards module can put on this surface; read as substrings of the subtree's `textContent`. */

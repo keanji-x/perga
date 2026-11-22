@@ -118,7 +118,7 @@ it.each(['mention','command'])('catalog composer search %s', async type => {
 it('catalog report data and history component states', async () => {
   await page.viewport(1100,950);
   mountReportComponentStates();
-  await shot('23-report-component-states', ["暂无数据", "暂无实时数据"]);
+  await shot('23-report-component-states', ["暂无数据"]);
 });
 it('catalog waiting conversation', async () => {
   await page.viewport(650,500);

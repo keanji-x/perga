@@ -147,7 +147,7 @@
    * gave it `flex: 1 0 auto` — content-sized, never shrinking — and on a 4000px
    * report the board became a 4000px overlay inside a `.page` that
    * `.pageBoard` gives `overflow: hidden`: the top screenful visible and the
-   * rest unreachable. Not only a layout bug — `BoardHost` measures its
+   * rest unreachable. Not only a layout bug — `ActivePanelHost` measures its
    * container to choose terminal rows and resizes the PTY to match, so the
    * number reaches a real process.
    *

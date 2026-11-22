@@ -66,9 +66,7 @@ The expected TypeScript error makes a future widened declaration require this
 adapter to be revisited. Real browser checks cover both @ and / empty menus,
 including zero options and unchanged input. No dependency files are patched.
 
-Owner registration decision: the requested consistency work needs one neutral
-UI primitive shared by independent features. Accept the narrow directory
-registration in module-file-inventory.yaml; preserve all existing entries.
+The consistency work uses one neutral UI primitive shared by independent features.
 
 ## Consolidation acceptance and review
 

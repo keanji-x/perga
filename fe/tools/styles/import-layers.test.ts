@@ -22,5 +22,5 @@ function layers(file: string, outer = ''): string[] {
   return result;
 }
 it('places vendor libraries and the Astryx bridge in their declared top-level layers', () => {
-  expect(layers('entry.css')).toEqual(['astryx', 'vendor', 'vendor', 'vendor', 'vendor', 'astryx']);
+  expect(layers('entry.css')).toEqual(['astryx', 'vendor', 'vendor', 'astryx']);
 });

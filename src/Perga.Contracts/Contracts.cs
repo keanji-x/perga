@@ -65,8 +65,6 @@ public sealed record TemplateHeaderViewDto(
 public sealed record TrackDto(
     string Id,
     string AreaId,
-    string? ParentTrackId,
-    string? ParentAttemptId,
     string Title,
     string Cwd,
     string WorkspaceDriver,

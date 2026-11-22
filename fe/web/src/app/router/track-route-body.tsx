@@ -1,3 +1,4 @@
+import { terminalPanelItem } from '../../../../core/domain/panel-item.ts';
 import type { TrackAggregateSnapshotDto } from "../../../../core/api/perga-v1.ts";
 import { priorityConversation } from '../../../../core/domain/activity.ts';
 import { DELETE_FAILURES,DELETE_TEXT,writeFailureText } from '../../../../core/domain/failure-class.ts';
@@ -43,14 +44,14 @@ import { ReportFileViewer } from '../../features/report/file-viewer/public.tsx';
 import { ReportOutline } from '../../features/report/outline/public.tsx';
 import { RecentFiles } from '../../features/report/recent-files/public.tsx';
 import { reportSourcePosition,type ReportSourcePosition } from '../../features/report/source/placement.ts';
-import { CardGridOverlay,TrackStage } from '../../features/track/grid/public.tsx';
+import { CardPanelOverlay,TrackStage } from '../../features/track/grid/public.tsx';
 import {
 sameCardDraft,
 type CardDraft,type KeyedCardBody
 } from '../../features/track/new-card/create.ts';
 import { TrackPage } from '../../features/track/page/public.tsx';
 import type {
-BoardHostItem
+CardHostItem
 } from '../../systems/cards/public.js';
 import {
 createCardHost,partitionTrackCards
@@ -75,7 +76,6 @@ import { trackToolsQueryOptions } from '../providers/track-queries.ts';
 import { useUiPreferences } from '../providers/ui-preferences.tsx';
 import { useMobileConversationOwner,useMobileHeaderActionsHost,useMobileHeaderTitleHost,useOpenMobileSection } from '../shell/public.tsx';
 import { TrackSelector } from '../shell/track-selector.tsx';
-import { readHostThemeRgb } from '../theme/host-rgb.ts';
 import dailyStyles from './daily-planner.module.css';
 import { type DailyCenterPresentation } from './daily-planner.tsx';
 import mobileChatStyles from './mobile-chat.module.css';
@@ -119,7 +119,7 @@ export function TrackRouteBody({
   const canReopenTrack = snapshot.track.closedAtMs != null;
   const canCloseTrack = !canReopenTrack;
   const toolsQuery = useQuery(trackToolsQueryOptions(transport, snapshot.track.id, unauthorized));
-  const rawCards = useMemo(() => toolsQuery.data ?? [], [toolsQuery.data]);
+  const rawCards = useMemo(() => (toolsQuery.data ?? []).map((terminal, index) => terminalPanelItem(terminal, 100 + index)), [toolsQuery.data]);
   const [centerHost, setCenterHost] = useState<HTMLDivElement | null>(null);
   const preferences = useUiPreferences();
   const cards = (() => {
@@ -127,11 +127,8 @@ export function TrackRouteBody({
     const withPlacement = rawCards.map((card) => {
       if (card.kind !== 'terminal') return card;
       const visible = preferences.terminalWorkbench(track.id, card.id);
-      if (visible === null || visible === terminalPresentation(card).in_workbench) return card;
-      return { ...card, payload: {
-        ...(card.payload as object),
-        terminal_presentation: { ...terminalPresentation(card), in_workbench: visible },
-      } };
+      if (visible === null || visible === terminalPresentation(card).inWorkbench) return card;
+      return { ...card, presentation: { ...terminalPresentation(card), inWorkbench: visible } };
     });
     return withPlacement.some((card, index) => card !== rawCards[index]) ? withPlacement : rawCards;
   })();
@@ -214,12 +211,12 @@ export function TrackRouteBody({
   const pendingApprovals = snapshot.pendingApprovals ?? NO_PENDING_APPROVALS;
   const openAsks = useMemo(() => openAsksOf(track.attentionItems), [track.attentionItems]);
   /* The CARDS module lists cards that have a surface; unclaimed kinds stay listed,
-   * and `originalIndex` is bound before the filter so the merge keeps wire order. */
+   * and `originalIndex` is bound before the filter so the merge keeps item order. */
   const panelCards = useMemo(() => {
     const { visible, unknown } = partitionTrackCards(cardRegistry, cards);
     return [...visible, ...unknown]
       .sort((left, right) => left.originalIndex - right.originalIndex)
-      .map((slot) => slot.wire);
+      .map((slot) => slot.item);
   }, [cardRegistry, cards]);
   const { report, outline } = reportPresentation;
   const reportBlocks = report?.blocks ?? null;
@@ -227,26 +224,25 @@ export function TrackRouteBody({
   /* Compare notices by content so unrelated task updates keep the board items stable. */
   const noticeKey = JSON.stringify([...parkedWorkerNotices(tasks)]);
   const notices = useMemo(() => new Map(JSON.parse(noticeKey) as [string, string][]), [noticeKey]);
-  const gridItems: readonly BoardHostItem[] = useMemo(() => {
+  const panelItems: readonly CardHostItem[] = useMemo(() => {
     const { visible } = partitionTrackCards(cardRegistry, cards);
     return [...visible]
       .sort((left, right) => {
-        const sort = left.wire.sort - right.wire.sort;
+        const sort = left.item.sort - right.item.sort;
         return sort !== 0 ? sort : left.originalIndex - right.originalIndex;
       })
       .map((slot) => Object.freeze({
         card: slot.card,
-        title: slot.wire.title ?? slot.wire.kind,
+        title: slot.item.title ?? slot.item.kind,
         originalIndex: slot.originalIndex,
-        /* The kernel's bit, carried straight through, so the board and the CARDS panel
-                   cannot disagree about which cards are the kernel's. */
-        deletable: slot.wire.deletable,
+        /* The same client removal capability drives the board and inventory. */
+        deletable: slot.item.removable,
         /* The kernel's verdict for the card, from the same overlay the CARDS row reads. */
         activity: cardActivityOf(track, slot.card.id),
         notice: notices.get(slot.card.id) ?? null,
       }));
   }, [cardRegistry, cards, track, notices]);
-  const openableCards = useMemo(() => new Set(gridItems.map((item) => item.card.id)), [gridItems]);
+  const openableCards = useMemo(() => new Set(panelItems.map((item) => item.card.id)), [panelItems]);
   const existingCardIds = useMemo(() => new Set([...cards.map(card => card.id), ...snapshot.sessions.map(session => session.id)]), [cards, snapshot.sessions]);
   const defaultTerminalIds = useMemo(() => workbenchTerminalCardIds({ cards: panelCards, existingCardIds, tasks,
     activity: track, openableCards }), [panelCards, existingCardIds, tasks, track, openableCards]);
@@ -256,7 +252,7 @@ export function TrackRouteBody({
   const workbench = useTerminalWorkbench({ session: trackViews.terminals.forTrack(track.id), trackId: track.id, cards, defaultCardIds: defaultTerminalIds, ordinaryCardOpen: requestedCardId !== null,
     onHide: () => { if (requestedCardId !== null && cards.some(card => card.id === requestedCardId && card.kind === 'terminal')) goSameTrack(track.id, { card: undefined }, { replace: true }); },
     create: (body, key) => trackMutations.createTerminal(track.id, body, key),
-    request: () => ({ key: mintIdempotencyKey(), body: { theme: readHostThemeRgb() } }),
+    request: () => ({ key: mintIdempotencyKey(), body: {} }),
   });
   const chat = useConversationPanel(
     transport,
@@ -295,7 +291,7 @@ export function TrackRouteBody({
       },
     },
     { workspace: { waiting: workspaceWaiting, notice: workspaceNotice }, defaultRowId: center !== undefined && plannerCard !== undefined ? plannerCard.id : null, onPresent: center?.onOpenAssistant, presented: centerActive ? center?.presented : undefined, embedded: center === undefined ? undefined : { active: centerActive, host: centerHost, footerPrefix: center.footerPrefix, emptyIntroduction: center.emptyIntroduction, label: center.title }, onArchive: conversationMutations.archive, terminal: { workbench, render: () => <TerminalWorkbenchView workbench={workbench} host={trackCardHost}
-      items={workbench.ordinaryHost ? [] : gridItems.filter(item => workbench.cardIds.has(item.card.id))} visible={!compactViewport && workbench.open}
+      items={workbench.ordinaryHost ? [] : panelItems.filter(item => workbench.cardIds.has(item.card.id))} visible={!compactViewport && workbench.open}
       onRemove={(id) => cardDeletion.request(id, { kind: 'surface-center' })} /> }, showTrack: false, reportComposer: { ready: true, returnLabel: routePanel === 'conversations' ? 'Conversations' : 'Report' } },
   );
   useMobileConversationOwner({ track, conversations: rows, onArchive: conversationMutations.archive, onNew: chat.startConversation,
@@ -306,7 +302,7 @@ export function TrackRouteBody({
    * is bounced; its task keeps its `workerCardId` regardless, because the TASKS
    * row looks its activity verdict up by that id. */
   const knownCard = requestedCardId !== null
-    && gridItems.some((item) => item.card.id === requestedCardId);
+    && panelItems.some((item) => item.card.id === requestedCardId);
   useEffect(() => {
     if (requestedCardId === null || !toolsQuery.isSuccess || knownCard) return;
     // Bouncing an unopenable `?card=` must drop only that parameter: the panel,
@@ -345,7 +341,6 @@ export function TrackRouteBody({
     cardCreatePort: { createTerminal: (body, key) => trackMutations.createTerminal(track.id, body, key) },
     cardIntent: useKeyedIntent<CardDraft, KeyedCardBody>(sameCardDraft),
     directory: useMemo(() => createDirectoryLister(transport, unauthorized), [transport, unauthorized]),
-    readTheme: readHostThemeRgb,
     onCreated: cardId => goSameTrack(track.id, { card: cardId }),
     compactViewport, newTerminalSession: workbench.newSession,
   });
@@ -490,7 +485,6 @@ export function TrackRouteBody({
       track={track}
       canReopenTrack={canReopenTrack}
       canCloseTrack={canCloseTrack}
-      adminGrantedAt={null}
       cards={panelCards}
       /* Derived from the report's own blocks, so the panel and the document
          cannot disagree about what tasks exist. */
@@ -516,9 +510,9 @@ export function TrackRouteBody({
 
       }}
       board={
-        <CardGridOverlay
+        <CardPanelOverlay
           open={knownCard && (compactViewport || !workbench.cardIds.has(requestedCardId))}
-          items={workbench.ordinaryHost ? gridItems : gridItems.filter(item => !workbench.cardIds.has(item.card.id))}
+          items={workbench.ordinaryHost ? panelItems : panelItems.filter(item => !workbench.cardIds.has(item.card.id))}
           host={trackCardHost}
           activeCardId={requestedCardId}
           onRemoveCard={(id) => cardDeletion.request(id, { kind: 'surface-center' })}

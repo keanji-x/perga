@@ -666,8 +666,6 @@ public sealed partial class PergaKernelService : IPergaKernel
         var track = new TrackDto(
             Id: trackId,
             AreaId: area.Id,
-            ParentTrackId: req.ParentTrackId,
-            ParentAttemptId: req.ParentAttemptId,
             Title: title,
             Cwd: string.Empty,
             WorkspaceDriver: driverId,

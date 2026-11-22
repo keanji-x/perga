@@ -6,13 +6,13 @@ import { Icon as AstryxIcon } from '@astryxdesign/core/Icon';
 import { Text } from '@astryxdesign/core/Text';
 import { VisuallyHidden } from '@astryxdesign/core/VisuallyHidden';
 
-import type { NewTrackBody, TrackWorkspaceOptions } from '../../../../../core/domain/track.ts';
+import type { TrackWorkspaceOptions } from '../../../../../core/domain/track.ts';
 import { Icon } from '../../../ui/icon/public.tsx';
 import { useState } from '../../../ui/state/public.ts';
 import { FolderClearButton, folderLabelParts } from '../default-pills/public.tsx';
 import styles from './repo-pill.module.css';
 
-export type RepoIsolationMode = NonNullable<NewTrackBody['isolation']>;
+export type RepoIsolationMode = 'worktree' | 'none';
 
 const REPO_MODES = Object.freeze([
   Object.freeze({

@@ -1,11 +1,11 @@
 import '../../styles/entry.css';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { page } from 'vitest/browser';
 
 import type { WorkspaceFilePort } from '../../../../core/domain/fs.ts';
 import { ReportDocument } from '../../features/report/document/public.tsx';
-import { createCardHost, createCardRegistry, registerAvailableBuiltinCards, BoardHost } from '../../systems/cards/public.ts';
+import { createCardHost, createCardRegistry, registerAvailableBuiltinCards, ActivePanelHost } from '../../systems/cards/public.ts';
 import { Dialog } from '../../ui/dialog/public.tsx';
 import { Drawer } from '../../ui/drawer/public.tsx';
 import { PanelCard } from '../../ui/panel-card/public.tsx';
@@ -52,24 +52,14 @@ for (const theme of ['light', 'dark'] as const) {
       if (card === null) throw new Error('Missing builtin card');
       return { card, title: card.id, originalIndex, activity: null, notice: null };
     });
-    render(<div style={{ width: 1200, height: 700 }}><BoardHost host={createCardHost(registry)} items={items} activeCardId={null} visible /></div>);
-    await waitFor(() => expect(document.querySelector('[data-nc-file-card]')).not.toBeNull());
+    const host = createCardHost(registry);
+    const scene = (id: string) => <div style={{ display: 'flex', width: 1200, height: 700 }}><ActivePanelHost host={host} items={items} activeCardId={id} visible /></div>;
+    const view = render(scene('terminal-frame'));
+    await waitFor(() => expect(document.querySelector('[data-nc-terminal-card]')).not.toBeNull());
     expectFrame(document.querySelector('[data-nc-terminal-card]')!, expected);
+    view.rerender(scene('file-frame'));
+    await waitFor(() => expect(document.querySelector('[data-nc-file-card]')).not.toBeNull());
     expectFrame(document.querySelector('[data-nc-file-card]')!, expected);
-    const terminal = document.querySelector<HTMLElement>('[data-nc-terminal-card]')!;
-    const cell = terminal.closest<HTMLElement>('[data-nc-card-cell]')!;
-    const handle = terminal.querySelector<HTMLElement>('[data-nc-card-drag]')!;
-    const box = handle.getBoundingClientRect();
-    const point = { clientX: box.left + 20, clientY: box.top + 10 };
-    try {
-      act(() => { handle.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0, buttons: 1, ...point })); });
-      act(() => { document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, buttons: 1, clientX: point.clientX, clientY: point.clientY + 60 })); });
-      expect(cell.classList.contains('react-draggable-dragging')).toBe(true);
-      expect(getComputedStyle(cell).boxShadow).toBe('none');
-      expectFrame(terminal, expected);
-    } finally {
-      act(() => { document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, button: 0, clientX: point.clientX, clientY: point.clientY + 60 })); });
-    }
   });
 
   it(`shares the conversation frame with real file link previews (${theme})`, async () => {

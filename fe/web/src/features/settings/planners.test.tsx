@@ -10,7 +10,7 @@ afterEach(cleanup);
 
 const PROVIDERS: NonNullable<PlannersPaneProps['providers']> = [
   { availability: { provider: 'codex', status: 'ready', reason: null, authentication_method: null, authentication_notice: null, checked_at_ms: 1_760_000_000_000 }, accepts_unavailable_blank_track: true },
-  { availability: { provider: 'claude', status: 'not_configured', reason: 'calm-server was started without --claude-planner-config',
+  { availability: { provider: 'claude', status: 'not_configured', reason: 'Planner authentication is not configured',
     authentication_method: null, authentication_notice: null, checked_at_ms: 1_760_000_000_000 }, accepts_unavailable_blank_track: true },
 ];
 
@@ -50,7 +50,7 @@ describe('PlannersPane', () => {
     expect(within(row('Codex')).getByText('Ready')).toBeTruthy();
     expect(within(row('Codex')).getByText('Passed every check; new tracks can use it.')).toBeTruthy();
     expect(within(row('Claude')).getByText('Not configured')).toBeTruthy();
-    expect(within(row('Claude')).getByText('calm-server was started without --claude-planner-config')).toBeTruthy();
+    expect(within(row('Claude')).getByText('Planner authentication is not configured')).toBeTruthy();
   });
 
   it('describes blank track creation during Codex and Claude outages (#3037)', () => {

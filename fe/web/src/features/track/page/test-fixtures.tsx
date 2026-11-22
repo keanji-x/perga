@@ -5,7 +5,8 @@ import { fireEvent, render, type RenderResult } from '@testing-library/react';
 import { vi } from 'vitest';
 
 import type { ReportTaskRow } from '../../../../../core/domain/track-task-inventory.ts';
-import { NEUTRAL_ACTIVITY, type CardWire, type Track } from '../../../../../core/domain/track.ts';
+import { NEUTRAL_ACTIVITY, type Track } from '../../../../../core/domain/track.ts';
+import type { PanelItem } from '../../../../../core/domain/panel-item.ts';
 import { useState } from '../../../ui/state/public.ts';
 import { TrackPage, type TrackPageProps } from './public.tsx';
 
@@ -21,16 +22,16 @@ export function track(overrides: Partial<Track> = {}): Track {
   };
 }
 
-export function manualCard(overrides: Partial<CardWire> = {}): CardWire {
+export function manualCard(overrides: Partial<PanelItem> = {}): PanelItem {
   return {
-    id: 'card-1', track_id: 'w1', kind: 'terminal', title: 'Main terminal', sort: 1,
-    payload: { terminal_presentation: { source: 'manual', in_workbench: true } }, deletable: true, created_at: 0, updated_at: 0,
-    ...overrides,
+    id: 'card-1', trackId: 'w1', kind: 'terminal', title: 'Main terminal', sort: 1,
+    payload: null, presentation: { source: 'manual', inWorkbench: true }, removable: true, createdAtMs: 0, updatedAtMs: 0,
+    ...overrides, panelType: 'custom',
   };
 }
 
 /** Every card the case names — the listed cards and every task's worker card. A case about an unopenable worker passes its own `openableCards`. */
-export function openableCardsOf(cards: readonly CardWire[], tasks: readonly ReportTaskRow[]): ReadonlySet<string> {
+export function openableCardsOf(cards: readonly PanelItem[], tasks: readonly ReportTaskRow[]): ReadonlySet<string> {
   return new Set([
     ...cards.map((entry) => entry.id),
     ...tasks.flatMap((task) => {
@@ -69,7 +70,6 @@ export function renderPage(overrides: Partial<TrackPageProps> & LegacyActions = 
     openableCards: openableCardsOf(cards, tasks),
     canReopenTrack: false,
     canCloseTrack: false,
-    adminGrantedAt: null,
     onRenameTrack: vi.fn(),
     closedControl: { pending: false, setClosed: () => Promise.resolve(true), feedback: { error: null, clear: () => undefined, run: () => Promise.resolve(true) } },
     onDeleteTrack: vi.fn(),

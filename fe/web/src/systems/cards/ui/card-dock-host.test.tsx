@@ -1,6 +1,6 @@
 import { cleanup, render } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
-import { CardDockHost, createCardHost, createCardRegistry, type MountedCard, type BoardHostItem } from '../public.js';
+import { CardDockHost, createCardHost, createCardRegistry, type MountedCard, type CardHostItem } from '../public.js';
 import { TERMINAL_CARD_ENTRY } from '../builtins/terminal.ts';
 
 afterEach(cleanup);
@@ -11,7 +11,7 @@ it('retains the single lifecycle mount while hidden, publishes visibility/focus 
   registry.register({ ...TERMINAL_CARD_ENTRY, createController: () => ({ dispose }), component: () => <input aria-label="retained resource" /> });
   const host = { ...createCardHost(registry) };
   const mount = vi.spyOn(host, 'mount');
-  const item: BoardHostItem = { card: { type: 'terminal', id: 'one', title: 'One', terminalId: null, sessionState: null, cwd: null, gateCwd: null },
+  const item: CardHostItem = { card: { type: 'terminal', id: 'one', title: 'One', terminalId: null, sessionState: null, cwd: null, gateCwd: null },
     title: 'One', originalIndex: 0, activity: null, notice: null };
   const view = render(<CardDockHost host={host} item={item} visible focused />);
   const input = view.getByRole('textbox');

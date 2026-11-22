@@ -1,6 +1,6 @@
 # Perga 架构参考
 
-> 实现基线：`6c907fa5`。本文描述该版本已实现的架构；接口、SQL 与运行参数的精确定义以所链接源码为准。后续契约生成工作的计划不作为本版本能力。
+> 实现基线：`216e2f3c`（含 PR #135 认证、#144 契约生成、#145 句柄回收、#143 浏览器入口清理与 #142 模板收敛）。本文描述该版本已实现的架构；接口、SQL 与运行参数的精确定义以所链接源码为准。
 
 Perga 以 Track 为长期工作单元，将会话、任务编排、工作区、报告和外部工具放在同一生命周期内。Host 接入浏览器与 Agent，Kernel 决定领域行为，SQLite 保存可恢复状态，适配器执行外部协议。Report 是出版物，Flow 是调度规格，Session 是可复用的会话工位。
 
@@ -38,7 +38,6 @@ Perga 以 Track 为长期工作单元，将会话、任务编排、工作区、�
 - [tools/perga-overlayfs](tools/perga-overlayfs)：OverlayFS 工作区辅助程序。
 - [tools/perga-deploy](tools/perga-deploy)：安装、发布、systemd 与升级控制工具。
 - [templates](templates)：内置包 `agents-delivery`、`equity-research`、`okr-loop`；每包有 `template.perga.js` 与报告骨架，部分包含 schema、views 和 widget。共享类型为 [perga-template.d.ts](templates/perga-template.d.ts)，检查配置为 [tsconfig.json](templates/tsconfig.json)。
-- [plugins](plugins)：当前目录为 `barra`、`invest`、`market`、`paper-trading`、`research-archive`；插件是否向某 Track 暴露由运行配置与授权决定，目录存在不等于默认启用。
 - [fe](fe)：React/TypeScript 浏览器客户端及其构建、测试、架构门禁。
 
 ### 1.2 编译与直接依赖矩阵
@@ -56,7 +55,7 @@ Perga 以 Track 为长期工作单元，将会话、任务编排、工作区、�
 | TermClient | Processes | 无 |
 | Kernel | Processes、Contracts、ReportDoc、PolicyVm、AgentKit、VcsKit、TermClient | 无 |
 | Storage.Sqlite | Kernel、Contracts | Microsoft.Data.Sqlite 11.0.0、Dapper 2.1.66、ZstdSharp.Port 0.8.4 |
-| Host | Processes、Kernel、Storage.Sqlite、Contracts、ReportDoc、PolicyVm、AgentKit、VcsKit、TermClient | Cronos 0.9.0 |
+| Host | Processes、Kernel、Storage.Sqlite、Contracts、ReportDoc、PolicyVm、AgentKit、VcsKit、TermClient | Cronos 0.9.0、Microsoft.Extensions.Identity.Core 11.0.0、System.CommandLine 3.0.0 |
 
 8 个测试项目均直接使用 `Microsoft.NET.Test.Sdk 17.12.0`、`xunit 2.9.3`、`xunit.runner.visualstudio 2.8.2`。Host 集成测试另用 `Microsoft.AspNetCore.Mvc.Testing 11.0.0`。
 
@@ -79,7 +78,7 @@ Perga 以 Track 为长期工作单元，将会话、任务编排、工作区、�
 
 [PergaKernelService](src/Perga.Kernel/PergaKernelService.cs) 是领域入口，[TrackActorRegistry](src/Perga.Kernel/Actors/TrackActorRegistry.cs) 管理按 Track 加载、复用与回收的 Actor。数据库是持久事实源，Actor 持有已水合状态与运行中的资源。
 
-[TrackActor.cs](src/Perga.Kernel/Actors/TrackActor.cs) 主文件为 **517 行**，聚焦组合、邮箱与生命周期。相关 partial 文件承接会话、Flow、模板等跨职责协调；四个私有嵌套协作者真正封装各自的可变状态：
+[TrackActor.cs](src/Perga.Kernel/Actors/TrackActor.cs) 主文件为 **519 行**，聚焦组合、邮箱与生命周期。相关 partial 文件承接会话、Flow、模板等跨职责协调；四个私有嵌套协作者真正封装各自的可变状态：
 
 | 协作者 | 拥有的状态与职责 |
 | --- | --- |
@@ -102,6 +101,10 @@ Actor 继续拥有 Track/Session 索引、模板及工作区协调、活动计�
 - Unknown、重连、reset/compact、审批等待与响应是显式生命周期路径。结果不明与已失败是不同状态；恢复逻辑不能假定外部执行没有发生。
 - Task 通过 `session_id` 指向会话；终结任务的关联用于追溯。当前活跃任务租约决定会话限制，历史任务不会永久锁住可复用会话。
 
+[SessionRuntime](src/Perga.Kernel/Actors/SessionRuntime.cs) 独立管理 provider 句柄及最后使用时间；[Registry](src/Perga.Kernel/Actors/TrackActorRegistry.cs) 默认每分钟巡检，先回收空闲句柄再考虑 Actor 驱逐。[KernelOptions](src/Perga.Kernel/KernelOptions.cs) 的默认 Session 空闲阈值为 15 分钟，Actor 空闲阈值为 10 分钟；Host 的 `SessionIdleTimeout` 配置传入 Kernel。普通空闲回收要求 provider 支持恢复、已有 native thread ID、调度器无占用且无 running/pending runtime task。关闭只释放外部句柄，保留持久 Session 及其恢复身份。
+
+[SessionInterop](src/Perga.Kernel/Actors/TrackActor.SessionInterop.cs) 还清理归档 Session、已关闭 Track 或 MCP token 已撤销的退役句柄；活跃 turn 先标记结算后关闭。候选在 mailbox 中选择，外部关闭在 mailbox 外进行，并在 runtime gate 内复核 generation、调度状态与空闲时间。关闭未确认时保留句柄，并将会话标为 `unknown`、原因为 `shutdown_unconfirmed`，不把不确定的停止当成可安全重新派发；启用 Session 空闲回收时，仍有开放句柄的 Actor 不会提前被空闲驱逐。
+
 接口与运行模型见 [统一会话设计](docs/design/unified-conversation-architecture.md)、[会话配置状态](docs/design/unified-session-config-state.md) 与 [任务/会话归属](docs/design/unify-task-session-ownership.md)。这些设计记录提供背景，当前工具和路由以源码为准。
 
 ### 2.3 Track Flow v1
@@ -121,7 +124,11 @@ Actor 继续拥有 Track/Session 索引、模板及工作区协调、活动计�
 
 [ReportDocEngine](libs/Perga.ReportDoc/ReportDocEngine.cs) 负责 Markdown 块身份、提交与修订快照；[PolicyVm](libs/Perga.PolicyVm) 使用 Jint 执行模板，并提供输入校验、业务 Data 校验、策略和视图能力。模板包按 [模板架构](docs/design/template-architecture.md) 组织，源类型定义位于模板目录。
 
-Report 发布正文与模板声明的骨架；`report_commit` 受块版本、模板章节权限、正文预算及策略检查，明确禁止新增或修改 Task 块，任务调度通过 Flow 声明。View/Widget 块仍可经报告操作插入，当前没有通用的视图插入禁令。`data_patch` 维护独立的业务 JSON 和 `data_rev`。Flow 负责调度，视图读取 Data/Flow，通用 UI 不承载投资、交付等模板领域政策。
+模板的业务状态统一保存在 Track Data；`data.schema(t)` 声明约束，`data.initial(inputs)` 初始化，`setup(inputs)` 可生成有效配置。`data_patch` 与 HTTP PATCH 使用相同的合并后校验，`expectedDataRev` 保护并发更新。任务、会话、门禁与 Flow 状态仍由 Kernel 持有，模板通过视图消费这些事实。策略钩子取得当前 inputs/data 的独立快照，钩子内修改不会写回；报告提交与任务派发复核审批所依据的数据快照。模板源码或包及继承所需冻结源码保存在模板快照中，见 [TemplateBundle](libs/Perga.PolicyVm/TemplateBundle.cs)。
+
+新建 Track 从 `report.template` 指定的 Markdown 初始化正文并替换输入占位符；模板视图更新不覆盖已持久化正文。[ReportAuthoring](src/Perga.Kernel/ReportAuthoring.cs) 将当前创作面限定为 Markdown prose 与 `perga-block widget`。`report_commit` 受块版本、ReportAuthoring 创作边界与模板策略检查；任务在 Flow 中声明。既有退役块可原样保留，修改或新增这些块会被拒绝；历史块枚举与压缩修订仍由文档引擎保留可读性，不能据此认为旧块仍可创作。
+
+`GET /api/v1/tracks/{trackId}/views` 提供模板视图、HTML 资产、诊断与 Kernel Flow 投影。前端 [ReportDocument](fe/web/src/features/report/document/public.tsx) 只呈现 prose/widget，其他块显示 unsupported 提示；[ReportWidgetBlock](fe/web/src/features/report/widget/public.tsx) 负责 `builtin:flow`、`builtin:list`、`builtin:table` 及包内 HTML widget。列表和指标表分别校验投影；HTML 通过 sandbox iframe 接收数据与主题。没有显式 Flow widget 时，存在 Flow 节点或归档记录的报告可自动补充 Flow 投影。旧 native/table/series/checkpoint/html 等独立 Report 渲染通路已删除；工作区 HTML 文件预览由文件查看器负责，模板特定业务规则留在 Data、视图与策略中。
 
 ### 2.5 Provider 与 OAR 运行活动
 
@@ -145,15 +152,15 @@ Report 发布正文与模板声明的骨架；`report_commit` 受块版本、模
 
 ### 3.1 门面、共享寿命与领域仓储
 
-[SqliteTrackStore](src/Perga.Storage.Sqlite/SqliteTrackStore.cs) 是 **501 行**的公开端口门面；保留 `ITrackStore` 等接口和 `SessionInputs`、`SessionMessages`、`TrackSchedules`、`TrackWakes` capability 的原对象身份。
+[SqliteTrackStore](src/Perga.Storage.Sqlite/SqliteTrackStore.cs) 是 **528 行**的公开端口门面；保留 `ITrackStore` 等接口和 `SessionInputs`、`SessionMessages`、`TrackSchedules`、`TrackWakes` capability 的原对象身份。
 
 [SqliteStoreContext](src/Perga.Storage.Sqlite/SqliteStoreContext.cs) 独占共享初始化、migrator、单 writer、冷 Blob、upcaster、时钟、读连接工厂、数据库 identity sidecar 和 disposal。先迁移再启动 writer；释放时先结束 writer，再清理对应 reader pool。
 
-**24 个 internal sealed repository** 按领域封装 SQL 与映射，依赖通过构造器显式注入，context 不持有仓储反向引用：
+**25 个 internal sealed repository** 按领域封装 SQL 与映射，依赖通过构造器显式注入，context 不持有仓储反向引用：
 
 | 领域 | 仓储类型 |
 | --- | --- |
-| Area、创建回执与准备 | AreaRepository、CreationRepository |
+| Area、创建回执、准备与认证 | AreaRepository、CreationRepository、AuthRepository |
 | Track 创建、读取、更新、删除 | TrackCreationRepository、TrackReadRepository、TrackUpdateRepository、TrackDeletionRepository |
 | 报告、任务 | ReportRepository、TaskRepository |
 | Session、输入、消息、恢复 | SessionRepository、SessionInputsRepository、SessionMessagesRepository、SessionResumeRepository |
@@ -167,27 +174,28 @@ Report 发布正文与模板声明的骨架；`report_commit` 受块版本、模
 
 [SqliteSingleWriter](src/Perga.Storage.Sqlite/SqliteSingleWriter.cs) 使用单写连接和有界通道。默认队列容量 4,096，微批最多 32 项；WAL、`synchronous=NORMAL`、外键开启。查询使用独立只读/query-only 连接，aggregate 读取保留自己的快照事务。
 
-一个业务回调中的相关行与事件在同一事务提交。例如 Track 创建包括初始聚合、输入、准备意图、回执和事件；报告提交包括修订、当前正文、模板状态、事件和 wake；Flow 更新将规格、任务和时钟效果保持一致。
+一个业务回调中的相关行与事件在同一事务提交。例如 Track 创建包括初始聚合、输入、准备意图、回执和事件；报告提交原子保存修订、当前正文和事件，`authorSessionId` 为空的写入还在同事务入队报告 wake；Flow 更新将规格、任务和时钟效果保持一致。
 
 微批中任一项失败会回滚整批，再逐项在独立事务重放，使有效的其他调用能够成功。回调因此必须保持事务内可重放，不能夹带不可撤销的外部副作用。成功结果在 commit 后发布；取消与失败不能把半批结果当成成功。
 
 输入准入、消息 steering、恢复和 Epoch 变更使用持久状态与 CAS。Boot recovery 与 Actor 水合配合处理进程重启后的中断工作。`synchronous=NORMAL` 下的进程恢复保证不应扩写成断电后零丢失承诺。
 
-### 3.3 25 个冻结迁移与真实 schema
+### 3.3 26 个冻结迁移与真实 schema
 
-唯一 DDL 事实源为 [Migrations](src/Perga.Storage.Sqlite/Migrations)：**0001–0025，共 25 个 SQL 文件**，发布后字节冻结，修正必须新增前向迁移。本文不复制一份容易漂移的建表脚本。
+唯一 DDL 事实源为 [Migrations](src/Perga.Storage.Sqlite/Migrations)：**0001–0026，共 26 个 SQL 文件**，发布后字节冻结，修正必须新增前向迁移。本文不复制一份容易漂移的建表脚本。
 
 | Schema 分组 | 当前承载 |
 | --- | --- |
 | 基础与工作区 | `schema_migrations`、`areas`、`tracks`、`track_workspace_preparations`、`creation_receipts` |
-| 报告与业务数据 | `reports`、`report_revisions`；业务 Data/版本与模板状态存于 Track 相关列 |
+| 报告与业务数据 | `reports`、`report_revisions`；业务 Data/版本存于 Track 相关列 |
 | Flow 与运行 | `tracks.flow_spec_json/flow_rev/flow_file_sha256`、`tasks`、`track_schedules`、`track_wakes` |
 | 会话与输入消息 | `agent_sessions`、`session_turns`、`session_inputs`、`session_items`、`session_messages`、`session_message_steers` |
 | 交互与终端 | `asks`、`mails`、`terminals` |
 | 事件与产品投影 | `events`、`daily_tracks`、`read_receipt_meta`、`read_receipts` |
 | 执行与运维 | `execution_targets`、`system_upgrade_receipts` |
+| Web 认证 | `auth_users`、`auth_sessions` |
 
-迁移顺序也描述了结构演进：0002 工作区准备；0003 Worker 消息；0004 provider resume；0005 Blob 引用索引；0006 消息队列；0007–0009 权限与推理配置；0010 Ask 交付；0011 升级回执；0012 Today；0013–0015 上下文及 wake；0016 退役 hold Ask；0017 task role；0018 时钟；0019 unknown 状态；0020 已读回执；0021 统一会话；0022 Data；0023 Task/Session 归属统一；0024 执行目标；0025 Flow。
+迁移顺序也描述了结构演进：0002 工作区准备；0003 Worker 消息；0004 provider resume；0005 Blob 引用索引；0006 消息队列；0007–0009 权限与推理配置；0010 Ask 交付；0011 升级回执；0012 Today；0013–0015 上下文及 wake；0016 退役 hold Ask；0017 task role；0018 时钟；0019 unknown 状态；0020 已读回执；0021 统一会话；0022 Data；0023 Task/Session 归属统一；0024 执行目标；0025 Flow；0026 Web 认证。
 
 历史迁移出现过的 `task_attempts`、`worker_messages`、`worker_settings`、`provider_session_resume` 已在后续迁移删除。**当前没有独立 `track_flows` 表**，Flow 规格在 `tracks` 列中；`track_schedules` 的历史列仍存在，运行语义已收口为 Flow 时钟，不能仅凭建表历史推断仍有旧 CRUD。
 
@@ -203,13 +211,13 @@ Report 发布正文与模板声明的骨架；`report_commit` 受块版本、模
 
 ### 4.1 组合根与静态发布
 
-[Program.cs](src/Perga.Host/Program.cs) 安装异常转换、RequestOriginGuard、WebSocket，映射 API/MCP，并通过 [ReleaseSnapshotManager](src/Perga.Host/SystemUpgrade/ReleaseSnapshotManager.cs) 在 **根路径 `/`** 交付静态前端。不存在单独的旧前缀静态挂载。非 API/MCP 的 GET/HEAD 可回退到 SPA；未知 API/MCP 路由返回错误，不返回 HTML。
+[Program.cs](src/Perga.Host/Program.cs) 捕获原始传输信息，按配置处理可信转发头，安装异常转换、传输安全、RequestOriginGuard、WebSocket，再经过路由、认证、授权和写入来源检查，映射 API/MCP，并通过 [ReleaseSnapshotManager](src/Perga.Host/SystemUpgrade/ReleaseSnapshotManager.cs) 在 **根路径 `/`** 交付静态前端。不存在单独的旧前缀静态挂载。非 API/MCP 的 GET/HEAD 可回退到 SPA；未知 API/MCP 路由返回错误，不返回 HTML。
 
 [服务注册](src/Perga.Host/PergaHostServiceCollectionExtensions.cs) 组合存储、Kernel、目标环境、桥与 hosted services。启动恢复、Cronos 时钟调度和 SQLite 维护分别位于 [Lifecycle](src/Perga.Host/Lifecycle)。
 
 ### 4.2 HTTP 资源面
 
-路由权威为 [ApiV1Endpoints](src/Perga.Host/Http/ApiV1Endpoints.cs)、[TodayEndpoints](src/Perga.Host/Http/TodayEndpoints.cs) 与 [SystemEndpoints](src/Perga.Host/Http/SystemEndpoints.cs)。下表列出实际资源组，避免固定“若干个逻辑端点”的虚假计数。
+路由权威为 [ApiV1Endpoints](src/Perga.Host/Http/ApiV1Endpoints.cs)、[TodayEndpoints](src/Perga.Host/Http/TodayEndpoints.cs)、[SystemEndpoints](src/Perga.Host/Http/SystemEndpoints.cs) 与 [AuthEndpoints](src/Perga.Host/Auth/AuthEndpoints.cs)。下表列出实际资源组，避免固定“若干个逻辑端点”的虚假计数。
 
 | 路径（资源组） | 当前操作 |
 | --- | --- |
@@ -230,9 +238,11 @@ Report 发布正文与模板声明的骨架；`report_commit` 受块版本、模
 | `/api/v1/tracks/{trackId}/terminals` | GET/POST；DELETE `/{termId}` |
 | `/api/v1/read-receipts` | GET；POST `/{kind}/{targetId}/read` 或 `/unread` |
 | `/api/v1/system/info`、`/system/drain`、`/system/reload` | 分别 GET、POST、POST（均属 `/api/v1`） |
-| `/api/today/daily`、`/calendar`、`/report-changes`、`/report-edits` | GET 日 Track、日历、报告变化及编辑明细 |
+| `/api/v1/auth/login`、`/logout`、`/session` | POST 登录/退出、GET 当前会话 |
+| `/api/v1/system/auth-status` | GET 认证配置状态（管理权限） |
+| `/api/v1/today/daily`、`/calendar`、`/report-changes`、`/report-edits` | GET 日 Track、日历、报告变化及编辑明细（均属 `/api/v1/today`） |
 
-`/api/v1` 默认属性为 camelCase，枚举写出 snake_case 字符串，见 [PergaJsonDefaults](src/Perga.Host/Serialization/PergaJsonDefaults.cs)。**该基线的 Today 仍在 `/api/today`，使用 snake_case 序列化与部分 snake_case 查询参数**，尚未统一迁到 `/api/v1/today`。
+`/api/v1` 默认属性为 camelCase，枚举写出 snake_case 字符串，见 [PergaJsonDefaults](src/Perga.Host/Serialization/PergaJsonDefaults.cs)。Today 同样使用 camelCase 属性和查询参数（`throughEventId`、`trackId`），统一位于 `/api/v1/today`，受 `UserSession` 和来源校验保护；旧 `/api/today` 路由已移除。
 
 ### 4.3 WebSocket 与事件重放
 
@@ -257,11 +267,15 @@ Report 发布正文与模板声明的骨架；`report_commit` 受块版本、模
 
 ### 4.5 浏览器来源与系统管理
 
-[RequestOriginGuard](src/Perga.Host/Http/RequestOriginGuard.cs) 覆盖 `/api/v1`、`/api/today` 和 `/mcp`，包括 WS 握手：
+[Web 认证](src/Perga.Host/Auth/PergaAuthentication.cs) 默认拒绝未认证访问：`UserSession` 要求有效 owner Web cookie 会话；API/WS 使用该身份，未知 API 路由与合成 405 也受保护。`UserOrManagement` 用于 system/info，接受用户或管理身份；`SystemManagementOnly` 用于 drain/reload/auth-status，要求管理 Bearer token。MCP 使用独立 `McpSessionOnly`，Web cookie 不替代 MCP 会话凭证。
 
-- 对 loopback 或无 socket 地址的连接，Host 仅接受 localhost、loopback IP 或配置的 `AllowedHosts`，防 DNS rebinding；不信任 forwarded headers 来判定本机地址。
-- 提供 `Origin` 时必须是有效单一 HTTP(S) origin，匹配请求本源或 `AllowedOrigins`；格式错误、多个值、未授权异源均拒绝。
-- 提供 `Sec-Fetch-Site` 时检查其合法值，未显式允许 origin 的 cross-site 拒绝。允许不带这些浏览器头的非浏览器调用；这层保护不是客户端身份认证。
+[AuthEndpoints](src/Perga.Host/Auth/AuthEndpoints.cs) 暴露匿名 JSON 登录、受 `UserSession` 保护的当前会话及允许匿名的幂等退出。登录校验数据库 owner 和密码、限流后签发 cookie；退出按可选会话 ID 防止旧请求撤销新会话，并撤销持久会话、断开相关 WS。没有 owner 配置时登录拒绝。部署模式、原始 socket 与可信代理校验由 [TransportSecurityMiddleware](src/Perga.Host/Http/TransportSecurityMiddleware.cs) 与 [配置](src/Perga.Host/Configuration/PergaHostOptions.cs) 决定，不能靠伪造转发头绕过。
+
+[RequestOriginGuard](src/Perga.Host/Http/RequestOriginGuard.cs) 覆盖整个 `/api`（含 `/api/v1/today`）及 `/mcp`，与身份认证互补：
+
+- 本地连接与代理入口执行 Host/DNS rebinding 校验，结合 `AllowedHosts`、`AuthPublicOrigin` 和严格限定的直接本地管理/MCP 例外；不凭转发头推断原始本机连接。
+- `Origin` 必须是单一有效 HTTP(S) origin，匹配请求本源、配置公开源或 `AllowedOrigins`；`Sec-Fetch-Site` 同样校验，未显式允许的 cross-site 请求拒绝。API WebSocket 握手必须带 Origin。
+- 标有 `BrowserWriteApi` 的 API 写请求要求 JSON 或允许的 Origin/Referer；非浏览器调用省略浏览器头仍须满足传输、身份及写入来源约束。来源检查不能授予身份。
 
 升级的 drain/reload 另受 [SystemManagementAuthorization](src/Perga.Host/Http/SystemManagementAuthorization.cs) 控制。Drain 管理派发准入，reload 切换发布快照；升级回执与通知由 Kernel 和 SQLite 配合恢复，细节见 [升级设计](docs/design/system-upgrade-phase2.md) 与 [安装升级](docs/design/install-and-upgrade.md)。
 
@@ -282,9 +296,11 @@ Report 发布正文与模板声明的骨架；`report_commit` 受块版本、模
 
 生产入口按 Perga 单一产品运行，已移除 `pergaMode` 双轨。浏览器挂载根路径 `/`；产品持久键使用 `perga:*`、IndexedDB 名为 `perga`、内部链接为 `perga://`。P3 不引入旧命名迁移兼容层，见 [前端 P3 记录](docs/design/frontend-p3-cleanup.md)。
 
+[ProductionApp](fe/web/src/app/auth/production-app.tsx) 统一通过 [SessionGate](fe/web/src/app/auth/session-gate.tsx) 验证 Web 会话，再进入兼容性检查和路由；[LogoutGate](fe/web/src/app/auth/logout-gate.tsx) 处理退出。旧 Tauri bundled 认证、配对/恢复入口、`systems/recovery` 与 `RecoveryGate` 已删除，其全局 DOM 观察与每秒滚动采样也随之移除；浏览器生产入口只保留 Web session 路径。
+
 ### 5.2 查询、会话与编辑器
 
-TanStack Router 组织导航，TanStack Query 组织查询、mutation 与失效；[app/providers](fe/web/src/app/providers) 按领域拆分 Query hooks。核心 API 通过 [client](fe/core/api/client.ts) 与 [Perga v1 schema](fe/core/api/perga-v1.ts) 接入 `/api/v1`，Today 保留上文所述真实接口。Query key 包含必要的目标/资源身份，避免不同 execution target 的 provider/model 目录串缓存。
+TanStack Router 组织导航，TanStack Query 组织查询、mutation 与失效；[app/providers](fe/web/src/app/providers) 按领域拆分 Query hooks。核心 API 通过 [client](fe/core/api/client.ts) 与 [Perga v1 schema](fe/core/api/perga-v1.ts) 接入 `/api/v1`，Today 使用统一的 `/api/v1/today`。Area/Track 的响应、事件与缓存直接消费 `AreaDto`/`TrackDto`，不再往返翻译 `AreaWire`/`TrackWire`。Provider ID 保留运行时目录报告的原值，展示标签单独处理，不再拼接 `acp:` 前缀。Query key 包含必要的目标/资源身份，避免不同 execution target 的 provider/model 目录串缓存。
 
 [app/conversations](fe/web/src/app/conversations) 管理会话注册表、outbox、历史、活跃流与审批控制；WS 驱动实时投影及查询失效，刷新仍可从持久快照恢复。创建确认的 Track ID 与首次发送恢复是客户端生命周期的一部分。
 
@@ -292,7 +308,9 @@ TanStack Router 组织导航，TanStack Query 组织查询、mutation 与失效�
 
 ### 5.3 契约现状与门禁
 
-**本基线没有真正运行的 OpenAPI → 前端生成链。** [package.json](fe/package.json) 的 `gen:api` 仅打印维护提示。[openapi.json](fe/core/api/generated/openapi.json)、前端解析 schema 与 Host 路由仍需同步核验；文件名为 generated 不代表它由当前 Host 自动导出。`TrackWire`/`AreaWire` 等前端投影命名与 provider 标识适配也不能视为已经由 C1 消除。
+[PergaHttpEndpoints](src/Perga.Host/Http/PergaHttpEndpoints.cs) 让服务与离线导出共享真实注册路由及 JSON/认证配置。[OpenApiDocumentExporter](src/Perga.Host/Http/OpenApiDocumentExporter.cs) 读取 RouteEndpoint 表，[OpenApiSchemaRegistry](src/Perga.Host/Http/OpenApiSchemaRegistry.cs) 使用序列化元数据生成 schema，[OpenApiAuthorization](src/Perga.Host/Http/OpenApiAuthorization.cs) 从真实授权策略生成安全要求。离线导出不启动监听或后台服务；未知契约/认证元数据使生成失败。
+
+[gen-api.mjs](fe/tools/api/gen-api.mjs) 通过 `npm run gen:api` 运行 Host 导出 OpenAPI 3.1，再生成 TypeScript：[openapi.json](fe/core/api/generated/openapi.json) 在此基线包含 **49 路径、57 操作、114 schema**，[wire.ts](fe/core/api/generated/wire.ts) 从这些 schema 生成类型。`npm run gen:api -- --check` 对比真实导出，拒绝产物漂移；[OpenApiExportTests](tests/Perga.Host.IntegrationTests/OpenApiExportTests.cs) 验证路由覆盖、schema、认证与生成确定性。运行时解码器仍需随契约同步，不能用类型生成代替运行时校验。
 
 前端门禁包含 ESLint、Stylelint、dependency-cruiser、目录/清单、样式/token 与 fixture 检查，入口为 npm lint scripts 和 [tools](fe/tools)。运行时不得导入测试工具；修改门禁须有正反 fixture 并检查同源互比的局限。契约检查还应对照真实 Host，不能用两份共同陈旧的产物相互证明。
 
@@ -316,6 +334,9 @@ dotnet test Perga.sln
 
 # OAR 桥；依赖安装后运行，要求 Node >=24
 (cd tools/perga-oar-bridge && npm run typecheck && npm test && npm run build)
+
+# HTTP 契约变更后生成，再校验漂移
+(cd fe && npm run gen:api && npm run gen:api -- --check)
 
 # 所有改动的空白检查
 git diff --check origin/main

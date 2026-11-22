@@ -1,5 +1,5 @@
 import type { ComponentType } from 'react';
-import type { CardRuntimeView } from '../../../../core/api/schemas.js';
+import type { TerminalDto } from '../../../../core/api/perga-v1.js';
 import type { CardActivity } from '../../../../core/domain/activity.js';
 import type { CardHostCapabilities } from './contracts.js';
 
@@ -9,21 +9,12 @@ export interface CardDataMap {
 
 export type RegisteredCard = CardDataMap[Exclude<keyof CardDataMap, '_cardDataMapBrand'>];
 
-export interface KernelCardInput {
+export interface PanelInput {
   readonly id: string;
   readonly kind: string;
-  readonly payload: unknown;
-  readonly runtime?: CardRuntimeView;
+  readonly payload?: unknown;
+  readonly terminal?: TerminalDto;
 }
-
-export interface CardSize {
-  readonly w: number;
-  readonly h: number;
-  readonly minW: number;
-  readonly minH: number;
-}
-
-export const FALLBACK_SIZE: CardSize = Object.freeze({ w: 4, h: 6, minW: 3, minH: 3 });
 
 export type CardKindClaim =
   | Readonly<{ mode: 'exact'; kind: string }>
@@ -70,15 +61,12 @@ export interface CardAddPanel {
 export interface CardEntry<Card extends { readonly id: string; readonly type: string } = RegisteredCard> {
   readonly type: Card['type'];
   readonly component: ComponentType<CardComponentProps<Card>>;
-  readonly defaultSize: CardSize;
-  /** Opt into a sticky surface bounded by the board scrollport; the user's grid cell stays unchanged. */
-  readonly viewport?: 'board';
   readonly claim?: CardKindClaim;
   readonly title?: (card: Card) => string;
   readonly accessibleName?: (card: Card) => string;
   readonly create?: CardCreateStrategy;
   readonly addPanel?: CardAddPanel;
-  readonly fromKernel?: (card: KernelCardInput) => Card | null;
+  readonly fromPanel?: (card: PanelInput) => Card | null;
 }
 
 export interface CardAddMenuEntry {
@@ -107,7 +95,7 @@ export function cardAddMenuEntries(registry: CardRegistry): readonly CardAddMenu
 export interface CardRegistry {
   register<Card extends RegisteredCard>(entry: CardEntry<Card>): void;
   get(type: string): CardEntry | undefined;
-  resolve(card: KernelCardInput): RegisteredCard | null;
+  resolve(card: PanelInput): RegisteredCard | null;
   entries(): readonly CardEntry[];
 }
 
@@ -155,11 +143,11 @@ export function createCardRegistry(): CardRegistry {
       if (entry.claim?.mode === 'prefix') prefix.set(entry.claim.prefix, entry);
     },
     get: (type: string) => entries.get(type),
-    resolve(card: KernelCardInput): RegisteredCard | null {
+    resolve(card: PanelInput): RegisteredCard | null {
       const tried = new Set<CardEntry>();
       const exactEntry = exact.get(card.kind);
       if (exactEntry !== undefined) tried.add(exactEntry);
-      const exactResult = exactEntry?.fromKernel?.(card);
+      const exactResult = exactEntry?.fromPanel?.(card);
       if (exactResult != null) return exactResult;
 
       let longest: CardEntry | undefined;
@@ -171,12 +159,12 @@ export function createCardRegistry(): CardRegistry {
         }
       }
       if (longest !== undefined) tried.add(longest);
-      const prefixResult = longest?.fromKernel?.(card);
+      const prefixResult = longest?.fromPanel?.(card);
       if (prefixResult != null) return prefixResult;
 
       for (const entry of entries.values()) {
-        if (tried.has(entry) || entry.fromKernel === undefined) continue;
-        const result = entry.fromKernel(card);
+        if (tried.has(entry) || entry.fromPanel === undefined) continue;
+        const result = entry.fromPanel(card);
         if (result != null) return result;
       }
       return null;

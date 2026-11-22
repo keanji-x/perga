@@ -60,8 +60,8 @@ it.each(['acp:opencode', 'acp:antigravity', 'vendor/new &mode=other'])('round-tr
   const input = { version: 'runtime', providers: [{ provider, available: true, models: ['model'] }] };
   const selected = managedProvidersOperation(false).responseSchema.parse(input)[0].availability.provider;
   expect(selected).toBe(provider);
-  expect(createTrackOperation({ area_id: 'area', planner_provider: selected,
-    theme: { fg: [0, 0, 0], bg: [255, 255, 255] } }, 'key').body).toMatchObject({ provider });
+  expect(createTrackOperation({ areaId: 'area', provider: selected,
+    }, 'key').body).toMatchObject({ provider });
   expect(createTrackConversationOperation('track', 'Inspect', 'key', selected,
     { model: null, reasoning_effort: null }).body).toMatchObject({ provider });
   const catalog = modelCatalogOperation({ kind: 'provider', provider: selected });

@@ -3,7 +3,6 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
-import { DARK_THEME_RGB, LIGHT_THEME_RGB, readHostThemeRgb } from './host-rgb.ts';
 import { THEME_MODES, parseThemeMode } from './public.tsx';
 
 describe('app/theme contracts', () => {
@@ -54,22 +53,5 @@ describe('app/theme contracts', () => {
     expect(parseThemeMode('sepia')).toBeNull();
   });
 
-  it('matches theme.config.json hostRgb defaults', () => {
-    const config = JSON.parse(readFileSync(resolve(import.meta.dirname, '../../styles/theme.config.json'), 'utf8')) as {
-      hostRgb: { dark: { fg: number[]; bg: number[] }; light: { fg: number[]; bg: number[] } };
-    };
-    expect(DARK_THEME_RGB).toEqual(config.hostRgb.dark);
-    expect(LIGHT_THEME_RGB).toEqual(config.hostRgb.light);
-    expect(LIGHT_THEME_RGB).toEqual({ fg: [42, 47, 58], bg: [252, 254, 255] });
-  });
 
-  it('INV-DUP-007 reads the structured dataset channel and defaults to Rust dark', () => {
-    const root = document.documentElement;
-    root.dataset.theme = 'light';
-    expect(readHostThemeRgb(root)).toBe(LIGHT_THEME_RGB);
-    root.dataset.theme = 'dark';
-    expect(readHostThemeRgb(root)).toBe(DARK_THEME_RGB);
-    delete root.dataset.theme;
-    expect(readHostThemeRgb(root)).toBe(DARK_THEME_RGB);
-  });
 });

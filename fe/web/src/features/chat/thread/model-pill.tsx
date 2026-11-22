@@ -1,4 +1,5 @@
-import { catalogReason, defaultNameOf, effortsFor, FOLLOW_DEFAULT_LABEL, legacyPresentation, providerLabel, visibleModelGroups, type CatalogEntry, type ModelGroup } from './model-selection.ts';
+import { providerPresentation } from '../../../../../core/domain/provider-presentation.ts';
+import { catalogReason, defaultNameOf, effortsFor, FOLLOW_DEFAULT_LABEL, providerLabel, visibleModelGroups, type CatalogEntry, type ModelGroup } from './model-selection.ts';
 // The model picker in a planner conversation's composer footer, and on the new-track page. Presentational:
 // every value is a prop; the queries and the write live in `app/router`. Each provider's catalog is one
 // group; on the new-track page the pick also decides the Planner's provider (#1810), and each group
@@ -331,7 +332,7 @@ function GroupChoices<Provider extends string>({ group, selection, onChange }: R
     {models.length === 0 && reason === null && (
       <div className={styles.pickerEmpty}>
         {unreachable ? (group.selectionProblem !== undefined ? `${group.provider} model catalog is unavailable`
-          : legacyPresentation(group.provider)?.unavailable ?? `${group.provider} is unavailable`) : 'No models available on this account'}
+          : providerPresentation(group.provider)?.unavailable ?? `${group.provider} is unavailable`) : 'No models available on this account'}
       </div>
     )}
   </>;
@@ -394,30 +395,6 @@ export function PermissionModePill({ mode, options, onChange, isDisabled = false
     : (options.find((opt) => opt.isDefault) ?? options[0]).id;
   return <SettingPill name="Approvals" options={optionMap} value={effectiveMode} onChange={onChange}
     note={PERMISSION_NOTE} isDisabled={isDisabled} unavailableOption={unavailableMode} placement={placement} />;
-}
-
-/** What a Track's Planner may do in its Area: an ordinary Planner, or an Area admin (`admin` on `POST`/`PATCH /api/tracks`). */
-export type PlannerRole = 'member' | 'admin';
-
-/** Total over `PlannerRole`, in menu order; Member is the default. */
-const PLANNER_ROLES: Readonly<Record<PlannerRole, SettingOption>> = Object.freeze({
-  member: Object.freeze({ label: 'Member', description: 'An ordinary Planner.' }),
-  admin: Object.freeze({ label: 'Admin', description: 'May add Tracks and close the ones it added.' }),
-});
-
-/** The Planner's role beside a model picker, on the new-track page and in an existing Track's Planner conversation: a trigger of the approval setting's kind. */
-export function PlannerRolePill({ value, onChange, isDisabled = false, disabledReason, placement = 'above' }: Readonly<{
-  /** The role chosen; `role` would read as an ARIA role. */
-  value: PlannerRole;
-  onChange: (role: PlannerRole) => void;
-  isDisabled?: boolean;
-  /** Why it cannot be changed, as the disabled trigger's tooltip; it still names the current role. */
-  disabledReason?: string;
-  placement?: 'above' | 'below';
-}>) {
-  /* It sits at the trailing edge beside Create, so its menu opens leftward: room for its descriptions on a phone. */
-  return <SettingPill name="Role" options={PLANNER_ROLES} value={value} onChange={onChange}
-    isDisabled={isDisabled} tooltip={isDisabled ? disabledReason : undefined} placement={placement} alignment="end" />;
 }
 
 /** A short fixed setting: the trigger names it and its value, and each row explains itself. */

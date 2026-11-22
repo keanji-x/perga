@@ -31,8 +31,6 @@ internal sealed class TrackReadRepository
             """
             SELECT t.id AS Id,
                    t.area_id AS AreaId,
-                   t.parent_track_id AS ParentTrackId,
-                   t.parent_attempt_id AS ParentAttemptId,
                    t.title AS Title,
                    t.cwd AS Cwd,
                    t.workspace_driver AS WorkspaceDriver,
@@ -243,8 +241,6 @@ internal sealed class TrackReadRepository
                 """
                 SELECT t.id AS Id,
                        t.area_id AS AreaId,
-                       t.parent_track_id AS ParentTrackId,
-                       t.parent_attempt_id AS ParentAttemptId,
                        t.title AS Title,
                        t.cwd AS Cwd,
                        t.workspace_driver AS WorkspaceDriver,
@@ -277,8 +273,6 @@ internal sealed class TrackReadRepository
         new(
             Id: r.Id,
             AreaId: r.AreaId,
-            ParentTrackId: r.ParentTrackId,
-            ParentAttemptId: r.ParentAttemptId,
             Title: r.Title,
             Cwd: r.Cwd,
             WorkspaceDriver: r.WorkspaceDriver,
@@ -303,8 +297,6 @@ internal sealed class TrackReadRepository
     {
         public string Id { get; init; } = string.Empty;
         public string AreaId { get; init; } = string.Empty;
-        public string? ParentTrackId { get; init; }
-        public string? ParentAttemptId { get; init; }
         public string Title { get; init; } = string.Empty;
         public string Cwd { get; init; } = string.Empty;
         public string WorkspaceDriver { get; init; } = "direct";

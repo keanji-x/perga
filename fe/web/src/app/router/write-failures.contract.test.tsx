@@ -20,8 +20,7 @@ import { bootTestCardRuntime } from './test-card-runtime.ts';
 const unauthorized = createUnauthorizedChannel({ enqueue: (task) => task() });
 const area = { id: 'c1', name: 'One', color: '#123456', sortOrder: 1, kind: 'user', createdAtMs: 1, updatedAtMs: 1 };
 const openTrack = fixtureTrack('w1', { areaId: 'c1', title: 'Reliable', cwd: '/tmp', sortOrder: 1, closedAtMs: null, createdAtMs: 1, updatedAtMs: 1 });
-const card = { id: 'k1', track_id: 'w1', kind: 'terminal', title: 'Build log', sort: 1, payload: { terminal_presentation: { source: 'manual', in_workbench: true } },
-  deletable: true, created_at: 1, updated_at: 1 };
+const card = { id: 'k1', trackId: 'w1', title: 'Build log', cwd: '/tmp', status: 'running', createdAtMs: 1 };
 const ok = (body: unknown): ApiTransportResponse => ({ status: 200, statusText: 'OK', body });
 const notFound: ApiTransportResponse = { status: 404, statusText: 'Not Found', body: { error: 'track not found', code: 'not_found' } };
 /** What a lost answer, a timeout or an unreadable answer would put on screen if the raw failure were shown. */

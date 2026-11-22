@@ -54,7 +54,7 @@ const LISTING = {
   path: '/srv/app', parent: '/srv', entries: [{ name: 'crates', is_dir: true }],
 };
 
-/* The kernel returns an empty title; the planner agent names the track later through `neige_track_rename`. */
+/* The kernel returns an empty title; the planner agent names the track later through `track_rename`. */
 const TRACK_ROW = fixtureTrack('w-new', { areaId: 'c1', title: '', cwd: '/srv/managed', sortOrder: 0, closedAtMs: null, createdAtMs: 1, updatedAtMs: 1 });
 
 /** The 409 `POST /api/tracks` answers a folder clash with — no `error` key. */
@@ -98,7 +98,7 @@ function harness(options: {
   claudeUnavailable?: string;
   /** `GET /api/agent-providers` says Codex cannot run now (#1817); create still accepts it. */
   codexUnavailable?: string;
-  /** The created Planner card's `planner_provider`; its `?card_id=` catalog is that provider's. */
+  /** The created Planner card's `provider`; its `?card_id=` catalog is that provider's. */
   plannerProvider?: 'codex' | 'claude';
   /** Override the detail read the track page makes when the create lands. */
   trackDetail?: ApiTransportResponse;
@@ -324,7 +324,7 @@ describe('New track model selection', () => {
     await userEvent.type(screen.getByLabelText(TASK_LABEL), 'Plan while Claude is down');
     await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
     await waitFor(() => expect(createdTrackRequests(sent)).toHaveLength(1));
-    expect(createdTrackRequests(sent)[0]?.body).toMatchObject({ planner_provider: 'claude' });
+    expect(createdTrackRequests(sent)[0]?.body).toMatchObject({ provider: 'claude' });
     expect(createdTrackRequests(sent)[0]?.body).not.toHaveProperty('model');
     expect(createdTrackRequests(sent)[0]?.body).not.toHaveProperty('first_message');
     expect(sent.some((request) => request.path === '/api/v1/bootstrap?scope=providers')).toBe(true);
@@ -340,7 +340,7 @@ describe('New track model selection', () => {
     await userEvent.type(screen.getByLabelText(TASK_LABEL), 'Plan while Codex is down');
     await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
     await waitFor(() => expect(createdTrackRequests(sent)).toHaveLength(1));
-    expect(createdTrackRequests(sent)[0]?.body).toMatchObject({ planner_provider: 'codex', model: 'gpt-5' });
+    expect(createdTrackRequests(sent)[0]?.body).toMatchObject({ provider: 'codex', model: 'gpt-5' });
     await waitFor(() => expect(window.location.pathname).toBe(`/track/w-new`));
   });
 
@@ -354,7 +354,7 @@ describe('New track model selection', () => {
     await userEvent.type(screen.getByLabelText(TASK_LABEL), 'Back on Codex');
     await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
     await waitFor(() => expect(createdTrackRequests(sent)).toHaveLength(1));
-    expect(createdTrackRequests(sent)[0]?.body).toMatchObject({ planner_provider: 'codex' });
+    expect(createdTrackRequests(sent)[0]?.body).toMatchObject({ provider: 'codex' });
   });
 
   it('a Claude pick sets the provider and value without inventing effort metadata', async () => {
@@ -369,7 +369,7 @@ describe('New track model selection', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
     await waitFor(() => expect(createdTrackRequests(sent)).toHaveLength(1));
     const body = createdTrackRequests(sent)[0]?.body;
-    expect(body).toMatchObject({ planner_provider: 'claude', model: 'sonnet' });
+    expect(body).toMatchObject({ provider: 'claude', model: 'sonnet' });
     expect(body).not.toHaveProperty('first_message');
     expect(body).not.toHaveProperty('reasoning_effort');
   });
@@ -384,7 +384,7 @@ describe('New track model selection', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
     await waitFor(() => expect(createdTrackRequests(sent)).toHaveLength(1));
     const body = createdTrackRequests(sent)[0]?.body;
-    expect(body).toMatchObject({ planner_provider: 'claude' });
+    expect(body).toMatchObject({ provider: 'claude' });
     expect(body).not.toHaveProperty('model');
   });
 
@@ -399,7 +399,7 @@ describe('New track model selection', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
     await waitFor(() => expect(createdTrackRequests(sent)).toHaveLength(1));
     const body = createdTrackRequests(sent)[0]?.body;
-    expect(body).toMatchObject({ planner_provider: 'codex' });
+    expect(body).toMatchObject({ provider: 'codex' });
     expect(body).not.toHaveProperty('model');
   });
 
@@ -455,7 +455,7 @@ describe('New track model selection', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
     await waitFor(() => expect(createdTrackRequests(sent)).toHaveLength(1));
     expect(createdTrackRequests(sent)[0]?.body).toMatchObject({
-      planner_provider: 'codex',
+      provider: 'codex',
     });
     expect(createdTrackRequests(sent)[0]?.body).not.toHaveProperty('first_message');
   });
@@ -479,7 +479,7 @@ describe('Track creation drafts survive navigation', () => {
     expect(retry?.headers).toEqual(first?.headers);
   });
 
-  it.each(['offline', 'rate-limit', 'folder-conflict', 'discovery'] as const)('keeps an earlier unconfirmed request after a later %s rejection', async (rejection) => {
+  it.each(['offline', 'rate-limit', 'discovery'] as const)('keeps an earlier unconfirmed request after a later %s rejection', async (rejection) => {
     const { sent } = harness({ loseFirstCreateAck: true,
       otherAreaDefaults: { default_template_id: null, defaultCwd: '/srv/app' },
       trackCreateSequence: rejection === 'offline' ? undefined : [
@@ -544,7 +544,7 @@ describe('Track creation drafts survive navigation', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
     await screen.findByText(UNCONFIRMED_TRACK);
     const first = createdTrackRequests(sent)[0];
-    expect(first?.body).toMatchObject({ theme: { fg: [42, 47, 58] } });
+    expect(first?.body).not.toHaveProperty('theme');
     await userEvent.click(screen.getByRole('button', { name: 'Go to Today' }));
     await userEvent.click(await screen.findByRole('button', { name: 'New track in Work' }));
     await findComposer();
@@ -640,7 +640,7 @@ it.each([false, true])('recovers an unread first message after reload (still unr
   const submittedStorage = createMemoryStorage();
   const createKey = 'confirmed-create';
   const message = 'Open after storage recovers';
-  const draft = JSON.stringify({ key: createKey, body: { area_id: 'c1', planner_provider: 'codex' }, message, createdTrackId: 'w-new' });
+  const draft = JSON.stringify({ key: createKey, body: { areaId: 'c1', provider: 'codex' }, message, createdTrackId: 'w-new' });
   const firstSend = JSON.stringify({ 'w-new': { text: message, key: `${createKey}:init` } });
   submittedStorage.setItem(DRAFT_KEY, draft);
   submittedStorage.setItem(FIRST_SEND_KEY, firstSend);
@@ -861,7 +861,7 @@ describe('the new-track page is a route reached from Area groups', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
     await waitFor(() => expect(createdTrackBodies(sent)).toHaveLength(1));
     const body = createdTrackBodies(sent)[0] as Record<string, unknown>;
-    expect(body).toMatchObject({ area_id: 'c2', cwd: '/srv/work-b', attach_folder: true });
+    expect(body).toMatchObject({ areaId: 'c2', cwd: '/srv/work-b' });
     expect(body).not.toHaveProperty('template_id');
   });
 
@@ -899,7 +899,7 @@ describe('the new-track page is a route reached from Area groups', () => {
   });
 
   /* Asserted on key absence: `title: ''` reaches the same stored value, and only a
-       missing key leaves `neige_track_rename` able to name the track. */
+       missing key leaves `track_rename` able to name the track. */
   it('creates with no title control on screen and no title key on the wire', async () => {
     const { sent } = harness({ });
     await userEvent.click(await screen.findByRole('button', { name: 'New track in Reading' }));
@@ -918,7 +918,7 @@ describe('the new-track page is a route reached from Area groups', () => {
     await waitFor(() => expect(createdTrackBodies(sent)).toHaveLength(1));
     const body = createdTrackBodies(sent)[0] as Record<string, unknown>;
     expect(Object.hasOwn(body, 'title')).toBe(false);
-    expect(body).toMatchObject({ area_id: 'c2' });
+    expect(body).toMatchObject({ areaId: 'c2' });
   });
 
   it('posts the opener\'s area_id and omits cwd / attach_folder with no folder chosen', async () => {
@@ -932,8 +932,8 @@ describe('the new-track page is a route reached from Area groups', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Create track' }));
     await waitFor(() => expect(createdTrackBodies(sent)).toHaveLength(1));
     const body = createdTrackBodies(sent)[0] as Record<string, unknown>;
-    expect(body).toMatchObject({ area_id: 'c2' });
-    expect(body).toHaveProperty('theme');
+    expect(body).toMatchObject({ areaId: 'c2' });
+    expect(body).not.toHaveProperty('theme');
     expect(body).not.toHaveProperty('title');
     expect(body).not.toHaveProperty('first_message');
     // The managed-workspace branch is keyed on *absence*, not on a value:
@@ -943,7 +943,7 @@ describe('the new-track page is a route reached from Area groups', () => {
     expect(sent.some((request) => request.path.startsWith('/api/v1/fs/listdir'))).toBe(false);
     // Blank means the key is not on the wire at all: `template_id: null` or `''` is a 400 from the kernel.
     expect(body).not.toHaveProperty('template_id');
-    expect(body).not.toHaveProperty('template_input');
+    expect(body).not.toHaveProperty('templateInputs');
   });
 
   it('ignores the Area template default while preserving its directory snapshot', async () => {
@@ -961,13 +961,12 @@ describe('the new-track page is a route reached from Area groups', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
     await waitFor(() => expect(createdTrackBodies(sent)).toHaveLength(1));
     expect(createdTrackBodies(sent)[0]).toMatchObject({
-      area_id: 'c1',
+      areaId: 'c1',
       cwd: '/srv/ area ',
-      attach_folder: true,
     });
     expect(createdTrackBodies(sent)[0]).not.toHaveProperty('first_message');
     expect(createdTrackBodies(sent)[0]).not.toHaveProperty('template_id');
-    expect(createdTrackBodies(sent)[0]).not.toHaveProperty('template_input');
+    expect(createdTrackBodies(sent)[0]).not.toHaveProperty('templateInputs');
     expect(createdTrackBodies(sent)[0]).not.toHaveProperty('recipe_id');
   });
 
@@ -1019,173 +1018,13 @@ describe('the new-track page is a route reached from Area groups', () => {
     await waitFor(() => expect(createdTrackBodies(sent)).toHaveLength(1));
     const body = createdTrackBodies(sent)[0] as Record<string, unknown>;
     expect(body).toMatchObject({
-      area_id: 'c1', cwd: '/srv/app', attach_folder: true,
+      areaId: 'c1', cwd: '/srv/app',
     });
     expect(sent.some((request) => request.path === '/api/v1/fs/listdir')).toBe(true);
     expect(body).not.toHaveProperty('template_id');
   });
 
   /* The 409 body has no `error` key, so `ApiError.message` is the bare status text. */
-  it('renders the structured folder conflict, not the word Conflict', async () => {
-    harness({
-
-      trackCreate: { status: 409, statusText: 'Conflict', body: CONFLICT },
-    });
-    await userEvent.click(await screen.findByRole('button', { name: 'New track in Reading' }));
-    expect(await findComposer()).toBeTruthy();
-    await userEvent.type(screen.getByLabelText(TASK_LABEL), 'Read it');
-    await userEvent.click(await screen.findByRole('button', { name: 'Create track' }));
-    // The request, its rejection, and the re-render are three ticks the click
-    // does not await; the default 1s window is not enough under a loaded suite.
-    const alert = await within(await screen.findByRole('main')).findByRole('alert', {}, { timeout: 5_000 });
-    expect(alert.textContent).toContain('/srv/app');
-    // `c1` is Work in the seeded area list — the id must never reach the page.
-    expect(alert.textContent).toContain('area “Work”');
-    expect(alert.textContent).not.toContain('c1');
-    expect(alert.textContent).not.toBe('Conflict');
-  });
-
-  it.each(['equal', 'descendant'] as const)(
-    'explicitly reuses the claimed directory in the current Area for a %s conflict',
-    async (conflictKind) => {
-    const { sent } = harness({
-
-      otherAreaDefaults: { default_template_id: null, defaultCwd: '/srv/app' },
-      trackCreateSequence: [
-        { status: 409, statusText: 'Conflict', body: { ...CONFLICT, conflict_kind: conflictKind } },
-        { status: 201, statusText: 'Created', body: fixtureSnapshot({ ...TRACK_ROW, areaId: 'c1' }) },
-      ],
-    });
-    await userEvent.click(await screen.findByRole('button', { name: 'New track in Reading' }));
-    await findComposer();
-    await userEvent.type(screen.getByLabelText(TASK_LABEL), 'Read it');
-    await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
-
-    const alert = await within(await screen.findByRole('main')).findByRole('alert', {}, { timeout: 5_000 });
-    await userEvent.click(within(alert).getByRole('button', { name: 'Reuse directory in Reading' }));
-    await waitFor(() => expect(createdTrackRequests(sent)).toHaveLength(2));
-    const [failed, recovered] = createdTrackRequests(sent);
-    expect(failed?.body).toMatchObject({
-      area_id: 'c2', cwd: '/srv/app', attach_folder: true,
-    });
-    expect(failed?.body).not.toHaveProperty('first_message');
-    expect(recovered?.body).toMatchObject({
-      area_id: 'c2', cwd: '/srv/app', attach_folder: true,
-      allow_cross_area_cwd: { folder_id: 4, area_id: 'c1' },
-    });
-    expect(recovered?.body).not.toHaveProperty('first_message');
-    expect(recovered?.headers?.['Idempotency-Key']).toBeDefined();
-    expect(recovered?.headers?.['Idempotency-Key']).not.toBe(failed?.headers?.['Idempotency-Key']);
-    await waitFor(() => expect(window.location.pathname).toBe(`/track/w-new`));
-    },
-  );
-
-  it('unlocks the draft when vanished directory consent is rejected as invalid input', async () => {
-    const { sent } = harness({
-
-      otherAreaDefaults: { default_template_id: null, defaultCwd: '/srv/app' },
-      trackCreateSequence: [
-        { status: 409, statusText: 'Conflict', body: CONFLICT },
-        { status: 400, statusText: 'Bad Request', body: {
-          code: 'bad_request', error: 'The authorized folder claim no longer covers this cwd',
-        } },
-        { status: 201, statusText: 'Created', body: fixtureSnapshot({ ...TRACK_ROW, areaId: 'c2' }) },
-      ],
-    });
-    await userEvent.click(await screen.findByRole('button', { name: 'New track in Reading' }));
-    await findComposer();
-    await userEvent.type(screen.getByLabelText(TASK_LABEL), 'Original intent');
-    await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
-    await userEvent.click(await screen.findByRole('button', { name: 'Reuse directory in Reading' }));
-    await screen.findByText('The authorized folder claim no longer covers this cwd');
-    const message = screen.getByLabelText(TASK_LABEL);
-    await userEvent.clear(message);
-    await userEvent.type(message, 'Current intent');
-    await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
-    await waitFor(() => expect(createdTrackRequests(sent)).toHaveLength(3));
-    const request = createdTrackRequests(sent)[2];
-    expect(request?.body).toMatchObject({ area_id: 'c2', cwd: '/srv/app' });
-    expect(request?.body).not.toHaveProperty('first_message');
-    expect(request?.body).not.toHaveProperty('allow_cross_area_cwd');
-  });
-
-  it('does not offer an owning-Area retry for an ancestor conflict that moving cannot resolve', async () => {
-    harness({
-
-      trackCreate: {
-        status: 409,
-        statusText: 'Conflict',
-        body: { ...CONFLICT, conflict_kind: 'ancestor' },
-      },
-    });
-    await userEvent.click(await screen.findByRole('button', { name: 'New track in Reading' }));
-    await findComposer();
-    await userEvent.type(screen.getByLabelText(TASK_LABEL), 'Read it');
-    await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
-
-    const alert = await within(await screen.findByRole('main')).findByRole('alert', {}, { timeout: 5_000 });
-    expect(within(alert).queryByRole('button', { name: 'Reuse directory in Reading' })).toBeNull();
-  });
-
-  it('uses the visible current draft when the owning-Area recovery is clicked', async () => {
-    const { sent } = harness({
-
-      otherAreaDefaults: { default_template_id: null, defaultCwd: '/srv/app' },
-      trackCreateSequence: [
-        { status: 409, statusText: 'Conflict', body: CONFLICT },
-        { status: 201, statusText: 'Created', body: fixtureSnapshot({ ...TRACK_ROW, areaId: 'c1' }) },
-      ],
-    });
-    await userEvent.click(await screen.findByRole('button', { name: 'New track in Reading' }));
-    await findComposer();
-    const field = screen.getByLabelText(TASK_LABEL);
-    await userEvent.type(field, 'Old message');
-    await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
-
-    const alert = await within(await screen.findByRole('main')).findByRole('alert', {}, { timeout: 5_000 });
-    await userEvent.clear(field);
-    await userEvent.type(field, 'Current message');
-    await userEvent.click(within(alert).getByRole('button', { name: 'Reuse directory in Reading' }));
-
-    await waitFor(() => expect(createdTrackRequests(sent)).toHaveLength(2));
-    const recovered = createdTrackRequests(sent)[1];
-    expect(recovered?.body).toMatchObject({
-      area_id: 'c2',
-      allow_cross_area_cwd: { folder_id: 4, area_id: 'c1' },
-    });
-    expect(recovered?.body).not.toHaveProperty('first_message');
-    expect(recovered?.body).not.toHaveProperty('template_id');
-    expect(recovered?.body).toMatchObject({ cwd: '/srv/app', attach_folder: true });
-  });
-
-  it('withdraws the owning-Area recovery when the conflicting folder changes', async () => {
-    const { sent } = harness({
-
-      otherAreaDefaults: { default_template_id: null, defaultCwd: '/srv/app' },
-      trackCreateSequence: [
-        { status: 409, statusText: 'Conflict', body: CONFLICT },
-        { status: 201, statusText: 'Created', body: fixtureSnapshot({ ...TRACK_ROW, areaId: 'c2' }) },
-      ],
-    });
-    await userEvent.click(await screen.findByRole('button', { name: 'New track in Reading' }));
-    await findComposer();
-    await userEvent.type(screen.getByLabelText(TASK_LABEL), 'Read it');
-    await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
-
-    const alert = await within(await screen.findByRole('main')).findByRole('alert', {}, { timeout: 5_000 });
-    expect(within(alert).getByRole('button', { name: 'Reuse directory in Reading' })).toBeTruthy();
-    await userEvent.click(screen.getByRole('button', { name: 'Use a Perga workspace instead' }));
-    expect(within(alert).queryByRole('button', { name: 'Reuse directory in Reading' })).toBeNull();
-    await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
-
-    await waitFor(() => expect(createdTrackRequests(sent)).toHaveLength(2));
-    const retried = createdTrackRequests(sent)[1];
-    expect(retried?.body).toMatchObject({ area_id: 'c2' });
-    expect(retried?.body).not.toHaveProperty('first_message');
-    expect(retried?.body).toHaveProperty('workspaceOptionId', 'direct');
-    expect(retried?.body).not.toHaveProperty('attach_folder');
-  });
-
   it('creates without reading template or recipe rosters', async () => {
     const { sent } = harness();
     await userEvent.click(await screen.findByRole('button', { name: 'New track in Reading' }));
@@ -1195,7 +1034,7 @@ describe('the new-track page is a route reached from Area groups', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
     await waitFor(() => expect(createdTrackBodies(sent)).toHaveLength(1));
     expect(createdTrackBodies(sent)[0]).toMatchObject({
-      area_id: 'c2',
+      areaId: 'c2',
     });
     expect(createdTrackBodies(sent)[0]).not.toHaveProperty('first_message');
     expect(createdTrackBodies(sent)[0]).not.toHaveProperty('title');
@@ -1446,8 +1285,8 @@ describe('the sentence is delivered by the create, and the track opens on it', (
     expect(fresh?.headers?.['Idempotency-Key'])
       .not.toBe(exhausted?.headers?.['Idempotency-Key']);
     expect(createdTrackBodies(sent)).toEqual([
-      expect.objectContaining({ area_id: 'c2' }),
-      expect.objectContaining({ area_id: 'c2' }),
+      expect.objectContaining({ areaId: 'c2' }),
+      expect.objectContaining({ areaId: 'c2' }),
     ]);
     expect(createdTrackBodies(sent)[0]).not.toHaveProperty('first_message');
     expect(createdTrackBodies(sent)[1]).not.toHaveProperty('first_message');
@@ -1518,26 +1357,26 @@ describe('the sentence is delivered by the create, and the track opens on it', (
 
 describe('a refused create that names a field', () => {
   it('names the input field a refused create is about', async () => {
-    /* The kernel's exact answer to a `template_input` missing a required key: the reason, with the field apart. */
+    /* The kernel's exact answer to a `templateInputs` missing a required key: the reason, with the field apart. */
     harness({ trackCreateSequence: [{ status: 400, statusText: 'Bad Request', body: {
-      error: 'required field is missing', code: 'bad_request', field: 'template_input.issue_url',
+      error: 'required field is missing', code: 'bad_request', field: 'templateInputs.issue_url',
     } }] });
     await userEvent.click(await screen.findByRole('button', { name: 'New track in Work' }));
     await findComposer();
     await userEvent.type(screen.getByLabelText(TASK_LABEL), 'Bound input');
     await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
     expect((await within(await screen.findByRole('main')).findByRole('alert')).textContent)
-      .toContain('template_input.issue_url: required field is missing');
+      .toContain('templateInputs.issue_url: required field is missing');
   });
 });
 
 it.each([
-  { template_id: 'legacy-template', template_input: { ticket: 'old-input' } },
-  { recipe_id: 'legacy-recipe' },
+  { templateId: 'compiled-template', templateInputs: { ticket: 'saved-input' } },
+  { executionTargetId: 'remote', workspaceOptionId: 'direct' },
 ])('replays a restored unknown creation with its original starting point %j', async startingPoint => {
-  const request = { key: 'legacy-unconfirmed-key', message: '  Legacy intent  ', body: {
-    area_id: 'c1', planner_provider: 'codex' as const,
-    theme: { fg: [12, 34, 56] as [number, number, number], bg: [255, 255, 255] as [number, number, number] }, ...startingPoint,
+  const request = { key: 'native-unconfirmed-key', message: '  Native intent  ', body: {
+    areaId: 'c1', provider: 'codex' as const,
+    ...startingPoint,
   } };
   const submittedStorage = createMemoryStorage();
   submittedStorage.setItem(DRAFT_KEY, JSON.stringify(request));
@@ -1555,13 +1394,12 @@ it.each([
   ['ready', undefined, 'use @`template:deploy`'],
   ['ready', { type: 'object' }, 'use @`template:deploy`'],
   ['ready', null, 'use @`template:deploy`'],
-  ['requires_plugin', undefined, 'use @`template:deploy`'],
   ['ready', undefined, 'use @`template:unknown`'],
   ['ready', undefined, 'use @`template:deploy` @`template:other`'],
   ['ready', undefined, 'use @`template:deploy` @`template:deploy`'],
-] as const)('keeps template mentions as message content without implicit template binding (%s, %j, %s)', async (status, input_schema, message) => {
+] as const)('keeps template mentions as message content without implicit template binding (%s, %j, %s)', async (_status, input_schema, message) => {
   const { sent } = harness({ templates: [{ id: 'deploy', title: 'Deploy', description: null, tasks: [], input_schema,
-    availability: status === 'ready' ? { status } : { status, plugin_id: 'example', plugin_name: 'Example' } }] });
+    availability: { status: 'ready' } }] });
   await userEvent.click(await screen.findByRole('button', { name: 'New track in Work' }));
   const composer = await findComposer();
   expect(sent.some(request => request.path === '/api/v1/templates')).toBe(false);

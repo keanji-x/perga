@@ -10,7 +10,8 @@ import { afterEach,beforeEach,describe,expect,it,vi } from 'vitest';
 
 import type { ApiRequest,ApiTransportPort,ApiTransportResponse } from '../../../../core/api/types.ts';
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
-import type { CardWire } from '../../../../core/domain/track.ts';
+
+import type { TerminalDto } from '../../../../core/api/perga-v1.ts';
 import { withReadReceipts } from '../providers/read-receipts-fixture.tsx';
 import { ThemeProvider } from '../theme/public.tsx';
 import { createAppRouter } from './public.tsx';
@@ -29,8 +30,8 @@ type CreateAnswer = 'created' | 'lost' | ApiTransportResponse;
 
 function setup({ createFails = false, deferCreate = false, answers = [] as readonly CreateAnswer[] } = {}) {
   const requests: ApiRequest[] = [];
-  const cards: CardWire[] = [];
-  const byKey = new Map<string, { body: string; card: CardWire }>();
+  const cards: TerminalDto[] = [];
+  const byKey = new Map<string, { body: string; card: TerminalDto }>();
   /* One entry per POST, in send order, so a test can release an older attempt before a newer one. */
   const releases: (() => void)[] = [];
   const transport: ApiTransportPort = {
@@ -65,9 +66,8 @@ function setup({ createFails = false, deferCreate = false, answers = [] as reado
             error: 'This card request was already used for a different card.', code: 'idempotency_key_reused',
           } });
         }
-        const created: CardWire = stored?.card ?? {
-          id: `card-${cards.length + 1}`, track_id: 'w1', kind: 'terminal', title: null, sort: 1,
-          payload: { terminal_presentation: { source: 'manual', in_workbench: true }, }, deletable: true, created_at: 1, updated_at: 2,
+        const created: TerminalDto = stored?.card ?? {
+          id: `card-${cards.length + 1}`, trackId: 'w1', title: '', cwd: '/tmp', status: 'running', createdAtMs: 1,
         };
         if (stored === undefined) {
           cards.push(created);
