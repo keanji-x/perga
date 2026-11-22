@@ -1,3 +1,18 @@
+using System.Collections.Concurrent;
+using System.Text;
+using System.Text.Json;
+using Perga.Contracts;
+using Perga.Kernel.Events;
+using Perga.Kernel.Flow;
+using Perga.Kernel.Internal;
+using Perga.Kernel.Mcp;
+using Perga.Kernel.Ports;
+using Perga.Kernel.Tasks;
+using Perga.Kernel.Templates;
+using Perga.PolicyVm;
+using Perga.ReportDoc;
+using Perga.TermClient;
+using Perga.VcsKit;
 using System.Threading.Channels;
 using System.Runtime.CompilerServices;
 using Perga.AgentKit;
@@ -31,7 +46,7 @@ public sealed partial class TrackActor
         await PersistAndEmitSessionUpdatedCoreAsync(session with { Status = "stopping", UpdatedAtMs = NowMs() }, NowMs(), CancellationToken.None).ConfigureAwait(false);
     }
 
-    private Task RequestTurnStop(ActiveTurnState active, bool observeTerminal = false, ActiveTaskRunState? pauseTask = null)
+    private Task RequestTurnStop(ActiveTurnState active, bool observeTerminal = false, TrackTasks.ActiveTaskRunState? pauseTask = null)
     {
         var control = active.Control;
         List<PendingApproval>? expired = null;
@@ -40,7 +55,7 @@ public sealed partial class TrackActor
         {
             if (pauseTask is not null && control.Phase != ExecutionPhase.Ended)
             {
-                pauseTask.Paused = true;
+                _taskCoordinator.SetPaused(pauseTask, true);
                 active.CloseRuntimeOnStop = true;
                 _mcpBridge.RevokeSession(active.SessionId);
             }
@@ -249,5 +264,98 @@ public sealed partial class TrackActor
 
         FinishExpiredApprovals(expired);
         active.CancelStream();
+    }
+    private static SessionItemDto CreateWakeUserItem(SessionTurnDto turn, string prompt, string? inputId, string? deliveryError = null, string? presentation = null) =>
+        new(Id: 0, SessionId: turn.SessionId, TurnId: turn.Id, Kind: "user",
+            Payload: inputId is null
+                ? JsonHelpers.ToElement(new { v = 1, content = prompt, triggerKind = turn.TriggerKind, presentation })
+                : JsonHelpers.ToElement(new { v = 1, content = prompt, triggerKind = turn.TriggerKind, inputId, deliveryError }),
+            CreatedAtMs: turn.StartedAtMs!.Value);
+
+    private async Task CompleteWakeTurnCoreAsync(SessionTurnDto turn, IReadOnlyList<SessionItemDto> items,
+        AgentSessionDto session)
+    {
+        var ct = CancellationToken.None;
+        var turnEvent = TurnCompletedEvent(turn, session.UpdatedAtMs);
+        await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
+        await _store.RecordTurnAndItemsAsync(turn, items, session, ct).ConfigureAwait(false);
+        _sessions[session.Id] = session;
+        await _store.AppendEventAsync(turnEvent, ct).ConfigureAwait(false);
+        await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, turnEvent, ct).ConfigureAwait(false);
+        var sessionEvent = SessionUpdatedEvent(session);
+        await _store.AppendEventAsync(sessionEvent, ct).ConfigureAwait(false);
+        await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, sessionEvent, ct).ConfigureAwait(false);
+    }
+
+    private sealed class ActiveTurnState(
+        string sessionId,
+        SessionConfiguration executionConfiguration,
+        LiveContextUsage contextBinding,
+        SessionTurnDto turnDto,
+        IAgentSession agentSession,
+        CancellationTokenSource turnCts,
+        bool hasStoredTurn)
+    {
+        public bool CanSteerQueuedMessages => hasStoredTurn && AgentSession.SupportsNativeSteer;
+        public string SessionId { get; } = sessionId;
+        public SessionTurnDto TurnDto { get; } = turnDto;
+        public IAgentSession AgentSession { get; } = agentSession;
+        public CancellationTokenSource TurnCts { get; } = turnCts;
+        public ExecutionControl Control { get; } = new(starting: true);
+        public TurnActivity Activity { get; } = new();
+        public bool CloseRuntimeOnStop { get; set; }
+        public SessionConfiguration Configuration { get; } = executionConfiguration;
+        public LiveContextUsage ContextBinding { get; } = contextBinding;
+        // Frozen inputs can execute a configuration different from the committed selection.
+        public bool MatchesSessionConfiguration(AgentSessionDto session) =>
+            Configuration == SessionConfiguration.FromNullable(session.Model, session.ReasoningEffort, session.PermissionMode);
+        public bool Interrupted
+        {
+            get { lock (Control.Sync) return Control.StopRequested; }
+        }
+        public void CancelStream()
+        {
+            try { TurnCts.Cancel(); }
+            catch (ObjectDisposedException) { }
+        }
+        public bool ProviderAccepted { get; set; }
+        public TaskCompletionSource<bool> Settled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
+
+
+    private sealed record TurnPolicyAdmission(string Generation, string? Context, Exception? Failure);
+
+    private async Task<TurnPolicyAdmission> PreparePolicyTurnAdmissionAsync(string sessionId, CancellationToken ct)
+    {
+        var preparation = await EnqueueAsync<(TurnPolicyAdmission Admission, PolicyApproval? Ask)>(async _ =>
+        {
+            await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
+            var session = RequireSessionCore(sessionId);
+            var generation = _policyGeneration;
+            if (_policyUnavailableReason is { } reason) return (new(generation, null, KernelException.PolicyDenied(reason)), null);
+            if (_policy is null) return (new(generation, null, null), null);
+            try
+            {
+                var evaluation = _policyVm.PrepareTurn(_policy, new(TrackId, session.Id, session.IsLead,
+                    _taskCoordinator.TryGetActiveTaskForSessionCore(session.Id)?.Task.Id, CurrentContextUsageRatioCore(session) ?? 0, _track.TemplateInputs), _track.TemplateState);
+                await UpdateTemplateStateIfChangedCoreAsync(evaluation.NextState, ct).ConfigureAwait(false);
+                var suspension = ApplyGuardDecisionCore(evaluation.Output.Decision, sessionId, null, ct);
+                return (new(generation, evaluation.Output.Context, null), suspension);
+            }
+            catch (Exception ex) when (!ct.IsCancellationRequested)
+            {
+                return (new(generation, null, ex), null);
+            }
+        }, ct).ConfigureAwait(false);
+        if (preparation.Ask is not { } ask) return preparation.Admission;
+        try
+        {
+            await RequirePolicyApprovalAsync(ask, ct).ConfigureAwait(false);
+            return preparation.Admission;
+        }
+        catch (KernelException ex)
+        {
+            return preparation.Admission with { Failure = ex };
+        }
     }
 }

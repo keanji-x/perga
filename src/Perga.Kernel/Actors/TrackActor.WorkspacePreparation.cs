@@ -198,7 +198,7 @@ public sealed partial class TrackActor
             DispatchAcceptedInput(input);
         foreach (var sessionId in _sessions.Keys)
             await PokeSessionCoreAsync(sessionId).ConfigureAwait(false);
-        if (_tasks.Count > 0)
+        if (_taskCoordinator.Snapshot().Length > 0)
             _ = TrackBackgroundJob(() => TriggerSchedulerAsync(_actorShutdownCts.Token));
     }
 

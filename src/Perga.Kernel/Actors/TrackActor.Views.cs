@@ -61,7 +61,7 @@ public sealed partial class TrackActor
             if (!string.IsNullOrWhiteSpace(callerSessionId))
             {
                 var caller = RequireSessionCore(callerSessionId);
-                if (TryGetActiveOwningTaskCore(caller.Id) is { Access: AccessMode.ReadOnly })
+                if (_taskCoordinator.TryGetActiveOwningTaskCore(caller.Id) is { Access: AccessMode.ReadOnly })
                     throw KernelException.PolicyDenied(
                         "Read-only bound worker sessions cannot patch track template data.");
             }
@@ -69,7 +69,7 @@ public sealed partial class TrackActor
             if (expectedDataRev is { } expected && expected != _track.DataRev)
                 throw KernelException.Conflict($"Data revision conflict: expected {expected}, current {_track.DataRev}.");
 
-            var knownTaskKeys = _tasks.Select(t => t.TaskKey).Distinct(StringComparer.Ordinal).ToArray();
+            var knownTaskKeys = _taskCoordinator.Snapshot().Select(t => t.TaskKey).Distinct(StringComparer.Ordinal).ToArray();
             var nowIso = _timeProvider.GetUtcNow().ToString("O");
             DataPatchValidationResult result;
             try
@@ -134,7 +134,7 @@ public sealed partial class TrackActor
             };
         }
 
-        foreach (var task in _tasks)
+        foreach (var task in _taskCoordinator.Snapshot())
         {
             var boundSession = task.SessionId is { } sid && _sessions.TryGetValue(sid, out var session) ? session : null;
             var gateChecks = new List<object>();
