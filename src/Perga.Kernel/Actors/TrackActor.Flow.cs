@@ -454,7 +454,7 @@ public sealed partial class TrackActor
                 if (task.Status == TaskRunStatus.Pending && (task.Ready || task.TriggerRunKey is not null))
                 {
                     var disarmed = task with { Ready = false, TriggerRunKey = null, UpdatedAtMs = now };
-                    await _taskCoordinator.PersistAndEmitTaskUpdatedCoreAsync(disarmed, null, now, ct).ConfigureAwait(false);
+                    await _taskCoordinator.PersistAndEmitTaskUpdatedCoreAsync(disarmed, now, ct).ConfigureAwait(false);
                     _taskCoordinator.ReplaceTaskInMemoryCore(disarmed);
                     tasksByKey[node.Id] = disarmed;
                 }
@@ -481,7 +481,7 @@ public sealed partial class TrackActor
                 FinishedAtMs = null,
                 UpdatedAtMs = now
             };
-            await _taskCoordinator.PersistAndEmitTaskUpdatedCoreAsync(armed, null, now, ct).ConfigureAwait(false);
+            await _taskCoordinator.PersistAndEmitTaskUpdatedCoreAsync(armed, now, ct).ConfigureAwait(false);
             _taskCoordinator.ReplaceTaskInMemoryCore(armed);
             tasksByKey[node.Id] = armed;
             armedAny = true;

@@ -5,7 +5,7 @@ import { terminalPresentation } from '../domain/terminal-presentation.js';
 import { PROVIDER_PRESENTATION } from '../domain/provider-presentation.js';
 import { groupPanelRows, progressRowFinished } from './panel-groups.js';
 import { activityLabelOf, cardActivityOf, cardActivityState, type CardActivity } from '../domain/activity.js';
-import { boundedStatusDetail, type ReportTaskRow } from '../domain/report.js';
+import { boundedStatusDetail, type ReportTaskRow } from '../domain/track-task-inventory.js';
 import { taskStatusLabel } from '../domain/task-recovery.js';
 import type { CardWire } from '../domain/track.js';
 import type { PanelRow, RowAction, RowBadge, InventoryModuleView, TrackPageView } from './panel.js';
@@ -139,7 +139,7 @@ export function parkedWorkerNotices(tasks: readonly ReportTaskRow[]): ReadonlyMa
 
 /**
  * The Tasks module. `declaration` and `status` are read independently — precedence is
- * `deriveReportTasks`' ruling upstream. The worker control needs `kind !== null`, a worker card AND
+ * determined when the inventory is prepared. The worker control needs `kind !== null`, a worker card AND
  * an openable card (the `kind` test is a faithful copy of the desktop's judgement, not a filter);
  * the activity verdict needs only the identity. Both controls have visible text and so take no `aria-label`.
  */

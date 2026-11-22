@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Dapper;
 using Microsoft.Data.Sqlite;
 using Perga.Contracts;
@@ -20,7 +19,6 @@ internal sealed class TaskRepository
 
     public Task UpsertTaskAsync(
         TaskDto task,
-        JsonElement? nextTemplateState,
         EventEnvelopeDto? evt,
         CancellationToken ct,
         AgentSessionDto? session = null,
@@ -32,10 +30,6 @@ internal sealed class TaskRepository
     {
         ArgumentNullException.ThrowIfNull(task);
         _context.EnsureInitialized();
-
-        var nextTemplateStateJson = nextTemplateState.HasValue
-            ? SqliteJsonUpcaster.SerializeElement(nextTemplateState.Value)
-            : null;
 
         return _context.Writer.EnqueueAsync(
             async (conn, tx, innerCt) =>
@@ -63,26 +57,6 @@ internal sealed class TaskRepository
                         UPDATE session_messages SET delivery = 'interrupted'
                         WHERE session_id = @SessionId AND delivery = 'queued';
                         """, new { task.SessionId }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
-                }
-
-                if (nextTemplateStateJson is not null)
-                {
-                    await conn.ExecuteAsync(
-                        new CommandDefinition(
-                            """
-                            UPDATE tracks
-                            SET template_state_json = @NextTemplateStateJson,
-                                updated_at_ms = @UpdatedAtMs
-                            WHERE id = @TrackId;
-                            """,
-                            new
-                            {
-                                task.TrackId,
-                                NextTemplateStateJson = nextTemplateStateJson,
-                                UpdatedAtMs = task.UpdatedAtMs
-                            },
-                            transaction: tx,
-                            cancellationToken: innerCt)).ConfigureAwait(false);
                 }
 
                 if (task.FinishedAtMs is not null && !suppressDefaultWake)

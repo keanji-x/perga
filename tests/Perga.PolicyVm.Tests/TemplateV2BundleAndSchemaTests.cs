@@ -26,7 +26,6 @@ public sealed class TemplateV2BundleAndSchemaTests
                     return {
                       data: { schema, initial: () => initial(inputs) },
                       report: {
-                        humanReadOnly: true,
                         template: "./report.md",
                         views
                       },
@@ -102,7 +101,6 @@ public sealed class TemplateV2BundleAndSchemaTests
         var compiled = _vm.Compile(bundleSource);
 
         Assert.Equal("sample-v2", compiled.TemplateId);
-        Assert.True(compiled.Manifest.HumanReadOnly);
         Assert.Contains("perga-block widget", compiled.Manifest.InitialReportMarkdown);
         Assert.Equal(["priceAxis", "eventList"], compiled.Manifest.ViewNames);
         Assert.Equal("Daily check for ${inputs.ticker}", Assert.Single(_vm.ResolveFlow(compiled, JsonSerializer.Deserialize<JsonElement>("{}"))).Do.Prompt);
@@ -217,6 +215,30 @@ public sealed class TemplateV2BundleAndSchemaTests
     }
 
     [Fact]
+    public void SnapshotReuseKeepsModuleStateEvaluationLocal()
+    {
+        var source = TemplateBundle.BundleHeader + JsonSerializer.Serialize(new
+        {
+            files = new Dictionary<string, string>
+            {
+                ["template.perga.js"] = """
+                    import { next } from "./counter.js";
+                    export default defineTemplate({
+                      id: "snapshot-counter", title: "Counter", data: { initial: () => ({ count: next() }) },
+                    });
+                    """,
+                ["counter.js"] = "let count = 0; export const next = () => ++count;",
+            },
+        });
+        var compiled = _vm.Compile(source);
+        var reconstructed = new CompiledPolicy(compiled.TemplateId, compiled.JsSource, compiled.Manifest);
+        foreach (var policy in new[] { compiled, compiled, reconstructed, reconstructed })
+        {
+            Assert.Equal(1, _vm.InitData(policy, default).GetProperty("count").GetInt32());
+        }
+    }
+
+    [Fact]
     public void ValidateAndPatchData_Rejects_MetaTampering_PrototypePollution_InvalidDates_And_BadRefs_FailClosed()
     {
         var files = new Dictionary<string, string>(StringComparer.Ordinal)
@@ -311,7 +333,7 @@ public sealed class TemplateV2BundleAndSchemaTests
     }
 
     [Fact]
-    public void SetupInputs_LifecycleHooks_AreExecutedAtRuntimeWithActualInputs()
+    public void SetupInputs_PolicyHooksUseActualInputsAndData()
     {
         const string source = """
             export default defineTemplate({
@@ -323,22 +345,17 @@ public sealed class TemplateV2BundleAndSchemaTests
               setup(inputs) {
                 return {
                   before(action, ctx) {
-                    ctx.state.beforeCalls = (ctx.state.beforeCalls || 0) + 1;
+                    const limit = ctx.data.limit;
                     if (inputs.mode === "deny" && action.type === "task.dispatch") {
-                      return Deny("blocked by setup mode=" + inputs.mode);
+                      return Deny("blocked by setup mode=" + inputs.mode + ":" + limit);
                     }
                     return Allow();
                   },
-                  after(event, ctx) {
-                    ctx.state.afterCalls = (ctx.state.afterCalls || 0) + 1;
-                    return "after:" + inputs.mode + ":" + event.type;
-                  },
                   turnContext(ctx) {
-                    ctx.state.turnCalls = (ctx.state.turnCalls || 0) + 1;
-                    return "ctx:" + inputs.mode;
+                    return "ctx:" + inputs.mode + ":" + ctx.data.limit;
                   },
-                  headerView() {
-                    return { badges: [{ label: "mode=" + inputs.mode, tone: "accent" }] };
+                  headerView(ctx) {
+                    return { badges: [{ label: "mode=" + inputs.mode + ":" + ctx.data.limit, tone: "accent" }] };
                   },
                 };
               },
@@ -349,30 +366,22 @@ public sealed class TemplateV2BundleAndSchemaTests
         Assert.True(compiled.Manifest.HasHeaderView);
 
         var denyInputs = JsonDocument.Parse("""{"mode":"deny"}""").RootElement;
-        var emptyState = JsonDocument.Parse("{}").RootElement;
+        var data = JsonDocument.Parse("""{"limit":3}""").RootElement;
         var payload = JsonDocument.Parse("""{"role":"review"}""").RootElement;
 
-        var beforeRes = _vm.Before(compiled, "task.dispatch", "trk_1", payload, denyInputs, emptyState);
-        var beforeDeny = Assert.IsType<GuardDecision.Deny>(beforeRes.Output);
-        Assert.Contains("blocked by setup mode=deny", beforeDeny.Reason);
-        Assert.Equal(1, beforeRes.NextState.GetProperty("beforeCalls").GetInt32());
-
-        var afterRes = _vm.After(compiled, "task.settled", "trk_1", payload, denyInputs, beforeRes.NextState);
-        Assert.Equal("after:deny:task.settled", afterRes.Output);
-        Assert.Equal(1, afterRes.NextState.GetProperty("afterCalls").GetInt32());
-
+        var beforeRes = _vm.Before(compiled, "task.dispatch", "trk_1", payload, denyInputs, data);
+        var beforeDeny = Assert.IsType<GuardDecision.Deny>(beforeRes);
+        Assert.Equal("blocked by setup mode=deny:3", beforeDeny.Reason);
         var turnRes = _vm.PrepareTurn(
             compiled,
             new PolicyTurnContext("trk_1", "ses_1", IsLead: true, BoundTaskId: null, ContextUsageRatio: 0.1, Inputs: denyInputs),
-            afterRes.NextState);
-        Assert.Equal("ctx:deny", turnRes.Output.Context);
-        Assert.IsType<GuardDecision.Allow>(turnRes.Output.Decision);
-        Assert.Equal(1, turnRes.NextState.GetProperty("turnCalls").GetInt32());
-        Assert.Equal(2, turnRes.NextState.GetProperty("beforeCalls").GetInt32());
+            data);
+        Assert.Equal("ctx:deny:3", turnRes.Context);
+        Assert.IsType<GuardDecision.Allow>(turnRes.Decision);
 
-        var header = _vm.EvaluateHeaderView(compiled, new PolicyHeaderViewContext("trk_1", denyInputs), turnRes.NextState);
+        var header = _vm.EvaluateHeaderView(compiled, new PolicyHeaderViewContext("trk_1", denyInputs), data);
         Assert.NotNull(header);
-        Assert.Equal("mode=deny", Assert.Single(header!.Badges!).Label);
+        Assert.Equal("mode=deny:3", Assert.Single(header!.Badges!).Label);
     }
 
     [Fact]
@@ -418,7 +427,7 @@ public sealed class TemplateV2BundleAndSchemaTests
                 JsonDocument.Parse("{}").RootElement,
                 JsonDocument.Parse("{}").RootElement,
                 JsonDocument.Parse("{}").RootElement);
-            var beforeADeny = Assert.IsType<GuardDecision.Deny>(beforeA.Output);
+            var beforeADeny = Assert.IsType<GuardDecision.Deny>(beforeA);
             Assert.Equal("parent denied", beforeADeny.Reason);
 
             // Frozen snapshot reloads identically on restart
@@ -615,10 +624,6 @@ public sealed class TemplateV2BundleAndSchemaTests
                   before(action) {
                     return action.type === "task.dispatch" ? Deny("parent denied") : Allow();
                   },
-                  after() {
-                    return "parent note";
-                  },
-                  report: { humanReadOnly: true },
                   tasks: {
                     routing: [
                       { when: { role: "review" }, model: inputs.reviewModel, access: "read_only", enforce: true },
@@ -650,7 +655,6 @@ public sealed class TemplateV2BundleAndSchemaTests
 
         foreach (var policy in new[] { inherited, reloaded })
         {
-            Assert.True(policy.Manifest.HumanReadOnly);
             var routeRule = Assert.Single(policy.Manifest.Routing);
             Assert.Equal("safe-model", routeRule.Model);
             Assert.True(routeRule.Enforce);
@@ -660,17 +664,15 @@ public sealed class TemplateV2BundleAndSchemaTests
             var empty = JsonDocument.Parse("{}").RootElement;
 
             var before = _vm.Before(policy, "task.dispatch", "trk_1", empty, inputs, empty);
-            var deny = Assert.IsType<GuardDecision.Deny>(before.Output);
+            var deny = Assert.IsType<GuardDecision.Deny>(before);
             Assert.Equal("parent denied", deny.Reason);
 
-            var after = _vm.After(policy, "task.settled", "trk_1", empty, inputs, empty);
-            Assert.Equal("parent note", after.Output);
 
             var turn = _vm.PrepareTurn(
                 policy,
                 new PolicyTurnContext("trk_1", "ses_1", IsLead: true, BoundTaskId: null, ContextUsageRatio: 0.1, Inputs: inputs),
                 empty);
-            Assert.Equal("child context", turn.Output.Context);
+            Assert.Equal("child context", turn.Context);
 
             var dynamicRoute = _vm.RouteTaskDispatch(policy, "review", "read_only", null, "wrong-model", inputs);
             Assert.NotNull(dynamicRoute.Denial);

@@ -1,9 +1,9 @@
 import type { ReactNode } from 'react';
 import type {
-  CheckpointMetric,
-  CheckpointMetricDirection,
-  CheckpointMetricStatus,
-} from '../../../../../core/domain/report-checkpoints.ts';
+  EditorialMetric,
+  EditorialMetricDirection,
+  EditorialMetricStatus,
+} from '../../../../../core/domain/report-editorial.ts';
 import { Icon } from '../../../ui/icon/public.tsx';
 import styles from './editorial.module.css';
 
@@ -16,13 +16,13 @@ function formatMetricValue(value: number, unit: string | null | undefined): stri
 function meetsTarget(
   value: number,
   target: number | null | undefined,
-  direction: CheckpointMetricDirection | null | undefined,
+  direction: EditorialMetricDirection | null | undefined,
 ): boolean {
   if (target == null || direction == null) return true;
   return direction === 'lte' ? value <= target : value >= target;
 }
 
-function statusClass(status: CheckpointMetricStatus | null | undefined): string {
+function statusClass(status: EditorialMetricStatus | null | undefined): string {
   switch (status) {
     case 'met': return styles.krStatusMet;
     case 'at_risk': return styles.krStatusRisk;
@@ -36,7 +36,7 @@ export function EditorialMetricsStrip({
   renderText,
   renderMarkdown,
 }: Readonly<{
-  metrics: readonly CheckpointMetric[];
+  metrics: readonly EditorialMetric[];
   renderText?: (text: string) => ReactNode;
   renderMarkdown?: (markdown: string, key: string) => ReactNode;
 }>) {
@@ -60,7 +60,7 @@ export function EditorialMetricsStrip({
                 ? metric.points[metric.points.length - 1]
                 : null;
 
-              const derivedStatus: CheckpointMetricStatus | null | undefined = metric.status
+              const derivedStatus: EditorialMetricStatus | null | undefined = metric.status
                 ?? (latestPoint !== null
                   ? (meetsTarget(latestPoint.value, metric.target, metric.direction) ? 'met' : 'at_risk')
                   : null);

@@ -468,36 +468,33 @@ public sealed partial class TrackActor
                     return null;
                 }
 
-                var policyToolName = GetPolicyToolName(mcpServer, toolName, _policy.UsesLegacyBeforeToolNames);
-                var eval = _policyVm.Before(_policy, "tool." + policyToolName, TrackId, JsonHelpers.ToElement(new {
+                var eval = _policyVm.Before(_policy, "tool." + toolName, TrackId, JsonHelpers.ToElement(new {
                     sessionId = caller.Id, isLead = caller.IsLead, boundTaskId = _taskCoordinator.TryGetActiveTaskForSessionCore(caller.Id)?.Task.Id,
-                    mcpServer, toolName = policyToolName, arguments = arguments.ValueKind == JsonValueKind.Undefined ? JsonHelpers.EmptyObject : arguments
-                }), _track.TemplateInputs, _track.TemplateState);
-                if (providerDiscovery && eval.Output is GuardDecision.AskHuman)
+                    mcpServer, toolName, arguments = arguments.ValueKind == JsonValueKind.Undefined ? JsonHelpers.EmptyObject : arguments
+                }), _track.TemplateInputs, _track.Data);
+                if (providerDiscovery && eval is GuardDecision.AskHuman)
                     throw KernelException.PolicyDenied("Provider discovery is read-only and cannot request approval.");
-                if (flowRead && eval.Output is GuardDecision.AskHuman)
+                if (flowRead && eval is GuardDecision.AskHuman)
                     throw KernelException.PolicyDenied("Reading flow is read-only and cannot request approval.");
-                if (eval.Output is GuardDecision.AskHuman)
+                if (eval is GuardDecision.AskHuman)
                     RequireApprovalOrigin(sessionId, approvalTurn, origin);
-                // An allowed replacement initializes its own state atomically. Denied or
-                // suspended attempts still retain the current policy's guard state updates.
-                if (!previewOnly && (!string.Equals(mcpServer, "perga", StringComparison.OrdinalIgnoreCase) ||
-                    toolName != KernelMcpToolNames.TrackSet || eval.Output is not GuardDecision.Allow))
-                    await UpdateTemplateStateIfChangedCoreAsync(eval.NextState, ct).ConfigureAwait(false);
-
-                if (previewOnly && eval.Output is GuardDecision.AskHuman)
+                if (previewOnly && eval is GuardDecision.AskHuman)
                     throw KernelException.PolicyDenied("Template preview requires human approval; dryRun cannot create an approval request.");
 
-                return ApplyGuardDecisionCore(eval.Output, caller.Id, approvalTurn, ct, toolName, arguments);
+                return ApplyGuardDecisionCore(eval, caller.Id, approvalTurn, ct, toolName, arguments);
             }, ct).ConfigureAwait(false);
 
-            if (askSuspension is null)
+            if (askSuspension is not null)
             {
-                return authorizedPolicyGeneration;
+                await RequirePolicyApprovalAsync(askSuspension, ct).ConfigureAwait(false);
+                return await EnqueueAsync(_ =>
+                {
+                    if (_policyGeneration != authorizedPolicyGeneration)
+                        throw KernelException.PolicyDenied("Active policy or template data changed during approval.");
+                    return Task.FromResult(authorizedPolicyGeneration);
+                }, ct).ConfigureAwait(false);
             }
 
-
-            await RequirePolicyApprovalAsync(askSuspension, ct).ConfigureAwait(false);
             return authorizedPolicyGeneration;
         }
         finally

@@ -24,7 +24,6 @@
 - { path: fe/tools/architecture, type: directory, owner: tooling/architecture, readonly: false, basis: "architecture §5 repository tree; enforcement infrastructure" }
 - { path: fe/tools/ownership, type: directory, owner: tooling/architecture, readonly: false, basis: "architecture §5 repository tree; ownership enforcement infrastructure" }
 - { path: fe/tools/projection, type: directory, owner: tooling/architecture, readonly: false, basis: "#1234 忠实投影检查器；验证域，故不入 core/web 运行时" }
-- { path: fe/tools/report-view, type: directory, owner: tooling/report-view, readonly: false, basis: "#1769 native view schema generation and cross-language conformance; no runtime dependencies" }
 - { path: fe/tools/styles, type: directory, owner: tooling/architecture, readonly: false, basis: "architecture §5 repository tree; styles enforcement infrastructure" }
 - { path: fe/tools/test-tier, type: directory, owner: tooling/test-tier, readonly: false, basis: "test-tier policy enforcement infrastructure (#997)" }
 - { path: fe/tools/vitest, type: directory, owner: tooling/test-tier, readonly: false, basis: "test-run setup; supplies §0.5's build-time constants Vitest cannot get from vite.config.ts (#997)" }

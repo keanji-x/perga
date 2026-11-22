@@ -38,8 +38,8 @@ public sealed class TemplateLoopTests
                 const string source = """
                     export default { id:'loop',title:'Loop',description:'Template loop',
                       inputs:{unit:{type:'string',default:'steps'}},
-                      initialState:()=>({count:7}),
-                      headerView:ctx=>({metrics:[{label:'Count',value:ctx.state.count+' '+ctx.inputs.unit}]}),
+                      data:{initial:{count:7}},
+                      headerView:ctx=>({metrics:[{label:'Count',value:ctx.data.count+' '+ctx.inputs.unit}]}),
                       workspace:{driver:'direct'},
                       tasks:{routing:[{when:{role:'missing'},provider:'missing',model:'unavailable'}]}}
                     """;
@@ -58,10 +58,10 @@ public sealed class TemplateLoopTests
                 var current = await Call(KernelMcpToolNames.TemplateRead, new { templateId = "__current__" });
                 Assert.Equal(source, current.GetProperty("snapshot").GetString());
                 Assert.Equal("retained", current.GetProperty("inputs").GetProperty("keep").GetString());
-                Assert.Equal(7, current.GetProperty("state").GetProperty("count").GetInt32());
+                Assert.Equal(7, current.GetProperty("data").GetProperty("count").GetInt32());
                 Assert.Equal("7 m", current.GetProperty("headerView").GetProperty("metrics")[0].GetProperty("value").GetString());
                 var stored = await host.Services.GetRequiredService<ITrackStore>().LoadTrackAggregateAsync(trackId, default);
-                Assert.Equal(7, stored!.Track.TemplateState.GetProperty("count").GetInt32());
+                Assert.Equal(7, stored!.Track.Data.GetProperty("count").GetInt32());
                 var report = await kernel.ReadReportAsync(trackId);
                 await kernel.CommitReportAsync(trackId, leadId, new(report.Anchor,
                     [new BlockOp.UpsertBlockOp(null, ReportBlockKind.Prose, "Preserved report", null)]));
@@ -79,7 +79,7 @@ public sealed class TemplateLoopTests
                 var token = kernel.McpSessionBridge.RegisterSession(trackId, leadId, true, null, null, []).Principal.Token;
                 var persisted = await kernel.GetTrackAggregateAsync(trackId);
                 Assert.Equal("m", persisted.Track.TemplateInputs.GetProperty("unit").GetString());
-                Assert.Equal(7, persisted.Track.TemplateState.GetProperty("count").GetInt32());
+                Assert.Equal(7, persisted.Track.Data.GetProperty("count").GetInt32());
                 var (text, error) = await CallToolAsync(reopened, "/mcp/kernel", token, KernelMcpToolNames.TrackSet, new { clear = true }, default);
                 Assert.False(error, text);
                 Assert.Null((await kernel.GetTrackAggregateAsync(trackId)).Track.TemplateId);
@@ -89,36 +89,6 @@ public sealed class TemplateLoopTests
             }
         }
         finally { directory.Delete(true); }
-    }
-
-    [Theory]
-    [InlineData("[]", false)]
-    [InlineData("['human']", false)]
-    [InlineData("['LEAD']", true)]
-    public async Task DeclarativeReportRules_EnforceLimitsAndSectionRolesBeforeHooks(string editableBy, bool allowed)
-    {
-        await using var host = new PergaHostTestCluster();
-        var kernel = host.Services.GetRequiredService<IPergaKernel>();
-        var (trackId, leadId) = await CreateTrackAsync(host, kernel);
-        var caller = kernel.McpSessionBridge.RegisterSession(trackId, leadId, true, null, null, []).Principal;
-        var report = await kernel.ReadReportAsync(trackId);
-        await kernel.CommitReportAsync(trackId, leadId, new(report.Anchor,
-            [new BlockOp.UpsertBlockOp(null, ReportBlockKind.Prose, "# Locked\n\nOriginal", null)]));
-        var source = "export default {id:'rules',title:'Rules',report:{maxProseChars:100,sections:[{h1:'# locked',editableBy:"
-            + editableBy + "}]},before(a,ctx){if(a.type==='report.commit')ctx.state.calls=(ctx.state.calls||0)+1;return Allow();}};";
-        await KernelMcpDispatcher.ExecuteGuardedAsync(kernel, caller, KernelMcpToolNames.TrackSet, JsonSerializer.SerializeToElement(new { source }));
-        report = await kernel.ReadReportAsync(trackId);
-        var commit = kernel.CommitReportAsync(trackId, leadId, new(report.Anchor,
-            [new BlockOp.ReplaceSectionOp("Locked", "# Locked\n\nChanged")]));
-        if (allowed) await commit;
-        else Assert.Equal(KernelErrorCode.PolicyDenied, (await Assert.ThrowsAsync<KernelException>(() => commit)).Code);
-        var state = (await kernel.GetTrackAggregateAsync(trackId)).Track.TemplateState;
-        Assert.Equal(allowed, state.TryGetProperty("calls", out _));
-        report = await kernel.ReadReportAsync(trackId);
-        var oversized = await Assert.ThrowsAsync<KernelException>(() => kernel.CommitReportAsync(trackId, leadId,
-            new(report.Anchor, [new BlockOp.UpsertBlockOp(null, ReportBlockKind.Prose, new string('x', 101), null)])));
-        Assert.Equal(KernelErrorCode.PolicyDenied, oversized.Code);
-        Assert.Equal(report.DocRev, (await kernel.ReadReportAsync(trackId)).DocRev);
     }
 
     [Fact]

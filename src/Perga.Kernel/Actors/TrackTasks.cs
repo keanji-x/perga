@@ -107,12 +107,7 @@ public sealed partial class TrackActor
                     UpdatedAtMs = now
                 };
                 ReplaceTaskInMemoryCore(updatedTask);
-                var after = actor.EvaluateAfterPolicyEventCore("task.settled", JsonHelpers.ToElement(new {
-                    taskKey = task.TaskKey, accessMode = TrackActor.FormatAccessModeForPolicy(task.Access),
-                    status = "canceled", workerResult = updatedTask.WorkerResult,
-                    meta = updatedTask.Meta ?? JsonHelpers.EmptyObject, gateVerdict = (JsonElement?)null
-                }));
-                await PersistAndEmitTaskUpdatedCoreAsync(updatedTask, after.NextState, now, CancellationToken.None, after.Output).ConfigureAwait(false);
+                await PersistAndEmitTaskUpdatedCoreAsync(updatedTask, now, CancellationToken.None).ConfigureAwait(false);
                 await ScheduleEligibleTasksCoreAsync(CancellationToken.None).ConfigureAwait(false);
                 await actor.OnTaskSettledFlowHookCoreAsync(updatedTask, CancellationToken.None).ConfigureAwait(false);
                 return updatedTask;
@@ -232,7 +227,7 @@ public sealed partial class TrackActor
                             try
                             {
                                 var watchRoute = actor.RouteTaskCore(task);
-                                if (!await actor.EnsureTaskDispatchApprovedCoreAsync(task, watchRoute.Route, ct).ConfigureAwait(false))
+                                if (!actor.EnsureTaskDispatchApprovedCore(task, watchRoute.Route))
                                     continue;
                             }
                             catch (Exception ex) when (!ct.IsCancellationRequested)
@@ -247,7 +242,7 @@ public sealed partial class TrackActor
                                     FinishedAtMs = actor.NowMs(),
                                     UpdatedAtMs = actor.NowMs()
                                 };
-                                await PersistAndEmitTaskUpdatedCoreAsync(failedWatch, null, failedWatch.UpdatedAtMs, ct).ConfigureAwait(false);
+                                await PersistAndEmitTaskUpdatedCoreAsync(failedWatch, failedWatch.UpdatedAtMs, ct).ConfigureAwait(false);
                                 ReplaceTaskInMemoryCore(failedWatch);
                                 preparationFailed |= await actor.EvaluateFlowAfterTriggersCoreAsync(ct).ConfigureAwait(false);
                                 await actor.TryRunFlowGcCoreAsync(ct).ConfigureAwait(false);
@@ -265,7 +260,7 @@ public sealed partial class TrackActor
                     {
                         var taskRoute = actor.RouteTaskCore(task);
                         route = taskRoute.Route;
-                        if (!await actor.EnsureTaskDispatchApprovedCoreAsync(task, route, ct).ConfigureAwait(false)) continue;
+                        if (!actor.EnsureTaskDispatchApprovedCore(task, route)) continue;
                         if (TrackActor.NeedsTaskProviderCatalog(route))
                         {
                             if (providers is null)
@@ -293,7 +288,7 @@ public sealed partial class TrackActor
                             FinishedAtMs = actor.NowMs(),
                             UpdatedAtMs = actor.NowMs()
                         };
-                        await PersistAndEmitTaskUpdatedCoreAsync(failed, null, failed.UpdatedAtMs, ct).ConfigureAwait(false);
+                        await PersistAndEmitTaskUpdatedCoreAsync(failed, failed.UpdatedAtMs, ct).ConfigureAwait(false);
                         ReplaceTaskInMemoryCore(failed);
                         preparationFailed |= await actor.EvaluateFlowAfterTriggersCoreAsync(ct).ConfigureAwait(false);
                         await actor.TryRunFlowGcCoreAsync(ct).ConfigureAwait(false);
@@ -436,13 +431,13 @@ public sealed partial class TrackActor
                 {
                     var taskEvent = CreateTaskUpdatedEventCore(now);
                     await actor._eventHub.EnsureInitializedFromStoreAsync(actor._store, ct).ConfigureAwait(false);
-                    await actor._store.UpsertTaskAsync(runningTask, null, taskEvent, ct, subagent, sessionEvent, initialMessage: initial, writeNewRunBoundary: previousSession is not null && task.RunCount > 0 && !preserveSessionContext).ConfigureAwait(false);
+                    await actor._store.UpsertTaskAsync(runningTask, taskEvent, ct, subagent, sessionEvent, initialMessage: initial, writeNewRunBoundary: previousSession is not null && task.RunCount > 0 && !preserveSessionContext).ConfigureAwait(false);
                 }
                 catch (Exception ex) when (!ct.IsCancellationRequested)
                 {
                     var failedAt = actor.NowMs();
                     var failed = task with { Status = TaskRunStatus.Failed, Outcome = FlowOutcome.Attention, OutcomeSummary = ex.Message, StatusDetail = ex.Message, FinishedAtMs = failedAt, UpdatedAtMs = failedAt };
-                    await PersistAndEmitTaskUpdatedCoreAsync(failed, null, failed.UpdatedAtMs, CancellationToken.None).ConfigureAwait(false);
+                    await PersistAndEmitTaskUpdatedCoreAsync(failed, failed.UpdatedAtMs, CancellationToken.None).ConfigureAwait(false);
                     ReplaceTaskInMemoryCore(failed);
                     return false;
                 }
@@ -636,7 +631,7 @@ public sealed partial class TrackActor
                     ReplaceTaskInMemoryCore(verifyingTask);
                     if (active.SessionId is { } sid) actor._mcpBridge.RevokeSession(sid);
 
-                    await PersistAndEmitTaskUpdatedCoreAsync(verifyingTask, nextTemplateState: null, now, verificationToken)
+                    await PersistAndEmitTaskUpdatedCoreAsync(verifyingTask, now, verificationToken)
                         .ConfigureAwait(false);
 
                     return (actor.InterpolateFlowTaskForExecutionCore(verifyingTask), active, mounted.MergedCwd, actor._policy?.Manifest.AfterWorkerDoneCmd);
@@ -757,16 +752,6 @@ public sealed partial class TrackActor
                     };
                     ReplaceTaskInMemoryCore(settledTask);
 
-                    var statusLabel = gatePassed ? "done" : "failed";
-                    var after = actor.EvaluateAfterPolicyEventCore("task.settled", JsonHelpers.ToElement(new {
-                        taskKey = currentTask.TaskKey, accessMode = TrackActor.FormatAccessModeForPolicy(currentTask.Access),
-                        status = statusLabel, outcome = FlowConstants.FormatOutcome(resolvedOutcome),
-                        outcomeSummary = resolvedSummary, workerResult = settledTask.WorkerResult,
-                        meta = mergedMeta, gateVerdict
-                    }));
-                    var nextTemplateState = after.NextState;
-                    var policyNote = after.Output;
-
                     var summarySb = new StringBuilder();
                     summarySb.Append($"Task '{settledTask.TaskKey}' (run #{settledTask.RunCount}) settled as {settledTask.Status} (outcome={FlowConstants.FormatOutcome(resolvedOutcome)}).");
                     if (!string.IsNullOrWhiteSpace(failedStepReason))
@@ -778,12 +763,7 @@ public sealed partial class TrackActor
                         summarySb.Append($" Summary: {resolvedSummary}");
                     }
 
-                    if (!string.IsNullOrWhiteSpace(policyNote))
-                    {
-                        summarySb.Append('\n').Append(policyNote);
-                    }
-
-                    await PersistAndEmitTaskUpdatedCoreAsync(settledTask, nextTemplateState, now, verificationToken, summarySb.ToString())
+                    await PersistAndEmitTaskUpdatedCoreAsync(settledTask, now, verificationToken, summarySb.ToString())
                         .ConfigureAwait(false);
 
                     if (current.SessionId is { } sid) actor.ScheduleSessionRuntimeCloseCore(sid);
@@ -854,18 +834,8 @@ public sealed partial class TrackActor
                     };
                     ReplaceTaskInMemoryCore(updatedTask);
 
-                    var after = actor.EvaluateAfterPolicyEventCore("task.settled", JsonHelpers.ToElement(new {
-                        taskKey = currentTask.TaskKey, accessMode = TrackActor.FormatAccessModeForPolicy(currentTask.Access),
-                        status = "failed", outcome = "attention", outcomeSummary = reason, workerResult = clonedWorkerResult,
-                        meta = currentTask.Meta ?? JsonHelpers.EmptyObject, gateVerdict = (JsonElement?)null
-                    }));
-                    var nextTemplateState = after.NextState;
-                    var policyNote = after.Output;
-
-                    var msg = string.IsNullOrWhiteSpace(policyNote)
-                        ? $"Task '{updatedTask.TaskKey}' (run #{updatedTask.RunCount}) failed: {reason}"
-                        : $"Task '{updatedTask.TaskKey}' (run #{updatedTask.RunCount}) failed: {reason}\n{policyNote}";
-                    await PersistAndEmitTaskUpdatedCoreAsync(updatedTask, nextTemplateState, now, ct, msg)
+                    var msg = $"Task '{updatedTask.TaskKey}' (run #{updatedTask.RunCount}) failed: {reason}";
+                    await PersistAndEmitTaskUpdatedCoreAsync(updatedTask, now, ct, msg)
                         .ConfigureAwait(false);
                     if (current.SessionId is { } sid) actor.ScheduleSessionRuntimeCloseCore(sid);
                     await ScheduleEligibleTasksCoreAsync(ct).ConfigureAwait(false);
@@ -1044,7 +1014,7 @@ public sealed partial class TrackActor
                         Status = TaskRunStatus.Canceled, Ready = false, StatusDetail = reason,
                         FinishedAtMs = now, UpdatedAtMs = now
                     };
-                    await PersistAndEmitTaskUpdatedCoreAsync(canceled, null, now, CancellationToken.None, suppressDefaultWake: true)
+                    await PersistAndEmitTaskUpdatedCoreAsync(canceled, now, CancellationToken.None, suppressDefaultWake: true)
                         .ConfigureAwait(false);
                     ReplaceTaskInMemoryCore(canceled);
                     canceledWatches.AddRange(actor.BeginWatchCancellationForNodeCore(watch.NodeId));
@@ -1066,7 +1036,7 @@ public sealed partial class TrackActor
                     var task = RequireTaskCore(active.TaskId);
                     var canceledTask = task with { Status = TaskRunStatus.Canceled, Ready = false, StatusDetail = reason, FinishedAtMs = now, UpdatedAtMs = now };
                     ReplaceTaskInMemoryCore(canceledTask);
-                    await PersistAndEmitTaskUpdatedCoreAsync(canceledTask, nextTemplateState: null, now, CancellationToken.None).ConfigureAwait(false);
+                    await PersistAndEmitTaskUpdatedCoreAsync(canceledTask, now, CancellationToken.None).ConfigureAwait(false);
                 }, CancellationToken.None).ConfigureAwait(false);
             }
         }
@@ -1099,17 +1069,15 @@ public sealed partial class TrackActor
 
         public async Task PersistAndEmitTaskUpdatedCoreAsync(
             TaskDto task,
-            JsonElement? nextTemplateState,
             long now,
             CancellationToken ct, string? wakePrompt = null, bool suppressDefaultWake = false)
         {
             var evt = CreateTaskUpdatedEventCore(now);
             await actor._eventHub.EnsureInitializedFromStoreAsync(actor._store, ct).ConfigureAwait(false);
-            await actor._store.UpsertTaskAsync(task, nextTemplateState, evt, ct, wakePrompt: wakePrompt, suppressDefaultWake: suppressDefaultWake).ConfigureAwait(false);
+            await actor._store.UpsertTaskAsync(task, evt, ct, wakePrompt: wakePrompt, suppressDefaultWake: suppressDefaultWake).ConfigureAwait(false);
             if (task.FinishedAtMs is not null && task.SessionId is { } childId && actor._sessions.TryGetValue(childId, out var child) &&
                 child.NotifyParent == "task_settled" && child.ParentSessionId is { } parentId)
                 await actor.PokeSessionCoreAsync(parentId).ConfigureAwait(false);
-            if (nextTemplateState is { } state) actor._track = actor._track with { TemplateState = state };
             await actor._eventHub.PublishSyncedAfterStoreWriteAsync(actor._store, evt, ct).ConfigureAwait(false);
         }
 

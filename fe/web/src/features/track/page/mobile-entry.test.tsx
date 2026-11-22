@@ -7,7 +7,7 @@ import { cleanup } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { ReportTaskRow } from '../../../../../core/domain/report.ts';
+import type { ReportTaskRow } from '../../../../../core/domain/track-task-inventory.ts';
 import { NEUTRAL_ACTIVITY, type CardWire } from '../../../../../core/domain/track.ts';
 import { MARKER } from '../../../../../core/view/panel.ts';
 import type { RowModuleView, RowPainter } from '../../../../../core/view/panel.ts';

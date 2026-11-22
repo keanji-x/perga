@@ -287,7 +287,7 @@ public sealed partial class TrackActor
             foreach (var wake in batch)
             {
                 var payload = TrackWakePayload.Parse(wake.PayloadJson);
-                var prompt = await Actor.PrepareWakePromptAsync(wake, payload, ct).ConfigureAwait(false);
+                var prompt = payload.Prompt ?? throw new InvalidOperationException($"Track wake '{wake.Id}' has no prompt.");
                 if (string.IsNullOrWhiteSpace(prompt))
                     await Actor._store.TrackWakes.MarkDroppedAsync([wake], TrackWakeReasons.Canceled, null, CancellationToken.None).ConfigureAwait(false);
                 else

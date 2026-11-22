@@ -237,8 +237,22 @@
       function render() {
         const rawPoints = currentData && Array.isArray(currentData.points) ? currentData.points : [];
         const points = rawPoints.filter((p) => p && typeof p.value === "number" && Number.isFinite(p.value));
+        const cur = currentData?.current;
+        const hasCur = Number.isFinite(cur?.value) && cur.value > 0;
         if (points.length === 0) {
-          app.textContent = "";
+          if (hasCur) {
+            const row = document.createElement("div");
+            row.className = "note-row";
+            const label = document.createElement("span");
+            label.textContent = cur.label || "现价";
+            const price = document.createElement("span");
+            price.className = "note-price";
+            price.textContent = cur.display || String(cur.value);
+            row.append(label, price);
+            app.replaceChildren(row);
+          } else {
+            app.textContent = "价格与估值区间待录入。";
+          }
           reportHeight();
           return;
         }
@@ -248,8 +262,6 @@
           activeIndex = emph >= 0 ? emph : 0;
         }
 
-        const cur = currentData.current;
-        const hasCur = Boolean(cur && typeof cur.value === "number" && Number.isFinite(cur.value));
         const allVals = points.map((p) => p.value);
         if (hasCur) allVals.push(cur.value);
         const rawMin = Math.min(...allVals);

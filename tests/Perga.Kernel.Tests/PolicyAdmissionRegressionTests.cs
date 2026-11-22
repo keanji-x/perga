@@ -17,7 +17,7 @@ public sealed class PolicyAdmissionRegressionTests
         KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller, KernelMcpToolNames.TrackSet, TestJson.FromObject(new { source }));
 
     [Fact]
-    public async Task ProviderDiscoveryHonorsPolicyWithoutUpdatingStateOrRequestingApproval()
+    public async Task ProviderDiscoveryHonorsPolicyWithoutUpdatingDataOrRequestingApproval()
     {
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
@@ -27,22 +27,19 @@ public sealed class PolicyAdmissionRegressionTests
               id: 'discovery', title: 'Discovery',
               before(call, ctx) {
                 if (call.type !== 'tool.provider_list') return Allow();
-                ctx.state.before = true;
+                ctx.data.before = true;
                 if (call.arguments.refresh) return AskHuman('Refresh?', {approve: 'Yes', deny: 'No'});
                 return Allow();
-              },
-              after(event, ctx) {
-                if (event.type === 'tool.provider_list') ctx.state.after = true;
               }
             };
             """);
-        var before = (await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId)).Track.TemplateState.GetRawText();
+        var before = (await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId)).Track.Data.GetRawText();
         await KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller, KernelMcpToolNames.ProviderList, TestJson.FromObject(new { }));
         var error = await Assert.ThrowsAsync<KernelException>(() => KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller,
             KernelMcpToolNames.ProviderList, TestJson.FromObject(new { refresh = true })));
         Assert.Equal(KernelErrorCode.PolicyDenied, error.Code);
         var after = await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId);
-        Assert.Equal(before, after.Track.TemplateState.GetRawText());
+        Assert.Equal(before, after.Track.Data.GetRawText());
         Assert.Empty(after.PendingApprovals);
         Assert.Equal(1, ctx.AgentRuntime.ProviderProbeCalls);
     }
@@ -140,6 +137,76 @@ public sealed class PolicyAdmissionRegressionTests
     }
 
     [Fact]
+    public async Task ChangedPolicyDataInvalidatesAnOpenReportApproval()
+    {
+        await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
+        var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
+        var caller = Caller(snapshot);
+        await SetPolicy(ctx, caller, """
+            export default { id: 'ask', title: 'Ask', data: { initial: { locked: false } },
+              before(action, ctx) {
+                if (action.type !== 'report.commit') return Allow();
+                return ctx.data.locked ? Deny('Report locked') : AskHuman('Approve report?');
+              } };
+            """);
+        var report = await ctx.Kernel.ReadReportAsync(caller.TrackId);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var commit = ctx.Kernel.CommitReportAsync(caller.TrackId, caller.SessionId,
+            new(report.Anchor, [new BlockOp.UpsertBlockOp("note", ReportBlockKind.Prose, "Note", null)]), timeout.Token);
+        ApprovalDto? approval = null;
+        while (approval is null)
+        {
+            approval = (await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId, timeout.Token)).PendingApprovals.SingleOrDefault();
+            if (approval is null) await Task.Delay(10, timeout.Token);
+        }
+
+        await ctx.Kernel.PatchTrackDataAsync(caller.TrackId, TestJson.Parse("""{"locked":true}"""), "test", ct: timeout.Token);
+        await ctx.Kernel.RespondInteractionAsync(approval.SessionId, approval.Id, new(ExecutionId: approval.ExecutionId,
+            OptionId: approval.Options.Single(o => o.IsApproval).Id), new InteropPrincipal.Human(), timeout.Token);
+        var error = await Assert.ThrowsAsync<KernelException>(() => commit);
+        Assert.Equal(KernelErrorCode.PolicyDenied, error.Code);
+        Assert.Equal(report.DocRev, (await ctx.Kernel.ReadReportAsync(caller.TrackId, ct: timeout.Token)).DocRev);
+    }
+
+    [Fact]
+    public async Task ChangedPolicyDataInvalidatesAnOpenVcsToolApproval()
+    {
+        await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
+        var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
+        var caller = Caller(snapshot);
+        await SetPolicy(ctx, caller, """
+            export default { id: 'vcs-approval', title: 'VCS approval', data: { initial: { locked: false } },
+              before(action, ctx) {
+                if (action.type !== 'tool.restore_op') return Allow();
+                return ctx.data.locked ? Deny('Workspace locked') : AskHuman('Restore workspace?');
+              } };
+            """);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var ct = timeout.Token;
+        var args = TestJson.Parse("""{"opId":"test-operation"}""");
+        var guard = ctx.Kernel.GuardMcpToolCallAsync(caller.TrackId, caller.SessionId, "vcs", "restore_op", args, ct);
+        ApprovalDto? approval = null;
+        while (approval is null)
+        {
+            approval = (await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId, ct)).PendingApprovals.SingleOrDefault();
+            if (approval is null) await Task.Delay(10, ct);
+        }
+
+        await KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller, KernelMcpToolNames.DataPatch,
+            TestJson.Parse("""{"patch":{"locked":true}}"""), ct);
+        await ctx.Kernel.RespondInteractionAsync(approval.SessionId, approval.Id, new(ExecutionId: approval.ExecutionId,
+            OptionId: approval.Options.Single(o => o.IsApproval).Id), new InteropPrincipal.Human(), ct);
+
+        var error = await Assert.ThrowsAsync<KernelException>(() => guard.WaitAsync(ct));
+        Assert.Equal(KernelErrorCode.PolicyDenied, error.Code);
+        Assert.Equal("Active policy or template data changed during approval.", error.Message);
+        var retry = await Assert.ThrowsAsync<KernelException>(() =>
+            ctx.Kernel.GuardMcpToolCallAsync(caller.TrackId, caller.SessionId, "vcs", "restore_op", args, ct));
+        Assert.Equal(KernelErrorCode.PolicyDenied, retry.Code);
+        Assert.Equal("Workspace locked", retry.Message);
+    }
+
+    [Fact]
     public async Task StopExpiresTemplateReportApprovalAndRejectsLateDecisions()
     {
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
@@ -185,26 +252,29 @@ public sealed class PolicyAdmissionRegressionTests
     [Theory]
     [InlineData("report-deny")]
     [InlineData("report-throw")]
-    [InlineData("manifest")]
+    [InlineData("checkpoints")]
     public async Task RejectedCommit_DoesNotLeaveApprovalAsks(string failure)
     {
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
         var caller = Caller(snapshot);
         var reportHook = failure == "report-deny" ? "return Deny('report blocked');" :
-            failure == "report-throw" ? "throw Error('report failed');" : "return Allow();";
-        await SetPolicy(ctx, caller, "export default {id:'admission',title:'Admission',report:{maxProseChars:" +
-            (failure == "manifest" ? "1" : "10000") + "},before(a){if(a.type==='report.commit'){" + reportHook +
-            "}return Allow();}};");
+            failure == "report-throw" ? "throw Error('report failed');" : "return AskHuman('Approve report?');";
+        await SetPolicy(ctx, caller, "export default {id:'admission',title:'Admission',before(a){if(a.type==='report.commit'){" +
+            reportHook + "}return Allow();}};");
         var report = await ctx.Kernel.ReadReportAsync(caller.TrackId);
+        var draft = failure == "checkpoints"
+            ? new BlockOp.UpsertBlockOp("draft", ReportBlockKind.Checkpoints, null, TestJson.Parse("""{"items":[]}"""))
+            : new BlockOp.UpsertBlockOp("draft", ReportBlockKind.Prose, "Proposed prose", null);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var error = await Record.ExceptionAsync(() => ctx.Kernel.CommitReportAsync(caller.TrackId, caller.SessionId,
-            new(report.Anchor, [new BlockOp.UpsertBlockOp("prose", ReportBlockKind.Prose, "Too much prose", null)])));
+            new(report.Anchor, [draft]), timeout.Token));
         Assert.NotNull(error);
         Assert.Empty((await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId)).PendingApprovals);
         var persisted = (await ctx.Store.LoadTrackAggregateAsync(caller.TrackId, default))!;
         Assert.Empty(persisted.OpenAsks);
         Assert.Empty(persisted.Tasks);
-        Assert.DoesNotContain(persisted.Report.Blocks, b => b.Id == "first");
+        Assert.DoesNotContain(persisted.Report.Blocks, b => b.Id == "draft");
     }
 
     [Fact]
@@ -221,56 +291,6 @@ public sealed class PolicyAdmissionRegressionTests
         Assert.Equal(KernelErrorCode.InvalidArgument, error.Code);
         Assert.Empty(await ctx.Kernel.ListTasksAsync(caller.TrackId));
         Assert.DoesNotContain(await ctx.Kernel.ListSessionsAsync(caller.TrackId, new(IncludeArchived: true), new InteropPrincipal.Human(), default), s => s.TaskId is not null);
-    }
-
-    [Theory]
-    [InlineData("throw Error('after failed');")]
-    [InlineData("while(true) {}")]
-    [InlineData("ctx.state.calls=(ctx.state.calls||0)+1;")]
-    public async Task AfterFailures_DoNotFailToolsReportsOrWedgeTurns(string hook)
-    {
-        await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
-        var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
-        var caller = Caller(snapshot);
-        await SetPolicy(ctx, caller, "export default {id:'after',title:'After',after(e,ctx){" + hook + "}};");
-        var stateBefore = (await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId)).Track.TemplateState.GetRawText();
-        ctx.Store.FailTemplateStateUpdate = true;
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-        await KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller, KernelMcpToolNames.TrackRename,
-            TestJson.FromObject(new { title = "Committed title" }), timeout.Token);
-        Assert.Equal("Committed title", (await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId)).Track.Title);
-        var report = await ctx.Kernel.ReadReportAsync(caller.TrackId);
-        await ctx.Kernel.CommitReportAsync(caller.TrackId, caller.SessionId,
-            new(report.Anchor, [new BlockOp.UpsertBlockOp("note", ReportBlockKind.Prose, "Committed report", null)]), timeout.Token);
-        Assert.Contains((await ctx.Kernel.ReadReportAsync(caller.TrackId)).Blocks, b => b.Id == "note");
-        await ctx.SendAndWaitForTurnAsync(caller.SessionId, new SendSessionMessageRequest("first", "first"), timeout.Token);
-        await ctx.Kernel.WaitForTrackIdleAsync(caller.TrackId, timeout.Token);
-        await ctx.SendAndWaitForTurnAsync(caller.SessionId, new SendSessionMessageRequest("second", "second"), timeout.Token);
-        await ctx.Kernel.WaitForTrackIdleAsync(caller.TrackId, timeout.Token);
-        Assert.Contains(ctx.AgentRuntime.OpenedSessions.SelectMany(s => s.RecordedInputs), i => i.Prompt.Contains("second", StringComparison.Ordinal));
-        Assert.Equal(stateBefore, (await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId)).Track.TemplateState.GetRawText());
-    }
-
-    [Theory]
-    [InlineData("throw Error('settled failed');")]
-    [InlineData("while(true) {}")]
-    [InlineData("ctx.state.changed=true;")]
-    public async Task TaskAfterFailures_PreserveCommittedCompletion(string hook)
-    {
-        await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
-        var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
-        var caller = Caller(snapshot);
-        await SetPolicy(ctx, caller, "export default {id:'settled',title:'Settled',after(e,ctx){if(e.type==='task.settled'){" + hook + "}}};");
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        var worker = (await FlowFixture.StartWorkerAsync(ctx.Kernel, caller.TrackId, FlowFixture.Worker("settled", "Inspect"))).Session;
-        await ctx.Kernel.WaitForTrackIdleAsync(caller.TrackId, timeout.Token);
-        ctx.Store.FailTemplateStateUpdate = true;
-        var completed = await ctx.Kernel.CompleteTaskDoneAsync(caller.TrackId, worker.Id, TestJson.FromObject(new { summary = "done" }), ct: timeout.Token);
-        Assert.Equal(TaskRunStatus.Done, completed.Status);
-        var persisted = (await ctx.Store.LoadTrackAggregateAsync(caller.TrackId, timeout.Token))!;
-        Assert.Equal(TaskRunStatus.Done, Assert.Single(persisted.Tasks).Status);
-        // Settlement state uses the atomic task/attempt/wake write, not UpdateTrackAndEmitAsync.
-        Assert.Equal(hook == "ctx.state.changed=true;", persisted.Track.TemplateState.TryGetProperty("changed", out _));
     }
 
     [Fact]
@@ -342,36 +362,36 @@ public sealed class PolicyAdmissionRegressionTests
     }
 
     [Fact]
-    public async Task PreviewAskHuman_ReturnsPromptlyWithoutPersistingAskOrState()
+    public async Task PreviewAskHuman_ReturnsPromptlyWithoutPersistingAskOrData()
     {
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
         var caller = Caller(snapshot);
-        await SetPolicy(ctx, caller, "export default {id:'ask',title:'Ask',before(a,ctx){if(a.type==='tool.track_set'){ctx.state.changed=true;return AskHuman('Approve?',{approve:'Approve',deny:'Reject'});}return Allow();}};");
-        var before = (await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId)).Track.TemplateState.GetRawText();
+        await SetPolicy(ctx, caller, "export default {id:'ask',title:'Ask',before(a,ctx){if(a.type==='tool.track_set'){ctx.data.changed=true;return AskHuman('Approve?',{approve:'Approve',deny:'Reject'});}return Allow();}};");
+        var before = (await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId)).Track.Data.GetRawText();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
         var error = await Assert.ThrowsAsync<KernelException>(() => KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller,
             KernelMcpToolNames.TrackSet, TestJson.FromObject(new { source = "export default {id:'next',title:'Next'};", dryRun = true }), timeout.Token));
         Assert.Equal(KernelErrorCode.PolicyDenied, error.Code);
         var after = await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId);
         Assert.Empty(after.PendingApprovals);
-        Assert.Equal(before, after.Track.TemplateState.GetRawText());
+        Assert.Equal(before, after.Track.Data.GetRawText());
     }
 
     [Theory]
     [InlineData("dryRun")]
     [InlineData("clear")]
-    public async Task TemplateBooleanArguments_AreValidatedBeforeGuardSideEffects(string name)
+    public async Task TemplateBooleanArguments_AreValidatedBeforeGuardEvaluation(string name)
     {
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
         var caller = Caller(snapshot);
-        await SetPolicy(ctx, caller, "export default {id:'bool',title:'Bool',before(a,ctx){if(a.type==='tool.track_set')ctx.state.changed=true;return Allow();}};");
-        var before = (await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId)).Track.TemplateState.GetRawText();
+        await SetPolicy(ctx, caller, "export default {id:'bool',title:'Bool',before(a,ctx){if(a.type==='tool.track_set')return Deny('guard ran');return Allow();}};");
+        var before = (await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId)).Track.Data.GetRawText();
         var error = await Assert.ThrowsAsync<KernelException>(() => KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller,
             KernelMcpToolNames.TrackSet, TestJson.FromObject(new Dictionary<string, object> { [name] = "true", ["clear"] = name == "clear" ? "true" : false })));
         Assert.Equal(KernelErrorCode.InvalidArgument, error.Code);
-        Assert.Equal(before, (await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId)).Track.TemplateState.GetRawText());
+        Assert.Equal(before, (await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId)).Track.Data.GetRawText());
     }
     [Fact]
     public async Task SchedulingAsk_UnrelatedReportSyncPreservesApprovalForSameContract()

@@ -14,7 +14,7 @@ function preview(blockId: string | null, flow: unknown) {
     status: 200,
     statusText: 'OK',
     body: request.path.endsWith('/views')
-      ? { templateId: '', dataRev: 0, views: {}, widgets: {}, diagnostics: [], humanReadOnly: true,
+      ? { templateId: '', dataRev: 0, views: {}, widgets: {}, diagnostics: [],
         flowRev: 1, flow }
       : fixtureSnapshot(track),
   }));

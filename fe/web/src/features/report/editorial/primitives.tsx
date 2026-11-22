@@ -1,17 +1,16 @@
 import type { ReactNode } from 'react';
 import type {
-  CheckpointCheck,
-  CheckpointExpectation,
-  CheckpointExpectStatus,
-  CheckpointItem,
-  CheckpointStatus,
-  CheckpointTrigger,
-} from '../../../../../core/domain/report-checkpoints.ts';
-import type { ReportTaskRow } from '../../../../../core/domain/report.ts';
+  EditorialCheck,
+  EditorialExpectation,
+  EditorialExpectationStatus,
+  EditorialListItem,
+  EditorialListStatus,
+} from '../../../../../core/domain/report-editorial.ts';
+import type { ReportTaskRow } from '../../../../../core/domain/track-task-inventory.ts';
 import { Icon } from '../../../ui/icon/public.tsx';
 import styles from './editorial.module.css';
 
-export function defaultStatusLabel(status: CheckpointStatus): string {
+export function defaultStatusLabel(status: EditorialListStatus): string {
   switch (status) {
     case 'done': return '已完成';
     case 'running': return '进行中';
@@ -20,7 +19,7 @@ export function defaultStatusLabel(status: CheckpointStatus): string {
   }
 }
 
-function bylineStateClass(status: CheckpointStatus): string {
+function bylineStateClass(status: EditorialListStatus): string {
   switch (status) {
     case 'done': return styles.bylineStateDone;
     case 'running': return styles.bylineStateRunning;
@@ -29,7 +28,7 @@ function bylineStateClass(status: CheckpointStatus): string {
   }
 }
 
-export function composeItemMarkdown(item: CheckpointItem): string {
+export function composeItemMarkdown(item: EditorialListItem): string {
   const parts: string[] = [];
   if (item.summary != null && item.summary.trim() !== '') {
     parts.push(item.summary.trim());
@@ -40,33 +39,18 @@ export function composeItemMarkdown(item: CheckpointItem): string {
   return parts.join('\n\n');
 }
 
-export function resolveItemSessionId(item: CheckpointItem, taskRows?: readonly ReportTaskRow[]): string | null {
+export function resolveItemSessionId(item: EditorialListItem, taskRows?: readonly ReportTaskRow[]): string | null {
   const matchedTask = item.taskKey != null
     ? taskRows?.find((row) => row.key === item.taskKey)
     : undefined;
-  return item.sessionId ?? matchedTask?.workerCardId ?? null;
+  return item.sessionId ?? matchedTask?.execution?.workerCardId ?? matchedTask?.workerCardId ?? null;
 }
 
-export function resolveAuthorDisplay(item: CheckpointItem, resolvedSessionId: string | null): string | null {
+export function resolveAuthorDisplay(item: EditorialListItem, resolvedSessionId: string | null): string | null {
   return item.model ?? item.assign ?? item.workerLabel ?? (resolvedSessionId !== null ? 'Worker' : null);
 }
 
-export function deriveFallbackTriggers(item: CheckpointItem): readonly CheckpointTrigger[] {
-  if (item.triggers != null && item.triggers.length > 0) return item.triggers;
-  if (item.status !== 'pending') return [];
-  const triggerText = item.dependsOn != null && item.dependsOn.length > 0
-    ? `${item.dependsOn.join('、')} 完成`
-    : null;
-  if (triggerText === null && item.constraint == null) return [];
-  return [{
-    trigger: triggerText ?? '手动或前置就绪',
-    action: `启动 ${item.title}`,
-    assignKind: item.model != null ? 'model' : null,
-    assign: item.constraint ?? item.model ?? '待分配',
-  }];
-}
-
-function GateMarker({ status }: Readonly<{ status: CheckpointCheck['status'] }>) {
+function GateMarker({ status }: Readonly<{ status: EditorialCheck['status'] }>) {
   switch (status) {
     case 'pass':
       return <span className={styles.gateCheckIcon} aria-hidden="true"><Icon name="check" size="sm" /></span>;
@@ -90,7 +74,7 @@ export function EditorialByline({
   taskRows,
   onOpenWorker,
 }: Readonly<{
-  item: CheckpointItem;
+  item: EditorialListItem;
   taskRows?: readonly ReportTaskRow[];
   onOpenWorker?: (sessionId: string) => void;
 }>) {
@@ -131,12 +115,12 @@ export function EditorialByline({
   );
 }
 
-export function CheckpointProseBody({
+export function EditorialItemBody({
   item,
   renderText,
   renderMarkdown,
 }: Readonly<{
-  item: CheckpointItem;
+  item: EditorialListItem;
   renderText?: (text: string) => ReactNode;
   renderMarkdown?: (markdown: string, key: string) => ReactNode;
 }>) {
@@ -146,7 +130,7 @@ export function CheckpointProseBody({
   return (
     <div className={styles.proseBody}>
       {renderMarkdown !== undefined ? (
-        renderMarkdown(bodyMarkdown, `checkpoint-${item.id}`)
+        renderMarkdown(bodyMarkdown, `editorial-${item.id}`)
       ) : (
         <>
           {item.summary != null && item.summary.trim() !== '' && (
@@ -165,7 +149,7 @@ export function CheckpointProseBody({
   );
 }
 
-function expectStatusLabel(status: CheckpointExpectStatus | null | undefined): string {
+function expectStatusLabel(status: EditorialExpectationStatus | null | undefined): string {
   switch (status) {
     case 'beat': return '超预期';
     case 'inline': return '符合';
@@ -174,7 +158,7 @@ function expectStatusLabel(status: CheckpointExpectStatus | null | undefined): s
   }
 }
 
-function expectStatusClass(status: CheckpointExpectStatus | null | undefined): string {
+function expectStatusClass(status: EditorialExpectationStatus | null | undefined): string {
   switch (status) {
     case 'beat': return styles.expectBeat;
     case 'miss': return styles.expectMiss;
@@ -183,13 +167,13 @@ function expectStatusClass(status: CheckpointExpectStatus | null | undefined): s
   }
 }
 
-export function CheckpointExpectationsTable({
+export function EditorialExpectationsTable({
   keyPrefix,
   expectations,
   renderText,
 }: Readonly<{
   keyPrefix: string;
-  expectations: readonly CheckpointExpectation[];
+  expectations: readonly EditorialExpectation[];
   renderText?: (text: string) => ReactNode;
 }>) {
   if (expectations.length === 0) return null;
@@ -201,7 +185,7 @@ export function CheckpointExpectationsTable({
       <table className={styles.scheduleTable}>
         <thead>
           <tr>
-            <th>Expect 检查点</th>
+            <th>指标</th>
             <th>事前预期</th>
             {hasActual && <th>实际兑现</th>}
             <th>判定</th>
@@ -224,50 +208,6 @@ export function CheckpointExpectationsTable({
   );
 }
 
-export function EditorialTriggersTable({
-  keyPrefix,
-  triggers,
-  renderText,
-}: Readonly<{
-  keyPrefix: string;
-  triggers: readonly CheckpointTrigger[];
-  renderText?: (text: string) => ReactNode;
-}>) {
-  if (triggers.length === 0) return null;
-  const text = (value: string) => (renderText !== undefined ? renderText(value) : value);
-  return (
-    <div className={styles.scheduleWrap}>
-      <table className={styles.scheduleTable}>
-        <thead>
-          <tr>
-            <th>触发条件</th>
-            <th>触发动作</th>
-            <th>Assign</th>
-          </tr>
-        </thead>
-        <tbody>
-          {triggers.map((row, idx) => (
-            <tr key={`${keyPrefix}-tr-${idx}`}>
-              <td>{text(row.trigger)}</td>
-              <td>{text(row.action)}</td>
-              <td>
-                <span className={styles.assignTag}>
-                  {row.assignKind != null && (
-                    <span className={styles.assignKind}>
-                      {row.assignKind === 'command' ? 'CLI' : 'Model'}
-                    </span>
-                  )}
-                  <span>{row.assign}</span>
-                </span>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
 export function EditorialGateStrip({
   itemId,
   checks,
@@ -276,7 +216,7 @@ export function EditorialGateStrip({
   renderText,
 }: Readonly<{
   itemId: string;
-  checks: readonly CheckpointCheck[];
+  checks: readonly EditorialCheck[];
   activeGateKey: string | null;
   onSelectGateKey: (key: string | null) => void;
   renderText?: (text: string) => ReactNode;

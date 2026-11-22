@@ -338,12 +338,7 @@ public static class KernelMcpDispatcher
         var expectedPolicyGeneration = await kernel.GuardMcpToolCallAsync(caller.TrackId, caller.SessionId, "perga", toolName, args, ct, caller.ExecutionOrigin)
             .ConfigureAwait(false);
 
-        var result = await ExecuteAuthorizedAsync(kernel, caller, toolName, args, expectedPolicyGeneration, origin, ct).ConfigureAwait(false);
-        if (toolName is not (KernelMcpToolNames.ProviderList or KernelMcpToolNames.FlowRead) &&
-            !(toolName is (KernelMcpToolNames.TrackSet or KernelMcpToolNames.FlowCommit) && args.TryGetProperty("dryRun", out var dry) && dry.ValueKind == JsonValueKind.True))
-            await kernel.Actors.GetOrActivate(caller.TrackId).AfterMcpToolCallAsync("perga", toolName,
-                JsonHelpers.ToElement(new { arguments = args, result }), ct).ConfigureAwait(false);
-        return result;
+        return await ExecuteAuthorizedAsync(kernel, caller, toolName, args, expectedPolicyGeneration, origin, ct).ConfigureAwait(false);
     }
 
     private static async Task<JsonElement> ExecuteAuthorizedAsync(IPergaKernel kernel, McpSessionPrincipal caller,
@@ -391,7 +386,7 @@ public static class KernelMcpDispatcher
                     patchEl,
                     source: $"session:{caller.SessionId}",
                     callerSessionId: caller.SessionId,
-                    ct: ct, expectedDataRev: expectedDataRev).ConfigureAwait(false);
+                    ct: ct, expectedDataRev: expectedDataRev, expectedPolicyGeneration: expectedPolicyGeneration).ConfigureAwait(false);
                 return JsonHelpers.ToElement(nextData);
             }
 

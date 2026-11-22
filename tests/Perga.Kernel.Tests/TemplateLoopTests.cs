@@ -79,9 +79,10 @@ public sealed class TemplateLoopTests
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
         var caller = new McpSessionPrincipal("token", snapshot.Track.Id, snapshot.Track.LeadSessionId!, true, null, null, []);
         const string source = """
-            export default {id:'turn',title:'Turn',turnContext:()=> 'Policy context',before(a,ctx){
+            export default {id:'turn',title:'Turn',data:{initial:{note:'Policy context',calls:0}},
+              turnContext:ctx=>ctx.data.note,before(a,ctx){
               if(a.type!=='turn.before') return Allow();
-              ctx.state.calls=(ctx.state.calls||0)+1;
+              ctx.data.calls=(ctx.data.calls||0)+1;
               return AskHuman('Approve turn?',{approve:'Approve',deny:'Reject'});
             }};
             """;
@@ -100,7 +101,7 @@ public sealed class TemplateLoopTests
         await ctx.Kernel.WaitForTrackIdleAsync(snapshot.Track.Id, timeout.Token);
         var input = Assert.Single(ctx.AgentRuntime.OpenedSessions.SelectMany(session => session.RecordedInputs), input => input.Prompt.Contains("Review context", StringComparison.Ordinal));
         Assert.Contains("Policy context", input.Prompt);
-        Assert.Equal(1, (await ctx.Kernel.GetTrackAggregateAsync(snapshot.Track.Id)).Track.TemplateState.GetProperty("calls").GetInt32());
+        Assert.Equal(0, (await ctx.Kernel.GetTrackAggregateAsync(snapshot.Track.Id)).Track.Data.GetProperty("calls").GetInt32());
     }
 
     [Fact]
@@ -125,24 +126,27 @@ public sealed class TemplateLoopTests
     }
 
     [Fact]
-    public async Task UnifiedToolBefore_AllowsOriginalArguments_AndAfterUpdatesState()
+    public async Task UnifiedToolBefore_ReceivesCanonicalActionAndOriginalArguments()
     {
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
         var (_, snap) = await ctx.CreateDefaultTrackAsync();
         var caller = new McpSessionPrincipal("token", snap.Track.Id, snap.Track.LeadSessionId!, true, null, null, []);
         const string source = """
-            export default {id:'tools',title:'Tools',before(a) {
+            export default {id:'tools',title:'Tools',before(a,ctx) {
+              if (a.toolName !== 'track_rename') return Allow();
+              if (a.type !== 'tool.track_rename' || a.arguments.title !== 'Original') return Deny('Unexpected call');
+              ctx.data.last = a.type;
               return Allow();
-            },after(e,ctx){ctx.state.last=e.type;}};
+            }};
             """;
         await KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller, KernelMcpToolNames.TrackSet, TestJson.FromObject(new { source }));
         await KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller, KernelMcpToolNames.TrackRename, TestJson.FromObject(new { title = "Original" }));
         var current = await ctx.Kernel.GetTrackAggregateAsync(snap.Track.Id);
         Assert.Equal("Original", current.Track.Title);
-        Assert.Equal("tool.track_rename", current.Track.TemplateState.GetProperty("last").GetString());
-        var before = current.Track.TemplateState.GetRawText();
+        Assert.False(current.Track.Data.TryGetProperty("last", out _));
+        var before = current.Track.Data.GetRawText();
         await KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller, KernelMcpToolNames.TrackSet, TestJson.FromObject(new { source, dryRun = true }));
-        Assert.Equal(before, (await ctx.Kernel.GetTrackAggregateAsync(snap.Track.Id)).Track.TemplateState.GetRawText());
+        Assert.Equal(before, (await ctx.Kernel.GetTrackAggregateAsync(snap.Track.Id)).Track.Data.GetRawText());
         Assert.Contains(KernelMcpCatalog.GetToolsForSession(null, true), tool => tool.Name == KernelMcpToolNames.TemplateUpdateInputs);
         Assert.DoesNotContain(KernelMcpCatalog.GetToolsForSession("attempt", false), tool => tool.Name == KernelMcpToolNames.TemplateUpdateInputs);
     }

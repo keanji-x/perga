@@ -253,11 +253,10 @@ describe('EventBridge contracts', () => {
     await waitFor(() => expect(invalidate.mock.calls.map(([filters]) => filters?.queryKey)).toEqual([
         ['tracks', 'c1'],
         ['overlays', 'track'],
-        ['track-report'],
       ]));
   });
 
-  it('refreshes the affected task verdict after a pending task is canceled', async () => {
+  it('refreshes the affected Track snapshot and Flow views after a pending task is canceled', async () => {
     const { record, stream, emit } = fakeStream();
     const client = new QueryClient();
     const invalidate = vi.spyOn(client, 'invalidateQueries').mockImplementation(() => Promise.resolve());
@@ -269,18 +268,18 @@ describe('EventBridge contracts', () => {
       data: { track_id: 'w1', changed_keys: ['task-1'], agent_message: 'canceled' },
     }));
     await waitFor(() => expect(invalidate.mock.calls.map(([filters]) => filters?.queryKey)).toEqual([
-        ['overlays', 'track'], ['track-report', 'w1'], ['track', 'w1'], ['track-views', 'w1'],
+        ['overlays', 'track'], ['track', 'w1'], ['track-views', 'w1'],
       ]));
   });
 
-  it('cancels an in-flight initial task-verdict read before refetching after plan.updated', async () => {
+  it('cancels an in-flight initial Track snapshot before refetching after task.updated', async () => {
     const { record, stream, emit } = fakeStream();
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     type Verdict = Readonly<{ status: string }>;
     const pending: Array<(value: readonly Verdict[]) => void> = [];
     let calls = 0;
     const observer = new QueryObserver(client, {
-      queryKey: ['track-report', 'w1'],
+      queryKey: ['track', 'w1'],
       queryFn: () => new Promise<readonly Verdict[]>((resolve) => {
         calls += 1;
         pending.push(resolve);
@@ -298,16 +297,16 @@ describe('EventBridge contracts', () => {
     await waitFor(() => expect(calls).toBe(2));
     pending[0]([{ status: 'pending' }]);
     pending[1]([{ status: 'canceled' }]);
-    await waitFor(() => expect(client.getQueryData(['track-report', 'w1']))
+    await waitFor(() => expect(client.getQueryData(['track', 'w1']))
       .toEqual([{ status: 'canceled' }]));
     expect(calls).toBe(2);
     unsubscribe();
   });
 
-  it('removes the deleted track report before refreshing surviving reports', async () => {
+  it('removes the deleted Track snapshot without trying to refresh it', async () => {
     const { record, stream, emit } = fakeStream();
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    const key = ['track-report', 'w1'] as const;
+    const key = ['track', 'w1'] as const;
     client.setQueryData(key, [{ status: 'pending' }]);
     let calls = 0;
     const observer = new QueryObserver(client, {

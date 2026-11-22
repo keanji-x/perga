@@ -1,4 +1,4 @@
-import { isHtmlPagePath } from '../../../../core/domain/report-html.ts';
+import { isHtmlPagePath } from '../../../../core/domain/workspace-html.ts';
 
 const IMAGE_EXTENSIONS = Object.freeze([
   '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.ico', '.svg',
@@ -14,7 +14,7 @@ export function isMarkdownPath(path: string): boolean {
   return lower.endsWith('.md') || lower.endsWith('.markdown');
 }
 
-/** A page the Report frames, by the html block's one page rule (`core/domain/report-html.ts`); the card browser shows it as source. */
+/** HTML pages are shown as source in the file viewer. */
 export function isHtmlPath(path: string): boolean {
   return isHtmlPagePath(path);
 }

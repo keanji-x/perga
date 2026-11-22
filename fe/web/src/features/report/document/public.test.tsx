@@ -237,13 +237,7 @@ describe('ReportDocument', () => {
         <ReportDocument
           report={blocked(
             prose('b-1', '据 [Mikko 日志](perga://source/src_2c9e0a1b#q1)。'),
-            {
-              id: 'b-2', kind: 'table',
-              payload: {
-                columns: [{ key: 'metric', label: '指标' }, { key: 'source', label: '来源' }],
-                rows: [{ metric: '布伦特收盘', source: '[AP](perga://source/src_ddef99cc#q1)' }],
-              },
-            },
+            prose('b-2', '| 指标 | 来源 |\n| --- | --- |\n| 布伦特收盘 | [AP](perga://source/src_ddef99cc#q1) |'),
           )}
           empty={EMPTY}
           onOpenSourceLink={onOpenSourceLink}
@@ -281,111 +275,6 @@ describe('ReportDocument', () => {
     expect(container.querySelector('pre')?.textContent).toContain('too deep');
   });
 
-  describe('the reference appendix', () => {
-    function task(id: string, key: string): ReportBlock {
-      return {
-        id,
-        kind: 'task',
-        payload: { key, kind: 'codex', declared_by: 'spec', ready: true, goal: `goal for ${key}` },
-      };
-    }
-
-    it('lifts task blocks out of the document flow, and only those', () => {
-      const { container } = render(<ReportDocument
-        report={blocked(
-          prose('b-1', '# Conclusion'),
-          task('b-2', 'alpha'),
-          { id: 'b-3', kind: 'table', payload: { caption: 'Comparables', columns: [{ key: 'k', label: 'K' }], rows: [{ k: 'v' }] } },
-        )}
-        empty={EMPTY}
-      />);
-      const reference = container.querySelector('[data-nc-report-reference]')!;
-      expect(reference).toBeTruthy();
-      expect(reference.contains(container.querySelector('#b-2'))).toBe(true);
-
-      expect(reference.contains(container.querySelector('#b-1'))).toBe(false);
-      expect(reference.contains(container.querySelector('#b-3'))).toBe(false);
-    });
-
-    it('comes after the document, not before it', () => {
-      const { container } = render(<ReportDocument
-        report={blocked(prose('b-1', '# Conclusion'), task('b-2', 'alpha'), prose('b-3', '# Next'))}
-        empty={EMPTY}
-      />);
-      const article = container.querySelector('[data-nc-report]')!;
-      const reference = container.querySelector('[data-nc-report-reference]')!;
-      const referenceRow = reference.closest('div')!;
-      const rows = [...article.children];
-      expect(rows.indexOf(referenceRow)).toBe(rows.length - 1);
-      expect(referenceRow.compareDocumentPosition(container.querySelector('#b-3')!))
-        .toBe(Node.DOCUMENT_POSITION_PRECEDING);
-    });
-
-    it('lifts a task whose payload did not parse, which degrades to unsupported', () => {
-      const { container } = render(<ReportDocument
-        report={blocked(prose('b-1', '# Conclusion'), { id: 'b-2', kind: 'unsupported', declaredKind: 'task' })}
-        empty={EMPTY}
-      />);
-      const reference = container.querySelector('[data-nc-report-reference]')!;
-      expect(reference).not.toBeNull();
-      expect(reference.contains(container.querySelector('#b-2'))).toBe(true);
-    });
-
-    it('leaves an unsupported block of some other kind in the flow', () => {
-      const { container } = render(<ReportDocument
-        report={blocked(prose('b-1', '# Conclusion'), { id: 'b-2', kind: 'unsupported', declaredKind: 'chart.sankey' })}
-        empty={EMPTY}
-      />);
-      expect(container.querySelector('[data-nc-report-reference]')).toBeNull();
-      expect(container.querySelector('#b-2')).toBeTruthy();
-    });
-
-    it('starts closed, and is one fold for all of them', () => {
-      const { container } = render(<ReportDocument
-        report={blocked(task('b-1', 'alpha'), task('b-2', 'beta'))}
-        empty={EMPTY}
-      />);
-      const reference = container.querySelector<HTMLDetailsElement>('[data-nc-report-reference]')!;
-      expect(reference.open).toBe(false);
-      expect(reference.querySelectorAll('[id]').length).toBe(2);
-    });
-
-    it('is a heading at the same level as the report\'s own sections', () => {
-      const { container } = render(<ReportDocument report={blocked(task('b-1', 'alpha'))} empty={EMPTY} />);
-      const summary = container.querySelector('[data-nc-report-reference] > summary')!;
-      const heading = summary.querySelector('h2');
-      expect(heading).not.toBeNull();
-      expect(heading!.textContent).toContain('Reference');
-      expect(summary.children.length).toBe(1);
-      expect(summary.firstElementChild).toBe(heading);
-    });
-
-    it('says how many are behind it, and counts one in the singular', () => {
-      const { container } = render(<ReportDocument report={blocked(task('b-1', 'alpha'))} empty={EMPTY} />);
-      expect(container.querySelector('[data-nc-report-reference] summary')?.textContent)
-        .toContain('1 task');
-      cleanup();
-      const two = render(<ReportDocument
-        report={blocked(task('b-1', 'alpha'), task('b-2', 'beta'))}
-        empty={EMPTY}
-      />);
-      expect(two.container.querySelector('[data-nc-report-reference] summary')?.textContent)
-        .toContain('2 tasks');
-    });
-
-    it('is absent, not empty, when the report declares no tasks', () => {
-      const { container } = render(
-        <ReportDocument report={blocked(prose('b-1', '# Conclusion'))} empty={EMPTY} />,
-      );
-      expect(container.querySelector('[data-nc-report-reference]')).toBeNull();
-    });
-
-    it('keeps each block id, so a citation still has something to land on', () => {
-      const { container } = render(<ReportDocument report={blocked(task('b-2', 'alpha'))} empty={EMPTY} />);
-      expect(container.querySelector('#b-2')).toBeTruthy();
-    });
-  });
-
   describe('typed blocks', () => {
     it('degrades a stored block of the retired view overlay kind to one line and keeps the report', () => {
       const retired = 'view.live';
@@ -396,18 +285,15 @@ describe('ReportDocument', () => {
           { id: 'b-2', kind: 'prose', rev: 1, payload: { markdown: 'Still readable.' } },
         ] },
       }]);
-      const asked: string[] = [];
-      const { container } = render(<ReportDocument report={report} empty={EMPTY}
-        resolveOverlay={(source) => { asked.push(source); return undefined; }} />);
+      const { container } = render(<ReportDocument report={report} empty={EMPTY} />);
       expect(container.querySelector('#b-old')?.textContent).toBe(`unsupported block kind ${retired}`);
       expect(screen.getByText('Still readable.')).toBeTruthy();
-      expect(asked).toEqual([]);
     });
 
     it('gives each block its id, so a citation has something to land on', () => {
       const { container } = render(<ReportDocument report={blocked(
         prose('b-1', '# One'),
-        { id: 'b-2', kind: 'table', payload: { columns: [{ key: 'k', label: 'K' }], rows: [{ k: 'v' }] } },
+        { id: 'b-2', kind: 'widget', payload: { use: 'builtin:list', view: 'log' } },
       )} empty={EMPTY} />);
       expect(container.querySelector('#b-1')).toBeTruthy();
       expect(container.querySelector('#b-2')).toBeTruthy();
@@ -419,40 +305,6 @@ describe('ReportDocument', () => {
       );
       expect(container.querySelector('#b-1-h1')?.textContent).toBe('One');
       expect(container.querySelector('#b-1-h2')?.textContent).toBe('Two');
-    });
-
-    it('renders every kind it knows', () => {
-      render(<ReportDocument report={blocked(
-        { id: 'b-1', kind: 'table', payload: { columns: [{ key: 'name', label: 'Name' }], rows: [{ name: 'Kweichow' }] } },
-        { id: 'b-2', kind: 'chart.candles', payload: { symbol: '600519', candles: [[0, 1, 2, 0.5, 1.5], [86400000, 1.5, 2, 1, 1.2]] } },
-        { id: 'b-3', kind: 'task', payload: { key: 't-1', kind: 'codex', goal: 'Ship it', ready: true, declared_by: 'spec' } },
-      )} empty={EMPTY} />);
-      expect(screen.getByText('Kweichow')).toBeTruthy();
-      expect(screen.getByText('600519')).toBeTruthy();
-      const reference = document.querySelector<HTMLDetailsElement>('[data-nc-report-reference]')!;
-      reference.open = true;
-      fireEvent(reference, new Event('toggle'));
-      expect(screen.getByText('t-1')).toBeTruthy();
-    });
-
-    it('renders a chart.series block through the injected resolver, by block id and rev', () => {
-      const block: ReportBlock = { id: 'b-1', kind: 'chart.series', rev: 3, payload: {
-        source: 'perga://plugin/dev-neige-market/market.series', series: ['US:NVDA', 'HK:9988'], range: '6M', caption: 'Big tech',
-      } };
-      const { container } = render(<ReportDocument report={blocked(block)} empty={EMPTY} />);
-      expect(screen.getByRole('heading', { name: '暂无图表数据' })).toBeTruthy();
-      expect(screen.getByText(/this view does not carry its data/)).toBeTruthy();
-      expect(screen.getByText('Big tech')).toBeTruthy();
-      expect(container.textContent).not.toContain('unsupported block kind');
-      cleanup();
-
-      const asked: [string, number][] = [];
-      render(<ReportDocument report={blocked(block)} empty={EMPTY} resolveSeries={(blockId, rev) => {
-        asked.push([blockId, rev]);
-        return { status: 'pending', reason: 'plugin dev-neige-market is not running', view: 'line', field: 'close', period: 'day', range: '6M' };
-      }} />);
-      expect(asked).toEqual([['b-1', 3]]);
-      expect(screen.getByRole('note').textContent).toContain('Pending — plugin dev-neige-market is not running');
     });
 
     it('degrades one unreadable block and keeps the rest of the document', () => {

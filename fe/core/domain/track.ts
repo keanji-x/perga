@@ -7,7 +7,7 @@ import { z } from 'zod';
 
 import type { AgentProvider, WorkspaceIsolation } from './presentation-types.js';
 import { compiledTemplateManifestDtoSchema, overlaysListDtoSchema, terminalDtoSchema, trackAggregateSnapshotDtoSchema, trackDtoSchema, trackWorkspaceOptionsDtoSchema, type TrackDto, type AgentSessionDto, type AskDto, type TaskDto, type TerminalDto, type TrackAggregateSnapshotDto, type TrackWorkspaceOptionsDto } from '../api/perga-v1.js';
-import { cardSchema,overlaySchema } from "../api/schemas.js";
+import { cardSchema } from '../api/schemas.js';
 import type { ApiFailure,ApiOperation } from '../api/types.js';
 import {
 activityStateOf,type ActivityItem,type ActivityState,type AttentionKind,type CardActivity,
@@ -102,36 +102,6 @@ export function toTrack(wire: TrackDto, activity: TrackActivity = NEUTRAL_ACTIVI
     templateHeaderView: wire.templateHeaderView ?? null,
     ...activity,
   };
-}
-
-export type OverlayWire = z.infer<typeof overlaySchema>;
-
-/** Scheme prefix of a live table `source`. Mirrors `report_blocks::LIVE_SOURCE_PREFIX`. */
-const LIVE_TABLE_SOURCE_PREFIX = 'perga://plugin/';
-
-/**
- * Resolves a report's `perga://plugin/<plugin_id>/<kind>` source to at most one overlay's
- * payload, unvalidated (the renderer decodes it); `undefined` when nothing matches.
- */
-export function trackOverlayPayload(
-  trackId: string,
-  overlays: readonly OverlayWire[],
-  source: string,
-): unknown {
-  const rest = source.startsWith(LIVE_TABLE_SOURCE_PREFIX)
-    ? source.slice(LIVE_TABLE_SOURCE_PREFIX.length)
-    : null;
-  if (rest === null) return undefined;
-  const slash = rest.indexOf('/');
-  if (slash <= 0 || slash === rest.length - 1) return undefined;
-  const pluginId = rest.slice(0, slash);
-  const kind = rest.slice(slash + 1);
-  if (kind.includes('/')) return undefined;
-  const match = overlays.find((overlay) => overlay.entity_kind === 'track'
-    && overlay.entity_id === trackId
-    && overlay.plugin_id === pluginId
-    && overlay.kind === kind);
-  return match?.payload;
 }
 
 function finiteOrNull(value: number): number | null {

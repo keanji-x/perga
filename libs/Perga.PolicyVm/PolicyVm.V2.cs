@@ -19,62 +19,11 @@ public sealed partial class PolicyVm
     {
         ArgumentNullException.ThrowIfNull(policy);
 
-        return ExecuteSandboxed("ResolveRoutingRules", () =>
+        return EvaluateWithEffectiveDefinition(policy, inputs, "ResolveRoutingRules", (engine, _, def, _, _) =>
         {
-            var bundle = TemplateBundle.Parse(policy.JsSource);
-            using var engine = CreateSandboxedEngine(ExecutionTimeoutMs, bundle);
-            var rawDef = LoadDefaultTemplateObject(engine, bundle);
-            var jsInputs = BuildEffectiveJsInputs(engine, rawDef, inputs);
-            var def = ResolveEffectiveDefinition(engine, rawDef, jsInputs);
 
             return ReadRoutingRules(engine, def);
         });
-    }
-
-    private static IReadOnlyList<CheckpointSpec> ParseCheckpoints(ObjectInstance def)
-    {
-        var val = def.Get("checkpoints");
-        if (val.IsUndefined() || val.IsNull())
-        {
-            return [];
-        }
-
-        if (!val.IsArray())
-        {
-            throw new InvalidOperationException("template.checkpoints must be an array.");
-        }
-
-        var arr = val.AsArray();
-        var list = new List<CheckpointSpec>((int)arr.Length);
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        for (uint i = 0; i < arr.Length; i++)
-        {
-            var item = arr.Get(i);
-            if (item is not ObjectInstance obj || item.IsArray())
-            {
-                throw new InvalidOperationException($"template.checkpoints[{i}] must be an object.");
-            }
-
-            var id = ReadRequiredNonEmptyString(obj, "id", $"template.checkpoints[{i}].id");
-            if (!seen.Add(id))
-            {
-                throw new InvalidOperationException($"Duplicate checkpoint id '{id}' in template.checkpoints.");
-            }
-
-            var title = ReadRequiredNonEmptyString(obj, "title", $"template.checkpoints[{i}].title");
-            var role = ReadOptionalString(obj, "role", $"template.checkpoints[{i}].role");
-            var access = ReadOptionalString(obj, "access", $"template.checkpoints[{i}].access");
-            if (access is not (null or "read_only" or "read_write"))
-            {
-                throw new InvalidOperationException($"template.checkpoints[{i}].access must be read_only or read_write.");
-            }
-
-            var dependsOn = ReadOptionalStringList(obj, "dependsOn", $"template.checkpoints[{i}].dependsOn");
-            var docPath = ReadOptionalString(obj, "docPath", $"template.checkpoints[{i}].docPath");
-            list.Add(new CheckpointSpec(id, title, role, access, dependsOn.Count > 0 ? dependsOn : null, docPath));
-        }
-
-        return list;
     }
 
     public DataPatchValidationResult ValidateAndPatchData(
@@ -92,21 +41,13 @@ public sealed partial class PolicyVm
         {
             return new DataPatchValidationResult(
                 false,
-                NormalizeStateJson(currentData),
+                NormalizeObjectJson(currentData),
                 [new DataValidationError("$", "Patch payload must be a JSON object.")]);
         }
 
-        return ExecuteSandboxed("ValidateAndPatchData", () =>
+        return EvaluateWithEffectiveDefinition(policy, inputs, "ValidateAndPatchData", (engine, _, def, _, tHelper) =>
         {
-            var bundle = TemplateBundle.Parse(policy.JsSource);
-            using var engine = CreateSandboxedEngine(ExecutionTimeoutMs, bundle);
-            var tHelper = engine.GetValue("t");
-
-            var rawDef = LoadDefaultTemplateObject(engine, bundle);
-            var jsInputs = BuildEffectiveJsInputs(engine, rawDef, inputs);
-            var def = ResolveEffectiveDefinition(engine, rawDef, jsInputs);
-
-            var normalizedCurrent = NormalizeStateJson(currentData);
+            var normalizedCurrent = NormalizeObjectJson(currentData);
             var (ok, mergedJson, safetyErrors) = TemplateDataValidator.MergeAndStamp(
                 normalizedCurrent,
                 patch,
@@ -136,14 +77,8 @@ public sealed partial class PolicyVm
     {
         ArgumentNullException.ThrowIfNull(policy);
 
-        return ExecuteSandboxed("ProjectViews", () =>
+        return EvaluateWithEffectiveDefinition(policy, inputs, "ProjectViews", (engine, bundle, def, _, _) =>
         {
-            var bundle = TemplateBundle.Parse(policy.JsSource);
-            using var engine = CreateSandboxedEngine(ExecutionTimeoutMs, bundle);
-            var rawDef = LoadDefaultTemplateObject(engine, bundle);
-            var jsInputs = BuildEffectiveJsInputs(engine, rawDef, inputs);
-            var def = ResolveEffectiveDefinition(engine, rawDef, jsInputs);
-
             var views = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
             var diagnostics = new List<TemplateViewDiagnostic>();
             var widgets = ExtractBundledHtmlWidgets(bundle);
@@ -151,8 +86,8 @@ public sealed partial class PolicyVm
             if (TryGetOptionalObject(def, "report", "template.report", out var reportObj) &&
                 TryGetOptionalObject(reportObj, "views", "template.report.views", out var viewsObj))
             {
-                var dataJs = ParseJsJson(engine, NormalizeStateJson(currentData).GetRawText());
-                var kernelJs = ParseJsJson(engine, NormalizeStateJson(kernelSnapshot).GetRawText());
+                var dataJs = ParseJsJson(engine, NormalizeObjectJson(currentData).GetRawText());
+                var kernelJs = ParseJsJson(engine, NormalizeObjectJson(kernelSnapshot).GetRawText());
 
                 foreach (var prop in viewsObj.GetOwnProperties())
                 {
@@ -183,20 +118,13 @@ public sealed partial class PolicyVm
                 TemplateId: policy.TemplateId,
                 Views: views,
                 Widgets: widgets,
-                Diagnostics: diagnostics,
-                HumanReadOnly: policy.Manifest.HumanReadOnly);
+                Diagnostics: diagnostics);
         });
     }
 
     public IReadOnlyList<FlowNodeSpecDto> ResolveFlow(CompiledPolicy policy, JsonElement inputs) =>
-        ExecuteSandboxed("ResolveFlow", () =>
-        {
-            var bundle = TemplateBundle.Parse(policy.JsSource);
-            using var engine = CreateSandboxedEngine(ExecutionTimeoutMs, bundle);
-            var rawDef = LoadDefaultTemplateObject(engine, bundle);
-            var jsInputs = BuildEffectiveJsInputs(engine, rawDef, inputs);
-            return ReadFlow(engine, ResolveEffectiveDefinition(engine, rawDef, jsInputs)).Nodes;
-        });
+        EvaluateWithEffectiveDefinition(policy, inputs, "ResolveFlow",
+            (engine, _, def, _, _) => ReadFlow(engine, def).Nodes);
 
     private static (JsonElement Json, IReadOnlyList<FlowNodeSpecDto> Nodes) ReadFlow(Engine engine, ObjectInstance definition)
     {
@@ -228,8 +156,6 @@ public sealed partial class PolicyVm
         {
             throw new InvalidOperationException("template.setup(inputs) must return a configuration object.");
         }
-
-        RejectLegacyHooks(resolved);
 
         var mergedVal = engine.Invoke("__mergeTemplateStatic", rawDef, resolved);
         if (mergedVal is ObjectInstance mergedObj)

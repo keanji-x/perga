@@ -7,15 +7,17 @@ import { ReportWidgetBlock } from './public.tsx';
 
 afterEach(() => { cleanup(); });
 
-describe('ReportWidgetBlock (Scheme B Unified VO)', () => {
-  it('renders builtin:stepper and builtin:table natively from projected views', () => {
+describe('ReportWidgetBlock', () => {
+  it('renders builtin:list and builtin:table natively from projected views', () => {
     const projection: TemplateViewsProjection = {
       templateId: 'demo',
       views: {
-        stepperView: {
+        chronicleView: {
+          summary: '交付记录',
+          groups: ['进行中', '已完成'],
           items: [
-            { id: 'design', title: '设计', status: 'done', summary: '完成架构设计' },
-            { id: 'impl', title: '实现', status: 'running', summary: '正在编码' },
+            { id: 'design', title: '设计', group: '已完成', status: 'done', summary: '完成架构设计' },
+            { id: 'impl', title: '实现', group: '进行中', status: 'running', summary: '正在编码' },
           ],
         },
         krView: {
@@ -28,16 +30,17 @@ describe('ReportWidgetBlock (Scheme B Unified VO)', () => {
       dataRev: 0,
       flowRev: 0,
       diagnostics: [],
-      humanReadOnly: false,
     };
 
     const { rerender } = render(
       <ReportWidgetBlock
-        payload={{ use: 'builtin:stepper', view: 'stepperView' }}
+        payload={{ use: 'builtin:list', view: 'chronicleView' }}
         projection={projection}
         renderText={(text) => <span>{text}</span>}
       />,
     );
+    expect(screen.getByText('交付记录')).toBeTruthy();
+    expect(screen.getAllByRole('heading', { level: 4 }).map((heading) => heading.textContent)).toEqual(['进行中', '已完成']);
     expect(screen.getByText('设计')).toBeTruthy();
     expect(screen.getByText('正在编码')).toBeTruthy();
 
@@ -66,7 +69,6 @@ describe('ReportWidgetBlock (Scheme B Unified VO)', () => {
       dataRev: 0,
       flowRev: 0,
       diagnostics: [],
-      humanReadOnly: true,
     };
 
     render(
@@ -91,7 +93,7 @@ describe('ReportWidgetBlock (Scheme B Unified VO)', () => {
 
     fireEvent(window, new MessageEvent('message', {
       source: iframe.contentWindow,
-      data: { type: 'perga:intent', kind: 'open_file', path: 'nvda-baseline-thesis.md' },
+      data: { type: 'perga:intent', kind: 'open_file', path: 'research-notes.md' },
     }));
     // All path traversal, backslash, scheme, query, fragment, and spoofed-source payloads must be dropped
     for (const badPath of ['../escape.md', '..\\escape.md', '/etc/passwd', 'https://evil.example/x', 'javascript:alert(1)', 'a.md?x=1', 'a.md#top']) {
@@ -106,12 +108,12 @@ describe('ReportWidgetBlock (Scheme B Unified VO)', () => {
     }));
     fireEvent(window, new MessageEvent('message', {
       source: iframe.contentWindow,
-      data: { type: 'perga:intent', kind: 'open_session', sessionId: 'ses_nvda_1' },
+      data: { type: 'perga:intent', kind: 'open_session', sessionId: 'ses_research_1' },
     }));
 
     expect(onOpenFile).toHaveBeenCalledTimes(1);
-    expect(onOpenFile).toHaveBeenCalledWith('nvda-baseline-thesis.md');
-    expect(onOpenWorker).toHaveBeenCalledWith('ses_nvda_1');
+    expect(onOpenFile).toHaveBeenCalledWith('research-notes.md');
+    expect(onOpenWorker).toHaveBeenCalledWith('ses_research_1');
   });
 
   it('renders empty builtin:list gracefully and surfaces schema/loading/error states', () => {
@@ -121,12 +123,12 @@ describe('ReportWidgetBlock (Scheme B Unified VO)', () => {
         chronicle: { items: [] },
         emptyLedger: { metrics: [] },
         badLedger: { metrics: [{ label: 123 }] },
+        badChronicle: { items: [{ id: 'bad', title: 'Broken', status: 'unknown' }] },
       },
       widgets: {},
       dataRev: 4,
       flowRev: 0,
       diagnostics: [{ view: 'brokenView', message: 'boom' }],
-      humanReadOnly: true,
     };
 
     const { rerender } = render(
@@ -155,6 +157,17 @@ describe('ReportWidgetBlock (Scheme B Unified VO)', () => {
       />,
     );
     expect(screen.getByRole('alert').textContent).toContain('视图契约校验失败：builtin:table');
+    expect(screen.getByRole('alert').textContent).toContain('metrics.0.label');
+
+    rerender(
+      <ReportWidgetBlock
+        payload={{ use: 'builtin:list', view: 'badChronicle' }}
+        projection={emptyProjection}
+        renderText={(text) => <span>{text}</span>}
+      />,
+    );
+    expect(screen.getByRole('alert').textContent).toContain('视图契约校验失败：builtin:list');
+    expect(screen.getByRole('alert').textContent).toContain('items.0.status');
 
     rerender(
       <ReportWidgetBlock
@@ -173,105 +186,6 @@ describe('ReportWidgetBlock (Scheme B Unified VO)', () => {
       />,
     );
     expect(screen.getByRole('alert').textContent).toContain('网络异常');
-  });
-
-  it('links graphic widget select intent to native builtin:detail with Markdown rendering', () => {
-    const onSelect = vi.fn();
-    const projection: TemplateViewsProjection = {
-      templateId: 'agents-delivery',
-      views: {
-        deliveryFlow: {
-          reviewTier: 'L2',
-          defaultSelectedId: 'review-b',
-          items: [
-            { id: 'design', title: '设计', status: 'done', summary: '详见 [架构文档](docs/arch.md)' },
-            {
-              id: 'review-b',
-              title: 'Review B · 前端与契约',
-              status: 'blocked',
-              summary: '拦截 2 项边界问题',
-              callouts: { title: '待处理', items: ['空态需先判空再校验'] },
-              entries: { title: '处理日志', items: [{ tag: 'Review', status: 'warn', statusLabel: '待修订', actor: 'Riley', summary: '首轮打回' }] },
-            },
-          ],
-        },
-      },
-      widgets: { './widgets/delivery-flow.html': '<!doctype html><html><body>dag</body></html>' },
-      dataRev: 0,
-      flowRev: 0,
-      diagnostics: [],
-      humanReadOnly: true,
-    };
-
-    const { rerender } = render(
-      <>
-        <ReportWidgetBlock
-          payload={{ use: './widgets/delivery-flow.html', view: 'deliveryFlow', selectionKey: 'node' }}
-          projection={projection}
-          onSelect={onSelect}
-          renderText={(text) => <span>{text}</span>}
-        />
-        <ReportWidgetBlock
-          payload={{ use: 'builtin:detail', view: 'deliveryFlow', selectionKey: 'node' }}
-          projection={projection}
-          renderText={(text) => <span>{text}</span>}
-          renderMarkdown={(md) => <div data-testid="native-md">{md}</div>}
-        />
-      </>,
-    );
-
-    expect(screen.getByTestId('native-md').textContent).toContain('拦截 2 项边界问题');
-    expect(screen.getByRole('region', { name: '待处理' }).textContent).toContain('空态需先判空再校验');
-    const entries = screen.getByRole('region', { name: '处理日志' });
-    expect(entries.textContent).toContain('Review');
-    expect(entries.textContent).toContain('[Riley] 首轮打回');
-
-    const iframe = screen.getByTitle<HTMLIFrameElement>('deliveryFlow');
-    fireEvent(window, new MessageEvent('message', {
-      source: iframe.contentWindow,
-      data: { type: 'perga:intent', kind: 'select', key: 'node', value: 'design' },
-    }));
-    expect(onSelect).toHaveBeenCalledWith('node', 'design');
-
-    rerender(
-      <ReportWidgetBlock
-        payload={{ use: 'builtin:detail', view: 'deliveryFlow', selectionKey: 'node' }}
-        projection={projection}
-        selectedId="design"
-        renderText={(text) => <span>{text}</span>}
-        renderMarkdown={(md) => <div data-testid="native-md">{md}</div>}
-      />,
-    );
-    expect(screen.getByTestId('native-md').textContent).toContain('[架构文档](docs/arch.md)');
-
-    const blankFallbackProjection: TemplateViewsProjection = {
-      ...projection,
-      views: {
-        deliveryFlow: {
-          items: [{
-            id: 'node-blank',
-            title: '空白回退校验',
-            status: 'done',
-            triggers: [{ trigger: '不应展示', action: 'legacy', assign: 'cli' }],
-            callouts: { title: '   ', items: ['保留有效提示'] },
-            entries: { title: '', items: [{ tag: 'E1', status: 'warn', statusLabel: '   ', actor: '  ', summary: '无参与者记录' }] },
-          }],
-        },
-      },
-    };
-    rerender(
-      <ReportWidgetBlock
-        payload={{ use: 'builtin:detail', view: 'deliveryFlow', selectionKey: 'node' }}
-        projection={blankFallbackProjection}
-        renderText={(text) => <span>{text}</span>}
-      />,
-    );
-    expect(screen.queryByText('不应展示')).toBeNull();
-    expect(screen.getByRole('region', { name: '关注事项' }).textContent).toContain('保留有效提示');
-    const fallbackEntries = screen.getByRole('region', { name: '记录' });
-    expect(fallbackEntries.textContent).toContain('待关注');
-    expect(fallbackEntries.textContent).not.toContain('[]');
-    expect(fallbackEntries.textContent).toContain('无参与者记录');
   });
 
   it('dispatches builtin:flow widget from projection.flow and handles empty flow cleanly', () => {
@@ -303,7 +217,6 @@ describe('ReportWidgetBlock (Scheme B Unified VO)', () => {
         archived: [],
       },
       diagnostics: [{ view: 'flow', message: 'Unrelated template JS view failure' }],
-      humanReadOnly: false,
     };
 
     const { rerender } = render(
@@ -356,7 +269,6 @@ describe('ReportWidgetBlock (Scheme B Unified VO)', () => {
         archived: [],
       },
       diagnostics: [{ view: 'flow', message: 'Unrelated template JS view failure' }],
-      humanReadOnly: false,
     };
 
     const templateLessReport: TrackReport = {

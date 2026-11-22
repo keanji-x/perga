@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { TrackPage } from './public.tsx';
 import { track } from './test-fixtures.tsx';
-import type { ReportTaskRow } from '../../../../../core/domain/report.ts';
+import type { ReportTaskRow } from '../../../../../core/domain/track-task-inventory.ts';
 
 afterEach(cleanup);
 function task(blockId: string, status: string): ReportTaskRow {

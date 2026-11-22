@@ -251,16 +251,14 @@ public sealed class SqliteTrackStoreRoundTripAndCascadeTests
         var rev2Doc = new ReportDocument(2, "Added two tasks", "<!-- lead -->", rev2Blocks);
         var rev2Zstd = SqliteJsonUpcaster.CompressReportBlocksZstd(rev2Blocks);
 
-        await store.UpsertTaskAsync(task1, null, null, ct);
-        await store.UpsertTaskAsync(task2, null, null, ct);
+        await store.UpsertTaskAsync(task1, null, ct);
+        await store.UpsertTaskAsync(task2, null, ct);
         await store.SaveReportAsync(
             trackId: "trk_a",
             report: rev2Doc,
             compressedRevisionBlocks: rev2Zstd,
             authorSessionId: "sess_a",
             commitMessage: "Add build and lint tasks",
-
-            nextTemplateState: StorageTestHarness.Json("""{"stage":"planned"}"""),
             evt: StorageTestHarness.CreateEvent("report.updated", "trk_a", "area_1", createdAtMs: 3_100),
             ct: ct);
 
@@ -286,7 +284,6 @@ public sealed class SqliteTrackStoreRoundTripAndCascadeTests
         };
         await store.UpsertTaskAsync(
             task1Done,
-            StorageTestHarness.Json("""{"stage":"built"}"""),
             StorageTestHarness.CreateEvent("task.updated", "trk_a", "area_1", createdAtMs: 3_300),
             ct);
 
@@ -298,15 +295,12 @@ public sealed class SqliteTrackStoreRoundTripAndCascadeTests
             compressedRevisionBlocks: SqliteJsonUpcaster.CompressReportBlocksZstd(rev3Blocks),
             authorSessionId: "sess_a",
             commitMessage: "Drop obsolete task",
-
-            nextTemplateState: StorageTestHarness.Json("""{"stage":"trimmed"}"""),
             evt: StorageTestHarness.CreateEvent("report.updated", "trk_a", "area_1", createdAtMs: 3_400),
             ct: ct);
 
         var aggA = await store.LoadTrackAggregateAsync("trk_a", ct);
         Assert.NotNull(aggA);
         Assert.Equal(3, aggA.Report.DocRev);
-        Assert.Equal("trimmed", aggA.Track.TemplateState.GetProperty("stage").GetString());
         Assert.Equal(2, aggA.Tasks.Count);
         var remainingTask = Assert.Single(aggA.Tasks, t => t.Id == "task_1");
         Assert.Equal("task_1", remainingTask.Id);
@@ -414,11 +408,11 @@ public sealed class SqliteTrackStoreRoundTripAndCascadeTests
             RunCount: 1, StartedAtMs: 5_000);
         var worker = lead2 with { Id = "worker-queued", IsLead = false, Status = "queued" };
         taskOpen2 = taskOpen2 with { SessionId = worker.Id };
-        await store.UpsertTaskAsync(taskOpen2, null, null, ct, worker);
+        await store.UpsertTaskAsync(taskOpen2, null, ct, worker);
 
         var runningWorker = worker with { Id = "worker-running", Status = "running" };
         var runningTask = taskOpen2 with { Id = "t_running", TaskKey = "running", Status = TaskRunStatus.Running, SessionId = runningWorker.Id };
-        await store.UpsertTaskAsync(runningTask, null, null, ct, runningWorker);
+        await store.UpsertTaskAsync(runningTask, null, ct, runningWorker);
 
         // In-flight Running turn on openTrack1 and closedTrack
         await store.RecordTurnAndItemsAsync(
@@ -503,7 +497,7 @@ public sealed class SqliteTrackStoreRoundTripAndCascadeTests
                 $"task_{suffix}", trackId, "b_1", "k1", 1, "subagent", "codex", AccessMode.ReadWrite,
                 true, [], "Goal", null, null, null, TaskRunStatus.Running, null, SemanticVerdict.None, null, 1_000, 1_000,
                 SessionId: sessId, RunCount: 1, StartedAtMs: 1_000);
-            await store.UpsertTaskAsync(task, null, null, ct);
+            await store.UpsertTaskAsync(task, null, ct);
 
             var turn = new SessionTurnDto(
                 $"turn_{suffix}", sessId, 1, 1, "user", StorageTestHarness.Json("{}"), "completed", null, null, 1_000, 1_100);

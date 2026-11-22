@@ -33,7 +33,6 @@ internal sealed class TrackCreationRepository
 
         var workspaceSpecJson = SqliteJsonUpcaster.SerializeElement(track.WorkspaceSpec);
         var templateInputsJson = SqliteJsonUpcaster.SerializeElement(track.TemplateInputs);
-        var templateStateJson = SqliteJsonUpcaster.SerializeElement(track.TemplateState);
         var dataJson = SqliteJsonUpcaster.SerializeElement(track.Data);
         var enabledPluginsJson = SqliteJsonUpcaster.SerializeStringList(track.EnabledPlugins);
         var blocksJson = SqliteJsonUpcaster.SerializeReportBlocks(initialReport.Blocks);
@@ -76,7 +75,7 @@ internal sealed class TrackCreationRepository
                         VALUES (
                             @Id, @AreaId, @ParentTrackId, @ParentAttemptId, @Title, @Cwd,
                             @WorkspaceDriver, @WorkspaceSpecJson, @LeadSessionId,
-                            @TemplateId, @TemplateSnapshot, @TemplateInputsJson, @TemplateStateJson, @DataJson, @DataRev,
+                            @TemplateId, @TemplateSnapshot, @TemplateInputsJson, '{}', @DataJson, @DataRev,
                             @FlowSpecJson, @FlowRev, @FlowFileSha256,
                             @EnabledPluginsJson, @ClosedAtMs, @PinnedAtMs, @SortOrder,
                             @CreatedAtMs, @UpdatedAtMs, @ExecutionTargetId
@@ -96,7 +95,6 @@ internal sealed class TrackCreationRepository
                             track.TemplateId,
                             TemplateSnapshot = templateSnapshot,
                             TemplateInputsJson = templateInputsJson,
-                            TemplateStateJson = templateStateJson,
                             DataJson = dataJson,
                             track.DataRev,
                             FlowSpecJson = string.IsNullOrWhiteSpace(track.FlowSpecJson) ? """{"rev":0,"nodes":[]}""" : track.FlowSpecJson,

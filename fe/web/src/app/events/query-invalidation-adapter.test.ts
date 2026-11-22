@@ -245,7 +245,7 @@ describe('query invalidation adapter', () => {
     expect(calls).toEqual([{ op: 'invalidate', queryKey: queryKeys.areas() }]);
   });
 
-  it('turns a real track.deleted plan into tree diagnostics refresh plus ordinary cleanup', async () => {
+  it('turns a real track.deleted plan into overlay refresh plus ordinary cleanup', async () => {
     const plan = invalidationPlanFor({
       ev: 'track.deleted',
       data: { id: 'w1', area_id: 'c1' },
@@ -259,10 +259,8 @@ describe('query invalidation adapter', () => {
     expect(calls).toEqual([
       { op: 'invalidate', queryKey: queryKeys.tracksInArea('c1') },
       { op: 'remove', queryKey: queryKeys.trackDetail('w1') },
-      { op: 'remove', queryKey: queryKeys.trackReport('w1') },
       { op: 'remove', queryKey: queryKeys.trackViews('w1') },
       { op: 'invalidate', queryKey: queryKeys.overlaysByKind('track') },
-      { op: 'invalidate', queryKey: queryKeys.trackReportPrefix() },
     ]);
   });
 });

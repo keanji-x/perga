@@ -1,7 +1,6 @@
 /** A pure JSON object may contain the declarative fields of this definition.
  * Function hooks require an ES module: export default defineTemplate({...}).
- * To reapply a legacy template with track_set, pass jsSource or snapshot from template_read unchanged.
- * Use editableSource to read or edit the underlying template. */
+ * Pass jsSource or snapshot from template_read to reapply a template with track_set. */
 export type Tone = "neutral" | "accent" | "success" | "warn" | "error";
 
 export interface TemplateHeaderView {
@@ -16,16 +15,17 @@ export type GuardDecision =
   | { kind: "deny"; reason: string }
   | { kind: "ask_human"; title: string; approveLabel?: string; denyLabel?: string };
 
-export interface SectionSpec {
-  h1: string;
-  omitIfEmpty?: boolean;
-  editableBy?: Array<"human" | "lead" | "subagent" | "system">;
+export interface TemplateContext<TInputs = Record<string, any>, TData = Record<string, any>> {
+  readonly trackId: string;
+  readonly inputs: Readonly<TInputs>;
+  readonly data: Readonly<TData>;
 }
 
-export interface TemplateContext<TState = Record<string, any>, TInputs = Record<string, any>> {
-  trackId: string;
-  inputs: TInputs;
-  state: TState;
+export interface TemplateSessionContext {
+  readonly sessionId: string;
+  readonly isLead: boolean;
+  readonly boundTaskId?: string;
+  readonly contextUsageRatio: number;
 }
 
 export interface TaskRoutingRuleSpec {
@@ -34,15 +34,6 @@ export interface TaskRoutingRuleSpec {
   model?: string;
   access?: "read_only" | "read_write";
   enforce?: boolean;
-}
-
-export interface CheckpointSpec {
-  id: string;
-  title: string;
-  role?: string;
-  access?: "read_only" | "read_write";
-  dependsOn?: string[];
-  docPath?: string;
 }
 
 export interface SchemaNode {
@@ -131,29 +122,18 @@ export interface FlowNode {
   canceled?: boolean;
 }
 
-export interface PergaTemplateSetupResult<TState = Record<string, any>, TInputs = Record<string, any>, TData = Record<string, any>> {
-  plugins?: string[];
+export interface PergaTemplateSetupResult<TInputs = Record<string, any>, TData = Record<string, any>> {
+  /** Core declarations resolved for the Track's inputs. */
+  /** Initial flow.v1 nodes with runtime interpolation in supported text fields. */
+  flow?: FlowNode[];
   data?: {
     schema?: ((t: SchemaBuilder) => Record<string, SchemaNode>) | SchemaNode;
     initial?: TData | ((inputs: TInputs) => TData);
   };
-  initialState?: (inputs: TInputs) => TState;
-  headerView?: (ctx: TemplateContext<TState, TInputs>) => TemplateHeaderView;
-  before?: (action: { type: string; role?: string; access?: string; provider?: string; model?: string; arguments?: Record<string, any>; [key: string]: any }, ctx: TemplateContext<TState, TInputs>) => GuardDecision;
-  after?: (event: { type: string; [key: string]: any }, ctx: TemplateContext<TState, TInputs>) => string | null | void;
-  checkpoints?: CheckpointSpec[];
-  workspace?: {
-    driver?: string;
-    lowerCacheDirs?: string[];
-    onCreateCmd?: string;
-    onCloseCmd?: string;
-  };
   report?: {
-    humanReadOnly?: boolean;
+    /** Package-relative Markdown seeded on Track creation. Supports ${inputs.key}. */
     template?: string;
     views?: Record<string, (data: TData, kernel: KernelFactsSnapshot) => unknown>;
-    maxProseChars?: number;
-    sections?: SectionSpec[];
   };
   tasks?: {
     /** First matching defaults fill omitted fields. enforce denies explicit conflicts.
@@ -162,35 +142,39 @@ export interface PergaTemplateSetupResult<TState = Record<string, any>, TInputs 
     requireGateForReadWrite?: boolean;
     afterWorkerDoneCmd?: string;
   };
-  turnContext?: (ctx: TemplateContext<TState, TInputs> & { session: {
-    sessionId: string;
-    isLead: boolean;
-    boundTaskId?: string;
-    contextUsageRatio: number;
-  } }) => string | void;
-  /** Initial flow.v1 nodes. Runtime text fields support ${inputs.key}. */
-  flow?: FlowNode[];
+  turnContext?: (ctx: TemplateContext<TInputs, TData> & { readonly session: TemplateSessionContext }) => string | void;
+
+  /** Advanced policy and workspace hooks. */
+  headerView?: (ctx: TemplateContext<TInputs, TData>) => TemplateHeaderView;
+  before?: (action: { type: string; role?: string; access?: string; provider?: string; model?: string; arguments?: Record<string, any>; [key: string]: any },
+    ctx: TemplateContext<TInputs, TData> & { readonly session?: TemplateSessionContext }) => GuardDecision;
+  workspace?: {
+    driver?: string;
+    lowerCacheDirs?: string[];
+    onCreateCmd?: string;
+    onCloseCmd?: string;
+  };
+  plugins?: string[];
 }
 
-export interface PergaTemplateDefinition<TState = Record<string, any>, TInputs = Record<string, any>, TData = Record<string, any>>
-  extends PergaTemplateSetupResult<TState, TInputs, TData> {
+export interface PergaTemplateDefinition<TInputs = Record<string, any>, TData = Record<string, any>>
+  extends PergaTemplateSetupResult<TInputs, TData> {
   id: string;
   title: string;
   description?: string;
-  /** 1 uses original prefixed tool names and 2 uses canonical names.
-   * Catalog files and old snapshots default to 1, while new inline sources default to 2. */
-  toolNameVersion?: 1 | 2;
+  /** Input declarations and input-dependent configuration. */
+  inputs?: Record<string, { type: "string" | "number" | "boolean" | "enum"; values?: string[]; default?: any; optional?: boolean; label?: string }>;
+  setup?: (inputs: TInputs) => PergaTemplateSetupResult<TInputs, TData>;
+
   /** Catalog base; snapshots freeze its complete source. Child keyed declarations take precedence. */
   extends?: string;
-  inputs?: Record<string, { type: "string" | "number" | "boolean" | "enum"; values?: string[]; default?: any; optional?: boolean; label?: string }>;
-  setup?: (inputs: TInputs) => PergaTemplateSetupResult<TState, TInputs, TData>;
 }
 
 declare global {
   function Allow(): GuardDecision;
   function Deny(reason: string): GuardDecision;
   function AskHuman(title: string, labels?: { approve?: string; deny?: string }): GuardDecision;
-  function defineTemplate<TState = Record<string, any>, TInputs = Record<string, any>, TData = Record<string, any>>(
-    def: PergaTemplateDefinition<TState, TInputs, TData>
-  ): PergaTemplateDefinition<TState, TInputs, TData>;
+  function defineTemplate<TInputs = Record<string, any>, TData = Record<string, any>>(
+    def: PergaTemplateDefinition<TInputs, TData>
+  ): PergaTemplateDefinition<TInputs, TData>;
 }

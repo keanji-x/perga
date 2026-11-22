@@ -12,7 +12,6 @@ trackBacklinksPrefix,
 trackDetail,
 trackDetailPrefix,
 trackLists,
-trackReport,trackReportPrefix,
 tracksInArea,
 trackTemplates,
 trackTerminals,
@@ -44,26 +43,8 @@ export const queryKeys = Object.freeze({
   trackTools: (trackId: string) => [...trackDetail(trackId), 'tools'] as const,
   trackBacklinksPrefix,
   trackBacklinks,
-  /* The track's registered previews (#1780). Registrations emit no event; `trackPreviewsQueryOptions` polls. */
-  trackPreviews: (trackId: string) => ['track-previews', trackId] as const,
   trackViews,
   trackViewsPrefix,
-  /* Report instances and event prefixes share the core resource address. */
-  trackReport,
-  /**
-   * The prefix for the `task.*` events the plan cannot key by track: they carry no `track_id` field
-   * (the id is only inside the opaque task id, which the plan declines to parse). A prefix invalidation
-   * reaches at most the open track's report and costs nothing when none is cached.
-   */
-  trackReportPrefix,
-  /**
-   * One `chart.series` block's resolved data, keyed by the block REVISION. `rev` is the whole refresh
-   * mechanism: `track.report_edited` does not name this prefix (the event carries no block id, and each
-   * block is a `full` read of up to 1 MiB); a changed block arrives with a new `rev` and mounts a new key.
-   */
-  trackReportSeries: (trackId: string, blockId: string, rev: number) =>
-    ['track-report-series', trackId, blockId, rev] as const,
-  /** One captured source with its body. Not under `['track-report', …]`: the row is immutable with append-only anchors; freshness is the query's own. */
   trackSource: (trackId: string, sourceId: string) => ['track-source', trackId, sourceId] as const,
   overlaysByKind,
   /* The user's read receipts (#2596). Writes emit no event: the read refetches on focus and after each write. */

@@ -25,7 +25,7 @@ public sealed partial class TrackActor
     {
         await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
         RequireGovernanceSessionCore(sessionId, KernelMcpToolNames.TemplateRead);
-        return InspectCurrentTemplateCore(TemplateHost.LegacyReapplySource(_policy));
+        return InspectCurrentTemplateCore();
     }, ct);
 
     public Task<JsonElement> InspectCurrentTemplateAsync(CancellationToken ct = default) => EnqueueAsync(async _ =>
@@ -34,11 +34,10 @@ public sealed partial class TrackActor
         return InspectCurrentTemplateCore();
     }, ct);
 
-    private JsonElement InspectCurrentTemplateCore(string? legacyReapply = null) => JsonHelpers.ToElement(new
+    private JsonElement InspectCurrentTemplateCore() => JsonHelpers.ToElement(new
     {
-        snapshot = legacyReapply ?? _presentedTemplateSnapshotSource, manifest = _policy?.Manifest,
-        editableSource = legacyReapply is null ? null : _presentedTemplateSnapshotSource,
-        inputs = _track.TemplateInputs, state = _track.TemplateState, headerView = PresentTrackCore().TemplateHeaderView
+        snapshot = _templateSnapshotSource, manifest = _policy?.Manifest,
+        inputs = _track.TemplateInputs, data = _track.Data, headerView = PresentTrackCore().TemplateHeaderView
     });
 
     public Task<TrackDto> ClearTemplateAsync(CancellationToken ct = default) => EnqueueAsync(async _ =>
@@ -53,7 +52,6 @@ public sealed partial class TrackActor
         {
             TemplateId = null,
             TemplateInputs = JsonHelpers.EmptyObject,
-            TemplateState = JsonHelpers.EmptyObject,
             UpdatedAtMs = NowMs()
         }, null, dryRun, ct, callerSessionId);
 
@@ -77,7 +75,7 @@ public sealed partial class TrackActor
         var evt = new EventEnvelopeDto(null, next.AreaId, TrackId, KernelEventKinds.TrackUpdated,
             JsonHelpers.ToElement(presented), next.UpdatedAtMs);
         await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
-        var snapshot = policy is null ? null : TemplateHost.Freeze(policy);
+        var snapshot = policy?.JsSource;
         await _store.UpdateTrackTemplateAndEmitAsync(next, snapshot, evt, ct,
             writeData: next.DataRev != _track.DataRev, flow: flow).ConfigureAwait(false);
         var pluginsChanged = !_track.EnabledPlugins.SequenceEqual(next.EnabledPlugins, StringComparer.Ordinal);
@@ -85,7 +83,6 @@ public sealed partial class TrackActor
         _policy = policy;
         _policyUnavailableReason = null;
         _templateSnapshotSource = snapshot;
-        _presentedTemplateSnapshotSource = TemplateHost.InspectSource(snapshot);
         _policyGeneration = Guid.NewGuid().ToString("N");
         _flowSpec = spec;
         if (flow is not null)
@@ -276,7 +273,7 @@ public sealed partial class TrackActor
         var evt = new EventEnvelopeDto(null, next.AreaId, TrackId, KernelEventKinds.TrackUpdated,
             JsonHelpers.ToElement(Templates.TemplatePresentation.Project(next, _policy, _policyVm)), next.UpdatedAtMs);
         await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
-        await _store.UpdateTrackTemplateAndEmitAsync(next, _templateSnapshotSource ?? TemplateHost.Freeze(_policy), evt, ct, flow: flow).ConfigureAwait(false);
+        await _store.UpdateTrackTemplateAndEmitAsync(next, _policy.JsSource, evt, ct, flow: flow).ConfigureAwait(false);
         _track = next;
         _policyGeneration = Guid.NewGuid().ToString("N");
         await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, ct).ConfigureAwait(false);
@@ -288,74 +285,6 @@ public sealed partial class TrackActor
         var session = RequireGovernanceSessionCore(sessionId, toolName);
         if (session.Id != _track.LeadSessionId || session.ArchivedAtMs is not null)
             throw KernelException.Forbidden("Only the current Track Lead can change the template.");
-    }
-
-    private static string GetPolicyToolName(string mcpServer, string toolName, bool useLegacyToolNames)
-    {
-        if (!useLegacyToolNames || mcpServer is not ("perga" or "vcs")) return toolName;
-        if (mcpServer == "perga")
-        {
-            toolName = toolName switch
-            {
-                KernelMcpToolNames.TaskList => "task_ls",
-                KernelMcpToolNames.MailList => "mail_ls",
-                KernelMcpToolNames.MailRead => "mail_cat",
-                KernelMcpToolNames.TemplateList => "template_ls",
-                KernelMcpToolNames.TemplateRead => "template_cat",
-                _ => toolName
-            };
-        }
-        return mcpServer + "_" + toolName;
-    }
-
-    public async Task AfterMcpToolCallAsync(string mcpServer, string toolName, JsonElement data, CancellationToken ct)
-    {
-        try
-        {
-            await EnqueueAsync(async _ =>
-            {
-                await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
-                var policyToolName = GetPolicyToolName(mcpServer, toolName, _policy?.UsesLegacyAfterToolNames == true);
-                await AfterPolicyEventCoreAsync("tool." + policyToolName, data, ct).ConfigureAwait(false);
-            }, ct).ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            System.Diagnostics.Trace.TraceWarning("Could not deliver policy after event for {0}.{1} on Track {2}: {3}",
-                mcpServer, toolName, TrackId, ex);
-        }
-    }
-
-    private PolicyEvalResult<string?> EvaluateAfterPolicyEventCore(string eventName, JsonElement data)
-    {
-        if (_policy is not null)
-        {
-            try
-            {
-                return _policyVm.After(_policy, eventName, TrackId, data, _track.TemplateInputs, _track.TemplateState);
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Trace.TraceWarning("Policy after hook {0} failed for Track {1}: {2}", eventName, TrackId, ex);
-            }
-        }
-        return new(_track.TemplateState, null);
-    }
-
-    private async Task<string?> AfterPolicyEventCoreAsync(string eventName, JsonElement data, CancellationToken ct)
-    {
-        if (_policy is null) return null;
-        try
-        {
-            var eval = _policyVm.After(_policy, eventName, TrackId, data, _track.TemplateInputs, _track.TemplateState);
-            await UpdateTemplateStateIfChangedCoreAsync(eval.NextState, ct).ConfigureAwait(false);
-            return eval.Output;
-        }
-        catch (Exception ex)
-        {
-            System.Diagnostics.Trace.TraceWarning("Policy after hook {0} failed for Track {1}: {2}", eventName, TrackId, ex);
-            return null;
-        }
     }
 
     private static bool HasBusinessDataFields(JsonElement data) =>
@@ -441,23 +370,18 @@ public sealed partial class TrackActor
 
             var nextInputs = JsonHelpers.EnsureClonedObject(inputs);
             CompiledPolicy policy;
-            JsonElement state;
             try
             {
                 if (templateId is not null)
                     policy = _templateCatalog.GetRequiredPolicy(templateId);
-                else if (_templateSnapshotSource is { } existing && source == _presentedTemplateSnapshotSource)
-                    policy = _templateCatalog.GetOrCompileSnapshot(existing);
                 else
-                    policy = _templateCatalog.CompileSource(source!);
+                    policy = _templateCatalog.GetOrCompileSnapshot(source!);
                 TemplateFlow.ValidateInputs(_policyVm, policy, nextInputs);
-                var init = _policyVm.InitState(policy, nextInputs);
-                state = (init.Output.ValueKind != JsonValueKind.Undefined ? init.Output : init.NextState).Clone();
             }
             catch (KernelException) { throw; }
             catch (Exception ex)
             {
-                throw KernelException.InvalidArgument($"Template compilation or initialization failed: {ex.Message}");
+                throw KernelException.InvalidArgument($"Template compilation or input validation failed: {ex.Message}");
             }
 
             var data = _track.Data.ValueKind == JsonValueKind.Object ? _track.Data : JsonHelpers.EmptyObject;
@@ -479,7 +403,6 @@ public sealed partial class TrackActor
             {
                 TemplateId = policy.TemplateId,
                 TemplateInputs = nextInputs,
-                TemplateState = state,
                 Data = data,
                 DataRev = dataRev,
                 EnabledPlugins = _track.EnabledPlugins.Concat(policy.Manifest.DefaultPlugins).Distinct(StringComparer.Ordinal).ToArray(),
@@ -489,21 +412,4 @@ public sealed partial class TrackActor
             return new TemplateSetResult(binding, warnings, dryRun);
         }, ct);
     }
-
-    private async Task UpdateTemplateStateIfChangedCoreAsync(JsonElement nextState, CancellationToken ct, bool emitEvent = false)
-    {
-        if (nextState.ValueKind == JsonValueKind.Undefined || JsonElement.DeepEquals(_track.TemplateState, nextState))
-        {
-            return;
-        }
-
-        var nextTrack = _track with { TemplateState = nextState.Clone(), UpdatedAtMs = NowMs() };
-        var evt = emitEvent ? new EventEnvelopeDto(null, nextTrack.AreaId, TrackId, KernelEventKinds.TrackUpdated,
-            JsonHelpers.ToElement(TemplatePresentation.Project(nextTrack, _policy, _policyVm)), nextTrack.UpdatedAtMs) : null;
-        if (evt is not null) await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
-        await _store.UpdateTrackAndEmitAsync(nextTrack, evt, ct).ConfigureAwait(false);
-        _track = nextTrack;
-        if (evt is not null) await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, CancellationToken.None).ConfigureAwait(false);
-    }
-
 }

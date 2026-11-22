@@ -221,7 +221,7 @@ PR #112 已将底层理顺为单向 `Task -> SessionId` 并退役了 `TaskAttemp
 
 ## 四、View 天然派生：`builtin:flow`
 
-- `GET /api/v1/tracks/{trackId}/views` 统一透出 `{ templateId, dataRev, flowRev, flow, views, widgets, diagnostics, humanReadOnly }`，其中 `flow` 包含：
+- `GET /api/v1/tracks/{trackId}/views` 统一透出 `{ templateId, dataRev, flowRev, flow, views, widgets, diagnostics }`，其中 `flow` 包含：
   - `nodes`：活跃节点声明（`id`, `title`, `when`, `do`）+ 最新运行态（`runCount`, `status`, `outcome`, `outcomeSummary`, `model`, `sessionId`, `gates`, `nextFireAtMs`, `firedCount`, `waitingOn`, `watchProgress`）；
   - `archived`：最近后台 GC 归档的一次性节点摘要（供折叠查看，不干扰主画布）。
 - 前端原生出版物组件 **`builtin:flow`**：

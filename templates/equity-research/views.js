@@ -9,17 +9,17 @@ const VERDICT_FALLBACK = {
 export const views = {
   /** @param {Record<string, any>} data */
   valuationAxis(data) {
-    const v = data.valuation || { unit: "$", currentPrice: 0, targets: [] };
+    const v = data.valuation || { unit: "$", targets: [] };
     /** @type {any[]} */
     const targets = Array.isArray(v.targets) ? v.targets : [];
     return {
       ticker: data.ticker,
       unit: v.unit || "$",
-      current: {
+      current: typeof v.currentPrice === "number" ? {
         value: v.currentPrice,
         display: `${v.unit || "$"}${Number(v.currentPrice).toFixed(2)}`,
         label: v.currentLabel || "现价",
-      },
+      } : null,
       points: targets.map((pt) => ({
         value: pt.price,
         display: `${v.unit || "$"}${pt.price}`,

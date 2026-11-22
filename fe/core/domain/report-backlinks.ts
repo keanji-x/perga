@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import type { ApiFailure } from '../api/types.js';
 
 /* Backlinks: the kernel resolves `perga://wave/<id>#<block>` links in other tracks' reports. */
 
@@ -32,30 +31,6 @@ export type BacklinkQuote = z.infer<typeof backlinkQuoteSchema>;
 export type TrackBacklink = z.infer<typeof trackBacklinkSchema>;
 export type TrackBacklinks = z.infer<typeof trackBacklinksSchema>;
 
-/* A track's registered previews (`GET /api/tracks/{id}/previews`, #1780). In-memory on the
-   kernel: a restart empties the list until the Planner registers again. */
-export const trackPreviewSchema = z.object({
-  key: z.string(),
-  title: z.string(),
-  /** The gateway pool port the browser loads. */
-  port: z.number().int().min(1).max(65535),
-  /** Whether the dev server behind it accepted a connection just now. */
-  live: z.boolean(),
-});
-
-export const trackPreviewsSchema = z.object({ previews: z.array(trackPreviewSchema) });
-
-export type TrackPreview = z.infer<typeof trackPreviewSchema>;
-export type TrackPreviews = z.infer<typeof trackPreviewsSchema>;
-
-/** What a `preview` block knows about its key: still loading, unreadable, not registered, or registered. */
-export type PreviewResolution =
-  | Readonly<{ status: 'loading' }>
-  | Readonly<{ status: 'error'; failure: ApiFailure | null }>
-  | Readonly<{ status: 'missing' }>
-  | Readonly<{ status: 'registered'; preview: TrackPreview }>;
-
-/** Group by source track, preserving server order. */
 export function groupBacklinks(
   backlinks: readonly TrackBacklink[],
   currentTrackId: string,

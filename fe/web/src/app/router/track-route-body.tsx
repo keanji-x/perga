@@ -3,7 +3,7 @@ import { priorityConversation } from '../../../../core/domain/activity.ts';
 import { DELETE_FAILURES,DELETE_TEXT,writeFailureText } from '../../../../core/domain/failure-class.ts';
 import { terminalPresentation } from '../../../../core/domain/terminal-presentation.ts';
 import { trackTemplateOperation, updateTrackTemplateInputsOperation } from '../../../../core/domain/track-template.ts';
-import { trackDetail, trackReport, trackTemplate, trackViews as trackViewsKey } from '../../../../core/events/query-keys.ts';
+import { trackDetail, trackTemplate, trackViews as trackViewsKey } from '../../../../core/events/query-keys.ts';
 import { TemplateProtocolBar } from '../../features/report/template-protocol/public.tsx';
 import { useTrackClosedControl } from '../../features/track/page/closed-control.ts';
 import { TerminalWorkbenchView,useTerminalWorkbench } from '../../features/track/workbench/public.tsx';
@@ -32,9 +32,8 @@ import {
 parseWorkspaceRelativeFilePath,type ReportFileLinkTarget,
 } from '../../../../core/domain/report-file.ts';
 import type { ReportSourceLinkTarget } from '../../../../core/domain/report-source.ts';
-import {
-deriveReportTasks,type ReportLinkTarget
-} from '../../../../core/domain/report.ts';
+import type { ReportLinkTarget } from '../../../../core/domain/report.ts';
+import { trackTaskInventory } from '../../../../core/domain/track-task-inventory.ts';
 import {
 toTrack,trackActivityFromSnapshot,trackDisplayTitle
 } from '../../../../core/domain/track.ts';
@@ -70,7 +69,6 @@ import { useReadReceipts } from '../providers/read-receipts.tsx';
 import {
 type RecentFileHistory
 } from '../providers/recent-files.ts';
-import { trackTaskVerdictsQueryOptions } from '../providers/report-queries.ts';
 import { useTrackConversationMutations } from '../providers/track-conversation-mutations.ts';
 import { useTrackMutations } from '../providers/track-mutations.ts';
 import { trackToolsQueryOptions } from '../providers/track-queries.ts';
@@ -90,11 +88,9 @@ useRoutePanel,
 useTrackFileNavigation,
 useTrackPanelNavigation
 } from './navigation.ts';
-import { useReportPreviewViewports } from './report-preview.ts';
 import { ReportReferencePreview } from './report-reference.tsx';
 import { ReportSourceInDocument,ReportSourcePreview } from './report-source.tsx';
 import { useTrackTemplateViews } from './report-views.ts';
-import { TaskRecovery,useCurrentTaskRows } from './task-recovery.tsx';
 
 import { useNewTrackCard } from '../../features/track/new-card/controller.tsx';
 import type { CardRuntime } from './card-runtime.ts';
@@ -217,20 +213,6 @@ export function TrackRouteBody({
     .toSorted((left, right) => Number(right.isLead) - Number(left.isLead)), [snapshot.sessions, trackTitle]);
   const pendingApprovals = snapshot.pendingApprovals ?? NO_PENDING_APPROVALS;
   const openAsks = useMemo(() => openAsksOf(track.attentionItems), [track.attentionItems]);
-  /* The runtime half of the TASKS panel, keyed `['track-report', trackId]`: the key
-   * `invalidation-plan` refreshes on every `task.*` event and `track.report_edited`. */
-  /* Read before the query: the poll's interval depends on the rows this report can produce. */
-  const { report, outline } = reportPresentation;
-  const reportBlocks = report?.blocks ?? null;
-  const verdictsQuery = useQuery(
-    trackTaskVerdictsQueryOptions(transport, track.id, unauthorized, reportBlocks),
-  );
-  const verdicts = verdictsQuery.data;
-  const { tasks: joinedTasks } = useMemo(() => ({
-    /* The verdicts land a round-trip after the declarations; `undefined` renders
-           the statusless list rather than a hole. */
-    tasks: deriveReportTasks(reportBlocks, verdicts),
-  }), [reportBlocks, verdicts]);
   /* The CARDS module lists cards that have a surface; unclaimed kinds stay listed,
    * and `originalIndex` is bound before the filter so the merge keeps wire order. */
   const panelCards = useMemo(() => {
@@ -239,9 +221,10 @@ export function TrackRouteBody({
       .sort((left, right) => left.originalIndex - right.originalIndex)
       .map((slot) => slot.wire);
   }, [cardRegistry, cards]);
-  const tasks = useCurrentTaskRows(transport, unauthorized, track.id, joinedTasks);
-  /* From the task rows the TASKS module draws, so a worker card and its row read one attempt status.
-   * `tasks` is a new array every render: keyed by content, so the board's items keep their identity. */
+  const { report, outline } = reportPresentation;
+  const reportBlocks = report?.blocks ?? null;
+  const tasks = useMemo(() => trackTaskInventory(reportBlocks, snapshot.tasks), [reportBlocks, snapshot.tasks]);
+  /* Compare notices by content so unrelated task updates keep the board items stable. */
   const noticeKey = JSON.stringify([...parkedWorkerNotices(tasks)]);
   const notices = useMemo(() => new Map(JSON.parse(noticeKey) as [string, string][]), [noticeKey]);
   const gridItems: readonly BoardHostItem[] = useMemo(() => {
@@ -317,12 +300,7 @@ export function TrackRouteBody({
   );
   useMobileConversationOwner({ track, conversations: rows, onArchive: conversationMutations.archive, onNew: chat.startConversation,
     selectedConversationId: chat.selectedConversationId, onClose: chat.close, onOpen: chat.openConversation, conversationOpen: chat.isOpen });
-  /* One query per `chart.series` block, keyed by the block's rev; opening the
-       report is what makes the kernel fetch the data. */
-  /* One polled read of the track's previews, only while the report has a `preview` block. */
-  const resolvePreview = () => ({ status: 'missing' as const });
   const templateViews = useTrackTemplateViews(transport, track.id, unauthorized);
-  const previewViewports = useReportPreviewViewports(track.id);
   /* The cards this route can open, asked of the registry through the list the board
    * draws. A worker card whose kind no entry claims is `unknown` and its `?card=`
    * is bounced; its task keeps its `workerCardId` regardless, because the TASKS
@@ -450,7 +428,6 @@ export function TrackRouteBody({
         protocolClient.invalidateQueries({ queryKey: trackTemplate(track.id) }),
         protocolClient.invalidateQueries({ queryKey: trackDetail(track.id) }),
         protocolClient.invalidateQueries({ queryKey: trackViewsKey(track.id) }),
-        protocolClient.invalidateQueries({ queryKey: trackReport(track.id) }),
       ]);
     },
   });
@@ -473,24 +450,7 @@ export function TrackRouteBody({
         trackId={track.id}
         openedAt={navigationCompletedAt}
         templateViews={templateViews}
-
-        resolvePreview={resolvePreview}
-        previewViewports={previewViewports}
-        taskVerdicts={verdicts}
         taskRows={tasks}
-        renderTaskExecution={(task, expanded) => <TaskRecovery
-          key={`${track.id}:${task.key}`} trackId={track.id} taskKey={task.key} expanded={expanded}
-          transport={transport} unauthorized={unauthorized}
-          enableTaskActions={false}
-          openableWorkerIds={openableWorkerIds}
-          openWorker={(cardId) => {
-            if (rows.some((row) => row.id === cardId)) {
-              registry.requestOpen(cardId, { focusComposer: false });
-              return;
-            }
-            go({ name: 'track', trackId: track.id, cardId, from: routeFrom });
-          }}
-        />}
         rail={<ReportOutline items={outline} />}
 
         onOpenLink={openReportLink}

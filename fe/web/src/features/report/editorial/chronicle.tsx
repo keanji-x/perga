@@ -1,32 +1,39 @@
 import type { ReactNode } from 'react';
 import type {
-  CheckpointItem,
-  CheckpointsBlockPayload,
-} from '../../../../../core/domain/report-checkpoints.ts';
-import type { ReportTaskRow } from '../../../../../core/domain/report.ts';
+  EditorialListItem,
+  EditorialListStatus,
+  EditorialMetric,
+} from '../../../../../core/domain/report-editorial.ts';
+import type { ReportTaskRow } from '../../../../../core/domain/track-task-inventory.ts';
 import { useState } from '../../../ui/state/public.ts';
-import { EditorialMetricsStrip } from '../editorial/metrics.tsx';
+import { EditorialMetricsStrip } from './metrics.tsx';
 import {
-  CheckpointExpectationsTable,
+  EditorialExpectationsTable,
   EditorialGateStrip,
-  CheckpointProseBody,
-  EditorialTriggersTable,
+  EditorialItemBody,
   defaultStatusLabel,
-  deriveFallbackTriggers,
   resolveAuthorDisplay,
   resolveItemSessionId,
-} from '../editorial/primitives.tsx';
-import { markerToneClass } from './marker.ts';
-import styles from './checkpoints.module.css';
+} from './primitives.tsx';
+import styles from './chronicle.module.css';
+
+function markerToneClass(status: EditorialListStatus): string {
+  switch (status) {
+    case 'done': return styles.markerDone;
+    case 'running': return styles.markerRunning;
+    case 'blocked': return styles.markerBlocked;
+    case 'pending': return styles.markerPending;
+  }
+}
 
 const INITIAL_VISIBLE_COUNT = 6;
 
-function initialExpandedId(items: readonly CheckpointItem[]): string {
+function initialExpandedId(items: readonly EditorialListItem[]): string {
   const active = items.find((item) => item.status === 'running' || item.status === 'blocked');
   return active?.id ?? items[0].id;
 }
 
-function verdictToneClass(item: CheckpointItem): string {
+function verdictToneClass(item: EditorialListItem): string {
   if (item.status === 'running') return styles.chronicleVerdictRunning;
   if (item.status === 'blocked') return styles.chronicleVerdictBlocked;
   return '';
@@ -34,37 +41,41 @@ function verdictToneClass(item: CheckpointItem): string {
 
 type GroupedBucket = Readonly<{
   group: string | null;
-  items: readonly CheckpointItem[];
+  items: readonly EditorialListItem[];
 }>;
 
-function groupVisibleItems(items: readonly CheckpointItem[]): readonly GroupedBucket[] {
+function groupVisibleItems(items: readonly EditorialListItem[], groups: readonly string[]): readonly GroupedBucket[] {
   const hasGroups = items.some((item) => item.group != null && item.group.trim() !== '');
   if (!hasGroups) {
     return [{ group: null, items }];
   }
-  const buckets: { group: string; items: CheckpointItem[] }[] = [];
-  const byName = new Map<string, CheckpointItem[]>();
+  const byName = new Map<string, EditorialListItem[]>(groups.map((name) => [name.trim(), []]));
   for (const item of items) {
     const name = item.group != null && item.group.trim() !== '' ? item.group.trim() : '其他';
     let list = byName.get(name);
     if (list === undefined) {
       list = [];
       byName.set(name, list);
-      buckets.push({ group: name, items: list });
     }
     list.push(item);
   }
-  return buckets;
+  return Array.from(byName, ([group, entries]) => ({ group, items: entries })).filter((bucket) => bucket.items.length > 0);
 }
 
-export function ReportCheckpointsChronicle({
+export function EditorialChronicle({
   payload,
   taskRows,
   renderText,
   renderMarkdown,
   onOpenWorker,
 }: Readonly<{
-  payload: CheckpointsBlockPayload;
+  payload: Readonly<{
+    items: readonly EditorialListItem[];
+    title?: string | null;
+    summary?: string | null;
+    groups?: readonly string[] | null;
+    metrics?: readonly EditorialMetric[] | null;
+  }>;
   taskRows?: readonly ReportTaskRow[];
   renderText?: (text: string) => ReactNode;
   renderMarkdown?: (markdown: string, key: string) => ReactNode;
@@ -72,21 +83,22 @@ export function ReportCheckpointsChronicle({
 }>) {
   const [expandedId, setExpandedId] = useState<string | null>(() => initialExpandedId(payload.items));
   const [showAll, setShowAll] = useState(false);
-  const [showTriggers, setShowTriggers] = useState(false);
   const [activeGateKey, setActiveGateKey] = useState<string | null>(null);
 
   const text = (value: string) => (renderText !== undefined ? renderText(value) : value);
-  const standingTriggers = payload.triggers ?? [];
 
   const hasGroups = payload.items.some((item) => item.group != null && item.group.trim() !== '');
   const visibleItems = (showAll || hasGroups)
     ? payload.items
     : payload.items.slice(0, INITIAL_VISIBLE_COUNT);
   const hiddenCount = payload.items.length - visibleItems.length;
-  const buckets = groupVisibleItems(visibleItems);
+  const buckets = groupVisibleItems(visibleItems, payload.groups ?? []);
 
   return (
     <section className={styles.root} aria-label={payload.title ?? '事件时间线'}>
+      {payload.summary != null && payload.summary !== '' && (
+        renderMarkdown?.(payload.summary, 'chronicle-summary') ?? <p>{text(payload.summary)}</p>
+      )}
       {payload.metrics != null && payload.metrics.length > 0 && (
         <EditorialMetricsStrip
           metrics={payload.metrics}
@@ -95,32 +107,13 @@ export function ReportCheckpointsChronicle({
         />
       )}
 
-      {standingTriggers.length > 0 && (
-        <div className={styles.chronicleBar}>
-          <button
-            type="button"
-            aria-expanded={showTriggers}
-            className={`${styles.watchToggle} ${showTriggers ? styles.watchToggleActive : ''}`}
-            onClick={() => { setShowTriggers((open) => !open); }}
-          >
-            自动监测 · {standingTriggers.length}
-          </button>
-        </div>
-      )}
-
-      {showTriggers && standingTriggers.length > 0 && (
-        <div className={styles.watchDrawer} role="region" aria-label="自动监测与触发规则">
-          <EditorialTriggersTable keyPrefix="standing" triggers={standingTriggers} renderText={renderText} />
-        </div>
-      )}
-
       {buckets.map((bucket, bucketIndex) => (
         <div key={bucket.group ?? 'flat'} className={bucket.group !== null ? styles.chronicleGroup : undefined}>
           {bucket.group !== null && (
             <h4 className={styles.chronicleGroupTitle}>{bucket.group}</h4>
           )}
           <ol
-            className={`${styles.chronicleList} ${bucketIndex === 0 && bucket.group === null && standingTriggers.length === 0 ? styles.chronicleListTopRule : ''}`}
+            className={`${styles.chronicleList} ${bucketIndex === 0 && bucket.group === null ? styles.chronicleListTopRule : ''}`}
           >
             {bucket.items.map((item) => {
               const isExpanded = expandedId === item.id;
@@ -128,7 +121,6 @@ export function ReportCheckpointsChronicle({
               const verdictText = item.verdict ?? item.statusLabel ?? defaultStatusLabel(item.status);
               const resolvedSessionId = resolveItemSessionId(item, taskRows);
               const assignDisplay = resolveAuthorDisplay(item, resolvedSessionId);
-              const itemTriggers = deriveFallbackTriggers(item);
               const checks = item.checks ?? [];
 
               return (
@@ -187,25 +179,19 @@ export function ReportCheckpointsChronicle({
                         </div>
                       )}
 
-                      <CheckpointProseBody
+                      <EditorialItemBody
                         item={item}
                         renderText={renderText}
                         renderMarkdown={renderMarkdown}
                       />
 
                       {item.expectations != null && item.expectations.length > 0 && (
-                        <CheckpointExpectationsTable
+                        <EditorialExpectationsTable
                           keyPrefix={item.id}
                           expectations={item.expectations}
                           renderText={renderText}
                         />
                       )}
-
-                      <EditorialTriggersTable
-                        keyPrefix={item.id}
-                        triggers={itemTriggers}
-                        renderText={renderText}
-                      />
 
                       <EditorialGateStrip
                         itemId={item.id}

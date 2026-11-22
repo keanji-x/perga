@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { ReportTaskRow } from '../domain/report.js';
+import type { ReportTaskRow } from '../domain/track-task-inventory.js';
 import { NEUTRAL_ACTIVITY, type CardWire } from '../domain/track.js';
 import { deriveTrackPageView, workbenchTerminalCardIds, parkedWorkerNotices, progressStatusLabel, taskStatusPhrase, type TrackPageActivity } from './track-page.js';
 
@@ -293,7 +293,6 @@ describe('deriveTrackPageView tasks', () => {
     const [row] = tasksModule([task({
       status: 'pending',
       pendingReason: {
-        kind: 'trackBusy',
         message: 'Track busy',
       },
     })]).rows;

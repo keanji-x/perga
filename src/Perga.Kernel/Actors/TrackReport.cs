@@ -74,20 +74,19 @@ public sealed partial class TrackActor
                         throw KernelException.PolicyDenied("Active policy changed after authorization.");
                     generation = actor._policyGeneration;
 
-                    var (preview, editorRole, touchedSections, nextProseChars) = PreviewReportCommitCore(callerSessionId, request);
+                    var (preview, editorRole) = PreviewReportCommitCore(callerSessionId, request);
                     if (actor._policy is not null)
                     {
                         var prevMd = actor._reportEngine.RenderMarkdown(_report, withMarkers: false);
                         var nextMd = actor._reportEngine.RenderMarkdown(preview.NextDocument, withMarkers: false);
                         var eval = actor._policyVm.Before(actor._policy, "report.commit", actor.TrackId, JsonHelpers.ToElement(new
                         {
-                            editorRole, prevMarkdown = prevMd, nextMarkdown = nextMd, touchedSections, nextProseChars
-                        }), actor._track.TemplateInputs, actor._track.TemplateState);
-                        await actor.UpdateTemplateStateIfChangedCoreAsync(eval.NextState, ct).ConfigureAwait(false);
+                            editorRole, prevMarkdown = prevMd, nextMarkdown = nextMd
+                        }), actor._track.TemplateInputs, actor._track.Data);
 
-                        if (eval.Output is GuardDecision.Deny denied)
+                        if (eval is GuardDecision.Deny denied)
                             throw KernelException.PolicyDenied(denied.Reason);
-                        if (eval.Output is GuardDecision.AskHuman ask)
+                        if (eval is GuardDecision.AskHuman ask)
                         {
                             actor.RequireApprovalOrigin(callerSessionId, approvalTurn, origin);
                             return (null, actor.ApplyGuardDecisionCore(ask, callerSessionId, approvalTurn, ct)!);
@@ -106,7 +105,7 @@ public sealed partial class TrackActor
                 {
                     if (actor._policyGeneration != generation)
                         throw KernelException.PolicyDenied("Active policy changed during report approval.");
-                    var (preview, editorRole, _, _) = PreviewReportCommitCore(callerSessionId, request);
+                    var (preview, editorRole) = PreviewReportCommitCore(callerSessionId, request);
                     return await FinalizeReportCommitCoreAsync(preview, callerSessionId,
                         request.CommitMessage ?? $"Report commit ({editorRole}, human-approved)", ct).ConfigureAwait(false);
                 }, ct).ConfigureAwait(false);
@@ -117,29 +116,16 @@ public sealed partial class TrackActor
             }
         }
 
-        public (ReportCommitResult Preview, string EditorRole, IReadOnlyList<string> TouchedSections, int NextProseChars)
+        private (ReportCommitResult Preview, string EditorRole)
             PreviewReportCommitCore(string callerSessionId, ReportCommitRequest request)
         {
             var editorRole = actor.RequireSessionCore(callerSessionId).IsLead ? "lead" : "subagent";
             var preview = actor._reportEngine.ApplyCommit(_report, request.Anchor, request.Ops, request.Summary);
-            var historicalTasks = _report.Blocks.Where(block => block.Kind == ReportBlockKind.Task)
-                .ToDictionary(block => block.Id, StringComparer.Ordinal);
-            if (preview.NextDocument.Blocks.Any(block => historicalTasks.TryGetValue(block.Id, out var previous)
-                    ? previous.Kind != block.Kind || previous.Rev != block.Rev || previous.SectionH1 != block.SectionH1 ||
-                        previous.Markdown != block.Markdown || !JsonHelpers.JsonEquals(previous.Payload, block.Payload)
-                    : block.Kind == ReportBlockKind.Task))
-                throw KernelException.InvalidArgument("Author tasks in flow.json and submit them with flow_commit.");
-
-            var touchedSections = CollectTouchedSections(_report, preview, request.Ops);
-            var nextProseChars = preview.NextDocument.Blocks.Where(block => block.Kind == ReportBlockKind.Prose)
-                .Sum(block => block.Markdown?.Length ?? 0);
-            ValidateManifestReportRulesCore(editorRole, touchedSections, nextProseChars);
-            return (preview, editorRole, touchedSections, nextProseChars);
+            ReportAuthoring.Validate(preview.NextDocument, _report);
+            return (preview, editorRole);
         }
 
-        // ------------------- Sessions, Streaming Turns & Epoch Compaction -------------------
-
-        public async Task<ReportReadResult> FinalizeReportCommitCoreAsync(
+        private async Task<ReportReadResult> FinalizeReportCommitCoreAsync(
             ReportCommitResult commitResult,
             string? authorSessionId,
             string commitMessage,
@@ -168,15 +154,12 @@ public sealed partial class TrackActor
                 compressedBlocks,
                 authorSessionId,
                 commitMessage,
-                actor._track.TemplateState,
                 reportEvt,
                 ct).ConfigureAwait(false);
 
             _report = commitResult.NextDocument;
             var committedCt = actor._actorShutdownCts.Token;
             await actor._eventHub.PublishSyncedAfterStoreWriteAsync(actor._store, reportEvt, committedCt).ConfigureAwait(false);
-
-            await actor.AfterPolicyEventCoreAsync("report.commit", reportPayload, committedCt).ConfigureAwait(false);
 
             var rendered = actor._reportEngine.RenderMarkdown(_report, withMarkers: true);
             var knownRevs = _report.Blocks.ToDictionary(b => b.Id, b => b.Rev, StringComparer.Ordinal);
@@ -190,72 +173,5 @@ public sealed partial class TrackActor
                 Diagnostics: [],
                 Changes: commitResult.Changes);
         }
-
-        public void ValidateManifestReportRulesCore(
-            string editorRole,
-            IReadOnlyList<string> touchedSections,
-            int nextProseChars)
-        {
-            if (actor._policy is null)
-            {
-                return;
-            }
-
-            if (actor._policy.Manifest.MaxProseChars is { } maxChars && nextProseChars > maxChars)
-            {
-                throw KernelException.PolicyDenied(
-                    $"Report prose length ({nextProseChars} chars) exceeds template maxProseChars ({maxChars}).");
-            }
-
-            if (actor._policy.Manifest.Sections.Count > 0 && touchedSections.Count > 0)
-            {
-                foreach (var touched in touchedSections)
-                {
-                    var rule = actor._policy.Manifest.Sections.FirstOrDefault(s =>
-                        string.Equals(s.H1.Trim().TrimStart('#').Trim(), touched.Trim().TrimStart('#').Trim(), StringComparison.OrdinalIgnoreCase));
-
-                    if (rule?.EditableBy is { } allowed &&
-                        !allowed.Any(r => string.Equals(r, editorRole, StringComparison.OrdinalIgnoreCase)))
-                    {
-                        throw KernelException.PolicyDenied(
-                            $"Section '{rule.H1}' is not editable by role '{editorRole}'.");
-                    }
-                }
-            }
-        }
-
-        public static IReadOnlyList<string> CollectTouchedSections(
-            ReportDocument prev,
-            ReportCommitResult commit,
-            IReadOnlyList<BlockOp> ops)
-        {
-            var sections = new HashSet<string>(StringComparer.Ordinal);
-            var prevById = prev.Blocks.ToDictionary(b => b.Id, StringComparer.Ordinal);
-            var nextById = commit.NextDocument.Blocks.ToDictionary(b => b.Id, StringComparer.Ordinal);
-
-            foreach (var op in ops)
-            {
-                if (op is BlockOp.ReplaceSectionOp rs && !string.IsNullOrWhiteSpace(rs.SectionH1))
-                {
-                    sections.Add(rs.SectionH1);
-                }
-            }
-
-            foreach (var change in commit.Changes)
-            {
-                if (prevById.TryGetValue(change.Id, out var p) && !string.IsNullOrWhiteSpace(p.SectionH1))
-                {
-                    sections.Add(p.SectionH1!);
-                }
-
-                if (nextById.TryGetValue(change.Id, out var n) && !string.IsNullOrWhiteSpace(n.SectionH1))
-                {
-                    sections.Add(n.SectionH1!);
-                }
-            }
-
-            return sections.ToArray();
-        }
-
     }
 }

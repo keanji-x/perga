@@ -35,7 +35,6 @@ public sealed class TrackActorAndHydrationTests
             LeadSessionId: "ses_lead_cold",
             TemplateId: null,
             TemplateInputs: rawJson,
-            TemplateState: rawJson,
             EnabledPlugins: [],
             ClosedAtMs: null,
             PinnedAtMs: null,
@@ -182,9 +181,8 @@ public sealed class TrackActorAndHydrationTests
         var initialLeadId = created.Track.LeadSessionId!;
         await ctx.Kernel.Actors.GetOrActivate(trackId).EnsureMountedAsync();
 
-        // WorkspaceCreateCmd executed in preparation and InitState was applied.
+        // WorkspaceCreateCmd executes during preparation.
         Assert.Contains(ctx.CommandRunner.ExecutedCommands, c => c.Command == "echo init-ws" && c.WorkingDirectory == "/repo/perga");
-        Assert.True(created.Track.TemplateState.GetProperty("initialized").GetBoolean());
 
         // Create a free Subagent and switch LeadSessionId to it
         var subagent = (await ctx.Kernel.CreateSessionAsync(trackId, new CreateSessionRequest(Title: "Co-Lead"), Guid.NewGuid().ToString("N"), new InteropPrincipal.Human(), default)).Receipt.Session;

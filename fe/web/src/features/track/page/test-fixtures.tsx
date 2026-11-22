@@ -4,7 +4,7 @@ import { useTrackClosedControl } from './closed-control.ts';
 import { fireEvent, render, type RenderResult } from '@testing-library/react';
 import { vi } from 'vitest';
 
-import type { ReportTaskRow } from '../../../../../core/domain/report.ts';
+import type { ReportTaskRow } from '../../../../../core/domain/track-task-inventory.ts';
 import { NEUTRAL_ACTIVITY, type CardWire, type Track } from '../../../../../core/domain/track.ts';
 import { useState } from '../../../ui/state/public.ts';
 import { TrackPage, type TrackPageProps } from './public.tsx';

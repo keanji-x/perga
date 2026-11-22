@@ -63,7 +63,6 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
     private long _nextEventId = 1;
 
     public bool FailTemplateUpdate { get; set; }
-    public bool FailTemplateStateUpdate { get; set; }
     public Action? AfterTemplateCommit { get; set; }
 
     public int MarkInterruptedCalls { get; private set; }
@@ -424,7 +423,6 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
     {
         lock (_gate)
         {
-            if (FailTemplateStateUpdate && evt is null) throw new IOException("template state persistence failure");
             if (_tracks.TryGetValue(track.Id, out var existing))
             {
                 if (!writeData)
@@ -590,7 +588,6 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
         byte[] compressedRevisionBlocks,
         string? authorSessionId,
         string commitMessage,
-        JsonElement nextTemplateState,
         EventEnvelopeDto evt,
         CancellationToken ct)
     {
@@ -599,11 +596,6 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
             _reports[trackId] = report;
             if (authorSessionId is null) EnqueueWakeLocked(TrackWakeRequests.Report(trackId, report.DocRev, evt.Payload));
             _revisions[(trackId, report.DocRev)] = compressedRevisionBlocks.ToArray();
-
-            if (_tracks.TryGetValue(trackId, out var track))
-            {
-                _tracks[trackId] = track with { TemplateState = nextTemplateState.Clone() };
-            }
 
             AppendEventLocked(evt);
             return Task.CompletedTask;
@@ -614,7 +606,6 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
 
     public Task UpsertTaskAsync(
         TaskDto task,
-        JsonElement? nextTemplateState,
         EventEnvelopeDto? evt,
         CancellationToken ct,
         AgentSessionDto? session = null,
@@ -655,11 +646,6 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
                         EnqueueWakeLocked(TrackWakeRequests.TaskSettled(task, wakePrompt) with { TargetSessionId = parentId }, once: true);
                 }
                 else EnqueueWakeLocked(TrackWakeRequests.TaskSettled(task, wakePrompt), once: true);
-            }
-
-            if (nextTemplateState is { } ns && _tracks.TryGetValue(task.TrackId, out var track))
-            {
-                _tracks[task.TrackId] = track with { TemplateState = ns.Clone() };
             }
 
             if (evt is not null)
@@ -1321,18 +1307,14 @@ internal sealed class ConfigurableFakePolicyVm : IPolicyVm
     public int CompileCallCount => Volatile.Read(ref _compileCount);
 
     public Func<string, CompiledTemplateManifest>? CustomManifestFactory { get; set; }
-    public Func<CompiledPolicy, JsonElement, PolicyEvalResult<JsonElement>>? OnInitState { get; set; }
-    public Func<CompiledPolicy, string, JsonElement, JsonElement, PolicyEvalResult<GuardDecision>>? OnBefore { get; set; }
-    public Func<CompiledPolicy, string, JsonElement, JsonElement, PolicyEvalResult<string?>>? OnAfter { get; set; }
-    public Func<CompiledPolicy, string, JsonElement, JsonElement, PolicyEvalResult<string?>>? OnScheduleFired { get; set; }
-    public ConcurrentQueue<JsonElement> RecordedSettledEvents { get; } = new();
+    public Func<CompiledPolicy, string, JsonElement, JsonElement, GuardDecision>? OnBefore { get; set; }
 
     public TemplateHeaderView? EvaluateHeaderView(CompiledPolicy policy, PolicyHeaderViewContext ctx, JsonElement state) => null;
 
     public CompiledPolicy Compile(string jsModuleSource)
     {
         Interlocked.Increment(ref _compileCount);
-        var source = global::Perga.PolicyVm.PolicyVm.ReadToolNameVersion(jsModuleSource)?.Source ?? jsModuleSource;
+        var source = jsModuleSource;
         CompiledTemplateManifest manifest;
         if (CustomManifestFactory is not null)
         {
@@ -1355,8 +1337,6 @@ internal sealed class ConfigurableFakePolicyVm : IPolicyVm
                 Description: "Test template",
                 DefaultPlugins: ["market"],
                 InputsSchema: TestJson.Parse("{}"),
-                Sections: [],
-                MaxProseChars: null,
                 RequireGateForReadWrite: false,
                 WorkspaceDriver: "direct",
                 WorkspaceLowerCacheDirs: [],
@@ -1374,34 +1354,14 @@ internal sealed class ConfigurableFakePolicyVm : IPolicyVm
     public IReadOnlyList<DataValidationError> ValidateData(CompiledPolicy policy, JsonElement inputs, JsonElement data,
         IReadOnlyList<string>? knownTaskKeys) => [];
 
-    public PolicyEvalResult<JsonElement> InitState(CompiledPolicy policy, JsonElement inputs)
-    {
-        if (OnInitState is not null)
-        {
-            return OnInitState(policy, inputs);
-        }
+    public PolicyTurnPreparation PrepareTurn(CompiledPolicy policy, PolicyTurnContext ctx, JsonElement data) =>
+        new(null, new GuardDecision.Allow());
 
-        var init = TestJson.Parse("""{"initialized":true,"count":0}""");
-        return new PolicyEvalResult<JsonElement>(init, init);
-    }
-
-    public PolicyEvalResult<PolicyTurnPreparation> PrepareTurn(CompiledPolicy policy, PolicyTurnContext ctx, JsonElement state) =>
-        new(state, new(null, new GuardDecision.Allow()));
-
-    public PolicyEvalResult<GuardDecision> Before(CompiledPolicy policy, string action, string trackId, JsonElement data, JsonElement inputs, JsonElement state) =>
-        OnBefore?.Invoke(policy, action, data, state) ?? new(state, new GuardDecision.Allow());
+    public GuardDecision Before(CompiledPolicy policy, string action, string trackId, JsonElement payload, JsonElement inputs, JsonElement data) =>
+        OnBefore?.Invoke(policy, action, payload, data) ?? new GuardDecision.Allow();
 
     public PolicyTaskRoute RouteTaskDispatch(CompiledPolicy policy, string? role, string access, string? provider, string? model, JsonElement inputs) => new(provider, model);
     public IReadOnlyList<PolicyTaskRoute> ResolveRoutingTargets(CompiledPolicy policy, JsonElement inputs) => [];
-
-    public PolicyEvalResult<string?> After(CompiledPolicy policy, string eventName, string trackId, JsonElement data, JsonElement inputs, JsonElement state)
-    {
-        if (eventName == "schedule.fired" && OnScheduleFired is not null)
-            return OnScheduleFired(policy, data.GetProperty("scheduleId").GetString()!, inputs, state);
-        if (eventName == "task.settled") RecordedSettledEvents.Enqueue(data);
-        return OnAfter?.Invoke(policy, eventName, data, state) ?? new(state,
-            eventName == "task.settled" ? $"Policy noted {data.GetProperty("taskKey").GetString()} -> {data.GetProperty("status").GetString()}" : null);
-    }
 
     public IReadOnlyList<FlowNodeSpecDto> ResolveFlow(CompiledPolicy policy, JsonElement inputs) => [];
 
@@ -1427,8 +1387,7 @@ internal sealed class ConfigurableFakePolicyVm : IPolicyVm
             policy.TemplateId,
             new Dictionary<string, JsonElement>(StringComparer.Ordinal),
             new Dictionary<string, string>(StringComparer.Ordinal),
-            [],
-            policy.Manifest.HumanReadOnly);
+            []);
 }
 
 internal sealed class ScriptableFakeAgentSession : IAgentSession

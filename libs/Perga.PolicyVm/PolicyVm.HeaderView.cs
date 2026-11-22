@@ -1,36 +1,33 @@
 using System.Text.Json;
 using Jint;
-using Jint.Native;
 using Jint.Native.Function;
-using Jint.Runtime;
 
 namespace Perga.PolicyVm;
 
 public sealed partial class PolicyVm
 {
     // Presentation is read-only and must never prevent track reads, even for malformed hooks.
-    public TemplateHeaderView? EvaluateHeaderView(CompiledPolicy policy, PolicyHeaderViewContext ctx, JsonElement state)
+    public TemplateHeaderView? EvaluateHeaderView(CompiledPolicy policy, PolicyHeaderViewContext ctx, JsonElement data)
     {
         try
         {
-            var bundle = TemplateBundle.Parse(policy.JsSource);
-            using var engine = CreateSandboxedEngine(ExecutionTimeoutMs, bundle);
-            var rawDef = LoadDefaultTemplateObject(engine, bundle);
-            var jsInputs = BuildEffectiveJsInputs(engine, rawDef, ctx.Inputs);
-            var def = ResolveEffectiveDefinition(engine, rawDef, jsInputs);
-            if (def.Get("headerView") is not Function hook)
-                return null;
-            var context = BuildTemplateContextObject(engine, def, ctx.TrackId, ctx.Inputs, state);
-            var value = engine.Call(hook, def, [context]);
-            if (!value.IsObject() || value.IsArray())
-                return null;
-            var json = JsValueToJsonElement(engine, value, defaultJson: "null");
-            if (!ValidHeaderView(json))
-                return null;
-            return System.Text.Json.JsonSerializer.Deserialize<TemplateHeaderView>(json, new JsonSerializerOptions
-            {
-                PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-            });
+            return EvaluateWithEffectiveDefinition<TemplateHeaderView?>(policy, ctx.Inputs, "HeaderView",
+                (engine, _, def, _, _) =>
+                {
+                    if (def.Get("headerView") is not Function hook)
+                        return null;
+                    var context = BuildTemplateContextObject(engine, def, ctx.TrackId, ctx.Inputs, data);
+                    var value = engine.Call(hook, def, [context]);
+                    if (!value.IsObject() || value.IsArray())
+                        return null;
+                    var json = JsValueToJsonElement(engine, value, defaultJson: "null");
+                    if (!ValidHeaderView(json))
+                        return null;
+                    return System.Text.Json.JsonSerializer.Deserialize<TemplateHeaderView>(json, new JsonSerializerOptions
+                    {
+                        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+                    });
+                });
         }
         catch (Exception)
         {

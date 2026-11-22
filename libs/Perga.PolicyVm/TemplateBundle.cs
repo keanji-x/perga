@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using System.Text;
 using System.Text.Json;
 using Jint;
@@ -33,6 +34,15 @@ public sealed record TemplateBundle(
         "tsconfig.json", "jsconfig.json", "package.json", "package-lock.json"
     };
 
+    internal const string InheritedSnapshotFormat = "perga.snapshot.v1";
+
+    internal abstract record SnapshotDefinition
+    {
+        internal sealed record Inherited(TemplateBundle Parent, TemplateBundle Child) : SnapshotDefinition;
+    }
+
+    internal SnapshotDefinition? Snapshot { get; private init; }
+
     public string EntrySource => RawSnapshotSource ?? Files[EntryPath];
 
     public bool HasMultiFileSources => IsMultiFile || (SnapshotMultiFileLeaves is { Count: > 0 });
@@ -65,10 +75,10 @@ public sealed record TemplateBundle(
 
             return new TemplateBundle(
                 EntryPath: "template.perga.js",
-                Files: new Dictionary<string, string>(StringComparer.Ordinal)
+                Files: new ReadOnlyDictionary<string, string>(new Dictionary<string, string>(StringComparer.Ordinal)
                 {
                     ["template.perga.js"] = source
-                },
+                }),
                 IsMultiFile: false);
         }
 
@@ -136,7 +146,7 @@ public sealed record TemplateBundle(
             throw new InvalidOperationException($"Template bundle entry file '{entry}' was not found in 'files'.");
         }
 
-        return new TemplateBundle(entry, files, IsMultiFile: true);
+        return new TemplateBundle(entry, new ReadOnlyDictionary<string, string>(files), IsMultiFile: true);
     }
 
     private static bool TryParseSnapshot(string source, int depth, out TemplateBundle bundle)
@@ -147,90 +157,56 @@ public sealed record TemplateBundle(
             return false;
         }
 
-        JsonDocument doc;
-        try
-        {
-            doc = JsonDocument.Parse(source);
-        }
-        catch (JsonException)
+        using var doc = JsonDocument.Parse(source);
+        var root = doc.RootElement;
+        if (root.ValueKind != JsonValueKind.Object ||
+            !root.TryGetProperty("format", out var formatEl) ||
+            formatEl.ValueKind != JsonValueKind.String)
         {
             return false;
         }
 
-        using (doc)
+        var format = formatEl.GetString();
+        if (!string.Equals(format, InheritedSnapshotFormat, StringComparison.Ordinal))
         {
-            var root = doc.RootElement;
-            if (root.ValueKind != JsonValueKind.Object ||
-                !root.TryGetProperty("format", out var formatEl) ||
-                formatEl.ValueKind != JsonValueKind.String)
-            {
-                return false;
-            }
-
-            var format = formatEl.GetString();
-            if (string.Equals(format, "perga.snapshot.v2", StringComparison.Ordinal))
-            {
-                if (!root.TryGetProperty("source", out var innerSourceEl) ||
-                    innerSourceEl.ValueKind != JsonValueKind.String ||
-                    string.IsNullOrWhiteSpace(innerSourceEl.GetString()))
-                {
-                    throw new InvalidOperationException("Invalid template snapshot tool-name version or source.");
-                }
-
-                var inner = ParseInternal(innerSourceEl.GetString()!, depth + 1);
-                var innerLeaves = new List<TemplateBundle>();
-                AppendMultiFileLeaves(inner, innerLeaves);
-
-                var innerAssets = new Dictionary<string, string>(StringComparer.Ordinal);
-                MergeBundleAssets(inner, innerAssets);
-
-                bundle = new TemplateBundle(
-                    EntryPath: "__snapshot__.json",
-                    Files: innerAssets,
-                    IsMultiFile: false,
-                    SnapshotMultiFileLeaves: innerLeaves.Count > 0 ? innerLeaves : null,
-                    RawSnapshotSource: source);
-                return true;
-            }
-
-            if (!string.Equals(format, "perga.snapshot.v1", StringComparison.Ordinal))
-            {
-                return false;
-            }
-
-            if (!root.TryGetProperty("sources", out var sourcesEl) || sourcesEl.ValueKind != JsonValueKind.Array)
-            {
-                throw new InvalidOperationException("Invalid template snapshot.");
-            }
-
-            var sources = sourcesEl.EnumerateArray().ToArray();
-            if (sources.Length != 2 ||
-                sources[0].ValueKind != JsonValueKind.String ||
-                sources[1].ValueKind != JsonValueKind.String)
-            {
-                throw new InvalidOperationException("Invalid template snapshot.");
-            }
-
-            var left = ParseInternal(sources[0].GetString()!, depth + 1);
-            var right = ParseInternal(sources[1].GetString()!, depth + 1);
-
-            var leaves = new List<TemplateBundle>();
-            AppendMultiFileLeaves(left, leaves);
-            AppendMultiFileLeaves(right, leaves);
-
-            // Merge packaged assets (report.md, widgets/*.html, etc.) from base to child so child overrides base.
-            var mergedAssets = new Dictionary<string, string>(StringComparer.Ordinal);
-            MergeBundleAssets(left, mergedAssets);
-            MergeBundleAssets(right, mergedAssets);
-
-            bundle = new TemplateBundle(
-                EntryPath: "__snapshot__.json",
-                Files: mergedAssets,
-                IsMultiFile: false,
-                SnapshotMultiFileLeaves: leaves.Count > 0 ? leaves : null,
-                RawSnapshotSource: source);
-            return true;
+            return false;
         }
+
+        if (!root.TryGetProperty("sources", out var sourcesEl) || sourcesEl.ValueKind != JsonValueKind.Array)
+        {
+            throw new InvalidOperationException("Invalid template snapshot.");
+        }
+
+        var sources = sourcesEl.EnumerateArray().ToArray();
+        if (sources.Length != 2 ||
+            sources[0].ValueKind != JsonValueKind.String ||
+            sources[1].ValueKind != JsonValueKind.String)
+        {
+            throw new InvalidOperationException("Invalid template snapshot.");
+        }
+
+        var left = ParseInternal(sources[0].GetString()!, depth + 1);
+        var right = ParseInternal(sources[1].GetString()!, depth + 1);
+
+        var leaves = new List<TemplateBundle>();
+        AppendMultiFileLeaves(left, leaves);
+        AppendMultiFileLeaves(right, leaves);
+
+        // Merge packaged assets (report.md, widgets/*.html, etc.) from base to child so child overrides base.
+        var mergedAssets = new Dictionary<string, string>(StringComparer.Ordinal);
+        MergeBundleAssets(left, mergedAssets);
+        MergeBundleAssets(right, mergedAssets);
+
+        bundle = new TemplateBundle(
+            EntryPath: "__snapshot__.json",
+            Files: new ReadOnlyDictionary<string, string>(mergedAssets),
+            IsMultiFile: false,
+            SnapshotMultiFileLeaves: leaves.Count > 0 ? leaves.AsReadOnly() : null,
+            RawSnapshotSource: source)
+        {
+            Snapshot = new SnapshotDefinition.Inherited(left, right),
+        };
+        return true;
     }
 
     private static void AppendMultiFileLeaves(TemplateBundle source, List<TemplateBundle> leaves)

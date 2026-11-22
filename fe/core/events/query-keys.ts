@@ -11,8 +11,6 @@ export const tracksInArea = (areaId: string) => ['tracks', areaId] as const;
 export const trackDetail = (trackId: string) => ['track', trackId] as const;
 export const trackBacklinksPrefix = () => ['track-backlinks'] as const;
 export const trackBacklinks = (trackId: string) => ['track-backlinks', trackId] as const;
-export const trackReport = (trackId: string) => ['track-report', trackId] as const;
-export const trackReportPrefix = () => ['track-report'] as const;
 export const trackViews = (trackId: string) => ['track-views', trackId] as const;
 export const trackViewsPrefix = () => ['track-views'] as const;
 export const overlaysByKind = (entityKind: 'track' | 'card') => ['overlays', entityKind] as const;

@@ -50,7 +50,7 @@ public sealed class SqliteColdBlobAndConcurrencyTests
             "task_blob", "trk_blob", "b_1", "verify", 1, "subagent", "codex", AccessMode.ReadWrite,
             true, [], "Verify", null, null, null, TaskRunStatus.Done, null, SemanticVerdict.None, null, 1_000, 1_200,
             SessionId: "sess_blob", RunCount: 1, Meta: StorageTestHarness.Json("{}"), GateVerdict: bigGatePayload, StartedAtMs: 1_000, FinishedAtMs: 1_200);
-        await store.UpsertTaskAsync(task, null, null, ct);
+        await store.UpsertTaskAsync(task, null, ct);
 
         // 1. Verify SQLite B-Tree stores compact {"v":1,"blobRef":"blobs/trk_blob/<sha256>.zst","bytes":...,"preview":...}
         string rawItemSqlJson;

@@ -3,13 +3,13 @@
 // progress, a read-only editorial detail panel, and a collapsible archived history drawer.
 
 import { useMemo, useRef, type ReactNode } from 'react';
-import type { CheckpointCheck } from '../../../../../core/domain/report-checkpoints.ts';
+import type { EditorialCheck } from '../../../../../core/domain/report-editorial.ts';
 import type {
   FlowArchivedNodeProjection,
   FlowNodeProjection,
   FlowProjection,
 } from '../../../../../core/domain/report-flow.ts';
-import type { ReportTaskRow } from '../../../../../core/domain/report.ts';
+import type { ReportTaskRow } from '../../../../../core/domain/track-task-inventory.ts';
 import { Icon } from '../../../ui/icon/public.tsx';
 import { useState } from '../../../ui/state/public.ts';
 import { EditorialByline, EditorialGateStrip } from '../editorial/primitives.tsx';
@@ -125,7 +125,7 @@ function archiveToneClass(item: FlowArchivedNodeProjection): string {
   }
 }
 
-function toEditorialChecks(node: FlowNodeProjection): readonly CheckpointCheck[] {
+function toEditorialChecks(node: FlowNodeProjection): readonly EditorialCheck[] {
   return node.gates.map((gate) => ({
     label: gate.label,
     status: gate.status,

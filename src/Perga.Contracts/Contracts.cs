@@ -74,7 +74,6 @@ public sealed record TrackDto(
     string? LeadSessionId,
     string? TemplateId,
     JsonElement TemplateInputs,
-    JsonElement TemplateState,
     IReadOnlyList<string> EnabledPlugins,
     long? ClosedAtMs,
     long? PinnedAtMs,

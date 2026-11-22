@@ -57,14 +57,14 @@ public sealed class PolicyVmTests
     }
 
     [Fact]
-    public void HeaderViewUsesEffectiveInputsAndCurrentStateWithoutCountCapsOrStateWrites()
+    public void HeaderViewUsesEffectiveInputsAndCurrentDataWithoutCountCapsOrWrites()
     {
         var policy = _vm.Compile("""
             export default defineTemplate({
               id: "view", title: "View", inputs: { unit: { type: "string", default: "steps" } },
               headerView(ctx) {
-                const value = String(ctx.state.count) + " " + ctx.inputs.unit;
-                ctx.state.count++;
+                const value = String(ctx.data.count) + " " + ctx.inputs.unit;
+                ctx.data.count++;
                 return {
                   badges: Array.from({length: 8}, () => ({label: ctx.trackId, tone: "accent"})),
                   notice: {text: "Ready", tone: "info"},
@@ -109,23 +109,24 @@ public sealed class PolicyVmTests
     }
 
     [Fact]
-    public void BeforeReport_CanDenyAskAndUpdateState()
+    public void BeforeReport_UsesPayloadAndDataWithoutPersistingMutations()
     {
         var policy = _vm.Compile("""
             export default {id:'report',title:'Report',before(a,ctx) {
               if(a.type !== 'report.commit') return Allow();
-              ctx.state.validations=(ctx.state.validations||0)+1;
-              if(a.nextMarkdown.includes('FORBIDDEN')) return Deny('Contains forbidden marker.');
+              ctx.data.validations=(ctx.data.validations||0)+1;
+              if(a.nextMarkdown.includes(ctx.data.forbidden)) return Deny('Contains forbidden marker.');
               if(a.nextMarkdown.includes('SIGN_OFF')) return AskHuman('Approve edit?',{approve:'Approve',deny:'Reject'});
               return Allow();
             }};
             """);
-        var result = _vm.Before(policy,"report.commit","track",ParseJson("""{"nextMarkdown":"FORBIDDEN"}"""),ParseJson("{}"),ParseJson("{}"));
-        Assert.IsType<GuardDecision.Deny>(result.Output);
-        Assert.Equal(1,result.NextState.GetProperty("validations").GetInt32());
-        var ask = _vm.Before(policy,"report.commit","track",ParseJson("""{"nextMarkdown":"SIGN_OFF"}"""),ParseJson("{}"),result.NextState);
-        Assert.IsType<GuardDecision.AskHuman>(ask.Output);
-        Assert.Equal(2,ask.NextState.GetProperty("validations").GetInt32());
+        var inputs = ParseJson("{}");
+        var data = ParseJson("""{"forbidden":"FORBIDDEN"}""");
+        var denied = _vm.Before(policy, "report.commit", "track", ParseJson("""{"nextMarkdown":"FORBIDDEN"}"""), inputs, data);
+        var ask = _vm.Before(policy, "report.commit", "track", ParseJson("""{"nextMarkdown":"SIGN_OFF"}"""), inputs, data);
+        Assert.IsType<GuardDecision.Deny>(denied);
+        Assert.IsType<GuardDecision.AskHuman>(ask);
+        Assert.False(data.TryGetProperty("validations", out _));
     }
 
     [Fact]
@@ -169,18 +170,18 @@ public sealed class PolicyVmTests
             export default defineTemplate({
               id: "mem",
               title: "Mem",
-              initialState: () => {
+              before: () => {
                 const chunks = [];
                 const unit = "x".repeat(1024 * 512);
                 for (let i = 0; i < 64; i++) {
                   chunks.push(unit + i);
                 }
-                return { count: chunks.length };
+                return Allow();
               }
             });
             """);
         var memEx = Assert.Throws<InvalidOperationException>(() =>
-            _vm.InitState(memoryPolicy, ParseJson("{}")));
+            _vm.Before(memoryPolicy, "tool.task_list", "t1", ParseJson("{}"), ParseJson("{}"), ParseJson("{}")));
         Assert.Contains("memory", memEx.Message, StringComparison.OrdinalIgnoreCase);
 
         // 4. Recursion depth (> 64) rejected
@@ -191,11 +192,11 @@ public sealed class PolicyVmTests
             export default defineTemplate({
               id: "rec",
               title: "Recursion",
-              initialState: () => ({ depth: recurse(200) })
+              before: () => Deny(String(recurse(200)))
             });
             """);
         var recEx = Assert.Throws<InvalidOperationException>(() =>
-            _vm.InitState(recursionPolicy, ParseJson("{}")));
+            _vm.Before(recursionPolicy, "tool.task_list", "t1", ParseJson("{}"), ParseJson("{}"), ParseJson("{}")));
         Assert.Contains("recursion", recEx.Message, StringComparison.OrdinalIgnoreCase);
 
         // 5. Strict mode enforced (implicit global variable throws ReferenceError)
@@ -210,21 +211,21 @@ public sealed class PolicyVmTests
             export default defineTemplate({
               id: "probe",
               title: "Host Isolation Probe",
-              initialState: () => ({
+              data: { initial: () => ({
                 hasSystem: typeof globalThis.System !== "undefined",
                 hasImportNamespace: typeof globalThis.importNamespace !== "undefined",
                 hasProcess: typeof globalThis.process !== "undefined",
                 hasRequire: typeof globalThis.require !== "undefined",
                 hasFetch: typeof globalThis.fetch !== "undefined"
-              })
+              }) }
             });
             """);
-        var probeState = _vm.InitState(probePolicy, ParseJson("{}")).NextState;
-        Assert.False(probeState.GetProperty("hasSystem").GetBoolean());
-        Assert.False(probeState.GetProperty("hasImportNamespace").GetBoolean());
-        Assert.False(probeState.GetProperty("hasProcess").GetBoolean());
-        Assert.False(probeState.GetProperty("hasRequire").GetBoolean());
-        Assert.False(probeState.GetProperty("hasFetch").GetBoolean());
+        var probeData = _vm.InitData(probePolicy, ParseJson("{}"));
+        Assert.False(probeData.GetProperty("hasSystem").GetBoolean());
+        Assert.False(probeData.GetProperty("hasImportNamespace").GetBoolean());
+        Assert.False(probeData.GetProperty("hasProcess").GetBoolean());
+        Assert.False(probeData.GetProperty("hasRequire").GetBoolean());
+        Assert.False(probeData.GetProperty("hasFetch").GetBoolean());
 
         // External filesystem / module import blocked (both bare and relative paths)
         Assert.ThrowsAny<Exception>(() =>
@@ -263,7 +264,7 @@ public sealed class PolicyVmTests
             """);
 
         var emptyInputs = ParseJson("{}");
-        var state = _vm.InitState(compiled, emptyInputs).NextState;
+        var data = ParseJson("{}");
 
         var askNoOpts = _vm.Before(compiled, "tool.ask_no_opts", "t1",
             JsonSerializer.SerializeToElement(new {
@@ -273,8 +274,8 @@ public sealed class PolicyVmTests
                 mcpServer = "perga",
                 toolName = "ask_no_opts",
                 arguments = emptyInputs
-            }), emptyInputs, state);
-        var ask = Assert.IsType<GuardDecision.AskHuman>(askNoOpts.Output);
+            }), emptyInputs, data);
+        var ask = Assert.IsType<GuardDecision.AskHuman>(askNoOpts);
         Assert.Equal("Confirm on staging?", ask.Title);
         Assert.Equal("Approve", ask.ApproveLabel);
         Assert.Equal("Deny", ask.DenyLabel);
@@ -287,8 +288,8 @@ public sealed class PolicyVmTests
                 mcpServer = "perga",
                 toolName = "deny_tool",
                 arguments = emptyInputs
-            }), emptyInputs, state);
-        var deny = Assert.IsType<GuardDecision.Deny>(denyRes.Output);
+            }), emptyInputs, data);
+        var deny = Assert.IsType<GuardDecision.Deny>(denyRes);
         Assert.Equal("Blocked on staging", deny.Reason);
 
     }

@@ -17,14 +17,11 @@ import type { ApiRequest,ApiTransportPort,ApiTransportResponse } from '../../../
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { toArea } from '../../../../core/domain/area.ts';
 import { ApiError,NotSentError } from '../../../../core/domain/failure-class.ts';
-import { readTrackReport, TRACK_REPORT_CARD_KIND } from '../../../../core/domain/report.ts';
-import { type TaskVerdict } from '../../../../core/domain/report-verdicts.ts';
 import { NEUTRAL_ACTIVITY } from '../../../../core/domain/track.ts';
 import { areaListQueryOptions, useWorkspace } from './workspace-queries.ts';
 import { modelCatalogQueryOptions } from './model-queries.ts';
 import { queryKeys } from './query-keys.ts';
 import { runOperation } from './query-operation.ts';
-import { taskVerdictsRefetchInterval } from './report-queries.ts';
 import { trackDetailQueryOptions, trackOverlaysQueryOptions, tracksInAreaQueryOptions } from './track-queries.ts';
 import { conversationHistoryQueryOptions as transcriptQueryOptions } from './conversation-queries.ts';
 import { useAreaMutations } from './area-mutations.ts';
@@ -602,70 +599,6 @@ describe('planner history pagination', () => {
 
 /* The kernel's `mark_running` stamps `worker_card_id` without emitting anything, so a wrong `false`
  * here leaves the panel's click-through dead until reload. */
-describe('task-verdict poll interval', () => {
-  /* The live branch asks whether the PANEL has a live row, not whether the wire has a live verdict. */
-  const declaration = (id: string, key: string) => ({
-    id, kind: 'task', rev: 1, payload: { key, kind: 'codex', declared_by: 'spec', ready: true, goal: 'g' },
-  });
-  const blocks = (declarations = [declaration('b-1', 'k')]) => readTrackReport([{
-    id: 'c1', track_id: 'w1', kind: TRACK_REPORT_CARD_KIND, title: null, sort: 0,
-    payload: { body: 'x', blocks: declarations }, deletable: false, created_at: 0, updated_at: 0,
-  }])?.blocks ?? null;
-  const interval = taskVerdictsRefetchInterval(blocks());
-  const state = (over: Partial<{ data: TaskVerdict[]; errorUpdateCount: number }>) =>
-    ({ state: { errorUpdateCount: 0, ...over } });
-  const at = (status: string): TaskVerdict[] =>
-    [{ blockId: 'b-1', key: 'k', schedulable: true, status, workerCardId: null }];
-
-  it('polls while a run sits inside the eventless window', () => {
-    expect(interval(state({ data: at('running') }))).toBe(3000);
-  });
-
-  it('stops once the read shows nothing left for a timer to find', () => {
-    expect(interval(state({ data: at('done') }))).toBe(false);
-    expect(interval(state({ data: [] }))).toBe(false);
-  });
-
-  /* A failed refetch keeps react-query's last good data, so an error leaves this branch unchanged. */
-  it('keeps polling a live run through a failed refetch, on the retained data', () => {
-    expect(interval(state({ data: at('running'), errorUpdateCount: 3 })))
-      .toBe(3000);
-  });
-
-  /* When the FIRST load fails there is no data, so `hasLiveTaskRun` is vacuously false. */
-  it('still schedules a retry when the initial load failed and there is no data', () => {
-    expect(interval(state({ errorUpdateCount: 1 }))).toBe(15_000);
-  });
-
-  /* Bounded: the report route also fails permanently (deleted track 404s, missing report card 500s). */
-  it('gives up after a bounded number of failed loads rather than hammering a dead route', () => {
-    expect(interval(state({ errorUpdateCount: 4 }))).toBe(15_000);
-    expect(interval(state({ errorUpdateCount: 5 }))).toBe(false);
-    expect(interval(state({ errorUpdateCount: 99 }))).toBe(false);
-  });
-
-  /* No timer while the very first fetch is still on the wire. */
-  it('does not schedule anything before the first fetch has resolved', () => {
-    expect(interval(state({}))).toBe(false);
-  });
-
-  /* The kernel synthesises a verdict for a deleted declaration (`blockId: ''`); no row is built for it,
-   * so nothing on screen can converge and a refetch on its account is unbounded cost. */
-  it('does not poll for an in-flight run the report has no row for', () => {
-    expect(interval(state({
-      data: [{ blockId: '', key: 'deleted', schedulable: true, status: 'running', workerCardId: 'c-9' }],
-    }))).toBe(false);
-  });
-
-  /* Premise for both of the above: the same verdict on a declaration this report DOES have still polls. */
-  it('still polls a live run whose declaration is in the document', () => {
-    expect(taskVerdictsRefetchInterval(blocks([declaration('b-1', 'deleted')]))(state({
-      data: [{ blockId: '', key: 'deleted', schedulable: true, status: 'running', workerCardId: 'c-9' }],
-    }))).toBe(3000);
-  });
-});
-
-
 describe('input metadata mutation reconciliation', () => {
   it('retains an input 401 without starting reconciliation reads even without an unauthorized-channel subscriber', async () => {
     const client = new QueryClient();

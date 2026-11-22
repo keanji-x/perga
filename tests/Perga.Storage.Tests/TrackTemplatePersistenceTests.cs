@@ -38,11 +38,16 @@ public sealed class TrackTemplatePersistenceTests
         await store.UpsertAreaAsync(StorageTestHarness.CreateArea(), default);
         var (track, report, lead) = StorageTestHarness.CreateSeedTrack();
         await store.CreateTrackAsync(track, report, "old source", lead, default);
+        using (var conn = harness.OpenRawInspectConnection())
+        {
+            Assert.Equal("{}", await conn.QuerySingleAsync<string>("SELECT template_state_json FROM tracks WHERE id = @Id", new { track.Id }));
+            await conn.ExecuteAsync("UPDATE tracks SET template_state_json = 'unused historical data' WHERE id = @Id", new { track.Id });
+        }
+
         var updated = track with
         {
             TemplateId = "custom",
             TemplateInputs = StorageTestHarness.Json("""{"input":"value"}"""),
-            TemplateState = StorageTestHarness.Json("""{"initialized":true}"""),
             Data = StorageTestHarness.Json("""{"research":42}"""),
             DataRev = 1,
             EnabledPlugins = ["existing", "custom"],
@@ -51,7 +56,7 @@ public sealed class TrackTemplatePersistenceTests
         const string source = "export default defineTemplate({id:'custom',title:'Custom'});";
         var evt = StorageTestHarness.CreateEvent("track.updated", track.Id, track.AreaId, createdAtMs: 5000);
         await store.UpdateTrackTemplateAndEmitAsync(updated, source, evt, default, writeData: true);
-        await store.UpdateTrackAndEmitAsync(track with { Title = "Renamed", TemplateId = updated.TemplateId, TemplateInputs = updated.TemplateInputs, TemplateState = updated.TemplateState, EnabledPlugins = updated.EnabledPlugins, UpdatedAtMs = updated.UpdatedAtMs }, null, default);
+        await store.UpdateTrackAndEmitAsync(track with { Title = "Renamed", TemplateId = updated.TemplateId, TemplateInputs = updated.TemplateInputs, EnabledPlugins = updated.EnabledPlugins, UpdatedAtMs = updated.UpdatedAtMs }, null, default);
         await store.DisposeAsync();
 
         await using var reopened = new SqliteTrackStore(new SqliteStorageOptions { DbPath = harness.DbPath, DataDir = harness.DataDir });
@@ -61,12 +66,15 @@ public sealed class TrackTemplatePersistenceTests
         Assert.Equal("custom", snapshot.Track.TemplateId);
         Assert.Equal("Renamed", snapshot.Track.Title);
         Assert.Equal("value", snapshot.Track.TemplateInputs.GetProperty("input").GetString());
-        Assert.True(snapshot.Track.TemplateState.GetProperty("initialized").GetBoolean());
         Assert.Equal(42, snapshot.Track.Data.GetProperty("research").GetInt32());
         Assert.Equal(1, snapshot.Track.DataRev);
         Assert.Equal(["existing", "custom"], snapshot.Track.EnabledPlugins);
         Assert.Equal(5000, snapshot.Track.UpdatedAtMs);
         Assert.Single(await reopened.ListEventsSinceAsync(0, track.Id), e => e.Kind == "track.updated");
+        using var persisted = harness.OpenRawInspectConnection();
+        Assert.Equal("unused historical data", await persisted.QuerySingleAsync<string>(
+            "SELECT template_state_json FROM tracks WHERE id = @Id", new { track.Id }));
+
     }
 
     [Fact]

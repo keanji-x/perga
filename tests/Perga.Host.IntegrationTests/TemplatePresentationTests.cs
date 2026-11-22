@@ -42,7 +42,26 @@ public sealed class TemplatePresentationTests
             Assert.False(string.IsNullOrWhiteSpace(track.GetProperty("templateTitle").GetString()));
             Assert.False(track.TryGetProperty("templateHeaderView", out var header) && header.ValueKind == JsonValueKind.Object);
             Assert.False(track.TryGetProperty("templateSchedules", out _));
+
+            var views = await host.AuthenticatedClient.GetFromJsonAsync<JsonElement>($"/api/v1/tracks/{trackId}/views");
+            Assert.False(views.TryGetProperty("humanReadOnly", out _));
         }
+    }
+
+    [Fact]
+    public async Task EquityResearchReportUsesTheSelectedTicker()
+    {
+        await using var host = new PergaHostTestCluster();
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        var area = await kernel.CreateAreaAsync(new("Research", DefaultCwd: host.DataDir));
+        var created = await kernel.CreateTrackAsync(new(area.Id, TemplateId: "equity-research",
+            TemplateInputs: JsonSerializer.SerializeToElement(new { ticker = "AAPL" })));
+
+        var report = await host.AuthenticatedClient.GetFromJsonAsync<JsonElement>($"/api/v1/tracks/{created.Track.Id}/report");
+        var markdown = report.GetProperty("renderedMarkdown").GetString();
+        Assert.Contains("AAPL", markdown);
+        Assert.DoesNotContain("NVDA", markdown);
+        Assert.DoesNotContain("${inputs.ticker}", markdown);
     }
 
     [Theory]
@@ -69,7 +88,7 @@ public sealed class TemplatePresentationTests
     }
 
     [Fact]
-    public async Task RestProjectionUsesPersistedSnapshotAfterRestartAndDoesNotPersistHeaderStateChanges()
+    public async Task RestProjectionUsesPersistedSnapshotAndDiscardsHeaderDataMutations()
     {
         var dataDir = Directory.CreateTempSubdirectory("perga-presentation-").FullName;
         try
@@ -89,10 +108,10 @@ public sealed class TemplatePresentationTests
                         export default defineTemplate({
                           id: 'snapshot-view', title: 'Snapshot title',
                           inputs: { unit: { type: 'string', default: 'steps' } },
-                          initialState: () => ({count: 7}),
+                          data: { initial: { count: 7 } },
                           headerView(ctx) {
-                            const value = String(ctx.state.count) + ' ' + ctx.inputs.unit;
-                            ctx.state.count++;
+                            const value = String(ctx.data.count) + ' ' + ctx.inputs.unit;
+                            ctx.data.count++;
                             return {metrics: [{label: ctx.trackId, value}]};
                           },
                         });
@@ -109,7 +128,7 @@ public sealed class TemplatePresentationTests
                 var updated = await response.Content.ReadFromJsonAsync<JsonElement>();
                 Assert.Equal("Snapshot title", updated.GetProperty("templateTitle").GetString());
                 var persisted = await host.Services.GetRequiredService<ITrackStore>().LoadTrackAggregateAsync(trackId, default);
-                Assert.Equal(7, persisted!.Track.TemplateState.GetProperty("count").GetInt32());
+                Assert.Equal(7, persisted!.Track.Data.GetProperty("count").GetInt32());
             }
         }
         finally { Directory.Delete(dataDir, recursive: true); }
@@ -127,7 +146,8 @@ public sealed class TemplatePresentationTests
             var metric = Assert.Single(track.GetProperty("templateHeaderView").GetProperty("metrics").EnumerateArray());
             Assert.Equal(trackId, metric.GetProperty("label").GetString());
             Assert.Equal("7 km", metric.GetProperty("value").GetString());
-            Assert.Equal(7, track.GetProperty("templateState").GetProperty("count").GetInt32());
+            Assert.Equal(7, track.GetProperty("data").GetProperty("count").GetInt32());
+            Assert.False(track.TryGetProperty("templateState", out _));
         }
     }
 }

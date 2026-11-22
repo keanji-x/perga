@@ -167,4 +167,14 @@
       margin-inline-start: max(0px, calc((100% - var(--document-measure, 40rem)) / 2));
     }
   }
+
+  .htmlPage {
+    display: block;
+    flex: 1 1 auto;
+    inline-size: 100%;
+    min-block-size: 0;
+    border: none;
+    border-radius: var(--radius-sm);
+    background: var(--surface-code);
+  }
 }

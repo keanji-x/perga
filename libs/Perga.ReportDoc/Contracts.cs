@@ -4,13 +4,14 @@ namespace Perga.ReportDoc;
 
 public enum ReportBlockKind
 {
-    Prose,
-    Task,
-    Html,
-    Table,
-    View,
-    Checkpoints,
-    Widget
+    // Historical report revisions may contain either these ordinals or their names.
+    Prose = 0,
+    Task = 1,
+    Html = 2,
+    Table = 3,
+    View = 4,
+    Checkpoints = 5,
+    Widget = 6
 }
 
 public sealed record ReportBlock(

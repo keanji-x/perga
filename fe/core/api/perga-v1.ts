@@ -51,6 +51,7 @@ export type TaskRunStatus = z.infer<typeof taskRunStatusSchema>;
 export const semanticVerdictSchema = z.enum(['none', 'accepted', 'rejected']);
 export type SemanticVerdict = z.infer<typeof semanticVerdictSchema>;
 
+// Historical kinds still occur on the Host wire.
 export const reportBlockKindSchema = z.enum(['prose', 'task', 'html', 'table', 'view', 'checkpoints', 'widget']);
 export type ReportBlockKind = z.infer<typeof reportBlockKindSchema>;
 
@@ -95,21 +96,12 @@ export const providerStatusDtoSchema = z.object({
 });
 export type ProviderStatusDto = z.infer<typeof providerStatusDtoSchema>;
 
-export const sectionRuleDtoSchema = z.object({
-  h1: z.string(),
-  omitIfEmpty: z.boolean().nullish().transform((v) => v ?? false),
-  editableBy: z.array(z.string()).nullish(),
-});
-export type SectionRuleDto = z.infer<typeof sectionRuleDtoSchema>;
-
 export const compiledTemplateManifestDtoSchema = z.object({
   id: z.string(),
   title: z.string().optional(),
   description: z.string().nullish().transform((v) => v ?? null),
   defaultPlugins: z.array(z.string()).nullish().transform((v) => v ?? []),
   inputsSchema: z.unknown().default({ type: 'object', properties: {} }),
-  sections: z.array(sectionRuleDtoSchema).nullish().transform((v) => v ?? []),
-  maxProseChars: z.number().int().nullish(),
   requireGateForReadWrite: z.boolean().nullish().transform((v) => v ?? false),
   workspaceDriver: z.string().nullish(),
   workspaceLowerCacheDirs: z.array(z.string()).nullish().transform((v) => v ?? []),
@@ -121,9 +113,7 @@ export const compiledTemplateManifestDtoSchema = z.object({
   hasHeaderView: z.boolean().default(false),
   initialReportMarkdown: z.string().nullish().transform((v) => v ?? ''),
   routing: z.array(z.unknown()).nullish(),
-  checkpoints: z.array(z.unknown()).nullish(),
   viewNames: z.array(z.string()).nullish(),
-  humanReadOnly: z.boolean().nullish().transform((v) => v ?? false),
 }).transform((raw) => ({
   ...raw,
   title: raw.title ?? raw.id,
@@ -179,7 +169,7 @@ export const templateHeaderViewDtoSchema = z.object({
 export const trackTemplateSnapshotSchema = z.object({
   snapshot: z.string().nullish().transform((v) => v ?? null),
   manifest: compiledTemplateManifestDtoSchema.nullish().transform((v) => v ?? null),
-  inputs: z.unknown(), state: z.unknown(),
+  inputs: z.unknown(), data: z.unknown(),
   headerView: templateHeaderViewDtoSchema.nullish().transform((v) => v ?? null),
 });
 
@@ -202,7 +192,6 @@ export const trackDtoSchema = z.object({
   leadSessionId: z.string().nullish(),
   templateId: z.string().nullish(),
   templateInputs: z.unknown().default({}),
-  templateState: z.unknown().default({}),
   data: z.record(z.string(), z.unknown()).default({}),
   dataRev: z.number().int().nonnegative().default(0),
   flowRev: z.number().int().nonnegative().default(0),

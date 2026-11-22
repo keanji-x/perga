@@ -32,7 +32,7 @@ internal static class KernelMcpReportSupport
             },
             "includeContract": {
               "type": "boolean",
-              "description": "When true, includes concise authoring contracts and minimal examples for perga-block fences (task, table, view, html, checkpoints, widget)."
+              "description": "When true, includes the authoring contract and examples for Markdown prose and perga-block widgets."
             }
           }
         }
@@ -76,7 +76,7 @@ internal static class KernelMcpReportSupport
                     "properties": {
                       "op": { "type": "string", "enum": ["upsert", "upsert_block"] },
                       "id": { "type": "string" },
-                      "blockKind": { "type": "string", "enum": ["prose", "task", "html", "table", "view", "checkpoints", "widget"] },
+                      "blockKind": { "type": "string", "enum": ["prose", "widget"] },
                       "markdown": { "type": "string" },
                       "payload": {},
                       "position": { "type": "integer", "minimum": 0 }
@@ -365,104 +365,22 @@ internal static class KernelMcpReportSupport
 
     private static JsonElement BuildBlockContract() => JsonHelpers.ParseClone("""
         {
-          "fenceSyntax": "```perga-block <kind>\n<json or html>\n```",
+          "fenceSyntax": "```perga-block widget\n<json>\n```",
           "ops": {
-            "replace_section": { "op": "replace_section", "sectionH1": "Overview", "markdown": "Section body" },
-            "upsert": { "op": "upsert", "id": "b_1234", "blockKind": "prose|task|table|view|html|checkpoints|widget", "markdown": "...", "payload": {}, "position": 0 },
+            "replaceSection": { "op": "replace_section", "sectionH1": "Progress", "markdown": "# Progress\n..." },
+            "upsert": { "op": "upsert", "id": "b_1234", "blockKind": "prose", "markdown": "...", "position": 0 },
             "delete": { "op": "delete", "id": "b_1234" },
             "move": { "op": "move", "id": "b_1234", "toIndex": 0 }
           },
           "kinds": {
-            "task": {
-              "required": ["taskKey", "kind", "access", "ready", "goal"],
-              "example": {
-                "taskKey": "impl-1",
-                "kind": "subagent",
-                "access": "read_write",
-                "ready": true,
-                "dependsOn": [],
-                "goal": "Implement change",
-                "acceptance": "Tests pass"
-              }
-            },
-            "table": {
-              "required": ["columns", "rows"],
-              "notes": "Each column requires unique key and label (align: left|right optional). Each row key must match a declared column key; cell values must be string, number, or null.",
-              "example": {
-                "caption": "Summary",
-                "columns": [
-                  { "key": "name", "label": "Name", "align": "left" },
-                  { "key": "count", "label": "Count", "align": "right" }
-                ],
-                "rows": [
-                  { "name": "Backend", "count": 9 }
-                ]
-              }
-            },
-            "view": {
-              "required": ["version", "title", "description", "snapshot", "rows"],
-              "notes": "version must be 1. snapshot is required ({id, observedAt, producedAt}) when any inline cell is used. row.layout (one|two|three|two-wide-start|two-wide-end) must match cells.length. Cell kinds: metrics, distribution, bars, time-series, table, meter, records, live.",
-              "example": {
-                "version": 1,
-                "title": "Overview",
-                "description": "Key metrics",
-                "snapshot": { "id": "snap-1", "observedAt": 1700000000000, "producedAt": 1700000000000 },
-                "rows": [
-                  {
-                    "id": "row-1",
-                    "title": "Metrics",
-                    "layout": "one",
-                    "cells": [
-                      {
-                        "kind": "metrics",
-                        "id": "m-1",
-                        "title": "Totals",
-                        "items": [
-                          {
-                            "id": "total",
-                            "label": "Items",
-                            "detail": "Active",
-                            "emphasis": "primary",
-                            "tone": "positive",
-                            "value": { "state": "known", "amount": 42, "decimals": 0, "placement": "suffix", "signed": false, "unit": "" }
-                          }
-                        ]
-                      }
-                    ]
-                  }
-                ]
-              }
-            },
-            "html": {
-              "required": ["path"],
-              "notes": "Workspace-relative .html/.htm file path rendered in a sandboxed frame (optional title and height).",
-              "example": {
-                "path": "docs/overview.html",
-                "title": "Architecture diagram",
-                "height": 480
-              }
-            },
-            "checkpoints": {
-              "required": ["items"],
-              "notes": "Native circular stage stepper with per-stage deliverables, workspace doc links, Worker session links, and collapsible scheduling rules.",
-              "example": {
-                "tier": "AGENTS.md · L2",
-                "rules": [{ "label": "Review 模型锁", "text": "role=review 强制使用指定模型" }],
-                "items": [
-                  { "id": "design", "title": "设计", "status": "done", "statusLabel": "已对齐", "docPath": "docs/design/overview.md", "summary": "已对齐目标与边界。" },
-                  { "id": "review-l2", "title": "L2 Review", "status": "pending", "statusLabel": "预注册", "role": "review", "dependsOn": ["设计"], "constraint": "role=review · 强制模型" }
-                ]
-              }
+            "prose": {
+              "notes": "Write standard Markdown, including native tables, code fences and links."
             },
             "widget": {
               "required": ["use", "view"],
-              "notes": "Template v2 data-bound view block. use is 'builtin:stepper', 'builtin:list', 'builtin:table', 'builtin:detail', or a package-relative './widgets/*.html' path (optional height, chrome: 'seamless'|'framed', selectionKey, title).",
-              "example": {
-                "use": "./widgets/range-axis.html",
-                "view": "rangeAxis",
-                "height": 210,
-                "chrome": "seamless"
-              }
+              "notes": "Use builtin:flow, builtin:list, builtin:table, or a package-relative ./widgets/*.html path. Set view to flow for builtin:flow and to the template view name for other widgets. Optional fields include height, chrome (seamless or framed), and title.",
+              "example": { "use": "./widgets/range-axis.html", "view": "valuationAxis", "height": 210, "chrome": "seamless" },
+              "flowExample": { "use": "builtin:flow", "view": "flow" }
             }
           }
         }

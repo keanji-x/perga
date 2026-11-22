@@ -24,11 +24,7 @@ export function createTrackTaskFixture() {
     if (request.method !== 'GET') throw new Error(`Unexpected write: ${request.method} ${request.path}`);
     if (request.path === '/api/v1/areas') return Promise.resolve(ok([area]));
     if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return Promise.resolve(ok([track]));
-    if (request.path === '/api/v1/tracks/w1') return Promise.resolve(ok({ ...fixtureSnapshot(track, [], { docRev: reportCard.payload.docRev, summary: reportCard.payload.summary, leadingComment: '', blocks: reportCard.payload.blocks.map(block => ({ ...block, markdown: '' })) }), tasks: [task] }));
-    if (request.path === '/api/v1/tracks/w1/report') return Promise.resolve(ok({ ...reportCard.payload, taskDiagnostics: [
-      { blockId: declaration.id, key: taskKey, schedulable: true, status: task.status,
-        statusDetail: task.statusDetail, workerCardId: null, diagnostics: [] },
-    ] }));
+    if (request.path === '/api/v1/tracks/w1') return Promise.resolve(ok({ ...fixtureSnapshot(track, [], { docRev: reportCard.payload.docRev, summary: reportCard.payload.summary, leadingComment: '', blocks: [{ id: 'finding', rev: 1, kind: 'prose', markdown: goal, payload: null }, ...reportCard.payload.blocks.map(block => ({ ...block, markdown: '' }))] }), tasks: [task] }));
     if (request.path === '/api/settings') return Promise.resolve(ok({}));
     return Promise.resolve(ok([]));
   } };

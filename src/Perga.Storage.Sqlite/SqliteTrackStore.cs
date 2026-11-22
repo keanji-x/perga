@@ -327,10 +327,9 @@ public sealed class SqliteTrackStore : ITrackStore, IAsyncDisposable, ISessionIn
         byte[] compressedRevisionBlocks,
         string? authorSessionId,
         string commitMessage,
-        JsonElement nextTemplateState,
         EventEnvelopeDto evt,
         CancellationToken ct) =>
-        _reportRepository.SaveReportAsync(trackId, report, compressedRevisionBlocks, authorSessionId, commitMessage, nextTemplateState, evt, ct);
+        _reportRepository.SaveReportAsync(trackId, report, compressedRevisionBlocks, authorSessionId, commitMessage, evt, ct);
 
     public Task<IReadOnlyList<ReportBlock>> GetReportRevisionBlocksAsync(
         string trackId,
@@ -340,7 +339,6 @@ public sealed class SqliteTrackStore : ITrackStore, IAsyncDisposable, ISessionIn
 
     public Task UpsertTaskAsync(
         TaskDto task,
-        JsonElement? nextTemplateState,
         EventEnvelopeDto? evt,
         CancellationToken ct,
         AgentSessionDto? session = null,
@@ -349,7 +347,7 @@ public sealed class SqliteTrackStore : ITrackStore, IAsyncDisposable, ISessionIn
         SessionMessage? initialMessage = null,
         bool writeNewRunBoundary = false,
         bool suppressDefaultWake = false) =>
-        _taskRepository.UpsertTaskAsync(task, nextTemplateState, evt, ct, session, sessionEvent, wakePrompt, initialMessage, writeNewRunBoundary, suppressDefaultWake);
+        _taskRepository.UpsertTaskAsync(task, evt, ct, session, sessionEvent, wakePrompt, initialMessage, writeNewRunBoundary, suppressDefaultWake);
 
     public Task UpsertSessionAsync(AgentSessionDto session, EventEnvelopeDto? evt, CancellationToken ct) =>
         _sessionRepository.UpsertSessionAsync(session, evt, ct);

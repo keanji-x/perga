@@ -359,6 +359,27 @@ public sealed partial class ReportDocEngineTests
     }
 
     [Fact]
+    public void DecompressZstd_ReadsHistoricalBlockNamesAndOrdinals()
+    {
+        const string historicalJson = """
+            [
+              {"id":"task","rev":1,"kind":1,"payload":{"task_key":"old"}},
+              {"id":"html","rev":1,"kind":"html","markdown":"<p>Retained</p>"},
+              {"id":"table","rev":1,"kind":3,"payload":[]},
+              {"id":"view","rev":1,"kind":"view","payload":{}},
+              {"id":"checkpoints","rev":1,"kind":5,"payload":{"items":[]}},
+              {"id":"widget","rev":1,"kind":"widget","payload":{"use":"builtin:flow"}}
+            ]
+            """;
+        using var compressor = new ZstdSharp.Compressor();
+        var blocks = _engine.DecompressZstd(compressor.Wrap(Encoding.UTF8.GetBytes(historicalJson)).ToArray());
+        Assert.Equal(new[] { ReportBlockKind.Task, ReportBlockKind.Html, ReportBlockKind.Table, ReportBlockKind.View,
+            ReportBlockKind.Checkpoints, ReportBlockKind.Widget }, blocks.Select(block => block.Kind));
+        Assert.Equal("old", blocks[0].Payload!.Value.GetProperty("task_key").GetString());
+        Assert.Equal(0, blocks[4].Payload!.Value.GetProperty("items").GetArrayLength());
+    }
+
+    [Fact]
     public void CompressZstd_And_DecompressZstd_RoundTripAllBlockKindsAndPayloads()
     {
         using var taskJson = JsonDocument.Parse("""{"key":"compile","dependsOn":["init"],"ready":true}""");

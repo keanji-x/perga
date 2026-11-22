@@ -126,7 +126,7 @@ public sealed class AttemptExecutionAndGateTests
         Assert.Contains(ctx.CommandRunner.ExecutedCommands,
             c => c.Command == "dotnet test --no-restore" && c.WorkingDirectory == expectedCwd);
 
-        // Verify task.Meta merged JSON & PolicyVm.OnTaskSettled received merged Meta
+        // Verify settlement persisted merged metadata and gate verdict
         var settledTask = (await ctx.Kernel.ListTasksAsync(trackId)).Single(t => t.TaskKey == "step-1-write");
         Assert.Equal(TaskRunStatus.Done, settledTask.Status);
         Assert.Equal("kkmpptxz", settledTask.Meta!.Value.GetProperty("changeId").GetString());
@@ -137,10 +137,6 @@ public sealed class AttemptExecutionAndGateTests
         Assert.True(firstGateStep.GetProperty("passed").GetBoolean());
         Assert.Contains("All tests passed!", firstGateStep.GetProperty("stdout").GetString());
         Assert.Contains("All tests passed!", firstGateStep.GetProperty("outputTail").GetString());
-
-        Assert.True(ctx.PolicyVm.RecordedSettledEvents.TryDequeue(out var settledCtx));
-        Assert.Equal("done", settledCtx.GetProperty("status").GetString());
-        Assert.Equal("kkmpptxz", settledCtx.GetProperty("meta").GetProperty("changeId").GetString());
 
         // Verify LeadSessionId was woken!
         Assert.True(ctx.Store.GetTurnsForSession(leadId).Count > leadTurnsBefore);

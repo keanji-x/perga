@@ -293,5 +293,30 @@
     "outcomeSummary": "Validation failed",
     "triggerRunKey": null,
     "archivedAtMs": null
+  },
+  "currentTemplate": {
+    "snapshot": "template source",
+    "manifest": {
+      "id": "equity-research",
+      "title": "Equity research",
+      "description": null,
+      "defaultPlugins": [],
+      "inputsSchema": { "type": "object" },
+      "requireGateForReadWrite": false,
+      "workspaceDriver": null,
+      "workspaceLowerCacheDirs": [],
+      "workspaceCreateCmd": null,
+      "workspaceCloseCmd": null,
+      "afterWorkerDoneCmd": null,
+      "flow": [],
+      "routing": [],
+      "extends": null,
+      "hasHeaderView": false,
+      "initialReportMarkdown": "",
+      "viewNames": null
+    },
+    "inputs": { "ticker": "SAMPLE" },
+    "data": { "events": [] },
+    "headerView": null
   }
 }
