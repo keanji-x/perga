@@ -137,8 +137,12 @@ public sealed class TemplateBindingToolsTests
         await ctx.Kernel.CommitReportAsync(track.Track.Id, lead!, new(report.Anchor,
             [new BlockOp.UpsertBlockOp(null, ReportBlockKind.Prose, "# Overview", null)]));
         await Call(ctx, track, KernelMcpToolNames.TrackStatus, new { });
-        await Call(ctx, track, KernelMcpToolNames.ReportRead, new { });
         await Call(ctx, track, KernelMcpToolNames.TemplateRead, new { templateId = "__current__" });
+        await Call(ctx, track, KernelMcpToolNames.FlowRead, new { });
+
+        var deniedRead = await Assert.ThrowsAsync<KernelException>(() =>
+            Call(ctx, track, KernelMcpToolNames.TaskList, new { }));
+        Assert.Equal(KernelErrorCode.PolicyDenied, deniedRead.Code);
 
         var denied = await Assert.ThrowsAsync<KernelException>(() =>
             Call(ctx, track, KernelMcpToolNames.TrackSet, new { source = InlineSource }));
@@ -237,7 +241,6 @@ public sealed class TemplateBindingToolsTests
         var saved = (await ctx.Store.LoadTrackAggregateAsync(track.Track.Id, default))!;
         var task = Assert.Single(saved.Tasks, task => task.TaskKey == "review");
         Assert.Equal(AccessMode.ReadOnly, task.Access);
-        Assert.False(task.Context!.Value.GetProperty("explicitAccess").GetBoolean());
         Assert.NotNull(task.SessionId);
         Assert.NotEqual(TaskRunStatus.Failed, task.Status);
 
@@ -323,7 +326,7 @@ public sealed class TemplateBindingToolsTests
                 TestJson.FromObject(new { path = "pipe.perga.js", dryRun = true }),
                 cts.Token));
         Assert.Equal(KernelErrorCode.InvalidArgument, ex.Code);
-        Assert.Contains("regular file", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("readable file", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

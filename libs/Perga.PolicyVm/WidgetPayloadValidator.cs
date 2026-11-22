@@ -69,7 +69,7 @@ public static class WidgetPayloadValidator
         string use,
         string view,
         IReadOnlyCollection<string>? declaredViews,
-        TemplateBundle? bundle)
+        IReadOnlySet<string>? widgetAssets)
     {
         if (string.Equals(use, "builtin:flow", StringComparison.Ordinal))
         {
@@ -85,7 +85,7 @@ public static class WidgetPayloadValidator
         }
 
         if (use.StartsWith("./widgets/", StringComparison.Ordinal) &&
-            bundle?.TryGetFile(use, out _) != true)
+            widgetAssets?.Contains(use) != true)
         {
             issues.Add(("missing_widget_asset", $"Widget asset '{use}' is missing from the active template."));
         }

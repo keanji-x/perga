@@ -41,7 +41,7 @@ public static class TaskGraphScheduler
 
             if (task.Status is TaskRunStatus.Running or TaskRunStatus.Verifying)
             {
-                if (!HoldsWorkspaceBetweenProbes(task, flowNodesById?.GetValueOrDefault(task.TaskKey)))
+                if (IsWorkspaceLockExempt(task) || (task.Kind == "flow_watch" && FlowConstants.IsFlowTask(task)))
                 {
                     continue;
                 }
@@ -121,7 +121,7 @@ public static class TaskGraphScheduler
         return exempt.Length == 0 ? selectedWorkspace : [.. exempt, .. selectedWorkspace];
     }
 
-    private static bool IsWorkspaceLockExempt(TaskDto task)
+    internal static bool IsWorkspaceLockExempt(TaskDto task)
     {
         if (!FlowConstants.IsFlowTask(task))
         {
@@ -140,16 +140,6 @@ public static class TaskGraphScheduler
                ctx.TryGetProperty("prChecks", out var prEl) &&
                prEl.ValueKind == JsonValueKind.Number;
     }
-
-    internal static bool UsesPerProbeWorkspace(FlowNodeSpecDto node) =>
-        string.Equals(node.Do.Kind, "watch", StringComparison.Ordinal) &&
-        !string.IsNullOrWhiteSpace(node.Do.Cmd) &&
-        (FlowConstants.IsRepeatingWatch(node) || FlowConstants.WatchTimeoutSeconds(node.Do) is null);
-
-    internal static bool HoldsWorkspaceBetweenProbes(TaskDto task, FlowNodeSpecDto? node) =>
-        !IsWorkspaceLockExempt(task) &&
-        !(task.Kind == "flow_watch" && FlowConstants.IsFlowTask(task) &&
-          node is not null && UsesPerProbeWorkspace(node));
 
     private static bool AreDependenciesSatisfied(
         TaskDto task,

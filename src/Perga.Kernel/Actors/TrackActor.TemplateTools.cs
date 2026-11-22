@@ -319,10 +319,13 @@ public sealed partial class TrackActor
         if (_policy is null) throw KernelException.Conflict("The track has no active template.");
         if (patch.ValueKind != JsonValueKind.Object) throw KernelException.InvalidArgument("inputs must be an object.");
         var schema = _policy.Manifest.InputsSchema;
-        foreach (var entry in patch.EnumerateObject())
-            if (!schema.TryGetProperty(entry.Name, out var _))
-                throw KernelException.InvalidArgument($"Unknown template input '{entry.Name}'. Allowed inputs: " +
-                    string.Join(", ", schema.EnumerateObject().Select(property => property.Name)) + ".");
+        if (schema.EnumerateObject().Any())
+        {
+            foreach (var entry in patch.EnumerateObject())
+                if (!schema.TryGetProperty(entry.Name, out var _))
+                    throw KernelException.InvalidArgument($"Unknown template input '{entry.Name}'. Allowed inputs: " +
+                        string.Join(", ", schema.EnumerateObject().Select(property => property.Name)) + ".");
+        }
         var merged = JsonNode.Parse(_track.TemplateInputs.GetRawText())!.AsObject();
         foreach (var entry in patch.EnumerateObject())
         {

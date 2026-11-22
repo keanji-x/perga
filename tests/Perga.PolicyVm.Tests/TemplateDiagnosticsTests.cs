@@ -124,6 +124,9 @@ public sealed class TemplateDiagnosticsTests
         Assert.Contains("Unknown template input keys: [User, typo]", error.Message);
         Assert.Contains("Allowed input keys: [count, user]", error.Message);
         _vm.ValidateInputs(policy, Json("""{"user":"name"}"""));
+
+        var undeclared = _vm.Compile("export default { id: 'free', title: 'Free' };");
+        _vm.ValidateInputs(undeclared, Json("""{"target":"prod-cluster"}"""));
     }
 
     [Fact]

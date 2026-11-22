@@ -53,7 +53,8 @@ public sealed record CompiledTemplateManifest(
 public sealed record CompiledPolicy(
     string TemplateId,
     string JsSource,
-    CompiledTemplateManifest Manifest);
+    CompiledTemplateManifest Manifest,
+    IReadOnlySet<string>? WidgetAssets = null);
 
 public sealed record PolicyTurnPreparation(string? Context, GuardDecision Decision);
 

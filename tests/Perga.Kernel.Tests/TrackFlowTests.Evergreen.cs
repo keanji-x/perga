@@ -410,4 +410,57 @@ public sealed partial class TrackFlowTests
         Assert.Equal("model-b", wave2Launch.Model);
         Assert.Null(wave2Launch.ReasoningEffort);
     }
+
+    [Fact]
+    public async Task FiniteCommandWatchDoesNotRunProbeAfterDeadlineWhileWaitingOnMailbox()
+    {
+        var clock = new ControllableTimeProvider();
+        await using var ctx = new KernelTestContext(timeProvider: clock);
+        var trackId = (await ctx.CreateDefaultTrackAsync()).TrackSnap.Track.Id;
+        var probeRuns = 0;
+        ctx.CommandRunner.Handler = (_, _) =>
+        {
+            Interlocked.Increment(ref probeRuns);
+            return Task.FromResult(new ShellCommandResult(75, "wait", "", false, 1));
+        };
+
+        var commit = await ctx.Kernel.CommitTrackFlowAsync(trackId, false, 0, Human, content: """
+            {
+              "rev": 0,
+              "nodes": [
+                {"id": "watch", "do": {"kind": "watch", "cmd": "probe", "interval": "5s", "timeout": "10s"}}
+              ]
+            }
+            """);
+        Assert.True(commit.Ok);
+        await WaitUntilAsync(() => Task.FromResult(probeRuns == 1 && clock.HasTimerDueAt(clock.GetUtcNow() + TimeSpan.FromSeconds(5))));
+
+        var actor = ctx.Kernel.Actors.GetOrActivate(trackId);
+        var mailboxEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseMailbox = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var hold = actor.EnqueueAsync(async _ =>
+        {
+            mailboxEntered.TrySetResult();
+            await releaseMailbox.Task;
+        });
+        await mailboxEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        try
+        {
+            clock.Advance(TimeSpan.FromSeconds(5));
+            await WaitUntilAsync(() => Task.FromResult(ctx.Kernel.DispatchAdmission.ActiveDispatches > 0));
+            clock.Advance(TimeSpan.FromSeconds(6));
+        }
+        finally
+        {
+            releaseMailbox.TrySetResult();
+        }
+        await hold;
+
+        await WaitUntilAsync(async () =>
+        {
+            var t = Assert.Single((await ctx.Store.LoadTrackAggregateAsync(trackId, default))!.Tasks, x => x.TaskKey == "watch");
+            return t.Status == TaskRunStatus.Done && t.Outcome == FlowOutcome.Blocked;
+        });
+        Assert.Equal(1, probeRuns);
+    }
 }

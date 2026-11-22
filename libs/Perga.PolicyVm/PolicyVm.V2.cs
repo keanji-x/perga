@@ -345,7 +345,7 @@ public sealed partial class PolicyVm
                     throw new InvalidOperationException($"perga-block widget invalid: {payloadError}");
                 }
 
-                var refIssues = WidgetPayloadValidator.ValidateReferences(use, viewName, viewSet, bundle);
+                var refIssues = WidgetPayloadValidator.ValidateReferences(use, viewName, viewSet, bundle.WidgetAssetPaths());
                 if (refIssues.Count > 0)
                 {
                     throw new InvalidOperationException($"perga-block widget invalid: {refIssues[0].Message}");

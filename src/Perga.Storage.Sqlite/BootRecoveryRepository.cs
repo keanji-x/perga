@@ -31,7 +31,7 @@ internal sealed class BootRecoveryRepository
                                   SELECT 1 FROM tasks task
                                   WHERE task.track_id = tr.id
                                     AND task.status IN ('running', 'verifying')
-                                    AND NOT (task.kind = 'flow_watch' AND task.block_id = 'flow:' || task.task_key AND json_type(task.context_json, '$.flowNode') IS 'true')
+                                    AND task.kind <> 'flow_watch'
                               )
                               OR EXISTS (
                                   SELECT 1 FROM session_turns t
@@ -71,7 +71,7 @@ internal sealed class BootRecoveryRepository
                             outcome_summary = CASE WHEN block_id = 'flow:' || task_key AND json_type(context_json, '$.flowNode') IS 'true' THEN 'The host stopped during this task.' ELSE outcome_summary END,
                             finished_at_ms = COALESCE(finished_at_ms, @NowMs),
                             updated_at_ms = @NowMs
-                        WHERE status IN ('running', 'verifying') AND NOT (kind = 'flow_watch' AND block_id = 'flow:' || task_key AND json_type(context_json, '$.flowNode') IS 'true');
+                        WHERE status IN ('running', 'verifying') AND kind <> 'flow_watch';
                         """,
                         new { NowMs = nowMs },
                         transaction: tx,

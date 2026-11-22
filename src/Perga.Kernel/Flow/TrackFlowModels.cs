@@ -185,17 +185,16 @@ internal sealed class ActiveWatchState(
     string taskId,
     string nodeId,
     CancellationTokenSource cts,
-    bool holdsWorkspace,
+    bool isCommandWatch,
     bool repeat,
-    bool usesPerProbeWorkspace,
     FlowWatchProgressDto initialProgress)
 {
     public string TaskId { get; } = taskId;
     public string NodeId { get; } = nodeId;
     public CancellationTokenSource Cts { get; } = cts;
-    public bool HoldsWorkspace { get; set; } = holdsWorkspace;
+    public bool IsCommandWatch { get; } = isCommandWatch;
+    public bool HoldsWorkspace { get; set; }
     public bool Repeat { get; } = repeat;
-    public bool UsesPerProbeWorkspace { get; } = usesPerProbeWorkspace;
     public FlowWatchProgressDto Progress { get; set; } = initialProgress;
     public long? LastPersistedCheckAtMs { get; set; }
     public Task? Execution { get; set; }

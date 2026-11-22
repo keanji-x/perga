@@ -53,10 +53,6 @@ public sealed partial class TrackActor
     {
         if (!FlowConstants.IsFlowTask(task) || task.Kind == "command")
             return FormatAccessModeForPolicy(task.Access);
-        if (task.Context is { ValueKind: JsonValueKind.Object } context &&
-            context.TryGetProperty("explicitAccess", out var explicitAccess) && explicitAccess.ValueKind == JsonValueKind.False)
-            return null;
-        // A retained Flow task may predate the marker or carry a routed effective access.
         var node = _flowSpec.Nodes.FirstOrDefault(node => node.Id == task.TaskKey);
         return node?.Do.Kind == "run" ? FlowTaskRouting.RequestedAccess(node) : FormatAccessModeForPolicy(task.Access);
     }

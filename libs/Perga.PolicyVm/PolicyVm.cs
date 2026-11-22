@@ -147,7 +147,7 @@ public sealed partial class PolicyVm : IPolicyVm
                 InitialReportMarkdown: initialReportMarkdown,
                 ViewNames: viewNames.Count > 0 ? viewNames : null);
 
-            var policy = new CompiledPolicy(id, jsModuleSource, manifest);
+            var policy = new CompiledPolicy(id, jsModuleSource, manifest, bundle.WidgetAssetPaths());
             PolicyBundles.Add(policy, bundle);
             return policy;
         }, CompileTimeoutMs);

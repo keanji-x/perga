@@ -584,8 +584,7 @@ internal static class TrackFlowReconciler
                         {
                             flowNode = true,
                             flowSource = node.Source,
-                            title = node.Title ?? node.Id,
-                            explicitAccess = true
+                            title = node.Title ?? node.Id
                         }));
                 }
 
@@ -604,7 +603,6 @@ internal static class TrackFlowReconciler
                         flowNode = true,
                         flowSource = node.Source,
                         title = node.Title ?? node.Id,
-                        explicitAccess = d.Access is not null,
                         initialModel = d.Model,
                         initialReasoningEffort = d.ReasoningEffort,
                         targetSession = d.Session,

@@ -17,7 +17,6 @@ internal static class ReportWidgetValidator
         var priorBlocks = previous?.Blocks.ToDictionary(block => block.Id, StringComparer.Ordinal);
         IReadOnlyList<string>? declaredViews = null;
         var viewsResolved = false;
-        TemplateBundle? bundle = null;
         var diagnostics = new List<ReportDiagnosticDto>();
 
         foreach (var block in document.Blocks.Where(block => block.Kind == ReportBlockKind.Widget))
@@ -38,10 +37,7 @@ internal static class ReportWidgetValidator
                 viewsResolved = true;
             }
 
-            if (policy is not null && use.StartsWith("./widgets/", StringComparison.Ordinal))
-                bundle ??= TemplateBundle.Parse(policy.JsSource);
-
-            foreach (var (code, message) in WidgetPayloadValidator.ValidateReferences(use, view, declaredViews, bundle))
+            foreach (var (code, message) in WidgetPayloadValidator.ValidateReferences(use, view, declaredViews, policy?.WidgetAssets))
             {
                 if (rejectInvalidChanges && !isUnchanged)
                     throw KernelException.InvalidArgument($"Widget '{block.Id}': {message}");

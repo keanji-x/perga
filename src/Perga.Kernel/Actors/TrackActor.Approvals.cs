@@ -461,7 +461,8 @@ public sealed partial class TrackActor
                     return null;
 
                 var trackSet = perga && toolName == KernelMcpToolNames.TrackSet;
-                var previewOnly = trackSet && ValidateTemplateSetArguments(arguments);
+                var previewOnly = (perga && KernelMcpCatalog.IsReadOnlyTool(toolName)) ||
+                    (trackSet && ValidateTemplateSetArguments(arguments));
                 if (trackSet && caller.Id == _track.LeadSessionId &&
                     arguments.TryGetProperty("clear", out var clear) && clear.ValueKind == JsonValueKind.True)
                     return null;

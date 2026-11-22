@@ -133,9 +133,11 @@ public static class KernelMcpCatalog
 
     public static bool IsBeforeHookExemptReadOnly(string toolName) => toolName is
         KernelMcpToolNames.TemplateList or KernelMcpToolNames.TemplateRead or KernelMcpToolNames.TrackStatus or
-        KernelMcpToolNames.ReportRead or KernelMcpToolNames.FlowRead or KernelMcpToolNames.ProviderList or
-        KernelMcpToolNames.TaskList or KernelMcpToolNames.SessionList or KernelMcpToolNames.SessionRead or
-        KernelMcpToolNames.MailList;
+        KernelMcpToolNames.FlowRead or KernelMcpToolNames.ProviderList;
+
+    public static bool IsReadOnlyTool(string toolName) => IsBeforeHookExemptReadOnly(toolName) || toolName is
+        KernelMcpToolNames.ReportRead or KernelMcpToolNames.TaskList or
+        KernelMcpToolNames.SessionList or KernelMcpToolNames.SessionRead or KernelMcpToolNames.MailList;
 
     public static bool IsCompletionOnly(string toolName) => toolName is
         KernelMcpToolNames.TaskDone or
