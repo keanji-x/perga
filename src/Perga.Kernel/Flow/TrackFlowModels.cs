@@ -32,6 +32,25 @@ public static partial class FlowConstants
         _ => "none"
     };
 
+    public static bool IsRepeatingWatch(FlowNodeSpecDto node) => node.Do.Kind == "watch" && node.Do.Repeat == true;
+
+    internal static bool IsWatchPaused(TaskDto task) => task.Outcome is FlowOutcome.Attention or FlowOutcome.Blocked;
+
+    public static bool IsRecurringSource(FlowNodeSpecDto node) =>
+        !node.Canceled && (node.When?.Cron is not null || IsRepeatingWatch(node));
+
+    public static TimeSpan WatchInterval(FlowDoSpecDto action) =>
+        FlowSyntax.TryParseDuration(action.Interval ?? FlowSyntax.DefaultWatchInterval, out var interval)
+            ? interval : TimeSpan.FromSeconds(60);
+
+    public static double? WatchTimeoutSeconds(FlowDoSpecDto action) =>
+        FlowSyntax.TryParseDuration(FlowSyntax.WatchTimeout(action), out var timeout, allowDays: true)
+            ? timeout.TotalSeconds : null;
+
+    internal static string? SatisfiedWaveKey(IReadOnlyList<FlowAfterRefDto> dependencies, Dictionary<string, TaskDto> tasks) =>
+        dependencies.All(dep => tasks.TryGetValue(dep.Node, out var upstream) && OutcomeMatchesCondition(upstream, dep.On))
+            ? ComputeWaveTriggerKey(dependencies, tasks) : null;
+
     public static bool TryParseOutcome(string? raw, out FlowOutcome outcome)
     {
         switch (raw?.Trim().ToLowerInvariant())
@@ -165,16 +184,18 @@ public static partial class FlowConstants
 internal sealed class ActiveWatchState(
     string taskId,
     string nodeId,
-    int runCount,
     CancellationTokenSource cts,
-    bool isWorkspaceExempt,
+    bool isCommandWatch,
+    bool repeat,
     FlowWatchProgressDto initialProgress)
 {
     public string TaskId { get; } = taskId;
     public string NodeId { get; } = nodeId;
-    public int RunCount { get; } = runCount;
     public CancellationTokenSource Cts { get; } = cts;
-    public bool IsWorkspaceExempt { get; } = isWorkspaceExempt;
+    public bool IsCommandWatch { get; } = isCommandWatch;
+    public bool HoldsWorkspace { get; set; }
+    public bool Repeat { get; } = repeat;
     public FlowWatchProgressDto Progress { get; set; } = initialProgress;
+    public long? LastPersistedCheckAtMs { get; set; }
     public Task? Execution { get; set; }
 }

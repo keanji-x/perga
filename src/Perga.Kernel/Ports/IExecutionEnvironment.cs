@@ -60,6 +60,8 @@ public static class ExecutionTargetIds
 {
     public const string Local = "local";
 
+    public static bool IsLocal(string? targetId) => Normalize(targetId) == Local;
+
     public static string Normalize(string? targetId) =>
         string.IsNullOrWhiteSpace(targetId) ? Local : targetId.Trim();
 }

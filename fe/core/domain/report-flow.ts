@@ -71,6 +71,7 @@ export const flowNodeProjectionSchema = z.object({
   targetSession: z.string().nullish(),
   provider: z.string().nullish(),
   model: z.string().nullish(),
+  reasoningEffort: z.string().nullish(),
   prompt: z.string().nullish(),
   cmd: z.string().nullish(),
   gate: z.string().nullish(),
@@ -88,6 +89,7 @@ export const flowNodeProjectionSchema = z.object({
   waitingOn: z.array(z.string()).default([]),
   gates: z.array(flowGateCheckProjectionSchema).default([]),
   watchProgress: flowWatchProgressSchema.nullish(),
+  repeat: z.boolean().default(false),
 });
 export type FlowNodeProjection = z.infer<typeof flowNodeProjectionSchema>;
 

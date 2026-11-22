@@ -570,7 +570,7 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
         }
     }
 
-    public Task UpdateTrackTemplateAndEmitAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto evt, CancellationToken ct, bool writeData = false, TrackFlowUpdate? flow = null)
+    public Task UpdateTrackTemplateAndEmitAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto evt, CancellationToken ct, bool writeData = false, TrackFlowUpdate? flow = null, TemplateReportSeed? reportSeed = null)
     {
         lock (_gate)
         {
@@ -579,6 +579,9 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
             if (flow is not null)
                 CommitTrackFlow(track, flow.ExpectedRev, flow.Tasks, flow.Clocks, flow.CanceledClockIds, [], flow.ResetClockIds).GetAwaiter().GetResult();
             var commit = UpdateTrackAndEmitAsync(track, evt, ct, writeData);
+            if (reportSeed is not null)
+                SaveReportAsync(track.Id, reportSeed.Document, reportSeed.CompressedBlocks, reportSeed.AuthorSessionId,
+                    "Seed template report", reportSeed.Event, ct).GetAwaiter().GetResult();
             AfterTemplateCommit?.Invoke();
             return commit;
         }
@@ -1320,7 +1323,7 @@ internal sealed class ConfigurableFakePolicyVm : IPolicyVm
     public Func<string, CompiledTemplateManifest>? CustomManifestFactory { get; set; }
     public Func<CompiledPolicy, string, JsonElement, JsonElement, GuardDecision>? OnBefore { get; set; }
 
-    public TemplateHeaderView? EvaluateHeaderView(CompiledPolicy policy, PolicyHeaderViewContext ctx, JsonElement state) => null;
+    public HeaderViewEvaluation EvaluateHeaderViewWithDiagnostic(CompiledPolicy policy, PolicyHeaderViewContext ctx, JsonElement data) => new(null, null);
 
     public CompiledPolicy Compile(string jsModuleSource)
     {
@@ -1368,10 +1371,10 @@ internal sealed class ConfigurableFakePolicyVm : IPolicyVm
     public PolicyTurnPreparation PrepareTurn(CompiledPolicy policy, PolicyTurnContext ctx, JsonElement data) =>
         new(null, new GuardDecision.Allow());
 
-    public GuardDecision Before(CompiledPolicy policy, string action, string trackId, JsonElement payload, JsonElement inputs, JsonElement data) =>
+    public GuardDecision Before(CompiledPolicy policy, string action, string trackId, JsonElement payload, JsonElement inputs, JsonElement data, PolicySessionContext? session = null) =>
         OnBefore?.Invoke(policy, action, payload, data) ?? new GuardDecision.Allow();
 
-    public PolicyTaskRoute RouteTaskDispatch(CompiledPolicy policy, string? role, string access, string? provider, string? model, JsonElement inputs) => new(provider, model);
+    public PolicyTaskRoute RouteTaskDispatch(CompiledPolicy policy, string? role, string? access, string? provider, string? model, JsonElement inputs) => new(provider, model, Access: access);
     public IReadOnlyList<PolicyTaskRoute> ResolveRoutingTargets(CompiledPolicy policy, JsonElement inputs) => [];
 
     public IReadOnlyList<FlowNodeSpecDto> ResolveFlow(CompiledPolicy policy, JsonElement inputs) => [];

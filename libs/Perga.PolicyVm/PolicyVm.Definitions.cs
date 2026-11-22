@@ -45,32 +45,46 @@ public sealed partial class PolicyVm
     }
 
     public GuardDecision Before(CompiledPolicy policy, string action, string trackId,
-        JsonElement payload, JsonElement inputs, JsonElement data) =>
-        EvaluateBefore(policy, action, trackId, payload, inputs, data);
+        JsonElement payload, JsonElement inputs, JsonElement data, PolicySessionContext? session = null) =>
+        EvaluateBefore(policy, action, trackId, payload, inputs, data, session);
 
     private GuardDecision EvaluateBefore(CompiledPolicy policy, string action, string trackId,
-        JsonElement payload, JsonElement inputs, JsonElement data, JsonElement? session = null) =>
+        JsonElement payload, JsonElement inputs, JsonElement data, PolicySessionContext? session = null) =>
         EvaluateWithEffectiveDefinition(policy, inputs, "Before", (engine, _, def, _, _) =>
         {
-            var ctx = BuildTemplateContextObject(engine, def, trackId, inputs, data, session);
+            var sessionJson = session is null ? (JsonElement?)null : SerializeSessionContext(session);
+            var ctx = BuildTemplateContextObject(engine, def, trackId, inputs, data, sessionJson);
             var value = engine.Invoke("__beforeTemplate", def, action, ParseJsJson(engine, payload.GetRawText()), ctx);
             return ParseGuardDecision(engine, value, "before");
         });
 
-    public PolicyTaskRoute RouteTaskDispatch(CompiledPolicy policy, string? role, string access, string? provider, string? model, JsonElement inputs)
+    public PolicyTaskRoute RouteTaskDispatch(CompiledPolicy policy, string? role, string? access, string? provider, string? model, JsonElement inputs)
     {
         var rules = policy.JsSource.Contains("setup", StringComparison.Ordinal)
             ? ResolveRoutingRules(policy, inputs)
             : policy.Manifest.Routing;
-        var selectedProvider = provider;
-        var selectedModel = model;
-        string? selectedAccess = null;
+
+        // Resolve effective access from role/wildcard rules first so when.access rules match consistently
+        // regardless of rule ordering, while still distinguishing omitted access from explicit conflicts.
+        string? roleDerivedAccess = null;
         for (var i = 0; i < rules.Count; i++)
         {
             var rule = rules[i];
-            if (rule.When.Role is { } r && r != role || rule.When.Access is { } a && a != access) continue;
+            if (rule.When.Access is not null) continue;
+            if (rule.When.Role is { } r && r != role) continue;
+            roleDerivedAccess ??= rule.TargetAccess;
+        }
+
+        var effectiveAccess = access ?? roleDerivedAccess ?? "read_write";
+        var selectedProvider = provider;
+        var selectedModel = model;
+        var selectedAccess = access;
+        for (var i = 0; i < rules.Count; i++)
+        {
+            var rule = rules[i];
+            if (rule.When.Role is { } r && r != role || rule.When.Access is { } a && a != effectiveAccess) continue;
             var target = ResolveRoutingTarget(policy, rule, inputs);
-            if (rule.Enforce && rule.TargetAccess is { } ta && access != ta)
+            if (rule.Enforce && rule.TargetAccess is { } ta && access is not null && access != ta)
                 return new(selectedProvider, selectedModel, $"Task routing requires access {ta}");
             if (rule.Enforce && provider is not null && target.Provider is not null && provider != target.Provider)
                 return new(selectedProvider, selectedModel, $"Task routing requires provider {target.Provider}");
@@ -80,7 +94,7 @@ public sealed partial class PolicyVm
             selectedModel ??= target.Model;
             selectedAccess ??= rule.TargetAccess;
         }
-        return new(selectedProvider, selectedModel, null, selectedAccess);
+        return new(selectedProvider, selectedModel, null, selectedAccess ?? effectiveAccess);
     }
 
     public IReadOnlyList<PolicyTaskRoute> ResolveRoutingTargets(CompiledPolicy policy, JsonElement inputs)
@@ -154,11 +168,17 @@ public sealed partial class PolicyVm
             }
             return keyed(inherited, own, x => x.id);
           };
+          const mergedReport = { ...base.report, ...child.report };
+          if (child.report?.initialMarkdown != null && child.report?.template == null) {
+            delete mergedReport.template;
+          } else if (child.report?.template != null && child.report?.initialMarkdown == null) {
+            delete mergedReport.initialMarkdown;
+          }
           const merged = { ...baseFields, ...childFields, extends: undefined,
             inputs: { ...base.inputs, ...child.inputs },
             plugins: [...new Set([...(base.plugins||[]),...(child.plugins||[])])],
             flow: mergeFlow(base.flow, child.flow),
-            report: { ...base.report, ...child.report },
+            report: mergedReport,
             tasks: { ...base.tasks, ...child.tasks,
               routing: [...childRoutes, ...(base.tasks?.routing || []).filter(x => !overriddenRoutes.has(routeKey(x)))] }
           };

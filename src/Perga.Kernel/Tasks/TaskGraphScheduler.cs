@@ -41,7 +41,7 @@ public static class TaskGraphScheduler
 
             if (task.Status is TaskRunStatus.Running or TaskRunStatus.Verifying)
             {
-                if (IsWorkspaceLockExempt(task))
+                if (IsWorkspaceLockExempt(task) || (task.Kind == "flow_watch" && FlowConstants.IsFlowTask(task)))
                 {
                     continue;
                 }
@@ -121,7 +121,7 @@ public static class TaskGraphScheduler
         return exempt.Length == 0 ? selectedWorkspace : [.. exempt, .. selectedWorkspace];
     }
 
-    private static bool IsWorkspaceLockExempt(TaskDto task)
+    internal static bool IsWorkspaceLockExempt(TaskDto task)
     {
         if (!FlowConstants.IsFlowTask(task))
         {

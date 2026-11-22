@@ -17,6 +17,9 @@ public sealed record TrackAggregateSnapshot(
     public IReadOnlyList<ApprovalDto> PendingApprovals { get; init; } = [];
 }
 
+public sealed record TemplateReportSeed(
+    ReportDocument Document, byte[] CompressedBlocks, string AuthorSessionId, EventEnvelopeDto Event);
+
 public sealed record ResourceCreationKey(string Operation, string ScopeId, string Key, string Hash);
 
 // Stored as JSON numbers by SQLite.
@@ -125,7 +128,7 @@ public interface ITrackStore : ITrackReadStore
         IReadOnlyList<EventEnvelopeDto> events,
         CancellationToken ct) =>
         throw new NotSupportedException("Flow commit is not implemented by this store.");
-    Task UpdateTrackTemplateAndEmitAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto evt, CancellationToken ct, bool writeData = false, TrackFlowUpdate? flow = null);
+    Task UpdateTrackTemplateAndEmitAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto evt, CancellationToken ct, bool writeData = false, TrackFlowUpdate? flow = null, TemplateReportSeed? reportSeed = null);
     Task DeleteTrackAsync(string trackId, CancellationToken ct);
 
     Task SaveReportAsync(

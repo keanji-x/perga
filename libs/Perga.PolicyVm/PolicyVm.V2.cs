@@ -59,6 +59,7 @@ public sealed partial class PolicyVm
             }
 
             var schemaNode = ExtractTemplateSchemaNode(engine, def, tHelper);
+            mergedJson = TemplateDataValidator.MaterializeDefaults(schemaNode, mergedJson, nowIso, source, normalizedCurrent);
             var errors = TemplateDataValidator.ValidateRoot(schemaNode, mergedJson, knownTaskKeys);
             if (errors.Count > 0)
             {
@@ -130,6 +131,13 @@ public sealed partial class PolicyVm
         EvaluateWithEffectiveDefinition(policy, inputs, "ResolveFlow",
             (engine, _, def, _, _) => ReadFlow(engine, def).Nodes);
 
+    public IReadOnlyList<string> ResolveViewNames(CompiledPolicy policy, JsonElement inputs)
+    {
+        ArgumentNullException.ThrowIfNull(policy);
+        return EvaluateWithEffectiveDefinition(policy, inputs, "ResolveViewNames", (_, _, def, _, _) =>
+            CollectViewNames(def));
+    }
+
     private static (JsonElement Json, IReadOnlyList<FlowNodeSpecDto> Nodes) ReadFlow(Engine engine, ObjectInstance definition)
     {
         var value = definition.Get("flow");
@@ -176,6 +184,13 @@ public sealed partial class PolicyVm
         if (TryGetOptionalObject(def, "report", "template.report", out var reportObj))
         {
             var templatePath = ReadOptionalString(reportObj, "template", "template.report.template");
+            var reportInitial = ReadOptionalString(reportObj, "initialMarkdown", "template.report.initialMarkdown");
+            if (!string.IsNullOrWhiteSpace(templatePath) && !string.IsNullOrWhiteSpace(reportInitial))
+            {
+                throw new InvalidOperationException(
+                    "template.report cannot declare both 'template' and 'initialMarkdown'.");
+            }
+
             if (!string.IsNullOrWhiteSpace(templatePath))
             {
                 if (!bundle.TryGetFile(templatePath, out var mdContent))
@@ -187,7 +202,6 @@ public sealed partial class PolicyVm
                 return mdContent;
             }
 
-            var reportInitial = ReadOptionalString(reportObj, "initialMarkdown", "template.report.initialMarkdown");
             if (!string.IsNullOrWhiteSpace(reportInitial))
             {
                 return reportInitial;
@@ -256,35 +270,43 @@ public sealed partial class PolicyVm
         IReadOnlyList<string>? knownTaskKeys,
         JsValue tHelper)
     {
+        const string source = "template:initial";
+        var nowIso = DateTimeOffset.UtcNow.ToString("O");
+        var schemaNode = ExtractTemplateSchemaNode(engine, def, tHelper);
         var initialVal = dataObj.Get("initial");
-        JsValue rawInitialJs;
-        if (initialVal is Function initFn)
-        {
-            rawInitialJs = engine.Call(initFn, dataObj, [jsInputs]);
-        }
-        else if (initialVal is ObjectInstance && !initialVal.IsArray() && !initialVal.IsNull())
-        {
-            rawInitialJs = initialVal;
-        }
+        var hasInitial = !initialVal.IsUndefined() && !initialVal.IsNull();
+        var empty = ParseJsonObject("{}");
+        JsonElement rawInitialJson;
+        if (!hasInitial)
+            rawInitialJson = empty;
         else
         {
-            throw new InvalidOperationException("template.data.initial must be a function or a plain object.");
+            var rawInitialJs = initialVal switch
+            {
+                Function initFn => engine.Call(initFn, dataObj, [jsInputs]),
+                ObjectInstance when !initialVal.IsArray() => initialVal,
+                _ => throw new InvalidOperationException("template.data.initial must be a function or a plain object.")
+            };
+            rawInitialJson = TemplateSchemaExtractor.ExtractDataElement(rawInitialJs);
         }
 
-        var rawInitialJson = TemplateSchemaExtractor.ExtractDataElement(rawInitialJs);
         var (ok, stampedJson, safetyErrs) = TemplateDataValidator.MergeAndStamp(
-            ParseJsonObject("{}"),
-            rawInitialJson,
-            DateTimeOffset.UtcNow.ToString("O"),
-            "template:initial", stampUnchanged: true);
+            empty, rawInitialJson, nowIso, source, stampUnchanged: hasInitial);
         if (!ok)
         {
             var safetyDetail = string.Join("; ", safetyErrs.Select(e => $"{(string.IsNullOrEmpty(e.Path) ? "$" : e.Path)}: {e.Message}"));
             throw new InvalidOperationException($"template.data.initial failed safety validation: {safetyDetail}");
         }
 
-        var schemaNode = ExtractTemplateSchemaNode(engine, def, tHelper);
+        stampedJson = TemplateDataValidator.MaterializeDefaults(schemaNode, stampedJson, nowIso, source);
         var errors = TemplateDataValidator.ValidateRoot(schemaNode, stampedJson, knownTaskKeys);
+        if (!hasInitial)
+        {
+            // When data.initial is omitted, materialize defaults if they satisfy the whole schema;
+            // otherwise defer initialization until the first data_patch supplies required fields.
+            return errors.Count == 0 ? stampedJson : empty;
+        }
+
         if (errors.Count > 0)
         {
             var detail = string.Join("; ", errors.Select(e => $"{(string.IsNullOrEmpty(e.Path) ? "$" : e.Path)}: {e.Message}"));
@@ -322,39 +344,15 @@ public sealed partial class PolicyVm
                     throw new InvalidOperationException($"Invalid JSON in perga-block widget inside report template: {ex.Message}", ex);
                 }
 
-                if (payload.ValueKind != JsonValueKind.Object)
+                if (!WidgetPayloadValidator.TryValidatePayload(payload, out var use, out var viewName, out var payloadError))
                 {
-                    throw new InvalidOperationException("perga-block widget payload must be a JSON object.");
+                    throw new InvalidOperationException($"perga-block widget invalid: {payloadError}");
                 }
 
-                var use = payload.TryGetProperty("use", out var useEl) && useEl.ValueKind == JsonValueKind.String
-                    ? useEl.GetString() ?? string.Empty
-                    : string.Empty;
-                if (string.IsNullOrWhiteSpace(use))
+                var refIssues = WidgetPayloadValidator.ValidateReferences(use, viewName, viewSet, bundle.WidgetAssetPaths());
+                if (refIssues.Count > 0)
                 {
-                    throw new InvalidOperationException("perga-block widget requires a non-empty 'use' field.");
-                }
-
-                if (!use.StartsWith("builtin:", StringComparison.Ordinal))
-                {
-                    if (!bundle.TryGetFile(use, out _))
-                    {
-                        throw new InvalidOperationException(
-                            $"perga-block widget references '{use}', which was not found in the template package.");
-                    }
-                }
-
-                var viewName = payload.TryGetProperty("view", out var viewEl) && viewEl.ValueKind == JsonValueKind.String
-                    ? viewEl.GetString() : null;
-                if (viewName is not null)
-                {
-                    var isKernelFlowBuiltin = string.Equals(use, "builtin:flow", StringComparison.Ordinal) &&
-                                              string.Equals(viewName, "flow", StringComparison.Ordinal);
-                    if (!string.IsNullOrWhiteSpace(viewName) && !isKernelFlowBuiltin && !viewSet.Contains(viewName))
-                    {
-                        throw new InvalidOperationException(
-                            $"perga-block widget references view '{viewName}', which is not declared in report.views.");
-                    }
+                    throw new InvalidOperationException($"perga-block widget invalid: {refIssues[0].Message}");
                 }
             }
         }
@@ -363,23 +361,9 @@ public sealed partial class PolicyVm
         JsValue initialDataJs = ParseJsJson(engine, "{}");
         if (TryGetOptionalObject(def, "data", "template.data", out var dataObj))
         {
-            var initialVal = dataObj.Get("initial");
-            if (!initialVal.IsUndefined() && !initialVal.IsNull())
-            {
-                var validatedJson = InitializeAndValidateData(
-                    engine,
-                    def,
-                    dataObj,
-                    jsInputs,
-                    knownTaskKeys: null,
-                    tHelper);
-                initialDataJs = ParseJsJson(engine, validatedJson.GetRawText());
-            }
-            else
-            {
-                // Still validate schema shape at compile time even when data.initial is omitted.
-                _ = ExtractTemplateSchemaNode(engine, def, tHelper);
-            }
+            var validatedJson = InitializeAndValidateData(
+                engine, def, dataObj, jsInputs, knownTaskKeys: null, tHelper);
+            initialDataJs = ParseJsJson(engine, validatedJson.GetRawText());
         }
 
         if (viewNames.Count > 0 &&

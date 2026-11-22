@@ -37,7 +37,7 @@ public sealed class TemplateLoopTests
                 var token = kernel.McpSessionBridge.RegisterSession(trackId, leadId, true, null, null, []).Principal.Token;
                 const string source = """
                     export default { id:'loop',title:'Loop',description:'Template loop',
-                      inputs:{unit:{type:'string',default:'steps'}},
+                      inputs:{unit:{type:'string',default:'steps'},keep:{type:'string',optional:true}},
                       data:{initial:{count:7}},
                       headerView:ctx=>({metrics:[{label:'Count',value:ctx.data.count+' '+ctx.inputs.unit}]}),
                       workspace:{driver:'direct'},
@@ -48,14 +48,14 @@ public sealed class TemplateLoopTests
                 var summary = Assert.Single(summaries.EnumerateArray(), p => p.GetProperty("id").GetString() == "loop");
                 Assert.Equal(7, summary.EnumerateObject().Count());
                 Assert.True(summary.GetProperty("hasHeaderView").GetBoolean());
-                Assert.Equal("unit", Assert.Single(summary.GetProperty("inputKeys").EnumerateArray()).GetString());
+                Assert.Equal(["unit", "keep"], summary.GetProperty("inputKeys").EnumerateArray().Select(key => key.GetString()));
                 var preview = await Call(KernelMcpToolNames.TrackSet, new { templateId = "loop", dryRun = true });
                 Assert.Equal(2, preview.GetProperty("warnings").GetArrayLength());
                 Assert.Null((await kernel.GetTrackAggregateAsync(trackId)).Track.TemplateId);
                 var applied = await Call(KernelMcpToolNames.TrackSet, new { templateId = "loop", inputs = new { unit = "km", keep = "retained" } });
                 Assert.Equal("loop", applied.GetProperty("templateId").GetString());
                 await Call(KernelMcpToolNames.TemplateUpdateInputs, new { inputs = new { unit = "m" } });
-                var current = await Call(KernelMcpToolNames.TemplateRead, new { templateId = "__current__" });
+                var current = await Call(KernelMcpToolNames.TemplateRead, new { templateId = "__current__", format = "full" });
                 Assert.Equal(source, current.GetProperty("snapshot").GetString());
                 Assert.Equal("retained", current.GetProperty("inputs").GetProperty("keep").GetString());
                 Assert.Equal(7, current.GetProperty("data").GetProperty("count").GetInt32());

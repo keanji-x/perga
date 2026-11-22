@@ -7,8 +7,7 @@ public sealed partial class PolicyVm
 {
     public JsonElement InitData(CompiledPolicy policy, JsonElement inputs) => EvaluateWithEffectiveDefinition(policy, inputs, "InitData", (engine, _, def, jsInputs, tHelper) =>
     {
-        if (TryGetOptionalObject(def, "data", "template.data", out var dataObj) &&
-            !dataObj.Get("initial").IsUndefined() && !dataObj.Get("initial").IsNull())
+        if (TryGetOptionalObject(def, "data", "template.data", out var dataObj))
             return InitializeAndValidateData(engine, def, dataObj, jsInputs, [], tHelper);
         return ParseJsonObject("{}");
     });

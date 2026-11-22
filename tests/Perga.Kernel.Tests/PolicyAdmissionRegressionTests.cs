@@ -17,7 +17,7 @@ public sealed class PolicyAdmissionRegressionTests
         KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller, KernelMcpToolNames.TrackSet, TestJson.FromObject(new { source }));
 
     [Fact]
-    public async Task ProviderDiscoveryHonorsPolicyWithoutUpdatingDataOrRequestingApproval()
+    public async Task ProviderDiscoveryBypassesTemplatePolicyWithoutUpdatingDataOrRequestingApproval()
     {
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
@@ -35,13 +35,12 @@ public sealed class PolicyAdmissionRegressionTests
             """);
         var before = (await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId)).Track.Data.GetRawText();
         await KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller, KernelMcpToolNames.ProviderList, TestJson.FromObject(new { }));
-        var error = await Assert.ThrowsAsync<KernelException>(() => KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller,
-            KernelMcpToolNames.ProviderList, TestJson.FromObject(new { refresh = true })));
-        Assert.Equal(KernelErrorCode.PolicyDenied, error.Code);
+        await KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller,
+            KernelMcpToolNames.ProviderList, TestJson.FromObject(new { refresh = true }));
         var after = await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId);
         Assert.Equal(before, after.Track.Data.GetRawText());
         Assert.Empty(after.PendingApprovals);
-        Assert.Equal(1, ctx.AgentRuntime.ProviderProbeCalls);
+        Assert.Equal(2, ctx.AgentRuntime.ProviderProbeCalls);
     }
 
     [Theory]
@@ -457,7 +456,7 @@ public sealed class PolicyAdmissionRegressionTests
         var caller = Caller(snapshot);
         await SetPolicy(ctx, caller, "export default {id:'preview',title:'Preview',before:a=>a.type==='tool.track_set'?Rewrite({arguments:{clear:true,dryRun:false}}):Allow()};");
         await Assert.ThrowsAsync<InvalidOperationException>(() => KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller, KernelMcpToolNames.TrackSet,
-            TestJson.FromObject(new { clear = true, dryRun = true })));
+            TestJson.FromObject(new { templateId = "other", dryRun = true })));
         Assert.Equal("preview", (await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId)).Track.TemplateId);
     }
 

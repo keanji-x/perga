@@ -11,7 +11,7 @@ using Perga.VcsKit;
 
 namespace Perga.Kernel.Tests;
 
-public sealed class TrackFlowTests
+public sealed partial class TrackFlowTests
 {
     private static readonly InteropPrincipal Human = new InteropPrincipal.Human();
 
@@ -160,6 +160,11 @@ public sealed class TrackFlowTests
         public override DateTimeOffset GetUtcNow()
         {
             lock (_lock) return _now;
+        }
+
+        public bool HasTimerDueAt(DateTimeOffset dueAt)
+        {
+            lock (_lock) return _timers.Any(timer => !timer.Disposed && timer.DueTime == dueAt);
         }
 
         public void Advance(TimeSpan delta)
@@ -834,10 +839,43 @@ public sealed class TrackFlowTests
         Assert.Contains("deploy-check --env=prod", observedCmds);
     }
 
+    [Fact]
+    public async Task FlowPreview_UsesRoutedAccessForGateAndReportsExplicitDenialOnce()
+    {
+        await using var ctx = new KernelTestContext(policyVm: new Perga.PolicyVm.PolicyVm());
+        ctx.Kernel.Templates.RegisterTemplate("""
+            export default {
+              id: 'routed-review', title: 'Routed Review',
+              tasks: {
+                requireGateForReadWrite: true,
+                routing: [{ when: { role: 'review' }, access: 'read_only', enforce: true }]
+              }
+            };
+            """);
+        var (_, snapshot) = await ctx.CreateDefaultTrackAsync(templateId: "routed-review");
+        var trackId = snapshot.Track.Id;
+        var flowPath = (await ctx.Kernel.GetTrackFlowAsync(trackId)).FilePath!;
+        const string flow = """
+            {
+              "rev": 0,
+              "nodes": [{ "id": "review", "title": "Review", "do": { "kind": "run", "role": "review", "prompt": "Review changes" } }]
+            }
+            """;
+
+        await File.WriteAllTextAsync(flowPath, flow);
+        Assert.True((await ctx.Kernel.CommitTrackFlowAsync(trackId, dryRun: true, expectedFlowRev: 0, Human)).Ok);
+
+        await File.WriteAllTextAsync(flowPath,
+            flow.Replace("\"role\": \"review\",", "\"role\": \"review\", \"access\": \"read_write\",", StringComparison.Ordinal));
+        var denied = await ctx.Kernel.CommitTrackFlowAsync(trackId, dryRun: true, expectedFlowRev: 0, Human);
+        Assert.False(denied.Ok);
+        Assert.Contains("Task routing requires access read_only", Assert.Single(denied.Diagnostics).Message);
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task GateRequiredTemplateRejectsCommandWatchButAllowsPrChecks(bool dryRun)
+    public async Task GateRequiredTemplateAllowsCommandWatchesButRequiresGatesForWritableRuns(bool dryRun)
     {
         await using var ctx = new KernelTestContext(policyVm: new Perga.PolicyVm.PolicyVm());
         ctx.Kernel.Templates.RegisterTemplate("""
@@ -853,25 +891,26 @@ public sealed class TrackFlowTests
         const string commandWatch = """
             {"rev":0,"nodes":[{"id":"shell","do":{"kind":"watch","cmd":"probe"}}]}
             """;
-        var rejected = await ctx.Kernel.CommitTrackFlowAsync(trackId, dryRun, 0, Human, content: commandWatch);
+        var rejected = await ctx.Kernel.CommitTrackFlowAsync(trackId, dryRun, 0, Human,
+            content: commandWatch.Replace("\"kind\":\"watch\"", "\"kind\":\"run\"", StringComparison.Ordinal));
         Assert.False(rejected.Ok);
         var diagnostic = Assert.Single(rejected.Diagnostics);
-        Assert.Equal("$.nodes[0].do.cmd", diagnostic.Path);
+        Assert.Equal("$.nodes[0].do.gate", diagnostic.Path);
         Assert.Contains("gate", diagnostic.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(0L, (await ctx.Kernel.GetTrackFlowAsync(trackId)).FlowRev);
         Assert.Empty((await ctx.Kernel.GetTrackAggregateAsync(trackId)).Tasks);
         Assert.Empty(ctx.CommandRunner.ExecutedCommands);
 
-        const string prWatch = """
-            {"rev":0,"nodes":[
-              {"id":"shell","canceled":true,"do":{"kind":"watch","cmd":"probe"}},
-              {"id":"forge","when":{"cron":"* * * * *"},"do":{"kind":"watch","prChecks":1}}
-            ]}
-            """;
-        var committed = await ctx.Kernel.CommitTrackFlowAsync(trackId, false, 0, Human, content: prWatch);
+        var committed = await ctx.Kernel.CommitTrackFlowAsync(trackId, dryRun, 0, Human, content: commandWatch);
         Assert.True(committed.Ok, JsonSerializer.Serialize(committed.Diagnostics));
-        Assert.Equal(1L, (await ctx.Kernel.GetTrackFlowAsync(trackId)).FlowRev);
-        Assert.Empty(ctx.CommandRunner.ExecutedCommands);
+        if (dryRun)
+        {
+            Assert.Empty(ctx.CommandRunner.ExecutedCommands);
+            return;
+        }
+        await ctx.Kernel.WaitForTrackIdleAsync(trackId).WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal("probe", Assert.Single(ctx.CommandRunner.ExecutedCommands).Command);
+        Assert.Equal("ok", Assert.Single((await ctx.Kernel.GetTrackFlowAsync(trackId)).Projection.Archived).Outcome);
     }
 
     [Fact]

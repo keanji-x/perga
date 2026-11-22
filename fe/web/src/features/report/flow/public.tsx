@@ -482,6 +482,7 @@ export function ReportFlowBlock({
                   <span>{formatWatchSummary(activeNode.watchProgress, visual === 'waiting')}</span>
                 </div>
                 <div className={styles.watchMeta}>
+                  {activeNode.repeat && <span>常青监听</span>}
                   {formatFlowTimestamp(activeNode.watchProgress.lastCheckedAtMs) !== null && (
                     <span>上次检查 {formatFlowTimestamp(activeNode.watchProgress.lastCheckedAtMs)}</span>
                   )}

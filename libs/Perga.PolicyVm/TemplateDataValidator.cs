@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 
 using static Perga.PolicyVm.ResourceBudget;
@@ -45,6 +46,85 @@ internal static partial class TemplateDataValidator
             : null;
         ValidateNode(rootSchema, data, exists: true, string.Empty, taskSet, errors, depth: 0, ref budget);
         return errors;
+    }
+
+    public static void ValidateDefault(TemplateSchemaNode schema, JsonElement value, string path, ref ResourceBudget budget)
+    {
+        var errors = new List<DataValidationError>();
+        ScanPatchSafety(value, path, errors, depth: 0, ref budget);
+        if (errors.Count == 0)
+            ValidateNode(schema, value, exists: true, path, knownTaskSet: null, errors, depth: 0, ref budget, allowMissingDefaults: true);
+
+        if (errors.Count > 0)
+        {
+            var error = errors[0];
+            throw new InvalidOperationException($"Invalid template schema default at {error.Path}: {error.Message}.");
+        }
+    }
+
+    public static JsonElement MaterializeDefaults(
+        TemplateSchemaNode? schema, JsonElement data, string nowIso, string source, JsonElement? previous = null)
+    {
+        if (schema is null || !schema.ContainsDefaults || data.ValueKind != JsonValueKind.Object)
+            return data;
+
+        var budget = ResourceBudget.Create();
+        var root = JsonNode.Parse(data.GetRawText());
+        if (!FillDefaults(schema, root, depth: 0, isNew: false, nowIso, source, ref budget))
+            return data;
+
+        var serialized = root!.ToJsonString();
+        if (serialized.Length > MaxTotalStringChars)
+            throw new InvalidOperationException($"Merged template data exceeds maximum serialized size ({MaxTotalStringChars} chars).");
+
+        using var doc = JsonDocument.Parse(serialized);
+        if (previous is { } prior)
+        {
+            var compareBudget = ResourceBudget.Create();
+            var priorValue = CanonicalJsonWithoutMeta(prior, ref compareBudget);
+            compareBudget = ResourceBudget.Create();
+            if (priorValue == CanonicalJsonWithoutMeta(doc.RootElement, ref compareBudget))
+                return prior;
+        }
+
+        return doc.RootElement.Clone();
+    }
+
+    private static bool FillDefaults(
+        TemplateSchemaNode schema, JsonNode? value, int depth, bool isNew, string nowIso, string source, ref ResourceBudget budget)
+    {
+        budget.ConsumeNode("default materialization");
+        if (depth > MaxDepth)
+            throw new InvalidOperationException("Template data nesting exceeds maximum depth.");
+
+        var changed = isNew;
+        if (value is JsonObject obj && schema.Shape is { } shape)
+        {
+            foreach (var (name, field) in shape)
+            {
+                if (obj.TryGetPropertyValue(name, out var child))
+                {
+                    changed |= FillDefaults(field, child, depth + 1, isNew, nowIso, source, ref budget);
+                }
+                else if (field.HasDefault)
+                {
+                    var copy = ToSafeJsonNode(field.DefaultValue!.Value, ref budget);
+                    obj.Add(name, copy);
+                    FillDefaults(field, copy, depth + 1, isNew: true, nowIso, source, ref budget);
+                    changed = true;
+                }
+            }
+
+            if (changed)
+                obj["_meta"] = BuildMetaObject(nowIso, source);
+        }
+        else if (value is JsonArray array && schema.Item is { } item)
+        {
+            foreach (var child in array)
+                changed |= FillDefaults(item, child, depth + 1, isNew, nowIso, source, ref budget);
+        }
+
+        return changed;
     }
 
     private static void CountNodesBounded(JsonElement val, int depth, ref ResourceBudget budget)
@@ -150,7 +230,8 @@ internal static partial class TemplateDataValidator
         HashSet<string>? knownTaskSet,
         List<DataValidationError> errors,
         int depth,
-        ref ResourceBudget budget)
+        ref ResourceBudget budget,
+        bool allowMissingDefaults = false)
     {
         budget.ConsumeNode("validation");
         if (depth > MaxDepth)
@@ -161,7 +242,7 @@ internal static partial class TemplateDataValidator
 
         if (!exists || value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
         {
-            if (schema.IsOptional)
+            if (schema.IsOptional || !exists && allowMissingDefaults && schema.HasDefault)
             {
                 return;
             }
@@ -288,7 +369,7 @@ internal static partial class TemplateDataValidator
                 var i = 0;
                 foreach (var item in value.EnumerateArray())
                 {
-                    ValidateNode(schema.Item!, item, exists: true, $"{path}[{i}]", knownTaskSet, errors, depth + 1, ref budget);
+                    ValidateNode(schema.Item!, item, exists: true, $"{path}[{i}]", knownTaskSet, errors, depth + 1, ref budget, allowMissingDefaults);
                     i++;
                 }
 
@@ -309,11 +390,11 @@ internal static partial class TemplateDataValidator
                     var childPath = string.IsNullOrEmpty(path) ? kv.Key : $"{path}.{kv.Key}";
                     if (value.TryGetProperty(kv.Key, out var fieldVal))
                     {
-                        ValidateNode(kv.Value, fieldVal, exists: true, childPath, knownTaskSet, errors, depth + 1, ref budget);
+                        ValidateNode(kv.Value, fieldVal, exists: true, childPath, knownTaskSet, errors, depth + 1, ref budget, allowMissingDefaults);
                     }
                     else
                     {
-                        ValidateNode(kv.Value, default, exists: false, childPath, knownTaskSet, errors, depth + 1, ref budget);
+                        ValidateNode(kv.Value, default, exists: false, childPath, knownTaskSet, errors, depth + 1, ref budget, allowMissingDefaults);
                     }
                 }
 

@@ -6,8 +6,11 @@ export default defineTemplate({
   title: "长期 OKR 优化闭环",
   description: "跟踪关键结果，在每日指标采集后核对进度和异常。",
   inputs: {
+    optimizeProvider: { type: "string", optional: true, label: "改进执行提供方" },
+    optimizeModel: { type: "string", optional: true, label: "改进执行模型" },
     checkCmd: { type: "string", default: "python scripts/ci_daily_check.py", label: "每日指标采集脚本" },
-    triageModel: { type: "string", default: "gpt-6.2-soar", label: "异常归因与回滚模型" },
+    triageProvider: { type: "string", optional: true, label: "异常归因与回滚提供方" },
+    triageModel: { type: "string", optional: true, label: "异常归因与回滚模型" },
   },
   flow: [{
     id: "daily-ci-check",
@@ -31,8 +34,18 @@ export default defineTemplate({
       },
       tasks: {
         routing: [
-          { when: { role: "triage" }, model: inputs.triageModel, access: "read_only", enforce: true },
-          { when: { role: "optimize" }, model: "claude-opus-4", access: "read_write" },
+          {
+            when: { role: "triage" },
+            ...(inputs.triageProvider ? { provider: inputs.triageProvider } : {}),
+            ...(inputs.triageModel ? { model: inputs.triageModel } : {}),
+            access: "read_only", enforce: true,
+          },
+          {
+            when: { role: "optimize" },
+            ...(inputs.optimizeProvider ? { provider: inputs.optimizeProvider } : {}),
+            ...(inputs.optimizeModel ? { model: inputs.optimizeModel } : {}),
+            access: "read_write",
+          },
         ],
       },
     };

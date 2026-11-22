@@ -9,7 +9,21 @@ public sealed partial class PolicyVm
     {
         if (inputs.ValueKind != JsonValueKind.Object)
             throw new InvalidOperationException("Template inputs must be an object.");
-        foreach (var field in policy.Manifest.InputsSchema.EnumerateObject())
+        var schemaFields = policy.Manifest.InputsSchema;
+        if (schemaFields.EnumerateObject().Any())
+        {
+            var unknown = inputs.EnumerateObject()
+                .Where(field => !schemaFields.TryGetProperty(field.Name, out _))
+                .Select(field => field.Name).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+            if (unknown.Length > 0)
+            {
+                var allowed = schemaFields.EnumerateObject().Select(field => field.Name).Order(StringComparer.Ordinal);
+                throw new InvalidOperationException(
+                    $"Unknown template input keys: [{string.Join(", ", unknown)}]. Allowed input keys: [{string.Join(", ", allowed)}].");
+            }
+        }
+
+        foreach (var field in schemaFields.EnumerateObject())
         {
             var schema = field.Value;
             if (!inputs.TryGetProperty(field.Name, out var value) && !schema.TryGetProperty("default", out value))

@@ -151,6 +151,7 @@ public sealed partial class TrackActor
 
     private void CloseTrackRuntimesCore()
     {
+        ScheduleWatchRearmCore(null);
         foreach (var sessionId in _sessions.Keys)
             ScheduleSessionRuntimeCloseCore(sessionId, revokeToken: !_scheduler.HasActive(sessionId));
     }

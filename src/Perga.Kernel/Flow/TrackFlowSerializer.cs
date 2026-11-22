@@ -125,6 +125,7 @@ public static class TrackFlowSerializer
         if (!string.IsNullOrWhiteSpace(action.Access)) obj["access"] = action.Access;
         if (!string.IsNullOrWhiteSpace(action.Provider)) obj["provider"] = action.Provider;
         if (!string.IsNullOrWhiteSpace(action.Model)) obj["model"] = action.Model;
+        if (!string.IsNullOrWhiteSpace(action.ReasoningEffort)) obj["reasoningEffort"] = action.ReasoningEffort;
         if (!string.IsNullOrWhiteSpace(action.Gate)) obj["gate"] = action.Gate;
         if (!string.IsNullOrWhiteSpace(action.Prompt)) obj["prompt"] = action.Prompt;
         if (!string.IsNullOrWhiteSpace(action.Acceptance)) obj["acceptance"] = action.Acceptance;
@@ -134,6 +135,7 @@ public static class TrackFlowSerializer
         if (!string.IsNullOrWhiteSpace(action.HeadSha)) obj["headSha"] = action.HeadSha;
         if (!string.IsNullOrWhiteSpace(action.Interval)) obj["interval"] = action.Interval;
         if (!string.IsNullOrWhiteSpace(action.Timeout)) obj["timeout"] = action.Timeout;
+        if (action.Repeat == true) obj["repeat"] = true;
         return obj;
     }
 }

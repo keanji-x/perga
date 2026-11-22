@@ -336,8 +336,8 @@ it('compiles input defaults from the bundled agents-delivery template', () => {
   const source = readFileSync(new URL('../../../templates/agents-delivery/template.perga.js', import.meta.url), 'utf8');
   const definition: unknown = runInNewContext(source.replace(/^export default /m, ''), { defineTemplate: (value: unknown) => value });
   const template = z.object({ id: z.literal('agents-delivery'), inputs: z.unknown() }).parse(definition);
-  expect(compilePergaTemplateInputs(parsePergaInputsSchema(template.inputs), {})).toMatchObject({
-    valid: true, input: { reviewModel: 'gpt-6.2-soar', testCmd: 'dotnet test Perga.sln' },
+  expect(compilePergaTemplateInputs(parsePergaInputsSchema(template.inputs), {})).toEqual({
+    valid: true, input: { testCmd: 'dotnet test Perga.sln' }, errors: {},
   });
 });
 

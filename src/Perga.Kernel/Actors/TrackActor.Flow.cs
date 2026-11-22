@@ -85,7 +85,8 @@ public sealed partial class TrackActor
 
                 errors = TrackFlowValidator.Validate(
                     parsedSpec, _flowSpec, _taskCoordinator.Snapshot(), CollectActiveFlowTaskIdsCore(), _sessions,
-                    _track.LeadSessionId, _policy, _policyVm, _track.TemplateInputs, _scheduleCronEvaluator, _timeProvider);
+                    _track.LeadSessionId, _policy, _policyVm, _track.TemplateInputs, _scheduleCronEvaluator, _timeProvider,
+                    workerCatalog: await GetFlowWorkerCatalogCoreAsync(parsedSpec, ct).ConfigureAwait(false));
                 if (errors.Count == 0)
                 {
                     // An explicit submission replaces the current Host draft. Keep its hash
@@ -177,7 +178,7 @@ public sealed partial class TrackActor
             }
             else if (proposedById.TryGetValue(id, out var prunedNewNode))
             {
-                var created = TrackFlowReconciler.BuildOrUpdateTaskForNode(TrackId, prunedNewNode, null, now);
+                var created = TrackFlowReconciler.BuildOrUpdateTaskForNode(TrackId, prunedNewNode, null, now, ResolveFlowTaskAccessCore(prunedNewNode));
                 upsertedTasks.Add(TrackFlowReconciler.ArchiveTaskForGc(created, now));
             }
         }
@@ -189,10 +190,11 @@ public sealed partial class TrackActor
             tasksByKey.TryGetValue(node.Id, out var existing);
             if (canceledTaskId is not null && existing?.Id != canceledTaskId)
                 continue;
-            if (existing is not null && previousNodes.TryGetValue(node.Id, out var previous) &&
+            previousNodes.TryGetValue(node.Id, out var previous);
+            if (existing is not null && previous is not null &&
                 !TrackFlowValidator.WhenEquals(previous.When, node.When))
                 existing = existing with { Ready = false, TriggerRunKey = null };
-            upsertedTasks.Add(TrackFlowReconciler.BuildOrUpdateTaskForNode(TrackId, node, existing, now));
+            upsertedTasks.Add(TrackFlowReconciler.BuildOrUpdateTaskForNode(TrackId, node, existing, now, ResolveFlowTaskAccessCore(node), previous));
             var schedule = TrackFlowReconciler.BuildScheduleForNode(TrackId, node, now, _scheduleCronEvaluator, _timeProvider);
             if (schedule is not null)
                 schedules.Add(node.Source == "template" && _policy is not null
@@ -240,6 +242,7 @@ public sealed partial class TrackActor
             {
                 if (_taskCoordinator.TryGetActiveRun(run.TaskId, out var current) && ReferenceEquals(current, run))
                     await _taskCoordinator.FinalizeCanceledTaskCoreAsync(run, CancellationToken.None).ConfigureAwait(false);
+                await EvaluateFlowAfterTriggersCoreAsync(CancellationToken.None).ConfigureAwait(false);
                 await _taskCoordinator.ScheduleEligibleTasksCoreAsync(CancellationToken.None).ConfigureAwait(false);
                 await TryRunFlowGcCoreAsync(CancellationToken.None).ConfigureAwait(false);
             }, CancellationToken.None).ConfigureAwait(false);
@@ -263,6 +266,7 @@ public sealed partial class TrackActor
             if (_activeWatches.TryGetValue(watch.TaskId, out var current) && ReferenceEquals(current, watch))
                 _activeWatches.Remove(watch.TaskId);
             watch.Cts.Dispose();
+            await EvaluateFlowAfterTriggersCoreAsync(CancellationToken.None).ConfigureAwait(false);
             await _taskCoordinator.ScheduleEligibleTasksCoreAsync(CancellationToken.None).ConfigureAwait(false);
             await TryRunFlowGcCoreAsync(CancellationToken.None).ConfigureAwait(false);
         }, CancellationToken.None).ConfigureAwait(false);
@@ -330,7 +334,8 @@ public sealed partial class TrackActor
                     (!canArmBehindOldWatch || watch.TaskId == existing?.Id)) ||
                 (existing is not null && (_taskCoordinator.HasActiveRun(existing.Id) ||
                     existing.Status is TaskRunStatus.Running or TaskRunStatus.Verifying ||
-                    (existing.Status == TaskRunStatus.Pending && existing.Ready)));
+                    (existing.Status == TaskRunStatus.Pending && existing.Ready) ||
+                    (FlowConstants.IsRepeatingWatch(node) && existing.RunCount > 0)));
 
             // Busy ticks skip arming without consuming an occurrence toward maxOccurrences.
             var count = busy ? clock.FiredCount : checked(clock.FiredCount + 1);
@@ -345,8 +350,12 @@ public sealed partial class TrackActor
                 State = nextFire is null ? TrackScheduleStates.Done : TrackScheduleStates.Active,
                 UpdatedAtMs = now
             };
-            TaskDto? armed = busy ? null : (existing ?? TrackFlowReconciler.BuildOrUpdateTaskForNode(TrackId, node, null, now)) with
+            var access = busy ? null : ResolveFlowTaskAccessCore(node);
+            var scheduledTask = busy ? null : existing ??
+                TrackFlowReconciler.BuildOrUpdateTaskForNode(TrackId, node, null, now, access);
+            var armed = scheduledTask is null ? null : scheduledTask with
             {
+                Access = access ?? scheduledTask.Access,
                 Ready = true,
                 Status = TaskRunStatus.Pending,
                 StatusDetail = null,
@@ -411,8 +420,9 @@ public sealed partial class TrackActor
 
     private async Task<bool> EvaluateFlowAfterTriggersCoreAsync(CancellationToken ct)
     {
-        if (_flowSpec.Nodes.Count == 0 || _track.ClosedAtMs is not null)
+        if (_flowSpec.Nodes.Count == 0 || _closingTrack || _deletingTrack || _track.ClosedAtMs is not null)
         {
+            ScheduleWatchRearmCore(null);
             return false;
         }
 
@@ -433,23 +443,14 @@ public sealed partial class TrackActor
             }
 
             if (_taskCoordinator.HasActiveRun(task.Id) || _activeWatches.ContainsKey(task.Id) ||
+                (FlowConstants.IsRepeatingWatch(node) && (task.Status == TaskRunStatus.Done || FlowConstants.IsWatchPaused(task))) ||
                 task.Status is TaskRunStatus.Running or TaskRunStatus.Verifying)
             {
                 continue;
             }
 
-            var allSatisfied = true;
-            foreach (var dep in afterList)
-            {
-                if (!tasksByKey.TryGetValue(dep.Node, out var depTask) ||
-                    !FlowConstants.OutcomeMatchesCondition(depTask, dep.On))
-                {
-                    allSatisfied = false;
-                    break;
-                }
-            }
-
-            if (!allSatisfied)
+            var waveKey = FlowConstants.SatisfiedWaveKey(afterList, tasksByKey);
+            if (waveKey is null)
             {
                 if (task.Status == TaskRunStatus.Pending && (task.Ready || task.TriggerRunKey is not null))
                 {
@@ -461,7 +462,6 @@ public sealed partial class TrackActor
                 continue;
             }
 
-            var waveKey = FlowConstants.ComputeWaveTriggerKey(afterList, tasksByKey);
             if (string.Equals(task.TriggerRunKey, waveKey, StringComparison.Ordinal))
             {
                 // Already triggered for this exact upstream wave.
@@ -470,6 +470,7 @@ public sealed partial class TrackActor
 
             var armed = task with
             {
+                Access = ResolveFlowTaskAccessCore(node) ?? task.Access,
                 Ready = true,
                 Status = TaskRunStatus.Pending,
                 StatusDetail = null,
@@ -487,7 +488,7 @@ public sealed partial class TrackActor
             armedAny = true;
         }
 
-        return armedAny;
+        return await RearmConvergedWatchesCoreAsync(tasksByKey, now, ct).ConfigureAwait(false) || armedAny;
     }
 
     private async Task TryRunFlowGcCoreAsync(CancellationToken ct)
@@ -531,8 +532,17 @@ public sealed partial class TrackActor
         await PublishFlowCommitCoreAsync(events).ConfigureAwait(false);
     }
 
+    private AccessMode? ResolveFlowTaskAccessCore(FlowNodeSpecDto node) =>
+        FlowTaskRouting.ResolveAccess(node, _policy, _policyVm, _track.TemplateInputs, _sessions);
+
     private string? InterpolateFlowTextCore(string? text) =>
         TemplateFlow.Interpolate(text, _track.TemplateInputs, _policy, _policyVm);
+
+    private TaskDto ProjectFlowTaskCore(TaskDto task) => !FlowConstants.IsFlowTask(task) ? task : task with
+    {
+        GoalOrCmd = InterpolateFlowTextCore(task.GoalOrCmd) ?? task.GoalOrCmd,
+        Acceptance = InterpolateFlowTextCore(task.Acceptance)
+    };
 
     private TaskDto InterpolateFlowTaskForExecutionCore(TaskDto task)
     {
@@ -541,8 +551,6 @@ public sealed partial class TrackActor
             return task;
         }
 
-        var goal = InterpolateFlowTextCore(task.GoalOrCmd) ?? task.GoalOrCmd;
-        var acceptance = InterpolateFlowTextCore(task.Acceptance);
         GateSpecDto? gate = task.Gate;
         if (gate is { Steps.Count: > 0 })
         {
@@ -554,7 +562,7 @@ public sealed partial class TrackActor
             };
         }
 
-        return task with { GoalOrCmd = goal, Acceptance = acceptance, Gate = gate };
+        return ProjectFlowTaskCore(task) with { Gate = gate };
     }
 
     private bool HasPendingFlowTaskForSessionCore(string sessionId) =>

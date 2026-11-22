@@ -79,8 +79,8 @@ internal static class TrackFlowReconciler
     /// <summary>
     /// Computes node IDs eligible for background GC archiving:
     /// 1) One-shot nodes (`when.cron == null`) in terminal status (`Done`/`Failed`/`Canceled`) with NO non-terminal
-    ///    downstream dependents in `spec` and NOT transitively dependent on any active (non-canceled) `cron` node.
-    /// 2) `canceled: true` cron nodes with no active run and no non-terminal downstream dependents.
+    ///    downstream dependents in `spec` and NOT transitively dependent on a live recurring source.
+    /// 2) Canceled recurring nodes with no active run and no non-terminal downstream dependents.
     /// </summary>
     public static HashSet<string> ComputeGcEligibleNodeIds(
         FlowSpecDto spec,
@@ -96,35 +96,15 @@ internal static class TrackFlowReconciler
         var nodesById = spec.Nodes.ToDictionary(n => n.Id, StringComparer.Ordinal);
         var tasksByKey = BuildTasksByKey(tasks);
 
-        // Build reverse adjacency: node -> direct downstream dependents
-        var downstream = new Dictionary<string, List<string>>(StringComparer.Ordinal);
-        foreach (var node in spec.Nodes)
-        {
-            if (node.When?.After is not { Count: > 0 } after)
-            {
-                continue;
-            }
+        var downstream = BuildDownstreamIndex(spec);
 
-            foreach (var dep in after)
-            {
-                if (!downstream.TryGetValue(dep.Node, out var list))
-                {
-                    list = [];
-                    downstream[dep.Node] = list;
-                }
-
-                list.Add(node.Id);
-            }
-        }
-
-        // Compute nodes fed by any live (non-canceled) cron node — those stay resident across waves!
-        var cronFed = new HashSet<string>(StringComparer.Ordinal);
+        var recurring = new HashSet<string>(StringComparer.Ordinal);
         var queue = new Queue<string>();
         foreach (var node in spec.Nodes)
         {
-            if (node.When?.Cron is not null && !node.Canceled)
+            if (FlowConstants.IsRecurringSource(node))
             {
-                if (cronFed.Add(node.Id))
+                if (recurring.Add(node.Id))
                 {
                     queue.Enqueue(node.Id);
                 }
@@ -141,7 +121,7 @@ internal static class TrackFlowReconciler
 
             foreach (var child in children)
             {
-                if (cronFed.Add(child))
+                if (recurring.Add(child))
                 {
                     queue.Enqueue(child);
                 }
@@ -173,7 +153,7 @@ internal static class TrackFlowReconciler
             changed = false;
             foreach (var node in spec.Nodes)
             {
-                if (cronFed.Contains(node.Id) || unreachable.Contains(node.Id) || IsTerminal(node))
+                if (recurring.Contains(node.Id) || unreachable.Contains(node.Id) || IsTerminal(node))
                 {
                     continue;
                 }
@@ -191,7 +171,7 @@ internal static class TrackFlowReconciler
 
                 foreach (var dep in after)
                 {
-                    if (!nodesById.TryGetValue(dep.Node, out var depNode) || cronFed.Contains(dep.Node))
+                    if (!nodesById.TryGetValue(dep.Node, out var depNode) || recurring.Contains(dep.Node))
                     {
                         continue;
                     }
@@ -215,7 +195,7 @@ internal static class TrackFlowReconciler
         var retained = new HashSet<string>(StringComparer.Ordinal);
         foreach (var node in spec.Nodes)
         {
-            if (cronFed.Contains(node.Id) || (!IsTerminal(node) && !unreachable.Contains(node.Id)))
+            if (recurring.Contains(node.Id) || (!IsTerminal(node) && !unreachable.Contains(node.Id)))
             {
                 retained.Add(node.Id);
                 queue.Enqueue(node.Id);
@@ -246,6 +226,83 @@ internal static class TrackFlowReconciler
         eligible.UnionWith(nodesById.Keys.Where(id => !retained.Contains(id)));
         return eligible;
     }
+
+    internal static Dictionary<string, List<string>> BuildDownstreamIndex(FlowSpecDto spec)
+    {
+        var downstream = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        foreach (var node in spec.Nodes)
+        {
+            foreach (var dependency in node.When?.After ?? [])
+            {
+                if (!downstream.TryGetValue(dependency.Node, out var children))
+                    downstream.Add(dependency.Node, children = []);
+                children.Add(node.Id);
+            }
+        }
+        return downstream;
+    }
+
+    internal static HashSet<string> DownstreamClosure(string root, Dictionary<string, List<string>> downstream)
+    {
+        var closure = new HashSet<string>(StringComparer.Ordinal);
+        var pending = new Queue<string>();
+        pending.Enqueue(root);
+        while (pending.TryDequeue(out var id))
+        {
+            if (!downstream.TryGetValue(id, out var children))
+                continue;
+            foreach (var child in children)
+                if (closure.Add(child))
+                    pending.Enqueue(child);
+        }
+        return closure;
+    }
+
+    internal static bool IsWaveConverged(HashSet<string> descendants,
+        Dictionary<string, FlowNodeSpecDto> nodes, Dictionary<string, TaskDto> tasks, IReadOnlySet<string> activeIds)
+    {
+        var skipped = new HashSet<string>(StringComparer.Ordinal);
+        // Outcome alternatives which cannot run in this wave remain pending for future waves.
+        // Propagate impossibility across the full prerequisite graph so joins depending on
+        // unreachable non-descendant branches do not pin the watch indefinitely.
+        bool changed;
+        do
+        {
+            changed = false;
+            foreach (var (id, node) in nodes)
+            {
+                if (skipped.Contains(id) ||
+                    node.When?.After is not { Count: > 0 } deps ||
+                    tasks.GetValueOrDefault(id) is not { Status: TaskRunStatus.Pending, Ready: false } task ||
+                    activeIds.Contains(task.Id))
+                    continue;
+                if (deps.Any(dep => skipped.Contains(dep.Node) ||
+                    (tasks.TryGetValue(dep.Node, out var upstream) && !activeIds.Contains(upstream.Id) &&
+                     IsTerminal(upstream) && !FlowConstants.OutcomeMatchesCondition(upstream, dep.On))))
+                    changed |= skipped.Add(id);
+            }
+        } while (changed);
+
+        return descendants.All(id =>
+        {
+            var node = nodes[id];
+            if (!tasks.TryGetValue(id, out var task))
+                return node.Canceled;
+            if (activeIds.Contains(task.Id))
+                return false;
+            if (skipped.Contains(id) || node.Canceled)
+                return true;
+            if (!IsTerminal(task))
+                return false;
+            // A terminal task can still owe work to this wave if one of its upstream runs just changed.
+            return (FlowConstants.IsRepeatingWatch(node) && FlowConstants.IsWatchPaused(task)) ||
+                FlowConstants.SatisfiedWaveKey(node.When!.After!, tasks) is not { } waveKey ||
+                waveKey == task.TriggerRunKey;
+        });
+    }
+
+    private static bool IsTerminal(TaskDto task) =>
+        task.Status is TaskRunStatus.Done or TaskRunStatus.Failed or TaskRunStatus.Canceled;
 
     public static TaskDto ArchiveTaskForGc(TaskDto task, long nowMs) =>
         task.Status == TaskRunStatus.Pending
@@ -278,9 +335,13 @@ internal static class TrackFlowReconciler
         string trackId,
         FlowNodeSpecDto node,
         TaskDto? existing,
-        long nowMs)
+        long nowMs,
+        AccessMode? routedAccess = null,
+        FlowNodeSpecDto? previousNode = null)
     {
         var (kind, goalOrCmd, access, provider, role, gate, acceptance, context) = MapNodeDoToTaskFields(node);
+        access = existing is not null && (node.Canceled || existing.Status is TaskRunStatus.Running or TaskRunStatus.Verifying)
+            ? existing.Access : routedAccess ?? access;
         var dependsOn = node.When?.After is { Count: > 0 } after
             ? after.Select(a => a.Node).Distinct(StringComparer.Ordinal).ToArray()
             : Array.Empty<string>();
@@ -325,6 +386,8 @@ internal static class TrackFlowReconciler
 
         var nextStatus = existing.Status;
         var nextReady = existing.Ready;
+        var nextOutcome = existing.Outcome;
+        var nextOutcomeSummary = existing.OutcomeSummary;
         long? finishedAt = existing.FinishedAtMs;
         string? statusDetail = existing.StatusDetail;
 
@@ -334,6 +397,19 @@ internal static class TrackFlowReconciler
             nextReady = false;
             finishedAt ??= nowMs;
             statusDetail = string.IsNullOrWhiteSpace(statusDetail) ? "Canceled in flow." : statusDetail;
+        }
+        else if (FlowConstants.IsRepeatingWatch(node) &&
+                 existing.Status == TaskRunStatus.Done &&
+                 FlowConstants.IsWatchPaused(existing) &&
+                 (previousNode is null || !TrackFlowValidator.DoEquals(previousNode.Do, node.Do) || !TrackFlowValidator.WhenEquals(previousNode.When, node.When)))
+        {
+            // Explicit recovery: editing and recommitting a paused repeating watch resumes patrolling.
+            nextStatus = TaskRunStatus.Pending;
+            nextReady = isImmediate;
+            nextOutcome = FlowOutcome.None;
+            nextOutcomeSummary = null;
+            finishedAt = null;
+            statusDetail = null;
         }
         else if (existing.Status == TaskRunStatus.Pending)
         {
@@ -357,6 +433,8 @@ internal static class TrackFlowReconciler
             Gate = gate,
             SessionId = sessionId,
             Status = nextStatus,
+            Outcome = nextOutcome,
+            OutcomeSummary = nextOutcomeSummary,
             StatusDetail = statusDetail,
             FinishedAtMs = finishedAt,
             ArchivedAtMs = null,
@@ -485,7 +563,7 @@ internal static class TrackFlowReconciler
                         headSha = d.HeadSha,
                         cmd = d.Cmd,
                         interval = d.Interval ?? FlowSyntax.DefaultWatchInterval,
-                        timeout = d.Timeout ?? FlowSyntax.DefaultWatchTimeout
+                        timeout = FlowSyntax.WatchTimeout(d)
                     }));
 
             default:
@@ -526,6 +604,7 @@ internal static class TrackFlowReconciler
                         flowSource = node.Source,
                         title = node.Title ?? node.Id,
                         initialModel = d.Model,
+                        initialReasoningEffort = d.ReasoningEffort,
                         targetSession = d.Session,
                         reuseSession
                     }));

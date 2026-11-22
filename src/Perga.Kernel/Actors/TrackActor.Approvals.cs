@@ -23,6 +23,10 @@ public sealed partial class TrackActor
     private static readonly IReadOnlyList<ApprovalChoiceDto> DefaultBinaryChoices =
         [new("approve", "Approve", true), new("deny", "Deny", false)];
 
+    private PolicySessionContext BuildPolicySessionContextCore(AgentSessionDto caller) =>
+        new(caller.Id, caller.IsLead, caller.ContextUsage?.Ratio ?? 0.0,
+            _taskCoordinator.TryGetActiveTaskForSessionCore(caller.Id)?.Task.Id);
+
     private readonly object _approvalAdmission = new();
     private bool _approvalAdmissionClosed;
     private readonly ConcurrentDictionary<string, PendingApproval> _approvals = new(StringComparer.Ordinal);
@@ -433,11 +437,11 @@ public sealed partial class TrackActor
             {
                 await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
                 var caller = RequireSessionCore(sessionId);
-                if (string.Equals(mcpServer, "perga", StringComparison.OrdinalIgnoreCase) &&
-                    KernelMcpCatalog.IsGovernanceOnly(toolName))
+                var perga = string.Equals(mcpServer, "perga", StringComparison.OrdinalIgnoreCase);
+                if (perga && KernelMcpCatalog.IsGovernanceOnly(toolName))
                     RequireGovernanceSessionCore(sessionId, toolName);
 
-                if (!string.Equals(mcpServer, "perga", StringComparison.OrdinalIgnoreCase) &&
+                if (!perga &&
                     !string.Equals(mcpServer, "vcs", StringComparison.OrdinalIgnoreCase) &&
                     !_track.EnabledPlugins.Contains(mcpServer, StringComparer.Ordinal))
                 {
@@ -447,35 +451,35 @@ public sealed partial class TrackActor
 
                 // Capture before evaluation, including across an AskHuman suspension.
                 authorizedPolicyGeneration = _policyGeneration;
-                if (mcpServer == "perga" && KernelMcpCatalog.IsLeadOnly(toolName))
+                if (perga && KernelMcpCatalog.IsLeadOnly(toolName))
                 {
                     if (caller.Id != _track.LeadSessionId)
                         throw KernelException.Forbidden("Only the current Track Lead can use this tool.");
                 }
 
-                var providerDiscovery = mcpServer == "perga" && toolName == KernelMcpToolNames.ProviderList;
-                var flowRead = mcpServer == "perga" && toolName == KernelMcpToolNames.FlowRead;
-                var previewOnly = providerDiscovery || flowRead;
-                if (mcpServer == "perga" && toolName == KernelMcpToolNames.TrackSet)
-                    previewOnly = ValidateTemplateSetArguments(arguments);
-                if (mcpServer == "perga" && toolName == KernelMcpToolNames.FlowCommit &&
+                if (perga && KernelMcpCatalog.IsBeforeHookExemptReadOnly(toolName))
+                    return null;
+
+                var trackSet = perga && toolName == KernelMcpToolNames.TrackSet;
+                var previewOnly = (perga && KernelMcpCatalog.IsReadOnlyTool(toolName)) ||
+                    (trackSet && ValidateTemplateSetArguments(arguments));
+                if (trackSet && caller.Id == _track.LeadSessionId &&
+                    arguments.TryGetProperty("clear", out var clear) && clear.ValueKind == JsonValueKind.True)
+                    return null;
+                if (perga && toolName == KernelMcpToolNames.FlowCommit &&
                     arguments.ValueKind == JsonValueKind.Object && arguments.TryGetProperty("dryRun", out var dryRun))
                     previewOnly = dryRun.ValueKind == JsonValueKind.True;
-                if (!(mcpServer == "perga" && toolName == KernelMcpToolNames.TrackSet))
+                if (!trackSet)
                     RequirePolicyAvailableCore();
                 if (_policy is null)
-                {
                     return null;
-                }
 
-                var eval = _policyVm.Before(_policy, "tool." + toolName, TrackId, JsonHelpers.ToElement(new {
-                    sessionId = caller.Id, isLead = caller.IsLead, boundTaskId = _taskCoordinator.TryGetActiveTaskForSessionCore(caller.Id)?.Task.Id,
+                var session = BuildPolicySessionContextCore(caller);
+                var eval = _policyVm.Before(_policy, "tool." + toolName, TrackId, JsonHelpers.ToElement(new
+                {
+                    sessionId = caller.Id, isLead = caller.IsLead, boundTaskId = session.BoundTaskId,
                     mcpServer, toolName, arguments = arguments.ValueKind == JsonValueKind.Undefined ? JsonHelpers.EmptyObject : arguments
-                }), _track.TemplateInputs, _track.Data);
-                if (providerDiscovery && eval is GuardDecision.AskHuman)
-                    throw KernelException.PolicyDenied("Provider discovery is read-only and cannot request approval.");
-                if (flowRead && eval is GuardDecision.AskHuman)
-                    throw KernelException.PolicyDenied("Reading flow is read-only and cannot request approval.");
+                }), _track.TemplateInputs, _track.Data, session);
                 if (eval is GuardDecision.AskHuman)
                     RequireApprovalOrigin(sessionId, approvalTurn, origin);
                 if (previewOnly && eval is GuardDecision.AskHuman)

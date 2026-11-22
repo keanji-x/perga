@@ -27,7 +27,9 @@ export function classifyFlowNodeState(node: FlowNodeProjection): FlowVisualState
   if (node.status === 'running' || node.status === 'verifying') {
     return node.doKind === 'watch' && node.watchProgress != null ? 'waiting' : 'running';
   }
-  if (node.status === 'done') return 'ok';
+  if (node.status === 'done') {
+    return node.doKind === 'watch' && node.repeat && node.outcome === 'ok' ? 'waiting' : 'ok';
+  }
   return 'pending';
 }
 
@@ -36,7 +38,7 @@ export function flowStateLabel(node: FlowNodeProjection): string {
   switch (visual) {
     case 'ok': return '已完成';
     case 'running': return node.status === 'verifying' ? '验证中' : '运行中';
-    case 'waiting': return '等待中';
+    case 'waiting': return node.doKind === 'watch' && node.repeat && node.status === 'done' ? '待下一轮' : '等待中';
     case 'attention': return '需介入';
     case 'blocked': return '阻塞';
     case 'failed': return '失败';

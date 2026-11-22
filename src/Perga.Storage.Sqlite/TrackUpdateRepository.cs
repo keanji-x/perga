@@ -12,17 +12,20 @@ internal sealed class TrackUpdateRepository
     private readonly SqliteStoreContext _context;
     private readonly TaskRepository _taskRepository;
 
-    internal TrackUpdateRepository(SqliteStoreContext context, TaskRepository taskRepository)
+    private readonly ReportRepository _reportRepository;
+
+    internal TrackUpdateRepository(SqliteStoreContext context, TaskRepository taskRepository, ReportRepository reportRepository)
     {
         _context = context;
         _taskRepository = taskRepository;
+        _reportRepository = reportRepository;
     }
 
     public Task UpdateTrackAndEmitAsync(TrackDto track, EventEnvelopeDto? evt, CancellationToken ct, bool writeData = false) =>
         UpdateTrackCoreAsync(track, null, evt, ct, writeData: writeData);
 
-    public Task UpdateTrackTemplateAndEmitAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto evt, CancellationToken ct, bool writeData = false, TrackFlowUpdate? flow = null) =>
-        UpdateTrackCoreAsync(track, templateSnapshot, evt, ct, replaceTemplateSnapshot: true, writeData, flow);
+    public Task UpdateTrackTemplateAndEmitAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto evt, CancellationToken ct, bool writeData = false, TrackFlowUpdate? flow = null, TemplateReportSeed? reportSeed = null) =>
+        UpdateTrackCoreAsync(track, templateSnapshot, evt, ct, replaceTemplateSnapshot: true, writeData, flow, reportSeed);
 
     public Task RecordFlowFileHashAsync(string trackId, long flowRev, string sha256, CancellationToken ct)
     {
@@ -127,7 +130,7 @@ internal sealed class TrackUpdateRepository
         }
     }
 
-    private Task UpdateTrackCoreAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto? evt, CancellationToken ct, bool replaceTemplateSnapshot = false, bool writeData = false, TrackFlowUpdate? flow = null)
+    private Task UpdateTrackCoreAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto? evt, CancellationToken ct, bool replaceTemplateSnapshot = false, bool writeData = false, TrackFlowUpdate? flow = null, TemplateReportSeed? reportSeed = null)
     {
         ArgumentNullException.ThrowIfNull(track);
         _context.EnsureInitialized();
@@ -214,6 +217,10 @@ internal sealed class TrackUpdateRepository
                 {
                     await EventRepository.InsertEventInternalAsync(conn, tx, evt, innerCt).ConfigureAwait(false);
                 }
+                if (reportSeed is not null)
+                    await _reportRepository.SaveReportInternalAsync(conn, tx, track.Id, reportSeed.Document,
+                        reportSeed.CompressedBlocks, reportSeed.AuthorSessionId, "Seed template report", reportSeed.Event,
+                        innerCt, requireBlankReport: true).ConfigureAwait(false);
             },
             ct);
     }

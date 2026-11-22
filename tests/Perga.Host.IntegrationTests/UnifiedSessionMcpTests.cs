@@ -443,7 +443,7 @@ public sealed class UnifiedSessionMcpTests
         var kernel = host.Services.GetRequiredService<IPergaKernel>();
         kernel.Templates.RegisterTemplate("""
             export default defineTemplate({id:"slow-approval",title:"Slow approval",
-              before(call) { return call.toolName === "session_list" ? AskHuman("Allow list?") : Allow(); }
+              before(call) { return call.toolName === "session_create" ? AskHuman("Allow create?") : Allow(); }
             });
             """);
         var area = await kernel.CreateAreaAsync(new("Approvals", DefaultCwd: host.DataDir));
@@ -464,7 +464,7 @@ public sealed class UnifiedSessionMcpTests
             opening.TrySetResult();
             await releaseOpen.Task.WaitAsync(openCt);
         };
-        var listing = CallToolAsync(host, "/mcp/kernel", token, KernelMcpToolNames.SessionList, new { }, ct);
+        var listing = CallToolAsync(host, "/mcp/kernel", token, KernelMcpToolNames.SessionCreate, new { title = "probe" }, ct);
         try
         {
             await opening.Task.WaitAsync(ct);
@@ -511,7 +511,7 @@ public sealed class UnifiedSessionMcpTests
         var kernel = host.Services.GetRequiredService<IPergaKernel>();
         kernel.Templates.RegisterTemplate("""
             export default defineTemplate({id:"approval-routing",title:"Approval routing",
-              before(call) { return call.toolName === "session_list" ? AskHuman("Allow list?") : Allow(); }
+              before(call) { return call.toolName === "session_create" && call.arguments?.title === "probe" ? AskHuman("Allow create?") : Allow(); }
             });
             """);
         var area = await kernel.CreateAreaAsync(new("Approvals", DefaultCwd: host.DataDir));
@@ -531,12 +531,12 @@ public sealed class UnifiedSessionMcpTests
             await kernel.UpdateSessionAsync(parent.Id, new(Archived: true), Human, ct);
         }
         var token = await StartCaller(host, kernel, child.Id, ct);
-        var listing = CallToolAsync(host, "/mcp/kernel", token, KernelMcpToolNames.SessionList, new { includeArchived = true }, ct);
+        var listing = CallToolAsync(host, "/mcp/kernel", token, KernelMcpToolNames.SessionCreate, new { title = "probe" }, ct);
         await WaitPage(kernel, child.Id, p => p.PendingInteractions?.Count == 1, ct);
         var approval = Assert.Single((await kernel.GetTrackStatusAsync(track.Id, ct)).PendingApprovals);
         Assert.Equal("policy", approval.Source);
-        Assert.Equal(KernelMcpToolNames.SessionList, approval.ToolName);
-        Assert.True(approval.Arguments!.Value.GetProperty("includeArchived").GetBoolean());
+        Assert.Equal(KernelMcpToolNames.SessionCreate, approval.ToolName);
+        Assert.Equal("probe", approval.Arguments!.Value.GetProperty("title").GetString());
         Assert.Equal(archivedParent ? track.LeadSessionId : parent.Id, approval.DelegateSessionId);
         if (!archivedParent)
             Assert.True(Assert.Single((await Success<SessionItemsPageDto>(host, parentToken, KernelMcpToolNames.SessionRead,

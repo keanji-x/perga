@@ -193,6 +193,7 @@ public sealed class ImplicitTemplateToolsTests
     private const string Source = """
         export default defineTemplate({ id: "authored", title: "Authored",
           plugins: ["search", "new-plugin", "search"],
+          inputs: { marker: { type: "string", optional: true } },
           data: { initial: inputs => ({ marker: inputs.marker ?? "default" }) },
           before: () => Deny("authored policy active") });
         """;
@@ -230,7 +231,10 @@ public sealed class ImplicitTemplateToolsTests
         var caller = Caller(snap);
         var listed = await Call(ctx, caller, KernelMcpToolNames.TemplateList, new { });
         Assert.Equal("authored", Assert.Single(listed.EnumerateArray()).GetProperty("id").GetString());
-        var inspected = await Call(ctx, caller, KernelMcpToolNames.TemplateRead, new { templateId = "authored" });
+        var summary = await Call(ctx, caller, KernelMcpToolNames.TemplateRead, new { templateId = "authored" });
+        Assert.False(summary.TryGetProperty("jsSource", out _));
+        Assert.Equal("template.perga.js", Assert.Single(summary.GetProperty("files").EnumerateArray()).GetString());
+        var inspected = await Call(ctx, caller, KernelMcpToolNames.TemplateRead, new { templateId = "authored", format = "full" });
         Assert.Equal(Source, inspected.GetProperty("jsSource").GetString());
         Assert.Equal("Authored", inspected.GetProperty("manifest").GetProperty("title").GetString());
         var contract = await Call(ctx, caller, KernelMcpToolNames.TemplateRead, new { });
@@ -286,8 +290,8 @@ public sealed class ImplicitTemplateToolsTests
         Assert.False(ctx.Kernel.Actors.IsTrackActiveInMemory(snap.Track.Id));
         var reloaded = await ctx.Kernel.GetTrackAggregateAsync(snap.Track.Id);
         Assert.Equal(Source, reloaded.TemplateSnapshotSource);
-        var denied = await Assert.ThrowsAsync<KernelException>(() => Call(ctx, caller, KernelMcpToolNames.TemplateList, new { }));
-        Assert.Equal(KernelErrorCode.PolicyDenied, denied.Code);
+        var listed = await Call(ctx, caller, KernelMcpToolNames.TemplateList, new { });
+        Assert.Equal("authored", Assert.Single(listed.EnumerateArray()).GetProperty("id").GetString());
     }
 
     [Fact]
@@ -301,7 +305,7 @@ public sealed class ImplicitTemplateToolsTests
               data: { initial: { requests: 0 } },
               before: (call, ctx) => {
                 ctx.data.requests++;
-                return call.arguments.inputs?.suspend
+                return call.arguments.inputs?.marker === 'suspend'
                   ? AskHuman('Approve replacement?', { approve: 'Approve', deny: 'Reject' }) : Allow();
               } });
             """;
@@ -312,7 +316,7 @@ public sealed class ImplicitTemplateToolsTests
         await Call(ctx, caller, KernelMcpToolNames.TrackSet, new { source = asking });
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var suspended = KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller,
-            KernelMcpToolNames.TrackSet, TestJson.FromObject(new { source = Source, inputs = new { suspend = true } }), timeout.Token);
+            KernelMcpToolNames.TrackSet, TestJson.FromObject(new { source = Source, inputs = new { marker = "suspend" } }), timeout.Token);
         ApprovalDto? ask = null;
         while (ask is null)
         {

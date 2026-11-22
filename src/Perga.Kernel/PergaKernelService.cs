@@ -39,11 +39,12 @@ public partial interface IPergaKernel : IAsyncDisposable
     Task<TrackOverlaysResponseDto> GetOverlaysAsync(bool includeClosed = false, CancellationToken ct = default);
     Task<HostListDirResultDto> ListHostDirectoryAsync(string? path = null, string? targetId = null, CancellationToken ct = default);
     IReadOnlyList<CompiledTemplateManifest> ListTemplates();
-    JsonElement InspectTemplate(string? templateId);
-    Task<JsonElement> InspectCurrentTemplateAsync(string trackId, string sessionId, CancellationToken ct = default);
+    JsonElement InspectTemplate(string? templateId, string? format = null, string? file = null);
+    Task<JsonElement> InspectCurrentTemplateAsync(string trackId, string sessionId, CancellationToken ct = default, string? format = null, string? file = null);
     Task<TemplateSetResult> SetTrackTemplateWithOptionsAsync(string trackId, string sessionId, string? templateId,
-        string? source, string generation, JsonElement? inputs, bool dryRun, bool clear, CancellationToken ct = default, bool resetData = false);
-    Task<TrackDto> UpdateTemplateInputsAsync(string trackId, string sessionId, JsonElement inputs, string generation, CancellationToken ct = default);
+        string? source, string generation, JsonElement? inputs, bool dryRun, bool clear, CancellationToken ct = default, bool resetData = false,
+        string? path = null, bool? seedReport = null);
+    Task<TemplateInputsUpdateResult> UpdateTemplateInputsAsync(string trackId, string sessionId, JsonElement inputs, string generation, CancellationToken ct = default);
     Task<TrackDto> SetTrackTemplateAsync(string trackId, string callerSessionId, string? templateId, string? source, string expectedPolicyGeneration, JsonElement? inputs = null, CancellationToken ct = default, bool resetData = false);
     Task<BootReconcileResult> ReconcileOnBootAsync(CancellationToken ct = default);
     Task<DbMaintenanceStatsDto> RunMaintenancePassAsync(CancellationToken ct = default);
@@ -401,7 +402,7 @@ public sealed partial class PergaKernelService : IPergaKernel
 
     public IReadOnlyList<CompiledTemplateManifest> ListTemplates() => Templates.ListManifests();
 
-    public JsonElement InspectTemplate(string? templateId)
+    public JsonElement InspectTemplate(string? templateId, string? format = null, string? file = null)
     {
         if (templateId is null or "__contract__")
         {
@@ -419,17 +420,18 @@ public sealed partial class PergaKernelService : IPergaKernel
             return JsonHelpers.ToElement(new { contract });
         }
         var policy = Templates.GetRequiredPolicy(templateId);
-        return JsonHelpers.ToElement(new { policy.Manifest, policy.JsSource });
+        return TemplateInspection.Project(JsonHelpers.ToElement(new { policy.Manifest }), policy.JsSource, "jsSource", format, file);
     }
 
-    public Task<JsonElement> InspectCurrentTemplateAsync(string trackId, string sessionId, CancellationToken ct = default) =>
-        Actors.GetOrActivate(trackId).InspectCurrentTemplateAsync(sessionId, ct);
+    public Task<JsonElement> InspectCurrentTemplateAsync(string trackId, string sessionId, CancellationToken ct = default, string? format = null, string? file = null) =>
+        Actors.GetOrActivate(trackId).InspectCurrentTemplateAsync(sessionId, ct, format, file);
 
     public Task<TemplateSetResult> SetTrackTemplateWithOptionsAsync(string trackId, string sessionId, string? templateId,
-        string? source, string generation, JsonElement? inputs, bool dryRun, bool clear, CancellationToken ct = default, bool resetData = false) =>
-        Actors.GetOrActivate(trackId).SetTemplateWithOptionsAsync(sessionId, templateId, source, generation, inputs, dryRun, clear, ct, resetData);
+        string? source, string generation, JsonElement? inputs, bool dryRun, bool clear, CancellationToken ct = default, bool resetData = false,
+        string? path = null, bool? seedReport = null) =>
+        Actors.GetOrActivate(trackId).SetTemplateWithOptionsAsync(sessionId, templateId, source, generation, inputs, dryRun, clear, ct, resetData, path, seedReport);
 
-    public Task<TrackDto> UpdateTemplateInputsAsync(string trackId, string sessionId, JsonElement inputs, string generation, CancellationToken ct = default) =>
+    public Task<TemplateInputsUpdateResult> UpdateTemplateInputsAsync(string trackId, string sessionId, JsonElement inputs, string generation, CancellationToken ct = default) =>
         Actors.GetOrActivate(trackId).UpdateTemplateInputsAsync(sessionId, inputs, generation, ct);
 
     public Task<TrackDto> SetTrackTemplateAsync(string trackId, string callerSessionId, string? templateId,
@@ -641,23 +643,17 @@ public sealed partial class PergaKernelService : IPergaKernel
 
         var templateInputs = JsonHelpers.EnsureClonedObject(req.TemplateInputs);
         var templateData = JsonHelpers.EmptyObject;
-        var initialReportMarkdown = string.Empty;
         if (policy is not null)
         {
             TemplateFlow.ValidateInputs(_policyVm, policy, templateInputs);
             try
             {
                 templateData = _policyVm.InitData(policy, templateInputs);
-                initialReportMarkdown = _policyVm.InterpolateInputs(policy, policy.Manifest.InitialReportMarkdown, templateInputs);
             }
             catch (InvalidOperationException ex) { throw KernelException.InvalidArgument(ex.Message); }
         }
 
-        var initialReport = _reportEngine.Parse(
-            initialReportMarkdown,
-            docRev: 0,
-            summary: string.Empty);
-        ReportAuthoring.Validate(initialReport);
+        var initialReport = TemplateReport.Create(_reportEngine, _policyVm, policy, templateInputs);
 
         var enabledPlugins = req.EnabledPlugins?.ToArray()
                              ?? policy?.Manifest.DefaultPlugins.ToArray()
@@ -711,9 +707,12 @@ public sealed partial class PergaKernelService : IPergaKernel
             if (seed.Length > 0)
             {
                 var spec = new FlowSpecDto(1, seed, FlowConstants.SchemaPointer);
+                TrackFlowValidator.WorkerCatalog? catalog = null;
+                if (seed.Any(node => !node.Canceled && node.Do.ReasoningEffort is not null))
+                    catalog = new(await env.AgentRuntime.ProbeProvidersAsync(ct).ConfigureAwait(false), leadProvider, leadSession.Model);
                 TemplateFlow.RequireValid(TrackFlowValidator.Validate(spec, new(0, []), [], new HashSet<string>(),
                     new Dictionary<string, AgentSessionDto> { [leadSessionId] = leadSession }, leadSessionId,
-                    policy, _policyVm, templateInputs, _scheduleCronEvaluator, _timeProvider));
+                    policy, _policyVm, templateInputs, _scheduleCronEvaluator, _timeProvider, workerCatalog: catalog));
                 track = track with { FlowRev = spec.Rev, FlowSpecJson = TrackFlowSerializer.SerializeCanonical(spec) };
                 initialFlow = TemplateFlow.BuildSeedUpdate(track, 0, seed, policy, _policyVm, _scheduleCronEvaluator, _timeProvider);
             }

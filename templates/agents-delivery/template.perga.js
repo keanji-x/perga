@@ -3,7 +3,8 @@ export default defineTemplate({
   title: "AGENTS.md 阶段交付协议",
   description: "按仓库 AGENTS.md 组织实现、独立审查与验证。",
   inputs: {
-    reviewModel: { type: "string", default: "gpt-6.2-soar", label: "审查强制模型" },
+    reviewProvider: { type: "string", optional: true, label: "审查提供方" },
+    reviewModel: { type: "string", optional: true, label: "审查模型" },
     testCmd: { type: "string", default: "dotnet test Perga.sln", label: "全量回归门禁命令" },
   },
   report: {
@@ -14,7 +15,12 @@ export default defineTemplate({
       tasks: {
         requireGateForReadWrite: true,
         routing: [
-          { when: { role: "review" }, model: inputs.reviewModel, access: "read_only", enforce: true },
+          {
+            when: { role: "review" },
+            ...(inputs.reviewProvider ? { provider: inputs.reviewProvider } : {}),
+            ...(inputs.reviewModel ? { model: inputs.reviewModel } : {}),
+            access: "read_only", enforce: true,
+          },
           { when: { role: "impl" }, access: "read_write" },
         ],
       },

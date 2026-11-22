@@ -41,7 +41,11 @@ public sealed record FlowDoSpecDto(
     string? Repo = null,
     string? HeadSha = null,
     string? Interval = null,
-    string? Timeout = null);
+    string? Timeout = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    bool? Repeat = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    string? ReasoningEffort = null);
 
 public sealed record FlowNodeSpecDto(
     string Id,
@@ -121,7 +125,9 @@ public sealed record FlowNodeProjectionDto(
     int FiredCount,
     IReadOnlyList<string> WaitingOn,
     IReadOnlyList<FlowGateCheckProjectionDto> Gates,
-    FlowWatchProgressDto? WatchProgress = null);
+    FlowWatchProgressDto? WatchProgress = null,
+    bool Repeat = false,
+    string? ReasoningEffort = null);
 
 public sealed record FlowArchivedNodeProjectionDto(
     string Id,

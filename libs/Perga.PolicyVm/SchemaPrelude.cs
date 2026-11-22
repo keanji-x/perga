@@ -20,6 +20,9 @@ internal static class SchemaPrelude
             node.optional = function () {
               return makeNode(kind, assign({}, extra || {}, { isOptional: true }));
             };
+            node.default = function (value) {
+              return makeNode(kind, assign({}, extra || {}, { hasDefault: true, defaultValue: value }));
+            };
             return freeze(node);
           }
 

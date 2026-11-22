@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using Perga.AgentKit;
 using Perga.Contracts;
 using Perga.Kernel.Ports;
 using Perga.PolicyVm;
@@ -11,6 +12,8 @@ namespace Perga.Kernel.Flow;
 /// </summary>
 internal static class TrackFlowValidator
 {
+    internal sealed record WorkerCatalog(IReadOnlyList<ProviderStatus> Providers, string DefaultProvider, string? DefaultModel);
+
     public static IReadOnlyList<FlowValidationErrorDto> Validate(
         FlowSpecDto nextSpec,
         FlowSpecDto previousSpec,
@@ -23,7 +26,8 @@ internal static class TrackFlowValidator
         JsonElement templateInputs,
         IScheduleCronEvaluator? cronEvaluator,
         TimeProvider timeProvider,
-        IReadOnlySet<string>? replacedTemplateNodeIds = null)
+        IReadOnlySet<string>? replacedTemplateNodeIds = null,
+        WorkerCatalog? workerCatalog = null)
     {
         var errors = new List<FlowValidationErrorDto>();
         var nextById = nextSpec.Nodes.ToDictionary(n => n.Id, StringComparer.Ordinal);
@@ -33,6 +37,7 @@ internal static class TrackFlowValidator
         for (var i = 0; i < nextSpec.Nodes.Count; i++)
         {
             var node = nextSpec.Nodes[i];
+            FlowSyntax.ValidateActionOptions(node.Do, $"$.nodes[{i}].do", errors);
             // Template binding archives the previous task before inserting the replacement.
             if (replacedTemplateNodeIds?.Contains(node.Id) == true)
                 continue;
@@ -104,12 +109,12 @@ internal static class TrackFlowValidator
                 continue;
             }
 
-            var isCron = prevNode.When?.Cron is not null;
-            if (isCron && !prevNode.Canceled)
+            if (FlowConstants.IsRecurringSource(prevNode))
             {
+                var kind = prevNode.When?.Cron is not null ? "cron" : "repeating watch";
                 errors.Add(new FlowValidationErrorDto(
                     "$.nodes",
-                    $"Cannot delete active cron node '{prevNode.Id}' from flow.json.",
+                    $"Cannot delete active {kind} node '{prevNode.Id}' from flow.json.",
                     $"Set \"canceled\": true explicitly instead of removing active node '{prevNode.Id}'."));
                 continue;
             }
@@ -145,6 +150,15 @@ internal static class TrackFlowValidator
                 continue;
             }
 
+            if (FlowConstants.IsRepeatingWatch(prevNode) && !FlowConstants.IsRepeatingWatch(nextNode))
+            {
+                errors.Add(new FlowValidationErrorDto(
+                    $"$.nodes[{i}].do.repeat",
+                    $"Cannot remove 'repeat' from active repeating watch node '{nextNode.Id}'.",
+                    $"Set \"canceled\": true explicitly to stop repeating watch '{nextNode.Id}'."));
+                continue;
+            }
+
             if (tasksByKey.TryGetValue(nextNode.Id, out var task) &&
                 (activeTaskIds.Contains(task.Id) || task.Status is TaskRunStatus.Running or TaskRunStatus.Verifying))
             {
@@ -169,7 +183,7 @@ internal static class TrackFlowValidator
 
             ValidateSessionBinding(node, i, nextById, existingTasks, activeTaskIds, sessions, leadSessionId, errors);
             var reused = node.Do.Session is { } id && sessions.TryGetValue(id, out var session) ? session : null;
-            ValidateTaskDispatch(node, i, reused, policy, policyVm, templateInputs, errors);
+            ValidateTaskDispatch(node, i, reused, policy, policyVm, templateInputs, workerCatalog, errors);
         }
 
         return errors;
@@ -441,22 +455,12 @@ internal static class TrackFlowValidator
         CompiledPolicy? policy,
         IPolicyVm policyVm,
         JsonElement templateInputs,
+        WorkerCatalog? workerCatalog,
         List<FlowValidationErrorDto> errors)
     {
         if (node.Do.Kind != "run")
-        {
-            if (node.Do.Kind == "watch" && !string.IsNullOrWhiteSpace(node.Do.Cmd) &&
-                policy?.Manifest.RequireGateForReadWrite == true)
-            {
-                errors.Add(new FlowValidationErrorDto(
-                    $"$.nodes[{index}].do.cmd",
-                    $"Template policy requires a gate for read_write node '{node.Id}'. Command watches have no gate field.",
-                    "Use a prChecks watch or a run node with a verification gate."));
-            }
             return;
-        }
 
-        var access = node.Do.Access ?? "read_write";
         var provider = SessionLaunchValidator.NormalizeTaskProviderId(node.Do.Provider);
         var model = node.Do.Model;
         if (reusedSession is not null)
@@ -465,14 +469,15 @@ internal static class TrackFlowValidator
                 (model is not null && model != reusedSession.Model))
                 errors.Add(new($"$.nodes[{index}].do", "Requested provider/model differ from the target session.",
                     "Use the current session provider/model or create a new session."));
-            provider = reusedSession.Provider;
-            model = reusedSession.Model;
+            if (node.Do.ReasoningEffort is { } effort && effort != reusedSession.ReasoningEffort)
+                errors.Add(new($"$.nodes[{index}].do.reasoningEffort", "Requested reasoningEffort differs from the target session.",
+                    "Use the current session reasoning effort or create a new session."));
         }
-        if (policy is null)
-            return;
 
-        var route = policyVm.RouteTaskDispatch(policy, node.Do.Role, access, provider, model, templateInputs);
-        if (reusedSession is not null && route.Denial is null && route.Model != model)
+        var route = policy is null
+            ? new PolicyTaskRoute(reusedSession?.Provider ?? provider, reusedSession is null ? model : reusedSession.Model)
+            : FlowTaskRouting.Resolve(node, policy, policyVm, templateInputs, reusedSession);
+        if (reusedSession is not null && route.Denial is null && route.Model != reusedSession.Model)
             errors.Add(new($"$.nodes[{index}].do", $"Template routing requires model '{route.Model}' on the target session.",
                 "Use a session configured for the routed model."));
         if (route.Denial is { } denial)
@@ -481,10 +486,11 @@ internal static class TrackFlowValidator
                 $"$.nodes[{index}].do",
                 $"Template routing denied node '{node.Id}': {denial}",
                 "Adjust provider/model/access on this node to match template tasks.routing enforcement."));
+            return;
         }
 
-        var effectiveAccess = route.Access ?? access;
-        if (policy.Manifest.RequireGateForReadWrite &&
+        var effectiveAccess = route.Access ?? node.Do.Access ?? "read_write";
+        if (policy?.Manifest.RequireGateForReadWrite == true &&
             string.Equals(effectiveAccess, "read_write", StringComparison.OrdinalIgnoreCase) &&
             string.IsNullOrWhiteSpace(node.Do.Gate))
         {
@@ -492,6 +498,25 @@ internal static class TrackFlowValidator
                 $"$.nodes[{index}].do.gate",
                 $"Template policy requires a non-empty 'gate' for read_write node '{node.Id}'.",
                 """Add a verification command inside "do": { "gate": "dotnet test ..." }."""));
+        }
+
+        if (workerCatalog is not null && node.Do.ReasoningEffort is { } requestedEffort)
+        {
+            var defaultProvider = SessionLaunchValidator.NormalizeProvider(workerCatalog.DefaultProvider);
+            var selected = SessionLaunchValidator.NormalizeProvider(reusedSession?.Provider ?? route.Provider ?? defaultProvider);
+            try
+            {
+                var status = SessionLaunchValidator.ValidateProvider(workerCatalog.Providers, selected, explicitlySelected: true, requireAvailable: true);
+                var routedModel = SessionLaunchValidator.NormalizeRequestedModel(route.Model);
+                var effectiveModel = reusedSession is not null ? reusedSession.Model :
+                    routedModel ?? (selected == defaultProvider ? workerCatalog.DefaultModel : null);
+                SessionLaunchValidator.ValidateModelAndEffort(selected, status, reusedSession is null ? routedModel : model,
+                    effectiveModel, requestedEffort, requireKnownEffort: true);
+            }
+            catch (KernelException ex)
+            {
+                errors.Add(new($"$.nodes[{index}].do.reasoningEffort", ex.Message, ex.NextStep));
+            }
         }
     }
 

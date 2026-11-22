@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Perga.AgentKit;
 using Perga.Contracts;
+using Perga.Kernel.Flow;
 using Perga.Kernel.Internal;
 using Perga.Kernel.Ports;
 using Perga.Kernel.Tasks;
@@ -20,20 +21,23 @@ public sealed partial class TrackActor
         RequirePolicyAvailableCore();
         var model = task.Context is { ValueKind: JsonValueKind.Object } context &&
             context.TryGetProperty("initialModel", out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
-        var session = ReadTaskDispatchSessionCore(task);
+        var reuseFlowSession = IsFlowSessionReuse(task);
+        var session = !FlowConstants.IsFlowTask(task) || reuseFlowSession ? ReadTaskDispatchSessionCore(task) : null;
         var provider = task.Provider;
-        if (IsFlowSessionReuse(task))
+        if (reuseFlowSession)
         {
             if (session is null || session.ArchivedAtMs is not null || session.IsLead)
                 throw KernelException.PolicyDenied("The flow task's reuse session is unavailable.");
             if ((provider is not null && provider != session.Provider) || (model is not null && model != session.Model))
                 throw KernelException.PolicyDenied("Requested provider/model differ from the reuse session.");
+            if (ReadTaskReasoningEffort(task) is { } effort && effort != session.ReasoningEffort)
+                throw KernelException.PolicyDenied("Requested reasoningEffort differs from the reuse session.");
             provider = session.Provider;
             model = session.Model;
         }
 
         var route = _policy is null ? new PolicyTaskRoute(provider, model) : _policyVm.RouteTaskDispatch(_policy,
-            task.Role, FormatAccessModeForPolicy(task.Access), provider, model, _track.TemplateInputs);
+            task.Role, ReadTaskRequestedAccessCore(task), provider, model, _track.TemplateInputs);
         if (route.Denial is null)
             route = route with { Model = SessionLaunchValidator.NormalizeRequestedModel(route.Model) };
         if (IsFlowSessionReuse(task) && route.Denial is null && route.Model != model)
@@ -45,10 +49,18 @@ public sealed partial class TrackActor
         return (route with { Provider = session.Provider, Model = session.Model }, usesPreparedDefault);
     }
 
+    private string? ReadTaskRequestedAccessCore(TaskDto task)
+    {
+        if (!FlowConstants.IsFlowTask(task) || task.Kind == "command")
+            return FormatAccessModeForPolicy(task.Access);
+        var node = _flowSpec.Nodes.FirstOrDefault(node => node.Id == task.TaskKey);
+        return node?.Do.Kind == "run" ? FlowTaskRouting.RequestedAccess(node) : FormatAccessModeForPolicy(task.Access);
+    }
+
     private GuardDecision EvaluateTaskDispatchCore(TaskDto task, PolicyTaskRoute route) =>
         _policy is null ? new GuardDecision.Allow() :
         _policyVm.Before(_policy, "task.dispatch", TrackId, JsonHelpers.ToElement(new {
-            taskKey = task.TaskKey, role = task.Role, access = FormatAccessModeForPolicy(task.Access),
+            taskKey = task.TaskKey, role = task.Role, access = route.Access ?? FormatAccessModeForPolicy(task.Access),
             provider = route.Provider, model = route.Model, gate = task.Gate, acceptance = task.Acceptance
         }), _track.TemplateInputs, _track.Data);
 
@@ -61,7 +73,9 @@ public sealed partial class TrackActor
         var evaluation = EvaluateTaskDispatchCore(task, route);
         if (evaluation is GuardDecision.Deny denied)
             throw KernelException.PolicyDenied(denied.Reason);
-        if (_policy.Manifest.RequireGateForReadWrite && task.Access == AccessMode.ReadWrite && (task.Gate is null || task.Gate.Steps.Count == 0))
+        if (_policy.Manifest.RequireGateForReadWrite && !(task.Kind == "flow_watch" && FlowConstants.IsFlowTask(task)) &&
+            (route.Access ?? FormatAccessModeForPolicy(task.Access)) == "read_write" &&
+            (task.Gate is null || task.Gate.Steps.Count == 0))
             throw KernelException.PolicyDenied("Template policy requires a gate for this task.");
         if (evaluation is GuardDecision.AskHuman ask)
         {
@@ -75,23 +89,34 @@ public sealed partial class TrackActor
         return true;
     }
 
-    private static bool NeedsTaskProviderCatalog(PolicyTaskRoute route) =>
-        route.Provider is not null || route.Model is not null;
+    private static string? ReadTaskReasoningEffort(TaskDto task) =>
+        FlowConstants.IsFlowTask(task) && task.Context is { ValueKind: JsonValueKind.Object } context &&
+        context.TryGetProperty("initialReasoningEffort", out var value) && value.ValueKind == JsonValueKind.String
+            ? value.GetString() : null;
 
     private void ValidateTaskProviderModelCore(PolicyTaskRoute route, IReadOnlyList<ProviderStatus> providers,
-        bool validateModel = true)
+        string? effort, bool validateModel)
     {
         var provider = SessionLaunchValidator.NormalizeProvider(route.Provider ?? GetDefaultProviderCore());
         try
         {
             var status = SessionLaunchValidator.ValidateProvider(providers, provider, explicitlySelected: true, requireAvailable: true);
-            if (validateModel)
-                SessionLaunchValidator.ValidateModelAndEffort(provider, status, route.Model, route.Model, null);
+            SessionLaunchValidator.ValidateModelAndEffort(provider, status, validateModel ? route.Model : null,
+                route.Model ?? ResolveTaskWorkerModelCore(provider), effort, requireKnownEffort: effort is not null);
         }
         catch (KernelException ex) when (ex.Code == KernelErrorCode.PreconditionFailed)
         {
             throw KernelException.Conflict(ex.Message, ex.NextStep);
         }
+    }
+
+    private async Task<TrackFlowValidator.WorkerCatalog?> GetFlowWorkerCatalogCoreAsync(FlowSpecDto spec, CancellationToken ct)
+    {
+        if (!spec.Nodes.Any(node => !node.Canceled && node.Do.ReasoningEffort is not null))
+            return null;
+        var provider = GetDefaultProviderCore();
+        var providers = await ProbeSessionProvidersAsync(ct).ConfigureAwait(false);
+        return new(providers, provider, ResolveTaskWorkerModelCore(provider));
     }
 
     private void StartTaskProviderProbeCore()
@@ -150,9 +175,10 @@ public sealed partial class TrackActor
                         _taskDispatchApprovals[task.TaskKey] = (task.Generation, generation, TaskDispatchFields(task));
                     else
                     {
-                        var failed = current with { Status = TaskRunStatus.Failed, StatusDetail = "Task dispatch denied by human.", FinishedAtMs = NowMs(), UpdatedAtMs = NowMs() };
+                        var failed = current with { Status = TaskRunStatus.Failed, Outcome = FlowOutcome.Attention, StatusDetail = "Task dispatch denied by human.", FinishedAtMs = NowMs(), UpdatedAtMs = NowMs() };
                         await _taskCoordinator.PersistAndEmitTaskUpdatedCoreAsync(failed, failed.UpdatedAtMs, _actorShutdownCts.Token).ConfigureAwait(false);
                         _taskCoordinator.ReplaceTaskInMemoryCore(failed);
+                        await OnTaskSettledFlowHookCoreAsync(failed, _actorShutdownCts.Token).ConfigureAwait(false);
                     }
                 }
                 await _taskCoordinator.ScheduleEligibleTasksCoreAsync(_actorShutdownCts.Token).ConfigureAwait(false);

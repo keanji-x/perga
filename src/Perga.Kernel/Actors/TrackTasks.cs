@@ -33,6 +33,8 @@ public sealed partial class TrackActor
         public ActiveTaskRunState[] ActiveRuns => _activeTasks.Values.ToArray();
         public ActiveTaskRunState GetActiveRun(string id) => _activeTasks[id];
         public bool HasActiveRun(string id) => _activeTasks.ContainsKey(id);
+        public bool HasCanceledRunStillSettling() => _activeTasks.Values.Any(run => run.Settling &&
+            _tasks.Any(task => task.Id == run.TaskId && task.Status == TaskRunStatus.Canceled));
         public bool TryGetActiveRun(string id, out ActiveTaskRunState run) => _activeTasks.TryGetValue(id, out run!);
         public void ReplaceDeclarations(IEnumerable<TaskDto> tasks)
         {
@@ -67,7 +69,7 @@ public sealed partial class TrackActor
             return actor.EnqueueAsync(async _ =>
             {
                 await actor.EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
-                return (IReadOnlyList<TaskDto>)_tasks.ToArray();
+                return (IReadOnlyList<TaskDto>)_tasks.Select(actor.ProjectFlowTaskCore).ToArray();
             }, ct);
         }
 
@@ -190,8 +192,7 @@ public sealed partial class TrackActor
                 return;
             }
 
-            if (_activeTasks.Values.Any(run => run.Settling &&
-                _tasks.Any(t => t.Id == run.TaskId && t.Status == TaskRunStatus.Canceled)))
+            if (HasCanceledRunStillSettling())
                 return;
 
             var mounted = await actor.EnsureWorkspaceMountedCoreAsync(ct).ConfigureAwait(false);
@@ -202,7 +203,7 @@ public sealed partial class TrackActor
             do
             {
                 preparationFailed = false;
-                var hasActiveCommandWatch = actor._activeWatches.Values.Any(watch => !watch.IsWorkspaceExempt);
+                var hasActiveCommandWatch = actor._activeWatches.Values.Any(watch => watch.HoldsWorkspace);
                 var schedulable = TaskGraphScheduler.ComputeSchedulable(_tasks, flowSpec: actor._flowSpec, hasActiveCommandWatch: hasActiveCommandWatch);
                 foreach (var task in schedulable)
                 {
@@ -260,15 +261,30 @@ public sealed partial class TrackActor
                     {
                         var taskRoute = actor.RouteTaskCore(task);
                         route = taskRoute.Route;
+                        if (FlowConstants.IsFlowTask(task) && route.Access is { } effectiveAccess &&
+                            effectiveAccess != FormatAccessModeForPolicy(task.Access))
+                        {
+                            // Persist a changed route before recomputing the workspace concurrency fence.
+                            var updated = task with
+                            {
+                                Access = effectiveAccess == "read_only" ? AccessMode.ReadOnly : AccessMode.ReadWrite,
+                                UpdatedAtMs = actor.NowMs()
+                            };
+                            await PersistAndEmitTaskUpdatedCoreAsync(updated, updated.UpdatedAtMs, ct).ConfigureAwait(false);
+                            ReplaceTaskInMemoryCore(updated);
+                            preparationFailed = true;
+                            break;
+                        }
                         if (!actor.EnsureTaskDispatchApprovedCore(task, route)) continue;
-                        if (TrackActor.NeedsTaskProviderCatalog(route))
+                        var effort = ReadTaskReasoningEffort(task);
+                        if (route.Provider is not null || route.Model is not null || effort is not null)
                         {
                             if (providers is null)
                             {
                                 actor.StartTaskProviderProbeCore();
                                 continue;
                             }
-                            actor.ValidateTaskProviderModelCore(route, providers, validateModel: !taskRoute.UsesPreparedDefault);
+                            actor.ValidateTaskProviderModelCore(route, providers, effort, validateModel: !taskRoute.UsesPreparedDefault);
                         }
                     }
                     catch (KernelException ex) when (ex.Code == KernelErrorCode.Conflict && !ct.IsCancellationRequested)
@@ -369,6 +385,7 @@ public sealed partial class TrackActor
                     }
                     actor._scheduler.Clear(previousSession.Id);
                 }
+                var isFlowFreshEpoch = FlowConstants.IsFlowTask(task) && !preserveSessionContext;
                 var subagent = isCommandTask ? null : previousSession is not null ? (preserveSessionContext ? previousSession with
                 {
                     Status = "idle",
@@ -378,6 +395,9 @@ public sealed partial class TrackActor
                 } : previousSession with
                 {
                     Status = "idle", NativeThreadId = null, ContextUsage = null,
+                    Provider = isFlowFreshEpoch ? workerProvider : previousSession.Provider,
+                    Model = isFlowFreshEpoch ? (route.Model ?? actor.ResolveTaskWorkerModelCore(workerProvider)) : previousSession.Model,
+                    ReasoningEffort = isFlowFreshEpoch ? ReadTaskReasoningEffort(task) : (ReadTaskReasoningEffort(task) ?? previousSession.ReasoningEffort),
                     ArchivedAtMs = null,
                     UnknownReason = null, UnknownTurnId = null, UnknownLastError = null, ReconnectInvalidated = false,
                     Epoch = task.RunCount == 0 ? previousSession.Epoch : checked(previousSession.Epoch + 1),
@@ -395,6 +415,7 @@ public sealed partial class TrackActor
                     ArchivedAtMs: null,
                     CreatedAtMs: now,
                     UpdatedAtMs: now,
+                    ReasoningEffort: ReadTaskReasoningEffort(task),
                     PermissionMode: RuntimePermissionModes.Resolve(workerProvider, null));
 
                 var effectiveTask = actor.InterpolateFlowTaskForExecutionCore(task);
@@ -439,6 +460,7 @@ public sealed partial class TrackActor
                     var failed = task with { Status = TaskRunStatus.Failed, Outcome = FlowOutcome.Attention, OutcomeSummary = ex.Message, StatusDetail = ex.Message, FinishedAtMs = failedAt, UpdatedAtMs = failedAt };
                     await PersistAndEmitTaskUpdatedCoreAsync(failed, failed.UpdatedAtMs, CancellationToken.None).ConfigureAwait(false);
                     ReplaceTaskInMemoryCore(failed);
+                    await actor.OnTaskSettledFlowHookCoreAsync(failed, CancellationToken.None).ConfigureAwait(false);
                     return false;
                 }
 

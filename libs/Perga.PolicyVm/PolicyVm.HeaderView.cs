@@ -6,73 +6,124 @@ namespace Perga.PolicyVm;
 
 public sealed partial class PolicyVm
 {
+    private static readonly JsonSerializerOptions HeaderViewJsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+
+    public TemplateHeaderView? EvaluateHeaderView(CompiledPolicy policy, PolicyHeaderViewContext ctx, JsonElement data) =>
+        EvaluateHeaderViewWithDiagnostic(policy, ctx, data).View;
+
     // Presentation is read-only and must never prevent track reads, even for malformed hooks.
-    public TemplateHeaderView? EvaluateHeaderView(CompiledPolicy policy, PolicyHeaderViewContext ctx, JsonElement data)
+    public HeaderViewEvaluation EvaluateHeaderViewWithDiagnostic(CompiledPolicy policy, PolicyHeaderViewContext ctx, JsonElement data)
     {
         try
         {
-            return EvaluateWithEffectiveDefinition<TemplateHeaderView?>(policy, ctx.Inputs, "HeaderView",
+            return EvaluateWithEffectiveDefinition<HeaderViewEvaluation>(policy, ctx.Inputs, "HeaderView",
                 (engine, _, def, _, _) =>
                 {
-                    if (def.Get("headerView") is not Function hook)
-                        return null;
+                    var hookVal = def.Get("headerView");
+                    if (hookVal.IsUndefined() || hookVal.IsNull())
+                        return new(null, null);
+                    if (hookVal is not Function hook)
+                        throw InvalidHeaderView("headerView", "expected a function");
+
                     var context = BuildTemplateContextObject(engine, def, ctx.TrackId, ctx.Inputs, data);
                     var value = engine.Call(hook, def, [context]);
                     if (!value.IsObject() || value.IsArray())
-                        return null;
+                        throw InvalidHeaderView("headerView", "expected an object");
+
                     var json = JsValueToJsonElement(engine, value, defaultJson: "null");
-                    if (!ValidHeaderView(json))
-                        return null;
-                    return System.Text.Json.JsonSerializer.Deserialize<TemplateHeaderView>(json, new JsonSerializerOptions
+                    ValidateHeaderObject(json, "headerView", (name, item, path) =>
                     {
-                        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+                        switch (name)
+                        {
+                            case "badges":
+                            case "metrics":
+                            case "rules":
+                                ValidateHeaderArray(item, path, (entry, entryPath) => ValidateHeaderEntry(entry, entryPath, name));
+                                break;
+                            case "notice":
+                                ValidateHeaderEntry(item, path, name);
+                                break;
+                            default:
+                                throw InvalidHeaderView(path, "unknown field");
+                        }
                     });
+                    return new(JsonSerializer.Deserialize<TemplateHeaderView>(json, HeaderViewJsonOptions), null);
                 });
         }
-        catch (Exception)
+        catch (Exception ex)
         {
-            return null;
+            return new(null, ex.Message);
         }
     }
 
-    private static bool ValidHeaderView(JsonElement view) =>
-        view.ValueKind == JsonValueKind.Object && view.EnumerateObject().All(property => property.Name switch
+    private static void ValidateHeaderEntry(JsonElement item, string path, string kind)
+    {
+        ValidateHeaderObject(item, path, (name, value, fieldPath) =>
         {
-            "badges" => ValidArray(property.Value, ValidBadge),
-            "notice" => ValidNotice(property.Value),
-            "metrics" => ValidArray(property.Value, ValidMetric),
-            "rules" => ValidArray(property.Value, ValidRule),
-            _ => false
+            switch (name)
+            {
+                case "label" when kind != "notice":
+                case "text" when kind is "notice" or "rules":
+                case "value" or "delta" or "sub" when kind == "metrics":
+                    RequireHeaderString(value, fieldPath);
+                    break;
+                case "tone" when kind is "badges" or "metrics":
+                    if (value.ValueKind != JsonValueKind.String ||
+                        value.GetString() is not ("neutral" or "accent" or "success" or "warn" or "error"))
+                        throw InvalidHeaderView(fieldPath, "expected neutral, accent, success, warn or error");
+                    break;
+                case "tone" when kind == "notice":
+                    if (value.ValueKind != JsonValueKind.String || value.GetString() is not ("info" or "warn" or "error"))
+                        throw InvalidHeaderView(fieldPath, "expected info, warn or error");
+                    break;
+                case "spark" when kind == "metrics":
+                    ValidateHeaderArray(value, fieldPath, (point, pointPath) =>
+                    {
+                        if (point.ValueKind != JsonValueKind.Number || !point.TryGetDouble(out var number) || !double.IsFinite(number))
+                            throw InvalidHeaderView(pointPath, "expected a finite number");
+                    });
+                    break;
+                default:
+                    throw InvalidHeaderView(fieldPath, "unknown field");
+            }
         });
 
-    private static bool ValidArray(JsonElement value, Func<JsonElement, bool> valid) =>
-        value.ValueKind == JsonValueKind.Array && value.EnumerateArray().All(valid);
+        RequireProperty(kind == "notice" ? "text" : "label");
+        if (kind == "metrics") RequireProperty("value");
+        if (kind == "rules") RequireProperty("text");
 
-    private static bool RequiredString(JsonElement item, string name) =>
-        item.ValueKind == JsonValueKind.Object && item.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String;
+        void RequireProperty(string name)
+        {
+            if (!item.TryGetProperty(name, out _))
+                throw InvalidHeaderView($"{path}.{name}", "required field is missing");
+        }
+    }
 
-    private static bool ValidTone(JsonElement value) =>
-        value.ValueKind == JsonValueKind.String && value.GetString() is "neutral" or "accent" or "success" or "warn" or "error";
+    private static void ValidateHeaderObject(JsonElement value, string path, Action<string, JsonElement, string> validateField)
+    {
+        if (value.ValueKind != JsonValueKind.Object)
+            throw InvalidHeaderView(path, "expected an object");
 
-    private static bool ValidBadge(JsonElement item) => RequiredString(item, "label") &&
-        item.EnumerateObject().All(p => p.Name switch { "label" => true, "tone" => ValidTone(p.Value), _ => false });
+        foreach (var field in value.EnumerateObject())
+            validateField(field.Name, field.Value, $"{path}.{field.Name}");
+    }
 
-    private static bool ValidNotice(JsonElement item) => RequiredString(item, "text") &&
-        item.EnumerateObject().All(p => p.Name switch {
-            "text" => true,
-            "tone" => p.Value.ValueKind == JsonValueKind.String && p.Value.GetString() is "info" or "warn" or "error",
-            _ => false
-        });
+    private static void ValidateHeaderArray(JsonElement value, string path, Action<JsonElement, string> validateItem)
+    {
+        if (value.ValueKind != JsonValueKind.Array)
+            throw InvalidHeaderView(path, "expected an array");
 
-    private static bool ValidMetric(JsonElement item) => RequiredString(item, "label") && RequiredString(item, "value") &&
-        item.EnumerateObject().All(p => p.Name switch {
-            "label" or "value" => true,
-            "delta" or "sub" => p.Value.ValueKind == JsonValueKind.String,
-            "tone" => ValidTone(p.Value),
-            "spark" => ValidArray(p.Value, n => n.ValueKind == JsonValueKind.Number && n.TryGetDouble(out var d) && double.IsFinite(d)),
-            _ => false
-        });
+        var index = 0;
+        foreach (var item in value.EnumerateArray())
+            validateItem(item, $"{path}[{index++}]");
+    }
 
-    private static bool ValidRule(JsonElement item) => RequiredString(item, "label") && RequiredString(item, "text") &&
-        item.EnumerateObject().All(p => p.Name is "label" or "text");
+    private static void RequireHeaderString(JsonElement value, string path)
+    {
+        if (value.ValueKind != JsonValueKind.String)
+            throw InvalidHeaderView(path, "expected a string");
+    }
+
+    private static InvalidOperationException InvalidHeaderView(string path, string message) =>
+        new($"Invalid {path}: {message}.");
 }

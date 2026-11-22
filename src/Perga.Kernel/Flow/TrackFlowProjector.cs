@@ -57,6 +57,10 @@ internal static class TrackFlowProjector
             var effectiveModel = boundSession?.Model ?? node.Do.Model;
             var effectiveProvider = boundSession?.Provider ?? node.Do.Provider;
 
+            var effectiveAccess = task is not null && node.Do.Kind == "run"
+                ? (task.Access == AccessMode.ReadOnly ? "read_only" : "read_write")
+                : node.Do.Access;
+
             var watchProgress = watchState?.Progress ?? ExtractPersistedWatchProgress(task);
 
             projectedNodes.Add(new FlowNodeProjectionDto(
@@ -70,7 +74,7 @@ internal static class TrackFlowProjector
                 At: node.When?.At,
                 DoKind: node.Do.Kind,
                 Role: node.Do.Role,
-                Access: node.Do.Access,
+                Access: effectiveAccess,
                 TargetSession: node.Do.Session,
                 Provider: effectiveProvider,
                 Model: effectiveModel,
@@ -90,7 +94,9 @@ internal static class TrackFlowProjector
                 FiredCount: sched?.FiredCount ?? 0,
                 WaitingOn: waitingOn,
                 Gates: gates,
-                WatchProgress: watchProgress));
+                WatchProgress: watchProgress,
+                Repeat: FlowConstants.IsRepeatingWatch(node),
+                ReasoningEffort: boundSession?.ReasoningEffort ?? node.Do.ReasoningEffort));
         }
 
         var archived = tasks

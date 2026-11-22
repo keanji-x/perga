@@ -18,10 +18,10 @@ public sealed record TemplateBundle(
     string? RawSnapshotSource = null)
 {
     public const string BundleHeader = "// @perga-bundle-v1\n";
-    private const int MaxBundleFiles = 64;
+    public const int MaxBundleFiles = 64;
     private const int MaxSnapshotDepth = 64;
-    private const long MaxSingleFileBytes = 512 * 1024;
-    private const long MaxTotalBundleBytes = 2 * 1024 * 1024;
+    public const long MaxSingleFileBytes = 512 * 1024;
+    public const long MaxTotalBundleBytes = 2 * 1024 * 1024;
     private const long MaxRawBundleEnvelopeBytes = 4 * 1024 * 1024;
 
     private static readonly HashSet<string> AllowedExtensions = new(StringComparer.OrdinalIgnoreCase)
@@ -234,6 +234,86 @@ public sealed record TemplateBundle(
         }
     }
 
+    public IReadOnlySet<string> WidgetAssetPaths() =>
+        Files.Keys
+            .Where(static path => path.StartsWith("widgets/", StringComparison.Ordinal) &&
+                                  path.EndsWith(".html", StringComparison.OrdinalIgnoreCase))
+            .Select(static path => "./" + path)
+            .ToHashSet(StringComparer.Ordinal);
+
+    public IReadOnlyDictionary<string, string> InspectFiles()
+    {
+        if (Snapshot is not SnapshotDefinition.Inherited inherited) return Files;
+        var files = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var (path, content) in inherited.Parent.InspectFiles())
+            files[$"base/{path}"] = content;
+        foreach (var (path, content) in inherited.Child.InspectFiles())
+            files[path] = content;
+        return files;
+    }
+
+    public static bool IsAllowedPackageExtension(string extension) => AllowedExtensions.Contains(extension);
+
+    public static string NormalizeRelativePath(string path) => NormalizeBundleRelativePath(path);
+
+    public static string PackFiles(IReadOnlyDictionary<string, string> files, string entryFileName, string displayRoot)
+    {
+        var sorted = new SortedDictionary<string, string>(StringComparer.Ordinal);
+        foreach (var (path, content) in files)
+        {
+            sorted[NormalizeBundleRelativePath(path)] = content;
+        }
+
+        return PackValidatedFiles(sorted, entryFileName, displayRoot);
+    }
+
+    public static string ReadBoundedStream(
+        Stream stream,
+        long maxFileBytes,
+        ref long totalBytes,
+        long maxTotalBytes,
+        string displayName)
+    {
+        if (!stream.CanSeek)
+        {
+            throw new InvalidOperationException($"Template file '{displayName}' must be a regular file.");
+        }
+
+        var remainingTotal = maxTotalBytes - totalBytes;
+        if (remainingTotal < 0)
+        {
+            throw new InvalidOperationException($"Template package exceeds maximum total size ({maxTotalBytes} bytes).");
+        }
+
+        var readCap = (int)Math.Min(maxFileBytes, remainingTotal);
+        var buffer = new byte[readCap + 1];
+        var read = 0;
+        while (read < buffer.Length)
+        {
+            var n = stream.Read(buffer, read, buffer.Length - read);
+            if (n == 0)
+            {
+                break;
+            }
+
+            read += n;
+        }
+
+        if (read > maxFileBytes)
+        {
+            throw new InvalidOperationException($"Template file '{displayName}' exceeds maximum size ({maxFileBytes} bytes).");
+        }
+
+        totalBytes += read;
+        if (totalBytes > maxTotalBytes)
+        {
+            throw new InvalidOperationException($"Template package exceeds maximum total size ({maxTotalBytes} bytes).");
+        }
+
+        using var reader = new StreamReader(new MemoryStream(buffer, 0, read, writable: false), Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+        return reader.ReadToEnd();
+    }
+
     public static string PackDirectory(string directoryPath, string entryFileName = "template.perga.js")
     {
         if (string.IsNullOrWhiteSpace(directoryPath) || !Directory.Exists(directoryPath))
@@ -263,11 +343,15 @@ public sealed record TemplateBundle(
         long totalBytes = 0;
 
         WalkSafeDirectory(rootFull, rootFull, files, ref totalBytes, directoryPath);
+        return PackValidatedFiles(files, entryFileName, directoryPath);
+    }
 
+    private static string PackValidatedFiles(SortedDictionary<string, string> files, string entryFileName, string displayRoot)
+    {
         var entryNorm = NormalizeBundleRelativePath(entryFileName);
         if (!files.ContainsKey(entryNorm))
         {
-            throw new InvalidOperationException($"Template package entry '{entryNorm}' was not packed.");
+            throw new FileNotFoundException($"Template package entry '{entryNorm}' was not found in '{displayRoot}'.");
         }
 
         var payload = new
@@ -473,18 +557,8 @@ public sealed record TemplateBundle(
                 throw new InvalidOperationException($"Template package '{displayRoot}' exceeds maximum file count ({MaxBundleFiles}).");
             }
 
-            if (info.Length > MaxSingleFileBytes)
-            {
-                throw new InvalidOperationException($"Template package file '{normalized}' exceeds maximum size ({MaxSingleFileBytes} bytes).");
-            }
-
-            totalBytes += info.Length;
-            if (totalBytes > MaxTotalBundleBytes)
-            {
-                throw new InvalidOperationException($"Template package '{displayRoot}' exceeds maximum total size ({MaxTotalBundleBytes} bytes).");
-            }
-
-            files[normalized] = File.ReadAllText(filePath, Encoding.UTF8);
+            using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            files[normalized] = ReadBoundedStream(stream, MaxSingleFileBytes, ref totalBytes, MaxTotalBundleBytes, normalized);
         }
 
         foreach (var subDir in Directory.EnumerateDirectories(currentDir, "*", SearchOption.TopDirectoryOnly)
@@ -575,7 +649,7 @@ internal sealed class BundleModuleLoader : ModuleLoader
         {
             if (index >= 0 && index < leaves.Count && leaves[index].Files.TryGetValue(innerKey, out var leafContent))
             {
-                return leafContent;
+                return AsModuleSource(innerKey, leaves[index].EntryPath, leafContent);
             }
 
             throw new InvalidOperationException($"Template module '{innerKey}' was not found in inherited template package.");
@@ -586,8 +660,13 @@ internal sealed class BundleModuleLoader : ModuleLoader
             throw new InvalidOperationException($"Template module '{key}' was not found in template bundle.");
         }
 
-        return content;
+        return AsModuleSource(key, _bundle.EntryPath, content);
     }
+
+    private static string AsModuleSource(string key, string entryPath, string content) =>
+        key == entryPath && key.EndsWith(".json", StringComparison.OrdinalIgnoreCase)
+            ? "export default " + content + ";"
+            : content;
 
     private static string ResolveInsideBundle(TemplateBundle leaf, string? referencingInner, string spec)
     {
