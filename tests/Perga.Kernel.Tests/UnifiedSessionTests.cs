@@ -189,7 +189,7 @@ public sealed class UnifiedSessionTests
     [InlineData("done")]
     [InlineData("failed")]
     [InlineData("canceled")]
-    public async Task SettledTaskSessionHasConsistentReadonlyReason(string outcome)
+    public async Task SettledTaskSessionReleasesItsLeaseAndAcceptsFollowUp(string outcome)
     {
         await using var ctx = new KernelTestContext();
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
@@ -202,8 +202,16 @@ public sealed class UnifiedSessionTests
         await ctx.Kernel.WaitForTrackIdleAsync(snapshot.Track.Id);
         var summary = Assert.Single(await ctx.Kernel.ListSessionsAsync(snapshot.Track.Id, new(), Human, default),
             s => s.Session.Id == receipt.Session.Id);
-        Assert.Equal("task_finished", summary.ReadonlyReason);
-        Assert.Equal("task_finished", (await ctx.Kernel.GetSessionItemsAsync(receipt.Session.Id, new(), Human, default)).ReadonlyReason);
+        Assert.Null(summary.ReadonlyReason);
+        Assert.Null((await ctx.Kernel.GetSessionItemsAsync(receipt.Session.Id, new(), Human, default)).ReadonlyReason);
+        // Settled task sessions release their active lease and become writable again.
+        var followUp = await ctx.Kernel.SendSessionMessageAsync(receipt.Session.Id,
+            new(Content: "follow-up after settle", RequestKey: $"post-{outcome}"), Human, default);
+        Assert.Equal("accepted", followUp.Delivery);
+        await ctx.Kernel.WaitForTrackIdleAsync(snapshot.Track.Id);
+        var replay = await ctx.Kernel.SendSessionMessageAsync(receipt.Session.Id,
+            new(Content: "follow-up after settle", RequestKey: $"post-{outcome}"), Human, default);
+        Assert.Equal("delivered", replay.Delivery);
     }
 
     private static async IAsyncEnumerable<UnifiedAgentEvent> Inconclusive(ScriptableFakeAgentSession session, TurnInput input,

@@ -424,8 +424,12 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
         lock (_gate)
         {
             if (FailTemplateStateUpdate && evt is null) throw new IOException("template state persistence failure");
-            if (!writeData && _tracks.TryGetValue(track.Id, out var existing))
-                track = track with { Data = existing.Data, DataRev = existing.DataRev };
+            if (_tracks.TryGetValue(track.Id, out var existing))
+            {
+                if (!writeData)
+                    track = track with { Data = existing.Data, DataRev = existing.DataRev };
+                track = track with { FlowRev = existing.FlowRev, FlowSpecJson = existing.FlowSpecJson, FlowFileSha256 = existing.FlowFileSha256 };
+            }
             _tracks[track.Id] = track;
             if (track.ClosedAtMs is not null)
             {
@@ -437,6 +441,107 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
                         _trackSchedules[i] = s with { State = TrackScheduleStates.Canceled, NextFireAtMs = null, UpdatedAtMs = track.UpdatedAtMs };
             }
             if (evt is not null)
+            {
+                AppendEventLocked(evt);
+            }
+
+            return Task.CompletedTask;
+        }
+    }
+
+    public Task RecordFlowFileHashAsync(string trackId, long flowRev, string sha256, CancellationToken ct)
+    {
+        lock (_gate)
+        {
+            if (_tracks.TryGetValue(trackId, out var track) && track.FlowRev == flowRev)
+                _tracks[trackId] = track with { FlowFileSha256 = sha256 };
+        }
+        return Task.CompletedTask;
+    }
+
+    public Task CommitTrackFlowAsync(
+        TrackDto track,
+        long expectedFlowRev,
+        IReadOnlyList<TaskDto> upsertedTasks,
+        IReadOnlyList<TrackScheduleDto> activeFlowSchedules,
+        IReadOnlyList<string> canceledFlowScheduleIds,
+        IReadOnlyList<EventEnvelopeDto> events,
+        CancellationToken ct)
+    {
+        lock (_gate)
+        {
+            if (!_tracks.TryGetValue(track.Id, out var existing))
+                throw KernelException.NotFound($"Track '{track.Id}' not found.");
+            if (existing.FlowRev != expectedFlowRev)
+                throw KernelException.Conflict($"Flow revision conflict: expected {expectedFlowRev}, current {existing.FlowRev}.");
+
+            _tracks[track.Id] = existing with
+            {
+                FlowSpecJson = track.FlowSpecJson,
+                FlowRev = track.FlowRev,
+                FlowFileSha256 = track.FlowFileSha256,
+                UpdatedAtMs = track.UpdatedAtMs
+            };
+
+            if (!_tasksByTrack.TryGetValue(track.Id, out var list))
+            {
+                list = [];
+                _tasksByTrack[track.Id] = list;
+            }
+
+            foreach (var task in upsertedTasks)
+            {
+                list.RemoveAll(t => t.TaskKey == task.TaskKey && t.Id != task.Id);
+                var idx = list.FindIndex(t => t.Id == task.Id);
+                if (idx >= 0) list[idx] = task;
+                else list.Add(task);
+            }
+
+            foreach (var schedule in activeFlowSchedules)
+            {
+                var idx = _trackSchedules.FindIndex(s => s.TrackId == track.Id && s.Id == schedule.Id);
+                if (idx >= 0)
+                {
+                    var prev = _trackSchedules[idx];
+                    var keepProgress = prev.State != TrackScheduleStates.Canceled &&
+                        prev.ScheduleKind == schedule.ScheduleKind &&
+                        prev.CronExpr == schedule.CronExpr &&
+                        prev.Timezone == schedule.Timezone &&
+                        prev.RunAtMs == schedule.RunAtMs;
+                    var nextFire = schedule.MaxOccurrences is { } cap && prev.FiredCount >= cap
+                        ? null : prev.NextFireAtMs ?? schedule.NextFireAtMs;
+                    _trackSchedules[idx] = keepProgress
+                        ? schedule with
+                        {
+                            State = nextFire is null ? TrackScheduleStates.Done : TrackScheduleStates.Active,
+                            NextFireAtMs = nextFire,
+                            LastFiredAtMs = prev.LastFiredAtMs,
+                            FiredCount = prev.FiredCount,
+                            CreatedAtMs = prev.CreatedAtMs
+                        }
+                        : schedule with { CreatedAtMs = prev.CreatedAtMs };
+                }
+                else
+                {
+                    _trackSchedules.Add(schedule);
+                }
+            }
+
+            foreach (var scheduleId in canceledFlowScheduleIds)
+            {
+                var idx = _trackSchedules.FindIndex(s => s.TrackId == track.Id && s.Id == scheduleId && s.State == TrackScheduleStates.Active);
+                if (idx >= 0)
+                {
+                    _trackSchedules[idx] = _trackSchedules[idx] with
+                    {
+                        State = TrackScheduleStates.Canceled,
+                        NextFireAtMs = null,
+                        UpdatedAtMs = track.UpdatedAtMs
+                    };
+                }
+            }
+
+            foreach (var evt in events)
             {
                 AppendEventLocked(evt);
             }
@@ -514,7 +619,8 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
         CancellationToken ct,
         AgentSessionDto? session = null,
         EventEnvelopeDto? sessionEvent = null, string? wakePrompt = null, SessionMessage? initialMessage = null,
-        bool writeNewRunBoundary = false)
+        bool writeNewRunBoundary = false,
+        bool suppressDefaultWake = false)
     {
         lock (_gate)
         {
@@ -540,7 +646,7 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
                 list.Add(task);
             }
 
-            if (task.FinishedAtMs is not null)
+            if (task.FinishedAtMs is not null && !suppressDefaultWake)
             {
                 var child = task.SessionId is { } childId ? _sessions.GetValueOrDefault(childId) : null;
                 if (child?.ParentSessionId is { } parentId)
@@ -1774,14 +1880,24 @@ internal sealed partial class KernelTestContext : IAsyncDisposable
     public FakeShellCommandRunner CommandRunner { get; } = new();
     public FakeManualTimeProvider Time { get; } = new();
     public EventHub EventHub { get; } = new();
+    public string DataDir { get; }
     public PergaKernelService Kernel { get; }
 
-    public KernelTestContext(KernelOptions? options = null, IPolicyVm? policyVm = null, IAgentRuntime? agentRuntime = null)
+    public KernelTestContext(
+        KernelOptions? options = null,
+        IPolicyVm? policyVm = null,
+        IAgentRuntime? agentRuntime = null,
+        TimeProvider? timeProvider = null,
+        IGitHubForgeService? gitHubForgeService = null)
     {
         DriverRegistry = new FakeWorkspaceDriverRegistry(DirectDriver, CowOverlayDriver);
-        var effectiveOptions = options ?? new KernelOptions
+        DataDir = Path.Combine(Path.GetTempPath(), $"perga-kernel-test-{Guid.NewGuid():N}");
+        var effectiveOptions = (options ?? new KernelOptions
         {
             ActorEvictionSweepInterval = TimeSpan.Zero // Manual deterministic eviction in unit tests unless configured
+        }) with
+        {
+            DataDir = options?.DataDir ?? DataDir
         };
 
         Kernel = new PergaKernelService(
@@ -1795,7 +1911,9 @@ internal sealed partial class KernelTestContext : IAsyncDisposable
             options: effectiveOptions,
             commandRunner: CommandRunner,
             eventHub: EventHub,
-            timeProvider: Time, scheduleCronEvaluator: new TestScheduleCronEvaluator());
+            timeProvider: timeProvider ?? Time,
+            scheduleCronEvaluator: new TestScheduleCronEvaluator(),
+            gitHubForgeService: gitHubForgeService);
     }
 
     public async Task<(AreaDto Area, TrackAggregateSnapshot TrackSnap)> CreateDefaultTrackAsync(
@@ -1814,7 +1932,16 @@ internal sealed partial class KernelTestContext : IAsyncDisposable
         return (area, await Kernel.GetTrackAggregateAsync(snap.Track.Id));
     }
 
-    public ValueTask DisposeAsync() => Kernel.DisposeAsync();
+    public async ValueTask DisposeAsync()
+    {
+        await Kernel.DisposeAsync();
+        try
+        {
+            if (Directory.Exists(DataDir))
+                Directory.Delete(DataDir, recursive: true);
+        }
+        catch { /* best effort cleanup */ }
+    }
 }
 
 internal sealed class TestScheduleCronEvaluator : IScheduleCronEvaluator

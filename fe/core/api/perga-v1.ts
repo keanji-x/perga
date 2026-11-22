@@ -472,7 +472,7 @@ export type SessionControlRequest = z.infer<typeof sessionControlRequestSchema>;
 export type RespondInteractionRequest = z.infer<typeof respondInteractionRequestSchema>;
 export const sessionSummarySchema = z.object({
   session: agentSessionDtoSchema, state: z.enum(['idle', 'running', 'stopping', 'compacting', 'unknown']),
-  taskId: z.string().nullish(), readonlyReason: z.enum(['archived', 'track_closed', 'waiting_task', 'task_finished']).nullable(), workerPaused: z.boolean(), lastTurn: sessionTurnDtoSchema.nullish(), pendingInteractionCount: z.number().int(),
+  taskId: z.string().nullish(), readonlyReason: z.enum(['archived', 'track_closed', 'waiting_task', 'task_verifying', 'task_finished']).nullable(), workerPaused: z.boolean(), lastTurn: sessionTurnDtoSchema.nullish(), pendingInteractionCount: z.number().int(),
 });
 export type SessionSummary = z.infer<typeof sessionSummarySchema>;
 export const sessionMessageReceiptSchema = z.object({
@@ -501,7 +501,7 @@ export const sessionItemsPageDtoSchema = z.object({
   items: z.array(sessionItemDtoSchema).nullish().transform((v) => v ?? []),
   activeTurn: sessionTurnDtoSchema.nullish(),
   state: z.enum(['idle', 'running', 'stopping', 'compacting', 'unknown']),
-  readonlyReason: z.enum(['archived', 'track_closed', 'waiting_task', 'task_finished']).nullable(),
+  readonlyReason: z.enum(['archived', 'track_closed', 'waiting_task', 'task_verifying', 'task_finished']).nullable(),
   canReopen: z.boolean(),
   workerPaused: z.boolean(),
   lastTurn: sessionTurnDtoSchema.nullish().transform(value => value ?? null),

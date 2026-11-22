@@ -30,6 +30,7 @@ public static class KernelMcpToolNames
     public const string ScheduleList = "schedule_list";
 
     // Governance tools (BoundTaskId == null ONLY)
+    public const string FlowCommit = "flow_commit";
     public const string TaskCancel = "task_cancel";
     public const string TaskAccept = "task_accept";
     public const string TaskReject = "task_reject";
@@ -71,6 +72,7 @@ public static class KernelMcpToolNames
         TerminalRead,
         TerminalInput,
         ScheduleList,
+        FlowCommit,
         TaskCancel,
         TaskAccept,
         TaskReject,
@@ -125,6 +127,7 @@ public static class KernelMcpCatalog
     }
 
     public static bool IsGovernanceOnly(string toolName) => toolName is
+        KernelMcpToolNames.FlowCommit or
         KernelMcpToolNames.TaskCancel or KernelMcpToolNames.TaskAccept or KernelMcpToolNames.TaskReject or
         KernelMcpToolNames.SessionCreate or KernelMcpToolNames.SessionUpdate or KernelMcpToolNames.SessionSend or
         KernelMcpToolNames.SessionWithdraw or KernelMcpToolNames.SessionControl or KernelMcpToolNames.SessionRespond or
@@ -143,7 +146,7 @@ public static class KernelMcpCatalog
         KernelMcpToolNames.TaskFail;
 
     public static bool IsLeadOnly(string toolName) => toolName is
-        KernelMcpToolNames.SystemUpgradeCheck or KernelMcpToolNames.SystemUpgradeApply or KernelMcpToolNames.SystemUpgradeRollback;
+        KernelMcpToolNames.FlowCommit or KernelMcpToolNames.SystemUpgradeCheck or KernelMcpToolNames.SystemUpgradeApply or KernelMcpToolNames.SystemUpgradeRollback;
 
     private static IReadOnlyList<McpToolDescriptor> BuildDescriptors()
     {
@@ -201,6 +204,18 @@ public static class KernelMcpCatalog
                 Schema("""{"type":"object","additionalProperties":false,"required":["title","prompt"],"properties":{"id":{"type":"string"},"title":{"type":"string"},"prompt":{"type":"string"},"runAt":{"type":"string"},"runAtMs":{"type":"integer"},"cron":{"type":"string"},"timezone":{"type":"string"},"maxOccurrences":{"type":"integer","minimum":1}}}"""), localWrite),
             new(KernelMcpToolNames.ScheduleCancel, "Cancel an active schedule on this track and drop any pending wake for it (governance only).",
                 Schema("""{"type":"object","additionalProperties":false,"required":["scheduleId"],"properties":{"scheduleId":{"type":"string"}}}"""), localIdempotentWrite),
+            new(KernelMcpToolNames.FlowCommit,
+                "Validate and commit {DataDir}/tracks/{trackId}/flow.json as the Track's single orchestration source of truth (governance only).\n" +
+                "Cheatsheet:\n" +
+                "- Root: { rev, nodes: [{ id, title?, source?, when?, do, canceled? }] }\n" +
+                "- when (omit = run once immediately): { after: [\"id\" | { node, on?: ok|attention|blocked|any }], on? } | { cron, tz?, maxOccurrences? } | { at: ISO-8601 }\n" +
+                "- do.kind='run': { kind:'run', prompt, session?:'new'|'ses_...', role?, access?, provider?, model?, gate?, acceptance? } OR { kind:'run', cmd }\n" +
+                "- do.kind='wake': { kind:'wake', session:'lead'|'ses_...', prompt }\n" +
+                "- do.kind='watch' (0-token): { kind:'watch', prChecks, repo?, headSha?, interval?:'60s', timeout?:'60m' } OR { kind:'watch', cmd, interval?, timeout? } (exit 0=ok, 75=wait, other=attention)\n" +
+                "- Reusing an existing ses_... preserves NativeThreadId & context.\n" +
+                "- Never silently delete active/running/cron nodes — set canceled:true explicitly; terminal orphan one-shot nodes are archived by background GC.\n" +
+                "- Pass dryRun:true first to inspect plan diff & diagnostics with zero side effects.",
+                Schema("""{"type":"object","additionalProperties":false,"properties":{"dryRun":{"type":"boolean","description":"Validate flow.json and return plan diff without side effects. Defaults to false."},"expectedFlowRev":{"type":"integer","minimum":0,"description":"Optional CAS guard; defaults to flow.json rev."}}}"""), localWrite),
             new(KernelMcpToolNames.TaskCancel, "Cancel a task and stop any active execution (task parent or Track Lead).",
                 Schema("""{"type":"object","required":["taskKey"],"properties":{"taskKey":{"type":"string"},"reason":{"type":"string"}}}"""), localWrite),
             new(KernelMcpToolNames.TaskAccept, "Record semantic acceptance verdict on a task (task parent or Track Lead).",
@@ -217,12 +232,12 @@ public static class KernelMcpCatalog
                 Schema("""{"type":"object","properties":{"templateId":{"type":"string"}}}"""), readOnlyLocal),
             new(KernelMcpToolNames.TemplateUpdateInputs, "Merge inputs into the active template, preserving state (governance only).",
                 Schema("""{"type":"object","required":["inputs"],"properties":{"inputs":{"type":"object"}}}"""), localIdempotentWrite),
-            new(KernelMcpToolNames.TrackSet, "Apply a templateId or JSON/.perga.js source with inputs. Use dryRun to preview or clear to detach while keeping the report (governance only).",
+            new(KernelMcpToolNames.TrackSet, "Apply a templateId, local template package path, or JSON/.perga.js source with inputs. Use dryRun to preview or clear to detach while keeping the report (governance only).",
                 Schema("""{"type":"object","properties":{"templateId":{"type":"string","minLength":1},"source":{"type":"string","minLength":1},"inputs":{"type":"object"},"dryRun":{"type":"boolean"},"clear":{"type":"boolean"},"resetData":{"type":"boolean"}}}"""), localWrite),
             new(KernelMcpToolNames.TrackClose, "Close the current track and cancel active tasks (governance only).",
                 Schema("""{"type":"object","properties":{}}"""), localDestructive),
-            new(KernelMcpToolNames.TaskDone, "Submit completed work for the bound task and trigger gate verification (contract subagent only).",
-                Schema("""{"type":"object","properties":{"result":{}}}"""), localWrite),
+            new(KernelMcpToolNames.TaskDone, "Submit completed work for the bound task with optional neutral outcome (ok|attention|blocked) and summary, and trigger gate verification (contract subagent only).",
+                Schema("""{"type":"object","properties":{"outcome":{"enum":["ok","attention","blocked"],"description":"Domain-neutral business outcome. Defaults to 'ok'."},"summary":{"type":"string","description":"Concise settlement summary."},"result":{}}}"""), localWrite),
             new(KernelMcpToolNames.TaskFail, "Report failure for the bound task (contract subagent only).",
                 Schema("""{"type":"object","required":["reason"],"properties":{"reason":{"type":"string"},"result":{}}}"""), localWrite),
             new(KernelMcpToolNames.SessionList, "List conversations in this Track.",
@@ -350,7 +365,7 @@ public static class KernelMcpDispatcher
 
         var result = await ExecuteAuthorizedAsync(kernel, caller, toolName, args, expectedPolicyGeneration, origin, ct).ConfigureAwait(false);
         if (toolName != KernelMcpToolNames.ProviderList &&
-            !(toolName == KernelMcpToolNames.TrackSet && args.TryGetProperty("dryRun", out var dry) && dry.ValueKind == JsonValueKind.True))
+            !(toolName is (KernelMcpToolNames.TrackSet or KernelMcpToolNames.FlowCommit) && args.TryGetProperty("dryRun", out var dry) && dry.ValueKind == JsonValueKind.True))
             await kernel.Actors.GetOrActivate(caller.TrackId).AfterMcpToolCallAsync("perga", toolName,
                 JsonHelpers.ToElement(new { arguments = args, result }), ct).ConfigureAwait(false);
         return result;
@@ -536,6 +551,24 @@ public static class KernelMcpDispatcher
                 return JsonHelpers.ToElement(res);
             }
 
+            case KernelMcpToolNames.FlowCommit:
+            {
+                RejectUnknownArgs(args, ToolSchema(toolName));
+                var dryRun = false;
+                if (args.TryGetProperty("dryRun", out var dryEl) && dryEl.ValueKind != JsonValueKind.Null)
+                {
+                    if (dryEl.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+                        throw KernelException.InvalidArgument("'dryRun' must be a boolean.");
+                    dryRun = dryEl.GetBoolean();
+                }
+
+                var expectedFlowRev = IntegerArg(args, "expectedFlowRev", 0, long.MaxValue);
+                var res = await kernel.CommitTrackFlowAsync(caller.TrackId, dryRun, expectedFlowRev,
+                    Principal(caller) with { AuthorizedPolicyGeneration = expectedPolicyGeneration }, ct)
+                    .ConfigureAwait(false);
+                return JsonHelpers.ToElement(res);
+            }
+
             case KernelMcpToolNames.TaskCancel:
             {
                 var taskKey = RequireStringArg(args, ["taskKey", "task_key", "taskId"]);
@@ -656,7 +689,19 @@ public static class KernelMcpDispatcher
                 JsonElement? workerResult = JsonHelpers.TryGetPropertyIgnoreCase(args, ["result", "workerResult", "worker_result"], out var wr)
                     ? wr.Clone()
                     : null;
-                var res = await kernel.CompleteTaskDoneAsync(caller.TrackId, caller.SessionId, workerResult, ct, origin)
+                var outcome = FlowOutcome.Ok;
+                if (JsonHelpers.TryGetPropertyIgnoreCase(args, ["outcome"], out var outcomeEl) &&
+                    outcomeEl.ValueKind != JsonValueKind.Null)
+                {
+                    if (outcomeEl.ValueKind != JsonValueKind.String ||
+                        !Perga.Kernel.Flow.FlowConstants.TryParseOutcome(outcomeEl.GetString(), out outcome))
+                    {
+                        throw KernelException.InvalidArgument("'outcome' must be one of: ok, attention, blocked.");
+                    }
+                }
+
+                var summary = OptionalTypedStringArg(args, ["summary"]);
+                var res = await kernel.CompleteTaskDoneAsync(caller.TrackId, caller.SessionId, workerResult, ct, origin, outcome, summary)
                     .ConfigureAwait(false);
                 return JsonHelpers.ToElement(res);
             }

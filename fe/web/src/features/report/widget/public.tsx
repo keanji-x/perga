@@ -19,6 +19,7 @@ import type {
 } from '../../../../../core/domain/report-widget.ts';
 import { useState } from '../../../ui/state/public.ts';
 import { ReportCheckpointsBlock } from '../checkpoints/public.tsx';
+import { ReportFlowBlock } from '../flow/public.tsx';
 import { composeItemMarkdown, EditorialByline, EditorialGateStrip } from '../editorial/primitives.tsx';
 import { EditorialMetricsStrip } from '../editorial/metrics.tsx';
 import { SeamlessHtmlWidget } from './seamless-html.tsx';
@@ -242,6 +243,30 @@ export function ReportWidgetBlock({
         <div className={styles.diagnosticTitle}>实时视图：{payload.title ?? payload.view}</div>
         <div>请在 Track 页面查看完整视图投影。</div>
       </div>
+    );
+  }
+
+  // Native Unified Track Flow (`builtin:flow`) reads directly from `projection.flow`,
+  // independent of template JS view diagnostics.
+  if (payload.use === 'builtin:flow') {
+    const flow = projection.flow;
+    if (flow == null || (flow.nodes.length === 0 && flow.archived.length === 0)) {
+      return (
+        <div className={styles.diagnostic} role="note">
+          <div className={styles.diagnosticTitle}>{payload.title ?? '调度流程'}</div>
+          <div>当前暂无活跃或已归档的流程步骤。</div>
+        </div>
+      );
+    }
+    return (
+      <ReportFlowBlock
+        flow={flow}
+        title={payload.title ?? undefined}
+        taskRows={taskRows}
+        renderText={renderText}
+        renderMarkdown={renderMarkdown}
+        onOpenWorker={onOpenWorker}
+      />
     );
   }
 

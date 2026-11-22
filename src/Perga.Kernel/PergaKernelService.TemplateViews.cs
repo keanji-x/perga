@@ -9,6 +9,17 @@ public sealed partial class PergaKernelService
     public Task<TemplateViewsProjection> GetTrackViewsAsync(string trackId, CancellationToken ct = default) =>
         Actors.GetOrActivate(trackId).GetTemplateViewsAsync(ct);
 
+    public Task<FlowSnapshotDto> GetTrackFlowAsync(string trackId, CancellationToken ct = default) =>
+        Actors.GetOrActivate(trackId).GetFlowSnapshotAsync(ct);
+
+    public Task<FlowCommitResultDto> CommitTrackFlowAsync(
+        string trackId,
+        bool dryRun,
+        long? expectedFlowRev,
+        InteropPrincipal caller,
+        CancellationToken ct = default) =>
+        Actors.GetOrActivate(trackId).CommitFlowAsync(dryRun, expectedFlowRev, caller, ct);
+
     public Task<TrackDataPatchResult> PatchTrackDataAsync(
         string trackId,
         JsonElement patch,

@@ -34,7 +34,9 @@ public sealed class WorkerSessionIntegrationTests
             started.TrySetResult();
             await release.Task.WaitAsync(turnCt);
         };
-        await kernel.SendSessionMessageAsync(sessionId, new(Content: prompt, RequestKey: prompt), new InteropPrincipal.Human(), ct);
+        // The preceding turn can still be releasing its dispatch slot after its state becomes idle.
+        await kernel.SendSessionMessageAsync(sessionId, new(Content: prompt, RequestKey: prompt, Mode: "queue"),
+            new InteropPrincipal.Human(), ct);
         await started.Task.WaitAsync(ct);
         try
         {
@@ -190,7 +192,7 @@ public sealed class WorkerSessionIntegrationTests
         var (afterCancel, afterCancelError) = await CallFromRunningLeadAsync(host, "/mcp/kernel", lead.Principal.SessionId, KernelMcpToolNames.SessionSend,
             new { sessionId = worker.Id, turnId = "old-turn", content = "Stale steer", mode = "steer", requestKey = "stale" }, ct);
         Assert.True(afterCancelError);
-        Assert.Contains("conflict", afterCancel);
+        Assert.Contains("not_found", afterCancel);
 
         async IAsyncEnumerable<UnifiedAgentEvent> Turns(HarnessLaunchSpec spec, TurnInput input,
             [EnumeratorCancellation] CancellationToken token)

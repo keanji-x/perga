@@ -9,7 +9,7 @@ public sealed partial class TrackActor
         status is "queued" or "running" or "stopping" or "compacting";
 
     private bool IsSessionBlockingTrack(AgentSessionDto session) =>
-        TryGetOwningTaskCore(session.Id) is not { } task ||
+        TryGetActiveOwningTaskCore(session.Id) is not { } task ||
         task.Status is TaskRunStatus.Running or TaskRunStatus.Verifying;
 
     internal Task<TrackOverlayDto> MergeOverlayAsync(TrackOverlayDto stored, CancellationToken ct) =>

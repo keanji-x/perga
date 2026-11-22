@@ -214,6 +214,7 @@ public static class PergaHostServiceCollectionExtensions
             {
                 Version = opts.Version,
                 TemplatesDirectory = opts.TemplatesDirectory,
+                DataDir = paths.DataDir,
                 WorkspacesRootDirectory = paths.WorkspacesRootDir,
                 DefaultProvider = opts.DefaultProvider,
                 DefaultModel = opts.DefaultModel,

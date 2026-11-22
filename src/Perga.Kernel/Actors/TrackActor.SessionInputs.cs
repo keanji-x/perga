@@ -134,6 +134,8 @@ public sealed partial class TrackActor
                 if (!_actorShutdownCts.IsCancellationRequested)
                     await EnqueueAsync(async _ =>
                     {
+                        if (HasPendingFlowTaskForSessionCore(input.Receipt.SessionId))
+                            await ScheduleEligibleTasksCoreAsync(CancellationToken.None).ConfigureAwait(false);
                         if (RequireSessionCore(input.Receipt.SessionId).Epoch == expectedEpoch)
                             await PokeSessionCoreAsync(input.Receipt.SessionId, allowWorker: completedTurn?.Status == "completed").ConfigureAwait(false);
                     }, CancellationToken.None).ConfigureAwait(false);

@@ -4,6 +4,7 @@
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="../../templates/perga-template.d.ts" LogicalName="Perga.TemplateContract" />
+    <EmbeddedResource Include="../../docs/schemas/flow.v1.schema.json" LogicalName="Perga.FlowSchemaV1" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\libs\Perga.Processes\Perga.Processes.csproj" />

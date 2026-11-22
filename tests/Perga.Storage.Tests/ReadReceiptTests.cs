@@ -64,7 +64,7 @@ public sealed class ReadReceiptTests
     }
 
     [Fact]
-    public async Task WorkerWatermarksAreExcludedAndOnlyUnfinishedUnknownWorkersBlock()
+    public async Task TaskLeaseExcludesWorkerWatermarksUntilTheConversationIsReleased()
     {
         await using var h = await StorageTestHarness.CreateAsync();
         await h.Store.UpsertAreaAsync(StorageTestHarness.CreateArea(), default);
@@ -86,9 +86,15 @@ public sealed class ReadReceiptTests
         Assert.Equal(5000, Assert.Single((await h.Store.LoadTrackAggregateAsync(track.Id, default))!.Sessions, s => s.Id == worker.Id).LastNotifiableTurnAtMs);
         await conn.ExecuteAsync("UPDATE tasks SET status='failed', finished_at_ms=6000;");
         var finished = Assert.Single(await h.Store.ListTrackOverlaysAsync());
-        Assert.False(finished.HasBlockedSession);
+        Assert.True(finished.HasBlockedSession);
         Assert.False(finished.IsWorking);
         Assert.False(finished.WorkspaceFailed);
+        Assert.Equal(5000, Assert.Single(finished.NotifiableSessions!).LastNotifiableTurnAtMs);
+
+        await h.Store.UpsertSessionAsync(worker with { ArchivedAtMs = 7000 }, null, default);
+        var archived = Assert.Single(await h.Store.ListTrackOverlaysAsync());
+        Assert.False(archived.HasBlockedSession);
+        Assert.Empty(archived.NotifiableSessions!);
     }
 
     [Theory]

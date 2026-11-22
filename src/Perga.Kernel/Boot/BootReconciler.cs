@@ -108,7 +108,10 @@ public sealed class BootReconciler : IBootReconciler
             }
         }
 
-        foreach (var trackId in await _store.ListPendingWorkerDispatchTracksAsync(ct).ConfigureAwait(false))
+        var pendingDispatch = await _store.ListPendingWorkerDispatchTracksAsync(ct).ConfigureAwait(false);
+        var flowTracks = (await _store.ListTracksAsync(ct: ct).ConfigureAwait(false))
+            .Where(track => track.FlowRev > 0).Select(track => track.Id);
+        foreach (var trackId in pendingDispatch.Concat(flowTracks).Distinct(StringComparer.Ordinal))
         {
             try
             {

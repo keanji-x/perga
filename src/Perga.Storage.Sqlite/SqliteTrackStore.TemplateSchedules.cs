@@ -19,6 +19,8 @@ public sealed partial class SqliteTrackStore
         {
             if (schedule.TrackId != trackId || schedule.SourceKind != TrackScheduleSources.Template)
                 throw KernelException.InvalidArgument("Invalid template schedule projection.");
+            if (existing.TryGetValue(schedule.Id, out var flowClock) && flowClock.NodeKey is not null)
+                throw KernelException.Conflict($"Schedule ID '{schedule.Id}' belongs to Track Flow.");
             if (refreshPromptsOnly)
             {
                 await conn.ExecuteAsync(new CommandDefinition("""
@@ -52,7 +54,7 @@ public sealed partial class SqliteTrackStore
                     CreatedAtMs = old?.CreatedAtMs ?? now, Now = now }, tx, cancellationToken: ct)).ConfigureAwait(false);
         }
         var ids = schedules.Select(s => s.Id).ToHashSet(StringComparer.Ordinal);
-        foreach (var old in existing.Values.Where(s => !refreshPromptsOnly && s.SourceKind == TrackScheduleSources.Template && !ids.Contains(s.Id)))
+        foreach (var old in existing.Values.Where(s => !refreshPromptsOnly && s.NodeKey is null && s.SourceKind == TrackScheduleSources.Template && !ids.Contains(s.Id)))
         {
             await conn.ExecuteAsync(new CommandDefinition("""
                 UPDATE track_schedules SET state='canceled', next_fire_at_ms=NULL, updated_at_ms=@Now
@@ -77,7 +79,7 @@ public sealed partial class SqliteTrackStore
     {
         var row = await conn.QuerySingleOrDefaultAsync<TrackScheduleRow>(new CommandDefinition(ScheduleSelect +
             " WHERE track_id=@TrackId AND id=@Id;", new { TrackId = trackId, Id = scheduleId }, tx, cancellationToken: token)).ConfigureAwait(false);
-        if (row is null) return false;
+        if (row is null || row.NodeKey is not null) return false;
         if (row.State != TrackScheduleStates.Active) throw KernelException.Conflict("Only active schedules can be triggered.");
         var open = await conn.ExecuteScalarAsync<bool>(new CommandDefinition("SELECT EXISTS(SELECT 1 FROM tracks WHERE id=@TrackId AND closed_at_ms IS NULL);",
             new { TrackId = trackId }, tx, cancellationToken: token)).ConfigureAwait(false);

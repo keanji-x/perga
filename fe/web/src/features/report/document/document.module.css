@@ -1,48 +1,8 @@
 @layer features {
-  .editable { position: relative; padding-block-end: var(--space-6); }
-  .editable > .editProse {
-    margin: 0;
-    position: absolute;
-    inset-block-end: 0;
-    inset-inline-end: 0;
-    opacity: 0;
-    padding: var(--space-1) var(--space-2);
-    border: 0;
-    border-radius: var(--radius-sm);
-    background: var(--paper);
-    color: var(--text-3);
-    font: var(--type-ui);
-    cursor: pointer;
-  }
-
-  .editProse:hover { color: var(--text); background: var(--surface-chip); }
-  .editProse:focus-visible { outline: var(--space-half) solid var(--accent); outline-offset: var(--space-half); }
-  .editable:hover .editProse, .editable:focus-within .editProse { opacity: 1; }
-  @media (hover: none) { .editable > .editProse { opacity: 1; } }
-
   .field :is(p, li, blockquote, table, h2, h3) { font: inherit; }
   .field :is(p, h2, h3, ul, ol, blockquote) { margin-block: var(--space-2); }
   .field > :first-child { margin-block-start: 0; }
   .field > :last-child { margin-block-end: 0; }
-
-  .proseEditor { display: grid; gap: var(--space-3); font: var(--type-ui); }
-  .proseEditor textarea {
-    box-sizing: border-box;
-    inline-size: 100%;
-    min-block-size: 10rem;
-    resize: vertical;
-    padding: var(--space-3);
-    border: 1px solid var(--hairline);
-    border-radius: var(--radius-sm);
-    color: var(--text);
-    background: var(--paper);
-    font: var(--type-code);
-  }
-
-  .proseEditor textarea:focus-visible { outline: var(--space-half) solid var(--accent); outline-offset: var(--space-half); }
-  .proseEditorActions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
-  .proseEditorActions button { padding: var(--space-1) var(--space-3); font: inherit; }
-  .proseEditor [role="alert"] { color: var(--error-text); }
 
   /*
    * The report's own layer, on top of `calm-prose`.

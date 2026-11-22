@@ -36,7 +36,8 @@ public sealed class TrackActorRegistry : IAsyncDisposable
         IMcpSessionBridge mcpBridge,
         EventHub eventHub,
         KernelOptions options,
-        TimeProvider? timeProvider = null, IScheduleCronEvaluator? scheduleCronEvaluator = null)
+        TimeProvider? timeProvider = null,
+        IScheduleCronEvaluator? scheduleCronEvaluator = null)
     {
         _store = store;
         _scheduleCronEvaluator = scheduleCronEvaluator;
@@ -160,7 +161,8 @@ public sealed class TrackActorRegistry : IAsyncDisposable
             _mcpBridge,
             _eventHub,
             _options,
-            _timeProvider, _scheduleCronEvaluator);
+            _timeProvider,
+            _scheduleCronEvaluator);
     }
 
     public async ValueTask DisposeAsync()

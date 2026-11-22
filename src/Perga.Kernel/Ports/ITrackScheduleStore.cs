@@ -23,7 +23,7 @@ public static class TrackScheduleSources
     public const string Template = "template";
 }
 
-public sealed record FiredTrackSchedule(string TrackId, string ScheduleId);
+public sealed record FiredTrackSchedule(string TrackId, string ScheduleId, string? NodeKey = null, long? DueAtMs = null);
 
 public interface ITrackScheduleStore
 {
@@ -33,6 +33,8 @@ public interface ITrackScheduleStore
     Task<IReadOnlyList<TrackScheduleDto>> ListForTrackAsync(string trackId, bool includeTerminal, CancellationToken ct);
     Task<bool> CancelAsync(string trackId, string scheduleId, CancellationToken ct);
     Task<int> CancelActiveForTrackAsync(string trackId, CancellationToken ct);
+    Task<bool> CommitFlowFireAsync(TrackScheduleDto nextClock, long expectedDueAtMs, TaskDto? armedTask,
+        EventEnvelopeDto taskEvent, CancellationToken ct);
     Task<IReadOnlyList<FiredTrackSchedule>> FireDueAsync(
         long nowMs,
         Func<TrackScheduleDto, long?> computeNextFireAtMs,

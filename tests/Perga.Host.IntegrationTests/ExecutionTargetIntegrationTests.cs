@@ -298,6 +298,8 @@ public sealed class ExecutionTargetIntegrationTests
         var jasperVcs = new RecordingVcsService();
         var jasperTerminals = new RecordingTerminalBridgeClient();
         var jasperFs = new ScopedFakeFileSystem(jasperRepoDir);
+        var localForge = new FakeGitHubForgeService();
+        var jasperForge = new FakeGitHubForgeService();
         var jasperEnv = new FakeExecutionEnvironment(
             id: "jasper",
             label: "jasper (localhost)",
@@ -305,7 +307,7 @@ public sealed class ExecutionTargetIntegrationTests
             agentRuntime: jasperRuntime,
             vcs: jasperVcs,
             files: jasperFs,
-            terminals: jasperTerminals);
+            terminals: jasperTerminals) { Forge = jasperForge };
 
         string areaId;
         string trackId;
@@ -318,6 +320,8 @@ public sealed class ExecutionTargetIntegrationTests
                 {
                     services.RemoveAll<IAgentRuntime>();
                     services.AddSingleton<IAgentRuntime>(localRuntime);
+                    services.RemoveAll<IGitHubForgeService>();
+                    services.AddSingleton<IGitHubForgeService>(localForge);
                     services.RemoveAll<IExecutionEnvironmentRegistry>();
                     services.AddSingleton<IExecutionEnvironmentRegistry>(sp =>
                     {
@@ -454,6 +458,17 @@ public sealed class ExecutionTargetIntegrationTests
                 Assert.Equal(1, jasperTerminals.EnsureCalls);
                 var resolvedTermClient = await kernel.ResolveTerminalClientAsync(termDto!.Id);
                 Assert.Same(jasperTerminals, resolvedTermClient);
+
+                var flow = await kernel.GetTrackFlowAsync(trackId);
+                await File.WriteAllTextAsync(flow.FilePath!, """
+                    { "rev": 0, "nodes": [{ "id": "ci", "do": { "kind": "watch", "prChecks": 42 } }] }
+                    """);
+                using var commitResponse = await client.PostAsJsonAsync($"/api/v1/tracks/{trackId}/flow/commit", new { expectedFlowRev = 0 });
+                commitResponse.EnsureSuccessStatusCode();
+                Assert.True((await commitResponse.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("ok").GetBoolean());
+                await kernel.WaitForTrackIdleAsync(trackId).WaitAsync(TimeSpan.FromSeconds(10));
+                Assert.Equal((jasperRepoDir, 42), Assert.Single(jasperForge.CheckedPrs));
+                Assert.Empty(localForge.CheckedPrs);
             }
 
             // 11. Restart WITHOUT jasper configured: MUST fail with precondition_failed (409), NEVER silently fall back to local!
@@ -610,7 +625,7 @@ public sealed class ExecutionTargetIntegrationTests
         public IAgentRuntime AgentRuntime { get; }
         public IShellCommandRunner Shell { get; }
         public IVcsService Vcs { get; }
-        public IGitHubForgeService? Forge => null;
+        public IGitHubForgeService? Forge { get; init; }
         public IWorkspaceDriverRegistry WorkspaceDrivers { get; }
         public IExecutionFileSystem Files { get; }
         public ITerminalBridgeClient Terminals { get; }

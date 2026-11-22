@@ -38,8 +38,9 @@ public sealed class SqliteMigratorTests
         {
             var dbPath = Path.Combine(tempDir, "fresh.db");
             var migrator = new SqliteMigrator();
-            Assert.Equal(Enumerable.Range(1, 24), migrator.Migrations.Select(m => m.Version));
-            Assert.Equal("0024_area_execution_target.sql", migrator.Migrations[^1].Name);
+            Assert.Equal(Enumerable.Range(1, 25), migrator.Migrations.Select(m => m.Version));
+            Assert.Equal("0024_area_execution_target.sql", migrator.Migrations[^2].Name);
+            Assert.Equal("0025_track_flow.sql", migrator.Migrations[^1].Name);
             await migrator.MigrateAsync(dbPath);
 
             // Idempotent re-run on already-initialized v1 database must not create a spurious backup.
@@ -54,8 +55,11 @@ public sealed class SqliteMigratorTests
             }.ToString());
             await conn.OpenAsync();
 
-            Assert.Equal(24L, await conn.ExecuteScalarAsync<long>("SELECT MAX(version) FROM schema_migrations;"));
+            Assert.Equal(25L, await conn.ExecuteScalarAsync<long>("SELECT MAX(version) FROM schema_migrations;"));
             Assert.Equal(1L, await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM pragma_table_info('areas') WHERE name = 'execution_target_id';"));
+            Assert.Equal(3L, await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM pragma_table_info('tracks') WHERE name IN ('flow_spec_json', 'flow_rev', 'flow_file_sha256');"));
+            Assert.Equal(4L, await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM pragma_table_info('tasks') WHERE name IN ('trigger_run_key', 'outcome', 'outcome_summary', 'archived_at_ms');"));
+            Assert.Equal(1L, await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM pragma_table_info('track_schedules') WHERE name = 'node_key';"));
             Assert.Equal(13L, await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM pragma_table_info('track_wakes');"));
             Assert.Equal(0L, await conn.ExecuteScalarAsync<long>("SELECT [unique] FROM pragma_index_list('session_messages') WHERE name='idx_session_messages_input_turn';"));
             Assert.Equal(2L, await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM pragma_table_info('agent_sessions') WHERE name IN ('reasoning_effort', 'permission_mode');"));

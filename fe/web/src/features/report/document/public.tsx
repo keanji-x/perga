@@ -13,6 +13,7 @@ import { deriveReportTasks, isTaskBlock, type ReportBlock, type ReportLinkTarget
 import { type PreviewResolution } from '../../../../../core/domain/report-backlinks.ts';
 import { type TaskVerdict } from '../../../../../core/domain/report-verdicts.ts';
 import { type TemplateViewsProjection, type TemplateViewsState } from '../../../../../core/domain/report-widget.ts';
+import type { FlowProjection } from '../../../../../core/domain/report-flow.ts';
 import {
   type ReportFileLinkTarget,
 } from '../../../../../core/domain/report-file.ts';
@@ -25,6 +26,7 @@ import { ReportDetails } from './details.tsx';
 import { REPORT_ANCHOR_REQUEST, revealReportAnchor, type ReportAnchorRequest } from '../anchor/public.ts';
 import { ReportAppBlock } from '../app/public.tsx';
 import { ReportCheckpointsBlock } from '../checkpoints/public.tsx';
+import { ReportFlowBlock } from '../flow/public.tsx';
 import { ReportWidgetBlock } from '../widget/public.tsx';
 import { ReportHtmlBlock } from '../html/public.tsx';
 import { ReportCandlesBlock } from '../candles/public.tsx';
@@ -78,20 +80,42 @@ export type ReportDocumentProps = Readonly<{
   resolveOverlay?: (source: string) => unknown;
   /** Projected template views & bundled HTML widgets for Scheme B `widget` blocks. */
   templateViews?: TemplateViewsProjection | TemplateViewsState;
+  /** Whether to auto-inject `builtin:flow` when the Track has flow nodes but no explicit flow widget. Defaults to true. */
+  allowAutoFlow?: boolean;
   /** Resolves a `chart.series` block, by id and rev, to the app's query of the kernel's resolved data. Absent ⇒ series blocks say the view carries no such data. */
   resolveSeries?: (blockId: string, rev: number) => SeriesResolution | undefined;
   /** Resolves a `preview` block's `key` to the app's read of the track's registered previews. Absent ⇒ preview blocks say the view carries none. */
   resolvePreview?: (key: string) => PreviewResolution;
   /** Where preview blocks remember the reader's device choice, by block key (the app scopes it per track). Absent ⇒ not remembered. */
   previewViewports?: PreviewViewportStore;
-  /** Optional human CAS editor for prose blocks (`PUT /api/v1/tracks/{trackId}/report/blocks/{blockId}`). */
-  onSaveProseBlock?: (blockId: string, markdown: string) => Promise<void>;
 }>;
+
+function resolveAutoFlow(
+  templateViews: TemplateViewsProjection | TemplateViewsState | undefined,
+  blocks: readonly ReportBlock[] | null,
+): FlowProjection | null {
+  if (templateViews === undefined) return null;
+  const projection = 'status' in templateViews
+    ? (templateViews.status === 'ready' ? templateViews.projection : null)
+    : templateViews;
+  if (projection === null) return null;
+  const flow = projection.flow;
+  if (flow == null || (flow.nodes.length === 0 && flow.archived.length === 0)) return null;
+  const hasExplicitFlowWidget = (blocks ?? []).some(
+    (block) => block.kind === 'widget' && block.payload.use === 'builtin:flow',
+  );
+  return hasExplicitFlowWidget ? null : flow;
+}
+
+function isTargetSectionProse(slot: PreparedReportBlock | undefined): boolean {
+  if (slot === undefined || slot.block.kind !== 'prose') return false;
+  return /^\s*#\s+(?:target|目标)(?=$|\s)/im.test(slot.block.payload.markdown);
+}
 
 /** Agent-authored destinations become admitted preview controls. Navigation stays behind typed callbacks or explicit external activation. */
 export function ReportDocument({
   report, preparation, empty, outlineEmpty, rail, byline, sourceInsertion, backlinkCounts, onOpenLink, onOpenFileLink, onOpenWorker, onOpenSourceLink, fileRoot, fileBasePath, linkPreview,
-  resolveOverlay, templateViews, resolveSeries, resolvePreview, previewViewports, onSaveProseBlock,
+  resolveOverlay, templateViews, allowAutoFlow = true, resolveSeries, resolvePreview, previewViewports,
   arrivalAnchorId, taskVerdicts, taskRows, renderTaskExecution,
 }: ReportDocumentProps) {
   const compactViewport = useCompactViewport();
@@ -104,9 +128,38 @@ export function ReportDocument({
     revealReportAnchor(arrivalAnchorId);
   }, [arrivalAnchorId]);
 
-  if (prepared.kind === 'empty') return <>{empty}</>;
-  if (prepared.outlineOnly && outlineEmpty !== undefined) return <>{outlineEmpty}</>;
-  const outlineOnly = compactViewport && prepared.outlineOnly;
+  const autoFlow = allowAutoFlow ? resolveAutoFlow(templateViews, report?.blocks ?? null) : null;
+  const autoFlowNode = autoFlow === null ? null : (() => {
+    const textContext = { referenceRepository, onOpenLink, onOpenFileLink, onOpenSourceLink, fileRoot, fileBasePath, linkPreview };
+    return (
+      <div className={styles.row} data-nc-auto-flow="">
+        <div className={styles.block} data-nc-report-reading="" data-nc-link-reading="">
+          <ReportFlowBlock
+            flow={autoFlow}
+            taskRows={taskRows}
+            renderText={(text) => <PlainReportText text={text} context={textContext} />}
+            renderMarkdown={(markdown, key) => (
+              <ProseBlock markdown={markdown} blockId={key} compact {...textContext} />
+            )}
+            onOpenWorker={onOpenWorker}
+          />
+        </div>
+      </div>
+    );
+  })();
+
+  if (prepared.kind === 'empty') {
+    if (autoFlowNode === null) return <>{empty}</>;
+    return (
+      <article className={`calm-prose ${styles.doc}`} data-nc-report="" tabIndex={-1}>
+        {rail}
+        {byline !== undefined && <div className={styles.byline}>{byline}</div>}
+        {autoFlowNode}
+      </article>
+    );
+  }
+  if (prepared.outlineOnly && outlineEmpty !== undefined && autoFlowNode === null) return <>{outlineEmpty}</>;
+  const outlineOnly = compactViewport && prepared.outlineOnly && autoFlowNode === null;
 
   return (
     <article className={`calm-prose ${styles.doc} ${outlineOnly ? styles.outlineOnly : ''}`} data-nc-report="" tabIndex={-1}>
@@ -115,52 +168,63 @@ export function ReportDocument({
       {byline !== undefined && <div className={styles.byline}>{byline}</div>}
       {prepared.kind === 'legacy'
         ? (
-          <div className={styles.row}>
-            <div className={styles.block} data-nc-report-reading="" data-nc-link-reading="" data-nc-report-source-block="">
-              <PreparedProseBlock
-                prepared={prepared.prose}
-                sourceInsertion={sourceInsertion}
-                referenceRepository={referenceRepository} onOpenLink={onOpenLink}
-                onOpenFileLink={onOpenFileLink}
-                onOpenSourceLink={onOpenSourceLink}
-                fileRoot={fileRoot}
-                fileBasePath={fileBasePath}
-                linkPreview={linkPreview}
-              />
-            </div>
-          </div>
-        )
-        : (() => {
-          const documentBlocks = prepared.blocks.filter(slot => !isProcessBlock(slot.block));
-          const processBlocks = prepared.blocks.map(slot => slot.block).filter(isProcessBlock);
-          return (
-            <>
-              {documentBlocks.map(slot => (
-                <BlockSlot
-                  key={slot.block.id}
-                  slot={slot}
-                  sourceInsertion={sourceInsertion?.position?.blockId === slot.block.id ? sourceInsertion : undefined}
-                  backlinks={backlinkCounts?.get(slot.block.id) ?? 0}
+          <>
+            {autoFlowNode}
+            <div className={styles.row}>
+              <div className={styles.block} data-nc-report-reading="" data-nc-link-reading="" data-nc-report-source-block="">
+                <PreparedProseBlock
+                  prepared={prepared.prose}
+                  sourceInsertion={sourceInsertion}
                   referenceRepository={referenceRepository} onOpenLink={onOpenLink}
                   onOpenFileLink={onOpenFileLink}
-                  onOpenWorker={onOpenWorker}
-                  taskRows={taskRows}
                   onOpenSourceLink={onOpenSourceLink}
                   fileRoot={fileRoot}
                   fileBasePath={fileBasePath}
                   linkPreview={linkPreview}
-                  resolveOverlay={resolveOverlay}
-                  templateViews={templateViews}
-                  widgetSelections={widgetSelections}
-                  onSelectWidget={(key, value) => {
-                    setWidgetSelections((prev) => (prev[key] === value ? prev : { ...prev, [key]: value }));
-                  }}
-                  resolveSeries={resolveSeries}
-                  resolvePreview={resolvePreview}
-                  previewViewports={previewViewports}
-                  onSaveProseBlock={report?.docRev !== undefined ? onSaveProseBlock : undefined}
                 />
-              ))}
+              </div>
+            </div>
+          </>
+        )
+        : (() => {
+          const documentBlocks = prepared.blocks.filter(slot => !isProcessBlock(slot.block));
+          const processBlocks = prepared.blocks.map(slot => slot.block).filter(isProcessBlock);
+          const insertFlowAfterFirst = autoFlowNode !== null && isTargetSectionProse(documentBlocks[0]);
+          const renderSlot = (slot: PreparedReportBlock) => (
+            <BlockSlot
+              key={slot.block.id}
+              slot={slot}
+              sourceInsertion={sourceInsertion?.position?.blockId === slot.block.id ? sourceInsertion : undefined}
+              backlinks={backlinkCounts?.get(slot.block.id) ?? 0}
+              referenceRepository={referenceRepository} onOpenLink={onOpenLink}
+              onOpenFileLink={onOpenFileLink}
+              onOpenWorker={onOpenWorker}
+              taskRows={taskRows}
+              onOpenSourceLink={onOpenSourceLink}
+              fileRoot={fileRoot}
+              fileBasePath={fileBasePath}
+              linkPreview={linkPreview}
+              resolveOverlay={resolveOverlay}
+              templateViews={templateViews}
+              widgetSelections={widgetSelections}
+              onSelectWidget={(key, value) => {
+                setWidgetSelections((prev) => (prev[key] === value ? prev : { ...prev, [key]: value }));
+              }}
+              resolveSeries={resolveSeries}
+              resolvePreview={resolvePreview}
+              previewViewports={previewViewports}
+            />
+          );
+          return (
+            <>
+              {autoFlowNode !== null && !insertFlowAfterFirst && autoFlowNode}
+              {insertFlowAfterFirst ? (
+                <>
+                  {renderSlot(documentBlocks[0])}
+                  {autoFlowNode}
+                  {documentBlocks.slice(1).map(renderSlot)}
+                </>
+              ) : documentBlocks.map(renderSlot)}
               {processBlocks.length > 0 && (
                 <ReportReference blocks={processBlocks} backlinkCounts={backlinkCounts}
                   sourceInsertion={sourceInsertion}
@@ -246,10 +310,10 @@ function ReportReference({ blocks, backlinkCounts, tasks, verdicts, renderTaskEx
   );
 }
 
-/** One block, plus the sidenote that belongs to it. */
+/** One block, plus the sidenote that belongs to it. Reports are read-only publications. */
 function BlockSlot({
   slot, backlinks, onOpenLink, onOpenFileLink, onOpenWorker, taskRows, onOpenSourceLink, fileRoot, fileBasePath, linkPreview, referenceRepository, resolveOverlay, templateViews, widgetSelections, onSelectWidget, resolveSeries,
-  resolvePreview, previewViewports, onSaveProseBlock, sourceInsertion,
+  resolvePreview, previewViewports, sourceInsertion,
 }: {
   referenceRepository: ReferenceRepository | null;
   slot: PreparedReportBlock;
@@ -269,84 +333,31 @@ function BlockSlot({
   resolveSeries?: ReportDocumentProps['resolveSeries'];
   resolvePreview?: ReportDocumentProps['resolvePreview'];
   previewViewports?: PreviewViewportStore;
-  onSaveProseBlock?: ReportDocumentProps['onSaveProseBlock'];
   sourceInsertion?: ReportSourceInsertion;
 }) {
   const { block, prose } = slot;
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
-  const canEditProse = block.kind === 'prose' && onSaveProseBlock !== undefined;
   return (
     <div className={styles.row}>
-      <div className={`${styles.block} ${canEditProse ? styles.editable : ''}`} id={block.id} data-nc-report-reading="" data-nc-link-reading="" data-nc-report-source-block={block.id}>
-        {canEditProse && editing ? (
-          <div className={styles.proseEditor} data-nc-prose-editor="">
-            <textarea
-              aria-label={`Markdown for block ${block.id}`}
-              value={draft}
-              rows={6}
-              disabled={saving}
-              onChange={(event) => { setDraft(event.target.value); }}
+      <div className={styles.block} id={block.id} data-nc-report-reading="" data-nc-link-reading="" data-nc-report-source-block={block.id}>
+        {prose !== null
+          ? (
+            <PreparedProseBlock
+              prepared={prose}
+              sourceInsertion={sourceInsertion}
+              referenceRepository={referenceRepository} onOpenLink={onOpenLink}
+              onOpenFileLink={onOpenFileLink}
+              onOpenSourceLink={onOpenSourceLink}
+              fileRoot={fileRoot}
+              fileBasePath={fileBasePath}
+              linkPreview={linkPreview}
             />
-            {saveError !== null && <p role="alert">{saveError}</p>}
-            <div className={styles.proseEditorActions}>
-              <button
-                type="button"
-                disabled={saving}
-                onClick={() => {
-                  setSaving(true);
-                  setSaveError(null);
-                  void onSaveProseBlock(block.id, draft).then(
-                    () => { setSaving(false); setEditing(false); },
-                    (error: unknown) => {
-                      setSaving(false);
-                      setSaveError(error instanceof Error ? error.message : 'Could not save block.');
-                    },
-                  );
-                }}
-              >
-                Save block
-              </button>
-              <button
-                type="button"
-                disabled={saving}
-                onClick={() => { setEditing(false); setSaveError(null); }}
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        ) : prose !== null
-          ? <>
-              <PreparedProseBlock
-                prepared={prose}
-                sourceInsertion={sourceInsertion}
-                referenceRepository={referenceRepository} onOpenLink={onOpenLink}
-                onOpenFileLink={onOpenFileLink}
-                onOpenSourceLink={onOpenSourceLink}
-                fileRoot={fileRoot}
-                fileBasePath={fileBasePath}
-                linkPreview={linkPreview}
-              />
-              {canEditProse && (
-                <button
-                  type="button"
-                  className={styles.editProse}
-                  aria-label={`Edit block ${block.id}`}
-                  onClick={() => { setDraft(block.payload.markdown); setSaveError(null); setEditing(true); }}
-                >
-                  Edit
-                </button>
-              )}
-            </>
+          )
           : <BlockBody block={block} taskRows={taskRows} referenceRepository={referenceRepository} onOpenLink={onOpenLink}
               onOpenFileLink={onOpenFileLink} onOpenWorker={onOpenWorker} fileRoot={fileRoot} fileBasePath={fileBasePath}
               onOpenSourceLink={onOpenSourceLink} linkPreview={linkPreview}
               resolveOverlay={resolveOverlay} templateViews={templateViews} widgetSelections={widgetSelections} onSelectWidget={onSelectWidget} resolveSeries={resolveSeries} resolvePreview={resolvePreview}
               previewViewports={previewViewports} />}
-        {(!prose || editing) && sourceInsertion?.content}
+        {!prose && sourceInsertion?.content}
       </div>
       {backlinks > 0 && (
         <span className={styles.sidenote} title={`${backlinks} report${backlinks === 1 ? '' : 's'} cite this block`}>

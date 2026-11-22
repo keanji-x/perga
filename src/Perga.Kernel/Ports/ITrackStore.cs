@@ -113,6 +113,16 @@ public interface ITrackStore : ITrackReadStore
     Task<bool> TryClaimWorkspacePreparationAsync(string trackId, WorkspacePreparationPhase expected, WorkspacePreparation claimed, CancellationToken ct);
     Task SaveWorkspacePreparationAsync(string trackId, WorkspacePreparation preparation, TrackDto? readyTrack, EventEnvelopeDto? evt, CancellationToken ct);
     Task UpdateTrackAndEmitAsync(TrackDto track, EventEnvelopeDto? evt, CancellationToken ct, bool writeData = false);
+    Task RecordFlowFileHashAsync(string trackId, long flowRev, string sha256, CancellationToken ct);
+    Task CommitTrackFlowAsync(
+        TrackDto track,
+        long expectedFlowRev,
+        IReadOnlyList<TaskDto> upsertedTasks,
+        IReadOnlyList<TrackScheduleDto> activeFlowSchedules,
+        IReadOnlyList<string> canceledFlowScheduleIds,
+        IReadOnlyList<EventEnvelopeDto> events,
+        CancellationToken ct) =>
+        throw new NotSupportedException("Flow commit is not implemented by this store.");
     Task UpdateTrackTemplateAndEmitAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto evt, CancellationToken ct, IReadOnlyList<TrackScheduleDto>? templateSchedules = null, bool refreshPromptsOnly = false, bool writeData = false);
     Task DeleteTrackAsync(string trackId, CancellationToken ct);
 
@@ -135,7 +145,7 @@ public interface ITrackStore : ITrackReadStore
 
     Task UpsertTaskAsync(TaskDto task, JsonElement? nextTemplateState, EventEnvelopeDto? evt, CancellationToken ct,
         AgentSessionDto? session = null, EventEnvelopeDto? sessionEvent = null, string? wakePrompt = null,
-        SessionMessage? initialMessage = null, bool writeNewRunBoundary = false);
+        SessionMessage? initialMessage = null, bool writeNewRunBoundary = false, bool suppressDefaultWake = false);
     Task<bool> HasSessionTurnAsync(string sessionId, string turnId, CancellationToken ct);
     Task<IReadOnlyList<SessionTurnDto>> ListSessionTurnsAsync(string sessionId, CancellationToken ct) =>
         Task.FromResult<IReadOnlyList<SessionTurnDto>>([]);

@@ -1,0 +1,236 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "perga://schemas/flow.v1.schema.json",
+  "title": "Perga Track Flow (v1)",
+  "description": "Single source of truth for a Track's active orchestration graph: orthogonal when (trigger) x do (action).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["rev", "nodes"],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Optional schema pointer maintained by Perga."
+    },
+    "rev": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Optimistic concurrency revision managed by Perga. Leave unchanged while editing; flow_commit advances it."
+    },
+    "nodes": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/node" },
+      "description": "Active orchestration nodes. Do not silently delete active/running/cron nodes; set canceled=true explicitly. Terminal orphan one-shot nodes are archived by background GC."
+    }
+  },
+  "$defs": {
+    "outcome": {
+      "type": "string",
+      "enum": ["ok", "attention", "blocked"]
+    },
+    "outcomeCondition": {
+      "type": "string",
+      "enum": ["ok", "attention", "blocked", "any"]
+    },
+    "afterEntry": {
+      "oneOf": [
+        { "type": "string", "pattern": "^[a-z0-9][a-z0-9._:-]{0,63}$" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["node"],
+          "properties": {
+            "node": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._:-]{0,63}$" },
+            "on": { "$ref": "#/$defs/outcomeCondition" }
+          }
+        }
+      ]
+    },
+    "when": {
+      "type": "object",
+      "description": "Trigger condition (omit or use {} to run once immediately upon flow_commit). Exactly one mode: after, cron, or at.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "maxProperties": 0
+        },
+        {
+          "additionalProperties": false,
+          "required": ["after"],
+          "properties": {
+            "after": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "$ref": "#/$defs/afterEntry" }
+            },
+            "on": {
+              "$ref": "#/$defs/outcomeCondition",
+              "default": "ok",
+              "description": "Default outcome filter for string entries in after."
+            }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "required": ["cron"],
+          "properties": {
+            "cron": {
+              "type": "string",
+              "minLength": 5,
+              "description": "Standard 5-field cron expression."
+            },
+            "tz": {
+              "type": "string",
+              "description": "IANA timezone name (e.g. Asia/Shanghai, UTC)."
+            },
+            "maxOccurrences": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "required": ["at"],
+          "properties": {
+            "at": {
+              "type": "string",
+              "format": "date-time",
+              "description": "One-shot ISO-8601 timestamp."
+            }
+          }
+        }
+      ]
+    },
+    "do": {
+      "type": "object",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "required": ["kind", "prompt"],
+          "properties": {
+            "kind": { "const": "run" },
+            "session": {
+              "type": "string",
+              "pattern": "^(new|ses_.+)$",
+              "description": "'new' (default) or existing track sessionId ('ses_...') to reuse with preserved context."
+            },
+            "role": { "type": "string" },
+            "access": { "type": "string", "enum": ["read_only", "read_write"] },
+            "provider": { "type": "string" },
+            "model": { "type": "string" },
+            "gate": { "type": "string" },
+            "prompt": { "type": "string", "minLength": 1 },
+            "acceptance": { "type": "string" }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "required": ["kind", "cmd"],
+          "properties": {
+            "kind": { "const": "run" },
+            "access": { "type": "string", "enum": ["read_only", "read_write"] },
+            "gate": { "type": "string" },
+            "cmd": {
+              "type": "string",
+              "minLength": 1,
+              "description": "0-token shell command: exit 0=ok, non-zero=attention."
+            },
+            "acceptance": { "type": "string" }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "required": ["kind", "session", "prompt"],
+          "properties": {
+            "kind": { "const": "wake" },
+            "session": {
+              "type": "string",
+              "pattern": "^(lead|ses_.+)$",
+              "description": "'lead' or existing track sessionId ('ses_...')."
+            },
+            "prompt": { "type": "string", "minLength": 1 }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "required": ["kind", "prChecks"],
+          "properties": {
+            "kind": { "const": "watch" },
+            "prChecks": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "GitHub PR number to monitor via Perga VCS checks."
+            },
+            "repo": {
+              "type": "string",
+              "description": "Optional owner/repo override for watch.prChecks."
+            },
+            "headSha": {
+              "type": "string",
+              "description": "Optional expected git head SHA for watch.prChecks."
+            },
+            "interval": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]*[smh]$",
+              "default": "60s",
+              "description": "Polling interval for watch probes (e.g. 30s, 60s, 2m; minimum 5s)."
+            },
+            "timeout": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]*[smh]$",
+              "default": "60m",
+              "description": "Timeout for watch probes; settles as blocked on expiry."
+            }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "required": ["kind", "cmd"],
+          "properties": {
+            "kind": { "const": "watch" },
+            "cmd": {
+              "type": "string",
+              "minLength": 1,
+              "description": "0-token probe command: exit 0=ok, exit 75=still waiting, other non-zero=attention."
+            },
+            "interval": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]*[smh]$",
+              "default": "60s",
+              "description": "Polling interval for watch probes (e.g. 30s, 60s, 2m; minimum 5s)."
+            },
+            "timeout": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]*[smh]$",
+              "default": "60m",
+              "description": "Timeout for watch probes; settles as blocked on expiry."
+            }
+          }
+        }
+      ]
+    },
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "do"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._:-]{0,63}$"
+        },
+        "title": { "type": "string" },
+        "source": {
+          "type": "string",
+          "enum": ["agent", "user", "template"],
+          "default": "agent"
+        },
+        "when": { "$ref": "#/$defs/when" },
+        "do": { "$ref": "#/$defs/do" },
+        "canceled": {
+          "type": "boolean",
+          "default": false
+        }
+      }
+    }
+  }
+}

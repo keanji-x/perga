@@ -228,7 +228,8 @@ public sealed class McpKernelAndVcsIntegrationTests
 
         // 1. Lead gets shared, governance and unified session tools.
         var leadTools = await ListToolNamesAsync(cluster, "/mcp/kernel", leadToken, ct);
-        Assert.Equal(36, leadTools.Count);
+        Assert.Equal(37, leadTools.Count);
+        Assert.Contains(KernelMcpToolNames.FlowCommit, leadTools);
         Assert.Contains(KernelMcpToolNames.ProviderList, leadTools);
         Assert.Contains(KernelMcpToolNames.DataPatch, leadTools);
         Assert.Contains(KernelMcpToolNames.TaskAccept, leadTools);

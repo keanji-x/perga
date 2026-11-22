@@ -15,11 +15,11 @@ describe('template-protocol wire contracts', () => {
     expectTypeOf<z.infer<typeof trackScheduleDtoSchema>>().toEqualTypeOf<TrackScheduleDto>();
     expectTypeOf<z.infer<typeof trackScheduleRunDtoSchema>>().toEqualTypeOf<TrackScheduleRunDto>();
   });
-  it('decodes persisted schedule events and invalidates only their track schedules', () => {
+  it('decodes persisted schedule events and invalidates their track schedules and views', () => {
     const decoded = decodeWireEvent({ eventId: 12, trackId: 't', kind: 'track.schedules.updated', payload: { trackId: 't' }, createdAtMs: 1 });
     expect(decoded).toEqual({ status: 'ready', value: { ev: 'track.schedules.updated', data: { trackId: 't' } } });
     if (decoded.status !== 'ready') throw new Error('Expected decoded event');
-    expect(invalidationPlanFor(decoded.value)).toEqual({ invalidate: [['track-schedules', 't']], remove: [], writeThrough: [] });
+    expect(invalidationPlanFor(decoded.value)).toEqual({ invalidate: [['track-schedules', 't'], ['track-views', 't']], remove: [], writeThrough: [] });
     expect(decodeWireEvent({ kind: 'track.schedules.updated', payload: { trackId: 42 } }).status).toBe('failed');
   });
   it('builds escaped REST operations with the exact request bodies', () => {

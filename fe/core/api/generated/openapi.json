@@ -900,6 +900,21 @@
                       "format": "int64",
                       "minimum": 0
                     },
+                    "flowRev": {
+                      "type": "integer",
+                      "format": "int64",
+                      "minimum": 0
+                    },
+                    "flow": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/components/schemas/FlowProjectionDto"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
                     "diagnostics": {
                       "type": "array",
                       "items": {
@@ -922,6 +937,149 @@
                       "type": "boolean"
                     }
                   }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tracks/{trackId}/flow": {
+      "parameters": [
+        {
+          "name": "trackId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "flowRev",
+                    "spec",
+                    "projection"
+                  ],
+                  "properties": {
+                    "flowRev": {
+                      "type": "integer",
+                      "format": "int64",
+                      "minimum": 0
+                    },
+                    "filePath": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "spec": {
+                      "type": "object",
+                      "additionalProperties": true
+                    },
+                    "projection": {
+                      "$ref": "#/components/schemas/FlowProjectionDto"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tracks/{trackId}/flow/commit": {
+      "parameters": [
+        {
+          "name": "trackId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "dryRun": {
+                    "type": "boolean"
+                  },
+                  "expectedFlowRev": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "format": "int64",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Commit result (ok=true on success/dry-run preview; ok=false with draft validation diagnostics).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "dryRun",
+                    "flowRev",
+                    "plan",
+                    "diagnostics",
+                    "flow"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "dryRun": {
+                      "type": "boolean"
+                    },
+                    "flowRev": {
+                      "type": "integer",
+                      "format": "int64",
+                      "minimum": 0
+                    },
+                    "plan": {
+                      "$ref": "#/components/schemas/FlowPlanDiffDto"
+                    },
+                    "diagnostics": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/FlowValidationErrorDto"
+                      }
+                    },
+                    "flow": {
+                      "$ref": "#/components/schemas/FlowProjectionDto"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Flow revision conflict or invalid state precondition (e.g., stale expectedFlowRev or canceling a verifying task).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
                 }
               }
             }
@@ -3908,6 +4066,7 @@
               "archived",
               "track_closed",
               "waiting_task",
+              "task_verifying",
               "task_finished"
             ]
           },
@@ -5692,6 +5851,7 @@
               "archived",
               "track_closed",
               "waiting_task",
+              "task_verifying",
               "task_finished"
             ]
           },
@@ -5910,6 +6070,509 @@
           "compactedTasks",
           "reclaimedBlobs"
         ]
+      },
+      "FlowDependencyProjectionDto": {
+        "type": "object",
+        "required": [
+          "node",
+          "on"
+        ],
+        "properties": {
+          "node": {
+            "type": "string"
+          },
+          "on": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "attention",
+              "blocked",
+              "any"
+            ]
+          }
+        }
+      },
+      "FlowGateCheckProjectionDto": {
+        "type": "object",
+        "required": [
+          "label",
+          "status"
+        ],
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pass",
+              "fail",
+              "running"
+            ]
+          },
+          "detail": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "command": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "output": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "FlowWatchProgressDto": {
+        "type": "object",
+        "required": [
+          "probeKind",
+          "label"
+        ],
+        "properties": {
+          "probeKind": {
+            "type": "string",
+            "enum": [
+              "prChecks",
+              "cmd"
+            ]
+          },
+          "label": {
+            "type": "string"
+          },
+          "passedChecks": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "totalChecks": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "lastCheckedAtMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "startedAtMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "timeoutAtMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "detail": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "FlowNodeProjectionDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "source",
+          "whenKind",
+          "after",
+          "doKind",
+          "canceled",
+          "status",
+          "outcome",
+          "runCount",
+          "firedCount",
+          "waitingOn",
+          "gates"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "agent",
+              "user",
+              "template"
+            ]
+          },
+          "whenKind": {
+            "type": "string",
+            "enum": [
+              "immediate",
+              "after",
+              "cron",
+              "at"
+            ]
+          },
+          "after": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FlowDependencyProjectionDto"
+            }
+          },
+          "cron": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tz": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "doKind": {
+            "type": "string",
+            "enum": [
+              "run",
+              "wake",
+              "watch"
+            ]
+          },
+          "role": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "access": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "targetSession": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "provider": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "prompt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "cmd": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "gate": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "canceled": {
+            "type": "boolean"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "running",
+              "verifying",
+              "waiting",
+              "done",
+              "failed",
+              "canceled"
+            ]
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "none",
+              "ok",
+              "attention",
+              "blocked"
+            ]
+          },
+          "outcomeSummary": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "runCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "sessionId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "startedAtMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "finishedAtMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "nextFireAtMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "lastFiredAtMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "firedCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "waitingOn": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "gates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FlowGateCheckProjectionDto"
+            }
+          },
+          "watchProgress": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FlowWatchProgressDto"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "FlowArchivedNodeProjectionDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "doKind",
+          "status",
+          "outcome",
+          "runCount",
+          "archivedAtMs"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "doKind": {
+            "type": "string",
+            "enum": [
+              "run",
+              "wake",
+              "watch"
+            ]
+          },
+          "status": {
+            "type": "string"
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "none",
+              "ok",
+              "attention",
+              "blocked"
+            ]
+          },
+          "outcomeSummary": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "runCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "sessionId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "finishedAtMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "archivedAtMs": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "FlowProjectionDto": {
+        "type": "object",
+        "required": [
+          "rev",
+          "nodes",
+          "archived"
+        ],
+        "properties": {
+          "rev": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "filePath": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "nodes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FlowNodeProjectionDto"
+            }
+          },
+          "archived": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FlowArchivedNodeProjectionDto"
+            }
+          }
+        }
+      },
+      "FlowPlanDiffDto": {
+        "type": "object",
+        "required": [
+          "added",
+          "updated",
+          "canceled",
+          "archived",
+          "unchanged"
+        ],
+        "properties": {
+          "added": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "updated": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "canceled": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "archived": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "unchanged": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "FlowValidationErrorDto": {
+        "type": "object",
+        "required": [
+          "path",
+          "message"
+        ],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "suggestion": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
       }
     },
     "securitySchemes": {

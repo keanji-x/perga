@@ -13,21 +13,31 @@ public sealed partial class TrackActor
         EnqueueAsync(async _ =>
         {
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
+            var flowProjection = await BuildFlowProjectionCoreAsync(ct).ConfigureAwait(false);
+            var flowElement = JsonHelpers.ToElement(flowProjection);
             if (_policy is null)
             {
                 return new TemplateViewsProjection(
                     TemplateId: _track.TemplateId ?? string.Empty,
                     Views: new Dictionary<string, JsonElement>(StringComparer.Ordinal),
                     Widgets: new Dictionary<string, string>(StringComparer.Ordinal),
-                    Diagnostics: [], DataRev: _track.DataRev);
+                    Diagnostics: [],
+                    DataRev: _track.DataRev,
+                    FlowRev: _track.FlowRev,
+                    Flow: flowElement);
             }
 
-            var kernelSnapshot = await BuildKernelFactsSnapshotCoreAsync(ct).ConfigureAwait(false);
+            var kernelSnapshot = await BuildKernelFactsSnapshotCoreAsync(flowProjection, ct).ConfigureAwait(false);
             return _policyVm.ProjectViews(
                 _policy,
                 _track.TemplateInputs,
                 _track.Data,
-                kernelSnapshot) with { DataRev = _track.DataRev };
+                kernelSnapshot) with
+            {
+                DataRev = _track.DataRev,
+                FlowRev = _track.FlowRev,
+                Flow = flowElement
+            };
         }, ct);
 
     public Task<TrackDataPatchResult> PatchTemplateDataAsync(
@@ -51,7 +61,7 @@ public sealed partial class TrackActor
             if (!string.IsNullOrWhiteSpace(callerSessionId))
             {
                 var caller = RequireSessionCore(callerSessionId);
-                if (TryGetOwningTaskCore(caller.Id) is { Access: AccessMode.ReadOnly })
+                if (TryGetActiveOwningTaskCore(caller.Id) is { Access: AccessMode.ReadOnly })
                     throw KernelException.PolicyDenied(
                         "Read-only bound worker sessions cannot patch track template data.");
             }
@@ -106,7 +116,7 @@ public sealed partial class TrackActor
             return new TrackDataPatchResult(true, _track.DataRev, _track.Data);
         }, ct);
 
-    private Task<JsonElement> BuildKernelFactsSnapshotCoreAsync(CancellationToken ct)
+    private Task<JsonElement> BuildKernelFactsSnapshotCoreAsync(FlowProjectionDto flowProjection, CancellationToken ct)
     {
         var tasksMap = new Dictionary<string, object?>(StringComparer.Ordinal);
         var sessionsMap = new Dictionary<string, object?>(StringComparer.Ordinal);
@@ -182,6 +192,7 @@ public sealed partial class TrackActor
             trackId = TrackId,
             tasks = tasksMap,
             sessions = sessionsMap,
+            flow = flowProjection,
         }));
     }
 }

@@ -120,7 +120,8 @@ public sealed partial class PergaKernelService
         var scheduleStore = _store.TrackSchedules
             ?? throw KernelException.PreconditionFailed("Track schedules are not enabled on this store.");
         await RequireScheduleTrackAsync(trackId, ct).ConfigureAwait(false);
-        return await scheduleStore.ListForTrackAsync(trackId, includeTerminal, ct).ConfigureAwait(false);
+        var schedules = await scheduleStore.ListForTrackAsync(trackId, includeTerminal, ct).ConfigureAwait(false);
+        return schedules.Where(s => s.NodeKey is null).ToArray();
     }
 
     public async Task<bool> CancelTrackScheduleAsync(
@@ -169,9 +170,23 @@ public sealed partial class PergaKernelService
         await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
         var fired = await store.FireDueAsync(nowMs, schedule => schedule.CronExpr is null ? null :
             _scheduleCronEvaluator?.GetNextOccurrenceMs(schedule.CronExpr, schedule.Timezone, nowMs), ct).ConfigureAwait(false);
-        foreach (var trackId in fired.Select(s => s.TrackId).Distinct())
+        var committed = new List<FiredTrackSchedule>(fired.Count);
+        foreach (var item in fired)
+        {
+            try
+            {
+                if (item.NodeKey is null || await Actors.GetOrActivate(item.TrackId).FireFlowScheduleAsync(item, nowMs, ct)
+                        .ConfigureAwait(false))
+                    committed.Add(item);
+            }
+            catch (Exception ex) when (!ct.IsCancellationRequested)
+            {
+                System.Diagnostics.Trace.TraceWarning("Could not dispatch due Flow clock {0}: {1}", item.ScheduleId, ex.Message);
+            }
+        }
+        foreach (var trackId in committed.Select(s => s.TrackId).Distinct())
             await PublishScheduleEventsAsync(trackId).ConfigureAwait(false);
-        return fired;
+        return committed;
     }
 
     private async Task RequireScheduleTrackAsync(string trackId, CancellationToken ct)
