@@ -3,6 +3,7 @@ using Perga.Contracts;
 using Perga.Kernel.Flow;
 using Perga.Kernel.Internal;
 using Perga.Kernel.Ports;
+using Perga.Kernel.Tasks;
 using Perga.VcsKit;
 
 namespace Perga.Kernel.Actors;
@@ -186,24 +187,22 @@ public sealed partial class TrackActor
         }
 
         var now = NowMs();
+        var repeat = FlowConstants.IsRepeatingWatch(node);
         var priorProgress = task.Status == TaskRunStatus.Running ? TrackFlowProjector.ExtractPersistedWatchProgress(task) : null;
-        var nextRunCount = priorProgress is null ? checked(task.RunCount + 1) : task.RunCount;
-        var interval = FlowSyntax.TryParseDuration(node.Do.Interval ?? FlowSyntax.DefaultWatchInterval, out var parsedInterval)
-            ? parsedInterval : TimeSpan.FromSeconds(60);
-        var timeout = FlowSyntax.TryParseDuration(node.Do.Timeout ?? FlowSyntax.DefaultWatchTimeout, out var parsedTimeout)
-            ? parsedTimeout : TimeSpan.FromMinutes(60);
-        var timeoutAtMs = priorProgress?.TimeoutAtMs ?? checked(now + (long)timeout.TotalMilliseconds);
+        var interval = FlowConstants.WatchInterval(node.Do);
+        var timeoutSeconds = FlowConstants.WatchTimeoutSeconds(node.Do);
         var initialProgress = priorProgress ?? new FlowWatchProgressDto(
             ProbeKind: node.Do.PrChecks.HasValue ? "prChecks" : "cmd",
             Label: node.Do.PrChecks is { } pr ? $"PR #{pr}" : (node.Title ?? node.Id),
             PassedChecks: null, TotalChecks: null, LastCheckedAtMs: null,
-            StartedAtMs: now, TimeoutAtMs: timeoutAtMs, Detail: "Starting probe...");
+            StartedAtMs: now, TimeoutAtMs: timeoutSeconds is { } seconds ? now + (long)(seconds * 1000) : null,
+            Detail: "Starting probe...");
 
         if (priorProgress is null)
         {
             var runningTask = task with
             {
-                RunCount = nextRunCount,
+                RunCount = repeat ? task.RunCount : checked(task.RunCount + 1),
                 Status = TaskRunStatus.Running,
                 StatusDetail = null,
                 Outcome = FlowOutcome.None,
@@ -218,7 +217,12 @@ public sealed partial class TrackActor
         }
 
         var watchCts = CancellationTokenSource.CreateLinkedTokenSource(_actorShutdownCts.Token);
-        var watchState = new ActiveWatchState(task.Id, node.Id, nextRunCount, watchCts, node.Do.PrChecks.HasValue, initialProgress);
+        var perProbeWorkspace = TaskGraphScheduler.UsesPerProbeWorkspace(node);
+        var watchState = new ActiveWatchState(task.Id, node.Id, watchCts,
+            TaskGraphScheduler.HoldsWorkspaceBetweenProbes(task, node), repeat, perProbeWorkspace, initialProgress)
+        {
+            LastPersistedCheckAtMs = priorProgress?.LastCheckedAtMs is not null ? task.UpdatedAtMs : null
+        };
         _activeWatches[task.Id] = watchState;
 
         var interpolatedCmd = InterpolateFlowTextCore(node.Do.Cmd);
@@ -229,7 +233,7 @@ public sealed partial class TrackActor
 
         var watchToken = watchCts.Token;
         watchState.Execution = TrackBackgroundJob(() => RunWatchProbeLoopAsync(
-            watchState, prNumber, interpolatedRepo, interpolatedHeadSha, interpolatedCmd, cwd, interval, timeoutAtMs, watchToken));
+            watchState, prNumber, interpolatedRepo, interpolatedHeadSha, interpolatedCmd, cwd, interval, watchToken));
 
         return true;
     }
@@ -242,22 +246,28 @@ public sealed partial class TrackActor
         string? cmd,
         string workspaceCwd,
         TimeSpan interval,
-        long timeoutAtMs,
         CancellationToken ct)
     {
+        var timeoutAtMs = watchState.Progress.TimeoutAtMs ?? long.MaxValue;
         try
         {
+            if (watchState.Progress.LastCheckedAtMs is { } lastCheck)
+                await WaitForNextWatchProbeAsync(lastCheck, interval, timeoutAtMs, ct).ConfigureAwait(false);
+
             while (!ct.IsCancellationRequested && NowMs() < timeoutAtMs)
             {
                 var checkNow = NowMs();
-                var budget = TimeSpan.FromMilliseconds(Math.Clamp(timeoutAtMs - checkNow, 1, uint.MaxValue - 1L));
+                var maxProbeMs = prNumber.HasValue && timeoutAtMs != long.MaxValue ? uint.MaxValue - 1L : 60_000L;
+                var budget = TimeSpan.FromMilliseconds(Math.Clamp(timeoutAtMs - checkNow, 1, maxProbeMs));
                 FlowOutcome? outcome = null;
                 string? summary = null;
                 var progress = watchState.Progress;
+                var probed = false;
                 using (var admission = _options.DispatchAdmission.TryEnter())
                 {
-                    if (admission is not null)
+                    if (admission is not null && (!watchState.UsesPerProbeWorkspace || await TryEnterWatchProbeCoreAsync(watchState, ct).ConfigureAwait(false)))
                     {
+                        probed = true;
                         using var deadline = new CancellationTokenSource(budget, _timeProvider);
                         using var probe = CancellationTokenSource.CreateLinkedTokenSource(ct, deadline.Token);
                         try
@@ -280,17 +290,15 @@ public sealed partial class TrackActor
 
                 if (outcome is { } finalOutcome)
                 {
-                    await SettleWatchAsync(watchState, finalOutcome, summary, progress).ConfigureAwait(false);
-                    return;
+                    if (await SettleWatchAsync(watchState, finalOutcome, summary, progress).ConfigureAwait(false))
+                        return;
+                    await WaitForNextWatchProbeAsync(checkNow, interval, timeoutAtMs, ct).ConfigureAwait(false);
+                    continue;
                 }
-                if (progress != watchState.Progress)
+                if (probed)
                     await UpdateWatchProgressAsync(watchState, progress).ConfigureAwait(false);
 
-                var nextCheckAtMs = Math.Min(timeoutAtMs, checkNow + (long)interval.TotalMilliseconds);
-                var delayMs = nextCheckAtMs - NowMs();
-                if (delayMs > 0)
-                    await Task.Delay(TimeSpan.FromMilliseconds(Math.Min(delayMs, uint.MaxValue - 1L)),
-                        _timeProvider, ct).ConfigureAwait(false);
+                await WaitForNextWatchProbeAsync(checkNow, interval, timeoutAtMs, ct).ConfigureAwait(false);
             }
 
             if (!ct.IsCancellationRequested)
@@ -309,6 +317,41 @@ public sealed partial class TrackActor
                 .ConfigureAwait(false);
         }
     }
+
+    private async Task WaitForNextWatchProbeAsync(long checkAtMs, TimeSpan interval, long timeoutAtMs, CancellationToken ct)
+    {
+        var nextCheckAtMs = Math.Min(timeoutAtMs, checkAtMs + (long)interval.TotalMilliseconds);
+        await WaitUntilWatchTimeAsync(nextCheckAtMs, ct).ConfigureAwait(false);
+    }
+
+    private async Task WaitUntilWatchTimeAsync(long atMs, CancellationToken ct)
+    {
+        while (atMs - NowMs() is > 0 and var delayMs)
+            await Task.Delay(TimeSpan.FromMilliseconds(Math.Min(delayMs, uint.MaxValue - 1L)), _timeProvider, ct)
+                .ConfigureAwait(false);
+    }
+
+    private Task<bool> TryEnterWatchProbeCoreAsync(ActiveWatchState watch, CancellationToken ct) =>
+        EnqueueAsync(_ =>
+        {
+            if (ct.IsCancellationRequested || _policyUnavailableReason is not null ||
+                _closingTrack || _deletingTrack || _track.ClosedAtMs is not null ||
+                _activeWatches.Values.Any(w => w.HoldsWorkspace) || _taskCoordinator.HasCanceledRunStillSettling())
+                return Task.FromResult(false);
+
+            var tasks = _taskCoordinator.Snapshot();
+            var nodes = _flowSpec.Nodes.ToDictionary(n => n.Id, StringComparer.Ordinal);
+            if (tasks.Any(task => task.ArchivedAtMs is null &&
+                task.Status is TaskRunStatus.Running or TaskRunStatus.Verifying &&
+                TaskGraphScheduler.HoldsWorkspaceBetweenProbes(task, nodes.GetValueOrDefault(task.TaskKey))))
+                return Task.FromResult(false);
+
+            if (watch.Repeat && HasActiveDescendantCore(watch.NodeId))
+                return Task.FromResult(false);
+
+            watch.HoldsWorkspace = true;
+            return Task.FromResult(true);
+        }, ct);
 
     private async Task<(FlowOutcome? Outcome, string? Summary, FlowWatchProgressDto Progress)> EvaluateCmdProbeAsync(
         string cmd,
@@ -437,25 +480,39 @@ public sealed partial class TrackActor
             var task = _taskCoordinator.Snapshot().FirstOrDefault(t => t.Id == watchState.TaskId);
             if (watchState.Cts.IsCancellationRequested || task?.Status != TaskRunStatus.Running)
                 return;
-            var updated = task with
-            {
-                Meta = JsonHelpers.ToElement(new { watchProgress = progress }),
-                UpdatedAtMs = NowMs()
-            };
-            await _taskCoordinator.PersistAndEmitTaskUpdatedCoreAsync(updated, updated.UpdatedAtMs, CancellationToken.None).ConfigureAwait(false);
-            _taskCoordinator.ReplaceTaskInMemoryCore(updated);
+            var now = NowMs();
+            var persist = progress.ProbeKind != "cmd" ||
+                watchState.LastPersistedCheckAtMs is not { } lastPersisted || now - lastPersisted >= 60_000 ||
+                progress.Detail != watchState.Progress.Detail;
             watchState.Progress = progress;
+            if (persist)
+            {
+                var updated = task with
+                {
+                    Meta = JsonHelpers.ToElement(new { watchProgress = progress }),
+                    UpdatedAtMs = now
+                };
+                await _taskCoordinator.PersistAndEmitTaskUpdatedCoreAsync(updated, now, CancellationToken.None).ConfigureAwait(false);
+                _taskCoordinator.ReplaceTaskInMemoryCore(updated);
+                watchState.LastPersistedCheckAtMs = now;
+            }
+            if (watchState.UsesPerProbeWorkspace && watchState.HoldsWorkspace)
+            {
+                watchState.HoldsWorkspace = false;
+                await _taskCoordinator.ScheduleEligibleTasksCoreAsync(CancellationToken.None).ConfigureAwait(false);
+            }
         }, CancellationToken.None).ConfigureAwait(false);
     }
 
-    private async Task SettleWatchAsync(
+    private async Task<bool> SettleWatchAsync(
         ActiveWatchState watchState,
         FlowOutcome outcome,
         string? summary,
         FlowWatchProgressDto finalProgress)
     {
-        if (_actorShutdownCts.IsCancellationRequested) return;
+        if (_actorShutdownCts.IsCancellationRequested) return true;
         var shouldPokeLead = false;
+        var settledRun = true;
         await EnqueueAsync(async _ =>
         {
             if (!_activeWatches.TryGetValue(watchState.TaskId, out var current) || !ReferenceEquals(current, watchState))
@@ -467,10 +524,25 @@ public sealed partial class TrackActor
             if (watchState.Cts.IsCancellationRequested || task.Status != TaskRunStatus.Running)
                 return;
 
+            // Enforce Downstream Convergence Barrier right before publishing a new repeating wave:
+            // an independent upstream (e.g. cron join wake) may have activated a descendant while patrolling.
+            if (watchState.Repeat && outcome == FlowOutcome.Ok && HasActiveDescendantCore(watchState.NodeId))
+            {
+                settledRun = false;
+                watchState.Progress = finalProgress with { Detail = "Waiting for active downstream to finish" };
+                if (watchState.UsesPerProbeWorkspace && watchState.HoldsWorkspace)
+                {
+                    watchState.HoldsWorkspace = false;
+                    await _taskCoordinator.ScheduleEligibleTasksCoreAsync(CancellationToken.None).ConfigureAwait(false);
+                }
+                return;
+            }
+
             var now = NowMs();
             var settled = task with
             {
                 Status = TaskRunStatus.Done,
+                RunCount = watchState.Repeat ? checked(task.RunCount + 1) : task.RunCount,
                 Outcome = outcome,
                 OutcomeSummary = summary,
                 StatusDetail = outcome == FlowOutcome.Ok ? null : summary,
@@ -478,8 +550,8 @@ public sealed partial class TrackActor
                 FinishedAtMs = now,
                 UpdatedAtMs = now
             };
-            var wakePrompt = outcome == FlowOutcome.Blocked
-                ? $"Flow watch node '{settled.TaskKey}' settled as blocked: {summary}"
+            var wakePrompt = outcome == FlowOutcome.Blocked || (watchState.Repeat && outcome == FlowOutcome.Attention)
+                ? $"Flow watch node '{settled.TaskKey}' settled as {FlowConstants.FormatOutcome(outcome)}: {summary}"
                 : null;
             shouldPokeLead = wakePrompt is not null;
 
@@ -496,6 +568,8 @@ public sealed partial class TrackActor
         {
             await PokePendingWakesAsync(CancellationToken.None).ConfigureAwait(false);
         }
+
+        return settledRun;
     }
 
     private ActiveWatchState[] BeginWatchCancellationForNodeCore(string nodeId)
@@ -515,6 +589,7 @@ public sealed partial class TrackActor
 
     private void CancelAllActiveWatchesCore()
     {
+        ScheduleWatchRearmCore(null);
         foreach (var kvp in _activeWatches.ToArray())
         {
             _activeWatches.Remove(kvp.Key);

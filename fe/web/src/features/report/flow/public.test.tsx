@@ -13,6 +13,7 @@ function makeNode(overrides: Partial<FlowNodeProjection> & Pick<FlowNodeProjecti
     after: [],
     doKind: 'run',
     canceled: false,
+    repeat: false,
     status: 'pending',
     outcome: 'none',
     runCount: 0,
@@ -259,5 +260,54 @@ describe('ReportFlowBlock (builtin:flow)', () => {
     const watchRegion = within(panel).getByRole('region', { name: '探针等待进度' });
     expect(watchRegion.textContent).toContain('PR #122 · 3/3 checks');
     expect(watchRegion.textContent).not.toContain('等待中');
+  });
+
+  it('shows evergreen watch progress without a timeout deadline', () => {
+    render(<ReportFlowBlock flow={{
+      rev: 1,
+      archived: [],
+      nodes: [makeNode({
+        id: 'poll',
+        title: '探针',
+        doKind: 'watch',
+        repeat: true,
+        status: 'waiting',
+        watchProgress: {
+          probeKind: 'cmd',
+          label: '探针',
+          lastCheckedAtMs: 1_760_000_000_000,
+          timeoutAtMs: null,
+        },
+      })],
+    }} />);
+    const progress = screen.getByRole('region', { name: '探针等待进度' });
+    expect(within(progress).getByText('常青监听')).toBeTruthy();
+    expect(within(progress).getByText(/^上次检查/)).toBeTruthy();
+    expect(within(progress).queryByText(/^超时截止/)).toBeNull();
+  });
+
+  it('shows continuing state instead of terminal done between waves of a repeating watch', () => {
+    render(<ReportFlowBlock flow={{
+      rev: 2,
+      archived: [],
+      nodes: [makeNode({
+        id: 'poll',
+        title: '常青探针',
+        doKind: 'watch',
+        repeat: true,
+        status: 'done',
+        outcome: 'ok',
+        runCount: 1,
+        watchProgress: {
+          probeKind: 'cmd',
+          label: '常青探针',
+          lastCheckedAtMs: 1_760_000_000_000,
+          timeoutAtMs: null,
+        },
+      })],
+    }} />);
+    const panel = screen.getByRole('article', { name: '常青探针' });
+    expect(within(panel).getByText('待下一轮')).toBeTruthy();
+    expect(within(panel).queryByText('已完成')).toBeNull();
   });
 });

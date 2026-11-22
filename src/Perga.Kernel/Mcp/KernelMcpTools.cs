@@ -203,11 +203,11 @@ public static class KernelMcpCatalog
                 "Cheatsheet:\n" +
                 "- Root: { rev, nodes: [{ id, title?, source?, when?, do, canceled? }] }\n" +
                 "- when (omit = run once immediately): { after: [\"id\" | { node, on?: ok|attention|blocked|any }], on? } | { cron, tz?, maxOccurrences? } | { at: ISO-8601 }\n" +
-                "- do.kind='run': { kind:'run', prompt, session?:'new'|'ses_...', role?, access?, provider?, model?, gate?, acceptance? } OR { kind:'run', cmd }\n" +
+                "- do.kind='run': { kind:'run', prompt, session?:'new'|'ses_...', role?, access?, provider?, model?, reasoningEffort?, gate?, acceptance? } OR { kind:'run', cmd }. Use provider_list for supported reasoning efforts. Reused sessions must match an explicit effort.\n" +
                 "- do.kind='wake': { kind:'wake', session:'lead'|'ses_...', prompt }\n" +
-                "- do.kind='watch' (0-token): { kind:'watch', prChecks, repo?, headSha?, interval?:'60s', timeout?:'60m' } OR { kind:'watch', cmd, interval?, timeout? } (exit 0=ok, 75=wait, other=attention)\n" +
+                "- do.kind='watch' (0-token): { kind:'watch', prChecks, repo?, headSha?, interval?, timeout? } OR { kind:'watch', cmd, interval?, timeout?, repeat? } (exit 0=ok, 75=wait, other=attention). Default interval is 60s. Timeout accepts 'never' or a duration (e.g. '60m', '7d'), defaulting to 'never' with repeat:true and '60m' otherwise. Repeating command watches re-arm after downstream tasks settle.\n" +
                 "- Reusing an existing ses_... preserves NativeThreadId & context.\n" +
-                "- Never silently delete active/running/cron nodes — set canceled:true explicitly; terminal orphan one-shot nodes are archived by background GC.\n" +
+                "- Set canceled:true before removing active nodes, cron nodes, or repeating watches. Terminal orphan one-shot nodes are archived by background GC.\n" +
                 "- Pass dryRun:true first to inspect plan diff & diagnostics with zero side effects.",
                 Schema("""{"type":"object","additionalProperties":false,"properties":{"dryRun":{"type":"boolean","description":"Validate the draft and return the plan diff. Defaults to false."},"expectedFlowRev":{"type":"integer","minimum":0,"description":"Expected committed revision. Defaults to the draft rev."},"content":{"type":["string","null"],"description":"Flow JSON text. Omit to read the Host's flow.json."}}}"""), localWrite),
             new(KernelMcpToolNames.TaskCancel, "Cancel a task and stop any active execution (task parent or Track Lead).",

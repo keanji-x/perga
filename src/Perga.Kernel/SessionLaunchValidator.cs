@@ -53,7 +53,7 @@ internal static class SessionLaunchValidator
     }
 
     internal static void ValidateModelAndEffort(string provider, ProviderStatus? status,
-        string? requestedModel, string? effectiveModel, string? requestedEffort)
+        string? requestedModel, string? effectiveModel, string? requestedEffort, bool requireKnownEffort = false)
     {
         var nextStep = $"Call provider_list(provider='{provider}') to inspect valid models and reasoning efforts.";
         if (requestedModel is not null && status is { Models.Count: > 0 } &&
@@ -65,6 +65,10 @@ internal static class SessionLaunchValidator
         if (requestedEffort is null) return;
         var model = effectiveModel ?? DefaultModel(status);
         var efforts = status?.ModelCatalog?.FirstOrDefault(entry => entry.Model == model)?.SupportedReasoningEfforts;
+        if (requireKnownEffort && (status is null || efforts is null || efforts.Count == 0))
+            throw KernelException.InvalidArgument(
+                $"Reasoning effort '{requestedEffort}' cannot be verified for model '{model ?? "(default)"}' on provider '{provider}' because no supported reasoning efforts were advertised.",
+                nextStep);
         if (efforts is { Count: > 0 } && !efforts.Any(entry => entry.ReasoningEffort == requestedEffort))
             throw KernelException.InvalidArgument(
                 $"Unsupported reasoningEffort '{requestedEffort}' for model '{model}' on provider '{provider}'. Supported efforts: {FormatChoices(efforts.Select(entry => entry.ReasoningEffort).ToArray())}.",

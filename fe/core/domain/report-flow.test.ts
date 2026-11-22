@@ -59,10 +59,30 @@ describe('report-flow domain contracts', () => {
     expect(parsed.nodes[0].source).toBe('agent');
     expect(parsed.nodes[0].whenKind).toBe('immediate');
     expect(parsed.nodes[0].doKind).toBe('run');
+    expect(parsed.nodes[0].repeat).toBe(false);
     expect(parsed.nodes[1].after).toEqual([{ node: 'fix-r2', on: 'ok' }]);
     expect(parsed.nodes[1].watchProgress?.passedChecks).toBe(3);
     expect(parsed.archived).toHaveLength(1);
     expect(parsed.archived[0].status).toBe('done');
+  });
+
+  it('decodes a repeating watch without a deadline and an explicit worker effort', () => {
+    const parsed = flowProjectionSchema.parse({
+      rev: 1,
+      nodes: [
+        {
+          id: 'poll',
+          title: 'Poll',
+          doKind: 'watch',
+          repeat: true,
+          watchProgress: { probeKind: 'cmd', label: 'Poll', timeoutAtMs: null },
+        },
+        { id: 'review', title: 'Review', reasoningEffort: 'high' },
+      ],
+    });
+    expect(parsed.nodes[0].repeat).toBe(true);
+    expect(parsed.nodes[0].watchProgress?.timeoutAtMs).toBeNull();
+    expect(parsed.nodes[1].reasoningEffort).toBe('high');
   });
 
   it('parses FlowCommitResult including plan diff and validation diagnostics', () => {

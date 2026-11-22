@@ -33,8 +33,10 @@ Extend `do.kind = "watch"` with only **two orthogonal fields** (no `probeTimeout
 
 Runtime invariants:
 - **Internal single-probe cap**: bounded safely (60s or remaining overall timeout) so `"never"` can never wedge a subprocess forever.
+- Repeating command watches acquire exclusive workspace access for each probe and release it before waiting for the next interval.
 - **Fail-safe error policy**: non-`0`/non-`75` exit settles once as `Done(Attention)` and pauses (never error-spams).
 - **Downstream Convergence Barrier**: while any transitive downstream node is active, the evergreen `watch` stays armed-waiting and never re-enters; once the downstream subtree reaches terminal states (and `watch` is not canceled/attention), it re-arms automatically.
+  Outcome branches that cannot run in the current wave stay available for later waves. If a repeating watch depends on another repeating watch, the upstream wave controls when the downstream watch re-arms.
 - **GC, anti-deletion, and restart recovery**: `recurringSources = cron ∪ (watch where repeat && !canceled)` exempts the watch and its downstream closure from GC; active repeating watches require explicit `canceled: true`; restarting the Host on the same SQLite DB resumes patrolling or re-arms converged watches seamlessly.
 - **Policy fix**: `requireGateForReadWrite` applies to writable `run` nodes, not `watch(cmd)` probes.
 

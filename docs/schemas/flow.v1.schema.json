@@ -19,7 +19,7 @@
     "nodes": {
       "type": "array",
       "items": { "$ref": "#/$defs/node" },
-      "description": "Active orchestration nodes. Do not silently delete active/running/cron nodes; set canceled=true explicitly. Terminal orphan one-shot nodes are archived by background GC."
+      "description": "Active orchestration nodes. Set canceled=true before removing running nodes, cron nodes, or repeating watches. Terminal orphan one-shot nodes are archived by background GC."
     }
   },
   "$defs": {
@@ -118,6 +118,11 @@
             "access": { "type": "string", "enum": ["read_only", "read_write"] },
             "provider": { "type": "string" },
             "model": { "type": "string" },
+            "reasoningEffort": {
+              "type": "string",
+              "pattern": "\\S",
+              "description": "Provider/model-supported reasoning effort. Must match the current effort when reusing a session."
+            },
             "gate": { "type": "string" },
             "prompt": { "type": "string", "minLength": 1 },
             "acceptance": { "type": "string" }
@@ -178,9 +183,9 @@
             },
             "timeout": {
               "type": "string",
-              "pattern": "^[1-9][0-9]*[smh]$",
+              "pattern": "^(never|[1-9][0-9]*[smhd])$",
               "default": "60m",
-              "description": "Timeout for watch probes; settles as blocked on expiry."
+              "description": "Overall timeout in seconds, minutes, hours, or days. 'never' removes the deadline. Expiry settles as blocked."
             }
           }
         },
@@ -202,9 +207,13 @@
             },
             "timeout": {
               "type": "string",
-              "pattern": "^[1-9][0-9]*[smh]$",
-              "default": "60m",
-              "description": "Timeout for watch probes; settles as blocked on expiry."
+              "pattern": "^(never|[1-9][0-9]*[smhd])$",
+              "description": "Overall timeout in seconds, minutes, hours, or days. Defaults to 'never' for repeating watches and '60m' otherwise. Expiry settles as blocked."
+            },
+            "repeat": {
+              "type": "boolean",
+              "default": false,
+              "description": "Re-arm after a successful probe and completion of the downstream wave. Attention or blocked pauses the watch."
             }
           }
         }

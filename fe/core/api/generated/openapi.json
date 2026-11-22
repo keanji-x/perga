@@ -2197,6 +2197,19 @@
               }
             ]
           },
+          "reasoningEffort": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "repeat": {
+            "type": "boolean"
+          },
           "role": {
             "anyOf": [
               {
@@ -2299,6 +2312,8 @@
           "outcomeSummary",
           "prompt",
           "provider",
+          "reasoningEffort",
+          "repeat",
           "role",
           "runCount",
           "sessionId",

@@ -216,19 +216,25 @@ export type FlowWhen =
 export type FlowAction =
   | ({ kind: "run"; access?: "read_only" | "read_write"; gate?: string; acceptance?: string;
       run?: never; wake?: never; watch?: never; reuseSession?: never;
-      prChecks?: never; repo?: never; headSha?: never; interval?: never; timeout?: never } & (
-      | { prompt: string; cmd?: never; session?: "new" | `ses_${string}`; role?: string; provider?: string; model?: string }
-      | { cmd: string; prompt?: never; session?: never; role?: never; provider?: never; model?: never }
+      prChecks?: never; repo?: never; headSha?: never; interval?: never; timeout?: never; repeat?: never } & (
+      | { prompt: string; cmd?: never; session?: "new" | `ses_${string}`; role?: string; provider?: string; model?: string;
+          /** Supported by the selected provider/model. Must match an explicitly reused session. */
+          reasoningEffort?: string }
+      | { cmd: string; prompt?: never; session?: never; role?: never; provider?: never; model?: never; reasoningEffort?: never }
     ))
   | { kind: "wake"; session: "lead" | `ses_${string}`; prompt: string;
       run?: never; wake?: never; watch?: never; cmd?: never; reuseSession?: never;
       role?: never; access?: never; provider?: never; model?: never; gate?: never; acceptance?: never;
-      prChecks?: never; repo?: never; headSha?: never; interval?: never; timeout?: never }
-  | ({ kind: "watch"; interval?: string; timeout?: string;
+      prChecks?: never; repo?: never; headSha?: never; interval?: never; timeout?: never; repeat?: never; reasoningEffort?: never }
+  | ({ kind: "watch"; interval?: string;
+      /** Overall timeout (e.g. "60m", "7d", "never"). Defaults to "never" with repeat, otherwise "60m". */
+      timeout?: string;
       run?: never; wake?: never; watch?: never; prompt?: never; session?: never; reuseSession?: never;
-      role?: never; access?: never; provider?: never; model?: never; gate?: never; acceptance?: never } & (
-      | { prChecks: number; cmd?: never; repo?: string; headSha?: string }
-      | { cmd: string; prChecks?: never; repo?: never; headSha?: never }
+      role?: never; access?: never; provider?: never; model?: never; gate?: never; acceptance?: never; reasoningEffort?: never } & (
+      | { prChecks: number; cmd?: never; repo?: string; headSha?: string; repeat?: never }
+      | { cmd: string; prChecks?: never; repo?: never; headSha?: never;
+          /** Re-arm after a successful probe and completion of the downstream wave. */
+          repeat?: boolean }
     ));
 
 export interface FlowNode {

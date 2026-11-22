@@ -26,7 +26,7 @@ public static class TrackFlowParser
     private static readonly HashSet<string> DoProperties = new(StringComparer.Ordinal)
     {
         "kind", "session", "role", "access", "provider", "model", "gate",
-        "prompt", "acceptance", "cmd", "prChecks", "repo", "headSha", "interval", "timeout"
+        "prompt", "acceptance", "cmd", "prChecks", "repo", "headSha", "interval", "timeout", "repeat", "reasoningEffort"
     };
 
     private static readonly HashSet<string> AllowedSources = new(StringComparer.Ordinal)
@@ -482,7 +482,7 @@ public static class TrackFlowParser
                 errors.Add(new FlowValidationErrorDto(
                     $"{path}.{prop.Name}",
                     $"Unknown field '{prop.Name}' in 'do'.",
-                    "Allowed 'do' fields: kind, session, role, access, provider, model, gate, prompt, acceptance, cmd, prChecks, repo, headSha, interval, timeout."));
+                    "Allowed 'do' fields: kind, session, role, access, provider, model, reasoningEffort, gate, prompt, acceptance, cmd, prChecks, repo, headSha, interval, timeout, repeat."));
             }
         }
 
@@ -509,6 +509,18 @@ public static class TrackFlowParser
         var headSha = ReadOptionalString(doEl, "headSha", $"{path}.headSha", errors);
         var interval = ReadOptionalString(doEl, "interval", $"{path}.interval", errors);
         var timeout = ReadOptionalString(doEl, "timeout", $"{path}.timeout", errors);
+        var effort = ReadOptionalString(doEl, "reasoningEffort", $"{path}.reasoningEffort", errors)?.Trim();
+        if (doEl.TryGetProperty("reasoningEffort", out var effortEl) && effortEl.ValueKind == JsonValueKind.Null)
+            errors.Add(new($"{path}.reasoningEffort", "'reasoningEffort' must be a string."));
+
+        bool? repeat = null;
+        if (doEl.TryGetProperty("repeat", out var repeatEl))
+        {
+            if (repeatEl.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                repeat = repeatEl.GetBoolean();
+            else
+                errors.Add(new($"{path}.repeat", "'repeat' must be a boolean."));
+        }
 
         int? prChecks = null;
         if (doEl.TryGetProperty("prChecks", out var prEl) && prEl.ValueKind != JsonValueKind.Null)
@@ -531,6 +543,9 @@ public static class TrackFlowParser
                 """Use "read_only" or "read_write"."""));
         }
 
+        var action = new FlowDoSpecDto(kind, session, role, access, provider, model, gate, prompt,
+            acceptance, cmd, prChecks, repo, headSha, interval, timeout, repeat, effort);
+        FlowSyntax.ValidateActionOptions(action, path, errors);
         switch (kind)
         {
             case "run":
@@ -544,7 +559,7 @@ public static class TrackFlowParser
                 break;
         }
 
-        return new FlowDoSpecDto(kind, session, role, access, provider, model, gate, prompt, acceptance, cmd, prChecks, repo, headSha, interval, timeout);
+        return repeat == false ? action with { Repeat = null } : action;
     }
 
     private static void ValidateRunDo(
@@ -681,15 +696,14 @@ public static class TrackFlowParser
             }
         }
 
-        var timeoutSpan = TimeSpan.FromMinutes(60);
-        if (timeout is not null)
+        if (timeout is not null and not FlowSyntax.NoWatchTimeout)
         {
-            if (!FlowSyntax.TryParseDuration(timeout, out timeoutSpan))
+            if (!FlowSyntax.TryParseDuration(timeout, out var timeoutSpan, allowDays: true))
             {
                 errors.Add(new FlowValidationErrorDto(
                     $"{path}.timeout",
                     $"Invalid watch timeout '{timeout}'.",
-                    "Use a duration matching '^[1-9][0-9]*[smh]$' (e.g. '10m', '30m', '2h')."));
+                    "Use 'never' or a duration in seconds, minutes, hours, or days (e.g. '10m', '2h', '7d')."));
             }
             else if (timeoutSpan < intervalSpan)
             {

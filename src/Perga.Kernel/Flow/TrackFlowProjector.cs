@@ -94,7 +94,9 @@ internal static class TrackFlowProjector
                 FiredCount: sched?.FiredCount ?? 0,
                 WaitingOn: waitingOn,
                 Gates: gates,
-                WatchProgress: watchProgress));
+                WatchProgress: watchProgress,
+                Repeat: FlowConstants.IsRepeatingWatch(node),
+                ReasoningEffort: boundSession?.ReasoningEffort ?? node.Do.ReasoningEffort));
         }
 
         var archived = tasks

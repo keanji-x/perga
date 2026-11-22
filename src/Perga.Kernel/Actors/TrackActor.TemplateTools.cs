@@ -221,7 +221,8 @@ public sealed partial class TrackActor
             };
         if (policy is not null)
             TemplateFlow.RequireValid(TrackFlowValidator.Validate(spec, _flowSpec, _taskCoordinator.Snapshot(), CollectActiveFlowTaskIdsCore(),
-                _sessions, next.LeadSessionId, policy, _policyVm, next.TemplateInputs, _scheduleCronEvaluator, _timeProvider, replaced));
+                _sessions, next.LeadSessionId, policy, _policyVm, next.TemplateInputs, _scheduleCronEvaluator, _timeProvider, replaced,
+                await GetFlowWorkerCatalogCoreAsync(spec, ct).ConfigureAwait(false)));
 
         if (replaced.Count > 0)
         {
@@ -335,7 +336,8 @@ public sealed partial class TrackActor
             ". Migrate data before changing inputs.");
         TemplateFlow.ReadSeedNodes(_policyVm, _policy, next.TemplateInputs);
         TemplateFlow.RequireValid(TrackFlowValidator.Validate(_flowSpec, _flowSpec, _taskCoordinator.Snapshot(), CollectActiveFlowTaskIdsCore(),
-            _sessions, next.LeadSessionId, _policy, _policyVm, next.TemplateInputs, _scheduleCronEvaluator, _timeProvider));
+            _sessions, next.LeadSessionId, _policy, _policyVm, next.TemplateInputs, _scheduleCronEvaluator, _timeProvider,
+            workerCatalog: await GetFlowWorkerCatalogCoreAsync(_flowSpec, ct).ConfigureAwait(false)));
         var clocks = await RefreshTemplateClockTextCoreAsync(_flowSpec, next, _policy, ct).ConfigureAwait(false);
         var updates = RefreshRoutedFlowAccessCore(_flowSpec, next, _policy,
             TrackFlowReconciler.BuildTasksByKey(_taskCoordinator.Snapshot())).ToArray();

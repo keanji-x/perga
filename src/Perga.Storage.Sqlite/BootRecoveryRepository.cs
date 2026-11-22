@@ -31,6 +31,7 @@ internal sealed class BootRecoveryRepository
                                   SELECT 1 FROM tasks task
                                   WHERE task.track_id = tr.id
                                     AND task.status IN ('running', 'verifying')
+                                    AND NOT (task.kind = 'flow_watch' AND task.block_id = 'flow:' || task.task_key AND json_type(task.context_json, '$.flowNode') IS 'true')
                               )
                               OR EXISTS (
                                   SELECT 1 FROM session_turns t

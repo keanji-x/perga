@@ -25,6 +25,12 @@ const watchWithPrompt: FlowAction = { kind: "watch", prChecks: 1, ...prompt };
 const nestedAction = { kind: "wake" as const, session: "lead" as const, prompt: "Check", run: command };
 // @ts-expect-error Flow actions use one flat, kind-tagged variant
 const invalidNested: FlowAction = nestedAction;
+// @ts-expect-error repeating watches require a command probe
+const repeatedPrCheck: FlowAction = { kind: "watch", prChecks: 1, repeat: true };
+// @ts-expect-error shell runs have no model effort
+const commandWithEffort: FlowAction = { kind: "run", cmd: "verify", reasoningEffort: "high" };
+// @ts-expect-error wake reuses a session's existing configuration
+const wakeWithEffort: FlowAction = { kind: "wake", session: "lead", prompt: "Review", reasoningEffort: "high" };
 
 const triggers: FlowWhen[] = [
   {},
@@ -34,10 +40,10 @@ const triggers: FlowWhen[] = [
 ];
 const actions: FlowAction[] = [
   { kind: "run", cmd: "verify" },
-  { kind: "run", prompt: "Review", session: "new" },
+  { kind: "run", prompt: "Review", session: "new", reasoningEffort: "high" },
   { kind: "wake", session: "lead", prompt: "Check progress" },
-  { kind: "watch", prChecks: 1, repo: "example/project" },
-  { kind: "watch", cmd: "verify", interval: "5s" },
+  { kind: "watch", prChecks: 1, repo: "example/project", timeout: "7d" },
+  { kind: "watch", cmd: "verify", interval: "5s", timeout: "never", repeat: true },
 ];
 
 const before: NonNullable<PergaTemplateSetupResult["before"]> = (action, ctx) => {
