@@ -286,7 +286,7 @@ export function HoverPreview({ title, trigger, children, getReadingSurface, getA
     const next = placePreview({
       anchor: source, reading: reading === null ? null : reading.getBoundingClientRect(),
       readingAreas: getAvoidSurfaces?.(triggerElement).map(element => element.getBoundingClientRect()),
-      // Neige's own portal order is the total order. Retention keeps its position;
+      // Perga's own portal order is the total order. Retention keeps its position;
       // only earlier interactive reservations participate. There is no reverse edge.
       obstacles: Array.from(document.querySelectorAll<HTMLElement>('[data-nc-preview-slot]'))
         .filter(element => element !== slot && !element.inert

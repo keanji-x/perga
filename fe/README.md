@@ -51,3 +51,16 @@ installation and standalone launch without reaching a backend.
 `@astryxdesign/core` is pinned exactly; review upgrades separately. Module-level
 static arrays must be frozen at runtime. Add pure-factory lint exceptions only
 with focused positive and negative fixtures; keep architecture gates intact.
+
+## Tooling scope
+
+Legacy development preview servers and the ownership inventory/trailer and test
+tier policy tools have been removed. Card layout browser coverage keeps its local
+fixture in the owning test. Vitest still discovers platform-independent, web DOM,
+browser and coarse-pointer suites through the existing project patterns.
+
+Architecture lint and fixtures, dependency direction checks, style/token checks,
+Host contract generation and drift checks, TypeScript and production builds remain
+the verification boundaries. Run the commands above plus `npm run gen:api -- --check`
+when verifying tooling changes. `yaml` remains a direct dependency for architecture
+and style checks. CI changes require L2 review of job/trigger and gate preservation.

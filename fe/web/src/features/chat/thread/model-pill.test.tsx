@@ -75,7 +75,7 @@ function unavailable(provider: AgentProvider, reason: string): ProviderAvailabil
 }
 
 function notConfigured(provider: AgentProvider): ProviderAvailability {
-  return { provider, status: 'not_configured', reason: 'calm-server was started without --claude-planner-config', authentication_method: null, authentication_notice: null, checked_at_ms: 1 };
+  return { provider, status: 'not_configured', reason: 'Planner authentication is not configured', authentication_method: null, authentication_notice: null, checked_at_ms: 1 };
 }
 
 function both(

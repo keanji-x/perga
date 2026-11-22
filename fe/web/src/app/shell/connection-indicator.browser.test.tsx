@@ -48,7 +48,7 @@ it('paints live connection changes without restarting the stream and reveals det
   expect(connected.getBoundingClientRect().left).toBeGreaterThanOrEqual(today.right);
   await userEvent.hover(connected);
   await waitFor(() => expect(screen.getByRole('tooltip').textContent).toBe('已连接'));
-  await page.screenshot({ path: '../../../../test-results/neige-connection-connected.png' });
+  await page.screenshot({ path: '../../../../test-results/perga-connection-connected.png' });
   act(() => sink.connectionState('disconnected'));
   const disconnected = screen.getByRole('button', { name: '连接状态：连接已断开' });
   expect(getComputedStyle(disconnected.firstElementChild!).backgroundColor).toBe(red);
@@ -74,7 +74,7 @@ it('hides raw sidebar errors until disclosure, keeps them accessible when collap
   const indicator = screen.getByRole('button', { name: '连接状态：连接异常' });
   await userEvent.hover(indicator);
   await waitFor(() => expect(screen.getByRole('tooltip').textContent).toContain('HTTP 503: lost'));
-  await page.screenshot({ path: '../../../../test-results/neige-connection-offline.png' });
+  await page.screenshot({ path: '../../../../test-results/perga-connection-offline.png' });
   await userEvent.click(indicator);
   expect(within(screen.getByRole('dialog', { name: '连接详情' })).getByText('HTTP 503: lost')).toBeTruthy();
   const errorLine = within(screen.getByRole('dialog', { name: '连接详情' })).getByText('HTTP 503: lost');
@@ -82,7 +82,7 @@ it('hides raw sidebar errors until disclosure, keeps them accessible when collap
     const rect = errorLine.getBoundingClientRect();
     expect(errorLine.contains(document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2))).toBe(true);
   });
-  await page.screenshot({ path: '../../../../test-results/neige-connection-menu.png' });
+  await page.screenshot({ path: '../../../../test-results/perga-connection-menu.png' });
   await userEvent.click(screen.getByRole('button', { name: '立即重试' }));
   expect(retry).toHaveBeenCalledTimes(1);
   expect(retryConnection).toHaveBeenCalledTimes(1);
@@ -95,5 +95,5 @@ it('hides raw sidebar errors until disclosure, keeps them accessible when collap
   expect(screen.queryByRole('alert')).toBeNull();
   await userEvent.hover(collapsed);
   await waitFor(() => expect(screen.getByRole('tooltip').textContent).toContain('WebSocket connection lost'));
-  await page.screenshot({ path: '../../../../test-results/neige-connection-collapsed.png' });
+  await page.screenshot({ path: '../../../../test-results/perga-connection-collapsed.png' });
 });

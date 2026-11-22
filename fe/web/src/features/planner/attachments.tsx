@@ -23,7 +23,7 @@ import styles from './attachments.module.css';
 export type UploadAttachment = (readBytes: () => Promise<Uint8Array>, contentType: string)
 => Promise<() => UploadAttachmentResponse>;
 
-/** Why a track can have no attachment surface: attachments are written into `<workspace>/.neige/`, and a workspace the person already owns is one neige never writes into (the server answers 400). */
+/** Explain why the server has not provided an attachment surface for this Track. */
 export type AttachmentSupport = Readonly<{ available: boolean; reason?: string }>;
 
 export const ATTACHED_WORKSPACE_REASON =

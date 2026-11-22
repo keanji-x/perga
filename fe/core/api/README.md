@@ -21,6 +21,5 @@ the generated contract. Frontend presentation types live in
 `core/domain/presentation-types.ts` and are not HTTP wire contracts.
 Keep producers, consumers, fixtures and runtime decoders aligned when regenerating.
 
-These paths are frozen ownership surfaces. Authorized changes require exact
-OWNERSHIP-CHANGE trailers and applicable contract verification. Error semantics
+Changes to these contracts require applicable contract verification. Error semantics
 and transport lifetime stay in their owning modules.

@@ -22,7 +22,7 @@ only when the actual slot exists. The slot/actual/card owners below retain all
 measurement, visual forwarding, intrinsic sizing and interaction permissions.
 
 `placePreview` is the only placement/collision owner. Its result is a fixed
-reservation slot, independent of natural content height. Neige-owned portal DOM
+reservation slot, independent of natural content height. Perga-owned portal DOM
 order defines priority: only earlier interactive slots participate. Ancestors
 precede descendants; retained reopen keeps its position, while unmount/remount
 appends a new position. Parents never consume descendant or later sibling slots.
@@ -48,7 +48,7 @@ may suppress another trigger enter on that transfer. Leaving both surfaces keeps
 the existing leave/travel delays and admission guards.
 Nested previews use a primitive-owned typed interaction port across portals.
 Each child registers only at its nearest declared parent's stable trigger endpoint
-by its Neige-owned id; registration releases on unmount. Every parent close
+by its Perga-owned id; registration releases on unmount. Every parent close
 synchronously revokes direct children, recursively clears pending intent and
 rejects retained-content activation. Reopening a parent never reopens an old child.
 The port carries semantic ownership and live ancestor proof only. Source, reading

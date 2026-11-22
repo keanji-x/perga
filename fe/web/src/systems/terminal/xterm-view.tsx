@@ -188,7 +188,7 @@ export const XtermView = forwardRef<XtermViewHandle, XtermViewProps>(function Xt
         latestThemeRef.current === 'dark' ? DARK_THEME : LIGHT_THEME,
       fontFamily: MONO_STACK,
       fontSize: TERMINAL_FONT_SIZE,
-      // Mirrors `SCROLLBACK_MAX_LINES` in `crates/calm-server/src/terminal_renderer/mod.rs`; keep in lockstep.
+      // Bound the local xterm scrollback retained for this terminal view.
       scrollback: 2000,
       convertEol: true,
       allowProposedApi: true,
