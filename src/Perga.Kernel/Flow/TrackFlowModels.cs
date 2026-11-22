@@ -14,12 +14,15 @@ public static partial class FlowConstants
     public static partial Regex InputInterpolationRegex();
 
     public static bool IsFlowTask(TaskDto task) =>
-        task.BlockId == MakeBlockId(task.TaskKey) &&
+        (task.BlockId == MakeBlockId(task.TaskKey) ||
+         (task.ArchivedAtMs is not null && task.TaskKey == MakeArchivedTaskKey(task.Id) &&
+          task.BlockId.StartsWith(FlowBlockIdPrefix, StringComparison.Ordinal))) &&
         task.Context is { ValueKind: JsonValueKind.Object } context &&
         context.TryGetProperty("flowNode", out var marker) && marker.ValueKind == JsonValueKind.True;
 
     public static string MakeBlockId(string nodeId) => FlowBlockIdPrefix + nodeId;
     public static string MakeScheduleId(string nodeId) => FlowScheduleIdPrefix + nodeId;
+    internal static string MakeArchivedTaskKey(string taskId) => "@archived:" + taskId;
 
     public static string FormatOutcome(FlowOutcome outcome) => outcome switch
     {

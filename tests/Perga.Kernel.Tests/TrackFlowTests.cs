@@ -15,6 +15,116 @@ public sealed class TrackFlowTests
 {
     private static readonly InteropPrincipal Human = new InteropPrincipal.Human();
 
+    [Fact]
+    public async Task FailureReservedBeforeCancellationCannotSettleOrReleaseWorkspace()
+    {
+        var bridge = new ObservedMcpSessionBridge();
+        await using var ctx = new KernelTestContext(mcpSessionBridge: bridge);
+        var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
+        var trackId = snapshot.Track.Id;
+        var workerStarted = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var shuttingDown = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        ctx.AgentRuntime.TurnScript = (session, _, ct) =>
+            HoldTurnAsync(session.NativeThreadId!, workerStarted, release.Task, ct);
+        ctx.AgentRuntime.OnOpenedSession = agent => agent.DisposeHandler = async () =>
+        {
+            shuttingDown.TrySetResult();
+            await release.Task;
+        };
+        var worker = await FlowFixture.StartWorkerAsync(ctx.Kernel, trackId,
+            FlowFixture.Worker("worker", "Worker", "read_write"));
+        await workerStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await FlowFixture.AddAsync(ctx.Kernel, trackId,
+            new("attention", new("run", Cmd: "attention"), When: new(After: [new("worker", "attention")])),
+            new FlowNodeSpecDto("next", new("run", Cmd: "next", Access: "read_write")));
+        Task<TaskDto>? cancellation = null;
+        // Revocation runs in the failure reservation, before its settlement can be queued.
+        bridge.OnRevoke = id =>
+        {
+            if (id == worker.Session.Id)
+                cancellation ??= ctx.Kernel.CancelTaskAsync(trackId, null, worker.Task.Id);
+        };
+        try
+        {
+            var failure = ctx.Kernel.CompleteTaskFailAsync(trackId, worker.Session.Id, "Late failure");
+            await shuttingDown.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var error = await Assert.ThrowsAsync<KernelException>(() => failure.WaitAsync(TimeSpan.FromSeconds(5)));
+            Assert.Equal(KernelErrorCode.Conflict, error.Code);
+            var tasks = await ctx.Kernel.ListTasksAsync(trackId);
+            Assert.Equal(TaskRunStatus.Canceled, Assert.Single(tasks, task => task.Id == worker.Task.Id).Status);
+            Assert.False(Assert.Single(tasks, task => task.TaskKey == "attention").Ready);
+            Assert.Equal(TaskRunStatus.Pending, Assert.Single(tasks, task => task.TaskKey == "next").Status);
+            Assert.Empty(ctx.CommandRunner.ExecutedCommands);
+        }
+        finally
+        {
+            release.TrySetResult();
+        }
+        Assert.Equal(TaskRunStatus.Canceled, (await cancellation!.WaitAsync(TimeSpan.FromSeconds(5))).Status);
+        await ctx.Kernel.WaitForTrackIdleAsync(trackId).WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal("next", Assert.Single(ctx.CommandRunner.ExecutedCommands).Command);
+    }
+
+    private sealed class ObservedMcpSessionBridge : IMcpSessionBridge
+    {
+        private readonly InMemoryMcpSessionBridge _inner = new();
+        public Action<string>? OnRevoke { get; set; }
+
+        public McpSessionRegistration RegisterSession(string trackId, string sessionId, bool isLead,
+            string? boundTaskId, int? taskRunCount, IReadOnlyList<string> enabledPlugins) =>
+            _inner.RegisterSession(trackId, sessionId, isLead, boundTaskId, taskRunCount, enabledPlugins);
+        public McpSessionPrincipal? ResolveToken(string token) => _inner.ResolveToken(token);
+        public string? GetTokenForSession(string sessionId) => _inner.GetTokenForSession(sessionId);
+        public void UpdateLeadStatus(string trackId, string? newLeadSessionId) => _inner.UpdateLeadStatus(trackId, newLeadSessionId);
+        public void UpdateTrackPlugins(string trackId, IReadOnlyList<string> enabledPlugins) => _inner.UpdateTrackPlugins(trackId, enabledPlugins);
+        public void RevokeSession(string sessionId)
+        {
+            _inner.RevokeSession(sessionId);
+            OnRevoke?.Invoke(sessionId);
+        }
+        public void RevokeTrack(string trackId) => _inner.RevokeTrack(trackId);
+    }
+
+    [Fact]
+    public async Task CancelDisablesRecurringClockAfterTrackCloseCanceledOnlyTheRun()
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
+        var trackId = snapshot.Track.Id;
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        ctx.CommandRunner.Handler = async (_, ct) =>
+        {
+            started.TrySetResult();
+            try { await Task.Delay(Timeout.InfiniteTimeSpan, ct); }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+            return new ShellCommandResult(0, "", "", false, 1);
+        };
+        await FlowFixture.AddAsync(ctx.Kernel, trackId,
+            new FlowNodeSpecDto("pulse", new("run", Cmd: "pulse"), When: new(Cron: "* * * * *", Tz: "UTC")));
+        ctx.Time.Advance(TimeSpan.FromMinutes(1));
+        Assert.Single(await ctx.Kernel.FireDueTrackSchedulesAsync(ctx.Time.GetUtcNow().ToUnixTimeMilliseconds()));
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var closed = await ctx.Kernel.CloseTrackAsync(trackId, snapshot.Track.LeadSessionId!);
+        Assert.NotNull(closed.ClosedAtMs);
+        Assert.Equal(TaskRunStatus.Canceled, Assert.Single(await ctx.Kernel.ListTasksAsync(trackId)).Status);
+        Assert.Null((await ctx.Kernel.PatchTrackAsync(trackId, new(Closed: false))).ClosedAtMs);
+        var before = await ctx.Kernel.GetTrackFlowAsync(trackId);
+        var canceled = await ctx.Kernel.CancelTaskAsync(trackId, null, "pulse");
+        Assert.Equal(TaskRunStatus.Canceled, canceled.Status);
+        var after = await ctx.Kernel.GetTrackFlowAsync(trackId);
+        Assert.Equal(before.FlowRev + 1, after.FlowRev);
+        Assert.True(Assert.Single(after.Spec.GetProperty("nodes").EnumerateArray()).GetProperty("canceled").GetBoolean());
+        Assert.Equal(TrackScheduleStates.Canceled, (await ctx.Store.GetAsync(trackId, "flow:pulse", default))!.State);
+        await ctx.Kernel.CancelTaskAsync(trackId, null, "pulse");
+        Assert.Equal(after.FlowRev, (await ctx.Kernel.GetTrackFlowAsync(trackId)).FlowRev);
+        await FlowFixture.AddAsync(ctx.Kernel, trackId,
+            new FlowNodeSpecDto("later", new("run", Cmd: "later"), When: new(At: "2099-01-01T00:00:00Z")));
+        ctx.Time.Advance(TimeSpan.FromMinutes(2));
+        Assert.Empty(await ctx.Kernel.FireDueTrackSchedulesAsync(ctx.Time.GetUtcNow().ToUnixTimeMilliseconds()));
+        Assert.Single(ctx.CommandRunner.ExecutedCommands);
+    }
+
     private static async Task WaitUntilAsync(Func<Task<bool>> predicate, int timeoutMs = 4000)
     {
         var deadline = DateTimeOffset.UtcNow.AddMilliseconds(timeoutMs);

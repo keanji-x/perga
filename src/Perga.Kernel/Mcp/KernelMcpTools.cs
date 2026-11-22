@@ -136,7 +136,9 @@ public static class KernelMcpCatalog
         KernelMcpToolNames.TaskFail;
 
     public static bool IsLeadOnly(string toolName) => toolName is
-        KernelMcpToolNames.FlowRead or KernelMcpToolNames.FlowCommit or KernelMcpToolNames.SystemUpgradeCheck or KernelMcpToolNames.SystemUpgradeApply or KernelMcpToolNames.SystemUpgradeRollback;
+        KernelMcpToolNames.FlowRead or KernelMcpToolNames.FlowCommit or
+        KernelMcpToolNames.TrackSet or KernelMcpToolNames.TemplateUpdateInputs or
+        KernelMcpToolNames.SystemUpgradeCheck or KernelMcpToolNames.SystemUpgradeApply or KernelMcpToolNames.SystemUpgradeRollback;
 
     private static IReadOnlyList<McpToolDescriptor> BuildDescriptors()
     {
@@ -212,9 +214,9 @@ public static class KernelMcpCatalog
                 Schema("""{"type":"object","properties":{}}"""), readOnlyLocal),
             new(KernelMcpToolNames.TemplateRead, "Inspect a template manifest and source; use __current__ for the active snapshot, inputs, state, and headerView; omit templateId or use __contract__ for the authoring contract (governance only).",
                 Schema("""{"type":"object","properties":{"templateId":{"type":"string"}}}"""), readOnlyLocal),
-            new(KernelMcpToolNames.TemplateUpdateInputs, "Merge inputs into the active template, preserving state (governance only).",
+            new(KernelMcpToolNames.TemplateUpdateInputs, "Merge inputs into the active template, preserving state (Track Lead only).",
                 Schema("""{"type":"object","required":["inputs"],"properties":{"inputs":{"type":"object"}}}"""), localIdempotentWrite),
-            new(KernelMcpToolNames.TrackSet, "Apply a templateId, local template package path, or JSON/.perga.js source with inputs. Use dryRun to preview or clear to detach while keeping the report (governance only).",
+            new(KernelMcpToolNames.TrackSet, "Apply a templateId, local template package path, or JSON/.perga.js source with inputs. Use dryRun to preview or clear to detach while keeping the report (Track Lead only).",
                 Schema("""{"type":"object","properties":{"templateId":{"type":"string","minLength":1},"source":{"type":"string","minLength":1},"inputs":{"type":"object"},"dryRun":{"type":"boolean"},"clear":{"type":"boolean"},"resetData":{"type":"boolean"}}}"""), localWrite),
             new(KernelMcpToolNames.TrackClose, "Close the current track and cancel active tasks (governance only).",
                 Schema("""{"type":"object","properties":{}}"""), localDestructive),

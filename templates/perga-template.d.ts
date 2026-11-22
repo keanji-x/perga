@@ -94,22 +94,31 @@ export interface KernelFactsSnapshot {
 }
 
 export type FlowOutcomeCondition = "ok" | "attention" | "blocked" | "any";
+export type FlowAfterRef = string | { node: string; on?: FlowOutcomeCondition };
 
 export type FlowWhen =
-  | { after: string | Array<string | { node: string; on?: FlowOutcomeCondition }>; on?: FlowOutcomeCondition }
-  | { cron: string; tz?: string; maxOccurrences?: number }
-  | { at: string }
+  | { after: readonly [FlowAfterRef, ...FlowAfterRef[]]; on?: FlowOutcomeCondition;
+      cron?: never; tz?: never; maxOccurrences?: never; at?: never }
+  | { cron: string; tz?: string; maxOccurrences?: number; after?: never; on?: never; at?: never }
+  | { at: string; after?: never; on?: never; cron?: never; tz?: never; maxOccurrences?: never }
   | Record<string, never>;
 
 export type FlowAction =
-  | ({ kind: "run"; access?: "read_only" | "read_write"; gate?: string; acceptance?: string } & (
-      | { prompt: string; session?: "new" | `ses_${string}`; role?: string; provider?: string; model?: string }
-      | { cmd: string }
+  | ({ kind: "run"; access?: "read_only" | "read_write"; gate?: string; acceptance?: string;
+      run?: never; wake?: never; watch?: never; reuseSession?: never;
+      prChecks?: never; repo?: never; headSha?: never; interval?: never; timeout?: never } & (
+      | { prompt: string; cmd?: never; session?: "new" | `ses_${string}`; role?: string; provider?: string; model?: string }
+      | { cmd: string; prompt?: never; session?: never; role?: never; provider?: never; model?: never }
     ))
-  | { kind: "wake"; session: "lead" | `ses_${string}`; prompt: string }
-  | ({ kind: "watch"; interval?: string; timeout?: string } & (
-      | { prChecks: number; repo?: string; headSha?: string }
-      | { cmd: string }
+  | { kind: "wake"; session: "lead" | `ses_${string}`; prompt: string;
+      run?: never; wake?: never; watch?: never; cmd?: never; reuseSession?: never;
+      role?: never; access?: never; provider?: never; model?: never; gate?: never; acceptance?: never;
+      prChecks?: never; repo?: never; headSha?: never; interval?: never; timeout?: never }
+  | ({ kind: "watch"; interval?: string; timeout?: string;
+      run?: never; wake?: never; watch?: never; prompt?: never; session?: never; reuseSession?: never;
+      role?: never; access?: never; provider?: never; model?: never; gate?: never; acceptance?: never } & (
+      | { prChecks: number; cmd?: never; repo?: string; headSha?: string }
+      | { cmd: string; prChecks?: never; repo?: never; headSha?: never }
     ));
 
 export interface FlowNode {

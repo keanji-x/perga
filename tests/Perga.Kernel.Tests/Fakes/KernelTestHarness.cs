@@ -64,6 +64,7 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
 
     public bool FailTemplateUpdate { get; set; }
     public bool FailTemplateStateUpdate { get; set; }
+    public Action? AfterTemplateCommit { get; set; }
 
     public int MarkInterruptedCalls { get; private set; }
 
@@ -466,7 +467,17 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
         IReadOnlyList<TrackScheduleDto> activeFlowSchedules,
         IReadOnlyList<string> canceledFlowScheduleIds,
         IReadOnlyList<EventEnvelopeDto> events,
-        CancellationToken ct)
+        CancellationToken ct) =>
+        CommitTrackFlow(track, expectedFlowRev, upsertedTasks, activeFlowSchedules, canceledFlowScheduleIds, events);
+
+    private Task CommitTrackFlow(
+        TrackDto track,
+        long expectedFlowRev,
+        IReadOnlyList<TaskDto> upsertedTasks,
+        IReadOnlyList<TrackScheduleDto> activeFlowSchedules,
+        IReadOnlyList<string> canceledFlowScheduleIds,
+        IReadOnlyList<EventEnvelopeDto> events,
+        IReadOnlySet<string>? resetClockIds = null)
     {
         lock (_gate)
         {
@@ -503,7 +514,7 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
                 if (idx >= 0)
                 {
                     var prev = _trackSchedules[idx];
-                    var keepProgress = prev.State != TrackScheduleStates.Canceled &&
+                    var keepProgress = resetClockIds?.Contains(schedule.Id) != true && prev.State != TrackScheduleStates.Canceled &&
                         prev.ScheduleKind == schedule.ScheduleKind &&
                         prev.CronExpr == schedule.CronExpr &&
                         prev.Timezone == schedule.Timezone &&
@@ -557,8 +568,10 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
             if (FailTemplateUpdate) throw new IOException("template persistence failure");
             _templateSnapshots[track.Id] = templateSnapshot;
             if (flow is not null)
-                CommitTrackFlowAsync(track, flow.ExpectedRev, flow.Tasks, flow.Clocks, [], [], ct).GetAwaiter().GetResult();
-            return UpdateTrackAndEmitAsync(track, evt, ct, writeData);
+                CommitTrackFlow(track, flow.ExpectedRev, flow.Tasks, flow.Clocks, flow.CanceledClockIds, [], flow.ResetClockIds).GetAwaiter().GetResult();
+            var commit = UpdateTrackAndEmitAsync(track, evt, ct, writeData);
+            AfterTemplateCommit?.Invoke();
+            return commit;
         }
     }
 
@@ -1887,7 +1900,8 @@ internal sealed partial class KernelTestContext : IAsyncDisposable
         IPolicyVm? policyVm = null,
         IAgentRuntime? agentRuntime = null,
         TimeProvider? timeProvider = null,
-        IGitHubForgeService? gitHubForgeService = null)
+        IGitHubForgeService? gitHubForgeService = null,
+        IMcpSessionBridge? mcpSessionBridge = null)
     {
         DriverRegistry = new FakeWorkspaceDriverRegistry(DirectDriver, CowOverlayDriver);
         DataDir = Path.Combine(Path.GetTempPath(), $"perga-kernel-test-{Guid.NewGuid():N}");
@@ -1912,7 +1926,8 @@ internal sealed partial class KernelTestContext : IAsyncDisposable
             eventHub: EventHub,
             timeProvider: timeProvider ?? Time,
             scheduleCronEvaluator: new TestScheduleCronEvaluator(),
-            gitHubForgeService: gitHubForgeService);
+            gitHubForgeService: gitHubForgeService,
+            mcpSessionBridge: mcpSessionBridge);
     }
 
     public async Task<(AreaDto Area, TrackAggregateSnapshot TrackSnap)> CreateDefaultTrackAsync(

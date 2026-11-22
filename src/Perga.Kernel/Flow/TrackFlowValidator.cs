@@ -22,7 +22,8 @@ internal static class TrackFlowValidator
         IPolicyVm policyVm,
         JsonElement templateInputs,
         IScheduleCronEvaluator? cronEvaluator,
-        TimeProvider timeProvider)
+        TimeProvider timeProvider,
+        IReadOnlySet<string>? replacedTemplateNodeIds = null)
     {
         var errors = new List<FlowValidationErrorDto>();
         var nextById = nextSpec.Nodes.ToDictionary(n => n.Id, StringComparer.Ordinal);
@@ -32,6 +33,9 @@ internal static class TrackFlowValidator
         for (var i = 0; i < nextSpec.Nodes.Count; i++)
         {
             var node = nextSpec.Nodes[i];
+            // Template binding archives the previous task before inserting the replacement.
+            if (replacedTemplateNodeIds?.Contains(node.Id) == true)
+                continue;
             if (tasksByKey.TryGetValue(node.Id, out var task) &&
                 (!FlowConstants.IsFlowTask(task) || task.ArchivedAtMs is not null))
             {
@@ -135,7 +139,8 @@ internal static class TrackFlowValidator
         for (var i = 0; i < nextSpec.Nodes.Count; i++)
         {
             var nextNode = nextSpec.Nodes[i];
-            if (nextNode.Canceled || !prevById.TryGetValue(nextNode.Id, out var prevNode))
+            if (nextNode.Canceled || replacedTemplateNodeIds?.Contains(nextNode.Id) == true ||
+                !prevById.TryGetValue(nextNode.Id, out var prevNode))
             {
                 continue;
             }

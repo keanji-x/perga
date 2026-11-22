@@ -75,6 +75,11 @@ public sealed partial class TrackActor
         {
             if (callerSessionId is null) return;
             var caller = actor.RequireSessionCore(callerSessionId);
+            // A wake's historical SessionId does not give the node control of the Lead's current turn.
+            if (task.Kind == "flow_wake" && FlowConstants.IsFlowTask(task) &&
+                task.SessionId == caller.Id && caller.Id == actor._track.LeadSessionId && caller.ArchivedAtMs is null &&
+                task.Status is not (TaskRunStatus.Running or TaskRunStatus.Verifying) && !_activeTasks.ContainsKey(task.Id))
+                return;
             var target = task.SessionId is { } sid && actor._sessions.TryGetValue(sid, out var found) ? found : null;
             if (target is not null)
                 SessionPolicy.RequireAccess(new InteropPrincipal.Session(actor.TrackId, caller.Id, caller.IsLead,
@@ -206,6 +211,9 @@ public sealed partial class TrackActor
                 var schedulable = TaskGraphScheduler.ComputeSchedulable(_tasks, flowSpec: actor._flowSpec, hasActiveCommandWatch: hasActiveCommandWatch);
                 foreach (var task in schedulable)
                 {
+                    if (FlowConstants.IsFlowTask(task) && actor._activeWatches.Values.Any(watch => watch.NodeId == task.TaskKey))
+                        continue;
+
                     if (task.Kind == "flow_wake" && FlowConstants.IsFlowTask(task))
                     {
                         if (!await actor.StartFlowWakeRunCoreAsync(task, ct).ConfigureAwait(false))
@@ -823,11 +831,13 @@ public sealed partial class TrackActor
                 {
                     if (!_activeTasks.TryGetValue(taskId, out var current) || !ReferenceEquals(current, active))
                         throw KernelException.Conflict("The task run already ended.");
+                    var currentTask = RequireTaskCore(active.TaskId);
+                    if (current.Cts.IsCancellationRequested || currentTask.Status != TaskRunStatus.Running)
+                        throw KernelException.Conflict("The task run is no longer running.");
                     _activeTasks.Remove(taskId);
                     Volatile.Write(ref _activeTaskCount, _activeTasks.Count);
                     current.Cts.Dispose();
                     await InterruptSessionQueueForTaskSettlementCoreAsync(current.SessionId, ct).ConfigureAwait(false);
-                    var currentTask = RequireTaskCore(active.TaskId);
                     var now = actor.NowMs();
                     var clonedWorkerResult = workerResult?.Clone();
 

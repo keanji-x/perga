@@ -48,24 +48,173 @@ public sealed partial class TrackActor
         return await DetachTemplateCoreAsync(false, ct).ConfigureAwait(false);
     }, ct);
 
-    private async Task<TrackDto> DetachTemplateCoreAsync(bool dryRun, CancellationToken ct)
+    private Task<TrackDto> DetachTemplateCoreAsync(bool dryRun, CancellationToken ct, string? callerSessionId = null) =>
+        ApplyTemplateBindingCoreAsync(_track with
+        {
+            TemplateId = null,
+            TemplateInputs = JsonHelpers.EmptyObject,
+            TemplateState = JsonHelpers.EmptyObject,
+            UpdatedAtMs = NowMs()
+        }, null, dryRun, ct, callerSessionId);
+
+    private async Task<TrackDto> ApplyTemplateBindingCoreAsync(
+        TrackDto next, CompiledPolicy? policy, bool dryRun, CancellationToken ct, string? callerSessionId)
     {
-        var detached = _track with { TemplateId = null, TemplateInputs = JsonHelpers.EmptyObject,
-            TemplateState = JsonHelpers.EmptyObject, UpdatedAtMs = NowMs() };
-        if (dryRun) return detached;
-        var evt = new EventEnvelopeDto(null, detached.AreaId, TrackId, KernelEventKinds.TrackUpdated,
-            JsonHelpers.ToElement(detached), detached.UpdatedAtMs);
+        var (spec, flow, stoppingNodes) = await PrepareTemplateFlowCoreAsync(next, policy, ct).ConfigureAwait(false);
+        var activeToStop = _taskCoordinator.Snapshot().Where(task => stoppingNodes.Contains(task.TaskKey) && _taskCoordinator.HasActiveRun(task.Id)).ToArray();
+        var callerWake = callerSessionId is null ? null :
+            activeToStop.FirstOrDefault(task => task.Kind == "flow_wake" && task.SessionId == callerSessionId);
+        if (callerWake is not null)
+            throw KernelException.Conflict($"Cannot change the template while its wake '{callerWake.TaskKey}' is running on the calling session.");
+        var canceledRuns = activeToStop.Select(task => _taskCoordinator.GetActiveRun(task.Id)).ToArray();
+        _taskCoordinator.RequireTasksOutsideVerification(canceledRuns);
+        var flowChanged = spec.Rev != _flowSpec.Rev;
+        if (flowChanged)
+            next = next with { FlowRev = spec.Rev, FlowSpecJson = TrackFlowSerializer.SerializeCanonical(spec) };
+        var presented = TemplatePresentation.Project(next, policy, _policyVm);
+        if (dryRun) return presented;
+
+        var evt = new EventEnvelopeDto(null, next.AreaId, TrackId, KernelEventKinds.TrackUpdated,
+            JsonHelpers.ToElement(presented), next.UpdatedAtMs);
         await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
-        await _store.UpdateTrackTemplateAndEmitAsync(detached, null, evt, ct).ConfigureAwait(false);
-        _track = detached;
-        _policy = null;
+        var snapshot = policy is null ? null : TemplateHost.Freeze(policy);
+        await _store.UpdateTrackTemplateAndEmitAsync(next, snapshot, evt, ct,
+            writeData: next.DataRev != _track.DataRev, flow: flow).ConfigureAwait(false);
+        var pluginsChanged = !_track.EnabledPlugins.SequenceEqual(next.EnabledPlugins, StringComparer.Ordinal);
+        _track = next;
+        _policy = policy;
         _policyUnavailableReason = null;
-        _templateSnapshotSource = null;
-        _presentedTemplateSnapshotSource = null;
+        _templateSnapshotSource = snapshot;
+        _presentedTemplateSnapshotSource = TemplateHost.InspectSource(snapshot);
         _policyGeneration = Guid.NewGuid().ToString("N");
-        await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, CancellationToken.None).ConfigureAwait(false);
-        await _taskCoordinator.ScheduleEligibleTasksCoreAsync(CancellationToken.None).ConfigureAwait(false);
+        _flowSpec = spec;
+        if (flow is not null)
+            foreach (var task in flow.Tasks) _taskCoordinator.ReplaceTaskInMemoryCore(task);
+        _ = BeginFlowCancellationCore(canceledRuns, stoppingNodes);
+
+        var lifecycle = _actorShutdownCts.Token;
+        try
+        {
+            if (flowChanged)
+                await ProjectCommittedFlowFileCoreAsync(lifecycle).ConfigureAwait(false);
+            if (pluginsChanged)
+                _mcpBridge.UpdateTrackPlugins(TrackId, next.EnabledPlugins);
+            try
+            {
+                await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, lifecycle).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Trace.TraceWarning("Could not publish template binding event for Track {0}: {1}", TrackId, ex);
+            }
+        }
+        finally
+        {
+            try { await EvaluateFlowAfterTriggersCoreAsync(lifecycle).ConfigureAwait(false); }
+            finally { await _taskCoordinator.ScheduleEligibleTasksCoreAsync(lifecycle).ConfigureAwait(false); }
+        }
         return PresentTrackCore();
+    }
+
+    private async Task<(FlowSpecDto Spec, TrackFlowUpdate? Update, HashSet<string> StoppingNodes)> PrepareTemplateFlowCoreAsync(
+        TrackDto next, CompiledPolicy? policy, CancellationToken ct)
+    {
+        var blueprint = policy is null ? [] : TemplateFlow.ReadSeedNodes(_policyVm, policy, next.TemplateInputs);
+        var incomingIds = blueprint.Select(node => node.Id).ToHashSet(StringComparer.Ordinal);
+        var previousById = _flowSpec.Nodes.ToDictionary(node => node.Id, StringComparer.Ordinal);
+        var tasksByKey = TrackFlowReconciler.BuildTasksByKey(_taskCoordinator.Snapshot());
+        var sameTemplate = _policy?.TemplateId == policy?.TemplateId;
+        var seeds = new Dictionary<string, FlowNodeSpecDto>(StringComparer.Ordinal);
+        var replaced = new HashSet<string>(StringComparer.Ordinal);
+        var stopping = new HashSet<string>(StringComparer.Ordinal);
+        var taskUpdates = new List<TaskDto>();
+
+        foreach (var node in blueprint)
+        {
+            var previous = previousById.GetValueOrDefault(node.Id);
+            var task = tasksByKey.GetValueOrDefault(node.Id);
+            if ((previous is not null && previous.Source != TrackScheduleSources.Template) ||
+                (task is not null && (!FlowConstants.IsFlowTask(task) ||
+                    (previous is null && TemplateFlow.HasIndependentSource(task)))))
+                throw KernelException.Conflict($"Template Flow node '{node.Id}' already belongs to an independent task. Choose a different ID.");
+
+            var detached = task is not null && TemplateFlow.WasDetached(task);
+            if (previous is not null)
+            {
+                if (!detached && (previous.Canceled || (sameTemplate && TrackFlowReconciler.NodeSpecEquals(previous, node))))
+                    continue;
+                stopping.Add(node.Id);
+            }
+            else if (task is not null && !detached)
+            {
+                // Settled history and explicit cancellations keep their claim on the ID.
+                continue;
+            }
+
+            if (previous is not null || task is not null)
+                replaced.Add(node.Id);
+            if (task is not null)
+                taskUpdates.Add(TrackFlowReconciler.ArchiveForTemplateReplacement(task, next.UpdatedAtMs));
+            seeds.Add(node.Id, node);
+        }
+
+        var outgoing = _flowSpec.Nodes.Where(node =>
+            node.Source == TrackScheduleSources.Template && !node.Canceled && !incomingIds.Contains(node.Id))
+            .Select(node => node with { Canceled = true }).ToDictionary(node => node.Id, StringComparer.Ordinal);
+        stopping.UnionWith(outgoing.Keys);
+        foreach (var node in outgoing.Values)
+        {
+            var canceled = TrackFlowReconciler.BuildOrUpdateTaskForNode(TrackId, node, tasksByKey.GetValueOrDefault(node.Id), next.UpdatedAtMs);
+            taskUpdates.Add(TemplateFlow.MarkDetached(canceled));
+        }
+
+        var spec = outgoing.Count == 0 && seeds.Count == 0 ? _flowSpec :
+            _flowSpec with
+            {
+                Rev = checked(_flowSpec.Rev + 1),
+                Nodes = [.. _flowSpec.Nodes.Select(node => outgoing.GetValueOrDefault(node.Id, seeds.GetValueOrDefault(node.Id, node))),
+                    .. seeds.Values.Where(node => !previousById.ContainsKey(node.Id))]
+            };
+        if (policy is not null)
+            TemplateFlow.RequireValid(TrackFlowValidator.Validate(spec, _flowSpec, _taskCoordinator.Snapshot(), CollectActiveFlowTaskIdsCore(),
+                _sessions, next.LeadSessionId, policy, _policyVm, next.TemplateInputs, _scheduleCronEvaluator, _timeProvider, replaced));
+
+        var clocks = policy is null ? [] :
+            await RefreshTemplateClockTextCoreAsync(spec, next, policy, ct, replaced).ConfigureAwait(false);
+        if (spec.Rev == _flowSpec.Rev && clocks.Length == 0)
+            return (spec, null, stopping);
+
+        var seeded = policy is null ? null :
+            TemplateFlow.BuildSeedUpdate(next, _flowSpec.Rev, seeds.Values.ToArray(), policy, _policyVm, _scheduleCronEvaluator, _timeProvider);
+        var seededClocks = seeded?.Clocks ?? [];
+        var activeClockIds = seededClocks.Select(clock => clock.Id).ToHashSet(StringComparer.Ordinal);
+        return (spec, new TrackFlowUpdate(_flowSpec.Rev, [.. taskUpdates, .. seeded?.Tasks ?? []], [.. clocks, .. seededClocks])
+        {
+            CanceledClockIds = stopping.Select(FlowConstants.MakeScheduleId).Where(id => !activeClockIds.Contains(id)).ToArray(),
+            ResetClockIds = replaced.Select(FlowConstants.MakeScheduleId).ToHashSet(StringComparer.Ordinal)
+        }, stopping);
+    }
+
+    private async Task<TrackScheduleDto[]> RefreshTemplateClockTextCoreAsync(
+        FlowSpecDto spec, TrackDto next, CompiledPolicy policy, CancellationToken ct, IReadOnlySet<string>? replaced = null)
+    {
+        var templateNodes = spec.Nodes.Where(node => node.Source == TrackScheduleSources.Template && !node.Canceled &&
+                replaced?.Contains(node.Id) != true)
+            .ToDictionary(node => node.Id, StringComparer.Ordinal);
+        if (templateNodes.Count == 0) return [];
+
+        var updates = new List<TrackScheduleDto>();
+        foreach (var clock in await ListTrackSchedulesSafeCoreAsync(ct).ConfigureAwait(false))
+        {
+            if (clock.State == TrackScheduleStates.Canceled || clock.NodeKey is null ||
+                !templateNodes.TryGetValue(clock.NodeKey, out var node))
+                continue;
+            var (title, prompt) = TrackFlowReconciler.ScheduleText(node);
+            var updated = TemplateFlow.ResolveClockText(clock with { Title = title, Prompt = prompt }, next, policy, _policyVm);
+            if (updated.Title != clock.Title || updated.Prompt != clock.Prompt)
+                updates.Add(updated);
+        }
+        return updates.ToArray();
     }
 
     public Task<TrackDto> UpdateTemplateInputsAsync(JsonElement patch, CancellationToken ct = default) =>
@@ -77,7 +226,7 @@ public sealed partial class TrackActor
     private Task<TrackDto> UpdateTemplateInputsCoreAsync(string? sessionId, JsonElement patch, string? generation, CancellationToken ct) => EnqueueAsync(async _ =>
     {
         await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
-        if (sessionId is not null) RequireGovernanceSessionCore(sessionId, KernelMcpToolNames.TemplateUpdateInputs);
+        if (sessionId is not null) RequireTemplateLeadCore(sessionId, KernelMcpToolNames.TemplateUpdateInputs);
         if (generation is not null && _policyGeneration != generation) throw KernelException.PolicyDenied("Active policy changed after authorization.");
         if (_track.ClosedAtMs is not null) throw KernelException.Conflict("Cannot update a closed track.");
         if (_policy is null) throw KernelException.Conflict("The track has no active template.");
@@ -96,16 +245,7 @@ public sealed partial class TrackActor
         TemplateFlow.ReadSeedNodes(_policyVm, _policy, next.TemplateInputs);
         TemplateFlow.RequireValid(TrackFlowValidator.Validate(_flowSpec, _flowSpec, _taskCoordinator.Snapshot(), CollectActiveFlowTaskIdsCore(),
             _sessions, next.LeadSessionId, _policy, _policyVm, next.TemplateInputs, _scheduleCronEvaluator, _timeProvider));
-        var templateNodes = _flowSpec.Nodes.Where(node => node.Source == TrackScheduleSources.Template)
-            .ToDictionary(node => node.Id, StringComparer.Ordinal);
-        var clocks = (await ListTrackSchedulesSafeCoreAsync(ct).ConfigureAwait(false))
-            .Where(clock => clock.NodeKey is not null && templateNodes.ContainsKey(clock.NodeKey) &&
-                clock.State == TrackScheduleStates.Active)
-            .Select(clock =>
-            {
-                var (title, prompt) = TrackFlowReconciler.ScheduleText(templateNodes[clock.NodeKey!]);
-                return TemplateFlow.ResolveClockText(clock with { Title = title, Prompt = prompt }, next, _policy, _policyVm);
-            }).ToArray();
+        var clocks = await RefreshTemplateClockTextCoreAsync(_flowSpec, next, _policy, ct).ConfigureAwait(false);
         var flow = clocks.Length == 0 ? null : new TrackFlowUpdate(_flowSpec.Rev, [], clocks);
         var evt = new EventEnvelopeDto(null, next.AreaId, TrackId, KernelEventKinds.TrackUpdated,
             JsonHelpers.ToElement(Templates.TemplatePresentation.Project(next, _policy, _policyVm)), next.UpdatedAtMs);
@@ -116,6 +256,13 @@ public sealed partial class TrackActor
         await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, ct).ConfigureAwait(false);
         return PresentTrackCore();
     }, ct);
+
+    private void RequireTemplateLeadCore(string sessionId, string toolName)
+    {
+        var session = RequireGovernanceSessionCore(sessionId, toolName);
+        if (session.Id != _track.LeadSessionId || session.ArchivedAtMs is not null)
+            throw KernelException.Forbidden("Only the current Track Lead can change the template.");
+    }
 
     private static string GetPolicyToolName(string mcpServer, string toolName, bool useLegacyToolNames)
     {
@@ -247,7 +394,7 @@ public sealed partial class TrackActor
         return EnqueueAsync(async _ =>
         {
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
-            RequireGovernanceSessionCore(callerSessionId, KernelMcpToolNames.TrackSet);
+            RequireTemplateLeadCore(callerSessionId, KernelMcpToolNames.TrackSet);
             if (_policyGeneration != expectedPolicyGeneration)
                 throw KernelException.PolicyDenied("Active policy changed after template application was authorized.");
             if (_track.ClosedAtMs is not null)
@@ -256,7 +403,7 @@ public sealed partial class TrackActor
                 throw KernelException.InvalidArgument("clear cannot be combined with a template, inputs, or resetData.");
             if (clear)
             {
-                return new TemplateSetResult(await DetachTemplateCoreAsync(dryRun, ct).ConfigureAwait(false), [], dryRun);
+                return new TemplateSetResult(await DetachTemplateCoreAsync(dryRun, ct, callerSessionId).ConfigureAwait(false), [], dryRun);
             }
 
             if ((templateId is null) == (source is null) ||
@@ -312,37 +459,8 @@ public sealed partial class TrackActor
                 EnabledPlugins = _track.EnabledPlugins.Concat(policy.Manifest.DefaultPlugins).Distinct(StringComparer.Ordinal).ToArray(),
                 UpdatedAtMs = now
             };
-            var (nextFlow, flowUpdate) = PreviewTemplateFlowCore(nextTrack, policy);
-            if (flowUpdate is not null)
-                nextTrack = nextTrack with { FlowRev = nextFlow.Rev, FlowSpecJson = TrackFlowSerializer.SerializeCanonical(nextFlow) };
-            if (dryRun) return new TemplateSetResult(TemplatePresentation.Project(nextTrack, policy, _policyVm), warnings, true);
-            var evt = new EventEnvelopeDto(null, nextTrack.AreaId, TrackId, KernelEventKinds.TrackUpdated,
-                JsonHelpers.ToElement(TemplatePresentation.Project(nextTrack, policy, _policyVm)), now);
-            await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
-            var snapshotSource = TemplateHost.Freeze(policy);
-            await _store.UpdateTrackTemplateAndEmitAsync(nextTrack, snapshotSource, evt, ct, writeData: dataRev != _track.DataRev, flow: flowUpdate).ConfigureAwait(false);
-            _policy = policy;
-            _policyUnavailableReason = null;
-            _policyGeneration = Guid.NewGuid().ToString("N");
-            _templateSnapshotSource = snapshotSource;
-            _presentedTemplateSnapshotSource = TemplateHost.InspectSource(snapshotSource);
-            var pluginsChanged = !_track.EnabledPlugins.SequenceEqual(nextTrack.EnabledPlugins, StringComparer.Ordinal);
-            _track = nextTrack;
-            if (flowUpdate is not null)
-            {
-                _flowSpec = nextFlow;
-                foreach (var task in flowUpdate.Tasks) _taskCoordinator.ReplaceTaskInMemoryCore(task);
-                await ProjectCommittedFlowFileCoreAsync(CancellationToken.None).ConfigureAwait(false);
-            }
-            if (pluginsChanged)
-                _mcpBridge.UpdateTrackPlugins(TrackId, nextTrack.EnabledPlugins);
-            await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, ct).ConfigureAwait(false);
-            if (flowUpdate is not null)
-            {
-                await EvaluateFlowAfterTriggersCoreAsync(CancellationToken.None).ConfigureAwait(false);
-                await _taskCoordinator.ScheduleEligibleTasksCoreAsync(CancellationToken.None).ConfigureAwait(false);
-            }
-            return new TemplateSetResult(PresentTrackCore(), warnings, false);
+            var binding = await ApplyTemplateBindingCoreAsync(nextTrack, policy, dryRun, ct, callerSessionId).ConfigureAwait(false);
+            return new TemplateSetResult(binding, warnings, dryRun);
         }, ct);
     }
 

@@ -44,7 +44,11 @@ public sealed record TrackCreation(TrackDto Track, ReportDocument Report, string
 }
 
 public sealed record TrackFlowUpdate(
-    long ExpectedRev, IReadOnlyList<TaskDto> Tasks, IReadOnlyList<TrackScheduleDto> Clocks);
+    long ExpectedRev, IReadOnlyList<TaskDto> Tasks, IReadOnlyList<TrackScheduleDto> Clocks)
+{
+    public IReadOnlyList<string> CanceledClockIds { get; init; } = [];
+    public IReadOnlySet<string>? ResetClockIds { get; init; }
+}
 
 public interface ITrackReadStore
 {

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Perga.Contracts;
+using Perga.Kernel.Events;
 using Perga.Kernel.Mcp;
 using Perga.Kernel.Ports;
 using Perga.Kernel.Tests.Fakes;
@@ -10,6 +11,128 @@ namespace Perga.Kernel.Tests;
 [Collection("Template policy sandbox")]
 public sealed class ImplicitTemplateToolsTests
 {
+    [Fact]
+    public async Task ImmediateWakeRunsWhenItsStartupEventCannotBePublished()
+    {
+        await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        var failed = false;
+        ctx.Store.BeforeEventPublication = events =>
+        {
+            if (!failed && events.Any(evt => evt.Kind == KernelEventKinds.TaskUpdated && evt.TrackId == snap.Track.Id))
+            {
+                failed = true;
+                throw new IOException("Failed to read the wake startup event.");
+            }
+            return Task.CompletedTask;
+        };
+        await Call(ctx, Caller(snap), KernelMcpToolNames.TrackSet, new { source = """
+            export default {id:'wake-seed', title:'Wake seed',
+              flow:[{id:'seed', do:{kind:'wake', session:'lead', prompt:'Run immediate wake'}}]};
+            """ });
+        await ctx.Kernel.WaitForTrackIdleAsync(snap.Track.Id).WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(failed);
+        Assert.Contains("Run immediate wake", Assert.Single(Assert.Single(ctx.AgentRuntime.OpenedSessions).RecordedInputs).Prompt);
+        Assert.Equal(TaskRunStatus.Done, Assert.Single(await ctx.Kernel.ListTasksAsync(snap.Track.Id)).Status);
+        Assert.Equal(0, ctx.Kernel.DispatchAdmission.ActiveDispatches);
+    }
+
+    [Fact]
+    public async Task TemplateDetachReleasesResponsiveRunWhenSiblingShutdownTimesOut()
+    {
+        await using var ctx = new KernelTestContext(new KernelOptions { SessionStartupTimeout = TimeSpan.FromMilliseconds(100) },
+            policyVm: new global::Perga.PolicyVm.PolicyVm());
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        var firstStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFirst = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        ctx.CommandRunner.Handler = async (command, ct) =>
+        {
+            if (command.Command == "slow")
+            {
+                firstStarted.TrySetResult();
+                await releaseFirst.Task;
+            }
+            else
+            {
+                secondStarted.TrySetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+            }
+            return new ShellCommandResult(0, "", "", false, 0);
+        };
+        await Call(ctx, Caller(snap), KernelMcpToolNames.TrackSet, new { source = """
+            export default {id:'two-runs', title:'Two runs', flow:[
+              {id:'first', do:{kind:'run', cmd:'slow', access:'read_only'}},
+              {id:'second', do:{kind:'run', cmd:'responsive', access:'read_only'}}]};
+            """ });
+        var id = snap.Track.Id;
+        try
+        {
+            await Task.WhenAll(firstStarted.Task, secondStarted.Task).WaitAsync(TimeSpan.FromSeconds(5));
+            await Call(ctx, Caller(snap), KernelMcpToolNames.TrackSet, new { clear = true });
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+            while (true)
+            {
+                var projection = (await ctx.Kernel.GetTrackFlowAsync(id, timeout.Token)).Projection;
+                if (projection.Archived.Any(task => task.Id == "second"))
+                {
+                    Assert.Equal("first", Assert.Single(projection.Nodes).Id);
+                    Assert.Equal(1, ctx.Kernel.DispatchAdmission.ActiveDispatches);
+                    break;
+                }
+                await Task.Delay(10, timeout.Token);
+            }
+        }
+        finally { releaseFirst.TrySetResult(); }
+        await ctx.Kernel.CancelTaskAsync(id, null, "first").WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(0, ctx.Kernel.DispatchAdmission.ActiveDispatches);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CommittedTemplateSchedulesItsSeedWhenResponseCannotBePublished(bool cancelRequest)
+    {
+        await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        var caller = Caller(snap);
+        using var request = new CancellationTokenSource();
+        var publicationFailed = false;
+        if (cancelRequest)
+            ctx.Store.AfterTemplateCommit = request.Cancel;
+        else
+            ctx.Store.BeforeEventPublication = events =>
+            {
+                if (events.Any(evt => evt.Kind == "track.updated" && evt.TrackId == snap.Track.Id))
+                {
+                    ctx.Store.BeforeEventPublication = null;
+                    publicationFailed = true;
+                    throw new IOException("Failed to read the committed template event.");
+                }
+                return Task.CompletedTask;
+            };
+
+        var binding = KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller, KernelMcpToolNames.TrackSet,
+            TestJson.FromObject(new { source = """
+                export default {id:'seed-command', title:'Seed command',
+                  flow:[{id:'seed', when:{}, do:{kind:'run', cmd:'seed'}}]};
+                """ }), request.Token);
+        if (cancelRequest)
+        {
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => binding);
+            // The request can return before the actor finishes the already committed operation.
+            await ctx.Kernel.Actors.GetOrActivate(snap.Track.Id).EnqueueAsync(_ => Task.CompletedTask);
+        }
+        else
+        {
+            await binding;
+            Assert.True(publicationFailed);
+        }
+        await ctx.Kernel.WaitForTrackIdleAsync(snap.Track.Id).WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal("seed", Assert.Single(ctx.CommandRunner.ExecutedCommands).Command);
+        Assert.Equal(TaskRunStatus.Done, Assert.Single(await ctx.Kernel.ListTasksAsync(snap.Track.Id)).Status);
+    }
+
     private const string Source = """
         export default defineTemplate({ id: "authored", title: "Authored",
           plugins: ["search", "new-plugin", "search"],
@@ -315,11 +438,17 @@ public sealed class ImplicitTemplateToolsTests
         // Seed before actor hydration in a fresh actor.
         await ctx.Kernel.WaitForTrackIdleAsync(snap.Track.Id);
         await ctx.Kernel.Actors.RemoveAndDisposeAsync(snap.Track.Id);
-        foreach (var name in new[] { KernelMcpToolNames.TemplateList, KernelMcpToolNames.TemplateRead, KernelMcpToolNames.TrackSet })
+        foreach (var name in new[]
+        {
+            KernelMcpToolNames.TemplateList, KernelMcpToolNames.TemplateRead,
+            KernelMcpToolNames.TrackSet, KernelMcpToolNames.TemplateUpdateInputs
+        })
         {
             Assert.Contains(name, KernelMcpToolNames.All);
             Assert.True(KernelMcpCatalog.IsGovernanceOnly(name));
-            Assert.Contains(KernelMcpCatalog.GetToolsForSession(null), d => d.Name == name);
+            Assert.Contains(KernelMcpCatalog.GetToolsForSession(null, isLead: true), d => d.Name == name);
+            Assert.Equal(name is KernelMcpToolNames.TemplateList or KernelMcpToolNames.TemplateRead,
+                KernelMcpCatalog.GetToolsForSession(null).Any(d => d.Name == name));
             Assert.DoesNotContain(KernelMcpCatalog.GetToolsForSession("tsk_bound"), d => d.Name == name);
             var ex = await Assert.ThrowsAsync<KernelException>(() => Call(ctx, Caller(snap) with { SessionId = bound.Id, BoundTaskId = "tsk_bound", TaskRunCount = 1 }, name, new { source = Source }));
             Assert.Equal(KernelErrorCode.Forbidden, ex.Code);
