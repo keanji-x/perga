@@ -280,17 +280,25 @@ public sealed partial class TrackActor
         await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
         await _store.RecordTurnAndItemsAsync(turn, items, session, ct).ConfigureAwait(false);
         _sessions[session.Id] = session;
-        await _store.AppendEventAsync(turnEvent, ct).ConfigureAwait(false);
-        await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, turnEvent, ct).ConfigureAwait(false);
-        var sessionEvent = SessionUpdatedEvent(session);
-        await _store.AppendEventAsync(sessionEvent, ct).ConfigureAwait(false);
-        await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, sessionEvent, ct).ConfigureAwait(false);
+        try
+        {
+            await _store.AppendEventAsync(turnEvent, ct).ConfigureAwait(false);
+            await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, turnEvent, ct).ConfigureAwait(false);
+            var sessionEvent = SessionUpdatedEvent(session);
+            await _store.AppendEventAsync(sessionEvent, ct).ConfigureAwait(false);
+            await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, sessionEvent, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            await ReleaseSettledTurnCoreAsync(session, turn.Id).ConfigureAwait(false);
+        }
     }
 
     private sealed class ActiveTurnState(
         string sessionId,
         SessionConfiguration executionConfiguration,
         LiveContextUsage contextBinding,
+        LiveRuntimeActivity runtimeActivity,
         SessionTurnDto turnDto,
         IAgentSession agentSession,
         CancellationTokenSource turnCts,
@@ -309,6 +317,7 @@ public sealed partial class TrackActor
         public bool CloseRuntimeOnSettle { get; set; }
         public SessionConfiguration Configuration { get; } = executionConfiguration;
         public LiveContextUsage ContextBinding { get; } = contextBinding;
+        public LiveRuntimeActivity RuntimeActivity { get; } = runtimeActivity;
         // Frozen inputs can execute a configuration different from the committed selection.
         public bool MatchesSessionConfiguration(AgentSessionDto session) =>
             Configuration == SessionConfiguration.FromNullable(session.Model, session.ReasoningEffort, session.PermissionMode);

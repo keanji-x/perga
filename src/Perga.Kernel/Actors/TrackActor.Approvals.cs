@@ -247,9 +247,10 @@ public sealed partial class TrackActor
             ?? throw KernelException.InvalidArgument($"Unknown approval option '{optionId}'.");
 
         lock (_approvalAdmission)
+        lock (pending.StopControl?.Sync ?? pending.Control.Sync)
         lock (pending.Control.Sync)
         {
-            if (_approvalAdmissionClosed || pending.Control.Phase != ExecutionPhase.Running ||
+            if (_approvalAdmissionClosed || pending.StopControl?.StopRequested == true || pending.Control.Phase != ExecutionPhase.Running ||
                 !_approvals.ContainsKey(approvalId) || pending.RecordingDecision)
                 throw KernelException.Conflict("This approval is no longer available for a decision.");
             pending.RecordingDecision = true;
@@ -283,9 +284,10 @@ public sealed partial class TrackActor
             }
             Func<Task>? send;
             lock (_approvalAdmission)
+            lock (pending.StopControl?.Sync ?? pending.Control.Sync)
             lock (pending.Control.Sync)
             {
-                if (_approvalAdmissionClosed || pending.Control.Phase != ExecutionPhase.Running ||
+                if (_approvalAdmissionClosed || pending.StopControl?.StopRequested == true || pending.Control.Phase != ExecutionPhase.Running ||
                     !TryDetachApprovalLocked(pending))
                     throw KernelException.Conflict("The execution ended before the decision could be delivered.");
 
@@ -437,26 +439,11 @@ public sealed partial class TrackActor
             {
                 await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
                 var caller = RequireSessionCore(sessionId);
-                var perga = string.Equals(mcpServer, "perga", StringComparison.OrdinalIgnoreCase);
-                if (perga && KernelMcpCatalog.IsGovernanceOnly(toolName))
-                    RequireGovernanceSessionCore(sessionId, toolName);
-
-                if (!perga &&
-                    !string.Equals(mcpServer, "vcs", StringComparison.OrdinalIgnoreCase) &&
-                    !_track.EnabledPlugins.Contains(mcpServer, StringComparer.Ordinal))
-                {
-                    throw KernelException.Forbidden(
-                        $"MCP plugin '{mcpServer}' is not enabled on track '{TrackId}'.");
-                }
-
+                RequireMcpToolAccessCore(sessionId, mcpServer, toolName);
                 // Capture before evaluation, including across an AskHuman suspension.
                 authorizedPolicyGeneration = _policyGeneration;
-                if (perga && KernelMcpCatalog.IsLeadOnly(toolName))
-                {
-                    if (caller.Id != _track.LeadSessionId)
-                        throw KernelException.Forbidden("Only the current Track Lead can use this tool.");
-                }
 
+                var perga = string.Equals(mcpServer, "perga", StringComparison.OrdinalIgnoreCase);
                 var open = write || principal.RuntimeBindingId is not null ? RequireRuntimeBindingCore(identity, authorized: false) : null;
 
                 if (perga && KernelMcpCatalog.IsBeforeHookExemptReadOnly(toolName))
@@ -497,6 +484,7 @@ public sealed partial class TrackActor
                 await RequirePolicyApprovalAsync(askSuspension, ct).ConfigureAwait(false);
                 return await EnqueueAsync(_ =>
                 {
+                    RequireMcpToolAccessCore(sessionId, mcpServer, toolName);
                     RequireRuntimeBindingCore(identity with { AuthorizedPolicyGeneration = authorizedPolicyGeneration });
                     return Task.FromResult(authorizedPolicyGeneration);
                 }, ct).ConfigureAwait(false);
@@ -510,9 +498,28 @@ public sealed partial class TrackActor
         }
     }
 
-    public Task EnsureMcpAuthorizationAsync(McpSessionPrincipal caller, string generation, CancellationToken ct = default) =>
+    private void RequireMcpToolAccessCore(string sessionId, string mcpServer, string toolName)
+    {
+        if (string.Equals(mcpServer, "perga", StringComparison.OrdinalIgnoreCase))
+        {
+            if (KernelMcpCatalog.IsLeadOnly(toolName) && _track.LeadSessionId != sessionId)
+            {
+                if (toolName is KernelMcpToolNames.SystemUpgradeCheck or KernelMcpToolNames.SystemUpgradeApply or KernelMcpToolNames.SystemUpgradeRollback)
+                    throw new KernelException(KernelErrorCode.SystemUpgradeLeadRequired, "System upgrades require the current Track Lead session.");
+                throw KernelException.Forbidden("Only the current Track Lead can use this tool.");
+            }
+            if (KernelMcpCatalog.IsGovernanceOnly(toolName)) RequireGovernanceSessionCore(sessionId, toolName);
+        }
+        else if (!string.Equals(mcpServer, "vcs", StringComparison.OrdinalIgnoreCase) &&
+            !_track.EnabledPlugins.Contains(mcpServer, StringComparer.Ordinal))
+            throw KernelException.Forbidden($"MCP plugin '{mcpServer}' is not enabled on track '{TrackId}'.");
+    }
+
+    public Task EnsureMcpAuthorizationAsync(McpSessionPrincipal caller, string generation, string mcpServer,
+        string toolName, CancellationToken ct = default) =>
         EnqueueAsync(_ =>
         {
+            RequireMcpToolAccessCore(caller.SessionId, mcpServer, toolName);
             RequireRuntimeBindingCore(new(caller.TrackId, caller.SessionId, caller.IsLead, caller.BoundTaskId,
                 0, caller.Token, caller.RuntimeBindingId) { AuthorizedPolicyGeneration = generation });
             return Task.CompletedTask;

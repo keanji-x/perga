@@ -118,6 +118,7 @@ public sealed partial class TrackActor
             var cancellation = await actor.EnqueueAsync<(TaskDto? Completed, ActiveTaskRunState? Active, Task Cleanup)>(async _ =>
             {
                 await actor.EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
+                actor.RequireMcpAuthorizationCore(authorization);
                 var task = RequireTaskCore(taskKeyOrId);
                 RequireTaskOwnershipCore(callerSessionId, task);
                 if (FlowConstants.IsFlowTask(task))

@@ -9,6 +9,85 @@ namespace Perga.Kernel.Tests;
 public sealed class SessionRuntimeActivityTests
 {
     [Fact]
+    public async Task ImmediateBackgroundOutputFollowsFinalTurnReplyInStorage()
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
+        var id = snapshot.Track.LeadSessionId!;
+        var human = new InteropPrincipal.Human();
+        ctx.AgentRuntime.TurnScript = Stream;
+        async IAsyncEnumerable<UnifiedAgentEvent> Stream(ScriptableFakeAgentSession provider, TurnInput input,
+            [EnumeratorCancellation] CancellationToken ct)
+        {
+            yield return new UnifiedAgentEvent.TextDelta("final reply");
+            provider.EmitRuntimeActivity(new UnifiedAgentEvent.TextDelta("background text"));
+            provider.EmitRuntimeActivity(new UnifiedAgentEvent.ToolCallStarted("late-tool", "perga:flow_commit", TestJson.Parse("{}")));
+            provider.EmitRuntimeActivity(new UnifiedAgentEvent.ToolCallCompleted("late-tool", "finished", false));
+            var beforeSettle = await ctx.Kernel.GetSessionItemsAsync(id, new(), human, ct);
+            Assert.NotNull(beforeSettle.ActiveTurn);
+            Assert.DoesNotContain(beforeSettle.Items, item => item.TurnId is null);
+            yield return new UnifiedAgentEvent.TurnCompleted(null);
+        }
+
+        var initial = await ctx.SendAndWaitForTurnAsync(id, new("go", "go"));
+        var page = await ctx.Kernel.GetSessionItemsAsync(id, new(), human, default);
+        Assert.Equal("completed", initial.Status);
+        var reply = Assert.Single(page.Items, item => item.TurnId == initial.Id && item.Kind == "assistant_text");
+        var background = page.Items.Where(item => item.TurnId is null).ToArray();
+        Assert.Equal(["assistant_text", "tool_call", "tool_result"], background.Select(item => item.Kind));
+        Assert.All(background, item => Assert.True(item.Id > reply.Id));
+        Assert.Equal("background text", background[0].Payload.GetProperty("text").GetString());
+    }
+
+    [Fact]
+    public async Task LargeBackgroundBufferFlushesWithoutWaitingForQuiet()
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
+        var id = snapshot.Track.LeadSessionId!;
+        await ctx.OpenMcpCallerAsync(id);
+        var provider = Assert.Single(ctx.AgentRuntime.OpenedSessions);
+        var delta = new string('x', 1024);
+        for (var i = 0; i < 16; i++)
+            provider.EmitRuntimeActivity(new UnifiedAgentEvent.TextDelta(delta));
+
+        var page = await ctx.Kernel.GetSessionItemsAsync(id, new(), new InteropPrincipal.Human(), default);
+        var item = Assert.Single(page.Items, item => item.TurnId is null);
+        Assert.Equal("assistant_text", item.Kind);
+        Assert.Equal(16 * 1024, item.Payload.GetProperty("text").GetString()!.Length);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task TranscriptFlushFailureDoesNotSkipProviderClose(bool publicationFails)
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
+        var id = snapshot.Track.LeadSessionId!;
+        var caller = await ctx.OpenMcpCallerAsync(id);
+        var provider = Assert.Single(ctx.AgentRuntime.OpenedSessions);
+        provider.EmitRuntimeActivity(new UnifiedAgentEvent.TextDelta("buffered output"));
+        if (publicationFails)
+        {
+            var publications = 0;
+            ctx.Store.BeforeEventPublication = _ => ++publications == 1
+                ? Task.FromException(new IOException("Publication failed after transcript write.")) : Task.CompletedTask;
+            // Recovery has no durable status event before the final transcript flush.
+            await ctx.Kernel.ControlSessionAsync(id, new("reset_context"), new InteropPrincipal.Human(), default);
+            Assert.True(publications >= 2);
+        }
+        else
+        {
+            ctx.Store.FailAppendSessionItems = true;
+            await ctx.Kernel.UpdateSessionAsync(id, new(Archived: true), new InteropPrincipal.Human(), default);
+        }
+        Assert.True(provider.Disposed);
+        Assert.Equal(1, provider.DisposeCalls);
+        Assert.Null(ctx.Kernel.McpSessionBridge.ResolveToken(caller.Token));
+    }
+
+    [Fact]
     public async Task BackgroundTranscriptFlushesAtKindAndToolBoundariesWithoutCreatingATurn()
     {
         await using var ctx = new KernelTestContext();

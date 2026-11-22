@@ -33,10 +33,57 @@ public sealed class WorkspaceFileSystemOpsTests
         Assert.Contains("/home/jasper/new-managed", fs.Directories);
     }
 
-    private sealed class StubProcessRunner : IProcessRunner
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task MutationRechecksAuthorizationAfterBackendDetection(bool rebase)
+    {
+        const string path = "/remote/workspace";
+        var fs = new InMemoryRemoteFsOps();
+        fs.Directories.Add(path);
+        fs.Directories.Add(path + "/.git");
+        fs.Files[path + "/.git/HEAD"] = "ref: refs/heads/main\n";
+        fs.Executables["jj"] = "/usr/bin/jj";
+        var detecting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finishDetection = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var commands = new List<string>();
+        var runner = new StubProcessRunner(async (request, ct) =>
+        {
+            var command = string.Join(' ', request.Arguments.Skip(3));
+            commands.Add(command);
+            if (command == "git init --colocate")
+            {
+                detecting.TrySetResult();
+                await finishDetection.Task.WaitAsync(ct);
+            }
+            return new(0, "", "");
+        });
+        var vcs = new VcsService(runner, new() { AutoColocateJj = true }, fs);
+        var valid = true;
+        Task AuthorizeAsync(CancellationToken _) => valid
+            ? Task.CompletedTask : Task.FromException(new InvalidOperationException("Runtime was revoked."));
+
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var ct = deadline.Token;
+        Task pending = rebase
+            ? vcs.RebaseOntoUpstreamAsync(path, ct: ct, authorizeMutation: AuthorizeAsync)
+            : vcs.RestoreOperationAsync(path, "operation", ct, AuthorizeAsync);
+        try
+        {
+            Assert.Same(detecting.Task, await Task.WhenAny(detecting.Task, pending).WaitAsync(ct));
+            valid = false;
+        }
+        finally { finishDetection.TrySetResult(); }
+
+        var denied = await Assert.ThrowsAsync<InvalidOperationException>(() => pending.WaitAsync(ct));
+        Assert.Equal("Runtime was revoked.", denied.Message);
+        Assert.DoesNotContain(commands, command => command.StartsWith(rebase ? "rebase " : "op restore ", StringComparison.Ordinal));
+    }
+
+    private sealed class StubProcessRunner(Func<ProcessRunRequest, CancellationToken, Task<ProcessRunResult>>? handler = null) : IProcessRunner
     {
         public Task<ProcessRunResult> RunAsync(ProcessRunRequest request, CancellationToken ct = default) =>
-            Task.FromResult(new ProcessRunResult(0, string.Empty, string.Empty));
+            handler?.Invoke(request, ct) ?? Task.FromResult(new ProcessRunResult(0, string.Empty, string.Empty));
     }
 
     private sealed class InMemoryRemoteFsOps : IWorkspaceFileSystemOps

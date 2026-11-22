@@ -48,10 +48,15 @@ public sealed partial class TrackActor
         }
     }
 
-    public Task<FlowSnapshotDto> GetFlowSnapshotAsync(CancellationToken ct = default) =>
+    public Task<FlowSnapshotDto> GetFlowSnapshotAsync(CancellationToken ct = default, InteropPrincipal.Session? authorization = null) =>
         EnqueueAsync(async _ =>
         {
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
+            if (authorization is not null)
+            {
+                RequireMcpToolAccessCore(authorization.SessionId, "perga", KernelMcpToolNames.FlowRead);
+                RequireRuntimeBindingCore(authorization);
+            }
             await ProjectCommittedFlowFileCoreAsync(ct).ConfigureAwait(false);
             var projection = await BuildFlowProjectionCoreAsync(ct).ConfigureAwait(false);
             var spec = JsonHelpers.ParseClone(TrackFlowSerializer.SerializeCanonical(_flowSpec));

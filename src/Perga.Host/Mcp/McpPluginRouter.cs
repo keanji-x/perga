@@ -151,12 +151,6 @@ public sealed class McpPluginRouter : IAsyncDisposable
             throw KernelException.NotFound($"MCP plugin '{pluginId}' is not registered.");
         }
 
-        if (caller.EnabledPlugins.Contains(pluginId, StringComparer.Ordinal))
-        {
-            return;
-        }
-
-        // Also check live Track state in case EnabledPlugins was patched after token registration.
         var snap = await _kernel.GetTrackAggregateAsync(caller.TrackId, ct).ConfigureAwait(false);
         if (!snap.Track.EnabledPlugins.Contains(pluginId, StringComparer.Ordinal))
         {
@@ -372,9 +366,8 @@ public sealed class McpPluginRouter : IAsyncDisposable
                     ct).ConfigureAwait(false);
 
                 var client = await _router.GetOrOpenClientAsync(_pluginId, ct).ConfigureAwait(false);
-                await _router.VerifyTrackAccessAsync(caller, _pluginId, ct).ConfigureAwait(false);
-                await _router._kernel.EnsureMcpAuthorizationAsync(caller, generation, ct).ConfigureAwait(false);
-                return await client.CallToolAsync(toolName, normalizedArgs, ct).ConfigureAwait(false);
+                return await client.CallToolAsync(toolName, normalizedArgs,
+                    token => _router._kernel.EnsureMcpAuthorizationAsync(caller, generation, _pluginId, toolName, token), ct).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -391,7 +384,7 @@ public sealed class McpPluginRouter : IAsyncDisposable
     {
         bool IsHealthy { get; }
         Task<IReadOnlyList<McpToolWireDescriptor>> ListToolsAsync(CancellationToken ct);
-        Task<McpCallToolResult> CallToolAsync(string toolName, JsonElement arguments, CancellationToken ct);
+        Task<McpCallToolResult> CallToolAsync(string toolName, JsonElement arguments, Func<CancellationToken, Task> authorize, CancellationToken ct);
     }
 
     private sealed class HttpMcpPluginClient : IUpstreamMcpClient
@@ -439,18 +432,18 @@ public sealed class McpPluginRouter : IAsyncDisposable
             return ParseToolsListResult(res);
         }
 
-        public async Task<McpCallToolResult> CallToolAsync(string toolName, JsonElement arguments, CancellationToken ct)
+        public async Task<McpCallToolResult> CallToolAsync(string toolName, JsonElement arguments, Func<CancellationToken, Task> authorize, CancellationToken ct)
         {
             var callParams = JsonSerializer.SerializeToElement(
                 new { name = toolName, arguments },
                 PergaJsonDefaults.McpOptions);
-            var res = await SendRpcRequestAsync("tools/call", callParams, ct).ConfigureAwait(false);
+            var res = await SendRpcRequestAsync("tools/call", callParams, ct, authorize).ConfigureAwait(false);
             return ParseCallToolResult(res);
         }
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
-        private async Task<JsonElement> SendRpcRequestAsync(string method, JsonElement parameters, CancellationToken ct)
+        private async Task<JsonElement> SendRpcRequestAsync(string method, JsonElement parameters, CancellationToken ct, Func<CancellationToken, Task>? authorize = null)
         {
             var id = Interlocked.Increment(ref _nextId);
             var payload = new
@@ -462,6 +455,7 @@ public sealed class McpPluginRouter : IAsyncDisposable
             };
 
             using var req = CreatePostMessage(payload);
+            if (authorize is not null) await authorize(ct).ConfigureAwait(false);
             using var resp = await _httpClient.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct)
                 .ConfigureAwait(false);
 
@@ -700,12 +694,12 @@ public sealed class McpPluginRouter : IAsyncDisposable
             return ParseToolsListResult(res);
         }
 
-        public async Task<McpCallToolResult> CallToolAsync(string toolName, JsonElement arguments, CancellationToken ct)
+        public async Task<McpCallToolResult> CallToolAsync(string toolName, JsonElement arguments, Func<CancellationToken, Task> authorize, CancellationToken ct)
         {
             var callParams = JsonSerializer.SerializeToElement(
                 new { name = toolName, arguments },
                 PergaJsonDefaults.McpOptions);
-            var res = await SendRequestAsync("tools/call", callParams, ct).ConfigureAwait(false);
+            var res = await SendRequestAsync("tools/call", callParams, ct, authorize).ConfigureAwait(false);
             return ParseCallToolResult(res);
         }
 
@@ -749,7 +743,7 @@ public sealed class McpPluginRouter : IAsyncDisposable
             _shutdownCts.Dispose();
         }
 
-        private async Task<JsonElement> SendRequestAsync(string method, JsonElement parameters, CancellationToken ct)
+        private async Task<JsonElement> SendRequestAsync(string method, JsonElement parameters, CancellationToken ct, Func<CancellationToken, Task>? authorize = null)
         {
             var id = Interlocked.Increment(ref _nextId);
             var tcs = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -760,7 +754,7 @@ public sealed class McpPluginRouter : IAsyncDisposable
                 var line = JsonSerializer.Serialize(
                     new { jsonrpc = "2.0", id, method, @params = parameters },
                     PergaJsonDefaults.McpOptions);
-                await WriteLineAsync(line, ct).ConfigureAwait(false);
+                await WriteLineAsync(line, ct, authorize).ConfigureAwait(false);
                 return await tcs.Task.WaitAsync(ct).ConfigureAwait(false);
             }
             finally
@@ -775,11 +769,12 @@ public sealed class McpPluginRouter : IAsyncDisposable
             return WriteLineAsync(line, ct);
         }
 
-        private async Task WriteLineAsync(string line, CancellationToken ct)
+        private async Task WriteLineAsync(string line, CancellationToken ct, Func<CancellationToken, Task>? authorize = null)
         {
             await _writeLock.WaitAsync(ct).ConfigureAwait(false);
             try
             {
+                if (authorize is not null) await authorize(ct).ConfigureAwait(false);
                 await _process.StandardInput.WriteLineAsync(line.AsMemory(), ct).ConfigureAwait(false);
                 await _process.StandardInput.FlushAsync(ct).ConfigureAwait(false);
             }

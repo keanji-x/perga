@@ -182,10 +182,10 @@ public sealed partial class TrackActor
             string? toTrackId,
             string summary,
             string body,
-            Func<MailDto, CancellationToken, Task> deliverToTargetTrack,
+            Func<MailDto, Action?, CancellationToken, Task> deliverToTargetTrack,
             CancellationToken ct, string? replyToMailId, InteropPrincipal.Session? authorization = null)
         {
-            var mail = await actor.EnqueueAsync(async _ =>
+            var (mail, authorizeDelivery) = await actor.EnqueueAsync<(MailDto, Action?)>(async _ =>
             {
                 await actor.EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
                 actor.RequireGovernanceSessionCore(callerSessionId, "mail_send");
@@ -199,9 +199,9 @@ public sealed partial class TrackActor
                     toTrackId = parent.FromTrackId;
                 }
 
-                actor.RequireMcpAuthorizationCore(authorization);
+                var open = authorization is null ? null : actor.RequireRuntimeBindingCore(authorization);
                 var now = actor.NowMs();
-                return new MailDto(
+                var mail = new MailDto(
                     Id: $"mail_{Guid.NewGuid():N}",
                     FromTrackId: actor.TrackId,
                     ToTrackId: toTrackId!,
@@ -210,13 +210,14 @@ public sealed partial class TrackActor
                     ReadAtMs: null,
                     CreatedAtMs: now,
                     ReplyToMailId: replyToMailId);
+                return (mail, open is null ? null : () => actor.RequireRuntimeWriteFence(authorization!, open));
             }, ct).ConfigureAwait(false);
 
-            await deliverToTargetTrack(mail, ct).ConfigureAwait(false);
+            await deliverToTargetTrack(mail, authorizeDelivery, ct).ConfigureAwait(false);
             return mail;
         }
 
-        public async Task ReceiveMailAsync(MailDto mail, CancellationToken ct = default)
+        public async Task ReceiveMailAsync(MailDto mail, CancellationToken ct, Action? authorizeDelivery)
         {
             var shouldWake = await actor.EnqueueAsync(async _ =>
             {
@@ -231,6 +232,7 @@ public sealed partial class TrackActor
 
                 await actor._eventHub.EnsureInitializedFromStoreAsync(actor._store, ct).ConfigureAwait(false);
                 var requestWake = actor._track.ClosedAtMs is null && actor._track.LeadSessionId is not null;
+                authorizeDelivery?.Invoke();
                 await actor._store.UpsertMailAsync(mail, evt, ct, requestWake).ConfigureAwait(false);
                 await actor._eventHub.PublishSyncedAfterStoreWriteAsync(actor._store, evt, CancellationToken.None).ConfigureAwait(false);
                 return requestWake;
@@ -314,8 +316,17 @@ public sealed partial class TrackActor
             await actor._store.UpsertAskAsync(ask, evt, ct).ConfigureAwait(false);
             _asks[ask.Id] = ask;
             _pendingAskWaiters[ask.Id] = new(tcs, runtimeControl);
-            await actor._eventHub.PublishSyncedAfterStoreWriteAsync(actor._store, evt, ct).ConfigureAwait(false);
-            return (ask.Id, tcs);
+            try
+            {
+                await actor._eventHub.PublishSyncedAfterStoreWriteAsync(actor._store, evt, ct).ConfigureAwait(false);
+                ct.ThrowIfCancellationRequested();
+                return (ask.Id, tcs);
+            }
+            catch
+            {
+                _pendingAskWaiters.TryRemove(ask.Id, out _);
+                throw;
+            }
         }
 
     }

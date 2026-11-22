@@ -84,7 +84,7 @@ public partial interface IPergaKernel : IAsyncDisposable
     Task<ReportSnapshot> ReadReportSnapshotAsync(
         string trackId, string? sectionH1, IReadOnlySet<string>? blockIds, bool includeTemplateViews, CancellationToken ct = default);
     Task<TemplateViewsProjection> GetTrackViewsAsync(string trackId, CancellationToken ct = default);
-    Task<FlowSnapshotDto> GetTrackFlowAsync(string trackId, CancellationToken ct = default);
+    Task<FlowSnapshotDto> GetTrackFlowAsync(string trackId, CancellationToken ct = default, InteropPrincipal.Session? authorization = null);
     Task<FlowCommitResultDto> CommitTrackFlowAsync(string trackId, bool dryRun, long? expectedFlowRev, InteropPrincipal caller, CancellationToken ct = default, string? content = null);
     Task<TrackDataPatchResult> PatchTrackDataAsync(string trackId, JsonElement patch, string source, string? callerSessionId = null, CancellationToken ct = default, long? expectedDataRev = null, string? expectedPolicyGeneration = null, InteropPrincipal.Session? authorization = null);
     Task<IReadOnlyList<ReportBlock>> GetReportRevisionBlocksAsync(string trackId, int docRev, CancellationToken ct = default);
@@ -122,7 +122,7 @@ public partial interface IPergaKernel : IAsyncDisposable
     // MCP Policy Guard, Tool Dispatch & Schedules
     Task<string> GuardMcpToolCallAsync(McpSessionPrincipal caller, string mcpServer, string toolName, JsonElement arguments,
         CancellationToken ct = default, bool write = true);
-    Task EnsureMcpAuthorizationAsync(McpSessionPrincipal caller, string generation, CancellationToken ct = default);
+    Task EnsureMcpAuthorizationAsync(McpSessionPrincipal caller, string generation, string mcpServer, string toolName, CancellationToken ct = default);
     Task<JsonElement> InvokeKernelMcpToolAsync(McpSessionPrincipal caller, string toolName, JsonElement arguments, CancellationToken ct = default);
     Task<bool> CancelPendingWakeAsync(string trackId, string wakeId, CancellationToken ct = default);
     Task<IReadOnlyList<FiredTrackSchedule>> FireDueTrackSchedulesAsync(long nowMs, CancellationToken ct = default);
@@ -1024,10 +1024,10 @@ public sealed partial class PergaKernelService : IPergaKernel
             toTrackId,
             summary,
             body,
-            deliverToTargetTrack: async (mail, token) =>
+            deliverToTargetTrack: async (mail, authorizeDelivery, token) =>
             {
                 var targetActor = Actors.GetOrActivate(mail.ToTrackId);
-                await targetActor.ReceiveMailAsync(mail, token).ConfigureAwait(false);
+                await targetActor.ReceiveMailAsync(mail, token, authorizeDelivery).ConfigureAwait(false);
             },
             ct, replyToMailId, authorization);
     }
@@ -1101,8 +1101,8 @@ public sealed partial class PergaKernelService : IPergaKernel
         JsonElement arguments, CancellationToken ct = default, bool write = true) =>
         Actors.GetOrActivate(caller.TrackId).GuardMcpToolCallAsync(caller, mcpServer, toolName, arguments, ct, write);
 
-    public Task EnsureMcpAuthorizationAsync(McpSessionPrincipal caller, string generation, CancellationToken ct = default) =>
-        Actors.GetOrActivate(caller.TrackId).EnsureMcpAuthorizationAsync(caller, generation, ct);
+    public Task EnsureMcpAuthorizationAsync(McpSessionPrincipal caller, string generation, string mcpServer, string toolName, CancellationToken ct = default) =>
+        Actors.GetOrActivate(caller.TrackId).EnsureMcpAuthorizationAsync(caller, generation, mcpServer, toolName, ct);
 
     public Task<JsonElement> InvokeKernelMcpToolAsync(
         McpSessionPrincipal caller,

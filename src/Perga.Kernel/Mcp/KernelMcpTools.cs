@@ -574,7 +574,7 @@ public static class KernelMcpDispatcher
             case KernelMcpToolNames.FlowRead:
             {
                 RejectUnknownArgs(args, ToolSchema(toolName));
-                var snapshot = await kernel.GetTrackFlowAsync(caller.TrackId, ct).ConfigureAwait(false);
+                var snapshot = await kernel.GetTrackFlowAsync(caller.TrackId, ct, authorization).ConfigureAwait(false);
                 return JsonHelpers.ToElement(new { snapshot.FlowRev, FlowPath = snapshot.FilePath, snapshot.Spec, snapshot.Projection });
             }
 

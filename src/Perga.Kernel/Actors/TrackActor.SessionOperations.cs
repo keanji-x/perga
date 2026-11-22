@@ -134,7 +134,7 @@ public sealed partial class TrackActor
                 else if (!await Messages.ClaimQueuedSteerAsync(message, turnId, ct).ConfigureAwait(false))
                     throw KernelException.Conflict("This message is already being sent or has been withdrawn.");
                 _scheduler.TryGetSteering(sessionId, out var previous);
-                var send = RunSteeringAsync(previous.Attempt, message, turnId, existing is not null, startedAt);
+                var send = RunSteeringAsync(previous.Attempt, message, turnId, existing is not null, startedAt, caller);
                 _scheduler.SetSteering(sessionId, (message.Id, send));
                 _ = TrackBackgroundJob(() => send);
                 NotifyQueueChangedCore(sessionId);
@@ -411,14 +411,25 @@ public sealed partial class TrackActor
         RequireSessionWritableCore(current);
         if (_closingTrack || _deletingTrack || current.ConfigVersion != session.ConfigVersion || current.Epoch != session.Epoch)
             throw KernelException.Conflict("The session changed during provider startup.");
-        var mcpReg = _mcpBridge.RegisterSession(
-            TrackId,
-            session.Id,
-            session.IsLead,
-            activeTask?.Task.Id,
-            activeTask?.Active.RunCount,
-            _track.EnabledPlugins,
-            runtimeBindingId: bindingId, baseUriOverride: mcpBaseUri);
+        ct.ThrowIfCancellationRequested();
+        McpSessionRegistration mcpReg;
+        try
+        {
+            mcpReg = _mcpBridge.RegisterSession(
+                TrackId,
+                session.Id,
+                session.IsLead,
+                activeTask?.Task.Id,
+                activeTask?.Active.RunCount,
+                _track.EnabledPlugins,
+                runtimeBindingId: bindingId, baseUriOverride: mcpBaseUri);
+            ct.ThrowIfCancellationRequested();
+        }
+        finally
+        {
+            // The mailbox operation can outlive its canceled waiter and launch cleanup.
+            if (ct.IsCancellationRequested) _mcpBridge.RevokeSession(session.Id, bindingId);
+        }
 
         var systemPrompt = overrideSystemPrompt ?? BuildDefaultSystemPromptCore(session);
         if (session.SystemPrompt is { } customPrompt) systemPrompt += "\n\n" + customPrompt;

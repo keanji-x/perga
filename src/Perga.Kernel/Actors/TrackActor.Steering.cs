@@ -11,16 +11,17 @@ public sealed partial class TrackActor
     private static readonly TimeSpan SteeringRequestTimeout = TimeSpan.FromSeconds(15);
 
     private async Task<SteeringResult> RunSteeringAsync(Task? previous, SessionMessage message,
-        string turnId, bool queued, long startedAt)
+        string turnId, bool queued, long startedAt, InteropPrincipal caller)
     {
         var ct = _actorShutdownCts.Token;
         if (previous is not null)
             await previous.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
         string outcome;
+        KernelException? authorizationFailure = null;
         try
         {
-            var delivery = await AttemptSteeringAsync(message, turnId, startedAt, ct).ConfigureAwait(false);
+            var delivery = await AttemptSteeringAsync(message, turnId, startedAt, caller, ct).ConfigureAwait(false);
             outcome = delivery switch
             {
                 SteerDelivery.Accepted => "delivered",
@@ -30,12 +31,17 @@ public sealed partial class TrackActor
                 _ => "unknown",
             };
         }
+        catch (KernelException ex) when (caller is InteropPrincipal.Session)
+        {
+            authorizationFailure = ex;
+            outcome = queued ? "queued" : "rejected";
+        }
         catch (Exception) when (!ct.IsCancellationRequested)
         {
             outcome = "unknown";
         }
 
-        return await EnqueueAsync(async _ =>
+        var settled = await EnqueueAsync(async _ =>
         {
             string result;
             try
@@ -67,6 +73,8 @@ public sealed partial class TrackActor
             }
             return ToSteeringResult(message.Id, result);
         }, ct).ConfigureAwait(false);
+        if (authorizationFailure is not null) throw authorizationFailure;
+        return settled;
     }
 
     private SessionItemDto CreateSteeredItem(SessionMessage message, string turnId) =>
@@ -108,11 +116,12 @@ public sealed partial class TrackActor
         _ => "unconfirmed",
     });
 
-    private async Task<SteerDelivery?> AttemptSteeringAsync(SessionMessage message, string turnId, long startedAt, CancellationToken ct)
+    private async Task<SteerDelivery?> AttemptSteeringAsync(SessionMessage message, string turnId, long startedAt, InteropPrincipal caller, CancellationToken ct)
     {
         var target = await EnqueueAsync(_ =>
         {
             var session = RequireSessionCore(message.SessionId);
+            RequireInteropCore(caller, session, write: true);
             _taskCoordinator.RequireDispatchWorkspace(session);
             if (_taskCoordinator.IsSessionFrozenForDispatchCore(session))
                 return Task.FromResult<ActiveTurnState?>(null);

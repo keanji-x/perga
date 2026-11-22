@@ -17,6 +17,7 @@ internal sealed class LiveContextUsage
 internal sealed class LiveRuntimeActivity
 {
     public int Epoch { get; set; }
+    public Queue<UnifiedAgentEvent> OutputAwaitingSettlement { get; } = new();
     public string? OutputKind { get; set; }
     public StringBuilder Output { get; } = new();
     public ITimer? OutputTimer { get; set; }

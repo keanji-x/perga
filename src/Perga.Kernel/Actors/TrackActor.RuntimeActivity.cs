@@ -100,24 +100,13 @@ public sealed partial class TrackActor
                 JsonHelpers.ToElement(new { sessionId, status = state.Status }), now);
             return;
         }
-        // The provider sends output here only when it has no prompt stream to receive it.
-        // Its stream may have ended before the actor settles the corresponding durable turn.
-        switch (observation)
+        if (observation is UnifiedAgentEvent.TextDelta or UnifiedAgentEvent.ThinkingDelta
+            or UnifiedAgentEvent.ToolCallStarted or UnifiedAgentEvent.ToolCallCompleted)
         {
-            case UnifiedAgentEvent.TextDelta text:
-                await BufferRuntimeOutputCoreAsync(session, state, "assistant_text", text.Delta).ConfigureAwait(false);
-                return;
-            case UnifiedAgentEvent.ThinkingDelta thinking:
-                await BufferRuntimeOutputCoreAsync(session, state, "thinking", thinking.Delta).ConfigureAwait(false);
-                return;
-            case UnifiedAgentEvent.ToolCallStarted tool:
-                await FlushRuntimeOutputCoreAsync(session, state, new(0, sessionId, null, "tool_call",
-                    JsonHelpers.ToElement(new { v = 1, callId = tool.CallId, name = tool.Name, args = tool.Args }), now)).ConfigureAwait(false);
-                return;
-            case UnifiedAgentEvent.ToolCallCompleted tool:
-                await FlushRuntimeOutputCoreAsync(session, state, new(0, sessionId, null, "tool_result",
-                    JsonHelpers.ToElement(new { v = 1, callId = tool.CallId, output = tool.Output, isError = tool.IsError }), now)).ConfigureAwait(false);
-                return;
+            // The adapter can release its prompt stream before we commit the turn.
+            if (_scheduler.HasActive(sessionId)) state.OutputAwaitingSettlement.Enqueue(observation);
+            else await ApplyRuntimeOutputCoreAsync(session, state, observation).ConfigureAwait(false);
+            return;
         }
 
         var task = observation switch
@@ -155,11 +144,51 @@ public sealed partial class TrackActor
         else _eventHub.PublishTransient(_track.AreaId, TrackId, KernelEventKinds.SessionTaskProgress, payload, now);
     }
 
+    private async Task ApplyRuntimeOutputCoreAsync(AgentSessionDto session, LiveRuntimeActivity state, UnifiedAgentEvent observation)
+    {
+        switch (observation)
+        {
+            case UnifiedAgentEvent.TextDelta text:
+                await BufferRuntimeOutputCoreAsync(session, state, "assistant_text", text.Delta).ConfigureAwait(false);
+                return;
+            case UnifiedAgentEvent.ThinkingDelta thinking:
+                await BufferRuntimeOutputCoreAsync(session, state, "thinking", thinking.Delta).ConfigureAwait(false);
+                return;
+            case UnifiedAgentEvent.ToolCallStarted tool:
+                await FlushRuntimeOutputCoreAsync(session, state, new(0, session.Id, null, "tool_call",
+                    JsonHelpers.ToElement(new { v = 1, callId = tool.CallId, name = tool.Name, args = tool.Args }), NowMs())).ConfigureAwait(false);
+                return;
+            case UnifiedAgentEvent.ToolCallCompleted tool:
+                await FlushRuntimeOutputCoreAsync(session, state, new(0, session.Id, null, "tool_result",
+                    JsonHelpers.ToElement(new { v = 1, callId = tool.CallId, output = tool.Output, isError = tool.IsError }), NowMs())).ConfigureAwait(false);
+                return;
+        }
+    }
+
+    private async Task ReleaseSettledTurnCoreAsync(AgentSessionDto session, string turnId)
+    {
+        if (!_scheduler.TryGetActive(session.Id, out var active) || active.TurnDto.Id != turnId) return;
+        _scheduler.RemoveActive(session.Id);
+        var state = active.RuntimeActivity;
+        if (state.OutputAwaitingSettlement.Count == 0) return;
+        while (state.OutputAwaitingSettlement.TryDequeue(out var observation))
+        {
+            try { await ApplyRuntimeOutputCoreAsync(session, state, observation).ConfigureAwait(false); }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Trace.TraceError("Post-turn runtime output for session {0} could not be stored: {1}", session.Id, ex);
+            }
+        }
+        if (state.Exited || !_runtimes.TryGetOpen(session.Id, out var open) || !ReferenceEquals(state, open.RuntimeActivity))
+            await FlushRuntimeOutputForCloseAsync(session, state).ConfigureAwait(false);
+    }
+
     private bool HasRecentBackgroundActivityCore(string sessionId) =>
         _runtimes.TryGetOpen(sessionId, out var open) &&
         (open.RuntimeActivity.Tasks.Values.Any(task => task.Status is "running" or "pending") ||
          open.RuntimeActivity.LastIdleActivityTimestamp is { } last && _timeProvider.GetElapsedTime(last) < TimeSpan.FromSeconds(5));
 
+    private const int RuntimeOutputMaxCharacters = 16 * 1024;
     private static readonly TimeSpan RuntimeOutputQuietPeriod = TimeSpan.FromSeconds(1);
 
     private async Task BufferRuntimeOutputCoreAsync(AgentSessionDto session, LiveRuntimeActivity state, string kind, string delta)
@@ -169,6 +198,11 @@ public sealed partial class TrackActor
             await FlushRuntimeOutputCoreAsync(session, state).ConfigureAwait(false);
         state.OutputKind = kind;
         state.Output.Append(delta);
+        if (state.Output.Length >= RuntimeOutputMaxCharacters)
+        {
+            await FlushRuntimeOutputCoreAsync(session, state).ConfigureAwait(false);
+            return;
+        }
         state.LastOutputTimestamp = _timeProvider.GetTimestamp();
         state.OutputTimer ??= _timeProvider.CreateTimer(_state =>
         {
@@ -239,7 +273,7 @@ public sealed partial class TrackActor
             if (shouldClose is not null && !shouldClose()) return false;
             EndRuntimeBinding(sessionId, open);
             if (_sessions.TryGetValue(sessionId, out var session))
-                await FlushRuntimeOutputCoreAsync(session, open.RuntimeActivity).ConfigureAwait(false);
+                await FlushRuntimeOutputForCloseAsync(session, open.RuntimeActivity).ConfigureAwait(false);
             return true;
         }
 
@@ -250,12 +284,20 @@ public sealed partial class TrackActor
             catch (OperationCanceledException) when (_disposed) { }
         }
         await _mailboxLoopTask.ConfigureAwait(false);
-        try { return await PrepareAsync().ConfigureAwait(false); }
+        return await PrepareAsync().ConfigureAwait(false);
+    }
+
+    private async Task FlushRuntimeOutputForCloseAsync(AgentSessionDto session, LiveRuntimeActivity state)
+    {
+        try { await FlushRuntimeOutputCoreAsync(session, state).ConfigureAwait(false); }
         catch (Exception ex)
         {
-            System.Diagnostics.Trace.TraceError("Runtime {0} output could not be flushed at shutdown: {1}", open.RuntimeBindingId, ex);
-            open.RuntimeActivity.OutputTimer?.Dispose();
-            return true;
+            System.Diagnostics.Trace.TraceError("Runtime output for session {0} could not be flushed at shutdown: {1}", session.Id, ex);
+        }
+        finally
+        {
+            state.OutputTimer?.Dispose();
+            state.OutputTimer = null;
         }
     }
 }

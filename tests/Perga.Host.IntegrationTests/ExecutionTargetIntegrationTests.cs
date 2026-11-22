@@ -1008,10 +1008,10 @@ public sealed class ExecutionTargetIntegrationTests
 
         public Task RemoveWorkspaceAsync(IsolatedWorkspace workspace, CancellationToken ct = default) => Task.CompletedTask;
 
-        public Task<RevisionSnapshot> SnapshotWorkingCopyAsync(string workspacePath, string? commitMessageIfGit = null, CancellationToken ct = default) =>
+        public Task<RevisionSnapshot> SnapshotWorkingCopyAsync(string workspacePath, string? commitMessageIfGit = null, CancellationToken ct = default, Func<CancellationToken, Task>? authorizeMutation = null) =>
             Task.FromResult(new RevisionSnapshot(VcsBackendKind.PlainDirectory, "main", "0000000", null, false, []));
 
-        public Task<DiffSummary> DiffAsync(string workspacePath, string? fromRev = null, string? toRev = null, CancellationToken ct = default)
+        public Task<DiffSummary> DiffAsync(string workspacePath, string? fromRev = null, string? toRev = null, CancellationToken ct = default, Func<CancellationToken, Task>? authorizeMutation = null)
         {
             DiffCalls++;
             return Task.FromResult(new DiffSummary("jasper-diff", false, ["hello.txt"]));
@@ -1023,12 +1023,12 @@ public sealed class ExecutionTargetIntegrationTests
             return Task.FromResult(new DiffSummary("jasper-diff", false, ["hello.txt"]));
         }
 
-        public Task RestoreOperationAsync(string workspacePath, string opId, CancellationToken ct = default) => Task.CompletedTask;
+        public Task RestoreOperationAsync(string workspacePath, string opId, CancellationToken ct = default, Func<CancellationToken, Task>? authorizeMutation = null) => Task.CompletedTask;
 
-        public Task<RevisionSnapshot> RebaseOntoUpstreamAsync(string workspacePath, string upstreamBranch = "main", CancellationToken ct = default) =>
+        public Task<RevisionSnapshot> RebaseOntoUpstreamAsync(string workspacePath, string upstreamBranch = "main", CancellationToken ct = default, Func<CancellationToken, Task>? authorizeMutation = null) =>
             SnapshotWorkingCopyAsync(workspacePath, null, ct);
 
-        public Task<PushResult> PushBookmarkAsync(string workspacePath, string bookmarkOrBranch, string? targetRev = null, CancellationToken ct = default) =>
+        public Task<PushResult> PushBookmarkAsync(string workspacePath, string bookmarkOrBranch, string? targetRev = null, CancellationToken ct = default, Func<CancellationToken, Task>? authorizeMutation = null) =>
             Task.FromResult(new PushResult(bookmarkOrBranch, "origin", "0000000"));
     }
 

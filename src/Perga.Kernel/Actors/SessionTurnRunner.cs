@@ -145,7 +145,7 @@ public sealed partial class TrackActor
                     var turnCts = CancellationTokenSource.CreateLinkedTokenSource(ct, actor._actorShutdownCts.Token);
                     var active = new ActiveTurnState(running.Id,
                         SessionConfiguration.FromNullable(claimed.Session.Model, claimed.Session.ReasoningEffort, claimed.Session.PermissionMode),
-                        handle.ContextUsage, turn, agent, turnCts, true, handle.Generation);
+                        handle.ContextUsage, handle.RuntimeActivity, turn, agent, turnCts, true, handle.Generation);
                     try
                     {
                         actor._scheduler.SetActive(running.Id, active);
@@ -478,7 +478,6 @@ public sealed partial class TrackActor
                 active.CloseRuntimeOnSettle = true;
                 actor.RevokeSessionRuntime(sessionId);
             }
-            actor._scheduler.RemoveActive(sessionId);
             if (actor._taskCoordinator.TryGetActiveOwningTaskCore(sessionId) is { Status: TaskRunStatus.Pending } ||
                 actor.HasPendingFlowTaskForSessionCore(sessionId))
                 await actor._taskCoordinator.ScheduleEligibleTasksCoreAsync(CancellationToken.None).ConfigureAwait(false);
@@ -519,6 +518,7 @@ public sealed partial class TrackActor
                     {
                         if (!actor._scheduler.TryGetActive(active.SessionId, out var current) || !ReferenceEquals(current, active))
                             return;
+                        active.RuntimeActivity.OutputAwaitingSettlement.Clear();
                         if (active.Interrupted && !active.CloseRuntimeOnStop && !HasStopEvidence(active))
                         {
                             var session = actor.RequireSessionCore(active.SessionId);

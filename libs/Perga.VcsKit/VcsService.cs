@@ -48,7 +48,7 @@ public sealed partial class VcsService : IVcsService
     public Task<VcsBackendKind> DetectAsync(string path, CancellationToken ct) =>
         DetectAsync(path, ct, searchAncestors: true);
 
-    private async Task<VcsBackendKind> DetectAsync(string path, CancellationToken ct, bool searchAncestors)
+    private async Task<VcsBackendKind> DetectAsync(string path, CancellationToken ct, bool searchAncestors, Func<CancellationToken, Task>? authorizeMutation = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         ct.ThrowIfCancellationRequested();
@@ -82,6 +82,7 @@ public sealed partial class VcsService : IVcsService
         {
             if (_options.AutoColocateJj && jjExe is not null)
             {
+                if (authorizeMutation is not null) await authorizeMutation(ct).ConfigureAwait(false);
                 await RunJjCheckedAsync(jjExe, vcsRoot.Value.RootPath, ["git", "init", "--colocate"], ct)
                     .ConfigureAwait(false);
                 return VcsBackendKind.JjColocated;
@@ -288,19 +289,19 @@ public sealed partial class VcsService : IVcsService
     public async Task<RevisionSnapshot> SnapshotWorkingCopyAsync(
         string workspacePath,
         string? commitMessageIfGit = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default, Func<CancellationToken, Task>? authorizeMutation = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(workspacePath);
         var fullWorkspacePath = Path.GetFullPath(workspacePath);
 
-        var kind = await DetectAsync(fullWorkspacePath, ct).ConfigureAwait(false);
+        var kind = await DetectAsync(fullWorkspacePath, ct, searchAncestors: true, authorizeMutation).ConfigureAwait(false);
         switch (kind)
         {
             case VcsBackendKind.JjColocated:
-                return await SnapshotJjAsync(fullWorkspacePath, ct).ConfigureAwait(false);
+                return await SnapshotJjAsync(fullWorkspacePath, ct, authorizeMutation).ConfigureAwait(false);
 
             case VcsBackendKind.GitWorktree:
-                return await SnapshotGitAsync(fullWorkspacePath, commitMessageIfGit, ct).ConfigureAwait(false);
+                return await SnapshotGitAsync(fullWorkspacePath, commitMessageIfGit, ct, authorizeMutation).ConfigureAwait(false);
 
             case VcsBackendKind.PlainDirectory:
             default:
@@ -308,13 +309,13 @@ public sealed partial class VcsService : IVcsService
         }
     }
 
-    public async Task RestoreOperationAsync(string workspacePath, string opId, CancellationToken ct = default)
+    public async Task RestoreOperationAsync(string workspacePath, string opId, CancellationToken ct = default, Func<CancellationToken, Task>? authorizeMutation = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(workspacePath);
         ArgumentException.ThrowIfNullOrWhiteSpace(opId);
 
         var fullWorkspacePath = Path.GetFullPath(workspacePath);
-        var kind = await DetectAsync(fullWorkspacePath, ct).ConfigureAwait(false);
+        var kind = await DetectAsync(fullWorkspacePath, ct, searchAncestors: true, authorizeMutation).ConfigureAwait(false);
         if (kind != VcsBackendKind.JjColocated)
         {
             throw new NotSupportedException(
@@ -322,19 +323,20 @@ public sealed partial class VcsService : IVcsService
         }
 
         var jjExe = RequireJjExecutable();
+        if (authorizeMutation is not null) await authorizeMutation(ct).ConfigureAwait(false);
         await RunJjCheckedAsync(jjExe, fullWorkspacePath, ["op", "restore", opId], ct).ConfigureAwait(false);
     }
 
     public async Task<RevisionSnapshot> RebaseOntoUpstreamAsync(
         string workspacePath,
         string upstreamBranch = "main",
-        CancellationToken ct = default)
+        CancellationToken ct = default, Func<CancellationToken, Task>? authorizeMutation = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(workspacePath);
         ArgumentException.ThrowIfNullOrWhiteSpace(upstreamBranch);
 
         var fullWorkspacePath = Path.GetFullPath(workspacePath);
-        var kind = await DetectAsync(fullWorkspacePath, ct).ConfigureAwait(false);
+        var kind = await DetectAsync(fullWorkspacePath, ct, searchAncestors: true, authorizeMutation).ConfigureAwait(false);
 
         switch (kind)
         {
@@ -346,6 +348,7 @@ public sealed partial class VcsService : IVcsService
 
                 if (hasRemote)
                 {
+                    if (authorizeMutation is not null) await authorizeMutation(ct).ConfigureAwait(false);
                     await RunJjCheckedAsync(jjExe, fullWorkspacePath, ["git", "fetch", "--remote", remoteName], ct)
                         .ConfigureAwait(false);
                 }
@@ -359,10 +362,11 @@ public sealed partial class VcsService : IVcsService
                     .ConfigureAwait(false);
 
                 // In JJ, conflicts are first-class tree states and exit 0 without wedging the workspace.
+                if (authorizeMutation is not null) await authorizeMutation(ct).ConfigureAwait(false);
                 await RunJjCheckedAsync(jjExe, fullWorkspacePath, ["rebase", "-s", "@", "-d", destinationRev], ct)
                     .ConfigureAwait(false);
 
-                return await SnapshotJjAsync(fullWorkspacePath, ct).ConfigureAwait(false);
+                return await SnapshotJjAsync(fullWorkspacePath, ct, authorizeMutation).ConfigureAwait(false);
             }
 
             case VcsBackendKind.GitWorktree:
@@ -371,6 +375,7 @@ public sealed partial class VcsService : IVcsService
                 var hasRemote = await GitHasRemoteAsync(fullWorkspacePath, remoteName, ct).ConfigureAwait(false);
                 if (hasRemote)
                 {
+                    if (authorizeMutation is not null) await authorizeMutation(ct).ConfigureAwait(false);
                     await RunGitCheckedAsync(fullWorkspacePath, ["fetch", remoteName], ct).ConfigureAwait(false);
                 }
 
@@ -384,10 +389,11 @@ public sealed partial class VcsService : IVcsService
                     }
                 }
 
+                if (authorizeMutation is not null) await authorizeMutation(ct).ConfigureAwait(false);
                 var rebaseResult = await RunGitAsync(fullWorkspacePath, ["rebase", targetRef], ct).ConfigureAwait(false);
                 if (rebaseResult.ExitCode == 0)
                 {
-                    return await SnapshotGitAsync(fullWorkspacePath, commitMessageIfGit: null, ct).ConfigureAwait(false);
+                    return await SnapshotGitAsync(fullWorkspacePath, commitMessageIfGit: null, ct, authorizeMutation).ConfigureAwait(false);
                 }
 
                 if (await IsGitRebaseInProgressAsync(fullWorkspacePath, ct).ConfigureAwait(false))
@@ -426,21 +432,31 @@ public sealed partial class VcsService : IVcsService
         string workspacePath,
         string? fromRev = null,
         string? toRev = null,
-        CancellationToken ct = default) =>
-        DiffDetailedAsync(workspacePath, fromRev, toRev, filterPath: null, ct);
+        CancellationToken ct = default, Func<CancellationToken, Task>? authorizeMutation = null) =>
+        ReadDiffAsync(workspacePath, fromRev, toRev, filterPath: null, ct, searchAncestors: true, authorizeMutation);
 
-    public async Task<DiffSummary> DiffDetailedAsync(
+    public Task<DiffSummary> DiffDetailedAsync(
         string workspacePath,
         string? fromRev = null,
         string? toRev = null,
         string? filterPath = null,
         CancellationToken ct = default,
-        bool searchAncestors = true)
+        bool searchAncestors = true) =>
+        ReadDiffAsync(workspacePath, fromRev, toRev, filterPath, ct, searchAncestors, authorizeMutation: null);
+
+    private async Task<DiffSummary> ReadDiffAsync(
+        string workspacePath,
+        string? fromRev,
+        string? toRev,
+        string? filterPath,
+        CancellationToken ct,
+        bool searchAncestors,
+        Func<CancellationToken, Task>? authorizeMutation)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(workspacePath);
         var fullWorkspacePath = Path.GetFullPath(workspacePath);
         var normalizedFilter = NormalizeOptionalRelativePath(fullWorkspacePath, filterPath);
-        var kind = await DetectAsync(fullWorkspacePath, ct, searchAncestors).ConfigureAwait(false);
+        var kind = await DetectAsync(fullWorkspacePath, ct, searchAncestors, authorizeMutation).ConfigureAwait(false);
 
         switch (kind)
         {
@@ -451,6 +467,7 @@ public sealed partial class VcsService : IVcsService
 
                 var diffArgs = new List<string> { "diff", "--git" };
                 diffArgs.AddRange(revArgs);
+                if (authorizeMutation is not null) await authorizeMutation(ct).ConfigureAwait(false);
                 var diffRes = await RunJjCheckedAsync(jjExe, fullWorkspacePath, diffArgs, ct).ConfigureAwait(false);
 
                 var summaryArgs = new List<string> { "diff", "--summary", "--ignore-working-copy" };
@@ -529,21 +546,21 @@ public sealed partial class VcsService : IVcsService
         string workspacePath,
         string bookmarkOrBranch,
         string? targetRev = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default, Func<CancellationToken, Task>? authorizeMutation = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(workspacePath);
         ArgumentException.ThrowIfNullOrWhiteSpace(bookmarkOrBranch);
 
         var fullWorkspacePath = Path.GetFullPath(workspacePath);
         var remoteName = _options.DefaultRemoteName;
-        var kind = await DetectAsync(fullWorkspacePath, ct).ConfigureAwait(false);
+        var kind = await DetectAsync(fullWorkspacePath, ct, searchAncestors: true, authorizeMutation).ConfigureAwait(false);
 
         switch (kind)
         {
             case VcsBackendKind.JjColocated:
             {
                 var jjExe = RequireJjExecutable();
-                var effectiveRev = await ResolveJjPushTargetRevAsync(jjExe, fullWorkspacePath, targetRev, ct)
+                var effectiveRev = await ResolveJjPushTargetRevAsync(jjExe, fullWorkspacePath, targetRev, ct, authorizeMutation)
                     .ConfigureAwait(false);
 
                 var authorCheck = await RunJjCheckedAsync(
@@ -555,6 +572,7 @@ public sealed partial class VcsService : IVcsService
 
                 if (string.IsNullOrWhiteSpace(authorCheck.StandardOutput))
                 {
+                    if (authorizeMutation is not null) await authorizeMutation(ct).ConfigureAwait(false);
                     await RunJjCheckedAsync(
                             jjExe,
                             fullWorkspacePath,
@@ -563,6 +581,7 @@ public sealed partial class VcsService : IVcsService
                         .ConfigureAwait(false);
                 }
 
+                if (authorizeMutation is not null) await authorizeMutation(ct).ConfigureAwait(false);
                 await RunJjCheckedAsync(
                         jjExe,
                         fullWorkspacePath,
@@ -577,6 +596,7 @@ public sealed partial class VcsService : IVcsService
                         ct)
                     .ConfigureAwait(false);
 
+                if (authorizeMutation is not null) await authorizeMutation(ct).ConfigureAwait(false);
                 await RunJjCheckedAsync(
                         jjExe,
                         fullWorkspacePath,
@@ -603,6 +623,7 @@ public sealed partial class VcsService : IVcsService
                     .ConfigureAwait(false);
                 var headCommitId = revRes.StandardOutput.Trim();
 
+                if (authorizeMutation is not null) await authorizeMutation(ct).ConfigureAwait(false);
                 await RunGitCheckedAsync(
                         fullWorkspacePath,
                         ["push", remoteName, $"{headCommitId}:refs/heads/{bookmarkOrBranch}"],
@@ -672,10 +693,11 @@ public sealed partial class VcsService : IVcsService
         ?? throw new InvalidOperationException(
             "Jujutsu ('jj') CLI executable was not found on PATH or in '~/.local/bin/jj'.");
 
-    private async Task<RevisionSnapshot> SnapshotJjAsync(string workspacePath, CancellationToken ct)
+    private async Task<RevisionSnapshot> SnapshotJjAsync(string workspacePath, CancellationToken ct, Func<CancellationToken, Task>? authorizeMutation = null)
     {
         var jjExe = RequireJjExecutable();
 
+        if (authorizeMutation is not null) await authorizeMutation(ct).ConfigureAwait(false);
         // First call runs WITHOUT --ignore-working-copy so JJ snapshots working-copy changes into @.
         var logRes = await RunJjCheckedAsync(
                 jjExe,
@@ -736,7 +758,7 @@ public sealed partial class VcsService : IVcsService
     private async Task<RevisionSnapshot> SnapshotGitAsync(
         string workspacePath,
         string? commitMessageIfGit,
-        CancellationToken ct)
+        CancellationToken ct, Func<CancellationToken, Task>? authorizeMutation = null)
     {
         var statusRes = await RunGitCheckedAsync(workspacePath, ["status", "--porcelain=v1", "-uall"], ct)
             .ConfigureAwait(false);
@@ -745,6 +767,7 @@ public sealed partial class VcsService : IVcsService
 
         if (!string.IsNullOrWhiteSpace(commitMessageIfGit) && changedFiles.Count > 0 && !hasConflicts)
         {
+            if (authorizeMutation is not null) await authorizeMutation(ct).ConfigureAwait(false);
             await RunGitCheckedAsync(workspacePath, ["add", "-A"], ct).ConfigureAwait(false);
 
             var hasGitEmail = await HasConfiguredGitIdentityAsync(workspacePath, ct).ConfigureAwait(false);
@@ -761,6 +784,7 @@ public sealed partial class VcsService : IVcsService
             commitArgs.Add("-m");
             commitArgs.Add(commitMessageIfGit);
 
+            if (authorizeMutation is not null) await authorizeMutation(ct).ConfigureAwait(false);
             await RunGitCheckedAsync(workspacePath, commitArgs, ct).ConfigureAwait(false);
         }
 
@@ -1560,7 +1584,8 @@ public sealed partial class VcsService : IVcsService
         string jjExe,
         string workspacePath,
         string? targetRev,
-        CancellationToken ct)
+        CancellationToken ct,
+        Func<CancellationToken, Task>? authorizeMutation)
     {
         if (!string.IsNullOrWhiteSpace(targetRev))
         {
@@ -1568,6 +1593,7 @@ public sealed partial class VcsService : IVcsService
         }
 
         // Snapshot working copy and inspect whether @ is an untouched empty working-copy commit above @-.
+        if (authorizeMutation is not null) await authorizeMutation(ct).ConfigureAwait(false);
         var inspect = await RunJjCheckedAsync(
                 jjExe,
                 workspacePath,

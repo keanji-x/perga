@@ -58,12 +58,14 @@ public sealed partial class PergaKernelService
             throw KernelException.InvalidArgument("sourceId is required.");
         }
         // Keep this guard at the shared entry point for direct and dispatcher calls.
-        await GuardMcpToolCallAsync(caller, "perga", "system_upgrade_" + operation,
+        var toolName = "system_upgrade_" + operation;
+        var generation = await GuardMcpToolCallAsync(caller, "perga", toolName,
             JsonHelpers.ToElement(sourceId is null ? new Dictionary<string, string>() : new Dictionary<string, string> { ["sourceId"] = sourceId }), ct).ConfigureAwait(false);
         if (_systemUpgradeController is null)
         {
             throw KernelException.Conflict("System upgrades are not configured.");
         }
+        await EnsureMcpAuthorizationAsync(caller, generation, "perga", toolName, ct).ConfigureAwait(false);
         if (operation == "check")
         {
             return await _systemUpgradeController.CheckAsync(sourceId, ct).ConfigureAwait(false);

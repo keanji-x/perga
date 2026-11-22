@@ -297,6 +297,8 @@ public sealed partial class TrackActor
                     return await EnqueueAsync(async _ =>
                     {
                         var current = RequireSessionCore(sessionId);
+                        if (principal is InteropPrincipal.Session)
+                            RequireSessionMutationCore(current, principal, expectedEpoch, destructive: true);
                         var now = NowMs();
 
                         var compactTurn = new SessionTurnDto(
@@ -368,6 +370,13 @@ public sealed partial class TrackActor
 
                 var handoverSummary = summaryBuilder.ToString().Trim();
 
+                if (principal is InteropPrincipal.Session)
+                    await EnqueueAsync(_ =>
+                    {
+                        RequireSessionMutationCore(RequireSessionCore(sessionId), principal, expectedEpoch, destructive: true);
+                        return Task.CompletedTask;
+                    }, ct).ConfigureAwait(false);
+
                 // 2. Dispose old IAgentSession instance.
                 await _runtimes.Get(sessionId).CloseAsync(_options.SessionStartupTimeout, ct).ConfigureAwait(false);
 
@@ -376,6 +385,8 @@ public sealed partial class TrackActor
                 {
 
                     var current = RequireSessionCore(sessionId);
+                    if (principal is InteropPrincipal.Session)
+                        RequireSessionMutationCore(current, principal, expectedEpoch, destructive: true);
                     var now = NowMs();
 
                     var handoverTurn = new SessionTurnDto(

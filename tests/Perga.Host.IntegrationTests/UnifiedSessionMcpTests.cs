@@ -66,7 +66,12 @@ public sealed class UnifiedSessionMcpTests
         await Error(host, caller.Token, KernelMcpToolNames.SessionControl,
             new { sessionId = child.Session.Id, action = "stop", turnId = "retired-turn" }, "conflict", ct);
 
-        await WaitPage(kernel, child.Session.Id, page => page.ActiveTurn is null && page.LastTurn?.Status == "completed", ct);
+        var childSettled = await WaitPage(kernel, child.Session.Id, page => page.ActiveTurn is null && page.LastTurn?.Status == "completed", ct);
+        await Error(host, caller.Token, KernelMcpToolNames.SessionSend, new
+        {
+            sessionId = child.Session.Id, content = "Stale steer", requestKey = "stale-steer",
+            mode = "steer", turnId = childSettled.LastTurn!.Id
+        }, "conflict", ct);
         var nonLead = kernel.RuntimeCaller(child.Session.Id);
         await Error(host, nonLead.Token, KernelMcpToolNames.FlowCommit, new { dryRun = true }, "forbidden", ct);
         await kernel.UpdateSessionAsync(lead, new(Archived: true), Human, ct);
@@ -653,6 +658,7 @@ public sealed class UnifiedSessionMcpTests
         using var document = JsonDocument.Parse(text);
         Assert.Equal(code, document.RootElement.GetProperty("code").GetString());
         if (code == "forbidden") Assert.Equal(403, document.RootElement.GetProperty("status").GetInt32());
+        if (code == "conflict") Assert.Equal(409, document.RootElement.GetProperty("status").GetInt32());
     }
 
     private static async IAsyncEnumerable<UnifiedAgentEvent> CompleteTurn([EnumeratorCancellation] CancellationToken ct)

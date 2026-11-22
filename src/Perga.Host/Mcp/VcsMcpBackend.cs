@@ -67,7 +67,10 @@ public sealed class VcsMcpBackend : IMcpToolBackend
                 .ConfigureAwait(false);
 
             var (workspaceCwd, vcsService, forgeService) = await ResolveCallerWorkspaceAsync(caller, ct).ConfigureAwait(false);
-            await _kernel.EnsureMcpAuthorizationAsync(caller, generation, ct).ConfigureAwait(false);
+            await AuthorizeMutationAsync(ct).ConfigureAwait(false);
+
+            Task AuthorizeMutationAsync(CancellationToken token) =>
+                _kernel.EnsureMcpAuthorizationAsync(caller, generation, ServerName, toolName, token);
 
             if (toolName is VcsMcpToolNames.PublishPr or VcsMcpToolNames.PrChecks or VcsMcpToolNames.CiEvidence
                 or VcsMcpToolNames.PrMerge or VcsMcpToolNames.IssueView && forgeService is null)
@@ -80,7 +83,7 @@ public sealed class VcsMcpBackend : IMcpToolBackend
                 case VcsMcpToolNames.Status:
                 {
                     var commitMsg = McpToolResultFormatter.OptionalString(args, ["commitMessageIfGit", "commit_message"]);
-                    var snapshot = await vcsService.SnapshotWorkingCopyAsync(workspaceCwd, commitMsg, ct)
+                    var snapshot = await vcsService.SnapshotWorkingCopyAsync(workspaceCwd, commitMsg, ct, AuthorizeMutationAsync)
                         .ConfigureAwait(false);
                     return McpToolResultFormatter.Success(snapshot);
                 }
@@ -89,15 +92,15 @@ public sealed class VcsMcpBackend : IMcpToolBackend
                 {
                     var fromRev = McpToolResultFormatter.OptionalString(args, ["fromRev", "from_rev", "from"]);
                     var toRev = McpToolResultFormatter.OptionalString(args, ["toRev", "to_rev", "to"]);
-                    var diff = await vcsService.DiffAsync(workspaceCwd, fromRev, toRev, ct).ConfigureAwait(false);
+                    var diff = await vcsService.DiffAsync(workspaceCwd, fromRev, toRev, ct, AuthorizeMutationAsync).ConfigureAwait(false);
                     return McpToolResultFormatter.Success(diff);
                 }
 
                 case VcsMcpToolNames.RestoreOp:
                 {
                     var opId = McpToolResultFormatter.RequireString(args, ["opId", "op_id"]);
-                    await vcsService.RestoreOperationAsync(workspaceCwd, opId, ct).ConfigureAwait(false);
-                    var snapshot = await vcsService.SnapshotWorkingCopyAsync(workspaceCwd, null, ct).ConfigureAwait(false);
+                    await vcsService.RestoreOperationAsync(workspaceCwd, opId, ct, AuthorizeMutationAsync).ConfigureAwait(false);
+                    var snapshot = await vcsService.SnapshotWorkingCopyAsync(workspaceCwd, null, ct, AuthorizeMutationAsync).ConfigureAwait(false);
                     return McpToolResultFormatter.Success(new { ok = true, opId, snapshot });
                 }
 
@@ -105,7 +108,7 @@ public sealed class VcsMcpBackend : IMcpToolBackend
                 {
                     var upstream = McpToolResultFormatter.OptionalString(args, ["upstreamBranch", "upstream_branch", "upstream"])
                                    ?? "main";
-                    var snapshot = await vcsService.RebaseOntoUpstreamAsync(workspaceCwd, upstream, ct)
+                    var snapshot = await vcsService.RebaseOntoUpstreamAsync(workspaceCwd, upstream, ct, AuthorizeMutationAsync)
                         .ConfigureAwait(false);
                     return McpToolResultFormatter.Success(snapshot);
                 }
@@ -122,10 +125,10 @@ public sealed class VcsMcpBackend : IMcpToolBackend
                         pushElem.ValueKind == JsonValueKind.True)
                     {
                         var targetRev = McpToolResultFormatter.OptionalString(args, ["targetRev", "target_rev"]);
-                        await vcsService.PushBookmarkAsync(workspaceCwd, headBranch, targetRev, ct).ConfigureAwait(false);
-                        await _kernel.EnsureMcpAuthorizationAsync(caller, generation, ct).ConfigureAwait(false);
+                        await vcsService.PushBookmarkAsync(workspaceCwd, headBranch, targetRev, ct, AuthorizeMutationAsync).ConfigureAwait(false);
                     }
 
+                    await AuthorizeMutationAsync(ct).ConfigureAwait(false);
                     var pr = await forgeService!.PublishPrAsync(
                         new PrPublishRequest(workspaceCwd, headBranch, baseBranch, title, body),
                         ct).ConfigureAwait(false);
@@ -157,6 +160,7 @@ public sealed class VcsMcpBackend : IMcpToolBackend
                         args,
                         ["expectedHeadSha", "expected_head_sha", "headSha", "head_sha"]);
                     var repo = McpToolResultFormatter.OptionalString(args, ["repo", "repoOrPath"]) ?? workspaceCwd;
+                    await AuthorizeMutationAsync(ct).ConfigureAwait(false);
                     await forgeService!.MergePrAsync(repo, prNumber, expectedHeadSha, ct).ConfigureAwait(false);
                     return McpToolResultFormatter.Success(new { ok = true, prNumber, expectedHeadSha });
                 }

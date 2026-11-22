@@ -27,20 +27,30 @@ public sealed partial class TrackActor
         if (_disposed || _track.ClosedAtMs is not null || _deletingTrack || _closingTrack ||
             session.ArchivedAtMs is not null || session.Status is "unknown" or "stopping" ||
             identity.RuntimeBindingId is not { } bindingId ||
-            _mcpBridge.ResolveToken(identity.Token) is not { } credential ||
-            credential.TrackId != TrackId || credential.SessionId != session.Id || credential.RuntimeBindingId != bindingId ||
             !_runtimes.TryGetOpen(session.Id, out var open) || open.RuntimeBindingId != bindingId)
             throw KernelException.Conflict("The originating session runtime is no longer authorized.");
-        var runtime = _runtimes.Get(session.Id);
-        if (runtime.IsDisposing || runtime.IsShutdownUnconfirmed)
-            throw KernelException.Conflict("The originating session runtime is shutting down.");
+        RequireRuntimeWriteFence(identity, open, authorized);
+        return open;
+    }
+
+    // Also used at the recipient's mail commit point. Read only lifecycle state
+    // that is safe to observe without entering the sender's mailbox.
+    private void RequireRuntimeWriteFence(InteropPrincipal.Session identity, OpenSessionHandle open, bool authorized = true)
+    {
+        var runtime = _runtimes.Get(identity.SessionId);
+        if (_disposed || _track.ClosedAtMs is not null || _closingTrack || _deletingTrack ||
+            runtime.IsDisposing || runtime.IsShutdownUnconfirmed ||
+            _scheduler.TryGetActive(identity.SessionId, out var active) && active.Interrupted ||
+            _mcpBridge.ResolveToken(identity.Token) is not { } credential ||
+            credential.TrackId != TrackId || credential.SessionId != identity.SessionId ||
+            credential.RuntimeBindingId != open.RuntimeBindingId)
+            throw KernelException.Conflict("The originating session runtime is no longer authorized.");
         lock (open.RuntimeControl.Sync)
             if (open.RuntimeControl.Phase != ExecutionPhase.Running)
                 throw KernelException.Conflict("The originating session runtime is no longer authorized.");
         if (authorized && identity.AuthorizedPolicyGeneration != _policyGeneration)
             throw KernelException.PolicyDenied("Active policy changed after authorization.");
         runtime.TouchUsed();
-        return open;
     }
 
     private bool HasRuntimeCredential(string sessionId, OpenSessionHandle open) =>

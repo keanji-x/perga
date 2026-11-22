@@ -43,12 +43,12 @@ public sealed partial class TrackActor : IAsyncDisposable
 
     // Actor-owned mutable state (mutated strictly on the single-writer mailbox loop)
     private bool _hydrated;
-    private bool _closingTrack;
-    private TrackDto _track = null!;
+    private volatile bool _closingTrack;
+    private volatile TrackDto _track = null!;
     private volatile string? _executionTargetId;
     private CompiledPolicy? _policy;
     private string? _policyUnavailableReason;
-    private string _policyGeneration = Guid.NewGuid().ToString("N");
+    private volatile string _policyGeneration = Guid.NewGuid().ToString("N");
     private string? _templateSnapshotSource;
     private MountedWorkspace? _mountedWorkspace;
     private readonly Dictionary<string, AgentSessionDto> _sessions = new(StringComparer.Ordinal);
@@ -67,7 +67,7 @@ public sealed partial class TrackActor : IAsyncDisposable
     private int _inFlightExternalOps;
     private int _queuedMailboxOps;
     private long _lastActivityAtMs;
-    private bool _disposed;
+    private volatile bool _disposed;
 
     internal TrackActor(
         string trackId,
@@ -279,12 +279,12 @@ public sealed partial class TrackActor : IAsyncDisposable
         string? toTrackId,
         string summary,
         string body,
-        Func<MailDto, CancellationToken, Task> deliverToTargetTrack,
+        Func<MailDto, Action?, CancellationToken, Task> deliverToTargetTrack,
         CancellationToken ct, string? replyToMailId, InteropPrincipal.Session? authorization = null)
         => _interactions.SendCrossTrackMailAsync(callerSessionId, toTrackId, summary, body, deliverToTargetTrack, ct, replyToMailId, authorization);
 
-    internal Task ReceiveMailAsync(MailDto mail, CancellationToken ct = default)
-        => _interactions.ReceiveMailAsync(mail, ct);
+    internal Task ReceiveMailAsync(MailDto mail, CancellationToken ct = default, Action? authorizeDelivery = null)
+        => _interactions.ReceiveMailAsync(mail, ct, authorizeDelivery);
 
     public Task<IReadOnlyList<MailDto>> ListMailsAsync(bool unreadOnly = false, CancellationToken ct = default)
         => _interactions.ListMailsAsync(unreadOnly, ct);
