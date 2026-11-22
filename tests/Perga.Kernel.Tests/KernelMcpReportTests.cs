@@ -28,6 +28,8 @@ public sealed class KernelMcpReportTests
         Assert.Equal("boolean", commitProps.GetProperty("includeDocument").GetProperty("type").GetString());
 
         var readProps = tools[KernelMcpToolNames.ReportRead].InputSchema.GetProperty("properties");
+        Assert.Equal("string", readProps.GetProperty("trackId").GetProperty("type").GetString());
+        Assert.Equal(1, readProps.GetProperty("trackId").GetProperty("minLength").GetInt32());
         var readFormats = readProps.GetProperty("format").GetProperty("enum").EnumerateArray().Select(e => e.GetString()!).ToArray();
         Assert.Equal(["full", "blocks", "markdown", "outline"], readFormats);
         Assert.True(readProps.TryGetProperty("sectionH1", out _));
@@ -194,6 +196,288 @@ public sealed class KernelMcpReportTests
         var singleById = Assert.Single(byIds.GetProperty("blocks").EnumerateArray());
         Assert.Equal(metricsBlockId, singleById.GetProperty("id").GetString());
         Assert.Equal("Metrics updated safely.", singleById.GetProperty("markdown").GetString());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ReportRead_CurrentTrackIdPreservesTheSameResponseAsAnImplicitRead(bool widget)
+    {
+        await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
+        ctx.Kernel.Templates.RegisterTemplate("""
+            export default defineTemplate({
+              id: 'same-track-views', title: 'Same Track views',
+              report: { views: { overview: () => ({ items: ['Local data'] }) } }
+            });
+            """);
+        var (_, snap) = await ctx.CreateDefaultTrackAsync(templateId: widget ? "same-track-views" : null);
+        var caller = Caller(snap);
+        var local = await Call(ctx, caller, KernelMcpToolNames.ReportRead, new { });
+        const string widgetMarkdown = """
+            ```perga-block widget
+            {"use":"builtin:list","view":"overview"}
+            ```
+            """;
+        await Call(ctx, caller, KernelMcpToolNames.ReportCommit, new
+        {
+            anchor = local.GetProperty("anchor"),
+            ops = new[]
+            {
+                new { op = "replace_section", sectionH1 = "Overview", markdown = "Local overview." },
+                new { op = "replace_section", sectionH1 = "Details", markdown = widget ? widgetMarkdown : "Local details." }
+            }
+        });
+        var populated = await Call(ctx, caller, KernelMcpToolNames.ReportRead, new { });
+        Assert.Equal(widget, populated.TryGetProperty("templateViews", out _));
+        var blockId = populated.GetProperty("blocks")[0].GetProperty("id").GetString();
+
+        foreach (var options in new object[]
+        {
+            new { }, new { format = "outline" }, new { format = "blocks", includeContract = true },
+            new { sectionH1 = "Details" }, new { blockIds = new[] { blockId } }
+        })
+        {
+            var args = TestJson.FromObject(options).EnumerateObject().ToDictionary(p => p.Name, p => p.Value);
+            var implicitRead = await Call(ctx, caller, KernelMcpToolNames.ReportRead, args);
+            args["trackId"] = TestJson.FromObject(caller.TrackId);
+            var explicitRead = await Call(ctx, caller, KernelMcpToolNames.ReportRead, args);
+            Assert.Equal(implicitRead.GetRawText(), explicitRead.GetRawText());
+            Assert.True(explicitRead.TryGetProperty("anchor", out _));
+            Assert.True(explicitRead.TryGetProperty("tasks", out _));
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ReportRead_CrossTrackProjectsAnOpenOrClosedProseSnapshotWithoutActivatingIt(bool closed)
+    {
+        await using var ctx = new KernelTestContext();
+        var (area, source) = await ctx.CreateDefaultTrackAsync();
+        var target = await ctx.Kernel.CreateTrackAsync(new CreateTrackRequest(area.Id, Title: "Peer"));
+        var local = await Call(ctx, Caller(target), KernelMcpToolNames.ReportRead, new { });
+        var commit = await Call(ctx, Caller(target), KernelMcpToolNames.ReportCommit, new
+        {
+            anchor = local.GetProperty("anchor"),
+            ops = new[]
+            {
+                new { op = "replace_section", sectionH1 = "Overview", markdown = "Overview text." },
+                new { op = "replace_section", sectionH1 = "Metrics", markdown = "Metrics text." }
+            },
+            summary = "Peer report",
+            includeDocument = true
+        });
+        var trackId = target.Track.Id;
+        var metricsId = commit.GetProperty("blocks")[1].GetProperty("id").GetString();
+        if (closed)
+            await ctx.Kernel.CloseTrackAsync(trackId, target.Track.LeadSessionId!);
+        await ctx.Kernel.WaitForTrackIdleAsync(trackId);
+        await ctx.Kernel.Actors.RemoveAndDisposeAsync(trackId);
+        Assert.False(ctx.Kernel.Actors.IsTrackActiveInMemory(trackId));
+
+        Task<JsonElement> Read(object arguments) => Call(ctx, Caller(source), KernelMcpToolNames.ReportRead, arguments);
+
+        var full = await Read(new { trackId });
+        Assert.Equal(commit.GetProperty("docRev").GetInt32(), full.GetProperty("docRev").GetInt32());
+        Assert.Equal("Peer report", full.GetProperty("summary").GetString());
+        Assert.Equal(2, full.GetProperty("blocks").GetArrayLength());
+        Assert.Contains("Overview text.", full.GetProperty("renderedMarkdown").GetString());
+
+        var scoped = await Read(new { trackId, format = "blocks", sectionH1 = "# Metrics", includeContract = true });
+        Assert.Equal(metricsId, Assert.Single(scoped.GetProperty("blocks").EnumerateArray()).GetProperty("id").GetString());
+        Assert.True(scoped.GetProperty("blockContract").TryGetProperty("kinds", out _));
+        Assert.False(scoped.TryGetProperty("renderedMarkdown", out _));
+
+        var markdown = await Read(new { trackId, format = "markdown", blockIds = new[] { metricsId } });
+        Assert.Contains("Metrics text.", markdown.GetProperty("renderedMarkdown").GetString());
+        Assert.DoesNotContain("Overview text.", markdown.GetProperty("renderedMarkdown").GetString());
+        Assert.False(markdown.TryGetProperty("blocks", out _));
+
+        var outline = await Read(new { trackId, format = "outline" });
+        Assert.Equal(["Overview", "Metrics"], outline.GetProperty("sections").EnumerateArray().Select(s => s.GetString()));
+        Assert.Equal(2, outline.GetProperty("outlineBlocks").GetArrayLength());
+        Assert.False(outline.TryGetProperty("renderedMarkdown", out _));
+        Assert.False(outline.TryGetProperty("blocks", out _));
+
+        foreach (var response in new[] { full, scoped, markdown, outline })
+        {
+            Assert.Equal(trackId, response.GetProperty("trackId").GetString());
+            Assert.True(response.GetProperty("readOnly").GetBoolean());
+            Assert.False(response.TryGetProperty("anchor", out _));
+            Assert.False(response.TryGetProperty("tasks", out _));
+            Assert.False(response.TryGetProperty("templateViews", out _));
+        }
+        Assert.False(ctx.Kernel.Actors.IsTrackActiveInMemory(trackId));
+    }
+
+    [Fact]
+    public async Task ReportRead_OnlyLoadsAWidgetTracksTemplateViewsForContentFormats()
+    {
+        await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
+        var (area, caller) = await ctx.CreateDefaultTrackAsync();
+        ctx.Kernel.Templates.RegisterTemplate("""
+            export default defineTemplate({
+              id: 'cross-views', title: 'Cross-track views',
+              report: {
+                views: {
+                  privateTasks: (_, kernel) => {
+                    kernel.unreferencedViewRan = true;
+                    return kernel.tasks;
+                  },
+                  overview: (_, kernel) => ({
+                    items: [kernel.unreferencedViewRan ? 'Unreferenced view ran' : 'Visible from another Track']
+                  }),
+                  flow: (_, kernel) => kernel.tasks
+                }
+              }
+            });
+            """);
+        var target = await ctx.Kernel.CreateTrackAsync(new CreateTrackRequest(area.Id, TemplateId: "cross-views"));
+        var trackId = target.Track.Id;
+        var local = await Call(ctx, Caller(target), KernelMcpToolNames.ReportRead, new { });
+        await Call(ctx, Caller(target), KernelMcpToolNames.ReportCommit, new
+        {
+            anchor = local.GetProperty("anchor"),
+            ops = new[]
+            {
+                new { op = "replace_section", sectionH1 = "Prose", markdown = "Visible text." },
+                new { op = "replace_section", sectionH1 = "Widget", markdown = """
+                    ```perga-block widget
+                    {"use":"builtin:list","view":"overview"}
+                    ```
+                    """ },
+                new { op = "replace_section", sectionH1 = "Flow", markdown = """
+                    ```perga-block widget
+                    {"use":"builtin:flow","view":"flow"}
+                    ```
+                    """ }
+            }
+        });
+        await ctx.Kernel.CloseTrackAsync(trackId, target.Track.LeadSessionId!);
+        await ctx.Kernel.WaitForTrackIdleAsync(trackId);
+        await ctx.Kernel.Actors.RemoveAndDisposeAsync(trackId);
+
+        var outline = await Call(ctx, Caller(caller), KernelMcpToolNames.ReportRead, new { trackId, format = "outline" });
+        Assert.False(outline.TryGetProperty("templateViews", out _));
+        Assert.False(ctx.Kernel.Actors.IsTrackActiveInMemory(trackId));
+
+        var prose = await Call(ctx, Caller(caller), KernelMcpToolNames.ReportRead, new { trackId, sectionH1 = "Prose" });
+        Assert.False(prose.TryGetProperty("templateViews", out _));
+        var widget = await Call(ctx, Caller(caller), KernelMcpToolNames.ReportRead, new { trackId, sectionH1 = "Widget" });
+        var view = Assert.Single(widget.GetProperty("templateViews").EnumerateObject());
+        Assert.Equal("overview", view.Name);
+        var widgetBlock = Assert.Single(widget.GetProperty("blocks").EnumerateArray(), block => block.GetProperty("kind").GetString() == "widget");
+        var byId = await Call(ctx, Caller(caller), KernelMcpToolNames.ReportRead, new
+        {
+            trackId, blockIds = new[] { widgetBlock.GetProperty("id").GetString() }
+        });
+        Assert.Equal("overview", Assert.Single(byId.GetProperty("templateViews").EnumerateObject()).Name);
+        var flow = await Call(ctx, Caller(caller), KernelMcpToolNames.ReportRead, new { trackId, sectionH1 = "Flow" });
+        Assert.False(flow.TryGetProperty("templateViews", out _));
+
+        var full = await Call(ctx, Caller(caller), KernelMcpToolNames.ReportRead, new { trackId });
+        Assert.Equal("overview", Assert.Single(full.GetProperty("templateViews").EnumerateObject()).Name);
+        Assert.Equal("Visible from another Track", full.GetProperty("templateViews").GetProperty("overview")
+            .GetProperty("items")[0].GetString());
+        Assert.False(full.TryGetProperty("anchor", out _));
+        Assert.False(full.TryGetProperty("tasks", out _));
+
+        Assert.False(ctx.Kernel.Actors.IsTrackActiveInMemory(trackId));
+    }
+
+    [Fact]
+    public async Task ReportRead_MissingTrackReturnsNotFoundWithoutActivatingIt()
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        const string trackId = "trk_missing_report";
+        var error = await Assert.ThrowsAsync<KernelException>(() =>
+            Call(ctx, Caller(snap), KernelMcpToolNames.ReportRead, new { trackId }));
+        Assert.Equal(KernelErrorCode.NotFound, error.Code);
+        Assert.Equal($"Track '{trackId}' not found.", error.Message);
+        Assert.False(ctx.Kernel.Actors.IsTrackActiveInMemory(trackId));
+    }
+
+    [Fact]
+    public async Task ReportRead_BeforeHookCanDenyCrossTrackTarget()
+    {
+        await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        var caller = Caller(snap);
+        await Call(ctx, caller, KernelMcpToolNames.TrackSet, new
+        {
+            source = """
+                export default defineTemplate({
+                  id: 'cross-read-policy', title: 'Cross-track read policy',
+                  before(action) {
+                    return action.type === 'tool.report_read' && action.arguments.trackId === 'trk_protected'
+                      ? Deny('Report is restricted') : Allow();
+                  }
+                });
+                """
+        });
+
+        var error = await Assert.ThrowsAsync<KernelException>(() =>
+            Call(ctx, caller, KernelMcpToolNames.ReportRead, new { trackId = "trk_protected" }));
+        Assert.Equal(KernelErrorCode.PolicyDenied, error.Code);
+        Assert.Contains("Report is restricted", error.Message, StringComparison.Ordinal);
+        var local = await Call(ctx, caller, KernelMcpToolNames.ReportRead, new { });
+        Assert.True(local.TryGetProperty("anchor", out _));
+    }
+
+    [Fact]
+    public async Task ReportRead_CrossTrackProjectsWidgetStoredInMarkdown()
+    {
+        await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
+        var (area, source) = await ctx.CreateDefaultTrackAsync();
+        ctx.Kernel.Templates.RegisterTemplate("""
+            export default defineTemplate({
+              id: 'markdown-widget', title: 'Markdown widget',
+              report: { views: { summary: () => ({ count: 3 }), unused: (_, kernel) => kernel.tasks } }
+            });
+            """);
+        var target = await ctx.Kernel.CreateTrackAsync(new CreateTrackRequest(area.Id, TemplateId: "markdown-widget"));
+        var local = await Call(ctx, Caller(target), KernelMcpToolNames.ReportRead, new { });
+        await Call(ctx, Caller(target), KernelMcpToolNames.ReportCommit, new
+        {
+            anchor = local.GetProperty("anchor"),
+            ops = new[] { new { op = "upsert", id = "b_widget", blockKind = "widget", markdown = """{"use":"builtin:list","view":"summary"}""" } }
+        });
+        await ctx.Kernel.WaitForTrackIdleAsync(target.Track.Id);
+        await ctx.Kernel.Actors.RemoveAndDisposeAsync(target.Track.Id);
+
+        var response = await Call(ctx, Caller(source), KernelMcpToolNames.ReportRead,
+            new { trackId = target.Track.Id, blockIds = new[] { "b_widget" }, format = "blocks" });
+        var view = Assert.Single(response.GetProperty("templateViews").EnumerateObject());
+        Assert.Equal("summary", view.Name);
+        Assert.Equal(3, view.Value.GetProperty("count").GetInt32());
+        Assert.False(ctx.Kernel.Actors.IsTrackActiveInMemory(target.Track.Id));
+    }
+
+    [Theory]
+    [InlineData("""{"trackId":" "}""")]
+    [InlineData("""{"trackId":5}""")]
+    [InlineData("""{"trackId":null}""")]
+    public async Task ReportRead_RejectsInvalidTrackIds(string arguments)
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        var error = await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.InvokeKernelMcpToolAsync(
+            Caller(snap), KernelMcpToolNames.ReportRead, TestJson.Parse(arguments)));
+        Assert.Equal(KernelErrorCode.InvalidArgument, error.Code);
+    }
+
+    [Theory]
+    [InlineData("""{"trackId":true}""")]
+    [InlineData("""{"trackId":" "}""")]
+    public async Task ReportCommit_RejectsInvalidTrackIds(string arguments)
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        var error = await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.InvokeKernelMcpToolAsync(
+            Caller(snap), KernelMcpToolNames.ReportCommit, TestJson.Parse(arguments)));
+        Assert.Equal(KernelErrorCode.InvalidArgument, error.Code);
+        Assert.Contains("only supports writing the caller's Track", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]

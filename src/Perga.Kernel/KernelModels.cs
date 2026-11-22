@@ -80,6 +80,14 @@ public sealed record ReportReadResult(
     [property: JsonIgnore] IReadOnlyList<BlockChangeRecord>? Changes = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? DataRev = null);
 
+public sealed record ReportSnapshot(
+    int DocRev,
+    string Summary,
+    string RenderedMarkdown,
+    IReadOnlyList<ReportBlock> Blocks,
+    long? DataRev,
+    IReadOnlyDictionary<string, JsonElement>? TemplateViews);
+
 public sealed record ReportCommitRequest(
     ReadAnchor Anchor,
     IReadOnlyList<BlockOp> Ops,

@@ -108,5 +108,6 @@ public interface IPolicyVm
         CompiledPolicy policy,
         JsonElement inputs,
         JsonElement currentData,
-        JsonElement kernelSnapshot);
+        JsonElement kernelSnapshot,
+        IReadOnlySet<string>? viewNames = null);
 }

@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json;
 using Dapper;
 using Microsoft.Data.Sqlite;
 using Perga.Contracts;
@@ -74,6 +75,26 @@ internal sealed class TrackReadRepository
                 cancellationToken: ct)).ConfigureAwait(false);
 
         return rows.Select(MapTrack).ToList();
+    }
+
+    public async Task<IReadOnlyDictionary<string, string>> GetReportSummariesAsync(
+        IReadOnlyCollection<string> trackIds, CancellationToken ct)
+    {
+        if (trackIds.Count == 0)
+            return new Dictionary<string, string>(StringComparer.Ordinal);
+
+        _context.EnsureInitialized();
+        await using var conn = await _context.OpenReadConnectionAsync(ct).ConfigureAwait(false);
+        var rows = await conn.QueryAsync<(string TrackId, string Summary)>(new CommandDefinition(
+            """
+            SELECT track_id, summary
+            FROM reports
+            WHERE track_id IN (SELECT value FROM json_each(@TrackIds));
+            """,
+            new { TrackIds = JsonSerializer.Serialize(trackIds) },
+            cancellationToken: ct)).ConfigureAwait(false);
+
+        return rows.ToDictionary(row => row.TrackId, row => row.Summary, StringComparer.Ordinal);
     }
 
     public async Task<TrackDto?> GetTrackAsync(string trackId, CancellationToken ct)

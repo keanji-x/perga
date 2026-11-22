@@ -15,6 +15,8 @@ public static class KernelMcpToolNames
     public const string SystemUpgradeRollback = "system_upgrade_rollback";
 
     // Shared across all sessions (Lead, free Subagent, contract Subagent)
+    public const string AreaList = "area_list";
+    public const string TrackList = "track_list";
     public const string ReportRead = "report_read";
     public const string ReportCommit = "report_commit";
     public const string DataPatch = "data_patch";
@@ -55,6 +57,8 @@ public static class KernelMcpToolNames
     public static readonly IReadOnlyList<string> All =
     [
         SystemUpgradeCheck, SystemUpgradeApply, SystemUpgradeRollback,
+        AreaList,
+        TrackList,
         ReportRead,
         ReportCommit,
         DataPatch,
@@ -159,7 +163,17 @@ public static class KernelMcpCatalog
                 Schema("""{"type":"object","additionalProperties":false,"required":["sourceId"],"properties":{"sourceId":{"type":"string"}}}"""), openWorldDestructive),
             new(KernelMcpToolNames.SystemUpgradeRollback, "Schedule detached rollback to the previous release (Lead only).",
                 Schema("""{"type":"object","additionalProperties":false,"properties":{}}"""), localDestructive),
-            new(KernelMcpToolNames.ReportRead, "Read the current track report document, block revisions, and read anchor. Supports optional format ('full'|'blocks'|'markdown'|'outline'), sectionH1/blockIds scoping, and includeContract for perga-block authoring specs.",
+            new(KernelMcpToolNames.AreaList, "List Areas and their open and closed Track counts.",
+                Schema("""{"type":"object","additionalProperties":false,"properties":{}}"""), readOnlyLocal),
+            new(KernelMcpToolNames.TrackList, "List Tracks and their report summaries. Defaults to open Tracks in the current Area.",
+                Schema("""
+                {"type":"object","additionalProperties":false,"properties":{
+                  "area":{"type":"string","minLength":1,"description":"Area ID or exact Area name (case-insensitive). Use '*' for all Areas."},
+                  "query":{"type":"string","minLength":1,"description":"Case-insensitive substring of a Track title, report summary, or ID."},
+                  "includeClosed":{"type":"boolean","description":"Include closed Tracks. Defaults to false."}
+                }}
+                """), readOnlyLocal),
+            new(KernelMcpToolNames.ReportRead, "Read a Track report. Omit trackId for the current Track and its read anchor, or pass another Track ID for a read-only snapshot. Supports format ('full'|'blocks'|'markdown'|'outline'), sectionH1/blockIds scoping, and includeContract for perga-block authoring specs.",
                 Schema(KernelMcpReportSupport.ReportReadSchemaJson), readOnlyLocal),
             new(KernelMcpToolNames.ReportCommit, "Atomically apply block operations (replace_section, upsert, delete, move) to the track report using a ReadAnchor. Returns a compact commit receipt by default; set includeDocument=true for full renderedMarkdown and blocks.",
                 Schema(KernelMcpReportSupport.ReportCommitSchemaJson), localWrite),
@@ -324,7 +338,7 @@ public static class KernelMcpDispatcher
         JsonElement arguments,
         CancellationToken ct = default)
     {
-        var args = arguments.ValueKind == JsonValueKind.Undefined ? JsonHelpers.EmptyObject : arguments;
+        var args = arguments.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null ? JsonHelpers.EmptyObject : arguments;
         if (!KernelMcpToolNames.All.Contains(toolName))
             throw KernelException.NotFound($"Unknown kernel MCP tool '{toolName}'.");
         if (toolName is KernelMcpToolNames.SystemUpgradeCheck or KernelMcpToolNames.SystemUpgradeApply or KernelMcpToolNames.SystemUpgradeRollback)
@@ -332,6 +346,7 @@ public static class KernelMcpDispatcher
             return await kernel.InvokeSystemUpgradeAsync(caller,
                 toolName == KernelMcpToolNames.SystemUpgradeCheck ? "check" : toolName == KernelMcpToolNames.SystemUpgradeApply ? "apply" : "rollback", args, ct).ConfigureAwait(false);
         }
+
         var origin = KernelMcpCatalog.IsCompletionOnly(toolName) && caller.BoundTaskId is not null
             ? await kernel.Actors.GetOrActivate(caller.TrackId).CaptureWorkerCompletionOriginAsync(caller, ct).ConfigureAwait(false)
             : null;
@@ -346,8 +361,31 @@ public static class KernelMcpDispatcher
     {
         switch (toolName)
         {
+            case KernelMcpToolNames.AreaList:
+                RejectUnknownArgs(args, ToolSchema(toolName));
+                return JsonHelpers.ToElement(await kernel.DiscoverAreasAsync(caller.TrackId, ct).ConfigureAwait(false));
+
+            case KernelMcpToolNames.TrackList:
+            {
+                RejectUnknownArgs(args, ToolSchema(toolName));
+                var area = OptionalNonBlankStringArg(args, ["area"]);
+                var query = OptionalNonBlankStringArg(args, ["query"]);
+                return JsonHelpers.ToElement(await kernel.DiscoverTracksAsync(
+                    caller.TrackId, area, query, ParseIncludeClosed(args), ct).ConfigureAwait(false));
+            }
+
             case KernelMcpToolNames.ReportRead:
             {
+                var trackId = OptionalNonBlankStringArg(args, ["trackId"]);
+                var options = KernelMcpReportSupport.ParseReadOptions(args);
+                if (trackId is not null && trackId != caller.TrackId)
+                {
+                    var snapshot = await kernel.ReadReportSnapshotAsync(
+                        trackId, options.SectionH1, options.BlockIds, includeTemplateViews: options.Format != "outline", ct)
+                        .ConfigureAwait(false);
+                    return KernelMcpReportSupport.FormatReportSnapshotResponse(trackId, snapshot, options);
+                }
+
                 var res = await kernel.ReadReportAsync(caller.TrackId, caller.SessionId, ct).ConfigureAwait(false);
                 Perga.PolicyVm.TemplateViewsProjection? templateViews = null;
                 if (res.Blocks.Any(b => b.Kind == ReportBlockKind.Widget))
@@ -355,11 +393,12 @@ public static class KernelMcpDispatcher
                     templateViews = await kernel.GetTrackViewsAsync(caller.TrackId, ct).ConfigureAwait(false);
                 }
 
-                return KernelMcpReportSupport.FormatReportReadResponse(res, args, templateViews);
+                return KernelMcpReportSupport.FormatReportReadResponse(res, options, templateViews);
             }
 
             case KernelMcpToolNames.ReportCommit:
             {
+                RequireLocalReportCommit(args, caller.TrackId);
                 var commitReq = ParseReportCommitArgs(args);
                 var includeDocument = KernelMcpReportSupport.ParseIncludeDocumentArg(args);
                 var res = await kernel.CommitReportAsync(caller.TrackId, caller.SessionId, commitReq, ct, caller.ExecutionOrigin, expectedPolicyGeneration)
@@ -696,6 +735,35 @@ public static class KernelMcpDispatcher
         if (elem.ValueKind != JsonValueKind.String)
             throw KernelException.InvalidArgument($"'{keys[0]}' must be a string.");
         return elem.GetString();
+    }
+
+    private static bool ParseIncludeClosed(JsonElement args)
+    {
+        if (!JsonHelpers.TryGetPropertyIgnoreCase(args, ["includeClosed"], out var value))
+            return false;
+        if (value.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+            throw KernelException.InvalidArgument("Argument 'includeClosed' must be a boolean.");
+        return value.GetBoolean();
+    }
+
+    private static string? OptionalNonBlankStringArg(JsonElement args, ReadOnlySpan<string> keys)
+    {
+        if (!JsonHelpers.TryGetPropertyIgnoreCase(args, keys, out var elem))
+            return null;
+        if (elem.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(elem.GetString()))
+            throw KernelException.InvalidArgument($"Argument '{keys[0]}' must be a non-empty string.");
+        return elem.GetString();
+    }
+
+    private static void RequireLocalReportCommit(JsonElement args, string trackId)
+    {
+        if (JsonHelpers.TryGetPropertyIgnoreCase(args, ["trackId"], out var target) &&
+            target.ValueKind != JsonValueKind.Null &&
+            (target.ValueKind != JsonValueKind.String || target.GetString() != trackId))
+        {
+            throw KernelException.InvalidArgument(
+                "report_commit only supports writing the caller's Track. Omit 'trackId' or use the caller's Track ID.");
+        }
     }
 
     private static ReportCommitRequest ParseReportCommitArgs(JsonElement args)

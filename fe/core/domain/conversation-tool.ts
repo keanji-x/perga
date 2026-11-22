@@ -1,4 +1,5 @@
 import {
+    AREA_LIST_TOOL,
     DEV_PUBLISH_TOOL,
     MAIL_SEND_TOOL,
     normalizeMcpToolName,
@@ -6,7 +7,7 @@ import {
     TASK_ACCEPT_TOOL,
     TASK_LIST_TOOL,
     TASK_REJECT_TOOL,
-    TRACK_RENAME_TOOL, TRACK_SET_TOOL, TRACK_TOOL_PREFIX,
+    TRACK_LIST_TOOL, TRACK_RENAME_TOOL, TRACK_SET_TOOL, TRACK_TOOL_PREFIX,
     USER_ASK_TOOL,
 } from '../keys/mcp-tools.js';
 const ACTIVITY_TARGET_MAX = 64;
@@ -31,7 +32,8 @@ export function conversationToolShape(recordedTool: string, args: unknown): Acti
     return { running: 'Writing report', done: 'Wrote report', target: null };
   }
   if (REPORT_READ_TOOLS.includes(tool)) {
-    return { running: 'Reading report', done: 'Read report', target: null };
+    const trackId = typeof args === 'object' && args !== null ? (args as { trackId?: unknown }).trackId : undefined;
+    return { running: 'Reading report', done: 'Read report', target: typeof trackId === 'string' ? clip(trackId) : null };
   }
   if (tool === TASK_ACCEPT_TOOL) {
     return { running: 'Accepting task', done: 'Accepted task', target: null };
@@ -55,6 +57,15 @@ export function conversationToolShape(recordedTool: string, args: unknown): Acti
   if (tool === MAIL_SEND_TOOL) {
     const summary = typeof args === 'object' && args !== null ? (args as { summary?: unknown }).summary : undefined;
     return { running: 'Sending mail', done: 'Sent mail', target: typeof summary === 'string' ? clip(summary) : null };
+  }
+  if (tool === AREA_LIST_TOOL) {
+    return { running: 'Listing areas', done: 'Listed areas', target: null };
+  }
+  if (tool === TRACK_LIST_TOOL) {
+    const filters = typeof args === 'object' && args !== null ? args as { area?: unknown; query?: unknown } : {};
+    const area = filters.area === '*' ? 'all areas' : typeof filters.area === 'string' ? clip(filters.area) : null;
+    const query = typeof filters.query === 'string' ? clip(filters.query) : null;
+    return { running: 'Listing tracks', done: 'Listed tracks', target: area ?? query };
   }
   if (tool.startsWith(TRACK_TOOL_PREFIX)) {
     return { running: 'Reading the track', done: 'Read the track', target: null };

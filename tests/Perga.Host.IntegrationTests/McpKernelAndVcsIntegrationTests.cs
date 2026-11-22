@@ -225,6 +225,10 @@ public sealed class McpKernelAndVcsIntegrationTests
         var hostBridge = cluster.Services.GetRequiredService<HostMcpSessionBridge>();
         var leadToken = hostBridge.GetTokenForSession(trackALeadId)!;
         var peerLeadToken = hostBridge.GetTokenForSession(trackBLeadId)!;
+        var peerReport = await kernel.ReadReportAsync(trackBId, trackBLeadId, ct);
+        var seededPeer = await kernel.CommitReportAsync(trackBId, trackBLeadId, new ReportCommitRequest(
+            peerReport.Anchor, [new Perga.ReportDoc.BlockOp.ReplaceSectionOp("Peer report", "Persisted peer content.")],
+            Summary: "Discovery integration marker"), ct);
 
         // 1. Lead gets shared, governance and unified session tools.
         var leadTools = await ListToolNamesAsync(cluster, "/mcp/kernel", leadToken, ct);
@@ -254,7 +258,8 @@ public sealed class McpKernelAndVcsIntegrationTests
         var (readText, readErr) = await CallToolAsync(cluster, "/mcp/kernel", leadToken, KernelMcpToolNames.ReportRead, new { }, ct);
         Assert.False(readErr);
         using var reportReadDoc = JsonDocument.Parse(readText);
-        var anchorElem = reportReadDoc.RootElement.GetProperty("anchor");
+        Assert.True(reportReadDoc.RootElement.TryGetProperty("anchor", out _));
+        await AssertTrackDiscoveryAsync(cluster, leadToken, area.Id, trackBId, ct);
 
         // Prepare subagent hook to pause inside contract attempt so we can exercise BoundAttemptId != null fences!
         var contractSubagentTokenTcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -304,6 +309,7 @@ public sealed class McpKernelAndVcsIntegrationTests
         Assert.Contains(KernelMcpToolNames.SessionList, subTools);
         Assert.Contains(KernelMcpToolNames.SessionRead, subTools);
         Assert.DoesNotContain(KernelMcpToolNames.TrackClose, subTools);
+        await AssertTrackDiscoveryAsync(cluster, contractToken, area.Id, trackBId, ct);
 
         // Bound Workers cannot invoke governance even when bypassing tools/list.
         foreach (var (govTool, govArgs) in new (string, object)[]
@@ -342,22 +348,25 @@ public sealed class McpKernelAndVcsIntegrationTests
             ct);
         Assert.True(taskBlockEditErr);
 
-        // Contract Subagent editing a 'prose' block -> allowed!
-        var (_, proseEditErr) = await CallToolAsync(
-            cluster,
-            "/mcp/kernel",
-            contractToken,
-            KernelMcpToolNames.ReportCommit,
-            new
-            {
-                anchor = subAnchor,
-                ops = new object[]
-                {
-                    new { op = "upsert_block", id = "b_sub_note", blockKind = "prose", markdown = "## Worker Progress\n\nAll checks green.\n" }
-                }
-            },
-            ct);
-        Assert.False(proseEditErr);
+        var proseOps = new[]
+        {
+            new { op = "upsert_block", id = "b_sub_note", blockKind = "prose", markdown = "## Worker Progress\n\nAll checks green.\n" }
+        };
+        var (invalidCommit, invalidCommitError) = await CallToolAsync(cluster, "/mcp/kernel", contractToken,
+            KernelMcpToolNames.ReportCommit, new { trackId = trackBId, anchor = subAnchor, ops = proseOps }, ct);
+        Assert.True(invalidCommitError);
+        using var invalidCommitDoc = JsonDocument.Parse(invalidCommit);
+        Assert.Equal("invalid_argument", invalidCommitDoc.RootElement.GetProperty("code").GetString());
+        Assert.Contains("only supports writing the caller's Track", invalidCommitDoc.RootElement.GetProperty("error").GetString());
+
+        var (proseEdit, proseEditErr) = await CallToolAsync(cluster, "/mcp/kernel", contractToken,
+            KernelMcpToolNames.ReportCommit, new { anchor = subAnchor, ops = proseOps }, ct);
+        Assert.False(proseEditErr, proseEdit);
+        var updatedLocal = await kernel.ReadReportAsync(trackAId, trackALeadId, ct);
+        Assert.Contains(updatedLocal.Blocks, block => block.Id == "b_sub_note");
+        var updatedPeer = await kernel.ReadReportAsync(trackBId, trackBLeadId, ct);
+        Assert.Equal(seededPeer.DocRev, updatedPeer.DocRev);
+        Assert.Equal(seededPeer.RenderedMarkdown, updatedPeer.RenderedMarkdown);
 
         // Contract Subagent submits work via task_done!
         var (doneText, doneErr) = await CallToolAsync(
@@ -556,6 +565,41 @@ public sealed class McpKernelAndVcsIntegrationTests
             new { },
             ct);
         Assert.False(clsErr, clsText);
+    }
+
+    private static async Task AssertTrackDiscoveryAsync(
+        PergaHostTestCluster cluster, string token, string areaId, string targetTrackId, CancellationToken ct)
+    {
+        const string path = "/mcp/kernel";
+        var tools = await ListToolsAsync(cluster, path, token, ct);
+        foreach (var name in new[] { KernelMcpToolNames.AreaList, KernelMcpToolNames.TrackList, KernelMcpToolNames.ReportRead })
+        {
+            AssertToolAnnotations(tools[name], readOnly: true, destructive: false, openWorld: false, idempotent: true);
+        }
+
+        var (areas, areasError) = await CallToolAsync(cluster, path, token, KernelMcpToolNames.AreaList, new { }, ct);
+        Assert.False(areasError, areas);
+        using var areaList = JsonDocument.Parse(areas);
+        Assert.Equal(areaId, areaList.RootElement.GetProperty("currentAreaId").GetString());
+
+        var (tracks, tracksError) = await CallToolAsync(cluster, path, token, KernelMcpToolNames.TrackList,
+            new { area = "*", query = "integration MARKER" }, ct);
+        Assert.False(tracksError, tracks);
+        using var trackList = JsonDocument.Parse(tracks);
+        var target = Assert.Single(trackList.RootElement.GetProperty("tracks").EnumerateArray());
+        Assert.Equal(targetTrackId, target.GetProperty("id").GetString());
+        Assert.Equal("Discovery integration marker", target.GetProperty("reportSummary").GetString());
+
+        var (report, reportError) = await CallToolAsync(cluster, path, token, KernelMcpToolNames.ReportRead,
+            new { trackId = targetTrackId, format = "markdown" }, ct);
+        Assert.False(reportError, report);
+        using var snapshot = JsonDocument.Parse(report);
+        var root = snapshot.RootElement;
+        Assert.Equal(targetTrackId, root.GetProperty("trackId").GetString());
+        Assert.True(root.GetProperty("readOnly").GetBoolean());
+        Assert.Contains("Persisted peer content.", root.GetProperty("renderedMarkdown").GetString());
+        Assert.False(root.TryGetProperty("anchor", out _));
+        Assert.False(root.TryGetProperty("tasks", out _));
     }
 
     [Fact]
@@ -795,7 +839,7 @@ public sealed class McpKernelAndVcsIntegrationTests
         string mcpPath,
         string token,
         string toolName,
-        object arguments,
+        object? arguments,
         CancellationToken ct)
     {
         using var resp = await cluster.PostMcpAsync(

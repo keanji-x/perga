@@ -173,6 +173,25 @@ it.each(['task_list', 'task_ls', 'perga_task_ls', 'perga:perga_task_ls'])('rende
   ]);
 });
 
+it.each([
+  ['area_list', {}, 'Listing areas', 'Listed areas', null],
+  ['perga_track_list', { area: 'Research', query: 'paper' }, 'Listing tracks', 'Listed tracks', 'Research'],
+  ['track_list', { query: 'report digest' }, 'Listing tracks', 'Listed tracks', 'report digest'],
+  ['track_list', { area: '*' }, 'Listing tracks', 'Listed tracks', 'all areas'],
+  ['track_list', {}, 'Listing tracks', 'Listed tracks', null],
+  ['perga_report_read', { trackId: 'trk_peer' }, 'Reading report', 'Read report', 'trk_peer'],
+  ['report_read', {}, 'Reading report', 'Read report', null],
+  ['report_read', { trackId: '  ' }, 'Reading report', 'Read report', null],
+] as const)('renders running and completed %s activities', (name, args, running, done, target) => {
+  const call = item(1, 'tool_call', { callId: 'discovery', name, args });
+  const result = item(2, 'tool_result', { callId: 'discovery', output: {}, isError: false });
+  const project = (items: unknown[]) => buildConversationTranscript(
+    conversationItemsOperation('session', null).responseSchema.parse(pergaPage(items)).items, null);
+
+  expect(project([call])).toMatchObject([{ author: 'activity', verb: running, state: 'running', target }]);
+  expect(project([call, result])).toMatchObject([{ author: 'activity', verb: done, state: 'done', target }]);
+});
+
 it('bounds thinking and tool disclosures without losing failure evidence', () => {
   const rows = [item(1, 'thinking', { text: 'x'.repeat(40_000) }),
     item(2, 'tool_call', { callId: 'call', name: 'custom' }), item(3, 'tool_result', { callId: 'call', isError: true, output: 'y'.repeat(40_000) })];
