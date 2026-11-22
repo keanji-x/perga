@@ -1098,7 +1098,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
             var task = RequireTaskCore(taskKeyOrId);
             RequireTaskOwnershipCore(callerSessionId, task);
-            if (_activeTasks.ContainsKey(task.Id))
+            if (_activeTasks.ContainsKey(task.Id) || _activeWatches.ContainsKey(task.Id))
                 throw KernelException.Conflict("Wait for the current task run to finish before rejecting or requeuing the task.");
             var effectiveNote = string.IsNullOrWhiteSpace(note) ? "Rejected by user." : note.Trim();
 

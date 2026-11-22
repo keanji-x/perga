@@ -717,6 +717,46 @@ public sealed class TrackFlowTests
         Assert.Contains("deploy-check --env=prod", observedCmds);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task GateRequiredTemplateRejectsCommandWatchButAllowsPrChecks(bool dryRun)
+    {
+        await using var ctx = new KernelTestContext(policyVm: new Perga.PolicyVm.PolicyVm());
+        ctx.Kernel.Templates.RegisterTemplate("""
+            export default defineTemplate({
+              id: "gate-required",
+              title: "Gate Required",
+              tasks: { requireGateForReadWrite: true }
+            });
+            """);
+        var (_, snap) = await ctx.CreateDefaultTrackAsync(templateId: "gate-required");
+        var trackId = snap.Track.Id;
+
+        const string commandWatch = """
+            {"rev":0,"nodes":[{"id":"shell","do":{"kind":"watch","cmd":"probe"}}]}
+            """;
+        var rejected = await ctx.Kernel.CommitTrackFlowAsync(trackId, dryRun, 0, Human, content: commandWatch);
+        Assert.False(rejected.Ok);
+        var diagnostic = Assert.Single(rejected.Diagnostics);
+        Assert.Equal("$.nodes[0].do.cmd", diagnostic.Path);
+        Assert.Contains("gate", diagnostic.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0L, (await ctx.Kernel.GetTrackFlowAsync(trackId)).FlowRev);
+        Assert.Empty((await ctx.Kernel.GetTrackAggregateAsync(trackId)).Tasks);
+        Assert.Empty(ctx.CommandRunner.ExecutedCommands);
+
+        const string prWatch = """
+            {"rev":0,"nodes":[
+              {"id":"shell","canceled":true,"do":{"kind":"watch","cmd":"probe"}},
+              {"id":"forge","when":{"cron":"* * * * *"},"do":{"kind":"watch","prChecks":1}}
+            ]}
+            """;
+        var committed = await ctx.Kernel.CommitTrackFlowAsync(trackId, false, 0, Human, content: prWatch);
+        Assert.True(committed.Ok, JsonSerializer.Serialize(committed.Diagnostics));
+        Assert.Equal(1L, (await ctx.Kernel.GetTrackFlowAsync(trackId)).FlowRev);
+        Assert.Empty(ctx.CommandRunner.ExecutedCommands);
+    }
+
     [Fact]
     public async Task BackgroundGc_ArchivesUnreachableOneShotBranch_AndAdvancesFlowRev()
     {
@@ -995,6 +1035,56 @@ public sealed class TrackFlowTests
         Assert.True((await cancel.WaitAsync(TimeSpan.FromSeconds(5))).Ok);
         await ctx.Kernel.WaitForTrackIdleAsync(trackId);
         Assert.Single(ctx.CommandRunner.ExecutedCommands, req => req.Command == "next");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task RejectingRunningCommandWatchConflictsUntilProbeReleasesWorkspace(bool reQueue)
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        var trackId = snap.Track.Id;
+        var probeStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseProbe = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        ctx.CommandRunner.Handler = async (request, ct) =>
+        {
+            if (request.Command == "probe")
+            {
+                probeStarted.TrySetResult();
+                await releaseProbe.Task.WaitAsync(ct);
+            }
+            return new ShellCommandResult(0, "", "", false, 1);
+        };
+        const string flow = """
+            {"rev":0,"nodes":[
+              {"id":"watch","do":{"kind":"watch","cmd":"probe"}},
+              {"id":"next","do":{"kind":"run","cmd":"next"}}
+            ]}
+            """;
+        try
+        {
+            Assert.True((await ctx.Kernel.CommitTrackFlowAsync(trackId, false, 0, Human, content: flow)).Ok);
+            await probeStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+            var conflict = await Assert.ThrowsAsync<KernelException>(() =>
+                ctx.Kernel.RejectTaskAsync(trackId, null, "watch", "reject while running", reQueue));
+            Assert.Equal(KernelErrorCode.Conflict, conflict.Code);
+            var track = await ctx.Kernel.GetTrackAggregateAsync(trackId);
+            Assert.Equal(TaskRunStatus.Running, Assert.Single(track.Tasks, task => task.TaskKey == "watch").Status);
+            Assert.Equal(TaskRunStatus.Pending, Assert.Single(track.Tasks, task => task.TaskKey == "next").Status);
+            Assert.DoesNotContain(ctx.CommandRunner.ExecutedCommands, cmd => cmd.Command == "next");
+        }
+        finally
+        {
+            releaseProbe.TrySetResult();
+        }
+        await ctx.Kernel.WaitForTrackIdleAsync(trackId).WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(new[] { "probe", "next" }, ctx.CommandRunner.ExecutedCommands.Select(cmd => cmd.Command));
+        var settled = await ctx.Kernel.GetTrackAggregateAsync(trackId);
+        Assert.Equal(TaskRunStatus.Done, Assert.Single(settled.Tasks, task => task.TaskKey == "watch").Status);
+        Assert.Equal(TaskRunStatus.Done, Assert.Single(settled.Tasks, task => task.TaskKey == "next").Status);
     }
 
     [Fact]

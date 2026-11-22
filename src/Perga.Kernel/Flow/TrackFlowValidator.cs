@@ -153,7 +153,7 @@ internal static class TrackFlowValidator
             }
         }
 
-        // 6. Validate `do.session` ownership, occupancy, and template routing enforcement
+        // 6. Validate `do.session` ownership, occupancy, and dispatch requirements
         for (var i = 0; i < nextSpec.Nodes.Count; i++)
         {
             var node = nextSpec.Nodes[i];
@@ -164,7 +164,7 @@ internal static class TrackFlowValidator
 
             ValidateSessionBinding(node, i, nextById, existingTasks, activeTaskIds, sessions, leadSessionId, errors);
             var reused = node.Do.Session is { } id && sessions.TryGetValue(id, out var session) ? session : null;
-            ValidateTemplateRouting(node, i, reused, policy, policyVm, templateInputs, errors);
+            ValidateTaskDispatch(node, i, reused, policy, policyVm, templateInputs, errors);
         }
 
         return errors;
@@ -429,7 +429,7 @@ internal static class TrackFlowValidator
         return false;
     }
 
-    private static void ValidateTemplateRouting(
+    private static void ValidateTaskDispatch(
         FlowNodeSpecDto node,
         int index,
         AgentSessionDto? reusedSession,
@@ -439,7 +439,17 @@ internal static class TrackFlowValidator
         List<FlowValidationErrorDto> errors)
     {
         if (node.Do.Kind != "run")
+        {
+            if (node.Do.Kind == "watch" && !string.IsNullOrWhiteSpace(node.Do.Cmd) &&
+                policy?.Manifest.RequireGateForReadWrite == true)
+            {
+                errors.Add(new FlowValidationErrorDto(
+                    $"$.nodes[{index}].do.cmd",
+                    $"Template policy requires a gate for read_write node '{node.Id}'. Command watches have no gate field.",
+                    "Use a prChecks watch or a run node with a verification gate."));
+            }
             return;
+        }
 
         var access = node.Do.Access ?? "read_write";
         var provider = Perga.Kernel.Tasks.TaskBlockSynchronizer.NormalizeProviderId(node.Do.Provider);
