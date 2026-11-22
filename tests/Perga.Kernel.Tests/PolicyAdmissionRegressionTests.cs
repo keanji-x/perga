@@ -10,9 +10,6 @@ namespace Perga.Kernel.Tests;
 [Collection("Template policy sandbox")]
 public sealed class PolicyAdmissionRegressionTests
 {
-    private static McpSessionPrincipal Caller(TrackAggregateSnapshot snapshot) =>
-        new("token", snapshot.Track.Id, snapshot.Track.LeadSessionId!, true, null, null, []);
-
     private static Task<System.Text.Json.JsonElement> SetPolicy(KernelTestContext ctx, McpSessionPrincipal caller, string source) =>
         KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller, KernelMcpToolNames.TrackSet, TestJson.FromObject(new { source }));
 
@@ -21,7 +18,7 @@ public sealed class PolicyAdmissionRegressionTests
     {
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
-        var caller = Caller(snapshot);
+        var caller = await ctx.OpenMcpCallerAsync(snapshot.Track.LeadSessionId!);
         await SetPolicy(ctx, caller, """
             export default {
               id: 'discovery', title: 'Discovery',
@@ -64,8 +61,7 @@ public sealed class PolicyAdmissionRegressionTests
             await Task.Delay(5, ct);
             lead = await ctx.Kernel.GetSessionItemsAsync(leadId, new(), human, ct);
         }
-        var caller = ctx.Kernel.McpSessionBridge.RegisterSession(track.Id, leadId, true, null, null, []).Principal
-            with { ExecutionOrigin = new(lead.ActiveTurn.Id) };
+        var caller = ctx.RuntimeCaller(leadId);
         var probing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         ctx.AgentRuntime.ProbeScript = async token =>
@@ -109,12 +105,12 @@ public sealed class PolicyAdmissionRegressionTests
     {
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
-        var caller = Caller(snapshot);
+        var caller = await ctx.OpenMcpCallerAsync(snapshot.Track.LeadSessionId!);
         await SetPolicy(ctx, caller, "export default {id:'ask',title:'Ask',before:a=>a.type==='report.commit'?AskHuman('Approve?',{approve:'Approve',deny:'Reject'}):Allow()};");
         var report = await ctx.Kernel.ReadReportAsync(caller.TrackId);
         using var cancellation = new CancellationTokenSource();
         var commit = ctx.Kernel.CommitReportAsync(caller.TrackId, caller.SessionId,
-            new(report.Anchor, [new BlockOp.UpsertBlockOp("note", ReportBlockKind.Prose, "Note", null)]), cancellation.Token);
+            new(report.Anchor, [new BlockOp.UpsertBlockOp("note", ReportBlockKind.Prose, "Note", null)]), cancellation.Token, await ctx.AuthorizeAsync(caller));
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         TrackAggregateSnapshot pending;
         do
@@ -140,7 +136,7 @@ public sealed class PolicyAdmissionRegressionTests
     {
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
-        var caller = Caller(snapshot);
+        var caller = await ctx.OpenMcpCallerAsync(snapshot.Track.LeadSessionId!);
         await SetPolicy(ctx, caller, """
             export default { id: 'ask', title: 'Ask', data: { initial: { locked: false } },
               before(action, ctx) {
@@ -151,7 +147,7 @@ public sealed class PolicyAdmissionRegressionTests
         var report = await ctx.Kernel.ReadReportAsync(caller.TrackId);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var commit = ctx.Kernel.CommitReportAsync(caller.TrackId, caller.SessionId,
-            new(report.Anchor, [new BlockOp.UpsertBlockOp("note", ReportBlockKind.Prose, "Note", null)]), timeout.Token);
+            new(report.Anchor, [new BlockOp.UpsertBlockOp("note", ReportBlockKind.Prose, "Note", null)]), timeout.Token, await ctx.AuthorizeAsync(caller));
         ApprovalDto? approval = null;
         while (approval is null)
         {
@@ -172,7 +168,7 @@ public sealed class PolicyAdmissionRegressionTests
     {
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
-        var caller = Caller(snapshot);
+        var caller = await ctx.OpenMcpCallerAsync(snapshot.Track.LeadSessionId!);
         await SetPolicy(ctx, caller, """
             export default { id: 'vcs-approval', title: 'VCS approval', data: { initial: { locked: false } },
               before(action, ctx) {
@@ -183,7 +179,7 @@ public sealed class PolicyAdmissionRegressionTests
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var ct = timeout.Token;
         var args = TestJson.Parse("""{"opId":"test-operation"}""");
-        var guard = ctx.Kernel.GuardMcpToolCallAsync(caller.TrackId, caller.SessionId, "vcs", "restore_op", args, ct);
+        var guard = ctx.Kernel.GuardMcpToolCallAsync(caller, "vcs", "restore_op", args, ct);
         ApprovalDto? approval = null;
         while (approval is null)
         {
@@ -198,9 +194,9 @@ public sealed class PolicyAdmissionRegressionTests
 
         var error = await Assert.ThrowsAsync<KernelException>(() => guard.WaitAsync(ct));
         Assert.Equal(KernelErrorCode.PolicyDenied, error.Code);
-        Assert.Equal("Active policy or template data changed during approval.", error.Message);
+        Assert.Equal("Active policy changed after authorization.", error.Message);
         var retry = await Assert.ThrowsAsync<KernelException>(() =>
-            ctx.Kernel.GuardMcpToolCallAsync(caller.TrackId, caller.SessionId, "vcs", "restore_op", args, ct));
+            ctx.Kernel.GuardMcpToolCallAsync(caller, "vcs", "restore_op", args, ct));
         Assert.Equal(KernelErrorCode.PolicyDenied, retry.Code);
         Assert.Equal("Workspace locked", retry.Message);
     }
@@ -210,7 +206,7 @@ public sealed class PolicyAdmissionRegressionTests
     {
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
-        var caller = Caller(snapshot);
+        var caller = await ctx.OpenMcpCallerAsync(snapshot.Track.LeadSessionId!);
         await SetPolicy(ctx, caller, "export default {id:'asks',title:'Asks',before:a=>a.type==='task.dispatch'||a.type==='report.commit'?AskHuman(a.type,{approve:'Approve',deny:'Reject'}):Allow()};");
         ctx.AgentRuntime.TurnScript = (_, _, ct) => BlockUntilStopped(ct);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -219,7 +215,7 @@ public sealed class PolicyAdmissionRegressionTests
             await Task.Delay(10, timeout.Token);
         var report = await ctx.Kernel.ReadReportAsync(caller.TrackId);
         var commit = ctx.Kernel.CommitReportAsync(caller.TrackId, caller.SessionId,
-            new(report.Anchor, [new BlockOp.UpsertBlockOp("note", ReportBlockKind.Prose, "Review.", null)]), timeout.Token);
+            new(report.Anchor, [new BlockOp.UpsertBlockOp("note", ReportBlockKind.Prose, "Review.", null)]), timeout.Token, await ctx.AuthorizeAsync(caller));
         TrackAggregateSnapshot pending;
         do
         {
@@ -256,7 +252,7 @@ public sealed class PolicyAdmissionRegressionTests
     {
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
-        var caller = Caller(snapshot);
+        var caller = await ctx.OpenMcpCallerAsync(snapshot.Track.LeadSessionId!);
         var reportHook = failure == "report-deny" ? "return Deny('report blocked');" :
             failure == "report-throw" ? "throw Error('report failed');" : "return AskHuman('Approve report?');";
         await SetPolicy(ctx, caller, "export default {id:'admission',title:'Admission',before(a){if(a.type==='report.commit'){" +
@@ -281,7 +277,7 @@ public sealed class PolicyAdmissionRegressionTests
     {
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
-        var caller = Caller(snapshot);
+        var caller = await ctx.OpenMcpCallerAsync(snapshot.Track.LeadSessionId!);
         await SetPolicy(ctx, caller, "export default {id:'deny',title:'Deny',before:a=>a.type==='task.dispatch'?Deny('dispatch blocked'):Allow()};");
         var report = await ctx.Kernel.ReadReportAsync(caller.TrackId);
         var error = await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.CommitReportAsync(caller.TrackId, caller.SessionId,
@@ -313,7 +309,7 @@ public sealed class PolicyAdmissionRegressionTests
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
         ctx.AgentRuntime.Providers = [new("codex", true, "1", null, ["gpt-5"]),
             new("claude", true, "1", null, ["sonnet"])];
-        await SetPolicy(ctx, Caller(snapshot),
+        await SetPolicy(ctx, await ctx.OpenMcpCallerAsync(snapshot.Track.LeadSessionId!),
             "export default {id:'route',title:'Route',tasks:{routing:[{when:{},provider:'claude',model:'sonnet'}]}};");
         var receipt = await FlowFixture.StartWorkerAsync(ctx.Kernel, snapshot.Track.Id,
             FlowFixture.Worker("routed-create", "Inspect", provider: explicitSelection ? "codex" : null,
@@ -334,7 +330,7 @@ public sealed class PolicyAdmissionRegressionTests
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
         ctx.AgentRuntime.Providers = [new("acp:antigravity", true, "1", null, [])];
-        await SetPolicy(ctx, Caller(snapshot),
+        await SetPolicy(ctx, await ctx.OpenMcpCallerAsync(snapshot.Track.LeadSessionId!),
             "export default {id:'alias',title:'Alias',tasks:{routing:[{when:{},provider:'agy',enforce:true}]}};");
 
         var created = await FlowFixture.StartWorkerAsync(ctx.Kernel, snapshot.Track.Id,
@@ -349,7 +345,7 @@ public sealed class PolicyAdmissionRegressionTests
     {
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
-        var caller = Caller(snapshot);
+        var caller = await ctx.OpenMcpCallerAsync(snapshot.Track.LeadSessionId!);
         await ctx.Kernel.Actors.GetOrActivate(caller.TrackId).UpdateSessionAsync(caller.SessionId, new(Model: new("lead-only-model")), new InteropPrincipal.Human(), default);
         ctx.AgentRuntime.ProbeScript = _ => Task.FromResult<IReadOnlyList<ProviderStatus>>([
             new("codex", true, "1", null, ["gpt-5"]), new("claude", true, "1", null, ["sonnet"])]);
@@ -365,7 +361,7 @@ public sealed class PolicyAdmissionRegressionTests
     {
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
-        var caller = Caller(snapshot);
+        var caller = await ctx.OpenMcpCallerAsync(snapshot.Track.LeadSessionId!);
         await SetPolicy(ctx, caller, "export default {id:'ask',title:'Ask',before(a,ctx){if(a.type==='tool.track_set'){ctx.data.changed=true;return AskHuman('Approve?',{approve:'Approve',deny:'Reject'});}return Allow();}};");
         var before = (await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId)).Track.Data.GetRawText();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
@@ -384,7 +380,7 @@ public sealed class PolicyAdmissionRegressionTests
     {
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
-        var caller = Caller(snapshot);
+        var caller = await ctx.OpenMcpCallerAsync(snapshot.Track.LeadSessionId!);
         await SetPolicy(ctx, caller, "export default {id:'bool',title:'Bool',before(a,ctx){if(a.type==='tool.track_set')return Deny('guard ran');return Allow();}};");
         var before = (await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId)).Track.Data.GetRawText();
         var error = await Assert.ThrowsAsync<KernelException>(() => KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller,
@@ -397,7 +393,7 @@ public sealed class PolicyAdmissionRegressionTests
     {
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
-        var caller = Caller(snapshot);
+        var caller = await ctx.OpenMcpCallerAsync(snapshot.Track.LeadSessionId!);
         await SetPolicy(ctx, caller, "export default {id:'ask',title:'Ask',tasks:{routing:[{when:{},provider:'codex',model:'gpt-5'}]},before:a=>a.type==='task.dispatch'?AskHuman('Approve?',{approve:'Approve',deny:'Reject'}):Allow()};");
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await FlowFixture.AddAsync(ctx.Kernel, caller.TrackId, FlowFixture.Worker("routed", "Inspect"));
@@ -419,7 +415,7 @@ public sealed class PolicyAdmissionRegressionTests
     {
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
-        var caller = Caller(snapshot);
+        var caller = await ctx.OpenMcpCallerAsync(snapshot.Track.LeadSessionId!);
         await SetPolicy(ctx, caller, "export default {id:'ask',title:'Ask',before:a=>a.type==='task.dispatch'?AskHuman('Approve?',{approve:'Approve',deny:'Reject'}):Allow()};");
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await FlowFixture.AddAsync(ctx.Kernel, caller.TrackId, FlowFixture.Worker("pending", "Inspect"));
@@ -453,7 +449,7 @@ public sealed class PolicyAdmissionRegressionTests
     {
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
-        var caller = Caller(snapshot);
+        var caller = await ctx.OpenMcpCallerAsync(snapshot.Track.LeadSessionId!);
         await SetPolicy(ctx, caller, "export default {id:'preview',title:'Preview',before:a=>a.type==='tool.track_set'?Rewrite({arguments:{clear:true,dryRun:false}}):Allow()};");
         await Assert.ThrowsAsync<InvalidOperationException>(() => KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller, KernelMcpToolNames.TrackSet,
             TestJson.FromObject(new { templateId = "other", dryRun = true })));

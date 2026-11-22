@@ -245,7 +245,6 @@ public static class McpStreamableHttpEndpoints
             return;
         }
 
-        principal = ctx.RequestServices.GetRequiredService<IPergaKernel>().ObserveMcpExecution(principal);
 
         // POST: Single or batch JSON-RPC 2.0 Streamable HTTP
         JsonDocument doc;

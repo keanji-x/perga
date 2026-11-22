@@ -63,11 +63,11 @@ public sealed class VcsMcpBackend : IMcpToolBackend
             if (!VcsMcpToolNames.All.Contains(toolName))
                 throw KernelException.NotFound($"Unknown VCS MCP tool '{toolName}'.");
 
-            var generation = await _kernel.GuardMcpToolCallAsync(caller.TrackId, caller.SessionId, ServerName, toolName, args, ct, caller.ExecutionOrigin)
+            var generation = await _kernel.GuardMcpToolCallAsync(caller, ServerName, toolName, args, ct)
                 .ConfigureAwait(false);
 
             var (workspaceCwd, vcsService, forgeService) = await ResolveCallerWorkspaceAsync(caller, ct).ConfigureAwait(false);
-            await _kernel.EnsurePolicyGenerationAsync(caller.TrackId, generation, ct).ConfigureAwait(false);
+            await _kernel.EnsureMcpAuthorizationAsync(caller, generation, ct).ConfigureAwait(false);
 
             if (toolName is VcsMcpToolNames.PublishPr or VcsMcpToolNames.PrChecks or VcsMcpToolNames.CiEvidence
                 or VcsMcpToolNames.PrMerge or VcsMcpToolNames.IssueView && forgeService is null)
@@ -123,6 +123,7 @@ public sealed class VcsMcpBackend : IMcpToolBackend
                     {
                         var targetRev = McpToolResultFormatter.OptionalString(args, ["targetRev", "target_rev"]);
                         await vcsService.PushBookmarkAsync(workspaceCwd, headBranch, targetRev, ct).ConfigureAwait(false);
+                        await _kernel.EnsureMcpAuthorizationAsync(caller, generation, ct).ConfigureAwait(false);
                     }
 
                     var pr = await forgeService!.PublishPrAsync(

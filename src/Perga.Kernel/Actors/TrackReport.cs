@@ -58,21 +58,16 @@ public sealed partial class TrackActor
             string callerSessionId,
             ReportCommitRequest request,
             CancellationToken ct = default,
-            McpExecutionOrigin? origin = null,
-            string? expectedPolicyGeneration = null)
+            InteropPrincipal.Session? authorization = null)
         {
-            var approvalTurn = actor._scheduler.TryGetActive(callerSessionId, out var callingTurn) ? callingTurn : null;
             Interlocked.Increment(ref actor._inFlightExternalOps);
             try
             {
-                var generation = expectedPolicyGeneration;
                 var (completed, approval) = await actor.EnqueueAsync<(ReportReadResult?, PolicyApproval?)>(async _ =>
                 {
                     await actor.EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
                     actor.RequirePolicyAvailableCore();
-                    if (generation is not null && generation != actor._policyGeneration)
-                        throw KernelException.PolicyDenied("Active policy changed after authorization.");
-                    generation = actor._policyGeneration;
+                    actor.RequireMcpAuthorizationCore(authorization);
 
                     var (preview, editorRole, diagnostics) = PreviewReportCommitCore(callerSessionId, request);
                     if (actor._policy is not null)
@@ -89,8 +84,11 @@ public sealed partial class TrackActor
                             throw KernelException.PolicyDenied(denied.Reason);
                         if (eval is GuardDecision.AskHuman ask)
                         {
-                            actor.RequireApprovalOrigin(callerSessionId, approvalTurn, origin);
-                            return (null, actor.ApplyGuardDecisionCore(ask, callerSessionId, approvalTurn, ct)!);
+                            if (authorization is null)
+                                throw KernelException.Conflict("A policy approval requires an authorized runtime.");
+                            var open = actor.RequireRuntimeBindingCore(authorization);
+                            actor._scheduler.TryGetActive(callerSessionId, out var approvalTurn);
+                            return (null, actor.ApplyGuardDecisionCore(ask, callerSessionId, open.RuntimeControl, ct, turn: approvalTurn)!);
                         }
                     }
 
@@ -104,8 +102,7 @@ public sealed partial class TrackActor
 
                 return await actor.EnqueueAsync(async _ =>
                 {
-                    if (actor._policyGeneration != generation)
-                        throw KernelException.PolicyDenied("Active policy changed during report approval.");
+                    actor.RequireMcpAuthorizationCore(authorization);
                     var (preview, editorRole, diagnostics) = PreviewReportCommitCore(callerSessionId, request);
                     return await FinalizeReportCommitCoreAsync(preview, callerSessionId,
                         request.CommitMessage ?? $"Report commit ({editorRole}, human-approved)", diagnostics, ct).ConfigureAwait(false);

@@ -34,7 +34,7 @@ public sealed class UnifiedTemplateFlowTests
         await using var host = Host();
         var kernel = host.Services.GetRequiredService<IPergaKernel>();
         var (id, leadId) = await host.CreateTrackAsync();
-        var principal = new McpSessionPrincipal("token", id, leadId, true, null, null, []);
+        var principal = await kernel.OpenMcpCallerAsync(leadId);
         var package = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../templates/okr-loop"));
         kernel.Templates.RegisterTemplate(Perga.PolicyVm.TemplateBundle.PackDirectory(package));
         var bind = JsonSerializer.SerializeToElement(new { templateId = "okr-loop" });
@@ -56,6 +56,7 @@ public sealed class UnifiedTemplateFlowTests
                 content: detached.Spec.GetRawText())).Ok);
             Assert.NotNull(Assert.Single(await kernel.ListTasksAsync(id)).ArchivedAtMs);
             await kernel.Actors.RemoveAndDisposeAsync(id);
+            principal = await kernel.OpenMcpCallerAsync(leadId);
         }
         await KernelMcpDispatcher.ExecuteGuardedAsync(kernel, principal, KernelMcpToolNames.TrackSet, bind);
         var reapplied = await kernel.GetTrackFlowAsync(id);
@@ -79,6 +80,7 @@ public sealed class UnifiedTemplateFlowTests
         Assert.True((await kernel.CommitTrackFlowAsync(id, false, canceled.FlowRev, new InteropPrincipal.Human(),
             content: canceled.Spec.GetRawText())).Ok);
         var beforeRebind = await kernel.GetTrackFlowAsync(id);
+        principal = await kernel.OpenMcpCallerAsync(leadId);
         await KernelMcpDispatcher.ExecuteGuardedAsync(kernel, principal, KernelMcpToolNames.TrackSet,
             JsonSerializer.SerializeToElement(new { templateId = "okr-loop", inputs = new { checkCmd = "new-check" } }));
         var afterRebind = await kernel.GetTrackFlowAsync(id);
@@ -96,7 +98,7 @@ public sealed class UnifiedTemplateFlowTests
         await using var host = Host();
         var kernel = host.Services.GetRequiredService<IPergaKernel>();
         var (id, leadId) = await host.CreateTrackAsync();
-        var principal = new McpSessionPrincipal("token", id, leadId, true, null, null, []);
+        var principal = await kernel.OpenMcpCallerAsync(leadId);
         var schedules = host.Services.GetRequiredService<CronosScheduleHostedService>();
         var oldSource = Source.Replace("target", "oldTarget", StringComparison.Ordinal);
         var newSource = Source.Replace("unified", "replacement", StringComparison.Ordinal)
@@ -141,7 +143,8 @@ public sealed class UnifiedTemplateFlowTests
         Assert.Equal(consumer.Id, secondConsumer.Id);
         Assert.Equal(TaskRunStatus.Done, secondConsumer.Status);
         Assert.Equal(2, secondConsumer.RunCount);
-        Assert.Collection(host.AgentRuntime.ExecutedTurns,
+        Assert.Collection(host.AgentRuntime.ExecutedTurns.Where(turn =>
+            turn.Input.Prompt.StartsWith("Check ", StringComparison.Ordinal) || turn.Input.Prompt.Contains("Consume pulse", StringComparison.Ordinal)),
             turn => Assert.Contains("Check old value", turn.Input.Prompt),
             turn => Assert.Contains("Consume pulse", turn.Input.Prompt),
             turn => Assert.Contains("Check new value", turn.Input.Prompt),
@@ -158,7 +161,6 @@ public sealed class UnifiedTemplateFlowTests
         await using var host = Host();
         var kernel = host.Services.GetRequiredService<IPergaKernel>();
         var (id, leadId) = await host.CreateTrackAsync();
-        var principal = new McpSessionPrincipal("token", id, leadId, true, null, null, []);
         await FlowFixture.AddAsync(kernel, id, new FlowNodeSpecDto("pulse",
             new("run", Prompt: "Independent"), When: new(At: "2099-01-01T00:00:00Z")));
         var store = host.Services.GetRequiredService<ITrackStore>();
@@ -179,6 +181,7 @@ public sealed class UnifiedTemplateFlowTests
         }
         var original = Assert.Single((await store.LoadTrackAggregateAsync(id, default))!.Tasks);
         var before = await kernel.GetTrackFlowAsync(id);
+        var principal = await kernel.OpenMcpCallerAsync(leadId);
         var error = await Assert.ThrowsAsync<KernelException>(() => KernelMcpDispatcher.ExecuteGuardedAsync(
             kernel, principal, KernelMcpToolNames.TrackSet, JsonSerializer.SerializeToElement(new { source = Source })));
         Assert.Equal(KernelErrorCode.Conflict, error.Code);
@@ -199,7 +202,7 @@ public sealed class UnifiedTemplateFlowTests
         await using var host = Host();
         var kernel = host.Services.GetRequiredService<IPergaKernel>();
         var (id, leadId) = await host.CreateTrackAsync();
-        var principal = new McpSessionPrincipal("token", id, leadId, true, null, null, []);
+        var principal = await kernel.OpenMcpCallerAsync(leadId);
         await KernelMcpDispatcher.ExecuteGuardedAsync(kernel, principal, KernelMcpToolNames.TrackSet,
             JsonSerializer.SerializeToElement(new { source = Source }));
         await kernel.CancelTaskAsync(id, null, "pulse");
@@ -218,7 +221,7 @@ public sealed class UnifiedTemplateFlowTests
         await using var host = Host();
         var kernel = host.Services.GetRequiredService<IPergaKernel>();
         var (id, leadId) = await host.CreateTrackAsync();
-        var principal = new McpSessionPrincipal("token", id, leadId, true, null, null, []);
+        var principal = await kernel.OpenMcpCallerAsync(leadId);
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var canceled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         host.AgentRuntime.BeforeTurn = async (input, ct) =>
@@ -267,7 +270,7 @@ public sealed class UnifiedTemplateFlowTests
         var kernel = host.Services.GetRequiredService<IPergaKernel>();
         var (id, leadId) = await host.CreateTrackAsync();
         var collaborator = await kernel.CreateSessionAsync(id, new(), "collaborator", new InteropPrincipal.Human(), default);
-        var principal = new McpSessionPrincipal("token", id, collaborator.Receipt.Session.Id, false, null, null, []);
+        var principal = await kernel.OpenMcpCallerAsync(collaborator.Receipt.Session.Id);
         var before = await kernel.GetTrackFlowAsync(id);
         const string source = """
             export default {id:'immediate', title:'Immediate',
@@ -277,7 +280,7 @@ public sealed class UnifiedTemplateFlowTests
         var error = await Assert.ThrowsAsync<KernelException>(() =>
             KernelMcpDispatcher.ExecuteGuardedAsync(kernel, principal, KernelMcpToolNames.TrackSet, arguments));
         Assert.Equal(KernelErrorCode.Forbidden, error.Code);
-        var generation = await kernel.GuardMcpToolCallAsync(id, leadId, "perga", KernelMcpToolNames.TrackSet, arguments);
+        var generation = await kernel.GuardMcpToolCallAsync(await kernel.OpenMcpCallerAsync(leadId), "perga", KernelMcpToolNames.TrackSet, arguments);
         await kernel.PatchTrackAsync(id, new(LeadSessionId: principal.SessionId));
         var staleLead = await Assert.ThrowsAsync<KernelException>(() =>
             kernel.SetTrackTemplateAsync(id, leadId, null, source, generation));
@@ -296,7 +299,7 @@ public sealed class UnifiedTemplateFlowTests
         await using var host = Host();
         var kernel = host.Services.GetRequiredService<IPergaKernel>();
         var (id, leadId) = await host.CreateTrackAsync();
-        var principal = new McpSessionPrincipal("token", id, leadId, true, null, null, []);
+        var principal = await kernel.OpenMcpCallerAsync(leadId);
         var package = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../templates/okr-loop"));
         kernel.Templates.RegisterTemplate(Perga.PolicyVm.TemplateBundle.PackDirectory(package));
         await KernelMcpDispatcher.ExecuteGuardedAsync(kernel, principal, KernelMcpToolNames.TrackSet,
@@ -346,7 +349,7 @@ public sealed class UnifiedTemplateFlowTests
         await using var host = Host();
         var kernel = host.Services.GetRequiredService<IPergaKernel>();
         var (id, leadId) = await host.CreateTrackAsync();
-        var principal = new McpSessionPrincipal("token", id, leadId, true, null, null, []);
+        var principal = await kernel.OpenMcpCallerAsync(leadId);
         var source = exhausted ? Source.Replace("tz:'UTC'", "tz:'UTC',maxOccurrences:1", StringComparison.Ordinal) : Source;
         await KernelMcpDispatcher.ExecuteGuardedAsync(kernel, principal, KernelMcpToolNames.TrackSet,
             JsonSerializer.SerializeToElement(new { source }));
@@ -387,7 +390,7 @@ public sealed class UnifiedTemplateFlowTests
         await using var host = Host();
         var kernel = host.Services.GetRequiredService<IPergaKernel>();
         var (id, leadId) = await host.CreateTrackAsync();
-        var principal = new McpSessionPrincipal("token", id, leadId, true, null, null, []);
+        var principal = await kernel.OpenMcpCallerAsync(leadId);
         await KernelMcpDispatcher.ExecuteGuardedAsync(kernel, principal, KernelMcpToolNames.TrackSet,
             JsonSerializer.SerializeToElement(new { source = Source }));
         var flow = await kernel.GetTrackFlowAsync(id);
@@ -515,7 +518,7 @@ public sealed class UnifiedTemplateFlowTests
         var before = await kernel.GetTrackFlowAsync(id);
         const string draft = "uncommitted";
         await File.WriteAllTextAsync(before.FilePath!, draft);
-        var principal = new McpSessionPrincipal("token", id, leadId, true, null, null, []);
+        var principal = await kernel.OpenMcpCallerAsync(leadId);
         await KernelMcpDispatcher.ExecuteGuardedAsync(kernel, principal, KernelMcpToolNames.TrackSet,
             JsonSerializer.SerializeToElement(new { source = Source, dryRun = true }));
         Assert.Equal(before.FlowRev, (await kernel.GetTrackFlowAsync(id)).FlowRev);
@@ -542,7 +545,7 @@ public sealed class UnifiedTemplateFlowTests
         Assert.Equal(HttpStatusCode.BadRequest,badCreate.StatusCode);
         var created = await kernel.CreateTrackAsync(new(area.Id));
         var id = created.Track.Id;
-        var principal = new McpSessionPrincipal("token",id,created.Track.LeadSessionId!,true,null,null,[]);
+        var principal = await kernel.OpenMcpCallerAsync(created.Track.LeadSessionId!);
         var badBind = await Assert.ThrowsAsync<KernelException>(()=>KernelMcpDispatcher.ExecuteGuardedAsync(kernel,principal,KernelMcpToolNames.TrackSet,
             JsonSerializer.SerializeToElement(new {source=Source,inputs=new {target=false}})));
         Assert.Equal(KernelErrorCode.InvalidArgument,badBind.Code);

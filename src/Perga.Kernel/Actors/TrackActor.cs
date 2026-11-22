@@ -100,7 +100,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         _eventHub = eventHub;
         _options = options;
         _timeProvider = timeProvider;
-        _runtimes = new(timeProvider);
+        _runtimes = new(timeProvider, PrepareRuntimeCloseAsync, (id, binding) => _mcpBridge.RevokeSession(id, binding));
         _lastActivityAtMs = NowMs();
 
         _mailbox = Channel.CreateUnbounded<Func<TrackActor, Task>>(new UnboundedChannelOptions
@@ -240,9 +240,8 @@ public sealed partial class TrackActor : IAsyncDisposable
         string callerSessionId,
         ReportCommitRequest request,
         CancellationToken ct = default,
-        McpExecutionOrigin? origin = null,
-        string? expectedPolicyGeneration = null)
-        => _reports.CommitReportBySessionAsync(callerSessionId, request, ct, origin, expectedPolicyGeneration);
+        InteropPrincipal.Session? authorization = null)
+        => _reports.CommitReportBySessionAsync(callerSessionId, request, ct, authorization);
 
     internal Task RefreshTaskDiagnosticsAsync(CancellationToken ct)
         => _taskCoordinator.RefreshTaskDiagnosticsAsync(ct);
@@ -250,8 +249,8 @@ public sealed partial class TrackActor : IAsyncDisposable
     public Task<IReadOnlyList<TaskDto>> ListTasksAsync(CancellationToken ct = default)
         => _taskCoordinator.ListTasksAsync(ct);
 
-    public Task<TaskDto> CancelTaskAsync(string? callerSessionId, string taskKeyOrId, string? reason = null, CancellationToken ct = default)
-        => _taskCoordinator.CancelTaskAsync(callerSessionId, taskKeyOrId, reason, ct);
+    public Task<TaskDto> CancelTaskAsync(string? callerSessionId, string taskKeyOrId, string? reason = null, CancellationToken ct = default, InteropPrincipal.Session? authorization = null)
+        => _taskCoordinator.CancelTaskAsync(callerSessionId, taskKeyOrId, reason, ct, authorization);
 
     public Task<TaskDto> CompleteTaskDoneAsync(
         string callerSessionId,
@@ -272,8 +271,8 @@ public sealed partial class TrackActor : IAsyncDisposable
     public Task<JsonElement> AskUserAsync(
         string? callerSessionId,
         IReadOnlyList<AskQuestionDto> questions,
-        CancellationToken ct = default)
-        => _interactions.AskUserAsync(callerSessionId, questions, ct);
+        CancellationToken ct = default, InteropPrincipal.Session? authorization = null)
+        => _interactions.AskUserAsync(callerSessionId, questions, ct, authorization);
 
     public Task<MailDto> SendCrossTrackMailAsync(
         string callerSessionId,
@@ -281,8 +280,8 @@ public sealed partial class TrackActor : IAsyncDisposable
         string summary,
         string body,
         Func<MailDto, CancellationToken, Task> deliverToTargetTrack,
-        CancellationToken ct, string? replyToMailId)
-        => _interactions.SendCrossTrackMailAsync(callerSessionId, toTrackId, summary, body, deliverToTargetTrack, ct, replyToMailId);
+        CancellationToken ct, string? replyToMailId, InteropPrincipal.Session? authorization = null)
+        => _interactions.SendCrossTrackMailAsync(callerSessionId, toTrackId, summary, body, deliverToTargetTrack, ct, replyToMailId, authorization);
 
     internal Task ReceiveMailAsync(MailDto mail, CancellationToken ct = default)
         => _interactions.ReceiveMailAsync(mail, ct);
@@ -290,29 +289,26 @@ public sealed partial class TrackActor : IAsyncDisposable
     public Task<IReadOnlyList<MailDto>> ListMailsAsync(bool unreadOnly = false, CancellationToken ct = default)
         => _interactions.ListMailsAsync(unreadOnly, ct);
 
-    public Task<MailDto> ReadMailAsync(string mailId, CancellationToken ct = default)
-        => _interactions.ReadMailAsync(mailId, ct);
+    public Task<MailDto> ReadMailAsync(string mailId, CancellationToken ct = default, InteropPrincipal.Session? authorization = null)
+        => _interactions.ReadMailAsync(mailId, ct, authorization);
 
     public Task<IReadOnlyList<TerminalDto>> ListTerminalsAsync(CancellationToken ct = default)
         => _terminalLifecycle.ListTerminalsAsync(ct);
 
-    public Task<TerminalDto> OpenTerminalAsync(string? callerSessionId, OpenTerminalRequest req, CancellationToken ct = default)
-        => _terminalLifecycle.OpenTerminalAsync(callerSessionId, req, ct);
+    public Task<TerminalDto> OpenTerminalAsync(string? callerSessionId, OpenTerminalRequest req, CancellationToken ct = default, InteropPrincipal.Session? authorization = null)
+        => _terminalLifecycle.OpenTerminalAsync(callerSessionId, req, ct, authorization);
 
     public Task<TermObserveResult> ObserveTerminalAsync(TermObserveRequest req, CancellationToken ct = default)
         => _terminalLifecycle.ObserveTerminalAsync(req, ct);
 
-    public Task<TermActionResult> SendTerminalInputAsync(TermActionRequest req, CancellationToken ct = default)
-        => _terminalLifecycle.SendTerminalInputAsync(req, ct);
+    public Task<TermActionResult> SendTerminalInputAsync(TermActionRequest req, CancellationToken ct = default, InteropPrincipal.Session? authorization = null)
+        => _terminalLifecycle.SendTerminalInputAsync(req, ct, authorization);
 
     public Task ResizeTerminalAsync(string terminalId, ushort cols, ushort rows, CancellationToken ct = default)
         => _terminalLifecycle.ResizeTerminalAsync(terminalId, cols, rows, ct);
 
     public Task<TerminalDto> CloseTerminalAsync(string terminalId, int graceMs = 2000, CancellationToken ct = default)
         => _terminalLifecycle.CloseTerminalAsync(terminalId, graceMs, ct);
-
-    internal string? ReadActiveTurnId(string sessionId) =>
-        _scheduler.TryGetActive(sessionId, out var active) ? active.TurnDto.Id : null;
 
     public async Task WaitForBackgroundWorkAsync(CancellationToken ct = default)
     {

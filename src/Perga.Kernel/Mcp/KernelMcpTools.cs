@@ -355,12 +355,12 @@ public static class KernelMcpDispatcher
             return await kernel.InvokeSystemUpgradeAsync(caller,
                 toolName == KernelMcpToolNames.SystemUpgradeCheck ? "check" : toolName == KernelMcpToolNames.SystemUpgradeApply ? "apply" : "rollback", args, ct).ConfigureAwait(false);
         }
-
-        var origin = KernelMcpCatalog.IsCompletionOnly(toolName) && caller.BoundTaskId is not null
-            ? await kernel.Actors.GetOrActivate(caller.TrackId).CaptureWorkerCompletionOriginAsync(caller, ct).ConfigureAwait(false)
-            : null;
-        var expectedPolicyGeneration = await kernel.GuardMcpToolCallAsync(caller.TrackId, caller.SessionId, "perga", toolName, args, ct, caller.ExecutionOrigin)
+        var write = KernelMcpCatalog.GetAllTools().Single(tool => tool.Name == toolName).Annotations?.ReadOnlyHint != true;
+        var expectedPolicyGeneration = await kernel.GuardMcpToolCallAsync(caller, "perga", toolName, args, ct, write)
             .ConfigureAwait(false);
+        var origin = KernelMcpCatalog.IsCompletionOnly(toolName)
+            ? await kernel.Actors.GetOrActivate(caller.TrackId).CaptureWorkerCompletionOriginAsync(caller, expectedPolicyGeneration, ct).ConfigureAwait(false)
+            : null;
 
         return await ExecuteAuthorizedAsync(kernel, caller, toolName, args, expectedPolicyGeneration, origin, ct).ConfigureAwait(false);
     }
@@ -368,6 +368,8 @@ public static class KernelMcpDispatcher
     private static async Task<JsonElement> ExecuteAuthorizedAsync(IPergaKernel kernel, McpSessionPrincipal caller,
         string toolName, JsonElement args, string expectedPolicyGeneration, WorkerCompletionOrigin? origin, CancellationToken ct)
     {
+        var authorization = new InteropPrincipal.Session(caller.TrackId, caller.SessionId, caller.IsLead, caller.BoundTaskId,
+            0, caller.Token, caller.RuntimeBindingId) { AuthorizedPolicyGeneration = expectedPolicyGeneration };
         switch (toolName)
         {
             case KernelMcpToolNames.AreaList:
@@ -410,7 +412,7 @@ public static class KernelMcpDispatcher
                 RequireLocalReportCommit(args, caller.TrackId);
                 var commitReq = ParseReportCommitArgs(args);
                 var includeDocument = KernelMcpReportSupport.ParseIncludeDocumentArg(args);
-                var res = await kernel.CommitReportAsync(caller.TrackId, caller.SessionId, commitReq, ct, caller.ExecutionOrigin, expectedPolicyGeneration)
+                var res = await kernel.CommitReportAsync(caller.TrackId, caller.SessionId, commitReq, ct, authorization)
                     .ConfigureAwait(false);
                 return KernelMcpReportSupport.FormatReportCommitResponse(res, includeDocument);
             }
@@ -434,7 +436,7 @@ public static class KernelMcpDispatcher
                     patchEl,
                     source: $"session:{caller.SessionId}",
                     callerSessionId: caller.SessionId,
-                    ct: ct, expectedDataRev: expectedDataRev, expectedPolicyGeneration: expectedPolicyGeneration).ConfigureAwait(false);
+                    ct: ct, expectedDataRev: expectedDataRev, expectedPolicyGeneration: expectedPolicyGeneration, authorization: authorization).ConfigureAwait(false);
                 return JsonHelpers.ToElement(nextData);
             }
 
@@ -453,7 +455,7 @@ public static class KernelMcpDispatcher
                 }
 
                 var questions = JsonHelpers.Deserialize<List<AskQuestionDto>>(qElem) ?? [];
-                return await kernel.AskUserAsync(caller.TrackId, caller.SessionId, questions, ct).ConfigureAwait(false);
+                return await kernel.AskUserAsync(caller.TrackId, caller.SessionId, questions, ct, authorization).ConfigureAwait(false);
             }
 
             case KernelMcpToolNames.MailList:
@@ -467,7 +469,7 @@ public static class KernelMcpDispatcher
             case KernelMcpToolNames.MailRead:
             {
                 var mailId = RequireStringArg(args, ["mailId", "mail_id", "id"]);
-                var mail = await kernel.ReadMailAsync(caller.TrackId, mailId, ct).ConfigureAwait(false);
+                var mail = await kernel.ReadMailAsync(caller.TrackId, mailId, ct, authorization).ConfigureAwait(false);
                 return JsonHelpers.ToElement(mail);
             }
 
@@ -488,14 +490,14 @@ public static class KernelMcpDispatcher
 
             case KernelMcpToolNames.SessionList:
                 return JsonHelpers.ToElement(await kernel.ListSessionsAsync(caller.TrackId,
-                    ParseSessionArgs<SessionListFilter>(args, toolName), Principal(caller), ct).ConfigureAwait(false));
+                    ParseSessionArgs<SessionListFilter>(args, toolName), authorization, ct).ConfigureAwait(false));
 
             case KernelMcpToolNames.SessionCreate:
             {
                 var request = ParseSessionArgs<CreateSessionRequest>(args, toolName);
                 var created = await kernel.CreateSessionAsync(caller.TrackId, request,
                     OptionalTypedStringArg(args, ["requestKey"]) ?? Guid.NewGuid().ToString("N"),
-                    Principal(caller) with { AuthorizedPolicyGeneration = expectedPolicyGeneration }, ct).ConfigureAwait(false);
+                    authorization, ct).ConfigureAwait(false);
                 return JsonHelpers.ToElement(created.Receipt);
             }
 
@@ -507,38 +509,38 @@ public static class KernelMcpDispatcher
                     !args.TryGetProperty("afterId", out _), OptionalTypedStringArg(args, ["activityTurnId"]),
                     IntegerArg(args, "afterSequence", 0, long.MaxValue), (int)(IntegerArg(args, "waitMs", 0, 10000) ?? 0));
                 return JsonHelpers.ToElement(await kernel.GetSessionItemsAsync(RequireStringArg(args, ["sessionId"]),
-                    query, Principal(caller), ct).ConfigureAwait(false));
+                    query, authorization, ct).ConfigureAwait(false));
             }
 
             case KernelMcpToolNames.SessionUpdate:
                 return JsonHelpers.ToElement(await kernel.UpdateSessionAsync(RequireStringArg(args, ["sessionId"]),
                     ParseSessionArgs<UpdateSessionRequest>(args, toolName),
-                    Principal(caller) with { AuthorizedPolicyGeneration = expectedPolicyGeneration }, ct).ConfigureAwait(false));
+                    authorization, ct).ConfigureAwait(false));
 
             case KernelMcpToolNames.SessionSend:
                 return JsonHelpers.ToElement(await kernel.SendSessionMessageAsync(RequireStringArg(args, ["sessionId"]),
                     ParseSessionArgs<SendSessionMessageRequest>(args, toolName),
-                    Principal(caller), ct).ConfigureAwait(false));
+                    authorization, ct).ConfigureAwait(false));
 
             case KernelMcpToolNames.SessionWithdraw:
                 RejectUnknownArgs(args, ToolSchema(toolName));
                 await kernel.WithdrawSessionMessageAsync(RequireStringArg(args, ["sessionId"]), RequireStringArg(args, ["messageId"]),
-                    Principal(caller), ct).ConfigureAwait(false);
+                    authorization, ct).ConfigureAwait(false);
                 return JsonHelpers.ToElement(new { ok = true });
 
             case KernelMcpToolNames.SessionControl:
                 return JsonHelpers.ToElement(await kernel.ControlSessionAsync(RequireStringArg(args, ["sessionId"]),
                     ParseSessionArgs<SessionControlRequest>(args, toolName),
-                    Principal(caller), ct).ConfigureAwait(false));
+                    authorization, ct).ConfigureAwait(false));
 
             case KernelMcpToolNames.SessionRespond:
                 return JsonHelpers.ToElement(await kernel.RespondInteractionAsync(RequireStringArg(args, ["sessionId"]),
-                    RequireStringArg(args, ["interactionId"]), ParseSessionArgs<RespondInteractionRequest>(args, toolName), Principal(caller), ct).ConfigureAwait(false));
+                    RequireStringArg(args, ["interactionId"]), ParseSessionArgs<RespondInteractionRequest>(args, toolName), authorization, ct).ConfigureAwait(false));
 
             case KernelMcpToolNames.TerminalOpen:
             {
                 var openReq = JsonHelpers.Deserialize<OpenTerminalRequest>(args) ?? new OpenTerminalRequest();
-                var term = await kernel.OpenTerminalAsync(caller.TrackId, caller.SessionId, openReq, ct)
+                var term = await kernel.OpenTerminalAsync(caller.TrackId, caller.SessionId, openReq, ct, authorization)
                     .ConfigureAwait(false);
                 return JsonHelpers.ToElement(term);
             }
@@ -565,7 +567,7 @@ public static class KernelMcpDispatcher
                 var res = await kernel.SendTerminalInputAsync(
                     caller.TrackId,
                     new TermActionRequest(termId, kind, payload),
-                    ct).ConfigureAwait(false);
+                    ct, authorization).ConfigureAwait(false);
                 return JsonHelpers.ToElement(res);
             }
 
@@ -590,7 +592,7 @@ public static class KernelMcpDispatcher
                 var expectedFlowRev = IntegerArg(args, "expectedFlowRev", 0, long.MaxValue);
                 var content = OptionalTypedStringArg(args, ["content"]);
                 var res = await kernel.CommitTrackFlowAsync(caller.TrackId, dryRun, expectedFlowRev,
-                    Principal(caller) with { AuthorizedPolicyGeneration = expectedPolicyGeneration }, ct, content)
+                    authorization, ct, content)
                     .ConfigureAwait(false);
                 return JsonHelpers.ToElement(res);
             }
@@ -599,7 +601,7 @@ public static class KernelMcpDispatcher
             {
                 var taskKey = RequireStringArg(args, ["taskKey", "task_key", "taskId"]);
                 var reason = OptionalStringArg(args, ["reason"]);
-                var res = await kernel.CancelTaskAsync(caller.TrackId, caller.SessionId, taskKey, reason, ct)
+                var res = await kernel.CancelTaskAsync(caller.TrackId, caller.SessionId, taskKey, reason, ct, authorization)
                     .ConfigureAwait(false);
                 return JsonHelpers.ToElement(res);
             }
@@ -610,7 +612,7 @@ public static class KernelMcpDispatcher
                 var replyToMailId = MailAddressArg(args, ["replyToMailId", "reply_to_mail_id"]);
                 var summary = RequireStringArg(args, ["summary"]);
                 var body = RequireStringArg(args, ["body"]);
-                var res = await kernel.SendMailAsync(caller.TrackId, caller.SessionId, toTrackId, summary, body, ct, replyToMailId)
+                var res = await kernel.SendMailAsync(caller.TrackId, caller.SessionId, toTrackId, summary, body, ct, replyToMailId, authorization)
                     .ConfigureAwait(false);
                 return JsonHelpers.ToElement(res);
             }
@@ -618,7 +620,7 @@ public static class KernelMcpDispatcher
             case KernelMcpToolNames.TrackRename:
             {
                 var title = RequireStringArg(args, ["title"]);
-                var res = await kernel.RenameTrackAsync(caller.TrackId, caller.SessionId, title, ct)
+                var res = await kernel.RenameTrackAsync(caller.TrackId, caller.SessionId, title, ct, authorization)
                     .ConfigureAwait(false);
                 return JsonHelpers.ToElement(res);
             }
@@ -641,7 +643,7 @@ public static class KernelMcpDispatcher
             case KernelMcpToolNames.TemplateUpdateInputs:
             {
                 var result = await kernel.UpdateTemplateInputsAsync(caller.TrackId, caller.SessionId,
-                    args.GetProperty("inputs"), expectedPolicyGeneration, ct).ConfigureAwait(false);
+                    args.GetProperty("inputs"), expectedPolicyGeneration, ct, authorization).ConfigureAwait(false);
                 var response = JsonSerializer.SerializeToNode(result.Track, JsonHelpers.SerializerOptions)!.AsObject();
                 response["warnings"] = JsonSerializer.SerializeToNode(result.Warnings);
                 return JsonSerializer.SerializeToElement(response, JsonHelpers.SerializerOptions);
@@ -658,7 +660,7 @@ public static class KernelMcpDispatcher
                     args.TryGetProperty("clear", out var clear) && clear.GetBoolean(), ct,
                     args.TryGetProperty("resetData", out var reset) && reset.GetBoolean(),
                     TemplateStringArg(args, "path"),
-                    args.TryGetProperty("seedReport", out var seedReport) ? seedReport.GetBoolean() : null).ConfigureAwait(false);
+                    args.TryGetProperty("seedReport", out var seedReport) ? seedReport.GetBoolean() : null, authorization).ConfigureAwait(false);
                 var response = JsonSerializer.SerializeToNode(result.Track, JsonHelpers.SerializerOptions)!.AsObject();
                 if (result.DryRun) response.Remove("workspaceSpec");
                 response["dryRun"] = result.DryRun;
@@ -669,7 +671,7 @@ public static class KernelMcpDispatcher
 
             case KernelMcpToolNames.TrackClose:
             {
-                var res = await kernel.CloseTrackAsync(caller.TrackId, caller.SessionId, ct).ConfigureAwait(false);
+                var res = await kernel.CloseTrackAsync(caller.TrackId, caller.SessionId, ct, authorization).ConfigureAwait(false);
                 return JsonHelpers.ToElement(res);
             }
 
@@ -710,9 +712,6 @@ public static class KernelMcpDispatcher
                 throw KernelException.NotFound($"Unknown kernel MCP tool '{toolName}'.");
         }
     }
-
-    private static InteropPrincipal.Session Principal(McpSessionPrincipal caller) => new(
-        caller.TrackId, caller.SessionId, caller.IsLead, caller.BoundTaskId, 0, caller.Token, caller.ExecutionOrigin);
 
     private sealed record ProviderListArgs(string? Provider = null, bool Refresh = false, bool IncludeUnavailable = false);
 

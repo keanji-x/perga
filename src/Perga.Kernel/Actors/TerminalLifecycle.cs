@@ -57,7 +57,7 @@ public sealed partial class TrackActor
             }, ct);
         }
 
-        public async Task<TerminalDto> OpenTerminalAsync(string? callerSessionId, OpenTerminalRequest req, CancellationToken ct = default)
+        public async Task<TerminalDto> OpenTerminalAsync(string? callerSessionId, OpenTerminalRequest req, CancellationToken ct = default, InteropPrincipal.Session? authorization = null)
         {
             await actor.WaitForWorkspacePreparationAsync(ct).ConfigureAwait(false);
             return await actor.EnqueueAsync(async _ =>
@@ -65,6 +65,7 @@ public sealed partial class TrackActor
                 await actor.EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
                 var mounted = await actor.EnsureWorkspaceMountedCoreAsync(ct).ConfigureAwait(false);
 
+                actor.RequireMcpAuthorizationCore(authorization);
                 var effectiveCwd = mounted.MergedCwd;
                 if (callerSessionId is not null)
                 {
@@ -157,9 +158,9 @@ public sealed partial class TrackActor
             return observed;
         }
 
-        public async Task<TermActionResult> SendTerminalInputAsync(TermActionRequest req, CancellationToken ct = default)
+        public async Task<TermActionResult> SendTerminalInputAsync(TermActionRequest req, CancellationToken ct = default, InteropPrincipal.Session? authorization = null)
         {
-            await actor.EnqueueAsync(async _ =>
+            return await actor.EnqueueAsync(async _ =>
             {
                 await actor.EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
                 await actor.EnsureWorkspaceMountedCoreAsync(ct).ConfigureAwait(false);
@@ -167,9 +168,9 @@ public sealed partial class TrackActor
                 {
                     throw KernelException.NotFound($"Terminal '{req.TerminalId}' not found on track '{actor.TrackId}'.");
                 }
-            }, ct).ConfigureAwait(false);
-
-            return await actor.EffectiveTerminalClient.SendActionAsync(req, ct).ConfigureAwait(false);
+                actor.RequireMcpAuthorizationCore(authorization);
+                return actor.EffectiveTerminalClient.SendActionAsync(req, ct);
+            }, ct).Unwrap().ConfigureAwait(false);
         }
 
         public async Task ResizeTerminalAsync(string terminalId, ushort cols, ushort rows, CancellationToken ct = default)

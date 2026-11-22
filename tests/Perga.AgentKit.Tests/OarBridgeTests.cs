@@ -75,6 +75,48 @@ public sealed class OarBridgeTests : IDisposable
     }
 
     [Fact]
+    public async Task BackgroundOutputAfterPromptIsDeliveredOnlyAsRuntimeActivity()
+    {
+        File.WriteAllText(_mockBridgePath, MockBridgeScript.Replace("usedTokens: 150 } } });", """
+            usedTokens: 150 } } });
+              for (const params of [
+                {kind:'thinking_delta',delta:'background thinking'},
+                {kind:'tool_call_started',callId:'background',name:'perga:flow_commit',args:{}},
+                {kind:'tool_call_completed',callId:'background',output:'committed'},
+                {kind:'text_delta',delta:'background reply'}
+              ]) send({jsonrpc:'2.0',method:'oar/event',params});
+            """));
+        await using var runtime = new AgentRuntime(new AgentRuntimeOptions { BridgeScriptPath = _mockBridgePath });
+        await using var session = runtime.CreateSession(new HarnessLaunchSpec("agy", null, _workspaceDir,
+            null, null, new Dictionary<string, McpServerConfig>()));
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await session.InitializeAsync(deadline.Token);
+        var activity = new System.Collections.Concurrent.ConcurrentQueue<UnifiedAgentEvent>();
+        var finished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Assert.Empty(session.AttachRuntimeActivityHandler(observation =>
+        {
+            activity.Enqueue(observation);
+            if (observation is UnifiedAgentEvent.TextDelta { Delta: "background reply" })
+                finished.TrySetResult();
+        }));
+        var streamed = new List<UnifiedAgentEvent>();
+        await foreach (var observation in session.StreamTurnAsync(new TurnInput("hello", "turn"), deadline.Token))
+            streamed.Add(observation);
+        Assert.Contains(streamed, e => e is UnifiedAgentEvent.TextDelta { Delta: "Reply from antigravity: hello" });
+        Assert.Contains(streamed, e => e is UnifiedAgentEvent.ThinkingDelta { Delta: "thinking..." });
+        Assert.Contains(streamed, e => e is UnifiedAgentEvent.ToolCallStarted { CallId: "c1" });
+        Assert.Contains(streamed, e => e is UnifiedAgentEvent.ToolCallCompleted { CallId: "c1" });
+        Assert.DoesNotContain(streamed, e => e is UnifiedAgentEvent.ToolCallStarted { CallId: "background" });
+
+        await finished.Task.WaitAsync(deadline.Token);
+        Assert.Collection(activity,
+            e => Assert.Equal("background thinking", Assert.IsType<UnifiedAgentEvent.ThinkingDelta>(e).Delta),
+            e => Assert.Equal("background", Assert.IsType<UnifiedAgentEvent.ToolCallStarted>(e).CallId),
+            e => Assert.Equal("background", Assert.IsType<UnifiedAgentEvent.ToolCallCompleted>(e).CallId),
+            e => Assert.Equal("background reply", Assert.IsType<UnifiedAgentEvent.TextDelta>(e).Delta));
+    }
+
+    [Fact]
     public async Task ExitDuringOpenSuppressesInitialAndSubsequentRuntimeStatus()
     {
         File.WriteAllText(_mockBridgePath, MockBridgeScript

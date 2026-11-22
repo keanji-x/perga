@@ -822,10 +822,14 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
     public Task<IReadOnlyList<long>> AppendSessionItemsAsync(
         string sessionId,
         IReadOnlyList<SessionItemDto> newItems,
-        CancellationToken ct = default)
+        CancellationToken ct = default, EventEnvelopeDto? evt = null)
     {
         lock (_gate)
-            return Task.FromResult(AppendSessionItemsLocked(sessionId, newItems));
+        {
+            var ids = AppendSessionItemsLocked(sessionId, newItems);
+            if (evt is not null) AppendEventLocked(evt);
+            return Task.FromResult(ids);
+        }
     }
 
     private IReadOnlyList<long> AppendSessionItemsLocked(string sessionId, IReadOnlyList<SessionItemDto> newItems)

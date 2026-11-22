@@ -31,11 +31,11 @@ public sealed partial class TrackActor
     private bool _approvalAdmissionClosed;
     private readonly ConcurrentDictionary<string, PendingApproval> _approvals = new(StringComparer.Ordinal);
 
-    private enum ExecutionPhase { Starting, Running, Stopping, Ended }
+    internal enum ExecutionPhase { Starting, Running, Stopping, Ended }
 
     // Approval claims only change in-memory state. Approval delivery, expiry,
     // notifications and audit writes run outside the execution and admission locks.
-    private sealed class ExecutionControl(bool starting = false)
+    internal sealed class ExecutionControl(bool starting = false)
     {
         public volatile bool StopTimedOut;
         public object Sync { get; } = new();
@@ -73,6 +73,7 @@ public sealed partial class TrackActor
         public ExecutionControl Control { get; } = control;
         public Func<ApprovalChoiceDto, Func<Task>?> ClaimDelivery { get; } = claimDelivery;
         public Action Expire { get; } = expire;
+        public ExecutionControl? StopControl { get; init; }
         public bool RecordingDecision { get; set; }
         public bool NotificationScheduled { get; set; }
         public CancellationTokenRegistration Cancellation { get; set; }
@@ -88,18 +89,20 @@ public sealed partial class TrackActor
     private PendingApproval? RegisterApproval(
         string executionId, string sessionId, string? turnId, string title, IReadOnlyList<ApprovalChoiceDto> options,
         ExecutionControl control, Func<ApprovalChoiceDto, Func<Task>?> claimDelivery, Action expire, CancellationToken ct = default,
-        string source = "policy", string? toolName = null, JsonElement? arguments = null)
+        string source = "policy", string? toolName = null, JsonElement? arguments = null, ExecutionControl? stopControl = null)
     {
         var dto = new ApprovalDto($"apr_{Guid.NewGuid():N}", executionId, sessionId, turnId,
             title, options, NowMs(), source, toolName, ApprovalArguments(arguments), ApprovalDelegateCore(sessionId));
-        var pending = new PendingApproval(dto, control, claimDelivery, expire);
+        var pending = new PendingApproval(dto, control, claimDelivery, expire) { StopControl = stopControl };
         // An already canceled token can run its callback inline during registration.
         pending.Cancellation = ct.UnsafeRegister(_ => ExpireApproval(pending), null);
         bool admitted;
         lock (_approvalAdmission)
+        lock (stopControl?.Sync ?? control.Sync)
         lock (control.Sync)
         {
-            admitted = !_approvalAdmissionClosed && !ct.IsCancellationRequested && control.Phase == ExecutionPhase.Running;
+            admitted = !_approvalAdmissionClosed && !ct.IsCancellationRequested && control.Phase == ExecutionPhase.Running &&
+                stopControl?.StopRequested != true;
             if (admitted)
                 _approvals[dto.Id] = pending;
         }
@@ -148,13 +151,15 @@ public sealed partial class TrackActor
         return true;
     }
 
-    private List<PendingApproval>? CollectExpiredApprovalsLocked(ExecutionControl control)
+    private List<PendingApproval>? CollectExpiredApprovalsLocked(ExecutionControl control, bool includeStopControl = false)
     {
         List<PendingApproval>? expired = null;
         foreach (var approval in _approvals.Values)
         {
-            if (ReferenceEquals(approval.Control, control) && TryDetachApprovalLocked(approval))
-                (expired ??= []).Add(approval);
+            if (!ReferenceEquals(approval.Control, control) &&
+                !(includeStopControl && ReferenceEquals(approval.StopControl, control))) continue;
+            lock (approval.Control.Sync)
+                if (TryDetachApprovalLocked(approval)) (expired ??= []).Add(approval);
         }
         return expired;
     }
@@ -373,15 +378,8 @@ public sealed partial class TrackActor
 
     private sealed record PolicyApproval(PendingApproval Pending, Task<ApprovalChoiceDto> Decision);
 
-    private void RequireApprovalOrigin(string? sessionId, ActiveTurnState? turn, McpExecutionOrigin? origin)
-    {
-        if (origin is { } observed && observed.TurnId != turn?.TurnDto.Id ||
-            turn is not null && (turn.Interrupted || ReadActiveTurnId(sessionId!) != turn.TurnDto.Id))
-            throw KernelException.Conflict("The approval's originating execution has ended.");
-    }
-
-    private PolicyApproval? ApplyGuardDecisionCore(GuardDecision decision, string? sessionId, ActiveTurnState? turn, CancellationToken ct,
-        string? toolName = null, JsonElement? arguments = null)
+    private PolicyApproval? ApplyGuardDecisionCore(GuardDecision decision, string? sessionId, ExecutionControl control, CancellationToken ct,
+        string? toolName = null, JsonElement? arguments = null, ActiveTurnState? turn = null)
     {
         if (decision is GuardDecision.Allow)
             return null;
@@ -395,11 +393,11 @@ public sealed partial class TrackActor
         var waiter = new TaskCompletionSource<ApprovalChoiceDto>(TaskCreationOptions.RunContinuationsAsynchronously);
         ApprovalChoiceDto[] choices = [new("approve", ask.ApproveLabel, true), new("deny", ask.DenyLabel, false)];
         var pending = RegisterApproval($"op_{Guid.NewGuid():N}", sessionId, turn?.TurnDto.Id,
-            ask.Title, choices, turn?.Control ?? new ExecutionControl(), choice =>
+            ask.Title, choices, control, choice =>
             {
                 waiter.TrySetResult(choice);
                 return static () => Task.CompletedTask;
-            }, () => waiter.TrySetCanceled(), ct, toolName: toolName, arguments: arguments);
+            }, () => waiter.TrySetCanceled(), ct, toolName: toolName, arguments: arguments, stopControl: turn?.Control);
         return new PolicyApproval(pending ?? throw KernelException.Conflict("The turn is stopping."), waiter.Task);
     }
 
@@ -421,14 +419,16 @@ public sealed partial class TrackActor
         }
     }
     public async Task<string> GuardMcpToolCallAsync(
-        string sessionId,
+        McpSessionPrincipal principal,
         string mcpServer,
         string toolName,
         JsonElement arguments,
         CancellationToken ct = default,
-        McpExecutionOrigin? origin = null)
+        bool write = true)
     {
-        var approvalTurn = _scheduler.TryGetActive(sessionId, out var callingTurn) ? callingTurn : null;
+        var identity = new InteropPrincipal.Session(principal.TrackId, principal.SessionId, principal.IsLead,
+            principal.BoundTaskId, 0, principal.Token, principal.RuntimeBindingId);
+        var sessionId = principal.SessionId;
         Interlocked.Increment(ref _inFlightExternalOps);
         try
         {
@@ -457,6 +457,8 @@ public sealed partial class TrackActor
                         throw KernelException.Forbidden("Only the current Track Lead can use this tool.");
                 }
 
+                var open = write || principal.RuntimeBindingId is not null ? RequireRuntimeBindingCore(identity, authorized: false) : null;
+
                 if (perga && KernelMcpCatalog.IsBeforeHookExemptReadOnly(toolName))
                     return null;
 
@@ -480,12 +482,14 @@ public sealed partial class TrackActor
                     sessionId = caller.Id, isLead = caller.IsLead, boundTaskId = session.BoundTaskId,
                     mcpServer, toolName, arguments = arguments.ValueKind == JsonValueKind.Undefined ? JsonHelpers.EmptyObject : arguments
                 }), _track.TemplateInputs, _track.Data, session);
-                if (eval is GuardDecision.AskHuman)
-                    RequireApprovalOrigin(sessionId, approvalTurn, origin);
                 if (previewOnly && eval is GuardDecision.AskHuman)
                     throw KernelException.PolicyDenied("Template preview requires human approval; dryRun cannot create an approval request.");
 
-                return ApplyGuardDecisionCore(eval, caller.Id, approvalTurn, ct, toolName, arguments);
+                if (eval is GuardDecision.Allow) return null;
+                if (eval is GuardDecision.Deny deny) throw KernelException.PolicyDenied(deny.Reason);
+                open ??= RequireRuntimeBindingCore(identity, authorized: false);
+                var approvalTurn = _scheduler.TryGetActive(sessionId, out var active) ? active : null;
+                return ApplyGuardDecisionCore(eval, caller.Id, open.RuntimeControl, ct, toolName, arguments, approvalTurn);
             }, ct).ConfigureAwait(false);
 
             if (askSuspension is not null)
@@ -493,8 +497,7 @@ public sealed partial class TrackActor
                 await RequirePolicyApprovalAsync(askSuspension, ct).ConfigureAwait(false);
                 return await EnqueueAsync(_ =>
                 {
-                    if (_policyGeneration != authorizedPolicyGeneration)
-                        throw KernelException.PolicyDenied("Active policy or template data changed during approval.");
+                    RequireRuntimeBindingCore(identity with { AuthorizedPolicyGeneration = authorizedPolicyGeneration });
                     return Task.FromResult(authorizedPolicyGeneration);
                 }, ct).ConfigureAwait(false);
             }
@@ -507,11 +510,11 @@ public sealed partial class TrackActor
         }
     }
 
-    public Task EnsurePolicyGenerationAsync(string expectedGeneration, CancellationToken ct = default) =>
+    public Task EnsureMcpAuthorizationAsync(McpSessionPrincipal caller, string generation, CancellationToken ct = default) =>
         EnqueueAsync(_ =>
         {
-            if (_policyGeneration != expectedGeneration)
-                throw KernelException.PolicyDenied("Active policy or template data changed after authorization.");
+            RequireRuntimeBindingCore(new(caller.TrackId, caller.SessionId, caller.IsLead, caller.BoundTaskId,
+                0, caller.Token, caller.RuntimeBindingId) { AuthorizedPolicyGeneration = generation });
             return Task.CompletedTask;
         }, ct);
 

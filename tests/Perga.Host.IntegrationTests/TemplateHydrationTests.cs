@@ -45,7 +45,7 @@ public sealed class TemplateHydrationTests
             var restored = reopened.Services.GetRequiredService<IPergaKernel>();
             restored.Templates.RegisterTemplate("export default { id: 'base', title: 'Updated base' };");
             var track = (await restored.GetTrackAggregateAsync(trackId)).Track;
-            var caller = new McpSessionPrincipal("token", trackId, track.LeadSessionId!, true, null, null, []);
+            var caller = await restored.OpenMcpCallerAsync(track.LeadSessionId!);
             var denied = await Assert.ThrowsAsync<KernelException>(() => KernelMcpDispatcher.ExecuteGuardedAsync(
                 restored, caller, KernelMcpToolNames.TrackRename, JsonSerializer.SerializeToElement(new { title = "Renamed" })));
             Assert.Equal(KernelErrorCode.PolicyDenied, denied.Code);
@@ -243,20 +243,21 @@ public sealed class TemplateHydrationTests
                 FlowFixture.AppendAsync(restarted, trackId, new FlowNodeSpecDto("blocked", new("run", Prompt: "Must not dispatch"))));
             Assert.Equal(KernelErrorCode.PolicyDenied, dispatchError.Code);
             Assert.Contains("template.before", dispatchError.Message);
-            var caller = new McpSessionPrincipal("token", trackId, aggregate.Track.LeadSessionId!, true, null, null, []);
-            var commandError = await Assert.ThrowsAsync<KernelException>(() => KernelMcpDispatcher.ExecuteGuardedAsync(restarted,
-                caller, KernelMcpToolNames.TrackRename, JsonSerializer.SerializeToElement(new { title = "Forbidden rename" })));
-            Assert.Equal(KernelErrorCode.PolicyDenied, commandError.Code);
-            await restarted.SendSessionMessageAsync(caller.SessionId, new(Content: "Must not reach provider", RequestKey: "blocked-turn"), new InteropPrincipal.Human(), default);
+            var lead = aggregate.Track.LeadSessionId!;
+            await restarted.SendSessionMessageAsync(lead, new(Content: "Must not reach provider", RequestKey: "blocked-turn"), new InteropPrincipal.Human(), default);
             await restarted.WaitForTrackIdleAsync(trackId).WaitAsync(TimeSpan.FromSeconds(10));
             Assert.Empty(reopened.AgentRuntime.ExecutedTurns);
             var persisted = await reopened.Services.GetRequiredService<ITrackStore>().LoadTrackAggregateAsync(trackId, default);
             Assert.Empty(persisted!.Tasks);
             Assert.Empty(persisted.OpenAsks);
             Assert.Equal(snapshot, persisted.TemplateSnapshotSource);
-            // Clear and replacement each work directly against the unavailable snapshot.
-            await KernelMcpDispatcher.ExecuteGuardedAsync(restarted, caller, KernelMcpToolNames.TrackSet,
-                clear ? JsonSerializer.SerializeToElement(new { clear = true }) :
+            Assert.Null(restarted.McpSessionBridge.GetTokenForSession(lead));
+            // The owner clears the unavailable policy so a provider can open again.
+            using var cleared = await reopened.AuthenticatedClient.DeleteAsync($"/api/v1/tracks/{trackId}/template");
+            cleared.EnsureSuccessStatusCode();
+            var caller = await restarted.OpenMcpCallerAsync(lead);
+            if (!clear)
+                await KernelMcpDispatcher.ExecuteGuardedAsync(restarted, caller, KernelMcpToolNames.TrackSet,
                     JsonSerializer.SerializeToElement(new { source = "export default {id:'recovered',title:'Recovered'};" }));
             Assert.Equal(clear ? null : "recovered", (await restarted.GetTrackAggregateAsync(trackId)).Track.TemplateId);
             await KernelMcpDispatcher.ExecuteGuardedAsync(restarted, caller, KernelMcpToolNames.TrackRename,

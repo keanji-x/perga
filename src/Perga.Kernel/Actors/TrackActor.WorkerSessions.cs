@@ -20,32 +20,37 @@ namespace Perga.Kernel.Actors;
 
 public sealed partial class TrackActor
 {
-    internal Task<WorkerCompletionOrigin> CaptureWorkerCompletionOriginAsync(McpSessionPrincipal caller, CancellationToken ct) =>
+    internal Task<WorkerCompletionOrigin> CaptureWorkerCompletionOriginAsync(McpSessionPrincipal caller,
+        string generation, CancellationToken ct) =>
         EnqueueAsync(async _ =>
         {
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
-            if (string.IsNullOrEmpty(caller.BoundTaskId) || caller.TaskRunCount is not { } runCount)
+            if (caller.BoundTaskId is not { } taskId || caller.TaskRunCount is not { } runCount)
                 throw KernelException.Forbidden("Completion tool requires an active bound task session.");
-            var session = RequireSessionCore(caller.SessionId);
-            if (!_taskCoordinator.TryGetActiveRun(caller.BoundTaskId, out var activeTask) ||
-                activeTask.SessionId != session.Id || activeTask.RunCount != runCount)
+            var open = RequireRuntimeBindingCore(new(caller.TrackId, caller.SessionId, caller.IsLead,
+                taskId, 0, caller.Token, caller.RuntimeBindingId) { AuthorizedPolicyGeneration = generation });
+            if (!_taskCoordinator.TryGetActiveRun(taskId, out var activeTask) || activeTask.SessionId != caller.SessionId)
                 throw KernelException.Conflict("The task execution no longer accepts completion.");
-            if (!_scheduler.TryGetActive(session.Id, out var active) || active.Interrupted ||
-                _mcpBridge.ResolveToken(caller.Token)?.SessionId != session.Id)
-                throw KernelException.Conflict("The worker turn no longer accepts completion.");
-            return new WorkerCompletionOrigin(caller.Token, active.TurnDto.Id, caller.BoundTaskId, runCount);
+            var origin = new WorkerCompletionOrigin(caller.Token, open.RuntimeBindingId, taskId, runCount)
+                { AuthorizedPolicyGeneration = generation };
+            CheckWorkerCompletionCore(activeTask, origin);
+            return origin;
         }, ct);
 
     private void CheckWorkerCompletionCore(TrackTasks.ActiveTaskRunState activeTask, WorkerCompletionOrigin? origin)
     {
         var task = _taskCoordinator.RequireTaskCore(activeTask.TaskId);
         if (activeTask.Paused || activeTask.Settling || task.Status != TaskRunStatus.Running)
-            throw KernelException.Conflict("The task no longer accepts completion from this turn.");
-        if (origin is not null &&
-            (origin.TaskId != activeTask.TaskId || origin.RunCount != activeTask.RunCount ||
-             activeTask.SessionId is not { } sessionId || _mcpBridge.ResolveToken(origin.Token)?.SessionId != sessionId ||
-             !_scheduler.TryGetActive(sessionId, out var turn) || turn.Interrupted || turn.TurnDto.Id != origin.TurnId))
-            throw KernelException.Conflict("The worker turn no longer accepts completion.");
+            throw KernelException.Conflict("The task no longer accepts completion.");
+        if (origin is null) return;
+        if (origin.TaskId != activeTask.TaskId || origin.RunCount != activeTask.RunCount ||
+            activeTask.SessionId is not { } sessionId)
+            throw KernelException.Conflict("The task execution no longer accepts completion.");
+        RequireRuntimeBindingCore(new(TrackId, sessionId, false, origin.TaskId, 0, origin.Token, origin.RuntimeBindingId)
+            { AuthorizedPolicyGeneration = origin.AuthorizedPolicyGeneration });
+        if (_mcpBridge.ResolveToken(origin.Token) is not { } credential ||
+            credential.BoundTaskId != origin.TaskId || credential.TaskRunCount != origin.RunCount)
+            throw KernelException.Conflict("The runtime credential belongs to another task execution.");
     }
 
     private void PublishTurnActivity(ActiveTurnState active, string kind, JsonElement payload, long now)

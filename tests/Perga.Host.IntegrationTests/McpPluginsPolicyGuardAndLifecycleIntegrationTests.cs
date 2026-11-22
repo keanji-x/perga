@@ -44,7 +44,7 @@ public sealed class McpPluginsPolicyGuardAndLifecycleIntegrationTests
         var area = await kernel.CreateAreaAsync(new("Plugin policy", DefaultCwd: cluster.DataDir), ct);
         var track = (await kernel.CreateTrackAsync(new(area.Id, TemplateId: "plugin-init-policy",
             EnabledPlugins: ["test-plugin"]), ct)).Track;
-        var caller = new McpSessionPrincipal("", track.Id, track.LeadSessionId!, true, null, null, track.EnabledPlugins);
+        var caller = await kernel.OpenMcpCallerAsync(track.LeadSessionId!, ct);
         var upstream = new PausedPluginInitialization();
         using var httpClient = new HttpClient(upstream);
         await using var router = new McpPluginRouter(kernel, new PergaHostOptions(), httpClient);
@@ -65,7 +65,7 @@ public sealed class McpPluginsPolicyGuardAndLifecycleIntegrationTests
 
         var result = await call.WaitAsync(ct);
         Assert.True(result.IsError);
-        Assert.Equal("Active policy or template data changed after authorization.", Assert.Single(result.Content).Text);
+        Assert.Equal("Active policy changed after authorization.", Assert.Single(result.Content).Text);
         Assert.Equal(0, upstream.ToolCalls);
 
         var retry = await backend.CallToolAsync(caller, "update", McpToolResultFormatter.EmptyObject, ct);

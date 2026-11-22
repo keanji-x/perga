@@ -109,15 +109,16 @@ public sealed class SqliteAuthStoreTests
             await db.OpenAsync();
             Assert.Equal(2, await db.ExecuteScalarAsync<int>(
                 "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name IN ('auth_users', 'auth_sessions');"));
+            var nextVersion = SqliteMigrator.CurrentSchemaVersion + 1;
             await db.ExecuteAsync("""
                 INSERT INTO schema_migrations (version, name, checksum_sha256, applied_at_ms)
-                VALUES (27, '0027_future.sql', lower(hex(zeroblob(32))), 0)
-                """);
+                VALUES (@Version, @Name, lower(hex(zeroblob(32))), 0)
+                """, new { Version = nextVersion, Name = $"{nextVersion:D4}_future.sql" });
             foreach (var allow in new[] { false, true })
             {
                 var error = await Assert.ThrowsAsync<SqliteFutureSchemaException>(() => migrator.EnsureMigratedAsync(path, allow));
-                Assert.Equal(27, error.DatabaseVersion);
-                Assert.Equal(26, error.SupportedVersion);
+                Assert.Equal(nextVersion, error.DatabaseVersion);
+                Assert.Equal(SqliteMigrator.CurrentSchemaVersion, error.SupportedVersion);
             }
             await Assert.ThrowsAsync<SqliteFutureSchemaException>(() => new SqliteAuthAdministration(path).GetStatusAsync(Now, default));
         }

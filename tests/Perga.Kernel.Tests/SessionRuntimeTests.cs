@@ -12,7 +12,7 @@ public sealed class SessionRuntimeTests
 
     private static Task<OpenSessionHandle> Open(SessionRuntime runtime, ScriptableFakeAgentRuntime provider, CancellationToken ct) =>
         runtime.EnsureOpenAsync(provider, SessionConfiguration.FromLaunch(Spec), Spec.Provider,
-            () => Task.FromResult(Spec), _ => { }, Timeout, ct);
+            _ => Task.FromResult(Spec), _ => { }, Timeout, ct);
 
     [Fact]
     public async Task CancelLaunchRunsCallbacksSynchronouslyOutsideSnapshotLock()
@@ -46,7 +46,7 @@ public sealed class SessionRuntimeTests
         var provider = new ScriptableFakeAgentRuntime();
         var first = await Open(runtime, provider, default);
         var second = await runtime.EnsureOpenAsync(provider, SessionConfiguration.FromLaunch(Spec), "CODEX",
-            () => Task.FromResult(Spec), _ => { }, Timeout, default);
+            _ => Task.FromResult(Spec), _ => { }, Timeout, default);
         Assert.Same(first.Agent, second.Agent);
         Assert.Single(provider.OpenedSessions);
         await runtime.CloseAsync(Timeout, default);

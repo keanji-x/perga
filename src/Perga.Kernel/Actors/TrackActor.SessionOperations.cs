@@ -211,7 +211,7 @@ public sealed partial class TrackActor
                         if (activeTask is not null)
                         {
                             _taskCoordinator.SetPaused(activeTask, true);
-                            _mcpBridge.RevokeSession(sessionId);
+                            RevokeSessionRuntime(sessionId);
                         }
                         var stopping = session with { Status = "stopping", UpdatedAtMs = NowMs() };
                         await PersistAndEmitSessionUpdatedCoreAsync(stopping, stopping.UpdatedAtMs, CancellationToken.None).ConfigureAwait(false);
@@ -364,11 +364,11 @@ public sealed partial class TrackActor
                     }
                 }, ct).ConfigureAwait(false);
             }
-            var forceReopen = _runtimes.TryGetOpen(session.Id, out _) && _mcpBridge.GetTokenForSession(session.Id) is null;
+            var forceReopen = _runtimes.TryGetOpen(session.Id, out var previous) && !HasRuntimeCredential(session.Id, previous);
             var handle = await _runtimes.Get(session.Id).EnsureOpenAsync(EffectiveAgentRuntime,
                 SessionConfiguration.FromNullable(session.Model, session.ReasoningEffort, session.PermissionMode),
                 session.Provider,
-                () => EnqueueAsync(_ => BuildAgentLaunchSpecCoreAsync(session, overrideSystemPrompt, ct), ct),
+                bindingId => EnqueueAsync(_ => BuildAgentLaunchSpecCoreAsync(session, overrideSystemPrompt, bindingId, ct), ct),
                 agent =>
                 {
                     RequireConfirmedConfiguration(session, agent, agent.ConfigurationState);
@@ -400,14 +400,17 @@ public sealed partial class TrackActor
     }
 
     private async Task<HarnessLaunchSpec> BuildAgentLaunchSpecCoreAsync(
-        AgentSessionDto session, string? overrideSystemPrompt, CancellationToken ct)
+        AgentSessionDto session, string? overrideSystemPrompt, string bindingId, CancellationToken ct)
     {
         _taskCoordinator.RequireDispatchWorkspace(session);
         var mounted = await EnsureWorkspaceMountedCoreAsync(ct).ConfigureAwait(false);
         var activeTask = _taskCoordinator.TryGetActiveTaskForSessionCore(session.Id);
 
         var mcpBaseUri = await Env.ResolveMcpBaseUriAsync(_mcpBridge.ResolveBaseUri(), ct).ConfigureAwait(false);
-        RequireSessionWritableCore(RequireSessionCore(session.Id));
+        var current = RequireSessionCore(session.Id);
+        RequireSessionWritableCore(current);
+        if (_closingTrack || _deletingTrack || current.ConfigVersion != session.ConfigVersion || current.Epoch != session.Epoch)
+            throw KernelException.Conflict("The session changed during provider startup.");
         var mcpReg = _mcpBridge.RegisterSession(
             TrackId,
             session.Id,
@@ -415,7 +418,7 @@ public sealed partial class TrackActor
             activeTask?.Task.Id,
             activeTask?.Active.RunCount,
             _track.EnabledPlugins,
-            mcpBaseUri);
+            runtimeBindingId: bindingId, baseUriOverride: mcpBaseUri);
 
         var systemPrompt = overrideSystemPrompt ?? BuildDefaultSystemPromptCore(session);
         if (session.SystemPrompt is { } customPrompt) systemPrompt += "\n\n" + customPrompt;

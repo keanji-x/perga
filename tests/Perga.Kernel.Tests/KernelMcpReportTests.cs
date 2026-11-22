@@ -8,9 +8,6 @@ namespace Perga.Kernel.Tests;
 
 public sealed class KernelMcpReportTests
 {
-    private static McpSessionPrincipal Caller(TrackAggregateSnapshot snap) =>
-        new("token", snap.Track.Id, snap.Track.LeadSessionId!, true, null, null, []);
-
     private static Task<JsonElement> Call(KernelTestContext ctx, McpSessionPrincipal caller, string tool, object args) =>
         KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller, tool, TestJson.FromObject(args));
 
@@ -59,7 +56,7 @@ public sealed class KernelMcpReportTests
     {
         await using var ctx = new KernelTestContext();
         var (_, snap) = await ctx.CreateDefaultTrackAsync();
-        var caller = Caller(snap);
+        var caller = await ctx.OpenMcpCallerAsync(snap.Track.LeadSessionId!);
 
         var initial = await Call(ctx, caller, KernelMcpToolNames.ReportRead, new { });
         var anchor0 = initial.GetProperty("anchor");
@@ -104,7 +101,7 @@ public sealed class KernelMcpReportTests
     {
         await using var ctx = new KernelTestContext();
         var (_, snap) = await ctx.CreateDefaultTrackAsync();
-        var caller = Caller(snap);
+        var caller = await ctx.OpenMcpCallerAsync(snap.Track.LeadSessionId!);
 
         var r0 = await Call(ctx, caller, KernelMcpToolNames.ReportRead, new { });
         var c1 = await Call(ctx, caller, KernelMcpToolNames.ReportCommit, new
@@ -497,7 +494,7 @@ public sealed class KernelMcpReportTests
     {
         await using var ctx = new KernelTestContext();
         var (_, snap) = await ctx.CreateDefaultTrackAsync();
-        var caller = Caller(snap);
+        var caller = await ctx.OpenMcpCallerAsync(snap.Track.LeadSessionId!);
 
         var badFormat = await Assert.ThrowsAsync<KernelException>(() =>
             Call(ctx, caller, KernelMcpToolNames.ReportRead, new { format = "xml" }));

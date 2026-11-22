@@ -105,11 +105,12 @@ public sealed partial class TrackActor
         }, ct);
     }
 
-    public Task<TrackDto> RenameTrackBySessionAsync(string callerSessionId, string newTitle, CancellationToken ct = default)
+    public Task<TrackDto> RenameTrackBySessionAsync(string callerSessionId, string newTitle, CancellationToken ct = default, InteropPrincipal.Session? authorization = null)
     {
         return EnqueueAsync(async _ =>
         {
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
+            RequireMcpAuthorizationCore(authorization);
             RequireGovernanceSessionCore(callerSessionId, "track_rename");
 
             var now = NowMs();
@@ -119,15 +120,17 @@ public sealed partial class TrackActor
         }, ct);
     }
 
-    public Task<TrackDto> CloseTrackBySessionAsync(string callerSessionId, CancellationToken ct = default) =>
+    public Task<TrackDto> CloseTrackBySessionAsync(string callerSessionId, CancellationToken ct = default, InteropPrincipal.Session? authorization = null) =>
         RunWithMailboxReservationAsync(
             reserve: async () =>
             {
                 await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
+                RequireMcpAuthorizationCore(authorization);
                 RequireGovernanceSessionCore(callerSessionId, "track_close");
                 if (_closingTrack || _deletingTrack) throw KernelException.Conflict("Track teardown is already in progress.");
                 ct.ThrowIfCancellationRequested();
                 _closingTrack = true;
+                foreach (var sessionId in _sessions.Keys) RevokeSessionRuntime(sessionId);
                 return true;
             },
             run: async _ =>
@@ -153,7 +156,7 @@ public sealed partial class TrackActor
     {
         ScheduleWatchRearmCore(null);
         foreach (var sessionId in _sessions.Keys)
-            ScheduleSessionRuntimeCloseCore(sessionId, revokeToken: !_scheduler.HasActive(sessionId));
+            ScheduleSessionRuntimeCloseCore(sessionId, revokeToken: true);
     }
 
     public async Task TeardownAndDeleteTrackAsync(CancellationToken ct = default)
@@ -196,6 +199,7 @@ public sealed partial class TrackActor
                 throw KernelException.Conflict("Wait for provider recovery before deleting this Track.");
             ct.ThrowIfCancellationRequested();
             _deletingTrack = true;
+            foreach (var sessionId in _sessions.Keys) RevokeSessionRuntime(sessionId);
             SetApprovalAdmissionClosed(true);
             reserve();
 

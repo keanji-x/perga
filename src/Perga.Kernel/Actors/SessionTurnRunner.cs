@@ -92,6 +92,7 @@ public sealed partial class TrackActor
                 actor.RequireSessionDispatchAvailableCore(session.Id);
                 if (work.IsOccupiedCore(session))
                     throw KernelException.Conflict($"Session '{session.Id}' already has an active or unresolved turn.");
+                await actor.FlushRuntimeOutputCoreAsync(session).ConfigureAwait(false);
                 var turn = work.CreateTurnCore(session, prompt, actor.NowMs());
                 var running = session with { Status = "running", UpdatedAtMs = actor.NowMs() };
                 var execution = await work.ClaimCoreAsync(session, running, actor.SessionUpdatedEvent(running), ct).ConfigureAwait(false);
@@ -128,7 +129,7 @@ public sealed partial class TrackActor
                     var current = actor.RequireSessionCore(work.SessionId);
                     actor.RequireSessionDispatchAvailableCore(work.SessionId);
                     if (actor._taskCoordinator.IsSessionFrozenForDispatchCore(current) || actor._taskCoordinator.IsSessionAutoDrainPausedCore(current.Id) ||
-                        actor._mcpBridge.GetTokenForSession(current.Id) is null)
+                        !actor._runtimes.TryGetOpen(current.Id, out var handle) || !actor.HasRuntimeCredential(current.Id, handle))
                         throw KernelException.Conflict("The session changed during provider startup.");
                     if (current.Epoch != claimed.Session.Epoch ||
                         actor._policyGeneration != policyAdmission.Generation)
@@ -137,11 +138,11 @@ public sealed partial class TrackActor
                     prompt = finalPrompt;
                     var running = current with { Status = "running", UpdatedAtMs = actor.NowMs() };
                     var evt = actor.SessionUpdatedEvent(running);
+                    await actor.FlushRuntimeOutputCoreAsync(current).ConfigureAwait(false);
                     var turn = await work.RecordTurnStartCoreAsync(claimed.Turn, prompt, running, ct).ConfigureAwait(false);
                     await work.OnTurnCreatedAsync(turn).ConfigureAwait(false);
                     actor._sessions[running.Id] = running;
                     var turnCts = CancellationTokenSource.CreateLinkedTokenSource(ct, actor._actorShutdownCts.Token);
-                    var handle = actor._runtimes.Get(running.Id).Snapshot!;
                     var active = new ActiveTurnState(running.Id,
                         SessionConfiguration.FromNullable(claimed.Session.Model, claimed.Session.ReasoningEffort, claimed.Session.PermissionMode),
                         handle.ContextUsage, turn, agent, turnCts, true, handle.Generation);
@@ -410,7 +411,8 @@ public sealed partial class TrackActor
             {
                 try
                 {
-                    await actor._runtimes.Get(active.SessionId).CloseAsync(actor._options.SessionStartupTimeout, CancellationToken.None).ConfigureAwait(false);
+                    await actor._runtimes.Get(active.SessionId).CloseAsync(actor._options.SessionStartupTimeout, CancellationToken.None,
+                        expectedGeneration: active.OpenGeneration).ConfigureAwait(false);
                 }
                 catch { /* SessionRuntime retains ownership and records unconfirmed shutdown. */ }
                 var unconfirmed = actor._runtimes.IsShutdownUnconfirmed(active.SessionId);
@@ -470,10 +472,11 @@ public sealed partial class TrackActor
                 .ConfigureAwait(false);
 
             actor._runtimes.Get(sessionId).TouchUsed();
+            if (updatedSession.Status == "unknown") actor.RevokeSessionRuntime(sessionId);
             if (actor._track.ClosedAtMs is not null || updatedSession.ArchivedAtMs is not null)
             {
                 active.CloseRuntimeOnSettle = true;
-                actor._mcpBridge.RevokeSession(sessionId);
+                actor.RevokeSessionRuntime(sessionId);
             }
             actor._scheduler.RemoveActive(sessionId);
             if (actor._taskCoordinator.TryGetActiveOwningTaskCore(sessionId) is { Status: TaskRunStatus.Pending } ||
@@ -522,6 +525,7 @@ public sealed partial class TrackActor
                             if (!work.IsDurable)
                             {
                                 var unknown = session with { Status = "unknown", UnknownReason = "stream_lost", UnknownTurnId = active.TurnDto.Id, UpdatedAtMs = actor.NowMs() };
+                                actor.RevokeSessionRuntime(session.Id);
                                 await actor.PersistAndEmitSessionUpdatedCoreAsync(unknown, unknown.UpdatedAtMs, CancellationToken.None)
                                     .ConfigureAwait(false);
                             }

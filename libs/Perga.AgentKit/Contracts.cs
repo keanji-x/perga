@@ -154,6 +154,7 @@ public interface IAgentSession : IAsyncDisposable
     ValueTask<bool> ResolveNativeCompactSupportAsync(CancellationToken ct) =>
         ValueTask.FromResult(SupportsNativeCompact);
     IReadOnlyList<IdleContextUsage> AttachIdleContextUsageHandler(Action<IdleContextUsage>? handler) => [];
+    // Output delivered through this handler belongs to the runtime outside its prompt stream.
     IReadOnlyList<UnifiedAgentEvent> AttachRuntimeActivityHandler(Action<UnifiedAgentEvent>? handler) => [];
     WorkerProviderConfiguration? WorkerConfiguration => null;
     bool ShutdownConfirmed => true;

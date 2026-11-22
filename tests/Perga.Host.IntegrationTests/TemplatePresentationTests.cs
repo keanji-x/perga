@@ -102,7 +102,7 @@ public sealed class TemplatePresentationTests
                 areaId = area.Id;
                 var created = await kernel.CreateTrackAsync(new(area.Id));
                 trackId = created.Track.Id;
-                var principal = new McpSessionPrincipal("token", trackId, created.Track.LeadSessionId!, true, null, null, []);
+                var principal = await kernel.OpenMcpCallerAsync(created.Track.LeadSessionId!);
                 await KernelMcpDispatcher.ExecuteGuardedAsync(kernel, principal, KernelMcpToolNames.TrackSet,
                     JsonSerializer.SerializeToElement(new { source = """
                         export default defineTemplate({

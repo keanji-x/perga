@@ -1,9 +1,35 @@
+using Perga.Kernel.Mcp;
+using Perga.Kernel.Ports;
 using Perga.Contracts;
 
 namespace Perga.Kernel.Tests.Fakes;
 
 internal sealed partial class KernelTestContext
 {
+    public McpSessionPrincipal RuntimeCaller(string sessionId)
+    {
+        var token = Kernel.McpSessionBridge.GetTokenForSession(sessionId);
+        Assert.NotNull(token);
+        var principal = Kernel.McpSessionBridge.ResolveToken(token);
+        Assert.NotNull(principal?.RuntimeBindingId);
+        return principal;
+    }
+
+    public async Task<McpSessionPrincipal> OpenMcpCallerAsync(string sessionId, CancellationToken ct = default)
+    {
+        if (Kernel.McpSessionBridge.GetTokenForSession(sessionId) is null)
+            Assert.Equal("completed", (await SendAndWaitForTurnAsync(sessionId,
+                new("Initialize test runtime", Guid.NewGuid().ToString("N")), ct)).Status);
+        return RuntimeCaller(sessionId);
+    }
+
+    public async Task<InteropPrincipal.Session> AuthorizeAsync(McpSessionPrincipal caller, CancellationToken ct = default)
+    {
+        var generation = await Kernel.GuardMcpToolCallAsync(caller, "perga", KernelMcpToolNames.TrackStatus, TestJson.Parse("{}"), ct);
+        return new(caller.TrackId, caller.SessionId, caller.IsLead, caller.BoundTaskId, 0, caller.Token, caller.RuntimeBindingId)
+            { AuthorizedPolicyGeneration = generation };
+    }
+
     public async Task<SessionTurnDto> SendAndWaitForTurnAsync(string sessionId, SendSessionMessageRequest request, CancellationToken ct = default)
     {
         var accepted = await Kernel.SendSessionMessageAsync(sessionId, request, new InteropPrincipal.Human(), ct);

@@ -19,7 +19,7 @@ public sealed class ReportFlowIntegrationTests
         await FlowFixture.AddAsync(kernel, trackId, new FlowNodeSpecDto("future",
             new("run", Prompt: "Inspect"), When: new(At: "2099-01-01T00:00:00Z")));
         var original = await kernel.ReadReportAsync(trackId);
-        var caller = new McpSessionPrincipal("token", trackId, leadId, true, null, null, []);
+        var caller = await kernel.OpenMcpCallerAsync(leadId);
         var error = await Assert.ThrowsAsync<KernelException>(() => KernelMcpDispatcher.ExecuteGuardedAsync(
             kernel, caller, KernelMcpToolNames.ReportCommit, JsonSerializer.SerializeToElement(new
             {

@@ -37,7 +37,7 @@ public sealed class TemplateLoopTests
     {
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
         var (_, snap) = await ctx.CreateDefaultTrackAsync();
-        var caller = new McpSessionPrincipal("token", snap.Track.Id, snap.Track.LeadSessionId!, true, null, null, []);
+        var caller = await ctx.OpenMcpCallerAsync(snap.Track.LeadSessionId!);
         const string asking = """
             export default {id:'ask',title:'Ask',before(a,ctx) {
               return a.type === 'task.dispatch' ? AskHuman('Approve dispatch?',{approve:'Approve',deny:'Reject'}) : Allow();
@@ -77,7 +77,7 @@ public sealed class TemplateLoopTests
     {
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
-        var caller = new McpSessionPrincipal("token", snapshot.Track.Id, snapshot.Track.LeadSessionId!, true, null, null, []);
+        var caller = await ctx.OpenMcpCallerAsync(snapshot.Track.LeadSessionId!);
         const string source = """
             export default {id:'turn',title:'Turn',data:{initial:{note:'Policy context',calls:0}},
               turnContext:ctx=>ctx.data.note,before(a,ctx){
@@ -88,6 +88,7 @@ public sealed class TemplateLoopTests
             """;
         await KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller, KernelMcpToolNames.TrackSet, TestJson.FromObject(new { source }));
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await ctx.Kernel.ControlSessionAsync(caller.SessionId, new("reset_context"), new InteropPrincipal.Human(), timeout.Token);
         var wake = ctx.SendAndWaitForTurnAsync(caller.SessionId, new SendSessionMessageRequest("Review context", "policy-turn"), timeout.Token);
         ApprovalDto? ask = null;
         while (ask is null)
@@ -109,7 +110,7 @@ public sealed class TemplateLoopTests
     {
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
-        var caller = new McpSessionPrincipal("token", snapshot.Track.Id, snapshot.Track.LeadSessionId!, true, null, null, []);
+        var caller = await ctx.OpenMcpCallerAsync(snapshot.Track.LeadSessionId!);
         const string source = "export default {id:'deny',title:'Deny',before:a=>a.type==='task.dispatch'?Deny('Blocked after restart'):Allow()};";
         await KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller, KernelMcpToolNames.TrackSet, TestJson.FromObject(new { source }));
         ctx.Kernel.DispatchAdmission.SetDraining(true);
@@ -130,7 +131,7 @@ public sealed class TemplateLoopTests
     {
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
         var (_, snap) = await ctx.CreateDefaultTrackAsync();
-        var caller = new McpSessionPrincipal("token", snap.Track.Id, snap.Track.LeadSessionId!, true, null, null, []);
+        var caller = await ctx.OpenMcpCallerAsync(snap.Track.LeadSessionId!);
         const string source = """
             export default {id:'tools',title:'Tools',before(a,ctx) {
               if (a.toolName !== 'track_rename') return Allow();

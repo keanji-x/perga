@@ -163,7 +163,7 @@ public interface ITrackStore : ITrackReadStore
     Task<IReadOnlyList<long>> AppendSessionItemsAsync(
         string sessionId,
         IReadOnlyList<SessionItemDto> newItems,
-        CancellationToken ct = default);
+        CancellationToken ct = default, EventEnvelopeDto? evt = null);
     Task UpsertAskAsync(AskDto ask, EventEnvelopeDto evt, CancellationToken ct);
     Task UpsertMailAsync(MailDto mail, EventEnvelopeDto evt, CancellationToken ct, bool requestWake = true);
     Task UpsertTerminalAsync(TerminalDto terminal, EventEnvelopeDto? evt, CancellationToken ct);

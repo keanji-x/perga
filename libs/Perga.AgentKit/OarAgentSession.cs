@@ -153,13 +153,13 @@ public sealed class OarAgentSession : IAgentSession
         }
     }
 
-    private void PublishRuntimeActivity(UnifiedAgentEvent observation)
+    private void PublishRuntimeActivity(UnifiedAgentEvent observation, bool includeTurn = true)
     {
         lock (_runtimeActivityLock)
         {
             if (_disposed != 0 || _runtimeExited) return;
             if (observation is UnifiedAgentEvent.RuntimeExited) _runtimeExited = true;
-            Volatile.Read(ref _currentTurn)?.Events.Writer.TryWrite(observation);
+            if (includeTurn) Volatile.Read(ref _currentTurn)?.Events.Writer.TryWrite(observation);
             if (_runtimeActivityHandler is { } handler) handler(observation);
             else _pendingRuntimeActivity.Add(observation);
         }
@@ -456,29 +456,32 @@ public sealed class OarAgentSession : IAgentSession
     {
         try
         {
-            var response = await _rpc.SendRequestAsync("session/prompt",
-                new { prompt = input.Prompt, correlationId = input.CorrelationId }, ct).ConfigureAwait(false);
-            var status = TryGetString(response, "status") ?? "completed";
-            var usage = TryParseUsage(response);
-
-            if (status.Equals("completed", StringComparison.OrdinalIgnoreCase))
-            {
-                turn.TryFinish(new UnifiedAgentEvent.TurnCompleted(
-                    usage, Interlocked.Read(ref _contextUsageRevision), Interlocked.Increment(ref _nextContextPromptId)));
-            }
-            else if (status.Equals("aborted", StringComparison.OrdinalIgnoreCase))
-            {
-                turn.TryFinish(new UnifiedAgentEvent.TurnInterrupted());
-            }
-            else
-            {
-                turn.TryFinish(new UnifiedAgentEvent.TurnError(
-                    TryGetString(response, "code") ?? "OAR_TURN_FAILED",
-                    TryGetString(response, "message") ?? "OAR turn failed.",
-                    TryGetBool(response, "isRetryable") == true,
-                    IsConclusive: true,
-                    BeforePrompt: TryGetBool(response, "beforePrompt") == true));
-            }
+            await _rpc.SendRequestAsync("session/prompt",
+                new { prompt = input.Prompt, correlationId = input.CorrelationId }, ct, observeResult: response =>
+                {
+                    // The next notification can already belong to the still-open session.
+                    Interlocked.CompareExchange(ref _currentTurn, null, turn);
+                    var status = TryGetString(response, "status") ?? "completed";
+                    var usage = TryParseUsage(response);
+                    if (status.Equals("completed", StringComparison.OrdinalIgnoreCase))
+                    {
+                        turn.TryFinish(new UnifiedAgentEvent.TurnCompleted(
+                            usage, Interlocked.Read(ref _contextUsageRevision), Interlocked.Increment(ref _nextContextPromptId)));
+                    }
+                    else if (status.Equals("aborted", StringComparison.OrdinalIgnoreCase))
+                    {
+                        turn.TryFinish(new UnifiedAgentEvent.TurnInterrupted());
+                    }
+                    else
+                    {
+                        turn.TryFinish(new UnifiedAgentEvent.TurnError(
+                            TryGetString(response, "code") ?? "OAR_TURN_FAILED",
+                            TryGetString(response, "message") ?? "OAR turn failed.",
+                            TryGetBool(response, "isRetryable") == true,
+                            IsConclusive: true,
+                            BeforePrompt: TryGetBool(response, "beforePrompt") == true));
+                    }
+                }).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -494,6 +497,12 @@ public sealed class OarAgentSession : IAgentSession
     {
         if (!method.Equals("oar/event", StringComparison.Ordinal) || p.ValueKind != JsonValueKind.Object) return;
         var turn = Volatile.Read(ref _currentTurn);
+        void PublishOutput(UnifiedAgentEvent observation)
+        {
+            if (turn is null) PublishRuntimeActivity(observation, includeTurn: false);
+            else turn.Events.Writer.TryWrite(observation);
+        }
+
         switch (TryGetString(p, "kind"))
         {
             case "task_started":
@@ -512,19 +521,19 @@ public sealed class OarAgentSession : IAgentSession
                     PublishRuntimeActivity(new UnifiedAgentEvent.AgentStatusChanged(status));
                 break;
             case "text_delta" when TryGetRawString(p, "delta") is { Length: > 0 } d:
-                turn?.Events.Writer.TryWrite(new UnifiedAgentEvent.TextDelta(d));
+                PublishOutput(new UnifiedAgentEvent.TextDelta(d));
                 break;
             case "thinking_delta" when TryGetRawString(p, "delta") is { Length: > 0 } d:
-                turn?.Events.Writer.TryWrite(new UnifiedAgentEvent.ThinkingDelta(d));
+                PublishOutput(new UnifiedAgentEvent.ThinkingDelta(d));
                 break;
             case "tool_call_started":
-                turn?.Events.Writer.TryWrite(new UnifiedAgentEvent.ToolCallStarted(
+                PublishOutput(new UnifiedAgentEvent.ToolCallStarted(
                     TryGetString(p, "callId") ?? Guid.NewGuid().ToString("N"),
                     TryGetString(p, "name") ?? "tool",
                     p.TryGetProperty("args", out var a) ? a.Clone() : JsonRpcStdioConnection.CreateEmptyJsonObject()));
                 break;
             case "tool_call_completed":
-                turn?.Events.Writer.TryWrite(new UnifiedAgentEvent.ToolCallCompleted(
+                PublishOutput(new UnifiedAgentEvent.ToolCallCompleted(
                     TryGetString(p, "callId") ?? string.Empty,
                     TryGetRawString(p, "output") ?? string.Empty,
                     TryGetBool(p, "isError") == true));

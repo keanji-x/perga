@@ -56,6 +56,31 @@ public sealed class SessionRuntimeEvictionTests
     }
 
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RuntimeActivityAndMcpCallsRefreshIdleDeadline(bool mcp)
+    {
+        await using var ctx = new KernelTestContext(Options);
+        ctx.AgentRuntime.SupportsSessionResume = true;
+        var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
+        var sessionId = snapshot.Track.LeadSessionId!;
+        var caller = await ctx.OpenMcpCallerAsync(sessionId);
+        var provider = Assert.Single(ctx.AgentRuntime.OpenedSessions);
+        ctx.Time.Advance(IdleTimeout);
+        if (mcp)
+            await ctx.Kernel.InvokeKernelMcpToolAsync(caller, KernelMcpToolNames.TrackRename,
+                TestJson.FromObject(new { title = "Background MCP call" }));
+        else
+            provider.EmitRuntimeActivity(new UnifiedAgentEvent.AgentStatusChanged(new("idle")));
+
+        Assert.Equal(0, await ctx.Kernel.Actors.EvictIdleSessionRuntimesAsync());
+        Assert.False(provider.Disposed);
+        ctx.Time.Advance(IdleTimeout);
+        Assert.Equal(1, await ctx.Kernel.Actors.EvictIdleSessionRuntimesAsync());
+        Assert.Null(ctx.Kernel.McpSessionBridge.ResolveToken(caller.Token));
+    }
+
+    [Theory]
     [InlineData("unsupported")]
     [InlineData("no-native-id")]
     [InlineData("running")]
@@ -87,6 +112,8 @@ public sealed class SessionRuntimeEvictionTests
         if (reason is "running" or "pending")
         {
             provider.EmitRuntimeActivity(new UnifiedAgentEvent.TaskEnded(new("background", Status: "completed")));
+            Assert.Equal(0, await ctx.Kernel.Actors.EvictIdleSessionRuntimesAsync(ct));
+            ctx.Time.Advance(IdleTimeout);
             Assert.Equal(1, await ctx.Kernel.Actors.EvictIdleSessionRuntimesAsync(ct));
         }
     }
@@ -278,12 +305,12 @@ public sealed class SessionRuntimeEvictionTests
         var ct = deadline.Token;
         var spec = new HarnessLaunchSpec("codex", null, "/workspace/demo", null, null, new Dictionary<string, McpServerConfig>());
         var selection = SessionConfiguration.FromLaunch(spec);
-        var first = await owner.EnsureOpenAsync(provider, selection, spec.Provider, () => Task.FromResult(spec), _ => { },
+        var first = await owner.EnsureOpenAsync(provider, selection, spec.Provider, _ => Task.FromResult(spec), _ => { },
             TimeSpan.FromSeconds(10), ct);
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         provider.BeforeOpenAsync = () => { entered.TrySetResult(); return release.Task; };
-        var reopening = owner.EnsureOpenAsync(provider, selection, spec.Provider, () => Task.FromResult(spec), _ => { },
+        var reopening = owner.EnsureOpenAsync(provider, selection, spec.Provider, _ => Task.FromResult(spec), _ => { },
             TimeSpan.FromSeconds(10), ct, forceReopen: true);
         Task<bool> staleClose;
         try
@@ -437,7 +464,7 @@ public sealed class SessionRuntimeEvictionTests
                 Assert.NotNull((await ctx.Kernel.PatchTrackAsync(trackId, new(Closed: true), ct)).ClosedAtMs);
             await idleClosed.Task.WaitAsync(ct);
             Assert.Null(ctx.Kernel.McpSessionBridge.GetTokenForSession(child.Id));
-            Assert.Equal(token, ctx.Kernel.McpSessionBridge.GetTokenForSession(leadId));
+            Assert.Null(ctx.Kernel.McpSessionBridge.ResolveToken(token));
             Assert.False(lead.Disposed);
         }
         finally { release.TrySetResult(); }

@@ -23,14 +23,6 @@ public sealed class UnifiedSessionLifecycleTests
         }
     }
 
-    private static InteropPrincipal.Session Caller(KernelTestContext ctx, AgentSessionDto session, string turnId, string? boundTaskId = null, int? runCount = null)
-    {
-        var registration = ctx.Kernel.McpSessionBridge.RegisterSession(session.TrackId, session.Id, session.IsLead,
-            boundTaskId, runCount, []);
-        return new(session.TrackId, session.Id, session.IsLead, boundTaskId, session.SpawnDepth,
-            registration.Principal.Token, new(turnId));
-    }
-
     private static async IAsyncEnumerable<UnifiedAgentEvent> Hold(Task release,
         [EnumeratorCancellation] CancellationToken ct)
     {
@@ -376,7 +368,7 @@ public sealed class UnifiedSessionLifecycleTests
         ctx.AgentRuntime.TurnScript = (_, _, ct) => Hold(release.Task, ct);
         await ctx.Kernel.SendSessionMessageAsync(lead.Id, new(Content: "caller", RequestKey: "caller"), Human, default);
         var parentPage = await WaitForPage(ctx, lead.Id, p => p.ActiveTurn is not null);
-        var caller = Caller(ctx, lead, parentPage.ActiveTurn!.Id);
+        var caller = await ctx.AuthorizeAsync(ctx.RuntimeCaller(lead.Id));
         var created = await ctx.Kernel.CreateSessionAsync(lead.TrackId,
             new(Prompt: "target"), "child", caller, default);
         Assert.NotNull(created.Receipt.FirstInput);
@@ -396,7 +388,7 @@ public sealed class UnifiedSessionLifecycleTests
         Assert.True((await ctx.Kernel.SendSessionMessageAsync(id, steer, caller, default)).Replay);
         Assert.Single(ctx.AgentRuntime.OpenedSessions.Single(s => s.LaunchSpec.StateKey == id).SteeredMessages);
         Assert.Equal("delivered", (await ctx.Store.SessionMessages.GetAsync(id, queued.MessageId, default))!.Delivery);
-        var stale = caller with { ExecutionOrigin = new("old-turn") };
+        var stale = caller with { RuntimeBindingId = "old-binding" };
         Assert.Equal(KernelErrorCode.Conflict, (await Assert.ThrowsAsync<KernelException>(() =>
             ctx.Kernel.SendSessionMessageAsync(id, request, stale, default))).Code);
         release.TrySetResult();
@@ -466,15 +458,15 @@ public sealed class UnifiedSessionLifecycleTests
         ctx.AgentRuntime.TurnScript = (_, _, ct) => Hold(release.Task, ct);
         await ctx.Kernel.SendSessionMessageAsync(lead.Id, new(Content: "caller", RequestKey: "caller"), Human, default);
         var page = await WaitForPage(ctx, lead.Id, p => p.ActiveTurn is not null);
-        var caller = Caller(ctx, lead, page.ActiveTurn!.Id);
+        var caller = await ctx.AuthorizeAsync(ctx.RuntimeCaller(lead.Id));
         var failure = await Assert.ThrowsAsync<KernelException>(() => action switch
         {
             "archive" => ctx.Kernel.UpdateSessionAsync(lead.Id, new(Archived: true), caller, default),
             "provider" => ctx.Kernel.UpdateSessionAsync(lead.Id, new(Provider: "claude"), caller, default),
-            _ => ctx.Kernel.ControlSessionAsync(lead.Id, new(action, TurnId: page.ActiveTurn.Id), caller, default)
+            _ => ctx.Kernel.ControlSessionAsync(lead.Id, new(action, TurnId: page.ActiveTurn!.Id), caller, default)
         });
         Assert.Equal(KernelErrorCode.Forbidden, failure.Code);
-        Assert.Equal(page.ActiveTurn.Id, (await ctx.Kernel.GetSessionItemsAsync(lead.Id, new(), new InteropPrincipal.Human(), default)).ActiveTurn!.Id);
+        Assert.Equal(page.ActiveTurn!.Id, (await ctx.Kernel.GetSessionItemsAsync(lead.Id, new(), new InteropPrincipal.Human(), default)).ActiveTurn!.Id);
         release.TrySetResult();
         await ctx.Kernel.WaitForTrackIdleAsync(lead.TrackId);
     }
@@ -499,7 +491,7 @@ public sealed class UnifiedSessionLifecycleTests
         var parentPage = await WaitForPage(ctx, parent.Id, p => p.ActiveTurn is not null);
         var child = (await ctx.Kernel.CreateSessionAsync(snapshot.Track.Id,
             new(Prompt: "child", NotifyParent: notify), "child",
-            Caller(ctx, parent, parentPage.ActiveTurn!.Id), default)).Receipt.Session;
+            await ctx.AuthorizeAsync(ctx.RuntimeCaller(parent.Id)), default)).Receipt.Session;
         await WaitForPage(ctx, child.Id, p => p.ActiveTurn is not null);
         parentRelease.TrySetResult();
         await WaitForPage(ctx, parent.Id, p => p.State == "idle");
@@ -523,7 +515,7 @@ public sealed class UnifiedSessionLifecycleTests
             ? Hold(release.Task, ct) : Approval(release.Task, ct);
         await ctx.Kernel.SendSessionMessageAsync(parent.Id, new(Content: "parent", RequestKey: "parent"), Human, default);
         var parentPage = await WaitForPage(ctx, parent.Id, p => p.ActiveTurn is not null);
-        var caller = Caller(ctx, parent, parentPage.ActiveTurn!.Id);
+        var caller = await ctx.AuthorizeAsync(ctx.RuntimeCaller(parent.Id));
         var child = (await ctx.Kernel.CreateSessionAsync(snapshot.Track.Id, new(Prompt: "child"), "child", caller, default)).Receipt.Session;
         var childPage = await WaitForPage(ctx, child.Id, p => p.PendingInteractions?.Count == 1);
         var approval = Assert.Single(childPage.PendingInteractions!);
@@ -536,7 +528,7 @@ public sealed class UnifiedSessionLifecycleTests
         ctx.Store.BeforeEventAppend = async evt =>
         {
             if (evt.Kind != KernelEventKinds.ApprovalDecided) return;
-            await ctx.Kernel.ControlSessionAsync(parent.Id, new("stop", TurnId: parentPage.ActiveTurn.Id), Human, default);
+            await ctx.Kernel.ControlSessionAsync(parent.Id, new("stop", TurnId: parentPage.ActiveTurn!.Id), Human, default);
         };
         var failure = await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.RespondInteractionAsync(child.Id,
             approval.Id, new(approval.ExecutionId, option), caller, default));

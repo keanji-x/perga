@@ -79,7 +79,7 @@ public sealed partial class TrackActor
             throw KernelException.PolicyDenied("Template policy requires a gate for this task.");
         if (evaluation is GuardDecision.AskHuman ask)
         {
-            var suspension = ApplyGuardDecisionCore(ask, _track.LeadSessionId, null, _actorShutdownCts.Token)!;
+            var suspension = ApplyGuardDecisionCore(ask, _track.LeadSessionId, new ExecutionControl(), _actorShutdownCts.Token)!;
             _pendingTaskDispatchApprovals.Add(task.Id);
             var generation = _policyGeneration;
             _ = TrackBackgroundJob(() => ResumeTaskDispatchApprovalAsync(task, generation, suspension));

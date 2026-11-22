@@ -171,7 +171,7 @@ internal sealed class SessionRepository
     public Task<IReadOnlyList<long>> AppendSessionItemsAsync(
         string sessionId,
         IReadOnlyList<SessionItemDto> newItems,
-        CancellationToken ct = default)
+        CancellationToken ct = default, EventEnvelopeDto? evt = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
         ArgumentNullException.ThrowIfNull(newItems);
@@ -192,7 +192,10 @@ internal sealed class SessionRepository
                         transaction: tx,
                         cancellationToken: innerCt)).ConfigureAwait(false);
 
-                return await InsertSessionItemsAsync(conn, tx, trackId, newItems, innerCt).ConfigureAwait(false);
+                var ids = await InsertSessionItemsAsync(conn, tx, trackId, newItems, innerCt).ConfigureAwait(false);
+                if (evt is not null)
+                    await EventRepository.InsertEventInternalAsync(conn, tx, evt, innerCt).ConfigureAwait(false);
+                return ids;
             },
             ct);
     }

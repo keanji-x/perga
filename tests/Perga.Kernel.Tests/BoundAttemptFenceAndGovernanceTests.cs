@@ -141,19 +141,23 @@ public sealed class BoundAttemptFenceAndGovernanceTests
                 [new BlockOp.UpsertBlockOp(null, ReportBlockKind.Prose, "Blocked text", null)])));
         Assert.Equal(KernelErrorCode.PolicyDenied, denyEx.Code);
 
+        ctx.PolicyVm.OnBefore = (_, _, _, _) => new GuardDecision.Allow();
+        var caller = await ctx.OpenMcpCallerAsync(leadId);
+        var authorization = await ctx.AuthorizeAsync(caller);
+
         // 2. AskHuman -> suspends without blocking actor -> human approves -> commit succeeds!
         ctx.PolicyVm.OnBefore = (_, action, _, _) =>
             new GuardDecision.AskHuman("Approve report edit?");
 
         var expired = await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.CommitReportAsync(trackId, leadId,
             new ReportCommitRequest(r0.Anchor, [new BlockOp.UpsertBlockOp(null, ReportBlockKind.Prose, "Stale request", null)]),
-            origin: new McpExecutionOrigin("expired-turn")));
+            authorization: authorization with { RuntimeBindingId = "expired-binding" }));
         Assert.Equal(KernelErrorCode.Conflict, expired.Code);
         Assert.Empty((await ctx.Kernel.GetTrackAggregateAsync(trackId)).PendingApprovals);
 
         var suspendedCommitTask = ctx.Kernel.CommitReportAsync(trackId, leadId, new ReportCommitRequest(
             r0.Anchor,
-            [new BlockOp.UpsertBlockOp(null, ReportBlockKind.Prose, "Human-gated text", null)]));
+            [new BlockOp.UpsertBlockOp(null, ReportBlockKind.Prose, "Human-gated text", null)]), authorization: authorization);
 
         // Wait until OpenAsk appears on the track
         ApprovalDto? openAsk = null;

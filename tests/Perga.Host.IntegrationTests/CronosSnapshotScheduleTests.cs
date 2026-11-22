@@ -26,7 +26,7 @@ public sealed class CronosSnapshotScheduleTests
             """);
         var area = await kernel.CreateAreaAsync(new CreateAreaRequest("Schedules", DefaultCwd: cluster.DataDir));
         var snap = await kernel.CreateTrackAsync(new CreateTrackRequest(area.Id, Cwd: cluster.DataDir));
-        var caller = new McpSessionPrincipal("token", snap.Track.Id, snap.Track.LeadSessionId!, true, null, null, []);
+        var caller = await kernel.OpenMcpCallerAsync(snap.Track.LeadSessionId!);
         await KernelMcpDispatcher.ExecuteGuardedAsync(kernel, caller, KernelMcpToolNames.TrackSet,
             JsonSerializer.SerializeToElement(new { source = """
                 export default defineTemplate({ id:'clashing', title:'Snapshot', flow: [
@@ -38,7 +38,7 @@ public sealed class CronosSnapshotScheduleTests
         cluster.TimeProvider.Advance(TimeSpan.FromMinutes(2));
         kernel.DispatchAdmission.SetDraining(true);
         Assert.Equal(0, await scheduler.EvaluateDueSchedulesOnceAsync());
-        Assert.Empty(cluster.AgentRuntime.ExecutedTurns);
+        Assert.DoesNotContain(cluster.AgentRuntime.ExecutedTurns, turn => turn.Input.Prompt.Contains("SNAPSHOT_PULSE", StringComparison.Ordinal));
         kernel.DispatchAdmission.SetDraining(false);
         Assert.Equal(1, await scheduler.EvaluateDueSchedulesOnceAsync());
         await kernel.WaitForTrackIdleAsync(snap.Track.Id);

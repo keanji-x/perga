@@ -14,18 +14,42 @@ public sealed partial class TrackActor
         var identity = (InteropPrincipal.Session)principal;
         if (identity.TrackId != TrackId) throw KernelException.Forbidden("The caller belongs to another Track.");
         var caller = RequireSessionCore(identity.SessionId);
-        if (write)
-        {
-            if (identity.AuthorizedPolicyGeneration is { } generation && generation != _policyGeneration)
-                throw KernelException.PolicyDenied("Active policy changed after authorization.");
-            if (_mcpBridge.ResolveToken(identity.Token)?.SessionId != caller.Id ||
-                identity.ExecutionOrigin?.TurnId is not { } turnId ||
-                !_scheduler.TryGetActive(caller.Id, out var turn) || turn.TurnDto.Id != turnId || turn.Interrupted)
-                throw KernelException.Conflict("The originating session turn is no longer running.");
-        }
+        if (write) RequireRuntimeBindingCore(identity);
         if (target is not null)
             SessionPolicy.RequireAccess(principal, target, caller, write, _scheduler.HasActive(target.Id), destructive);
         return caller;
+    }
+
+    private OpenSessionHandle RequireRuntimeBindingCore(InteropPrincipal.Session identity, bool authorized = true)
+    {
+        if (identity.TrackId != TrackId) throw KernelException.Forbidden("The caller belongs to another Track.");
+        var session = RequireSessionCore(identity.SessionId);
+        if (_disposed || _track.ClosedAtMs is not null || _deletingTrack || _closingTrack ||
+            session.ArchivedAtMs is not null || session.Status is "unknown" or "stopping" ||
+            identity.RuntimeBindingId is not { } bindingId ||
+            _mcpBridge.ResolveToken(identity.Token) is not { } credential ||
+            credential.TrackId != TrackId || credential.SessionId != session.Id || credential.RuntimeBindingId != bindingId ||
+            !_runtimes.TryGetOpen(session.Id, out var open) || open.RuntimeBindingId != bindingId)
+            throw KernelException.Conflict("The originating session runtime is no longer authorized.");
+        var runtime = _runtimes.Get(session.Id);
+        if (runtime.IsDisposing || runtime.IsShutdownUnconfirmed)
+            throw KernelException.Conflict("The originating session runtime is shutting down.");
+        lock (open.RuntimeControl.Sync)
+            if (open.RuntimeControl.Phase != ExecutionPhase.Running)
+                throw KernelException.Conflict("The originating session runtime is no longer authorized.");
+        if (authorized && identity.AuthorizedPolicyGeneration != _policyGeneration)
+            throw KernelException.PolicyDenied("Active policy changed after authorization.");
+        runtime.TouchUsed();
+        return open;
+    }
+
+    private bool HasRuntimeCredential(string sessionId, OpenSessionHandle open) =>
+        _mcpBridge.GetTokenForSession(sessionId) is { } token &&
+        _mcpBridge.ResolveToken(token) is { } credential && credential.RuntimeBindingId == open.RuntimeBindingId;
+
+    private void RequireMcpAuthorizationCore(InteropPrincipal.Session? authorization)
+    {
+        if (authorization is not null) RequireRuntimeBindingCore(authorization);
     }
 
     private void RequireSessionMutationCore(AgentSessionDto session, InteropPrincipal principal, int? expectedEpoch = null,
@@ -182,7 +206,7 @@ public sealed partial class TrackActor
             if (modelChanged) InvalidateContextBindingCore(sessionId);
             if (providerChanged || request.Archived == true)
             {
-                _mcpBridge.RevokeSession(sessionId);
+                RevokeSessionRuntime(sessionId);
                 if (_scheduler.TryGetActive(sessionId, out var active))
                     active.CloseRuntimeOnSettle = true;
                 else if (_scheduler.IsIdleForRuntimeClose(sessionId) && _runtimes.TryGetOpen(sessionId, out var open))
@@ -213,7 +237,7 @@ public sealed partial class TrackActor
 
     private void ScheduleSessionRuntimeCloseCore(string sessionId, bool revokeToken = false)
     {
-        if (revokeToken) _mcpBridge.RevokeSession(sessionId);
+        if (revokeToken) RevokeSessionRuntime(sessionId);
         if (_scheduler.TryGetActive(sessionId, out var active))
             active.CloseRuntimeOnSettle = true;
         else if (_runtimes.TryGetOpen(sessionId, out var open))
@@ -229,7 +253,7 @@ public sealed partial class TrackActor
             return await runtime.CloseAsync(_options.SessionStartupTimeout, _actorShutdownCts.Token,
                 shouldClose: () => _scheduler.IsIdleForRuntimeClose(sessionId, allowDispatchInputId) &&
                     (idleCutoffMs is null || !runtime.IsShutdownUnconfirmed &&
-                        runtime.Snapshot is { } handle && handle.LastUsedAtMs <= idleCutoffMs),
+                        runtime.Snapshot is { } handle && RuntimeIsIdleCore(handle, idleCutoffMs.Value)),
                 expectedGeneration: expectedGeneration).ConfigureAwait(false);
         }
         catch (Exception)
@@ -263,15 +287,14 @@ public sealed partial class TrackActor
                         !_sessions.TryGetValue(sessionId, out var session) ||
                         !_scheduler.IsIdleForRuntimeClose(sessionId)) continue;
                     var retired = session.ArchivedAtMs is not null || _track.ClosedAtMs is not null ||
-                        _mcpBridge.GetTokenForSession(sessionId) is null;
+                        !HasRuntimeCredential(sessionId, handle);
                     if (retired)
                     {
                         idle.Add((sessionId, handle.Generation, null));
                         continue;
                     }
-                    if (idleCutoffMs is null || handle.LastUsedAtMs > idleCutoffMs || _scheduler.IsOccupied(session)) continue;
-                    if (handle.Agent.SupportsSessionResume && !string.IsNullOrWhiteSpace(session.NativeThreadId) &&
-                        !handle.RuntimeActivity.Tasks.Values.Any(t => t.Status is "running" or "pending"))
+                    if (idleCutoffMs is null || !RuntimeIsIdleCore(handle, idleCutoffMs.Value) || _scheduler.IsOccupied(session)) continue;
+                    if (handle.Agent.SupportsSessionResume && !string.IsNullOrWhiteSpace(session.NativeThreadId))
                         idle.Add((sessionId, handle.Generation, idleCutoffMs));
                 }
                 return Task.FromResult(idle);
@@ -288,6 +311,12 @@ public sealed partial class TrackActor
             .ConfigureAwait(false);
         return results.Count(closed => closed);
     }
+
+    private bool RuntimeIsIdleCore(OpenSessionHandle handle, long cutoffMs) =>
+        handle.LastUsedAtMs <= cutoffMs &&
+        !handle.RuntimeActivity.Tasks.Values.Any(task => task.Status is "running" or "pending") &&
+        !_approvals.Values.Any(approval => ReferenceEquals(approval.Control, handle.RuntimeControl)) &&
+        !_interactions.HasRuntimeWaiter(handle.RuntimeControl);
 
     private async Task NotifyParentCoreAsync(AgentSessionDto child, string policy, string key, string prompt)
     {

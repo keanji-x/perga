@@ -23,7 +23,8 @@ public sealed partial class TrackActor
     // State transitions run in the owning Actor mailbox; external phases explicitly re-enter it.
     private sealed class TrackInteractions(TrackActor actor)
     {
-        private readonly Dictionary<string, TaskCompletionSource<JsonElement>> _pendingAskWaiters = new(StringComparer.Ordinal);
+        private sealed record AskWaiter(TaskCompletionSource<JsonElement> Completion, ExecutionControl? RuntimeControl);
+        private readonly ConcurrentDictionary<string, AskWaiter> _pendingAskWaiters = new(StringComparer.Ordinal);
         private readonly Dictionary<string, AskDto> _asks = new(StringComparer.Ordinal);
 
         public AskDto[] OpenAsks() => _asks.Values.Where(a => a.Status == AskStatus.Open).OrderBy(a => a.CreatedAtMs).ToArray();
@@ -36,15 +37,25 @@ public sealed partial class TrackActor
         {
             foreach (var kvp in _pendingAskWaiters.ToArray())
             {
-                _pendingAskWaiters.Remove(kvp.Key);
-                kvp.Value.TrySetCanceled(ct);
+                _pendingAskWaiters.TryRemove(kvp.Key, out _);
+                kvp.Value.Completion.TrySetCanceled(ct);
             }
+        }
+
+        public bool HasRuntimeWaiter(ExecutionControl control) =>
+            _pendingAskWaiters.Values.Any(waiter => ReferenceEquals(waiter.RuntimeControl, control));
+
+        public void ExpireRuntimeWaiters(ExecutionControl control)
+        {
+            foreach (var entry in _pendingAskWaiters)
+                if (ReferenceEquals(entry.Value.RuntimeControl, control) && _pendingAskWaiters.TryRemove(entry))
+                    entry.Value.Completion.TrySetCanceled();
         }
 
         public async Task<JsonElement> AskUserAsync(
             string? callerSessionId,
             IReadOnlyList<AskQuestionDto> questions,
-            CancellationToken ct = default)
+            CancellationToken ct = default, InteropPrincipal.Session? authorization = null)
         {
             if (questions.Count == 0)
             {
@@ -57,19 +68,34 @@ public sealed partial class TrackActor
             Interlocked.Increment(ref actor._inFlightExternalOps);
             try
             {
-                var waiter = await actor.EnqueueAsync(async _ =>
+                var (id, waiter) = await actor.EnqueueAsync(async _ =>
                 {
+                    ct.ThrowIfCancellationRequested();
                     await actor.EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
-                    if (callerSessionId is not null)
-                    {
-                        actor.RequireSessionCore(callerSessionId);
-                    }
+                    if (callerSessionId is not null) actor.RequireSessionCore(callerSessionId);
+                    var control = authorization is null ? null : actor.RequireRuntimeBindingCore(authorization).RuntimeControl;
+                    return await CreateWakeAskCoreAsync(questions, callerSessionId, control, ct).ConfigureAwait(false);
+                }, CancellationToken.None).ConfigureAwait(false);
 
-                    return await CreateWakeAskCoreAsync(questions, callerSessionId, ct).ConfigureAwait(false);
-                }, ct).ConfigureAwait(false);
-
-
-                return await waiter.WaitAsync(ct).ConfigureAwait(false);
+                try
+                {
+                    var answer = await waiter.Task.WaitAsync(ct).ConfigureAwait(false);
+                    if (authorization is not null)
+                        await actor.EnqueueAsync(_ =>
+                        {
+                            actor.RequireRuntimeBindingCore(authorization);
+                            return Task.CompletedTask;
+                        }, ct).ConfigureAwait(false);
+                    return answer;
+                }
+                catch (OperationCanceledException) when (authorization is not null && !ct.IsCancellationRequested)
+                {
+                    throw KernelException.Conflict("The originating runtime closed while waiting for an answer.");
+                }
+                finally
+                {
+                    _pendingAskWaiters.TryRemove(id, out _);
+                }
             }
             finally
             {
@@ -125,7 +151,7 @@ public sealed partial class TrackActor
                 // The transaction accepted this answer. Neither request cancellation nor
                 // event catch-up failure may reopen it or strand its original waiter.
                 _asks[askId] = answered;
-                _pendingAskWaiters.Remove(askId, out var waiter);
+                _pendingAskWaiters.TryRemove(askId, out var waiter);
                 try
                 {
                     await actor._eventHub.PublishSyncedAfterStoreWriteAsync(actor._store, evt, CancellationToken.None).ConfigureAwait(false);
@@ -134,7 +160,7 @@ public sealed partial class TrackActor
                 {
                     // Complete inside the actor: EnqueueAsync's caller can stop waiting
                     // on cancellation before this committed operation returns.
-                    waiter?.TrySetResult(clonedAnswer);
+                    waiter?.Completion.TrySetResult(clonedAnswer);
                 }
 
                 var shouldWakeLead = actor._track.ClosedAtMs is null && !string.IsNullOrEmpty(actor._track.LeadSessionId);
@@ -157,7 +183,7 @@ public sealed partial class TrackActor
             string summary,
             string body,
             Func<MailDto, CancellationToken, Task> deliverToTargetTrack,
-            CancellationToken ct, string? replyToMailId)
+            CancellationToken ct, string? replyToMailId, InteropPrincipal.Session? authorization = null)
         {
             var mail = await actor.EnqueueAsync(async _ =>
             {
@@ -173,6 +199,7 @@ public sealed partial class TrackActor
                     toTrackId = parent.FromTrackId;
                 }
 
+                actor.RequireMcpAuthorizationCore(authorization);
                 var now = actor.NowMs();
                 return new MailDto(
                     Id: $"mail_{Guid.NewGuid():N}",
@@ -222,7 +249,7 @@ public sealed partial class TrackActor
             }, ct);
         }
 
-        public Task<MailDto> ReadMailAsync(string mailId, CancellationToken ct = default)
+        public Task<MailDto> ReadMailAsync(string mailId, CancellationToken ct = default, InteropPrincipal.Session? authorization = null)
         {
             return actor.EnqueueAsync(async _ =>
             {
@@ -236,6 +263,7 @@ public sealed partial class TrackActor
                     return target;
                 }
 
+                actor.RequireMcpAuthorizationCore(authorization);
                 var now = actor.NowMs();
                 var readMail = target with { ReadAtMs = now };
                 var evt = new EventEnvelopeDto(
@@ -253,9 +281,10 @@ public sealed partial class TrackActor
             }, ct);
         }
 
-        public async Task<Task<JsonElement>> CreateWakeAskCoreAsync(
+        private async Task<(string Id, TaskCompletionSource<JsonElement> Waiter)> CreateWakeAskCoreAsync(
             IReadOnlyList<AskQuestionDto> questions,
             string? callerSessionId,
+            ExecutionControl? runtimeControl,
             CancellationToken ct)
         {
             var now = actor.NowMs();
@@ -284,13 +313,9 @@ public sealed partial class TrackActor
             await actor._eventHub.EnsureInitializedFromStoreAsync(actor._store, ct).ConfigureAwait(false);
             await actor._store.UpsertAskAsync(ask, evt, ct).ConfigureAwait(false);
             _asks[ask.Id] = ask;
-            _pendingAskWaiters[ask.Id] = tcs;
+            _pendingAskWaiters[ask.Id] = new(tcs, runtimeControl);
             await actor._eventHub.PublishSyncedAfterStoreWriteAsync(actor._store, evt, ct).ConfigureAwait(false);
-            // Request cancellation expires approval authority even if the ask stays visible.
-            if (ct.CanBeCanceled)
-                _ = ct.Register(() => tcs.TrySetCanceled(ct));
-
-            return tcs.Task;
+            return (ask.Id, tcs);
         }
 
     }

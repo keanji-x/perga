@@ -57,7 +57,7 @@ public sealed partial class TrackActor
             {
                 _taskCoordinator.SetPaused(pauseTask, true);
                 active.CloseRuntimeOnStop = true;
-                _mcpBridge.RevokeSession(active.SessionId);
+                RevokeSessionRuntime(active.SessionId);
             }
 
             if (control.StopDispatch is { IsCompleted: false } inFlight)
@@ -82,7 +82,7 @@ public sealed partial class TrackActor
             control.Phase = ExecutionPhase.Stopping;
             // Queue the transition before cancellation, but never make provider stop wait for SQLite.
             ObserveTaskFault(EnterStoppingAsync(active));
-            expired = CollectExpiredApprovalsLocked(control);
+            expired = CollectExpiredApprovalsLocked(control, includeStopControl: true);
             stopTask = control.StopDispatch = started
                 ? StartTurnStopDispatch(active, observeTerminal)
                 : Task.CompletedTask;
@@ -259,7 +259,7 @@ public sealed partial class TrackActor
             active.Control.StopRequested = true;
             active.Control.Stopping.TrySetResult();
             active.Control.Phase = ExecutionPhase.Stopping;
-            expired = CollectExpiredApprovalsLocked(active.Control);
+            expired = CollectExpiredApprovalsLocked(active.Control, includeStopControl: true);
         }
 
         FinishExpiredApprovals(expired);
@@ -341,7 +341,7 @@ public sealed partial class TrackActor
             {
                 var evaluation = _policyVm.PrepareTurn(_policy, new(TrackId, session.Id, session.IsLead,
                     _taskCoordinator.TryGetActiveTaskForSessionCore(session.Id)?.Task.Id, CurrentContextUsageRatioCore(session) ?? 0, _track.TemplateInputs), _track.Data);
-                var suspension = ApplyGuardDecisionCore(evaluation.Decision, sessionId, null, ct);
+                var suspension = ApplyGuardDecisionCore(evaluation.Decision, sessionId, new ExecutionControl(), ct);
                 return (new(generation, evaluation.Context, null), suspension);
             }
             catch (Exception ex) when (!ct.IsCancellationRequested)

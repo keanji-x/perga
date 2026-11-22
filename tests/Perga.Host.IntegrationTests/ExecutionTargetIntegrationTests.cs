@@ -737,7 +737,7 @@ public sealed class ExecutionTargetIntegrationTests
                     await flowTurnStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
                     var token = kernel.McpSessionBridge.GetTokenForSession(leadSessionId)!;
-                    var principal = kernel.ObserveMcpExecution(kernel.McpSessionBridge.ResolveToken(token)!);
+                    var principal = kernel.McpSessionBridge.ResolveToken(token)!;
                     var flow = await kernel.InvokeKernelMcpToolAsync(principal, KernelMcpToolNames.FlowRead, JsonSerializer.SerializeToElement(new { }));
                     var rev = flow.GetProperty("flowRev").GetInt64();
                     flowPath = flow.GetProperty("flowPath").GetString()!;

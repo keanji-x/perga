@@ -362,7 +362,7 @@ public sealed class SystemUpgradeTests
         var (track, lead) = await host.CreateTrackAsync();
         host.Services.GetRequiredService<Perga.Host.Configuration.PergaHostOptions>().InstallationRoot = host.DataDir;
         var kernel = host.Services.GetRequiredService<IPergaKernel>();
-        var principal = new McpSessionPrincipal("test", track, lead, false, null, null, []);
+        var principal = (await kernel.OpenMcpCallerAsync(lead)) with { IsLead = false };
         var subagent = (await kernel.CreateSessionAsync(track, new CreateSessionRequest(), Guid.NewGuid().ToString("N"), new InteropPrincipal.Human(), default)).Receipt.Session;
         foreach (var name in new[] { KernelMcpToolNames.SystemUpgradeCheck, KernelMcpToolNames.SystemUpgradeApply, KernelMcpToolNames.SystemUpgradeRollback })
         {
@@ -423,7 +423,7 @@ public sealed class SystemUpgradeTests
         host.AgentRuntime.SetTurnHandler(Upgrade);
         async IAsyncEnumerable<UnifiedAgentEvent> Upgrade(HarnessLaunchSpec spec, TurnInput input, [EnumeratorCancellation] CancellationToken ct)
         {
-            var principal = new McpSessionPrincipal("test", track, lead, true, null, null, []);
+            var principal = kernel.RuntimeCaller(lead);
             var result = await kernel.InvokeKernelMcpToolAsync(principal, KernelMcpToolNames.SystemUpgradeApply,
                 JsonSerializer.SerializeToElement(new { sourceId = "trusted" }), ct);
             Assert.Equal("queued", result.GetProperty("status").GetString());

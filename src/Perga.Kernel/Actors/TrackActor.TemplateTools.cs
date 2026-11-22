@@ -313,12 +313,13 @@ public sealed partial class TrackActor
     private async Task<TrackDto> ReadUpdatedTemplateTrackAsync(JsonElement patch, CancellationToken ct) =>
         (await UpdateTemplateInputsCoreAsync(null, patch, null, ct).ConfigureAwait(false)).Track;
 
-    public Task<TemplateInputsUpdateResult> UpdateTemplateInputsAsync(string sessionId, JsonElement patch, string generation, CancellationToken ct) =>
-        UpdateTemplateInputsCoreAsync(sessionId, patch, generation, ct);
+    public Task<TemplateInputsUpdateResult> UpdateTemplateInputsAsync(string sessionId, JsonElement patch, string generation, CancellationToken ct, InteropPrincipal.Session? authorization = null) =>
+        UpdateTemplateInputsCoreAsync(sessionId, patch, generation, ct, authorization);
 
-    private Task<TemplateInputsUpdateResult> UpdateTemplateInputsCoreAsync(string? sessionId, JsonElement patch, string? generation, CancellationToken ct) => EnqueueAsync(async _ =>
+    private Task<TemplateInputsUpdateResult> UpdateTemplateInputsCoreAsync(string? sessionId, JsonElement patch, string? generation, CancellationToken ct, InteropPrincipal.Session? authorization = null) => EnqueueAsync(async _ =>
     {
         await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
+        RequireMcpAuthorizationCore(authorization);
         if (sessionId is not null) RequireTemplateLeadCore(sessionId, KernelMcpToolNames.TemplateUpdateInputs);
         if (generation is not null && _policyGeneration != generation) throw KernelException.PolicyDenied("Active policy changed after authorization.");
         if (_track.ClosedAtMs is not null) throw KernelException.Conflict("Cannot update a closed track.");
@@ -475,7 +476,8 @@ public sealed partial class TrackActor
 
     public async Task<TemplateSetResult> SetTemplateWithOptionsAsync(string callerSessionId, string? templateId,
         string? source, string expectedPolicyGeneration, JsonElement? inputs, bool dryRun, bool clear,
-        CancellationToken ct = default, bool resetData = false, string? path = null, bool? seedReport = null)
+        CancellationToken ct = default, bool resetData = false, string? path = null, bool? seedReport = null,
+        InteropPrincipal.Session? authorization = null)
     {
         string? workspaceSource = null;
         if (!clear && path is not null && templateId is null && source is null && !string.IsNullOrWhiteSpace(path))
@@ -506,6 +508,7 @@ public sealed partial class TrackActor
         return await EnqueueAsync(async _ =>
         {
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
+            RequireMcpAuthorizationCore(authorization);
             RequireTemplateLeadCore(callerSessionId, KernelMcpToolNames.TrackSet);
             if (_policyGeneration != expectedPolicyGeneration)
                 throw KernelException.PolicyDenied("Active policy changed after template application was authorized.");
@@ -570,6 +573,7 @@ public sealed partial class TrackActor
             }
             var dataRev = JsonElement.DeepEquals(data, _track.Data) ? _track.DataRev : checked(_track.DataRev + 1);
             var warnings = await TemplateWarningsCoreAsync(policy, nextInputs, ct).ConfigureAwait(false);
+            RequireMcpAuthorizationCore(authorization);
             var now = NowMs();
             var nextTrack = _track with
             {

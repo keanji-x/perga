@@ -146,7 +146,10 @@ public sealed record SessionItemsPageDto(
 public sealed record WorkerActivityEvent(long Sequence, string Kind, JsonElement Payload, long CreatedAtMs);
 
 
-public sealed record WorkerCompletionOrigin(string Token, string TurnId, string TaskId, int RunCount);
+public sealed record WorkerCompletionOrigin(string Token, string RuntimeBindingId, string TaskId, int RunCount)
+{
+    internal string? AuthorizedPolicyGeneration { get; init; }
+}
 
 public sealed record TemplateSetResult(TrackDto Track, IReadOnlyList<string> Warnings, bool DryRun, TemplateSetPlanDto Plan);
 

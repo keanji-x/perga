@@ -44,7 +44,6 @@ export interface BridgeTransport {
 interface ActiveTurnCollector {
   readonly captureText: boolean;
   text: string;
-  readonly startedTools: Set<string>;
 }
 
 const DEFAULT_COMPACT_GRACE_MS = 2_000;
@@ -61,6 +60,7 @@ export class OarBridgeServer {
   private _unsubEvents: (() => void) | null = null;
   private _unsubRaw: (() => void) | null = null;
   private _pendingSystemPrompt: string | null = null;
+  private readonly _startedTools = new Set<string>();
   private _activeTurn: ActiveTurnCollector | null = null;
   private _lastAgentStatus: AgentStatus | null = null;
   private _statusState: StatusState = initialStatus;
@@ -421,7 +421,7 @@ export class OarBridgeServer {
       case "tool_call_started": {
         const callId = isRoot ? event.callId : `${event.agentPath.join("/")}:${event.callId}`;
         const name = event.server && event.toolName ? `${event.server}:${event.toolName}` : event.tool;
-        this._activeTurn?.startedTools.add(callId);
+        this._startedTools.add(callId);
         this.emitEvent({
           kind: "tool_call_started",
           callId,
@@ -433,8 +433,8 @@ export class OarBridgeServer {
 
       case "tool_call_input": {
         const callId = isRoot ? event.callId : `${event.agentPath.join("/")}:${event.callId}`;
-        if (!this._activeTurn?.startedTools.has(callId)) {
-          this._activeTurn?.startedTools.add(callId);
+        if (!this._startedTools.has(callId)) {
+          this._startedTools.add(callId);
           this.emitEvent({
             kind: "tool_call_started",
             callId,
@@ -447,6 +447,7 @@ export class OarBridgeServer {
 
       case "tool_call_ended": {
         const callId = isRoot ? event.callId : `${event.agentPath.join("/")}:${event.callId}`;
+        this._startedTools.delete(callId);
         const output = flattenToolOutput(event.content);
         const isError = event.result === "failed" || (typeof event.exitCode === "number" && event.exitCode !== 0);
         this.emitEvent({
@@ -515,7 +516,6 @@ export class OarBridgeServer {
     const collector: ActiveTurnCollector = {
       captureText,
       text: "",
-      startedTools: new Set<string>(),
     };
     this._activeTurn = collector;
     try {
@@ -718,6 +718,7 @@ export class OarBridgeServer {
     this._unsubEvents = null;
     this._unsubRaw?.();
     this._unsubRaw = null;
+    this._startedTools.clear();
 
     const waiters = this._commandsWaiters;
     this._commandsWaiters = [];

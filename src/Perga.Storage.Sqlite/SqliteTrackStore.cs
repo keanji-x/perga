@@ -376,8 +376,8 @@ public sealed class SqliteTrackStore : ITrackStore, IAsyncDisposable, ISessionIn
     public Task<IReadOnlyList<long>> AppendSessionItemsAsync(
         string sessionId,
         IReadOnlyList<SessionItemDto> newItems,
-        CancellationToken ct = default) =>
-        _sessionRepository.AppendSessionItemsAsync(sessionId, newItems, ct);
+        CancellationToken ct = default, EventEnvelopeDto? evt = null) =>
+        _sessionRepository.AppendSessionItemsAsync(sessionId, newItems, ct, evt);
 
     public Task<IReadOnlyList<SessionTurnDto>> ListSessionTurnsAsync(
         string sessionId,
