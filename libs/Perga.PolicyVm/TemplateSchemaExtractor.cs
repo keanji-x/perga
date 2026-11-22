@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Jint.Native;
 using Jint.Native.Object;
+using Jint.Native.Function;
 using static Perga.PolicyVm.ResourceBudget;
 using static Perga.PolicyVm.TemplateDataValidator;
 
@@ -16,7 +17,13 @@ internal sealed record TemplateSchemaNode(
     IReadOnlyList<string>? EnumValues = null,
     string? RefTarget = null,
     TemplateSchemaNode? Item = null,
-    IReadOnlyDictionary<string, TemplateSchemaNode>? Shape = null);
+    IReadOnlyDictionary<string, TemplateSchemaNode>? Shape = null,
+    bool HasDefault = false,
+    JsonElement? DefaultValue = null)
+{
+    public bool ContainsDefaults => HasDefault || Item?.ContainsDefaults == true ||
+        Shape?.Values.Any(child => child.ContainsDefaults) == true;
+}
 
 internal struct ResourceBudget
     {
@@ -69,7 +76,7 @@ internal static class TemplateSchemaExtractor
     public static TemplateSchemaNode ExtractSchemaNode(JsValue value)
     {
         var budget = ResourceBudget.Create();
-        return ExtractSchemaNodeCore(value, depth: 0, ref budget);
+        return ExtractSchemaNodeCore(value, "$", depth: 0, ref budget);
     }
 
     /// <summary>
@@ -78,14 +85,12 @@ internal static class TemplateSchemaExtractor
     public static JsonElement ExtractDataElement(JsValue value)
     {
         var budget = ResourceBudget.Create();
-        var node = ExtractJsonNode(value, depth: 0, ref budget);
-        if (node is null)
-        {
-            using var nullDoc = JsonDocument.Parse("null");
-            return nullDoc.RootElement.Clone();
-        }
+        return SerializeDataNode(ExtractJsonNode(value, depth: 0, ref budget));
+    }
 
-        var raw = node.ToJsonString();
+    private static JsonElement SerializeDataNode(JsonNode? node)
+    {
+        var raw = node?.ToJsonString() ?? "null";
         if (raw.Length > MaxTotalStringChars)
         {
             throw new InvalidOperationException($"Template data exceeds maximum serialized size ({MaxTotalStringChars} chars).");
@@ -95,7 +100,7 @@ internal static class TemplateSchemaExtractor
         return doc.RootElement.Clone();
     }
 
-    private static TemplateSchemaNode ExtractSchemaNodeCore(JsValue value, int depth, ref ResourceBudget budget)
+    private static TemplateSchemaNode ExtractSchemaNodeCore(JsValue value, string path, int depth, ref ResourceBudget budget)
     {
         budget.ConsumeNode("schema");
         if (depth > MaxDepth)
@@ -121,7 +126,7 @@ internal static class TemplateSchemaExtractor
             var optVal = GetOwnDataValue(obj, "isOptional");
             var isOptional = optVal.IsBoolean() && optVal.AsBoolean();
 
-            return kind switch
+            var node = kind switch
             {
                 "string" or "markdown" or "id" or "isoDate" or "number" or "boolean" =>
                     new TemplateSchemaNode(kind, isOptional),
@@ -130,16 +135,34 @@ internal static class TemplateSchemaExtractor
                 "array" => new TemplateSchemaNode(
                     "array",
                     isOptional,
-                    Item: ExtractSchemaNodeCore(GetOwnDataValue(obj, "item"), depth + 1, ref budget)),
-                "object" => ExtractObjectNode(GetOwnDataValue(obj, "shape"), isOptional, depth + 1, ref budget),
+                    Item: ExtractSchemaNodeCore(GetOwnDataValue(obj, "item"), $"{path}[]", depth + 1, ref budget)),
+                "object" => ExtractObjectNode(GetOwnDataValue(obj, "shape"), isOptional, path, depth + 1, ref budget),
                 _ => throw new InvalidOperationException($"Unsupported template schema kind '{kind}'.")
             };
+
+            var hasDefault = GetOwnDataValue(obj, "hasDefault");
+            if (!hasDefault.IsBoolean() || !hasDefault.AsBoolean())
+                return node;
+
+            JsonElement defaultValue;
+            try
+            {
+                var raw = GetOwnDataValue(obj, "defaultValue");
+                defaultValue = SerializeDataNode(ExtractJsonNode(raw, depth, ref budget, strictJson: true));
+            }
+            catch (InvalidOperationException ex)
+            {
+                throw new InvalidOperationException($"Invalid template schema default at {path}: {ex.Message}", ex);
+            }
+
+            ValidateDefault(node, defaultValue, path, ref budget);
+            return node with { HasDefault = true, DefaultValue = defaultValue };
         }
 
         // Root shorthand: `{ field: t.string(), ... }` -> wrap as object schema
         if (depth == 0)
         {
-            return ExtractObjectNode(obj, isOptional: false, depth + 1, ref budget);
+            return ExtractObjectNode(obj, isOptional: false, path, depth + 1, ref budget);
         }
 
         throw new InvalidOperationException("Nested template schema field must be a schema node created by `t.*`.");
@@ -194,7 +217,7 @@ internal static class TemplateSchemaExtractor
         return new TemplateSchemaNode("ref", isOptional, RefTarget: target);
     }
 
-    private static TemplateSchemaNode ExtractObjectNode(JsValue shapeVal, bool isOptional, int depth, ref ResourceBudget budget)
+    private static TemplateSchemaNode ExtractObjectNode(JsValue shapeVal, bool isOptional, string path, int depth, ref ResourceBudget budget)
     {
         if (shapeVal is not ObjectInstance shapeObj || shapeVal.IsArray())
         {
@@ -217,7 +240,11 @@ internal static class TemplateSchemaExtractor
                 throw new InvalidOperationException($"Template schema declares forbidden property name '{key}'.");
             }
 
-            shape[key] = ExtractSchemaNodeCore(prop.Value.Value, depth, ref budget);
+            var field = ExtractSchemaNodeCore(prop.Value.Value, $"{path}.{key}", depth, ref budget);
+            if (key == "_meta" && field.ContainsDefaults)
+                throw new InvalidOperationException($"Invalid template schema default at {path}.{key}: '_meta' is managed by the kernel.");
+
+            shape[key] = field;
         }
 
         return new TemplateSchemaNode("object", isOptional, Shape: shape);
@@ -234,13 +261,16 @@ internal static class TemplateSchemaExtractor
         return desc.Value;
     }
 
-    private static JsonNode? ExtractJsonNode(JsValue value, int depth, ref ResourceBudget budget)
+    private static JsonNode? ExtractJsonNode(JsValue value, int depth, ref ResourceBudget budget, bool strictJson = false)
     {
         budget.ConsumeNode("data");
         if (depth > MaxDepth)
         {
             throw new InvalidOperationException("Template data nesting exceeds maximum depth.");
         }
+
+        if (strictJson && (value.IsUndefined() || value is Function || value.IsNumber() && !double.IsFinite(value.AsNumber())))
+            throw new InvalidOperationException("Default must be a JSON value.");
 
         if (value.IsUndefined() || value.IsNull())
         {
@@ -282,7 +312,7 @@ internal static class TemplateSchemaExtractor
             for (uint i = 0; i < arr.Length; i++)
             {
                 var elem = GetOwnDataValue(arr, i.ToString(CultureInfo.InvariantCulture));
-                jsonArr.Add(ExtractJsonNode(elem, depth + 1, ref budget));
+                jsonArr.Add(ExtractJsonNode(elem, depth + 1, ref budget, strictJson));
             }
 
             return jsonArr;
@@ -290,6 +320,11 @@ internal static class TemplateSchemaExtractor
 
         if (value is ObjectInstance obj)
         {
+            if (strictJson && obj.GetType() != typeof(JsObject))
+            {
+                throw new InvalidOperationException("Default must be a plain JSON object.");
+            }
+
             var jsonObj = new JsonObject();
             foreach (var prop in obj.GetOwnProperties())
             {
@@ -304,14 +339,14 @@ internal static class TemplateSchemaExtractor
                 }
 
                 var childVal = prop.Value.Value;
-                if (childVal.IsUndefined())
+                if (!strictJson && childVal.IsUndefined())
                 {
                     continue;
                 }
 
                 var key = prop.Key.AsString();
                 budget.ConsumeChars(key.Length, "data");
-                jsonObj[key] = ExtractJsonNode(childVal, depth + 1, ref budget);
+                jsonObj[key] = ExtractJsonNode(childVal, depth + 1, ref budget, strictJson);
             }
 
             return jsonObj;

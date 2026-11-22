@@ -68,7 +68,15 @@ public sealed record TemplateHeaderView(
     IReadOnlyList<TemplateHeaderMetric>? Metrics = null,
     IReadOnlyList<TemplateHeaderRule>? Rules = null);
 
+public sealed record HeaderViewEvaluation(TemplateHeaderView? View, string? Error);
+
 public sealed record PolicyHeaderViewContext(string TrackId, JsonElement Inputs);
+
+public sealed record PolicySessionContext(
+    string SessionId,
+    bool IsLead,
+    double ContextUsageRatio,
+    string? BoundTaskId = null);
 
 public sealed record PolicyTurnContext(
     string TrackId,
@@ -86,12 +94,14 @@ public sealed record PolicyTaskRoute(string? Provider, string? Model, string? De
 public interface IPolicyVm
 {
     CompiledPolicy Compile(string jsModuleSource);
-    GuardDecision Before(CompiledPolicy policy, string action, string trackId, JsonElement payload, JsonElement inputs, JsonElement data);
-    TemplateHeaderView? EvaluateHeaderView(CompiledPolicy policy, PolicyHeaderViewContext ctx, JsonElement data);
+    GuardDecision Before(CompiledPolicy policy, string action, string trackId, JsonElement payload, JsonElement inputs, JsonElement data, PolicySessionContext? session = null);
+    TemplateHeaderView? EvaluateHeaderView(CompiledPolicy policy, PolicyHeaderViewContext ctx, JsonElement data) =>
+        EvaluateHeaderViewWithDiagnostic(policy, ctx, data).View;
+    HeaderViewEvaluation EvaluateHeaderViewWithDiagnostic(CompiledPolicy policy, PolicyHeaderViewContext ctx, JsonElement data);
     JsonElement InitData(CompiledPolicy policy, JsonElement inputs);
     IReadOnlyList<DataValidationError> ValidateData(CompiledPolicy policy, JsonElement inputs, JsonElement data, IReadOnlyList<string>? knownTaskKeys);
     PolicyTurnPreparation PrepareTurn(CompiledPolicy policy, PolicyTurnContext ctx, JsonElement data);
-    PolicyTaskRoute RouteTaskDispatch(CompiledPolicy policy, string? role, string access, string? provider, string? model, JsonElement inputs);
+    PolicyTaskRoute RouteTaskDispatch(CompiledPolicy policy, string? role, string? access, string? provider, string? model, JsonElement inputs);
     IReadOnlyList<PolicyTaskRoute> ResolveRoutingTargets(CompiledPolicy policy, JsonElement inputs);
     IReadOnlyList<Perga.Contracts.FlowNodeSpecDto> ResolveFlow(CompiledPolicy policy, JsonElement inputs);
     void ValidateInputs(CompiledPolicy policy, JsonElement inputs);

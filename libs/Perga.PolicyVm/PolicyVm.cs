@@ -156,15 +156,8 @@ public sealed partial class PolicyVm : IPolicyVm
     public PolicyTurnPreparation PrepareTurn(CompiledPolicy policy, PolicyTurnContext ctx, JsonElement data)
     {
         ArgumentNullException.ThrowIfNull(ctx);
-        var session = new Dictionary<string, object?>
-        {
-            ["sessionId"] = ctx.SessionId,
-            ["isLead"] = ctx.IsLead,
-            ["contextUsageRatio"] = ctx.ContextUsageRatio
-        };
-        if (ctx.BoundTaskId is not null)
-            session["boundTaskId"] = ctx.BoundTaskId;
-        var sessionJson = System.Text.Json.JsonSerializer.SerializeToElement(session);
+        var session = new PolicySessionContext(ctx.SessionId, ctx.IsLead, ctx.ContextUsageRatio, ctx.BoundTaskId);
+        var sessionJson = SerializeSessionContext(session);
         var context = EvaluateWithEffectiveDefinition<string?>(policy, ctx.Inputs, "TurnContext", (engine, _, def, _, _) =>
         {
             if (def.Get("turnContext") is not Function hook)
@@ -177,8 +170,21 @@ public sealed partial class PolicyVm : IPolicyVm
             sessionId = ctx.SessionId, isLead = ctx.IsLead, boundTaskId = ctx.BoundTaskId,
             contextUsageRatio = ctx.ContextUsageRatio, context
         });
-        var decision = EvaluateBefore(policy, "turn.before", ctx.TrackId, payload, ctx.Inputs, data, sessionJson);
+        var decision = EvaluateBefore(policy, "turn.before", ctx.TrackId, payload, ctx.Inputs, data, session);
         return new(context, decision);
+    }
+
+    private static JsonElement SerializeSessionContext(PolicySessionContext session)
+    {
+        var fields = new Dictionary<string, object?>
+        {
+            ["sessionId"] = session.SessionId,
+            ["isLead"] = session.IsLead,
+            ["contextUsageRatio"] = session.ContextUsageRatio
+        };
+        if (session.BoundTaskId is not null)
+            fields["boundTaskId"] = session.BoundTaskId;
+        return System.Text.Json.JsonSerializer.SerializeToElement(fields);
     }
 
     private static Engine CreateSandboxedEngine(int timeoutMs = ExecutionTimeoutMs, TemplateBundle? bundle = null)
@@ -243,39 +249,58 @@ public sealed partial class PolicyVm : IPolicyVm
         catch (StatementsCountOverflowException ex)
         {
             throw new InvalidOperationException(
-                $"Policy sandbox statement limit ({MaxStatementBudget}) exceeded during {phase}.",
+                $"Template sandbox statement limit ({MaxStatementBudget}) exceeded during {phase}.",
                 ex);
         }
         catch (MemoryLimitExceededException ex)
         {
             throw new InvalidOperationException(
-                $"Policy sandbox memory limit ({MaxMemoryBytes} bytes) exceeded during {phase}.",
+                $"Template sandbox memory limit ({MaxMemoryBytes} bytes) exceeded during {phase}.",
                 ex);
         }
         catch (RecursionDepthOverflowException ex)
         {
             throw new InvalidOperationException(
-                $"Policy sandbox recursion depth limit ({MaxRecursionDepth}) exceeded during {phase}.",
+                $"Template sandbox recursion depth limit ({MaxRecursionDepth}) exceeded during {phase}.",
                 ex);
         }
         catch (TimeoutException ex)
         {
             throw new InvalidOperationException(
-                $"Policy sandbox execution timeout ({timeoutMs}ms) exceeded during {phase}.",
+                $"Template sandbox execution timeout ({timeoutMs}ms) exceeded during {phase}.",
                 ex);
         }
         catch (JavaScriptException ex)
         {
             throw new InvalidOperationException(
-                $"Policy JavaScript error during {phase}: {ex.Message}",
+                $"Template JavaScript error during {phase}: {FormatJavaScriptError(ex)}",
                 ex);
         }
         catch (Acornima.ParseErrorException ex)
         {
             throw new InvalidOperationException(
-                $"Policy JavaScript syntax error during {phase}: {ex.Message}",
+                $"Template JavaScript syntax error during {phase}: " +
+                FormatErrorAt(ex.Message, ex.Error.SourceFile ?? "template", ex.LineNumber, ex.Column),
                 ex);
         }
+    }
+
+    private static string FormatJavaScriptError(JavaScriptException exception)
+    {
+        var location = exception.Location;
+        var source = location.SourceFile;
+        var start = location.Start;
+        var detail = FormatErrorAt(exception.Message, source ?? "template", start.Line, start.Column + 1);
+        var frame = exception.JavaScriptStackTrace?.Split('\n', StringSplitOptions.TrimEntries)
+            .FirstOrDefault(line => line.StartsWith("at ", StringComparison.Ordinal) &&
+                (source is null || line.Contains(source, StringComparison.Ordinal)));
+        return frame is null ? detail : $"{detail}\n{frame}";
+    }
+
+    private static string FormatErrorAt(string message, string source, int line, int column)
+    {
+        var position = $"{source}:{line}:{column}";
+        return line <= 0 || message.Contains(position, StringComparison.Ordinal) ? message : $"{message} ({position})";
     }
 
     private static ObjectInstance BuildTemplateContextObject(

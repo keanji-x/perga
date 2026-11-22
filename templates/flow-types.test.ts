@@ -1,4 +1,7 @@
-import type { FlowAction, FlowWhen } from "./perga-template";
+import type {
+  BuiltinListView, BuiltinTableView, FlowAction, FlowWhen,
+  HtmlWidgetFromHostMessage, HtmlWidgetToHostMessage, PergaTemplateSetupResult, TemplateBeforeAction,
+} from "./perga-template";
 
 // @ts-expect-error after requires an array of dependencies
 const scalarAfter: FlowWhen = { after: "build" };
@@ -36,3 +39,60 @@ const actions: FlowAction[] = [
   { kind: "watch", prChecks: 1, repo: "example/project" },
   { kind: "watch", cmd: "verify", interval: "5s" },
 ];
+
+const before: NonNullable<PergaTemplateSetupResult["before"]> = (action, ctx) => {
+  switch (action.type) {
+    case "report.commit":
+      return action.editorRole === "lead" && action.nextMarkdown !== action.prevMarkdown ? Allow() : Deny("no change");
+    case "task.dispatch":
+      return action.taskKey && action.access === "read_only" ? Allow() : Deny("requires a gate");
+    case "turn.before":
+      return action.contextUsageRatio < 1 ? Allow() : Deny("context full");
+    default:
+      return action.toolName === "report_read" && action.arguments && ctx.session?.isLead ? Allow() : Deny("lead only");
+  }
+};
+const toolAction: TemplateBeforeAction = {
+  type: "tool.report_read", mcpServer: "perga", toolName: "report_read", arguments: {}, sessionId: "lead", isLead: true,
+};
+// @ts-expect-error report.commit requires a previous and next report
+const incompleteReportCommit: TemplateBeforeAction = { type: "report.commit", editorRole: "lead", nextMarkdown: "" };
+
+const table: BuiltinTableView = {
+  metrics: [{
+    label: "Coverage", target: 0.9, direction: "gte", status: "on_track",
+    points: [{ date: "2026-01-01", value: 0.8 }, { date: "2026-01-02", value: 0.85, note: null }],
+  }],
+};
+const list: BuiltinListView = {
+  title: null,
+  items: [{
+    id: "review", title: "Review", status: "running", assignKind: "model",
+    checks: [{ label: "Unit tests", status: "pass" }],
+    expectations: [{ label: "Coverage", expected: "90%", status: "pending" }],
+  }],
+};
+// @ts-expect-error a table requires metrics
+const invalidTable: BuiltinTableView = {};
+// @ts-expect-error list items use editorial status values
+const invalidList: BuiltinListView = { items: [{ id: "a", title: "A", status: "pass" }] };
+
+const template: PergaTemplateSetupResult = {
+  before,
+  report: { initialMarkdown: "# Report", views: { checks: () => list, coverage: () => table } },
+};
+// @ts-expect-error report.template and report.initialMarkdown are mutually exclusive
+const dualReportTemplate: PergaTemplateSetupResult = { report: { template: "./report.md", initialMarkdown: "# Report" } };
+
+const widgetMessages: HtmlWidgetToHostMessage[] = [
+  { type: "perga:ready" },
+  { type: "perga:resize", height: 120 },
+  { type: "perga:intent", kind: "open_file", path: "report.md" },
+  { type: "perga:intent", kind: "open_session", sessionId: "ses_example" },
+];
+const hostMessages: HtmlWidgetFromHostMessage<BuiltinTableView>[] = [
+  { type: "perga:theme", scheme: "light", tokens: { bg: "#fff" } },
+  { type: "perga:data", data: table },
+];
+// @ts-expect-error open_file carries a workspace-relative path
+const invalidIntent: HtmlWidgetToHostMessage = { type: "perga:intent", kind: "open_file", sessionId: "lead" };

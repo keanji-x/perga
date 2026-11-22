@@ -25,16 +25,17 @@ public sealed class TemplateRulesTests
     public void RoutingTargetsShareInputResolutionAndOnlyMatchingRulesApply()
     {
         var policy = _vm.Compile("""
-            export default {id:'typed',title:'Typed',inputs:{model:{type:'string',default:'default'}},tasks:{routing:[
+            export default {id:'typed',title:'Typed',inputs:{provider:{type:'string'},model:{type:'string',default:'default'}},tasks:{routing:[
                 {when:{role:'review'},provider:'${inputs.provider}',model:'${inputs.model}'}]}};
             """);
         var rule = Assert.Single(policy.Manifest.Routing);
         Assert.Equal("review", rule.When.Role);
         var inputs = Json("{\"provider\":\"codex\"}");
         Assert.Equal(new PolicyTaskRoute("codex", "default"), Assert.Single(_vm.ResolveRoutingTargets(policy, inputs)));
-        Assert.Equal(Assert.Single(_vm.ResolveRoutingTargets(policy, inputs)),
+        _vm.ValidateInputs(policy, inputs);
+        Assert.Equal(Assert.Single(_vm.ResolveRoutingTargets(policy, inputs)) with { Access = "read_only" },
             _vm.RouteTaskDispatch(policy, "review", "read_only", null, null, inputs));
-        Assert.Equal(new PolicyTaskRoute(null, null), _vm.RouteTaskDispatch(policy, "other", "read_only", null, null, Json()));
+        Assert.Equal(new PolicyTaskRoute(null, null, Access: "read_only"), _vm.RouteTaskDispatch(policy, "other", "read_only", null, null, Json()));
     }
 
     [Fact]
@@ -45,8 +46,8 @@ public sealed class TemplateRulesTests
              "tasks":{"routing":[{"when":{"role":"review","access":"read_only"},"provider":"codex","model":"${inputs.model}","enforce":true}]}}
             """);
         var route = _vm.RouteTaskDispatch(policy,"review","read_only",null,null,Json());
-        Assert.Equal(new PolicyTaskRoute("codex","gpt-5"),route);
-        Assert.Equal(new PolicyTaskRoute(null,null),_vm.RouteTaskDispatch(policy,"other","read_only",null,null,Json()));
+        Assert.Equal(new PolicyTaskRoute("codex","gpt-5", Access: "read_only"),route);
+        Assert.Equal(new PolicyTaskRoute(null,null, Access: "read_only"),_vm.RouteTaskDispatch(policy,"other","read_only",null,null,Json()));
         Assert.NotNull(_vm.RouteTaskDispatch(policy,"review","read_only",null,"wrong",Json()).Denial);
         Assert.Equal("custom",_vm.RouteTaskDispatch(policy,"review","read_only",null,null,Json("""{"model":"custom"}""")).Model);
         var defaults = _vm.Compile("export default {id:'defaults',title:'Defaults',tasks:{routing:[{when:{},model:'default'}]}};");
@@ -113,7 +114,7 @@ public sealed class TemplateRulesTests
         Assert.Equal(["a","b","c"],policy.Manifest.DefaultPlugins);
         Assert.Equal("child",policy.Manifest.InputsSchema.GetProperty("one").GetProperty("default").GetString());
         Assert.Equal("0 10 * * *",Assert.Single(_vm.ResolveFlow(policy, Json())).When?.Cron);
-        Assert.Equal(new PolicyTaskRoute("codex","child"),_vm.RouteTaskDispatch(policy,"review","read_only",null,null,Json()));
+        Assert.Equal(new PolicyTaskRoute("codex","child", Access: "read_only"),_vm.RouteTaskDispatch(policy,"review","read_only",null,null,Json()));
         Assert.Equal("child decision", Assert.IsType<GuardDecision.Deny>(_vm.Before(policy,"task.dispatch","track",Json(),Json(),Json())).Reason);
         Assert.Equal("child context",_vm.PrepareTurn(policy,new("track","session",true,null,0,Json()),Json()).Context);
         Assert.Equal("child",Assert.Single(_vm.EvaluateHeaderView(policy,new("track",Json()),Json())!.Badges!).Label);

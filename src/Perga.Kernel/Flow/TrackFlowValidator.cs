@@ -456,7 +456,6 @@ internal static class TrackFlowValidator
             return;
         }
 
-        var access = node.Do.Access ?? "read_write";
         var provider = SessionLaunchValidator.NormalizeTaskProviderId(node.Do.Provider);
         var model = node.Do.Model;
         if (reusedSession is not null)
@@ -471,7 +470,7 @@ internal static class TrackFlowValidator
         if (policy is null)
             return;
 
-        var route = policyVm.RouteTaskDispatch(policy, node.Do.Role, access, provider, model, templateInputs);
+        var route = policyVm.RouteTaskDispatch(policy, node.Do.Role, node.Do.Access, provider, model, templateInputs);
         if (reusedSession is not null && route.Denial is null && route.Model != model)
             errors.Add(new($"$.nodes[{index}].do", $"Template routing requires model '{route.Model}' on the target session.",
                 "Use a session configured for the routed model."));
@@ -481,9 +480,10 @@ internal static class TrackFlowValidator
                 $"$.nodes[{index}].do",
                 $"Template routing denied node '{node.Id}': {denial}",
                 "Adjust provider/model/access on this node to match template tasks.routing enforcement."));
+            return;
         }
 
-        var effectiveAccess = route.Access ?? access;
+        var effectiveAccess = route.Access ?? node.Do.Access ?? "read_write";
         if (policy.Manifest.RequireGateForReadWrite &&
             string.Equals(effectiveAccess, "read_write", StringComparison.OrdinalIgnoreCase) &&
             string.IsNullOrWhiteSpace(node.Do.Gate))

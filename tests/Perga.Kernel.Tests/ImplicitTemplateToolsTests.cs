@@ -193,6 +193,7 @@ public sealed class ImplicitTemplateToolsTests
     private const string Source = """
         export default defineTemplate({ id: "authored", title: "Authored",
           plugins: ["search", "new-plugin", "search"],
+          inputs: { marker: { type: "string", optional: true } },
           data: { initial: inputs => ({ marker: inputs.marker ?? "default" }) },
           before: () => Deny("authored policy active") });
         """;
@@ -301,7 +302,7 @@ public sealed class ImplicitTemplateToolsTests
               data: { initial: { requests: 0 } },
               before: (call, ctx) => {
                 ctx.data.requests++;
-                return call.arguments.inputs?.suspend
+                return call.arguments.inputs?.marker === 'suspend'
                   ? AskHuman('Approve replacement?', { approve: 'Approve', deny: 'Reject' }) : Allow();
               } });
             """;
@@ -312,7 +313,7 @@ public sealed class ImplicitTemplateToolsTests
         await Call(ctx, caller, KernelMcpToolNames.TrackSet, new { source = asking });
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var suspended = KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller,
-            KernelMcpToolNames.TrackSet, TestJson.FromObject(new { source = Source, inputs = new { suspend = true } }), timeout.Token);
+            KernelMcpToolNames.TrackSet, TestJson.FromObject(new { source = Source, inputs = new { marker = "suspend" } }), timeout.Token);
         ApprovalDto? ask = null;
         while (ask is null)
         {

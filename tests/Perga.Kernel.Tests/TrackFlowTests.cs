@@ -834,6 +834,39 @@ public sealed class TrackFlowTests
         Assert.Contains("deploy-check --env=prod", observedCmds);
     }
 
+    [Fact]
+    public async Task FlowPreview_UsesRoutedAccessForGateAndReportsExplicitDenialOnce()
+    {
+        await using var ctx = new KernelTestContext(policyVm: new Perga.PolicyVm.PolicyVm());
+        ctx.Kernel.Templates.RegisterTemplate("""
+            export default {
+              id: 'routed-review', title: 'Routed Review',
+              tasks: {
+                requireGateForReadWrite: true,
+                routing: [{ when: { role: 'review' }, access: 'read_only', enforce: true }]
+              }
+            };
+            """);
+        var (_, snapshot) = await ctx.CreateDefaultTrackAsync(templateId: "routed-review");
+        var trackId = snapshot.Track.Id;
+        var flowPath = (await ctx.Kernel.GetTrackFlowAsync(trackId)).FilePath!;
+        const string flow = """
+            {
+              "rev": 0,
+              "nodes": [{ "id": "review", "title": "Review", "do": { "kind": "run", "role": "review", "prompt": "Review changes" } }]
+            }
+            """;
+
+        await File.WriteAllTextAsync(flowPath, flow);
+        Assert.True((await ctx.Kernel.CommitTrackFlowAsync(trackId, dryRun: true, expectedFlowRev: 0, Human)).Ok);
+
+        await File.WriteAllTextAsync(flowPath,
+            flow.Replace("\"role\": \"review\",", "\"role\": \"review\", \"access\": \"read_write\",", StringComparison.Ordinal));
+        var denied = await ctx.Kernel.CommitTrackFlowAsync(trackId, dryRun: true, expectedFlowRev: 0, Human);
+        Assert.False(denied.Ok);
+        Assert.Contains("Task routing requires access read_only", Assert.Single(denied.Diagnostics).Message);
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]

@@ -15,6 +15,124 @@ export type GuardDecision =
   | { kind: "deny"; reason: string }
   | { kind: "ask_human"; title: string; approveLabel?: string; denyLabel?: string };
 
+export type TemplateBeforeAction =
+  | {
+      type: `tool.${string}`;
+      mcpServer: string;
+      toolName: string;
+      arguments: Record<string, any>;
+      sessionId: string;
+      isLead: boolean;
+      boundTaskId?: string | null;
+    }
+  | { type: "report.commit"; editorRole: "lead" | "subagent"; prevMarkdown: string; nextMarkdown: string }
+  | {
+      type: "task.dispatch";
+      taskKey: string;
+      role?: string | null;
+      access: "read_only" | "read_write";
+      provider?: string | null;
+      model?: string | null;
+      gate?: unknown;
+      acceptance?: string | null;
+    }
+  | {
+      type: "turn.before";
+      sessionId: string;
+      isLead: boolean;
+      boundTaskId?: string | null;
+      contextUsageRatio: number;
+      context?: string | null;
+    };
+
+export interface EditorialCheck {
+  label: string;
+  status: "pass" | "running" | "fail" | "pending";
+  detail?: string | null;
+  command?: string | null;
+  output?: string | null;
+}
+
+export interface EditorialExpectation {
+  label: string;
+  expected: string;
+  actual?: string | null;
+  status?: "pending" | "beat" | "inline" | "miss" | null;
+}
+
+export interface EditorialMetricPoint {
+  date: string;
+  value: number;
+  note?: string | null;
+}
+
+export interface EditorialMetric {
+  code?: string | null;
+  label: string;
+  tag?: string | null;
+  current?: string | null;
+  status?: "met" | "on_track" | "at_risk" | "pending" | null;
+  updatedAt?: string | null;
+  evidence?: string | null;
+  unit?: string | null;
+  target?: number | null;
+  direction?: "lte" | "gte" | null;
+  targetLabel?: string | null;
+  /** When provided, 2–90 points. */
+  points?: EditorialMetricPoint[] | null;
+}
+
+export interface EditorialListItem {
+  id: string;
+  title: string;
+  status: "done" | "running" | "pending" | "blocked";
+  statusLabel?: string | null;
+  group?: string | null;
+  date?: string | null;
+  verdict?: string | null;
+  triggerAt?: string | null;
+  assignKind?: "model" | "command" | null;
+  assign?: string | null;
+  summary?: string | null;
+  bullets?: string[] | null;
+  docLabel?: string | null;
+  sessionId?: string | null;
+  taskKey?: string | null;
+  workerLabel?: string | null;
+  model?: string | null;
+  blockedReason?: string | null;
+  expectations?: EditorialExpectation[] | null;
+  checks?: EditorialCheck[] | null;
+}
+
+/** View result for `builtin:table`. At most 12 metrics. */
+export interface BuiltinTableView {
+  metrics: EditorialMetric[];
+}
+
+/** View result for `builtin:list`. At most 100 items and groups, and 1–12 metrics when supplied. */
+export interface BuiltinListView {
+  items: EditorialListItem[];
+  title?: string | null;
+  summary?: string | null;
+  groups?: string[] | null;
+  metrics?: EditorialMetric[] | null;
+}
+
+/** Messages sent by a sandboxed `./widgets/*.html` iframe to its parent with postMessage.
+ * Send ready to request the current theme and data. Resize height is in CSS pixels.
+ * Intent paths are workspace-relative. */
+export type HtmlWidgetToHostMessage =
+  | { type: "perga:ready" }
+  | { type: "perga:resize"; height: number }
+  | { type: "perga:intent"; kind: "open_file"; path: string }
+  | { type: "perga:intent"; kind: "open_session"; sessionId: string };
+
+/** Messages sent by the host to the widget iframe. Data is the selected report view result. */
+export type HtmlWidgetFromHostMessage<TData = unknown> =
+  | { type: "perga:theme"; scheme: "light" | "dark"; tokens: Readonly<Record<string, string>> }
+  | { type: "perga:data"; data: TData };
+
 export interface TemplateContext<TInputs = Record<string, any>, TData = Record<string, any>> {
   readonly trackId: string;
   readonly inputs: Readonly<TInputs>;
@@ -39,6 +157,7 @@ export interface TaskRoutingRuleSpec {
 export interface SchemaNode {
   readonly __pergaSchema: true;
   optional(): SchemaNode;
+  /** Supply a JSON value for a missing field. Explicit values, including null on optional fields, are preserved. */
   default(value: unknown): SchemaNode;
 }
 
@@ -130,9 +249,15 @@ export interface PergaTemplateSetupResult<TInputs = Record<string, any>, TData =
     schema?: ((t: SchemaBuilder) => Record<string, SchemaNode>) | SchemaNode;
     initial?: TData | ((inputs: TInputs) => TData);
   };
-  report?: {
-    /** Package-relative Markdown seeded on Track creation. Supports ${inputs.key}. */
+  report?: ({
+    /** Package-relative Markdown seeded on Track creation. Supports ${inputs.key}. Supply either this or initialMarkdown. */
     template?: string;
+    initialMarkdown?: never;
+  } | {
+    template?: never;
+    /** Inline Markdown seeded on Track creation. Supports ${inputs.key}. Supply either this or template. */
+    initialMarkdown?: string;
+  }) & {
     views?: Record<string, (data: TData, kernel: KernelFactsSnapshot) => unknown>;
   };
   tasks?: {
@@ -146,7 +271,7 @@ export interface PergaTemplateSetupResult<TInputs = Record<string, any>, TData =
 
   /** Advanced policy and workspace hooks. */
   headerView?: (ctx: TemplateContext<TInputs, TData>) => TemplateHeaderView;
-  before?: (action: { type: string; role?: string; access?: string; provider?: string; model?: string; arguments?: Record<string, any>; [key: string]: any },
+  before?: (action: TemplateBeforeAction,
     ctx: TemplateContext<TInputs, TData> & { readonly session?: TemplateSessionContext }) => GuardDecision;
   workspace?: {
     driver?: string;

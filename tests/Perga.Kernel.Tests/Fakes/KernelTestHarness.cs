@@ -1309,7 +1309,7 @@ internal sealed class ConfigurableFakePolicyVm : IPolicyVm
     public Func<string, CompiledTemplateManifest>? CustomManifestFactory { get; set; }
     public Func<CompiledPolicy, string, JsonElement, JsonElement, GuardDecision>? OnBefore { get; set; }
 
-    public TemplateHeaderView? EvaluateHeaderView(CompiledPolicy policy, PolicyHeaderViewContext ctx, JsonElement state) => null;
+    public HeaderViewEvaluation EvaluateHeaderViewWithDiagnostic(CompiledPolicy policy, PolicyHeaderViewContext ctx, JsonElement data) => new(null, null);
 
     public CompiledPolicy Compile(string jsModuleSource)
     {
@@ -1357,10 +1357,10 @@ internal sealed class ConfigurableFakePolicyVm : IPolicyVm
     public PolicyTurnPreparation PrepareTurn(CompiledPolicy policy, PolicyTurnContext ctx, JsonElement data) =>
         new(null, new GuardDecision.Allow());
 
-    public GuardDecision Before(CompiledPolicy policy, string action, string trackId, JsonElement payload, JsonElement inputs, JsonElement data) =>
+    public GuardDecision Before(CompiledPolicy policy, string action, string trackId, JsonElement payload, JsonElement inputs, JsonElement data, PolicySessionContext? session = null) =>
         OnBefore?.Invoke(policy, action, payload, data) ?? new GuardDecision.Allow();
 
-    public PolicyTaskRoute RouteTaskDispatch(CompiledPolicy policy, string? role, string access, string? provider, string? model, JsonElement inputs) => new(provider, model);
+    public PolicyTaskRoute RouteTaskDispatch(CompiledPolicy policy, string? role, string? access, string? provider, string? model, JsonElement inputs) => new(provider, model, Access: access);
     public IReadOnlyList<PolicyTaskRoute> ResolveRoutingTargets(CompiledPolicy policy, JsonElement inputs) => [];
 
     public IReadOnlyList<FlowNodeSpecDto> ResolveFlow(CompiledPolicy policy, JsonElement inputs) => [];
