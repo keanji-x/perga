@@ -1,9 +1,9 @@
-import { useReadingHostRef } from './reading-host.tsx';
+import { DRAWER_REGISTER_EVENT, type DrawerRegistration, useReadingHostRef } from './reading-host.tsx';
 import { LayerDismissal } from '../dialog/public.tsx';
 import { CardFrame } from '../card-frame/public.tsx';
 // The conversation drawer. It overlays the panel column rather than squeezing the main column, and is deliberately not modal: no focus trap, no inert background. Escape closes it.
 
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, type ReactNode } from 'react';
 import { LayerDepthProvider } from '@astryxdesign/core/Layer';
 
 import { DrawerHeader } from './header.tsx';
@@ -71,6 +71,14 @@ export function Drawer({ open, title, headerActions, mobileBackLabel, mobileHead
   const seamRef = useRef<HTMLDivElement | null>(null);
   const readingPorts = useMemo(() => ({ key: 'drawer', navigation: seamRef }), []);
   const captureReadingHost = useReadingHostRef(readingPorts, panelRef);
+  useEffect(() => {
+    if (!open) return;
+    let release: (() => void) | undefined;
+    panelRef.current?.dispatchEvent(new CustomEvent<DrawerRegistration>(DRAWER_REGISTER_EVENT, {
+      bubbles: true, detail: { accept: cleanup => { release = cleanup; } },
+    }));
+    return () => { release?.(); };
+  }, [open]);
   const parentResizeGroup = suppliedResizeGroup;
   const hostRef = useRef<HTMLDivElement | null>(null);
   const [panes] = useState(() => new Set<HTMLElement>());
@@ -78,7 +86,13 @@ export function Drawer({ open, title, headerActions, mobileBackLabel, mobileHead
   const resizeGroup = parentResizeGroup ?? (stacked || companion !== undefined ? ownResizeGroup : null);
 
   const width = compact ? undefined : resize;
-  const [closing, setClosing] = useState(false);
+  const [exitState, setExitState] = useState({ active: false });
+  // A zero-distance completion must still commit the derived first exit frame,
+  // even when its final boolean equals the state before this transition.
+  const setClosing = useCallback((active: boolean) => { setExitState({ active }); }, []);
+  const wasOpen = useRef(open);
+  const closing = !compact && (exitState.active || (wasOpen.current && !open
+    && !globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches));
   const companionVisible = suppliedCompanionVisible ?? ((open || closing) && companion !== undefined);
   useLayoutEffect(() => {
     const pane = scrollRef.current;
@@ -86,7 +100,6 @@ export function Drawer({ open, title, headerActions, mobileBackLabel, mobileHead
     resizeGroup.panes.add(pane);
     return () => { resizeGroup.panes.delete(pane); };
   }, [resizeGroup, open, closing]);
-  const wasOpen = useRef(open);
   const shouldRestoreFocus = useRef(false);
   const previouslyFocusedRef = useRef<HTMLElement | null>(null);
 
@@ -109,21 +122,22 @@ export function Drawer({ open, title, headerActions, mobileBackLabel, mobileHead
   }>(
     { title, mobileBackLabel, children, footer },
   );
-  if (open) lastFrame.current = { title, mobileBackLabel, children, footer };
+  useLayoutEffect(() => {
+    if (open) lastFrame.current = { title, mobileBackLabel, children, footer };
+  }, [open, title, mobileBackLabel, children, footer]);
   const frame = open ? { title, mobileBackLabel, children, footer } : lastFrame.current;
 
-  /* The retraction starts during render, not in an effect: an effect cost a frame in which the early return unmounted the drawer and then remounted it, replaying the enter animation. */
-  if (open !== wasOpen.current) {
-    // Only a true → false edge retracts; mounting closed does not.
-    const retracts = wasOpen.current && !open && !compact
-      && !globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-    shouldRestoreFocus.current = wasOpen.current && !open;
-    wasOpen.current = open;
-    setClosing(retracts);
-  }
-  // A desktop exit may still be running when the viewport becomes compact.
-  // Compact pages disappear in this commit; no mobile transitionend is owed.
-  if (compact && closing) setClosing(false);
+  // Derive the first exit frame from the last committed open value so closing
+  // never drops the surface between commits. Only effects mutate the snapshot.
+  useLayoutEffect(() => {
+    if (open !== wasOpen.current) {
+      const retracts = wasOpen.current && !open && !compact
+        && !globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+      shouldRestoreFocus.current = wasOpen.current && !open;
+      wasOpen.current = open;
+      setClosing(retracts);
+    } else if (compact) setClosing(false);
+  }, [open, compact, setClosing]);
 
   useSurfacePresence({
     parts: { kind: 'paired',

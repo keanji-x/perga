@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, type RefObject } from 'react';
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { markdownExcerpt } from '../../../../../core/markdown/public.ts';
 import { isUserConversationTurn, opensExchange, type TranscriptEntry } from '../../../../../core/domain/conversation.ts';
@@ -21,7 +21,11 @@ export const ExchangeNavigation = memo(function ExchangeNavigation({ turns, fram
     readExcerpt: () => item.reply === null ? '' : markdownExcerpt(item.reply),
     label: `Jump to exchange ${index + 1}${railLabel(item.text) === '' ? '' : `: ${railLabel(item.text)}`}`,
   })), [exchanges]);
-  const exchangeKey = useMemo(() => JSON.stringify(exchanges.map(exchange => exchange.id)), [exchanges]);
+  const [exchangeIds, setExchangeIds] = useState(() => exchanges.map(exchange => exchange.id));
+  useLayoutEffect(() => {
+    const next = exchanges.map(exchange => exchange.id);
+    setExchangeIds(previous => previous.length === next.length && previous.every((id, index) => id === next[index]) ? previous : next);
+  }, [exchanges]);
   const shown = exchanges.length > 0 && seam !== null;
   const [active, setActive] = useState<string | null>(null);
   const readActive = useRef<() => void>(() => {});
@@ -69,7 +73,7 @@ export const ExchangeNavigation = memo(function ExchangeNavigation({ turns, fram
       scroller.removeEventListener('scroll', onScroll);
       if (queued !== null) cancelAnimationFrame(queued);
     };
-  }, [shown, exchangeKey, frameRef]);
+  }, [shown, exchangeIds, frameRef]);
 
   return !shown || seam === null ? null : createPortal(
     <EdgeNavigator className={styles.edgeNavigation} label="Jump to a loaded exchange" items={items} activeId={active}

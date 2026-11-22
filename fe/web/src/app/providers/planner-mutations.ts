@@ -42,19 +42,19 @@ function useCardSettingWriter<A, R>(
   unauthorized: UnauthorizedChannel, accepted: (result: R) => R = result => result,
 ): (value: A) => Promise<R> {
   const execute = usePlannerOperation();
-  const writer = useRef<{ cardId: string; write: (value: A) => Promise<R> } | null>(null);
-  if (writer.current === null || writer.current.cardId !== cardId) {
-    const serial = createSerialWriter((intent: { value: A; transport: ApiTransportPort }) =>
-      execute(intent.transport, operation(cardId, intent.value), unauthorized).then(accepted));
-    writer.current = {
-      cardId,
-      write: (value: A) => {
-        try { return serial({ value, transport: admitTransport(transport) }); }
-        catch (error) { return Promise.reject(error instanceof Error ? error : new Error('连接尚未恢复')); }
-      },
-    };
-  }
-  return writer.current.write;
+  const writer = useRef<{ cardId: string; write: (dispatch: () => Promise<R>) => Promise<R> } | null>(null);
+  return (value: A) => {
+    // Only an admitted user event creates a writer. Abandoned renders cannot
+    // replace a queue belonging to the committed card.
+    if (writer.current === null || writer.current.cardId !== cardId) {
+      writer.current = { cardId, write: createSerialWriter((dispatch: () => Promise<R>) => dispatch()) };
+    }
+    try {
+      const admitted = admitTransport(transport);
+      return writer.current.write(() => execute(admitted, operation(cardId, value), unauthorized).then(accepted));
+    }
+    catch (error) { return Promise.reject(error instanceof Error ? error : new Error('连接尚未恢复')); }
+  };
 }
 
 export function usePlannerMutations(transport: ApiTransportPort, cardId: string, trackId: string | null, unauthorized: UnauthorizedChannel, permissions: ConversationRegistry) {

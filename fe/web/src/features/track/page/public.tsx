@@ -147,14 +147,7 @@ export function TrackPage({ fillReading = false, showWorkspaceIsolation = true, 
 }: TrackPageProps) {
   const compactViewport = useCompactViewport();
   const headerActionsHost = compactViewport ? mobileHeaderActionsHost : null;
-  const [titleContainer] = useState(() => {
-    const container = document.createElement('div');
-    container.style.display = 'contents';
-    return container;
-  });
-  useLayoutEffect(() => () => titleContainer.remove(), [titleContainer]);
-  const desktopTitleSlotRef = useRef<HTMLDivElement | null>(null);
-  const [mobileTitleReadHost] = useState(() => document.createElement('div'));
+  const titleSlotRef = useRef<HTMLDivElement | null>(null);
   const lastFocusedTitleRef = useRef<HTMLElement | null>(null);
   const titleReadControlRef = useRef<HTMLButtonElement | null>(null);
   const mobileTitleEditRef = useRef<(() => void) | null>(null);
@@ -163,25 +156,35 @@ export function TrackPage({ fillReading = false, showWorkspaceIsolation = true, 
     mobileTitleEditRef.current = begin;
     setCanEditMobileTitle(begin !== null);
   }, []);
-  const relocatingTitleRef = useRef(false);
   const titleInHeader = compactViewport && mobileHeaderTitleHost !== null;
   useLayoutEffect(() => {
-    const slot = titleInHeader ? mobileHeaderTitleHost : desktopTitleSlotRef.current;
-    if (slot !== null) {
-      const focused = lastFocusedTitleRef.current;
-      const restore = focused !== null
-        && (document.activeElement === focused || document.activeElement === document.body);
-      // Read controls change shape across breakpoints; the editor itself is
-      // stable. Hand off only focus previously owned by this title subtree.
-      const target = focused !== null && titleContainer.contains(focused) ? focused : titleReadControlRef.current;
-      relocatingTitleRef.current = true;
-      slot.appendChild(titleContainer);
-      // A host removed at the breakpoint can drop focus to body without a
-      // blur event. Restore the same input after moving its stable container.
-      if (restore) target?.focus({ preventScroll: true });
-      relocatingTitleRef.current = false;
-    }
-  }, [mobileHeaderTitleHost, titleContainer, titleInHeader]);
+    const slot = titleSlotRef.current;
+    if (slot === null || !titleInHeader || mobileHeaderTitleHost === null) return;
+    // Only the title slot is measured. The live editor stays in its React host;
+    // responsive positioning changes geometry without removing the focused input.
+    const place = () => {
+      const box = mobileHeaderTitleHost.getBoundingClientRect();
+      Object.assign(slot.style, { position: 'fixed', top: `${box.top}px`, left: `${box.left}px`, width: `${box.width}px` });
+    };
+    place();
+    const observer = new ResizeObserver(place);
+    observer.observe(mobileHeaderTitleHost);
+    return () => {
+      observer.disconnect();
+      Object.assign(slot.style, { position: '', top: '', left: '', width: '' });
+    };
+  }, [mobileHeaderTitleHost, titleInHeader]);
+  useLayoutEffect(() => {
+    const focused = lastFocusedTitleRef.current;
+    const restore = () => {
+      if (focused !== null && lastFocusedTitleRef.current === focused && document.activeElement === document.body) {
+        titleReadControlRef.current?.focus({ preventScroll: true });
+      }
+    };
+    restore();
+    const frame = requestAnimationFrame(restore);
+    return () => cancelAnimationFrame(frame);
+  }, [titleInHeader]);
 
   const deletion = useDeleteConfirm((_id, signal) => onDeleteTrack?.(signal), writeFailureText(DELETE_FAILURES, DELETE_TEXT), onTrackDeleted);
   const offeredClosedAction = closedControl === undefined ? null : canReopenTrack ? 'reopen' : (canCloseTrack ? 'close' : null);
@@ -300,7 +303,7 @@ export function TrackPage({ fillReading = false, showWorkspaceIsolation = true, 
     >
       {dismissalLayer}
       <PageHeader
-        className={`${styles.workHeader} ${conversationOpen ? styles.workHeaderBesideDrawer : ''}`}
+        className={`${styles.workHeader} ${compactViewport && closeSurface === undefined ? styles.workHeaderInShell : ''} ${conversationOpen ? styles.workHeaderBesideDrawer : ''}`}
         title={
           <>
             {closeSurface !== undefined && (
@@ -317,7 +320,26 @@ export function TrackPage({ fillReading = false, showWorkspaceIsolation = true, 
               </button>
             )}
             {/* The raw title, with the fallback as the placeholder. `emptyCommit="clear"`: the planner's `neige_track_rename` succeeds only while the title is empty, so clearing the name is a real request here, not a cancel. */}
-            <div className={styles.titleSlot} ref={desktopTitleSlotRef} />
+            <div className={styles.titleSlot} ref={titleSlotRef}>
+      <div className={titleInHeader ? styles.mobileHeaderIdentity : styles.titleCluster}
+        onFocusCapture={(event) => { lastFocusedTitleRef.current = event.target; }}
+        onBlurCapture={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget)) lastFocusedTitleRef.current = null;
+        }}>
+        <h1 className={styles.titleHeading}>{onRenameTrack === undefined ? <span className={styles.title} data-nc-page-title=""><TrackTitle track={track} /></span> : <EditableTitle value={track.title} placeholder={UNTITLED_TRACK_LABEL}
+          displayContent={<TrackTitle track={track} />} emptyCommit="clear" onCommit={onRenameTrack}
+          readCommitFailure={writeFailureText(TRACK_PATCH_FAILURES, TRACK_PATCH_TEXT.rename)} editLabel="Rename track" inputLabel="Track title"
+          className={styles.title} isPageTitle titleRef={titleReadControlRef}
+          readView={titleInHeader && mobileTitleReadView !== undefined ? (controls) => <MobileTitleReadView
+            controls={controls} host={mobileHeaderTitleHost} view={mobileTitleReadView} register={registerMobileTitleEdit} /> : undefined} />}</h1>
+        {showWorkspaceIsolation && track.isolation === 'none' && <ExplanationBadge label={NO_ISOLATION_LABEL}>{NO_ISOLATION_EXPLANATION}</ExplanationBadge>}
+        {!titleInHeader && <TrackClosedBadge closedAt={track.closedAt} />}
+        {!titleInHeader && <TrackAdminBadge adminGrantedAt={adminGrantedAt} />}
+        {/* Shared track activity and conversation unread state. */}
+        {!titleInHeader && <ActivityIndicator state={activity} />}
+      </div>
+
+</div>
           </>
         }
         meta={!compactViewport && !boardOpen && onShareTrack !== undefined && <AstryxButton ref={shareTriggerRef}
@@ -364,26 +386,7 @@ export function TrackPage({ fillReading = false, showWorkspaceIsolation = true, 
         )}
       />
 
-      {createPortal(<div className={titleInHeader ? styles.mobileHeaderIdentity : styles.titleCluster}
-        onFocusCapture={(event) => { lastFocusedTitleRef.current = event.target; }}
-        onBlurCapture={(event) => {
-          if (relocatingTitleRef.current) event.stopPropagation();
-          else if (!titleContainer.contains(event.relatedTarget)) lastFocusedTitleRef.current = null;
-        }}>
-        <h1 className={styles.titleHeading}>{onRenameTrack === undefined ? <span className={styles.title} data-nc-page-title=""><TrackTitle track={track} /></span> : <EditableTitle value={track.title} placeholder={UNTITLED_TRACK_LABEL}
-          displayContent={<TrackTitle track={track} />} emptyCommit="clear" onCommit={onRenameTrack}
-          readCommitFailure={writeFailureText(TRACK_PATCH_FAILURES, TRACK_PATCH_TEXT.rename)} editLabel="Rename track" inputLabel="Track title"
-          className={styles.title} isPageTitle titleRef={titleReadControlRef}
-          readView={titleInHeader && mobileTitleReadView !== undefined ? (controls) => <MobileTitleReadView
-            controls={controls} host={mobileTitleReadHost} view={mobileTitleReadView} register={registerMobileTitleEdit} /> : undefined} />}</h1>
-        <div className={styles.mobileTitleReadHost} hidden={!titleInHeader}
-          ref={(node) => { if (node !== null && mobileTitleReadHost.parentNode !== node) node.appendChild(mobileTitleReadHost); }} />
-        {showWorkspaceIsolation && track.isolation === 'none' && <ExplanationBadge label={NO_ISOLATION_LABEL}>{NO_ISOLATION_EXPLANATION}</ExplanationBadge>}
-        {!titleInHeader && <TrackClosedBadge closedAt={track.closedAt} />}
-        {!titleInHeader && <TrackAdminBadge adminGrantedAt={adminGrantedAt} />}
-        {/* Shared track activity and conversation unread state. */}
-        {!titleInHeader && <ActivityIndicator state={activity} />}
-      </div>, titleContainer)}
+      {titleInHeader && createPortal(<span aria-hidden="true" style={{ position: 'absolute' }} />, mobileHeaderTitleHost)}
       {headerActionsHost !== null && mobileActions !== undefined && createPortal(mobileActions, headerActionsHost)}
       {titleInHeader && closeSurface === undefined ? null : <div className={styles.mobileTrackHeader}>
         <MobileHeader

@@ -1,11 +1,10 @@
 import { useSystemUpgrade } from '../providers/system-upgrade.tsx';
 // One Settings visit: a desktop dialog or a mobile route page, mounted above the
-// shell's keyed route stage so section routes keep one surface. The URL selects the section.
+// shell's persistent route stage so section routes keep one surface. The URL selects the section.
 
 import { useQuery } from '@tanstack/react-query';
 import { useRouter,useRouterState,type RouterHistory } from '@tanstack/react-router';
-import { useCallback,useEffect,useRef } from 'react';
-import { createPortal } from 'react-dom';
+import { useEffect,useLayoutEffect,useRef } from 'react';
 
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
@@ -53,11 +52,8 @@ export type SettingsOverlayProps = Readonly<{
 
 }>;
 
-/**
- * The pane tree is one portal into a stable container; only the container's DOM
- * parent changes between the mobile page and the desktop dialog slot, so resizing
- * cannot discard plugin drafts. DOM ancestry is not React context here.
- */
+/** One Dialog body for a visit; compact presentation uses a full-page surface.
+ * React retains the same pane host across responsive changes. */
 export function SettingsOverlay({ transport, unauthorized, }: SettingsOverlayProps) {
   const go = useGo();
   const router = useRouter();
@@ -66,40 +62,25 @@ export function SettingsOverlay({ transport, unauthorized, }: SettingsOverlayPro
   const section = settingsSectionForPath(path);
   const compact = useCompactViewport();
   const mobileIndex = compact && path === '/settings';
-  const [contentHost] = useState(() => document.createElement('div'));
-  const focusedContentRef = useRef<HTMLElement | null>(null);
-  const relocatingContentRef = useRef(false);
-  const attachContent = useCallback((slot: HTMLDivElement | null) => {
-    if (slot === null || contentHost.parentNode === slot) return;
-    const focused = focusedContentRef.current;
-    const restore = focused !== null && contentHost.contains(focused)
-      && (document.activeElement === focused || document.activeElement === document.body);
-    // Moving the same editor between responsive hosts is not leaving its field.
-    relocatingContentRef.current = true;
-    slot.appendChild(contentHost);
-    if (restore) focused.focus({ preventScroll: true });
-    relocatingContentRef.current = false;
-  }, [contentHost]);
-  useEffect(() => {
-    // On desktop → phone, Dialog removes background inertness in its cleanup.
-    // A focus attempt while moving the field can therefore have been ignored.
-    const focused = focusedContentRef.current;
-    if (compact && focused !== null && contentHost.contains(focused)
-      && document.activeElement === document.body) focused.focus({ preventScroll: true });
-  }, [compact, contentHost]);
   const history = router.history as RouterHistory;
-  const historyIndex = history.location.state.__TSR_index;
+  // Coordinates belong to this mounted shell and public history actions only.
+  const position = useRef(0);
+  useLayoutEffect(() => history.subscribe(({ action }) => {
+    if (action.type === 'PUSH' || action.type === 'FORWARD') position.current += 1;
+    else if (action.type === 'BACK') position.current -= 1;
+    else if (action.type === 'GO') position.current += action.index;
+  }), [history]);
   const returnLocation = useRef<Readonly<{ href: string; index: number }> | null>(null);
   const indexLocation = useRef<number | null>(null);
   useEffect(() => {
     if (section === null) {
-      returnLocation.current = { href, index: historyIndex };
+      returnLocation.current = { href, index: position.current };
       indexLocation.current = null;
-    } else if (path === '/settings') indexLocation.current = historyIndex;
-  }, [href, historyIndex, path, section]);
+    } else if (path === '/settings') indexLocation.current = position.current;
+  }, [href, path, section]);
   const leaveSettings = () => {
     const previous = returnLocation.current;
-    const distance = previous === null ? 0 : history.location.state.__TSR_index - previous.index;
+    const distance = previous === null ? 0 : position.current - previous.index;
     // Only pop entries after a workspace entry this mounted shell observed.
     // Section pushes made on desktop belong to the same visit if resized.
     if (distance > 0 && history.canGoBack()) {
@@ -112,7 +93,7 @@ export function SettingsOverlay({ transport, unauthorized, }: SettingsOverlayPro
   };
   const backToIndex = () => {
     const previous = indexLocation.current;
-    const distance = previous === null ? 0 : history.location.state.__TSR_index - previous;
+    const distance = previous === null ? 0 : position.current - previous;
     if (distance > 0 && history.canGoBack()) {
       history.go(-distance);
       return;
@@ -121,28 +102,23 @@ export function SettingsOverlay({ transport, unauthorized, }: SettingsOverlayPro
     go({ name: 'settings' }, { replace: true });
   };
   if (section === null) return null;
-  return <>
-    <section className={styles.page} hidden={!compact} data-nc-settings-page="" aria-label="Settings">
-      <MobileHeader title={mobileIndex ? 'Settings' : settingsSectionLabel(section)} level={1}
-        backLabel={mobileIndex ? 'workspace' : 'Settings'} onBack={mobileIndex ? leaveSettings : backToIndex} />
-      <div className={styles.content} ref={compact ? attachContent : undefined} />
+  return <Dialog purpose="form" origin={{ kind: 'surface-center' }} open onClose={leaveSettings}
+    title="Settings" wide hideTitleRow={compact}>
+    <section className={compact ? styles.page : undefined} data-nc-settings-page={compact ? '' : undefined} aria-label="Settings">
+      <div hidden={!compact}>
+        <MobileHeader title={mobileIndex ? 'Settings' : settingsSectionLabel(section)} level={1}
+          backLabel={mobileIndex ? 'workspace' : 'Settings'} onBack={mobileIndex ? leaveSettings : backToIndex} />
+      </div>
+      <div className={compact ? styles.content : undefined}>
+        <SettingsSurface section={section}
+          sections={SETTINGS_SECTIONS}
+          presentation={!compact ? 'desktop' : mobileIndex ? 'mobile-index' : 'mobile-detail'}
+          onSelectSection={(next) => go(targetForSection(next, compact))}>
+          <SectionPane section={section} transport={transport} unauthorized={unauthorized} />
+        </SettingsSurface>
+      </div>
     </section>
-    <Dialog purpose="form" origin={{ kind: 'surface-center' }} open={!compact} onClose={leaveSettings} title="Settings" wide>
-      <div ref={!compact ? attachContent : undefined} />
-    </Dialog>
-    {createPortal(<div
-      onFocusCapture={(event) => { focusedContentRef.current = event.target; }}
-      onBlurCapture={(event) => {
-        if (relocatingContentRef.current) event.stopPropagation();
-        else if (!contentHost.contains(event.relatedTarget)) focusedContentRef.current = null;
-      }}>
-    <SettingsSurface section={section}
-      sections={SETTINGS_SECTIONS}
-      presentation={!compact ? 'desktop' : mobileIndex ? 'mobile-index' : 'mobile-detail'}
-      onSelectSection={(next) => go(targetForSection(next, compact))}>
-      <SectionPane section={section} transport={transport} unauthorized={unauthorized} />
-    </SettingsSurface></div>, contentHost)}
-  </>;
+  </Dialog>;
 }
 
 /** One switch, so a new section cannot forget to be rendered. */

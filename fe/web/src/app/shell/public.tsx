@@ -210,10 +210,7 @@ export function AppShell({
   const [historyOpen, setHistoryOpen] = useState(false);
   const conversationScope = useMobileConversationScope();
   const scopeOwner = conversationScope?.owner ?? null;
-  const [historyOwner, setHistoryOwner] = useState(() => ({ path: currentPath, scopeOwner, token: {} }));
-  if (historyOwner.path !== currentPath || historyOwner.scopeOwner !== scopeOwner) {
-    setHistoryOwner({ path: currentPath, scopeOwner, token: {} });
-  }
+  const historyOwner = useMemo(() => ({ path: currentPath, scopeOwner, token: {} }), [currentPath, scopeOwner]);
   const historyTracks = conversationScope === null ? [] : [conversationScope.track];
   const receipts = useReadReceipts();
   const readTrackUnread = receipts.isTrackUnread;
@@ -581,7 +578,7 @@ export function AppShell({
         {<SystemUpgradeBannerHost />}
         {/* One flex item. Routes compose ErrorBox + page + Drawer as siblings;
             `:first-child` on `.main` would flex the banner, not the page. */}
-        <div key={currentPath} className={styles.stage} hidden={narrowRail && settingsOpen}>
+        <div className={styles.stage} hidden={narrowRail && settingsOpen}>
 
           <CreateAreaContext.Provider value={requestCreateArea}>
             <MobileSectionContext.Provider value={openMobileSection}>
@@ -593,7 +590,7 @@ export function AppShell({
             </MobileSectionContext.Provider>
           </CreateAreaContext.Provider>
         </div>
-        {/* Above the keyed route stage so settings panes survive tab changes and resizing. */}
+        {/* Beside the persistent route stage so settings panes survive tab changes and resizing. */}
         {<SettingsOverlay transport={transport} unauthorized={unauthorized} />}
       </main>
       <Dialog purpose="form" origin={areaEditorTarget?.origin ?? { kind: 'surface-center' }}

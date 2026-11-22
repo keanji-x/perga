@@ -66,13 +66,13 @@ it('removes abandoned title containers when switching Tracks', async () => {
   await page.viewport(390, 844);
   const router = setup('/track/w1');
   const selector = await page.getByRole('button', { name: 'Switch track, Responsive mobile UI', exact: true }).findElement();
-  const host = selector.closest('[style="display: contents;"]')!.parentElement!;
+  const host = selector.closest('[data-nc-workspace-header]')!;
   for (const id of ['w2', 'w1', 'w2', 'w1']) {
     await router.navigate({ to: '/track/$trackId', params: { trackId: id } });
     await page.getByRole('button', { name: `Switch track, ${id === 'w1' ? 'Responsive mobile UI' : 'Another track'}`, exact: true }).findElement();
     await settlePaint();
-    expect(host.childElementCount).toBe(1);
-    expect(host.firstElementChild?.childElementCount).toBeGreaterThan(0);
+    expect(document.querySelectorAll('[aria-label^="Switch track,"]')).toHaveLength(1);
+    expect(host.isConnected).toBe(true);
   }
   await page.viewport(1280, 720);
 });

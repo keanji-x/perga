@@ -358,6 +358,31 @@
       display: none;
     }
 
+    /* The editor has one stable React host. Only its visual position follows
+       the shell title slot; the mobile read control uses an ordinary portal. */
+    .page > .workHeaderInShell {
+      display: contents;
+    }
+
+    .workHeaderInShell > div {
+      display: contents;
+    }
+
+    .workHeaderInShell > div > :not(.titleSlot) {
+      display: none;
+    }
+
+    .workHeaderInShell .titleSlot {
+      display: block;
+      pointer-events: none;
+      z-index: var(--z-overlay);
+      min-block-size: var(--control-h-touch);
+    }
+
+    .workHeaderInShell .titleSlot :is(input, button) {
+      pointer-events: auto;
+    }
+
     .mobileHeaderIdentity {
       display: flex;
       align-items: center;

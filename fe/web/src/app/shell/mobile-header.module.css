@@ -34,6 +34,7 @@
   }
 
   .trackTitleHost {
+    min-block-size: var(--control-h-touch);
     --header-primary-h: calc(var(--rail-w-collapsed) + var(--space-1));
     min-inline-size: 0;
     inline-size: 100%;

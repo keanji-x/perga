@@ -517,6 +517,18 @@ describe('dragged conversation width', () => {
     }
     throw new Error(`no paragraph starts with ${prefix}`);
   }
+  it('registers a drawer already open when the main host mounts', async () => {
+    await page.viewport(1440, 900);
+    mount({ initiallyOpen: true });
+    await page.getByRole('button', { name: 'Close conversation', exact: true }).findElement();
+    await Promise.all(main().getAnimations().map(animation => animation.finished));
+    await page.getByRole('button', { name: 'Close conversation', exact: true }).click();
+    // Without cold-mount registration the host thinks it was always closed,
+    // so it cannot animate its panel allocation back to the resting width.
+    expect(main().getAnimations().length).toBeGreaterThan(0);
+    await Promise.all(main().getAnimations().map(animation => animation.finished));
+  });
+
   const frame = () => new Promise((resolve) => { requestAnimationFrame(() => { resolve(null); }); });
   async function settled() {
     await Promise.all(drawer().getAnimations().map((animation) => animation.finished));
