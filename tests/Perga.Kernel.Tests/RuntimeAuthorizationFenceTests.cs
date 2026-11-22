@@ -333,8 +333,10 @@ public sealed class RuntimeAuthorizationFenceTests
         }
     }
 
-    [Fact]
-    public async Task HumanSteerRejectedBeforeWritingHasRejectedReceipt()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task HumanSteerRejectedBeforeWritingHasRejectedReceipt(bool queued)
     {
         await using var ctx = new KernelTestContext();
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
@@ -351,7 +353,17 @@ public sealed class RuntimeAuthorizationFenceTests
             waiting.TrySetResult();
             return release.Task.WaitAsync(token);
         };
-        var request = new SendSessionMessageRequest("late steer", "late-steer", Mode: "steer", TurnId: turnId);
+        SendSessionMessageRequest request;
+        if (queued)
+        {
+            var queuedReceipt = await ctx.Kernel.SendSessionMessageAsync(sessionId,
+                new("queued steer", "queued-steer", Mode: "queue"), Human, ct);
+            request = new(null, null, Mode: "steer", TurnId: turnId, MessageId: queuedReceipt.MessageId);
+        }
+        else
+        {
+            request = new("late steer", "late-steer", Mode: "steer", TurnId: turnId);
+        }
         var steering = ctx.Kernel.SendSessionMessageAsync(sessionId, request, Human, ct);
         try
         {

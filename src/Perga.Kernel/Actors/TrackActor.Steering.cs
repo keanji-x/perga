@@ -155,7 +155,7 @@ public sealed partial class TrackActor
         catch (KernelException) when (caller is InteropPrincipal.Human)
         {
             // A rejected write fence leaves the transport untouched.
-            return SteerDelivery.Declined;
+            return null;
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
