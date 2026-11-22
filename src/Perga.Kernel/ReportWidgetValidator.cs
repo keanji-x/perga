@@ -23,7 +23,7 @@ internal static class ReportWidgetValidator
         {
             var isUnchanged = priorBlocks?.TryGetValue(block.Id, out var prior) == true &&
                               prior.HasSameContentAs(block);
-            if (!WidgetPayloadValidator.TryValidatePayload(block.Payload, out var use, out var view, out var error))
+            if (!WidgetPayloadValidator.TryValidatePayload(ExtractPayload(block), out var use, out var view, out var error))
             {
                 if (rejectInvalidChanges && !isUnchanged)
                     throw KernelException.InvalidArgument($"Widget '{block.Id}': {error}");
@@ -46,6 +46,23 @@ internal static class ReportWidgetValidator
         }
 
         return diagnostics;
+    }
+
+    private static JsonElement? ExtractPayload(ReportBlock block)
+    {
+        if (block.Payload is { ValueKind: not JsonValueKind.Null and not JsonValueKind.Undefined } payload)
+            return payload;
+        if (string.IsNullOrWhiteSpace(block.Markdown))
+            return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(block.Markdown);
+            return doc.RootElement.Clone();
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     private static IReadOnlyList<string> ResolveEffectiveViews(CompiledPolicy policy, IPolicyVm vm, JsonElement inputs)

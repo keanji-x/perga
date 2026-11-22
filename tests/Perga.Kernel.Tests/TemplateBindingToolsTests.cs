@@ -458,6 +458,16 @@ public sealed class TemplateBindingToolsTests
         await Call(ctx, track, KernelMcpToolNames.TemplateUpdateInputs, new { inputs = new { enabled = false } });
         var afterDisable = await ctx.Kernel.ReadReportAsync(track.Track.Id);
         Assert.Equal("unknown_widget_view", Assert.Single(afterDisable.Diagnostics).Code);
+
+        // Widgets authored with JSON in block.Markdown (payload: null) must validate identically.
+        await Call(ctx, track, KernelMcpToolNames.TemplateUpdateInputs, new { inputs = new { enabled = true } });
+        var reenabled = await ctx.Kernel.ReadReportAsync(track.Track.Id);
+        var fromMarkdown = await ctx.Kernel.CommitReportAsync(track.Track.Id, track.Track.LeadSessionId!, new(reenabled.Anchor,
+            [new BlockOp.UpsertBlockOp("b_md_widget", ReportBlockKind.Widget, """{"use":"builtin:list","view":"rows"}""", null)]));
+        Assert.Empty(fromMarkdown.Diagnostics);
+        await Assert.ThrowsAsync<KernelException>(() =>
+            ctx.Kernel.CommitReportAsync(track.Track.Id, track.Track.LeadSessionId!, new(fromMarkdown.Anchor,
+                [new BlockOp.UpsertBlockOp("b_md_bad", ReportBlockKind.Widget, """{"use":"builtin:list","view":"missing"}""", null)])));
     }
 
     private static Task<JsonElement> Call(KernelTestContext ctx, TrackAggregateSnapshot track, string tool, object arguments) =>
