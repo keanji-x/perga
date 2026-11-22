@@ -59,6 +59,54 @@ public sealed class McpReportErgonomicsIntegrationTests
         Assert.Equal(committed.DocRev, (await kernel.ReadReportAsync(track.Id)).DocRev);
     }
 
+    [Theory]
+    [InlineData("table")]
+    [InlineData("checkpoints")]
+    public async Task SectionReplacementPreservesUnchangedHistoricalBlocks(string kind)
+    {
+        await using var cluster = new PergaHostTestCluster();
+        var kernel = cluster.Services.GetRequiredService<IPergaKernel>();
+        var store = cluster.Services.GetRequiredService<ITrackStore>();
+        var area = await kernel.CreateAreaAsync(new("Historical Report", DefaultCwd: cluster.DataDir));
+        var track = (await kernel.CreateTrackAsync(new(area.Id))).Track;
+        var lead = track.LeadSessionId!;
+        await kernel.WaitForTrackIdleAsync(track.Id);
+        await kernel.Actors.RemoveAndDisposeAsync(track.Id);
+
+        var engine = new ReportDocEngine();
+        var history = engine.Parse($$"""
+            # Progress
+
+            Original prose.
+
+            <!-- perga:legacy rev=7 -->
+            ```perga-block {{kind}}
+            {"historical":true}
+            ```
+            """, docRev: 1);
+        await store.SaveReportAsync(track.Id, history, engine.CompressZstd(history.Blocks),
+            lead, "Historical import", new(null, area.Id, track.Id, "report.updated",
+                JsonSerializer.SerializeToElement(new { docRev = 1 }), cluster.TimeProvider.GetUtcNow().ToUnixTimeMilliseconds()), default);
+
+        var before = await kernel.ReadReportAsync(track.Id, lead);
+        var updatedMarkdown = before.RenderedMarkdown.Replace("Original prose.", "New prose.", StringComparison.Ordinal);
+        var after = await kernel.CommitReportAsync(track.Id, lead,
+            new(before.Anchor, [new BlockOp.ReplaceSectionOp("Progress", updatedMarkdown)]));
+        Assert.Equal(updatedMarkdown, after.RenderedMarkdown);
+        Assert.Equal(7, Assert.Single(after.Blocks, block => block.Id == "legacy").Rev);
+        Assert.DoesNotContain(after.Changes!, change => change.Id == "legacy");
+        var storedBlocks = await store.GetReportRevisionBlocksAsync(track.Id, after.DocRev, default);
+        Assert.Equal(7, Assert.Single(storedBlocks, block => block.Id == "legacy").Rev);
+
+        var modifiedFence = after.RenderedMarkdown.Replace("\"historical\":true", "\"historical\":false", StringComparison.Ordinal);
+        var failure = await Assert.ThrowsAsync<KernelException>(() => kernel.CommitReportAsync(track.Id, lead,
+            new(after.Anchor, [new BlockOp.ReplaceSectionOp("Progress", modifiedFence)])));
+        Assert.Equal(KernelErrorCode.InvalidArgument, failure.Code);
+        var persisted = await kernel.ReadReportAsync(track.Id, lead);
+        Assert.Equal(after.DocRev, persisted.DocRev);
+        Assert.Equal(after.RenderedMarkdown, persisted.RenderedMarkdown);
+    }
+
     [Fact]
     public async Task McpKernel_ReportSchemas_CompactCommit_And_ScopedRead_WorkOverHttp()
     {

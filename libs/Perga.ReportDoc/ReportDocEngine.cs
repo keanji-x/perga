@@ -187,9 +187,10 @@ public sealed partial class ReportDocEngine : IReportDocEngine
                     foreach (var replBlock in parsedReplacement)
                     {
                         deletedIds.Remove(replBlock.Id);
-                        if (originalById.ContainsKey(replBlock.Id))
+                        if (originalById.TryGetValue(replBlock.Id, out var original))
                         {
-                            updatedIds.Add(replBlock.Id);
+                            if (!ReferenceEquals(replBlock, original.Block))
+                                updatedIds.Add(replBlock.Id);
                         }
                         else
                         {
@@ -565,16 +566,17 @@ public sealed partial class ReportDocEngine : IReportDocEngine
 
         var parsed = ParseBlocks(fullSectionSource, reservedOutsideSection, seedOffset: ++idSeed * 997);
         var result = new List<ReportBlock>(parsed.Count);
-        foreach (var b in parsed)
+        foreach (var parsedBlock in parsed)
         {
-            usedIds.Add(b.Id);
-            if (removedInSection.TryGetValue(b.Id, out var prev))
+            var block = parsedBlock with { SectionH1 = sectionH1 };
+            usedIds.Add(block.Id);
+            if (removedInSection.TryGetValue(block.Id, out var previous))
             {
-                result.Add(b with { Rev = prev.Rev + 1, SectionH1 = sectionH1 });
+                result.Add(previous.HasSameContentAs(block) ? previous : block with { Rev = previous.Rev + 1 });
             }
             else
             {
-                result.Add(b with { Rev = 1, SectionH1 = sectionH1 });
+                result.Add(block with { Rev = 1 });
             }
         }
 
