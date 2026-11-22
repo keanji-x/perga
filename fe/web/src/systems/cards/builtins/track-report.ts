@@ -14,7 +14,6 @@ export const TRACK_REPORT_CARD_ENTRY = Object.freeze({
   type: 'track-report',
   component: () => null,
   headless: true,
-  defaultSize: Object.freeze({ w: 1, h: 1, minW: 1, minH: 1 }),
   title: () => 'Report',
   accessibleName: () => 'Track report',
   create: Object.freeze({ mode: 'kernel-minted-only' } as const),

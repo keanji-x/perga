@@ -3,7 +3,7 @@ import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import { EditorView } from '@codemirror/view';
 import { afterEach, expect, it } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
-import { BoardHost, createCardHost, createCardRegistry, registerAvailableBuiltinCards, type BoardHostItem } from '../public.ts';
+import { ActivePanelHost, createCardHost, createCardRegistry, registerAvailableBuiltinCards, type CardHostItem } from '../public.ts';
 
 afterEach(() => { cleanup(); document.body.replaceChildren(); });
 
@@ -40,11 +40,8 @@ function assertUsable(view: EditorView, board: HTMLElement) {
   }
 }
 
-it.each([
-  { resized: false, laterRow: false }, { resized: true, laterRow: false },
-  { resized: false, laterRow: true }, { resized: true, laterRow: true },
-])('keeps keyboard search reachable in an oversized real file card (%j)', async ({ resized, laterRow }) => {
-  await page.viewport(1400, 900);
+it.each([1400, 420])('keeps file search usable across selection, hide and viewport resize (%i)', async (width) => {
+  await page.viewport(width, 900);
   const registry = createCardRegistry(); registerAvailableBuiltinCards(registry);
   const text = Array.from({ length: 8000 }, (_, index) => `row ${index}: needle`).join('\n');
   const host = createCardHost(registry, { files: {
@@ -55,14 +52,9 @@ it.each([
   } });
   const card = registry.resolve({ id: 'file', kind: 'file-viewer', payload: { path: '/repo' } });
   if (card === null) throw new Error('Real file card missing');
-  const preceding = laterRow ? ['before-a', 'before-b'].map((id, originalIndex): BoardHostItem => {
-    const terminal = registry.resolve({ id, kind: 'terminal', payload: {} });
-    if (terminal === null) throw new Error('Real terminal missing');
-    return { card: terminal, title: id, originalIndex, activity: null, notice: null };
-  }) : [];
-  const items: readonly BoardHostItem[] = [...preceding, { card, title: 'File', originalIndex: preceding.length, activity: null, notice: null }];
-  const scene = (visible: boolean, active = 'file', cards = items) => <div style={{ display: visible ? 'flex' : 'none', width: 1200, height: 'calc(100vh - 132px)' }}>
-    <BoardHost host={host} items={cards} activeCardId={active} visible={visible} />
+  const items: readonly CardHostItem[] = [{ card, title: 'File', originalIndex: 0, activity: null, notice: null }];
+  const scene = (visible: boolean, active = 'file', cards = items) => <div style={{ display: 'flex', width: '100%', height: 'calc(100vh - 132px)' }}>
+    <ActivePanelHost host={host} items={cards} activeCardId={active} visible={visible} />
   </div>;
   const rendered = render(scene(true));
   await page.getByRole('button', { name: /large\.txt/ }).click();
@@ -71,24 +63,10 @@ it.each([
   if (view === null) throw new Error('Real editor missing');
   const cell = document.querySelector<HTMLElement>('[data-nc-card-id="file"]')!;
   await paint();
-  if (laterRow) expect(Number(cell.style.getPropertyValue('--nc-card-layout-y'))).toBeGreaterThan(0);
-  if (!resized) {
-    expect(document.querySelector('[data-nc-file-card]')!.getBoundingClientRect().height).toBe(cell.getBoundingClientRect().height);
-  }
-  if (resized) {
-    const handle = cell.querySelector<HTMLElement>('[data-nc-card-resize="se"]')!;
-    const box = handle.getBoundingClientRect();
-    const point = { clientX: box.left + box.width / 2, clientY: box.top + box.height / 2 };
-    act(() => { handle.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0, buttons: 1, ...point })); });
-    act(() => { document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, buttons: 1, clientX: point.clientX, clientY: point.clientY + 270 })); });
-    act(() => { document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, button: 0, clientX: point.clientX, clientY: point.clientY + 270 })); });
-    await paint();
-  }
-  const cardHeight = cell.getBoundingClientRect().height;
-  expect(cardHeight).toBeGreaterThan(resized ? 800 : 600);
-  await page.viewport(1400, 500);
+  expect(document.querySelector('[data-nc-file-card]')!.getBoundingClientRect().height).toBe(cell.getBoundingClientRect().height);
+  await page.viewport(width, 500);
   await paint();
-  const board = document.querySelector<HTMLElement>('[data-nc-card-board]')!;
+  const board = document.querySelector<HTMLElement>('[data-nc-active-panel-host]')!;
   expect(board.clientHeight).toBe(368);
   content.focus();
   await userEvent.keyboard('{Control>}{Home}{/Control}/');
@@ -103,17 +81,10 @@ it.each([
     await paint(); assertUsable(view, board);
     expect(document.activeElement).toBe(search);
   }
-  expect(cell.getBoundingClientRect().height).toBe(cardHeight);
   expect(view.state.doc.toString()).toBe(text);
-  // A user can still scroll the board; resizing and visibility do not discard the grid dimensions.
-  board.scrollTop += 100;
-  await paint();
-  expect(board.scrollTop).toBeGreaterThan(0);
-  await userEvent.keyboard('{Shift>}{Enter}{/Shift}');
-  await paint(); assertUsable(view, board);
   const sibling = registry.resolve({ id: 'terminal', kind: 'terminal', payload: {} });
   if (sibling === null) throw new Error('Real terminal card missing');
-  const withSibling: readonly BoardHostItem[] = [...items, { card: sibling, title: 'Terminal', originalIndex: 1, activity: null, notice: null }];
+  const withSibling: readonly CardHostItem[] = [...items, { card: sibling, title: 'Terminal', originalIndex: 1, activity: null, notice: null }];
   rendered.rerender(scene(true, 'terminal', withSibling));
   await paint();
   const terminal = document.querySelector<HTMLElement>('[data-nc-card-id="terminal"]')!;
@@ -125,10 +96,10 @@ it.each([
   rendered.rerender(scene(true, 'file', withSibling));
   await paint(); assertUsable(view, board);
   rendered.rerender(scene(false, 'file', withSibling));
-  await page.viewport(1400, 600); await paint();
+  await page.viewport(width, 600); await paint();
   rendered.rerender(scene(true, 'file', withSibling));
   await paint(); assertUsable(view, board);
-  expect(cell.getBoundingClientRect().height).toBe(cardHeight);
-  await page.viewport(1400, 900); await paint();
-  expect(cell.getBoundingClientRect().height).toBe(cardHeight);
+  expect(cell.getBoundingClientRect().height).toBe(board.clientHeight);
+  await page.viewport(width, 900); await paint();
+  expect(cell.getBoundingClientRect().height).toBe(board.clientHeight);
 });

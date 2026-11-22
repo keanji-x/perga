@@ -22,7 +22,6 @@ declare module './registry.js' {
 }
 
 const component = () => null;
-const size = Object.freeze({ w: 4, h: 6, minW: 3, minH: 3 });
 const create = Object.freeze({ mode: 'kernel-minted-only' } as const);
 
 function entry(
@@ -32,7 +31,6 @@ function entry(
   return {
     type,
     component,
-    defaultSize: size,
     title: () => type,
     accessibleName: () => type,
     create,
@@ -121,7 +119,7 @@ describe('cards public contract', () => {
     const deep = vi.fn((raw: PanelInput) => raw.id === '3' ? null : { type: 'contract-deep' as const, id: raw.id, payload: null });
     const fallback = vi.fn((raw: PanelInput) => raw.id === '3' ? null : { type: 'contract-fallback' as const, id: raw.id, payload: null });
     const make = (type: CardEntry['type'], claim: CardEntry['claim'], fromPanel: NonNullable<CardEntry['fromPanel']>) => ({
-      component, defaultSize: size, title: () => type, accessibleName: () => type, create, type, claim, fromPanel,
+      component, title: () => type, accessibleName: () => type, create, type, claim, fromPanel,
     }) satisfies CardEntry;
     registry.register(make('contract-alpha', { mode: 'exact', kind: 'k' }, exact));
     registry.register(make('contract-prefix', { mode: 'prefix', prefix: 'k' }, short));

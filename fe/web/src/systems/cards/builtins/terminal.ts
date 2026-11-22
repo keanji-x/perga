@@ -26,7 +26,6 @@ export const TERMINAL_CARD_ENTRY = Object.freeze({
   type: 'terminal',
   component: (props: CardComponentProps<TerminalCard>) => TerminalCardView(props),
   headless: false,
-  defaultSize: Object.freeze({ w: 6, h: 10, minW: 4, minH: 6 }),
   claim: Object.freeze({ mode: 'exact', kind: 'terminal' } as const),
   title: (card: TerminalCard) => card.title ?? 'Terminal',
   accessibleName: (card: TerminalCard) => card.title ?? 'Terminal',

@@ -3,7 +3,6 @@ import { conversationCommands } from '../../features/chat/thread/composer-comman
 import { ReportSourcePanel } from '../../features/report/source/public.tsx';
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { ReportReferencePreview } from './report-reference.tsx';
-import { LivePlaceholder } from '../../features/report/live/placeholder.tsx';
 import { BarChart, MeterChart, TimeSeriesChart, DistributionChart } from '../../ui/data-visualization/public.tsx';
 import { Dialog } from '../../ui/dialog/public.tsx';
 import { DirectoryBrowser } from '../../ui/directory-browser/public.tsx';
@@ -51,8 +50,6 @@ export function mountReportComponentStates() {
     {box('分布图 · 无数据',<DistributionChart label="分布" unit="" slices={[]} emptyText="暂无图表数据（示例文案）" selected={null} onSelect={noop}/>)}
     {box('时间序列 · 无数据集',<TimeSeriesChart label="趋势" datasets={[{id:'default',label:'趋势',unit:'',style:'line',series:[{id:'value',label:'值',palette:0}],points:[]}]} emptyText="暂无图表数据（示例文案）" selection={{datasetId:'',selected:null,sample:null,readoutOpen:false}} onSelection={noop}/>)}
     {box('额度图 · 无数据',<MeterChart label="额度" unit="" used={null} limit={null} usedLabel="已用" limitLabel="总额" detail="" emptyText="暂无额度数据（示例文案）" tone="neutral"/>)}
-    {box('实时内容 · 等待数据',<LivePlaceholder state="pending" source="数据源" />)}
-    {box('实时内容 · 未携带数据',<LivePlaceholder state="detached" source="数据源" />)}
   </div>,true);
 }
 

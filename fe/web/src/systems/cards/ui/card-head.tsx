@@ -38,7 +38,7 @@ export function CardHead({
   return (
     <div
       className={rootClass}
-      data-nc-card-drag={className?.includes('card-drag-handle') ? '' : undefined}
+      data-nc-card-head=""
     >
       {iconNode}
       {title !== undefined ? <span className="card-head-title">{title}</span> : null}

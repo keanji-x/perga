@@ -32,7 +32,6 @@ function FileViewerCardView({ card, host, onRemove, header }: CardComponentProps
     <CardFrame className="term fv-card" data-nc-file-card="">
       <CardHead
         header={header}
-        className="card-drag-handle"
         title={card.title ?? 'file'}
         onDelete={onRemove}
         deleteLabel={`Delete card ${card.title ?? 'file'}`}
@@ -47,8 +46,6 @@ export const FILE_VIEWER_CARD_ENTRY = Object.freeze({
   type: 'file-viewer',
   component: (props: CardComponentProps<FileViewerCard>) => FileViewerCardView(props),
   headless: false,
-  viewport: 'board',
-  defaultSize: Object.freeze({ w: 6, h: 12, minW: 4, minH: 6 }),
   claim: Object.freeze({ mode: 'exact', kind: 'file-viewer' } as const),
   title: (card: FileViewerCard) => card.title ?? 'file',
   accessibleName: (card: FileViewerCard) => `File: ${card.path}`,

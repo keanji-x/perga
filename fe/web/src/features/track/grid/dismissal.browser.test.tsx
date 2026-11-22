@@ -9,7 +9,7 @@ import '../../../styles/entry.css';
 import { createCardHost, createCardRegistry, type CardEntry } from '../../../systems/cards/public.ts';
 import { useState } from '../../../ui/state/public.ts';
 import { ConfirmDialog } from '../../../ui/dialog/public.tsx';
-import { CardGridOverlay } from './public.tsx';
+import { CardPanelOverlay } from './public.tsx';
 
 type MenuCard = Readonly<{ type: 'dismissal-test'; id: string }>;
 declare module '../../../systems/cards/registry.js' { interface CardDataMap { dismissalTest: MenuCard } }
@@ -19,7 +19,7 @@ afterEach(cleanup);
 function setup(terminal = false, menuInitiallyOpen = false) {
   const registry = createCardRegistry();
   const entry: CardEntry<MenuCard> = {
-    type: 'dismissal-test', defaultSize: { w: 12, h: 4, minW: 4, minH: 3 },
+    type: 'dismissal-test',
     title: () => 'Menu', accessibleName: () => 'Menu', create: { mode: 'kernel-minted-only' },
     component: function MenuContent() {
       const [open, setOpen] = useState(menuInitiallyOpen);
@@ -30,7 +30,7 @@ function setup(terminal = false, menuInitiallyOpen = false) {
   registry.register(entry);
   const close = vi.fn();
   const host = createCardHost(registry);
-  const overlay = (dismissible: boolean) => <CardGridOverlay open host={host} activeCardId={null} onClose={dismissible ? close : undefined}
+  const overlay = (dismissible: boolean) => <CardPanelOverlay open host={host} activeCardId="menu" onClose={dismissible ? close : undefined}
     items={[{ card: { type: 'dismissal-test', id: 'menu' }, title: 'Menu', originalIndex: 0, activity: null, notice: null }]} />;
   const view = render(overlay(!menuInitiallyOpen));
   return { close, enableDismissal: () => { view.rerender(overlay(true)); } };
@@ -74,7 +74,7 @@ it('dismisses a reopened confirmation before a grid opened after its first close
   const closeGrid = vi.fn();
   const closeDialog = vi.fn();
   const overlay = (dialog: boolean, grid: boolean) => <>
-    <CardGridOverlay open={grid} host={host} items={[]} activeCardId={null} onClose={closeGrid} />
+    <CardPanelOverlay open={grid} host={host} items={[]} activeCardId={null} onClose={closeGrid} />
     <ConfirmDialog origin={{ kind: 'surface-center' }} open={dialog} title="Delete card"
       onConfirm={vi.fn()} onCancel={closeDialog} />
   </>;

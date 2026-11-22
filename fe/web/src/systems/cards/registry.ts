@@ -16,15 +16,6 @@ export interface PanelInput {
   readonly terminal?: TerminalDto;
 }
 
-export interface CardSize {
-  readonly w: number;
-  readonly h: number;
-  readonly minW: number;
-  readonly minH: number;
-}
-
-export const FALLBACK_SIZE: CardSize = Object.freeze({ w: 4, h: 6, minW: 3, minH: 3 });
-
 export type CardKindClaim =
   | Readonly<{ mode: 'exact'; kind: string }>
   | Readonly<{ mode: 'prefix'; prefix: string }>;
@@ -70,9 +61,6 @@ export interface CardAddPanel {
 export interface CardEntry<Card extends { readonly id: string; readonly type: string } = RegisteredCard> {
   readonly type: Card['type'];
   readonly component: ComponentType<CardComponentProps<Card>>;
-  readonly defaultSize: CardSize;
-  /** Opt into a sticky surface bounded by the board scrollport; the user's grid cell stays unchanged. */
-  readonly viewport?: 'board';
   readonly claim?: CardKindClaim;
   readonly title?: (card: Card) => string;
   readonly accessibleName?: (card: Card) => string;

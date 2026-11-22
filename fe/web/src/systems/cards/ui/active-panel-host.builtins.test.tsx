@@ -5,8 +5,8 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 import {
-  BoardHost, createCardHost, createCardRegistry, registerAvailableBuiltinCards,
-  type BoardHostItem, type RegisteredCard,
+  ActivePanelHost, createCardHost, createCardRegistry, registerAvailableBuiltinCards,
+  type CardHostItem, type RegisteredCard,
 } from '../public.js';
 
 beforeEach(() => {
@@ -19,7 +19,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function boardOfBuiltins(onRemoveCard: (cardId: string) => void) {
+function boardOfBuiltins(activeCardId: string, onRemoveCard: (cardId: string) => void) {
   const registry = createCardRegistry();
   registerAvailableBuiltinCards(registry);
   const host = createCardHost(registry);
@@ -28,7 +28,7 @@ function boardOfBuiltins(onRemoveCard: (cardId: string) => void) {
     if (card === null) throw new Error(`no built-in entry claims ${wire.kind}`);
     return card;
   };
-  const items: readonly BoardHostItem[] = [
+  const items: readonly CardHostItem[] = [
     Object.freeze({
       card: resolve({ id: 'card-term', kind: 'terminal', payload: {} }),
       title: 'Build log',
@@ -45,13 +45,13 @@ function boardOfBuiltins(onRemoveCard: (cardId: string) => void) {
     }),
   ];
   return render(
-    <BoardHost host={host} items={items} activeCardId="card-term" visible onRemoveCard={onRemoveCard} />,
+    <ActivePanelHost host={host} items={items} activeCardId={activeCardId} visible onRemoveCard={onRemoveCard} />,
   );
 }
 
 it('draws the delete on a real terminal card and calls back with that card id', async () => {
   const onRemoveCard = vi.fn();
-  boardOfBuiltins(onRemoveCard);
+  boardOfBuiltins('card-term', onRemoveCard);
   expect(screen.getByText('No terminal session available.')).toBeTruthy();
   await userEvent.click(screen.getByRole('button', { name: 'Delete card Build log' }));
   expect(onRemoveCard).toHaveBeenCalledWith('card-term');
@@ -59,7 +59,7 @@ it('draws the delete on a real terminal card and calls back with that card id', 
 
 it('draws the delete on a real file card and calls back with that card id', async () => {
   const onRemoveCard = vi.fn();
-  boardOfBuiltins(onRemoveCard);
+  boardOfBuiltins('card-file', onRemoveCard);
   expect(screen.getByText('This board was built without filesystem access.')).toBeTruthy();
   await userEvent.click(screen.getByRole('button', { name: 'Delete card Notes' }));
   expect(onRemoveCard).toHaveBeenCalledWith('card-file');

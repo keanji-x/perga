@@ -596,7 +596,7 @@ describe('TrackPage card inventory', () => {
     const props = {
       mobilePanelObscured: false,
       track: track(), cards: [card({ id: 'k1', title: 'Build log' })], existingCardIds: new Set(['k1']), tasks: [], openableCards: new Set(['k1']),
-      canReopenTrack: false, canCloseTrack: false, adminGrantedAt: null, onRenameTrack: vi.fn(), closedControl: { pending: false, setClosed: () => Promise.resolve(true), feedback: { error: null, clear: () => undefined, run: () => Promise.resolve(true) } }, onDeleteTrack: vi.fn(), onTrackDeleted: vi.fn(),
+      canReopenTrack: false, canCloseTrack: false, onRenameTrack: vi.fn(), closedControl: { pending: false, setClosed: () => Promise.resolve(true), feedback: { error: null, clear: () => undefined, run: () => Promise.resolve(true) } }, onDeleteTrack: vi.fn(), onTrackDeleted: vi.fn(),
     };
     const { container, rerender } = render(<TrackPage {...props} panel="cards" />);
     expect(container.querySelector('[data-nc-mobile-page]')?.getAttribute('data-nc-mobile-page')).toBe('open');
@@ -648,7 +648,7 @@ describe('TrackPage card inventory', () => {
       tasks={[]}
       openableCards={new Set(['k1'])}
       canReopenTrack={false}
-      canCloseTrack={false} adminGrantedAt={null}
+      canCloseTrack={false}
       onRenameTrack={vi.fn()}
       closedControl={{ pending: false, setClosed: () => Promise.resolve(true), feedback: { error: null, clear: () => undefined, run: () => Promise.resolve(true) } }}
       onDeleteTrack={vi.fn()} onTrackDeleted={vi.fn()} existingCardIds={new Set(["k1"])}
