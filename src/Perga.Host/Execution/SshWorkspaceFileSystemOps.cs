@@ -100,6 +100,9 @@ public sealed class SshWorkspaceFileSystemOps : IWorkspaceFileSystemOps
             with os.fdopen(fd, "rb") as f:
                 if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
                     sys.exit(1)
+                fd_link = f"/proc/self/fd/{fd}"
+                if os.path.exists(fd_link) and os.path.commonpath([root, os.path.realpath(fd_link)]) != root:
+                    sys.exit(1)
                 sys.stdout.buffer.write(f.read(int(sys.argv[3])))
             """;
         var script = $"python3 -c {SshCommandBuilder.QuotePosix(python)} " +

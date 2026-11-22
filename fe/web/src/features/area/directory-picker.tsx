@@ -1,7 +1,7 @@
 import { Banner } from '@astryxdesign/core/Banner';
 import { Button } from '@astryxdesign/core/Button';
 import { TextInput } from '@astryxdesign/core/TextInput';
-import { useEffect, useRef, type FormEvent } from 'react';
+import { useEffect, useRef, useSyncExternalStore, type FormEvent } from 'react';
 
 import type { CreateExecutionTargetBody, ExecutionTargetDto } from '../../../../core/domain/area.ts';
 import { Dialog, useDialogView, type DialogOrigin } from '../../ui/dialog/public.tsx';
@@ -35,18 +35,25 @@ const DEFAULT_LOCAL_TARGET: ExecutionTargetDto = Object.freeze({
   removable: false,
 });
 
+interface TargetStore {
+  subscribe: (listener: () => void) => () => void;
+  getSnapshot: () => readonly ExecutionTargetDto[] | undefined;
+  update: (targets: readonly ExecutionTargetDto[] | undefined) => void;
+}
+
 function DirectoryPickerContent({
   initialPath,
   listDirectory,
   listDirectoryForTarget,
-  targets,
+  targetStore,
   selectedTargetId,
   targetEditable = false,
   onCreateTarget,
   mode,
   onCancel,
   onSelect,
-}: Omit<DirectoryPickerProps, 'open' | 'origin' | 'title'>) {
+}: Omit<DirectoryPickerProps, 'open' | 'origin' | 'title' | 'targets'> & { targetStore: TargetStore }) {
+  const targets = useSyncExternalStore(targetStore.subscribe, targetStore.getSnapshot);
   const initialTargetId = selectedTargetId ?? 'local';
   const [localTargets, setLocalTargets] = useState<readonly ExecutionTargetDto[]>(() => {
     if (targets !== undefined && targets.length > 0) return targets;
@@ -240,26 +247,42 @@ export function DirectoryPicker({
   onSelect,
 }: DirectoryPickerProps) {
   const dialog = useDialogView();
+  const [targetStore] = useState<TargetStore>(() => {
+    let snapshot = targets;
+    const listeners = new Set<() => void>();
+    return {
+      subscribe: (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+      getSnapshot: () => snapshot,
+      update: (next) => {
+        if (snapshot === next) return;
+        snapshot = next;
+        listeners.forEach((listener) => listener());
+      },
+    };
+  });
+  useEffect(() => { targetStore.update(targets); }, [targetStore, targets]);
+
+  const content = (
+    <DirectoryPickerContent
+      listDirectory={listDirectory}
+      listDirectoryForTarget={listDirectoryForTarget}
+      targetStore={targetStore}
+      selectedTargetId={selectedTargetId}
+      targetEditable={targetEditable}
+      onCreateTarget={onCreateTarget}
+      initialPath={initialPath}
+      mode={mode}
+      onCancel={onCancel}
+      onSelect={onSelect}
+    />
+  );
 
   useEffect(() => {
     if (!dialog || !open) return;
     return dialog.pushView({
       title,
       onEscape: onCancel,
-      body: (
-        <DirectoryPickerContent
-          listDirectory={listDirectory}
-          listDirectoryForTarget={listDirectoryForTarget}
-          targets={targets}
-          selectedTargetId={selectedTargetId}
-          targetEditable={targetEditable}
-          onCreateTarget={onCreateTarget}
-          initialPath={initialPath}
-          mode={mode}
-          onCancel={onCancel}
-          onSelect={onSelect}
-        />
-      ),
+      body: content,
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps -- capture the path and ports once when browsing opens; selection must not push a second view.
   }, [open, dialog]);
@@ -275,20 +298,7 @@ export function DirectoryPicker({
       title={title}
       wide
     >
-      {open && (
-        <DirectoryPickerContent
-          listDirectory={listDirectory}
-          listDirectoryForTarget={listDirectoryForTarget}
-          targets={targets}
-          selectedTargetId={selectedTargetId}
-          targetEditable={targetEditable}
-          onCreateTarget={onCreateTarget}
-          initialPath={initialPath}
-          mode={mode}
-          onCancel={onCancel}
-          onSelect={onSelect}
-        />
-      )}
+      {open && content}
     </Dialog>
   );
 }

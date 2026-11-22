@@ -23,18 +23,6 @@ public sealed class SshShellCommandRunner : IShellCommandRunner
         var runToken = Guid.NewGuid().ToString("N")[..12];
         var remotePidFile = $"{_config.WorkspacesRoot.TrimEnd('/')}/.perga-runtime/pids/cmd-{runToken}.pid";
 
-        IReadOnlyDictionary<string, string?>? extraEnv = null;
-        if (request.Environment is { Count: > 0 })
-        {
-            var dict = new Dictionary<string, string?>(StringComparer.Ordinal);
-            foreach (var kv in request.Environment)
-            {
-                dict[kv.Key] = kv.Value;
-            }
-
-            extraEnv = dict;
-        }
-
         var workingDirScript = !string.IsNullOrWhiteSpace(request.WorkingDirectory)
             ? $"if [ -d {SshCommandBuilder.QuotePosix(request.WorkingDirectory)} ]; then cd {SshCommandBuilder.QuotePosix(request.WorkingDirectory)}; else cd /tmp; fi\n"
             : "cd /tmp\n";
@@ -44,7 +32,7 @@ public sealed class SshShellCommandRunner : IShellCommandRunner
 
         var remoteScript = SshCommandBuilder.BuildRemoteScript(
             workingDirectory: null,
-            extraEnv: extraEnv,
+            extraEnv: request.Environment?.Select(static kv => new KeyValuePair<string, string?>(kv.Key, kv.Value)),
             targetDefaultEnv: _config.ExtraEnv,
             body: body);
 

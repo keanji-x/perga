@@ -166,7 +166,7 @@ public static partial class SshCommandBuilder
 
     public static string BuildRemoteScript(
         string? workingDirectory,
-        IReadOnlyDictionary<string, string?>? extraEnv,
+        IEnumerable<KeyValuePair<string, string?>>? extraEnv,
         IReadOnlyDictionary<string, string>? targetDefaultEnv,
         string body)
     {
