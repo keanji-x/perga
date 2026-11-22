@@ -132,9 +132,6 @@ export function ReportFileViewer({
 
 // The raw file route applies the same sandbox when a page is opened directly.
 function WorkspaceHtmlPage({ url, title }: Readonly<{ url: string; title: string }>) {
-  if (__NC_BUNDLED__) return <p className={styles.htmlPageNote} role="note">
-    Open this page on desktop: the mobile app does not show embedded pages.
-  </p>;
   return <iframe className={styles.htmlPage} src={url} title={title} sandbox="allow-scripts"
     referrerPolicy="no-referrer" loading="lazy" />;
 }
