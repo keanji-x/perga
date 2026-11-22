@@ -6,7 +6,6 @@ import { queryKeys } from './query-keys.ts';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useRef } from 'react';
 import { conversationInputMetadata } from '../../../../core/events/invalidation-plan.ts';
-import { admitTransport } from './recovery-mutation.ts';
 import type { AskAnswer, PlannerPermissionMode } from '../../../../core/domain/presentation-types.ts';
 import type { ApiOperation,ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
@@ -21,7 +20,7 @@ import type { ConversationRegistry } from '../conversations/registry-model.ts';
 import { cancelThenInvalidate } from '../events/query-refresh.ts';
 import { plannerRunQueryOptions } from './conversation-queries.ts';
 import { runOperation } from './query-operation.ts';
-/** Each intent carries its original admission and decoder, including across pane changes.
+/** Each intent carries its transport and decoder, including across pane changes.
  * Mutation retries/offline queuing must never replay a user command. */
 function usePlannerOperation() {
   const mutation = useMutation({
@@ -35,7 +34,7 @@ function usePlannerOperation() {
 
 /**
  * One serialised settings writer per mounted card, held across renders: a fresh writer each render would have nothing
- * in flight to serialise against. Re-created when the card changes. Each call is admitted at the press.
+ * in flight to serialise against. Re-created when the card changes.
  */
 function useCardSettingWriter<A, R>(
   transport: ApiTransportPort, cardId: string, operation: (cardId: string, value: A) => ApiOperation<R>,
@@ -44,16 +43,12 @@ function useCardSettingWriter<A, R>(
   const execute = usePlannerOperation();
   const writer = useRef<{ cardId: string; write: (dispatch: () => Promise<R>) => Promise<R> } | null>(null);
   return (value: A) => {
-    // Only an admitted user event creates a writer. Abandoned renders cannot
+    // Only a user event creates a writer. Abandoned renders cannot
     // replace a queue belonging to the committed card.
     if (writer.current === null || writer.current.cardId !== cardId) {
       writer.current = { cardId, write: createSerialWriter((dispatch: () => Promise<R>) => dispatch()) };
     }
-    try {
-      const admitted = admitTransport(transport);
-      return writer.current.write(() => execute(admitted, operation(cardId, value), unauthorized).then(accepted));
-    }
-    catch (error) { return Promise.reject(error instanceof Error ? error : new Error('连接尚未恢复')); }
+    return writer.current.write(() => execute(transport, operation(cardId, value), unauthorized).then(accepted));
   };
 }
 
@@ -63,15 +58,12 @@ export function usePlannerMutations(transport: ApiTransportPort, cardId: string,
   const setModelWrite = useCardSettingWriter<ModelSelection, ModelSelectionResult>(
     transport, cardId, setPlannerModelOperation, unauthorized);
   // The tab registry owns serialization across A → B → A and actual pane remounts.
-  // Admission belongs to the press; waiting for the preceding write must not admit an offline press later.
   const setPermissionModeWrite = (mode: PlannerPermissionMode): Promise<SetPlannerPermissionModeResponse> => {
-    let admitted: ApiTransportPort;
-    try { admitted = admitTransport(transport); } catch (error) { return Promise.reject(error instanceof Error ? error : new Error('Could not change permission mode.')); }
     const previous = permissions.permissionWriteOf(cardId);
     const key = plannerRunQueryOptions(transport, cardId, unauthorized).queryKey;
     const dispatch = () => {
       const readVersion = client.getQueryState(key)?.dataUpdateCount;
-      return execute(admitted, setPlannerPermissionModeOperation(cardId, mode), unauthorized).then(result => {
+      return execute(transport, setPlannerPermissionModeOperation(cardId, mode), unauthorized).then(result => {
         // A completed GET is authoritative too. Neither an older ACK nor its cancellation may revert it.
         const publish = permissions.permissionWriteOf(cardId) === held
           && client.getQueryState(key)?.dataUpdateCount === readVersion;
@@ -101,12 +93,10 @@ export function usePlannerMutations(transport: ApiTransportPort, cardId: string,
     ]).catch(() => undefined);
     return result;
   };
-  const refreshInputMetadata = (admitted: ApiTransportPort = transport, error?: unknown) => {
-    let canRead = !(error instanceof ApiError && error.failure.kind === 'unauthorized');
-    try { admitted.recovery?.capture(); } catch { canRead = false; }
+  const refreshInputMetadata = (error?: unknown) => {
+    const canRead = !(error instanceof ApiError && error.failure.kind === 'unauthorized');
     for (const queryKey of conversationInputMetadata(trackId)) {
-      // Recovery owns read admission and resumption. Retain stale metadata while denied;
-      // do not turn a refused/unknown write into a business read outside that permission.
+      // An unauthorized write leaves the metadata stale without issuing another protected request.
       if (canRead) void cancelThenInvalidate(client, queryKey);
       else void client.invalidateQueries({ queryKey, refetchType: 'none' }).catch(() => undefined);
     }
@@ -122,8 +112,8 @@ export function usePlannerMutations(transport: ApiTransportPort, cardId: string,
   };
   return {
     send: (text: string, attachments: readonly string[], idempotencyKey: string,
-      admitted: ApiTransportPort, queueIfBusy = false, target?: ConversationSendTarget) => {
-      const sent = execute(admitted, sendPlannerInputOperation(cardId, text, attachments, idempotencyKey, false, queueIfBusy || target?.queue === true, target?.epoch), unauthorized);
+      queueIfBusy = false, target?: ConversationSendTarget) => {
+      const sent = execute(transport, sendPlannerInputOperation(cardId, text, attachments, idempotencyKey, false, queueIfBusy || target?.queue === true, target?.epoch), unauthorized);
       return sent.then(receipt => {
         if (receipt.delivery === 'unknown' || receipt.delivery === 'dispatching')
           throw new KeyedSendFailure(new Error('Message delivery is unconfirmed.'), 'unknown');
@@ -131,31 +121,24 @@ export function usePlannerMutations(transport: ApiTransportPort, cardId: string,
           throw new KeyedSendFailure(new Error('The message was not delivered.'), 'refused');
         return receipt;
       }).then(receipt => refreshAfterInput(receipt, false), (error: unknown) => {
-        refreshInputMetadata(admitted, error);
+        refreshInputMetadata(error);
         if (target !== undefined && error instanceof ApiError && error.failure.kind === 'http' && error.failure.status === 409)
           refreshAfter(undefined);
         throw error;
       });
     },
     steerQueuedSessionMessage: (inputId: string, turnId: string) =>
-      Promise.resolve().then(() => admitTransport(transport))
-        .then(admitted => execute(admitted, steerQueuedSessionMessageOperation(cardId, inputId, turnId), unauthorized))
+      execute(transport, steerQueuedSessionMessageOperation(cardId, inputId, turnId), unauthorized)
         .finally(() => { refreshAfterInput(undefined, false); }),
     removeQueuedSessionMessage: (inputId: string) =>
-      Promise.resolve().then(() => admitTransport(transport))
-        .then(admitted => execute(admitted, removeQueuedSessionMessageOperation(cardId, inputId), unauthorized))
+      execute(transport, removeQueuedSessionMessageOperation(cardId, inputId), unauthorized)
         .finally(() => { refreshAfterInput(undefined, false); }),
-    recover: (mode: 'reconnect' | 'reset_context') => Promise.resolve().then(() => admitTransport(transport))
-      .then(admitted => execute(admitted, recoverSessionOperation(cardId, mode), unauthorized))
+    recover: (mode: 'reconnect' | 'reset_context') => execute(transport, recoverSessionOperation(cardId, mode), unauthorized)
       .finally(() => { refreshAfterInput(undefined, false); }),
-    /* Admitted at the press, as every chat write is: a stop that cannot leave the browser is not sent (#2068). */
-    compact: () => Promise.resolve().then(() => admitTransport(transport))
-      .then((admitted) => execute(admitted, compactPlannerOperation(cardId), unauthorized)).then(refreshAfter),
-    interrupt: (worker?: { epoch?: number; turnId: string }) => Promise.resolve().then(() => admitTransport(transport))
-      .then((admitted) => execute(admitted, interruptPlannerOperation(cardId, worker), unauthorized)).then(refreshAfter),
+    compact: () => execute(transport, compactPlannerOperation(cardId), unauthorized).then(refreshAfter),
+    interrupt: (worker?: { epoch?: number; turnId: string }) => execute(transport, interruptPlannerOperation(cardId, worker), unauthorized).then(refreshAfter),
     answerInteraction: (sessionId: string, askId: AskId, answers: readonly AskAnswer[], questions: readonly AskQuestion[]) =>
-      Promise.resolve().then(() => admitTransport(transport))
-        .then(admitted => execute(admitted, answerAskOperation(sessionId, askId, answers, questions), unauthorized))
+      execute(transport, answerAskOperation(sessionId, askId, answers, questions), unauthorized)
         .finally(() => { refreshAfterInput(undefined, false); }),
     /* The stored selection is read back from `planner-run`; the catalog goes with it because the default
      * this card follows is part of that answer. */
@@ -169,8 +152,8 @@ export function usePlannerMutations(transport: ApiTransportPort, cardId: string,
     /* Each actual PUT publishes its ACK inside the serial writer, before the next queued intent. */
     setPermissionMode: (mode: PlannerPermissionMode): Promise<SetPlannerPermissionModeResponse> =>
       setPermissionModeWrite(mode),
-    /* No `refreshAfter`: an upload changes nothing any query holds until a send names it. Every failure, the
-     * admission's included, rejects with the sentence the strip shows, read against the route's table. */
+    /* No `refreshAfter`: an upload changes nothing any query holds until a send names it. Failures reject with the sentence
+     * the strip shows, read against the route's table. */
     uploadAttachment: (() => Promise.reject(new Error('Image attachments are unavailable.'))) as (readBytes: () => Promise<Uint8Array>, contentType: string) => Promise<() => UploadAttachmentResponse>,
   };
 }

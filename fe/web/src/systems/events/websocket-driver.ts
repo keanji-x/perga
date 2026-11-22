@@ -55,7 +55,6 @@ export class WebSocketDriver implements EventStreamDriver {
   private socket: SocketPort | null = null;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private retryDelay = 500;
-  private handshakeTimer: ReturnType<typeof setTimeout> | null = null;
   private probeInFlight = false;
   private unauthorized = false;
   private configuration: EventStreamConfiguration | null = null;
@@ -92,8 +91,6 @@ export class WebSocketDriver implements EventStreamDriver {
     this.probeInFlight = false;
     if (this.retryTimer !== null) clearTimeout(this.retryTimer);
     this.retryTimer = null;
-    if (this.handshakeTimer !== null) clearTimeout(this.handshakeTimer);
-    this.handshakeTimer = null;
     const socket = this.socket;
     this.socket = null;
     if (socket !== null) {
@@ -119,16 +116,13 @@ export class WebSocketDriver implements EventStreamDriver {
     catch { this.scheduleRetry(epoch); return; }
     if (this.closed || epoch !== this.epoch) { socket.close(); return; }
     this.socket = socket;
-    if (__NC_BUNDLED__) this.handshakeTimer = setTimeout(() => {
-      if (!this.closed && epoch === this.epoch && this.socket === socket) socket.close();
-    }, 15_000);
     let opened = false;
     socket.onopen = () => {
       if (this.closed || epoch !== this.epoch) { socket.close(); return; }
       opened = true;
       // The v1 Host verifies the session before accepting the upgrade.
       if (isPergaV1) this.unauthorized = false;
-      if (!__NC_BUNDLED__) this.retryDelay = 500;
+      this.retryDelay = 500;
       if (!isPergaV1) {
         socket.send(JSON.stringify(eventSubscriptionFrame(configuration.topics, this.cursor.read())));
       }
@@ -142,8 +136,6 @@ export class WebSocketDriver implements EventStreamDriver {
       if (decoded.status !== 'ready') return;
       if (decoded.frame.type === 'replay-complete') {
         this.retryDelay = 500;
-        if (this.handshakeTimer !== null) clearTimeout(this.handshakeTimer);
-        this.handshakeTimer = null;
         sink.connectionState('connected');
         if (this.closed || epoch !== this.epoch) return;
       }
@@ -151,8 +143,6 @@ export class WebSocketDriver implements EventStreamDriver {
     };
     socket.onclose = (event) => {
       if (this.closed || epoch !== this.epoch) return;
-      if (this.handshakeTimer !== null) clearTimeout(this.handshakeTimer);
-      this.handshakeTimer = null;
       if (this.socket === socket) this.socket = null;
       if (!opened || event.code === 1008 || event.code === 1006) this.probe(epoch);
       this.scheduleRetry(epoch);
@@ -162,7 +152,7 @@ export class WebSocketDriver implements EventStreamDriver {
 
   private scheduleRetry(epoch: number): void {
     if (this.closed || epoch !== this.epoch || this.retryTimer !== null) return;
-    const delay = __NC_BUNDLED__ ? this.retryDelay * (0.75 + Math.random() * 0.5) : this.retryDelay;
+    const delay = this.retryDelay;
     this.retryDelay = Math.min(this.retryDelay * 2, 8000);
     this.retryTimer = setTimeout(() => {
       if (this.closed || epoch !== this.epoch) return;

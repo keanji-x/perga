@@ -68,7 +68,7 @@ function renderPlanners(recheck?: () => Promise<ApiTransportResponse>,
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   client.setQueryData(queryKeys.modelCatalog({ kind: 'provider', provider: 'claude' }), { models: [], modelCatalog: [] });
   const router = createAppRouter({ prepareReport: prepareReportDocument,
-    transport, unauthorized, client, cards: bootTestCardRuntime(), onSignOut: () => undefined,
+    transport, unauthorized, client, cards: bootTestCardRuntime(),
   });
   router.update({ history: createMemoryHistory({ initialEntries: ['/settings/planners'] }) });
   render(

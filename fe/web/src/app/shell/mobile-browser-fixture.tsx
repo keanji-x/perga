@@ -3,7 +3,6 @@ import { sessionPage } from '../router/conversation-session-data.ts';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider, createMemoryHistory, type RouterHistory } from '@tanstack/react-router';
 import { render } from '@testing-library/react';
-import { vi } from 'vitest';
 import type { ApiRequest, ApiTransportPort, ApiTransportResponse } from '../../../../core/api/types.ts';
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { ThemeProvider } from '../theme/public.tsx';
@@ -56,7 +55,6 @@ export function setup(path: string, areaName: string = AREA.name, onRequest: (re
     unauthorized: createUnauthorizedChannel({ enqueue: (task) => task() }),
     client,
     cards: bootTestCardRuntime(),
-    onSignOut: vi.fn(),
   });
   router.update({ history: history ?? createMemoryHistory({ initialEntries: [path] }) });
   render(<QueryClientProvider client={client}><ThemeProvider storage={{ getItem: () => null, setItem: () => undefined }}>

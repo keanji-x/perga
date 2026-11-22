@@ -134,7 +134,6 @@
 
 - { path: fe/web/src/ui/list-typography, type: directory, owner: ui/list-typography, readonly: false, basis: "User-requested common typography for sidebar and context lists" }
 - { path: fe/web/src/ui/trigger-menu-keys, type: directory, owner: ui/trigger-menu-keys, readonly: false, basis: "#1881 one Enter/Tab rule for composers carrying an Astryx trigger menu" }
-- { path: fe/web/src/systems/recovery, type: directory, owner: systems/recovery, readonly: false, basis: "#1712 browser recovery lifecycle, cancellation, and transport capabilities" }
 
 - { path: fe/web/src/ui/hover-preview, type: directory, owner: ui/hover-preview, readonly: false, basis: "#2237 transient pinnable preview lifecycle with injected content and no domain policy" }
 

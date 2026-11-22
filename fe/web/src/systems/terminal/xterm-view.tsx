@@ -2,7 +2,6 @@
 import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
 import { forwardRef,useEffect,useImperativeHandle,useRef } from 'react';
-import type { RecoveryAccess } from '../../../../core/domain/recovery/access.ts';
 import { DARK_TERMINAL_THEME as DARK_THEME,LIGHT_TERMINAL_THEME as LIGHT_THEME,TERMINAL_FONT_SIZE } from '../../styles/theme-values.ts';
 import { ErrorBox } from '../../ui/error-box/public.tsx';
 import { useState } from '../../ui/state/public.ts';
@@ -30,7 +29,6 @@ export interface ExitChange {
 }
 
 interface XtermViewProps {
-  recovery?: RecoveryAccess | null;
   terminalId: string;
   theme?: 'light' | 'dark';
   /** The daemon-assigned role, or `null` on reconnect/disconnect so the parent can clear a badge. */
@@ -77,7 +75,6 @@ export type TerminalConnectionStatus =
 /** Perga binary terminal WebSocket bridge. */
 export const XtermView = forwardRef<XtermViewHandle, XtermViewProps>(function XtermView({
   terminalId,
-  recovery = null,
   theme = 'light',
   onRoleChange,
   onExitChange,
@@ -295,31 +292,19 @@ export const XtermView = forwardRef<XtermViewHandle, XtermViewProps>(function Xt
     }
     lastFailedMountSizeRef.current = null;
 
-    let automaticAllowed = true;
-    let retryTimer: ReturnType<typeof setTimeout> | null = null;
-    let retryDelay = 500;
-    const permitted = () => recovery !== null ? recovery.read().phase === 'connected' : !__NC_BUNDLED__;
     const connect = () => {
-      setStatus(permitted() ? 'connecting' : 'closed');
+      setStatus('connecting');
       setCloseInfo(null);
       exitedRef.current = false;
       onExitChangeRef.current?.(null);
       term.options.disableStdin = true;
-      if (!permitted()) return () => {};
-      const generation = recovery?.read().generation;
       let live = true;
-      const current = () => live && permitted() && generation === recovery?.read().generation;
       let connectionReady = false;
       const scopedUrl = terminalWsUrl(terminalId, location);
       const ws = new WebSocket(scopedUrl);
       ws.binaryType = 'arraybuffer';
-      let handshakeTimedOut = false;
-      const handshakeTimer = __NC_BUNDLED__ ? setTimeout(() => {
-        if (current()) { handshakeTimedOut = true; ws.close(); }
-      }, 15_000) : null;
-
       const sendBinary = (frame: Uint8Array) => {
-        if (!current()) return;
+        if (!live) return;
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(frame);
         }
@@ -330,12 +315,10 @@ export const XtermView = forwardRef<XtermViewHandle, XtermViewProps>(function Xt
       let lastRows = term.rows;
 
       ws.onopen = () => {
-        if (!current()) { ws.close(); return; }
-        if (handshakeTimer !== null) clearTimeout(handshakeTimer);
+        if (!live) { ws.close(); return; }
         onRoleChangeRef.current?.('Owner');
         setStatus('connected');
         connectionReady = true;
-        retryDelay = 500;
         term.options.disableStdin = false;
         term.reset();
         if (mountDesired.cols >= MIN_COMMIT_COLS && mountDesired.rows >= MIN_COMMIT_ROWS) {
@@ -346,7 +329,7 @@ export const XtermView = forwardRef<XtermViewHandle, XtermViewProps>(function Xt
       };
 
       ws.onmessage = (e) => {
-        if (!current()) return;
+        if (!live) return;
         if (e.data instanceof ArrayBuffer || e.data instanceof Uint8Array) {
           const frame = decodeTerminalServerFrame(e.data);
           if (frame.kind === 'output') {
@@ -354,7 +337,6 @@ export const XtermView = forwardRef<XtermViewHandle, XtermViewProps>(function Xt
             return;
           }
           if (frame.kind === 'exit') {
-            automaticAllowed = false;
             exitedRef.current = true;
             setStatus('exited');
             connectionReady = false;
@@ -373,20 +355,12 @@ export const XtermView = forwardRef<XtermViewHandle, XtermViewProps>(function Xt
       };
 
       ws.onclose = (e) => {
-        if (handshakeTimer !== null) clearTimeout(handshakeTimer);
         connectionReady = false;
         term.options.disableStdin = true;
         // 1000 + `child-exited` = daemon's clean child-exit close (mapped to `exited` even if the exit frame was dropped); 1006 abnormal; 1011 server heartbeat trip; 1001 going away.
         setCloseInfo({ code: e.code, reason: e.reason || '' });
         const isChildExitClose =
           e.code === 1000 && e.reason === 'child-exited';
-        const transientClose = [1001, 1006, 1011].includes(e.code)
-          || (handshakeTimedOut && [1000, 1005].includes(e.code));
-        if (isChildExitClose || !transientClose) automaticAllowed = false;
-        if (__NC_BUNDLED__ && automaticAllowed && current() && retryTimer === null) {
-          retryTimer = setTimeout(() => { retryTimer = null; if (automaticAllowed && permitted()) reconnect(); }, retryDelay * (0.75 + Math.random() * 0.5));
-          retryDelay = Math.min(8000, retryDelay * 2);
-        }
         // Don't clobber a more-specific state (`exited`); a `child-exited` close promotes to `exited`.
         setStatus((prev) => {
           if (prev === 'exited') return prev;
@@ -465,7 +439,6 @@ export const XtermView = forwardRef<XtermViewHandle, XtermViewProps>(function Xt
 
       return () => {
         live = false;
-        if (handshakeTimer !== null) clearTimeout(handshakeTimer);
         if (flushResizeRef.current === onResize) flushResizeRef.current = null;
         ro.disconnect();
         if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
@@ -481,37 +454,16 @@ export const XtermView = forwardRef<XtermViewHandle, XtermViewProps>(function Xt
         }
         // Sync here rather than via onclose so a strict-mode unmount or `terminalId` change clears the parent even with no close frame.
         onRoleChangeRef.current?.(null);
-        // Revoking the transport does not revoke authoritative exit facts.
-        // A new attach resets them in connect(); disposal clears the parent below.
       };
     };
     let disconnect = connect();
     const reconnect = () => {
-      if (!permitted()) return;
-      disconnect(); disconnect = connect();
+      disconnect();
+      disconnect = connect();
     };
-    let wasPermitted = permitted();
-    const unsubscribeRecovery = recovery?.subscribe(() => {
-      const now = permitted();
-      if (!now) {
-        if (retryTimer !== null) clearTimeout(retryTimer);
-        retryTimer = null; disconnect(); disconnect = () => {};
-        term.options.disableStdin = true;
-        setStatus(previous => previous === 'exited' ? previous : 'closed');
-      } else if (!wasPermitted && automaticAllowed) reconnect();
-      wasPermitted = now;
-    });
-    const manualReconnect = () => {
-      if (!permitted()) return;
-      automaticAllowed = true; retryDelay = 500;
-      if (retryTimer !== null) clearTimeout(retryTimer);
-      retryTimer = null; reconnect();
-    };
-    reconnectRef.current = manualReconnect;
+    reconnectRef.current = reconnect;
     return () => {
-      if (reconnectRef.current === manualReconnect) reconnectRef.current = null;
-      unsubscribeRecovery?.();
-      if (retryTimer !== null) clearTimeout(retryTimer);
+      if (reconnectRef.current === reconnect) reconnectRef.current = null;
       disconnect();
       exitedRef.current = false;
       onExitChangeRef.current?.(null);
@@ -520,7 +472,7 @@ export const XtermView = forwardRef<XtermViewHandle, XtermViewProps>(function Xt
       if (termRef.current === term) termRef.current = null;
     };
     // Theme changes and connection status must never tear down the buffer.
-  }, [terminalId, layoutRetryKey, recovery]);
+  }, [terminalId, layoutRetryKey]);
 
   return (
     <div ref={rootRef} className="xterm-view" data-nc-terminal-id={terminalId}>

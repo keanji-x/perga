@@ -11,7 +11,7 @@ import { useState } from '../../ui/state/public.ts';
 import { useConnectionStatus } from './connection-status.tsx';
 import { queryKeys } from './query-keys.ts';
 import { runOperation } from './query-operation.ts';
-import { useRecoveryMutation } from './recovery-mutation.ts';
+import { useOnlineMutation } from './online-mutation.ts';
 
 /** The provider's writes: how many are in flight, and each target's last write. */
 type WriteLedger = { pending: number; tails: Map<string, Promise<void>> };
@@ -24,7 +24,7 @@ type ReceiptChannel = Pick<ReadReceipts, 'markRead' | 'markUnread'> & Readonly<{
 const ReadReceiptsContext = createContext<ReceiptChannel | null>(null);
 
 async function write(
-  client: QueryClient, ledger: WriteLedger, admitted: ApiTransportPort, unauthorized: UnauthorizedChannel, intent: WriteIntent,
+  client: QueryClient, ledger: WriteLedger, transport: ApiTransportPort, unauthorized: UnauthorizedChannel, intent: WriteIntent,
 ): Promise<void> {
   const queryKey = queryKeys.readReceipts();
   const cancelReads = () => client.cancelQueries({ queryKey });
@@ -40,7 +40,7 @@ async function write(
     await cancelReads();
     client.setQueryData<ReadState>(queryKey, (state) => state === undefined ? state : intent.optimistic(state));
     await previous;
-    const receipt = await runOperation(admitted, intent.operation, unauthorized);
+    const receipt = await runOperation(transport, intent.operation, unauthorized);
     // A later write of the same target keeps its own optimistic state until it answers.
     if (ledger.tails.get(key) === tail) {
       client.setQueryData<ReadState>(queryKey, (state) => state === undefined ? state : withReceipt(state, receipt));
@@ -57,7 +57,7 @@ async function write(
 
 /**
  * The kernel's read receipts (#2596), owned by the root route. Every receipt write goes through the app's write
- * admission (`useRecoveryMutation`), in the order made per target; no read that started before a write settled is the
+ * admission (`useOnlineMutation`), in the order made per target; no read that started before a write settled is the
  * final cached state. `markRead` owes an acknowledgement (the larger instant per target) and `flush` sends what is
  * owed, forgetting it once stored. A refused or failed send stays owed until a trigger. Triggers are external signals
  * only, each published by its owner: a new record, `onlineManager` going online, `focusManager` reporting focus, and
@@ -71,8 +71,8 @@ export function ReadReceiptsProvider({ transport, unauthorized, children }: Read
   const client = useQueryClient();
   const [{ ledger, owed, sending, missed }] = useState(() => ({ ledger: { pending: 0, tails: new Map<string, Promise<void>>() } satisfies WriteLedger,
     owed: new Map<string, Owed>(), sending: new Map<string, Owed>(), missed: new Set<string>() }));
-  const mutation = useRecoveryMutation(transport, { mutationFn: (intent: WriteIntent, admitted: ApiTransportPort) =>
-    write(client, ledger, admitted, unauthorized, intent) });
+  const mutation = useOnlineMutation({ mutationFn: (intent: WriteIntent) =>
+    write(client, ledger, transport, unauthorized, intent) });
   const send = useRef(mutation.mutateAsync);
   send.current = mutation.mutateAsync;
   // An owed acknowledgement is its record: a send settles only the record it sent, never a later one. A trigger that

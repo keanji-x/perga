@@ -20,17 +20,13 @@ const DEFAULT_HEIGHT = 480;
 /** Scripts only. Adding `allow-same-origin` would hand the page this origin's cookies and API. */
 const HTML_FRAME_SANDBOX = 'allow-scripts';
 
-/**
- * The frame itself, shared by the block and the file viewer. The mobile app's document policy
- * blocks every frame without telling the page, so there it says where the page can be seen instead.
- */
+/** The frame shared by the block and the file viewer. */
 export function ReportHtmlFrame({ url, title, height }: Readonly<{
   url: string;
   title: string;
   /** In px; absent ⇒ the frame fills the box its parent gives it. */
   height?: number;
 }>) {
-  if (__NC_BUNDLED__) return <BundledNote height={height} />;
   return (
     <iframe
       className={height === undefined ? `${styles.frame} ${styles.fill}` : styles.frame}
@@ -44,12 +40,6 @@ export function ReportHtmlFrame({ url, title, height }: Readonly<{
   );
 }
 
-function BundledNote({ height }: Readonly<{ height?: number }>) {
-  return <p className={styles.note} style={height === undefined ? undefined : { blockSize: `${height}px` }} role="note">
-    Open this page on desktop: the mobile app does not show embedded pages.
-  </p>;
-}
-
 export function ReportHtmlBlock({ payload, files, onOpen }: Readonly<{
   payload: HtmlBlockPayload;
   /** The Track workspace the page lives in. Absent ⇒ this view carries no workspace and the block says so. */
@@ -61,12 +51,9 @@ export function ReportHtmlBlock({ payload, files, onOpen }: Readonly<{
   const height = reportFrameHeight(payload.height, DEFAULT_HEIGHT);
   return (
     <figure className={styles.figure}>
-      {/* The mobile app cannot show the frame, so it does not read the page either. */}
-      {__NC_BUNDLED__
-        ? <BundledNote height={height} />
-        : files === undefined
-          ? <p className={styles.note} style={{ blockSize: `${height}px` }} role="note">This view does not carry workspace files.</p>
-          : <BlockPage path={payload.path} files={files} title={title} height={height} />}
+      {files === undefined
+        ? <p className={styles.note} style={{ blockSize: `${height}px` }} role="note">This view does not carry workspace files.</p>
+        : <BlockPage path={payload.path} files={files} title={title} height={height} />}
       <figcaption className={styles.caption}>
         <span className={styles.title}>{title}</span>
         {onOpen !== undefined && (

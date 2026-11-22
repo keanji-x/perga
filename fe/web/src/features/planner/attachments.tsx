@@ -95,8 +95,7 @@ export function usePlannerAttachments(
     lane.reserved += 1;
     editUpload(target, (current) => ({ inFlight: current.inFlight + 1, refusal: null }));
     const previous = lane.tail;
-    /* Call the provider now: it captures recovery admission before calling the reader.
-     * Only byte reading waits for the previous upload, never permission capture. */
+    /* Start the upload intent now and wait for the previous upload before reading bytes. */
     const pending = (async () => {
       try {
         const consume = await upload(async () => {

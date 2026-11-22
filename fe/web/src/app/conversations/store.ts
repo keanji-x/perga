@@ -186,7 +186,7 @@ export function useConversationStore(
   const canQueueWhileRunning = phase === 'turn_running' && working && runReadError === null;
   const steeringTarget = run.data?.activeTurn?.status === 'running' ? run.data.activeTurn.id : null;
   const outbox = useConversationOutbox({
-    cardId, transport, send: mutations.send, serverEntries, liveReplies,
+    cardId, send: mutations.send, serverEntries, liveReplies,
     stalled: false, target: run.data == null ? undefined : { epoch: run.data.session.epoch, queue: canQueueWhileRunning }, queuesInput: kernelQueuesInput(phase), queueIfBusy: canQueueWhileRunning,
     pressed: () => { setActionError(null); stop.clearFeedback(); },
   });

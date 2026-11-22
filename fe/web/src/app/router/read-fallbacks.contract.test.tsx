@@ -31,7 +31,7 @@ function renderRoute(path: string, reply: (request: ApiRequest) => ApiTransportR
       ? ok({ tracks: [] }) : reply(request)),
   };
   const client = new QueryClient({ defaultOptions: { queries: { retryDelay: 0, retry: false } } });
-  const router = createAppRouter({ prepareReport: prepareReportDocument, transport: withReadReceipts(transport), unauthorized, client, cards: bootTestCardRuntime(), onSignOut: () => undefined });
+  const router = createAppRouter({ prepareReport: prepareReportDocument, transport: withReadReceipts(transport), unauthorized, client, cards: bootTestCardRuntime() });
   router.update({ history: createMemoryHistory({ initialEntries: [path] }) });
   const view = render(<QueryClientProvider client={client}><ThemeProvider storage={{ getItem: () => null, setItem: () => undefined }}>
     <RouterProvider router={router} />

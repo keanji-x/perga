@@ -39,7 +39,6 @@ export async function performApiRequest<T>(
   unauthorized?: UnauthorizedChannel,
 ): Promise<ApiResult<T>> {
   let response;
-  const checkpoint = transport.recovery?.checkpoint();
   /* A body implies `content-type`; the operation's own headers are merged over
      it. The key is built first and spread only when it has entries, so a GET
      with neither still sends no `headers` at all (`client.contract.test.ts`
@@ -59,7 +58,6 @@ export async function performApiRequest<T>(
       ...(Object.keys(headers).length === 0 ? {} : { headers }),
       ...(operation.body === undefined ? {} : { body: operation.body }),
     });
-    checkpoint?.();
   } catch (cause) {
     const message = isTimeoutError(cause)
       ? 'Request timed out.'

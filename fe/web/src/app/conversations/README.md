@@ -7,7 +7,7 @@ layout, then calls this one assembly; it contains no copy or re-export of it.
 
 | Input or capability | Owner |
 | --- | --- |
-| Transport and recovery/unauthorized handling | app/providers and core/api |
+| Transport and unauthorized handling | app/providers and core/api |
 | Scoped query facts and invalidation | QueryClient via app/providers/queries |
 | Read numbering and live/history handoff | conversations/read-order and live-replies |
 | Cross-mount input, drafts, local sends and accepted history | ConversationProvider |
@@ -86,8 +86,7 @@ The history model is verified through these production consumers and the
 behavioral contracts below.
 
 `draft-actions.ts` assembles first-message commands from a required draft
-snapshot, the Registry edit/start/accept/discard port, recovery-admitted transport,
-the typed v1 create/replay port, capability booleans and open/close/onGone
+snapshot, the Registry edit/start/accept/discard port, the typed v1 create/replay port, capability booleans and open/close/onGone
 signals. Construction performs no IO or Hook initialization. Dispatched attempts
 retain their original scope/key/text and settle through the Registry, including
 unknown-result receipt replays and refused-before-dispatch restoration. Navigation
@@ -148,8 +147,7 @@ handle; an old attempt cannot hand focus to another draft. Initial composer subm
 keeps the original void handoff into the held draft, including local refusals.
 Only recovery commands consume the local-takeover boolean, so a private retry
 cannot leave an extra restored copy in the next new-conversation composer.
-Initial admission also passes its actual text to the held-draft owner: recovery
-capture can refuse the POST without erasing the first sentence or inventing a send.
+An offline refusal keeps the submitted text in the held draft.
 
 First-message creation uses the v1 SessionCreationReceipt path. Its required
 `sessionInput` identifies the accepted message remembered at draft adoption.

@@ -1,6 +1,6 @@
 import { queryKeys } from './query-keys.ts';
 import { useQueryClient } from '@tanstack/react-query';
-import { useRecoveryMutation } from './recovery-mutation.ts';
+import { useOnlineMutation } from './online-mutation.ts';
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { createTrackOperation, deleteTrackOperation, toTrack, updateTrackOperation, type NewTrackBody, type TrackPatchBody } from '../../../../core/domain/track.ts';
@@ -8,8 +8,8 @@ import { cancelThenInvalidate } from '../events/query-refresh.ts';
 import { deleteDone, runOperation } from './query-operation.ts';
 export function useTrackLifecycleMutations(transport: ApiTransportPort, unauthorized: UnauthorizedChannel) {
   const client = useQueryClient();
-  const create = useRecoveryMutation(transport, {
-    mutationFn: (variables: { body: NewTrackBody; idempotencyKey: string }, transport: ApiTransportPort) =>
+  const create = useOnlineMutation({
+    mutationFn: (variables: { body: NewTrackBody; idempotencyKey: string }) =>
       runOperation(transport, createTrackOperation(variables.body, variables.idempotencyKey), unauthorized),
     onSuccess: (track, { body }) => {
       void client.invalidateQueries({ queryKey: queryKeys.tracksInArea(track.areaId) });
@@ -19,8 +19,8 @@ export function useTrackLifecycleMutations(transport: ApiTransportPort, unauthor
       }
     },
   });
-  const patch = useRecoveryMutation(transport, {
-    mutationFn: ({ trackId, body }: { trackId: string; areaId: string; body: TrackPatchBody }, transport: ApiTransportPort) =>
+  const patch = useOnlineMutation({
+    mutationFn: ({ trackId, body }: { trackId: string; areaId: string; body: TrackPatchBody }) =>
       runOperation(transport, updateTrackOperation(trackId, body), unauthorized),
     // A patch can move the track: the area the server just reported is refetched too.
     onSuccess: (track, variables) => {
@@ -34,8 +34,8 @@ export function useTrackLifecycleMutations(transport: ApiTransportPort, unauthor
       void client.invalidateQueries({ queryKey: queryKeys.trackDetail(variables.trackId) });
     },
   });
-  const remove = useRecoveryMutation(transport, {
-    mutationFn: ({ trackId, signal }: { trackId: string; areaId: string; signal?: AbortSignal }, transport: ApiTransportPort) =>
+  const remove = useOnlineMutation({
+    mutationFn: ({ trackId, signal }: { trackId: string; areaId: string; signal?: AbortSignal }) =>
       runOperation(transport, { ...deleteTrackOperation(trackId), signal }, unauthorized),
     onSuccess: (_result, variables) => {
       client.removeQueries({ queryKey: queryKeys.trackDetail(variables.trackId) });

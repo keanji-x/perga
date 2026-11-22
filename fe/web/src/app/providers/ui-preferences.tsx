@@ -22,29 +22,7 @@ export function createUiPreferences(storage?: UiPreferenceStorage) {
     revision += 1;
     for (const listener of listeners) listener();
   };
-  let recoveryScope: string | null = null;
-  /* Display preferences live under the bundled recovery scope `[origin, userId, dbInstanceId]`, but per-browser
-   * choices (`browser:*`) must NOT: `dbInstanceId` is per boot, so they use origin and userId only. */
-  let browserNamespace: readonly [origin: string, userId: string] | null = null;
-  const browserNamespaceOf = (scope: string): readonly [string, string] | null => {
-    try {
-      const parsed: unknown = JSON.parse(scope);
-      if (Array.isArray(parsed) && parsed.length === 3
-        && parsed.every((part) => typeof part === 'string' && part.length > 0)) {
-        return [parsed[0] as string, parsed[1] as string];
-      }
-    } catch { /* not the bundled triple */ }
-    return null;
-  };
-  const storageKey = (key: string) => {
-    if (recoveryScope === null) return createStorageKey('ui', 'v1', encodeURIComponent(key));
-    /* A per-browser display choice outlives a kernel restart: origin and user, not the boot. */
-    if (browserNamespace !== null && key.startsWith('browser:')) {
-      return createStorageKey('ui', 'browser',
-        encodeURIComponent(browserNamespace[0]), encodeURIComponent(browserNamespace[1]), encodeURIComponent(key));
-    }
-    return createStorageKey('ui', 'recovery', encodeURIComponent(recoveryScope), encodeURIComponent(key));
-  };
+  const storageKey = (key: string) => createStorageKey('ui', 'v1', encodeURIComponent(key));
   const read = (key: string): Preference => {
     if (memory.has(key)) return memory.get(key) ?? null;
     let value: Preference = null;
@@ -89,10 +67,6 @@ export function createUiPreferences(storage?: UiPreferenceStorage) {
     },
     setTerminalWorkbench(trackId: string, terminalId: string, visible: boolean): void {
       write(`browser:terminal-workbench:${database ?? ''}:${trackId}:${terminalId}`, visible, true);
-    },
-    setRecoveryScope(scope: string): void {
-      if (recoveryScope === scope) return;
-      recoveryScope = scope; browserNamespace = browserNamespaceOf(scope); memory.clear(); notify();
     },
     // Mounted views subscribe to live preferences. Conversation selection is restored on route entry
     // and owned by React while open, so saving it does not publish a change.

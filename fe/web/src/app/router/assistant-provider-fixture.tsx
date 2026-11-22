@@ -87,7 +87,7 @@ export function renderAssistantProviderFixture(options: {
   } };
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const router = createAppRouter({ prepareReport: prepareReportDocument, transport, client, cards: bootTestCardRuntime(),
-    unauthorized: createUnauthorizedChannel({ enqueue: task => task() }), onSignOut: () => undefined });
+    unauthorized: createUnauthorizedChannel({ enqueue: task => task() }) });
   router.update({ history: createMemoryHistory({ initialEntries: [`/track/${track.id}${options.mobile ? "" : "?panel=conversations"}`] }) });
   const container = document.createElement('div'); container.id = 'root'; document.body.append(container);
   render(<QueryClientProvider client={client}><ThemeProvider><RouterProvider router={router} /></ThemeProvider></QueryClientProvider>, { container });

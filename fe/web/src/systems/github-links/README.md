@@ -2,7 +2,7 @@
 
 `public.tsx` owns GitHub citation parsing, hover presentation and lazy query lifecycle.
 The app supplies `GitHubPreviewPort` through `GitHubPreviewProvider` within its session
-and QueryClient providers. Reads retain the existing unauthorized/recovery checks.
+and QueryClient providers. Reads retain the existing unauthorized handling.
 Queries share summaries for one minute and do not run before opening a card.
 
 Chat preserves link navigation; report prose reuses its existing preview controls,

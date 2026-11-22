@@ -1,5 +1,4 @@
 import type { CardFilesPort } from '../../../../core/domain/fs.ts';
-import type { RecoveryAccess } from '../../../../core/domain/recovery/access.ts';
 
 export type { CardFilesPort };
 
@@ -55,7 +54,6 @@ export interface CardHostCapabilities {
   readonly slots: CardSlotStore;
   /** Filesystem reads injected by `app/composition`, or `null`; a card that needs them must render a reason rather than throw. */
   readonly files: CardFilesPort | null;
-  readonly recovery: RecoveryAccess | null;
   emit(command: CardRuntimeCommand): void;
 }
 

@@ -2,7 +2,6 @@ import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeAll, expect, it, vi } from 'vitest';
 import { page } from 'vitest/browser';
-import { RecoveryAccess } from '../../../../../core/domain/recovery/access.ts';
 
 import '../../../styles/entry.css';
 import { encodeTerminalInputFrame, TERMINAL_FRAME_CONTROL_JSON } from '../../terminal/protocol.ts';
@@ -49,14 +48,14 @@ function terminalTransport() {
   return sockets;
 }
 
-function mountTerminal(status: 'running' | 'starting' = 'running', width?: number, recovery?: RecoveryAccess, notice: string | null = null) {
+function mountTerminal(status: 'running' | 'starting' = 'running', width?: number, notice: string | null = null) {
   const registry = createCardRegistry();
   registerAvailableBuiltinCards(registry);
   const card = registry.resolve({ id: 'card-1', kind: 'terminal', payload: {},
     runtime: { worker_session_id: 'run-1', kind: 'terminal', status, terminal_id: 'pty-1' },
   });
   if (card === null) throw new Error('Missing terminal');
-  const host = createCardHost(registry, { recovery });
+  const host = createCardHost(registry);
   const board = (next: string | null) => <div style={{ width }}><BoardHost host={host} items={[
     { card, title: 'Terminal', originalIndex: 0, deletable: true, activity: null, notice: next },
   ]} visible activeCardId="card-1" onRemoveCard={() => {}} /></div>;
@@ -156,7 +155,7 @@ it('keeps input and the same attachment while the notice shows, changes and clea
   const sockets = terminalTransport();
   const inputs = () => sockets[0].sent.filter((frame) => frame[0] === 0x01);
   const notice = () => document.querySelector('[data-nc-card-cell] [data-nc-terminal-notice]');
-  const mounted = mountTerminal('running', undefined, undefined, 'Completed — this attempt has ended.');
+  const mounted = mountTerminal('running', undefined, 'Completed — this attempt has ended.');
   await waitFor(() => expect(sockets).toHaveLength(1));
   act(() => sockets[0].open('parked prompt'));
   await waitFor(() => expect(headStatusText()).toBeNull());
@@ -210,59 +209,4 @@ it('keeps the disconnected status on the title row when the terminal is wide', a
   const statusRect = status.getBoundingClientRect();
   expect(statusRect.top).toBeCloseTo(titleRect.top, 0);
   expect(statusRect.left).toBeGreaterThanOrEqual(titleRect.right);
-});
-
-
-it('bundled recovery fences input and automatically reattaches the same terminal only after synchronization', async () => {
-  vi.stubGlobal('__NC_BUNDLED__', true); await page.viewport(390, 844);
-  const access = new RecoveryAccess(); access.change('syncing'); const sockets = terminalTransport();
-  mountTerminal('running', 390, access);
-  await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-  expect(sockets).toHaveLength(0);
-  act(() => access.change('connected')); await waitFor(() => expect(sockets).toHaveLength(1));
-  act(() => sockets[0].open('old retained prompt'));
-  await waitFor(() => expect(headStatusText()).toBeNull());
-  expect(headIndicator()).toBeNull();
-  act(() => access.invalidate('recovering'));
-  expect(sockets[0].readyState).toBe(3);
-  const textarea = document.querySelector<HTMLTextAreaElement>('[data-nc-terminal-id] textarea')!;
-  await userEvent.type(textarea, 'offline input');
-  act(() => access.change('syncing')); expect(sockets).toHaveLength(1);
-  act(() => access.change('connected')); await waitFor(() => expect(sockets).toHaveLength(2));
-  expect(sockets[1].url).toBe(sockets[0].url); act(() => sockets[1].open('authoritative prompt'));
-  expect(sockets[1].sent.some(frame => frame[0] === 0x01)).toBe(false);
-  act(() => sockets[1].exit(0));
-  act(() => { access.invalidate('recovering'); access.change('connected'); });
-  expect(sockets).toHaveLength(2);
-});
-
-it('a successful manual same-terminal reconnect starts a fresh automatic recovery episode', async () => {
-  vi.stubGlobal('__NC_BUNDLED__', true); await page.viewport(1200, 800);
-  const access = new RecoveryAccess(); access.change('connected'); const sockets = terminalTransport();
-  mountTerminal('running', undefined, access); await waitFor(() => expect(sockets).toHaveLength(1));
-  act(() => sockets[0].open('initial prompt'));
-  act(() => { sockets[0].readyState = 3; sockets[0].onclose?.({ code: 1008, reason: 'permission refused', wasClean: true }); });
-  await userEvent.click(await screen.findByRole('button', { name: 'Reconnect' }));
-  await waitFor(() => expect(sockets).toHaveLength(2)); act(() => sockets[1].open('manual recovery succeeded'));
-  act(() => { access.invalidate('recovering'); access.change('connected'); });
-  await waitFor(() => expect(sockets).toHaveLength(3));
-  expect(sockets[2].url).toBe(sockets[0].url);
-  expect(sockets[2].sent.some(frame => frame[0] === 0x01)).toBe(false);
-});
-it.each([1000, 1005])('a locally timed-out connection opening retries the same terminal after normal close %s', async (code) => {
-  vi.stubGlobal('__NC_BUNDLED__', true); await page.viewport(1200, 800);
-  const deadlines: (() => void)[] = []; const schedule = globalThis.setTimeout.bind(globalThis);
-  const clock = vi.spyOn(globalThis, 'setTimeout').mockImplementation((handler, delay) => {
-    if (delay === 15_000 && typeof handler === 'function') deadlines.push(handler as () => void);
-    return schedule(handler, delay);
-  });
-  try {
-    const access = new RecoveryAccess(); access.change('connected'); const sockets = terminalTransport();
-    mountTerminal('running', undefined, access); await waitFor(() => expect(sockets).toHaveLength(1));
-    expect(deadlines).toHaveLength(1);
-    act(() => { deadlines[0](); sockets[0].onclose?.({ code, reason: '', wasClean: true }); });
-    await waitFor(() => expect(sockets).toHaveLength(2), { timeout: 2000 });
-    expect(sockets[1].url).toBe(sockets[0].url);
-    expect(sockets[0].sent.some(frame => frame[0] === 0x01 || frame[0] === 0x02)).toBe(false);
-  } finally { clock.mockRestore(); }
 });

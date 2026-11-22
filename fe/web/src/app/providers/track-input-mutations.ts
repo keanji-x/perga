@@ -1,6 +1,6 @@
 import { queryKeys } from './query-keys.ts';
 import { useQueryClient } from '@tanstack/react-query';
-import { useRecoveryMutation } from './recovery-mutation.ts';
+import { useOnlineMutation } from './online-mutation.ts';
 import type { AskAnswer } from '../../../../core/domain/presentation-types.ts';
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
@@ -12,8 +12,8 @@ export function useTrackInputMutations(transport: ApiTransportPort, unauthorized
   const client = useQueryClient();
   /* An answer may apply a lifecycle action; refresh detail/lists even after an uncertain response.
    * The projector's overlay remains authoritative for removing the question itself. */
-  const answerAsk = useRecoveryMutation(transport, {
-    mutationFn: ({ trackId, askId, answers, questions }: { trackId: string; askId: AskId; answers: readonly AskAnswer[]; questions?: readonly AskQuestion[] }, transport: ApiTransportPort) =>
+  const answerAsk = useOnlineMutation({
+    mutationFn: ({ trackId, askId, answers, questions }: { trackId: string; askId: AskId; answers: readonly AskAnswer[]; questions?: readonly AskQuestion[] }) =>
       Promise.resolve().then(() => {
         const snapshot = client.getQueryData<import('../../../../core/api/perga-v1.ts').TrackAggregateSnapshotDto>(queryKeys.trackDetail(trackId));
         const sessionId = snapshot?.openAsks?.find(ask => ask.id === String(askId))?.sessionId;
@@ -25,8 +25,8 @@ export function useTrackInputMutations(transport: ApiTransportPort, unauthorized
       void client.invalidateQueries({ queryKey: queryKeys.trackLists() });
     },
   });
-  const decideApproval = useRecoveryMutation(transport, {
-    mutationFn: ({ approval, optionId }: { trackId: string; approval: PendingApproval; optionId: string }, transport: ApiTransportPort) =>
+  const decideApproval = useOnlineMutation({
+    mutationFn: ({ approval, optionId }: { trackId: string; approval: PendingApproval; optionId: string }) =>
       runOperation(transport, decideApprovalOperation(approval.sessionId, approval.executionId, approval.id, optionId), unauthorized),
     onSettled: (_answer, _error, { trackId, approval }) => {
       void client.invalidateQueries({ queryKey: queryKeys.trackDetail(trackId) });

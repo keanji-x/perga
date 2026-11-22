@@ -1,7 +1,7 @@
 import { retireAreaQueries } from './area-query-lifecycle.ts';
 import { queryKeys } from './query-keys.ts';
 import { useQueryClient } from '@tanstack/react-query';
-import { useRecoveryMutation } from './recovery-mutation.ts';
+import { useOnlineMutation } from './online-mutation.ts';
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { asFolderConflict,createAreaOperation,deleteAreaOperation,newestArea,sortedAreas,toArea,updateAreaOperation,type Area,type AreaPatchBody,type FolderConflict,type NewAreaBody } from '../../../../core/domain/area.ts';
@@ -30,8 +30,8 @@ export type AreaMutations = Readonly<{
 
 export function useAreaMutations(transport: ApiTransportPort, unauthorized: UnauthorizedChannel): AreaMutations {
   const client = useQueryClient();
-  const create = useRecoveryMutation(transport, {
-    mutationFn: async ({ body, idempotencyKey }: { body: NewAreaBody; idempotencyKey: string }, transport: ApiTransportPort) => {
+  const create = useOnlineMutation({
+    mutationFn: async ({ body, idempotencyKey }: { body: NewAreaBody; idempotencyKey: string }) => {
       return runOperation(transport, createAreaOperation(body, idempotencyKey), unauthorized);
     },
     onSuccess: (wire) => {
@@ -49,8 +49,8 @@ export function useAreaMutations(transport: ApiTransportPort, unauthorized: Unau
     // A lost response can follow a committed creation; the retained creation key makes the next POST safe.
     onError: () => client.invalidateQueries({ queryKey: queryKeys.areas() }),
   });
-  const update = useRecoveryMutation(transport, {
-    mutationFn: ({ areaId, body }: { areaId: string; body: AreaPatchBody }, transport: ApiTransportPort) =>
+  const update = useOnlineMutation({
+    mutationFn: ({ areaId, body }: { areaId: string; body: AreaPatchBody }) =>
       runOperation(transport, updateAreaOperation(areaId, body), unauthorized),
     onSuccess: (wire) => {
       const updated = toArea(wire);
@@ -65,8 +65,8 @@ export function useAreaMutations(transport: ApiTransportPort, unauthorized: Unau
     // A transport failure may still follow a committed write, so failure cannot leave cached defaults authoritative.
     onSettled: () => client.invalidateQueries({ queryKey: queryKeys.areas() }),
   });
-  const remove = useRecoveryMutation(transport, {
-    mutationFn: ({ areaId, signal }: { areaId: string; signal?: AbortSignal }, transport: ApiTransportPort) =>
+  const remove = useOnlineMutation({
+    mutationFn: ({ areaId, signal }: { areaId: string; signal?: AbortSignal }) =>
       runOperation(transport, { ...deleteAreaOperation(areaId), signal }, unauthorized),
     // The area is gone, also when the delete was answered done; its track list can never resolve again.
     onSuccess: (_result, { areaId }) => { retireAreaQueries(client, areaId); },

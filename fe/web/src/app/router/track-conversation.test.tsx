@@ -13,9 +13,7 @@ import * as conversationStores from '../conversations/store.ts';
 // Starting a conversation on a track, driven through the real router; and what the
 // session registry may remember about one, driven through the real store.
 
-import { RecoveryAccess } from '../../../../core/domain/recovery/access.ts';
 import { SEND_RETRIES } from '../../../../core/domain/conversation-delivery.ts';
-import { createRecoveryTransports } from '../../systems/recovery/transport.ts';
 import { onlineManager, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider } from '@tanstack/react-router';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -39,9 +37,9 @@ import { bootTestCardRuntime } from './test-card-runtime.ts';
 import { RAIL_COLLAPSE_QUERY } from '../../styles/breakpoints.ts';
 
 /* A send's automatic retries wait no real time here; how long they back off is not under test. */
-vi.mock('../../../../core/domain/recovery/access.ts', async (importOriginal) => ({
-  ...await importOriginal<typeof import('../../../../core/domain/recovery/access.ts')>(),
-  recoveryDelay: () => 0,
+vi.mock('../../../../core/domain/conversation-delivery.ts', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../../../../core/domain/conversation-delivery.ts')>(),
+  sendRetryDelay: () => 0,
 }));
 
 /** Text in the drawer outside its desktop header, which paints the conversation's name (often its first message). */
@@ -100,7 +98,7 @@ function failure(status: number, code: string, error: string): ApiTransportRespo
 type Reply = (request: ApiRequest) => ApiTransportResponse | undefined
   | Promise<ApiTransportResponse | undefined>;
 
-function setup(reply?: Reply, storage?: UiPreferenceStorage, recovery?: RecoveryAccess, receipts?: ReadReceiptsKernel) {
+function setup(reply?: Reply, storage?: UiPreferenceStorage, receipts?: ReadReceiptsKernel) {
   const defaultReceipts = createReadReceiptsKernel();
   const requests: ApiRequest[] = [];
   const themeValues = new Map<string, string>();
@@ -134,7 +132,7 @@ function setup(reply?: Reply, storage?: UiPreferenceStorage, recovery?: Recovery
     },
   };
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, structuralSharing: false } } });
-  const router = createAppRouter({ prepareReport: prepareReportDocument, transport: recovery ? createRecoveryTransports(transport, recovery).business : transport, unauthorized, client, onSignOut: vi.fn(), cards: bootTestCardRuntime(), uiPreferences: createUiPreferences(storage) });
+  const router = createAppRouter({ prepareReport: prepareReportDocument, transport, unauthorized, client, cards: bootTestCardRuntime(), uiPreferences: createUiPreferences(storage) });
   render(<QueryClientProvider client={client}><ThemeProvider storage={themeStorage}>
     <RouterProvider router={router} />
   </ThemeProvider></QueryClientProvider>);
@@ -223,6 +221,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  onlineManager.setOnline(true);
   vi.unstubAllGlobals();
 });
 
@@ -652,68 +651,24 @@ it('[#2068] keeps a composer draft when Try again resends a rejected message', a
     expect(messageField().textContent).toBe('A draft in progress');
   });
 
-it('[F5] leaves the footer as it was when Try again is pressed offline in the bundled build', async () => {
-    vi.stubGlobal('__NC_BUNDLED__', true);
-    const access = new RecoveryAccess(); access.change('connected');
+it('[F5] leaves the footer as it was when Try again is pressed offline', async () => {
     const { requests } = setup((request) => {
       if (request.path.endsWith('/messages')) throw new Error('response dropped');
       return undefined;
-    }, undefined, access);
+    });
     const inputs = () => requests.filter((request) => request.path.endsWith('/messages'));
     await sendUntilSpent('Spent online, retried offline');
     expect(inputs()).toHaveLength(SEND_RETRIES + 1);
-    act(() => { access.change('offline'); });
+    act(() => { onlineManager.setOnline(false); });
     fireEvent.click(screen.getByRole('button', { name: /^(Try again|重试|安全重试（同幂等键）)$/ }));
-    /* The connection is the global recovery status's to speak of, not this op's. */
     expect(within(screen.getByRole('alert')).getByText('发送结果未确认。')).toBeTruthy();
     expect(screen.queryByRole('button', { name: '放回输入框' })).toBeNull();
     expect(inputs()).toHaveLength(SEND_RETRIES + 1);
   });
 
-it('[F5] says only that delivery is unconfirmed when the retries ran out offline (bundled build)', async () => {
-    vi.stubGlobal('__NC_BUNDLED__', true);
-    const access = new RecoveryAccess(); access.change('connected');
-    const { requests } = setup((request) => {
-      if (!request.path.endsWith('/messages')) return undefined;
-      access.change('offline');
-      throw new Error('response dropped');
-    }, undefined, access);
-    fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
-    await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
-    await write('Sent just before the connection went');
-    expect(within(await screen.findByRole('alert')).getByText('发送结果未确认。')).toBeTruthy();
-    expect(screen.getByRole('button', { name: /^(Try again|重试|安全重试（同幂等键）)$/ })).toBeTruthy();
-    expect(requests.filter((request) => request.path.endsWith('/messages'))).toHaveLength(1);
-  });
-
-it('[F4] refuses a send pressed while offline in the bundled build, sends nothing and keeps the words', async () => {
-    vi.stubGlobal('__NC_BUNDLED__', true);
-    const access = new RecoveryAccess(); access.change('connected');
-    const { requests } = setup(undefined, undefined, access);
-    fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
-    await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
-    act(() => { access.change('offline'); });
-    await write('Not while offline');
-    await waitFor(() => expect(messageField().textContent).toBe('Not while offline'));
-    /* No notice of its own: the global recovery status already says the workspace is offline. */
-    expect(screen.queryByRole('alert')).toBeNull();
-    expect(requests.filter((request) => request.path.endsWith('/messages'))).toHaveLength(0);
-  });
-
 it('send: says only that delivery is unconfirmed', async () => {
       setup((request) => request.path.endsWith('/messages') ? timedOut() : undefined);
       await sendUntilSpent('Lost on the way');
-      expect(within(screen.getByRole('alert')).getByText('发送结果未确认。')).toBeTruthy();
-      expect(chatText()).not.toMatch(CONNECTIVITY);
-    });
-
-it('Try again offline (bundled build): keeps the unconfirmed footer as it was', async () => {
-      vi.stubGlobal('__NC_BUNDLED__', true);
-      const access = new RecoveryAccess(); access.change('connected');
-      setup((request) => request.path.endsWith('/messages') ? dropped() : undefined, undefined, access);
-      await sendUntilSpent('Retried offline');
-      act(() => { access.change('offline'); });
-      fireEvent.click(screen.getByRole('button', { name: /^(Try again|重试|安全重试（同幂等键）)$/ }));
       expect(within(screen.getByRole('alert')).getByText('发送结果未确认。')).toBeTruthy();
       expect(chatText()).not.toMatch(CONNECTIVITY);
     });
@@ -727,15 +682,6 @@ it('model select: says the change is unconfirmed', async () => {
       expect((await screen.findByRole('alert')).textContent).toContain('The model change is unconfirmed.');
       expect(chatText()).not.toMatch(CONNECTIVITY);
     });
-
-it('model select: says the model was not changed', async () => {
-        const requests = await offlineAfterOpening(() => undefined);
-        fireEvent.click(within(drawerElement()).getByRole('button', { name: /^Model:/ }));
-        fireEvent.click(await screen.findByRole('radio', { name: /^Default/ }));
-        fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-        expect((await screen.findByRole('alert')).textContent).toContain('The model was not changed.');
-        expect(requests.filter((request) => request.method === 'PATCH' && /\/api\/v1\/sessions\/[^/]+$/.test(request.path))).toEqual([]);
-      });
 
 it('never carries a delivered message the server has not shown yet into the next conversation', async () => {
     storedSetup();
@@ -1097,32 +1043,6 @@ it('offline after a lost answer: stays unconfirmed, since the first attempt may 
       } finally { onlineManager.setOnline(true); }
     });
 
-it('not admitted at the press (bundled recovery not connected): refused, with nothing sent', async () => {
-      const access = new RecoveryAccess(); access.change('connected');
-      const { requests } = setup(undefined, undefined, access);
-      await screen.findByRole('button', { name: 'Conversation Planner chat' });
-      await openDraft();
-      act(() => { access.change('offline'); });
-      await write('words not admitted');
-      await says(CONVERSATION_CREATE_TEXT.refused);
-      expect(creates(requests, CONVERSATIONS)).toHaveLength(0);
-    });
-
-it('the recovery state changes while the create is out: unconfirmed, never "connection changed"', async () => {
-      const access = new RecoveryAccess(); access.change('connected');
-      let answer!: (response: ApiTransportResponse) => void;
-      const { requests } = setup((request) => request.method === 'POST' && request.path === CONVERSATIONS
-        ? new Promise<ApiTransportResponse>((resolve) => { answer = resolve; }) : undefined, undefined, access);
-      await screen.findByRole('button', { name: 'Conversation Planner chat' });
-      await openDraft();
-      await write('words in flight');
-      await waitFor(() => expect(creates(requests, CONVERSATIONS)).toHaveLength(1));
-      act(() => { access.change('offline'); });
-      await act(async () => { answer(created(derivedRow('w1', creates(requests, CONVERSATIONS)[0]), creates(requests, CONVERSATIONS)[0])); await Promise.resolve(); });
-      await says(CONVERSATION_CREATE_TEXT.unknown);
-      expect(screen.getByRole('button', { name: /^(Try again|重试|安全重试（同幂等键）)$/ })).toBeTruthy();
-    });
-
 it.each(['429', 'transport'])('[F5] keeps a %s failure and its distinct echo when an unacknowledged send meets an old equal Unknown message', async (mode) => {
   const text = 'repeat this instruction';
   const first = sessionItem(ASSISTANT_CARD.id, 1, 'Earlier different instruction', 'user');
@@ -1198,15 +1118,13 @@ it('does not fetch a stored conversation absent from the current Track rows', as
   expect(requests.some((request) => request.path.includes('foreign-or-deleted-card'))).toBe(false);
 });
 
-it.each([false, true])('selects a model before the first conversation message and sends it atomically (bundled=%s)', async bundled => {
-  vi.stubGlobal('__NC_BUNDLED__', bundled);
-  const access = new RecoveryAccess(); access.change('connected');
+it('selects a model before the first conversation message and sends it atomically', async () => {
   const { requests } = setup(request => {
     if (request.path === '/api/v1/bootstrap') return ok(fixtureBootstrap());
     if (request.path === '/api/v1/bootstrap?provider=codex') return ok(fixtureBootstrap(['codex'], ['gpt-5']));
     if (request.method === 'POST' && request.path === CONVERSATIONS) return created(derivedRow('w1', request), request);
     return undefined;
-  }, undefined, bundled ? access : undefined);
+  });
   await openDraft();
   fireEvent.click(await screen.findByRole('button', { name: /^Model:/ }));
   fireEvent.click(await screen.findByRole('radio', { name: /^gpt-5/ }));
@@ -1226,7 +1144,7 @@ it('uses a spinner while a closed conversation runs, a blue unread dot on comple
   const { client } = setup(request => {
     if (request.method === 'GET' && request.path === '/api/v1/tracks/w1') return ok(fixtureSnapshot(TRACK, [PLANNER_CARD, ...rows]));
     return undefined;
-  }, undefined, undefined, receiptKernel());
+  }, undefined, receiptKernel());
   const refetch = () => act(async () => {
     await client.invalidateQueries({ queryKey: queryKeys.trackDetail('w1') });
     await client.invalidateQueries({ queryKey: ['track', 'w1'] });
@@ -1288,7 +1206,7 @@ it('keeps new replies unread while reopening cached history is still loading', a
     if (isHistoryPath(request.path)) return holdHistory ? pending
       : ok(historyPage(conversationCardId(request.path), [sessionItem(ASSISTANT_CARD.id, 20, 'Previously read answer.')]));
     return undefined;
-  }, undefined, undefined, receiptKernel());
+  }, undefined, receiptKernel());
   const row = () => screen.getByRole('button', { name: /^Conversation Assistant(?:,|$)/ });
   const unread = () => row().closest('li')?.querySelector('[data-nc-activity="unread"]');
   fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
@@ -1420,16 +1338,7 @@ async function sendUntilSpent(text: string) {
 }
 const CONNECTIVITY = /Transport request failed|timed out|back online|连接恢复/;
 const timedOut = (): never => { throw new DOMException('Request timed out.', 'TimeoutError'); };
-const dropped = (): never => { throw new Error('response dropped'); };
 const chatText = () => drawerElement().textContent;
-async function offlineAfterOpening(reply: Reply) {
-  vi.stubGlobal('__NC_BUNDLED__', true);
-  const access = new RecoveryAccess(); access.change('connected');
-  const { requests } = setup(reply, undefined, access);
-  await openAssistant();
-  act(() => { access.change('offline'); });
-  return requests;
-}
 const RAW_OR_CONNECTIVITY = /Transport request failed|timed out|schema|offline|reconnect|connection|Nothing was sent|连接/i;
 const says = async (text: string) => {
   await waitFor(() => expect(within(screen.getByRole('alert')).getByText(text, { exact: true })).toBeTruthy());
@@ -1866,7 +1775,7 @@ it('does not loop failed acknowledgements when a conversation with no output is 
   receipts.capWrites(8);
   const { client } = setup(request => request.path === '/api/v1/tracks/w1'
     ? ok(fixtureSnapshot(TRACK, [PLANNER_CARD, assistantRow({ lastNotifiableTurnAtMs: null })])) : undefined,
-  undefined, undefined, receipts);
+  undefined, receipts);
   fireEvent.click(await screen.findByRole('button', { name: /^Conversation Assistant(?:,|$)/ }));
   await screen.findByRole('combobox', { name: 'Message' });
   await waitFor(() => expect(receipts.posts().some(request => request.path.includes('/conversation/'))).toBe(true));
@@ -1884,7 +1793,7 @@ it('keeps a visible conversation without output manually unread after receipt re
   ] });
   const { client } = setup(request => request.path === '/api/v1/tracks/w1'
     ? ok(fixtureSnapshot(TRACK, [PLANNER_CARD, assistantRow({ lastNotifiableTurnAtMs: null })])) : undefined,
-  undefined, undefined, receipts);
+  undefined, receipts);
   fireEvent.click(await screen.findByRole('button', { name: /^Conversation Assistant(?:,|$)/ }));
   await screen.findByRole('combobox', { name: 'Message' });
   await waitFor(() => expect(receipts.stored('conversation', ASSISTANT_CARD.id)?.manualUnread).toBe(false));

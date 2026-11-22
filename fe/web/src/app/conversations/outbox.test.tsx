@@ -4,14 +4,12 @@ import { afterEach, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 import { ConversationProvider, useConversationCommands } from './public.tsx';
 import { useConversationOutbox } from './outbox.ts';
-import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import { sendPlannerInputOperation } from '../../../../core/domain/conversation-commands.ts';
 
-const transport: ApiTransportPort = { send: () => Promise.reject(new Error('unused')) };
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 function setup(send = vi.fn().mockResolvedValue({ card_id: 'a', worker_session_id: 'a', entry_id: 'input', turnId: 'accepted-turn' })) {
   return { send, ...renderHook(() => ({ registry: useConversationCommands(), outbox: useConversationOutbox({
-    cardId: 'a', transport, send, serverEntries: [], liveReplies: [], stalled: false, queuesInput: false,
+    cardId: 'a', send, serverEntries: [], liveReplies: [], stalled: false, queuesInput: false,
     queueIfBusy: false, pressed: () => {},
   }) }), { wrapper: ({ children }: { children: ReactNode }) => <ConversationProvider>{children}</ConversationProvider> }) };
 }

@@ -3,7 +3,6 @@ import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import { ApiError, classifyFailure, refusedText } from '../../../../core/domain/failure-class.ts';
 import { LOGIN_FAILURES, LOGIN_TEXT, LoginThrottledError } from '../../../../core/domain/login.ts';
 import { runOperation } from '../providers/query-operation.ts';
-import type { RecoverySession } from '../../systems/recovery/session.ts';
 
 /**
  * Login treats rejected credentials as an expected result and does not broadcast its 401. Any other failure is
@@ -30,14 +29,4 @@ export async function loginWithTransport(
     const nextStep = failure.kind === 'http' ? failure.nextStep : undefined;
     throw new Error(nextStep ? `${message} ${nextStep}` : message, { cause });
   }
-}
-
-/** The form's cancellation spans the login POST and the same session owner's proof. */
-export async function loginForRecovery(transport: ApiTransportPort, session: RecoverySession,
-  username: string, password: string, signal: AbortSignal): Promise<SessionIdentity | null> {
-  const attempt = session.beginAuthentication(signal);
-  try {
-    const identity = await loginWithTransport(transport, username, password, attempt.signal);
-    return identity === null ? null : await attempt.verify(identity.sessionId);
-  } finally { attempt.cancel(); }
 }

@@ -57,7 +57,7 @@ export class ApiError extends Error {
 }
 
 /**
- * A write stopped where it is admitted, before anything left the browser (offline, or the bundled build syncing):
+ * A write stopped where it is admitted, while the browser is offline, before anything left the browser:
  * nothing was sent, so on every route it reads as a refusal, never as an unknown outcome (#2068). Why it was stopped is
  * the global connection indicator's to say, never the write's.
  */

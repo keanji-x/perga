@@ -1,11 +1,10 @@
 import { useCallback, useMemo, useRef } from 'react';
 import { onlineManager } from '@tanstack/react-query';
 
-import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { PlannerAttachment } from '../../../../core/domain/presentation-types.ts';
 import { type SentPlannerInput } from '../../../../core/domain/conversation-commands.ts';
 import { type TranscriptEntry } from '../../../../core/domain/conversation.ts';
-import { KeyedSendFailure, retryUnknownSend, sendFailureCode, sendFailureMessage, SEND_FAILURES, SEND_RETRIES } from '../../../../core/domain/conversation-delivery.ts';
+import { KeyedSendFailure, retryUnknownSend, sendRetryDelay, sendFailureCode, sendFailureMessage, SEND_FAILURES, SEND_RETRIES } from '../../../../core/domain/conversation-delivery.ts';
 import {
   outboxFacts,
   queueDisplayAccounting,
@@ -15,9 +14,7 @@ import {
   type QueueDisplayAccounting,
   type SendOp,
 } from '../../../../core/domain/conversation-outbox.ts';
-import { recoveryDelay } from '../../../../core/domain/recovery/access.ts';
 import { ApiError, classifyFailure, NotSentError } from '../../../../core/domain/failure-class.ts';
-import { admitTransport } from '../providers/recovery-mutation.ts';
 import { mintIdempotencyKey } from '../providers/idempotency-key.ts';
 
 import { useConversationCommands, useConversationSendOps } from './public.tsx';
@@ -29,13 +26,12 @@ import { useConversationCommands, useConversationSendOps } from './public.tsx';
  * a receipt arrives or the reader drops a failure.
  */
 export function useConversationOutbox({
-  cardId, transport, send, serverEntries, liveReplies, stalled,
+  cardId, send, serverEntries, liveReplies, stalled,
   queuesInput, queueIfBusy, pressed, target,
 }: {
   cardId: string;
-  transport: ApiTransportPort;
   /** Mark the receipt before starting the reads that reconcile it. */
-  send: (text: string, attachments: readonly string[], key: string, admitted: ApiTransportPort,
+  send: (text: string, attachments: readonly string[], key: string,
     queueIfBusy: boolean, target?: ConversationSendTarget) => Promise<SentPlannerInput>;
   target?: ConversationSendTarget;
   serverEntries: readonly TranscriptEntry[];
@@ -76,7 +72,7 @@ export function useConversationOutbox({
   };
 
   /** One run of a begun op: its attempts under one key, settled into the outbox of the card it was pressed in. */
-  const run = (op: SendOp & { phase: 'sending' }, admittedAtPress: ApiTransportPort): Promise<void> => {
+  const run = (op: SendOp & { phase: 'sending' }): Promise<void> => {
     const sentTo = cardId;
     const { key, echo, fromComposer, target } = op;
     const generation = registry.sendGenerationOf(sentTo);
@@ -84,18 +80,14 @@ export function useConversationOutbox({
     const requireCurrent = () => { if (!current()) throw new KeyedSendFailure(new NotSentError(), 'refused'); };
     const attachments: readonly PlannerAttachment[] = echo.attachments ?? [];
     const settle = (next: SendOp | null) => editOutbox(sentTo, (current) => settleSendOp(current, key, next));
-    /* An unknown answer is sent again under the same key, so the server queues the message at most once. Each
-       retry is admitted again; one that cannot go out counts as an attempt. */
-    const admitRetry = (): ApiTransportPort | null => { try { return admitTransport(transport); } catch { return null; } };
+    /* An unknown answer is sent again under the same key, so the server queues the message at most once. */
     const deliver = () => retryUnknownSend(
-      (attempt) => {
+      () => {
         requireCurrent();
-        const admitted = attempt === 0 ? admittedAtPress : admitRetry();
-        return admitted === null ? Promise.reject(new NotSentError())
-          : send(echo.text, attachments.map((attachment) => attachment.id), key, admitted, queueIfBusy, target);
+        return send(echo.text, attachments.map((attachment) => attachment.id), key, queueIfBusy, target);
       },
       (error) => (error instanceof ApiError ? error.failure : null),
-      (retry) => new Promise<void>((resolve) => { setTimeout(resolve, recoveryDelay(retry, Math.random())); }),
+      (retry) => new Promise<void>((resolve) => { setTimeout(resolve, sendRetryDelay(retry, Math.random())); }),
       op.unknown, (target?.queue ?? queueIfBusy) ? 0 : SEND_RETRIES,
       // The session epoch and task admission checks reject a conflict before writing the message. After a lost
       // response the shared retry logic still keeps uncertainty until it receives a receipt.
@@ -140,12 +132,6 @@ export function useConversationOutbox({
     send: (conversationId: string, text: string, attachments: readonly PlannerAttachment[], fromComposer: boolean,
       idempotencyKey?: string): Promise<void> | null => {
       if (conversationId !== cardId || stalled || view.failed !== null) return null;
-      /* Admitted at the press. Where the transport carries a recovery admission (the bundled build), a press that
-         cannot leave the browser is refused here and sends nothing: the composer keeps its words, and the global
-         recovery status already says why. The web build admits every press, and a send that cannot leave fails as a
-         transport error — unknown, retried. */
-      let admitted: ApiTransportPort;
-      try { admitted = admitTransport(transport); } catch { return null; }
       const op = {
         key: idempotencyKey ?? mintIdempotencyKey(), target, fromComposer, phase: 'sending', unknown: false,
         echo: {
@@ -162,7 +148,7 @@ export function useConversationOutbox({
       } as const;
       if (!beginSend(cardId, op)) return null;
       if (shownCardId.current === cardId) pressed();
-      return run(op, admitted);
+      return run(op);
     },
     /**
      * Try again resumes the failed op, it does not press again: the echo (images included — an image-only message
@@ -172,16 +158,13 @@ export function useConversationOutbox({
     retrySend: (key: string) => {
       const failed = view.failed;
       if (failed?.key !== key || stalled || !onlineManager.isOnline()) return false;
-      let admitted: ApiTransportPort;
-      /* Not admitted: the op keeps its standing and its footer unchanged; the global recovery status says why. */
-      try { admitted = admitTransport(transport); } catch { return false; }
       const op = {
         key, target: failed.target, echo: failed.echo, fromComposer: failed.fromComposer, phase: 'sending',
         unknown: failed.delivery === 'unknown',
       } as const;
       if (!beginSend(cardId, op)) return false;
       pressed();
-      void run(op, admitted);
+      void run(op);
       return true;
     },
     /**

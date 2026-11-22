@@ -225,7 +225,7 @@ function harness(options: {
   if (!options.reload) window.history.pushState({}, '', `${options.path ?? '/'}`);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const router = createAppRouter({ prepareReport: prepareReportDocument,
-    transport, unauthorized, client, cards: bootTestCardRuntime(), onSignOut: vi.fn(),
+    transport, unauthorized, client, cards: bootTestCardRuntime(),
     submittedStorage: options.submittedStorage === undefined ? undefined : () => options.submittedStorage!,
   });
   /* `StrictMode`, because production runs it: its double-invoked effects are what

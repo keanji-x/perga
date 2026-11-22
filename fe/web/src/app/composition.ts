@@ -5,7 +5,7 @@ import { createBrowserCursorStore, type CursorIdleScheduler } from './events/bro
 import { runOperation } from './providers/query-operation.ts';
 import type { SyncCursorPort } from '../systems/events/cursor-port.ts';
 import { EventStream, type UnconfiguredEventStream } from '../systems/events/event-stream.ts';
-import { WebSocketDriver, wsUrl, type SocketFactory, type UnauthorizedProbe } from '../systems/events/websocket-driver.ts';
+import { WebSocketDriver, wsUrl, type SocketFactory } from '../systems/events/websocket-driver.ts';
 
 export type EventComposition = Readonly<{
   store: SyncCursorPort;
@@ -20,7 +20,6 @@ export function createBrowserEventComposition(options: Readonly<{
   transport: ApiTransportPort;
   url?: string;
   unauthorizedChannel?: Pick<UnauthorizedChannel, 'notify'>;
-  probeUnauthorized?: UnauthorizedProbe;
   cursorStore?: SyncCursorPort;
 }>): EventComposition {
   const unauthorized = options.unauthorizedChannel ?? createUnauthorizedChannel(
@@ -32,7 +31,6 @@ export function createBrowserEventComposition(options: Readonly<{
     storage: options.storage,
     transport: options.transport,
     onUnauthorized: () => unauthorized.notify(),
-    probeUnauthorized: options.probeUnauthorized,
     cursorStore: options.cursorStore,
   });
 }
@@ -43,7 +41,6 @@ export function createEventComposition(options: Readonly<{
   onUnauthorized?: () => void;
   socketFactory?: SocketFactory;
   idle?: CursorIdleScheduler;
-  probeUnauthorized?: UnauthorizedProbe;
   driverFactory?: EventDriverFactory;
   url?: string;
   cursorStore?: SyncCursorPort;
@@ -53,7 +50,7 @@ export function createEventComposition(options: Readonly<{
   const driver = createDriver({
     cursor: store,
     // The driver owns the single unauthorized notification for its probe.
-    probeUnauthorized: options.probeUnauthorized ?? (() => runOperation(options.transport, whoamiOperation(), undefined)),
+    probeUnauthorized: () => runOperation(options.transport, whoamiOperation(), undefined),
     onUnauthorized: options.onUnauthorized ?? (() => undefined),
     ...(options.socketFactory === undefined ? {} : { socketFactory: options.socketFactory }),
   });

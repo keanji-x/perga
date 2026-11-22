@@ -79,7 +79,7 @@ export function renderDailyFixture({ history, identity, routeProbe, withTranspor
   const unauthorized = createUnauthorizedChannel({ enqueue: (task) => task() });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const fixtureTransport = withReadReceipts(transport, receipts);
-  const router = createAppRouter({ prepareReport, transport: withTransport?.(fixtureTransport) ?? fixtureTransport, unauthorized, client, cards: bootTestCardRuntime(), uiPreferences, onSignOut: () => undefined });
+  const router = createAppRouter({ prepareReport, transport: withTransport?.(fixtureTransport) ?? fixtureTransport, unauthorized, client, cards: bootTestCardRuntime(), uiPreferences });
   // Observe commits inside the existing provider via declared child routes. Each
   // wrapper delegates the original component and adds only a nonvisual test probe.
   if (routeProbe !== undefined) for (const route of (router.routeTree.children ?? []) as readonly AnyRoute[]) {

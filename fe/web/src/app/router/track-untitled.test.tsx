@@ -92,7 +92,7 @@ function setup(options: Options = {}) {
   };
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const router = createAppRouter({ prepareReport: prepareReportDocument,
-    transport, unauthorized, client, cards: bootTestCardRuntime(), onSignOut: vi.fn(),
+    transport, unauthorized, client, cards: bootTestCardRuntime(),
   });
   render(
     <QueryClientProvider client={client}>

@@ -52,7 +52,7 @@ already held by the query cache. The report feature reuses pure syntax/outline/
 reference data for that exact input; replacing the report card invalidates it.
 No DOM, navigation callback, file port, subscription or timer is retained. The
 cache neither keeps evicted query cards alive nor promises a memory cap while
-queries remain reachable. Leaving the authenticated/recovery scope drops it.
+queries remain reachable. Leaving the authenticated scope drops it.
 
 TrackRouteBody composes generic UI admission and systems preparation leases through
 the report typed adapter. Production injects per-job native Worker execution of

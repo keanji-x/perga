@@ -59,7 +59,7 @@ it('opens a confirmed Track after Chromium reloads the draft page', async () => 
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const router = createAppRouter({
       client, transport, prepareReport: prepareReportDocument, cards: bootTestCardRuntime(),
-      unauthorized: createUnauthorizedChannel({ enqueue: (task) => task() }), onSignOut: () => undefined,
+      unauthorized: createUnauthorizedChannel({ enqueue: (task) => task() }),
       submittedStorage: frameStorage,
     });
     router.update({ history: createMemoryHistory({ initialEntries: ['/area/work/new'] }) });

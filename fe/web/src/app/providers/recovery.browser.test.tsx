@@ -25,7 +25,7 @@ it.each([390, 1280])('keeps preflight recovery compact and navigation usable at 
   }) };
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, retryDelay: 0 } } });
   const unauthorized = createUnauthorizedChannel({ enqueue: (task) => task() });
-  const router = createAppRouter({ prepareReport: prepareReportDocument, transport, unauthorized, client, cards: bootTestCardRuntime(), onSignOut: vi.fn() });
+  const router = createAppRouter({ prepareReport: prepareReportDocument, transport, unauthorized, client, cards: bootTestCardRuntime() });
   router.update({ history: createMemoryHistory({ initialEntries: ['/'] }) });
   const runtime: ProviderRuntime = {
     fetchVersion: vi.fn().mockRejectedValueOnce(new Error('Version service unavailable'))

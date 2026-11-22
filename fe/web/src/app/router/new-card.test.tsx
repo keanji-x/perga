@@ -87,7 +87,7 @@ function setup({ createFails = false, deferCreate = false, answers = [] as reado
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   const router = createAppRouter({ prepareReport: prepareReportDocument,
-    transport: withReadReceipts(transport), unauthorized, client, cards: bootTestCardRuntime(), onSignOut: vi.fn(),
+    transport: withReadReceipts(transport), unauthorized, client, cards: bootTestCardRuntime(),
   });
   router.update({ history: createMemoryHistory({ initialEntries: ['/track/w1'] }) });
   render(<QueryClientProvider client={client}><ThemeProvider storage={{ getItem: () => null, setItem: () => undefined }}>
