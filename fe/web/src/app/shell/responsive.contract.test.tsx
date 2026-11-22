@@ -48,15 +48,13 @@ let workspaceTracks: readonly Track[] = [TRACK];
 // Authentication notifications have their own real query and browser coverage; this contract isolates navigation.
 vi.mock('./provider-authentication.tsx', () => ({ ProviderAuthenticationNotice: () => null }));
 
-vi.mock('../providers/queries.ts', async (importOriginal) => ({
-  ...await importOriginal<typeof import('../providers/queries.ts')>(),
+vi.mock('../providers/workspace-queries.ts', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../providers/workspace-queries.ts')>(),
   useWorkspace: () => ({
     areas: [AREA], tracks: workspaceTracks, tracksByArea: new Map([['c1', workspaceTracks]]), trackErrorsByArea: new Map(), tracksLoadingByArea: new Map(),
     areasError: null, overlaysError: null, areasLoading: false, overlaysLoading: false,
     retryAreas: vi.fn(), retryOverlays: vi.fn(), retryTracks: vi.fn(),
   }),
-  useAreaMutations: () => ({ create: vi.fn(), update: vi.fn(), remove: vi.fn() }),
-  useTrackMutations: () => ({ setPinned: vi.fn(), create: vi.fn(), remove: vi.fn() }),
   // Blank-only is a working state, so the rail contract needs nothing more.
 }));
 /* A partial mock: `pathFor`, which the dock's selection rule reads the route
@@ -136,3 +134,6 @@ describe('compact navigation interaction contracts', () => {
     await waitFor(() => expect(marker()).toBeNull());
   });
 });
+
+vi.mock('../providers/area-mutations.ts', () => ({ useAreaMutations: () => ({ create: vi.fn(), update: vi.fn(), remove: vi.fn() }) }));
+vi.mock('../providers/track-lifecycle-mutations.ts', () => ({ useTrackLifecycleMutations: () => ({ setPinned: vi.fn(), create: vi.fn(), remove: vi.fn() }) }));

@@ -11,16 +11,16 @@ import {
 } from '../../../../core/domain/agent-providers.ts';
 import { probeFailureText } from '../../../../core/domain/read-failure.ts';
 import { useState } from '../../ui/state/public.ts';
-import { queryKeys, runOperation } from './queries.ts';
+import { queryKeys } from './query-keys.ts';
+import { runOperation } from './query-operation.ts';
 
 export function agentProvidersQueryOptions(
   transport: ApiTransportPort,
   unauthorized: UnauthorizedChannel,
   targetId?: string,
 ) {
-  const scoped = targetId !== undefined && targetId !== '' && targetId !== 'local';
   return {
-    queryKey: scoped ? [...queryKeys.agentProviders(), targetId] as const : queryKeys.agentProviders(),
+    queryKey: queryKeys.agentProviders(targetId),
     queryFn: ({ signal }: { signal: AbortSignal }): Promise<ProviderAvailability[]> =>
       runOperation(transport, { ...agentProvidersOperation(false, targetId), signal }, unauthorized),
   };

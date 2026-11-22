@@ -2,7 +2,7 @@ import { loginOperation, type SessionIdentity } from '../../../../core/api/auth.
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import { ApiError, classifyFailure, refusedText } from '../../../../core/domain/failure-class.ts';
 import { LOGIN_FAILURES, LOGIN_TEXT } from '../../../../core/domain/login.ts';
-import { runOperation } from '../providers/queries.ts';
+import { runOperation } from '../providers/query-operation.ts';
 import type { RecoverySession } from '../../systems/recovery/session.ts';
 
 /**

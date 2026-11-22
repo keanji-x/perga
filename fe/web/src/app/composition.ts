@@ -2,7 +2,7 @@ import { whoamiOperation } from '../../../core/api/auth.ts';
 import type { ApiTransportPort } from '../../../core/api/types.ts';
 import { createUnauthorizedChannel, type UnauthorizedChannel } from '../../../core/api/unauthorized.ts';
 import { createBrowserCursorStore, type CursorIdleScheduler } from './events/browser-cursor-store.ts';
-import { runOperation } from './providers/queries.ts';
+import { runOperation } from './providers/query-operation.ts';
 import type { SyncCursorPort } from '../systems/events/cursor-port.ts';
 import { EventStream, type UnconfiguredEventStream } from '../systems/events/event-stream.ts';
 import { WebSocketDriver, wsUrl, type SocketFactory, type UnauthorizedProbe } from '../systems/events/websocket-driver.ts';

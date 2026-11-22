@@ -18,7 +18,7 @@ import { ProductionApp } from './production-app.tsx';
 import { createEventComposition } from '../composition.ts';
 import { EventBridge } from '../events/event-bridge.tsx';
 import type { SocketPort } from '../../systems/events/websocket-driver.ts';
-import { queryKeys } from '../providers/queries.ts';
+import { queryKeys } from '../providers/query-keys.ts';
 import { WEB_COMPAT_VERSION } from '../providers/public.tsx';
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });

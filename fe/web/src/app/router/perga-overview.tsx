@@ -10,7 +10,7 @@ import { trackDisplayTitle, trackRecentAt, userVisibleTracks, hasFailed, needsUs
 import { ErrorBox } from '../../ui/error-box/public.tsx';
 import { ActivityIndicator } from '../../ui/activity-indicator/public.tsx';
 import { useReadReceipts } from '../providers/read-receipts.tsx';
-import { useWorkspace } from '../providers/queries.ts';
+import { useWorkspace } from '../providers/workspace-queries.ts';
 import { useRequestCreateArea } from '../shell/public.tsx';
 import { useGo } from './navigation.ts';
 import styles from './perga-overview.module.css';

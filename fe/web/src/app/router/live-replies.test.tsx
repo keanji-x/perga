@@ -5,7 +5,7 @@ import type { SessionItemsPageDto } from '../../../../core/api/perga-v1.ts';
 import { renderDailyFixture } from './daily-planner-fixture.tsx';
 import { fixtureSession } from './session-contract-fixture.ts';
 import { sessionItem, sessionPage, sessionTurn } from './conversation-session-data.ts';
-import { queryKeys } from '../providers/queries.ts';
+import { queryKeys } from '../providers/query-keys.ts';
 
 const SESSION = 'daily-planner';
 function setup(initial: SessionItemsPageDto) {

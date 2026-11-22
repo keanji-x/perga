@@ -1,3 +1,4 @@
+import { queryKeys } from '../providers/query-keys.ts';
 import { DailyCalendar,type CalendarViewMode } from '../../features/today/daily-calendar.tsx';
 import { CenteredComposerIntroduction } from '../../ui/drawer/centered-composer-introduction.tsx';
 import { EmptyState } from '../../ui/empty-state/public.tsx';
@@ -18,7 +19,8 @@ import { ReportDetails } from '../../features/report/document/details.tsx';
 import { ErrorBox } from '../../ui/error-box/public.tsx';
 import { PanelCard } from '../../ui/panel-card/public.tsx';
 import { useState } from '../../ui/state/public.ts';
-import { runOperation,trackDetailQueryOptions } from '../providers/queries.ts';
+import { runOperation } from '../providers/query-operation.ts';
+import { trackDetailQueryOptions } from '../providers/track-queries.ts';
 
 type DailyCenterView = 'assistant' | 'changes' | 'supervisor';
 
@@ -65,7 +67,7 @@ export function DailyTodayRoute({ transport, unauthorized, selectedDate, onOpenT
     setVisibleRange((current) => (current.start === next.start && current.end === next.end ? current : next));
   }, [setVisibleRange]);
   const daily = useQuery({
-    queryKey: ['daily-planner', validSelectedDate ?? (isInvalidDate ? 'invalid' : 'today')],
+    queryKey: queryKeys.dailyPlanner(validSelectedDate ?? (isInvalidDate ? 'invalid' : 'today')),
     enabled: !isInvalidDate,
     queryFn: async () => {
       try {
@@ -80,7 +82,7 @@ export function DailyTodayRoute({ transport, unauthorized, selectedDate, onOpenT
     refetchInterval: 30_000,
   });
   const calendar = useQuery({
-    queryKey: ['daily-calendar', visibleRange.start, visibleRange.end],
+    queryKey: queryKeys.dailyCalendar(visibleRange.start, visibleRange.end),
     enabled: true,
     queryFn: () => runOperation(transport, todayCalendarOperation(visibleRange.start, visibleRange.end), unauthorized),
     refetchInterval: 30_000,
@@ -180,7 +182,7 @@ function DailyReportChanges({ date, isToday, transport, unauthorized, onOpenTrac
 }>) {
   const compactViewport = useCompactViewport();
   const [open, setOpen] = useState(standalone);
-  const changes = useInfiniteQuery({ queryKey: ['daily-report-changes', date], enabled: open,
+  const changes = useInfiniteQuery({ queryKey: queryKeys.dailyReportChanges(date), enabled: open,
     initialPageParam: undefined as Readonly<{ cursor: string; through: number }> | undefined,
     queryFn: ({ pageParam }) => runOperation(transport, reportChangesOperation(date, pageParam), unauthorized),
     getNextPageParam: (last) => last.next_cursor === null ? undefined : { cursor: last.next_cursor, through: last.through_event_id },
@@ -212,7 +214,7 @@ function ReportChangeItem({ card, change, date, timeZone, through, transport, un
   unauthorized: UnauthorizedChannel; onOpenTrack: (trackId: string) => void;
 }>) {
   const [open, setOpen] = useState(false);
-  const edits = useInfiniteQuery({ queryKey: ['daily-report-edits', date, change.track_id, through], enabled: open,
+  const edits = useInfiniteQuery({ queryKey: queryKeys.dailyReportEdits(date, change.track_id, through), enabled: open,
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam }) => runOperation(transport, reportEditsOperation(date, change.track_id, through, pageParam), unauthorized),
     getNextPageParam: (last) => last.next_cursor ?? undefined,

@@ -9,7 +9,8 @@ import { fixtureSession } from '../router/session-contract-fixture.ts';
 import { sessionPage, sessionReply, sessionInput } from '../router/conversation-session-data.ts';
 import { ConversationProvider, useConversationCommands } from '../conversations/public.tsx';
 import { useConversationStore } from '../conversations/store.ts';
-import { plannerRunQueryOptions, usePlannerMutations } from './queries.ts';
+import { plannerRunQueryOptions } from './conversation-queries.ts';
+import { usePlannerMutations } from './planner-mutations.ts';
 import type { ConversationRun } from '../../../../core/domain/conversation-display.ts';
 
 const unauthorized = createUnauthorizedChannel({ enqueue: task => task() });
@@ -42,7 +43,7 @@ it('publishes only the latest serialized permission ACK and cancels a stale run 
   const { result } = renderHook(() => usePlannerMutations(transport, 'a', 't', unauthorized, useConversationCommands()), { wrapper: wrapper(client) });
   const first = result.current.setPermissionMode('full');
   const second = result.current.setPermissionMode('never');
-  expect(puts).toBe(1);
+  await waitFor(() => expect(puts).toBe(1));
   await act(async () => { writes[0].resolve(sessionReply(fixtureSession('a', 't', { permissionMode: 'full' }))); await Promise.resolve(); });
   expect(client.getQueryData<ConversationRun>(options.queryKey)?.session.permissionMode).toBe('ask');
   expect(oldSignal?.aborted).toBe(true);
@@ -159,7 +160,7 @@ it.each([false, true])('protects a newer confirmed GET from an old ACK across A 
   rerender({ id: 'b' }); rerender({ id: 'a' });
   if (newerWrite) {
     act(() => { void result.current.store.setPermissionMode('never'); });
-    expect(puts).toBe(1);
+    await waitFor(() => expect(puts).toBe(1));
   }
   await client.fetchQuery(plannerRunQueryOptions(transport, 'a', unauthorized));
   holdReads = true;

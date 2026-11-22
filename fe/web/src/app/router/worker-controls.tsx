@@ -10,7 +10,8 @@ import { workerDispatchOperation, type WorkerDispatchOptions } from '../../../..
 import { Dialog } from '../../ui/dialog/public.tsx';
 import { useState } from '../../ui/state/public.ts';
 import { mintIdempotencyKey } from '../providers/idempotency-key.ts';
-import { queryKeys, runOperation } from '../providers/queries.ts';
+import { queryKeys } from '../providers/query-keys.ts';
+import { runOperation } from '../providers/query-operation.ts';
 import { admitTransport } from '../providers/recovery-mutation.ts';
 
 type OptionalDispatchFields = Readonly<{

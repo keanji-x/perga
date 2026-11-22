@@ -23,7 +23,8 @@ import { EventBridge } from '../events/event-bridge.tsx';
 import { RecoveryEventBridge } from '../events/recovery-event-bridge.tsx';
 import { SystemUpgradeProvider } from '../providers/connection-status.tsx';
 import { AppProviders,WEB_COMPAT_VERSION,type ProviderRuntime } from '../providers/public.tsx';
-import { logoutOperation,runOperation,serverVersionOperation } from '../providers/queries.ts';
+import { serverVersionOperation } from '../providers/server-queries.ts';
+import { runOperation } from '../providers/query-operation.ts';
 import { createRecentFileHistory } from '../providers/recent-files.ts';
 import { SystemUpgradeMonitor } from '../providers/system-upgrade.tsx';
 import { createFetchTransport } from '../providers/transport.ts';
@@ -98,7 +99,7 @@ export function mountProductionApp(root: HTMLElement, browserInput: Readonly<{
     adoptScope: scope => uiPreferences.setRecoveryScope(scope),
     identity: (signal) => runOperation(probe, { ...whoamiOperation(), signal }, undefined),
     version: (signal) => runOperation(probe, { ...serverVersionOperation(), signal }, unauthorized),
-    logout: (signal) => runOperation(probe, { ...logoutOperation(), signal }, undefined),
+    logout: () => Promise.resolve(undefined),
     clear: () => clearSessionArtifacts(client, cursorStore, runtime), online: () => navigator.onLine, visible: () => !document.hidden,
   }) : undefined;
   const buildRouter = () => createAppRouter({
@@ -112,10 +113,8 @@ export function mountProductionApp(root: HTMLElement, browserInput: Readonly<{
     uiPreferences,
     onSignOut: () => {
       if (recovery) { void recovery.signOut(); return; }
-      void runOperation(transport, logoutOperation(), unauthorized).finally(() => {
-        clearSessionArtifacts(client, cursorStore, runtime);
-        browser.reload();
-      });
+      clearSessionArtifacts(client, cursorStore, runtime);
+      browser.reload();
     },
   });
   const mounted = createRoot(root);

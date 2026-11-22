@@ -25,7 +25,7 @@ import { useEffect, useLayoutEffect } from 'react';
 
 import type { ApiRequest, ApiTransportPort, ApiTransportResponse } from '../../../../core/api/types.ts';
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
-import { queryKeys } from '../providers/queries.ts';
+import { queryKeys } from '../providers/query-keys.ts';
 import type { Conversation, TranscriptEntry } from '../../../../core/domain/conversation.ts';
 import {
   CONVERSATION_CREATE_TEXT,

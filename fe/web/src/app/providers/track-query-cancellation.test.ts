@@ -3,9 +3,8 @@ import { afterEach,describe,expect,it,vi } from 'vitest';
 
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { retireAreaQueries } from './area-query-lifecycle.ts';
-import {
-areaListQueryOptions,tracksInAreaQueryOptions
-} from './queries.ts';
+import { areaListQueryOptions } from './workspace-queries.ts';
+import { tracksInAreaQueryOptions } from './track-queries.ts';
 import { createFetchTransport } from './transport.ts';
 
 afterEach(() => { vi.unstubAllGlobals(); });

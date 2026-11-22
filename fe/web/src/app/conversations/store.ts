@@ -17,7 +17,9 @@ import { refusalText, writeFailureOf } from '../../../../core/domain/failure-cla
 import { PERMISSION_MODE_CHANGE_TEXT, PLANNER_PERMISSION_MODE_FAILURES } from '../../../../core/domain/planner-permission-mode.ts';
 import { readErrorText } from '../../../../core/domain/read-failure.ts';
 import type { ConversationStopFeedback } from '../../../../core/domain/conversation-stop.ts';
-import { conversationHistoryQueryOptions, modelCatalogQueryOptions, plannerRunQueryOptions, usePlannerMutations } from '../providers/queries.ts';
+import { conversationHistoryQueryOptions, plannerRunQueryOptions } from '../providers/conversation-queries.ts';
+import { modelCatalogQueryOptions } from '../providers/model-queries.ts';
+import { usePlannerMutations } from '../providers/planner-mutations.ts';
 import { useState } from '../../ui/state/public.ts';
 import { useConversationAcceptedTurn, useConversationCommands, useConversationSendOps, useConversationQueueWriteOut, useConversationRememberedTurns, useRememberedConversations } from './public.tsx';
 import { NO_TURNS } from './registry-owner.ts';

@@ -1,10 +1,11 @@
+import { queryKeys } from './query-keys.ts';
 import { useQuery } from '@tanstack/react-query';
 import { useEffect,useSyncExternalStore } from 'react';
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { systemInfoOperation } from '../../../../core/domain/system-upgrade.ts';
 import { useConnectionStatus,useSystemUpgradeStore } from './connection-status.tsx';
-import { runOperation } from './queries.ts';
+import { runOperation } from './query-operation.ts';
 
 const emptyStore = Object.freeze({ read: () => null, subscribe: () => () => {} });
 export function useSystemUpgrade() {
@@ -19,7 +20,7 @@ export function SystemUpgradeMonitor({ transport, unauthorized }: Readonly<{
   const store = useSystemUpgradeStore();
   const connected = useConnectionStatus()?.connected;
   const { refetch } = useQuery({
-    queryKey: ['system-info'],
+    queryKey: queryKeys.systemInfo(),
     enabled: store !== null,
     queryFn: async ({ signal }) => {
       const revision = store?.revision();

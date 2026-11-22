@@ -1,7 +1,7 @@
 import { QueryClient } from '@tanstack/react-query';
 import { describe, expect, it } from 'vitest';
 
-import { queryKeys } from '../providers/queries.ts';
+import { queryKeys } from '../providers/query-keys.ts';
 import { trackLookupContext } from './track-lookup.ts';
 
 describe('track lookup context', () => {

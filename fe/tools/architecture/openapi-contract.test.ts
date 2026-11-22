@@ -13,7 +13,7 @@ const PATH_ITEM_FIELDS = new Set([...METHODS, 'summary', 'description', 'servers
  * declared in a calm-server route module is typed by a hand-written zod schema in `core/domain/**` instead. */
 const RESPONSE_WIRE_EXCEPTIONS = new Set([
   'ApprovalDto', 'ErrorBody', 'ExecutionTargetDto', 'GetPlannerRunResponse', 'GitDiffResponse', 'GitStatusResponse',
-  // Route-owned negotiated adapters, decoded by conversation-display.ts and queries.ts.
+  // Route-owned negotiated adapters, decoded by conversation-display.ts and server-queries.ts.
   // Their exact composition is pinned below; component wire models remain generated.
   'ConversationItemsReadResponse', 'HarnessLiveReadResponse', 'PlannerRunReadResponse',
   'InterruptPlannerCardResponse', 'ListdirResponse', 'ModelsResponse', 'PluginDetail', 'PluginListItem',

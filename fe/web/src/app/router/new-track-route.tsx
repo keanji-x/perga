@@ -1,3 +1,4 @@
+import { queryKeys } from '../providers/query-keys.ts';
 import { Banner } from '@astryxdesign/core/Banner';
 import { useQuery } from '@tanstack/react-query';
 import { useCallback,useEffect,useRef } from 'react';
@@ -21,9 +22,13 @@ import { useConversationCommands } from '../conversations/public.tsx';
 import { agentProvidersQueryOptions } from '../providers/agent-providers.ts';
 import { createDirectoryLister } from '../providers/directory.ts';
 import { mintIdempotencyKey } from '../providers/idempotency-key.ts';
-import { managedProvidersQueryOptions } from '../providers/managed-providers.ts';
+import { useManagedProviderCatalogs } from '../providers/managed-providers.ts';
 import { useMentionSearch } from '../providers/mentions.ts';
-import { executionTargetsQueryOptions,useCreateExecutionTarget,folderConflictOf,modelCatalogQueryOptions,runOperation,useTrackMutations,useWorkspace,type Workspace } from '../providers/queries.ts';
+import { executionTargetsQueryOptions, useCreateExecutionTarget } from '../providers/execution-target-queries.ts';
+import { folderConflictOf } from '../providers/area-mutations.ts';
+import { runOperation } from '../providers/query-operation.ts';
+import { useTrackLifecycleMutations } from '../providers/track-lifecycle-mutations.ts';
+import { useWorkspace, type Workspace } from '../providers/workspace-queries.ts';
 import { readHostThemeRgb } from '../theme/host-rgb.ts';
 import { useGo,useRouteParam } from './navigation.ts';
 import { useNewTrackSession,type NewTrackSession,type TrackCreationRequest } from './new-track-drafts.tsx';
@@ -64,22 +69,17 @@ function NewTrackEditor({ transport, unauthorized, workspace, session, store }: 
   );
   /* Availability has one cache owner; the managed response supplies only static creation capability.
      The server admits each submitted shape and renders any refusal through the existing error flow. */
-  const codexCatalog = useQuery(modelCatalogQueryOptions(transport, { kind: 'provider', provider: 'codex', targetId }, unauthorized));
-  const claudeCatalog = useQuery(modelCatalogQueryOptions(transport, { kind: 'provider', provider: 'claude', targetId }, unauthorized));
-  const opencodeCatalog = useQuery(modelCatalogQueryOptions(transport, { kind: 'provider', provider: 'opencode', targetId }, unauthorized));
-  const grokCatalog = useQuery(modelCatalogQueryOptions(transport, { kind: 'provider', provider: 'grok', targetId }, unauthorized));
-  const antigravityCatalog = useQuery(modelCatalogQueryOptions(transport, { kind: 'provider', provider: 'antigravity', targetId }, unauthorized));
   const availability = useQuery(agentProvidersQueryOptions(transport, unauthorized, targetId));
-  const providers = useQuery(managedProvidersQueryOptions(transport, unauthorized, targetId));
+  const { providers, catalogs } = useManagedProviderCatalogs(transport, unauthorized, targetId);
   const optionCwd = session.form?.cwd ?? session.area.defaultCwd ?? '';
   const workspaceOptionsQuery = useQuery({
-    queryKey: ['track-workspace-options', areaId, targetId, optionCwd],
+    queryKey: queryKeys.trackWorkspaceOptions(areaId, targetId, optionCwd),
     queryFn: ({ signal }: { signal: AbortSignal }) =>
       runOperation(transport, { ...trackWorkspaceOptionsOperation(areaId, optionCwd, undefined, targetId), signal }, unauthorized),
     enabled: session.form !== null && session.request === null,
     retry: false,
   });
-  const trackMutations = useTrackMutations(transport, unauthorized);
+  const trackMutations = useTrackLifecycleMutations(transport, unauthorized);
   const conversationRegistry = useConversationCommands();
   const go = useGo();
   const listDirectory = listDirectoryForTarget(targetId);
@@ -232,18 +232,12 @@ function NewTrackEditor({ transport, unauthorized, workspace, session, store }: 
         />
       )}
       <ModelPill
-        groups={[
-          { provider: 'codex', catalog: codexCatalog.data ?? null, availability: availabilityOf(availability.data, 'codex'),
-            acceptsUnavailableBlankTrack: providers.data?.find((entry) => entry.availability.provider === 'codex')?.accepts_unavailable_blank_track },
-          { provider: 'claude', catalog: claudeCatalog.data ?? null, availability: availabilityOf(availability.data, 'claude'),
-            acceptsUnavailableBlankTrack: providers.data?.find((entry) => entry.availability.provider === 'claude')?.accepts_unavailable_blank_track },
-          { provider: 'opencode', catalog: opencodeCatalog.data ?? null, availability: availabilityOf(availability.data, 'opencode'),
-            acceptsUnavailableBlankTrack: providers.data?.find((entry) => entry.availability.provider === 'opencode')?.accepts_unavailable_blank_track },
-          { provider: 'grok', catalog: grokCatalog.data ?? null, availability: availabilityOf(availability.data, 'grok'),
-            acceptsUnavailableBlankTrack: providers.data?.find((entry) => entry.availability.provider === 'grok')?.accepts_unavailable_blank_track },
-          { provider: 'antigravity', catalog: antigravityCatalog.data ?? null, availability: availabilityOf(availability.data, 'antigravity'),
-            acceptsUnavailableBlankTrack: providers.data?.find((entry) => entry.availability.provider === 'antigravity')?.accepts_unavailable_blank_track },
-        ]}
+        groups={(providers.data ?? []).map((entry, index) => ({
+          provider: entry.availability.provider,
+          catalog: catalogs[index].data ?? null,
+          availability: availabilityOf(availability.data, entry.availability.provider),
+          acceptsUnavailableBlankTrack: entry.accepts_unavailable_blank_track,
+        }))}
         provider={session.provider}
         effortControl={compactViewport ? 'in-menu' : 'separate'}
         selection={session.model}

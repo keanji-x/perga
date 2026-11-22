@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, expect, it } from 'vitest';
-import { queryKeys } from '../providers/queries.ts';
+import { queryKeys } from '../providers/query-keys.ts';
 import { renderConversationReadFixture } from './conversation-read-fixture.tsx';
 
 afterEach(cleanup);

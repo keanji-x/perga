@@ -10,7 +10,7 @@ import { ReportDocument } from '../../features/report/document/public.tsx';
 import '../../styles/entry.css';
 import { TaskRecovery, useCurrentTaskRows } from './task-recovery.tsx';
 import { fixtureSnapshot, fixtureTrack } from './session-contract-fixture.ts';
-import { queryKeys } from '../providers/queries.ts';
+import { queryKeys } from '../providers/query-keys.ts';
 
 afterEach(cleanup);
 

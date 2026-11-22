@@ -7,7 +7,7 @@ import { createElement,type ReactNode } from 'react';
 import { afterEach,expect,it } from 'vitest';
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { applyEventEffects } from '../events/query-invalidation-adapter.ts';
-import { conversationHistoryQueryOptions as pageOptions } from '../providers/queries.ts';
+import { conversationHistoryQueryOptions as pageOptions } from '../providers/conversation-queries.ts';
 import { latestHistory as applyLatestPage,earlierReadingPosition,historyRows,observedWindow as observePage,useTranscriptHistory,useTranscriptReads,type History } from './history.ts';
 
 import type { ConversationCursor } from '../../../../core/api/generated/wire.ts';

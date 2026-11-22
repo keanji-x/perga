@@ -9,7 +9,8 @@ import {
 } from '../../../../core/domain/read-receipts.ts';
 import { useState } from '../../ui/state/public.ts';
 import { useConnectionStatus } from './connection-status.tsx';
-import { queryKeys, runOperation } from './queries.ts';
+import { queryKeys } from './query-keys.ts';
+import { runOperation } from './query-operation.ts';
 import { useRecoveryMutation } from './recovery-mutation.ts';
 
 /** The provider's writes: how many are in flight, and each target's last write. */

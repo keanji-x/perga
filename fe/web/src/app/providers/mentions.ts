@@ -8,7 +8,7 @@ import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { mentionQueryOf,templateMentionSuggestions,type MentionSearch,type MentionSuggestion } from '../../../../core/domain/mentions.ts';
 import { tracksInAreaOperation,trackTemplatesOperation,type TrackTemplate } from '../../../../core/domain/track.ts';
-import { runOperation } from './queries.ts';
+import { runOperation } from './query-operation.ts';
 
 /** `trackId` is the track the message is written in, or `null` before there is one. */
 export function mentionSearchOf(

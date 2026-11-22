@@ -2,7 +2,7 @@ import '../../styles/entry.css';
 import { act, cleanup } from '@testing-library/react';
 import { afterEach, expect, it } from 'vitest';
 import { page } from 'vitest/browser';
-import { queryKeys } from '../providers/queries.ts';
+import { queryKeys } from '../providers/query-keys.ts';
 import { renderSessionFixture } from './conversation-session-fixture.tsx';
 import { sessionItem } from './conversation-session-data.ts';
 

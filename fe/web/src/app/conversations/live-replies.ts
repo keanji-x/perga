@@ -14,7 +14,8 @@ import {
 import { cancelThenInvalidate } from '../events/query-refresh.ts';
 import type { SessionLiveBuffer } from '../events/query-invalidation-adapter.ts';
 import { useConnectionStatus } from '../providers/connection-status.tsx';
-import { harnessLiveQueryOptions, queryKeys } from '../providers/queries.ts';
+import { harnessLiveQueryOptions } from '../providers/conversation-queries.ts';
+import { queryKeys } from '../providers/query-keys.ts';
 import { type History, type TranscriptReads } from './history.ts';
 import { useState } from '../../ui/state/public.ts';
 
@@ -55,7 +56,7 @@ export function useLiveReplies({ transport, unauthorized, cardId, enabled, phase
     ...liveOptions,
     // A delayed initial read cannot hold up or answer a later streaming visit.
     // Prefix invalidation still reaches the card; cached payload shape is unchanged.
-    queryKey: [...liveOptions.queryKey, scope.read, scope.turnId],
+    queryKey: queryKeys.conversationLiveRead(cardId, scope.read, scope.turnId),
     enabled: streaming && !wsConnected,
     refetchInterval: LIVE_REPLY_POLL_MS,
     gcTime: 0,

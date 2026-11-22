@@ -8,7 +8,7 @@ import type { ApiRequest,ApiTransportPort } from '../../../../core/api/types.ts'
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { conversationCommands } from '../../features/chat/thread/composer-command.ts';
 import { ChatComposer } from '../../features/chat/thread/public.tsx';
-import { trackDetailQueryOptions } from '../providers/queries.ts';
+import { trackDetailQueryOptions } from '../providers/track-queries.ts';
 import { queryKeys } from '../providers/query-keys.ts';
 import { renderAssistantProviderFixture } from './assistant-provider-fixture.tsx';
 import { usePlannerSwitchControl } from './planner-switch-control.ts';

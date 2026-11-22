@@ -5,7 +5,7 @@ import type { SessionCreationReceipt } from '../../../../core/api/perga-v1.ts';
 import { fixtureCreation, fixtureSession, fixtureSnapshot, fixtureTrack } from './session-contract-fixture.ts';
 import { renderDailyFixture } from './daily-planner-fixture.tsx';
 import { sessionItem, sessionPage } from './conversation-session-data.ts';
-import { queryKeys } from '../providers/queries.ts';
+import { queryKeys } from '../providers/query-keys.ts';
 
 const FIRST_MESSAGE = 'Keep the first sentence readable through adoption.';
 afterEach(() => { cleanup(); document.getElementById('root')?.remove(); });
