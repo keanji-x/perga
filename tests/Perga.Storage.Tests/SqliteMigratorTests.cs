@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using Dapper;
 using Microsoft.Data.Sqlite;
 using Perga.Storage.Sqlite;
@@ -7,26 +9,19 @@ namespace Perga.Storage.Tests;
 public sealed class SqliteMigratorTests
 {
     [Fact]
-    public void EmbeddedInitMigration_MatchesDesignMdSection3ByteForByte()
+    public void EmbeddedInitMigration_MatchesFrozenSourceAndChecksum()
     {
+        // Pin the released bytes independently of both the source and embedded resource.
+        const string frozenSha256 = "05e8403f4c72725eb6afd5410ba4b500fa9f1073ef4488ab03a547db343d04cf";
         var init = Assert.Single(SqliteMigrator.LoadEmbeddedMigrations(), migration => migration.Version == 1);
         Assert.Equal(1, init.Version);
         Assert.Equal("0001_init.sql", init.Name);
         Assert.Equal(64, init.ChecksumSha256.Length);
+        Assert.Equal(frozenSha256, init.ChecksumSha256);
 
-        var designMdPath = FindRepoFile("DESIGN.md");
-        var designMdText = File.ReadAllText(designMdPath).Replace("\r\n", "\n", StringComparison.Ordinal);
-
-        const string sqlStartMarker = "```sql\n-- 必须在首次建表前设置";
-        var startIdx = designMdText.IndexOf(sqlStartMarker, StringComparison.Ordinal);
-        Assert.True(startIdx >= 0, "Could not locate Section 3 SQL DDL block in DESIGN.md.");
-
-        var bodyStart = startIdx + "```sql\n".Length;
-        var bodyEnd = designMdText.IndexOf("\n```", bodyStart, StringComparison.Ordinal);
-        Assert.True(bodyEnd > bodyStart, "Could not locate closing fence of Section 3 SQL DDL block in DESIGN.md.");
-
-        var expectedSql = designMdText[bodyStart..(bodyEnd + 1)];
-        Assert.Equal(expectedSql.TrimEnd('\n'), init.Sql.TrimEnd('\n'));
+        var sourceBytes = File.ReadAllBytes(FindRepoFile("src/Perga.Storage.Sqlite/Migrations/0001_init.sql"));
+        Assert.Equal(frozenSha256, Convert.ToHexStringLower(SHA256.HashData(sourceBytes)));
+        Assert.Equal(sourceBytes, Encoding.UTF8.GetBytes(init.Sql));
     }
 
     [Fact]
