@@ -1,5 +1,5 @@
 export const ARRIVAL_ATTRIBUTE = 'data-nc-arrived';
-type ArrivalElement = HTMLElement & { __neigeReportArrivalRun?: number };
+type ArrivalElement = HTMLElement & { __pergaReportArrivalRun?: number };
 
 function scrollBounds(element: HTMLElement, root: Document): Readonly<{ top: number; bottom: number }> {
   const view = root.defaultView;
@@ -18,14 +18,14 @@ function markAfterSmoothScroll(element: ArrivalElement, root: Document, run: num
   let stableFrames = 0;
   let finished = false;
   const finish = () => {
-    if (finished || element.__neigeReportArrivalRun !== run) return;
+    if (finished || element.__pergaReportArrivalRun !== run) return;
     finished = true;
     view?.clearTimeout(fallback);
     element.setAttribute(ARRIVAL_ATTRIBUTE, '');
   };
   const fallback = view?.setTimeout(finish, 2_500);
   const sample = () => {
-    if (finished || element.__neigeReportArrivalRun !== run) return;
+    if (finished || element.__pergaReportArrivalRun !== run) return;
     const box = element.getBoundingClientRect();
     const bounds = scrollBounds(element, root);
     const visible = box.bottom > bounds.top && box.top < bounds.bottom;
@@ -62,8 +62,8 @@ export function revealReportAnchor(
 
   const reducedMotion = root.defaultView?.matchMedia('(prefers-reduced-motion: reduce)').matches ?? false;
   const effectiveBehavior = reducedMotion ? 'auto' : behavior;
-  const run = (element.__neigeReportArrivalRun ?? 0) + 1;
-  element.__neigeReportArrivalRun = run;
+  const run = (element.__pergaReportArrivalRun ?? 0) + 1;
+  element.__pergaReportArrivalRun = run;
   element.removeAttribute(ARRIVAL_ATTRIBUTE);
   element.scrollIntoView({ block: 'start', behavior: effectiveBehavior });
   if (effectiveBehavior === 'smooth') {
@@ -71,6 +71,6 @@ export function revealReportAnchor(
     return;
   }
   requestAnimationFrame(() => {
-    if (element.__neigeReportArrivalRun === run) element.setAttribute(ARRIVAL_ATTRIBUTE, '');
+    if (element.__pergaReportArrivalRun === run) element.setAttribute(ARRIVAL_ATTRIBUTE, '');
   });
 }
