@@ -76,12 +76,20 @@ it('resumes independent report positions through real sidebar navigation', async
       };
     }).toEqual({ path: `/track/${trackId}`, bodyMatches: true, busy: 'false', committed: true });
   }
+  const stageOf = (el: HTMLElement): HTMLElement | null => {
+    let cur: HTMLElement | null = el;
+    while (cur !== null && cur.parentElement?.tagName !== 'MAIN') cur = cur.parentElement;
+    return cur;
+  };
   await reportReady('a');
+  const stage = stageOf(reportPage());
+  expect(stage).not.toBeNull();
   reportPage().scrollTop = 700;
   await settle();
   expect(reportPage().scrollTop).toBe(700);
   await page.getByRole('button', { name: /^Track Track b\b/ }).click();
   await reportReady('b');
+  expect(stageOf(reportPage())).toBe(stage);
   expect(reportPage().scrollTop).toBe(0);
   reportPage().scrollTop = 350;
   await settle();

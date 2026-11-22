@@ -60,9 +60,7 @@ export function useTrackViewState(trackId: string, reportReady: boolean) {
       views.ensure(trackId).search = { card, file, panel };
     }
   }, [search, trackId, views]);
-  useTrackScrollPort(views, trackId, 'page', reportReady, hash, resumeBoard);
-  useTrackScrollPort(views, trackId, 'panel', true, hash, resumeBoard);
-  useTrackScrollPort(views, trackId, 'board', true, hash, resumeBoard);
+  useTrackScrollPorts(views, trackId, reportReady, hash, resumeBoard);
   return { open: progressOpen, onOpenChange: (open: boolean) => {
     if (views !== null) views.ensure(trackId).progressOpen = open;
     setProgressOpen(open);
@@ -76,68 +74,78 @@ function portNode(port: ScrollPort) {
   return document.querySelector<HTMLElement>('[data-nc-card-board]');
 }
 
-function useTrackScrollPort(views: ReturnType<typeof useTrackViews>, trackId: string, port: ScrollPort,
-  ready: boolean, hash: string, resumeBoard: boolean) {
-  const readerActed = useRef(false);
-  // Input is observed from shell mount; placeholder scroll offsets are never saved.
+/** One input subscription per Track. The nearest scrollport owns each gesture. */
+function useTrackScrollPorts(views: ReturnType<typeof useTrackViews>, trackId: string,
+  reportReady: boolean, hash: string, resumeBoard: boolean) {
+  const actedRef = useRef(new Set<ScrollPort>());
+  useLayoutEffect(() => { actedRef.current.clear(); }, [trackId]);
   useLayoutEffect(() => {
-    readerActed.current = false;
+    if (views === null) return;
+    const ports: readonly ScrollPort[] = ['page', 'panel', 'board'];
+    const view = views.ensure(trackId);
+    const acted = actedRef.current;
+    const observed = new Map<ScrollPort, HTMLElement>();
+    const saved = new Map(view.scroll);
+    let boardSettled = false;
+    const ready = (port: ScrollPort) => port !== 'page' || reportReady;
     const input = (event: Event) => {
-      const node = portNode(port);
-      if (node === null || !(event.target instanceof Node) || !node.contains(event.target)) return;
-      const target = event.target instanceof Element ? event.target : event.target.parentElement;
-      if (target?.closest('[data-nc-card-board], [data-nc-panel], [data-nc-track-page]') !== node) return;
+      const target = event.target instanceof Element ? event.target : null;
+      const node = target?.closest('[data-nc-card-board], [data-nc-panel], [data-nc-track-page]');
+      const port = ports.find(candidate => node != null && portNode(candidate) === node);
+      if (port === undefined) return;
       if (event.type === 'pointerdown' && target?.closest('button, a, input, textarea, select, [role="button"], [contenteditable="true"]') !== null) return;
       if (event instanceof KeyboardEvent) {
         if (!['PageDown', 'PageUp', 'Home', 'End', 'ArrowDown', 'ArrowUp', ' '].includes(event.key)) return;
         if (target?.closest('input, textarea, select, [contenteditable="true"]') !== null) return;
         if (event.key === ' ' && target?.closest('button, a, [role="button"]') !== null) return;
       }
-      readerActed.current = true;
+      acted.add(port);
     };
+    const restore = (port: ScrollPort) => {
+      const node = portNode(port);
+      if (node === null || !ready(port)) return;
+      observed.set(port, node);
+      const offset = saved.get(port);
+      if (offset !== undefined && hash === '' && !acted.has(port) && (port !== 'board' || resumeBoard)) {
+        node.scrollTop = offset.top; node.scrollLeft = offset.left;
+      }
+    };
+    const remember = (event: Event) => {
+      for (const port of ports) {
+        const node = portNode(port);
+        if (ready(port) && (port !== 'board' || boardSettled) && node !== null && event.target === node) {
+          observed.set(port, node);
+          view.scroll.set(port, { top: node.scrollTop, left: node.scrollLeft });
+        }
+      }
+    };
+    ports.forEach(restore);
+    // BoardHost reveals its selected card on frame two. One cancellable job
+    // waits through that layout barrier; there are no nested frame callbacks.
+    let remaining = 3;
+    let frame = 0;
+    const settleBoard = () => {
+      remaining -= 1;
+      if (remaining > 0) { frame = requestAnimationFrame(settleBoard); return; }
+      restore('board');
+      boardSettled = true;
+    };
+    frame = requestAnimationFrame(settleBoard);
     document.addEventListener('wheel', input, { capture: true, passive: true });
     document.addEventListener('touchmove', input, { capture: true, passive: true });
     document.addEventListener('pointerdown', input, true);
     document.addEventListener('keydown', input, true);
+    document.addEventListener('scroll', remember, true);
     return () => {
+      cancelAnimationFrame(frame);
       document.removeEventListener('wheel', input, true);
       document.removeEventListener('touchmove', input, true);
       document.removeEventListener('pointerdown', input, true);
       document.removeEventListener('keydown', input, true);
-    };
-  }, [port, trackId]);
-  useLayoutEffect(() => {
-    if (views === null || !ready) return;
-    const view = views.ensure(trackId);
-    const saved = view.scroll.get(port);
-    let restoring = true;
-    let frame = 0;
-    let observed = portNode(port);
-    const restore = () => {
-      const node = portNode(port);
-      observed = node;
-      if (node !== null && saved !== undefined && hash === '' && !readerActed.current && (port !== 'board' || resumeBoard)) {
-        node.scrollTop = saved.top; node.scrollLeft = saved.left;
-      }
-    };
-    const remember = (event: Event) => {
-      const node = portNode(port);
-      if (!restoring && node !== null && event.target === node) {
-        observed = node; view.scroll.set(port, { top: node.scrollTop, left: node.scrollLeft });
-      }
-    };
-    restore();
-    if (port === 'board') {
-      // BoardHost owns a two-frame selected-card reveal; only its resume waits for that owner.
-      frame = requestAnimationFrame(() => { frame = requestAnimationFrame(() => {
-        frame = requestAnimationFrame(() => { restore(); restoring = false; });
-      }); });
-    } else restoring = false;
-    document.addEventListener('scroll', remember, true);
-    return () => {
-      cancelAnimationFrame(frame);
       document.removeEventListener('scroll', remember, true);
-      if (!restoring && observed !== null) view.scroll.set(port, { top: observed.scrollTop, left: observed.scrollLeft });
+      for (const [port, node] of observed) {
+        if (ready(port) && (port !== 'board' || boardSettled)) view.scroll.set(port, { top: node.scrollTop, left: node.scrollLeft });
+      }
     };
-  }, [hash, port, ready, resumeBoard, trackId, views]);
+  }, [hash, reportReady, resumeBoard, trackId, views]);
 }

@@ -54,3 +54,7 @@ export function EmbeddedReadingHost({ id, label, hidden, children, footer, cente
       <div ref={navigation} className={styles.navigation} />
     </section>;
 }
+
+/** Component-scoped lifecycle handshake; the nearest layout host accepts it. */
+export const DRAWER_REGISTER_EVENT = 'nc-drawer-register';
+export type DrawerRegistration = { accept: (release: () => void) => void };

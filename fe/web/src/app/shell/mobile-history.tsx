@@ -68,7 +68,9 @@ export function MobileHistory({ owner, open, onOpenChange, conversations, loadin
 }>) {
   const [view, setView] = useState<HistoryView>('current');
   const wasOpen = useRef(open);
-  if (wasOpen.current !== open) { wasOpen.current = open; if (open) setView('current'); }
+  useLayoutEffect(() => {
+    if (wasOpen.current !== open) { wasOpen.current = open; if (open) setView('current'); }
+  }, [open]);
   const list = useRef<HTMLDivElement | null>(null);
   const scrollTop = useRef(0);
   const captureList = useCallback((node: HTMLDivElement | null) => {
@@ -78,10 +80,13 @@ export function MobileHistory({ owner, open, onOpenChange, conversations, loadin
   }, []);
   const content = useRef<HTMLDivElement | null>(null);
   const [presentation, setPresentation] = useState(() => ({ owner, open, key: 0, blocked: false }));
-  if (presentation.owner !== owner || presentation.open !== open) {
-    const fresh = presentation.owner !== owner || open;
-    setPresentation({ owner, open, key: presentation.key + (fresh ? 1 : 0), blocked: fresh ? false : presentation.blocked });
-  }
+  useLayoutEffect(() => {
+    setPresentation(current => {
+      if (current.owner === owner && current.open === open) return current;
+      const fresh = current.owner !== owner || open;
+      return { owner, open, key: current.key + (fresh ? 1 : 0), blocked: fresh ? false : current.blocked };
+    });
+  }, [owner, open]);
   // A native close event has no generation. A fresh public MobileNav node on
   // reopen/owner replacement isolates queued old-node events, without keying
   // this History owner (view/selection/scroll state stays here).

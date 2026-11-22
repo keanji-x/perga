@@ -18,4 +18,33 @@
     min-block-size: 0;
     padding: 0 var(--space-4) var(--space-4);
   }
+  /* Dialog's published layout classes provide a full-page compact surface.
+     Keeping the same body preserves drafts and focus without moving DOM. */
+  [class~="dialog-overlay"]:has(.page) {
+    padding: 0;
+    align-items: stretch;
+    justify-content: stretch;
+  }
+
+  [class~="dialog-overlay"]:has(.page) > div {
+    inline-size: 100%;
+    max-block-size: 100% !important;
+  }
+
+  [class~="dialog-panel"]:has(.page) {
+    inline-size: 100%;
+    block-size: 100%;
+    max-block-size: 100% !important;
+    border: 0;
+    border-radius: 0;
+    padding: 0;
+    transform: none !important;
+    opacity: 1 !important;
+  }
+
+  [class~="dialog-body"]:has(> .page) {
+    display: flex;
+    flex-direction: column;
+    padding: 0;
+  }
 }

@@ -1,3 +1,4 @@
+import { DRAWER_REGISTER_EVENT, type DrawerRegistration } from '../../ui/drawer/reading-host.tsx';
 // The conversation drawer's dragged width. It is a fact about the main region, not
 // about the card: `--conversation-span` on `.main` also sizes the covered panel track,
 // the report measure and the rail preview, so the shell owns the value and `ui/drawer`
@@ -5,7 +6,7 @@
 // is open (`data-nc-drawer-resizable`), so a source card on its own keeps the default.
 // The routes reach the contract through `useConversationDrawerResize` in `./public.tsx`.
 
-import { useLayoutEffect, useMemo, useRef, type CSSProperties } from 'react';
+import { useCallback, useMemo, useRef, type CSSProperties } from 'react';
 
 import { useState } from '../../ui/state/public.ts';
 import { useSpringTarget } from '../../ui/motion/target.ts';
@@ -17,21 +18,20 @@ const WIDTH_PROPERTY = '--nc-drawer-width';
 
 export function useDrawerWidthHost(preferences: UiPreferences) {
   const mainRef = useRef<HTMLElement | null>(null);
-  const [open, setOpen] = useState(false);
+  const [openCount, setOpenCount] = useState(0);
+  const open = openCount > 0;
   const compact = useCompactViewport();
-  useLayoutEffect(() => {
-    const main = mainRef.current;
-    if (main === null) return;
-    const read = () => { setOpen(main.querySelector('[data-nc-drawer-open]') !== null); };
-    const observer = new MutationObserver(records => {
-      if (records.some(record => record.type === 'attributes'
-        || [...record.addedNodes, ...record.removedNodes].some(node => node instanceof Element
-          && (node.matches('[data-nc-drawer]') || node.querySelector('[data-nc-drawer]') !== null)))) read();
-    });
-    observer.observe(main, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-nc-drawer-open'] });
-    read();
-    return () => { observer.disconnect(); };
-  }, []);
+  const attachMain = useCallback((node: HTMLElement | null) => {
+    mainRef.current = node;
+    if (node === null) return;
+    const register = (event: Event) => {
+      event.stopPropagation();
+      setOpenCount(count => count + 1);
+      (event as CustomEvent<DrawerRegistration>).detail.accept(() => { setOpenCount(count => count - 1); });
+    };
+    node.addEventListener(DRAWER_REGISTER_EVENT, register);
+    return () => { node.removeEventListener(DRAWER_REGISTER_EVENT, register); mainRef.current = null; };
+  }, [setOpenCount]);
   useSpringTarget(mainRef, null, open ? 1 : 0, 0, true, !compact, () => {},
     value => ({ '--nc-panel-open': value }));
   const width = preferences.drawerWidth();
@@ -49,5 +49,5 @@ export function useDrawerWidthHost(preferences: UiPreferences) {
     };
   }, [preferences]);
   const style = width === null ? undefined : { [WIDTH_PROPERTY]: `${width}rem` } as CSSProperties;
-  return { mainRef, style, resize };
+  return { mainRef: attachMain, style, resize };
 }

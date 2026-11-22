@@ -471,11 +471,18 @@ export function ChatComposer({
     parkedFocus.current = document.activeElement;
   }, [sendCount, disabled, focusRequest]);
 
-  // Metadata, not callback identity, controls the vendor trigger lifetime.
-  const menuKey = JSON.stringify(commands.filter(command => !command.hidden && command.unavailableReason === undefined)
-    .map(({ id, name, icon, hint, arguments: argumentShape }) => ({ id, name, icon, hint, argumentShape })));
+  // Only visible metadata controls vendor trigger lifetime. Commit comparison
+  // keeps callback-only rerenders from closing an open command menu.
+  const [items, setItems] = useState(() => commandMenuItems(commands));
+  useLayoutEffect(() => {
+    const next = commandMenuItems(commands);
+    setItems(previous => previous.length === next.length && previous.every((item, index) => {
+      const candidate = next[index];
+      return item.id === candidate.id && item.name === candidate.name && item.icon === candidate.icon
+        && item.hint === candidate.hint && item.argumentShape === candidate.argumentShape;
+    }) ? previous : next);
+  }, [commands]);
   const commandTrigger = useMemo<ChatComposerTrigger>(() => {
-    const items = JSON.parse(menuKey) as { id: string; name: string; icon: ComposerCommand['icon']; hint: string; argumentShape: ComposerCommand['arguments'] }[];
     return withEmptyTrigger({
       character: '/',
       searchSource: {
@@ -496,9 +503,9 @@ export function ChatComposer({
         return `/${command.name}${command.argumentShape === 'optional' ? ' ' : ''}`;
       },
     }, { icon: <Icon name="search" />, title: 'No command by that name', description: '试试其他命令名称。' });
-  }, [menuKey]);
+  }, [items]);
   // Discovery is only an aid: submit always parses the complete controlled draft.
-  const hasCommands = editing === undefined && menuKey !== '[]';
+  const hasCommands = editing === undefined && items.length > 0;
   /* One array per combination: a new array per render would make `useTriggerMenu` drop an open menu. */
   const triggers = useMemo<ChatComposerTrigger[]>(() => [
     ...(hasCommands ? [commandTrigger] : []),
@@ -686,4 +693,9 @@ function clockTime(formatter: Intl.DateTimeFormat, atMs: number): string {
   const date = new Date(atMs);
   // Date#toLocaleTimeString previously displayed invalid gap dates rather than throwing.
   return Number.isNaN(date.getTime()) ? date.toString() : formatter.format(date);
+}
+
+function commandMenuItems(commands: readonly ComposerCommand[]) {
+  return commands.filter(command => !command.hidden && command.unavailableReason === undefined)
+    .map(({ id, name, icon, hint, arguments: argumentShape }) => ({ id, name, icon, hint, argumentShape }));
 }
