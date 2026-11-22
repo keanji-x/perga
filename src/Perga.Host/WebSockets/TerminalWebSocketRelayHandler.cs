@@ -30,47 +30,34 @@ public static class TerminalWebSocketRelayHandler
             return;
         }
 
-        ClientWebSocket upstreamWs;
-        try
+        await AuthenticatedWebSocket.RunAsync(context, RelayAsync, async ct =>
         {
-            upstreamWs = await ConnectUpstreamAsync(terminalClient, termId, context.RequestAborted).ConfigureAwait(false);
-        }
-        catch (WebSocketException wsEx)
-        {
-            var err = HttpErrorHandling.NotFound($"Unable to attach WebSocket to terminal '{termId}': {wsEx.Message}");
-            await err.ExecuteAsync(context).ConfigureAwait(false);
-            return;
-        }
-        catch (TerminalBridgeException tbEx)
-        {
-            var err = HttpErrorHandling.NotFound($"Terminal bridge unavailable for '{termId}': {tbEx.Message}");
-            await err.ExecuteAsync(context).ConfigureAwait(false);
-            return;
-        }
-
-        using (upstreamWs)
-        {
-            using var clientWs = await context.WebSockets.AcceptWebSocketAsync().ConfigureAwait(false);
-            using var relayCts = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted);
-
-            var upstreamToClient = PumpFramesAsync(upstreamWs, clientWs, relayCts);
-            var clientToUpstream = PumpFramesAsync(clientWs, upstreamWs, relayCts);
-
-            await Task.WhenAny(upstreamToClient, clientToUpstream).ConfigureAwait(false);
-            relayCts.Cancel();
-
             try
             {
-                await Task.WhenAll(upstreamToClient, clientToUpstream).ConfigureAwait(false);
+                return await ConnectUpstreamAsync(terminalClient, termId, ct).ConfigureAwait(false);
             }
-            catch
+            catch (Exception ex) when (ex is WebSocketException or TerminalBridgeException)
             {
-                // Ignore cancellation / reset on shutdown.
+                ct.ThrowIfCancellationRequested();
+                await HttpErrorHandling.NotFound($"Unable to attach WebSocket to terminal '{termId}': {ex.Message}")
+                    .ExecuteAsync(context).ConfigureAwait(false);
+                return null;
             }
+        });
+    }
 
-            await SafeCloseAsync(upstreamWs).ConfigureAwait(false);
-            await SafeCloseAsync(clientWs).ConfigureAwait(false);
-        }
+    private static async Task RelayAsync(WebSocket client, WebSocket? upstream,
+        WsSessionCloseCoordinator close, CancellationToken ct)
+    {
+        using var relayCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var upstreamToClient = PumpFramesAsync(upstream!, close.SendAsync, relayCts.Token);
+        var clientToUpstream = PumpFramesAsync(client, (payload, type, endOfMessage, token) =>
+            close.IsClosing ? ValueTask.CompletedTask : upstream!.SendAsync(payload, type, endOfMessage, token),
+            relayCts.Token);
+
+        await Task.WhenAny(upstreamToClient, clientToUpstream).ConfigureAwait(false);
+        await relayCts.CancelAsync().ConfigureAwait(false);
+        await Task.WhenAll(upstreamToClient, clientToUpstream).ConfigureAwait(false);
     }
 
     private static async Task<ClientWebSocket> ConnectUpstreamAsync(
@@ -104,28 +91,25 @@ public static class TerminalWebSocketRelayHandler
 
     private static async Task PumpFramesAsync(
         WebSocket source,
-        WebSocket destination,
-        CancellationTokenSource relayCts)
+        Func<ReadOnlyMemory<byte>, WebSocketMessageType, bool, CancellationToken, ValueTask> send,
+        CancellationToken ct)
     {
         var buffer = ArrayPool<byte>.Shared.Rent(RelayBufferBytes);
         try
         {
-            while (source.State == WebSocketState.Open &&
-                   destination.State == WebSocketState.Open &&
-                   !relayCts.IsCancellationRequested)
+            while (source.State == WebSocketState.Open && !ct.IsCancellationRequested)
             {
-                var result = await source.ReceiveAsync(buffer.AsMemory(), relayCts.Token).ConfigureAwait(false);
+                var result = await source.ReceiveAsync(buffer.AsMemory(), ct).ConfigureAwait(false);
                 if (result.MessageType == WebSocketMessageType.Close)
                 {
-                    relayCts.Cancel();
                     break;
                 }
 
-                await destination.SendAsync(
+                await send(
                     buffer.AsMemory(0, result.Count),
                     result.MessageType,
                     result.EndOfMessage,
-                    relayCts.Token).ConfigureAwait(false);
+                    ct).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException)
@@ -133,27 +117,10 @@ public static class TerminalWebSocketRelayHandler
         }
         catch (WebSocketException)
         {
-            relayCts.Cancel();
         }
         finally
         {
             ArrayPool<byte>.Shared.Return(buffer);
-        }
-    }
-
-    private static async Task SafeCloseAsync(WebSocket ws)
-    {
-        if (ws.State is WebSocketState.Open or WebSocketState.CloseReceived)
-        {
-            try
-            {
-                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(1));
-                await ws.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "relay closed", cts.Token)
-                    .ConfigureAwait(false);
-            }
-            catch
-            {
-            }
         }
     }
 }

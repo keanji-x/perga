@@ -44,7 +44,7 @@ it.each([
   let sessionId = 'first-session';
   let version = { webCompatVersion: WEB_COMPAT_VERSION, minWebCompatVersion: WEB_COMPAT_VERSION, syncEventVersion: 19, dbInstanceId: 'old-db' };
   const session = new RecoverySession({ access, storage, origin: window.location.origin, compatibleVersion: WEB_COMPAT_VERSION,
-    identity: () => Promise.resolve({ userId: 'owner', displayName: 'Owner', role: 'owner', sessionId }),
+    identity: () => Promise.resolve({ userId: 'owner', displayName: 'Owner', username: 'owner', expiresAtMs: 2000000000000, role: 'owner', sessionId }),
     version: () => Promise.resolve(version), logout: () => Promise.resolve(),
     clear: () => { client.clear(); cursorStore.clear(); }, adoptScope: () => {}, online: () => true, visible: () => true });
   render(<Boundary><RecoveryGate client={client} transport={transport} unauthorized={unauthorized} recovery={session}

@@ -34,8 +34,8 @@ export function renderDailyFixture({ history, identity, routeProbe, withTranspor
     requests.push(request);
     const response = await reply?.(request);
     if (response !== undefined) return response;
-    if (request.path === '/api/v1/bootstrap?scope=whoami' && identity !== undefined) return ok(identity);
-    if (request.path.startsWith('/api/v1/bootstrap') && !request.path.includes('scope=whoami')) return ok(fixtureBootstrap([plannerProvider]));
+    if (request.path === '/api/v1/auth/session' && identity !== undefined) return ok(identity);
+    if (request.path.startsWith('/api/v1/bootstrap')) return ok(fixtureBootstrap([plannerProvider]));
     if (request.path.includes('/workspace-options')) return ok({ defaultId: 'direct', options: [{ id: 'direct', label: 'Direct folder', description: 'Use this folder' }] });
     if (request.path === '/api/v1/areas') return ok(emptyWorkspace ? [] : [projectArea]);
     if (request.path === '/api/v1/areas/daily-area/tracks?includeClosed=true') return ok([track]);

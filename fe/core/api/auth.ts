@@ -7,10 +7,12 @@ import type { ApiOperation } from './types.js';
 export const DEPLOYMENT_OWNER_USER_ID = 'local-owner';
 
 export const sessionIdentitySchema = z.strictObject({
+  sessionId: z.string().min(1),
   userId: z.string(),
+  username: z.string(),
   displayName: z.string(),
   role: z.string(),
-  sessionId: z.string(),
+  expiresAtMs: z.number().int(),
 });
 export type SessionIdentity = z.infer<typeof sessionIdentitySchema>;
 
@@ -20,25 +22,29 @@ export const loginRequestSchema = z.strictObject({
 });
 export type LoginRequest = z.infer<typeof loginRequestSchema>;
 
-const bootstrapIdentitySchema = z.union([
-  sessionIdentitySchema,
-  bootstrapDtoSchema.transform((bootstrap): SessionIdentity => ({
-    userId: DEPLOYMENT_OWNER_USER_ID,
-    displayName: 'Local Operator',
-    role: 'owner',
-    sessionId: `perga-${bootstrap.version}`,
-  })),
-]);
-
 export function bootstrapOperation(): ApiOperation<BootstrapDto> {
   return { method: 'GET', path: '/api/v1/bootstrap', responseSchema: bootstrapDtoSchema };
 }
 
 export function whoamiOperation(): ApiOperation<SessionIdentity> {
-  return { method: 'GET', path: '/api/v1/bootstrap?scope=whoami', responseSchema: bootstrapIdentitySchema };
+  return {
+    method: 'GET', path: '/api/v1/auth/session', responseSchema: sessionIdentitySchema,
+    expectedStatuses: [200], redirect: 'error',
+  };
 }
 
 export function loginOperation(body: LoginRequest): ApiOperation<SessionIdentity> {
-  void body;
-  return { method: 'GET', path: '/api/v1/bootstrap?scope=whoami', responseSchema: bootstrapIdentitySchema };
+  return {
+    method: 'POST', path: '/api/v1/auth/login', body, responseSchema: sessionIdentitySchema,
+    expectedStatuses: [200], redirect: 'error',
+    validateResponse: (identity, response) => response.headers?.['x-perga-session-id'] === identity.sessionId,
+  };
+}
+
+export function logoutOperation(sessionId?: string): ApiOperation<undefined> {
+  return {
+    method: 'POST', path: '/api/v1/auth/logout', responseSchema: z.undefined(),
+    expectedStatuses: [204], redirect: 'error',
+    ...(sessionId === undefined ? {} : { headers: { 'X-Perga-Session-Id': sessionId } }),
+  };
 }

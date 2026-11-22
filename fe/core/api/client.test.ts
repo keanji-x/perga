@@ -105,6 +105,22 @@ describe('core/api client behavior', () => {
     });
   });
 
+  it.each([
+    ['32', 32],
+    ['0', 0],
+    ['NaN', undefined],
+    ['Thu, 01 Jan 2026 00:00:00 GMT', undefined],
+  ])('reads Retry-After %s as delay seconds only', async (retryAfter, seconds) => {
+    const body = { code: 'login_throttled', error: 'Try again later.' };
+    const result = await performApiRequest({
+      send: () => Promise.resolve({ status: 429, statusText: 'Too Many Requests', body, headers: { 'retry-after': retryAfter } }),
+    }, { method: 'POST', path: '/api/v1/auth/login', responseSchema: z.unknown() });
+    expect(result).toEqual({ status: 'failed', error: {
+      kind: 'http', status: 429, code: body.code, message: body.error, body,
+      ...(seconds === undefined ? {} : { retryAfterSeconds: seconds }),
+    } });
+  });
+
   it('reports response schema drift as decode data instead of throwing', async () => {
     const result = await performApiRequest(
       { send: () => Promise.resolve({ status: 200, statusText: 'OK', body: { value: '7' } }) },

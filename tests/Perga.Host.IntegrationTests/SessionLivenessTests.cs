@@ -37,7 +37,7 @@ public sealed class SessionLivenessTests
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
             if (stop)
             {
-                using var response = await host.Client.PostAsJsonAsync($"/api/v1/sessions/{session.Id}/control", new { action = "stop", turnId = accepted.TurnId });
+                using var response = await host.AuthenticatedClient.PostAsJsonAsync($"/api/v1/sessions/{session.Id}/control", new { action = "stop", turnId = accepted.TurnId });
                 response.EnsureSuccessStatusCode();
             }
             await canceled.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -129,7 +129,7 @@ public sealed class SessionLivenessTests
         var store = host.Services.GetRequiredService<ITrackStore>();
         await store.SessionMessages!.InsertAsync(new("withdraw", id, "user", "withdraw", "hash", null, null,
             "withdraw text", delivery, 1, "queue"), default);
-        using var response = await host.Client.DeleteAsync($"/api/v1/sessions/{id}/messages/withdraw");
+        using var response = await host.AuthenticatedClient.DeleteAsync($"/api/v1/sessions/{id}/messages/withdraw");
         Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
         Assert.Equal("withdrawn", (await store.SessionMessages.GetAsync(id, "withdraw", default))?.Delivery);
     }

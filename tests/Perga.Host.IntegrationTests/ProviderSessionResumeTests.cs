@@ -35,7 +35,7 @@ public sealed class ProviderSessionResumeTests
         Assert.Equal("unknown", before.LastTurn?.Status);
         Assert.True(before.UnknownDetail?.CanReconnect);
         host.AgentRuntime.LaunchConfirmationHandler = _ => null;
-        using var failed = await host.Client.PostAsJsonAsync($"/api/v1/sessions/{id}/control", new { action = "reconnect" });
+        using var failed = await host.AuthenticatedClient.PostAsJsonAsync($"/api/v1/sessions/{id}/control", new { action = "reconnect" });
         Assert.Equal(HttpStatusCode.Conflict, failed.StatusCode);
         var held = await kernel.GetSessionItemsAsync(id, new(), new InteropPrincipal.Human(), default);
         Assert.Equal("unknown", held.State);
@@ -46,7 +46,7 @@ public sealed class ProviderSessionResumeTests
         Assert.Null(kernel.McpSessionBridge.ResolveToken(failedMcp.Headers["Authorization"]["Bearer ".Length..]));
         Assert.Equal(before.Session.NativeThreadId, held.Session.NativeThreadId);
         host.AgentRuntime.LaunchConfirmationHandler = null;
-        using var retry = await host.Client.PostAsJsonAsync($"/api/v1/sessions/{id}/control", new { action = "reconnect" });
+        using var retry = await host.AuthenticatedClient.PostAsJsonAsync($"/api/v1/sessions/{id}/control", new { action = "reconnect" });
         retry.EnsureSuccessStatusCode();
         var restored = await kernel.GetSessionItemsAsync(id, new(), new InteropPrincipal.Human(), default);
         Assert.Equal("idle", restored.State);
@@ -83,7 +83,7 @@ public sealed class ProviderSessionResumeTests
         var page = await kernel.GetSessionItemsAsync(id, new(), new InteropPrincipal.Human(), default);
         Assert.Equal("running", page.State);
         Assert.Null(page.UnknownDetail);
-        using var result = await host.Client.PostAsJsonAsync($"/api/v1/sessions/{id}/control", new { action = mode });
+        using var result = await host.AuthenticatedClient.PostAsJsonAsync($"/api/v1/sessions/{id}/control", new { action = mode });
         Assert.Equal(HttpStatusCode.Conflict, result.StatusCode);
         Assert.Single(host.AgentRuntime.OpenedSessions);
     }
@@ -116,11 +116,11 @@ public sealed class ProviderSessionResumeTests
     {
         await using var host = new PergaHostTestCluster();
         var (_, id) = await host.CreateTrackAsync();
-        using var invalid = await host.Client.PostAsJsonAsync($"/api/v1/sessions/{id}/control", new { action = "" });
+        using var invalid = await host.AuthenticatedClient.PostAsJsonAsync($"/api/v1/sessions/{id}/control", new { action = "" });
         Assert.Equal(HttpStatusCode.BadRequest, invalid.StatusCode);
-        using var resume = await host.Client.PostAsJsonAsync($"/api/v1/sessions/{id}/resume", new { action = "stop", turnId = "old" });
+        using var resume = await host.AuthenticatedClient.PostAsJsonAsync($"/api/v1/sessions/{id}/resume", new { action = "stop", turnId = "old" });
         Assert.Equal(HttpStatusCode.NotFound, resume.StatusCode);
-        using var abandon = await host.Client.PostAsync($"/api/v1/sessions/{id}/inputs/old/abandon", null);
+        using var abandon = await host.AuthenticatedClient.PostAsync($"/api/v1/sessions/{id}/inputs/old/abandon", null);
         Assert.Equal(HttpStatusCode.NotFound, abandon.StatusCode);
     }
 }

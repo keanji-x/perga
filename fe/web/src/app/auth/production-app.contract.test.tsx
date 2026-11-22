@@ -3,14 +3,13 @@ import { Button } from '@astryxdesign/core';
 import { QueryClient } from '@tanstack/react-query';
 import { createMemoryHistory,createRootRoute,createRouter } from '@tanstack/react-router';
 import { cleanup,fireEvent,render,screen } from '@testing-library/react';
-import type { ReactElement } from 'react';
 import { createPortal } from 'react-dom';
 import { afterEach,describe,expect,it,vi } from 'vitest';
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
-import { IDB_DB_NAME } from '../../../../core/keys/storage.ts';
 import { bootCards } from '../cards.ts';
-import { runOperation } from '../providers/query-operation.ts';
 import { createAppRouter } from '../router/public.tsx';
+import { useSignOut } from './current-user.tsx';
+import { LogoutGate } from './logout-gate.tsx';
 import { mountProductionApp,ProductionApp } from './production-app.tsx';
 
 const mocks = vi.hoisted(() => ({ render: vi.fn(), cursorClear: vi.fn() }));
@@ -25,47 +24,9 @@ vi.mock('../cards.ts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../cards.ts')>();
   return { bootCards: vi.fn(actual.bootCards) };
 });
-vi.mock('../providers/query-operation.ts', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../providers/query-operation.ts')>();
-  return { ...actual, runOperation: vi.fn() };
-});
-
 afterEach(() => { cleanup(); vi.clearAllMocks(); mocks.cursorClear.mockReset(); });
 
 describe('production app mount', () => {
-
-  it('clears every session artifact locally and then reloads without a logout request', async () => {
-    const sequence: string[] = [];
-    const reload = vi.fn(() => { sequence.push('reload'); });
-    const deleteDatabase = vi.fn((name: string) => { sequence.push(`indexed-db:${name}`); });
-    const root = document.createElement('div');
-    const storage = {
-      length: 0, clear: vi.fn(), getItem: vi.fn(() => null), key: vi.fn(() => null),
-      removeItem: vi.fn(), setItem: vi.fn(),
-    } satisfies Storage;
-
-    mountProductionApp(root, {
-      storage,
-      reload,
-      deleteDatabase,
-    });
-    const routerOptions = vi.mocked(createAppRouter).mock.calls[0]?.[0];
-    expect(routerOptions).toBeDefined();
-    const rendered = mocks.render.mock.calls[0]?.[0] as ReactElement<Parameters<typeof ProductionApp>[0]>;
-    const clear = rendered.props.client.clear.bind(rendered.props.client);
-    rendered.props.client.setQueryData(['private'], 'cached');
-    vi.spyOn(rendered.props.client, 'clear').mockImplementation(() => { sequence.push('query'); clear(); });
-    mocks.cursorClear.mockImplementation(() => { sequence.push('cursor'); });
-
-    routerOptions?.onSignOut();
-    expect(runOperation).not.toHaveBeenCalled();
-    await vi.waitFor(() => expect(reload).toHaveBeenCalledOnce());
-    expect(rendered.props.client.getQueryData(['private'])).toBeUndefined();
-    expect(mocks.cursorClear).toHaveBeenCalledOnce();
-    expect(deleteDatabase).toHaveBeenCalledWith(IDB_DB_NAME);
-    expect(IDB_DB_NAME).toBe('perga');
-    expect(sequence).toEqual(['query', 'cursor', `indexed-db:${IDB_DB_NAME}`, 'reload']);
-  });
 
   it('assembles the card runtime exactly once and injects that instance into the router', () => {
     const root = document.createElement('div');
@@ -106,6 +67,30 @@ describe('production app mount', () => {
     const [first, second] = vi.mocked(createAppRouter).mock.calls.map((call) => call[0]?.cards.registry);
     expect(first).not.toBe(second);
   });
+});
+
+function PrivateWorkspace() {
+  const signOut = useSignOut();
+  return <><p>Private workspace</p><button type="button" onClick={() => signOut?.('original')}>Sign out</button></>;
+}
+
+it('locks the workspace and retries logout with the original session ID', async () => {
+  const send = vi.fn().mockRejectedValueOnce(new Error('Connection lost'))
+    .mockResolvedValueOnce({ status: 204, statusText: 'No Content', body: undefined });
+  const complete = vi.fn();
+  render(<LogoutGate transport={{ send }} onComplete={complete}><PrivateWorkspace /></LogoutGate>);
+  fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+  expect(screen.queryByText('Private workspace')).toBeNull();
+  const retry = await screen.findByRole('button', { name: 'Retry sign out' });
+  expect(complete).not.toHaveBeenCalled();
+  fireEvent.click(retry);
+  await vi.waitFor(() => expect(complete).toHaveBeenCalledOnce());
+  expect(send).toHaveBeenCalledTimes(2);
+  for (const request of send.mock.calls.map(([request]) => request as unknown)) {
+    expect(request).toMatchObject({
+      method: 'POST', path: '/api/v1/auth/logout', headers: { 'X-Perga-Session-Id': 'original' },
+    });
+  }
 });
 
 it('installs one depth adapter through ProductionApp for native, Astryx and portal login actions', async () => {

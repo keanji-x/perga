@@ -85,7 +85,7 @@ public sealed class WorkerSessionIntegrationTests
         await kernel.WaitForTrackIdleAsync(trackId, ct);
         var worker = Assert.Single(await kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), ct), summary => summary.TaskId == dispatched.Task.Id).Session;
         Assert.Equal(1000, worker.ContextUsage?.WindowTokens);
-        using var patch = await host.Client.PatchAsJsonAsync($"/api/v1/sessions/{worker.Id}",
+        using var patch = await host.AuthenticatedClient.PatchAsJsonAsync($"/api/v1/sessions/{worker.Id}",
             new { expectedConfigVersion = 0, model = "gpt-5.4-mini", reasoningEffort = "low" }, ct);
         patch.EnsureSuccessStatusCode();
         var cleared = await kernel.GetSessionItemsAsync(worker.Id, new(), new InteropPrincipal.Human(), ct);
@@ -133,7 +133,7 @@ public sealed class WorkerSessionIntegrationTests
                 Content = JsonContent.Create(new { content = "Look at dates", mode = "queue" })
             };
             request.Headers.Add("Idempotency-Key", "queued-request");
-            using var response = await host.Client.SendAsync(request, ct);
+            using var response = await host.AuthenticatedClient.SendAsync(request, ct);
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             var receipt = (await response.Content.ReadFromJsonAsync<SessionMessageReceipt>(PergaJsonDefaults.ApiOptions, ct))!;
             Assert.Equal("queued", receipt.Delivery);
@@ -157,7 +157,7 @@ public sealed class WorkerSessionIntegrationTests
             var queuePath = $"/api/v1/sessions/{worker.Id}/messages/{extraReceipt.MessageId}";
             var workerPage = await kernel.GetSessionItemsAsync(worker.Id, new(), new InteropPrincipal.Human(), ct);
             Assert.Contains(workerPage.QueuedMessages, entry => entry.Id == extraReceipt.MessageId);
-            using var withdrawn = await host.Client.DeleteAsync(queuePath, ct);
+            using var withdrawn = await host.AuthenticatedClient.DeleteAsync(queuePath, ct);
             Assert.Equal(HttpStatusCode.NoContent, withdrawn.StatusCode);
             var (withdrawAgain, withdrawError) = await CallFromRunningLeadAsync(host, "/mcp/kernel", lead.Principal.SessionId, KernelMcpToolNames.SessionWithdraw,
                 new { sessionId = worker.Id, messageId = extraReceipt.MessageId }, ct);
@@ -297,9 +297,9 @@ public sealed class WorkerSessionIntegrationTests
         await kernel.UpdateSessionAsync(worker.Id, new(ExpectedConfigVersion: 0, Model: new("gpt-5.4"), ReasoningEffort: new("high")), new InteropPrincipal.Human(), ct);
         Assert.Equal(1, (await ReadPage()).Session.ConfigVersion);
 
-        using var stale = await host.Client.PostAsJsonAsync($"{sessionPath}/control", new { action = "stop", turnId = "stale" }, ct);
+        using var stale = await host.AuthenticatedClient.PostAsJsonAsync($"{sessionPath}/control", new { action = "stop", turnId = "stale" }, ct);
         Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
-        using var stop = await host.Client.PostAsJsonAsync($"{sessionPath}/control", new { action = "stop", turnId }, ct);
+        using var stop = await host.AuthenticatedClient.PostAsJsonAsync($"{sessionPath}/control", new { action = "stop", turnId }, ct);
         Assert.Equal(HttpStatusCode.OK, stop.StatusCode);
         while ((await ReadPage()) is not { State: "idle", TaskBinding.Phase: "paused" })
             await Task.Delay(10, ct);
@@ -309,7 +309,7 @@ public sealed class WorkerSessionIntegrationTests
             Content = JsonContent.Create(new { content = "Continue the inspection" })
         };
         resume.Headers.Add("Idempotency-Key", "human-resume");
-        using var resumed = await host.Client.SendAsync(resume, ct);
+        using var resumed = await host.AuthenticatedClient.SendAsync(resume, ct);
         Assert.True(resumed.StatusCode == HttpStatusCode.OK, await resumed.Content.ReadAsStringAsync(ct));
         Assert.NotEqual(turnId, await continued.Task.WaitAsync(ct));
         Assert.Equal(taskId, (await ReadPage()).TaskBinding!.Task.Id);
@@ -317,7 +317,7 @@ public sealed class WorkerSessionIntegrationTests
         Assert.Equal("gpt-5.4", resumedTurn.Input.Model);
         Assert.Equal("high", resumedTurn.Input.ReasoningEffort);
 
-        async Task<SessionItemsPageDto> ReadPage() => (await host.Client.GetFromJsonAsync<SessionItemsPageDto>(
+        async Task<SessionItemsPageDto> ReadPage() => (await host.AuthenticatedClient.GetFromJsonAsync<SessionItemsPageDto>(
             $"{sessionPath}/items?latest=true", PergaJsonDefaults.ApiOptions, ct))!;
 
         async IAsyncEnumerable<UnifiedAgentEvent> WorkerTurns(HarnessLaunchSpec spec, TurnInput input,

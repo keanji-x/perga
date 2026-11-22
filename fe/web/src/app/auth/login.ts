@@ -1,7 +1,7 @@
 import { loginOperation, type SessionIdentity } from '../../../../core/api/auth.ts';
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import { ApiError, classifyFailure, refusedText } from '../../../../core/domain/failure-class.ts';
-import { LOGIN_FAILURES, LOGIN_TEXT } from '../../../../core/domain/login.ts';
+import { LOGIN_FAILURES, LOGIN_TEXT, LoginThrottledError } from '../../../../core/domain/login.ts';
 import { runOperation } from '../providers/query-operation.ts';
 import type { RecoverySession } from '../../systems/recovery/session.ts';
 
@@ -12,6 +12,7 @@ import type { RecoverySession } from '../../systems/recovery/session.ts';
 export async function loginWithTransport(
   transport: ApiTransportPort, username: string, password: string, signal: AbortSignal,
 ): Promise<SessionIdentity | null> {
+  if (username.trim() === '' || password.trim() === '') return null;
   try {
     signal.throwIfAborted();
     const identity = await runOperation(transport, { ...loginOperation({ username, password }), signal }, undefined);
@@ -19,9 +20,15 @@ export async function loginWithTransport(
     return identity;
   } catch (cause: unknown) {
     if (!(cause instanceof ApiError)) throw cause;
-    const kind = classifyFailure(cause.failure, LOGIN_FAILURES);
+    const failure = cause.failure;
+    if (failure.kind === 'http' && failure.code === 'login_throttled' && failure.status === 429 &&
+      failure.retryAfterSeconds !== undefined) throw new LoginThrottledError(failure.retryAfterSeconds);
+    const kind = classifyFailure(failure, LOGIN_FAILURES);
     if (kind === 'credentials') return null;
-    throw new Error(kind === 'refused' ? refusedText(cause.failure, LOGIN_TEXT.refused) : LOGIN_TEXT.unknown, { cause });
+    if (kind !== 'refused') throw new Error(LOGIN_TEXT.unknown, { cause });
+    const message = refusedText(failure, LOGIN_TEXT.refused);
+    const nextStep = failure.kind === 'http' ? failure.nextStep : undefined;
+    throw new Error(nextStep ? `${message} ${nextStep}` : message, { cause });
   }
 }
 

@@ -76,6 +76,16 @@ const pergaPage = (items: unknown[], extra = {}) => ({
 const item = (id: number, kind: string, payload: unknown, turnId: string | null = 'turn') =>
   ({ id, sessionId: 'session', turnId, kind, payload, createdAtMs: id });
 
+it('attributes a historical local-owner message to the verified owner', () => {
+  const page = conversationItemsOperation('session', null).responseSchema.parse(pergaPage([
+    item(1, 'user', { inputId: 'before-auth', content: 'Historical message' }),
+  ]));
+  expect(buildConversationTranscript(page.items, 'new-owner-id', true)).toMatchObject([
+    { author: 'you', human: { userId: 'local-owner' } },
+  ]);
+  expect(buildConversationTranscript(page.items, 'member-id', false)).toMatchObject([{ author: 'human' }]);
+});
+
 it('projects SessionItemDto speech, thinking, tools and outcomes directly without provider envelopes', () => {
   const page = conversationItemsOperation('session', null).responseSchema.parse(pergaPage([
     item(1, 'user', { inputId: 'message', content: '  exact\nwords  ', steered: true }),

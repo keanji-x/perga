@@ -126,6 +126,8 @@ export class WebSocketDriver implements EventStreamDriver {
     socket.onopen = () => {
       if (this.closed || epoch !== this.epoch) { socket.close(); return; }
       opened = true;
+      // The v1 Host verifies the session before accepting the upgrade.
+      if (isPergaV1) this.unauthorized = false;
       if (!__NC_BUNDLED__) this.retryDelay = 500;
       if (!isPergaV1) {
         socket.send(JSON.stringify(eventSubscriptionFrame(configuration.topics, this.cursor.read())));
@@ -147,12 +149,12 @@ export class WebSocketDriver implements EventStreamDriver {
       }
       sink.frame(decoded.frame);
     };
-    socket.onclose = () => {
+    socket.onclose = (event) => {
       if (this.closed || epoch !== this.epoch) return;
       if (this.handshakeTimer !== null) clearTimeout(this.handshakeTimer);
       this.handshakeTimer = null;
       if (this.socket === socket) this.socket = null;
-      if (!opened) this.probe(epoch);
+      if (!opened || event.code === 1008 || event.code === 1006) this.probe(epoch);
       this.scheduleRetry(epoch);
       sink.connectionState('connecting');
     };

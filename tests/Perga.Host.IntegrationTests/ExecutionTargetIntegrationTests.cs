@@ -298,7 +298,7 @@ public sealed class ExecutionTargetIntegrationTests
                 services.RemoveAll<ISshTargetConnectivityProbe>();
                 services.AddSingleton<ISshTargetConnectivityProbe>(probe);
             });
-            using var client = factory.CreateClient();
+            using var client = await BrowserAuthentication.CreateAuthenticatedClientAsync(factory);
             var response = await client.PostAsJsonAsync("/api/v1/targets", new { target });
             Assert.Equal(host is null ? HttpStatusCode.BadRequest : HttpStatusCode.Created, response.StatusCode);
             if (host is null) return;
@@ -596,7 +596,7 @@ public sealed class ExecutionTargetIntegrationTests
                     });
                 }))
             {
-                using var client = factory.CreateClient();
+                using var client = await BrowserAuthentication.CreateAuthenticatedClientAsync(factory);
 
                 // 1. Bootstrap reports both local and jasper execution targets.
                 var bootstrap = await client.GetFromJsonAsync<JsonElement>("/api/v1/bootstrap", PergaJsonDefaults.ApiOptions);
@@ -808,7 +808,7 @@ public sealed class ExecutionTargetIntegrationTests
                     services.AddSingleton<IAgentRuntime>(localRuntime);
                 }))
             {
-                using var restartedClient = restartedFactory.CreateClient();
+                using var restartedClient = await BrowserAuthentication.CreateAuthenticatedClientAsync(restartedFactory);
 
                 var filesWhenMissing = await restartedClient.GetAsync($"/api/v1/tracks/{trackId}/files");
                 Assert.Equal(HttpStatusCode.Conflict, filesWhenMissing.StatusCode);
@@ -845,7 +845,7 @@ public sealed class ExecutionTargetIntegrationTests
                     services.AddSingleton<ISshTargetConnectivityProbe>(probe);
                 }))
             {
-                using var client = factory.CreateClient();
+                using var client = await BrowserAuthentication.CreateAuthenticatedClientAsync(factory);
 
                 // 1. Failing SSH probe rejects creation and persists nothing.
                 probe.NextResult = new SshProbeResult(false, null, "Permission denied (publickey).");
@@ -900,7 +900,7 @@ public sealed class ExecutionTargetIntegrationTests
                     services.AddSingleton<ISshTargetConnectivityProbe>(probe);
                 }))
             {
-                using var restartedClient = restarted.CreateClient();
+                using var restartedClient = await BrowserAuthentication.CreateAuthenticatedClientAsync(restarted);
                 var listedAfterRestart = await restartedClient.GetFromJsonAsync<List<ExecutionTargetDto>>(
                     "/api/v1/targets",
                     PergaJsonDefaults.ApiOptions);

@@ -22,7 +22,7 @@ import { createMemoryStorage } from './share-reuse-fixture.ts';
 import { createAppRouter } from './public.tsx';
 import { bootTestCardRuntime } from './test-card-runtime.ts';
 
-const IDENTITY = { userId: 'track-create-owner', displayName: 'Owner', role: 'owner', sessionId: 'one' } as const;
+const IDENTITY = { userId: 'track-create-owner', displayName: 'Owner', username: 'owner', expiresAtMs: 2000000000000, role: 'owner', sessionId: 'one' } as const;
 const DRAFT_KEY = createStorageKey('track-create-v1', IDENTITY.userId, 'c1');
 const FIRST_SEND_KEY = createStorageKey('pending-track-initial-sends-v1');
 
@@ -1301,7 +1301,7 @@ describe('the sentence is delivered by the create, and the track opens on it', (
 
   /* The kernel writes the sentence to the transcript when the queue drains it, so the
        planner card's item read answers with it; nothing is minted on the client. */
-  it('shows the sentence that made the track from its persisted v1 input', async () => {
+  it('shows the persisted v1 input as the owner’s own message', async () => {
     const { sent } = harness({
 
       plannerItems: [sessionItem('card-planner', 1, 'Read it', 'user')],
@@ -1315,7 +1315,7 @@ describe('the sentence is delivered by the create, and the track opens on it', (
     await waitFor(() => expect(window.location.pathname).toBe(`/track/w-new`));
     const drawer = await screen.findByRole('complementary', { name: 'Planner' });
     await waitFor(() => expect(
-      [...drawer.querySelectorAll('[data-nc-turn="human"]')].map((turn) => turn.textContent),
+      [...drawer.querySelectorAll('[data-nc-entry="human:input-1"] [data-nc-turn="you"]')].map((turn) => turn.textContent),
     ).toEqual(['Read it']));
     expect(drawer.querySelector('[data-nc-thread-empty]')).toBeNull();
     const items = sent.filter((request) => request.path.includes('/items') && !request.path.includes('limit=1'));

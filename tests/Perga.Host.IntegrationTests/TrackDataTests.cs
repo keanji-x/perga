@@ -65,11 +65,11 @@ public sealed class TrackDataTests
                 Assert.Equal("c", records[1].GetProperty("code").GetString());
                 Assert.Equal(1, (await kernel.GetTrackAggregateAsync(id)).Track.TemplateState.GetProperty("approvals").GetInt32());
 
-                using var invalid = await host.Client.PatchAsJsonAsync(url + "/data",
+                using var invalid = await host.AuthenticatedClient.PatchAsJsonAsync(url + "/data",
                     new { expectedDataRev = 1, patch = Parse("""{"records":{"$upsert":[{"code":"a","value":"invalid"}]}}""") });
                 Assert.Equal(HttpStatusCode.BadRequest, invalid.StatusCode);
 
-                using var typoEnvelope = await host.Client.PatchAsJsonAsync(url + "/data",
+                using var typoEnvelope = await host.AuthenticatedClient.PatchAsJsonAsync(url + "/data",
                     new { expectedRev = 1, patch = Parse("""{"records":{"$upsert":[{"code":"a","value":99}]}}""") });
                 Assert.Equal(HttpStatusCode.BadRequest, typoEnvelope.StatusCode);
 
@@ -78,20 +78,20 @@ public sealed class TrackDataTests
 
                 var patch = Parse("""{"records":{"$upsert":[{"code":"a","value":6}]}}""");
                 var competing = await Task.WhenAll(
-                    host.Client.PatchAsJsonAsync(url + "/data", new { expectedDataRev = 1, patch }),
-                    host.Client.PatchAsJsonAsync(url + "/data", new { expectedDataRev = 1, patch }));
+                    host.AuthenticatedClient.PatchAsJsonAsync(url + "/data", new { expectedDataRev = 1, patch }),
+                    host.AuthenticatedClient.PatchAsJsonAsync(url + "/data", new { expectedDataRev = 1, patch }));
                 using var winner = Assert.Single(competing, result => result.StatusCode == HttpStatusCode.OK);
                 using var stale = Assert.Single(competing, result => result.StatusCode == HttpStatusCode.Conflict);
                 var winnerBody = await winner.Content.ReadFromJsonAsync<JsonElement>();
                 Assert.Equal(2, winnerBody.GetProperty("dataRev").GetInt64());
 
-                using var retry = await host.Client.PatchAsJsonAsync(url + "/data", patch);
+                using var retry = await host.AuthenticatedClient.PatchAsJsonAsync(url + "/data", patch);
                 retry.EnsureSuccessStatusCode();
                 var retryBody = await retry.Content.ReadFromJsonAsync<JsonElement>();
                 Assert.Equal(2, retryBody.GetProperty("dataRev").GetInt64());
                 expected = retryBody.GetProperty("data").Clone();
 
-                var views = await host.Client.GetFromJsonAsync<JsonElement>(url + "/views");
+                var views = await host.AuthenticatedClient.GetFromJsonAsync<JsonElement>(url + "/views");
                 Assert.Equal(2, views.GetProperty("dataRev").GetInt64());
                 Assert.Equal(6, views.GetProperty("views").GetProperty("ledger")[0].GetProperty("value").GetInt32());
 
@@ -181,13 +181,13 @@ public sealed class TrackDataTests
         var area = await kernel.CreateAreaAsync(new("Inputs", DefaultCwd: host.DataDir));
         var created = (await kernel.CreateTrackAsync(new(area.Id, TemplateId: "input-gated"))).Track;
 
-        using var badInput = await host.Client.PatchAsJsonAsync($"/api/v1/tracks/{created.Id}/template/inputs", new { numeric = true });
+        using var badInput = await host.AuthenticatedClient.PatchAsJsonAsync($"/api/v1/tracks/{created.Id}/template/inputs", new { numeric = true });
         Assert.Equal(HttpStatusCode.Conflict, badInput.StatusCode);
         var afterFailedInput = (await kernel.GetTrackAggregateAsync(created.Id)).Track;
         Assert.False(afterFailedInput.TemplateInputs.TryGetProperty("numeric", out var num) && num.GetBoolean());
 
         // Direct store CAS fence rejects stale writer trying to commit DataRev=1 after rev already advanced to 1.
-        var fresh = await host.Client.PatchAsJsonAsync($"/api/v1/tracks/{created.Id}/data",
+        var fresh = await host.AuthenticatedClient.PatchAsJsonAsync($"/api/v1/tracks/{created.Id}/data",
             new { expectedDataRev = 0, patch = Parse("""{"value":"updated"}""") });
         fresh.EnsureSuccessStatusCode();
         var staleCandidate = created with { Data = Parse("""{"value":"stale-overwrite"}"""), DataRev = 1 };
@@ -217,9 +217,9 @@ public sealed class TrackDataTests
             """;
         kernel.Templates.RegisterTemplate(emptyDataTemplate);
         var emptyTrack = (await kernel.CreateTrackAsync(new(area.Id, TemplateId: "empty-input-gated"))).Track;
-        using var reqMode = await host.Client.PatchAsJsonAsync($"/api/v1/tracks/{emptyTrack.Id}/template/inputs", new { mode = "required" });
+        using var reqMode = await host.AuthenticatedClient.PatchAsJsonAsync($"/api/v1/tracks/{emptyTrack.Id}/template/inputs", new { mode = "required" });
         Assert.Equal(HttpStatusCode.Conflict, reqMode.StatusCode);
-        using var badMode = await host.Client.PatchAsJsonAsync($"/api/v1/tracks/{emptyTrack.Id}/template/inputs", new { mode = "invalid" });
+        using var badMode = await host.AuthenticatedClient.PatchAsJsonAsync($"/api/v1/tracks/{emptyTrack.Id}/template/inputs", new { mode = "invalid" });
         Assert.Equal(HttpStatusCode.BadRequest, badMode.StatusCode);
     }
 
@@ -244,10 +244,10 @@ public sealed class TrackDataTests
             expects = Array.Empty<object>(),
         }).ToArray();
 
-        using var seeded = await host.Client.PatchAsJsonAsync(url, new { expectedDataRev = 0, patch = new { events = seedEvents } });
+        using var seeded = await host.AuthenticatedClient.PatchAsJsonAsync(url, new { expectedDataRev = 0, patch = new { events = seedEvents } });
         seeded.EnsureSuccessStatusCode();
 
-        using var updated = await host.Client.PatchAsJsonAsync(url, new
+        using var updated = await host.AuthenticatedClient.PatchAsJsonAsync(url, new
         {
             expectedDataRev = 1,
             patch = new { events = new Dictionary<string, object> { ["$upsert"] = new[] { new { id = "evt-200", title = "Event 200 Revised" } } } }
@@ -257,7 +257,7 @@ public sealed class TrackDataTests
         Assert.Equal(2, updatedBody.GetProperty("dataRev").GetInt64());
         Assert.Equal("Event 200 Revised", updatedBody.GetProperty("data").GetProperty("events")[199].GetProperty("title").GetString());
 
-        using var noop = await host.Client.PatchAsJsonAsync(url, new
+        using var noop = await host.AuthenticatedClient.PatchAsJsonAsync(url, new
         {
             expectedDataRev = 2,
             patch = new { events = new Dictionary<string, object> { ["$upsert"] = new[] { new { id = "evt-200", title = "Event 200 Revised" } } } }

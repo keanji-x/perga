@@ -6,8 +6,9 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
-import { IDB_DB_NAME, SYNC_CURSOR_KEY } from '../../../../core/keys/storage.ts';
+import { AUTH_CHANGE_KEY, IDB_DB_NAME, SYNC_CURSOR_KEY } from '../../../../core/keys/storage.ts';
 import { createBrowserCursorStore } from '../events/browser-cursor-store.ts';
+import { createAuthChanges } from './auth-changes.ts';
 import { SessionGate } from './session-gate.tsx';
 import { WEB_COMPAT_VERSION, type ProviderRuntime } from '../providers/public.tsx';
 import { ProductionApp } from './production-app.tsx';
@@ -15,13 +16,31 @@ import { createAppRouter } from '../router/public.tsx';
 import { bootTestCardRuntime } from '../router/test-card-runtime.ts';
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); window.history.replaceState({}, '', '/'); });
-const identity = { userId: 'u', displayName: 'Owner', role: 'admin', sessionId: 's' };
+const identity = { userId: 'u', displayName: 'Owner', username: 'owner', expiresAtMs: 2000000000000, role: 'admin', sessionId: 's' };
 
 function cleanupRuntime() {
   return { deleteDatabase: vi.fn(), idbDatabaseName: IDB_DB_NAME };
 }
 
 const noopCursorStore = { clear: () => undefined };
+
+it('uses a credential-free storage notification when BroadcastChannel is unavailable', () => {
+  vi.stubGlobal('BroadcastChannel', undefined);
+  const storage = { setItem: vi.fn(), removeItem: vi.fn() };
+  const changes = createAuthChanges(window, storage);
+  const listener = vi.fn();
+  const stop = changes.subscribe(listener);
+  try {
+    changes.publish();
+    expect(storage.setItem).toHaveBeenCalledExactlyOnceWith(AUTH_CHANGE_KEY, '1');
+    expect(storage.removeItem).toHaveBeenCalledExactlyOnceWith(AUTH_CHANGE_KEY);
+    window.dispatchEvent(new StorageEvent('storage', { key: AUTH_CHANGE_KEY, newValue: '1' }));
+    window.dispatchEvent(new StorageEvent('storage', { key: AUTH_CHANGE_KEY, newValue: null }));
+    expect(listener).toHaveBeenCalledOnce();
+  } finally { stop(); }
+  window.dispatchEvent(new StorageEvent('storage', { key: AUTH_CHANGE_KEY, newValue: '1' }));
+  expect(listener).toHaveBeenCalledOnce();
+});
 
 describe('session gate contracts', () => {
   it('cold bundled deep link paints its saved page structure before whoami or version can respond', () => {
@@ -42,7 +61,7 @@ describe('session gate contracts', () => {
     expect(screen.getByRole('navigation', { name: '恢复页面导航' })).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Track' })).toBeTruthy();
     expect(screen.getByRole('status').textContent).toContain('正在恢复连接');
-    expect(paths).toEqual(['/api/v1/bootstrap?scope=whoami']);
+    expect(paths).toEqual(['/api/v1/auth/session']);
     expect(fetchVersion).not.toHaveBeenCalled();
   });
   it('bundled assembly without recovery admission never mounts business routes after successful identity and version', async () => {
@@ -58,7 +77,7 @@ describe('session gate contracts', () => {
     render(<ProductionApp transport={transport} client={client} unauthorized={unauthorized} runtime={runtime}
       cursorStore={{ clear: vi.fn() }} router={router} renderLogin={() => <b>login</b>} renderError={() => <b>retry</b>} />);
     await waitFor(() => expect(fetchVersion).toHaveBeenCalledOnce());
-    expect(paths).toEqual(['/api/v1/bootstrap?scope=whoami']); expect(screen.getByRole('heading', { name: 'Track' })).toBeTruthy();
+    expect(paths).toEqual(['/api/v1/auth/session']); expect(screen.getByRole('heading', { name: 'Track' })).toBeTruthy();
   });
 
   it('does not mount the real AppProviders ServerCompatGate before an unauthenticated verdict', async () => {
@@ -71,7 +90,7 @@ describe('session gate contracts', () => {
     const router = createAppRouter({ prepareReport: prepareReportDocument, transport, unauthorized, client, cards: bootTestCardRuntime(), onSignOut: vi.fn() });
     render(<ProductionApp transport={transport} client={client} unauthorized={unauthorized} runtime={runtime}
       cursorStore={{ clear: vi.fn() }} router={router} renderLogin={() => <b>login</b>} renderError={() => <b>retry</b>} />);
-    expect(paths).toEqual(['/api/v1/bootstrap?scope=whoami']);
+    expect(paths).toEqual(['/api/v1/auth/session']);
     expect(await screen.findByText('login')).toBeTruthy();
     expect(fetchVersion).not.toHaveBeenCalled();
   });
@@ -163,5 +182,34 @@ describe('session gate contracts', () => {
     resolveWhoami({ status: 200, statusText: 'OK', body: identity });
     await waitFor(() => expect(screen.queryByText('router')).toBeNull());
     expect(screen.getByText('login')).toBeTruthy();
+  });
+
+  it('re-probes in place on authChanges without unmounting active login or same-session workspace', async () => {
+    let listener: (() => void) | null = null;
+    const authChanges = {
+      publish: vi.fn(),
+      subscribe: (fn: () => void) => { listener = fn; return () => { listener = null; }; },
+    };
+    let resolveNext!: (value: { status: number; statusText: string; body: unknown }) => void;
+    let calls = 0;
+    const transport: ApiTransportPort = {
+      send: () => {
+        calls += 1;
+        if (calls === 1) return Promise.resolve({ status: 401, statusText: 'Unauthorized', body: {} });
+        return new Promise((resolve) => { resolveNext = resolve; });
+      },
+    };
+    const channel = createUnauthorizedChannel({ enqueue: (task) => task() });
+    render(<SessionGate transport={transport} client={new QueryClient()} unauthorized={channel}
+      authChanges={authChanges} runtime={cleanupRuntime()} cursorStore={noopCursorStore}
+      renderLogin={() => <input aria-label="Username" />} renderError={() => <b>retry</b>}><b>router</b></SessionGate>);
+
+    const input = await screen.findByLabelText('Username');
+    await userEvent.type(input, 'alice');
+    listener!();
+    // Login form stays mounted with typed input while background re-probe is in flight.
+    expect(screen.getByLabelText<HTMLInputElement>('Username').value).toBe('alice');
+    resolveNext({ status: 401, statusText: 'Unauthorized', body: {} });
+    await waitFor(() => expect(screen.getByLabelText<HTMLInputElement>('Username').value).toBe('alice'));
   });
 });

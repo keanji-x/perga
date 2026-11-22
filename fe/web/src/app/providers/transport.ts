@@ -41,7 +41,10 @@ export function createFetchTransport(): ApiTransportPort {
           }),
           signal: controller.signal,
         });
-        return { status: response.status, statusText: response.statusText, body: await readBody(response) };
+        return {
+          status: response.status, statusText: response.statusText, body: await readBody(response),
+          headers: Object.fromEntries(response.headers),
+        };
       } finally {
         clearTimeout(timeout);
         request.signal?.removeEventListener('abort', relayAbort);

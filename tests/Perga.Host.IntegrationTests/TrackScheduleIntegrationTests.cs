@@ -106,7 +106,7 @@ public sealed class TrackScheduleIntegrationTests
     {
         await using var host = new PergaHostTestCluster();
         Assert.Equal(HttpStatusCode.BadRequest,
-            (await host.Client.GetAsync("/api/today/calendar?start=9999-12-31&end=9999-12-31")).StatusCode);
+            (await host.AuthenticatedClient.GetAsync("/api/today/calendar?start=9999-12-31&end=9999-12-31")).StatusCode);
     }
 
     [Fact]
@@ -120,7 +120,7 @@ public sealed class TrackScheduleIntegrationTests
         var kernel = host.Services.GetRequiredService<IPergaKernel>();
 
         // Ensure today's daily track exists and populate its report.
-        var dailyResp = await host.Client.GetAsync("/api/today/daily");
+        var dailyResp = await host.AuthenticatedClient.GetAsync("/api/today/daily");
         dailyResp.EnsureSuccessStatusCode();
         using var dailyDoc = JsonDocument.Parse(await dailyResp.Content.ReadAsStringAsync());
         var todayDate = dailyDoc.RootElement.GetProperty("date").GetString()!;
@@ -169,7 +169,7 @@ public sealed class TrackScheduleIntegrationTests
             FlowFixture.Wake("every-minute-budget", "Ping",
                 new(Cron: "* * * * *", Tz: TodayCalendar.IanaId(hostZone), MaxOccurrences: 5000), "Heartbeat"));
 
-        var calResp = await host.Client.GetAsync($"/api/today/calendar?start={todayDate}&end={day3Date}");
+        var calResp = await host.AuthenticatedClient.GetAsync($"/api/today/calendar?start={todayDate}&end={day3Date}");
         calResp.EnsureSuccessStatusCode();
         using var calDoc = JsonDocument.Parse(await calResp.Content.ReadAsStringAsync());
         Assert.Equal(targetLocalDate, calDoc.RootElement.GetProperty("today").GetString());
@@ -203,8 +203,8 @@ public sealed class TrackScheduleIntegrationTests
         Assert.Equal("Release check-in", checkIn.GetProperty("title").GetString());
         Assert.Equal("Release Track", checkIn.GetProperty("track_title").GetString());
 
-        Assert.Equal(HttpStatusCode.BadRequest, (await host.Client.GetAsync("/api/today/calendar?start=2026-11-20&end=2026-11-19")).StatusCode);
-        Assert.Equal(HttpStatusCode.BadRequest, (await host.Client.GetAsync("/api/today/calendar?start=2026-01-01&end=2026-04-01")).StatusCode);
-        Assert.Equal(HttpStatusCode.BadRequest, (await host.Client.GetAsync("/api/today/calendar?start=invalid&end=2026-11-20")).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await host.AuthenticatedClient.GetAsync("/api/today/calendar?start=2026-11-20&end=2026-11-19")).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await host.AuthenticatedClient.GetAsync("/api/today/calendar?start=2026-01-01&end=2026-04-01")).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await host.AuthenticatedClient.GetAsync("/api/today/calendar?start=invalid&end=2026-11-20")).StatusCode);
     }
 }

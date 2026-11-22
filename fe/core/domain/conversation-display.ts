@@ -179,7 +179,9 @@ export function nativeDisplayRows(items: readonly ConversationDisplayItem[]) {
   return items.flatMap(({ source }) => source.kind === 'entry' && source.observation !== undefined ? [source.observation] : []);
 }
 
-export function buildConversationTranscript(items: readonly ConversationDisplayItem[], viewerId: string | null): readonly TranscriptEntry[] {
+export function buildConversationTranscript(
+  items: readonly ConversationDisplayItem[], viewerId: string | null, viewerIsOwner = false,
+): readonly TranscriptEntry[] {
   return retireFollowedThoughts([...items].sort((a, b) => a.cursor.position - b.cursor.position).flatMap(({ source, cursor }): TranscriptEntry[] => {
     if (source.kind === 'removed') return [];
     if (source.kind === 'entry') return source.entry.author === 'agent' && source.entry.text.trim() === '' ? []
@@ -187,7 +189,9 @@ export function buildConversationTranscript(items: readonly ConversationDisplayI
     if (source.kind === 'system') return [{ id: `system:${source.observation_id}`, author: 'system',
       label: source.statusLabel ?? SYSTEM_PRESENTATION_LABELS[source.presentation], text: source.text,
       atMs: source.created_at_ms, displayPosition: cursor.position }];
-    return [{ id: `human:${source.message_id}`, author: source.author.user_id === viewerId ? 'you' : 'human',
+    const authorId = source.author.user_id;
+    const authoredByViewer = authorId === viewerId || (viewerIsOwner && authorId === DEPLOYMENT_OWNER_USER_ID);
+    return [{ id: `human:${source.message_id}`, author: authoredByViewer ? 'you' : 'human',
       human: { userId: source.author.user_id, displayName: source.author.display_name, messageId: source.message_id, revision: source.revision },
       text: source.text, attachments: source.attachments, atMs: source.created_at_ms, displayPosition: cursor.position,
       ...(source.supplemental === true ? { supplemental: true } : {}),

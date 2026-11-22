@@ -34,13 +34,12 @@ public sealed class RequestOriginGuardTests
     public async Task SameOriginAndNativeHttpPass(string origin)
     {
         await using var host = new PergaHostTestCluster();
-        host.Client.DefaultRequestHeaders.Authorization = null;
         using var request = new HttpRequestMessage(HttpMethod.Get, "/api/v1/areas");
         request.Headers.Add("Origin", origin);
         request.Headers.Add("Sec-Fetch-Site", "same-origin");
-        using var response = await host.Client.SendAsync(request);
+        using var response = await host.AuthenticatedClient.SendAsync(request);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        using var native = await host.Client.GetAsync("/api/v1/areas");
+        using var native = await host.AuthenticatedClient.GetAsync("/api/v1/areas");
         Assert.Equal(HttpStatusCode.OK, native.StatusCode);
         // MCP retains its own capability authentication, rather than being blocked by browser policy.
         using var mcp = await host.Client.GetAsync("/mcp/kernel");
@@ -127,7 +126,7 @@ public sealed class RequestOriginGuardTests
         await using var host = new PergaHostTestCluster();
         using var request = new HttpRequestMessage(HttpMethod.Get, "/api/v1/areas");
         request.Headers.Host = authority;
-        using var response = await host.Client.SendAsync(request);
+        using var response = await host.AuthenticatedClient.SendAsync(request);
         if (allowed) Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         else await AssertForbidden(response, "request_host_forbidden");
     }
@@ -150,17 +149,17 @@ public sealed class RequestOriginGuardTests
         request.Headers.Host = "perga.example";
         request.Headers.Add("Origin", "https://console.example");
         request.Headers.Add("Sec-Fetch-Site", "cross-site");
-        using var response = await host.Client.SendAsync(request);
+        using var response = await host.AuthenticatedClient.SendAsync(request);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         request.Headers.Host = "evil.example";
-        using var hostDenied = await host.Client.SendAsync(Clone(request));
+        using var hostDenied = await host.AuthenticatedClient.SendAsync(Clone(request));
         await AssertForbidden(hostDenied, "request_host_forbidden");
         request.Headers.Host = "perga.example";
         request.Headers.Remove("Origin");
-        using var noOrigin = await host.Client.SendAsync(Clone(request));
+        using var noOrigin = await host.AuthenticatedClient.SendAsync(Clone(request));
         await AssertForbidden(noOrigin, "request_origin_forbidden");
         request.Headers.Add("Origin", "https://other.example");
-        using var originDenied = await host.Client.SendAsync(Clone(request));
+        using var originDenied = await host.AuthenticatedClient.SendAsync(Clone(request));
         await AssertForbidden(originDenied, "request_origin_forbidden");
     }
 
@@ -175,7 +174,6 @@ public sealed class RequestOriginGuardTests
     [InlineData("/healthz")]
     [InlineData("/")]
     [InlineData("/assets/app.js")]
-    [InlineData("/api/v10")]
     [InlineData("/mcplease")]
     public async Task UnprotectedPathsBypassGuard(string path)
     {
@@ -194,7 +192,11 @@ public sealed class RequestOriginGuardTests
     {
         await using var host = new PergaHostTestCluster();
         var client = host.Factory.Server.CreateWebSocketClient();
-        client.ConfigureRequest = request => request.Headers["Origin"] = "http://localhost";
+        client.ConfigureRequest = request =>
+        {
+            request.Headers["Origin"] = "http://localhost";
+            request.Headers.Cookie = host.SessionCookie;
+        };
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         using var socket = await client.ConnectAsync(new Uri("ws://localhost/api/v1/events"), timeout.Token);
         using var frame = await PergaHostTestCluster.ReceiveTextJsonFrameAsync(socket, timeout.Token);
@@ -213,6 +215,7 @@ public sealed class RequestOriginGuardTests
         client.ConfigureRequest = request =>
         {
             request.Headers["Origin"] = "https://console.example";
+            request.Headers.Cookie = host.SessionCookie;
             request.Headers["Sec-Fetch-Site"] = "cross-site";
         };
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -241,20 +244,16 @@ public sealed class RequestOriginGuardTests
         await using var host = new PergaHostTestCluster();
         host.Client.DefaultRequestHeaders.Remove("Origin");
         host.Client.DefaultRequestHeaders.Add("Origin", "http://localhost");
-        var bearer = host.Client.DefaultRequestHeaders.Authorization;
-        host.Client.DefaultRequestHeaders.Authorization = null;
         using var denied = await host.Client.PostAsJsonAsync("/api/v1/system/drain", new { draining = true });
         await AssertForbidden(denied, "system_management_forbidden");
-        host.Client.DefaultRequestHeaders.Authorization = bearer;
-        host.Client.DefaultRequestHeaders.Remove("Origin");
-        host.Client.DefaultRequestHeaders.Add("Origin", "https://evil.example");
-        using var foreign = await host.Client.PostAsJsonAsync("/api/v1/system/drain", new { draining = true });
+        host.ManagementClient.DefaultRequestHeaders.Add("Origin", "https://evil.example");
+        using var foreign = await host.ManagementClient.PostAsJsonAsync("/api/v1/system/drain", new { draining = true });
         await AssertForbidden(foreign, "request_origin_forbidden");
-        host.Client.DefaultRequestHeaders.Remove("Origin");
-        host.Client.DefaultRequestHeaders.Add("Origin", "http://localhost");
-        using var info = JsonDocument.Parse(await host.Client.GetStringAsync("/api/v1/system/info"));
+        host.ManagementClient.DefaultRequestHeaders.Remove("Origin");
+        host.ManagementClient.DefaultRequestHeaders.Add("Origin", "http://localhost");
+        using var info = JsonDocument.Parse(await host.ManagementClient.GetStringAsync("/api/v1/system/info"));
         Assert.False(info.RootElement.GetProperty("draining").GetBoolean());
-        using var permitted = await host.Client.PostAsJsonAsync("/api/v1/system/drain", new { draining = true });
+        using var permitted = await host.ManagementClient.PostAsJsonAsync("/api/v1/system/drain", new { draining = true });
         Assert.Equal(HttpStatusCode.Accepted, permitted.StatusCode);
     }
 
@@ -265,7 +264,6 @@ public sealed class RequestOriginGuardTests
     {
         await using var host = new PergaHostTestCluster(configureHostOptions: o =>
             o.AllowedOrigins = ["https://console.example"]);
-        host.Client.DefaultRequestHeaders.Authorization = null;
         host.Client.DefaultRequestHeaders.Add("Origin", "https://console.example");
         using var response = await host.Client.PostAsJsonAsync("/api/v1/system/" + action,
             new { draining = true, releaseId = "missing", webBuildId = "missing" });
@@ -283,12 +281,12 @@ public sealed class RequestOriginGuardTests
         request.Headers.Add("X-Forwarded-For", "127.0.0.1");
         request.Headers.Add("Origin", "http://localhost");
         using var response = await host.Client.SendAsync(request);
-        await AssertForbidden(response, "request_host_forbidden");
+        await AssertForbidden(response, "insecure_transport_required");
         request.Headers.Host = "localhost";
         request.Headers.Remove("Origin");
         request.Headers.Add("Origin", "https://evil.example");
         using var originDenied = await host.Client.SendAsync(Clone(request));
-        await AssertForbidden(originDenied, "request_origin_forbidden");
+        await AssertForbidden(originDenied, "insecure_transport_required");
     }
 
     [Theory]
@@ -297,6 +295,10 @@ public sealed class RequestOriginGuardTests
     public async Task CanonicalHttpsAndIpv6OriginsPass(string scheme, string authority, string origin)
     {
         await using var host = new PergaHostTestCluster();
+        using var client = scheme == "https"
+            ? await BrowserAuthentication.CreateAuthenticatedClientAsync(host.Factory, new Uri("https://localhost"))
+            : null;
+        var cookie = client?.DefaultRequestHeaders.GetValues("Cookie").Single() ?? host.SessionCookie;
         var context = await host.Factory.Server.SendAsync(ctx =>
         {
             ctx.Request.Method = "GET";
@@ -304,6 +306,7 @@ public sealed class RequestOriginGuardTests
             ctx.Request.Host = new HostString(authority);
             ctx.Request.Path = "/api/v1/areas";
             ctx.Request.Headers["Origin"] = origin;
+            ctx.Request.Headers.Cookie = cookie;
         });
         Assert.Equal(200, context.Response.StatusCode);
     }
@@ -316,7 +319,8 @@ public sealed class RequestOriginGuardTests
         {
             await using var factory = new IsolatedPergaHostFactory(directory.FullName);
             factory.UseKestrel(0);
-            using var client = factory.CreateClient();
+            using var original = factory.CreateClient();
+            using var client = await BrowserAuthentication.CreateAuthenticatedClientAsync(factory, original.BaseAddress);
             var origin = client.BaseAddress!.GetLeftPart(UriPartial.Authority);
             using var sameOrigin = new HttpRequestMessage(HttpMethod.Get, "/api/v1/areas");
             sameOrigin.Headers.Add("Origin", origin);
@@ -332,6 +336,7 @@ public sealed class RequestOriginGuardTests
             await AssertForbidden(deniedOrigin, "request_origin_forbidden");
             using var socket = new ClientWebSocket();
             socket.Options.SetRequestHeader("Origin", origin);
+            socket.Options.SetRequestHeader("Cookie", client.DefaultRequestHeaders.GetValues("Cookie").Single());
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
             var wsUri = new UriBuilder(client.BaseAddress) { Scheme = "ws", Path = "/api/v1/events" }.Uri;
             await socket.ConnectAsync(wsUri, timeout.Token);

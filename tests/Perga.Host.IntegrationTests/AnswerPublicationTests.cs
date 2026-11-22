@@ -130,7 +130,7 @@ public sealed class AnswerPublicationTests
         // A snapshot queues behind the answer and observes its final actor state.
         Assert.DoesNotContain((await Snapshot(host, trackId)).OpenAsks, a => a.Id == ask.Id);
         Assert.False((await question.WaitAsync(TimeSpan.FromSeconds(5))).GetBoolean());
-        using var retry = await host.Client.PostAsJsonAsync($"/api/v1/sessions/{ask.SessionId}/interactions/{ask.Id}/respond", new { answers = true });
+        using var retry = await host.AuthenticatedClient.PostAsJsonAsync($"/api/v1/sessions/{ask.SessionId}/interactions/{ask.Id}/respond", new { answers = true });
         Assert.Equal(HttpStatusCode.Conflict, retry.StatusCode);
 
         await using var db = new SqliteConnection($"Data Source={Path.Combine(host.DataDir, "perga.db")};Pooling=False");
@@ -147,6 +147,6 @@ public sealed class AnswerPublicationTests
     }
 
     private static async Task<TrackAggregateSnapshot> Snapshot(PergaHostTestCluster host, string trackId) =>
-        (await host.Client.GetFromJsonAsync<TrackAggregateSnapshot>($"/api/v1/tracks/{trackId}", PergaJsonDefaults.ApiOptions))!;
+        (await host.AuthenticatedClient.GetFromJsonAsync<TrackAggregateSnapshot>($"/api/v1/tracks/{trackId}", PergaJsonDefaults.ApiOptions))!;
 
 }

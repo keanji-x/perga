@@ -1,3 +1,4 @@
+using Perga.Host.Auth;
 using System.Text.Json;
 using Perga.Kernel;
 
@@ -12,7 +13,8 @@ public static class TodayEndpoints
 
     public static IEndpointRouteBuilder MapTodayEndpoints(this IEndpointRouteBuilder endpoints)
     {
-        var today = endpoints.MapGroup("/api/today");
+        var today = endpoints.MapGroup("/api/today").RequireAuthorization(PergaAuthPolicies.UserSession)
+            .WithMetadata(new RequestOriginGuard.BrowserWriteApi());
         today.MapGet("/daily", async (string? date, IPergaKernel kernel, CancellationToken ct) =>
         {
             var daily = await kernel.GetDailyTrackAsync(date, ct).ConfigureAwait(false);

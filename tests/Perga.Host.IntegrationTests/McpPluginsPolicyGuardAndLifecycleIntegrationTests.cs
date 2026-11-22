@@ -180,7 +180,7 @@ public sealed class McpPluginsPolicyGuardAndLifecycleIntegrationTests
 
             await using var cluster = new PergaHostTestCluster(
                 configureHostOptions: opts => opts.McpPluginsConfigPath = pluginsJsonPath);
-            var client = cluster.Client;
+            var client = cluster.AuthenticatedClient;
             var kernel = cluster.Services.GetRequiredService<IPergaKernel>();
 
             // Register a policy template exercising GuardToolCall Allow / Deny / AskHuman across MCP servers!
@@ -431,7 +431,7 @@ public sealed class McpPluginsPolicyGuardAndLifecycleIntegrationTests
                                  opts.MaintenanceInterval = TimeSpan.FromMilliseconds(40);
                              }))
             {
-                var client = cluster.Client;
+                var client = cluster.AuthenticatedClient;
                 var kernel = cluster.Services.GetRequiredService<IPergaKernel>();
                 var store = cluster.Services.GetRequiredService<ITrackStore>();
 

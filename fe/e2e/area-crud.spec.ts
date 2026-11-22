@@ -1,4 +1,5 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
+import { test } from './helpers/workspace-test.ts';
 import { areaDtoSchema } from '../core/api/perga-v1.ts';
 
 const createdAreaIds: string[] = [];

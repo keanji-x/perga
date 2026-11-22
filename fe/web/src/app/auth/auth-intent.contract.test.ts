@@ -23,8 +23,8 @@ function setup() {
     posts.push({ retiredProof: proofs[0]?.signal.aborted ?? false, generation: access.read().generation, finish: resolve });
   }) }, access).probe;
   session.start();
-  const identity = (sessionId: string): SessionIdentity => ({ userId: 'owner', displayName: 'Owner', role: 'owner', sessionId });
-  const finishPost = (sessionId: string) => posts[0].finish({ status: 200, statusText: 'OK', body: identity(sessionId) });
+  const identity = (sessionId: string): SessionIdentity => ({ userId: 'owner', displayName: 'Owner', username: 'owner', expiresAtMs: 2000000000000, role: 'owner', sessionId });
+  const finishPost = (sessionId: string) => posts[0].finish({ status: 200, statusText: 'OK', headers: { 'x-perga-session-id': sessionId }, body: identity(sessionId) });
   return { session, access, proofs, posts, transport, identity, finishPost, values };
 }
 

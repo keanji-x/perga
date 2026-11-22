@@ -121,7 +121,7 @@ it('saves and reads back null effort on an existing session without materializin
   const session = () => fixtureSession('second-planner', 'daily', { model: saved.model, reasoningEffort: saved.reasoning_effort });
   const ok = (body: unknown) => ({ status: 200, statusText: 'OK', body });
   const fixture = renderPlannerSwitchFixture({ reply: request => {
-    if (request.path.startsWith('/api/v1/bootstrap') && !request.path.includes('scope=whoami')) {
+    if (request.path.startsWith('/api/v1/bootstrap')) {
       const bootstrap = fixtureBootstrap(['codex'], ['test-model']);
       bootstrap.providers[0].modelCatalog = [{ model: 'test-model', displayName: 'Test model', description: '', isDefault: true,
         defaultReasoningEffort: null, supportedReasoningEfforts: [{ reasoningEffort: 'low', description: '' }, { reasoningEffort: 'high', description: '' }] }];

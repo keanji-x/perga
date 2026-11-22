@@ -1,5 +1,6 @@
 import { sessionItemsPageDtoSchema, trackAggregateSnapshotDtoSchema } from '../core/api/perga-v1.ts';
-import { expect, test } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { test } from './helpers/workspace-test.ts';
 import { createArea } from './helpers/seed.js';
 
 test('renders a completed v1 reply once and retains it after reload', async ({ page, request }) => {

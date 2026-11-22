@@ -1,5 +1,6 @@
 import { trackAggregateSnapshotDtoSchema } from '../core/api/perga-v1.ts';
-import { expect, test, type Page } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
+import { test } from './helpers/workspace-test.ts';
 
 import { createArea, createTrack } from './helpers/seed.js';
 

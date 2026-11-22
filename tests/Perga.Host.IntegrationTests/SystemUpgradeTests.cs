@@ -13,6 +13,7 @@ using Perga.Host.SystemUpgrade;
 using Perga.Kernel;
 using Perga.Kernel.Mcp;
 using Perga.Kernel.Ports;
+using Perga.Storage.Sqlite;
 
 namespace Perga.Host.IntegrationTests;
 
@@ -258,19 +259,19 @@ public sealed class SystemUpgradeTests
         var (track, lead) = await host.CreateTrackAsync();
         var kernel = host.Services.GetRequiredService<IPergaKernel>();
         using var sub = kernel.EventBus.Subscribe();
-        using var infoResponse = await host.Client.GetAsync("/api/v1/system/info");
+        using var infoResponse = await host.AuthenticatedClient.GetAsync("/api/v1/system/info");
         Assert.Equal("no-store", infoResponse.Headers.CacheControl!.ToString());
         var info = (await infoResponse.Content.ReadFromJsonAsync<SystemInfoDto>(PergaJsonDefaults.ApiOptions))!;
-        Assert.Equal(25, info.SchemaVersion);
+        Assert.Equal(SqliteMigrator.CurrentSchemaVersion, info.SchemaVersion);
         Assert.False(info.Draining);
-        using var draining = await host.Client.PostAsJsonAsync("/api/v1/system/drain", new { draining = true });
+        using var draining = await host.ManagementClient.PostAsJsonAsync("/api/v1/system/drain", new { draining = true });
         Assert.Equal(HttpStatusCode.Accepted, draining.StatusCode);
         var accepted = await kernel.SendSessionMessageAsync(lead, new(Content: "during drain", RequestKey: "drain-input"), new InteropPrincipal.Human(), default);
         Assert.Equal("accepted", accepted.Delivery);
         Assert.Empty(host.AgentRuntime.OpenedSessions);
         Assert.Equal(0, (await Info(host)).ActiveDispatches);
         Assert.True((await Info(host)).Draining);
-        using var resumed = await host.Client.PostAsJsonAsync("/api/v1/system/drain", new { draining = false });
+        using var resumed = await host.ManagementClient.PostAsJsonAsync("/api/v1/system/drain", new { draining = false });
         Assert.Equal(HttpStatusCode.Accepted, resumed.StatusCode);
         await kernel.WaitForTrackIdleAsync(track).WaitAsync(Deadline);
         Assert.Single(host.AgentRuntime.ExecutedTurns);
@@ -278,7 +279,7 @@ public sealed class SystemUpgradeTests
         Assert.True(sub.Reader.TryRead(out var evt));
         Assert.Equal("system.upgrade_status", evt.Kind);
         Assert.True(evt.Payload.GetProperty("draining").GetBoolean());
-        using var missing = await host.Client.PostAsJsonAsync("/api/v1/system/drain", new { });
+        using var missing = await host.ManagementClient.PostAsJsonAsync("/api/v1/system/drain", new { });
         Assert.Equal(HttpStatusCode.BadRequest, missing.StatusCode);
     }
 
@@ -300,7 +301,7 @@ public sealed class SystemUpgradeTests
         var kernel = host.Services.GetRequiredService<IPergaKernel>();
         await kernel.SendSessionMessageAsync(lead, new(Content: "work", RequestKey: "busy"), new InteropPrincipal.Human(), default);
         await started.Task.WaitAsync(Deadline);
-        using var response = await host.Client.PostAsJsonAsync("/api/v1/system/drain", new { draining = true }).WaitAsync(Deadline);
+        using var response = await host.ManagementClient.PostAsJsonAsync("/api/v1/system/drain", new { draining = true }).WaitAsync(Deadline);
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
         Assert.Equal(1, (await Info(host)).ActiveDispatches);
         finish.SetResult();
@@ -338,13 +339,13 @@ public sealed class SystemUpgradeTests
         await using var host = new PergaHostTestCluster();
         using var csrf = new HttpRequestMessage(HttpMethod.Post, "/api/v1/system/drain") { Content = JsonContent.Create(new { draining = true }) };
         csrf.Headers.Add("Origin", "https://attacker.example");
-        using var denied = await host.Client.SendAsync(csrf);
+        using var denied = await host.ManagementClient.SendAsync(csrf);
         Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
         using var noToken = new HttpRequestMessage(HttpMethod.Post, "/api/v1/system/drain") { Content = JsonContent.Create(new { draining = true }) };
         noToken.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", "wrong");
-        using var noTokenResponse = await host.Client.SendAsync(noToken);
+        using var noTokenResponse = await host.AuthenticatedClient.SendAsync(noToken);
         Assert.Equal(HttpStatusCode.Forbidden, noTokenResponse.StatusCode);
-        using var remote = await host.Client.PostAsJsonAsync("http://untrusted.example/api/v1/system/drain", new { draining = true });
+        using var remote = await host.ManagementClient.PostAsJsonAsync("http://untrusted.example/api/v1/system/drain", new { draining = true });
         Assert.Equal(HttpStatusCode.Forbidden, remote.StatusCode);
         Assert.False((await Info(host)).Draining);
     }
@@ -548,7 +549,7 @@ public sealed class SystemUpgradeTests
     }
 
     private static async Task<SystemInfoDto> Info(PergaHostTestCluster host) =>
-        (await host.Client.GetFromJsonAsync<SystemInfoDto>("/api/v1/system/info", PergaJsonDefaults.ApiOptions))!;
+        (await host.ManagementClient.GetFromJsonAsync<SystemInfoDto>("/api/v1/system/info", PergaJsonDefaults.ApiOptions))!;
     private static SqliteConnection Open(string dataDir) => new(new SqliteConnectionStringBuilder { DataSource = Path.Combine(dataDir, "perga.db"), Pooling = false }.ToString());
     private static async Task Until(Func<Task<bool>> condition)
     {

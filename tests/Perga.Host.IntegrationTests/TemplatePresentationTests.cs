@@ -20,15 +20,15 @@ public sealed class TemplatePresentationTests
     public async Task NewTracksUseTheirTemplateReport(string? templateId)
     {
         await using var host = new PergaHostTestCluster();
-        using var areaResponse = await host.Client.PostAsJsonAsync("/api/v1/areas", new { name = "Presentation" });
+        using var areaResponse = await host.AuthenticatedClient.PostAsJsonAsync("/api/v1/areas", new { name = "Presentation" });
         areaResponse.EnsureSuccessStatusCode();
         var area = await areaResponse.Content.ReadFromJsonAsync<JsonElement>();
-        using var response = await host.Client.PostAsJsonAsync("/api/v1/tracks", new { areaId = area.GetProperty("id").GetString(), templateId });
+        using var response = await host.AuthenticatedClient.PostAsJsonAsync("/api/v1/tracks", new { areaId = area.GetProperty("id").GetString(), templateId });
         response.EnsureSuccessStatusCode();
         var snapshot = await response.Content.ReadFromJsonAsync<JsonElement>();
         var track = snapshot.GetProperty("track");
         var trackId = track.GetProperty("id").GetString();
-        using var reportResponse = await host.Client.GetAsync($"/api/v1/tracks/{trackId}/report");
+        using var reportResponse = await host.AuthenticatedClient.GetAsync($"/api/v1/tracks/{trackId}/report");
         var report = await reportResponse.Content.ReadFromJsonAsync<JsonElement>();
         var markdown = report.GetProperty("renderedMarkdown").GetString();
         if (templateId is null)
@@ -58,7 +58,7 @@ public sealed class TemplatePresentationTests
         var created = await kernel.CreateTrackAsync(new(area.Id, TemplateId: "broken-view"));
         foreach (var url in new[] { $"/api/v1/tracks/{created.Track.Id}", $"/api/v1/areas/{area.Id}/tracks" })
         {
-            using var response = await host.Client.GetAsync(url);
+            using var response = await host.AuthenticatedClient.GetAsync(url);
             response.EnsureSuccessStatusCode();
             var json = await response.Content.ReadFromJsonAsync<JsonElement>();
             var track = json.ValueKind == JsonValueKind.Array ? json[0] : json.GetProperty("track");
@@ -104,7 +104,7 @@ public sealed class TemplatePresentationTests
                 var kernel = host.Services.GetRequiredService<IPergaKernel>();
                 kernel.Templates.RegisterTemplate("export default defineTemplate({id:'snapshot-view', title:'Changed catalog'});");
                 await VerifyProjection(host, areaId, trackId);
-                using var response = await host.Client.PatchAsJsonAsync($"/api/v1/tracks/{trackId}", new { title = "Renamed" });
+                using var response = await host.AuthenticatedClient.PatchAsJsonAsync($"/api/v1/tracks/{trackId}", new { title = "Renamed" });
                 response.EnsureSuccessStatusCode();
                 var updated = await response.Content.ReadFromJsonAsync<JsonElement>();
                 Assert.Equal("Snapshot title", updated.GetProperty("templateTitle").GetString());
@@ -119,7 +119,7 @@ public sealed class TemplatePresentationTests
     {
         foreach (var url in new[] { $"/api/v1/tracks/{trackId}" })
         {
-            using var response = await host.Client.GetAsync(url);
+            using var response = await host.AuthenticatedClient.GetAsync(url);
             response.EnsureSuccessStatusCode();
             var json = await response.Content.ReadFromJsonAsync<JsonElement>();
             var track = json.ValueKind == JsonValueKind.Array ? json[0] : json.GetProperty("track");

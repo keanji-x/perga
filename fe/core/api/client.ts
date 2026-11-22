@@ -1,25 +1,31 @@
-import type { ApiFailure, ApiOperation, ApiResult, ApiTransportPort } from './types.js';
+import type { ApiFailure, ApiOperation, ApiResult, ApiTransportPort, ApiTransportResponse } from './types.js';
 import type { UnauthorizedChannel } from './unauthorized.js';
 
-function errorText(body: unknown, key: 'code' | 'error', fallback: string): string {
-  if (typeof body !== 'object' || body === null) return fallback;
-  const value: unknown = (body as Record<string, unknown>)[key];
-  return typeof value === 'string' ? value : fallback;
-}
-
-/** The `ErrorBody`'s `field`, sent only when the refusal is about one field of the request. */
-function errorField(body: unknown): string | undefined {
+function errorText(body: unknown, key: string): string | undefined {
   if (typeof body !== 'object' || body === null) return undefined;
-  const value: unknown = (body as Record<string, unknown>).field;
+  const value: unknown = (body as Record<string, unknown>)[key];
   return typeof value === 'string' ? value : undefined;
 }
 
-function normalizeHttpFailure(status: number, statusText: string, body: unknown): ApiFailure {
-  const code = errorText(body, 'code', 'http_error');
-  const message = errorText(body, 'error', statusText);
+function retryAfterSeconds(value: string | undefined): number | undefined {
+  if (value === undefined || !/^\d+$/.test(value)) return undefined;
+  const seconds = Number(value);
+  return Number.isSafeInteger(seconds) ? seconds : undefined;
+}
+
+function normalizeHttpFailure({ status, statusText, body, headers }: ApiTransportResponse): ApiFailure {
+  const code = errorText(body, 'code') ?? 'http_error';
+  const message = errorText(body, 'error') ?? statusText;
   if (status === 401) return { kind: 'unauthorized', status: 401, code, message, body };
-  const field = errorField(body);
-  return { kind: 'http', status, code, message, ...(field === undefined ? {} : { field }), body };
+  const field = errorText(body, 'field');
+  const nextStep = errorText(body, 'nextStep');
+  const retry = retryAfterSeconds(headers?.['retry-after']);
+  return {
+    kind: 'http', status, code, message, body,
+    ...(field === undefined ? {} : { field }),
+    ...(nextStep === undefined ? {} : { nextStep }),
+    ...(retry === undefined ? {} : { retryAfterSeconds: retry }),
+  };
 }
 
 function isTimeoutError(cause: unknown): boolean {
@@ -62,7 +68,7 @@ export async function performApiRequest<T>(
   }
 
   if (response.status < 200 || response.status >= 300) {
-    const error = normalizeHttpFailure(response.status, response.statusText, response.body);
+    const error = normalizeHttpFailure(response);
     if (error.kind === 'unauthorized') unauthorized?.notify();
     return {
       status: 'failed',
@@ -70,12 +76,18 @@ export async function performApiRequest<T>(
     };
   }
 
+  if (operation.expectedStatuses !== undefined && !operation.expectedStatuses.includes(response.status)) {
+    return { status: 'failed', error: { kind: 'decode', message: 'Unexpected API response status' } };
+  }
   const parsed = operation.responseSchema.safeParse(response.status === 204 ? undefined : response.body);
   if (!parsed.success) {
     return {
       status: 'failed',
       error: { kind: 'decode', message: 'API response did not match its schema', cause: parsed.error },
     };
+  }
+  if (operation.validateResponse?.(parsed.data, response) === false) {
+    return { status: 'failed', error: { kind: 'decode', message: 'API response failed validation' } };
   }
   return { status: 'ready', value: parsed.data };
 }

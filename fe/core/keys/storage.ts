@@ -16,6 +16,9 @@ export const DB_INSTANCE_ID_KEY = 'perga:db_instance_id' as StorageKey;
 /** The kernel database's stable identity — survives a process restart. Read receipts are scoped by it; `DB_INSTANCE_ID_KEY` is the per-boot id and must never seed them. */
 export const DATABASE_ID_KEY = 'perga:database_id' as StorageKey;
 export const THEME_KEY = 'perga:theme' as StorageKey;
+export const AUTH_CHANGE_KEY = 'perga:auth-change' as StorageKey;
+export const TRACK_CREATE_DRAFTS_KEY = 'perga:track-create-v1' as StorageKey;
+export const PENDING_TRACK_INITIAL_SENDS_KEY = 'perga:pending-track-initial-sends-v1' as StorageKey;
 
 /** Creates application-owned keys; segments must already be normalized and non-empty. */
 export function createStorageKey(...segments: readonly [string, ...string[]]): StorageKey {

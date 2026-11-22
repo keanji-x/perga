@@ -92,7 +92,7 @@ public sealed class SharedSessionMessageTests
                 var store = host.Services.GetRequiredService<ITrackStore>().SessionMessages!;
                 await InsertQueueAsync(store, sessionId, "declared-uncertain", "dispatching");
                 await InsertQueueAsync(store, sessionId, "withdraw-me", "queued");
-                using var withdrawn = await host.Client.DeleteAsync($"/api/v1/sessions/{sessionId}/messages/withdraw-me");
+                using var withdrawn = await host.AuthenticatedClient.DeleteAsync($"/api/v1/sessions/{sessionId}/messages/withdraw-me");
                 Assert.Equal(HttpStatusCode.NoContent, withdrawn.StatusCode);
                 await InsertQueueAsync(store, sessionId, "first-waiting", "queued");
                 await InsertQueueAsync(store, sessionId, "second-waiting", "queued");
@@ -105,7 +105,7 @@ public sealed class SharedSessionMessageTests
             foreach (var (key, expected) in new[] { ("declared-uncertain", "unknown"), ("withdraw-me", "withdrawn"),
                          ("first-waiting", "delivered"), ("second-waiting", "delivered") })
             {
-                using var replay = await SendAsync(reopened.Client, sessionId, key, new { content = key, mode = "queue" });
+                using var replay = await SendAsync(reopened.AuthenticatedClient, sessionId, key, new { content = key, mode = "queue" });
                 Assert.Equal(HttpStatusCode.OK, replay.StatusCode);
                 var receipt = (await replay.Content.ReadFromJsonAsync<SessionMessageReceipt>(PergaJsonDefaults.ApiOptions))!;
                 Assert.Equal((key, expected), (receipt.MessageId, receipt.Delivery));
@@ -197,19 +197,19 @@ public sealed class SharedSessionMessageTests
 
         try
         {
-            using var admitted = await SendAsync(host.Client, sessionId, "first", new { content = "first" });
+            using var admitted = await SendAsync(host.AuthenticatedClient, sessionId, "first", new { content = "first" });
             Assert.Equal(HttpStatusCode.OK, admitted.StatusCode);
             var firstTurn = await first.Task.WaitAsync(ct);
-            using var follower = await SendAsync(host.Client, sessionId, "second", new { content = "second", mode = "queue" });
+            using var follower = await SendAsync(host.AuthenticatedClient, sessionId, "second", new { content = "second", mode = "queue" });
             Assert.Equal(HttpStatusCode.OK, follower.StatusCode);
-            using var pending = await SendAsync(host.Client, sessionId, "content", new { content = "content", mode = "queue" });
+            using var pending = await SendAsync(host.AuthenticatedClient, sessionId, "content", new { content = "content", mode = "queue" });
             var message = (await pending.Content.ReadFromJsonAsync<SessionMessageReceipt>(PergaJsonDefaults.ApiOptions, ct))!;
 
             var messageId = message.MessageId;
             var path = $"/api/v1/sessions/{sessionId}/messages";
             async Task<SessionMessageReceipt> SteerAsync(string turnId)
             {
-                using var response = await host.Client.PostAsJsonAsync(path, new { messageId, mode = "steer", turnId }, ct);
+                using var response = await host.AuthenticatedClient.PostAsJsonAsync(path, new { messageId, mode = "steer", turnId }, ct);
                 Assert.Equal(HttpStatusCode.OK, response.StatusCode);
                 return (await response.Content.ReadFromJsonAsync<SessionMessageReceipt>(PergaJsonDefaults.ApiOptions, ct))!;
             }
@@ -222,7 +222,7 @@ public sealed class SharedSessionMessageTests
             // Both waiting messages were promoted into the second turn. A fresh
             // queued message can still be steered while that batch is running.
             Assert.Equal("queued", (await SteerAsync(firstTurn)).Delivery);
-            using var fresh = await SendAsync(host.Client, sessionId, "fresh", new { content = "fresh", mode = "queue" });
+            using var fresh = await SendAsync(host.AuthenticatedClient, sessionId, "fresh", new { content = "fresh", mode = "queue" });
             var freshMessage = (await fresh.Content.ReadFromJsonAsync<SessionMessageReceipt>(PergaJsonDefaults.ApiOptions, ct))!;
             messageId = freshMessage.MessageId;
             Assert.Equal("delivered", (await SteerAsync(secondTurn)).Delivery);

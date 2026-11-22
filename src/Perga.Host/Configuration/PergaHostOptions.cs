@@ -1,4 +1,7 @@
+using System.Globalization;
+using System.Net;
 using Microsoft.Extensions.Configuration;
+using Perga.Host.Http;
 using Perga.Kernel;
 
 namespace Perga.Host.Configuration;
@@ -23,12 +26,42 @@ public sealed class ExecutionTargetOptions
     public Dictionary<string, string> ProviderExecutables { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 }
 
+public enum AuthIngressMode { Direct, Proxied }
+public enum AuthCookieSecurePolicy { Auto, Always }
+
 public sealed class PergaHostOptions
 {
     public const string SectionName = "Perga";
 
     public string[] AllowedOrigins { get; set; } = [];
     public string[] AllowedHosts { get; set; } = [];
+
+    public AuthIngressMode AuthIngressMode { get; set; } = AuthIngressMode.Direct;
+    public AuthCookieSecurePolicy AuthCookieSecurePolicy { get; set; } = AuthCookieSecurePolicy.Auto;
+    public int AuthSessionLifetimeDays { get; set; } = 30;
+    public string? AuthPublicOrigin { get; set; }
+    public bool TrustForwardedHeaders { get; set; }
+    public string[] TrustedProxyAddresses { get; set; } = [];
+    public TimeSpan AuthWsRevalidationInterval { get; set; } = TimeSpan.FromSeconds(15);
+
+    public void ValidateAuth()
+    {
+        if (!Enum.IsDefined(AuthIngressMode) || !Enum.IsDefined(AuthCookieSecurePolicy))
+            throw new InvalidOperationException("Invalid auth ingress or cookie security policy.");
+        if (AuthSessionLifetimeDays is < 1 or > 365)
+            throw new InvalidOperationException("AuthSessionLifetimeDays must be between 1 and 365.");
+        if (AuthWsRevalidationInterval < TimeSpan.FromSeconds(1) || AuthWsRevalidationInterval > TimeSpan.FromMinutes(5))
+            throw new InvalidOperationException("AuthWsRevalidationInterval must be between one second and five minutes.");
+        if (AuthPublicOrigin is not null &&
+            (!RequestOriginGuard.TryOrigin(AuthPublicOrigin, out var origin) || !origin.StartsWith("https://", StringComparison.Ordinal)))
+            throw new InvalidOperationException("AuthPublicOrigin must be an HTTPS origin.");
+        if (AuthIngressMode == AuthIngressMode.Proxied && AuthPublicOrigin is null && AllowedHosts.Length == 0)
+            throw new InvalidOperationException("Proxied ingress requires AuthPublicOrigin or AllowedHosts.");
+        if (TrustForwardedHeaders && AuthIngressMode != AuthIngressMode.Proxied)
+            throw new InvalidOperationException("TrustForwardedHeaders requires proxied ingress.");
+        if (TrustedProxyAddresses.Any(address => !IPAddress.TryParse(address, out _)))
+            throw new InvalidOperationException("TrustedProxyAddresses entries must be IP literals.");
+    }
 
     public string? InstallationRoot { get; set; }
     public string InstallationName { get; set; } = "perga";
@@ -80,6 +113,16 @@ public sealed class PergaHostOptions
         var opts = new PergaHostOptions();
         var section = configuration.GetSection(SectionName);
         section.Bind(opts);
+        if (section[nameof(AuthIngressMode)] is null && configuration["PERGA_AUTH_INGRESS_MODE"] is { } ingress)
+            opts.AuthIngressMode = Enum.Parse<AuthIngressMode>(ingress, ignoreCase: true);
+        if (section[nameof(AuthCookieSecurePolicy)] is null && configuration["PERGA_AUTH_COOKIE_SECURE"] is { } secure)
+            opts.AuthCookieSecurePolicy = Enum.Parse<AuthCookieSecurePolicy>(secure, ignoreCase: true);
+        if (section[nameof(AuthSessionLifetimeDays)] is null && configuration["PERGA_AUTH_SESSION_DAYS"] is { } days)
+            opts.AuthSessionLifetimeDays = int.Parse(days, CultureInfo.InvariantCulture);
+        if (section[nameof(AuthPublicOrigin)] is null)
+            opts.AuthPublicOrigin = configuration["PERGA_AUTH_PUBLIC_ORIGIN"];
+        if (section[nameof(TrustForwardedHeaders)] is null && configuration["PERGA_TRUST_FORWARDED_HEADERS"] is { } forwarded)
+            opts.TrustForwardedHeaders = bool.Parse(forwarded);
 
         if (string.IsNullOrWhiteSpace(opts.DataDir))
         {

@@ -5,7 +5,7 @@ namespace Perga.Kernel;
 
 public abstract record InteropPrincipal
 {
-    public sealed record Human : InteropPrincipal;
+    public sealed record Human(string UserId = "local-owner", string Username = "local-owner") : InteropPrincipal;
     public sealed record Session(string TrackId, string SessionId, bool IsLead, string? BoundTaskId,
         int SpawnDepth, string Token, McpExecutionOrigin? ExecutionOrigin) : InteropPrincipal
     {

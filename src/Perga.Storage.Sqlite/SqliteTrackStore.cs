@@ -6,9 +6,10 @@ using Perga.ReportDoc;
 namespace Perga.Storage.Sqlite;
 
 /// <summary>SQLite port facade. Domain repositories share one storage lifetime and writer.</summary>
-public sealed class SqliteTrackStore : ITrackStore, IAsyncDisposable, ISessionInputStore, ISessionMessageStore, ITrackScheduleStore, ITrackWakeStore, ITodayReadStore, ISystemUpgradeStore
+public sealed class SqliteTrackStore : ITrackStore, IAsyncDisposable, ISessionInputStore, ISessionMessageStore, ITrackScheduleStore, ITrackWakeStore, ITodayReadStore, ISystemUpgradeStore, IAuthStore
 {
     private readonly SqliteStoreContext _context;
+    private readonly AuthRepository _authRepository;
     private readonly MaintenanceRepository _maintenanceRepository;
     private readonly SessionInputsRepository _sessionInputsRepository;
     private readonly TodayRepository _todayRepository;
@@ -56,6 +57,7 @@ public sealed class SqliteTrackStore : ITrackStore, IAsyncDisposable, ISessionIn
         SqliteJsonUpcaster? upcaster = null)
     {
         _context = new SqliteStoreContext(options, migrator, timeProvider, upcaster);
+        _authRepository = new AuthRepository(_context);
         _maintenanceRepository = new MaintenanceRepository(_context);
         _sessionRepository = new SessionRepository(_context);
         _taskRepository = new TaskRepository(_context, _sessionRepository);
@@ -120,6 +122,9 @@ public sealed class SqliteTrackStore : ITrackStore, IAsyncDisposable, ISessionIn
 
     public Task<int> PruneTrackSchedulesAsync(long nowMs, CancellationToken ct) =>
         _maintenanceRepository.PruneTrackSchedulesAsync(nowMs, ct);
+
+    public Task<int> PruneAuthSessionsAsync(long nowMs, CancellationToken ct) =>
+        _maintenanceRepository.PruneAuthSessionsAsync(nowMs, ct);
 
     public Task<bool> HasSessionTurnAsync(string sessionId, string turnId, CancellationToken ct) =>
         _sessionInputsRepository.HasSessionTurnAsync(sessionId, turnId, ct);
@@ -498,4 +503,28 @@ public sealed class SqliteTrackStore : ITrackStore, IAsyncDisposable, ISessionIn
 
     public Task SaveWorkspacePreparationAsync(string trackId, WorkspacePreparation preparation, TrackDto? readyTrack, EventEnvelopeDto? evt, CancellationToken ct) =>
         _creationRepository.SaveWorkspacePreparationAsync(trackId, preparation, readyTrack, evt, ct);
+
+    public Task<AuthUserRecord?> GetOwnerAsync(CancellationToken ct) =>
+        _authRepository.GetOwnerAsync(ct);
+
+    public Task<SessionIdentityDto?> TryCreateSessionIfVersionMatchesAsync(AuthUserRecord owner, NewAuthSession session, CancellationToken ct) =>
+        _authRepository.TryCreateSessionIfVersionMatchesAsync(owner, session, ct);
+
+    public Task<bool> UpgradePasswordHashIfVersionMatchesAsync(AuthUserRecord owner, string hash, long nowMs, CancellationToken ct) =>
+        _authRepository.UpgradePasswordHashIfVersionMatchesAsync(owner, hash, nowMs, ct);
+
+    public Task<SessionIdentityDto?> GetValidOwnerSessionByTokenHashAsync(string tokenHash, long nowMs, CancellationToken ct) =>
+        _authRepository.GetValidOwnerSessionByTokenHashAsync(tokenHash, nowMs, ct);
+
+    public Task<bool> IsOwnerSessionValidAsync(string id, long nowMs, CancellationToken ct) =>
+        _authRepository.IsOwnerSessionValidAsync(id, nowMs, ct);
+
+    public Task TouchSessionLastSeenIfStaleAsync(string id, long nowMs, CancellationToken ct) =>
+        _authRepository.TouchSessionLastSeenIfStaleAsync(id, nowMs, ct);
+
+    public Task RevokeSessionByTokenHashAsync(string tokenHash, long nowMs, CancellationToken ct) =>
+        _authRepository.RevokeSessionByTokenHashAsync(tokenHash, nowMs, ct);
+
+    public Task<SystemAuthStatusDto> GetAuthStatusAsync(long nowMs, CancellationToken ct) =>
+        _authRepository.GetAuthStatusAsync(nowMs, ct);
 }

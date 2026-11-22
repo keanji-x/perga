@@ -2,7 +2,8 @@ import type { ApiRequest,ApiTransportPort,ApiTransportResponse } from '../../../
 import { RecoveryAccess,type RecoveryPermit } from '../../../../core/domain/recovery/access.ts';
 
 function authRequest(request: ApiRequest): boolean {
-  return (request.method === 'GET' && ((request.path === '/api/v1/bootstrap' || request.path === '/api/v1/bootstrap?scope=whoami' || request.path === '/api/v1/bootstrap?scope=login')));
+  if (request.method === 'GET') return request.path === '/api/v1/bootstrap' || request.path === '/api/v1/auth/session';
+  return request.method === 'POST' && (request.path === '/api/v1/auth/login' || request.path === '/api/v1/auth/logout');
 }
 
 /** Separate capability for the identity/version owner; business callers never receive it. */

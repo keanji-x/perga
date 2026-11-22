@@ -84,7 +84,7 @@ public sealed class WebSocketsIntegrationTests
     public async Task EventsWebSocket_ReplaysPersistedEvents_EmitsReplayComplete_And_StreamsTransientDeltas()
     {
         await using var cluster = new PergaHostTestCluster();
-        var client = cluster.Client;
+        var client = cluster.AuthenticatedClient;
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         var ct = cts.Token;
 
@@ -287,7 +287,7 @@ public sealed class WebSocketsIntegrationTests
     public async Task TerminalWebSocketRelay_Relays0x01PtyData_And_0x02ResizeAndExitFrames_EndToEnd()
     {
         await using var cluster = new PergaHostTestCluster();
-        var client = cluster.Client;
+        var client = cluster.AuthenticatedClient;
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         var ct = cts.Token;
 

@@ -51,7 +51,7 @@ it('pauses on pagehide even when the browser has not changed document.hidden', (
   expect(h.access.read().phase).toBe('paused');
 });
 
-const acceptedIdentity: SessionIdentity = Object.freeze({ userId: 'owner', displayName: 'Owner', role: 'owner', sessionId: 'current-session' });
+const acceptedIdentity: SessionIdentity = Object.freeze({ userId: 'owner', displayName: 'Owner', username: 'owner', expiresAtMs: 2000000000000, role: 'owner', sessionId: 'current-session' });
 async function settle() { for (let index = 0; index < 12; index++) await Promise.resolve(); }
 it('retains an active page read and permit on a duplicate wake, but revokes both on a real pause', async () => {
   const h = harness(); h.session.start(); h.pending[0].finish(acceptedIdentity); await settle();

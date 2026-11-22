@@ -1,5 +1,6 @@
 import { AxeBuilder } from '@axe-core/playwright';
-import { expect, test } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { test } from './helpers/workspace-test.ts';
 import { createArea, createTrack } from './helpers/seed.js';
 
 const createdAreaIds: string[] = [];

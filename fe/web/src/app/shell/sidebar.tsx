@@ -54,7 +54,7 @@ export type SidebarProps = Readonly<{
   onOpenSettings: () => void;
   /** Settings › Plugins, reachable without walking through Settings first. */
   onOpenPlugins?: (() => void) | undefined;
-  /** The shell never signs out itself; the owner of the session does. `undefined` in single-owner mode. */
+  /** Delegates sign-out to the session owner. */
   onSignOut?: (() => void) | undefined;
   /** Hides the unimplemented Recipes row on Perga v1 servers. */
   /** Owned by the shell: collapsing changes the shell grid, not just the rail. */
