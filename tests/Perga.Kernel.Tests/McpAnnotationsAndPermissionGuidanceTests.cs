@@ -3,6 +3,7 @@ using Perga.Kernel;
 using Perga.Kernel.Mcp;
 using Perga.Kernel.Tests.Fakes;
 using Perga.ReportDoc;
+using Perga.PolicyVm;
 
 namespace Perga.Kernel.Tests;
 
@@ -42,6 +43,40 @@ public sealed class McpAnnotationsAndPermissionGuidanceTests
         Assert.Equal(true, byName[KernelMcpToolNames.TerminalInput].Annotations!.DestructiveHint);
         Assert.Equal(true, byName[KernelMcpToolNames.TerminalInput].Annotations!.OpenWorldHint);
     }
+
+    [Theory]
+    [InlineData(KernelMcpToolNames.SystemUpgradeCheck, "check", "{}")]
+    [InlineData(KernelMcpToolNames.SystemUpgradeApply, "apply", """{"sourceId":"trusted"}""")]
+    [InlineData(KernelMcpToolNames.SystemUpgradeRollback, "rollback", "{}")]
+    public async Task SystemUpgradeRunsPolicyGuardExactlyOnceForMcpAndDirectCalls(string tool, string operation, string json)
+    {
+        await using var ctx = new KernelTestContext();
+        ctx.Kernel.Templates.RegisterTemplate("""export default {id:"upgrades", title:"Upgrades"};""");
+        var (_, snap) = await ctx.CreateDefaultTrackAsync(templateId: "upgrades");
+        var caller = new Perga.Kernel.Ports.McpSessionPrincipal("token", snap.Track.Id, snap.Track.LeadSessionId!, true, null, null, []);
+        var actions = new List<string>();
+        ctx.PolicyVm.OnBefore = (_, action, _, _) =>
+        {
+            actions.Add(action);
+            return new GuardDecision.Allow();
+        };
+        var args = TestJson.Parse(json);
+
+        var mcp = await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.InvokeKernelMcpToolAsync(caller, tool, args));
+        Assert.Equal(KernelErrorCode.Conflict, mcp.Code);
+        Assert.Equal($"tool.{tool}", Assert.Single(actions));
+
+        actions.Clear();
+        var direct = await Assert.ThrowsAsync<KernelException>(() =>
+            ctx.Kernel.InvokeSystemUpgradeAsync(caller, operation, args, default));
+        Assert.Equal(KernelErrorCode.Conflict, direct.Code);
+        Assert.Equal($"tool.{tool}", Assert.Single(actions));
+    }
+
+    [Theory]
+    [InlineData(KernelMcpToolNames.AreaList)]
+    [InlineData(KernelMcpToolNames.TrackList)]
+    public void DiscoveryToolsAreReadOnly(string tool) => Assert.True(KernelMcpCatalog.IsReadOnlyTool(tool));
 
     [Fact]
     public async Task BoundWorkersAndChildSubagentsReceivePermissionEscalationGuidanceInPrompts()

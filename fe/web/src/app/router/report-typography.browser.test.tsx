@@ -80,10 +80,11 @@ it.each([390, 900, 1440, 1920])('aligns a mixed prose/widget report on both edge
   await page.viewport(width, 1000);
   const view = renderPage({ report: <ReportDocument report={{ summary: '', body: '', blocks: [
     { id: 'before-view', kind: 'prose', payload: { markdown: 'Before the widget.' } },
-    { id: 'mixed-view', kind: 'widget', payload: { use: 'builtin:table', view: 'assets' } },
+    { id: 'mixed-view', kind: 'widget', payload: { use: 'builtin:list', view: 'assets' } },
     { id: 'after-view', kind: 'prose', payload: { markdown: 'After the widget.' } },
-  ] }} templateViews={{ templateId: 'test', diagnostics: [], widgets: {}, dataRev: 0, flowRev: 0, views: { assets: { metrics: [{ label: 'Total assets' }] } } }} backlinkCounts={new Map([['mixed-view', 3]])} empty={<></>} /> });
+  ] }} templateViews={{ templateId: 'test', diagnostics: [], widgets: {}, dataRev: 0, flowRev: 0, views: { assets: { items: [{ id: 'assets', title: 'Assets', table: { columns: [{ key: 'total', label: 'Total assets' }], rows: [{ total: '1,200' }] } }] } } }} backlinkCounts={new Map([['mixed-view', 3]])} empty={<></>} /> });
   view.container.className = shell.main;
+  await expect.element(page.getByRole('columnheader', { name: 'Total assets' })).toBeVisible();
   const before = document.getElementById('before-view')!.getBoundingClientRect();
   const widget = document.getElementById('mixed-view')!.getBoundingClientRect();
   const after = document.getElementById('after-view')!.getBoundingClientRect();

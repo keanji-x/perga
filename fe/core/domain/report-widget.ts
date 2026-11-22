@@ -1,6 +1,8 @@
 import { z } from 'zod';
-import { editorialItemSchema, editorialMetricSchema, max2048CodePoints } from './report-editorial.js';
+import { editorialItemSchema, max2048CodePoints } from './report-editorial.js';
 import { flowProjectionSchema } from './report-flow.js';
+
+export { builtinTableViewSchema } from './report-editorial.js';
 
 export const WIDGET_MIN_HEIGHT = 48;
 export const WIDGET_MAX_HEIGHT = 2400;
@@ -18,16 +20,11 @@ export const widgetBlockPayloadSchema = z.strictObject({
 
 export type WidgetBlockPayload = z.infer<typeof widgetBlockPayloadSchema>;
 
-export const builtinListViewSchema = z.object({
+export const builtinListViewSchema = z.strictObject({
   items: z.array(editorialItemSchema).max(100),
   title: max2048CodePoints(z.string()).nullish(),
   summary: max2048CodePoints(z.string()).nullish(),
   groups: z.array(max2048CodePoints(z.string().min(1))).max(100).nullish(),
-  metrics: z.array(editorialMetricSchema).min(1).max(12).nullish(),
-});
-
-export const builtinTableViewSchema = z.object({
-  metrics: z.array(editorialMetricSchema).max(12),
 });
 
 export const templateViewDiagnosticSchema = z.object({

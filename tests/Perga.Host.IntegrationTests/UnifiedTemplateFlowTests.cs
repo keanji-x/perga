@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Perga.Contracts;
 using Perga.Host.IntegrationTests.Fixtures;
 using Perga.Host.Lifecycle;
+using Perga.Host.Mcp;
 using Perga.Kernel;
 using Perga.Kernel.Events;
 using Perga.Kernel.Mcp;
@@ -579,6 +580,88 @@ public sealed class UnifiedTemplateFlowTests
         using var rejected = await host.AuthenticatedClient.PatchAsJsonAsync(url, new Dictionary<string, object?> { ["required"] = null });
         Assert.Equal(HttpStatusCode.BadRequest, rejected.StatusCode);
         Assert.Equal(inputs.GetRawText(), (await kernel.GetTrackAggregateAsync(id)).Track.TemplateInputs.GetRawText());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ClearTemplatePersistsRequestedDataActionAcrossHostRestart(bool resetData)
+    {
+        var directory = Directory.CreateTempSubdirectory("perga-template-clear-");
+        try
+        {
+            string id;
+            TrackDto original;
+            await using (var host = Host(directory.FullName))
+            {
+                var kernel = host.Services.GetRequiredService<IPergaKernel>();
+                var created = await host.CreateTrackAsync();
+                id = created.TrackId;
+                var token = host.Services.GetRequiredService<IMcpSessionBridge>()
+                    .RegisterSession(id, created.SessionId, true, null, null, []).Principal.Token;
+                var (bound, bindError) = await McpKernelAndVcsIntegrationTests.CallToolAsync(host, "/mcp/kernel", token,
+                    KernelMcpToolNames.TrackSet, new { source = Source }, default);
+                Assert.False(bindError, bound);
+                original = (await kernel.GetTrackAggregateAsync(id)).Track;
+                Assert.Equal("untouched", original.Data.GetProperty("business").GetString());
+
+                var (previewText, previewError) = await McpKernelAndVcsIntegrationTests.CallToolAsync(host, "/mcp/kernel", token,
+                    KernelMcpToolNames.TrackSet, new { clear = true, resetData, dryRun = true }, default);
+                Assert.False(previewError, previewText);
+                using var preview = JsonDocument.Parse(previewText);
+                Assert.Equal(resetData ? "reset" : "preserve",
+                    preview.RootElement.GetProperty("plan").GetProperty("dataAction").GetString());
+                var afterPreview = (await kernel.GetTrackAggregateAsync(id)).Track;
+                Assert.Equal(original.TemplateId, afterPreview.TemplateId);
+                Assert.Equal(original.DataRev, afterPreview.DataRev);
+
+                object clearArgs = resetData ? new { clear = true, resetData = true } : new { clear = true };
+                var (cleared, clearError) = await McpKernelAndVcsIntegrationTests.CallToolAsync(host, "/mcp/kernel", token,
+                    KernelMcpToolNames.TrackSet, clearArgs, default);
+                Assert.False(clearError, cleared);
+                if (resetData)
+                {
+                    var (retry, retryError) = await McpKernelAndVcsIntegrationTests.CallToolAsync(host, "/mcp/kernel", token,
+                        KernelMcpToolNames.TrackSet, clearArgs, default);
+                    Assert.False(retryError, retry);
+                }
+            }
+
+            await using var restarted = Host(directory.FullName);
+            var track = (await restarted.Services.GetRequiredService<IPergaKernel>().GetTrackAggregateAsync(id)).Track;
+            Assert.Null(track.TemplateId);
+            Assert.Equal(original.DataRev + (resetData ? 1 : 0), track.DataRev);
+            if (resetData)
+                Assert.Empty(track.Data.EnumerateObject());
+            else
+                Assert.True(JsonElement.DeepEquals(original.Data, track.Data));
+        }
+        finally { directory.Delete(true); }
+    }
+
+    [Fact]
+    public async Task TrackSetUsesLiveHostPluginRegistrationForWarnings()
+    {
+        await using var host = Host();
+        var (id, leadId) = await host.CreateTrackAsync();
+        var bridge = host.Services.GetRequiredService<IMcpSessionBridge>();
+        var token = bridge.RegisterSession(id, leadId, true, null, null, []).Principal.Token;
+        host.Services.GetRequiredService<McpPluginRouter>().RegisterPlugin(
+            new McpPluginDefinition("known-test-plugin", "stdio", Command: "unused"));
+        const string source = """
+            export default { id: "plugins-test", title: "Plugin warnings",
+              plugins: ["perga", "vcs", "known-test-plugin", "unregistered-test-plugin"] };
+            """;
+
+        foreach (var dryRun in new[] { true, false })
+        {
+            var (response, error) = await McpKernelAndVcsIntegrationTests.CallToolAsync(host, "/mcp/kernel", token,
+                KernelMcpToolNames.TrackSet, new { source, dryRun }, default);
+            Assert.False(error, response);
+            using var parsed = JsonDocument.Parse(response);
+            Assert.Equal("Template plugin 'unregistered-test-plugin' is not configured on this host.",
+                Assert.Single(parsed.RootElement.GetProperty("warnings").EnumerateArray()).GetString());
+        }
     }
 
     private static PergaHostTestCluster Host(string? directory=null) => new(explicitDataDir:directory,configureHostOptions:o=>

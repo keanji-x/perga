@@ -53,70 +53,63 @@ export interface EditorialCheck {
   output?: string | null;
 }
 
-export interface EditorialExpectation {
+export type EditorialTone = "neutral" | "good" | "warn" | "bad" | "accent";
+
+export interface TableColumn {
+  /** Unique within the table, 1–64 characters. */
+  key: string;
+  /** 1–2048 Unicode code points. */
   label: string;
-  expected: string;
-  actual?: string | null;
-  status?: "pending" | "beat" | "inline" | "miss" | null;
+  align?: "left" | "right" | "center";
 }
 
-export interface EditorialMetricPoint {
-  date: string;
-  value: number;
-  note?: string | null;
+export interface TableCellContent {
+  text: string;
+  tone?: EditorialTone;
+  code?: string;
+  tag?: string;
+  check?: boolean;
+  markdown?: boolean;
 }
 
-export interface EditorialMetric {
-  code?: string | null;
-  label: string;
-  tag?: string | null;
-  current?: string | null;
-  status?: "met" | "on_track" | "at_risk" | "pending" | null;
-  updatedAt?: string | null;
-  evidence?: string | null;
-  unit?: string | null;
-  target?: number | null;
-  direction?: "lte" | "gte" | null;
-  targetLabel?: string | null;
-  /** When provided, 2–90 points. */
-  points?: EditorialMetricPoint[] | null;
+export type TableCell = string | TableCellContent;
+
+/** View result for `builtin:table` and for tables embedded in a list item. */
+export interface BuiltinTableView {
+  /** 1–12 columns in display order. */
+  columns: TableColumn[];
+  /** At most 100 rows. Undeclared keys are ignored. Missing and null cells display as an em dash. */
+  rows: Record<string, TableCell | null | undefined>[];
+  title?: string | null;
+  summary?: string | null;
 }
 
 export interface EditorialListItem {
   id: string;
   title: string;
-  status: "done" | "running" | "pending" | "blocked";
-  statusLabel?: string | null;
-  group?: string | null;
+  /** Defaults to pending. */
+  status?: "done" | "running" | "pending" | "blocked";
   date?: string | null;
-  verdict?: string | null;
-  triggerAt?: string | null;
-  assignKind?: "model" | "command" | null;
-  assign?: string | null;
-  summary?: string | null;
-  bullets?: string[] | null;
-  docLabel?: string | null;
+  subtitle?: string | null;
+  badge?: string | null;
+  tone?: EditorialTone | null;
+  meta?: string | null;
   sessionId?: string | null;
   taskKey?: string | null;
-  workerLabel?: string | null;
-  model?: string | null;
-  blockedReason?: string | null;
-  expectations?: EditorialExpectation[] | null;
+  group?: string | null;
+  summary?: string | null;
+  bullets?: string[] | null;
+  note?: string | null;
+  table?: BuiltinTableView | null;
   checks?: EditorialCheck[] | null;
 }
 
-/** View result for `builtin:table`. At most 12 metrics. */
-export interface BuiltinTableView {
-  metrics: EditorialMetric[];
-}
-
-/** View result for `builtin:list`. At most 100 items and groups, and 1–12 metrics when supplied. */
+/** View result for `builtin:list`. At most 100 items and groups, and at most 12 bullets and 16 checks per item. */
 export interface BuiltinListView {
   items: EditorialListItem[];
   title?: string | null;
   summary?: string | null;
   groups?: string[] | null;
-  metrics?: EditorialMetric[] | null;
 }
 
 /** Messages sent by a sandboxed `./widgets/*.html` iframe to its parent with postMessage.
@@ -128,9 +121,18 @@ export type HtmlWidgetToHostMessage =
   | { type: "perga:intent"; kind: "open_file"; path: string }
   | { type: "perga:intent"; kind: "open_session"; sessionId: string };
 
+/** Theme values are sent via postMessage. Apply them to CSS variables in the iframe.
+ * bg, paper, and surface map to --bg, --paper, and a surface color (derived from --paper).
+ * text, text2, and text3 map to --text, --text-2, and --text-3.
+ * hairline and accent map to --hairline and --accent.
+ * fontSans, fontSerif, and fontMono map to --font-sans, --font-serif, and --font-mono. */
+export type HtmlWidgetThemeToken =
+  | "bg" | "paper" | "surface" | "text" | "text2" | "text3" | "hairline" | "accent"
+  | "fontSans" | "fontSerif" | "fontMono";
+
 /** Messages sent by the host to the widget iframe. Data is the selected report view result. */
 export type HtmlWidgetFromHostMessage<TData = unknown> =
-  | { type: "perga:theme"; scheme: "light" | "dark"; tokens: Readonly<Record<string, string>> }
+  | { type: "perga:theme"; scheme: "light" | "dark"; tokens: Readonly<Partial<Record<HtmlWidgetThemeToken, string>>> }
   | { type: "perga:data"; data: TData };
 
 export interface TemplateContext<TInputs = Record<string, any>, TData = Record<string, any>> {
@@ -247,6 +249,10 @@ export interface FlowNode {
   canceled?: boolean;
 }
 
+/** A report view receives effective inputs, including defaults, as its third argument. */
+export type TemplateViewFn<TInputs = Record<string, any>, TData = Record<string, any>> =
+  (data: TData, kernel: KernelFactsSnapshot, inputs: Readonly<TInputs>) => unknown;
+
 export interface PergaTemplateSetupResult<TInputs = Record<string, any>, TData = Record<string, any>> {
   /** Core declarations resolved for the Track's inputs. */
   /** Initial flow.v1 nodes with runtime interpolation in supported text fields. */
@@ -264,7 +270,7 @@ export interface PergaTemplateSetupResult<TInputs = Record<string, any>, TData =
     /** Inline Markdown seeded on Track creation or when applying a template to a blank report. Supports ${inputs.key}. Supply either this or template. */
     initialMarkdown?: string;
   }) & {
-    views?: Record<string, (data: TData, kernel: KernelFactsSnapshot) => unknown>;
+    views?: Record<string, TemplateViewFn<TInputs, TData>>;
   };
   tasks?: {
     /** First matching defaults fill omitted fields. enforce denies explicit conflicts.

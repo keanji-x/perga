@@ -1,6 +1,5 @@
 // Pure formatting, state classification, and priority selection helpers for `builtin:flow`.
 
-import type { EditorialListItem, EditorialListStatus } from '../../../../../core/domain/report-editorial.ts';
 import type {
   FlowArchivedNodeProjection,
   FlowNodeProjection,
@@ -204,49 +203,4 @@ export function formatDoKindLabel(doKind: FlowNodeProjection['doKind']): string 
     case 'wake': return '唤醒';
     case 'watch': return '监听探针';
   }
-}
-
-export function toEditorialBylineItem(node: FlowNodeProjection): EditorialListItem {
-  const visual = classifyFlowNodeState(node);
-  let status: EditorialListStatus;
-  switch (visual) {
-    case 'ok':
-      status = 'done';
-      break;
-    case 'running':
-    case 'waiting':
-      status = 'running';
-      break;
-    case 'attention':
-    case 'blocked':
-    case 'failed':
-      status = 'blocked';
-      break;
-    case 'pending':
-    case 'canceled':
-      status = 'pending';
-      break;
-  }
-
-  const resolvedSession = node.sessionId
-    ?? (node.targetSession != null && node.targetSession.startsWith('ses_') ? node.targetSession : undefined);
-  const ts = formatFlowTimestamp(node.finishedAtMs ?? node.startedAtMs ?? node.nextFireAtMs);
-
-  return {
-    id: node.id,
-    title: node.title,
-    status,
-    statusLabel: flowStateLabel(node),
-    model: node.model ?? undefined,
-    assign: node.model == null
-      ? (node.cmd != null && node.cmd.trim() !== ''
-        ? node.cmd.trim()
-        : (node.role ?? (node.targetSession === 'lead' ? 'Lead' : undefined)))
-      : undefined,
-    assignKind: node.model != null
-      ? 'model'
-      : (node.cmd != null && node.cmd.trim() !== '' ? 'command' : undefined),
-    sessionId: resolvedSession ?? undefined,
-    triggerAt: ts ?? undefined,
-  };
 }

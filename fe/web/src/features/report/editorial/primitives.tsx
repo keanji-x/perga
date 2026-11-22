@@ -1,8 +1,6 @@
 import type { ReactNode } from 'react';
 import type {
   EditorialCheck,
-  EditorialExpectation,
-  EditorialExpectationStatus,
   EditorialListItem,
   EditorialListStatus,
 } from '../../../../../core/domain/report-editorial.ts';
@@ -19,22 +17,16 @@ export function defaultStatusLabel(status: EditorialListStatus): string {
   }
 }
 
-function bylineStateClass(status: EditorialListStatus): string {
-  switch (status) {
-    case 'done': return styles.bylineStateDone;
-    case 'running': return styles.bylineStateRunning;
-    case 'blocked': return styles.bylineStateBlocked;
-    case 'pending': return '';
-  }
-}
-
-export function composeItemMarkdown(item: EditorialListItem): string {
+function composeItemMarkdown(item: EditorialListItem): string {
   const parts: string[] = [];
   if (item.summary != null && item.summary.trim() !== '') {
     parts.push(item.summary.trim());
   }
   if (item.bullets != null && item.bullets.length > 0) {
     parts.push(item.bullets.map((bullet) => `- ${bullet}`).join('\n'));
+  }
+  if (item.note != null && item.note.trim() !== '') {
+    parts.push(item.note.trim());
   }
   return parts.join('\n\n');
 }
@@ -44,10 +36,6 @@ export function resolveItemSessionId(item: EditorialListItem, taskRows?: readonl
     ? taskRows?.find((row) => row.key === item.taskKey)
     : undefined;
   return item.sessionId ?? matchedTask?.execution?.workerCardId ?? matchedTask?.workerCardId ?? null;
-}
-
-export function resolveAuthorDisplay(item: EditorialListItem, resolvedSessionId: string | null): string | null {
-  return item.model ?? item.assign ?? item.workerLabel ?? (resolvedSessionId !== null ? 'Worker' : null);
 }
 
 function GateMarker({ status }: Readonly<{ status: EditorialCheck['status'] }>) {
@@ -67,52 +55,6 @@ function GateMarker({ status }: Readonly<{ status: EditorialCheck['status'] }>) 
     case 'pending':
       return <span className={styles.gatePendingDot} aria-hidden="true" />;
   }
-}
-
-export function EditorialByline({
-  item,
-  taskRows,
-  onOpenWorker,
-}: Readonly<{
-  item: EditorialListItem;
-  taskRows?: readonly ReportTaskRow[];
-  onOpenWorker?: (sessionId: string) => void;
-}>) {
-  const resolvedSessionId = resolveItemSessionId(item, taskRows);
-  const authorDisplay = resolveAuthorDisplay(item, resolvedSessionId);
-  const statusLabel = item.statusLabel ?? defaultStatusLabel(item.status);
-  return (
-    <div className={styles.byline}>
-      {authorDisplay !== null && (
-        <>
-          {item.assignKind != null && item.model == null && (
-            <span className={styles.assignKind}>
-              {item.assignKind === 'command' ? 'CLI' : 'Model'}
-            </span>
-          )}
-          {resolvedSessionId !== null && onOpenWorker !== undefined ? (
-            <button
-              type="button"
-              className={styles.bylineAuthor}
-              onClick={() => { onOpenWorker(resolvedSessionId); }}
-            >
-              {authorDisplay}
-            </button>
-          ) : (
-            <span className={styles.bylineAuthorStatic}>{authorDisplay}</span>
-          )}
-          <span className={styles.bylineSep} aria-hidden="true">·</span>
-        </>
-      )}
-      {item.triggerAt != null && item.triggerAt.trim() !== '' && (
-        <>
-          <span className={styles.bylineTrigger}>{item.triggerAt}</span>
-          <span className={styles.bylineSep} aria-hidden="true">·</span>
-        </>
-      )}
-      <span className={bylineStateClass(item.status)}>{statusLabel}</span>
-    </div>
-  );
 }
 
 export function EditorialItemBody({
@@ -143,67 +85,9 @@ export function EditorialItemBody({
               ))}
             </ul>
           )}
+          {item.note != null && item.note.trim() !== '' && <p>{text(item.note)}</p>}
         </>
       )}
-    </div>
-  );
-}
-
-function expectStatusLabel(status: EditorialExpectationStatus | null | undefined): string {
-  switch (status) {
-    case 'beat': return '超预期';
-    case 'inline': return '符合';
-    case 'miss': return '未达';
-    default: return '待兑现';
-  }
-}
-
-function expectStatusClass(status: EditorialExpectationStatus | null | undefined): string {
-  switch (status) {
-    case 'beat': return styles.expectBeat;
-    case 'miss': return styles.expectMiss;
-    case 'inline': return styles.expectInline;
-    default: return styles.expectPending;
-  }
-}
-
-export function EditorialExpectationsTable({
-  keyPrefix,
-  expectations,
-  renderText,
-}: Readonly<{
-  keyPrefix: string;
-  expectations: readonly EditorialExpectation[];
-  renderText?: (text: string) => ReactNode;
-}>) {
-  if (expectations.length === 0) return null;
-  const text = (value: string) => (renderText !== undefined ? renderText(value) : value);
-  const hasActual = expectations.some((row) => row.actual != null && row.actual.trim() !== '');
-
-  return (
-    <div className={styles.expectWrap}>
-      <table className={styles.scheduleTable}>
-        <thead>
-          <tr>
-            <th>指标</th>
-            <th>事前预期</th>
-            {hasActual && <th>实际兑现</th>}
-            <th>判定</th>
-          </tr>
-        </thead>
-        <tbody>
-          {expectations.map((row, idx) => (
-            <tr key={`${keyPrefix}-ex-${idx}`}>
-              <td>{text(row.label)}</td>
-              <td>{text(row.expected)}</td>
-              {hasActual && <td>{row.actual != null ? text(row.actual) : '—'}</td>}
-              <td className={expectStatusClass(row.status)}>
-                {expectStatusLabel(row.status)}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
     </div>
   );
 }

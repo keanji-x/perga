@@ -156,6 +156,18 @@ public sealed class KernelMcpReportTests
 
         var contract = scoped.GetProperty("blockContract");
         Assert.Equal(["prose", "widget"], contract.GetProperty("kinds").EnumerateObject().Select(property => property.Name));
+        var widget = contract.GetProperty("kinds").GetProperty("widget");
+        var builtins = widget.GetProperty("builtins");
+        Assert.Equal(["builtin:flow", "builtin:table", "builtin:list"], builtins.EnumerateObject().Select(property => property.Name));
+        var table = builtins.GetProperty("builtin:table").GetProperty("viewResult");
+        Assert.Equal("cost", Assert.Single(table.GetProperty("columns").EnumerateArray()).GetProperty("key").GetString());
+        Assert.Equal("$24", Assert.Single(table.GetProperty("rows").EnumerateArray()).GetProperty("cost").GetProperty("text").GetString());
+        var iframe = widget.GetProperty("iframePostMessage");
+        var theme = iframe.GetProperty("hostToWidget")[0].GetProperty("tokens");
+        var cssTokens = iframe.GetProperty("cssThemeTokens");
+        Assert.All(theme.EnumerateObject(), token => Assert.True(cssTokens.TryGetProperty(token.Name, out _)));
+        Assert.Equal("--paper", cssTokens.GetProperty("paper").GetString());
+
 
         // format=markdown + sectionH1 with '# ' prefix renders only the scoped section
         var scopedMd = await Call(ctx, caller, KernelMcpToolNames.ReportRead, new

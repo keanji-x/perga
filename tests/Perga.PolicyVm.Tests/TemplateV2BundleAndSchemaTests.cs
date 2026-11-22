@@ -69,8 +69,8 @@ public sealed class TemplateV2BundleAndSchemaTests
                       title: e.id,
                       status: "pending",
                       date: e.date,
-                      verdict: e.verdict,
-                      model: e.taskRef && kernel.tasks[e.taskRef] ? kernel.tasks[e.taskRef].model : null
+                      badge: e.verdict,
+                      meta: e.taskRef && kernel.tasks[e.taskRef] ? kernel.tasks[e.taskRef].model : null
                     }))
                   })
                 };
@@ -137,7 +137,7 @@ public sealed class TemplateV2BundleAndSchemaTests
         var projection = _vm.ProjectViews(compiled, inputs, patched.NextData, kernelSnapshot);
         Assert.Empty(projection.Diagnostics);
         Assert.Equal(142.0, projection.Views["priceAxis"].GetProperty("current").GetDouble());
-        Assert.Equal("claude-opus-4", projection.Views["eventList"].GetProperty("items")[0].GetProperty("model").GetString());
+        Assert.Equal("claude-opus-4", projection.Views["eventList"].GetProperty("items")[0].GetProperty("meta").GetString());
         Assert.True(projection.Widgets.ContainsKey("./widgets/axis.html"));
     }
 

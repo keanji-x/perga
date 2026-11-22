@@ -140,7 +140,7 @@ public static class KernelMcpCatalog
         KernelMcpToolNames.FlowRead or KernelMcpToolNames.ProviderList;
 
     public static bool IsReadOnlyTool(string toolName) => IsBeforeHookExemptReadOnly(toolName) || toolName is
-        KernelMcpToolNames.ReportRead or KernelMcpToolNames.TaskList or
+        KernelMcpToolNames.ReportRead or KernelMcpToolNames.TaskList or KernelMcpToolNames.AreaList or KernelMcpToolNames.TrackList or
         KernelMcpToolNames.SessionList or KernelMcpToolNames.SessionRead or KernelMcpToolNames.MailList;
 
     public static bool IsCompletionOnly(string toolName) => toolName is
@@ -239,7 +239,7 @@ public static class KernelMcpCatalog
             new(KernelMcpToolNames.TemplateUpdateInputs, "Merge inputs into the active template. Stored business data can be changed with data_patch (Track Lead only).",
                 Schema("""{"type":"object","required":["inputs"],"properties":{"inputs":{"type":"object"}}}"""), localIdempotentWrite),
             new(KernelMcpToolNames.TrackSet, "Apply a templateId, local template package path, or JSON/.perga.js source with inputs. Use dryRun to preview or clear to detach while keeping the report (Track Lead only).",
-                Schema("""{"type":"object","properties":{"templateId":{"type":"string","minLength":1},"source":{"type":"string","minLength":1},"path":{"type":"string","minLength":1,"description":"Package directory or template file inside the local Track workspace."},"inputs":{"type":"object"},"dryRun":{"type":"boolean"},"clear":{"type":"boolean"},"resetData":{"type":"boolean"},"seedReport":{"type":"boolean","description":"Seed an empty report. Defaults to true when the report is empty and the template provides initial Markdown."}}}"""), localWrite),
+                Schema("""{"type":"object","properties":{"templateId":{"type":"string","minLength":1},"source":{"type":"string","minLength":1},"path":{"type":"string","minLength":1,"description":"Package directory or template file inside the local Track workspace."},"inputs":{"type":"object"},"dryRun":{"type":"boolean"},"clear":{"type":"boolean"},"resetData":{"type":"boolean","description":"Initialize fresh template data, or clear stored data when used with clear: true."},"seedReport":{"type":"boolean","description":"Seed an empty report. Defaults to true when the report is empty and the template provides initial Markdown."}}}"""), localWrite),
             new(KernelMcpToolNames.TrackClose, "Close the current track and cancel active tasks (governance only).",
                 Schema("""{"type":"object","properties":{}}"""), localDestructive),
             new(KernelMcpToolNames.TaskDone, "Submit completed work for the bound task with optional neutral outcome (ok|attention|blocked) and summary, and trigger gate verification (contract subagent only).",
@@ -351,6 +351,7 @@ public static class KernelMcpDispatcher
             throw KernelException.NotFound($"Unknown kernel MCP tool '{toolName}'.");
         if (toolName is KernelMcpToolNames.SystemUpgradeCheck or KernelMcpToolNames.SystemUpgradeApply or KernelMcpToolNames.SystemUpgradeRollback)
         {
+            // The service owns the policy guard for both dispatcher and direct calls.
             return await kernel.InvokeSystemUpgradeAsync(caller,
                 toolName == KernelMcpToolNames.SystemUpgradeCheck ? "check" : toolName == KernelMcpToolNames.SystemUpgradeApply ? "apply" : "rollback", args, ct).ConfigureAwait(false);
         }

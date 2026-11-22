@@ -10,7 +10,6 @@
     min-inline-size: 0;
   }
 
-
   .markerDone {
     background: var(--text);
   }
@@ -28,20 +27,6 @@
   .markerBlocked {
     background: var(--error);
   }
-
-
-
-  .blockedNote {
-    margin-block-end: var(--space-4);
-    padding: var(--space-2) var(--space-3);
-    border-inline-start: 2px solid var(--error);
-    background: var(--error-soft);
-    color: var(--error-text);
-    font-family: var(--font-sans);
-    font-size: var(--font-step-2-size);
-    line-height: 1.55;
-  }
-
 
   .chronicleGroup + .chronicleGroup {
     margin-block-start: var(--space-5);
@@ -159,7 +144,7 @@
     white-space: nowrap;
   }
 
-  .chronicleAssignBtn {
+  .chronicleMetaButton {
     appearance: none;
     border: 0;
     background: transparent;
@@ -170,22 +155,22 @@
     cursor: pointer;
   }
 
-  .chronicleAssignBtn:hover {
+  .chronicleMetaButton:hover {
     color: var(--accent);
   }
 
-  .chronicleAssignBtn:focus-visible {
+  .chronicleMetaButton:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
   }
 
-  .chronicleAssignStatic {
+  .chronicleMetaLabel {
     font-family: var(--font-mono);
     font-size: 0.72rem;
     color: var(--text-3);
   }
 
-  .chronicleVerdict {
+  .chronicleBadge {
     font-family: var(--font-sans);
     font-size: 0.75rem;
     color: var(--text-3);
@@ -193,23 +178,14 @@
     text-align: end;
   }
 
-  .chronicleVerdictRunning {
-    color: var(--accent);
-  }
-
-  .chronicleVerdictBlocked {
-    color: var(--error-text);
-  }
-
   .chronicleBody {
     padding-inline-start: calc(6rem + var(--space-3));
     padding-block-end: var(--space-5);
   }
 
-  .chronicleTriggerNote {
-    margin: 0 0 var(--space-2);
-    font-family: var(--font-mono);
-    font-size: 0.72rem;
+  .chronicleSubtitle {
+    display: block;
+    font-size: var(--font-step-1-size);
     color: var(--text-3);
   }
 
