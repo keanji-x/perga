@@ -73,7 +73,7 @@ cp -R fe/web/dist "$out/perga/web"
 cd "$out/perga"
 ```
 
-This directory has the same layout as the extracted release. Follow the owner and Host commands above from here.
+You are now in the package directory. On first use, start with `export PERGA_DATA_DIR` in the owner setup above, then run the Host command.
 
 ### Linux-specific deployment
 
