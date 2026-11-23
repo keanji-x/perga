@@ -14,171 +14,180 @@
     text-align: center;
   }
 
-  .folioWrap {
-    align-items: stretch;
-    justify-content: flex-start;
-    max-inline-size: min(100%, var(--document-measure, 40rem));
-    margin-inline: var(--document-start, 0px) auto;
-    padding: var(--space-5) 0 var(--space-7);
+  /* Mirrors real Report + TemplateProtocolBar: unboxed, laid directly on the
+     parchment ground inside the reading column (`--document-start` / `--document-measure`). */
+  .sheet {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-block-size: 0;
+    inline-size: 100%;
+    padding-block-end: var(--space-8);
     text-align: start;
   }
 
-  .folio {
+  .protocolBar {
     display: flex;
-    flex-direction: column;
-    gap: var(--space-6);
-    padding: var(--space-6) var(--space-6) var(--space-5);
-    border: var(--space-px) solid var(--hairline);
-    border-radius: var(--radius-md);
-    background: color-mix(in srgb, var(--paper) 68%, var(--bg));
-    box-shadow: 0 1px 0 color-mix(in srgb, var(--paper) 80%, transparent) inset;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    margin-block: var(--space-3) var(--space-5);
+    margin-inline-start: var(--document-start, 0px);
+    max-inline-size: min(100%, var(--document-measure, 40rem));
+    color: var(--text-2);
+    font: var(--type-ui);
   }
 
-  .folioHead {
+  .protocolBadges {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-inline-size: 0;
+  }
+
+  .protocolName {
+    color: var(--text-3);
+    font-weight: var(--weight-normal);
+  }
+
+  .protocolPill {
+    padding: var(--space-half) var(--space-2);
+    border-radius: var(--radius-sm);
+    background: var(--surface-chip);
+    color: var(--text-2);
+    font: var(--type-metadata);
+  }
+
+  .protocolHint {
+    color: var(--text-3);
+    font: var(--type-metadata);
+  }
+
+  .doc {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-7);
+    margin-inline-start: var(--document-start, 0px);
+    max-inline-size: min(100%, var(--document-measure, 40rem));
+    font: var(--type-reading);
+    letter-spacing: var(--type-reading-tracking);
+  }
+
+  .section {
     display: flex;
     flex-direction: column;
     gap: var(--space-3);
+    min-inline-size: 0;
   }
 
-  .eyebrowRow {
+  .chapterRow {
     display: flex;
-    align-items: center;
+    align-items: baseline;
     justify-content: space-between;
     gap: var(--space-3);
   }
 
-  .eyebrow {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-2);
-    color: var(--text-3);
-    font: var(--type-navigation-label);
-    letter-spacing: 0.08em;
-  }
-
-  .eyebrowIcon {
-    display: inline-flex;
-    align-items: center;
-    color: var(--text-3);
-  }
-
-  .folioCode {
-    color: var(--text-3);
-    font: var(--type-code);
-    letter-spacing: 0.08em;
-  }
-
-  .doubleRule {
-    block-size: 3px;
-    border-block-start: var(--space-px) solid var(--hairline-strong);
-    border-block-end: var(--space-px) solid var(--hairline);
-  }
-
-  .folioTitle {
-    margin: var(--space-2) 0 0;
+  /* Same marginalia treatment as Report `.h1` / `.referenceHead`:
+     indigo mono chapter number pulled into `--document-start` on desktop,
+     walking gracefully inline on narrow viewports with zero breakpoint literals. */
+  .chapter {
+    position: relative;
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-3);
+    margin: 0;
     color: var(--text);
     font: var(--type-chapter);
-    font-size: var(--font-step-6-size);
-    line-height: var(--font-step-6-line);
     letter-spacing: var(--type-chapter-tracking);
-    font-weight: var(--weight-semibold);
   }
 
-  .folioLead {
+  .chapterNum {
+    --_pull: min(2ch + var(--space-5), var(--document-start, 0px));
+
+    flex: none;
+    margin-inline-start: calc(-1 * var(--_pull));
+    margin-inline-end: max(0px, calc(var(--_pull) - 2ch - var(--space-3)));
+    color: var(--accent);
+    font: var(--type-code);
+    letter-spacing: var(--type-code-tracking);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .chapterMeta {
+    flex: none;
+    color: var(--text-3);
+    font: var(--type-metadata);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .prose {
     margin: 0;
-    max-inline-size: 36rem;
     color: var(--text-2);
     font: var(--type-reading);
     line-height: 1.75;
     text-wrap: pretty;
   }
 
-  .notes {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(10.5rem, 1fr));
-    gap: var(--space-4) var(--space-5);
-    margin: 0;
-    padding: var(--space-4) 0;
-    border-block: var(--space-px) solid var(--hairline);
-    list-style: none;
+  .prose strong {
+    color: var(--text);
+    font-weight: var(--weight-semibold);
   }
 
-  .note {
-    display: flex;
-    align-items: flex-start;
-    gap: var(--space-2);
-    min-inline-size: 0;
-  }
-
-  .noteIndex {
-    flex: none;
-    padding-block-start: var(--space-half);
-    color: var(--accent);
+  .codeCue {
+    padding: 0 var(--space-1);
+    border-radius: var(--radius-sm);
+    background: var(--surface-code);
+    color: var(--text);
     font: var(--type-code);
-    font-variant-numeric: tabular-nums;
   }
 
-  .noteBody {
+  /* Borderless hairline table matching Report's own "nothing is boxed, one rule per row" rule. */
+  .surfaceTable {
     display: flex;
     flex-direction: column;
-    gap: var(--space-1);
-    min-inline-size: 0;
-  }
-
-  .noteTitle {
-    margin: 0;
-    color: var(--text);
-    font: var(--type-ui);
-    font-weight: var(--weight-medium);
-  }
-
-  .noteDesc {
-    margin: 0;
-    color: var(--text-3);
-    font: var(--type-metadata);
-    line-height: 1.55;
-  }
-
-  .ledger {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-  }
-
-  .ledgerHead {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: var(--space-2);
-    padding-block-end: var(--space-2);
-  }
-
-  .ledgerTitle {
-    margin: 0;
-    color: var(--text);
-    font: var(--type-subheading);
-  }
-
-  .ledgerMeta {
-    color: var(--text-3);
-    font: var(--type-metadata);
-    font-variant-numeric: tabular-nums;
-  }
-
-  .ledgerList {
-    display: flex;
-    flex-direction: column;
+    margin: var(--space-1) 0 0;
     border-block-start: var(--space-px) solid var(--hairline);
   }
 
-  .ledgerRow {
+  .surfaceRow {
     display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-columns: minmax(7.5rem, 9.5rem) minmax(0, 1fr);
+    align-items: baseline;
+    gap: var(--space-4);
+    padding-block: var(--space-3);
+    border-block-end: var(--space-px) solid var(--hairline);
+  }
+
+  .surfaceName {
+    margin: 0;
+    color: var(--text);
+    font: var(--type-ui);
+    font-weight: var(--weight-semibold);
+  }
+
+  .surfaceRole {
+    margin: 0;
+    color: var(--text-2);
+    font: var(--type-ui);
+    line-height: 1.6;
+  }
+
+  .templateList {
+    display: flex;
+    flex-direction: column;
+    margin-block-start: var(--space-1);
+    border-block-start: var(--space-px) solid var(--hairline);
+  }
+
+  .templateRow {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
-    gap: var(--space-3);
+    gap: var(--space-4);
     inline-size: 100%;
     padding: var(--space-3) var(--space-2);
+    margin-inline: calc(-1 * var(--space-2));
     border: 0;
     border-block-end: var(--space-px) solid var(--hairline);
     border-radius: var(--radius-sm);
@@ -187,18 +196,7 @@
     font: var(--type-ui);
     text-align: start;
     cursor: pointer;
-    transition:
-      background-color var(--motion-quick) var(--ease-feedback),
-      border-color var(--motion-quick) var(--ease-feedback);
-  }
-
-  .rowIndex {
-    align-self: start;
-    padding-block-start: var(--space-half);
-    color: var(--text-3);
-    font: var(--type-code);
-    font-variant-numeric: tabular-nums;
-    transition: color var(--motion-quick) var(--ease-feedback);
+    transition: background-color var(--motion-quick) var(--ease-feedback);
   }
 
   .rowBody {
@@ -210,10 +208,7 @@
 
   .rowTitle {
     color: var(--text);
-    font: var(--type-subheading-small);
-    font-size: var(--font-step-3-size);
-    line-height: var(--font-step-3-line);
-    font-weight: var(--weight-semibold);
+    font: var(--type-subheading);
   }
 
   .rowDesc {
@@ -234,28 +229,28 @@
       transform var(--motion-quick) var(--ease-feedback);
   }
 
-  .ledgerRow:disabled {
+  .templateRow:disabled {
     color: var(--text-3);
     cursor: default;
   }
 
-  .ledgerRow:focus-visible {
+  .templateRow:focus-visible {
     background: var(--overlay-hover);
     outline: var(--space-half) solid var(--accent);
     outline-offset: calc(-1 * var(--space-half));
   }
 
-  .ledgerRow:hover:not(:disabled) {
+  .templateRow:hover:not(:disabled) {
     background: var(--overlay-hover);
   }
 
-  .ledgerRow:focus-visible .rowIndex,
-  .ledgerRow:hover:not(:disabled) .rowIndex {
+  .templateRow:focus-visible .rowTitle,
+  .templateRow:hover:not(:disabled) .rowTitle {
     color: var(--accent);
   }
 
-  .ledgerRow:focus-visible .rowAction,
-  .ledgerRow:hover:not(:disabled) .rowAction {
+  .templateRow:focus-visible .rowAction,
+  .templateRow:hover:not(:disabled) .rowAction {
     color: var(--accent);
     transform: translateX(var(--space-half));
   }
@@ -313,26 +308,5 @@
     margin: var(--space-2) 0 0;
     color: var(--error-text);
     font: var(--type-metadata);
-  }
-
-  .colophon {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding-block-start: var(--space-1);
-  }
-
-  .colophonLine {
-    color: var(--text-3);
-    font: var(--type-metadata);
-    line-height: 1.6;
-  }
-
-  .codeCue {
-    padding: 0 var(--space-1);
-    border-radius: var(--radius-sm);
-    background: var(--surface-code);
-    color: var(--text-2);
-    font: var(--type-code);
   }
 }
