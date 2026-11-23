@@ -106,4 +106,20 @@ public sealed class TemplateEntryOptimizationTests
             Assert.Equal(KernelErrorCode.Conflict, closedErr.Code);
         }
     }
+
+    [Fact]
+    public async Task LeadSystemPrompt_DescribesTrackSurfacesAndComposableTemplateModel()
+    {
+        await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        await ctx.SendAndWaitForTurnAsync(snap.Track.LeadSessionId!, new SendSessionMessageRequest("帮我做小米投研", "lead-prompt-check"));
+
+        var leadPrompt = Assert.Single(ctx.AgentRuntime.OpenedSessions).LaunchSpec.SystemPrompt;
+        Assert.Contains("## Track Model", leadPrompt, StringComparison.Ordinal);
+        Assert.Contains("**Title**", leadPrompt, StringComparison.Ordinal);
+        Assert.Contains("**Report**", leadPrompt, StringComparison.Ordinal);
+        Assert.Contains("Templates are optional and implicit", leadPrompt, StringComparison.Ordinal);
+        Assert.Contains("composable rather than all-or-nothing", leadPrompt, StringComparison.Ordinal);
+        Assert.Contains("format: \"files\"", leadPrompt, StringComparison.Ordinal);
+    }
 }

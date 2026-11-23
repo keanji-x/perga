@@ -94,8 +94,8 @@ public sealed partial class TrackActor
         {userMessage}
 
         步骤：
-        1. 调用 `template_list` 查看可用模板；如有潜在匹配，再调用 `template_read` 确认适用场景、输入参数与流程结构。
-        2. 只有在需求明确契合某个模板的结构化流程时，才调用 `mail_send`（`toTrackId: "{trackId}"`）通知当前 Track 的 Lead，简洁给出推荐的 `templateId`、建议的 `inputs`（如有）以及一句理由，最终由 Lead 决定是否调用 `track_set`。
+        1. 调用 `template_list` 查看可用模板；如有潜在匹配，再调用 `template_read` 确认适用场景、输入参数与结构。
+        2. 只有在需求明确契合某个模板的报告结构、数据模型或流程时，才调用 `mail_send`（`toTrackId: "{trackId}"`）通知当前 Track 的 Lead，只写清推荐的 `templateId`、建议的 `inputs`（如有）以及一句理由，由 Lead 决定是否调用 `track_set`。
         3. 如果需求只是简单问答、一次性查询或没有明确匹配的模板，不要调用 `mail_send`，直接回复 `NO_TEMPLATE` 并结束。
         4. 不要调用 `track_set`、`report_commit`、`flow_commit` 或创建其他会话。
         """;
