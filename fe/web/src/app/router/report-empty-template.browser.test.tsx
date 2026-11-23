@@ -7,7 +7,7 @@ import { fixtureReport, fixtureSnapshot, fixtureTrack } from './session-contract
 
 afterEach(cleanup);
 
-it('applies a template from the blank report popover and replaces the empty state with the seeded report', async () => {
+it('applies a template directly from the blank report parchment ledger and replaces the empty state with the seeded report', async () => {
   await page.viewport(1440, 900);
   let applied = false;
   const appliedBodies: unknown[] = [];
@@ -82,10 +82,7 @@ it('applies a template from the blank report popover and replaces the empty stat
   });
 
   await expect.element(page.getByRole('heading', { name: '进展会整理在这里' })).toBeVisible();
-  const trigger = page.getByRole('button', { name: '选择模板', exact: true });
-  await expect.element(trigger).toBeVisible();
-
-  await trigger.click();
+  await expect.element(page.getByRole('heading', { name: '从模板起稿' })).toBeVisible();
   const option = page.getByRole('button', { name: /AGENTS\.md 阶段交付协议/ });
   await expect.element(option).toBeVisible();
   await option.click();

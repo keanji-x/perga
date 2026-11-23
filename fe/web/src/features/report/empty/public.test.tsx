@@ -25,21 +25,20 @@ const TEMPLATES: readonly TrackTemplate[] = Object.freeze([
 ]);
 
 describe('ReportEmpty', () => {
-  it('renders pure copy with no action when no template callback or catalog is provided', () => {
+  it('renders pure EmptyState with no interactive actions when no template callback or catalog is provided', () => {
     const { container } = render(<ReportEmpty />);
     expect(screen.getByRole('heading', { name: '进展会整理在这里' })).toBeTruthy();
     expect(screen.getByText('说说想做的事，计划与结论会随对话整理。')).toBeTruthy();
     expect(container.querySelector('button, a, input, textarea')).toBeNull();
   });
 
-  it('keeps EmptyState pure and applies a selected template via the quiet sibling trigger', async () => {
+  it('renders the parchment folio guide and applies a selected template in one click', async () => {
     const onApplyTemplate = vi.fn(() => Promise.resolve());
     render(<ReportEmpty templates={TEMPLATES} onApplyTemplate={onApplyTemplate} />);
 
-    const trigger = screen.getByRole('button', { name: '选择模板' });
-    expect(trigger.closest('[data-nc-empty-state]')).toBeNull();
+    expect(screen.getByRole('heading', { name: '进展会整理在这里' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: '从模板起稿' })).toBeTruthy();
 
-    await userEvent.click(trigger);
     await userEvent.click(screen.getByRole('button', { name: /AGENTS\.md 阶段交付协议/ }));
 
     await waitFor(() => expect(onApplyTemplate).toHaveBeenCalledWith('agents-delivery'));
@@ -49,7 +48,6 @@ describe('ReportEmpty', () => {
     const onApplyTemplate = vi.fn(() => Promise.reject(new Error('template rejected')));
     render(<ReportEmpty templates={TEMPLATES} onApplyTemplate={onApplyTemplate} />);
 
-    await userEvent.click(screen.getByRole('button', { name: '选择模板' }));
     await userEvent.click(screen.getByRole('button', { name: /个股长期投研/ }));
 
     const alert = await screen.findByRole('alert');
