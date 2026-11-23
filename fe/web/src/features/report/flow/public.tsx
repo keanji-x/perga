@@ -9,10 +9,9 @@ import type {
   FlowNodeProjection,
   FlowProjection,
 } from '../../../../../core/domain/report-flow.ts';
-import type { ReportTaskRow } from '../../../../../core/domain/track-task-inventory.ts';
 import { Icon } from '../../../ui/icon/public.tsx';
 import { useState } from '../../../ui/state/public.ts';
-import { EditorialByline, EditorialGateStrip } from '../editorial/primitives.tsx';
+import { EditorialGateStrip } from '../editorial/primitives.tsx';
 import {
   archivedOutcomeLabel,
   archivedOutcomeTone,
@@ -24,7 +23,7 @@ import {
   formatWatchSummary,
   formatWhenRule,
   pickDefaultFlowNodeId,
-  toEditorialBylineItem,
+  flowStateLabel,
   type FlowVisualState,
 } from './format.ts';
 import { balanceFlowRows, buildFlowLayout, type FlowLayeredNode } from './layout.ts';
@@ -33,7 +32,6 @@ import styles from './flow.module.css';
 export type ReportFlowBlockProps = Readonly<{
   flow: FlowProjection;
   title?: string;
-  taskRows?: readonly ReportTaskRow[];
   renderText?: (text: string) => ReactNode;
   renderMarkdown?: (markdown: string, key: string) => ReactNode;
   onOpenWorker?: (sessionId: string) => void;
@@ -259,7 +257,6 @@ function FlowPeriodicNodeCard({
 export function ReportFlowBlock({
   flow,
   title,
-  taskRows,
   renderText,
   renderMarkdown,
   onOpenWorker,
@@ -406,9 +403,14 @@ export function ReportFlowBlock({
       {/* 3. Calm editorial detail panel for the selected node (strictly read-only publication) */}
       {activeNode !== null && (() => {
         const visual = classifyFlowNodeState(activeNode);
-        const bylineItem = toEditorialBylineItem(activeNode);
         const checks = toEditorialChecks(activeNode);
-        const reusesSession = activeNode.targetSession != null && activeNode.targetSession.startsWith('ses_');
+        const targetSession = activeNode.targetSession;
+        const reusesSession = targetSession != null && targetSession.startsWith('ses_');
+        const sessionId = activeNode.sessionId ?? (reusesSession ? targetSession : null);
+        const command = activeNode.cmd?.trim();
+        const worker = activeNode.model ?? (command || activeNode.role || (targetSession === 'lead' ? 'Lead' : null))
+          ?? (sessionId === null ? null : 'Worker');
+        const timestamp = formatFlowTimestamp(activeNode.finishedAtMs ?? activeNode.startedAtMs ?? activeNode.nextFireAtMs);
         const hasOutcomeSummary = activeNode.outcomeSummary != null && activeNode.outcomeSummary.trim() !== '';
         const whenRule = formatWhenRule(activeNode, titleById);
 
@@ -419,11 +421,28 @@ export function ReportFlowBlock({
                 <h3 className={styles.detailTitle}>{activeNode.title}</h3>
               </div>
 
-              <EditorialByline
-                item={bylineItem}
-                taskRows={taskRows}
-                onOpenWorker={onOpenWorker}
-              />
+              <div className={styles.metaLine}>
+                {worker !== null && (
+                  <>
+                    {command && activeNode.model == null && <span>CLI</span>}
+                    {sessionId !== null && onOpenWorker !== undefined ? (
+                      <button type="button" className={styles.workerButton} onClick={() => { onOpenWorker(sessionId); }}>
+                        {worker}
+                      </button>
+                    ) : <span>{worker}</span>}
+                    <span className={styles.metaSep} aria-hidden="true">·</span>
+                  </>
+                )}
+                {timestamp !== null && (
+                  <>
+                    <span>{timestamp}</span>
+                    <span className={styles.metaSep} aria-hidden="true">·</span>
+                  </>
+                )}
+                <span className={visual === 'ok' ? styles.archiveToneOk : captionToneClass(visual)}>
+                  {flowStateLabel(activeNode)}
+                </span>
+              </div>
 
               <div className={styles.metaLine}>
                 <span>{whenRule}</span>
@@ -550,7 +569,7 @@ export function ReportFlowBlock({
                           {item.sessionId != null && onOpenWorker !== undefined ? (
                             <button
                               type="button"
-                              className={styles.archiveModelBtn}
+                              className={styles.workerButton}
                               onClick={() => { onOpenWorker(item.sessionId!); }}
                             >
                               {modelDisplay}

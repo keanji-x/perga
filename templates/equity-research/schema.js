@@ -1,6 +1,7 @@
 /** @param {import("../perga-template.d.ts").SchemaBuilder} t */
 export const schema = (t) => ({
-  ticker: t.string(),
+  // Keep the field readable on tracks created before ticker moved to inputs.
+  ticker: t.string().optional(),
   valuation: t.object({
     unit: t.string(),
     currentPrice: t.number().optional(),
@@ -33,9 +34,7 @@ export const schema = (t) => ({
   })),
 });
 
-/** @param {Record<string, any>} inputs */
-export const initial = (inputs) => ({
-  ticker: inputs.ticker,
+export const initial = () => ({
   valuation: {
     unit: "$",
     targets: [],

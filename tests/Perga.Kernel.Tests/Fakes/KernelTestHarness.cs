@@ -1390,7 +1390,7 @@ internal sealed class ConfigurableFakePolicyVm : IPolicyVm
         IReadOnlyList<string>? knownTaskKeys,
         string nowIso,
         string source) =>
-        new(true, patch.Clone(), []);
+        new(true, patch.EnumerateObject().Any() ? patch.Clone() : currentData.Clone(), []);
 
     public TemplateViewsProjection ProjectViews(
         CompiledPolicy policy,

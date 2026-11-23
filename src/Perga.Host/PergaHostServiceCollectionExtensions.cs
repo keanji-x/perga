@@ -192,7 +192,9 @@ public static class PergaHostServiceCollectionExtensions
         services.TryAddSingleton(sp =>
             new HostMcpSessionBridge(
                 sp.GetRequiredService<PergaHostOptions>(),
-                sp.GetService<IServer>()));
+                sp.GetService<IServer>(),
+                // The router consumes the kernel, which consumes this bridge.
+                () => sp.GetService<McpPluginRouter>()));
         services.TryAddSingleton<IMcpSessionBridge>(sp => sp.GetRequiredService<HostMcpSessionBridge>());
 
         services.TryAddSingleton<Perga.Host.Http.SystemManagementAuthorization>();

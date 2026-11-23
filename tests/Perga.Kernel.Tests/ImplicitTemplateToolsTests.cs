@@ -205,6 +205,142 @@ public sealed class ImplicitTemplateToolsTests
         string tool, object args) => KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller, tool, TestJson.FromObject(args));
 
     [Fact]
+    public async Task TrackSetMaterializesDefaultsOnlyOnceAndStillRejectsRemovedFields()
+    {
+        await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        var caller = Caller(snap);
+        const string v1 = """
+            export default { id: "evolving", title: "Evolving",
+              data: { schema: t => ({ old: t.string() }), initial: { old: "existing" } } };
+            """;
+        var v2 = v1.Replace("old: t.string()", """old: t.string(), added: t.string().default("default")""",
+            StringComparison.Ordinal);
+        const string incompatible = """
+            export default { id: "evolving", title: "Incompatible",
+              data: { schema: t => ({ added: t.string().default("default") }) } };
+            """;
+
+        await Call(ctx, caller, KernelMcpToolNames.TrackSet, new { source = v1 });
+        var before = (await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId)).Track;
+
+        var preview = await Call(ctx, caller, KernelMcpToolNames.TrackSet, new { source = v2, dryRun = true });
+        Assert.Equal("preserve", preview.GetProperty("plan").GetProperty("dataAction").GetString());
+        Assert.Equal("default", preview.GetProperty("data").GetProperty("added").GetString());
+        Assert.Equal(before.DataRev, (await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId)).Track.DataRev);
+
+        await Call(ctx, caller, KernelMcpToolNames.TrackSet, new { source = v2 });
+        var upgraded = (await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId)).Track;
+        Assert.Equal(before.DataRev + 1, upgraded.DataRev);
+        Assert.Equal("existing", upgraded.Data.GetProperty("old").GetString());
+        Assert.Equal("default", upgraded.Data.GetProperty("added").GetString());
+        Assert.Equal("template:upgrade", upgraded.Data.GetProperty("_meta").GetProperty("source").GetString());
+
+        ctx.Time.Advance(TimeSpan.FromMinutes(1));
+        await Call(ctx, caller, KernelMcpToolNames.TrackSet, new { source = v2 });
+        var replayed = (await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId)).Track;
+        Assert.Equal(upgraded.DataRev, replayed.DataRev);
+        Assert.True(JsonElement.DeepEquals(upgraded.Data, replayed.Data));
+
+        var conflict = await Assert.ThrowsAsync<KernelException>(() =>
+            Call(ctx, caller, KernelMcpToolNames.TrackSet, new { source = incompatible }));
+        Assert.Equal(KernelErrorCode.Conflict, conflict.Code);
+        Assert.Contains("old", conflict.Message);
+        Assert.Contains("resetData: true", conflict.Message);
+        Assert.Equal(v2, (await ctx.Store.LoadTrackAggregateAsync(caller.TrackId, default))!.TemplateSnapshotSource);
+
+        await Call(ctx, caller, KernelMcpToolNames.TrackSet, new { source = incompatible, resetData = true });
+        var reset = (await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId)).Track;
+        Assert.Equal(upgraded.DataRev + 1, reset.DataRev);
+        Assert.False(reset.Data.TryGetProperty("old", out _));
+        Assert.Equal("default", reset.Data.GetProperty("added").GetString());
+    }
+
+    [Fact]
+    public async Task TrackSetSameTemplateUpgrade_PreservesInputsWhenOmitted_AndResetsWhenExplicit()
+    {
+        await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        var caller = Caller(snap);
+        const string v1 = """
+            export default defineTemplate({
+              id: "equity-research",
+              title: "Equity v1",
+              inputs: { ticker: { type: "string", default: "NVDA" } },
+              data: {
+                schema: t => ({ ticker: t.string(), note: t.string() }),
+                initial: inputs => ({ ticker: inputs.ticker, note: "thesis" })
+              },
+              report: { views: { summary: (data) => ({ ticker: data.ticker }) } }
+            });
+            """;
+        const string v2 = """
+            export default defineTemplate({
+              id: "equity-research",
+              title: "Equity v2",
+              inputs: { ticker: { type: "string", default: "NVDA" } },
+              data: {
+                schema: t => ({ ticker: t.string().optional(), note: t.string(), added: t.string().default("v2") }),
+                initial: () => ({ note: "fresh", added: "v2" })
+              },
+              report: { views: { summary: (data, _kernel, inputs) => ({ ticker: inputs.ticker, note: data.note, added: data.added }) } }
+            });
+            """;
+
+        await Call(ctx, caller, KernelMcpToolNames.TrackSet, new { source = v1, inputs = new { ticker = "TSLA" } });
+        await Call(ctx, caller, KernelMcpToolNames.TrackSet, new { source = v2 });
+
+        var upgraded = (await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId)).Track;
+        Assert.Equal("TSLA", upgraded.TemplateInputs.GetProperty("ticker").GetString());
+        Assert.Equal("thesis", upgraded.Data.GetProperty("note").GetString());
+        Assert.Equal("v2", upgraded.Data.GetProperty("added").GetString());
+        var views = await ctx.Kernel.GetTrackViewsAsync(caller.TrackId);
+        Assert.Equal("TSLA", views.Views["summary"].GetProperty("ticker").GetString());
+
+        await Call(ctx, caller, KernelMcpToolNames.TrackSet, new { source = v2, inputs = new { } });
+        var explicitEmpty = (await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId)).Track;
+        Assert.Empty(explicitEmpty.TemplateInputs.EnumerateObject());
+        var viewsAfterExplicit = await ctx.Kernel.GetTrackViewsAsync(caller.TrackId);
+        Assert.Equal("NVDA", viewsAfterExplicit.Views["summary"].GetProperty("ticker").GetString());
+    }
+
+    [Fact]
+    public async Task ClearTemplateWithResetData_EmitsClearedDataAndBumpedDataRevInTrackUpdatedEvent()
+    {
+        await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        var caller = Caller(snap);
+        await Call(ctx, caller, KernelMcpToolNames.TrackSet, new { source = Source, inputs = new { marker = "keep" } });
+        var before = (await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId)).Track;
+
+        await Call(ctx, caller, KernelMcpToolNames.TrackSet, new { clear = true, resetData = true });
+
+        var updatedEvent = ctx.Store.PersistedEvents.Last(e => e.Kind == KernelEventKinds.TrackUpdated && e.TrackId == caller.TrackId);
+        Assert.False(updatedEvent.Payload.TryGetProperty("templateId", out _));
+        Assert.Equal(before.DataRev + 1, updatedEvent.Payload.GetProperty("dataRev").GetInt32());
+        Assert.Empty(updatedEvent.Payload.GetProperty("data").EnumerateObject());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task TrackSetWarnsOnlyForUnconfiguredTemplatePlugins(bool dryRun)
+    {
+        var bridge = new InMemoryMcpSessionBridge { ConfiguredPluginIds = ["known"] };
+        await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm(), mcpSessionBridge: bridge);
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        var result = await Call(ctx, Caller(snap), KernelMcpToolNames.TrackSet, new
+        {
+            source = """
+                export default { id: "plugin-test", title: "Plugin test", plugins: ["perga", "vcs", "known", "missing"] };
+                """,
+            dryRun
+        });
+        Assert.Equal("Template plugin 'missing' is not configured on this host.",
+            Assert.Single(result.GetProperty("warnings").EnumerateArray()).GetString());
+    }
+
+    [Fact]
     public async Task TrackSetPreviewRecognizesProviderAliasInRouting()
     {
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
@@ -419,6 +555,9 @@ public sealed class ImplicitTemplateToolsTests
     [InlineData("{\"source\":\"export default defineTemplate({id:'bad',title:'Bad',data:{initial:()=>{throw new Error('init failed')}}});\"}")]
     [InlineData("{\"source\":\"x\",\"inputs\":[]}")]
     [InlineData("{\"source\":null}")]
+    [InlineData("{\"clear\":true,\"resetData\":true,\"templateId\":\"a\"}")]
+    [InlineData("{\"clear\":true,\"resetData\":true,\"inputs\":{}}")]
+    [InlineData("{\"clear\":true,\"resetData\":true,\"seedReport\":true}")]
     public async Task InvalidApplication_DoesNotMutateTrackOrSnapshotOrEmit(string arguments)
     {
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());

@@ -2,20 +2,18 @@ import type { ReactNode } from 'react';
 import type {
   EditorialListItem,
   EditorialListStatus,
-  EditorialMetric,
 } from '../../../../../core/domain/report-editorial.ts';
 import type { ReportTaskRow } from '../../../../../core/domain/track-task-inventory.ts';
 import { useState } from '../../../ui/state/public.ts';
-import { EditorialMetricsStrip } from './metrics.tsx';
+import { EditorialTable } from './table.tsx';
 import {
-  EditorialExpectationsTable,
   EditorialGateStrip,
   EditorialItemBody,
   defaultStatusLabel,
-  resolveAuthorDisplay,
   resolveItemSessionId,
 } from './primitives.tsx';
 import styles from './chronicle.module.css';
+import editorialStyles from './editorial.module.css';
 
 function markerToneClass(status: EditorialListStatus): string {
   switch (status) {
@@ -28,15 +26,9 @@ function markerToneClass(status: EditorialListStatus): string {
 
 const INITIAL_VISIBLE_COUNT = 6;
 
-function initialExpandedId(items: readonly EditorialListItem[]): string {
+function initialExpandedId(items: readonly EditorialListItem[]): string | null {
   const active = items.find((item) => item.status === 'running' || item.status === 'blocked');
-  return active?.id ?? items[0].id;
-}
-
-function verdictToneClass(item: EditorialListItem): string {
-  if (item.status === 'running') return styles.chronicleVerdictRunning;
-  if (item.status === 'blocked') return styles.chronicleVerdictBlocked;
-  return '';
+  return active?.id ?? items[0]?.id ?? null;
 }
 
 type GroupedBucket = Readonly<{
@@ -74,7 +66,6 @@ export function EditorialChronicle({
     title?: string | null;
     summary?: string | null;
     groups?: readonly string[] | null;
-    metrics?: readonly EditorialMetric[] | null;
   }>;
   taskRows?: readonly ReportTaskRow[];
   renderText?: (text: string) => ReactNode;
@@ -95,18 +86,10 @@ export function EditorialChronicle({
   const buckets = groupVisibleItems(visibleItems, payload.groups ?? []);
 
   return (
-    <section className={styles.root} aria-label={payload.title ?? '事件时间线'}>
+    <section className={styles.root} aria-label={payload.title ?? '记录列表'}>
       {payload.summary != null && payload.summary !== '' && (
         renderMarkdown?.(payload.summary, 'chronicle-summary') ?? <p>{text(payload.summary)}</p>
       )}
-      {payload.metrics != null && payload.metrics.length > 0 && (
-        <EditorialMetricsStrip
-          metrics={payload.metrics}
-          renderText={renderText}
-          renderMarkdown={renderMarkdown}
-        />
-      )}
-
       {buckets.map((bucket, bucketIndex) => (
         <div key={bucket.group ?? 'flat'} className={bucket.group !== null ? styles.chronicleGroup : undefined}>
           {bucket.group !== null && (
@@ -117,10 +100,11 @@ export function EditorialChronicle({
           >
             {bucket.items.map((item) => {
               const isExpanded = expandedId === item.id;
-              const headline = item.docLabel ?? item.title;
-              const verdictText = item.verdict ?? item.statusLabel ?? defaultStatusLabel(item.status);
+              const badge = item.badge ?? defaultStatusLabel(item.status);
               const resolvedSessionId = resolveItemSessionId(item, taskRows);
-              const assignDisplay = resolveAuthorDisplay(item, resolvedSessionId);
+              const canOpenWorker = resolvedSessionId !== null && onOpenWorker !== undefined;
+              const meta = item.meta ?? (canOpenWorker ? 'Worker' : null);
+              const tone = item.tone ?? (item.status === 'running' ? 'accent' : item.status === 'blocked' ? 'bad' : 'neutral');
               const checks = item.checks ?? [];
 
               return (
@@ -142,54 +126,48 @@ export function EditorialChronicle({
                         <span className={`${styles.chronicleDot} ${markerToneClass(item.status)}`} aria-hidden="true">
                           {item.status === 'running' && <span className={styles.chronicleDotCore} />}
                         </span>
-                        <span className={styles.chronicleDate}>{item.date ?? '—'}</span>
+                        {item.date != null && <span className={styles.chronicleDate}>{item.date}</span>}
                       </span>
-                      <span className={styles.chronicleTitle}>{headline}</span>
+                      <span>
+                        <span className={styles.chronicleTitle}>{item.title}</span>
+                        {item.subtitle != null && <span className={styles.chronicleSubtitle}>{item.subtitle}</span>}
+                      </span>
                     </button>
 
                     <span className={styles.chronicleMeta}>
-                      {assignDisplay !== null && (
-                        resolvedSessionId !== null && onOpenWorker !== undefined ? (
+                      {meta !== null && (
+                        canOpenWorker ? (
                           <button
                             type="button"
-                            className={styles.chronicleAssignBtn}
+                            className={styles.chronicleMetaButton}
                             onClick={() => { onOpenWorker(resolvedSessionId); }}
                           >
-                            {assignDisplay}
+                            {meta}
                           </button>
                         ) : (
-                          <span className={styles.chronicleAssignStatic}>{assignDisplay}</span>
+                          <span className={styles.chronicleMetaLabel}>{meta}</span>
                         )
                       )}
-                      <span className={`${styles.chronicleVerdict} ${verdictToneClass(item)}`}>
-                        {verdictText}
+                      <span className={`${styles.chronicleBadge} ${editorialStyles.tone}`} data-nc-tone={tone}>
+                        {badge}
                       </span>
                     </span>
                   </div>
 
                   {isExpanded && (
                     <div className={styles.chronicleBody}>
-                      {item.triggerAt != null && item.triggerAt.trim() !== '' && (
-                        <p className={styles.chronicleTriggerNote}>触发：{item.triggerAt}</p>
-                      )}
-
-                      {item.blockedReason != null && item.blockedReason.trim() !== '' && (
-                        <div className={styles.blockedNote} role="alert">
-                          {text(item.blockedReason)}
-                        </div>
-                      )}
-
                       <EditorialItemBody
                         item={item}
                         renderText={renderText}
                         renderMarkdown={renderMarkdown}
                       />
 
-                      {item.expectations != null && item.expectations.length > 0 && (
-                        <EditorialExpectationsTable
-                          keyPrefix={item.id}
-                          expectations={item.expectations}
+                      {item.table != null && (
+                        <EditorialTable
+                          payload={item.table}
+                          title={item.title}
                           renderText={renderText}
+                          renderMarkdown={renderMarkdown}
                         />
                       )}
 

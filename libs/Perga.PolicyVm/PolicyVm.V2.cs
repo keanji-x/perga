@@ -79,7 +79,7 @@ public sealed partial class PolicyVm
     {
         ArgumentNullException.ThrowIfNull(policy);
 
-        return EvaluateWithEffectiveDefinition(policy, inputs, "ProjectViews", (engine, bundle, def, _, _) =>
+        return EvaluateWithEffectiveDefinition(policy, inputs, "ProjectViews", (engine, bundle, def, jsInputs, _) =>
         {
             var views = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
             var diagnostics = new List<TemplateViewDiagnostic>();
@@ -90,6 +90,8 @@ public sealed partial class PolicyVm
             {
                 var dataJs = ParseJsJson(engine, NormalizeObjectJson(currentData).GetRawText());
                 var kernelJs = ParseJsJson(engine, NormalizeObjectJson(kernelSnapshot).GetRawText());
+
+                engine.Call(engine.Intrinsics.Object.Get("freeze"), [jsInputs]);
 
                 foreach (var prop in viewsObj.GetOwnProperties())
                 {
@@ -106,7 +108,7 @@ public sealed partial class PolicyVm
 
                     try
                     {
-                        var projected = engine.Call(fn, viewsObj, [dataJs, kernelJs]);
+                        var projected = engine.Call(fn, viewsObj, [dataJs, kernelJs, jsInputs]);
                         views[viewName] = JsValueToJsonElement(engine, projected, "{}");
                     }
                     catch (Exception ex) when (ex is not TimeoutException
@@ -371,10 +373,11 @@ public sealed partial class PolicyVm
             TryGetOptionalObject(reportObj, "views", "template.report.views", out var viewsObj))
         {
             var emptyKernel = ParseJsJson(engine, "{\"tasks\":{},\"sessions\":{},\"flow\":{\"rev\":0,\"nodes\":[],\"archived\":[]}}");
+            engine.Call(engine.Intrinsics.Object.Get("freeze"), [jsInputs]);
             foreach (var name in viewNames)
             {
                 var fn = (Function)viewsObj.Get(name);
-                engine.Call(fn, viewsObj, [initialDataJs, emptyKernel]);
+                engine.Call(fn, viewsObj, [initialDataJs, emptyKernel, jsInputs]);
             }
         }
     }

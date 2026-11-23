@@ -1,15 +1,17 @@
 import type { ReactNode } from 'react';
 import type { ReportTaskRow } from '../../../../../core/domain/track-task-inventory.ts';
-import {
-  builtinListViewSchema,
-  builtinTableViewSchema,
-  type TemplateViewsProjection,
-  type TemplateViewsState,
-  type WidgetBlockPayload,
+import type {
+  TemplateViewsProjection,
+  TemplateViewsState,
+  WidgetBlockPayload,
 } from '../../../../../core/domain/report-widget.ts';
+import {
+  parseBuiltinListView,
+  parseBuiltinTableView,
+} from '../../../../../core/domain/report-widget-compat.ts';
 import { EditorialChronicle } from '../editorial/chronicle.tsx';
 import { ReportFlowBlock } from '../flow/public.tsx';
-import { EditorialMetricsStrip } from '../editorial/metrics.tsx';
+import { EditorialTable } from '../editorial/table.tsx';
 import { SeamlessHtmlWidget } from './seamless-html.tsx';
 import styles from './widget.module.css';
 
@@ -99,7 +101,6 @@ export function ReportWidgetBlock({
       <ReportFlowBlock
         flow={flow}
         title={payload.title ?? undefined}
-        taskRows={taskRows}
         renderText={renderText}
         renderMarkdown={renderMarkdown}
         onOpenWorker={onOpenWorker}
@@ -128,11 +129,11 @@ export function ReportWidgetBlock({
   }
 
   if (payload.use === 'builtin:list') {
-    const parsed = builtinListViewSchema.safeParse(viewData);
+    const parsed = parseBuiltinListView(viewData);
     if (!parsed.success) {
       return <WidgetContractError payload={payload} issues={parsed.error.issues} />;
     }
-    if (parsed.data.items.length === 0) {
+    if (parsed.data.items.length === 0 && parsed.legacyMetricsTable === undefined) {
       return (
         <div className={styles.diagnostic} role="note">
           <div className={styles.diagnosticTitle}>{payload.title ?? payload.view}</div>
@@ -142,31 +143,41 @@ export function ReportWidgetBlock({
     }
 
     return (
-      <EditorialChronicle
-        payload={parsed.data}
-        taskRows={taskRows}
-        renderText={renderText}
-        renderMarkdown={renderMarkdown}
-        onOpenWorker={onOpenWorker}
-      />
+      <>
+        {parsed.legacyMetricsTable !== undefined && (
+          <EditorialTable
+            payload={parsed.legacyMetricsTable}
+            title={payload.title?.trim() || payload.view}
+            renderText={renderText}
+            renderMarkdown={renderMarkdown}
+          />
+        )}
+        {parsed.data.items.length > 0 && (
+          <EditorialChronicle
+            payload={parsed.data}
+            taskRows={taskRows}
+            renderText={renderText}
+            renderMarkdown={renderMarkdown}
+            onOpenWorker={onOpenWorker}
+          />
+        )}
+      </>
     );
   }
 
   if (payload.use === 'builtin:table') {
-    const parsed = builtinTableViewSchema.safeParse(viewData);
+    const parsed = parseBuiltinTableView(viewData);
     if (!parsed.success) {
       return <WidgetContractError payload={payload} issues={parsed.error.issues} />;
     }
-    if (parsed.data.metrics.length === 0) {
-      return (
-        <div className={styles.diagnostic} role="note">
-          <div className={styles.diagnosticTitle}>空指标总账：{payload.view}</div>
-          <div>当前暂无可展示条目。</div>
-        </div>
-      );
-    }
-
-    return <EditorialMetricsStrip metrics={parsed.data.metrics} renderText={renderText} renderMarkdown={renderMarkdown} />;
+    return (
+      <EditorialTable
+        payload={parsed.data}
+        title={payload.title?.trim() || payload.view}
+        renderText={renderText}
+        renderMarkdown={renderMarkdown}
+      />
+    );
   }
 
   if (payload.use.startsWith('builtin:')) {

@@ -290,9 +290,17 @@ describe('ReportDocument', () => {
       const { container } = render(<ReportDocument report={blocked(
         prose('b-1', '# One'),
         { id: 'b-2', kind: 'widget', payload: { use: 'builtin:list', view: 'log' } },
-      )} empty={EMPTY} />);
+      )} empty={EMPTY} templateViews={{
+        templateId: 'test', dataRev: 0, flowRev: 0, widgets: {}, diagnostics: [],
+        views: { log: { items: [{
+          id: 'check', title: 'Release review', note: 'See [review notes](./review.md).',
+          table: { columns: [{ key: 'result', label: 'Result' }], rows: [{ result: { text: '**Passed**', markdown: true } }] },
+        }] } },
+      }} />);
       expect(container.querySelector('#b-1')).toBeTruthy();
-      expect(container.querySelector('#b-2')).toBeTruthy();
+      const widget = container.querySelector('#b-2');
+      expect(widget?.querySelector('table strong')?.textContent).toBe('Passed');
+      expect(widget?.textContent).toContain('review notes');
     });
 
     it('anchors headings on ids the outline can address', () => {

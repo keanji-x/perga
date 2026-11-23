@@ -26,7 +26,7 @@ export default defineTemplate({
     return {
       data: {
         schema,
-        initial: () => initial(inputs),
+        initial,
       },
       report: {
         template: "./report.md",

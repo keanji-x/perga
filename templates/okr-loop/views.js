@@ -7,18 +7,28 @@ function formatUpdatedAt(kr) {
 }
 
 export const views = {
-  /** @param {Record<string, any>} data */
+  /**
+   * @param {Record<string, any>} data
+   * @returns {import("../perga-template.d.ts").BuiltinTableView}
+   */
   krLedger(data) {
-    /** @type {any[]} */
     const krs = Array.isArray(data.krs) ? data.krs : [];
     return {
-      metrics: krs.map((kr) => ({
-        code: kr.code,
-        label: kr.label,
-        tag: kr.tag,
-        current: kr.current,
-        targetLabel: kr.targetLabel,
-        status: kr.status,
+      title: "Key Results 总账",
+      columns: [
+        { key: "result", label: "Key Result" },
+        { key: "current", label: "当前" },
+        { key: "target", label: "目标" },
+        { key: "updatedAt", label: "更新时间", align: "right" },
+      ],
+      rows: krs.map((kr) => ({
+        result: { text: kr.label, code: kr.code, tag: kr.tag ?? undefined, markdown: true },
+        current: {
+          text: kr.current ?? "—",
+          tone: kr.status === "met" ? "good" : kr.status === "on_track" ? "accent" : "warn",
+          check: kr.status === "met",
+        },
+        target: kr.targetLabel,
         updatedAt: formatUpdatedAt(kr),
       })),
     };

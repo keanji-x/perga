@@ -11,15 +11,24 @@ public sealed class HostMcpSessionBridge : IMcpSessionBridge
 {
     private readonly PergaHostOptions _options;
     private readonly IServer? _server;
+    private readonly Func<McpPluginRouter?> _getPluginRouter;
     private readonly ConcurrentDictionary<string, McpSessionPrincipal> _byToken = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, string> _tokenBySession = new(StringComparer.Ordinal);
     private readonly object _gate = new();
 
-    public HostMcpSessionBridge(PergaHostOptions options, IServer? server = null)
+    public HostMcpSessionBridge(PergaHostOptions options, IServer? server = null, McpPluginRouter? pluginRouter = null)
+        : this(options, server, () => pluginRouter)
+    {
+    }
+
+    internal HostMcpSessionBridge(PergaHostOptions options, IServer? server, Func<McpPluginRouter?> getPluginRouter)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _server = server;
+        _getPluginRouter = getPluginRouter;
     }
+
+    public IReadOnlyCollection<string>? ConfiguredPluginIds => _getPluginRouter()?.RegisteredPluginIds;
 
     public McpSessionRegistration RegisterSession(
         string trackId,

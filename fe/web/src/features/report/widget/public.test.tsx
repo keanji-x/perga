@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { TemplateViewsProjection } from '../../../../../core/domain/report-widget.ts';
 import type { TrackReport } from '../../../../../core/domain/report.ts';
@@ -17,13 +17,28 @@ describe('ReportWidgetBlock', () => {
           groups: ['进行中', '已完成'],
           items: [
             { id: 'design', title: '设计', group: '已完成', status: 'done', summary: '完成架构设计' },
-            { id: 'impl', title: '实现', group: '进行中', status: 'running', summary: '正在编码' },
+            {
+              id: 'impl', title: '实现', group: '进行中', status: 'running', summary: '正在编码',
+              subtitle: '本周交付', badge: '复核中', tone: 'accent', meta: 'Reviewer', sessionId: 'ses_review',
+              note: '等候验收', checks: [{ label: 'Build', status: 'pass' }],
+              table: { title: 'Review evidence', columns: [{ key: 'result', label: 'Result' }], rows: [{ result: 'Passed' }] },
+            },
           ],
         },
         krView: {
-          metrics: [
-            { code: 'KR1', label: 'P95 时长', current: '11.2 min', targetLabel: '≤ 8.0 min', status: 'at_risk', updatedAt: '11-21 09:00' },
+          title: 'Service latency',
+          summary: 'Latency by release',
+          columns: [
+            { key: 'result', label: 'Service' },
+            { key: 'current', label: 'Current', align: 'right' },
+            { key: 'target', label: 'Target', align: 'center' },
+            { key: 'updatedAt', label: 'Updated' },
           ],
+          rows: [{
+            result: { code: 'KR1', text: '**P95 latency**', markdown: true, tag: 'CI' },
+            current: { text: '7.2 min', tone: 'good', check: true },
+            updatedAt: '11-21 09:00',
+          }],
         },
       },
       widgets: {},
@@ -32,27 +47,128 @@ describe('ReportWidgetBlock', () => {
       diagnostics: [],
     };
 
+    const onOpenWorker = vi.fn();
     const { rerender } = render(
       <ReportWidgetBlock
         payload={{ use: 'builtin:list', view: 'chronicleView' }}
         projection={projection}
         renderText={(text) => <span>{text}</span>}
+        onOpenWorker={onOpenWorker}
       />,
     );
     expect(screen.getByText('交付记录')).toBeTruthy();
     expect(screen.getAllByRole('heading', { level: 4 }).map((heading) => heading.textContent)).toEqual(['进行中', '已完成']);
     expect(screen.getByText('设计')).toBeTruthy();
     expect(screen.getByText('正在编码')).toBeTruthy();
+    expect(screen.getByText('本周交付')).toBeTruthy();
+    expect(screen.getByText('复核中').dataset.ncTone).toBe('accent');
+    expect(screen.getByText('等候验收')).toBeTruthy();
+    expect(screen.getByText('Build')).toBeTruthy();
+    expect(within(screen.getByRole('table', { name: 'Review evidence' })).getByText('Passed')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Reviewer' }));
+    expect(onOpenWorker).toHaveBeenCalledWith('ses_review');
 
     rerender(
       <ReportWidgetBlock
         payload={{ use: 'builtin:table', view: 'krView' }}
         projection={projection}
         renderText={(text) => <span>{text}</span>}
+        renderMarkdown={(markdown) => <p data-markdown>{markdown}</p>}
       />,
     );
-    expect(screen.getByText('KR1')).toBeTruthy();
-    expect(screen.getByText('11-21 09:00')).toBeTruthy();
+    const table = within(screen.getByRole('table', { name: 'Service latency' }));
+    expect(screen.getByText('Latency by release').hasAttribute('data-markdown')).toBe(true);
+    expect(table.getAllByRole('columnheader').map((header) => header.textContent))
+      .toEqual(['Service', 'Current', 'Target', 'Updated']);
+    expect(table.getByText('KR1').tagName).toBe('CODE');
+    expect(table.getByText('CI')).toBeTruthy();
+    expect(table.getByText('**P95 latency**').hasAttribute('data-markdown')).toBe(true);
+    expect(table.getByText('11-21 09:00')).toBeTruthy();
+    expect(table.getByRole('img', { name: '已通过' })).toBeTruthy();
+    expect(table.getByText('7.2 min').closest('td')?.dataset.ncAlign).toBe('right');
+    expect(table.getByRole('cell', { name: '—' }).dataset.ncAlign).toBe('center');
+  });
+
+  it('gives untitled embedded list tables an accessible name and renders frozen v1 template payloads', () => {
+    const projection: TemplateViewsProjection = {
+      templateId: 'legacy-frozen',
+      views: {
+        legacyLedger: {
+          metrics: [{
+            code: 'KR1',
+            label: 'P95 latency',
+            tag: 'CI',
+            current: '7.2 min',
+            targetLabel: '≤ 8 min',
+            status: 'met',
+            updatedAt: '11-21 09:00',
+          }],
+        },
+        legacyChronicle: {
+          metrics: [{ label: 'Headline KR', current: '100%', targetLabel: '100%', status: 'met' }],
+          items: [{
+            id: 'q3',
+            date: '2026-11-21',
+            title: 'Q3 Earnings',
+            status: 'done',
+            verdict: '超预期',
+            assign: 'Analyst',
+            assignKind: 'model',
+            triggerAt: 'After close',
+            summary: 'Beat guidance',
+            expectations: [{ label: 'Revenue', expected: '$35B', actual: '$36B', status: 'beat' }],
+          }],
+        },
+        blankEmbeddedTitle: {
+          items: [{
+            id: 'blank-title',
+            title: 'Blank table title fallback',
+            status: 'running',
+            table: { title: '   ', columns: [{ key: 'k', label: 'K' }], rows: [{ k: 'V' }] },
+          }],
+        },
+      },
+      widgets: {},
+      dataRev: 1,
+      flowRev: 0,
+      diagnostics: [],
+    };
+
+    const { rerender } = render(
+      <ReportWidgetBlock
+        payload={{ use: 'builtin:table', view: 'legacyLedger', title: '   ' }}
+        projection={projection}
+        renderText={(text) => <span>{text}</span>}
+      />,
+    );
+    const ledger = within(screen.getByRole('table', { name: 'legacyLedger' }));
+    expect(ledger.getByText('KR1')).toBeTruthy();
+    expect(ledger.getByText('7.2 min')).toBeTruthy();
+    expect(ledger.getByText('≤ 8 min')).toBeTruthy();
+
+    rerender(
+      <ReportWidgetBlock
+        payload={{ use: 'builtin:list', view: 'legacyChronicle', title: '事件清单' }}
+        projection={projection}
+        renderText={(text) => <span>{text}</span>}
+      />,
+    );
+    expect(within(screen.getByRole('table', { name: '事件清单' })).getByText('Headline KR')).toBeTruthy();
+    expect(screen.getByText('After close')).toBeTruthy();
+    expect(screen.getByText('Analyst')).toBeTruthy();
+    const embedded = within(screen.getByRole('table', { name: 'Q3 Earnings' }));
+    expect(embedded.getByText('Revenue')).toBeTruthy();
+    expect(embedded.getByText('$36B')).toBeTruthy();
+
+    cleanup();
+    render(
+      <ReportWidgetBlock
+        payload={{ use: 'builtin:list', view: 'blankEmbeddedTitle' }}
+        projection={projection}
+        renderText={(text) => <span>{text}</span>}
+      />,
+    );
+    expect(within(screen.getByRole('table', { name: 'Blank table title fallback' })).getByText('V')).toBeTruthy();
   });
 
   it('mounts seamless HTML graphic widget with sandbox="allow-scripts" and handles resize + whitelisted intents', () => {
@@ -121,8 +237,8 @@ describe('ReportWidgetBlock', () => {
       templateId: 'equity-research',
       views: {
         chronicle: { items: [] },
-        emptyLedger: { metrics: [] },
-        badLedger: { metrics: [{ label: 123 }] },
+        emptyLedger: { columns: [{ key: 'cost', label: 'Cost' }], rows: [] },
+        badLedger: { columns: [{ key: 'cost', label: 123 }], rows: [] },
         badChronicle: { items: [{ id: 'bad', title: 'Broken', status: 'unknown' }] },
       },
       widgets: {},
@@ -147,7 +263,7 @@ describe('ReportWidgetBlock', () => {
         renderText={(text) => <span>{text}</span>}
       />,
     );
-    expect(screen.getByText('当前暂无可展示条目。')).toBeTruthy();
+    expect(screen.getByText('当前暂无可展示的行。')).toBeTruthy();
 
     rerender(
       <ReportWidgetBlock
@@ -157,7 +273,7 @@ describe('ReportWidgetBlock', () => {
       />,
     );
     expect(screen.getByRole('alert').textContent).toContain('视图契约校验失败：builtin:table');
-    expect(screen.getByRole('alert').textContent).toContain('metrics.0.label');
+    expect(screen.getByRole('alert').textContent).toContain('columns.0.label');
 
     rerender(
       <ReportWidgetBlock

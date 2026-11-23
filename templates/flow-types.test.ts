@@ -1,6 +1,6 @@
 import type {
   BuiltinListView, BuiltinTableView, FlowAction, FlowWhen,
-  HtmlWidgetFromHostMessage, HtmlWidgetToHostMessage, PergaTemplateSetupResult, TemplateBeforeAction,
+  HtmlWidgetFromHostMessage, HtmlWidgetToHostMessage, PergaTemplateSetupResult, TemplateBeforeAction, TemplateViewFn,
 } from "./perga-template";
 
 // @ts-expect-error after requires an array of dependencies
@@ -65,27 +65,37 @@ const toolAction: TemplateBeforeAction = {
 const incompleteReportCommit: TemplateBeforeAction = { type: "report.commit", editorRole: "lead", nextMarkdown: "" };
 
 const table: BuiltinTableView = {
-  metrics: [{
-    label: "Coverage", target: 0.9, direction: "gte", status: "on_track",
-    points: [{ date: "2026-01-01", value: 0.8 }, { date: "2026-01-02", value: 0.85, note: null }],
-  }],
+  columns: [{ key: "coverage", label: "Coverage", align: "right" }],
+  rows: [{ coverage: { text: "90%", tone: "good", code: "KR1", tag: "CI", check: true } }, { coverage: null }],
 };
 const list: BuiltinListView = {
   title: null,
   items: [{
-    id: "review", title: "Review", status: "running", assignKind: "model",
+    id: "review", title: "Review", subtitle: "Release", badge: "Ready", tone: "good",
+    meta: "Review worker", note: "See the unit results", table,
     checks: [{ label: "Unit tests", status: "pass" }],
-    expectations: [{ label: "Coverage", expected: "90%", status: "pending" }],
   }],
 };
-// @ts-expect-error a table requires metrics
+// @ts-expect-error a table requires columns and rows
 const invalidTable: BuiltinTableView = {};
+// @ts-expect-error a table cell requires text
+const invalidCell: BuiltinTableView = { columns: table.columns, rows: [{ coverage: { check: true } }] };
+// @ts-expect-error list items do not accept domain-specific fields
+const invalidItem: BuiltinListView = { items: [{ id: "a", title: "A", verdict: "beat" }] };
+const useInputs: TemplateViewFn<{ target: string }> = (data, kernel, inputs) => {
+  // @ts-expect-error view inputs are read-only
+  inputs.target = "new target";
+  return { target: inputs.target, data, tasks: kernel.tasks };
+};
+const existingView: TemplateViewFn = (data, kernel) => ({ data, tasks: kernel.tasks });
 // @ts-expect-error list items use editorial status values
 const invalidList: BuiltinListView = { items: [{ id: "a", title: "A", status: "pass" }] };
 
+const withInputs: PergaTemplateSetupResult<{ target: string }> = { report: { views: { useInputs } } };
+
 const template: PergaTemplateSetupResult = {
   before,
-  report: { initialMarkdown: "# Report", views: { checks: () => list, coverage: () => table } },
+  report: { initialMarkdown: "# Report", views: { checks: () => list, coverage: () => table, existingView } },
 };
 // @ts-expect-error report.template and report.initialMarkdown are mutually exclusive
 const dualReportTemplate: PergaTemplateSetupResult = { report: { template: "./report.md", initialMarkdown: "# Report" } };

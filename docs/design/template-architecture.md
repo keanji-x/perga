@@ -29,9 +29,9 @@ Lead 通过 `flow_read` 查看当前定义，通过 `flow_commit` 提交流程�
 
 模板用 `data.schema(t)` 定义字段、必填项、枚举等约束，用 `data.initial` 初始化业务数据。可用 `t.ref("task")` 引用 Track 任务，用 `t.ref("file")` 引用 Track 工作区中的相对路径。写入走 `data_patch` 或 `PATCH /api/v1/tracks/{trackId}/data`。内核校验合并后的数据，可用 `expectedDataRev` 防止并发覆盖。
 
-`report.views` 函数接收当前业务数据和内核事实，后者包括实际任务、会话、门禁及 Flow 状态。策略钩子使用当前 `{ trackId, inputs, data }` 的独立快照，钩子中的修改不会写回。Report 提交和任务派发会校验审批所依据的数据快照。`before` 可允许、拒绝或请求人确认，MCP 动作使用 `tool.<toolName>`。`turnContext` 与 `before("turn.before", …)` 也接收会话快照，`headerView` 投影 Track 头部信息。`tasks.routing` 可提供执行默认值或强制模型、访问模式，`requireGateForReadWrite` 要求写任务携带门禁。
+`report.views(data, kernel, inputs)` 接收当前业务数据、内核事实和只读模板输入。内核事实包括实际任务、会话、门禁及 Flow 状态，输入包含模板默认值。策略钩子使用当前 `{ trackId, inputs, data }` 的独立快照，钩子中的修改不会写回。Report 提交和任务派发会校验审批所依据的数据快照。`before` 可允许、拒绝或请求人确认，MCP 动作使用 `tool.<toolName>`。`turnContext` 与 `before("turn.before", …)` 也接收会话快照，`headerView` 投影 Track 头部信息。`tasks.routing` 可提供执行默认值或强制模型、访问模式，`requireGateForReadWrite` 要求写任务携带门禁。
 
-模板快照直接存储源码或包，保留继承所需的冻结源码。
+模板快照直接存储源码或包，保留继承所需的冻结源码。重新应用模板时，`track_set` 会给保留的业务数据补齐新 schema 声明的默认值。删除旧字段或改变字段类型可能需要 `resetData: true`。解除模板时，`clear: true` 会保留业务数据，也可同时传入 `resetData: true` 清空。
 
 ## Report 视图
 
@@ -40,13 +40,13 @@ Lead 通过 `flow_read` 查看当前定义，通过 `flow_commit` 提交流程�
 | `perga-block widget` 的 `use` | 数据来源与呈现 |
 |---|---|
 | `builtin:flow` | 内核 Flow 投影。使用 `view: "flow"`，模板无需声明 JavaScript 投影 |
-| `builtin:list` | 视图返回 `items`，可提供标题、摘要、指标和分组顺序。条目以 `group` 标记所属分组 |
-| `builtin:table` | 视图返回 `metrics`，可带目标、当前值、状态、更新信息和证据 |
+| `builtin:list` | 视图返回 `items`，可提供标题、摘要和分组顺序。条目可带副标题、徽标、元信息与可展开的说明、表格和检查引用 |
+| `builtin:table` | 视图返回 `columns` 与 `rows`。每列以唯一的 `key` 对应行的字段，单元格支持文字、语义颜色、代码、标签和勾选标记 |
 | `./widgets/*.html` | 包内 HTML 接收对应视图的 JSON，用于估值轴等专用图形 |
 
-列表和指标表各自校验数据。运行中的视图出错时，诊断显示在对应块内。Report 的创作契约是 Markdown 正文与 `perga-block widget`。历史 Report 块及其压缩修订仍可读取，模板快照直接存储源码或包，保留继承所需的冻结源码。
+列表和表格各自按当前通用契约校验数据；前端读取边界同时兼容已冻结的 v1 模板快照（指标表和旧列表字段），无需升级旧 Track 即可继续渲染。运行中的视图出错时，诊断显示在对应块内。Report 的创作契约是 Markdown 正文与 `perga-block widget`。历史 Report 块及其压缩修订仍可读取，模板快照直接存储源码或包，保留继承所需的冻结源码。
 
-HTML 通过含 `sandbox="allow-scripts"` 的 iframe 承载。宿主发送 `perga:data` 和 `perga:theme`，组件可上报 `perga:resize`，并通过 `perga:intent` 请求打开工作区文件或会话。导航沿用 Track 的文件和会话入口。
+HTML 通过含 `sandbox="allow-scripts"` 的 iframe 承载。宿主发送 `perga:data` 和 `perga:theme`，组件通过 `perga:ready` 请求主题和数据，可上报 `perga:resize`，并通过 `perga:intent` 请求打开工作区文件或会话。导航沿用 Track 的文件和会话入口。
 
 ## 内置模板
 

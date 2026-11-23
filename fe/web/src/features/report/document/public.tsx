@@ -108,7 +108,6 @@ export function ReportDocument({
         <div className={styles.block} data-nc-report-reading="" data-nc-link-reading="">
           <ReportFlowBlock
             flow={autoFlow}
-            taskRows={taskRows}
             renderText={(text) => <PlainReportText text={text} context={textContext} />}
             renderMarkdown={(markdown, key) => (
               <ProseBlock markdown={markdown} blockId={key} compact {...textContext} />
@@ -274,7 +273,7 @@ function BlockBody({
           taskRows={taskRows}
           renderText={renderText}
           renderMarkdown={(markdown, key) => (
-            <ProseBlock markdown={markdown} blockId={key} compact {...textContext} />
+            <ProseBlock markdown={markdown} blockId={`${block.id}-${key}`} compact {...textContext} />
           )}
           onOpenFile={onOpenFileLink === undefined ? undefined : (path) => { onOpenFileLink({ path }); }}
           onOpenWorker={onOpenWorker}

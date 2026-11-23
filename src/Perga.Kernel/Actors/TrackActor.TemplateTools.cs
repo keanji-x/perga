@@ -54,13 +54,19 @@ public sealed partial class TrackActor
         return (await DetachTemplateCoreAsync(false, ct).ConfigureAwait(false)).Track;
     }, ct);
 
-    private Task<TemplateSetResult> DetachTemplateCoreAsync(bool dryRun, CancellationToken ct, string? callerSessionId = null) =>
-        ApplyTemplateBindingCoreAsync(_track with
+    private Task<TemplateSetResult> DetachTemplateCoreAsync(
+        bool dryRun, CancellationToken ct, string? callerSessionId = null, bool resetData = false)
+    {
+        var data = resetData ? JsonHelpers.EmptyObject : _track.Data;
+        return ApplyTemplateBindingCoreAsync(_track with
         {
             TemplateId = null,
             TemplateInputs = JsonHelpers.EmptyObject,
+            Data = data,
+            DataRev = JsonElement.DeepEquals(data, _track.Data) ? _track.DataRev : checked(_track.DataRev + 1),
             UpdatedAtMs = NowMs()
-        }, null, dryRun, ct, callerSessionId, "preserve", [], null);
+        }, null, dryRun, ct, callerSessionId, resetData ? "reset" : "preserve", [], null);
+    }
 
     private async Task<TemplateSetResult> ApplyTemplateBindingCoreAsync(
         TrackDto next, CompiledPolicy? policy, bool dryRun, CancellationToken ct, string? callerSessionId,
@@ -388,6 +394,11 @@ public sealed partial class TrackActor
             throw KernelException.InvalidArgument($"Template data schema evaluation failed: {ex.Message}");
         }
 
+        RequireCompatibleTrackData(errors, prefix, suffix);
+    }
+
+    private static void RequireCompatibleTrackData(IReadOnlyList<DataValidationError> errors, string prefix, string suffix)
+    {
         if (errors.Count > 0)
             throw KernelException.Conflict(prefix + ": " +
                 string.Join("; ", errors.Select(e => $"{(string.IsNullOrEmpty(e.Path) ? "$" : e.Path)}: {e.Message}")) + suffix);
@@ -406,6 +417,14 @@ public sealed partial class TrackActor
     private async Task<IReadOnlyList<string>> TemplateWarningsCoreAsync(CompiledPolicy policy, JsonElement inputs, CancellationToken ct)
     {
         var warnings = new List<string>();
+        if (policy.Manifest.DefaultPlugins.Count > 0 && _mcpBridge.ConfiguredPluginIds is { } configured)
+        {
+            foreach (var id in policy.Manifest.DefaultPlugins)
+                if (!id.Equals("perga", StringComparison.OrdinalIgnoreCase) &&
+                    !id.Equals("vcs", StringComparison.OrdinalIgnoreCase) &&
+                    !configured.Contains(id, StringComparer.Ordinal))
+                    warnings.Add($"Template plugin '{id}' is not configured on this host.");
+        }
         if (policy.Manifest.WorkspaceDriver is not null || policy.Manifest.WorkspaceLowerCacheDirs.Count > 0 ||
             policy.Manifest.WorkspaceCreateCmd is not null || policy.Manifest.WorkspaceCloseCmd is not null)
             warnings.Add("Template workspace settings are ignored for an existing track.");
@@ -493,24 +512,29 @@ public sealed partial class TrackActor
             if (_track.ClosedAtMs is not null)
                 throw KernelException.Conflict("Cannot set a template on a closed track.");
             var selectors = new[] { templateId, source, path }.OfType<string>().ToArray();
-            if (clear && (selectors.Length > 0 || inputs is not null || resetData || seedReport is not null))
-                throw KernelException.InvalidArgument("clear cannot be combined with a template, inputs, resetData, or seedReport.");
+            if (clear && (selectors.Length > 0 || inputs is not null || seedReport is not null))
+                throw KernelException.InvalidArgument("clear cannot be combined with a template, inputs, or seedReport.");
             if (clear)
-                return await DetachTemplateCoreAsync(dryRun, ct, callerSessionId).ConfigureAwait(false);
+                return await DetachTemplateCoreAsync(dryRun, ct, callerSessionId, resetData).ConfigureAwait(false);
 
             if (selectors.Length != 1 || string.IsNullOrWhiteSpace(selectors[0]))
                 throw KernelException.InvalidArgument("Specify exactly one non-empty 'templateId', 'source', or 'path'.");
             if (inputs is { ValueKind: not JsonValueKind.Object })
                 throw KernelException.InvalidArgument("'inputs' must be an object.");
 
-            var nextInputs = JsonHelpers.EnsureClonedObject(inputs);
             CompiledPolicy policy;
+            JsonElement nextInputs;
             try
             {
                 if (templateId is not null)
                     policy = _templateCatalog.GetRequiredPolicy(templateId);
                 else
                     policy = _templateCatalog.GetOrCompileSnapshot(workspaceSource ?? source!);
+                var preserveInputs = inputs is null && !resetData && _track.TemplateId is not null &&
+                    string.Equals(_track.TemplateId, policy.TemplateId, StringComparison.Ordinal);
+                nextInputs = preserveInputs
+                    ? JsonHelpers.EnsureClonedObject(_track.TemplateInputs)
+                    : JsonHelpers.EnsureClonedObject(inputs);
                 TemplateFlow.ValidateInputs(_policyVm, policy, nextInputs);
             }
             catch (KernelException) { throw; }
@@ -528,9 +552,21 @@ public sealed partial class TrackActor
             }
             else
             {
-                ValidateTrackDataCompatibilityCore(policy, nextInputs, data,
+                DataPatchValidationResult upgraded;
+                try
+                {
+                    var knownTaskKeys = _taskCoordinator.Snapshot().Select(task => task.TaskKey).ToArray();
+                    upgraded = _policyVm.ValidateAndPatchData(policy, nextInputs, data, JsonHelpers.EmptyObject,
+                        knownTaskKeys, _timeProvider.GetUtcNow().ToString("O"), "template:upgrade");
+                }
+                catch (InvalidOperationException ex)
+                {
+                    throw KernelException.InvalidArgument($"Template data schema evaluation failed: {ex.Message}");
+                }
+                RequireCompatibleTrackData(upgraded.Errors,
                     "Existing track data is incompatible with the new template",
                     ". Existing data can be preserved only when it satisfies the new template schema. Pass resetData: true to initialize fresh data.");
+                data = upgraded.NextData;
             }
             var dataRev = JsonElement.DeepEquals(data, _track.Data) ? _track.DataRev : checked(_track.DataRev + 1);
             var warnings = await TemplateWarningsCoreAsync(policy, nextInputs, ct).ConfigureAwait(false);

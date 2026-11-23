@@ -4,59 +4,6 @@
     50% { transform: translateY(-2.5px); opacity: 0.45; }
   }
 
-  /* Clean byline without distracting default underline */
-  .byline {
-    margin-block-start: var(--space-2);
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    flex-wrap: wrap;
-    font-family: var(--font-sans);
-    font-size: var(--font-step-1-size);
-    color: var(--text-3);
-    line-height: 1.4;
-  }
-
-  .bylineAuthor {
-    appearance: none;
-    border: 0;
-    background: transparent;
-    padding: 0;
-    font: inherit;
-    font-weight: var(--weight-semibold);
-    color: var(--text);
-    cursor: pointer;
-  }
-
-  .bylineAuthor:hover {
-    color: var(--accent);
-  }
-
-  .bylineAuthor:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
-  }
-
-  .bylineAuthorStatic {
-    font-weight: var(--weight-semibold);
-    color: var(--text);
-  }
-
-  .bylineSep {
-    color: var(--hairline-strong);
-    user-select: none;
-  }
-
-  .bylineTrigger {
-    font-family: var(--font-mono);
-    font-size: 0.72rem;
-    color: var(--text-3);
-  }
-
-  .bylineStateDone { color: var(--success-text); }
-  .bylineStateRunning { color: var(--accent); }
-  .bylineStateBlocked { color: var(--error-text); }
-
   .proseBody {
     font-family: var(--font-serif);
     font-size: var(--font-step-3-size);
@@ -205,83 +152,19 @@
     font: inherit;
   }
 
-  .expectWrap {
-    margin-block-start: var(--space-3);
-    overflow-x: auto;
-  }
-
-  .expectBeat {
-    color: var(--success-text);
-    font-weight: var(--weight-medium);
-  }
-
-  .expectInline {
-    color: var(--text-2);
-  }
-
-  .expectMiss {
-    color: var(--error-text);
-    font-weight: var(--weight-medium);
-  }
-
-  .expectPending {
-    color: var(--text-3);
-  }
-
-  .scheduleTable {
-    width: 100%;
-    border-collapse: collapse;
-    font-family: var(--font-sans);
-    font-size: var(--font-step-2-size);
-    line-height: 1.5;
-  }
-
-  .scheduleTable th {
-    text-align: start;
-    font-size: 0.6875rem;
-    font-weight: var(--weight-semibold);
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: var(--text-3);
-    padding: var(--space-2) var(--space-3) var(--space-2) 0;
-    border-block-end: 1px solid var(--hairline-strong);
-  }
-
-  .scheduleTable td {
-    vertical-align: top;
-    padding: var(--space-2) var(--space-3) var(--space-2) 0;
-    border-block-end: 1px solid var(--hairline);
-    color: var(--text-2);
-  }
-
-  .scheduleTable td:first-child {
-    color: var(--text);
-    font-weight: var(--weight-medium);
-  }
-
-  .scheduleTable th:last-child,
-  .scheduleTable td:last-child {
-    padding-inline-end: 0;
-    white-space: nowrap;
-  }
-
-  .assignKind {
-    font-size: 0.65rem;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: var(--text-3);
-  }
-
-  /* 5b. Tufte inline-sparkline Key Results ledger (supports continuous metrics, counts, and qualitative milestones) */
-  .krRoot {
+  .tableRoot {
     margin: 0 0 var(--space-4);
   }
 
-  .krTableWrap {
+  .emptyTable {
+    color: var(--text-2);
+  }
+
+  .tableWrap {
     overflow-x: auto;
   }
 
-  .krTable {
+  .table {
     inline-size: 100%;
     border-collapse: collapse;
     font-family: var(--font-sans);
@@ -289,114 +172,67 @@
     line-height: 1.45;
   }
 
-  .krTh {
+  .table th,
+  .table td {
     text-align: start;
+    padding: var(--space-2) var(--space-3) var(--space-2) 0;
+    border-block-end: 1px solid var(--hairline);
+  }
+
+  .table th {
     font-size: 0.6875rem;
     font-weight: var(--weight-semibold);
     letter-spacing: 0.06em;
     text-transform: uppercase;
     color: var(--text-3);
-    padding: var(--space-2) var(--space-3) var(--space-2) 0;
     border-block-start: 1px solid var(--hairline);
-    border-block-end: 1px solid var(--hairline-strong);
+    border-block-end-color: var(--hairline-strong);
     white-space: nowrap;
   }
 
-  .krTd {
+  .table td {
     vertical-align: middle;
-    padding: var(--space-2) var(--space-3) var(--space-2) 0;
-    border-block-end: 1px solid var(--hairline);
     color: var(--text-2);
   }
 
-  .krLastCol {
+  .table :is(th, td):last-child {
     padding-inline-end: 0;
   }
 
-  .krLabelCell {
+  .table [data-nc-align="left"] { text-align: left; }
+  .table [data-nc-align="right"] { text-align: right; }
+  .table [data-nc-align="center"] { text-align: center; }
+
+  .cellContent {
     display: inline-flex;
     align-items: baseline;
     gap: var(--space-2);
     flex-wrap: wrap;
   }
 
-  .krCode {
+  .cellCode,
+  .cellTag {
     font-family: var(--font-mono);
     font-size: 0.72rem;
-    color: var(--text-3);
-    font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
 
-  .krName {
-    color: var(--text);
-    font-weight: var(--weight-medium);
-  }
+  .cellCode { color: var(--text-3); }
+  .cellTag { color: var(--accent); }
+  .cellText p { margin: 0; }
 
-  .krName p {
-    margin: 0;
-  }
-
-  .metricTag {
-    font-family: var(--font-mono);
-    font-size: 0.65rem;
-    color: var(--accent);
-    white-space: nowrap;
-  }
-
-  .krCurrentCell {
-    white-space: nowrap;
-  }
-
-  .krCurrentValue {
+  .cellCheck {
     display: inline-flex;
-    align-items: center;
-    gap: var(--space-1);
-    font-family: var(--font-mono);
-    font-size: 0.82rem;
-    font-weight: var(--weight-semibold);
-    font-variant-numeric: tabular-nums;
-  }
-
-  .krCheckIcon {
-    display: inline-flex;
+    align-self: center;
     color: var(--success-text);
   }
 
-  .krStatusMet { color: var(--success-text); }
-  .krStatusTrack { color: var(--accent); }
-  .krStatusRisk { color: var(--text); }
-  .krStatusNeutral { color: var(--text-2); }
-
-  .krTargetCell {
-    font-family: var(--font-mono);
-    font-size: 0.76rem;
-    color: var(--text-3);
-    font-variant-numeric: tabular-nums;
-    white-space: nowrap;
-  }
-
-  .krUpdatedCol {
-    text-align: end;
-  }
-
-  .krUpdatedCell {
-    text-align: end;
-    font-family: var(--font-mono);
-    font-size: 0.72rem;
-    color: var(--text-3);
-    font-variant-numeric: tabular-nums;
-    white-space: nowrap;
-  }
+  .tone[data-nc-tone="good"] { color: var(--success-text); }
+  .tone[data-nc-tone="warn"] { color: var(--warn-text); }
+  .tone[data-nc-tone="bad"] { color: var(--error-text); }
+  .tone[data-nc-tone="accent"] { color: var(--accent); }
 
   @media (prefers-reduced-motion: reduce) {
     .bouncingDot { animation: none; }
-  }
-
-  @container (inline-size < 40rem) {
-    .scheduleTable th:last-child,
-    .scheduleTable td:last-child {
-      white-space: normal;
-    }
   }
 }

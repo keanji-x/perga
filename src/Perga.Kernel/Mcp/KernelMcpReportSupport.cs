@@ -383,10 +383,18 @@ internal static class KernelMcpReportSupport
               "flowExample": { "use": "builtin:flow", "view": "flow" },
               "builtins": {
                 "builtin:flow": { "view": "flow", "notes": "Displays the committed Track Flow and its execution state." },
-                "builtin:table": { "viewResult": { "metrics": [{ "label": "Cost", "current": "$24" }] } },
-                "builtin:list": { "viewResult": { "items": [{ "id": "review", "title": "Review the change", "status": "pending" }] } }
+                "builtin:table": {
+                  "viewResult": { "columns": [{ "key": "cost", "label": "Cost", "align": "right" }], "rows": [{ "cost": { "text": "$24", "tone": "good", "check": true } }] },
+                  "notes": "Required columns (1–12) and rows (0–100), optional nullable title and summary (strings up to 2048 Unicode code points). Columns have a unique key (1–64 characters), label (1–2048 Unicode code points), and optional align (left, right, center). Rows map keys to strings, null, or strict cells with required text and optional tone, code, tag, check, markdown. Tone is neutral, good, warn, bad, or accent. Code and tag are strings. Check and markdown are booleans. Missing and null cells display as an em dash. Undeclared row keys are ignored."
+                },
+                "builtin:list": {
+                  "viewResult": { "items": [{ "id": "review", "title": "Review the change", "badge": "Ready", "tone": "good" }] },
+                  "notes": "Required items (0–100), optional nullable title, summary, and groups (up to 100 strings). Item id (1–120 characters) and title (1–2048 Unicode code points) are required. Session and task IDs are 1–160 characters. Other strings are limited to 2048 Unicode code points. Status is done, running, pending, or blocked and defaults to pending. Optional nullable item fields are date, subtitle, badge, tone, meta, sessionId, taskKey, group, summary, bullets, note, table, checks. Tone uses the table cell values. Bullets are up to 12 strings. Table uses builtin:table's view result. Checks are up to 16 objects with label, status (pass, running, fail, pending), and optional nullable detail, command, output."
+                }
               },
               "iframePostMessage": {
+                "notes": "Send ready to request the current theme and view data. Resize height uses CSS pixels. File intents use workspace-relative paths. The theme scheme is light or dark. Theme tokens are a map of keys to string values that the iframe can apply to its CSS variables.",
+                "cssThemeTokens": { "bg": "--bg", "paper": "--paper", "surface": "--paper", "text": "--text", "text2": "--text-2", "text3": "--text-3", "hairline": "--hairline", "accent": "--accent", "fontSans": "--font-sans", "fontSerif": "--font-serif", "fontMono": "--font-mono" },
                 "widgetToHost": [
                   { "type": "perga:ready" },
                   { "type": "perga:resize", "height": 210 },
@@ -394,7 +402,7 @@ internal static class KernelMcpReportSupport
                   { "type": "perga:intent", "kind": "open_session", "sessionId": "ses_example" }
                 ],
                 "hostToWidget": [
-                  { "type": "perga:theme", "scheme": "light | dark", "tokens": ["bg", "paper", "surface", "text", "text2", "text3", "hairline", "accent", "fontSans", "fontSerif", "fontMono"] },
+                  { "type": "perga:theme", "scheme": "light", "tokens": { "bg": "#f4f2ec", "paper": "#fdfcfa", "text": "#1e2026" } },
                   { "type": "perga:data", "data": "Output of the selected template view" }
                 ]
               }
