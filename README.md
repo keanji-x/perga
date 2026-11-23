@@ -2,6 +2,8 @@
 
 A task-driven organization of AI agents for long-horizon work.
 
+The Perga Host and local terminal bridge run natively on **macOS on Apple Silicon (arm64)** and **Linux x64**. Both packages include the web interface. See the [quickstart](#quickstart) for installation and [runtime differences](#runtime-differences) for platform-specific features.
+
 Perga moves multi-day and multi-week work — maintaining a repository, driving engineering OKRs, or running ongoing research — out of scrolling chat tabs. Each goal gets its own isolated **Track**: conversation stays in the side pane while the main view continuously distills a read-only living report backed by kernel-verified facts. Orchestrate the CLIs you already use (Claude Code, Codex, ACP) with lightweight protocols, enforced cross-model review, and zero-token external watches.
 
 ## Key Capabilities
@@ -75,9 +77,21 @@ cd "$out/perga"
 
 You are now in the package directory. On first use, start with `export PERGA_DATA_DIR` in the owner setup above, then run the Host command.
 
+### Runtime differences
+
+| Feature | Platform behavior |
+| --- | --- |
+| Track workspaces | The OverlayFS driver shares prewarmed snapshots on a Linux Host with the mount helper. On macOS, the workspace picker offers Git worktrees, Jujutsu workspaces, directory copies, or direct access according to the source and installed tools. |
+| Local terminals | macOS uses its native pseudo-terminal (PTY). The optional `Perga__EnableTerminalLinuxUnshare` setting uses Linux user and PID namespaces when available and defaults to off. |
+| Terminals over SSH | Perga can copy its bridge automatically between Linux machines with matching x86-64 or arm64 CPUs. With a macOS Host, install a bridge built for the target on its `PATH`, or set the target's `TerminalBridgeExecutablePath` to that executable. |
+| Workspace files | Linux can read an opened file's path and list an opened directory through `/proc/self/fd`. macOS checks local files with `fgetattrlist` and lists directories by their resolved path. Over SSH, the extra check on an opened file depends on the **target** exposing `/proc/self/fd`. |
+| Remote command cancellation | On an SSH target with the `setsid` utility, Perga starts remote shell commands and agent subprocesses in their own process group. Without it, cancellation can stop the tracked process while leaving its children running. |
+
+On macOS, use the physical path for workspaces under the system temporary directory. File and template lookups can fail when `/var/` and `/private/var/` refer to the same workspace. Run migrations against the same database one at a time to avoid a file-sharing error.
+
 ### Linux-specific deployment
 
-The foreground Host and local terminals run on both platforms. The managed installer and hot-upgrade services use Linux systemd user units. OverlayFS workspaces and optional terminal user/PID namespaces also require Linux kernel support. See [managed installation](docs/design/install-and-upgrade.md) and [OverlayFS prerequisites](docs/track-overlayfs.md).
+The managed installer and hot-upgrade services use Linux systemd user units. See [managed installation](docs/design/install-and-upgrade.md) and [OverlayFS prerequisites](docs/track-overlayfs.md).
 
 ## CI and Releases
 
