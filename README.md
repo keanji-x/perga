@@ -87,6 +87,8 @@ You are now in the package directory. On first use, start with `export PERGA_DAT
 | Workspace files | Linux can read an opened file's path and list an opened directory through `/proc/self/fd`. macOS checks local files with `fgetattrlist` and lists directories by their resolved path. Over SSH, the extra check on an opened file depends on the **target** exposing `/proc/self/fd`. |
 | Remote command cancellation | On an SSH target with the `setsid` utility, Perga starts remote shell commands and agent subprocesses in their own process group. Without it, cancellation can stop the tracked process while leaving its children running. |
 
+When a **Mac is the SSH target**, its stock `chmod` rejects the argument order used by Perga's remote shell and agent launchers. A job can fail before its command starts. For a statically configured Mac target, set `WorkspacesRoot` to a directory under the remote user's home. Targets added through the API already discover the remote home. If Homebrew's Node is outside the SSH session's `PATH`, set the target's `OarNodeExecutablePath`.
+
 On macOS, use the physical path for workspaces under the system temporary directory. File and template lookups can fail when `/var/` and `/private/var/` refer to the same workspace. Run migrations against the same database one at a time to avoid a file-sharing error.
 
 ### Linux-specific deployment
