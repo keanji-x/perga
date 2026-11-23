@@ -287,6 +287,9 @@ public sealed class SqliteTrackStore : ITrackStore, IAsyncDisposable, ISessionIn
     public Task<string> CreateTrackAsync(TrackCreation creation, ResourceCreationKey? key, CancellationToken ct) =>
         _trackCreationRepository.CreateTrackAsync(creation, key, ct);
 
+    public Task<IReadOnlyDictionary<string, AreaTrackCounts>> GetAreaTrackCountsAsync(CancellationToken ct = default) =>
+        _trackReadRepository.GetAreaTrackCountsAsync(ct);
+
     public Task<IReadOnlyList<TrackDto>> ListTracksAsync(
         string? areaId = null,
         bool includeClosed = false,

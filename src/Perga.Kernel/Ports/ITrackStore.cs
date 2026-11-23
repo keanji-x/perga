@@ -53,12 +53,15 @@ public sealed record TrackFlowUpdate(
     public IReadOnlySet<string>? ResetClockIds { get; init; }
 }
 
+public sealed record AreaTrackCounts(int OpenCount, int ClosedCount);
+
 public interface ITrackReadStore
 {
     string DatabaseId => string.Empty;
 
     Task<IReadOnlyList<AreaDto>> ListAreasAsync(CancellationToken ct, bool includeSystem = false);
     Task<AreaDto?> GetAreaAsync(string areaId, CancellationToken ct);
+    Task<IReadOnlyDictionary<string, AreaTrackCounts>> GetAreaTrackCountsAsync(CancellationToken ct = default);
     Task<IReadOnlyList<TrackDto>> ListTracksAsync(string? areaId = null, bool includeClosed = false, CancellationToken ct = default);
     Task<IReadOnlyDictionary<string, string>> GetReportSummariesAsync(IReadOnlyCollection<string> trackIds, CancellationToken ct = default);
     Task<TrackDto?> GetTrackAsync(string trackId, CancellationToken ct);

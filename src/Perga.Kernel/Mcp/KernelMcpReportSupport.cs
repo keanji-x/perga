@@ -14,6 +14,7 @@ internal static class KernelMcpReportSupport
     internal const string ReportReadSchemaJson = """
         {
           "type": "object",
+          "additionalProperties": false,
           "properties": {
             "trackId": {
               "type": "string",
@@ -177,7 +178,7 @@ internal static class KernelMcpReportSupport
 
     internal static ReportReadOptions ParseReadOptions(JsonElement args) => new(
         ParseReadFormat(args), ParseOptionalSectionFilter(args), ParseOptionalBlockIdFilter(args),
-        ParseOptionalBool(args, ["includeContract", "include_contract"]));
+        ParseOptionalBool(args, ["includeContract"]));
 
     internal static JsonElement FormatReportReadResponse(
         ReportReadResult res,
@@ -285,7 +286,7 @@ internal static class KernelMcpReportSupport
 
     private static string? ParseOptionalSectionFilter(JsonElement args)
     {
-        if (!JsonHelpers.TryGetPropertyIgnoreCase(args, ["sectionH1", "section_h1", "section"], out var elem) ||
+        if (!JsonHelpers.TryGetPropertyIgnoreCase(args, ["sectionH1"], out var elem) ||
             elem.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
         {
             return null;
@@ -302,7 +303,7 @@ internal static class KernelMcpReportSupport
 
     private static HashSet<string>? ParseOptionalBlockIdFilter(JsonElement args)
     {
-        if (!JsonHelpers.TryGetPropertyIgnoreCase(args, ["blockIds", "block_ids"], out var elem) ||
+        if (!JsonHelpers.TryGetPropertyIgnoreCase(args, ["blockIds"], out var elem) ||
             elem.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
         {
             return null;

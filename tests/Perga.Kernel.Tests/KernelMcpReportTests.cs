@@ -27,7 +27,9 @@ public sealed class KernelMcpReportTests
         Assert.Equal(4, commitProps.GetProperty("ops").GetProperty("items").GetProperty("oneOf").GetArrayLength());
         Assert.Equal("boolean", commitProps.GetProperty("includeDocument").GetProperty("type").GetString());
 
-        var readProps = tools[KernelMcpToolNames.ReportRead].InputSchema.GetProperty("properties");
+        var readSchema = tools[KernelMcpToolNames.ReportRead].InputSchema;
+        Assert.False(readSchema.GetProperty("additionalProperties").GetBoolean());
+        var readProps = readSchema.GetProperty("properties");
         Assert.Equal("string", readProps.GetProperty("trackId").GetProperty("type").GetString());
         Assert.Equal(1, readProps.GetProperty("trackId").GetProperty("minLength").GetInt32());
         var readFormats = readProps.GetProperty("format").GetProperty("enum").EnumerateArray().Select(e => e.GetString()!).ToArray();
@@ -433,6 +435,9 @@ public sealed class KernelMcpReportTests
             Call(ctx, caller, KernelMcpToolNames.ReportRead, new { trackId = "trk_protected" }));
         Assert.Equal(KernelErrorCode.PolicyDenied, error.Code);
         Assert.Contains("Report is restricted", error.Message, StringComparison.Ordinal);
+        var alternateCase = await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.InvokeKernelMcpToolAsync(
+            caller, KernelMcpToolNames.ReportRead, TestJson.Parse("""{"TrackId":"trk_protected"}""")));
+        Assert.Equal(KernelErrorCode.InvalidArgument, alternateCase.Code);
         var local = await Call(ctx, caller, KernelMcpToolNames.ReportRead, new { });
         Assert.True(local.TryGetProperty("anchor", out _));
     }
@@ -470,7 +475,17 @@ public sealed class KernelMcpReportTests
     [InlineData("""{"trackId":" "}""")]
     [InlineData("""{"trackId":5}""")]
     [InlineData("""{"trackId":null}""")]
-    public async Task ReportRead_RejectsInvalidTrackIds(string arguments)
+    [InlineData("""{"TrackId":"trk_other"}""")]
+    [InlineData("""{"FORMAT":"outline"}""")]
+    [InlineData("""{"track_id":"trk_other"}""")]
+    [InlineData("""{"unknown":true}""")]
+    [InlineData("""{"unknown":null}""")]
+    [InlineData("""{"section":"Overview"}""")]
+    [InlineData("""{"section_h1":"Overview"}""")]
+    [InlineData("""{"block_ids":["b_1"]}""")]
+    [InlineData("""{"include_contract":true}""")]
+    [InlineData("[]")]
+    public async Task ReportRead_RejectsInvalidOrUnknownArguments(string arguments)
     {
         await using var ctx = new KernelTestContext();
         var (_, snap) = await ctx.CreateDefaultTrackAsync();
