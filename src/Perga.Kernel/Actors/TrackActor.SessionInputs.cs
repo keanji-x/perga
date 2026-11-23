@@ -56,6 +56,8 @@ public sealed partial class TrackActor
                 if (replay is not null) return (replay, true);
                 SessionPolicy.RequireCreate(caller, parent, TrackId,
                     callerIsTaskOwned: parent is not null && _taskCoordinator.IsTaskOwnedSessionCore(parent.Id), _options.MaxSessionSpawnDepth);
+                if (request.SourceSessionId is { } sourceId)
+                    RequireInteropCore(caller, RequireSessionCore(sourceId));
                 var session = NewSubagentSessionCore(request, providers,
                     requireAvailable: caller is InteropPrincipal.Session || request.Prompt is not null, parent);
                 SessionInputRequest? first = null;

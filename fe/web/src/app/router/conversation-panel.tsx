@@ -9,10 +9,7 @@ import { useEffect,useMemo,useRef } from 'react';
 
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
-import {
-FOLLOW_INSTALLATION_DEFAULT
-} from '../../../../core/domain/conversation.ts';
-import { useState } from '../../ui/state/public.ts';
+import { byRecency, FOLLOW_INSTALLATION_DEFAULT } from '../../../../core/domain/conversation.ts';
 import { useCompactViewport } from '../../ui/viewport/public.ts';
 import {
 useConversationCommands,
@@ -32,7 +29,6 @@ export function useConversationPanel(
 ) {
   const registry = useConversationCommands();
   const compact = useCompactViewport();
-  const [sideError, setSideError] = useState<string | null>(null);
   const savedTarget = useConversationPaneTarget(source.scopeId, source.rows);
   // The declared default owns resources even when its surface is absent. Keep
   // that fallback out of preferences: only an explicit selection opens a Sheet.
@@ -75,27 +71,26 @@ export function useConversationPanel(
   const side = useConversationPane(transport, unauthorized, source, sideTarget,
     { ...options, embedded: undefined, reportComposer: undefined, ownedCardIds, onTerminal: options.terminal?.workbench.reveal, inline: true, slotId: sideSlot, enabled: sideAvailable, presented: sidePresented });
   const main = useConversationPane(transport, unauthorized, source, mainTarget,
-    { ...options, reportComposer: mainReportComposer, ownedCardIds, sideError, stacked: true, showSideCommand: !compact, retainCompanion: options.terminal !== undefined, onTerminal: options.terminal?.workbench.reveal,
+    { ...options, reportComposer: mainReportComposer, ownedCardIds, stacked: true, showSideCommand: !compact, retainCompanion: options.terminal !== undefined, onTerminal: options.terminal?.workbench.reveal,
       companionVisible: terminalVisible || (sidePresented && side.isOpen),
       companion: options.terminal !== undefined
         ? (group) => <TerminalCompanion workbench={options.terminal!.workbench} visible={companionVisible}
             sideOpen={sideAvailable && side.isOpen} side={side.drawerFor(group)} terminal={options.terminal!.render()} />
         : sideAvailable && side.isOpen ? side.drawerFor : undefined,
       onSide: (parent, entries, question) => {
-        if (compact) { setSideError('Side conversations are available on desktop.'); return false; }
+        if (compact) throw new Error('Side conversations are available on desktop.');
+        if (capabilities.isPending) throw new Error('Checking server support for side conversations. Try again in a moment.');
         if (capabilities.data?.conversationSide !== true) {
-          setSideError('Side conversations require a server that reports support. Update or reconnect, then try again.');
-          return false;
+          throw new Error('Side conversations require a server that reports support. Update or reconnect, then try again.');
         }
-        setSideError(null);
         options.terminal?.workbench.suspend();
         if (sideDraft !== null && sideDraft.submitted !== null) {
           sideTarget[1]({ kind: 'draft' });
-          if (question !== '') { setSideError('This side draft still has an unsettled delivery. Continue or retry it before starting another.'); return false; }
+          if (question !== '') throw new Error('This side draft still has an unsettled delivery. Continue or retry it before starting another.');
           return;
         }
         if (question === '') {
-          const saved = source.rows.find((row) => row.sourceCardId === parent.id);
+          const saved = source.rows.filter(row => row.sourceCardId === parent.id && row.archivedAt === null).sort(byRecency)[0];
           if (saved !== undefined) { sideTarget[1]({ kind: 'row', id: saved.id }); return; }
         }
         registry.startDraft({ scopeId: sideSlot, key: mintIdempotencyKey(),

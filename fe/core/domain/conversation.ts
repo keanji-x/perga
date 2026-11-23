@@ -259,6 +259,7 @@ export function agentSessionDtoToConversation(dto: AgentSessionDto): Conversatio
     title: dto.title ?? null,
     kind: 'agent',
     isLead: dto.isLead,
+    ...(dto.sourceSessionId == null ? {} : { sourceCardId: dto.sourceSessionId }),
     provider,
     state: stateParsed.success ? stateParsed.data : 'idle',
     updatedAt: dto.updatedAtMs,
@@ -285,14 +286,15 @@ export function createTrackConversationOperation(
     headers: { 'Idempotency-Key': idempotencyKey },
     body: {
       ...(derivedTitle === null ? {} : { title: derivedTitle }),
-      prompt: text,
+      prompt: side?.context ? `Conversation excerpt:\n${side.context}\n\nQuestion:\n${text}` : text,
       provider,
-      ...(side === undefined ? {} : { systemPrompt: side.context }),
+      ...(side === undefined ? {} : { sourceSessionId: side.source_card_id }),
       ...(selection.model === null ? {} : { model: selection.model }),
       ...(selection.reasoning_effort === null ? {} : { reasoningEffort: selection.reasoning_effort }),
       ...(permissionMode == null ? {} : { permissionMode }),
     },
-    responseSchema: sessionCreationReceiptSchema.refine(result => result.firstInput != null && result.session.trackId === trackId)
+    responseSchema: sessionCreationReceiptSchema.refine(result => result.firstInput != null && result.session.trackId === trackId
+      && (side === undefined || result.session.sourceSessionId === side.source_card_id))
         .transform((result) => ({
           session: result.session,
           conversation: agentSessionDtoToConversation(result.session),

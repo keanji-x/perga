@@ -15,7 +15,7 @@ import type { ConversationPanelOptions } from './conversation-panel-contract.ts'
 export function useConversationActionArea({ open, options, store, shownComposer, existingId,
   conversationAsks, conversationApprovals, decideApproval, answerAsk, retrySend, focusComposer }: {
   open: Conversation | null;
-  options?: Pick<ConversationPanelOptions, 'onArchive' | 'workspace'> & { sideError?: string | null };
+  options?: Pick<ConversationPanelOptions, 'onArchive' | 'workspace'>;
   store: ReturnType<typeof useConversationStore>;
   shownComposer: RefObject<string | null>;
   existingId: string | null;
@@ -45,7 +45,7 @@ export function useConversationActionArea({ open, options, store, shownComposer,
     hasAsks: conversationAsks.length > 0 || conversationApprovals.length > 0,
     localSend: store.failedSend !== null ? 'failed' : store.sending ? 'sending' : 'idle',
     sendUnconfirmed: store.failedSend?.delivery === 'unknown',
-    actionError: store.actionError ?? archiveError ?? options?.sideError ?? null, workerPaused: store.workerPaused,
+    actionError: store.actionError ?? archiveError, workerPaused: store.workerPaused,
   });
   const [pausedDismissedFor, setPausedDismissedFor] = useState<string | null>(null);
   useEffect(() => { if (!store.workerPaused) setPausedDismissedFor(null); }, [store.workerPaused]);

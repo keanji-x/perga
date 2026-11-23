@@ -15,7 +15,10 @@ public sealed record BootstrapDto(
     string DatabaseId = "",
     string DbInstanceId = "",
     bool AuthRequired = true,
-    IReadOnlyList<ExecutionTargetDto>? ExecutionTargets = null);
+    IReadOnlyList<ExecutionTargetDto>? ExecutionTargets = null)
+{
+    public bool ConversationSide => true;
+}
 
 public sealed record CreateAreaRequest(
     string Name,
@@ -116,7 +119,8 @@ public sealed record CreateSessionRequest(
     string? Model = null,
     string? ReasoningEffort = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? PermissionMode = null,
-    string? SystemPrompt = null, string? Prompt = null, string? NotifyParent = null);
+    string? SystemPrompt = null, string? Prompt = null, string? NotifyParent = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? SourceSessionId = null);
 
 public sealed record SteeringResult(string InputId, string Delivery);
 

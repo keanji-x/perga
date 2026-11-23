@@ -1,4 +1,5 @@
 import { permissionModesForProvider } from '../../../../core/domain/agent-providers.ts';
+import { providerPresentation } from '../../../../core/domain/provider-presentation.ts';
 import { conversationCommandEnabled } from '../../../../core/domain/conversation-action.ts';
 import { permissionModeAfterProviderChange,resolvePermissionControl } from '../../../../core/domain/planner-permission-mode.ts';
 import { composerCommands,conversationCommandBindings,conversationCommands } from '../../features/chat/thread/composer-command.ts';
@@ -90,7 +91,7 @@ export function useConversationPane(
   unauthorized: UnauthorizedChannel,
   source: ConversationPanelSource,
   target: ReturnType<typeof useConversationPaneTarget>,
-  options?: { onPresent?: () => void; embedded?: EmbeddedConversationPresentation; onArchive?: (cardId: string, archived: boolean) => Promise<void>; onTerminal?: () => void; retainCompanion?: boolean; companionVisible?: boolean; reportComposer?: Readonly<{ ready: boolean; returnLabel: string; conversationId: string | null }>; showSideCommand?: boolean; stacked?: boolean; sideError?: string | null; ownedCardIds?: readonly string[]; showTrack?: boolean; resizable?: boolean; inline?: boolean; slotId?: string; enabled?: boolean; presented?: boolean;
+  options?: { onPresent?: () => void; embedded?: EmbeddedConversationPresentation; onArchive?: (cardId: string, archived: boolean) => Promise<void>; onTerminal?: () => void; retainCompanion?: boolean; companionVisible?: boolean; reportComposer?: Readonly<{ ready: boolean; returnLabel: string; conversationId: string | null }>; showSideCommand?: boolean; stacked?: boolean; ownedCardIds?: readonly string[]; showTrack?: boolean; resizable?: boolean; inline?: boolean; slotId?: string; enabled?: boolean; presented?: boolean;
     workspace?: ConversationPanelOptions['workspace'];
     companion?: (group: PaneResizeGroup) => React.ReactNode; onSide?: (source: Conversation, entries: readonly TranscriptEntry[], question: string) => void | boolean },
 ) {
@@ -515,7 +516,8 @@ export function useConversationPane(
         open={open !== null || draftOpen}
         /* A draft has no name yet, and naming it after the words being typed
            would rename the drawer on every keystroke. */
-        title={options?.inline === true ? 'Side conversation · Codex' : open !== null ? conversationName(open) : draftOpen ? 'Untitled' : ''}
+        title={options?.inline === true ? `Side conversation · ${providerPresentation(open?.provider ?? draft?.provider ?? scopeProvider).label}`
+          : open !== null ? conversationName(open) : draftOpen ? 'Untitled' : ''}
         mobileBackLabel={options?.reportComposer?.returnLabel ?? 'Conversations'}
         onClose={closeDrawer}
         resize={options?.resizable === false ? undefined : drawerResize}

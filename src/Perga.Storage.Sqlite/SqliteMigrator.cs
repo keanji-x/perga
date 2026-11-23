@@ -85,7 +85,7 @@ public sealed class SqliteFutureSchemaException(int databaseVersion, int support
 /// </summary>
 public sealed class SqliteMigrator
 {
-    public const int CurrentSchemaVersion = 28;
+    public const int CurrentSchemaVersion = 29;
 
     private readonly IReadOnlyList<SqliteMigration> _migrations;
     private readonly TimeProvider _timeProvider;

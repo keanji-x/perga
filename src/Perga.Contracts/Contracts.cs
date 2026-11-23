@@ -128,7 +128,8 @@ public sealed record AgentSessionDto(
     int SpawnDepth = 0,
     long ConfigVersion = 0,
     string NotifyParent = "none",
-    string? SystemPrompt = null);
+    string? SystemPrompt = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? SourceSessionId = null);
 
 public sealed record SessionTurnDto(
     string Id,

@@ -326,7 +326,7 @@ internal sealed class SessionRepository
                     context_used_tokens, context_window_tokens, context_usage_at_ms,
                     archived_at_ms, created_at_ms, updated_at_ms, permission_mode,
                     unknown_reason, unknown_turn_id, unknown_last_error, reconnect_invalidated,
-                    parent_session_id, spawn_depth, config_version, notify_parent, system_prompt
+                    parent_session_id, spawn_depth, config_version, notify_parent, system_prompt, source_session_id
                 )
                 VALUES (
                     @Id, @TrackId, @Title,
@@ -334,7 +334,7 @@ internal sealed class SessionRepository
                     @ContextUsedTokens, @ContextWindowTokens, @ContextUsageAtMs,
                     @ArchivedAtMs, @CreatedAtMs, @UpdatedAtMs, @PermissionMode,
                     @UnknownReason, @UnknownTurnId, @UnknownLastError, @ReconnectInvalidated,
-                    @ParentSessionId, @SpawnDepth, @ConfigVersion, @NotifyParent, @SystemPrompt
+                    @ParentSessionId, @SpawnDepth, @ConfigVersion, @NotifyParent, @SystemPrompt, @SourceSessionId
                 )
                 ON CONFLICT(id) DO UPDATE SET
                     title = excluded.title,
@@ -374,7 +374,7 @@ internal sealed class SessionRepository
                     session.UpdatedAtMs,
                     session.PermissionMode, session.UnknownReason, session.UnknownTurnId,
                     session.UnknownLastError, session.ReconnectInvalidated, session.ParentSessionId,
-                    session.SpawnDepth, session.ConfigVersion, session.NotifyParent, session.SystemPrompt
+                    session.SpawnDepth, session.ConfigVersion, session.NotifyParent, session.SystemPrompt, session.SourceSessionId
                 },
                 transaction: tx,
                 cancellationToken: ct));
@@ -402,7 +402,8 @@ internal sealed class SessionRepository
          AND LOWER(t.status) IN ('completed', 'failed') AND t.completed_at_ms IS NOT NULL) AS LastNotifiableTurnAtMs,
         unknown_last_error AS UnknownLastError, reconnect_invalidated AS ReconnectInvalidated,
         parent_session_id AS ParentSessionId, spawn_depth AS SpawnDepth,
-        config_version AS ConfigVersion, notify_parent AS NotifyParent, system_prompt AS SystemPrompt
+        config_version AS ConfigVersion, notify_parent AS NotifyParent, system_prompt AS SystemPrompt,
+        source_session_id AS SourceSessionId
         """;
 
     internal static AgentSessionDto MapSession(SessionRow r, string? leadSessionId) =>
@@ -427,7 +428,8 @@ internal sealed class SessionRepository
             PermissionMode: r.PermissionMode, UnknownReason: r.UnknownReason, UnknownTurnId: r.UnknownTurnId,
             UnknownLastError: r.UnknownLastError, ReconnectInvalidated: r.ReconnectInvalidated,
             ParentSessionId: r.ParentSessionId, SpawnDepth: r.SpawnDepth, ConfigVersion: r.ConfigVersion,
-            NotifyParent: r.NotifyParent, SystemPrompt: r.SystemPrompt, LastNotifiableTurnAtMs: r.LastNotifiableTurnAtMs);
+            NotifyParent: r.NotifyParent, SystemPrompt: r.SystemPrompt, LastNotifiableTurnAtMs: r.LastNotifiableTurnAtMs,
+            SourceSessionId: r.SourceSessionId);
 
     private static SessionTurnDto MapTurn(SessionTurnRow r) =>
         new(
@@ -456,6 +458,7 @@ internal sealed class SessionRepository
     {
         public long? LastNotifiableTurnAtMs { get; init; }
         public string? ParentSessionId { get; init; }
+        public string? SourceSessionId { get; init; }
         public int SpawnDepth { get; init; }
         public long ConfigVersion { get; init; }
         public string NotifyParent { get; init; } = "none";

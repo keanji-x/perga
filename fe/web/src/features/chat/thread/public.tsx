@@ -2,7 +2,7 @@ import { InputCopy } from './input-copy.tsx';
 import { isImeKeyEvent } from '@astryxdesign/core/utils';
 import { useHistoryPrefetch, type HistoryPrefetch } from './history-prefetch.ts';
 import { PrependReading } from './prepend-reading.tsx';
-import { dispatchComposerCommand, executeComposerCommand } from './composer-command.ts';
+import { dispatchComposerCommand, executeComposerCommand, matchesCommandName } from './composer-command.ts';
 import type { ComposerCommand } from './composer-command.ts';
 import { withEmptyTrigger } from '../../../ui/empty-state/astryx-trigger.tsx';
 import { EmptyState, type EmptyStateSchema } from '../../../ui/empty-state/public.tsx';
@@ -493,7 +493,7 @@ export function ChatComposer({
     return withEmptyTrigger({
       character: '/',
       searchSource: {
-        search: query => items.filter(item => item.name.startsWith(query)).map(item => ({ ...item, label: item.name })),
+        search: query => items.filter(item => matchesCommandName(item.name, query, 'prefix')).map(item => ({ ...item, label: item.name })),
         bootstrap: () => items.map(item => ({ ...item, label: item.name })),
       },
       menuLabel: 'Commands',
