@@ -373,6 +373,99 @@ public sealed class OarBridgeTests : IDisposable
         }
     }
 
+    [Fact]
+    public async Task OarAgentSessionSupportsImagesForwardsImagesOnPromptAndSteerAndRefusesWhenUnsupported()
+    {
+        var node24 = OarNodeResolver.ResolveNode24Executable(null, null);
+        var imgBridgePath = Path.Combine(_tempDir, "mock-img-bridge.mjs");
+        File.WriteAllText(imgBridgePath, MockBridgeScript
+            .Replace(
+                "supportsManualCompaction: true, models:",
+                "supportsManualCompaction: true, supportsImages: rt === 'codex' ? true : rt === 'qwen' ? false : null, models:")
+            .Replace(
+                "supportsSessionResume: true, contextUsage:",
+                "supportsSessionResume: true, supportsImages: openRuntime === 'codex', contextUsage:")
+            .Replace(
+                "if (req.method === 'session/prompt') {",
+                """
+                if (req.method === 'session/prompt') {
+                  if (openRuntime !== 'codex' && Array.isArray(req.params.images) && req.params.images.length > 0) {
+                    send({ jsonrpc: '2.0', id: req.id, result: { status: 'failed', code: 'unsupported', message: 'Images not supported by runtime', isRetryable: false, beforePrompt: true } });
+                    return;
+                  }
+                """));
+
+        await using var runtime = new AgentRuntime(new AgentRuntimeOptions
+        {
+            NodeExecutablePath = node24,
+            BridgeScriptPath = imgBridgePath,
+            ProviderOverrides = new Dictionary<string, ProviderCommandOverride>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["codex"] = new("fake-codex", Env: new Dictionary<string, string> { ["MOCK_OAR_LOG"] = _logPath }),
+                ["acp:antigravity"] = new("fake-agy", Env: new Dictionary<string, string> { ["MOCK_OAR_LOG"] = _logPath }),
+                ["oar:qwen"] = new("fake-qwen", Env: new Dictionary<string, string> { ["MOCK_OAR_LOG"] = _logPath })
+            }
+        });
+
+        var statuses = await runtime.ProbeProvidersAsync(forceRefresh: true, CancellationToken.None);
+        Assert.Equal(true, statuses.Single(s => s.Provider == "codex").SupportsImages);
+        Assert.Null(statuses.Single(s => s.Provider == "acp:antigravity").SupportsImages);
+        Assert.Equal(false, statuses.Single(s => s.Provider == "oar:qwen").SupportsImages);
+
+        Assert.Equal(true, runtime.SupportsImages("codex"));
+        Assert.Null(runtime.SupportsImages("acp:antigravity"));
+        Assert.Equal(false, runtime.SupportsImages("oar:qwen"));
+
+        var image = new InputImageRef("/tmp/att_0123456789abcdef0123456789abcdef.png", "image/png");
+
+        // Supported session: codex
+        await using (var supported = runtime.CreateSession(
+            new HarnessLaunchSpec("codex", null, _workspaceDir, null, null, new Dictionary<string, McpServerConfig>())))
+        {
+            await supported.InitializeAsync(CancellationToken.None);
+            Assert.True(supported.SupportsImages);
+
+            var events = new List<UnifiedAgentEvent>();
+            await foreach (var evt in supported.StreamTurnAsync(new TurnInput("", "corr-img", Images: [image]), CancellationToken.None))
+            {
+                events.Add(evt);
+            }
+            Assert.Contains(events, e => e is UnifiedAgentEvent.TurnCompleted);
+
+            Assert.Equal(SteerDelivery.Accepted,
+                await supported.SteerAsync("corr-img", "", [image], CancellationToken.None));
+        }
+
+        // Unsupported session: antigravity handshake returns supportsImages=false
+        await using (var unsupported = runtime.CreateSession(
+            new HarnessLaunchSpec("acp:antigravity", null, _workspaceDir, null, null, new Dictionary<string, McpServerConfig>())))
+        {
+            await unsupported.InitializeAsync(CancellationToken.None);
+            Assert.False(unsupported.SupportsImages);
+
+            // Steer with images is declined fail-closed without issuing RPC
+            Assert.Equal(SteerDelivery.Declined,
+                await unsupported.SteerAsync("corr-no", "", [image], CancellationToken.None));
+
+            // Prompt with images propagates BeforePrompt=true conclusive TurnError
+            var events = new List<UnifiedAgentEvent>();
+            await foreach (var evt in unsupported.StreamTurnAsync(new TurnInput("look", "corr-no", Images: [image]), CancellationToken.None))
+            {
+                events.Add(evt);
+            }
+            var err = Assert.Single(events.OfType<UnifiedAgentEvent.TurnError>());
+            Assert.Equal("unsupported", err.Code);
+            Assert.True(err.BeforePrompt);
+            Assert.True(err.IsConclusive);
+        }
+
+        var logLines = await File.ReadAllLinesAsync(_logPath);
+        Assert.Contains(logLines, l => l.Contains("\"method\":\"session/prompt\"", StringComparison.Ordinal) &&
+                                       l.Contains("att_0123456789abcdef0123456789abcdef.png", StringComparison.Ordinal));
+        Assert.Contains(logLines, l => l.Contains("\"method\":\"session/steer\"", StringComparison.Ordinal) &&
+                                       l.Contains("att_0123456789abcdef0123456789abcdef.png", StringComparison.Ordinal));
+    }
+
     private const string MockBridgeScript = """
 import fs from 'node:fs';
 import readline from 'node:readline';

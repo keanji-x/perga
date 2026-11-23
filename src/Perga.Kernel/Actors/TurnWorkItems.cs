@@ -32,6 +32,8 @@ public sealed partial class TrackActor
         // A queued follow-up whose outcome is inconclusive holds the session until its resume is resolved.
         bool HoldsResumeWhenInconclusive { get; }
 
+        IReadOnlyList<StoredSessionAttachment> Attachments => [];
+
         // Returns null when nothing remains to dispatch.
         Task<string?> PreparePromptAsync(CancellationToken ct);
 
@@ -72,6 +74,7 @@ public sealed partial class TrackActor
         public bool IsQueuedMessage => true;
         public bool WaitForWorkspacePreparation => false;
         public bool HoldsResumeWhenInconclusive => input.IsQueuedFollowUp;
+        public IReadOnlyList<StoredSessionAttachment> Attachments => input.Attachments ?? [];
         public Task<string?> PreparePromptAsync(CancellationToken ct) => Task.FromResult<string?>(input.Content);
         public bool IsOccupiedCore(AgentSessionDto session) => actor._scheduler.IsOccupied(session, input);
 

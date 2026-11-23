@@ -49,6 +49,7 @@ public sealed class OarAgentSession : IAgentSession
     private bool _supportsNativeSteer;
     private bool _supportsNativeCompact;
     private bool _supportsSessionResume = true;
+    private bool _supportsImages;
     private long _contextUsageRevision = 1;
     private long _nextContextPromptId;
     private int _poisoned;
@@ -79,6 +80,7 @@ public sealed class OarAgentSession : IAgentSession
     public string? NativeThreadId => Volatile.Read(ref _nativeThreadId);
     public bool SupportsNativeSteer => Volatile.Read(ref _supportsNativeSteer);
     public bool SupportsNativeCompact => Volatile.Read(ref _supportsNativeCompact);
+    public bool SupportsImages => Volatile.Read(ref _supportsImages);
     public bool CanReuseContextWindow => true;
     public long? ContextUsageRevision => Interlocked.Read(ref _contextUsageRevision);
     public WorkerProviderConfiguration? WorkerConfiguration => Volatile.Read(ref _workerConfiguration);
@@ -349,14 +351,26 @@ public sealed class OarAgentSession : IAgentSession
             _ => false
         };
 
-    public async Task<SteerDelivery> SteerAsync(string turnCorrelationId, string message, CancellationToken ct)
+    public Task<SteerDelivery> SteerAsync(string turnCorrelationId, string message, CancellationToken ct) =>
+        SteerAsync(turnCorrelationId, message, images: null, ct);
+
+    public async Task<SteerDelivery> SteerAsync(string turnCorrelationId, string message, IReadOnlyList<InputImageRef>? images, CancellationToken ct)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-        if (!SupportsNativeSteer || string.IsNullOrWhiteSpace(message)) return SteerDelivery.Declined;
+        var hasImages = images is { Count: > 0 };
+        if (!SupportsNativeSteer || (!hasImages && string.IsNullOrWhiteSpace(message))) return SteerDelivery.Declined;
+        if (hasImages && !SupportsImages) return SteerDelivery.Declined;
         try
         {
-            var result = await _rpc.SendRequestAsync("session/steer",
-                new { message, correlationId = turnCorrelationId }, ct).ConfigureAwait(false);
+            object payload = hasImages
+                ? new
+                {
+                    message,
+                    correlationId = turnCorrelationId,
+                    images = images!.Select(img => new { path = img.Path, mediaType = img.MediaType }).ToArray()
+                }
+                : new { message, correlationId = turnCorrelationId };
+            var result = await _rpc.SendRequestAsync("session/steer", payload, ct).ConfigureAwait(false);
             return string.Equals(TryGetString(result, "delivery"), "accepted", StringComparison.OrdinalIgnoreCase)
                 ? SteerDelivery.Accepted
                 : SteerDelivery.Declined;
@@ -436,6 +450,7 @@ public sealed class OarAgentSession : IAgentSession
         Volatile.Write(ref _supportsNativeSteer, TryGetBool(result, "supportsNativeSteer") == true);
         Volatile.Write(ref _supportsNativeCompact, TryGetBool(result, "supportsNativeCompact") == true);
         Volatile.Write(ref _supportsSessionResume, TryGetBool(result, "supportsSessionResume") != false);
+        Volatile.Write(ref _supportsImages, TryGetBool(result, "supportsImages") == true);
 
         var revision = Interlocked.Read(ref _contextUsageRevision);
         Volatile.Write(ref _configurationState, new ConfirmedConfiguration(
@@ -456,8 +471,15 @@ public sealed class OarAgentSession : IAgentSession
     {
         try
         {
-            var response = await _rpc.SendRequestAsync("session/prompt",
-                new { prompt = input.Prompt, correlationId = input.CorrelationId }, ct).ConfigureAwait(false);
+            object promptPayload = input.Images is { Count: > 0 } images
+                ? new
+                {
+                    prompt = input.Prompt,
+                    correlationId = input.CorrelationId,
+                    images = images.Select(img => new { path = img.Path, mediaType = img.MediaType }).ToArray()
+                }
+                : new { prompt = input.Prompt, correlationId = input.CorrelationId };
+            var response = await _rpc.SendRequestAsync("session/prompt", promptPayload, ct).ConfigureAwait(false);
             var status = TryGetString(response, "status") ?? "completed";
             var usage = TryParseUsage(response);
 

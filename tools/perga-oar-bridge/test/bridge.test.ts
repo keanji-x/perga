@@ -536,3 +536,181 @@ test("OarBridgeServer propagates OAR_CODEX_SANDBOX to real codexRuntime process.
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 });
+
+test("OarBridgeServer reports probe tri-state supportsImages, session/open authoritative supportsImages, forwards images on prompt/steer, and propagates unsupported refusal", async () => {
+  const promptCalls: Array<{ input: string; images?: ReadonlyArray<{ readonly path: string; readonly mediaType?: string }> }> = [];
+  const steerCalls: Array<{ input: string; images?: ReadonlyArray<{ readonly path: string; readonly mediaType?: string }> }> = [];
+
+  const makeAdapterRuntime = (
+    id: string,
+    probeImages: boolean | undefined,
+    sessionImages: boolean,
+    refuseSystemPrompt = false,
+  ) =>
+    defineRuntime(
+      {
+        id,
+        installation: async () => ({ kind: "available", via: "bundled", version: "1.0.0" }),
+        sessionCapabilities: () => ({
+          steer: true,
+          ...(probeImages !== undefined ? { images: probeImages } : {}),
+          ...(refuseSystemPrompt ? { refusedSessionOptions: { appendSystemPrompt: "no", systemPrompt: "no" } } : {}),
+        }),
+        session: async () => {
+          const kernel = createSessionKernel(`${id}-sess-1`);
+          const adapter: AdapterSession = {
+            id: kernel.sessionId,
+            capabilities: { queue: { durable: false }, attribution: "opaque", images: sessionImages },
+            prompt: async (input, options) => {
+              return await kernel.control(
+                {
+                  kind: "prompt",
+                  input,
+                  ...(options?.inputId ? { inputId: options.inputId } : {}),
+                  ...(options?.images ? { images: options.images } : {}),
+                },
+                async () => {
+                  if (!sessionImages && (options?.images?.length ?? 0) > 0) {
+                    return { kind: "rejected", code: "unsupported", reason: "Runtime does not support images." };
+                  }
+                  promptCalls.push({ input, images: options?.images });
+                  queueMicrotask(() => {
+                    kernel.frame({
+                      type: "agent_message_chunk",
+                      native: {},
+                      events: [{ kind: "text_delta", text: `seen:${input}|imgs:${options?.images?.length ?? 0}` }],
+                    });
+                    kernel.frame({
+                      type: "session/prompt",
+                      native: {},
+                      events: [{ kind: "turn_ended", outcome: { kind: "completed" } }],
+                    });
+                  });
+                  return { kind: "accepted" };
+                },
+              );
+            },
+            steer: async (input, options) =>
+              await kernel.control(
+                {
+                  kind: "steer",
+                  input,
+                  ...(options?.inputId ? { inputId: options.inputId } : {}),
+                  ...(options?.images ? { images: options.images } : {}),
+                },
+                () => {
+                  if (!sessionImages && (options?.images?.length ?? 0) > 0) {
+                    return { kind: "rejected", code: "unsupported", reason: "Runtime does not support images." };
+                  }
+                  steerCalls.push({ input, images: options?.images });
+                  return { kind: "accepted" };
+                },
+              ),
+            queue: async (input, options) =>
+              await kernel.control(
+                { kind: "queue", input, ...(options?.inputId ? { inputId: options.inputId } : {}) },
+                () => ({ kind: "rejected", code: "unsupported", reason: "unused" }),
+              ),
+            abort: async () => await kernel.control({ kind: "abort" }, () => ({ kind: "accepted" })),
+            rawEvents: (observer, cursor) => kernel.rawEvents(observer, cursor),
+            records: () => kernel.records(),
+            graph: () => kernel.graph(),
+            dispose: async () => {
+              await kernel.dispose(() => {});
+            },
+          };
+          return sealSession(adapter);
+        },
+      },
+      { execution: "process" },
+    );
+
+  // 1. Probe tri-state: true, false, null (undefined pre-open)
+  const runtimeMap: Record<string, ReturnType<typeof makeAdapterRuntime>> = {
+    codex: makeAdapterRuntime("codex", true, true, true),
+    qwen: makeAdapterRuntime("qwen", false, false),
+    antigravity: makeAdapterRuntime("antigravity", undefined, false),
+  };
+
+  const probeTransport = new MemoryTransport();
+  const probeBridge = new OarBridgeServer(probeTransport, async (id) => runtimeMap[id]!);
+
+  await probeBridge.handleMessage({ jsonrpc: "2.0", id: 1, method: "probe", params: { runtime: "codex" } });
+  assert.equal((probeTransport.responseFor(1).result as Record<string, unknown>).supportsImages, true);
+
+  await probeBridge.handleMessage({ jsonrpc: "2.0", id: 2, method: "probe", params: { runtime: "qwen" } });
+  assert.equal((probeTransport.responseFor(2).result as Record<string, unknown>).supportsImages, false);
+
+  await probeBridge.handleMessage({ jsonrpc: "2.0", id: 3, method: "probe", params: { runtime: "antigravity" } });
+  assert.equal((probeTransport.responseFor(3).result as Record<string, unknown>).supportsImages, null);
+  await probeBridge.dispose();
+
+  // 2. Supported session: open reports supportsImages=true, forwards images on empty prompt (with pending systemPrompt) and empty steer
+  const okTransport = new MemoryTransport();
+  const okBridge = new OarBridgeServer(okTransport, async () => runtimeMap.codex!);
+  await okBridge.handleMessage({
+    jsonrpc: "2.0",
+    id: 10,
+    method: "session/open",
+    params: { runtime: "codex", cwd: process.cwd(), systemPrompt: "System instructions" },
+  });
+  assert.equal((okTransport.responseFor(10).result as Record<string, unknown>).supportsImages, true);
+
+  const img = { path: "/tmp/att_0123456789abcdef0123456789abcdef.png", mediaType: "image/png" };
+  await okBridge.handleMessage({
+    jsonrpc: "2.0",
+    id: 11,
+    method: "session/prompt",
+    params: { prompt: "", correlationId: "trn_img_1", images: [img] },
+  });
+  assert.equal((okTransport.responseFor(11).result as Record<string, unknown>).status, "completed");
+  assert.equal(promptCalls.length, 1);
+  assert.equal(promptCalls[0]!.input, "System instructions");
+  assert.deepEqual(promptCalls[0]!.images, [img]);
+
+  await okBridge.handleMessage({
+    jsonrpc: "2.0",
+    id: 12,
+    method: "session/prompt",
+    params: { prompt: "", correlationId: "trn_img_2", images: [img] },
+  });
+  assert.equal((okTransport.responseFor(12).result as Record<string, unknown>).status, "completed");
+  assert.equal(promptCalls[1]!.input, "");
+  assert.deepEqual(promptCalls[1]!.images, [img]);
+
+  await okBridge.handleMessage({
+    jsonrpc: "2.0",
+    id: 13,
+    method: "session/steer",
+    params: { message: "", correlationId: "trn_img_2", images: [img] },
+  });
+  assert.deepEqual(okTransport.responseFor(13).result, { delivery: "accepted" });
+  assert.equal(steerCalls.length, 1);
+  assert.equal(steerCalls[0]!.input, "");
+  assert.deepEqual(steerCalls[0]!.images, [img]);
+  await okBridge.dispose();
+
+  // 3. Unsupported session: open reports supportsImages=false and prompt with images propagates unsupported refusal with beforePrompt=true
+  const noImgTransport = new MemoryTransport();
+  const noImgBridge = new OarBridgeServer(noImgTransport, async () => runtimeMap.antigravity!);
+  await noImgBridge.handleMessage({
+    jsonrpc: "2.0",
+    id: 20,
+    method: "session/open",
+    params: { runtime: "antigravity", cwd: process.cwd() },
+  });
+  assert.equal((noImgTransport.responseFor(20).result as Record<string, unknown>).supportsImages, false);
+
+  await noImgBridge.handleMessage({
+    jsonrpc: "2.0",
+    id: 21,
+    method: "session/prompt",
+    params: { prompt: "look at this", correlationId: "trn_no_img", images: [img] },
+  });
+  const refusal = noImgTransport.responseFor(21).result as Record<string, unknown>;
+  assert.equal(refusal.status, "failed");
+  assert.equal(refusal.code, "unsupported");
+  assert.equal(refusal.beforePrompt, true);
+  assert.equal(refusal.isRetryable, false);
+  await noImgBridge.dispose();
+});

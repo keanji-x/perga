@@ -99,7 +99,12 @@ export function sessionItemsPageDtoToConversationPage(
           ...(item.messageStatus == null ? {} : { message_status: item.messageStatus }),
           ...(interrupted ? { delivery_error: 'Interrupted · Unsent' }
             : typeof payloadObj.deliveryError === 'string' ? { delivery_error: payloadObj.deliveryError } : {}),
-          attachments: [],
+          attachments: (item.attachments ?? []).map((attachment) => ({
+            id: attachment.id,
+            contentType: attachment.contentType,
+            size: attachment.size,
+            url: attachment.url,
+          })),
           created_at_ms: item.createdAtMs,
         },
       }];
@@ -220,6 +225,19 @@ export function conversationRunningTurn(run: ConversationRun, now: number): impo
 }
 
 export function conversationPendingQueue(run: ConversationRun): readonly import('./conversation.js').PendingQueueEntry[] {
-  return run.queuedMessages?.map(message => ({ entry_id: message.id, text: message.text,
-    rev: 1, queued_at_ms: message.queuedAtMs, state: message.state })) ?? [];
+  return run.queuedMessages?.map(message => ({
+    entry_id: message.id,
+    text: message.text,
+    rev: 1,
+    queued_at_ms: message.queuedAtMs,
+    state: message.state,
+    ...(message.attachments != null && message.attachments.length > 0 ? {
+      attachments: message.attachments.map((attachment) => ({
+        id: attachment.id,
+        contentType: attachment.contentType,
+        size: attachment.size,
+        url: attachment.url,
+      })),
+    } : {}),
+  })) ?? [];
 }

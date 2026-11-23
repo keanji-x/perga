@@ -203,11 +203,11 @@ internal sealed partial class InMemoryTrackStore : ISessionInputStore, ISessionM
             return Task.FromResult(_messages.Values.FirstOrDefault(m => m.SessionId == sessionId && m.Delivery == "queued" && m.TurnId is null));
     }
 
-    public Task InsertAsync(SessionMessage message, CancellationToken ct)
+    public Task<SessionMessage> InsertAsync(SessionMessage message, CancellationToken ct)
     {
         BeforeInputWrite?.Invoke();
         lock (_gate) _messages.Add(Key(message), message);
-        return Task.CompletedTask;
+        return Task.FromResult(message);
     }
 
     public Task<bool> TransitionAsync(SessionMessage message, string expected, CancellationToken ct)

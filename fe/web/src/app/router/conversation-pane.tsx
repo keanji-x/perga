@@ -1,4 +1,4 @@
-import { permissionModesForProvider } from '../../../../core/domain/agent-providers.ts';
+import { permissionModesForProvider, providerSupportsImages } from '../../../../core/domain/agent-providers.ts';
 import { conversationCommandEnabled } from '../../../../core/domain/conversation-action.ts';
 import { permissionModeAfterProviderChange,resolvePermissionControl } from '../../../../core/domain/planner-permission-mode.ts';
 import { composerCommands,conversationCommandBindings,conversationCommands } from '../../features/chat/thread/composer-command.ts';
@@ -57,22 +57,26 @@ ChatFooterError,ChatFooterNotice,ChatFooterRemedy,ChatThread,
 type ComposerFocusHandle,
 } from '../../features/chat/thread/public.tsx';
 import {
-ATTACHED_WORKSPACE_REASON,PlannerAttachButton,PlannerAttachmentDrawer,
-usePlannerAttachments,
-type AttachmentStore,
+  IMAGE_UNSUPPORTED_REASON, PlannerAttachButton, PlannerAttachmentDrawer,
+  usePlannerAttachments,
+  type AttachmentStore,
 } from '../../features/planner/attachments.tsx';
+import { AttachmentGallery } from '../../ui/image-attachments/public.tsx';
 import { useCommittedCallback } from '../../ui/state/committed-callback.ts';
 import { useState } from '../../ui/state/public.ts';
 import { useCompactViewport } from '../../ui/viewport/public.ts';
 import {
-useConversationAttachments,
-useConversationCommands,
-useConversationDraft,
-useConversationUpload,
-type ConversationDraftId
+  useConversationAttachments,
+  useConversationCommands,
+  useConversationDraft,
+  useConversationUpload,
+  useNewConversationAttachments,
+  useNewConversationUpload,
+  type ConversationDraftId,
 } from '../conversations/public.tsx';
 import { createTrackWorkspaceFilesPort } from '../providers/directory.ts';
 import { useMentionSearch } from '../providers/mentions.ts';
+import { useStagedAttachmentUpload } from '../providers/planner-mutations.ts';
 import { useReadReceipt,useReadReceipts,useViewReadReceipt } from '../providers/read-receipts.tsx';
 import { trackDetailQueryOptions } from '../providers/track-queries.ts';
 import { useConversationDrawerResize } from '../shell/public.tsx';
@@ -208,7 +212,7 @@ export function useConversationPane(
     && (store.historyReady || openTurns.length > 0 || hasPendingMessages || store.stopFeedback !== null);
   const threadPresented = useContentAdmission(open?.id ?? null, threadAvailable);
   const outgoingPreview = open === null || threadPresented ? undefined : openTurns.findLast((entry): entry is ConversationTurn & { author: 'you' | 'human' | 'unknown' } =>
-    isUserConversationTurn(entry) && entry.text !== '' && (entry.attachments?.length ?? 0) === 0);
+    isUserConversationTurn(entry) && (entry.text !== '' || (entry.attachments?.length ?? 0) > 0));
   const conversationBodyVisible = hasPendingMessages || (threadPresented ? openTurns.length > 0 : outgoingPreview !== undefined);
   const sideSourceReady = threadPresented && store.historyReady;
   /* While an Edit is held nothing else acts on the conversation; its replace, once sent, blocks as any send does. */
@@ -239,10 +243,21 @@ export function useConversationPane(
   });
   const discardUnsentDraft = registry.discardUnsentDraft;
   /* The new conversation's composer lives in the registry per Track, so closing, `+` and leaving keep its words. */
-  const { editNewConversationComposer } = registry;
+  const { editNewConversationComposer, editNewConversationAttachments, editNewConversationUpload } = registry;
   const setNewConversationText = useCallback<Dispatch<SetStateAction<string>>>((action) => {
     editNewConversationComposer(sourceScopeId, (current) => typeof action === 'function' ? action(current) : action);
   }, [editNewConversationComposer, sourceScopeId]);
+  const draftUpload = useStagedAttachmentUpload(transport, unauthorized, source.scopeId);
+  const heldDraftAttachments = useNewConversationAttachments(sourceScopeId);
+  const draftUploadState = useNewConversationUpload(sourceScopeId);
+  const draftAttachmentStore = useMemo<AttachmentStore>(() => ({
+    items: heldDraftAttachments,
+    update: editNewConversationAttachments,
+    upload: draftUploadState,
+    editUpload: editNewConversationUpload,
+  }), [heldDraftAttachments, editNewConversationAttachments, draftUploadState, editNewConversationUpload]);
+  const draftAttachments = usePlannerAttachments(draftUpload, sourceScopeId, draftAttachmentStore);
+  const draftAttachmentsSupported = draft !== null && providerSupportsImages(managed.answers, draft.provider);
 
   useConversationDraftRetention({ discardUnsentDraft, sourceScopeId });
 
@@ -322,11 +337,58 @@ export function useConversationPane(
   const answerAsk = useCommittedCallback(existingId, (askId: import('../../../../core/domain/activity.ts').AskId, answers: readonly AskAnswer[]) =>
     store.answerAsk(askId, answers));
   const attach = useCommittedCallback(existingId, attachments.attach);
+  const attachMany = useCommittedCallback(existingId, attachments.attachMany);
   const removeAttachment = useCommittedCallback(existingId, attachments.remove);
-  const { items: attachmentItems, ids: attachmentIds, busy: attachmentBusy, error: attachmentError, atCapacity } = attachments;
-  const composerAttachments = useMemo(() => ({ items: attachmentItems, ids: attachmentIds, busy: attachmentBusy,
-    error: attachmentError, atCapacity, attach, remove: removeAttachment }),
-  [attachmentItems, attachmentIds, attachmentBusy, attachmentError, atCapacity, attach, removeAttachment]);
+  const retryAttachment = useCommittedCallback(existingId, attachments.retry);
+  const clearAttachments = useCommittedCallback(existingId, attachments.clear);
+  const {
+    items: attachmentItems,
+    ids: attachmentIds,
+    draftItems: attachmentDraftItems,
+    busy: attachmentBusy,
+    hasUploading: attachmentUploading,
+    hasFailed: attachmentFailed,
+    sendBlocked: attachmentSendBlocked,
+    canSendWithoutText: attachmentCanSendWithoutText,
+    statusMessage: attachmentStatusMessage,
+    error: attachmentError,
+    atCapacity,
+  } = attachments;
+  const composerAttachments = useMemo(() => ({
+    items: attachmentItems,
+    ids: attachmentIds,
+    draftItems: attachmentDraftItems,
+    busy: attachmentBusy,
+    hasUploading: attachmentUploading,
+    hasFailed: attachmentFailed,
+    sendBlocked: attachmentSendBlocked,
+    canSendWithoutText: attachmentCanSendWithoutText,
+    statusMessage: attachmentStatusMessage,
+    error: attachmentError,
+    atCapacity,
+    attach,
+    attachMany,
+    remove: removeAttachment,
+    retry: retryAttachment,
+    clear: clearAttachments,
+  }), [
+    attachmentItems,
+    attachmentIds,
+    attachmentDraftItems,
+    attachmentBusy,
+    attachmentUploading,
+    attachmentFailed,
+    attachmentSendBlocked,
+    attachmentCanSendWithoutText,
+    attachmentStatusMessage,
+    attachmentError,
+    atCapacity,
+    attach,
+    attachMany,
+    removeAttachment,
+    retryAttachment,
+    clearAttachments,
+  ]);
   const canSteer = store.steerQueuedEntry !== undefined;
   const [pendingPresentation, setPendingPresentation] = useState<Readonly<{ conversationId: string | null; visible: boolean }> | null>(null);
   const pendingPresenceChanged = useCallback((visible: boolean) => {
@@ -349,7 +411,7 @@ export function useConversationPane(
     compact: compact,
     compacting: store.compacting,
     manualCompactSupported: store.manualCompactSupported,
-    attachmentsSupported: false,
+    attachmentsSupported: store.attachmentsSupported,
     contextUsage: store.contextUsage,
     historyReady: store.historyReady,
     runReady: store.runReady,
@@ -368,7 +430,7 @@ export function useConversationPane(
     setPermissionMode: setPermissionMode,
     stopping: store.stopping,
     working: store.working
-  }), [compact, store.compacting, store.manualCompactSupported, store.contextUsage, store.historyReady, store.runReady, interrupt, store.model, store.modelCatalog, store.modelDefaultAvailable, store.modelChangeDisabled, store.permissionChangeDisabled,
+  }), [compact, store.compacting, store.manualCompactSupported, store.attachmentsSupported, store.contextUsage, store.historyReady, store.runReady, interrupt, store.model, store.modelCatalog, store.modelDefaultAvailable, store.modelChangeDisabled, store.permissionChangeDisabled,
     store.permissionMode, store.sendBlocked, store.composerBlocked, store.sending, store.canQueueWhileRunning, setModel, setPermissionMode, store.stopping, store.working]);
   const permissionOptions = store.permissionOptions ?? scopePermissionModes;
   const permissionControl = useMemo(() => resolvePermissionControl({
@@ -442,15 +504,15 @@ export function useConversationPane(
               focusRequest={composerFocusRequest}
               changeText={changeComposer}
               disabled={(!draftOnly && composerView.composerBlocked) || !composerView.historyReady || !composerView.runReady || replacing}
-              sendDisabled={draftOnly || composerView.sendBlocked}
+              sendDisabled={draftOnly || composerView.sendBlocked || composerAttachments.sendBlocked}
               sendWaiting={composerView.sending}
               /* The images stay with the composer until the store reports them delivered; the press waits out its Edit. */
               commands={paneCommands}
               onSend={sendText}
               canQueueWhileRunning={composerView.canQueueWhileRunning}
-              allowEmptyText={!editingQueue && composerAttachments.items.length > 0}
-              onFiles={editingQueue || !composerView.attachmentsSupported || composerAttachments.busy || composerAttachments.atCapacity ? undefined : (files) => {
-                for (const file of files) void composerAttachments.attach(file);
+              allowEmptyText={!editingQueue && composerAttachments.canSendWithoutText}
+              onFiles={editingQueue || !composerView.attachmentsSupported ? undefined : (files) => {
+                void composerAttachments.attachMany(files);
               }}
               /* Questions and attachments belong to the composer; waiting messages follow the running status. */
               drawer={(
@@ -475,7 +537,7 @@ export function useConversationPane(
                     attachments={composerAttachments}
                     support={{
                       available: composerView.attachmentsSupported,
-                      reason: ATTACHED_WORKSPACE_REASON,
+                      reason: IMAGE_UNSUPPORTED_REASON,
                     }}
                     disabled={editingQueue || composerView.sendBlocked || !composerView.historyReady || replacing}
                   />
@@ -541,7 +603,19 @@ export function useConversationPane(
               </ChatFooterNotice>
             )}
             {/* Initial submit hands words to the held draft, including refusal; only recovery uses the takeover boolean. */}
-            <ConversationComposer commands={conversationCommands({ terminal: onTerminal, compactViewport: compactComposer, newConversation: options?.inline === true ? undefined : startAnother })} target={{ kind: 'scope', id: sourceScopeId }} layout={compactComposer ? 'mobile' : 'standard'} disabled={creating} sendWaiting={creating} onSend={text => { sendDraft(text); }}
+            <ConversationComposer
+              commands={conversationCommands({ terminal: onTerminal, compactViewport: compactComposer, newConversation: options?.inline === true ? undefined : startAnother })}
+              target={{ kind: 'scope', id: sourceScopeId }}
+              layout={compactComposer ? 'mobile' : 'standard'}
+              disabled={creating}
+              sendDisabled={creating || draftAttachments.sendBlocked}
+              sendWaiting={creating}
+              allowEmptyText={draftAttachments.canSendWithoutText}
+              onFiles={!draftAttachmentsSupported || creating || draft.submitted !== null ? undefined : (files) => {
+                void draftAttachments.attachMany(files);
+              }}
+              drawer={<PlannerAttachmentDrawer attachments={draftAttachments} disabled={creating || draft.submitted !== null} />}
+              onSend={text => { sendDraft(text, managed.answers, draftAttachments.items); }}
               focusOnMount={panePresented} focusRequest={composerFocusRequest} focusHandle={draftFocus.handle}
               mentionTrigger={mentionTrigger}
               changeText={setNewConversationText}
@@ -556,9 +630,9 @@ export function useConversationPane(
                 return (
                   <HStack gap={1} align="center" wrap="wrap" className={footerStyles.group}>
                     <PlannerAttachButton
-                      attachments={composerAttachments}
-                      support={{ available: false, reason: ATTACHED_WORKSPACE_REASON }}
-                      disabled
+                      attachments={draftAttachments}
+                      support={{ available: draftAttachmentsSupported, reason: IMAGE_UNSUPPORTED_REASON }}
+                      disabled={creating || draft.submitted !== null}
                     />
                     <ModelPill groups={managed.groups} provider={draft.provider} selection={draft.model}
                       effortControl={compactComposer ? 'in-menu' : 'separate'}
@@ -603,10 +677,15 @@ export function useConversationPane(
         )}
         {/* Shown back because the composer clears its field on send; nothing here
                     claims they arrived. */}
-        {draftOpen && (draft?.text == null
+        {draftOpen && (draft?.text == null && (draft?.attachments?.length ?? 0) === 0
           ? <ChatEmpty />
           : <>
-            <OutgoingMessage speaker="you" text={draft.text} mobile={compactViewport} />
+            {draft.text != null && (draft.text !== '' || (draft.attachments?.length ?? 0) === 0) && (
+              <OutgoingMessage speaker="you" text={draft.text} mobile={compactViewport} />
+            )}
+            {draft.attachments !== undefined && draft.attachments.length > 0 && (
+              <AttachmentGallery images={draft.attachments.map((attachment) => ({ id: attachment.id, src: attachment.url }))} />
+            )}
             {creating && <p role="status">Sending…</p>}
           </>)}
         {open !== null && (
@@ -621,7 +700,16 @@ export function useConversationPane(
                           `ChatThread` draws its empty state (with the live dot) for an empty list.
                           `turnsOf` is the second arm so a reopen whose query was collected still
                           shows the remembered transcript. */}
-            {!threadPresented && outgoingPreview !== undefined && <OutgoingMessage speaker={outgoingPreview.author} text={outgoingPreview.text} mobile={compactViewport} />}
+            {!threadPresented && outgoingPreview !== undefined && (
+              <>
+                {(outgoingPreview.text !== '' || (outgoingPreview.attachments?.length ?? 0) === 0) && (
+                  <OutgoingMessage speaker={outgoingPreview.author} text={outgoingPreview.text} mobile={compactViewport} />
+                )}
+                {outgoingPreview.attachments !== undefined && outgoingPreview.attachments.length > 0 && (
+                  <AttachmentGallery images={outgoingPreview.attachments.map((attachment) => ({ id: attachment.id, src: attachment.url }))} />
+                )}
+              </>
+            )}
             {!threadPresented && hasPendingMessages && pendingMessages}
             {threadPresented && !centeredEmpty && (
               <ChatThread historyPrefetch={historyPrefetch} readingView={threadReadingView} key={open.id} pendingMessages={pendingMessages}
@@ -687,7 +775,7 @@ export function useConversationPane(
     dock: compactComposer ? <ConversationDock target={dockRowId === null ? { kind: 'scope', id: sourceScopeId } : { kind: 'card', id: dockRowId }}
       commands={dockRowId === null ? conversationCommands({ compactViewport: true }) : paneCommands}
       onChange={setDockText} onSend={sendFromDock} onBeginInput={openDockHistory}
-      disabled={archived || options?.reportComposer?.ready === false || (dockRowId !== null && (store.sendBlocked || !store.historyReady || !store.runReady))} /> : undefined,
+      disabled={archived || options?.reportComposer?.ready === false || (dockRowId !== null && (store.sendBlocked || composerAttachments.sendBlocked || !store.historyReady || !store.runReady))} /> : undefined,
     selectedConversationId: draftOpen ? null : open?.id ?? dockRowId,
     isOpen: open !== null || draftOpen,
     close: closeDrawer,

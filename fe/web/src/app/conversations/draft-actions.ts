@@ -1,6 +1,7 @@
 import type { ManagedProviderAvailability } from '../../../../core/domain/agent-providers.ts';
 import { managedProviderProblem } from '../../../../core/domain/agent-providers.ts';
 import { onlineManager } from '@tanstack/react-query';
+import type { PlannerAttachment } from '../../../../core/api/generated/wire.ts';
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import { CONVERSATION_CREATE_TEXT, conversationCreateFailure, CONVERSATION_TEXT_MAX, FOLLOW_INSTALLATION_DEFAULT, type CreatedConversation, type SubmittedConversationInput } from '../../../../core/domain/conversation.ts';
 import { ApiError, NotSentError } from '../../../../core/domain/failure-class.ts';
@@ -10,7 +11,16 @@ import type { ConversationDraft, ConversationDraftId, ConversationRegistry } fro
 import type { ConversationCreationSource } from './contracts.ts';
 
 /** The identity and dispatched body move together through rekey/markSent only. */
-type DraftEdit = Partial<Pick<ConversationDraft, 'text' | 'creating' | 'error' | 'remedy'>>;
+type DraftEdit = Partial<Pick<ConversationDraft, 'text' | 'attachments' | 'creating' | 'error' | 'remedy'>>;
+
+function sameAttachmentIds(
+  left: readonly PlannerAttachment[] | undefined,
+  right: readonly PlannerAttachment[] | undefined,
+): boolean {
+  const a = left ?? [];
+  const b = right ?? [];
+  return a.length === b.length && a.every((item, index) => item.id === b[index].id);
+}
 
 export type ConversationDraftActionInput = Readonly<{
   registry: Pick<ConversationRegistry, 'editDraft' | 'startDraft' | 'acceptDraft' | 'discardDraft'>;
@@ -57,7 +67,7 @@ export function createConversationDraftActions({ registry, draft, creating, sour
   /** Records that a POST is going out under this key with these words. Called
    *  before the request, so a failure finds the right baseline. */
   const markDraftSent = (from: ConversationDraft, submitted: SubmittedConversationInput) => {
-    withDraft(from, (current) => ({ ...current, text: submitted.text, submitted }));
+    withDraft(from, (current) => ({ ...current, text: submitted.text, attachments: submitted.attachments, submitted }));
   };
 
   /* The `+` opens a draft scoped to one concrete Track. */
@@ -142,7 +152,14 @@ export function createConversationDraftActions({ registry, draft, creating, sour
   };
 
   /** Retry frozen submissions under their original key; only an explicit new conversation rekeys. */
-  const createDraft = (from: ConversationDraft, text: string, current: () => boolean, recheck: ConversationDraft['remedy'], answers = managedProviders) => {
+  const createDraft = (
+    from: ConversationDraft,
+    text: string,
+    attachments: readonly PlannerAttachment[] | undefined,
+    current: () => boolean,
+    recheck: ConversationDraft['remedy'],
+    answers = managedProviders,
+  ) => {
     const { create } = source;
     /* The draft this send is for, fixed here: a send that outlives its draft changes nothing. */
     let attempt = from;
@@ -156,12 +173,18 @@ export function createConversationDraftActions({ registry, draft, creating, sour
         if (!current()) { amendDraft(attempt, { error: notSentText(attempt.submitted), remedy: 'retry' }); return; }
         if (refuseOfflineDraft(attempt, text, answers)) return;
         previouslySubmitted = attempt.submitted;
-        const submitted = attempt.submitted ?? Object.freeze({ text, atMs: Date.now() });
+        const normalizedAttachments = attachments !== undefined && attachments.length > 0 ? [...attachments] : undefined;
+        const submitted = attempt.submitted ?? Object.freeze({
+          text,
+          atMs: Date.now(),
+          ...(normalizedAttachments === undefined ? {} : { attachments: normalizedAttachments }),
+        });
         markDraftSent(attempt, submitted);
-        attempt = { ...attempt, text, submitted };
+        attempt = { ...attempt, text, attachments: submitted.attachments, submitted };
+        const attachmentIds = submitted.attachments?.map((item) => item.id);
         await create(submitted.text, attempt.key, attempt.provider, attempt.model, attempt.side, (result) => {
           if (current()) adopt(attempt, result);
-        }, attempt.permissionMode);
+        }, attempt.permissionMode, attachmentIds);
       } catch (error: unknown) {
         if (error instanceof NotSentError) {
           // Marking a request optimistically must not invent dispatch when the
@@ -177,30 +200,36 @@ export function createConversationDraftActions({ registry, draft, creating, sour
     })();
   };
 
-  const sendDraft = (text: string, answers = managedProviders) => {
+  const sendDraft = (
+    text: string,
+    answers = managedProviders,
+    attachments?: readonly PlannerAttachment[],
+  ) => {
     if (creating || draft === null) return false;
-    /* The server refuses `text.trim().is_empty()` but counts `chars()` on the
-           untrimmed text, in Unicode scalar values: so the blank check trims, the
-           length check does not, and `Array.from` counts code points. */
-    if (text.trim() === '') return false;
+    const effectiveAttachments = attachments ?? draft.submitted?.attachments ?? draft.attachments;
+    const hasAttachments = (effectiveAttachments?.length ?? 0) > 0;
+    /* The server refuses `text.trim().is_empty()` unless images are attached, and counts `chars()`
+       on the untrimmed text in Unicode scalar values. */
+    if (text.trim() === '' && !hasAttachments) return false;
     if (Array.from(text).length > CONVERSATION_TEXT_MAX) {
       /* Shown back, but never recorded as sent: no request left the browser, so
          the key is untouched and the next press is not "the text changed". */
       amendDraft(draft, {
         text,
+        ...(hasAttachments ? { attachments: effectiveAttachments } : {}),
         error: `This message is too long — the limit is ${CONVERSATION_TEXT_MAX} characters.`,
         remedy: null,
       });
       return false;
     }
-    if (draft.submitted !== null && draft.submitted.text !== text) {
+    if (draft.submitted !== null && (draft.submitted.text !== text || !sameAttachmentIds(draft.submitted.attachments, effectiveAttachments))) {
       amendDraft(draft, { text, error: 'The previous submission is unconfirmed. Try again to recover it first.', remedy: 'retry' });
       return false;
     }
     if (refuseOfflineDraft(draft, text, answers)) return false;
     const current = admitDraft(draft, text); if (current === null) return false;
-    amendDraft(draft, { text, creating: true, error: null, remedy: null });
-    createDraft(draft, text, current, null, answers);
+    amendDraft(draft, { text, ...(hasAttachments ? { attachments: effectiveAttachments } : {}), creating: true, error: null, remedy: null });
+    createDraft(draft, text, effectiveAttachments, current, null, answers);
     return true;
   };
 
@@ -242,11 +271,12 @@ export function createConversationDraftActions({ registry, draft, creating, sour
   const sendAsNewConversation = () => {
     if (creating || draft === null || draft.text === null) return false;
     const text = draft.text;
+    const attachments = draft.submitted?.attachments ?? draft.attachments;
     if (refuseOfflineDraft(draft, text)) return false;
     const current = admitDraft(draft, text); if (current === null) return false;
     amendDraft(draft, { creating: true, error: null, remedy: null });
     /* An explicit new-conversation choice starts a fresh idempotent submission. */
-    createDraft(draft, text, current, 'new-conversation');
+    createDraft(draft, text, attachments, current, 'new-conversation');
     return true;
   };
 
@@ -254,15 +284,16 @@ export function createConversationDraftActions({ registry, draft, creating, sour
      local takeover, not a dispatched/accepted POST or capability confirmation. */
   const retryDraft = () => {
     if (creating || draft === null || draft.text === null) return false;
-    if (draft.submitted !== null) return sendDraft(draft.submitted.text);
+    if (draft.submitted !== null) return sendDraft(draft.submitted.text, managedProviders, draft.submitted.attachments);
     const text = draft.text;
+    const attachments = draft.attachments;
     if (!onlineManager.isOnline()) return false;
     const current = admitDraft(draft, text); if (current === null) return false;
     amendDraft(draft, { creating: true });
     void recheckManagedProviders().then(answers => {
       amendDraft(draft, { creating: false });
       if (!current()) return;
-      sendDraft(text, answers);
+      sendDraft(text, answers, attachments);
     }).catch(() => {
       amendDraft(draft, { creating: false, error: 'Managed provider capabilities are unavailable. Reconnect before sending.', remedy: 'retry' });
     });

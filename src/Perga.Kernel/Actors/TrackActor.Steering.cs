@@ -10,6 +10,15 @@ public sealed partial class TrackActor
     private static readonly TimeSpan SteeringTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan SteeringRequestTimeout = TimeSpan.FromSeconds(15);
 
+    private enum SteeringAttemptOutcome
+    {
+        Accepted,
+        DeclinedByProvider,
+        PreDispatchFailed,
+        TurnUnavailable,
+        Unconfirmed,
+    }
+
     private async Task<SteeringResult> RunSteeringAsync(Task? previous, SessionMessage message,
         string turnId, bool queued, long startedAt)
     {
@@ -23,10 +32,11 @@ public sealed partial class TrackActor
             var delivery = await AttemptSteeringAsync(message, turnId, startedAt, ct).ConfigureAwait(false);
             outcome = delivery switch
             {
-                SteerDelivery.Accepted => "delivered",
-                SteerDelivery.Declined when !queued => "rejected",
-                SteerDelivery.Declined when _timeProvider.GetElapsedTime(startedAt) < SteeringRequestTimeout => "queued",
-                null => "rejected",
+                SteeringAttemptOutcome.Accepted => "delivered",
+                SteeringAttemptOutcome.PreDispatchFailed => queued ? "queued" : "rejected",
+                SteeringAttemptOutcome.DeclinedByProvider when !queued => "rejected",
+                SteeringAttemptOutcome.DeclinedByProvider when _timeProvider.GetElapsedTime(startedAt) < SteeringRequestTimeout => "queued",
+                SteeringAttemptOutcome.TurnUnavailable => "rejected",
                 _ => "unknown",
             };
         }
@@ -108,7 +118,7 @@ public sealed partial class TrackActor
         _ => "unconfirmed",
     });
 
-    private async Task<SteerDelivery?> AttemptSteeringAsync(SessionMessage message, string turnId, long startedAt, CancellationToken ct)
+    private async Task<SteeringAttemptOutcome> AttemptSteeringAsync(SessionMessage message, string turnId, long startedAt, CancellationToken ct)
     {
         var target = await EnqueueAsync(_ =>
         {
@@ -120,20 +130,59 @@ public sealed partial class TrackActor
             return Task.FromResult(current is not null && current.TurnDto.Id == turnId && !current.Interrupted ? current : null);
         }, ct).ConfigureAwait(false);
         var remaining = SteeringRequestTimeout - _timeProvider.GetElapsedTime(startedAt);
-        if (remaining <= TimeSpan.Zero) return SteerDelivery.Unconfirmed;
-        if (target is null) return null;
-        if (!target.AgentSession.SupportsNativeSteer) return SteerDelivery.Declined;
+        if (remaining <= TimeSpan.Zero) return SteeringAttemptOutcome.PreDispatchFailed;
+        if (target is null) return SteeringAttemptOutcome.TurnUnavailable;
+        if (!target.AgentSession.SupportsNativeSteer) return SteeringAttemptOutcome.DeclinedByProvider;
+
+        IReadOnlyList<InputImageRef>? stagedImages = null;
+        if (message.Attachments is { Count: > 0 } attachments)
+        {
+            if (!target.AgentSession.SupportsImages) return SteeringAttemptOutcome.PreDispatchFailed;
+            using var stagingDeadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            stagingDeadline.CancelAfter(remaining < SteeringTimeout ? remaining : SteeringTimeout);
+            try
+            {
+                var list = new List<InputImageRef>(attachments.Count);
+                foreach (var att in attachments)
+                {
+                    if (string.IsNullOrWhiteSpace(att.PhysicalPath) || !File.Exists(att.PhysicalPath))
+                        return SteeringAttemptOutcome.PreDispatchFailed;
+                    var ext = SessionAttachmentValidation.ExtensionForContentType(att.ContentType);
+                    if (ext is null) return SteeringAttemptOutcome.PreDispatchFailed;
+                    var stagedPath = await Env.Files
+                        .StageAttachmentAsync(TrackId, att.Id, ext, att.PhysicalPath, att.Sha256, stagingDeadline.Token)
+                        .WaitAsync(stagingDeadline.Token)
+                        .ConfigureAwait(false);
+                    list.Add(new InputImageRef(stagedPath, att.ContentType));
+                }
+                stagedImages = list;
+            }
+            catch (Exception) when (!ct.IsCancellationRequested)
+            {
+                // Provider SteerAsync has not been invoked yet; never mark un-dispatched staging failures/timeouts as unknown.
+                return SteeringAttemptOutcome.PreDispatchFailed;
+            }
+
+            remaining = SteeringRequestTimeout - _timeProvider.GetElapsedTime(startedAt);
+            if (remaining <= TimeSpan.Zero) return SteeringAttemptOutcome.PreDispatchFailed;
+        }
 
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
         deadline.CancelAfter(remaining < SteeringTimeout ? remaining : SteeringTimeout);
         try
         {
-            return await target.AgentSession.SteerAsync(turnId, message.Content, deadline.Token)
+            var delivery = await target.AgentSession.SteerAsync(turnId, message.Content, stagedImages, deadline.Token)
                 .WaitAsync(deadline.Token).ConfigureAwait(false);
+            return delivery switch
+            {
+                SteerDelivery.Accepted => SteeringAttemptOutcome.Accepted,
+                SteerDelivery.Declined => SteeringAttemptOutcome.DeclinedByProvider,
+                _ => SteeringAttemptOutcome.Unconfirmed,
+            };
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
-            return SteerDelivery.Unconfirmed;
+            return SteeringAttemptOutcome.Unconfirmed;
         }
     }
 }

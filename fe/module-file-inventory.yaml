@@ -152,3 +152,4 @@
 - { path: fe/web/src/ui/explanation-badge, type: directory, owner: ui/explanation-badge, readonly: false, basis: "#2666 domain-free status chip with keyboard and touch explanation; features supply copy" }
 
 - { path: fe/web/src/ui/card-frame, type: directory, owner: ui/card-frame, readonly: false, basis: "#2951 shared conversation and workspace card shell" }
+- { path: fe/web/src/ui/image-attachments, type: directory, owner: ui/image-attachments, readonly: false, basis: "docs/design/session-image-attachments.md; domain-free image paste, dropzone, thumbnail strip and lightbox gallery primitives" }

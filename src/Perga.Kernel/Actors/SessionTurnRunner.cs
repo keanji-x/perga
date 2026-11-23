@@ -188,9 +188,71 @@ public sealed partial class TrackActor
             var outcome = new TurnOutcome();
             try
             {
-                var input = new TurnInput(effectivePrompt, active.TurnDto.Id, active.AgentSession.ConfigurationState?.NativeModel ?? active.Configuration.Model.ValueOrNull, active.AgentSession.ConfigurationState?.NativeEffort ?? active.Configuration.Effort.ValueOrNull);
-                await foreach (var evt in actor.ObserveTurnAsync(active, input, active.TurnCts.Token).ConfigureAwait(false))
-                    await HandleEventAsync(work, active, outcome, evt).ConfigureAwait(false);
+                IReadOnlyList<InputImageRef>? stagedImages = null;
+                if (work.Attachments.Count > 0)
+                {
+                    if (!active.AgentSession.SupportsImages)
+                    {
+                        outcome.RejectedBeforePrompt = true;
+                        outcome.Conclusive = true;
+                        outcome.Status = "failed";
+                        outcome.ErrorText = "unsupported: The active runtime does not support image attachments.";
+                    }
+                    else
+                    {
+                        var list = new List<InputImageRef>(work.Attachments.Count);
+                        try
+                        {
+                            foreach (var att in work.Attachments)
+                            {
+                                var localPath = att.PhysicalPath;
+                                if (string.IsNullOrWhiteSpace(localPath) || !File.Exists(localPath))
+                                {
+                                    outcome.RejectedBeforePrompt = true;
+                                    outcome.Conclusive = true;
+                                    outcome.Status = "failed";
+                                    outcome.ErrorText = $"attachment_missing: Image attachment '{att.Id}' could not be read from storage.";
+                                    break;
+                                }
+
+                                var ext = SessionAttachmentValidation.ExtensionForContentType(att.ContentType)
+                                    ?? throw new InvalidOperationException($"Unsupported image content type '{att.ContentType}'.");
+                                var stagedPath = await actor.Env.Files
+                                    .StageAttachmentAsync(actor.TrackId, att.Id, ext, localPath, att.Sha256, active.TurnCts.Token)
+                                    .ConfigureAwait(false);
+                                list.Add(new InputImageRef(stagedPath, att.ContentType));
+                            }
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            throw;
+                        }
+                        catch (Exception stageEx)
+                        {
+                            outcome.RejectedBeforePrompt = true;
+                            outcome.Conclusive = true;
+                            outcome.Status = "failed";
+                            outcome.ErrorText = $"attachment_stage_failed: {stageEx.Message}";
+                        }
+
+                        if (!outcome.RejectedBeforePrompt)
+                        {
+                            stagedImages = list;
+                        }
+                    }
+                }
+
+                if (!outcome.RejectedBeforePrompt)
+                {
+                    var input = new TurnInput(
+                        effectivePrompt,
+                        active.TurnDto.Id,
+                        active.AgentSession.ConfigurationState?.NativeModel ?? active.Configuration.Model.ValueOrNull,
+                        active.AgentSession.ConfigurationState?.NativeEffort ?? active.Configuration.Effort.ValueOrNull,
+                        stagedImages);
+                    await foreach (var evt in actor.ObserveTurnAsync(active, input, active.TurnCts.Token).ConfigureAwait(false))
+                        await HandleEventAsync(work, active, outcome, evt).ConfigureAwait(false);
+                }
             }
             catch (OperationCanceledException) when (active.Interrupted || actor._actorShutdownCts.IsCancellationRequested)
             {

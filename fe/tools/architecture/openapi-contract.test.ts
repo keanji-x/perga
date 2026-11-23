@@ -42,6 +42,8 @@ const RESPONSE_WIRE_EXCEPTIONS = new Set([
   // Login answer, decoded by `sessionIdentitySchema` in core/api/auth.ts.
   'WhoamiBody',
   'ReportSeriesResolved', 'ReportSeriesRevConflict', 'TrackPreviews',
+  // Binary attachment upload answer, decoded by `uploadAttachmentResponseDtoSchema` in core/api/perga-v1.ts.
+  'UploadAttachmentResponseDto',
 ]);
 
 function object(value: unknown): value is JsonObject {
@@ -323,7 +325,7 @@ it('preserves fractional Unix seconds in upgrade receipts', () => {
     notifyTrackId: null, finishedAt, changed: [] }).finishedAt).toBe(finishedAt);
 });
 
-it('matches the eight session primitives to the production Host routes and removes retired DTOs', () => {
+it('matches the session and attachment primitives to the production Host routes and removes retired DTOs', () => {
   const host = readFileSync(new URL('../../../src/Perga.Host/Http/ApiV1Endpoints.cs', import.meta.url), 'utf8');
   const document = JSON.parse(readFileSync(new URL('../../core/api/generated/openapi.json', import.meta.url), 'utf8')) as {
     paths: Record<string, Record<string, unknown>>; components: { schemas: Record<string, unknown> };
@@ -331,9 +333,10 @@ it('matches the eight session primitives to the production Host routes and remov
   const section = host.split('// ------------------- Unified sessions -------------------')[1].split('// ------------------- Terminals')[0];
   const expected = [...section.matchAll(/v1\.Map(Get|Post|Patch|Delete)\("([^"]+)"/g)]
     .map(match => `${match[1].toLowerCase()} /api/v1${match[2]}`).sort();
-  const actual = Object.entries(document.paths).filter(([path]) => path.startsWith('/api/v1/sessions/') || path === '/api/v1/tracks/{trackId}/sessions')
+  const actual = Object.entries(document.paths)
+    .filter(([path]) => path.startsWith('/api/v1/sessions/') || path === '/api/v1/tracks/{trackId}/sessions' || path === '/api/v1/attachments' || path.startsWith('/api/v1/attachments/'))
     .flatMap(([path, operations]) => Object.keys(operations).filter(method => METHODS.has(method)).map(method => `${method} ${path}`)).sort();
-  expect(expected).toHaveLength(8);
+  expect(expected).toHaveLength(12);
   expect(actual).toEqual(expected);
   for (const name of ['WorkerActivityDto', 'WorkerSettings', 'WorkerDispatchReceipt', 'WorkerMessageReceipt', 'RecoverSessionRequest', 'UpdateSessionModelRequest', 'TaskAttemptDto', 'TaskAttemptView', 'TaskRecoveryView'])
     expect(document.components.schemas).not.toHaveProperty(name);

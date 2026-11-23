@@ -67,7 +67,14 @@ export function renderAssistantProviderFixture(options: {
     const cardId = sessionOrCardMatch !== null ? decodeURIComponent(sessionOrCardMatch[1]) : request.path.split('/')[3];
     if (request.path.includes('/items?')) {
       const session = rows.find(row => row.id === cardId) ?? fixtureSession(cardId, track.id);
-      body = sessionPage({ ...session, model: selectedModel }, cardId === 'dormant' ? [sessionItem(cardId, 1, 'Saved reply')] : []);
+      const page = sessionPage({ ...session, model: selectedModel }, cardId === 'dormant' ? [sessionItem(cardId, 1, 'Saved reply')] : []);
+      body = {
+        ...page,
+        capabilities: {
+          ...page.capabilities!,
+          supportsImages: options.runAttachmentsSupported === true,
+        },
+      };
     }
     if (request.method === 'PATCH' && /\/api\/v1\/sessions\/[^/]+$/.test(request.path)) {
       const input = request.body as { model: string | null; reasoning_effort: string | null };

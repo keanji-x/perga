@@ -1,9 +1,7 @@
 import mobileStyles from './mobile-composer.module.css';
 import { memo, useMemo } from 'react';
-import { useTranslator } from '@astryxdesign/core/i18n';
-import { useLightbox } from '@astryxdesign/core/Lightbox';
 import { messageStatusLabel, type ConversationTurn } from '../../../../../core/domain/conversation.ts';
-import { useState } from '../../../ui/state/public.ts';
+import { AttachmentGallery } from '../../../ui/image-attachments/public.tsx';
 import { OutgoingMessage } from './outgoing-message.tsx';
 import { Reply, type ReplyImageFiles, type ReplyLinkRenderer } from './reply.tsx';
 import styles from './thread.module.css';
@@ -37,13 +35,11 @@ type MessageEntryProps = Readonly<{
 export const MessageEntry = memo(function MessageEntry({ id, entryKey, author, human, imported, text, deliveryError, messageStatus, attachments,
   opens, gapLabel, queued, edited, replacement, imageFiles, renderLink, mobile, atMs, timestampFormatter,
 }: MessageEntryProps) {
-  const t = useTranslator();
-  const [mounted, setMounted] = useState(false);
-  const media = useMemo(
-    () => (attachments ?? []).map((attachment) => ({ src: attachment.url, alt: '' })),
+  const galleryImages = useMemo(
+    () => (attachments ?? []).map((attachment) => ({ id: attachment.id, src: attachment.url })),
     [attachments],
   );
-  const lightbox = useLightbox({ media, hasZoom: true });
+  const showOutgoingText = text !== '' || galleryImages.length === 0;
   return (
     <div
       className={[opens ? styles.exchange : '', mobile && author !== 'agent' ? mobileStyles.userTurn : ''].filter(Boolean).join(' ') || undefined}
@@ -56,34 +52,13 @@ export const MessageEntry = memo(function MessageEntry({ id, entryKey, author, h
       )}
       {author !== 'agent' ? (
         <>
-          <OutgoingMessage speaker={author} text={text} mobile={mobile} queued={queued} edited={edited} replacement={replacement} />
+          {showOutgoingText && (
+            <OutgoingMessage speaker={author} text={text} mobile={mobile} queued={queued} edited={edited} replacement={replacement} />
+          )}
           {/* Attribution follows the bubble so a real source handoff preserves its position. */}
           {imported && <p className={styles.queuedNote}>Imported history · Unknown author</p>}
           {!imported && author !== 'you' && <p className={styles.queuedNote}>{author === 'human' ? human?.displayName : 'Unknown author'}</p>}
-          {/* `alt=""`: the transcript has no description of the image to offer; the trigger button carries the translated position label. */}
-          {media.length > 0 && (
-            <>
-              <ul className={styles.attachments} data-nc-turn-attachments="" {...(edited ? { 'data-nc-editing': '' } : {})}>
-                {(attachments ?? []).map((attachment, index) => (
-                  <li key={attachment.id} className={styles.attachment}>
-                    <button
-                      type="button"
-                      className={styles.attachmentButton}
-                      aria-haspopup="dialog"
-                      aria-label={t('@astryx.lightbox.imagePosition', { index: index + 1, total: media.length })}
-                      onClick={() => {
-                        setMounted(true);
-                        lightbox.open(index);
-                      }}
-                    >
-                      <img src={attachment.url} alt="" />
-                    </button>
-                  </li>
-                ))}
-              </ul>
-              {mounted && lightbox.element}
-            </>
-          )}
+          <AttachmentGallery images={galleryImages} editing={edited} />
           {queued && (
             /* `role="status"`: it appears in response to the reader's own press, answering "did that go anywhere?". */
             <p className={styles.queuedNote} data-nc-queued-note="" role="status">

@@ -13,18 +13,24 @@ internal sealed class SessionInputsRepository
     private readonly SqliteStoreContext _context;
     private readonly SessionRepository _sessionRepository;
     private readonly TrackReadRepository _trackReadRepository;
+    private readonly SessionAttachmentsRepository _attachmentsRepository;
 
-    internal SessionInputsRepository(SqliteStoreContext context, SessionRepository sessionRepository, TrackReadRepository trackReadRepository)
+    internal SessionInputsRepository(
+        SqliteStoreContext context,
+        SessionRepository sessionRepository,
+        TrackReadRepository trackReadRepository,
+        SessionAttachmentsRepository attachmentsRepository)
     {
         _context = context;
         _sessionRepository = sessionRepository;
         _trackReadRepository = trackReadRepository;
+        _attachmentsRepository = attachmentsRepository;
     }
 
     internal const string OwnerAuthor = "owner:installation";
 
     private const string InputSelect = """
-        SELECT i.id AS InputId, i.turn_id AS TurnId, i.session_id AS SessionId,
+        SELECT i.ordinal AS Ordinal, i.id AS InputId, i.turn_id AS TurnId, i.session_id AS SessionId,
                CASE WHEN i.delivery = 'queued' THEN 'accepted' ELSE i.delivery END AS DeliveryState, i.resolved_at_ms AS ResolvedAtMs, t.status AS TurnStatus,
                i.request_hash AS RequestHash, i.content AS Content, t.turn_index AS TurnIndex,
                i.kind IN ('queue', 'steer') AS IsQueuedFollowUp,
@@ -76,10 +82,13 @@ internal sealed class SessionInputsRepository
     {
         _context.EnsureInitialized();
         await using var conn = await _context.OpenReadConnectionAsync(ct).ConfigureAwait(false);
-        var rows = await conn.QueryAsync<InputRow>(new CommandDefinition(
+        var rows = (await conn.QueryAsync<InputRow>(new CommandDefinition(
             InputSelect + "\nWHERE s.track_id = @TrackId AND i.delivery = 'queued' AND t.status = 'queued' ORDER BY i.ordinal;",
-            new { TrackId = trackId }, cancellationToken: ct)).ConfigureAwait(false);
-        return GroupInputs(rows).Select(g => CombineInput(g)).ToArray();
+            new { TrackId = trackId }, cancellationToken: ct)).ConfigureAwait(false)).AsList();
+        if (rows.Count == 0) return [];
+        var byOrdinal = await _attachmentsRepository
+            .LoadByMessageOrdinalsAsync(conn, tx: null, rows.Select(static r => r.Ordinal).ToArray(), ct).ConfigureAwait(false);
+        return GroupInputs(rows).Select(g => CombineInput(g, byOrdinal)).ToArray();
     }
 
     private async Task<PersistedSessionInput?> FindInputAsync(string filter, object parameters, CancellationToken ct)
@@ -88,7 +97,10 @@ internal sealed class SessionInputsRepository
         await using var conn = await _context.OpenReadConnectionAsync(ct).ConfigureAwait(false);
         var row = await conn.QuerySingleOrDefaultAsync<InputRow>(
             new CommandDefinition(InputSelect + "\n" + filter, parameters, cancellationToken: ct)).ConfigureAwait(false);
-        return row?.ToInput();
+        if (row is null) return null;
+        var byOrdinal = await _attachmentsRepository
+            .LoadByMessageOrdinalsAsync(conn, tx: null, [row.Ordinal], ct).ConfigureAwait(false);
+        return row.ToInput(byOrdinal.GetValueOrDefault(row.Ordinal));
     }
 
     public async Task<StoredSessionCreation?> FindCreationAsync(SessionCreateIntent intent, CancellationToken ct)
@@ -116,7 +128,7 @@ internal sealed class SessionInputsRepository
         {
             if (!await ReserveInputSlotAsync(conn, tx, session, innerCt).ConfigureAwait(false))
                 throw Perga.Kernel.KernelException.Conflict("The session already has an active or unresolved turn.");
-            var input = await InsertInputAsync(conn, tx, session, request, innerCt).ConfigureAwait(false);
+            var input = await InsertInputAsync(conn, tx, session, request, _attachmentsRepository, promoteDraftLinks: null, innerCt).ConfigureAwait(false);
             await EventRepository.InsertEventInternalAsync(conn, tx, sessionEvent, innerCt).ConfigureAwait(false);
             return input;
         }, ct);
@@ -152,9 +164,14 @@ internal sealed class SessionInputsRepository
                     tx, cancellationToken: innerCt)).ConfigureAwait(false);
                 if (next.Id == message.Id) primaryItemId = itemId;
             }
+            var attachments = await _attachmentsRepository
+                .LoadOrderedUnionForOrdinalsAsync(conn, tx, messages.Select(static m => m.Ordinal).ToArray(), innerCt)
+                .ConfigureAwait(false);
+            var combinedPrompt = string.Join("\n\n", messages.Select(static m => m.Content).Where(static c => c.Length > 0));
             var input = new PersistedSessionInput(new(message.Id, turnId, session.Id, "accepted", "queued", null),
-                message.RequestHash, string.Join("\n\n", messages.Select(m => m.Content)), turnIndex, session.Epoch,
-                session.Provider, session.Model, session.ReasoningEffort, true, primaryItemId);
+                message.RequestHash, combinedPrompt, turnIndex, session.Epoch,
+                session.Provider, session.Model, session.ReasoningEffort, true, primaryItemId,
+                attachments.Count > 0 ? attachments : null);
             await EventRepository.InsertEventInternalAsync(conn, tx, sessionEvent, innerCt).ConfigureAwait(false);
             return input;
         }, ct);
@@ -166,24 +183,48 @@ internal sealed class SessionInputsRepository
             WHERE id = @Id AND status NOT IN ('queued', 'running', 'unknown');
             """, new { session.Id, session.UpdatedAtMs }, tx, cancellationToken: ct)).ConfigureAwait(false) == 1;
 
-    public Task<PersistedSessionInput?> CreateAsync(
+    public async Task<PersistedSessionInput?> CreateAsync(
         SessionCreateIntent intent, AgentSessionDto session, SessionInputRequest? firstInput,
-        EventEnvelopeDto sessionEvent, CancellationToken ct) =>
-        _context.Writer.EnqueueAsync(async (conn, tx, innerCt) =>
+        EventEnvelopeDto sessionEvent, CancellationToken ct)
+    {
+        var preparedLinks = await _attachmentsRepository
+            .PrepareStagedLinksForTrackAsync(session.TrackId, firstInput?.AttachmentIds, requireUnownedTrack: false, ct)
+            .ConfigureAwait(false);
+        var committed = false;
+        try
         {
-            await SessionRepository.UpsertSessionInternalAsync(conn, tx, session, innerCt).ConfigureAwait(false);
-            var input = firstInput is null ? null
-                : await InsertInputAsync(conn, tx, session, firstInput, innerCt).ConfigureAwait(false);
-            await conn.ExecuteAsync(new CommandDefinition(
-                """
-                INSERT INTO creation_receipts (author_id, operation, scope_id, request_key, request_hash,
-                                               resource_id, first_input_id, created_at_ms)
-                VALUES (@Author, 'session-create', @TrackId, @Key, @Hash, @Id, @InputId, @CreatedAtMs);
-                """, new { Author = intent.AuthorId, intent.TrackId, intent.Key, intent.Hash, session.Id,
-                    InputId = input?.Receipt.InputId, session.CreatedAtMs }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
-            await EventRepository.InsertEventInternalAsync(conn, tx, sessionEvent, innerCt).ConfigureAwait(false);
+            var input = await _context.Writer.EnqueueAsync(async (conn, tx, innerCt) =>
+            {
+                await SessionRepository.UpsertSessionInternalAsync(conn, tx, session, innerCt).ConfigureAwait(false);
+                var inserted = firstInput is null ? null
+                    : await InsertInputAsync(conn, tx, session, firstInput, _attachmentsRepository, preparedLinks, innerCt).ConfigureAwait(false);
+                await conn.ExecuteAsync(new CommandDefinition(
+                    """
+                    INSERT INTO creation_receipts (author_id, operation, scope_id, request_key, request_hash,
+                                                   resource_id, first_input_id, created_at_ms)
+                    VALUES (@Author, 'session-create', @TrackId, @Key, @Hash, @Id, @InputId, @CreatedAtMs);
+                    """, new { Author = intent.AuthorId, intent.TrackId, intent.Key, intent.Hash, session.Id,
+                        InputId = inserted?.Receipt.InputId, session.CreatedAtMs }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
+                await EventRepository.InsertEventInternalAsync(conn, tx, sessionEvent, innerCt).ConfigureAwait(false);
+                return inserted;
+            }, ct).ConfigureAwait(false);
+            committed = true;
+            _attachmentsRepository.CommitPromotedLinks(preparedLinks);
             return input;
-        }, ct);
+        }
+        catch
+        {
+            if (!committed)
+            {
+                _attachmentsRepository.CleanupRolledBackLinks(preparedLinks);
+            }
+            throw;
+        }
+        finally
+        {
+            _attachmentsRepository.UnpinPromotedLinks(preparedLinks);
+        }
+    }
 
     private static async Task<(string TurnId, int TurnIndex)> CreateInputTurnAsync(
         SqliteConnection conn, SqliteTransaction tx, AgentSessionDto session, CancellationToken ct)
@@ -201,12 +242,28 @@ internal sealed class SessionInputsRepository
     }
 
     internal static async Task<PersistedSessionInput> InsertInputAsync(
-        SqliteConnection conn, SqliteTransaction tx, AgentSessionDto session, SessionInputRequest request, CancellationToken ct)
+        SqliteConnection conn,
+        SqliteTransaction tx,
+        AgentSessionDto session,
+        SessionInputRequest request,
+        SessionAttachmentsRepository? attachmentsRepository,
+        IReadOnlyList<PromotedAttachmentLink>? promoteDraftLinks,
+        CancellationToken ct)
     {
         var message = new SessionMessage($"inp_{Guid.NewGuid():N}", session.Id, request.AuthorId, request.Key, request.Hash,
             null, null, request.Content, "queued", session.UpdatedAtMs, "input");
         var (turnId, turnIndex) = await CreateInputTurnAsync(conn, tx, session, ct).ConfigureAwait(false);
         var ordinal = await SessionMessageSql.InsertSessionMessageAsync(conn, tx, message with { TurnId = turnId }, ct).ConfigureAwait(false);
+
+        IReadOnlyList<StoredSessionAttachment>? attachments = null;
+        if (request.AttachmentIds is { Count: > 0 } attachmentIds && attachmentsRepository is not null)
+        {
+            attachments = promoteDraftLinks is not null
+                ? await attachmentsRepository.PromoteAndBindDraftSessionAttachmentsInternalAsync(
+                    conn, tx, session.TrackId, session.Id, ordinal, attachmentIds, promoteDraftLinks, session.UpdatedAtMs, ct).ConfigureAwait(false)
+                : await attachmentsRepository.BindSessionAttachmentsInternalAsync(
+                    conn, tx, session.Id, ordinal, attachmentIds, session.UpdatedAtMs, ct).ConfigureAwait(false);
+        }
 
         var userItemId = await conn.ExecuteScalarAsync<long>(new CommandDefinition("""
             INSERT INTO session_items (session_id, turn_id, kind, payload_json, created_at_ms, message_ordinal)
@@ -215,7 +272,8 @@ internal sealed class SessionInputsRepository
             tx, cancellationToken: ct)).ConfigureAwait(false);
 
         return new PersistedSessionInput(new(message.Id, turnId, session.Id, "accepted", "queued", null),
-            message.RequestHash, message.Content, turnIndex, session.Epoch, session.Provider, session.Model, session.ReasoningEffort, false, userItemId);
+            message.RequestHash, message.Content, turnIndex, session.Epoch, session.Provider, session.Model, session.ReasoningEffort, false, userItemId,
+            attachments is { Count: > 0 } ? attachments : null);
     }
 
     public Task<bool> ClaimAsync(
@@ -323,18 +381,25 @@ internal sealed class SessionInputsRepository
                     .ConfigureAwait(false);
             }
 
-            var queued = await conn.QueryAsync<InputRow>(new CommandDefinition(
+            var queued = (await conn.QueryAsync<InputRow>(new CommandDefinition(
                 InputSelect + "\nWHERE i.delivery = 'queued' AND t.status = 'queued' AND s.archived_at_ms IS NULL AND NOT EXISTS (SELECT 1 FROM tasks tk WHERE tk.session_id = s.id AND (tk.kind <> 'flow_wake' OR tk.block_id <> 'flow:' || tk.task_key OR json_type(tk.context_json, '$.flowNode') IS NOT 'true') AND LOWER(tk.status) IN ('pending', 'running', 'verifying')) ORDER BY i.ordinal;",
-                transaction: tx, cancellationToken: innerCt)).ConfigureAwait(false);
-            return GroupInputs(queued).Select(g => (g.First().TrackId, CombineInput(g))).ToArray();
+                transaction: tx, cancellationToken: innerCt)).ConfigureAwait(false)).AsList();
+            if (queued.Count == 0) return [];
+            var byOrdinal = await _attachmentsRepository
+                .LoadByMessageOrdinalsAsync(conn, tx, queued.Select(static r => r.Ordinal).ToArray(), innerCt).ConfigureAwait(false);
+            return GroupInputs(queued).Select(g => (g.First().TrackId, CombineInput(g, byOrdinal))).ToArray();
         }, ct);
 
     private static IEnumerable<IGrouping<string, InputRow>> GroupInputs(IEnumerable<InputRow> rows) => rows.GroupBy(r => r.TurnId);
 
-    private static PersistedSessionInput CombineInput(IEnumerable<InputRow> rows)
+    private static PersistedSessionInput CombineInput(
+        IEnumerable<InputRow> rows,
+        IReadOnlyDictionary<long, IReadOnlyList<StoredSessionAttachment>> byOrdinal)
     {
         var batch = rows.ToArray();
-        return batch[0].ToInput() with { Content = string.Join("\n\n", batch.Select(r => r.Content)) };
+        var attachments = SessionAttachmentsRepository.CombineOrderedUnique(batch.Select(static r => r.Ordinal), byOrdinal);
+        var content = string.Join("\n\n", batch.Select(static r => r.Content).Where(static c => c.Length > 0));
+        return batch[0].ToInput(attachments) with { Content = content };
     }
 
     private sealed record QueuedInputRow(long Ordinal, string Id, string Content);
@@ -348,6 +413,7 @@ internal sealed class SessionInputsRepository
 
     private sealed class InputRow
     {
+        public long Ordinal { get; init; }
         public string InputId { get; init; } = "";
         public string TurnId { get; init; } = "";
         public string SessionId { get; init; } = "";
@@ -367,8 +433,9 @@ internal sealed class SessionInputsRepository
         public string? Model { get; init; }
         public string? ReasoningEffort { get; init; }
 
-        public PersistedSessionInput ToInput() => new(
+        public PersistedSessionInput ToInput(IReadOnlyList<StoredSessionAttachment>? attachments = null) => new(
             new(InputId, TurnId, SessionId, DeliveryState, TurnStatus, ResolvedAtMs),
-            RequestHash, Content, TurnIndex, Epoch, Provider, Model, ReasoningEffort, IsQueuedFollowUp, UserItemId);
+            RequestHash, Content, TurnIndex, Epoch, Provider, Model, ReasoningEffort, IsQueuedFollowUp, UserItemId,
+            attachments is { Count: > 0 } ? attachments : null);
     }
 }

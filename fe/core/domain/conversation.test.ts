@@ -167,7 +167,7 @@ describe('track conversations', () => {
     }).success).toBe(false);
     expect(operation.method).toBe('POST');
     expect(operation.path).toBe('/api/v1/sessions/card%201/messages');
-    expect(operation.body).toStrictEqual({ content: 'hello', mode: 'default' });
+    expect(operation.body).toStrictEqual({ content: 'hello', mode: 'default', attachmentIds: ['image.png'] });
     expect(operation.headers).toEqual({ 'Idempotency-Key': 'key-a' });
     expect(sendPlannerInputOperation('card 1', 'hello', [], 'key-a').body)
       .toStrictEqual({ content: 'hello', mode: 'default' });

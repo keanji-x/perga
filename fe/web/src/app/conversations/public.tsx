@@ -46,6 +46,14 @@ export function useNewConversationText(scopeId: string | null) {
   return useSnapshot(useCallback((state: ConversationSnapshot) => scopeId === null ? '' : state.newComposers[scopeId] ?? '', [scopeId]), scopeId !== null);
 }
 
+export function useNewConversationAttachments(scopeId: string | null) {
+  return useSnapshot(useCallback((state: ConversationSnapshot) => scopeId === null ? EMPTY_COMPOSER.attachments : state.newComposerAttachments[scopeId] ?? EMPTY_COMPOSER.attachments, [scopeId]), scopeId !== null);
+}
+
+export function useNewConversationUpload(scopeId: string | null) {
+  return useSnapshot(useCallback((state: ConversationSnapshot) => scopeId === null ? NO_UPLOAD : state.newComposerUploads[scopeId] ?? NO_UPLOAD, [scopeId]), scopeId !== null);
+}
+
 export function useConversationDraftSlot(scopeId: string | null) {
   return useSnapshot(useCallback((state: ConversationSnapshot) => scopeId === null ? null : state.drafts[scopeId] ?? null, [scopeId]), scopeId !== null);
 }

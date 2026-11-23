@@ -6,6 +6,7 @@ import type { PlannerQueueWriteOutcome } from '../../../../../core/domain/conver
 import { queueEntryIsAccounted, type QueueDisplayAccounting, type PendingQueueSend } from '../../../../../core/domain/conversation-outbox.ts';
 import { OutgoingMessage } from './outgoing-message.tsx';
 import { MessageActions } from './message-actions.tsx';
+import { AttachmentGallery } from '../../../ui/image-attachments/public.tsx';
 import { useCompactViewport } from '../../../ui/viewport/public.ts';
 import { useState } from '../../../ui/state/public.ts';
 import { SizeMotion } from '../../../ui/motion/size.tsx';
@@ -131,7 +132,17 @@ export function PendingQueue({ entries, pendingInputCount, queueDisplayAccountin
               <SizeMotion motionKey={isEditing}><div className={styles.rowSpace}><div className={styles.row} data-nc-pending-entry={alive || isEditing ? entry.entry_id : undefined}>
                 <div className={styles.content}>
                   <div className={styles.line}>
-                    <div data-nc-pending-entry-text=""><OutgoingMessage speaker="unknown" text={current.text} mobile={mobile} edited={isEditing} /></div>
+                    <div data-nc-pending-entry-text="">
+                      {(current.text !== '' || (current.attachments?.length ?? 0) === 0) && (
+                        <OutgoingMessage speaker="unknown" text={current.text} mobile={mobile} edited={isEditing} />
+                      )}
+                      {current.attachments !== undefined && current.attachments.length > 0 && (
+                        <AttachmentGallery
+                          images={current.attachments.map((attachment) => ({ id: attachment.id, src: attachment.url }))}
+                          compact
+                        />
+                      )}
+                    </div>
                     <div className={styles.actions}>
                       <MessageActions label="排队消息操作" actions={[
                         { id: 'undo', kind: 'undo', label: '撤回', tooltip: '撤回这条排队消息。', disabled: blocked || isEditing || !canWithdraw,
@@ -151,7 +162,17 @@ export function PendingQueue({ entries, pendingInputCount, queueDisplayAccountin
             </CollapsePresence>;
           })}
           {sending.map(message => <div key={message.id} className={styles.sending} data-nc-pending-send={message.id}>
-            <div><OutgoingMessage speaker={message.author === 'you' ? 'you' : message.author === 'human' ? 'human' : 'unknown'} text={message.text} mobile={mobile} /></div>
+            <div>
+              {(message.text !== '' || (message.attachments?.length ?? 0) === 0) && (
+                <OutgoingMessage speaker={message.author === 'you' ? 'you' : message.author === 'human' ? 'human' : 'unknown'} text={message.text} mobile={mobile} />
+              )}
+              {message.attachments !== undefined && message.attachments.length > 0 && (
+                <AttachmentGallery
+                  images={message.attachments.map((attachment) => ({ id: attachment.id, src: attachment.url }))}
+                  compact
+                />
+              )}
+            </div>
             <span className={styles.delivery} role="status">{message.delivery === 'failed' ? '发送未完成' : '正在发送…'}</span>
           </div>)}
           {pendingInputCount > 0 && <p className={styles.notice} role="status">

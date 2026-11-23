@@ -275,10 +275,14 @@ public sealed partial class TrackActor
         _runtimes.TryGetOpen(session.Id, out var handle);
         if (!string.Equals(handle?.LaunchSpec.Provider, session.Provider, StringComparison.OrdinalIgnoreCase)) handle = null;
         var configuration = handle?.Agent.WorkerConfiguration;
+        var supportsImages = handle is not null
+            ? handle.Agent.SupportsImages
+            : EffectiveAgentRuntime.SupportsImages(session.Provider) != false;
         return new(configuration?.Models ?? [], configuration?.DefaultModel, configuration?.DefaultReasoningEffort,
             handle?.Agent.AvailablePermissionModes ?? [], handle?.Agent.SupportsNativeSteer == true,
             handle?.Agent.SupportsSessionResume ?? EffectiveAgentRuntime.CanResumeSession(session.Provider),
-            handle?.Agent.SupportsNativeCompact == true);
+            handle?.Agent.SupportsNativeCompact == true,
+            supportsImages);
     }
 
     private IReadOnlyList<PendingInteractionDto> ReadInteractionsCore(AgentSessionDto session, InteropPrincipal principal)

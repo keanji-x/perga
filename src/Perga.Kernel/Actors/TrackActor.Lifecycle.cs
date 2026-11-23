@@ -266,6 +266,18 @@ public sealed partial class TrackActor
             }
         }
 
+        if (teardownInfo.Env is { IsLocal: false } remoteEnv)
+        {
+            try
+            {
+                await remoteEnv.Files.CleanupTrackAttachmentsAsync(TrackId, CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Trace.TraceWarning("Could not clean up remote attachments for deleted Track {0}: {1}", TrackId, ex.Message);
+            }
+        }
+
         var delNow = NowMs();
         var delEvt = new EventEnvelopeDto(
             EventId: null,

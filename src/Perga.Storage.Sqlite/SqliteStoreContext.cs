@@ -15,6 +15,8 @@ internal sealed class SqliteStoreContext : IAsyncDisposable
 
     private readonly ColdBlobStore _coldBlobStore;
 
+    private readonly AttachmentBlobStore _attachmentBlobStore;
+
     private readonly SqliteJsonUpcaster _upcaster;
 
     private readonly TimeProvider _timeProvider;
@@ -44,6 +46,7 @@ internal sealed class SqliteStoreContext : IAsyncDisposable
         _migrator = migrator ?? new SqliteMigrator(timeProvider: _timeProvider);
         _writer = new SqliteSingleWriter(options);
         _coldBlobStore = new ColdBlobStore(options, _upcaster);
+        _attachmentBlobStore = new AttachmentBlobStore(options);
 
         var readCsb = new SqliteConnectionStringBuilder
         {
@@ -179,6 +182,8 @@ internal sealed class SqliteStoreContext : IAsyncDisposable
     internal SqliteSingleWriter Writer => _writer;
 
     internal ColdBlobStore ColdBlobs => _coldBlobStore;
+
+    internal AttachmentBlobStore AttachmentBlobs => _attachmentBlobStore;
 
     internal TimeProvider TimeProvider => _timeProvider;
 }

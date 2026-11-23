@@ -1,9 +1,8 @@
 import { z } from 'zod';
-import { agentSessionDtoSchema } from '../api/perga-v1.js';
+import { agentSessionDtoSchema, sessionMessageReceiptSchema, uploadAttachmentResponseDtoSchema } from '../api/perga-v1.js';
+import type { UploadAttachmentResponse } from '../api/generated/wire.js';
 
-import { sessionMessageReceiptSchema } from '../api/perga-v1.js';
-
-import type { ApiFailure, ApiOperation } from '../api/types.js';
+import type { ApiAbortSignal, ApiFailure, ApiOperation } from '../api/types.js';
 import { classifyFailure, failureReason, type FailureTable, type WriteFailure } from './failure-class.js';
 import type { PendingQueueEntry } from './conversation.js';
 
@@ -42,7 +41,7 @@ export type SentPlannerInput = Readonly<{
 export function sendPlannerInputOperation(
   cardId: string,
   text: string,
-  _attachments: readonly string[],
+  attachments: readonly string[],
   idempotencyKey: string,
   steerIfRunning = false,
   queueIfBusy = false,
@@ -52,13 +51,65 @@ export function sendPlannerInputOperation(
     method: 'POST',
     path: `/api/v1/sessions/${encodeURIComponent(cardId)}/messages`,
     timeoutMs: 10 * 60_000,
-    body: { content: text, mode: steerIfRunning ? 'steer' : queueIfBusy ? 'queue' : 'default',
-      ...(expectedEpoch === undefined ? {} : { expectedEpoch }) },
+    body: {
+      content: text,
+      mode: steerIfRunning ? 'steer' : queueIfBusy ? 'queue' : 'default',
+      ...(attachments.length > 0 ? { attachmentIds: [...attachments] } : {}),
+      ...(expectedEpoch === undefined ? {} : { expectedEpoch }),
+    },
     headers: { 'Idempotency-Key': idempotencyKey },
     responseSchema: sessionMessageReceiptSchema.refine(receipt => receipt.sessionId === cardId).transform(receipt => ({
       card_id: receipt.sessionId, worker_session_id: receipt.sessionId, entry_id: receipt.messageId, delivery: receipt.delivery,
       ...(receipt.turnId == null ? {} : { turnId: receipt.turnId }), queued: receipt.delivery === 'queued',
     })),
+  };
+}
+
+function binaryAttachmentHeaders(contentType: string, filename?: string): Readonly<Record<string, string>> {
+  const trimmedFilename = filename?.trim();
+  return {
+    'content-type': contentType !== '' ? contentType : 'application/octet-stream',
+    ...(trimmedFilename !== undefined && trimmedFilename !== ''
+      ? { 'X-Attachment-Filename': encodeURIComponent(trimmedFilename) }
+      : {}),
+  };
+}
+
+/** Upload raw image bytes scoped to an existing session (`POST /api/v1/sessions/{sessionId}/attachments`). */
+export function uploadSessionAttachmentOperation(
+  sessionId: string,
+  bytes: Uint8Array,
+  contentType: string,
+  options?: Readonly<{ filename?: string; signal?: ApiAbortSignal }>,
+): ApiOperation<UploadAttachmentResponse> {
+  return {
+    method: 'POST',
+    path: `/api/v1/sessions/${encodeURIComponent(sessionId)}/attachments`,
+    timeoutMs: 120_000,
+    body: bytes,
+    headers: binaryAttachmentHeaders(contentType, options?.filename),
+    ...(options?.signal === undefined ? {} : { signal: options.signal }),
+    responseSchema: uploadAttachmentResponseDtoSchema,
+  };
+}
+
+/** Upload raw image bytes before session/track creation (`POST /api/v1/attachments`, optional `?trackId=`). */
+export function uploadStagedAttachmentOperation(
+  bytes: Uint8Array,
+  contentType: string,
+  options?: Readonly<{ trackId?: string; filename?: string; signal?: ApiAbortSignal }>,
+): ApiOperation<UploadAttachmentResponse> {
+  const query = options?.trackId !== undefined && options.trackId !== ''
+    ? `?trackId=${encodeURIComponent(options.trackId)}`
+    : '';
+  return {
+    method: 'POST',
+    path: `/api/v1/attachments${query}`,
+    timeoutMs: 120_000,
+    body: bytes,
+    headers: binaryAttachmentHeaders(contentType, options?.filename),
+    ...(options?.signal === undefined ? {} : { signal: options.signal }),
+    responseSchema: uploadAttachmentResponseDtoSchema,
   };
 }
 

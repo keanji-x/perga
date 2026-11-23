@@ -651,6 +651,17 @@
                   "executionTargetId": {
                     "type": "string",
                     "description": "Execution target ID."
+                  },
+                  "attachmentIds": {
+                    "type": [
+                      "array",
+                      "null"
+                    ],
+                    "maxItems": 8,
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Unowned staged image attachment IDs to adopt onto the new Track's lead session."
                   }
                 }
               }
@@ -1386,6 +1397,275 @@
             }
           }
         ]
+      }
+    },
+    "/api/v1/attachments": {
+      "post": {
+        "summary": "Upload a pre-creation staged image attachment (PNG, JPEG, GIF, or WebP, max 10 MiB).",
+        "parameters": [
+          {
+            "name": "trackId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Attachment-Filename",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "image/png": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "image/jpeg": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "image/gif": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "image/webp": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Uploaded staged image attachment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadAttachmentResponseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_argument or attachment_quota_exceeded"
+          },
+          "413": {
+            "description": "payload_too_large"
+          }
+        }
+      }
+    },
+    "/api/v1/attachments/{attachmentId}": {
+      "parameters": [
+        {
+          "name": "attachmentId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "summary": "Download an unowned staged image attachment.",
+        "responses": {
+          "200": {
+            "description": "Raw image bytes with nosniff and sandbox CSP headers",
+            "content": {
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/jpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/gif": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/webp": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Not Modified"
+          },
+          "404": {
+            "description": "Not Found"
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionId}/attachments": {
+      "parameters": [
+        {
+          "name": "sessionId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "summary": "Upload a session-scoped staged image attachment (PNG, JPEG, GIF, or WebP, max 10 MiB).",
+        "parameters": [
+          {
+            "name": "X-Attachment-Filename",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "image/png": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "image/jpeg": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "image/gif": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "image/webp": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Uploaded session image attachment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadAttachmentResponseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "invalid_argument or attachment_quota_exceeded"
+          },
+          "404": {
+            "description": "Session not found"
+          },
+          "413": {
+            "description": "payload_too_large"
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionId}/attachments/{attachmentId}": {
+      "parameters": [
+        {
+          "name": "sessionId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "attachmentId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "summary": "Download a session-owned image attachment.",
+        "responses": {
+          "200": {
+            "description": "Raw image bytes with nosniff and sandbox CSP headers",
+            "content": {
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/jpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/gif": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/webp": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Not Modified"
+          },
+          "404": {
+            "description": "Not Found"
+          }
+        }
       }
     },
     "/api/v1/sessions/{sessionId}/messages": {
@@ -2650,6 +2930,13 @@
             "items": {
               "$ref": "#/components/schemas/PermissionModeOptionDto"
             }
+          },
+          "supportsImages": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Tri-state image input capability (true, false, or null when handshake-determined)."
           }
         }
       },
@@ -4241,6 +4528,64 @@
           }
         }
       },
+      "SessionAttachmentDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "contentType",
+          "size",
+          "url"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "contentType": {
+            "type": "string",
+            "enum": [
+              "image/png",
+              "image/jpeg",
+              "image/gif",
+              "image/webp"
+            ]
+          },
+          "size": {
+            "type": "integer"
+          },
+          "url": {
+            "type": "string"
+          }
+        }
+      },
+      "UploadAttachmentResponseDto": {
+        "type": "object",
+        "required": [
+          "attachmentId",
+          "contentType",
+          "size",
+          "url"
+        ],
+        "properties": {
+          "attachmentId": {
+            "type": "string"
+          },
+          "contentType": {
+            "type": "string",
+            "enum": [
+              "image/png",
+              "image/jpeg",
+              "image/gif",
+              "image/webp"
+            ]
+          },
+          "size": {
+            "type": "integer"
+          },
+          "url": {
+            "type": "string"
+          }
+        }
+      },
       "SessionItemDto": {
         "type": "object",
         "required": [
@@ -4284,6 +4629,15 @@
           },
           "createdAtMs": {
             "type": "integer"
+          },
+          "attachments": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/SessionAttachmentDto"
+            }
           }
         }
       },
@@ -4314,6 +4668,15 @@
               "processing",
               "unconfirmed"
             ]
+          },
+          "attachments": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/SessionAttachmentDto"
+            }
           }
         }
       },
@@ -5507,6 +5870,16 @@
               "turn_end",
               null
             ]
+          },
+          "attachmentIds": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "maxItems": 8,
+            "items": {
+              "type": "string"
+            }
           }
         },
         "additionalProperties": false
@@ -5599,6 +5972,16 @@
               "string",
               "null"
             ]
+          },
+          "attachmentIds": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "maxItems": 8,
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
@@ -5813,6 +6196,9 @@
           },
           "supportsCompact": {
             "type": "boolean"
+          },
+          "supportsImages": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -5820,7 +6206,8 @@
           "permissionModes",
           "supportsNativeSteer",
           "supportsSessionResume",
-          "supportsCompact"
+          "supportsCompact",
+          "supportsImages"
         ]
       },
       "AskQuestionDto": {
@@ -6141,6 +6528,9 @@
           },
           "reclaimedBlobs": {
             "type": "integer"
+          },
+          "reclaimedAttachments": {
+            "type": "integer"
           }
         },
         "required": [
@@ -6149,7 +6539,8 @@
           "compactedItems",
           "reclaimedPages",
           "compactedTasks",
-          "reclaimedBlobs"
+          "reclaimedBlobs",
+          "reclaimedAttachments"
         ]
       },
       "FlowDependencyProjectionDto": {

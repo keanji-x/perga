@@ -51,7 +51,11 @@ export type Conversation = Readonly<{
   turns?: number;
 }>;
 
-export type SubmittedConversationInput = Readonly<{ text: string; atMs: number }>;
+export type SubmittedConversationInput = Readonly<{
+  text: string;
+  atMs: number;
+  attachments?: readonly PlannerAttachment[];
+}>;
 
 export type CreatedConversation = Readonly<{
   conversation: Conversation;
@@ -198,6 +202,7 @@ export type PendingQueueEntry = Readonly<{
   rev: number;
   queued_at_ms: number;
   state?: 'waiting' | 'steering' | 'sending' | 'processing' | 'unconfirmed';
+  attachments?: readonly PlannerAttachment[];
 }>;
 
 /**
@@ -277,7 +282,7 @@ export function listSessionsOperation(trackId: string, includeArchived = false, 
 }
 
 export function createTrackConversationOperation(
-  trackId: string, text: string, idempotencyKey: string, provider: AgentProvider, selection: ModelSelection, side?: SideConversation, permissionMode?: string | null,
+  trackId: string, text: string, idempotencyKey: string, provider: AgentProvider, selection: ModelSelection, side?: SideConversation, permissionMode?: string | null, attachmentIds?: readonly string[],
 ): ApiOperation<CreatedConversation & Readonly<{ session: AgentSessionDto }>> {
   const derivedTitle = conversationNameFrom(text);
   return {
@@ -292,6 +297,7 @@ export function createTrackConversationOperation(
       ...(selection.model === null ? {} : { model: selection.model }),
       ...(selection.reasoning_effort === null ? {} : { reasoningEffort: selection.reasoning_effort }),
       ...(permissionMode == null ? {} : { permissionMode }),
+      ...(attachmentIds !== undefined && attachmentIds.length > 0 ? { attachmentIds: [...attachmentIds] } : {}),
     },
     responseSchema: sessionCreationReceiptSchema.refine(result => result.firstInput != null && result.session.trackId === trackId)
         .transform((result) => ({

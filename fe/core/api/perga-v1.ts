@@ -92,8 +92,28 @@ export const providerStatusDtoSchema = z.object({
   models: z.array(z.string()).nullish().transform((v) => v ?? []),
   modelCatalog: z.array(providerModelInfoDtoSchema).nullish().transform((v) => v ?? []),
   permissionModes: z.array(permissionModeOptionDtoSchema).nullish().transform((v) => v ?? []),
+  supportsImages: z.boolean().nullish(),
 });
 export type ProviderStatusDto = z.infer<typeof providerStatusDtoSchema>;
+
+export const attachmentContentTypeSchema = z.enum(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+export type AttachmentContentType = z.infer<typeof attachmentContentTypeSchema>;
+
+export const sessionAttachmentDtoSchema = z.object({
+  id: z.string(),
+  contentType: attachmentContentTypeSchema,
+  size: z.number().int().nonnegative(),
+  url: z.string(),
+});
+export type SessionAttachmentDto = z.infer<typeof sessionAttachmentDtoSchema>;
+
+export const uploadAttachmentResponseDtoSchema = z.object({
+  attachmentId: z.string(),
+  contentType: attachmentContentTypeSchema,
+  size: z.number().int().nonnegative(),
+  url: z.string(),
+});
+export type UploadAttachmentResponseDto = z.infer<typeof uploadAttachmentResponseDtoSchema>;
 
 export const sectionRuleDtoSchema = z.object({
   h1: z.string(),
@@ -406,6 +426,7 @@ export const sessionItemDtoSchema = z.object({
   payload: z.unknown(),
   createdAtMs: z.number(),
   messageStatus: z.enum(['queued', 'sending', 'processing', 'completed', 'failed', 'unconfirmed']).nullish(),
+  attachments: z.array(sessionAttachmentDtoSchema).nullish(),
 });
 export type SessionItemDto = z.infer<typeof sessionItemDtoSchema>;
 
@@ -427,6 +448,7 @@ export const createSessionRequestSchema = z.object({
   title: z.string().nullish(), provider: z.string().nullish(), model: z.string().nullish(), reasoningEffort: z.string().nullish(),
   permissionMode: z.string().nullish(), systemPrompt: z.string().nullish(), prompt: z.string().nullish(),
   notifyParent: z.enum(['none', 'turn_end']).nullish(),
+  attachmentIds: z.array(z.string()).max(8).nullish(),
 }).strict();
 export const updateSessionRequestSchema = z.object({
   expectedConfigVersion: z.number().int().nullish(), title: z.string().nullish(), archived: z.boolean().nullish(),
@@ -435,6 +457,7 @@ export const updateSessionRequestSchema = z.object({
 export const sendSessionMessageRequestSchema = z.object({
   content: z.string().nullish(), mode: z.enum(['default', 'steer', 'queue']).optional(), turnId: z.string().nullish(),
   messageId: z.string().nullish(), requestKey: z.string().nullish(), expectedEpoch: z.number().int().nullish(),
+  attachmentIds: z.array(z.string()).max(8).nullish(),
 }).strict();
 export const sessionControlRequestSchema = z.object({
   action: z.enum(['stop', 'reconnect', 'reset_context', 'compact']), turnId: z.string().nullish(),
@@ -492,6 +515,7 @@ export const sessionCapabilitiesSchema = z.object({
   models: z.array(z.object({ id: z.string(), name: z.string(), reasoningEfforts: z.array(z.string()), defaultReasoningEffort: z.string().nullish() })),
   defaultModel: z.string().nullish(), defaultReasoningEffort: z.string().nullish(), permissionModes: z.array(permissionModeOptionDtoSchema),
   supportsNativeSteer: z.boolean(), supportsSessionResume: z.boolean(), supportsCompact: z.boolean(),
+  supportsImages: z.boolean().optional(),
 });
 export type SessionCapabilities = z.infer<typeof sessionCapabilitiesSchema>;
 export const pendingInteractionSchema = z.object({
@@ -512,7 +536,8 @@ export const sessionItemsPageDtoSchema = z.object({
   unknownDetail: z.object({ reason: z.string(), detail: z.string(), canReconnect: z.boolean(),
     canResetContext: z.boolean(), recovering: z.boolean(), lastError: z.string().nullable() }).nullable(),
   queuedMessages: z.array(z.object({ id: z.string(), text: z.string(), queuedAtMs: z.number(),
-    state: z.enum(['waiting', 'steering', 'sending', 'processing', 'unconfirmed']) })).optional(),
+    state: z.enum(['waiting', 'steering', 'sending', 'processing', 'unconfirmed']),
+    attachments: z.array(sessionAttachmentDtoSchema).nullish() })).optional(),
   canSteer: z.boolean().optional(),
   queueHandoffIds: z.array(z.string()).optional(),
   session: agentSessionDtoSchema,
@@ -569,6 +594,7 @@ export type MailDto = z.infer<typeof mailDtoSchema>;
 export const dbMaintenanceStatsDtoSchema = z.object({
   prunedEvents: z.number().int(), thinnedRevisions: z.number().int(), compactedItems: z.number().int(),
   reclaimedPages: z.number().int(), compactedTasks: z.number().int(), reclaimedBlobs: z.number().int(),
+  reclaimedAttachments: z.number().int().optional(),
 });
 export type DbMaintenanceStatsDto = z.infer<typeof dbMaintenanceStatsDtoSchema>;
 

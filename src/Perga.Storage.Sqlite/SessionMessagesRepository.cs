@@ -10,15 +10,20 @@ internal sealed class SessionMessagesRepository : ISessionMessageStore
 {
     private readonly SqliteStoreContext _context;
     private readonly SessionRepository _sessionRepository;
+    private readonly SessionAttachmentsRepository _attachmentsRepository;
 
-    internal SessionMessagesRepository(SqliteStoreContext context, SessionRepository sessionRepository)
+    internal SessionMessagesRepository(
+        SqliteStoreContext context,
+        SessionRepository sessionRepository,
+        SessionAttachmentsRepository attachmentsRepository)
     {
         _context = context;
         _sessionRepository = sessionRepository;
+        _attachmentsRepository = attachmentsRepository;
     }
 
     private const string MessageSelect = """
-        SELECT id AS Id, session_id AS SessionId, author_id AS AuthorId,
+        SELECT ordinal AS Ordinal, id AS Id, session_id AS SessionId, author_id AS AuthorId,
                request_key AS RequestKey, request_hash AS RequestHash, target_turn_id AS TargetTurnId,
                turn_id AS TurnId, content AS Content, delivery AS Delivery, created_at_ms AS CreatedAtMs,
                kind AS Kind, delivered_turn_id AS DeliveredTurnId
@@ -44,13 +49,30 @@ internal sealed class SessionMessagesRepository : ISessionMessageStore
     {
         _context.EnsureInitialized();
         await using var conn = await _context.OpenReadConnectionAsync(ct).ConfigureAwait(false);
-        return await conn.QuerySingleOrDefaultAsync<SessionMessage>(new CommandDefinition(
+        var row = await conn.QuerySingleOrDefaultAsync<SessionMessageRow>(new CommandDefinition(
             MessageSelect + "\n" + clause, parameters, cancellationToken: ct)).ConfigureAwait(false);
+        if (row is null) return null;
+        var attachments = await _attachmentsRepository
+            .LoadByMessageOrdinalsAsync(conn, tx: null, [row.Ordinal], ct).ConfigureAwait(false);
+        return row.ToMessage(attachments.GetValueOrDefault(row.Ordinal));
     }
 
-    Task ISessionMessageStore.InsertAsync(SessionMessage message, CancellationToken ct) =>
+    Task<SessionMessage> ISessionMessageStore.InsertAsync(SessionMessage message, CancellationToken ct) =>
         _context.Writer.EnqueueAsync(async (conn, tx, innerCt) =>
-            { await SessionMessageSql.InsertSessionMessageAsync(conn, tx, message, innerCt).ConfigureAwait(false); }, ct);
+        {
+            var ordinal = await SessionMessageSql.InsertSessionMessageAsync(conn, tx, message, innerCt).ConfigureAwait(false);
+            if (message.AttachmentIds is { Count: > 0 } attachmentIds)
+            {
+                var bound = await _attachmentsRepository.BindSessionAttachmentsInternalAsync(
+                    conn, tx, message.SessionId, ordinal, attachmentIds, message.CreatedAtMs, innerCt).ConfigureAwait(false);
+                if (bound.Count > 0)
+                {
+                    return message with { Attachments = bound };
+                }
+            }
+
+            return message;
+        }, ct);
 
     Task<bool> ISessionMessageStore.TransitionAsync(SessionMessage message, string expected, CancellationToken ct) =>
         _context.Writer.EnqueueAsync(async (conn, tx, innerCt) =>
@@ -127,12 +149,20 @@ internal sealed class SessionMessagesRepository : ISessionMessageStore
     async Task<IReadOnlyList<SessionMessage>> ISessionMessageStore.ListQueueAsync(string sessionId, CancellationToken ct)
     {
         await using var conn = await _context.OpenReadConnectionAsync(ct).ConfigureAwait(false);
-        var rows = await conn.QueryAsync<SessionMessage>(new CommandDefinition(MessageSelect + "\n" + """
+        var rows = (await conn.QueryAsync<SessionMessageRow>(new CommandDefinition(MessageSelect + "\n" + """
             WHERE session_id = @SessionId AND turn_id IS NULL
               AND kind IN ('queue', 'steer') AND delivery IN ('queued', 'dispatching', 'unknown')
             ORDER BY ordinal;
-            """, new { SessionId = sessionId }, cancellationToken: ct)).ConfigureAwait(false);
-        return rows.AsList();
+            """, new { SessionId = sessionId }, cancellationToken: ct)).ConfigureAwait(false)).AsList();
+        if (rows.Count == 0)
+        {
+            return [];
+        }
+
+        var attachmentsByOrdinal = await _attachmentsRepository
+            .LoadByMessageOrdinalsAsync(conn, tx: null, rows.Select(static r => r.Ordinal).ToArray(), ct)
+            .ConfigureAwait(false);
+        return rows.Select(r => r.ToMessage(attachmentsByOrdinal.GetValueOrDefault(r.Ordinal))).ToArray();
     }
 
     async Task<IReadOnlyList<string>> ISessionMessageStore.ListHandoffsAsync(string sessionId, CancellationToken ct)
@@ -155,5 +185,28 @@ internal sealed class SessionMessagesRepository : ISessionMessageStore
               AND NOT EXISTS (SELECT 1 FROM tasks tk WHERE tk.session_id = s.id AND (tk.kind <> 'flow_wake' OR tk.block_id <> 'flow:' || tk.task_key OR json_type(tk.context_json, '$.flowNode') IS NOT 'true') AND LOWER(tk.status) IN ('pending', 'running', 'verifying'));
             """, cancellationToken: ct)).ConfigureAwait(false);
         return rows.AsList();
+    }
+
+    private sealed class SessionMessageRow
+    {
+        public long Ordinal { get; init; }
+        public string Id { get; init; } = string.Empty;
+        public string SessionId { get; init; } = string.Empty;
+        public string AuthorId { get; init; } = string.Empty;
+        public string RequestKey { get; init; } = string.Empty;
+        public string RequestHash { get; init; } = string.Empty;
+        public string? TargetTurnId { get; init; }
+        public string? TurnId { get; init; }
+        public string Content { get; init; } = string.Empty;
+        public string Delivery { get; init; } = string.Empty;
+        public long CreatedAtMs { get; init; }
+        public string Kind { get; init; } = string.Empty;
+        public string? DeliveredTurnId { get; init; }
+
+        public SessionMessage ToMessage(IReadOnlyList<StoredSessionAttachment>? attachments) =>
+            new(Id, SessionId, AuthorId, RequestKey, RequestHash, TargetTurnId, TurnId, Content, Delivery, CreatedAtMs, Kind, DeliveredTurnId)
+            {
+                Attachments = attachments is { Count: > 0 } ? attachments : null
+            };
     }
 }

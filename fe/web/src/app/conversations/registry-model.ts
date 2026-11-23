@@ -1,4 +1,4 @@
-import type { KeepConversationInputRequest, AgentProvider } from '../../../../core/api/generated/wire.ts';
+import type { KeepConversationInputRequest, AgentProvider, PlannerAttachment } from '../../../../core/api/generated/wire.ts';
 import type { Conversation, CreatedConversation, ModelSelection, SideConversation, SubmittedConversationInput, TranscriptEntry } from '../../../../core/domain/conversation.ts';
 import type { ConversationOutboxOp, SendOp } from '../../../../core/domain/conversation-outbox.ts';
 import type { ComposerContent } from '../../../../core/domain/conversation-composer.ts';
@@ -25,6 +25,8 @@ export type ConversationDraft = Readonly<{
   key: string;
   /** The words the drawer is holding after its composer clears on send. */
   text: string | null;
+  /** Ready images submitted with this draft, held for echo and retry. */
+  attachments?: readonly PlannerAttachment[];
   /** Original dispatched body and client display time; retries preserve this exact fact. */
   submitted: SubmittedConversationInput | null;
   /** The create/recovery chain for this key has not settled yet. */
@@ -124,7 +126,7 @@ export type ConversationRegistry = Readonly<{
   /** Checks the current in-memory queue, including sends queued during a storage failure. */
   hasPendingTrackInitialSend: (trackId: string) => boolean;
   /** Queues in memory and reports whether configured storage accepted the write. */
-  queueTrackInitialSend: (trackId: string, text: string, key: string) => boolean;
+  queueTrackInitialSend: (trackId: string, text: string, key: string, attachments?: readonly PlannerAttachment[]) => boolean;
   consumeTrackInitialSend: (trackId: string) => void;
   /** Failed first-message attempts live here, above every route remount. */
   draftOf: (scopeId: string) => ConversationDraft | null;
@@ -165,6 +167,14 @@ export type ConversationRegistry = Readonly<{
    * Not `ConversationDraft.text`, which holds the words after the composer clears on send. */
   newConversationComposerOf: (scopeId: string) => string;
   editNewConversationComposer: (scopeId: string, next: (current: string) => string) => void;
+  /** Each Track's ready staged images for a conversation not created yet. */
+  newConversationAttachmentsOf: (scopeId: string) => readonly PlannerAttachment[];
+  editNewConversationAttachments: (
+    scopeId: string,
+    next: (current: readonly PlannerAttachment[]) => readonly PlannerAttachment[],
+  ) => void;
+  newConversationUploadOf: (scopeId: string) => UploadState;
+  editNewConversationUpload: (scopeId: string, next: (current: UploadState) => UploadState) => void;
   /** One card's image uploads, held here so a remount or another route sees an upload still in flight. */
   uploadOf: (cardId: string) => UploadState;
   editUpload: (cardId: string, next: (current: UploadState) => UploadState) => void;

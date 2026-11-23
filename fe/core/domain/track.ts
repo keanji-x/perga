@@ -296,6 +296,8 @@ export type NewTrackBody = Readonly<{
   template_input?: Readonly<Record<string, unknown>>;
   /** The chosen user recipe's id. Mutually exclusive with `template_id` (400 naming both). Absent, never `''`. */
   recipe_id?: string;
+  /** Unowned staged image attachment IDs to adopt onto the new Track's lead session. */
+  attachment_ids?: readonly string[];
 }>;
 
 /** A selectable starting point for a new track. `input_schema` is present exactly when a running trusted plugin is bound and the template takes input. */
@@ -518,7 +520,7 @@ export function trackWorkspaceOptionsOperation(
  * `POST /api/v1/tracks`, keyed per draft on every create.
  */
 export function createTrackOperation(body: NewTrackBody, idempotencyKey: string): ApiOperation<TrackWire> {
-  const { workspace_option_id: workspaceOptionId, execution_target_id: executionTargetId, ...rest } = body;
+  const { workspace_option_id: workspaceOptionId, execution_target_id: executionTargetId, attachment_ids: attachmentIds, ...rest } = body;
   const wireBody = {
     ...rest,
     areaId: body.area_id,
@@ -530,6 +532,7 @@ export function createTrackOperation(body: NewTrackBody, idempotencyKey: string)
     ...(body.template_id !== undefined ? { templateId: body.template_id } : {}),
     ...(body.template_input !== undefined ? { templateInputs: body.template_input } : {}),
     ...(body.reasoning_effort !== undefined ? { reasoningEffort: body.reasoning_effort } : {}),
+    ...(attachmentIds !== undefined && attachmentIds.length > 0 ? { attachmentIds: [...attachmentIds] } : {}),
   };
   return {
     method: 'POST',

@@ -41,6 +41,7 @@ public sealed record TrackCreation(TrackDto Track, ReportDocument Report, string
     WorkspacePreparation? Preparation, IReadOnlyList<EventEnvelopeDto> Events, string? DailyDate = null, AreaDto? SystemArea = null)
 {
     public IReadOnlyList<TrackScheduleDto> FlowClocks { get; init; } = [];
+    public IReadOnlyList<string>? AttachmentIds { get; init; }
 }
 
 public sealed record TrackFlowUpdate(
@@ -148,6 +149,7 @@ public interface ITrackStore : ITrackReadStore
     ITrackWakeStore TrackWakes { get; }
     ITrackScheduleStore? TrackSchedules => null;
     ISessionMessageStore? SessionMessages => null;
+    ISessionAttachmentStore? SessionAttachments => null;
     Task<IReadOnlyList<(string TrackId, PersistedSessionInput Input)>> RecoverSessionInputsAsync(CancellationToken ct);
     Task UpsertSessionAsync(AgentSessionDto session, EventEnvelopeDto? evt, CancellationToken ct);
     Task CompleteSessionResumeAsync(AgentSessionDto session, PersistedSessionInput? unresolved, EventEnvelopeDto sessionEvent, int expectedEpoch, CancellationToken ct, SessionItemDto? boundary = null);

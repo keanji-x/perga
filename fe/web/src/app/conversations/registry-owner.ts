@@ -1,3 +1,4 @@
+import type { PlannerAttachment } from '../../../../core/api/generated/wire.ts';
 import { createStorageKey } from '../../../../core/keys/storage.ts';
 import type { TranscriptEntry, Conversation } from '../../../../core/domain/conversation.ts';
 import { DEPLOYMENT_OWNER_USER_ID } from '../../../../core/api/auth.ts';
@@ -18,7 +19,7 @@ export const NO_TURNS: readonly TranscriptEntry[] = Object.freeze([]);
 const NO_CONVERSATIONS: readonly Conversation[] = Object.freeze([]);
 
 type ById<T> = Readonly<Record<string, T>>;
-type PendingTrackInitialSend = Readonly<{ text: string; key: string }>;
+type PendingTrackInitialSend = Readonly<{ text: string; key: string; attachments?: readonly PlannerAttachment[] }>;
 
 export type ConversationSnapshot = Readonly<{
   entries: ById<RememberedConversation>;
@@ -30,6 +31,8 @@ export type ConversationSnapshot = Readonly<{
   acceptedTurns: ById<string>;
   composers: ById<ComposerContent>;
   newComposers: ById<string>;
+  newComposerAttachments: ById<readonly PlannerAttachment[]>;
+  newComposerUploads: ById<UploadState>;
   uploads: ById<UploadState>;
   queueWrites: ById<number>;
   restarts: ById<true>;
@@ -74,10 +77,20 @@ function withRefilledComposer(state: ConversationSnapshot, id: string, refill: C
     : withUpload(next, id, { ...next.uploads[id] ?? NO_UPLOAD, refusal: TOO_MANY_IMAGES });
 }
 
-function isPendingTrackInitialSend(value: unknown): value is PendingTrackInitialSend {
+function isPlannerAttachment(value: unknown): value is PlannerAttachment {
   return typeof value === 'object' && value !== null
-    && typeof (value as { text?: unknown }).text === 'string'
-    && typeof (value as { key?: unknown }).key === 'string';
+    && typeof (value as { id?: unknown }).id === 'string'
+    && typeof (value as { contentType?: unknown }).contentType === 'string'
+    && typeof (value as { size?: unknown }).size === 'number'
+    && typeof (value as { url?: unknown }).url === 'string';
+}
+
+function isPendingTrackInitialSend(value: unknown): value is PendingTrackInitialSend {
+  if (typeof value !== 'object' || value === null) return false;
+  const candidate = value as { text?: unknown; key?: unknown; attachments?: unknown };
+  if (typeof candidate.text !== 'string' || typeof candidate.key !== 'string') return false;
+  return candidate.attachments === undefined
+    || (Array.isArray(candidate.attachments) && candidate.attachments.every(isPlannerAttachment));
 }
 
 function readPendingTrackInitialSends(key: string, submittedStorage?: () => Storage):
@@ -123,7 +136,8 @@ export function createConversationOwner(submittedStorage?: () => Storage) {
   let state: ConversationSnapshot = {
     entries: {}, conversations: NO_CONVERSATIONS, drafts: {}, openRequest: null,
     pendingTrackInitialSends: initialRead.ok ? initialRead.map : {}, outboxes: {}, acceptedTurns: {},
-    composers: {}, newComposers: {}, uploads: {}, queueWrites: {}, restarts: {}, resolutions: {},
+    composers: {}, newComposers: {}, newComposerAttachments: {}, newComposerUploads: {},
+    uploads: {}, queueWrites: {}, restarts: {}, resolutions: {},
   };
   const sendGenerations = new Map<string, number>();
   const epochs = new Map<string, number>();
@@ -214,9 +228,12 @@ export function createConversationOwner(submittedStorage?: () => Storage) {
     clearOpenRequest: () => { if (state.openRequest !== null) commit({ ...state, openRequest: null }); },
     hydratePendingTrackInitialSends,
     hasPendingTrackInitialSend: (trackId) => Object.hasOwn(state.pendingTrackInitialSends, trackId),
-    queueTrackInitialSend: (trackId, text, key) => {
+    queueTrackInitialSend: (trackId, text, key, attachments) => {
       if (!pendingInitialSendsHydrated) hydratePendingTrackInitialSends();
-      const pendingTrackInitialSends = put(state.pendingTrackInitialSends, trackId, { text, key });
+      const entry: PendingTrackInitialSend = attachments !== undefined && attachments.length > 0
+        ? { text, key, attachments: [...attachments] }
+        : { text, key };
+      const pendingTrackInitialSends = put(state.pendingTrackInitialSends, trackId, entry);
       const saved = pendingInitialSendsHydrated && savePendingTrackInitialSends(pendingTrackInitialSends);
       commit({ ...state, pendingTrackInitialSends });
       return saved;
@@ -238,13 +255,20 @@ export function createConversationOwner(submittedStorage?: () => Storage) {
     },
     acceptDraft: (from, result, submitted) => {
       if (!slotHolds(state.drafts[from.scopeId], from)) return false;
+      const acceptedAttachments = submitted.attachments?.map((attachment) => ({
+        ...attachment,
+        url: `/api/v1/sessions/${encodeURIComponent(result.conversation.id)}/attachments/${encodeURIComponent(attachment.id)}`,
+      }));
       const accepted = { conversation: result.conversation, turns: [{
         id: `human:${result.sessionInput.inputId}`, author: 'you' as const, text: submitted.text, atMs: submitted.atMs,
+        ...(acceptedAttachments !== undefined && acceptedAttachments.length > 0 ? { attachments: acceptedAttachments } : {}),
         human: { userId: DEPLOYMENT_OWNER_USER_ID, displayName: 'Owner', messageId: result.sessionInput.inputId, revision: 1 },
       }] };
       const entries = put(state.entries, result.conversation.id, accepted);
       commit({ ...state, entries, conversations: Object.values(entries).map(entry => entry.conversation),
         acceptedTurns: put(state.acceptedTurns, result.conversation.id, result.sessionInput.turnId),
+        newComposerAttachments: put(state.newComposerAttachments, from.scopeId, undefined),
+        newComposerUploads: put(state.newComposerUploads, from.scopeId, undefined),
         drafts: moveDraft(state.drafts, { kind: 'adopt', from, conversationId: result.conversation.id }) });
       return true;
     },
@@ -304,6 +328,18 @@ export function createConversationOwner(submittedStorage?: () => Storage) {
       const value = update(state.newComposers[scope] ?? '');
       const newComposers = put(state.newComposers, scope, value === '' ? undefined : value);
       if (newComposers !== state.newComposers) commit({ ...state, newComposers });
+    },
+    newConversationAttachmentsOf: scope => state.newComposerAttachments[scope] ?? EMPTY_COMPOSER.attachments,
+    editNewConversationAttachments: (scope, update) => {
+      const next = update(state.newComposerAttachments[scope] ?? EMPTY_COMPOSER.attachments);
+      const newComposerAttachments = put(state.newComposerAttachments, scope, next.length === 0 ? undefined : next);
+      if (newComposerAttachments !== state.newComposerAttachments) commit({ ...state, newComposerAttachments });
+    },
+    newConversationUploadOf: scope => state.newComposerUploads[scope] ?? NO_UPLOAD,
+    editNewConversationUpload: (scope, update) => {
+      const next = update(state.newComposerUploads[scope] ?? NO_UPLOAD);
+      const newComposerUploads = put(state.newComposerUploads, scope, next.inFlight === 0 && next.refusal === null ? undefined : next);
+      if (newComposerUploads !== state.newComposerUploads) commit({ ...state, newComposerUploads });
     },
     uploadOf: id => state.uploads[id] ?? NO_UPLOAD,
     editUpload: (id, update) => { commit(withUpload(state, id, update(state.uploads[id] ?? NO_UPLOAD))); },

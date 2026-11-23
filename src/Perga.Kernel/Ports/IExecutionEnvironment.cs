@@ -20,6 +20,16 @@ public interface IExecutionFileSystem
         string workspaceRoot,
         string relativePath,
         CancellationToken ct = default);
+
+    Task<string> StageAttachmentAsync(
+        string trackId,
+        string attachmentId,
+        string extension,
+        string localPhysicalPath,
+        string sha256,
+        CancellationToken ct = default) => Task.FromResult(localPhysicalPath);
+
+    Task CleanupTrackAttachmentsAsync(string trackId, CancellationToken ct = default) => Task.CompletedTask;
 }
 
 public interface IExecutionEnvironment : IAsyncDisposable

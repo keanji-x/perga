@@ -160,6 +160,18 @@ public sealed record SessionInputReceipt(
 
 public sealed record SessionCreationReceipt(AgentSessionDto Session, SessionInputReceipt? FirstInput, string? RequestKey = null);
 
+public sealed record SessionAttachmentDto(
+    string Id,
+    string ContentType,
+    long Size,
+    string Url);
+
+public sealed record UploadAttachmentResponseDto(
+    string AttachmentId,
+    string ContentType,
+    long Size,
+    string Url);
+
 public sealed record SessionItemDto(
     long Id,
     string SessionId,
@@ -175,6 +187,9 @@ public sealed record SessionItemDto(
     public string? InputDelivery { get; init; }
 
     public string? MessageStatus { get; init; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<SessionAttachmentDto>? Attachments { get; init; }
 }
 
 public sealed record GateStepDto(string Name, string Cmd);
@@ -293,6 +308,7 @@ public sealed record DbMaintenanceStatsDto(
 {
     public int CompactedTasks { get; init; }
     public int ReclaimedBlobs { get; init; }
+    public int ReclaimedAttachments { get; init; }
 }
 
 public sealed record TrackOverlayDto(

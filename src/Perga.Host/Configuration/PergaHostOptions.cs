@@ -73,6 +73,12 @@ public sealed class PergaHostOptions
     public TimeSpan ProviderCancelDispatchGrace { get; set; } = KernelOptions.DefaultProviderCancelDispatchGrace;
     public TimeSpan ProviderTerminalStopGrace { get; set; } = KernelOptions.DefaultProviderTerminalStopGrace;
 
+    public long MaxAttachmentBytes { get; set; } = Perga.Storage.Sqlite.SqliteStorageOptions.DefaultMaxAttachmentBytes;
+    public int MaxAttachmentsPerMessage { get; set; } = Perga.Storage.Sqlite.SqliteStorageOptions.DefaultMaxAttachmentsPerMessage;
+    public long MaxSessionAttachmentBytes { get; set; } = Perga.Storage.Sqlite.SqliteStorageOptions.DefaultMaxSessionAttachmentBytes;
+    public long MaxUnownedStagedAttachmentBytes { get; set; } = Perga.Storage.Sqlite.SqliteStorageOptions.DefaultMaxUnownedStagedAttachmentBytes;
+    public int MaxUnownedStagedAttachmentCount { get; set; } = Perga.Storage.Sqlite.SqliteStorageOptions.DefaultMaxUnownedStagedAttachmentCount;
+
     public bool CleanupEphemeralDataOnShutdown { get; set; } = true;
 
     public static PergaHostOptions BindFrom(IConfiguration configuration, string contentRootPath)

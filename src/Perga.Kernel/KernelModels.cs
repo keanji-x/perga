@@ -51,7 +51,8 @@ public sealed record CreateTrackRequest(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ReasoningEffort = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? WorkspaceOptionId = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? PermissionMode = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ExecutionTargetId = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ExecutionTargetId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? AttachmentIds = null);
 
 public sealed record TrackWorkspaceOptionDto(string Id, string Label, string Description);
 
@@ -97,7 +98,8 @@ public sealed record TrackProviderEntryDto(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Reason,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? DefaultModel,
     string PermissionCatalogSource, IReadOnlyList<TrackProviderModelDto> Models,
-    IReadOnlyList<PermissionModeOption> PermissionModes);
+    IReadOnlyList<PermissionModeOption> PermissionModes,
+    bool? SupportsImages = null);
 
 public sealed record TrackProviderModelDto(
     string Id, string DisplayName, bool IsDefault,
@@ -110,11 +112,17 @@ public sealed record CreateSessionRequest(
     string? Model = null,
     string? ReasoningEffort = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? PermissionMode = null,
-    string? SystemPrompt = null, string? Prompt = null, string? NotifyParent = null);
+    string? SystemPrompt = null, string? Prompt = null, string? NotifyParent = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? AttachmentIds = null);
 
 public sealed record SteeringResult(string InputId, string Delivery);
 
-public sealed record QueuedSessionMessageDto(string Id, string Text, long QueuedAtMs, string State);
+public sealed record QueuedSessionMessageDto(
+    string Id,
+    string Text,
+    long QueuedAtMs,
+    string State,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<SessionAttachmentDto>? Attachments = null);
 public sealed record SessionUnknownDetailDto(string Reason, string Detail, bool CanReconnect,
     bool CanResetContext, bool Recovering, string? LastError);
 

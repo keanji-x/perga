@@ -15,9 +15,16 @@ public sealed partial class TrackActor
         ValidateRequestKey(key);
         if (request.NotifyParent is not (null or "none" or "turn_end"))
             throw KernelException.InvalidArgument("notifyParent must be 'none' or 'turn_end'.");
-        if (request.Prompt is { } prompt && string.IsNullOrWhiteSpace(prompt))
+        var maxAttachments = _store.SessionAttachments?.Limits.MaxPerMessage ?? SessionAttachmentValidation.DefaultMaxPerMessage;
+        var attachmentIds = SessionAttachmentValidation.NormalizeAndValidateIds(request.AttachmentIds, maxAttachments);
+        var hasAttachments = attachmentIds is { Count: > 0 };
+        if (!hasAttachments && request.Prompt is { } prompt && string.IsNullOrWhiteSpace(prompt))
             throw KernelException.InvalidArgument("First message cannot be empty.");
-        request = request with { ReasoningEffort = string.IsNullOrWhiteSpace(request.ReasoningEffort) ? null : request.ReasoningEffort.Trim() };
+        request = request with
+        {
+            ReasoningEffort = string.IsNullOrWhiteSpace(request.ReasoningEffort) ? null : request.ReasoningEffort.Trim(),
+            AttachmentIds = attachmentIds
+        };
         // Plain-session retries must still match receipts written before Task and Role were retired.
         var receiptIdentity = JsonSerializer.SerializeToNode(request)!.AsObject();
         receiptIdentity["Task"] = null;
@@ -26,6 +33,7 @@ public sealed partial class TrackActor
         var intent = new SessionCreateIntent(TrackId, key, hash,
             principal is InteropPrincipal.Session identity ? identity.SessionId : InstallationAuthor);
         var caller = principal ?? new InteropPrincipal.Human();
+        var hasFirstInput = request.Prompt is not null || hasAttachments;
         Interlocked.Increment(ref _inFlightExternalOps);
         try
         {
@@ -57,12 +65,21 @@ public sealed partial class TrackActor
                 SessionPolicy.RequireCreate(caller, parent, TrackId,
                     callerIsTaskOwned: parent is not null && _taskCoordinator.IsTaskOwnedSessionCore(parent.Id), _options.MaxSessionSpawnDepth);
                 var session = NewSubagentSessionCore(request, providers,
-                    requireAvailable: caller is InteropPrincipal.Session || request.Prompt is not null, parent);
-                SessionInputRequest? first = null;
-                if (request.Prompt is { } content)
+                    requireAvailable: caller is InteropPrincipal.Session || hasFirstInput, parent);
+                if (hasAttachments)
                 {
-                    var firstHash = RequestIdentity.Hash(new { version = 4, Content = content, Mode = "default", TurnId = (string?)null, ExpectedEpoch = (int?)null });
-                    first = new(key, firstHash, content, intent.AuthorId);
+                    var providerStatus = SessionLaunchValidator.FindProvider(providers, session.Provider);
+                    if (providerStatus?.SupportsImages == false || EffectiveAgentRuntime.SupportsImages(session.Provider) == false)
+                        throw KernelException.PreconditionFailed("The selected provider does not support image attachments.");
+                }
+                SessionInputRequest? first = null;
+                if (hasFirstInput)
+                {
+                    var content = string.IsNullOrWhiteSpace(request.Prompt) ? string.Empty : request.Prompt!;
+                    var firstHash = hasAttachments
+                        ? RequestIdentity.Hash(new { version = 5, Content = content, Mode = "default", TurnId = (string?)null, ExpectedEpoch = (int?)null, AttachmentIds = attachmentIds })
+                        : RequestIdentity.Hash(new { version = 4, Content = content, Mode = "default", TurnId = (string?)null, ExpectedEpoch = (int?)null });
+                    first = new(key, firstHash, content, intent.AuthorId, attachmentIds);
                     session = session with { Status = "queued" };
                 }
 
@@ -237,8 +254,14 @@ public sealed partial class TrackActor
     {
         if (_store.SessionMessages is null) return ([], []);
         var messages = await Messages.ListQueueAsync(sessionId, ct).ConfigureAwait(false);
-        var queue = messages.Select(message => new QueuedSessionMessageDto(message.Id, message.Content, message.CreatedAtMs,
-            message.Delivery switch { "dispatching" => "steering", "unknown" => "unconfirmed", _ => "waiting" })).ToArray();
+        var queue = messages.Select(message => new QueuedSessionMessageDto(
+            message.Id,
+            message.Content,
+            message.CreatedAtMs,
+            message.Delivery switch { "dispatching" => "steering", "unknown" => "unconfirmed", _ => "waiting" },
+            message.Attachments is { Count: > 0 } stored
+                ? stored.Select(SessionAttachmentValidation.ToSessionDto).ToArray()
+                : null)).ToArray();
         return (queue, await Messages.ListHandoffsAsync(sessionId, ct).ConfigureAwait(false));
     }
 

@@ -25,11 +25,14 @@ public sealed record HarnessLaunchSpec(
     string? StateKey = null,
     string? PermissionMode = null);
 
+public sealed record InputImageRef(string Path, string MediaType);
+
 public sealed record TurnInput(
     string Prompt,
     string CorrelationId,
     string? Model = null,
-    string? ReasoningEffort = null);
+    string? ReasoningEffort = null,
+    IReadOnlyList<InputImageRef>? Images = null);
 
 public sealed record TokenUsage(
     long InputTokens,
@@ -106,7 +109,8 @@ public sealed record ProviderStatus(
     IReadOnlyList<string> Models,
     IReadOnlyList<ProviderModelInfo>? ModelCatalog = null,
     IReadOnlyList<PermissionModeOption>? PermissionModes = null,
-    [property: System.Text.Json.Serialization.JsonIgnore] SessionConfigurationCapabilities? ConfigurationCapabilities = null);
+    [property: System.Text.Json.Serialization.JsonIgnore] SessionConfigurationCapabilities? ConfigurationCapabilities = null,
+    bool? SupportsImages = null);
 
 public sealed record NativeCompactResult(
     TokenUsage? Usage = null,
@@ -148,6 +152,7 @@ public interface IAgentSession : IAsyncDisposable
     IReadOnlyList<PermissionModeOption> AvailablePermissionModes => [];
     string? NativeThreadId { get; }
     bool SupportsNativeSteer { get; }
+    bool SupportsImages => false;
     long? ContextUsageRevision => 0;
     bool CanReuseContextWindow => false;
     bool SupportsNativeCompact => false;
@@ -182,11 +187,14 @@ public interface IAgentSession : IAsyncDisposable
     ConfirmedConfiguration? ConfigurationState { get; }
     Task<SessionConfigurationOutcome> ConfigureAsync(SessionConfiguration configuration, CancellationToken ct = default);
     Task<SteerDelivery> SteerAsync(string turnCorrelationId, string message, CancellationToken ct);
+    Task<SteerDelivery> SteerAsync(string turnCorrelationId, string message, IReadOnlyList<InputImageRef>? images, CancellationToken ct) =>
+        images is { Count: > 0 } ? Task.FromResult(SteerDelivery.Declined) : SteerAsync(turnCorrelationId, message, ct);
 }
 
 public interface IAgentRuntime : IAsyncDisposable
 {
     bool CanResumeSession(string provider) => false;
+    bool? SupportsImages(string provider) => null;
     Task<IReadOnlyList<ProviderStatus>> ProbeProvidersAsync(CancellationToken ct);
     /// <summary>Starts and returns an owned session before initialization; the caller must dispose it.</summary>
     IAgentSession CreateSession(HarnessLaunchSpec spec);

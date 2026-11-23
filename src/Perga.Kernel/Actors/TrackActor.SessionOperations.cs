@@ -56,15 +56,26 @@ public sealed partial class TrackActor
     public async Task<SessionMessageReceipt> SendSessionMessageAsync(string sessionId, SendSessionMessageRequest request,
         InteropPrincipal caller, CancellationToken ct)
     {
+        var maxAttachments = _store.SessionAttachments?.Limits.MaxPerMessage ?? SessionAttachmentValidation.DefaultMaxPerMessage;
+        var attachmentIds = SessionAttachmentValidation.NormalizeAndValidateIds(request.AttachmentIds, maxAttachments);
+        var hasAttachments = attachmentIds is { Count: > 0 };
+        var isNewMessage = request.Content is not null || hasAttachments;
+
         if (request.Mode is not ("default" or "queue" or "steer") ||
-            (request.Content is null) == (request.MessageId is null) ||
+            isNewMessage == (request.MessageId is not null) ||
+            request.MessageId is not null && hasAttachments ||
             request.Mode == "steer" && request.TurnId is null || request.Mode != "steer" && request.TurnId is not null ||
             request.MessageId is not null && request.Mode != "steer")
             throw KernelException.InvalidArgument("Choose content or a queued messageId and a valid delivery mode.");
-        if (request.Content is not null && string.IsNullOrWhiteSpace(request.Content))
+        if (isNewMessage && !hasAttachments && string.IsNullOrWhiteSpace(request.Content))
             throw KernelException.InvalidArgument("Message content cannot be empty.");
-        if (request.Content is not null) ValidateRequestKey(request.RequestKey!);
-        var hash = RequestIdentity.Hash(new { version = 4, request.Content, request.Mode, request.TurnId, request.ExpectedEpoch });
+        if (isNewMessage) ValidateRequestKey(request.RequestKey!);
+        var normalizedContent = isNewMessage
+            ? (string.IsNullOrWhiteSpace(request.Content) ? string.Empty : request.Content!)
+            : null;
+        var hash = hasAttachments
+            ? RequestIdentity.Hash(new { version = 5, Content = normalizedContent, request.Mode, request.TurnId, request.ExpectedEpoch, AttachmentIds = attachmentIds })
+            : RequestIdentity.Hash(new { version = 4, Content = normalizedContent, request.Mode, request.TurnId, request.ExpectedEpoch });
         var author = caller is InteropPrincipal.Session identity ? identity.SessionId : InstallationAuthor;
         var startedAt = _timeProvider.GetTimestamp();
         var delivery = await EnqueueAsync(async actor =>
@@ -109,6 +120,8 @@ public sealed partial class TrackActor
 
             RequireSessionWritableCore(session);
             RequireSessionDispatchAvailableCore(sessionId);
+            if (hasAttachments && !ReadCapabilitiesCore(session).SupportsImages)
+                throw KernelException.PreconditionFailed("The runtime does not support image attachments.");
             _scheduler.TryGetActive(sessionId, out var active);
             var turnId = request.TurnId;
             if (turnId is not null)
@@ -128,9 +141,17 @@ public sealed partial class TrackActor
                 if (request.Mode == "steer" && (!active.AgentSession.SupportsNativeSteer ||
                     request.MessageId is not null && !active.CanSteerQueuedMessages))
                     throw KernelException.PreconditionFailed("The runtime does not support steering this turn.");
+                if ((hasAttachments || existing?.Attachments is { Count: > 0 }) && !active.AgentSession.SupportsImages)
+                    throw KernelException.PreconditionFailed("The runtime does not support image attachments.");
                 var message = existing ?? new SessionMessage($"inp_{Guid.NewGuid():N}", sessionId,
-                    author, request.RequestKey!, hash, turnId, null, request.Content!, "dispatching", NowMs(), "steer");
-                if (existing is null) await Messages.InsertAsync(message, ct).ConfigureAwait(false);
+                    author, request.RequestKey!, hash, turnId, null, normalizedContent!, "dispatching", NowMs(), "steer")
+                {
+                    AttachmentIds = attachmentIds
+                };
+                if (existing is null)
+                {
+                    message = await Messages.InsertAsync(message, ct).ConfigureAwait(false);
+                }
                 else if (!await Messages.ClaimQueuedSteerAsync(message, turnId, ct).ConfigureAwait(false))
                     throw KernelException.Conflict("This message is already being sent or has been withdrawn.");
                 _scheduler.TryGetSteering(sessionId, out var previous);
@@ -152,7 +173,10 @@ public sealed partial class TrackActor
                 RequireWorkspaceReadyCore();
                 _taskCoordinator.RequireDispatchWorkspace(session);
                 var message = new SessionMessage($"inp_{Guid.NewGuid():N}", sessionId, author,
-                    request.RequestKey!, hash, null, null, request.Content!, "queued", NowMs(), "queue");
+                    request.RequestKey!, hash, null, null, normalizedContent!, "queued", NowMs(), "queue")
+                {
+                    AttachmentIds = attachmentIds
+                };
                 await Messages.InsertAsync(message, ct).ConfigureAwait(false);
                 // Persist the resume input before opening the existing queue for dispatch.
                 if (resuming) _taskCoordinator.SetPaused(activeTask!, false);
@@ -164,7 +188,7 @@ public sealed partial class TrackActor
             var evt = SessionUpdatedEvent(session);
             await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
             var accepted = await _store.SessionInputs.AcceptAsync(session,
-                new(request.RequestKey!, hash, request.Content!, author), evt, ct).ConfigureAwait(false);
+                new(request.RequestKey!, hash, normalizedContent!, author, attachmentIds), evt, ct).ConfigureAwait(false);
             if (resuming) _taskCoordinator.SetPaused(activeTask!, false);
             RegisterAcceptedInput(session, accepted);
             await PublishInputEventAsync(evt).ConfigureAwait(false);

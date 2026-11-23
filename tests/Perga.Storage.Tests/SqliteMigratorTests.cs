@@ -33,9 +33,9 @@ public sealed class SqliteMigratorTests
         {
             var dbPath = Path.Combine(tempDir, "fresh.db");
             var migrator = new SqliteMigrator();
-            Assert.Equal(Enumerable.Range(1, 25), migrator.Migrations.Select(m => m.Version));
-            Assert.Equal("0024_area_execution_target.sql", migrator.Migrations[^2].Name);
-            Assert.Equal("0025_track_flow.sql", migrator.Migrations[^1].Name);
+            Assert.Equal(Enumerable.Range(1, 26), migrator.Migrations.Select(m => m.Version));
+            Assert.Equal("0025_track_flow.sql", migrator.Migrations[^2].Name);
+            Assert.Equal("0026_session_attachments.sql", migrator.Migrations[^1].Name);
             await migrator.MigrateAsync(dbPath);
 
             // Idempotent re-run on already-initialized v1 database must not create a spurious backup.
@@ -50,7 +50,7 @@ public sealed class SqliteMigratorTests
             }.ToString());
             await conn.OpenAsync();
 
-            Assert.Equal(25L, await conn.ExecuteScalarAsync<long>("SELECT MAX(version) FROM schema_migrations;"));
+            Assert.Equal(26L, await conn.ExecuteScalarAsync<long>("SELECT MAX(version) FROM schema_migrations;"));
             Assert.Equal(1L, await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM pragma_table_info('areas') WHERE name = 'execution_target_id';"));
             Assert.Equal(3L, await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM pragma_table_info('tracks') WHERE name IN ('flow_spec_json', 'flow_rev', 'flow_file_sha256');"));
             Assert.Equal(4L, await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM pragma_table_info('tasks') WHERE name IN ('trigger_run_key', 'outcome', 'outcome_summary', 'archived_at_ms');"));
@@ -99,7 +99,9 @@ public sealed class SqliteMigratorTests
                 "track_wakes",
                 "track_schedules",
                 "session_message_steers",
-                "execution_targets"
+                "execution_targets",
+                "session_attachments",
+                "session_message_attachments"
             ];
 
             Assert.Equal(expectedTables.OrderBy(static x => x), tables.OrderBy(static x => x));
@@ -143,7 +145,11 @@ public sealed class SqliteMigratorTests
                 "idx_session_messages_queue",
                 "idx_session_messages_boot",
                 "idx_session_messages_input_turn",
-                "idx_items_message_ordinal"
+                "idx_items_message_ordinal",
+                "idx_session_attachments_session_status",
+                "idx_session_attachments_staged_gc",
+                "idx_session_attachments_track",
+                "idx_session_message_attachments_attachment"
             ];
 
             Assert.Equal(expectedIndexes.OrderBy(static x => x), indexes.OrderBy(static x => x));

@@ -79,6 +79,8 @@ export type ConversationStore = Readonly<{
   /** How full this conversation's context is; `null` when the harness has never said. */
   contextUsage: PlannerRunTokenUsage | null;
   uploadAttachment: UploadAttachment;
+  /** Declared by `SessionCapabilities.supportsImages` once the session run read answers. */
+  attachmentsSupported: boolean;
   interrupt: () => void;
   /** Declared by the bound Planner backend; false until the run read answers. */
   manualCompactSupported: boolean;
@@ -135,5 +137,5 @@ export type PlannerConversationScope = Readonly<{
 /** First-message creation and authoritative session/input receipt replay. */
 export type ConversationCreationSource = Readonly<{
   create: (text: string, idempotencyKey: string, provider: AgentProvider, selection: ModelSelection, side: SideConversation | undefined,
-    answered: (result: CreatedConversation) => void, permissionMode?: string | null) => Promise<CreatedConversation>;
+    answered: (result: CreatedConversation) => void, permissionMode?: string | null, attachmentIds?: readonly string[]) => Promise<CreatedConversation>;
 }>;

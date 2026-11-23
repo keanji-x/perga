@@ -1,10 +1,10 @@
 import { queryKeys } from '../providers/query-keys.ts';
 import { Banner } from '@astryxdesign/core/Banner';
 import { useQuery } from '@tanstack/react-query';
-import { useCallback,useEffect,useRef } from 'react';
+import { useCallback,useEffect,useMemo,useRef } from 'react';
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
-import { availabilityOf,permissionModesForProvider } from '../../../../core/domain/agent-providers.ts';
+import { availabilityOf,permissionModesForProvider,providerSupportsImages } from '../../../../core/domain/agent-providers.ts';
 import { folderConflictMessage } from '../../../../core/domain/area.ts';
 import { ApiError,classifyFailure,NotSentError,refusedText,writeFailureOf } from '../../../../core/domain/failure-class.ts';
 import { resolvePermissionControl } from '../../../../core/domain/planner-permission-mode.ts';
@@ -16,6 +16,13 @@ trackWorkspaceOptionsOperation,type NewTrackBody,
 import { NewTrackForm,type NewTrackDraft,type NewTrackFormState } from '../../features/area/new-track/public.tsx';
 import { useMentionTrigger } from '../../features/chat/thread/mention-trigger.tsx';
 import { ModelPill,PermissionModePill,PlannerRolePill } from '../../features/chat/thread/model-pill.tsx';
+import {
+  IMAGE_UNSUPPORTED_REASON,
+  PlannerAttachButton,
+  PlannerAttachmentDrawer,
+  usePlannerAttachments,
+  type AttachmentStore,
+} from '../../features/planner/attachments.tsx';
 import { ErrorBox } from '../../ui/error-box/public.tsx';
 import { useCompactViewport } from '../../ui/viewport/public.ts';
 import { useConversationCommands } from '../conversations/public.tsx';
@@ -26,6 +33,7 @@ import { useManagedProviderCatalogs } from '../providers/managed-providers.ts';
 import { useMentionSearch } from '../providers/mentions.ts';
 import { executionTargetsQueryOptions, useCreateExecutionTarget } from '../providers/execution-target-queries.ts';
 import { folderConflictOf } from '../providers/area-mutations.ts';
+import { useStagedAttachmentUpload } from '../providers/planner-mutations.ts';
 import { runOperation } from '../providers/query-operation.ts';
 import { useTrackLifecycleMutations } from '../providers/track-lifecycle-mutations.ts';
 import { useWorkspace, type Workspace } from '../providers/workspace-queries.ts';
@@ -107,10 +115,32 @@ function NewTrackEditor({ transport, unauthorized, workspace, session, store }: 
   }, []);
   const saveForm = useCallback((form: NewTrackFormState) => { store.update(areaId, { form }); }, [areaId, store]);
 
+  const uploadStagedAttachment = useStagedAttachmentUpload(transport, unauthorized);
+  const trackAttachmentStore = useMemo<AttachmentStore>(() => ({
+    items: session.attachments,
+    update: (targetAreaId, next) => {
+      const current = store.get(targetAreaId);
+      if (current === null) return;
+      const updated = next(current.attachments);
+      if (updated !== current.attachments) store.update(targetAreaId, { attachments: updated });
+    },
+    upload: session.upload,
+    editUpload: (targetAreaId, next) => {
+      const current = store.get(targetAreaId);
+      if (current === null) return;
+      const updated = next(current.upload);
+      if (updated !== current.upload) store.update(targetAreaId, { upload: updated });
+    },
+  }), [session.attachments, session.upload, store]);
+  const trackAttachments = usePlannerAttachments(uploadStagedAttachment, areaId, trackAttachmentStore);
+  const attachmentsSupported = providerSupportsImages(providers.data, session.provider);
+
   const openCreated = (trackId: string) => {
     const synced = conversationRegistry.hydratePendingTrackInitialSends();
-    const message = store.get(areaId)?.request?.message;
-    const hasMessage = message !== undefined && !isBlankForKernel(message);
+    const request = store.get(areaId)?.request;
+    const message = request?.message;
+    const hasMessage = (message !== undefined && !isBlankForKernel(message))
+      || (request?.attachments?.length ?? 0) > 0;
     const canForget = !hasMessage || synced;
     if (!canForget && !conversationRegistry.hasPendingTrackInitialSend(trackId)) {
       store.update(areaId, { error: 'Your track was created, but its saved first message is unavailable. Try opening the track again.' });
@@ -128,8 +158,10 @@ function NewTrackEditor({ transport, unauthorized, workspace, session, store }: 
     // After `key-reused` only an explicit new track goes anywhere: a retry under the key cannot.
     if (current === null || current.creating || !available || current.createdTrackId !== null
       || current.canRetryAsNewTrack) return;
+    if (trackAttachments.sendBlocked) return;
     const hadUnconfirmedRequest = replacementKey === undefined && current.request !== null;
     const attemptKey = replacementKey ?? current.key;
+    const readyAttachments = trackAttachments.items;
     const body = {
       area_id: areaId,
       planner_provider: current.provider,
@@ -142,17 +174,30 @@ function NewTrackEditor({ transport, unauthorized, workspace, session, store }: 
       ...(draft.executionTargetId === undefined ? {} : { execution_target_id: draft.executionTargetId }),
       ...(current.role === 'admin' ? { admin: true } : {}),
       ...(authorization === undefined ? {} : { allow_cross_area_cwd: authorization }),
+      ...(readyAttachments.length > 0 ? { attachment_ids: readyAttachments.map((item) => item.id) } : {}),
     } satisfies NewTrackBody;
     // The original wire body travels with the key. A retry after navigation,
     // theme changes or template refresh must not silently change its payload.
     const request: TrackCreationRequest = replacementKey === undefined && current.request !== null
       ? current.request
-      : { body, key: attemptKey, ...(isBlankForKernel(draft.message) ? {} : { message: draft.message }) };
+      : {
+          body,
+          key: attemptKey,
+          ...(isBlankForKernel(draft.message) ? {} : { message: draft.message }),
+          ...(readyAttachments.length > 0 ? { attachments: readyAttachments } : {}),
+        };
     store.update(areaId, { creating: true, request, error: null, canRetryAsNewTrack: false, folderConflict: null });
     const creation = trackMutations.create(request.body, request.key);
     void creation.then((track) => {
-      const persistConfirmation = request.message === undefined || isBlankForKernel(request.message)
-        || conversationRegistry.queueTrackInitialSend(track.id, request.message, `${request.key}:init`);
+      const hasInitialContent = (request.message !== undefined && !isBlankForKernel(request.message))
+        || (request.attachments?.length ?? 0) > 0;
+      const persistConfirmation = !hasInitialContent
+        || conversationRegistry.queueTrackInitialSend(
+          track.id,
+          request.message ?? '',
+          `${request.key}:init`,
+          request.attachments,
+        );
       // A late acknowledgement belongs to its draft; it never steals the
       // navigation the reader made while waiting. Returning offers Open track.
       // If saving the first send failed, the saved request can still replay both keys after reload.
@@ -222,6 +267,19 @@ function NewTrackEditor({ transport, unauthorized, workspace, session, store }: 
           onRetry={() => { void workspaceOptionsQuery.refetch(); }} />
         : undefined}
     mentionTrigger={mentionTrigger}
+    drawer={<PlannerAttachmentDrawer attachments={trackAttachments} disabled={session.creating || session.request !== null} />}
+    attachControl={(
+      <PlannerAttachButton
+        attachments={trackAttachments}
+        support={{ available: attachmentsSupported, reason: IMAGE_UNSUPPORTED_REASON }}
+        disabled={session.creating || session.request !== null || !available}
+      />
+    )}
+    onFiles={!attachmentsSupported || session.creating || session.request !== null || !available
+      ? undefined
+      : (files) => { void trackAttachments.attachMany(files); }}
+    allowEmptyText={trackAttachments.canSendWithoutText}
+    attachmentSendBlocked={trackAttachments.sendBlocked}
     modelControls={<>
       {permissionControl.visible && (
         <PermissionModePill

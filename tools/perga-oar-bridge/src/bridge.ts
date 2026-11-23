@@ -177,6 +177,7 @@ export class OarBridgeServer {
         reason: installationReason(installation),
         supportsNativeSteer: false,
         supportsManualCompaction: false,
+        supportsImages: null,
         models: [],
       };
     }
@@ -185,6 +186,7 @@ export class OarBridgeServer {
     const manualCompaction = caps?.manualCompaction ?? runtime.manualCompaction;
     const supportsManualCompaction =
       manualCompaction?.kind === "supported" || runtimeId === "antigravity";
+    const supportsImages = typeof caps?.images === "boolean" ? caps.images : null;
 
     const { models: enabledModels, reason: probeReason } = await listEnabledModels(
       runtime,
@@ -201,6 +203,7 @@ export class OarBridgeServer {
       reason: probeReason,
       supportsNativeSteer: caps?.steer === true,
       supportsManualCompaction,
+      supportsImages,
       models: enabledModels.map((m) => ({
         id: m.id,
         displayName: m.displayName,
@@ -343,6 +346,7 @@ export class OarBridgeServer {
       supportsNativeSteer: typeof session.steer === "function",
       supportsNativeCompact: nativeCompact || this._slashCompactAdvertised,
       supportsSessionResume: true,
+      supportsImages: session.capabilities.images === true,
       contextUsage: buildUsagePayload(session),
       ...(typeof session.status === "function" ? { agentStatus: session.status().value } : {}),
       sessionConfiguration,
@@ -492,18 +496,38 @@ export class OarBridgeServer {
     return this._session;
   }
 
+  private static parseInputImages(raw: unknown): ReadonlyArray<{ readonly path: string; readonly mediaType?: string }> {
+    if (!Array.isArray(raw)) {
+      return [];
+    }
+    const parsed: Array<{ readonly path: string; readonly mediaType?: string }> = [];
+    for (const entry of raw) {
+      const rec = asRecord(entry);
+      const imagePath = rec ? asString(rec.path) : undefined;
+      if (!imagePath) {
+        continue;
+      }
+      const mediaType = rec ? asString(rec.mediaType) : undefined;
+      parsed.push(mediaType ? { path: imagePath, mediaType } : { path: imagePath });
+    }
+    return parsed;
+  }
+
   private async handleSessionPrompt(params: Record<string, unknown>): Promise<Record<string, unknown>> {
     const session = this.requireSession();
     const rawPrompt = typeof params.prompt === "string" ? params.prompt : "";
     const correlationId = asString(params.correlationId);
+    const images = OarBridgeServer.parseInputImages(params.images);
 
     let effectivePrompt = rawPrompt;
     if (this._pendingSystemPrompt) {
-      effectivePrompt = `${this._pendingSystemPrompt}\n\n${rawPrompt}`;
+      effectivePrompt = rawPrompt.length > 0
+        ? `${this._pendingSystemPrompt}\n\n${rawPrompt}`
+        : this._pendingSystemPrompt;
       this._pendingSystemPrompt = null;
     }
 
-    return await this.runPromptTurn(session, effectivePrompt, correlationId, false);
+    return await this.runPromptTurn(session, effectivePrompt, correlationId, false, images);
   }
 
   private async runPromptTurn(
@@ -511,6 +535,7 @@ export class OarBridgeServer {
     prompt: string,
     correlationId: string | undefined,
     captureText: boolean,
+    images?: ReadonlyArray<{ readonly path: string; readonly mediaType?: string }>,
   ): Promise<Record<string, unknown>> {
     const collector: ActiveTurnCollector = {
       captureText,
@@ -520,7 +545,10 @@ export class OarBridgeServer {
     this._activeTurn = collector;
     try {
       const inputId = toValidInputId(correlationId);
-      const outcome = await session.prompt(prompt, { inputId });
+      const outcome = await session.prompt(prompt, {
+        inputId,
+        ...(images && images.length > 0 ? { images } : {}),
+      });
       if (outcome.kind !== "accepted") {
         return {
           status: "failed",
@@ -574,11 +602,15 @@ export class OarBridgeServer {
   private async handleSessionSteer(params: Record<string, unknown>): Promise<Record<string, unknown>> {
     const session = this.requireSession();
     const message = typeof params.message === "string" ? params.message : "";
-    if (!message || typeof session.steer !== "function") {
+    const images = OarBridgeServer.parseInputImages(params.images);
+    if ((!message && images.length === 0) || typeof session.steer !== "function") {
       return { delivery: "declined" };
     }
     const correlationId = asString(params.correlationId);
-    const outcome = await session.steer(message, { inputId: toValidInputId(correlationId) });
+    const outcome = await session.steer(message, {
+      inputId: toValidInputId(correlationId),
+      ...(images.length > 0 ? { images } : {}),
+    });
     return { delivery: outcome.kind === "accepted" ? "accepted" : "declined" };
   }
 

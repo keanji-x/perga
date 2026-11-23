@@ -11,6 +11,14 @@ public sealed record SqliteStorageOptions
     public const int DefaultColdBlobThresholdBytes = 65_536; // 64 KB
     public const int DefaultColdBlobPreviewBytes = 2_048;    // 2 KB
     public const int DefaultFreePageVacuumThreshold = 4;
+    public const long DefaultMaxAttachmentBytes = 10_485_760L; // 10 MiB
+    public const int DefaultMaxAttachmentsPerMessage = 8;
+    public const int MaxSchemaAttachmentsPerMessage = 8;
+    public const long DefaultMaxSessionAttachmentBytes = 67_108_864L; // 64 MiB
+    public const long DefaultMaxUnownedStagedAttachmentBytes = 67_108_864L; // 64 MiB
+    public const int DefaultMaxUnownedStagedAttachmentCount = 64;
+    public const long DefaultStagedAttachmentTtlMs = 86_400_000L; // 24 hours
+    public const long DefaultOrphanAttachmentGraceMs = 600_000L;  // 10 minutes
 
     public required string DbPath { get; init; }
     public string? DataDir { get; init; }
@@ -20,6 +28,13 @@ public sealed record SqliteStorageOptions
     public int ColdBlobThresholdBytes { get; init; } = DefaultColdBlobThresholdBytes;
     public int ColdBlobPreviewBytes { get; init; } = DefaultColdBlobPreviewBytes;
     public int FreePageVacuumThreshold { get; init; } = DefaultFreePageVacuumThreshold;
+    public long MaxAttachmentBytes { get; init; } = DefaultMaxAttachmentBytes;
+    public int MaxAttachmentsPerMessage { get; init; } = DefaultMaxAttachmentsPerMessage;
+    public long MaxSessionAttachmentBytes { get; init; } = DefaultMaxSessionAttachmentBytes;
+    public long MaxUnownedStagedAttachmentBytes { get; init; } = DefaultMaxUnownedStagedAttachmentBytes;
+    public int MaxUnownedStagedAttachmentCount { get; init; } = DefaultMaxUnownedStagedAttachmentCount;
+    public long StagedAttachmentTtlMs { get; init; } = DefaultStagedAttachmentTtlMs;
+    public long OrphanAttachmentGraceMs { get; init; } = DefaultOrphanAttachmentGraceMs;
 
     public string GetFullDbPath() => Path.GetFullPath(DbPath);
 
@@ -35,4 +50,5 @@ public sealed record SqliteStorageOptions
     }
 
     public string ResolveBlobsRootDir() => Path.Combine(ResolveDataDir(), "blobs");
+    public string ResolveAttachmentsRootDir() => Path.Combine(ResolveDataDir(), "attachments");
 }

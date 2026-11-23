@@ -19,6 +19,7 @@ public sealed class AgentRuntime : IAgentRuntime
     private readonly ISubprocessTransport _transport;
     private readonly ConcurrentDictionary<IAgentSession, byte> _activeSessions = new();
     private readonly ConcurrentDictionary<string, bool> _resumeCapabilities = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, bool?> _imageCapabilities = new(StringComparer.Ordinal);
     private readonly SemaphoreSlim _probeLock = new(1, 1);
     private IReadOnlyList<ProviderStatus>? _cachedProbeStatuses;
     private DateTimeOffset _cachedProbeExpiresAt = DateTimeOffset.MinValue;
@@ -40,6 +41,28 @@ public sealed class AgentRuntime : IAgentRuntime
         return _resumeCapabilities.TryGetValue(name, out var supported)
             ? supported
             : OarNodeResolver.TryMapProviderToOarRuntime(name) is not null;
+    }
+
+    public bool? SupportsImages(string provider)
+    {
+        var name = NormalizeProviderName(provider);
+        if (_imageCapabilities.TryGetValue(name, out var supported))
+        {
+            return supported;
+        }
+
+        var oarRuntimeId = OarNodeResolver.TryMapProviderToOarRuntime(name);
+        if (oarRuntimeId is null)
+        {
+            return false;
+        }
+
+        return oarRuntimeId switch
+        {
+            "codex" or "claude" or "cursor" or "factory" or "grok" or "pi" => true,
+            "qoder" or "qwen" or "pi-durable" => false,
+            _ => null
+        };
     }
     public static string NormalizeProviderName(string provider)
     {
@@ -198,6 +221,11 @@ public sealed class AgentRuntime : IAgentRuntime
             }, probeCts.Token).ConfigureAwait(false);
 
             var available = response.TryGetProperty("available", out var avail) && avail.ValueKind == JsonValueKind.True;
+            var supportsImages = TryGetJsonBool(response, "supportsImages");
+            if (available)
+            {
+                _imageCapabilities[provider] = supportsImages;
+            }
             var catalog = ParseModelCatalog(response);
             return new ProviderStatus(
                 Provider: provider,
@@ -207,7 +235,8 @@ public sealed class AgentRuntime : IAgentRuntime
                 Models: catalog.Select(m => m.Model).ToArray(),
                 ModelCatalog: catalog,
                 PermissionModes: permissionModes,
-                ConfigurationCapabilities: available ? SessionConfigurationCapabilities.LaunchOnly : SessionConfigurationCapabilities.Unknown);
+                ConfigurationCapabilities: available ? SessionConfigurationCapabilities.LaunchOnly : SessionConfigurationCapabilities.Unknown,
+                SupportsImages: supportsImages);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -338,5 +367,11 @@ public sealed class AgentRuntime : IAgentRuntime
     private static string? TryGetJsonString(JsonElement obj, string property) =>
         obj.ValueKind == JsonValueKind.Object && obj.TryGetProperty(property, out var val) && val.ValueKind == JsonValueKind.String
             ? val.GetString()
+            : null;
+
+    private static bool? TryGetJsonBool(JsonElement obj, string property) =>
+        obj.ValueKind == JsonValueKind.Object && obj.TryGetProperty(property, out var val) &&
+        val.ValueKind is JsonValueKind.True or JsonValueKind.False
+            ? val.GetBoolean()
             : null;
 }

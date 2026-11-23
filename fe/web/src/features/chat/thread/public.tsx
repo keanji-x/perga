@@ -20,8 +20,14 @@ import {
   ChatComposerInput,
   ChatSendButton,
   ChatLayoutScrollButton,
+  type ChatComposerInputHandle,
   type ChatComposerTrigger,
 } from '@astryxdesign/core/Chat';
+import {
+  dropzoneActiveClassName,
+  handleComposerPasteCapture,
+  useDropzoneHighlight,
+} from '../../../ui/image-attachments/public.tsx';
 import { Button } from '@astryxdesign/core/Button';
 import { Divider } from '@astryxdesign/core/Divider';
 import { useIcon } from '@astryxdesign/core/Icon';
@@ -426,6 +432,11 @@ export function ChatComposer({
 
   const rootRef = useRef<HTMLDivElement>(null);
   const messageInputRef = useRef<HTMLDivElement>(null);
+  const inputHandleRef = useRef<ChatComposerInputHandle | null>(null);
+  const { isDragOver, dropzoneProps } = useDropzoneHighlight({
+    enabled: !disabled && onFiles !== undefined,
+    onDropFiles: (files) => { onFiles?.(files); },
+  });
   const [sendCount, setSendCount] = useState(0);
   const wantsFieldFocus = useRef(focusOnMount);
   /** The element this component last put focus on; `null` while no restore is in flight. */
@@ -532,6 +543,7 @@ export function ChatComposer({
 
   /* `Send image`: `ChatSendButton` takes its availability from `canSend`, false on an empty draft, and an image-only message is an empty draft. Shown only while the vendor's own button is unavailable. */
   const commandError = commandFailure?.identity !== feedbackIdentity ? null : <p role="alert">{commandFailure.message}</p>;
+  const hasSendableContent = draft.trim() !== '' || allowEmptyText;
   const sendDoor = allowEmptyText && draft.trim() === '' && !stopShown && !sendWaiting && editing === undefined ? (
     <button
       type="button"
@@ -540,15 +552,21 @@ export function ChatComposer({
       disabled={disabled || sendDisabled}
       onClick={() => { submit(); }}
     >Send image</button>
-  ) : canQueueWhileRunning && stopShown && !sendDisabled && draft.trim() !== '' && !sendWaiting && editing === undefined ? (
+  ) : canQueueWhileRunning && stopShown && !sendDisabled && hasSendableContent && !sendWaiting && editing === undefined ? (
     <button type="button" className={styles.queueSend} disabled={disabled} onClick={submit}>排队发送</button>
   ) : undefined;
 
   return (
     <div
       ref={rootRef}
-      className={`${styles.composer} ${layout === 'mobile' ? mobileStyles.composer : composerLayoutStyles.standard}`}
+      className={[
+        styles.composer,
+        layout === 'mobile' ? mobileStyles.composer : composerLayoutStyles.standard,
+        isDragOver ? dropzoneActiveClassName : '',
+      ].filter(Boolean).join(' ')}
       data-nc-composer=""
+      data-nc-dropzone-active={isDragOver ? '' : undefined}
+      {...dropzoneProps}
       /* Programmatic focus only: the perch the send effect parks on so focus taken off a disabling Send is not on `<body>`. */
       tabIndex={-1}
       /* Named, because focus is parked here during a send and a screen reader announces it; `group` rather than a landmark, and a name that builds on the field's `Message` rather than repeating it. */
@@ -630,10 +648,25 @@ export function ChatComposer({
             <>{sendAdornment}{sendDoor}</>
           )}
           input={(
-            <div ref={messageInputRef} className={layout === 'mobile' ? mobileStyles.input : `${styles.input} ${composerLayoutStyles.input}`}><ChatComposerInput
+            <div
+              ref={messageInputRef}
+              className={layout === 'mobile' ? mobileStyles.input : `${styles.input} ${composerLayoutStyles.input}`}
+              onPasteCapture={(event) => {
+                handleComposerPasteCapture(event, {
+                  inputDisabled: disabled,
+                  disabled: onFiles === undefined,
+                  onImages: onFiles,
+                  onUnsupportedFiles: onFiles,
+                  insertText: (plainText) => {
+                    if (inputHandleRef.current !== null) inputHandleRef.current.insertText(plainText);
+                    else setDraft((current) => `${current}${plainText}`);
+                  },
+                });
+              }}
+            ><ChatComposerInput
+              handleRef={inputHandleRef}
               /* Longer drafts scroll inside the editor, leaving room for a shared pane's recovery strip and Send. */
               maxRows={3}
-              onFiles={disabled ? undefined : onFiles}
               label="Message"
               placeholder="输入消息，或输入 / 呼出命令…"
               /* No triggers where there is neither a command nor a mention: otherwise the field becomes an `aria-expanded="false"` combobox that can never expand. */

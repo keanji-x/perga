@@ -10,13 +10,16 @@ import {
   NO_UPLOAD, type AttachmentStore, type PlannerAttachments, type UploadAttachment, type UploadState,
 } from './attachments.tsx';
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 function uploaded(index: number): UploadAttachmentResponse {
-  const id = `0189bc3f-2b1a-4c7d-9e4f-1a2b3c4d5e6${index}.png`;
+  const id = `att_0189bc3f2b1a4c7d9e4f1a2b3c4d5e6${index}`;
   return {
     attachmentId: id, contentType: 'image/png', size: 12,
-    url: `/api/cards/card-1/planner/attachments/${id}`,
+    url: `/api/v1/sessions/card-1/attachments/${id}`,
   };
 }
 
@@ -74,16 +77,14 @@ function attachBlocked(): boolean {
   return button.disabled || button.getAttribute('aria-disabled') === 'true';
 }
 
-async function pick(file: File) {
+async function pick(...files: File[]) {
   await act(async () => {
-    fireEvent.change(picker(), { target: { files: [file] } });
-    /* Letting the microtask queue drain inside `act` folds the upload's state update into this commit. */
+    fireEvent.change(picker(), { target: { files } });
     await Promise.resolve();
   });
 }
 
 describe('planner attachments', () => {
-  /* Every other test dispatches `change` on the hidden input directly, so none of them executes the line that opens it. */
   it('opens the file picker when the control is pressed', async () => {
     render(<Harness upload={vi.fn<UploadAttachment>()} />);
     const opened = vi.fn();
@@ -92,22 +93,33 @@ describe('planner attachments', () => {
     expect(opened).toHaveBeenCalledTimes(1);
   });
 
-  it('uploads on pick and previews the server copy, not a local one', async () => {
+  it('shows optimistic ObjectURL preview immediately and revokes it on remove or unmount', async () => {
+    const createSpy = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:optimistic-0');
+    const revokeSpy = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
     const upload = vi.fn<UploadAttachment>().mockResolvedValue(() => uploaded(0));
-    render(<Harness upload={upload} />);
+    const mounted = render(<Harness upload={upload} />);
     await pick(png());
 
+    expect(createSpy).toHaveBeenCalledTimes(1);
     expect(upload).toHaveBeenCalledTimes(1);
-    const [readBytes, contentType] = upload.mock.calls[0] ?? [];
+    const [readBytes, contentType, options] = upload.mock.calls[0] ?? [];
     expect(await readBytes()).toBeInstanceOf(Uint8Array);
     expect(contentType).toBe('image/png');
+    expect(options?.filename).toBe('shot.png');
 
     const thumb = document.querySelector('img');
-    expect(thumb?.getAttribute('src')).toBe(uploaded(0).url);
+    expect(thumb?.getAttribute('src')).toBe('blob:optimistic-0');
     expect(latest?.ids).toEqual([uploaded(0).attachmentId]);
+    expect(latest?.canSendWithoutText).toBe(true);
+    expect(latest?.sendBlocked).toBe(false);
+
+    mounted.unmount();
+    expect(revokeSpy).toHaveBeenCalledWith('blob:optimistic-0');
   });
 
-  it('removes a picked image before it is ever sent', async () => {
+  it('removes a picked image before it is ever sent and revokes its ObjectURL', async () => {
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:remove-me');
+    const revokeSpy = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
     const upload = vi.fn<UploadAttachment>().mockResolvedValue(() => uploaded(0));
     render(<Harness upload={upload} />);
     await pick(png());
@@ -116,6 +128,45 @@ describe('planner attachments', () => {
     act(() => { fireEvent.click(screen.getByLabelText('Remove Image 1')); });
     expect(latest?.ids).toEqual([]);
     expect(screen.queryByLabelText('Remove Image 1')).toBeNull();
+    expect(revokeSpy).toHaveBeenCalledWith('blob:remove-me');
+  });
+
+  it('keeps attach button enabled while uploading and allows removing an in-flight upload without reappearing', async () => {
+    let urlCounter = 0;
+    vi.spyOn(URL, 'createObjectURL').mockImplementation(() => `blob:flight-${urlCounter++}`);
+    const revokeSpy = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    const resolvers: ((value: () => UploadAttachmentResponse) => void)[] = [];
+    const signals: (AbortSignal | undefined)[] = [];
+    const upload = vi.fn<UploadAttachment>().mockImplementation((_readBytes, _type, opts) => {
+      signals.push(opts?.signal);
+      return new Promise((resolve) => { resolvers.push(resolve); });
+    });
+    render(<Harness upload={upload} />);
+
+    await pick(png('first.png'));
+    expect(latest?.busy).toBe(true);
+    expect(latest?.sendBlocked).toBe(true);
+    expect(attachBlocked()).toBe(false);
+
+    // Second pick while first is uploading must be admitted immediately.
+    await pick(png('second.png'));
+    expect(latest?.draftItems).toHaveLength(2);
+    expect(upload).toHaveBeenCalledTimes(2);
+
+    // Cancel the first uploading item.
+    act(() => { fireEvent.click(screen.getByLabelText('Remove Image 1')); });
+    expect(signals[0]?.aborted).toBe(true);
+    expect(revokeSpy).toHaveBeenCalledWith('blob:flight-0');
+    expect(latest?.draftItems).toHaveLength(1);
+
+    // Even if first promise settles late, it must not reappear.
+    await act(async () => {
+      resolvers[0](() => uploaded(0));
+      resolvers[1](() => uploaded(1));
+      await Promise.resolve();
+    });
+    expect(latest?.ids).toEqual([uploaded(1).attachmentId]);
+    expect(latest?.sendBlocked).toBe(false);
   });
 
   it('refuses a file that is not one of the four formats without a round trip', async () => {
@@ -128,8 +179,9 @@ describe('planner attachments', () => {
   });
 
   it('stops at eight and says so', async () => {
+    let seq = 0;
     const upload = vi.fn<UploadAttachment>()
-      .mockImplementation(() => Promise.resolve(() => uploaded(latest?.ids.length ?? 0)));
+      .mockImplementation(() => Promise.resolve(() => uploaded(seq++)));
     render(<Harness upload={upload} />);
     for (let index = 0; index < 8; index += 1) await pick(png(`shot-${index}.png`));
     expect(latest?.ids).toHaveLength(8);
@@ -141,13 +193,25 @@ describe('planner attachments', () => {
     expect(upload).not.toHaveBeenCalled();
   });
 
-  it('shows the server refusal rather than a generic failure', async () => {
+  it('shows server refusal, blocks send on failed item, and retries in place', async () => {
     const upload = vi.fn<UploadAttachment>()
-      .mockRejectedValue(new Error('attachment budget exhausted for this card (64 MiB).'));
+      .mockRejectedValueOnce(new Error('attachment budget exhausted for this card (64 MiB).'))
+      .mockResolvedValueOnce(() => uploaded(0));
     render(<Harness upload={upload} />);
     await pick(png());
+
     expect(screen.getByRole('alert').textContent).toContain('budget exhausted');
     expect(latest?.ids).toEqual([]);
+    expect(latest?.hasFailed).toBe(true);
+    expect(latest?.sendBlocked).toBe(true);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Retry Image 1' }));
+      await Promise.resolve();
+    });
+    expect(latest?.hasFailed).toBe(false);
+    expect(latest?.sendBlocked).toBe(false);
+    expect(latest?.ids).toEqual([uploaded(0).attachmentId]);
   });
 
   it('puts an upload that finished after the card changed into the card it started for', async () => {
@@ -205,7 +269,6 @@ it('an old card upload cannot release the new card upload busy state', async () 
   expect(latest?.busy).toBe(false); expect(latest?.ids).toEqual([uploaded(1).attachmentId]);
 });
 
-
 it('serializes a batch and admits only eight images before React commits', async () => {
   let count = 0;
   const upload = vi.fn<UploadAttachment>().mockImplementation(async () => {
@@ -262,4 +325,38 @@ it('continues a queued batch after an upload refusal', async () => {
   expect(latest?.ids).toEqual([uploaded(1).attachmentId]);
   expect(latest?.error).toBe('budget refusal');
   expect(latest?.busy).toBe(false);
+});
+
+it('treats unmount abort as cancellation without writing a stale refusal banner', async () => {
+  const uploadStates: Record<string, UploadState> = {};
+  const upload = vi.fn<UploadAttachment>((_readBytes, _contentType, options) => new Promise((_resolve, reject) => {
+    options?.signal?.addEventListener('abort', () => {
+      reject(new DOMException('Aborted', 'AbortError'));
+    }, { once: true });
+  }));
+
+  function UnmountHarness() {
+    const store: AttachmentStore = {
+      items: [],
+      update: () => undefined,
+      upload: uploadStates['card-unmount'] ?? NO_UPLOAD,
+      editUpload: (id, next) => {
+        uploadStates[id] = next(uploadStates[id] ?? NO_UPLOAD);
+      },
+    };
+    latest = usePlannerAttachments(upload, 'card-unmount', store);
+    return null;
+  }
+
+  const mounted = render(<UnmountHarness />);
+  act(() => {
+    void latest!.attach(png('in-flight.png'));
+  });
+  mounted.unmount();
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  expect(uploadStates['card-unmount']?.refusal ?? null).toBeNull();
+  expect(uploadStates['card-unmount']?.inFlight ?? 0).toBe(0);
 });

@@ -21,7 +21,11 @@ export function useConversationInitialSend({ primaryPlanner, scopeId, plannerCar
   useEffect(() => {
     if (pendingTrackInitialSend === undefined || open === null || open.id !== plannerCardId) return;
     if (dispatchedInitialSendRef.current === scopeId) return;
-    const sent = store.send(open.id, pendingTrackInitialSend.text, [], false, pendingTrackInitialSend.key);
+    const initialAttachments = (pendingTrackInitialSend.attachments ?? []).map((attachment) => ({
+      ...attachment,
+      url: `/api/v1/sessions/${encodeURIComponent(open.id)}/attachments/${encodeURIComponent(attachment.id)}`,
+    }));
+    const sent = store.send(open.id, pendingTrackInitialSend.text, initialAttachments, false, pendingTrackInitialSend.key);
     if (sent === null) return;
     dispatchedInitialSendRef.current = scopeId;
     pendingInitialFocusRef.current = open.id;

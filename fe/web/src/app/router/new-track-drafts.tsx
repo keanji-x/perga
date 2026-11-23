@@ -1,19 +1,35 @@
 import { createContext, useContext, useEffect, useSyncExternalStore, type ReactNode } from 'react';
 import { FOLLOW_INSTALLATION_DEFAULT, type ModelSelection } from '../../../../core/domain/conversation.ts';
 import { permissionModeAfterProviderChange } from '../../../../core/domain/planner-permission-mode.ts';
-import type { AgentProvider } from '../../../../core/api/generated/wire.ts';
+import type { AgentProvider, PlannerAttachment } from '../../../../core/api/generated/wire.ts';
 import type { Area } from '../../../../core/domain/area.ts';
 import type { NewTrackBody } from '../../../../core/domain/track.ts';
 import type { NewTrackFormState } from '../../features/area/new-track/public.tsx';
 import type { PlannerRole } from '../../features/chat/thread/model-pill.tsx';
+import { NO_UPLOAD, type UploadState } from '../../features/planner/attachments.tsx';
 import { useState } from '../../ui/state/public.ts';
 import { mintIdempotencyKey } from '../providers/idempotency-key.ts';
 import { createStorageKey } from '../../../../core/keys/storage.ts';
 import { useCurrentUser } from '../auth/current-user.tsx';
 import { TRACK_CREATE_TEXT } from '../../../../core/domain/track.ts';
 
+const EMPTY_ATTACHMENTS: readonly PlannerAttachment[] = Object.freeze([]);
+
+function isPlannerAttachment(value: unknown): value is PlannerAttachment {
+  return typeof value === 'object' && value !== null
+    && typeof (value as { id?: unknown }).id === 'string'
+    && typeof (value as { contentType?: unknown }).contentType === 'string'
+    && typeof (value as { size?: unknown }).size === 'number'
+    && typeof (value as { url?: unknown }).url === 'string';
+}
+
 /** One create's wire body, its key, and any initial message held for post-create send. */
-export type TrackCreationRequest = Readonly<{ body: NewTrackBody; key: string; message?: string }>;
+export type TrackCreationRequest = Readonly<{
+  body: NewTrackBody;
+  key: string;
+  message?: string;
+  attachments?: readonly PlannerAttachment[];
+}>;
 
 type SubmittedTrackDraft = Readonly<{ request: TrackCreationRequest; createdTrackId: string | null }>;
 
@@ -24,6 +40,8 @@ export type NewTrackDraftArea = Pick<Area, 'id' | 'name' | 'defaultCwd' | 'execu
 export type NewTrackSession = Readonly<{
   area: NewTrackDraftArea;
   form: NewTrackFormState | null;
+  attachments: readonly PlannerAttachment[];
+  upload: UploadState;
   /** The Planner's backend; `codex` until the reader picks a model from another provider's group. */
   provider: AgentProvider;
   permissionMode: string | null;
@@ -49,11 +67,17 @@ function createDraftStore(submittedStorage?: () => Storage, userId?: string) {
     try {
       const value: unknown = JSON.parse(submittedStorage().getItem(keyOf(areaId)) ?? 'null');
       if (typeof value !== 'object' || value === null) return null;
-      const { key, body, message, createdTrackId } = value as Partial<TrackCreationRequest> & { createdTrackId?: unknown };
+      const { key, body, message, attachments, createdTrackId } = value as Partial<TrackCreationRequest> & { createdTrackId?: unknown };
       if (typeof key !== 'string' || body?.area_id !== areaId
-        || (message !== undefined && typeof message !== 'string')) return null;
+        || (message !== undefined && typeof message !== 'string')
+        || (attachments !== undefined && (!Array.isArray(attachments) || !attachments.every(isPlannerAttachment)))) return null;
       return {
-        request: { key, body, ...(message === undefined ? {} : { message }) },
+        request: {
+          key,
+          body,
+          ...(message === undefined ? {} : { message }),
+          ...(attachments !== undefined && attachments.length > 0 ? { attachments } : {}),
+        },
         createdTrackId: typeof createdTrackId === 'string' && createdTrackId.trim() !== '' ? createdTrackId : null,
       };
     } catch {
@@ -94,6 +118,8 @@ function createDraftStore(submittedStorage?: () => Storage, userId?: string) {
             typeof value === 'number' ? [[key, String(value)]]
               : typeof value === 'string' || typeof value === 'boolean' ? [[key, value]] : [])),
         },
+        attachments: request?.attachments ?? EMPTY_ATTACHMENTS,
+        upload: NO_UPLOAD,
         provider: request?.body.planner_provider ?? 'codex',
         permissionMode: request?.body.permissionMode ?? null,
         model: request === null ? FOLLOW_INSTALLATION_DEFAULT : {

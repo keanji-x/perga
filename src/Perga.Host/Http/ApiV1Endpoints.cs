@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.AspNetCore.StaticFiles;
 using Perga.Contracts;
@@ -315,9 +316,40 @@ public static class ApiV1Endpoints
         v1.MapPost("/sessions/{sessionId}/messages", async (string sessionId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
         {
             var request = await ReadRequiredJsonBodyAsync<SendSessionMessageRequest>(ctx, ct, SessionJsonOptions).ConfigureAwait(false);
-            request = request with { RequestKey = request.Content is not null ? RequiredMessageKey(ctx) : null };
+            var needsKey = request.MessageId is null && (request.Content is not null || request.AttachmentIds is { Count: > 0 });
+            request = request with { RequestKey = needsKey ? RequiredMessageKey(ctx) : null };
             return Results.Json(await kernel.SendSessionMessageAsync(sessionId, request, new InteropPrincipal.Human(), ct).ConfigureAwait(false),
                 PergaJsonDefaults.ApiOptions);
+        });
+
+        v1.MapPost("/sessions/{sessionId}/attachments", async (string sessionId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
+        {
+            PrepareBinaryAttachmentUpload(ctx, kernel.AttachmentLimits);
+            var filename = ReadAttachmentFilenameHeader(ctx);
+            var stored = await kernel.UploadSessionAttachmentAsync(sessionId, ctx.Request.Body, filename, ct).ConfigureAwait(false);
+            return Results.Json(SessionAttachmentValidation.ToUploadResponse(stored), PergaJsonDefaults.ApiOptions,
+                statusCode: StatusCodes.Status201Created);
+        });
+
+        v1.MapGet("/sessions/{sessionId}/attachments/{attachmentId}", async (string sessionId, string attachmentId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
+        {
+            var attachment = await kernel.GetSessionAttachmentAsync(sessionId, attachmentId, ct).ConfigureAwait(false);
+            return await ServeAttachmentAsync(ctx, kernel, attachment, ct).ConfigureAwait(false);
+        });
+
+        v1.MapPost("/attachments", async (string? trackId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
+        {
+            PrepareBinaryAttachmentUpload(ctx, kernel.AttachmentLimits);
+            var filename = ReadAttachmentFilenameHeader(ctx);
+            var stored = await kernel.UploadStagedAttachmentAsync(trackId, ctx.Request.Body, filename, ct).ConfigureAwait(false);
+            return Results.Json(SessionAttachmentValidation.ToUploadResponse(stored), PergaJsonDefaults.ApiOptions,
+                statusCode: StatusCodes.Status201Created);
+        });
+
+        v1.MapGet("/attachments/{attachmentId}", async (string attachmentId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
+        {
+            var attachment = await kernel.GetUnownedStagedAttachmentAsync(attachmentId, ct).ConfigureAwait(false);
+            return await ServeAttachmentAsync(ctx, kernel, attachment, ct).ConfigureAwait(false);
         });
 
         v1.MapDelete("/sessions/{sessionId}/messages/{messageId}", async (string sessionId, string messageId,
@@ -380,6 +412,120 @@ public static class ApiV1Endpoints
         });
 
         return endpoints;
+    }
+
+    private static void PrepareBinaryAttachmentUpload(HttpContext ctx, AttachmentUploadLimits limits)
+    {
+        var bodySizeFeature = ctx.Features.Get<IHttpMaxRequestBodySizeFeature>();
+        if (bodySizeFeature is { IsReadOnly: false })
+        {
+            bodySizeFeature.MaxRequestBodySize = limits.MaxFileBytes;
+        }
+
+        if (ctx.Request.ContentLength is { } contentLength && contentLength > limits.MaxFileBytes)
+        {
+            throw KernelException.PayloadTooLarge($"Image attachment exceeds maximum allowed size of {limits.MaxFileBytes} bytes.");
+        }
+
+        var contentType = ctx.Request.ContentType;
+        if (!string.IsNullOrWhiteSpace(contentType))
+        {
+            var mediaType = contentType.Split(';', 2)[0].Trim();
+            if (mediaType.Equals("application/json", StringComparison.OrdinalIgnoreCase) ||
+                mediaType.EndsWith("+json", StringComparison.OrdinalIgnoreCase) ||
+                mediaType.StartsWith("text/", StringComparison.OrdinalIgnoreCase))
+            {
+                throw KernelException.InvalidArgument("Unsupported Content-Type for image upload. Send raw image bytes.");
+            }
+        }
+    }
+
+    private static string? ReadAttachmentFilenameHeader(HttpContext ctx)
+    {
+        if (!ctx.Request.Headers.TryGetValue("X-Attachment-Filename", out var values) || values.Count == 0)
+        {
+            return null;
+        }
+
+        var raw = values[0];
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return null;
+        }
+
+        try
+        {
+            return Uri.UnescapeDataString(raw.Trim());
+        }
+        catch (UriFormatException)
+        {
+            return raw.Trim();
+        }
+    }
+
+    private static async Task<IResult> ServeAttachmentAsync(
+        HttpContext ctx,
+        IPergaKernel kernel,
+        StoredSessionAttachment? attachment,
+        CancellationToken ct)
+    {
+        if (attachment is null)
+        {
+            return HttpErrorHandling.NotFound("Attachment not found.");
+        }
+
+        var etag = $"\"{attachment.Sha256}\"";
+        var cacheControl = string.Equals(attachment.Status, "bound", StringComparison.Ordinal)
+            ? "private, max-age=31536000, immutable"
+            : "private, no-store";
+
+        ctx.Response.Headers["X-Content-Type-Options"] = "nosniff";
+        ctx.Response.Headers["Content-Security-Policy"] = "sandbox";
+        ctx.Response.Headers["Content-Disposition"] = "inline";
+        ctx.Response.Headers["Cache-Control"] = cacheControl;
+        ctx.Response.Headers["ETag"] = etag;
+
+        if (MatchesIfNoneMatch(ctx.Request.Headers.IfNoneMatch.ToString(), etag))
+        {
+            return Results.StatusCode(StatusCodes.Status304NotModified);
+        }
+
+        var stream = await kernel.OpenAttachmentStreamAsync(attachment, ct).ConfigureAwait(false);
+        if (stream is null)
+        {
+            return HttpErrorHandling.NotFound("Attachment file not found.");
+        }
+
+        return Results.File(stream, attachment.ContentType, enableRangeProcessing: true);
+    }
+
+    private static bool MatchesIfNoneMatch(string? ifNoneMatch, string etag)
+    {
+        if (string.IsNullOrWhiteSpace(ifNoneMatch))
+        {
+            return false;
+        }
+
+        foreach (var rawTag in ifNoneMatch.Split(','))
+        {
+            var tag = rawTag.Trim();
+            if (tag == "*")
+            {
+                return true;
+            }
+
+            if (tag.StartsWith("W/", StringComparison.OrdinalIgnoreCase))
+            {
+                tag = tag[2..].Trim();
+            }
+
+            if (string.Equals(tag, etag, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static string? OptionalCreationKey(HttpContext ctx)

@@ -4,14 +4,18 @@ namespace Perga.Kernel.Ports;
 public sealed record SessionMessage(
     string Id, string SessionId, string AuthorId, string RequestKey, string RequestHash,
     string? TargetTurnId, string? TurnId, string Content, string Delivery, long CreatedAtMs, string Kind,
-    string? DeliveredTurnId = null);
+    string? DeliveredTurnId = null)
+{
+    public IReadOnlyList<string>? AttachmentIds { get; init; }
+    public IReadOnlyList<StoredSessionAttachment>? Attachments { get; init; }
+}
 
 public interface ISessionMessageStore
 {
     Task<SessionMessage?> FindAsync(string sessionId, string authorId, string requestKey, CancellationToken ct);
     Task<SessionMessage?> GetAsync(string sessionId, string messageId, CancellationToken ct);
     Task<SessionMessage?> NextAsync(string sessionId, CancellationToken ct);
-    Task InsertAsync(SessionMessage message, CancellationToken ct);
+    Task<SessionMessage> InsertAsync(SessionMessage message, CancellationToken ct);
     Task<bool> TransitionAsync(SessionMessage message, string expected, CancellationToken ct);
     Task<string?> FindQueuedSteerAsync(SessionMessage message, string turnId, CancellationToken ct);
     Task<bool> ClaimQueuedSteerAsync(SessionMessage message, string turnId, CancellationToken ct);

@@ -14,7 +14,9 @@ public enum KernelErrorCode
     IdempotencyKeyReused,
     IdempotencyKeyExhausted,
     WorkerTurnChanged,
-    SystemUpgradeLeadRequired
+    SystemUpgradeLeadRequired,
+    PayloadTooLarge,
+    AttachmentQuotaExceeded
 }
 
 public sealed class KernelException : Exception
@@ -49,4 +51,10 @@ public sealed class KernelException : Exception
 
     public static KernelException PreconditionFailed(string message, string? nextStep = null) =>
         new(KernelErrorCode.PreconditionFailed, message, nextStep);
+
+    public static KernelException PayloadTooLarge(string message, string? nextStep = null) =>
+        new(KernelErrorCode.PayloadTooLarge, message, nextStep);
+
+    public static KernelException AttachmentQuotaExceeded(string message, string? nextStep = null) =>
+        new(KernelErrorCode.AttachmentQuotaExceeded, message, nextStep);
 }

@@ -53,6 +53,11 @@ public sealed record RecordedTurnExecution(
 public sealed class ScriptableAgentRuntime : IAgentRuntime
 {
     public bool CanResumeSession(string provider) => true;
+    public Func<string, bool?>? ProviderImageSupport { get; set; }
+    public Func<HarnessLaunchSpec, bool>? SessionImageSupport { get; set; }
+    public bool SessionSupportsImages { get; set; } = true;
+    public bool? SupportsImages(string provider) => ProviderImageSupport is not null ? ProviderImageSupport(provider) : true;
+    public ConcurrentQueue<(string TurnId, string Message, IReadOnlyList<InputImageRef>? Images)> SteeredMessages { get; } = new();
     private readonly ConcurrentQueue<RecordedSessionOpen> _openedSessions = new();
     private readonly ConcurrentQueue<RecordedTurnExecution> _executedTurns = new();
     private Func<HarnessLaunchSpec, TurnInput, CancellationToken, IAsyncEnumerable<UnifiedAgentEvent>>? _turnHandler;
@@ -182,6 +187,7 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
 
         public string? NativeThreadId { get; }
         public bool SupportsNativeSteer => _owner.SupportsSteering;
+        public bool SupportsImages => _owner.SessionImageSupport is not null ? _owner.SessionImageSupport(_spec) : _owner.SessionSupportsImages;
         public bool SupportsNativeCompact => _owner.CompactHandler is not null;
         public Task<NativeCompactResult> CompactAsync(CancellationToken ct) => _owner.CompactHandler!(ct);
         public IReadOnlyList<PermissionModeOption> AvailablePermissionModes =>
@@ -291,8 +297,13 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
             return Task.FromResult(outcome);
         }
 
-        public async Task<SteerDelivery> SteerAsync(string turnCorrelationId, string message, CancellationToken ct)
+        public Task<SteerDelivery> SteerAsync(string turnCorrelationId, string message, CancellationToken ct) =>
+            SteerAsync(turnCorrelationId, message, images: null, ct);
+
+        public async Task<SteerDelivery> SteerAsync(string turnCorrelationId, string message, IReadOnlyList<InputImageRef>? images, CancellationToken ct)
         {
+            if (images is { Count: > 0 } && !SupportsImages) return SteerDelivery.Declined;
+            _owner.SteeredMessages.Enqueue((turnCorrelationId, message, images));
             var accepted = _owner._steerHandler is null || await _owner._steerHandler(message).WaitAsync(ct);
             return accepted ? SteerDelivery.Accepted : SteerDelivery.Declined;
         }

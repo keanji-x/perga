@@ -93,6 +93,12 @@ public partial interface IPergaKernel : IAsyncDisposable
     Task<TaskDto> CompleteTaskFailAsync(string trackId, string callerSessionId, string reason, JsonElement? workerResult = null, CancellationToken ct = default, WorkerCompletionOrigin? origin = null);
 
     // Sessions, Messages & Epoch Compaction
+    AttachmentUploadLimits AttachmentLimits { get; }
+    Task<StoredSessionAttachment> UploadSessionAttachmentAsync(string sessionId, Stream content, string? originalFilename, CancellationToken ct = default);
+    Task<StoredSessionAttachment?> GetSessionAttachmentAsync(string sessionId, string attachmentId, CancellationToken ct = default);
+    Task<StoredSessionAttachment> UploadStagedAttachmentAsync(string? trackId, Stream content, string? originalFilename, CancellationToken ct = default);
+    Task<StoredSessionAttachment?> GetUnownedStagedAttachmentAsync(string attachmentId, CancellationToken ct = default);
+    Task<Stream?> OpenAttachmentStreamAsync(StoredSessionAttachment attachment, CancellationToken ct = default);
     Task<ReadReceiptsResponseDto> GetReadReceiptsAsync(CancellationToken ct = default);
     Task<ReadReceiptDto> MarkReadAsync(string kind, string targetId, long readThroughMs, CancellationToken ct = default);
     Task<ReadReceiptDto> MarkUnreadAsync(string kind, string targetId, CancellationToken ct = default);
@@ -221,6 +227,53 @@ public sealed partial class PergaKernelService : IPergaKernel
     public IBootReconciler BootReconciler { get; }
     public SystemUpgrade.DispatchAdmission DispatchAdmission => _options.DispatchAdmission;
     public SystemUpgrade.UpgradeReceiptConsumer UpgradeReceipts { get; }
+    public AttachmentUploadLimits AttachmentLimits => _store.SessionAttachments?.Limits ?? new AttachmentUploadLimits();
+
+    public async Task<StoredSessionAttachment> UploadSessionAttachmentAsync(
+        string sessionId, Stream content, string? originalFilename, CancellationToken ct = default)
+    {
+        var attachments = RequireAttachmentStore();
+        var trackId = await ResolveTrackIdForSessionAsync(sessionId, ct).ConfigureAwait(false);
+        return await attachments.StoreStagedAsync(trackId, sessionId, content, originalFilename, ct).ConfigureAwait(false);
+    }
+
+    public Task<StoredSessionAttachment?> GetSessionAttachmentAsync(
+        string sessionId, string attachmentId, CancellationToken ct = default) =>
+        _store.SessionAttachments is { } attachments
+            ? attachments.GetForSessionAsync(sessionId, attachmentId, ct)
+            : Task.FromResult<StoredSessionAttachment?>(null);
+
+    public async Task<StoredSessionAttachment> UploadStagedAttachmentAsync(
+        string? trackId, Stream content, string? originalFilename, CancellationToken ct = default)
+    {
+        var attachments = RequireAttachmentStore();
+        var normalizedTrackId = string.IsNullOrWhiteSpace(trackId) ? null : trackId.Trim();
+        if (normalizedTrackId is not null)
+        {
+            var track = await _store.GetTrackAsync(normalizedTrackId, ct).ConfigureAwait(false)
+                ?? throw KernelException.NotFound($"Track '{normalizedTrackId}' not found.");
+            if (track.ClosedAtMs is not null)
+            {
+                throw KernelException.PreconditionFailed("Cannot upload attachments to a closed Track.");
+            }
+        }
+
+        return await attachments.StoreStagedAsync(normalizedTrackId, sessionId: null, content, originalFilename, ct).ConfigureAwait(false);
+    }
+
+    public Task<StoredSessionAttachment?> GetUnownedStagedAttachmentAsync(
+        string attachmentId, CancellationToken ct = default) =>
+        _store.SessionAttachments is { } attachments
+            ? attachments.GetUnownedStagedAsync(attachmentId, ct)
+            : Task.FromResult<StoredSessionAttachment?>(null);
+
+    public Task<Stream?> OpenAttachmentStreamAsync(StoredSessionAttachment attachment, CancellationToken ct = default) =>
+        _store.SessionAttachments is { } attachments
+            ? attachments.OpenReadStreamAsync(attachment, ct)
+            : Task.FromResult<Stream?>(null);
+
+    private ISessionAttachmentStore RequireAttachmentStore() =>
+        _store.SessionAttachments ?? throw KernelException.PreconditionFailed("Image attachment storage is unavailable.");
 
     // ------------------- System & Bootstrap -------------------
 
@@ -591,6 +644,8 @@ public sealed partial class PergaKernelService : IPergaKernel
 
     private async Task<TrackAggregateSnapshot> CreateTrackCoreAsync(CreateTrackRequest req, CancellationToken ct, string? requestKey, string? dailyDate = null, AreaDto? systemArea = null)
     {
+        var attachmentIds = SessionAttachmentValidation.NormalizeAndValidateIds(req.AttachmentIds, AttachmentLimits.MaxPerMessage);
+        req = req with { AttachmentIds = attachmentIds };
         var key = CreateKey("track", req.AreaId, requestKey, req);
         if (key is not null && await _store.FindCreationAsync(key, ct).ConfigureAwait(false) is { } replay)
             return await ReadCreatedTrackAsync(replay, ct).ConfigureAwait(false);
@@ -739,7 +794,7 @@ public sealed partial class PergaKernelService : IPergaKernel
         var id = await _store.CreateTrackAsync(
             new(track, initialReport, policy is null ? null : TemplateHost.Freeze(policy), leadSession,
                 initialFlow?.Tasks ?? [], null, preparation, events, dailyDate, systemArea)
-            { FlowClocks = initialFlow?.Clocks ?? [] },
+            { FlowClocks = initialFlow?.Clocks ?? [], AttachmentIds = attachmentIds },
             key, ct).ConfigureAwait(false);
         var snapshot = await ReadCreatedTrackAsync(id, CancellationToken.None).ConfigureAwait(false);
         if (id == track.Id)

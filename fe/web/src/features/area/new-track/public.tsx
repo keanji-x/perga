@@ -6,9 +6,15 @@ import type { DialogOrigin } from '../../../ui/dialog/public.tsx';
 import { useEffect, useMemo, useRef, useId, type ReactNode } from 'react';
 import { Banner } from '@astryxdesign/core/Banner';
 import { Button } from '@astryxdesign/core/Button';
-import { ChatComposer, ChatComposerInput, type ChatComposerTrigger } from '@astryxdesign/core/Chat';
+import { ChatComposer, ChatComposerInput, type ChatComposerInputHandle, type ChatComposerTrigger } from '@astryxdesign/core/Chat';
+import { HStack } from '@astryxdesign/core/HStack';
 import { Icon } from '@astryxdesign/core/Icon';
 import { VStack } from '@astryxdesign/core/VStack';
+import {
+  dropzoneActiveClassName,
+  handleComposerPasteCapture,
+  useDropzoneHighlight,
+} from '../../../ui/image-attachments/public.tsx';
 
 import type { CreateExecutionTargetBody, ExecutionTargetDto } from '../../../../../core/domain/area.ts';
 import { isBlankForKernel, type TrackTemplate } from '../../../../../core/domain/track.ts';
@@ -54,6 +60,16 @@ export type NewTrackFormProps = Readonly<{
   }>;
   /** App-composed model controls beside the send button. */
   modelControls?: ReactNode;
+  /** Optional attachment drawer rendered inside the composer above the input. */
+  drawer?: ReactNode;
+  /** Optional image attach control placed beside footer preferences. */
+  attachControl?: ReactNode;
+  /** Files pasted or dropped into the new-track composer. */
+  onFiles?: (files: File[]) => void;
+  /** Allow submitting with blank text when at least one ready image attachment is present. */
+  allowEmptyText?: boolean;
+  /** Block submission while image uploads are in flight or failed. */
+  attachmentSendBlocked?: boolean;
   /** Available Perga templates for explicit selection and typed `inputsSchema` entry. */
   templates?: readonly TrackTemplate[];
   /** Area's default template ID when starting a fresh draft. */
@@ -108,7 +124,8 @@ export type NewTrackFormState = Readonly<{
 }>;
 
 export function NewTrackForm({
-  modelControls, templates, defaultTemplateId, submitting, error, readNotice, initialCwd,
+  modelControls, drawer, attachControl, onFiles, allowEmptyText = false, attachmentSendBlocked = false,
+  templates, defaultTemplateId, submitting, error, readNotice, initialCwd,
   initialExecutionTargetId, executionTargets, listDirectory, listDirectoryForTarget, onCreateExecutionTarget, onSubmit,
   errorAction, initialDraft, onDraftChange, submitBlocked = false, locked = false, mentionTrigger,
   workspaceOptions: workspaceOptionsState,
@@ -127,6 +144,11 @@ export function NewTrackForm({
   const [templateInputs, setTemplateInputs] = useState<PergaTemplateRawValues>(initialDraft?.templateInputs ?? {});
   const [browsing, setBrowsing] = useState<DialogOrigin | null>(null);
   const composerHostRef = useRef<HTMLDivElement | null>(null);
+  const inputHandleRef = useRef<ChatComposerInputHandle | null>(null);
+  const { isDragOver, dropzoneProps } = useDropzoneHighlight({
+    enabled: !submitting && !locked && onFiles !== undefined,
+    onDropFiles: (files) => { onFiles?.(files); },
+  });
   /* One array per trigger: `useTriggerMenu` drops an open menu when the list changes identity. */
   const triggers = useMemo(() => mentionTrigger === undefined ? undefined : [mentionTrigger], [mentionTrigger]);
   const folderId = `${fieldId}-folder`;
@@ -188,12 +210,13 @@ export function NewTrackForm({
 
   const templateInputsValid = locked || activeTemplate === undefined || compiledTemplateInputs.valid;
   const workspaceSelectionValid = workspaceOptions === undefined || selectedWorkspaceOption !== undefined || locked;
-  const valid = !isBlankForKernel(message) && templateInputsValid && workspaceSelectionValid;
+  const hasMessageOrAttachments = !isBlankForKernel(message) || allowEmptyText;
+  const valid = hasMessageOrAttachments && templateInputsValid && workspaceSelectionValid && !attachmentSendBlocked;
 
   function draftFor(text: string, forAction = false): NewTrackDraft | null {
-    /* Blank refuses the submit; it does not rewrite it. `text` goes to the caller
+    /* Blank refuses the submit unless ready image attachments are present; `text` goes to the caller
            exactly as typed, and the kernel forwards it untrimmed. */
-    if (isBlankForKernel(text) || !templateInputsValid || !workspaceSelectionValid || submitting || (submitBlocked && !forAction)) return null;
+    if ((isBlankForKernel(text) && !allowEmptyText) || attachmentSendBlocked || !templateInputsValid || !workspaceSelectionValid || submitting || (submitBlocked && !forAction)) return null;
     /* Spread, not `cwd: cwd || undefined`: the caller keys managed-vs-attached on
            whether the key is there. A path travels byte-for-byte; leading/trailing
            spaces are legal POSIX path characters. */
@@ -345,8 +368,10 @@ export function NewTrackForm({
 
         <div
           ref={composerHostRef}
-          className={`${styles.composer} ${centeredComposerClassName}`}
+          className={[styles.composer, centeredComposerClassName, isDragOver ? dropzoneActiveClassName : ''].filter(Boolean).join(' ')}
           data-nc-new-track-message
+          data-nc-dropzone-active={isDragOver ? '' : undefined}
+          {...dropzoneProps}
           /* Enter is ours: astryx's `ChatComposer.handleSubmit` clears the controlled value unconditionally after calling us, so a refused
              submit would lose the sentence. Only when the field itself is the target; Enter while composing is accepting an IME candidate, not sending. */
           onKeyDownCapture={(event) => {
@@ -380,25 +405,53 @@ export function NewTrackForm({
             placeholder={TASK_PLACEHOLDER}
             isDisabled={submitting}
             onSubmit={submit}
-            input={<div className={styles.editor}>
-              <ChatComposerInput className={styles.input} label={TASK_LABEL} placeholder={TASK_PLACEHOLDER} isDisabled={submitting || locked}
+            {...(drawer === undefined ? {} : { drawer })}
+            input={<div
+              className={styles.editor}
+              onPasteCapture={(event) => {
+                handleComposerPasteCapture(event, {
+                  inputDisabled: submitting || locked,
+                  disabled: onFiles === undefined,
+                  onImages: onFiles,
+                  onUnsupportedFiles: onFiles,
+                  insertText: (plainText) => {
+                    if (inputHandleRef.current !== null) inputHandleRef.current.insertText(plainText);
+                    else setMessage((current) => `${current}${plainText}`);
+                  },
+                });
+              }}
+            >
+              <ChatComposerInput
+                handleRef={inputHandleRef}
+                className={styles.input}
+                label={TASK_LABEL}
+                placeholder={TASK_PLACEHOLDER}
+                isDisabled={submitting || locked}
                 /* The `@` source delays its own requests; Astryx's delay would let its per-keystroke probe search fire. */
-                {...(triggers === undefined ? {} : { triggers, debounceMs: 0 })} />
+                {...(triggers === undefined ? {} : { triggers, debounceMs: 0 })}
+              />
             </div>}
-            footerActions={<ComposerPreferences browsing={browsing !== null}
-              folder={{ buttonId: folderId, value: cwd, targetLabel: resolvedTargetLabel, isolation, clearLabel: FOLDER_CLEAR_LABEL,
-                workspaceOptions, workspaceOptionId: selectedWorkspaceOption,
-                onWorkspaceOptionChange: (id) => setWorkspaceChoice({ id, cwd }),
-                onIsolationChange: setIsolation,
-                onBrowse: (origin) => setBrowsing(origin),
-                onClear: () => {
-                  setCwd('');
-                  if (hasTargetPicker) setExecutionTargetId('local');
-                  setIsolation('worktree');
-                  setWorkspaceChoice(null);
-                },
-                isDisabled: submitting || locked }}
-            />}
+            footerActions={(() => {
+              const preferences = (
+                <ComposerPreferences browsing={browsing !== null}
+                  folder={{ buttonId: folderId, value: cwd, targetLabel: resolvedTargetLabel, isolation, clearLabel: FOLDER_CLEAR_LABEL,
+                    workspaceOptions, workspaceOptionId: selectedWorkspaceOption,
+                    onWorkspaceOptionChange: (id) => setWorkspaceChoice({ id, cwd }),
+                    onIsolationChange: setIsolation,
+                    onBrowse: (origin) => setBrowsing(origin),
+                    onClear: () => {
+                      setCwd('');
+                      if (hasTargetPicker) setExecutionTargetId('local');
+                      setIsolation('worktree');
+                      setWorkspaceChoice(null);
+                    },
+                    isDisabled: submitting || locked }}
+                />
+              );
+              return attachControl === undefined ? preferences : (
+                <HStack gap={1} align="center">{attachControl}{preferences}</HStack>
+              );
+            })()}
             /* Model and Create stay together at the trailing edge. */
             sendActions={modelControls === undefined ? undefined : <span className={styles.modelControls}>{modelControls}</span>}
             sendButton={(

@@ -24,7 +24,8 @@ public sealed record UpdateSessionRequest(long? ExpectedConfigVersion = null, st
     string? Provider = null, OptionalString Model = default, OptionalString ReasoningEffort = default,
     OptionalString PermissionMode = default);
 public sealed record SendSessionMessageRequest(string? Content = null, string? RequestKey = null, string Mode = "default",
-    string? TurnId = null, string? MessageId = null, int? ExpectedEpoch = null);
+    string? TurnId = null, string? MessageId = null, int? ExpectedEpoch = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? AttachmentIds = null);
 public sealed record SessionMessageReceipt(string MessageId, string SessionId, string? TurnId, string Delivery, bool Replay = false);
 public sealed record SessionControlRequest(string Action, string? TurnId = null, int? ExpectedEpoch = null);
 public sealed record RespondInteractionRequest(string? ExecutionId = null, string? OptionId = null, JsonElement? Answers = null);
@@ -37,7 +38,7 @@ public sealed record SessionSummaryDto(AgentSessionDto Session, string State, st
 public sealed record SessionTaskBindingDto(TaskDto Task, string Phase, string? WaitingReason);
 public sealed record SessionCapabilitiesDto(IReadOnlyList<Perga.AgentKit.WorkerModelOption> Models,
     string? DefaultModel, string? DefaultReasoningEffort, IReadOnlyList<Perga.AgentKit.PermissionModeOption> PermissionModes,
-    bool SupportsNativeSteer, bool SupportsSessionResume, bool SupportsCompact);
+    bool SupportsNativeSteer, bool SupportsSessionResume, bool SupportsCompact, bool SupportsImages = false);
 public sealed record PendingInteractionDto(string Id, string Kind, string SessionId, string? TurnId,
     string? ExecutionId, string Title, IReadOnlyList<ApprovalChoiceDto>? Options,
     IReadOnlyList<AskQuestionDto>? Questions, bool CanRespond, long CreatedAtMs, string? ToolName = null, JsonElement? Arguments = null);

@@ -9,10 +9,12 @@ namespace Perga.Storage.Sqlite;
 internal sealed class SessionRepository
 {
     private readonly SqliteStoreContext _context;
+    private readonly SessionAttachmentsRepository _attachmentsRepository;
 
-    internal SessionRepository(SqliteStoreContext context)
+    internal SessionRepository(SqliteStoreContext context, SessionAttachmentsRepository attachmentsRepository)
     {
         _context = context;
+        _attachmentsRepository = attachmentsRepository;
     }
 
     public Task UpsertSessionAsync(AgentSessionDto session, EventEnvelopeDto? evt, CancellationToken ct)
@@ -275,7 +277,7 @@ internal sealed class SessionRepository
         var reverse = latest || beforeId is not null;
         var clampedLimit = Math.Max(1, limit);
         await using var conn = await _context.OpenReadConnectionAsync(ct).ConfigureAwait(false);
-        var rows = await conn.QueryAsync<SessionItemRow>(
+        var rows = (await conn.QueryAsync<SessionItemRow>(
             new CommandDefinition(
                 $"""
                 SELECT item.id AS Id,
@@ -287,7 +289,8 @@ internal sealed class SessionRepository
                        END AS PayloadJson,
                        item.created_at_ms AS CreatedAtMs,
                        CASE WHEN item.turn_id IS NULL AND json_extract(item.payload_json,'$.archived') = 1 THEN json_extract(item.payload_json,'$.status') ELSE turn.status END AS TurnStatus,
-                       CASE WHEN input.delivery = 'queued' THEN 'accepted' ELSE input.delivery END AS InputDelivery
+                       CASE WHEN input.delivery = 'queued' THEN 'accepted' ELSE input.delivery END AS InputDelivery,
+                       item.message_ordinal AS MessageOrdinal
                 FROM session_items item
                 LEFT JOIN session_messages input ON input.ordinal = item.message_ordinal
                 LEFT JOIN session_turns turn ON turn.session_id = item.session_id AND turn.id = item.turn_id
@@ -303,9 +306,19 @@ internal sealed class SessionRepository
                     BeforeId = beforeId,
                     Limit = clampedLimit
                 },
-                cancellationToken: ct)).ConfigureAwait(false);
+                cancellationToken: ct)).ConfigureAwait(false)).AsList();
 
-        return (reverse ? rows.Reverse() : rows).Select(MapSessionItem).ToList();
+        var ordinals = rows
+            .Where(static r => r.MessageOrdinal.HasValue)
+            .Select(static r => r.MessageOrdinal!.Value)
+            .Distinct()
+            .ToArray();
+        var attachmentsByOrdinal = ordinals.Length > 0
+            ? await _attachmentsRepository.LoadByMessageOrdinalsAsync(conn, tx: null, ordinals, ct).ConfigureAwait(false)
+            : null;
+
+        var ordered = reverse ? Enumerable.Reverse(rows) : rows;
+        return ordered.Select(r => MapSessionItem(r, attachmentsByOrdinal)).ToList();
     }
 
     internal static Task UpsertSessionInternalAsync(
@@ -415,14 +428,32 @@ internal sealed class SessionRepository
             StartedAtMs: r.StartedAtMs,
             CompletedAtMs: r.CompletedAtMs);
 
-    private SessionItemDto MapSessionItem(SessionItemRow r) =>
-        new(
+    private SessionItemDto MapSessionItem(
+        SessionItemRow r,
+        IReadOnlyDictionary<long, IReadOnlyList<StoredSessionAttachment>>? attachmentsByOrdinal)
+    {
+        IReadOnlyList<SessionAttachmentDto>? attachments = null;
+        if (r.MessageOrdinal is { } ord &&
+            attachmentsByOrdinal is not null &&
+            attachmentsByOrdinal.TryGetValue(ord, out var stored) &&
+            stored.Count > 0)
+        {
+            attachments = stored.Select(SessionAttachmentValidation.ToSessionDto).ToArray();
+        }
+
+        return new(
             Id: r.Id,
             SessionId: r.SessionId,
             TurnId: r.TurnId,
             Kind: r.Kind,
             Payload: _context.ColdBlobs.Hydrate(r.PayloadJson, "session_items.payload_json"),
-            CreatedAtMs: r.CreatedAtMs) { TurnStatus = r.TurnStatus, InputDelivery = r.InputDelivery };
+            CreatedAtMs: r.CreatedAtMs)
+        {
+            TurnStatus = r.TurnStatus,
+            InputDelivery = r.InputDelivery,
+            Attachments = attachments
+        };
+    }
 
     internal sealed class SessionRow
     {
@@ -479,5 +510,6 @@ internal sealed class SessionRepository
         public long CreatedAtMs { get; init; }
         public string? TurnStatus { get; init; }
         public string? InputDelivery { get; init; }
+        public long? MessageOrdinal { get; init; }
     }
 }

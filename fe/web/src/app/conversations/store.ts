@@ -352,6 +352,7 @@ export function useConversationStore(
     manualCompactSupported: sessionState === 'idle' && readonlyReason === null && capabilities?.supportsCompact === true,
     contextUsage: run.data === undefined ? null : sessionContextUsage(run.data.session),
     uploadAttachment: mutations.uploadAttachment,
+    attachmentsSupported: capabilities?.supportsImages === true,
     compacting: compactPending.has(cardId) || phase === 'compacting',
     compact: () => {
       if (!capabilities?.supportsCompact || sessionState !== 'idle' || readonlyReason !== null || compactLeases.current.has(cardId) || cardId === '') return;

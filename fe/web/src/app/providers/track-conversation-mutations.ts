@@ -14,7 +14,7 @@ export type ConversationMutations = Readonly<{
   archive: (cardId: string, archived: boolean) => Promise<void>;
   /** The key identifies the DRAFT, not the attempt: a retry after a timeout must reuse it, or it mints a second conversation. */
   create: (text: string, idempotencyKey: string, provider: AgentProvider, selection: ModelSelection, side: SideConversation | undefined,
-    answered: (result: CreatedConversation) => void, permissionMode?: string | null) => Promise<CreatedConversation>;
+    answered: (result: CreatedConversation) => void, permissionMode?: string | null, attachmentIds?: readonly string[]) => Promise<CreatedConversation>;
 }>;
 
 /** Session receipts and recovery reads update the Track's authoritative aggregate. */
@@ -23,10 +23,10 @@ export function useTrackConversationMutations(
 ): ConversationMutations {
   const client = useQueryClient();
   const create = useRecoveryMutation(transport, {
-    mutationFn: async ({ text, idempotencyKey, provider, selection, side, permissionMode }: { text: string; idempotencyKey: string; provider: AgentProvider; selection: ModelSelection; side?: SideConversation; answered: (result: CreatedConversation) => void; permissionMode?: string | null }, transport: ApiTransportPort) => {
+    mutationFn: async ({ text, idempotencyKey, provider, selection, side, permissionMode, attachmentIds }: { text: string; idempotencyKey: string; provider: AgentProvider; selection: ModelSelection; side?: SideConversation; answered: (result: CreatedConversation) => void; permissionMode?: string | null; attachmentIds?: readonly string[] }, transport: ApiTransportPort) => {
       return runOperation(
         transport,
-        createTrackConversationOperation(trackId, text, idempotencyKey, provider, selection, side, permissionMode),
+        createTrackConversationOperation(trackId, text, idempotencyKey, provider, selection, side, permissionMode, attachmentIds),
         unauthorized,
       );
     },
@@ -56,7 +56,7 @@ export function useTrackConversationMutations(
     (cardId: string, archived: boolean) => archive.mutateAsync({ cardId, archived }));
   return {
     archive: changeArchive,
-    create: (text, idempotencyKey, provider, selection, side, answered, permissionMode) =>
-      create.mutateAsync({ text, idempotencyKey, provider, selection, side, answered, permissionMode }),
+    create: (text, idempotencyKey, provider, selection, side, answered, permissionMode, attachmentIds) =>
+      create.mutateAsync({ text, idempotencyKey, provider, selection, side, answered, permissionMode, attachmentIds }),
   };
 }

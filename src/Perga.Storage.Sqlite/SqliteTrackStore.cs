@@ -33,6 +33,7 @@ public sealed class SqliteTrackStore : ITrackStore, IAsyncDisposable, ISessionIn
     private readonly TrackSchedulesRepository _trackSchedulesRepository;
     private readonly TrackWakesRepository _trackWakesRepository;
     private readonly CreationRepository _creationRepository;
+    private readonly SessionAttachmentsRepository _sessionAttachmentsRepository;
 
     public SqliteTrackStore(
         string dbPath,
@@ -56,20 +57,21 @@ public sealed class SqliteTrackStore : ITrackStore, IAsyncDisposable, ISessionIn
         SqliteJsonUpcaster? upcaster = null)
     {
         _context = new SqliteStoreContext(options, migrator, timeProvider, upcaster);
+        _sessionAttachmentsRepository = new SessionAttachmentsRepository(_context);
         _maintenanceRepository = new MaintenanceRepository(_context);
-        _sessionRepository = new SessionRepository(_context);
+        _sessionRepository = new SessionRepository(_context, _sessionAttachmentsRepository);
         _taskRepository = new TaskRepository(_context, _sessionRepository);
         _trackReadRepository = new TrackReadRepository(_context, _taskRepository);
-        _sessionInputsRepository = new SessionInputsRepository(_context, _sessionRepository, _trackReadRepository);
+        _sessionInputsRepository = new SessionInputsRepository(_context, _sessionRepository, _trackReadRepository, _sessionAttachmentsRepository);
         _todayRepository = new TodayRepository(_context);
         _readReceiptsRepository = new ReadReceiptsRepository(_context);
-        _sessionMessagesRepository = new SessionMessagesRepository(_context, _sessionRepository);
+        _sessionMessagesRepository = new SessionMessagesRepository(_context, _sessionRepository, _sessionAttachmentsRepository);
         _correspondenceRepository = new CorrespondenceRepository(_context);
         _systemUpgradeRepository = new SystemUpgradeRepository(_context, _correspondenceRepository);
         _executionTargetsRepository = new ExecutionTargetsRepository(_context);
         _sessionResumeRepository = new SessionResumeRepository(_context, _sessionRepository);
         _areaRepository = new AreaRepository(_context);
-        _trackCreationRepository = new TrackCreationRepository(_context, _taskRepository);
+        _trackCreationRepository = new TrackCreationRepository(_context, _taskRepository, _sessionAttachmentsRepository);
         _trackUpdateRepository = new TrackUpdateRepository(_context, _taskRepository);
         _trackDeletionRepository = new TrackDeletionRepository(_context);
         _reportRepository = new ReportRepository(_context);
@@ -109,6 +111,7 @@ public sealed class SqliteTrackStore : ITrackStore, IAsyncDisposable, ISessionIn
 
     public ISessionInputStore SessionInputs => this;
     public ISessionMessageStore SessionMessages => this;
+    public ISessionAttachmentStore? SessionAttachments => _sessionAttachmentsRepository;
     public ITrackScheduleStore? TrackSchedules => this;
     public ITrackWakeStore TrackWakes => this;
 
@@ -207,7 +210,7 @@ public sealed class SqliteTrackStore : ITrackStore, IAsyncDisposable, ISessionIn
     Task<SessionMessage?> ISessionMessageStore.NextAsync(string sessionId, CancellationToken ct) =>
         ((ISessionMessageStore)_sessionMessagesRepository).NextAsync(sessionId, ct);
 
-    Task ISessionMessageStore.InsertAsync(SessionMessage message, CancellationToken ct) =>
+    Task<SessionMessage> ISessionMessageStore.InsertAsync(SessionMessage message, CancellationToken ct) =>
         ((ISessionMessageStore)_sessionMessagesRepository).InsertAsync(message, ct);
 
     Task<bool> ISessionMessageStore.TransitionAsync(SessionMessage message, string expected, CancellationToken ct) =>

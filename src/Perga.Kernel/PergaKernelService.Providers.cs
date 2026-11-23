@@ -48,7 +48,8 @@ public sealed partial class PergaKernelService
                 ? ProviderPermissionModes.GetModesForProvider(id)
                 : liveModes.GetValueOrDefault(id) ?? status.PermissionModes ?? [];
             return new TrackProviderEntryDto(id, status.Available, status.Version, status.Reason, defaultModel,
-                permissionSource == PermissionCatalogSource.Static ? "static" : "dynamic", models, permissionModes);
+                permissionSource == PermissionCatalogSource.Static ? "static" : "dynamic", models, permissionModes,
+                status.SupportsImages);
         }).ToArray();
 
         return new(defaultProvider, observation.ObservedAtMs, entries);

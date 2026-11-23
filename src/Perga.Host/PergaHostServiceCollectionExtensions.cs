@@ -88,9 +88,21 @@ public static class PergaHostServiceCollectionExtensions
         services.TryAddSingleton(sp =>
         {
             _ = sp.GetRequiredService<EphemeralStorageCleanupHook>();
+            var opts = sp.GetRequiredService<PergaHostOptions>();
             var paths = sp.GetRequiredService<ResolvedHostStoragePaths>();
             var timeProvider = sp.GetRequiredService<TimeProvider>();
-            return new SqliteTrackStore(paths.DbPath, paths.DataDir, timeProvider);
+            return new SqliteTrackStore(
+                new SqliteStorageOptions
+                {
+                    DbPath = paths.DbPath,
+                    DataDir = paths.DataDir,
+                    MaxAttachmentBytes = opts.MaxAttachmentBytes,
+                    MaxAttachmentsPerMessage = opts.MaxAttachmentsPerMessage,
+                    MaxSessionAttachmentBytes = opts.MaxSessionAttachmentBytes,
+                    MaxUnownedStagedAttachmentBytes = opts.MaxUnownedStagedAttachmentBytes,
+                    MaxUnownedStagedAttachmentCount = opts.MaxUnownedStagedAttachmentCount
+                },
+                timeProvider: timeProvider);
         });
 
         services.TryAddSingleton<ITrackStore>(sp => sp.GetRequiredService<SqliteTrackStore>());

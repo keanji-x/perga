@@ -36,6 +36,11 @@ public static class HttpErrorHandling
 
             KernelException kex => MapKernelException(kex),
 
+            BadHttpRequestException { StatusCode: StatusCodes.Status413PayloadTooLarge } tooLarge => Results.Json(
+                new ApiErrorResponse("payload_too_large", tooLarge.Message, null),
+                PergaJsonDefaults.ApiOptions,
+                statusCode: StatusCodes.Status413PayloadTooLarge),
+
             BadHttpRequestException badHttp => Results.Json(
                 new ApiErrorResponse("bad_request", badHttp.Message, null),
                 PergaJsonDefaults.ApiOptions,
@@ -97,6 +102,8 @@ public static class HttpErrorHandling
             KernelErrorCode.WorkerTurnChanged => (StatusCodes.Status409Conflict, "worker_turn_changed"),
             KernelErrorCode.SessionRecoveryRequired => (StatusCodes.Status409Conflict, "session_recovery_required"),
             KernelErrorCode.PreconditionFailed => (StatusCodes.Status409Conflict, "precondition_failed"),
+            KernelErrorCode.PayloadTooLarge => (StatusCodes.Status413PayloadTooLarge, "payload_too_large"),
+            KernelErrorCode.AttachmentQuotaExceeded => (StatusCodes.Status400BadRequest, "attachment_quota_exceeded"),
             _ => (StatusCodes.Status400BadRequest, "kernel_error")
         };
 

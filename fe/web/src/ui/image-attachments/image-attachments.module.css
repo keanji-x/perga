@@ -1,0 +1,123 @@
+@layer ui {
+  .attach {
+    position: relative;
+    display: inline-flex;
+  }
+
+  .attachInput {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: calc(-1 * var(--space-px));
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .dropzoneActive {
+    outline: 2px dashed var(--accent);
+    outline-offset: 2px;
+    border-radius: var(--radius-lg);
+  }
+
+  .draftItem {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-1);
+  }
+
+  .draftItemFailed {
+    padding: var(--space-half);
+    border-radius: var(--radius-sm);
+    background: var(--error-soft);
+    outline: 1px solid var(--error-text);
+  }
+
+  .retryButton {
+    font-family: inherit;
+    font-size: var(--font-step-1-size);
+    font-weight: var(--weight-medium);
+    line-height: var(--font-step-1-line);
+    min-block-size: 28px;
+    padding: var(--space-half) var(--space-2);
+    border: 1px solid var(--hairline-strong);
+    border-radius: var(--radius-pill);
+    background: var(--surface-chip);
+    color: var(--error-text);
+    cursor: pointer;
+  }
+
+  @media (pointer: coarse) {
+    .retryButton {
+      min-inline-size: 44px;
+      min-block-size: 44px;
+    }
+  }
+
+  .retryButton:hover {
+    background: var(--bg);
+  }
+
+  .statusNote {
+    font-size: var(--font-step-1-size);
+    line-height: var(--font-step-1-line);
+    margin: 0;
+    color: var(--text-3);
+  }
+
+  .gallery {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: var(--space-2);
+    margin: var(--space-1) 0 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .galleryStart {
+    justify-content: flex-start;
+  }
+
+  .gallery[data-nc-editing] {
+    inline-size: fit-content;
+    margin-inline-start: auto;
+    opacity: 0.6;
+    outline: 1px dashed var(--hairline-strong);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+
+  .galleryItem {
+    max-inline-size: 160px;
+    border-radius: 6px;
+  }
+
+  .galleryCompact .galleryItem {
+    max-inline-size: 96px;
+  }
+
+  .galleryButton {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-inline-size: 44px;
+    min-block-size: 44px;
+    inline-size: 100%;
+    padding: 0;
+    border: 0;
+    background: var(--surface-chip);
+    border-radius: inherit;
+    overflow: hidden;
+    cursor: zoom-in;
+  }
+
+  .galleryButton img {
+    display: block;
+    inline-size: 100%;
+    block-size: auto;
+  }
+}

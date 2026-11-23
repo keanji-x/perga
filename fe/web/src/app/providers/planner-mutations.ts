@@ -1,4 +1,3 @@
-import type { UploadAttachmentResponse } from '../../../../core/api/generated/wire.ts';
 import { KeyedSendFailure } from '../../../../core/domain/conversation-delivery.ts';
 import { type ConversationRun } from '../../../../core/domain/conversation-display.ts';
 import type { ConversationSendTarget } from '../../../../core/domain/conversation-outbox.ts';
@@ -12,10 +11,22 @@ import type { ApiOperation,ApiTransportPort } from '../../../../core/api/types.t
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { type AskId,type AskQuestion } from '../../../../core/domain/activity.ts';
 import { answerAskOperation } from '../../../../core/domain/ask.ts';
-import { compactPlannerOperation, interruptPlannerOperation, recoverSessionOperation, removeQueuedSessionMessageOperation, sendPlannerInputOperation, steerQueuedSessionMessageOperation } from '../../../../core/domain/conversation-commands.ts';
+import {
+  compactPlannerOperation,
+  interruptPlannerOperation,
+  PLANNER_ATTACHMENT_FAILURES,
+  recoverSessionOperation,
+  removeQueuedSessionMessageOperation,
+  sendPlannerInputOperation,
+  steerQueuedSessionMessageOperation,
+  UPLOAD_TEXT,
+  uploadSessionAttachmentOperation,
+  uploadStagedAttachmentOperation,
+} from '../../../../core/domain/conversation-commands.ts';
 import { createSerialWriter, setPlannerModelOperation, type ModelSelectionResult } from '../../../../core/domain/conversation-models.ts';
 import { type ModelSelection } from '../../../../core/domain/conversation.ts';
-import { ApiError } from '../../../../core/domain/failure-class.ts';
+import { ApiError, refusalText, writeFailureOf } from '../../../../core/domain/failure-class.ts';
+import type { UploadAttachment } from '../../features/planner/attachments.tsx';
 import { setPlannerPermissionModeOperation,type SetPlannerPermissionModeResponse } from '../../../../core/domain/planner-permission-mode.ts';
 import type { ConversationRegistry } from '../conversations/registry-model.ts';
 import { cancelThenInvalidate } from '../events/query-refresh.ts';
@@ -171,6 +182,62 @@ export function usePlannerMutations(transport: ApiTransportPort, cardId: string,
       setPermissionModeWrite(mode),
     /* No `refreshAfter`: an upload changes nothing any query holds until a send names it. Every failure, the
      * admission's included, rejects with the sentence the strip shows, read against the route's table. */
-    uploadAttachment: (() => Promise.reject(new Error('Image attachments are unavailable.'))) as (readBytes: () => Promise<Uint8Array>, contentType: string) => Promise<() => UploadAttachmentResponse>,
+    uploadAttachment: (async (readBytes, contentType, options) => {
+      let admitted: ApiTransportPort;
+      try { admitted = admitTransport(transport); }
+      catch (error) { throw new Error(error instanceof Error ? error.message : UPLOAD_TEXT.refused); }
+      const checkpoint = admitted.recovery?.checkpoint();
+      const bytes = await readBytes();
+      try {
+        const response = await execute(
+          admitted,
+          uploadSessionAttachmentOperation(cardId, bytes, contentType, options),
+          unauthorized,
+        );
+        return () => {
+          try { checkpoint?.(); } catch { throw new Error(UPLOAD_TEXT.unknown); }
+          return response;
+        };
+      } catch (error) {
+        throw new Error(
+          refusalText(writeFailureOf(error), PLANNER_ATTACHMENT_FAILURES, UPLOAD_TEXT.refused) ?? UPLOAD_TEXT.unknown,
+        );
+      }
+    }) as UploadAttachment,
+  };
+}
+
+/** Staged attachment upload for New Session drafts (`trackId` set) and New Track pages (`trackId` omitted). */
+export function useStagedAttachmentUpload(
+  transport: ApiTransportPort,
+  unauthorized: UnauthorizedChannel,
+  trackId?: string,
+): UploadAttachment {
+  const execute = usePlannerOperation();
+  return async (readBytes, contentType, options) => {
+    let admitted: ApiTransportPort;
+    try { admitted = admitTransport(transport); }
+    catch (error) { throw new Error(error instanceof Error ? error.message : UPLOAD_TEXT.refused); }
+    const checkpoint = admitted.recovery?.checkpoint();
+    const bytes = await readBytes();
+    try {
+      const response = await execute(
+        admitted,
+        uploadStagedAttachmentOperation(bytes, contentType, {
+          ...(trackId === undefined ? {} : { trackId }),
+          ...(options?.filename === undefined ? {} : { filename: options.filename }),
+          ...(options?.signal === undefined ? {} : { signal: options.signal }),
+        }),
+        unauthorized,
+      );
+      return () => {
+        try { checkpoint?.(); } catch { throw new Error(UPLOAD_TEXT.unknown); }
+        return response;
+      };
+    } catch (error) {
+      throw new Error(
+        refusalText(writeFailureOf(error), PLANNER_ATTACHMENT_FAILURES, UPLOAD_TEXT.refused) ?? UPLOAD_TEXT.unknown,
+      );
+    }
   };
 }

@@ -51,12 +51,14 @@ internal sealed class MaintenanceRepository
         var compactedTasks = await RunMaintenanceBatchesAsync(
             () => CompactTaskDiagnosticsAsync(nowMs, ct), MaintenanceBatchSize).ConfigureAwait(false);
         var reclaimedBlobs = await SweepUnreferencedBlobsAsync(ct).ConfigureAwait(false);
+        var reclaimedAttachments = await SweepOrphanAttachmentsAsync(nowMs, ct).ConfigureAwait(false);
         var reclaimedPages = await VacuumAndCheckpointAsync(ct).ConfigureAwait(false);
 
         return new DbMaintenanceStatsDto(prunedEvents, thinnedRevisions, compactedItems, reclaimedPages)
         {
             CompactedTasks = compactedTasks,
-            ReclaimedBlobs = reclaimedBlobs
+            ReclaimedBlobs = reclaimedBlobs,
+            ReclaimedAttachments = reclaimedAttachments
         };
     }
 
@@ -457,6 +459,118 @@ internal sealed class MaintenanceRepository
             new CommandDefinition(sql, new { Candidates = candidates }, cancellationToken: ct)).ConfigureAwait(false);
         return refs.ToHashSet(StringComparer.Ordinal);
     }
+
+    private async Task<int> SweepOrphanAttachmentsAsync(long nowMs, CancellationToken ct)
+    {
+        var reclaimed = 0;
+
+        // 1. Delete expired staged rows (> 24h TTL) in batches of 250 and unlink post-commit.
+        var stagedCutoffMs = nowMs - _context.Options.StagedAttachmentTtlMs;
+        while (true)
+        {
+            ct.ThrowIfCancellationRequested();
+            var expiredPaths = await _context.Writer.EnqueueAsync<List<string>>(async (conn, tx, innerCt) =>
+            {
+                var rows = await conn.QueryAsync<string>(new CommandDefinition(
+                    """
+                    DELETE FROM session_attachments
+                    WHERE id IN (
+                        SELECT id FROM session_attachments
+                        WHERE status = 'staged' AND created_at_ms < @Cutoff
+                        ORDER BY created_at_ms ASC, id ASC
+                        LIMIT @BatchSize
+                    )
+                    RETURNING storage_rel_path;
+                    """,
+                    new { Cutoff = stagedCutoffMs, BatchSize = MaintenanceBatchSize },
+                    transaction: tx,
+                    cancellationToken: innerCt)).ConfigureAwait(false);
+                return rows.AsList();
+            }, ct).ConfigureAwait(false);
+
+            foreach (var relPath in expiredPaths)
+            {
+                _context.AttachmentBlobs.DeleteFileIfPresent(relPath);
+            }
+
+            reclaimed += expiredPaths.Count;
+            if (expiredPaths.Count < MaintenanceBatchSize)
+            {
+                break;
+            }
+        }
+
+        // 2. Sweep unreferenced physical files on disk older than the grace period (two-phase re-check on writer).
+        var graceCutoffMs = Math.Max(0L, nowMs - _context.Options.OrphanAttachmentGraceMs);
+        var graceCutoffUtc = DateTimeOffset.FromUnixTimeMilliseconds(graceCutoffMs);
+        using var files = _context.AttachmentBlobs.EnumerateAttachmentFilesOlderThan(graceCutoffUtc).GetEnumerator();
+        if (!files.MoveNext())
+        {
+            return reclaimed;
+        }
+
+        HashSet<string> referenced;
+        await using (var conn = await _context.OpenReadConnectionAsync(ct).ConfigureAwait(false))
+        {
+            referenced = (await conn.QueryAsync<string>(new CommandDefinition(
+                "SELECT storage_rel_path FROM session_attachments;",
+                cancellationToken: ct)).ConfigureAwait(false)).ToHashSet(StringComparer.Ordinal);
+        }
+
+        var candidates = new List<string>(MaintenanceBatchSize);
+        do
+        {
+            ct.ThrowIfCancellationRequested();
+            var current = files.Current;
+            if (current.IsTempFile)
+            {
+                if (_context.AttachmentBlobs.DeleteFileIfPresent(current.StorageRelPath))
+                {
+                    reclaimed++;
+                }
+                continue;
+            }
+
+            if (!referenced.Contains(current.StorageRelPath))
+            {
+                candidates.Add(current.StorageRelPath);
+                if (candidates.Count == MaintenanceBatchSize)
+                {
+                    reclaimed += await ReclaimAttachmentFilesAsync(candidates, ct).ConfigureAwait(false);
+                    candidates.Clear();
+                }
+            }
+        }
+        while (files.MoveNext());
+
+        if (candidates.Count > 0)
+        {
+            reclaimed += await ReclaimAttachmentFilesAsync(candidates, ct).ConfigureAwait(false);
+        }
+
+        return reclaimed;
+    }
+
+    private Task<int> ReclaimAttachmentFilesAsync(IReadOnlyList<string> candidates, CancellationToken ct) =>
+        _context.Writer.EnqueueNonTransactionalAsync<int>(async (conn, innerCt) =>
+        {
+            var current = (await conn.QueryAsync<string>(new CommandDefinition(
+                "SELECT storage_rel_path FROM session_attachments WHERE storage_rel_path IN @Candidates;",
+                new { Candidates = candidates },
+                cancellationToken: innerCt)).ConfigureAwait(false)).ToHashSet(StringComparer.Ordinal);
+            var reclaimed = 0;
+            foreach (var candidate in candidates)
+            {
+                innerCt.ThrowIfCancellationRequested();
+                if (!current.Contains(candidate) &&
+                    _context.AttachmentBlobs.DeleteUnpinnedFileBestEffort(candidate))
+                {
+                    reclaimed++;
+                }
+            }
+
+            return reclaimed;
+        }, ct);
 
     private sealed record TaskDiagnosticRow(
         string TaskId, string TrackId, string? SessionId, string? WorkerResultJson, string? GateVerdictJson);

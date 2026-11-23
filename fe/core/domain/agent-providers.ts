@@ -140,7 +140,7 @@ function mapProvidersToManaged(providers: readonly ProviderStatusDto[]): Managed
       capabilities: {
         managed_conversation: true,
         steer: true,
-        images: false,
+        images: provider.supportsImages !== false,
         manual_compact: true,
         history_replacement: false,
         requires_ready_availability: false,
@@ -175,6 +175,14 @@ export function permissionModesForProvider(
 export function defaultPermissionModeFor(options: readonly PermissionModeOptionDto[]): string | null {
   if (options.length === 0) return null;
   return (options.find((option) => option.isDefault) ?? options[0]).id;
+}
+
+export function providerSupportsImages(
+  answers: readonly ManagedProviderAvailability[] | undefined,
+  provider: AgentProvider,
+): boolean {
+  const entry = answers?.find(({ availability }) => availability.provider === provider);
+  return entry === undefined ? true : entry.capabilities.images;
 }
 
 /** A picker can offer only a declared managed backend. This does not describe Planner create admission. */

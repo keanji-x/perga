@@ -37,5 +37,14 @@ internal sealed class TrackDeletionRepository
         {
             System.Diagnostics.Trace.TraceWarning("Could not clean up blobs for deleted Track {0}: {1}", trackId, ex.Message);
         }
+
+        try
+        {
+            _context.AttachmentBlobs.DeleteTrackAttachmentsDirectory(trackId);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            System.Diagnostics.Trace.TraceWarning("Could not clean up attachments for deleted Track {0}: {1}", trackId, ex.Message);
+        }
     }
 }

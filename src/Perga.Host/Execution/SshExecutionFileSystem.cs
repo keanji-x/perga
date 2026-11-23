@@ -322,6 +322,201 @@ public sealed class SshExecutionFileSystem : IExecutionFileSystem
         }
     }
 
+    public async Task<string> StageAttachmentAsync(
+        string trackId,
+        string attachmentId,
+        string extension,
+        string localPhysicalPath,
+        string sha256,
+        CancellationToken ct = default)
+    {
+        if (!SessionAttachmentValidation.IsValidTrackSegment(trackId))
+        {
+            throw KernelException.InvalidArgument($"Invalid trackId '{trackId}' for remote attachment staging.");
+        }
+
+        if (!SessionAttachmentValidation.IsValidAttachmentId(attachmentId))
+        {
+            throw KernelException.InvalidArgument($"Invalid attachmentId '{attachmentId}' for remote attachment staging.");
+        }
+
+        if (!SessionAttachmentValidation.IsAllowedExtension(extension))
+        {
+            throw KernelException.InvalidArgument($"Unsupported attachment extension '{extension}'.");
+        }
+
+        if (!SessionAttachmentValidation.IsValidSha256(sha256))
+        {
+            throw KernelException.InvalidArgument("Invalid attachment SHA-256 checksum.");
+        }
+
+        var safeTrackId = trackId.Trim();
+        var attachmentsRoot = $"{_config.WorkspacesRoot.TrimEnd('/')}/.perga-attachments";
+        var fileName = $"{attachmentId}{extension}";
+
+        // Fast idempotent check: if the file is already staged with matching SHA-256, skip transferring bytes.
+        const string checkScript = """
+            import hashlib, json, os, stat, sys
+            root = os.path.abspath(sys.argv[1])
+            track_id = sys.argv[2]
+            file_name = sys.argv[3]
+            expected_sha = sys.argv[4]
+            root_sep = root if root.endswith(os.sep) else root + os.sep
+            track_dir = os.path.abspath(os.path.join(root, track_id))
+            target = os.path.abspath(os.path.join(track_dir, file_name))
+            if not track_dir.startswith(root_sep) or not target.startswith(root_sep):
+                print(json.dumps({"error": "forbidden", "message": "Attachment target escapes attachments root."}))
+                sys.exit(0)
+            if os.path.islink(root) or os.path.islink(track_dir) or os.path.islink(target):
+                print(json.dumps({"error": "forbidden", "message": "Symlinks are not allowed in attachment storage."}))
+                sys.exit(0)
+            if os.path.exists(target):
+                try:
+                    real_root = os.path.realpath(root)
+                    real_root_sep = real_root if real_root.endswith(os.sep) else real_root + os.sep
+                    real_target = os.path.realpath(target)
+                    if not real_target.startswith(real_root_sep):
+                        print(json.dumps({"error": "forbidden", "message": "Attachment target resolves outside attachments root."}))
+                        sys.exit(0)
+                    st = os.lstat(target)
+                    if stat.S_ISREG(st.st_mode):
+                        h = hashlib.sha256()
+                        with open(target, "rb") as f:
+                            while True:
+                                chunk = f.read(65536)
+                                if not chunk:
+                                    break
+                                h.update(chunk)
+                        if h.hexdigest() == expected_sha:
+                            print(json.dumps({"staged": True, "path": real_target}))
+                            sys.exit(0)
+                except OSError:
+                    pass
+            print(json.dumps({"staged": False}))
+            """;
+
+        var checkCmd = BuildPythonCommand(checkScript, attachmentsRoot, safeTrackId, fileName, sha256);
+        var (checkExit, checkStdout, checkStderr) = await SshCommandBuilder
+            .RunTextAsync(_config, checkCmd, stdin: null, ct)
+            .ConfigureAwait(false);
+        if (checkExit != 0)
+        {
+            throw new IOException($"Failed to check remote attachment on target '{_config.TargetId}': {checkStderr.Trim()}");
+        }
+
+        using (var checkDoc = JsonDocument.Parse(checkStdout))
+        {
+            ThrowIfRemoteError(checkDoc.RootElement);
+            if (checkDoc.RootElement.TryGetProperty("staged", out var stagedProp) &&
+                stagedProp.ValueKind == JsonValueKind.True &&
+                checkDoc.RootElement.TryGetProperty("path", out var existingPathProp) &&
+                existingPathProp.GetString() is { Length: > 0 } existingRemotePath)
+            {
+                return existingRemotePath;
+            }
+        }
+
+        var localBytes = await File.ReadAllBytesAsync(localPhysicalPath, ct).ConfigureAwait(false);
+        var nonce = Guid.NewGuid().ToString("N");
+        const string writeScript = """
+            import hashlib, json, os, stat, sys
+            root = os.path.abspath(sys.argv[1])
+            track_id = sys.argv[2]
+            file_name = sys.argv[3]
+            expected_sha = sys.argv[4]
+            nonce = sys.argv[5]
+            root_sep = root if root.endswith(os.sep) else root + os.sep
+            track_dir = os.path.abspath(os.path.join(root, track_id))
+            if not track_dir.startswith(root_sep):
+                print(json.dumps({"error": "forbidden", "message": "Attachment directory escapes attachments root."}))
+                sys.exit(0)
+            if os.path.islink(root) or os.path.islink(track_dir):
+                print(json.dumps({"error": "forbidden", "message": "Symlinks are not allowed in attachment storage."}))
+                sys.exit(0)
+            os.makedirs(track_dir, mode=0o700, exist_ok=True)
+            if os.path.islink(root) or os.path.islink(track_dir):
+                print(json.dumps({"error": "forbidden", "message": "Symlinks are not allowed in attachment storage."}))
+                sys.exit(0)
+            target = os.path.abspath(os.path.join(track_dir, file_name))
+            if os.path.islink(target):
+                print(json.dumps({"error": "forbidden", "message": "Symlinks are not allowed in attachment storage."}))
+                sys.exit(0)
+            real_root = os.path.realpath(root)
+            real_root_sep = real_root if real_root.endswith(os.sep) else real_root + os.sep
+            real_track_dir = os.path.realpath(track_dir)
+            if not real_track_dir.startswith(real_root_sep):
+                print(json.dumps({"error": "forbidden", "message": "Attachment directory resolves outside attachments root."}))
+                sys.exit(0)
+            tmp_path = os.path.abspath(os.path.join(track_dir, f".{file_name}.tmp.{nonce}"))
+            h = hashlib.sha256()
+            try:
+                fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                with os.fdopen(fd, "wb") as f:
+                    while True:
+                        chunk = sys.stdin.buffer.read(65536)
+                        if not chunk:
+                            break
+                        h.update(chunk)
+                        f.write(chunk)
+                actual_sha = h.hexdigest()
+                if actual_sha != expected_sha:
+                    os.unlink(tmp_path)
+                    print(json.dumps({"error": "invalid_argument", "message": "Staged attachment SHA-256 mismatch."}))
+                    sys.exit(0)
+                os.replace(tmp_path, target)
+                print(json.dumps({"path": os.path.realpath(target)}))
+            except Exception as ex:
+                try:
+                    if os.path.exists(tmp_path):
+                        os.unlink(tmp_path)
+                except OSError:
+                    pass
+                print(json.dumps({"error": "precondition_failed", "message": str(ex)}))
+                sys.exit(0)
+            """;
+
+        var writeCmd = BuildPythonCommand(writeScript, attachmentsRoot, safeTrackId, fileName, sha256, nonce);
+        var (writeExit, writeStdoutBytes, writeStderr) = await SshCommandBuilder
+            .RunBytesAsync(_config, writeCmd, localBytes, ct)
+            .ConfigureAwait(false);
+        if (writeExit != 0)
+        {
+            throw new IOException($"Failed to stage attachment onto target '{_config.TargetId}': {writeStderr.Trim()}");
+        }
+
+        var writeStdout = Encoding.UTF8.GetString(writeStdoutBytes);
+        using var writeDoc = JsonDocument.Parse(writeStdout);
+        ThrowIfRemoteError(writeDoc.RootElement);
+        return writeDoc.RootElement.GetProperty("path").GetString()
+            ?? throw new IOException($"Remote attachment staging returned no path on target '{_config.TargetId}'.");
+    }
+
+    public async Task CleanupTrackAttachmentsAsync(string trackId, CancellationToken ct = default)
+    {
+        if (!SessionAttachmentValidation.IsValidTrackSegment(trackId))
+        {
+            return;
+        }
+
+        var attachmentsRoot = $"{_config.WorkspacesRoot.TrimEnd('/')}/.perga-attachments";
+        const string cleanupScript = """
+            import os, shutil, sys
+            root = os.path.abspath(sys.argv[1])
+            track_id = sys.argv[2]
+            root_sep = root if root.endswith(os.sep) else root + os.sep
+            target = os.path.abspath(os.path.join(root, track_id))
+            if not target.startswith(root_sep):
+                sys.exit(1)
+            if os.path.islink(root) or os.path.islink(target):
+                sys.exit(1)
+            if os.path.isdir(target):
+                shutil.rmtree(target)
+            """;
+
+        var cmd = BuildPythonCommand(cleanupScript, attachmentsRoot, trackId.Trim());
+        _ = await SshCommandBuilder.RunTextAsync(_config, cmd, stdin: null, ct).ConfigureAwait(false);
+    }
+
     private const string WorkspacePathScript = """
         import json, os, stat, sys
         def ensure_fd_contained(fd):
