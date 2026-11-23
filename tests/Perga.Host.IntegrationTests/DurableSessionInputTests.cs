@@ -140,7 +140,8 @@ public sealed class DurableSessionInputTests
         try
         {
             string trackId, sourceId, sideId;
-            const string prompt = "Question with a conversation excerpt";
+            const string prompt = "What about this?";
+            var sourceExcerpt = new string('x', 12_000);
             await using (var host = new PergaHostTestCluster(directory.FullName))
             {
                 (trackId, sourceId) = await host.CreateTrackAsync();
@@ -148,27 +149,72 @@ public sealed class DurableSessionInputTests
                 var bootstrap = await host.AuthenticatedClient.GetFromJsonAsync<JsonElement>("/api/v1/bootstrap");
                 Assert.True(bootstrap.GetProperty("conversationSide").GetBoolean());
                 var path = $"/api/v1/tracks/{trackId}/sessions";
+                var probes = host.AgentRuntime.ProbeCount;
+                using var noSource = await SendAsync(host.AuthenticatedClient, path, "side", new { prompt, sourceExcerpt });
+                Assert.Equal(HttpStatusCode.BadRequest, noSource.StatusCode);
+                using var noQuestion = await SendAsync(host.AuthenticatedClient, path, "side", new { sourceSessionId = sourceId, sourceExcerpt });
+                Assert.Equal(HttpStatusCode.BadRequest, noQuestion.StatusCode);
                 using var invalid = await SendAsync(host.AuthenticatedClient, path, "side", new { sourceSessionId = otherSource, prompt });
                 Assert.Equal(HttpStatusCode.NotFound, invalid.StatusCode);
-                using var created = await SendAsync(host.AuthenticatedClient, path, "side", new { sourceSessionId = sourceId, prompt });
+                Assert.Equal(probes, host.AgentRuntime.ProbeCount);
+                using var created = await SendAsync(host.AuthenticatedClient, path, "side", new { sourceSessionId = sourceId, prompt, sourceExcerpt });
                 Assert.Equal(HttpStatusCode.Created, created.StatusCode);
                 var receipt = (await created.Content.ReadFromJsonAsync<SessionCreationReceipt>(PergaJsonDefaults.ApiOptions))!;
                 Assert.Equal(sourceId, receipt.Session.SourceSessionId);
                 Assert.Null(receipt.Session.ParentSessionId);
                 sideId = receipt.Session.Id;
                 await host.Services.GetRequiredService<IPergaKernel>().WaitForTrackIdleAsync(trackId);
-                Assert.Equal(prompt, Assert.Single(host.AgentRuntime.ExecutedTurns).Input.Prompt);
+                Assert.Equal($"Conversation excerpt:\n{sourceExcerpt}\n\nQuestion:\n{prompt}", Assert.Single(host.AgentRuntime.ExecutedTurns).Input.Prompt);
+                await AssertUserItemAsync(host.AuthenticatedClient, receipt.FirstInput!, prompt);
             }
 
             await using var reopened = new PergaHostTestCluster(directory.FullName);
             var sessions = $"/api/v1/tracks/{trackId}/sessions";
-            using var replay = await SendAsync(reopened.AuthenticatedClient, sessions, "side", new { sourceSessionId = sourceId, prompt });
+            using var replay = await SendAsync(reopened.AuthenticatedClient, sessions, "side", new { sourceSessionId = sourceId, prompt, sourceExcerpt });
             Assert.Equal(HttpStatusCode.OK, replay.StatusCode);
             var recovered = (await replay.Content.ReadFromJsonAsync<SessionCreationReceipt>(PergaJsonDefaults.ApiOptions))!;
             Assert.Equal((sideId, sourceId), (recovered.Session.Id, recovered.Session.SourceSessionId));
-            using var changed = await SendAsync(reopened.AuthenticatedClient, sessions, "side", new { sourceSessionId = sideId, prompt });
+            await AssertUserItemAsync(reopened.AuthenticatedClient, recovered.FirstInput!, prompt);
+            using var changedExcerpt = await SendAsync(reopened.AuthenticatedClient, sessions, "side", new { sourceSessionId = sourceId, prompt, sourceExcerpt = "different" });
+            Assert.Equal(HttpStatusCode.Conflict, changedExcerpt.StatusCode);
+            using var changed = await SendAsync(reopened.AuthenticatedClient, sessions, "side", new { sourceSessionId = sideId, prompt, sourceExcerpt });
             Assert.Equal(HttpStatusCode.Conflict, changed.StatusCode);
             Assert.Empty(reopened.AgentRuntime.ExecutedTurns);
+        }
+        finally { directory.Delete(recursive: true); }
+    }
+
+    [Fact]
+    public async Task QueuedSideTurnRecoversItsExcerptOnlyForTheFirstProviderInput()
+    {
+        var directory = Directory.CreateTempSubdirectory("perga-side-recovery-");
+        try
+        {
+            string trackId;
+            SessionInputReceipt first;
+            await using (var host = new PergaHostTestCluster(directory.FullName))
+            {
+                (trackId, var sourceId) = await host.CreateTrackAsync();
+                var kernel = host.Services.GetRequiredService<IPergaKernel>();
+                var source = Assert.Single(await kernel.ListSessionsAsync(trackId, new(), new InteropPrincipal.Human(), default)).Session;
+                var side = source with { Id = "ses_side", IsLead = false, SourceSessionId = sourceId, Status = "queued" };
+                // Stop after the production creation transaction but before dispatch.
+                var store = host.Services.GetRequiredService<ITrackStore>();
+                var input = await store.SessionInputs.CreateAsync(new(trackId, "side", "hash"), side,
+                    new("side", "first-hash", "Question?", SourceExcerpt: "Frozen at creation"),
+                    new(null, null, trackId, KernelEventKinds.SessionUpdated, JsonSerializer.SerializeToElement(side), side.UpdatedAtMs), default);
+                first = input!.Receipt;
+            }
+
+            await using var reopened = new PergaHostTestCluster(directory.FullName);
+            var resumed = reopened.Services.GetRequiredService<IPergaKernel>();
+            await resumed.WaitForTrackIdleAsync(trackId);
+            Assert.Equal("Conversation excerpt:\nFrozen at creation\n\nQuestion:\nQuestion?",
+                Assert.Single(reopened.AgentRuntime.ExecutedTurns).Input.Prompt);
+            await AssertUserItemAsync(reopened.AuthenticatedClient, first, "Question?");
+            await resumed.SendSessionMessageAsync(first.SessionId, new(Content: "Follow up", RequestKey: "next"), new InteropPrincipal.Human(), default);
+            await resumed.WaitForTrackIdleAsync(trackId);
+            Assert.Collection(reopened.AgentRuntime.ExecutedTurns, _ => { }, next => Assert.Equal("Follow up", next.Input.Prompt));
         }
         finally { directory.Delete(recursive: true); }
     }

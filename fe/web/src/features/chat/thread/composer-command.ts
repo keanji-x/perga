@@ -70,7 +70,7 @@ export function conversationCommands(options: Parameters<typeof conversationComm
 }
 
 export function matchesCommandName(name: string, typed: string, match: 'prefix' | 'exact'): boolean {
-  const query = name === 'side' ? typed.toLowerCase() : typed;
+  const query = typed.toLowerCase();
   return match === 'prefix' ? name.startsWith(query) : name === query;
 }
 

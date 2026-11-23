@@ -79,7 +79,8 @@ public sealed class SqliteMigratorTests
             Assert.Equal("0026_auth_users_sessions.sql", migrator.Migrations[25].Name);
             Assert.Equal("0027_session_runtime_activity.sql", migrator.Migrations[26].Name);
             Assert.Equal("0028_task_session_ownership.sql", migrator.Migrations[27].Name);
-            Assert.Equal("0029_side_conversation_source.sql", migrator.Migrations[^1].Name);
+            Assert.Equal("0029_side_conversation_source.sql", migrator.Migrations[28].Name);
+            Assert.Equal("0030_side_conversation_excerpt.sql", migrator.Migrations[^1].Name);
             await migrator.MigrateAsync(dbPath);
 
             // Idempotent re-run on already-initialized v1 database must not create a spurious backup.
@@ -160,6 +161,7 @@ public sealed class SqliteMigratorTests
             string[] expectedIndexes =
             [
                 "idx_sessions_parent",
+                "idx_sessions_source",
                 "idx_creation_receipts_resource",
                 "idx_asks_target",
                 "idx_report_revisions_event",

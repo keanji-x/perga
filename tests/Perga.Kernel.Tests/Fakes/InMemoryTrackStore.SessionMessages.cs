@@ -95,12 +95,12 @@ internal sealed partial class InMemoryTrackStore : ISessionInputStore, ISessionM
         }
     }
 
-    private PersistedSessionInput BindInputLocked(AgentSessionDto session, SessionMessage message, bool followUp)
+    private PersistedSessionInput BindInputLocked(AgentSessionDto session, SessionMessage message, bool followUp, string? sourceExcerpt = null)
     {
         var index = (_turnsBySession.GetValueOrDefault(session.Id)?.Select(t => t.TurnIndex).DefaultIfEmpty().Max() ?? 0) + 1;
         var turnId = $"trn_{index:D6}_{Guid.NewGuid():N}";
         var input = new PersistedSessionInput(new(message.Id, turnId, session.Id, "accepted", "queued", null),
-            message.RequestHash, message.Content, index, session.Epoch, session.Provider, session.Model, session.ReasoningEffort, followUp);
+            message.RequestHash, message.Content, index, session.Epoch, session.Provider, session.Model, session.ReasoningEffort, followUp, SourceExcerpt: sourceExcerpt);
         _inputs.Add(Key(message), input);
         _messages[Key(message)] = message with { TurnId = turnId };
         var turn = new SessionTurnDto(turnId, session.Id, index, session.Epoch, "user", TestJson.FromObject(new { }), "queued", null, null, null, null);
@@ -119,7 +119,7 @@ internal sealed partial class InMemoryTrackStore : ISessionInputStore, ISessionM
                 throw KernelException.Conflict("The session already has an active or unresolved turn.");
             BeforeInputWrite?.Invoke();
             var input = BindInputLocked(session, new($"inp_{Guid.NewGuid():N}", session.Id, request.AuthorId, request.Key,
-                request.Hash, null, null, request.Content, "queued", session.UpdatedAtMs, "input"), false);
+                request.Hash, null, null, request.Content, "queued", session.UpdatedAtMs, "input"), false, request.SourceExcerpt);
             AppendEventLocked(sessionEvent);
             return Task.FromResult(input);
         }
@@ -153,7 +153,7 @@ internal sealed partial class InMemoryTrackStore : ISessionInputStore, ISessionM
         {
             _sessions[session.Id] = session;
             var input = firstInput is null ? null : BindInputLocked(session, new($"inp_{Guid.NewGuid():N}", session.Id,
-                "owner:installation", firstInput.Key, firstInput.Hash, null, null, firstInput.Content, "queued", session.UpdatedAtMs, "input"), false);
+                "owner:installation", firstInput.Key, firstInput.Hash, null, null, firstInput.Content, "queued", session.UpdatedAtMs, "input"), false, firstInput.SourceExcerpt);
             _sessionCreations.Add((intent.TrackId, intent.AuthorId, intent.Key), new(intent.Hash, session, input));
             AppendEventLocked(sessionEvent);
             return Task.FromResult(input);

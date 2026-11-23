@@ -413,6 +413,7 @@ export const createSessionRequestSchema = z.object({
   title: z.string().nullish(), provider: z.string().nullish(), model: z.string().nullish(), reasoningEffort: z.string().nullish(),
   permissionMode: z.string().nullish(), systemPrompt: z.string().nullish(), prompt: z.string().nullish(),
   notifyParent: z.enum(['none', 'turn_end']).nullish(),
+  sourceSessionId: z.string().nullish(), sourceExcerpt: z.string().nullish(),
 }).strict();
 export const updateSessionRequestSchema = z.object({
   expectedConfigVersion: z.number().int().nullish(), title: z.string().nullish(), archived: z.boolean().nullish(),

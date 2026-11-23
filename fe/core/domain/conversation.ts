@@ -286,7 +286,8 @@ export function createTrackConversationOperation(
     headers: { 'Idempotency-Key': idempotencyKey },
     body: {
       ...(derivedTitle === null ? {} : { title: derivedTitle }),
-      prompt: side?.context ? `Conversation excerpt:\n${side.context}\n\nQuestion:\n${text}` : text,
+      prompt: text,
+      ...(side?.context ? { sourceExcerpt: side.context } : {}),
       provider,
       ...(side === undefined ? {} : { sourceSessionId: side.source_card_id }),
       ...(selection.model === null ? {} : { model: selection.model }),

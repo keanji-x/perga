@@ -17,6 +17,8 @@ public sealed partial class TrackActor
             throw KernelException.InvalidArgument("notifyParent must be 'none' or 'turn_end'.");
         if (request.Prompt is { } prompt && string.IsNullOrWhiteSpace(prompt))
             throw KernelException.InvalidArgument("First message cannot be empty.");
+        if (request.SourceExcerpt is not null && (request.SourceSessionId is null || request.Prompt is null))
+            throw KernelException.InvalidArgument("sourceExcerpt requires sourceSessionId and a first message.");
         request = request with { ReasoningEffort = string.IsNullOrWhiteSpace(request.ReasoningEffort) ? null : request.ReasoningEffort.Trim() };
         // Plain-session retries must still match receipts written before Task and Role were retired.
         var receiptIdentity = JsonSerializer.SerializeToNode(request)!.AsObject();
@@ -42,8 +44,7 @@ public sealed partial class TrackActor
                 var replay = await ReplayCreationCoreAsync(intent, ct).ConfigureAwait(false);
                 if (replay is not null) return replay;
                 await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
-                SessionPolicy.RequireCreate(caller, parent, TrackId,
-                    callerIsTaskOwned: parent is not null && _taskCoordinator.IsTaskOwnedSessionCore(parent.Id), _options.MaxSessionSpawnDepth);
+                RequireCreate(parent);
                 return null;
             }, ct).ConfigureAwait(false);
             if (initialReplay is not null) return (initialReplay, true);
@@ -54,17 +55,14 @@ public sealed partial class TrackActor
                 var parent = RequireInteropCore(caller, write: true);
                 var replay = await ReplayCreationCoreAsync(intent, ct).ConfigureAwait(false);
                 if (replay is not null) return (replay, true);
-                SessionPolicy.RequireCreate(caller, parent, TrackId,
-                    callerIsTaskOwned: parent is not null && _taskCoordinator.IsTaskOwnedSessionCore(parent.Id), _options.MaxSessionSpawnDepth);
-                if (request.SourceSessionId is { } sourceId)
-                    RequireInteropCore(caller, RequireSessionCore(sourceId));
+                RequireCreate(parent);
                 var session = NewSubagentSessionCore(request, providers,
                     requireAvailable: caller is InteropPrincipal.Session || request.Prompt is not null, parent);
                 SessionInputRequest? first = null;
                 if (request.Prompt is { } content)
                 {
                     var firstHash = RequestIdentity.Hash(new { version = 4, Content = content, Mode = "default", TurnId = (string?)null, ExpectedEpoch = (int?)null });
-                    first = new(key, firstHash, content, intent.AuthorId);
+                    first = new(key, firstHash, content, intent.AuthorId, request.SourceExcerpt);
                     session = session with { Status = "queued" };
                 }
 
@@ -82,6 +80,14 @@ public sealed partial class TrackActor
         finally
         {
             Interlocked.Decrement(ref _inFlightExternalOps);
+        }
+
+        void RequireCreate(AgentSessionDto? parent)
+        {
+            SessionPolicy.RequireCreate(caller, parent, TrackId,
+                callerIsTaskOwned: parent is not null && _taskCoordinator.IsTaskOwnedSessionCore(parent.Id), _options.MaxSessionSpawnDepth);
+            if (request.SourceSessionId is { } sourceId)
+                RequireInteropCore(caller, RequireSessionCore(sourceId));
         }
     }
 

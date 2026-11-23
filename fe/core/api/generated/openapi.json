@@ -1404,6 +1404,16 @@
               }
             ]
           },
+          "sourceExcerpt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "sourceSessionId": {
             "anyOf": [
               {

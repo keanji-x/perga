@@ -2,11 +2,11 @@ using Perga.Contracts;
 
 namespace Perga.Kernel.Ports;
 
-public sealed record SessionInputRequest(string Key, string Hash, string Content, string AuthorId = "owner:installation");
+public sealed record SessionInputRequest(string Key, string Hash, string Content, string AuthorId = "owner:installation", string? SourceExcerpt = null);
 
 public sealed record PersistedSessionInput(
     SessionInputReceipt Receipt, string RequestHash, string Content, int TurnIndex, int Epoch,
-    string Provider, string? Model, string? ReasoningEffort, bool IsQueuedFollowUp = false, long? UserItemId = null);
+    string Provider, string? Model, string? ReasoningEffort, bool IsQueuedFollowUp = false, long? UserItemId = null, string? SourceExcerpt = null);
 
 public sealed record SessionCreateIntent(string TrackId, string Key, string Hash, string AuthorId = "owner:installation");
 
