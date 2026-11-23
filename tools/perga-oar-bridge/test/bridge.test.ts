@@ -4,6 +4,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 import type { AddressInfo } from "node:net";
 import { defineRuntime, type AdapterSession } from "@botiverse/oar/browser";
 import { createSessionKernel, sealSession } from "@botiverse/oar/kernel";
@@ -429,12 +430,20 @@ test("OarBridgeServer propagates OAR_CODEX_SANDBOX to real codexRuntime process.
   const argvLogPath = path.join(tmpDir, "argv.txt");
   fs.writeFileSync(
     stubPath,
-    `#!/bin/sh\nif [ ! -f "${argvLogPath}" ]; then printf '%s\\n' "$@" > "${argvLogPath}"; fi\nexit 1\n`,
+    `#!/bin/sh
+printf '%s\\n' "$@" > "${argvLogPath}.tmp"
+mv "${argvLogPath}.tmp" "${argvLogPath}"
+exit 1
+`,
     { mode: 0o755 },
   );
 
-  const readCapturedArgs = (): string[] =>
-    fs.readFileSync(argvLogPath, "utf8").split(/\r?\n/u).filter((line) => line.length > 0);
+  const readCapturedArgs = async (): Promise<string[]> => {
+    // Opening a session can resolve as soon as the OS spawns the stub.
+    const deadline = Date.now() + 5000;
+    while (!fs.existsSync(argvLogPath) && Date.now() < deadline) await delay(10);
+    return fs.readFileSync(argvLogPath, "utf8").trimEnd().split(/\r?\n/u);
+  };
 
   const originalCodexSandbox = process.env.OAR_CODEX_SANDBOX;
   process.env.OAR_CODEX_SANDBOX = "sentinel-before";
@@ -443,6 +452,8 @@ test("OarBridgeServer propagates OAR_CODEX_SANDBOX to real codexRuntime process.
     // 1. Real codexRuntime must receive sandbox_mode="workspace-write" (not danger-full-access)
     const controlledCodex = {
       ...codexRuntime,
+      // Only session launches should write to the argv capture shared by these cases.
+      listModels: undefined,
       installation: async () => ({
         kind: "available" as const,
         via: "executable" as const,
@@ -463,7 +474,7 @@ test("OarBridgeServer propagates OAR_CODEX_SANDBOX to real codexRuntime process.
       },
     });
     assert.ok(codexTransport1.responseFor(1).error, "Stub exits 1 after recording spawn argv");
-    const codexWorkspaceArgs = readCapturedArgs();
+    const codexWorkspaceArgs = await readCapturedArgs();
     assert.ok(
       codexWorkspaceArgs.includes('sandbox_mode="workspace-write"'),
       `Expected workspace-write sandbox arg, got: ${JSON.stringify(codexWorkspaceArgs)}`,
@@ -485,7 +496,7 @@ test("OarBridgeServer propagates OAR_CODEX_SANDBOX to real codexRuntime process.
         env: { OAR_CODEX_SANDBOX: "danger-full-access" },
       },
     });
-    const codexFullArgs = readCapturedArgs();
+    const codexFullArgs = await readCapturedArgs();
     assert.ok(
       codexFullArgs.includes('sandbox_mode="danger-full-access"'),
       `Expected danger-full-access sandbox arg, got: ${JSON.stringify(codexFullArgs)}`,
@@ -497,6 +508,7 @@ test("OarBridgeServer propagates OAR_CODEX_SANDBOX to real codexRuntime process.
     fs.rmSync(argvLogPath, { force: true });
     const controlledClaude = {
       ...claudeRuntime,
+      listModels: undefined,
       installation: async () => ({
         kind: "available" as const,
         via: "executable" as const,
@@ -516,7 +528,7 @@ test("OarBridgeServer propagates OAR_CODEX_SANDBOX to real codexRuntime process.
         launchArgs: ["--permission-mode", "dontAsk"],
       },
     });
-    const claudeDontAskArgs = readCapturedArgs();
+    const claudeDontAskArgs = await readCapturedArgs();
     assert.ok(claudeDontAskArgs.includes("--permission-mode"), `Missing --permission-mode: ${JSON.stringify(claudeDontAskArgs)}`);
     assert.ok(claudeDontAskArgs.includes("dontAsk"), `Missing dontAsk: ${JSON.stringify(claudeDontAskArgs)}`);
     assert.ok(claudeDontAskArgs.includes("--permission-prompts"), `Missing --permission-prompts: ${JSON.stringify(claudeDontAskArgs)}`);
@@ -536,7 +548,7 @@ test("OarBridgeServer propagates OAR_CODEX_SANDBOX to real codexRuntime process.
         cwd: tmpDir,
       },
     });
-    const claudeBypassArgs = readCapturedArgs();
+    const claudeBypassArgs = await readCapturedArgs();
     assert.ok(
       claudeBypassArgs.includes("--dangerously-skip-permissions"),
       `Expected --dangerously-skip-permissions, got: ${JSON.stringify(claudeBypassArgs)}`,
