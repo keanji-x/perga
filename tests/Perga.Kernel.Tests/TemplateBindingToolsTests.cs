@@ -113,7 +113,7 @@ public sealed class TemplateBindingToolsTests
     }
 
     [Fact]
-    public async Task IntrospectionBypassesBeforeWhileTemplateWritesReceiveSessionContext()
+    public async Task ReadOnlyAndLeadClearBypassBeforeWhileWritesReceiveSessionContext()
     {
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
         var (_, track) = await ctx.CreateDefaultTrackAsync();
@@ -149,15 +149,9 @@ public sealed class TemplateBindingToolsTests
         Assert.Equal(KernelErrorCode.PolicyDenied, denied.Code);
         Assert.Contains("guarded write", denied.Message);
 
-        foreach (var dryRun in new[] { true, false })
-        {
-            var deniedClear = await Assert.ThrowsAsync<KernelException>(() =>
-                Call(ctx, track, KernelMcpToolNames.TrackSet, new { clear = true, resetData = true, dryRun }));
-            Assert.Equal(KernelErrorCode.PolicyDenied, deniedClear.Code);
-            Assert.Contains("guarded write", deniedClear.Message);
-        }
+        await Call(ctx, track, KernelMcpToolNames.TrackSet, new { clear = true, dryRun = true });
         Assert.Equal("guard", (await ctx.Kernel.GetTrackAggregateAsync(track.Track.Id)).Track.TemplateId);
-        await ctx.Kernel.Actors.GetOrActivate(track.Track.Id).ClearTemplateAsync();
+        await Call(ctx, track, KernelMcpToolNames.TrackSet, new { clear = true });
         Assert.Null((await ctx.Kernel.GetTrackAggregateAsync(track.Track.Id)).Track.TemplateId);
     }
 

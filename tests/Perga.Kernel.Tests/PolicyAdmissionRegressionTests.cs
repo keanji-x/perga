@@ -163,6 +163,75 @@ public sealed class PolicyAdmissionRegressionTests
         Assert.Equal(report.DocRev, (await ctx.Kernel.ReadReportAsync(caller.TrackId, ct: timeout.Token)).DocRev);
     }
 
+    [Theory]
+    [InlineData("usage")]
+    [InlineData("report")]
+    [InlineData("none")]
+    public async Task ReportApprovalAppliesOnlyToTheEvaluatedSessionContextAndPreview(string change)
+    {
+        await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var ct = timeout.Token;
+        var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
+        var caller = await ctx.OpenMcpCallerAsync(snapshot.Track.LeadSessionId!, ct);
+        await SetPolicy(ctx, caller, """
+            export default { id: 'report-approval', title: 'Report approval',
+              before(action, ctx) {
+                if (action.type !== 'report.commit' || !action.nextMarkdown.includes('Approval candidate')) return Allow();
+                if (ctx.session.contextUsageRatio >= 0.8) return Deny('Session context is too full');
+                return AskHuman('Approve report?');
+              } };
+            """);
+        var human = new InteropPrincipal.Human();
+        var before = await ctx.Kernel.ReadReportAsync(caller.TrackId, ct: ct);
+        var authorization = await ctx.AuthorizeAsync(caller, ct);
+        // A block-scoped proposal can still be applied after an independent report edit.
+        var commit = ctx.Kernel.CommitReportAsync(caller.TrackId, caller.SessionId,
+            new(before.Anchor with { WholeDocumentRead = false },
+                [new BlockOp.UpsertBlockOp("candidate", ReportBlockKind.Prose, "Approval candidate", null)]), ct, authorization);
+        ApprovalDto? approval = null;
+        while (approval is null)
+        {
+            if (commit.IsCompleted) await commit;
+            approval = (await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId, ct)).PendingApprovals.SingleOrDefault();
+            if (approval is null) await Task.Delay(10, ct);
+        }
+
+        if (change == "usage")
+        {
+            var runtime = Assert.Single(ctx.AgentRuntime.OpenedSessions);
+            runtime.EmitIdleContextUsage(new IdleContextUsage(
+                new TokenUsage(90_000, 0, 0, 100_000), ContextUsageRevision: 0, runtime.NativeThreadId));
+            var current = await ctx.Kernel.GetSessionItemsAsync(caller.SessionId, new(), human, ct);
+            Assert.Equal(0.9, current.Session.ContextUsage?.Ratio);
+        }
+        else if (change == "report")
+        {
+            await ctx.Kernel.CommitReportAsync(caller.TrackId, caller.SessionId,
+                new(before.Anchor, [new BlockOp.UpsertBlockOp("other", ReportBlockKind.Prose, "Independent edit", null)]), ct);
+        }
+
+        Assert.Equal(caller.RuntimeBindingId, ctx.RuntimeCaller(caller.SessionId).RuntimeBindingId);
+        Assert.Equal(authorization.AuthorizedPolicyGeneration, (await ctx.AuthorizeAsync(caller, ct)).AuthorizedPolicyGeneration);
+        var beforeApproval = await ctx.Kernel.ReadReportAsync(caller.TrackId, ct: ct);
+        await ctx.Kernel.RespondInteractionAsync(approval.SessionId, approval.Id, new(ExecutionId: approval.ExecutionId,
+            OptionId: approval.Options.Single(o => o.IsApproval).Id), human, ct);
+
+        if (change == "none")
+        {
+            var saved = await commit;
+            Assert.Equal(beforeApproval.DocRev + 1, saved.DocRev);
+            Assert.Contains(saved.Blocks, block => block.Markdown == "Approval candidate");
+        }
+        else
+        {
+            var error = await Assert.ThrowsAsync<KernelException>(() => commit);
+            Assert.Equal(KernelErrorCode.PolicyDenied, error.Code);
+            Assert.Equal(beforeApproval.DocRev, (await ctx.Kernel.ReadReportAsync(caller.TrackId, ct: ct)).DocRev);
+            Assert.Empty((await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId, ct)).PendingApprovals);
+        }
+    }
+
     [Fact]
     public async Task ChangedPolicyDataInvalidatesAnOpenVcsToolApproval()
     {

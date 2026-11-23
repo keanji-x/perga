@@ -454,6 +454,9 @@ public sealed partial class TrackActor
                 var trackSet = kernelTool && toolName == KernelMcpToolNames.TrackSet;
                 var readOnly = kernelTool && KernelMcpCatalog.IsReadOnlyTool(toolName);
                 var dryRunOnly = trackSet && ValidateTemplateSetArguments(arguments);
+                // The current Lead can detach a template whose policy blocks ordinary writes.
+                if (trackSet && arguments.TryGetProperty("clear", out var clear) && clear.ValueKind == JsonValueKind.True)
+                    return null;
                 if (kernelTool && toolName == KernelMcpToolNames.FlowCommit &&
                     arguments.ValueKind == JsonValueKind.Object && arguments.TryGetProperty("dryRun", out var dryRun))
                     dryRunOnly = dryRun.ValueKind == JsonValueKind.True;

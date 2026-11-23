@@ -309,10 +309,7 @@ public sealed class ImplicitTemplateToolsTests
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
         var (_, snap) = await ctx.CreateDefaultTrackAsync();
         var caller = await ctx.OpenMcpCallerAsync(snap.Track.LeadSessionId!);
-        await Call(ctx, caller, KernelMcpToolNames.TrackSet, new
-        {
-            source = """export default { id: "resettable", title: "Resettable", data: { initial: { marker: "keep" } } };"""
-        });
+        await Call(ctx, caller, KernelMcpToolNames.TrackSet, new { source = Source, inputs = new { marker = "keep" } });
         var before = (await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId)).Track;
 
         await Call(ctx, caller, KernelMcpToolNames.TrackSet, new { clear = true, resetData = true });

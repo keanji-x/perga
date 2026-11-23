@@ -28,6 +28,9 @@ public sealed partial class TrackActor
         public ReportDocument Document => _report;
         public void Hydrate(ReportDocument document) => _report = document;
 
+        private sealed record ReportPolicyInputs(
+            string EditorRole, string PrevMarkdown, string NextMarkdown, PolicySessionContext Session);
+
         public Task<ReportReadResult> ReadReportAsync(string? callerSessionId = null, CancellationToken ct = default)
         {
             return actor.EnqueueAsync(async _ =>
@@ -63,7 +66,7 @@ public sealed partial class TrackActor
             Interlocked.Increment(ref actor._inFlightExternalOps);
             try
             {
-                var (completed, approval) = await actor.EnqueueAsync<(ReportReadResult?, PolicyApproval?)>(async _ =>
+                var (completed, approval, evaluatedInputs) = await actor.EnqueueAsync<(ReportReadResult?, PolicyApproval?, ReportPolicyInputs?)>(async _ =>
                 {
                     await actor.EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
                     actor.RequirePolicyAvailableCore();
@@ -72,13 +75,11 @@ public sealed partial class TrackActor
                     var (preview, editorRole, diagnostics) = PreviewReportCommitCore(callerSessionId, request);
                     if (actor._policy is not null)
                     {
-                        var prevMd = actor._reportEngine.RenderMarkdown(_report, withMarkers: false);
-                        var nextMd = actor._reportEngine.RenderMarkdown(preview.NextDocument, withMarkers: false);
+                        var inputs = BuildReportPolicyInputsCore(callerSessionId, editorRole, preview);
                         var eval = actor._policyVm.Before(actor._policy, "report.commit", actor.TrackId, JsonHelpers.ToElement(new
                         {
-                            editorRole, prevMarkdown = prevMd, nextMarkdown = nextMd
-                        }), actor._track.TemplateInputs, actor._track.Data,
-                            actor.BuildPolicySessionContextCore(actor.RequireSessionCore(callerSessionId)));
+                            inputs.EditorRole, inputs.PrevMarkdown, inputs.NextMarkdown
+                        }), actor._track.TemplateInputs, actor._track.Data, inputs.Session);
 
                         if (eval is GuardDecision.Deny denied)
                             throw KernelException.PolicyDenied(denied.Reason);
@@ -88,12 +89,12 @@ public sealed partial class TrackActor
                                 throw KernelException.Conflict("A policy approval requires an authorized runtime.");
                             var open = actor.RequireRuntimeBindingCore(authorization);
                             actor._scheduler.TryGetActive(callerSessionId, out var approvalTurn);
-                            return (null, actor.ApplyGuardDecisionCore(ask, callerSessionId, open.RuntimeControl, ct, turn: approvalTurn)!);
+                            return (null, actor.ApplyGuardDecisionCore(ask, callerSessionId, open.RuntimeControl, ct, turn: approvalTurn)!, inputs);
                         }
                     }
 
                     return (await FinalizeReportCommitCoreAsync(preview, callerSessionId,
-                        request.CommitMessage ?? $"Report commit ({editorRole})", diagnostics, ct, authorization).ConfigureAwait(false), null);
+                        request.CommitMessage ?? $"Report commit ({editorRole})", diagnostics, ct, authorization).ConfigureAwait(false), null, null);
                 }, CancellationToken.None).ConfigureAwait(false);
 
                 if (completed is not null) return completed;
@@ -104,6 +105,8 @@ public sealed partial class TrackActor
                 {
                     actor.RequireMcpAuthorizationCore(authorization);
                     var (preview, editorRole, diagnostics) = PreviewReportCommitCore(callerSessionId, request);
+                    if (evaluatedInputs != BuildReportPolicyInputsCore(callerSessionId, editorRole, preview))
+                        throw KernelException.PolicyDenied("Report preview or session context changed during report approval.");
                     return await FinalizeReportCommitCoreAsync(preview, callerSessionId,
                         request.CommitMessage ?? $"Report commit ({editorRole}, human-approved)", diagnostics, ct, authorization).ConfigureAwait(false);
                 }, ct).ConfigureAwait(false);
@@ -113,6 +116,12 @@ public sealed partial class TrackActor
                 Interlocked.Decrement(ref actor._inFlightExternalOps);
             }
         }
+
+        private ReportPolicyInputs BuildReportPolicyInputsCore(string callerSessionId, string editorRole, ReportCommitResult preview) =>
+            new(editorRole,
+                actor._reportEngine.RenderMarkdown(_report, withMarkers: false),
+                actor._reportEngine.RenderMarkdown(preview.NextDocument, withMarkers: false),
+                actor.BuildPolicySessionContextCore(actor.RequireSessionCore(callerSessionId)));
 
         private (ReportCommitResult Preview, string EditorRole, IReadOnlyList<ReportDiagnosticDto> Diagnostics)
             PreviewReportCommitCore(string callerSessionId, ReportCommitRequest request)
