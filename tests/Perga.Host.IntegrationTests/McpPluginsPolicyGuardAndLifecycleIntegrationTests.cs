@@ -470,7 +470,7 @@ public sealed class McpPluginsPolicyGuardAndLifecycleIntegrationTests
             Assert.Equal("PRICE:NVDA=188.50", allowText);
             Assert.Single(httpUpstreamCalls);
 
-            // 5. Test PolicyVm.GuardToolCall -> Deny on HTTP plugin, /mcp/vcs, AND /mcp/kernel!
+            // 5. Verify policy denial for plugins, VCS, and Kernel writes, plus the Kernel read-only bypass.
             var (denyPluginText, denyPluginErr) = await McpKernelAndVcsIntegrationTests.CallToolAsync(
                 cluster,
                 "/mcp/p/http-quote",
@@ -492,15 +492,24 @@ public sealed class McpPluginsPolicyGuardAndLifecycleIntegrationTests
             Assert.True(denyVcsErr);
             Assert.Contains("Policy blocked vcs:status", denyVcsText, StringComparison.Ordinal);
 
+            var (readOnlyKernelText, readOnlyKernelErr) = await McpKernelAndVcsIntegrationTests.CallToolAsync(
+                cluster,
+                "/mcp/kernel",
+                token,
+                KernelMcpToolNames.TaskList,
+                new { mode = "deny" },
+                ct);
+            Assert.False(readOnlyKernelErr, readOnlyKernelText);
+
             var (denyKernelText, denyKernelErr) = await McpKernelAndVcsIntegrationTests.CallToolAsync(
                 cluster,
                 "/mcp/kernel",
                 token,
-                "task_list",
-                new { mode = "deny" },
+                KernelMcpToolNames.TrackRename,
+                new { title = "Blocked Title", mode = "deny" },
                 ct);
             Assert.True(denyKernelErr);
-            Assert.Contains("Policy blocked perga:task_list", denyKernelText, StringComparison.Ordinal);
+            Assert.Contains("Policy blocked perga:track_rename", denyKernelText, StringComparison.Ordinal);
 
             // 6. Test PolicyVm.GuardToolCall -> AskHuman live HTTP suspension + WS approval.changed and the decision route!
             using var eventsWs = await cluster.ConnectEventsWebSocketAsync($"?since=0&trackId={trackId}", ct);
