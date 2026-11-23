@@ -175,7 +175,16 @@ public sealed partial class TrackActor
                         _taskDispatchApprovals[task.TaskKey] = (task.Generation, generation, TaskDispatchFields(task));
                     else
                     {
-                        var failed = current with { Status = TaskRunStatus.Failed, Outcome = FlowOutcome.Attention, StatusDetail = "Task dispatch denied by human.", FinishedAtMs = NowMs(), UpdatedAtMs = NowMs() };
+                        var now = NowMs();
+                        var failed = current with
+                        {
+                            Status = TaskRunStatus.Failed,
+                            RunCount = FlowConstants.IsFlowTask(current) ? checked(current.RunCount + 1) : current.RunCount,
+                            Outcome = FlowOutcome.Attention,
+                            StatusDetail = "Task dispatch denied by human.",
+                            FinishedAtMs = now,
+                            UpdatedAtMs = now
+                        };
                         await _taskCoordinator.PersistAndEmitTaskSettlementCoreAsync(failed, failed.UpdatedAtMs, _actorShutdownCts.Token).ConfigureAwait(false);
                         await OnTaskSettledFlowHookCoreAsync(failed, _actorShutdownCts.Token).ConfigureAwait(false);
                     }

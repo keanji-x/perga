@@ -15,10 +15,14 @@ public sealed partial class TrackActor
 {
     private readonly TrackFlowFileStore _flowFileStore;
     private readonly Dictionary<string, ActiveWatchState> _activeWatches = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, FlowNodeSpecDto> _gcArchivedSinceSemantic = new(StringComparer.Ordinal);
     private FlowSpecDto _flowSpec = new(0, [], FlowConstants.SchemaPointer);
+    private long _lastSemanticFlowRev;
+
     private async Task HydrateFlowCoreAsync(CancellationToken ct)
     {
         _flowSpec = TrackFlowParser.ParsePersisted(_track.FlowSpecJson, _track.FlowRev);
+        MarkSemanticFlowRevisionCore(_track.FlowRev);
         _flowFileStore.EnsureSchemaMaterialized();
         await ProjectCommittedFlowFileCoreAsync(ct).ConfigureAwait(false);
     }
@@ -88,7 +92,7 @@ public sealed partial class TrackActor
             {
                 var expectedRev = expectedFlowRev ?? parsedSpec.Rev;
                 if (expectedRev != _track.FlowRev)
-                    throw KernelException.Conflict($"Flow revision conflict: expected {expectedRev}, current {_track.FlowRev}. Read the current flow using flow_read or flow.json and retry.");
+                    parsedSpec = ReconcileFlowDraftAfterGcCore(parsedSpec, expectedRev);
 
                 errors = TrackFlowValidator.Validate(
                     parsedSpec, _flowSpec, _taskCoordinator.Snapshot(), CollectActiveFlowTaskIdsCore(), _sessions,
@@ -112,6 +116,29 @@ public sealed partial class TrackActor
 
         await cleanup.ConfigureAwait(false);
         return result;
+    }
+
+    private FlowSpecDto ReconcileFlowDraftAfterGcCore(FlowSpecDto draft, long expectedRev)
+    {
+        if (expectedRev < _lastSemanticFlowRev || expectedRev >= _track.FlowRev)
+            throw RevisionConflict();
+
+        var remainingNodes = draft.Nodes.Where(node =>
+            !_gcArchivedSinceSemantic.TryGetValue(node.Id, out var archived) ||
+            !TrackFlowReconciler.NodeSpecEquals(archived, node)).ToArray();
+        if (remainingNodes.Any(node => node.When?.After?.Any(dep => _gcArchivedSinceSemantic.ContainsKey(dep.Node)) == true))
+            throw RevisionConflict();
+
+        return draft with { Nodes = remainingNodes };
+
+        KernelException RevisionConflict() => KernelException.Conflict(
+            $"Flow revision conflict: expected {expectedRev}, current {_track.FlowRev}. Read the current flow using flow_read with format 'spec' or flow.json and retry.");
+    }
+
+    private void MarkSemanticFlowRevisionCore(long rev)
+    {
+        _lastSemanticFlowRev = rev;
+        _gcArchivedSinceSemantic.Clear();
     }
 
     private async Task<Task> CancelFlowTaskCoreAsync(TaskDto task, string? reason, CancellationToken ct,
@@ -230,6 +257,7 @@ public sealed partial class TrackActor
         }
         var events = await PersistFlowCoreAsync(nextSpec, sourceSha, upsertedTasks, schedules, canceledClocks, now, ct, authorization)
             .ConfigureAwait(false);
+        MarkSemanticFlowRevisionCore(nextSpec.Rev);
         var cleanup = BeginFlowCancellationCore(canceledRuns, canceledNodes);
         if (canceledTaskId is null && canceledNodes.Count > 0 && cleanup == Task.CompletedTask)
             _ = TrackBackgroundJob(() => TriggerSchedulerAsync(_actorShutdownCts.Token));
@@ -237,6 +265,7 @@ public sealed partial class TrackActor
         await PublishFlowCommitCoreAsync(events).ConfigureAwait(false);
         await EvaluateFlowAfterTriggersCoreAsync(CancellationToken.None).ConfigureAwait(false);
         await _taskCoordinator.ScheduleEligibleTasksCoreAsync(CancellationToken.None).ConfigureAwait(false);
+        await TryPokeLeadForPendingWakesCoreAsync().ConfigureAwait(false);
         var projection = await BuildFlowProjectionCoreAsync(CancellationToken.None).ConfigureAwait(false);
         return (new FlowCommitResultDto(true, false, _track.FlowRev, plan, [], projection), cleanup);
     }
@@ -269,6 +298,7 @@ public sealed partial class TrackActor
                 await EvaluateFlowAfterTriggersCoreAsync(CancellationToken.None).ConfigureAwait(false);
                 await _taskCoordinator.ScheduleEligibleTasksCoreAsync(CancellationToken.None).ConfigureAwait(false);
                 await TryRunFlowGcCoreAsync(CancellationToken.None).ConfigureAwait(false);
+                await TryPokeLeadForPendingWakesCoreAsync().ConfigureAwait(false);
             }, CancellationToken.None).ConfigureAwait(false);
         }
         catch (Exception ex)
@@ -293,6 +323,7 @@ public sealed partial class TrackActor
             await EvaluateFlowAfterTriggersCoreAsync(CancellationToken.None).ConfigureAwait(false);
             await _taskCoordinator.ScheduleEligibleTasksCoreAsync(CancellationToken.None).ConfigureAwait(false);
             await TryRunFlowGcCoreAsync(CancellationToken.None).ConfigureAwait(false);
+            await TryPokeLeadForPendingWakesCoreAsync().ConfigureAwait(false);
         }, CancellationToken.None).ConfigureAwait(false);
     }
 
@@ -404,6 +435,7 @@ public sealed partial class TrackActor
                 await EvaluateFlowAfterTriggersCoreAsync(CancellationToken.None).ConfigureAwait(false);
                 await _taskCoordinator.ScheduleEligibleTasksCoreAsync(CancellationToken.None).ConfigureAwait(false);
             }
+            await TryPokeLeadForPendingWakesCoreAsync().ConfigureAwait(false);
             return true;
         }, ct);
 
@@ -444,6 +476,19 @@ public sealed partial class TrackActor
         }
 
         await TryRunFlowGcCoreAsync(ct).ConfigureAwait(false);
+        await TryPokeLeadForPendingWakesCoreAsync().ConfigureAwait(false);
+    }
+
+    private async Task TryPokeLeadForPendingWakesCoreAsync()
+    {
+        try
+        {
+            await _scheduler.PokeLeadAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Trace.TraceWarning("Could not check pending Lead wakes for Track {0}: {1}", TrackId, ex);
+        }
     }
 
     private async Task<bool> EvaluateFlowAfterTriggersCoreAsync(CancellationToken ct)
@@ -547,6 +592,7 @@ public sealed partial class TrackActor
         }
 
         var now = NowMs();
+        var archivedNodes = _flowSpec.Nodes.Where(n => eligible.Contains(n.Id)).ToArray();
         var remainingNodes = _flowSpec.Nodes.Where(n => !eligible.Contains(n.Id)).ToArray();
         var nextSpec = new FlowSpecDto(checked(_track.FlowRev + 1), remainingNodes, FlowConstants.SchemaPointer);
         var tasksByKey = TrackFlowReconciler.BuildTasksByKey(_taskCoordinator.Snapshot());
@@ -557,6 +603,8 @@ public sealed partial class TrackActor
         var canceledClocks = eligible.Select(FlowConstants.MakeScheduleId).ToArray();
         var events = await PersistFlowCoreAsync(nextSpec, _track.FlowFileSha256, archivedTasks, [], canceledClocks, now, ct)
             .ConfigureAwait(false);
+        foreach (var node in archivedNodes)
+            _gcArchivedSinceSemantic[node.Id] = node;
         await PublishFlowCommitCoreAsync(events).ConfigureAwait(false);
     }
 

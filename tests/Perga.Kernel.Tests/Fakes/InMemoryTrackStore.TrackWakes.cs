@@ -27,7 +27,8 @@ internal sealed partial class InMemoryTrackStore : ITrackWakeStore
     { lock (_gate) return Task.FromResult<IReadOnlyList<TrackWake>>(_trackWakes.Where(w => w.TrackId == trackId).ToArray()); }
     public Task<IReadOnlyList<string>> ListPendingTracksAsync(CancellationToken ct)
     { lock (_gate) return Task.FromResult<IReadOnlyList<string>>(_trackWakes.Where(w => w.State == TrackWakeStates.Pending && _tracks[w.TrackId].ClosedAtMs is null).Select(w => w.TrackId).Distinct().Order().ToArray()); }
-    public Task<IReadOnlyList<TrackWake>> ClaimBatchAsync(string trackId, string targetSessionId, int limit, CancellationToken ct)
+    public Task<IReadOnlyList<TrackWake>> ClaimBatchAsync(string trackId, string targetSessionId, int limit, CancellationToken ct,
+        IReadOnlyCollection<string>? excludeWakeIds = null)
     {
         lock (_gate)
         {
@@ -35,6 +36,7 @@ internal sealed partial class InMemoryTrackStore : ITrackWakeStore
             var claimed = new List<TrackWake>();
             for (var i = 0; i < _trackWakes.Count && claimed.Count < Math.Clamp(limit, 1, 32); i++)
                 if (_trackWakes[i] is { State: TrackWakeStates.Pending } w && w.TrackId == trackId &&
+                    excludeWakeIds?.Contains(w.Id) != true &&
                     _tracks[trackId].ClosedAtMs is null && (w.TargetSessionId == targetSessionId || (w.TargetSessionId is null && _tracks[trackId].LeadSessionId == targetSessionId)))
                 { w = w with { State = TrackWakeStates.Delivering, Attempts = w.Attempts + 1, UpdatedAtMs = now }; _trackWakes[i] = w; claimed.Add(w); }
             return Task.FromResult<IReadOnlyList<TrackWake>>(claimed);
@@ -45,8 +47,9 @@ internal sealed partial class InMemoryTrackStore : ITrackWakeStore
         lock (_gate)
         {
             var now = NowMs();
+            var expectedState = reason == TrackWakeReasons.SupersededByFlowWake ? TrackWakeStates.Pending : TrackWakeStates.Delivering;
             for (var i = 0; i < _trackWakes.Count; i++)
-                if (_trackWakes[i] is { State: TrackWakeStates.Delivering } w && batch.Any(b => b.Id == w.Id))
+                if (_trackWakes[i] is { } w && w.State == expectedState && batch.Any(b => b.Id == w.Id))
                     _trackWakes[i] = w with { State = state, Reason = reason, TurnId = turnId ?? w.TurnId, UpdatedAtMs = now };
         }
         return Task.CompletedTask;

@@ -738,7 +738,7 @@ public sealed class ExecutionTargetIntegrationTests
 
                     var token = kernel.McpSessionBridge.GetTokenForSession(leadSessionId)!;
                     var principal = kernel.McpSessionBridge.ResolveToken(token)!;
-                    var flow = await kernel.InvokeKernelMcpToolAsync(principal, KernelMcpToolNames.FlowRead, JsonSerializer.SerializeToElement(new { }));
+                    var flow = await kernel.InvokeKernelMcpToolAsync(principal, KernelMcpToolNames.FlowRead, JsonSerializer.SerializeToElement(new { format = "full" }));
                     var rev = flow.GetProperty("flowRev").GetInt64();
                     flowPath = flow.GetProperty("flowPath").GetString()!;
                     Assert.Equal(0, rev);

@@ -1,5 +1,6 @@
 using Dapper;
 using Microsoft.Data.Sqlite;
+using Perga.Contracts;
 using Perga.Kernel.Ports;
 using Perga.Storage.Sqlite;
 
@@ -88,5 +89,66 @@ public sealed class RepositoryTransactionTests
         using (var conn = h.OpenRawInspectConnection())
             Assert.Equal(persistedEvent.EventId, await conn.ExecuteScalarAsync<long>(
                 "SELECT event_id FROM report_revisions WHERE doc_rev = 2;"));
+    }
+
+    [Fact]
+    public async Task ClaimBatchSkipsExcludedPendingWakeWithoutCountingAnAttempt()
+    {
+        await using var h = await StorageTestHarness.CreateAsync();
+        await h.Store.UpsertAreaAsync(StorageTestHarness.CreateArea(), default);
+        var (track, report, lead) = StorageTestHarness.CreateSeedTrack();
+        await h.Store.CreateTrackAsync(track, report, null, lead, default);
+        var wakes = h.Store.TrackWakes;
+        await wakes.EnqueueAsync(TrackWakeRequests.Prompt(track.Id, TrackWakeKinds.TaskSettled, "task:tsk_review:1", "Review finished"), default);
+        await wakes.EnqueueAsync(TrackWakeRequests.Prompt(track.Id, TrackWakeKinds.Mail, "mail:1", "New mail"), default);
+
+        var excluded = Assert.Single(await wakes.ListAsync(track.Id, default), wake => wake.Kind == TrackWakeKinds.TaskSettled);
+        string[] exclusions = [excluded.Id, .. Enumerable.Range(0, 33_000).Select(index => $"unused-{index}")];
+        var claimed = Assert.Single(await wakes.ClaimBatchAsync(track.Id, lead.Id, 1, default, excludeWakeIds: exclusions));
+        Assert.Equal(TrackWakeKinds.Mail, claimed.Kind);
+        Assert.Equal(TrackWakeStates.Delivering, claimed.State);
+        Assert.Equal(1, claimed.Attempts);
+
+        var retained = Assert.Single(await wakes.ListAsync(track.Id, default), wake => wake.Id == excluded.Id);
+        Assert.Equal(TrackWakeStates.Pending, retained.State);
+        Assert.Equal(0, retained.Attempts);
+        await wakes.MarkDroppedAsync([retained], TrackWakeReasons.SupersededByFlowWake, "trn_flow", default);
+        var dropped = Assert.Single(await wakes.ListAsync(track.Id, default), wake => wake.Id == excluded.Id);
+        Assert.Equal(TrackWakeStates.Dropped, dropped.State);
+        Assert.Equal(TrackWakeReasons.SupersededByFlowWake, dropped.Reason);
+        Assert.Equal("trn_flow", dropped.TurnId);
+        Assert.Equal(0, dropped.Attempts);
+        Assert.Empty(await wakes.ClaimBatchAsync(track.Id, lead.Id, 32, default, excludeWakeIds: []));
+    }
+
+    [Fact]
+    public async Task ReopenAfterInterruptedExplicitWakePreservesPendingTaskSettlement()
+    {
+        await using var h = await StorageTestHarness.CreateAsync();
+        await h.Store.UpsertAreaAsync(StorageTestHarness.CreateArea(), default);
+        var (track, report, lead) = StorageTestHarness.CreateSeedTrack();
+        await h.Store.CreateTrackAsync(track, report, null, lead, default);
+        await h.Store.TrackWakes.EnqueueAsync(TrackWakeRequests.Prompt(
+            track.Id, TrackWakeKinds.TaskSettled, "task:tsk_review:1", "Review finished"), default);
+        var pending = Assert.Single(await h.Store.TrackWakes.ListAsync(track.Id, default));
+        Assert.Empty(await h.Store.TrackWakes.ClaimBatchAsync(track.Id, lead.Id, 1, default, excludeWakeIds: [pending.Id]));
+        var explicitTurn = new SessionTurnDto("trn_explicit", lead.Id, 1, lead.Epoch, "wake",
+            StorageTestHarness.Json("""{"prompt":"Review update"}"""), "running", null, null, 200, null);
+        await h.Store.RecordTurnAndItemsAsync(explicitTurn, [], lead with { Status = "running" }, default);
+        await h.Store.DisposeAsync();
+
+        await using var reopened = await SqliteTrackStore.OpenAsync(h.DbPath, h.DataDir);
+        await reopened.MarkInFlightInterruptedOnBootAsync(default);
+        await reopened.TrackWakes.RecoverOnBootAsync(default);
+        Assert.Equal("unknown", Assert.Single(await reopened.ListSessionTurnsAsync(lead.Id, default)).Status);
+        Assert.Equal(pending, Assert.Single(await reopened.TrackWakes.ListAsync(track.Id, default), wake => wake.Id == pending.Id));
+        var claimed = Assert.Single(await reopened.TrackWakes.ClaimBatchAsync(track.Id, lead.Id, 1, default));
+        Assert.Equal(pending.Id, claimed.Id);
+        Assert.Equal(TrackWakeStates.Delivering, claimed.State);
+        Assert.Equal(1, claimed.Attempts);
+        await reopened.TrackWakes.MarkDoneAsync([claimed], TrackWakeReasons.Delivered, "trn_recovered", default);
+        var delivered = Assert.Single(await reopened.TrackWakes.ListAsync(track.Id, default), wake => wake.Id == pending.Id);
+        Assert.Equal(TrackWakeStates.Done, delivered.State);
+        Assert.Equal("trn_recovered", delivered.TurnId);
     }
 }

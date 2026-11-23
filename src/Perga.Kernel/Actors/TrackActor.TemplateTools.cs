@@ -124,6 +124,8 @@ public sealed partial class TrackActor
         _templateSnapshotSource = snapshot;
         _policyGeneration = Guid.NewGuid().ToString("N");
         _flowSpec = spec;
+        if (flowChanged)
+            MarkSemanticFlowRevisionCore(spec.Rev);
         if (flow is not null)
             foreach (var task in flow.Tasks) _taskCoordinator.ReplaceTaskInMemoryCore(task);
         _ = BeginFlowCancellationCore(canceledRuns, stoppingNodes);
@@ -166,6 +168,8 @@ public sealed partial class TrackActor
             try { await EvaluateFlowAfterTriggersCoreAsync(lifecycle).ConfigureAwait(false); }
             finally { await _taskCoordinator.ScheduleEligibleTasksCoreAsync(lifecycle).ConfigureAwait(false); }
         }
+        if (flowChanged)
+            await TryPokeLeadForPendingWakesCoreAsync().ConfigureAwait(false);
         return result with { Track = TemplatePresentation.Project(_track, _policy, header.View) };
     }
 

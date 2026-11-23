@@ -199,7 +199,9 @@ public sealed partial class TrackActor
             if (actor.TryScheduleApprovalNotificationCore(sessionId)) return null;
 
             // Pending system work belongs to the Track. Resolve its Lead only when claiming.
-            var batch = await actor._store.TrackWakes.ClaimBatchAsync(actor.TrackId, sessionId, 32, CancellationToken.None).ConfigureAwait(false);
+            var excluded = await actor.GetDeferredLeadWakeIdsCoreAsync(sessionId).ConfigureAwait(false);
+            var batch = await actor._store.TrackWakes.ClaimBatchAsync(actor.TrackId, sessionId, 32, CancellationToken.None,
+                excludeWakeIds: excluded).ConfigureAwait(false);
             if (batch.Count == 0) return null;
             var reservation = Guid.NewGuid();
             Reserve(sessionId, reservation);

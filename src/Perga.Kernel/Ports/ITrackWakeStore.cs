@@ -15,7 +15,8 @@ public interface ITrackWakeStore
     Task EnqueueAsync(TrackWakeRequest request, CancellationToken ct);
     Task<IReadOnlyList<TrackWake>> ListAsync(string trackId, CancellationToken ct);
     Task<IReadOnlyList<string>> ListPendingTracksAsync(CancellationToken ct);
-    Task<IReadOnlyList<TrackWake>> ClaimBatchAsync(string trackId, string targetSessionId, int limit, CancellationToken ct);
+    Task<IReadOnlyList<TrackWake>> ClaimBatchAsync(string trackId, string targetSessionId, int limit, CancellationToken ct,
+        IReadOnlyCollection<string>? excludeWakeIds = null);
     Task MarkDoneAsync(IReadOnlyList<TrackWake> batch, string reason, string turnId, CancellationToken ct);
     Task MarkDroppedAsync(IReadOnlyList<TrackWake> batch, string reason, string? turnId, CancellationToken ct);
     Task LinkTurnAsync(IReadOnlyList<TrackWake> batch, string turnId, CancellationToken ct);

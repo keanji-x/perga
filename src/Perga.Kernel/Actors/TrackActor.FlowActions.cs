@@ -1,3 +1,4 @@
+using System.Globalization;
 using Perga.AgentKit;
 using Perga.Contracts;
 using Perga.Kernel.Flow;
@@ -89,7 +90,7 @@ public sealed partial class TrackActor
         {
             using (admission)
             {
-                await RunFlowWakeInBackgroundAsync(task.Id, nextRunCount, targetSessionId, prompt, reservation, runToken)
+                await RunFlowWakeInBackgroundAsync(runningTask, targetSessionId, prompt, reservation, runToken)
                     .ConfigureAwait(false);
             }
         });
@@ -106,8 +107,7 @@ public sealed partial class TrackActor
     }
 
     private async Task RunFlowWakeInBackgroundAsync(
-        string taskId,
-        int runCount,
+        TaskDto runningTask,
         string targetSessionId,
         string prompt,
         Guid reservation,
@@ -117,7 +117,7 @@ public sealed partial class TrackActor
         string? errorMessage = null;
         try
         {
-            var work = new FlowWakeWorkItem(this, targetSessionId, prompt, reservation);
+            var work = new FlowWakeWorkItem(this, targetSessionId, prompt, reservation, runningTask.Id, runningTask.TriggerRunKey);
             turn = await _turnRunner.RunAsync(work, ct, alreadyAdmitted: true).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
@@ -151,7 +151,8 @@ public sealed partial class TrackActor
 
         await EnqueueAsync(async _ =>
         {
-            if (!_taskCoordinator.TryGetActiveRun(taskId, out var active) || active.RunCount != runCount || active.Settling)
+            var taskId = runningTask.Id;
+            if (!_taskCoordinator.TryGetActiveRun(taskId, out var active) || active.RunCount != runningTask.RunCount || active.Settling)
             {
                 return;
             }
@@ -170,8 +171,9 @@ public sealed partial class TrackActor
             };
             await _taskCoordinator.PersistAndEmitTaskSettlementCoreAsync(settled, now, CancellationToken.None,
                 suppressDefaultWake: true, activeRun: active).ConfigureAwait(false);
-            await PokeSessionCoreAsync(targetSessionId).ConfigureAwait(false);
             await OnTaskSettledFlowHookCoreAsync(settled, CancellationToken.None).ConfigureAwait(false);
+            if (targetSessionId != _track.LeadSessionId)
+                await PokeSessionCoreAsync(targetSessionId).ConfigureAwait(false);
         }, CancellationToken.None).ConfigureAwait(false);
     }
 
@@ -510,7 +512,6 @@ public sealed partial class TrackActor
         FlowWatchProgressDto finalProgress)
     {
         if (_actorShutdownCts.IsCancellationRequested) return true;
-        var shouldPokeLead = false;
         var settledRun = true;
         await EnqueueAsync(async _ =>
         {
@@ -552,8 +553,6 @@ public sealed partial class TrackActor
             var wakePrompt = outcome == FlowOutcome.Blocked || (watchState.Repeat && outcome == FlowOutcome.Attention)
                 ? $"Flow watch node '{settled.TaskKey}' settled as {FlowConstants.FormatOutcome(outcome)}: {summary}"
                 : null;
-            shouldPokeLead = wakePrompt is not null;
-
             await _taskCoordinator.PersistAndEmitTaskSettlementCoreAsync(settled, now, CancellationToken.None, wakePrompt: wakePrompt, suppressDefaultWake: wakePrompt is null)
                 .ConfigureAwait(false);
             _activeWatches.Remove(watchState.TaskId);
@@ -561,11 +560,6 @@ public sealed partial class TrackActor
             await OnTaskSettledFlowHookCoreAsync(settled, CancellationToken.None).ConfigureAwait(false);
             await _taskCoordinator.ScheduleEligibleTasksCoreAsync(CancellationToken.None).ConfigureAwait(false);
         }, CancellationToken.None).ConfigureAwait(false);
-
-        if (shouldPokeLead)
-        {
-            await PokePendingWakesAsync(CancellationToken.None).ConfigureAwait(false);
-        }
 
         return settledRun;
     }
@@ -596,14 +590,87 @@ public sealed partial class TrackActor
         }
     }
 
-    private sealed class FlowWakeWorkItem(TrackActor actor, string sessionId, string prompt, Guid reservation)
+    private static bool IsPendingLeadTaskWake(TrackWake wake, string leadId) =>
+        wake.State == TrackWakeStates.Pending && wake.Kind == TrackWakeKinds.TaskSettled &&
+        (wake.TargetSessionId is null || wake.TargetSessionId == leadId);
+
+    private async Task<IReadOnlyCollection<string>?> GetDeferredLeadWakeIdsCoreAsync(string sessionId)
+    {
+        if (sessionId != _track.LeadSessionId || !TrackFlowReconciler.HasActiveLeadWakeNode(_flowSpec, sessionId))
+            return null;
+
+        var wakes = await _store.TrackWakes.ListAsync(TrackId, CancellationToken.None).ConfigureAwait(false);
+        var pending = wakes.Where(wake => IsPendingLeadTaskWake(wake, sessionId)).ToArray();
+        if (pending.Length == 0)
+            return null;
+
+        var tasks = _taskCoordinator.Snapshot();
+        var activeById = tasks.Where(task => task.ArchivedAtMs is null).ToDictionary(task => task.Id, StringComparer.Ordinal);
+        var schedules = await ListTrackSchedulesSafeCoreAsync(CancellationToken.None).ConfigureAwait(false);
+        var excluded = new List<string>();
+        foreach (var wake in pending)
+        {
+            // Startup failures have a separate identity even when they reuse a run count.
+            var parts = wake.CoalesceKey?.Split(':');
+            if (parts is ["task", var taskId, var run] &&
+                int.TryParse(run, NumberStyles.None, CultureInfo.InvariantCulture, out var runCount) &&
+                activeById.TryGetValue(taskId, out var task) && task.RunCount == runCount &&
+                TrackFlowReconciler.HasPendingExplicitLeadWake(_flowSpec, tasks, task, sessionId, schedules))
+                excluded.Add(wake.Id);
+        }
+        return excluded;
+    }
+
+    private async Task DropSupersededLeadWakesCoreAsync(string wakeTaskId, string triggerRunKey, SessionTurnDto turn)
+    {
+        if (turn.SessionId != _track.LeadSessionId)
+            return;
+
+        var tasks = _taskCoordinator.Snapshot();
+        if (!tasks.Any(task => task.Id == wakeTaskId && task.ArchivedAtMs is null && task.TriggerRunKey == triggerRunKey))
+            return;
+
+        var byKey = TrackFlowReconciler.BuildTasksByKey(tasks);
+        var keys = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var segment in triggerRunKey.Split(','))
+        {
+            var separator = segment.IndexOf('#');
+            if (separator > 0 &&
+                int.TryParse(segment.AsSpan(separator + 1), NumberStyles.None, CultureInfo.InvariantCulture, out var runCount) &&
+                byKey.TryGetValue(segment[..separator], out var task) && task.ArchivedAtMs is null &&
+                task.RunCount == runCount && FlowConstants.IsFlowTask(task))
+                keys.Add(TrackWakeRequests.TaskSettledKey(task.Id, runCount));
+        }
+
+        var wakes = await _store.TrackWakes.ListAsync(TrackId, CancellationToken.None).ConfigureAwait(false);
+        var superseded = wakes.Where(wake => IsPendingLeadTaskWake(wake, turn.SessionId) &&
+            wake.CoalesceKey is { } key && keys.Contains(key)).ToArray();
+        if (superseded.Length > 0)
+            await _store.TrackWakes.MarkDroppedAsync(superseded, TrackWakeReasons.SupersededByFlowWake, turn.Id, CancellationToken.None)
+                .ConfigureAwait(false);
+    }
+
+    private sealed class FlowWakeWorkItem(TrackActor actor, string sessionId, string prompt, Guid reservation,
+        string taskId, string? triggerRunKey)
         : ReservedTurnWorkItem(actor, sessionId, reservation)
     {
+        private bool _deliveryRecorded;
+
         public override string TriggerKind => "wake";
         protected override string? Presentation => TrackWakePresentations.System;
         public override Task<string?> PreparePromptAsync(CancellationToken ct) => Task.FromResult<string?>(prompt);
-        public override Task OnProviderDeliveredAsync(SessionTurnDto turn, UnifiedAgentEvent evt, string? nativeThreadId) =>
-            Task.CompletedTask;
+        public override Task OnProviderDeliveredAsync(SessionTurnDto turn, UnifiedAgentEvent evt, string? nativeThreadId)
+        {
+            if (evt is not (UnifiedAgentEvent.TurnAccepted or UnifiedAgentEvent.TextDelta or
+                UnifiedAgentEvent.ThinkingDelta or UnifiedAgentEvent.ToolCallStarted or
+                UnifiedAgentEvent.ToolCallCompleted or UnifiedAgentEvent.ApprovalRequested or
+                UnifiedAgentEvent.TurnCompleted))
+                return Task.CompletedTask;
+            if (_deliveryRecorded || string.IsNullOrEmpty(triggerRunKey))
+                return Task.CompletedTask;
+            _deliveryRecorded = true;
+            return Actor.EnqueueAsync(_ => Actor.DropSupersededLeadWakesCoreAsync(taskId, triggerRunKey, turn), CancellationToken.None);
+        }
         public override async Task OnTurnSettledAsync(TurnSettlement settlement) =>
             await settlement.SettleAsync().ConfigureAwait(false);
     }

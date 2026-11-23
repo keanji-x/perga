@@ -231,6 +231,8 @@ public sealed class TemplateBindingToolsTests
                         """
                 }), ct);
             Assert.True(commit.GetProperty("ok").GetBoolean(), commit.GetRawText());
+            var node = Assert.Single(commit.GetProperty("flow").GetProperty("nodes").EnumerateArray());
+            Assert.False(node.TryGetProperty("prompt", out _));
         }
         finally
         {
@@ -356,15 +358,38 @@ public sealed class TemplateBindingToolsTests
         await Call(ctx, track, KernelMcpToolNames.TrackSet, new { source = InlineSource });
         await FlowFixture.AddAsync(ctx.Kernel, track.Track.Id, new FlowNodeSpecDto("scheduled",
             new("run", Prompt: "Check ${inputs.unit}", Acceptance: "Verify ${inputs.unit}"),
+            Title: "Scheduled check",
             When: new(At: "2099-01-01T00:00:00Z")));
         await Call(ctx, track, KernelMcpToolNames.TemplateUpdateInputs, new { inputs = new { unit = "m" } });
 
         var tasks = await Call(ctx, track, KernelMcpToolNames.TaskList, new { });
+        Assert.Equal("Check m", tasks[0].GetProperty("goalOrCmd").GetString());
+        Assert.Equal("Verify m", tasks[0].GetProperty("acceptance").GetString());
+
+        var kernelTask = Assert.Single((await ctx.Kernel.ReadReportAsync(track.Track.Id)).Tasks);
+        Assert.Equal("Check m", kernelTask.GoalOrCmd);
+        Assert.Equal("Verify m", kernelTask.Acceptance);
+
         var report = await Call(ctx, track, KernelMcpToolNames.ReportRead, new { });
-        foreach (var task in new[] { tasks[0], report.GetProperty("tasks")[0] })
+        var blocks = await Call(ctx, track, KernelMcpToolNames.ReportRead, new { format = "blocks" });
+        var receipt = await Call(ctx, track, KernelMcpToolNames.ReportCommit, new
         {
-            Assert.Equal("Check m", task.GetProperty("goalOrCmd").GetString());
-            Assert.Equal("Verify m", task.GetProperty("acceptance").GetString());
+            anchor = report.GetProperty("anchor"),
+            ops = new[] { new { op = "upsert", blockKind = "prose", markdown = "# Notes\n\nVerified." } }
+        });
+        foreach (var response in new[] { report, blocks, receipt })
+        {
+            var task = Assert.Single(response.GetProperty("tasks").EnumerateArray());
+            Assert.Equal(kernelTask.Id, task.GetProperty("id").GetString());
+            Assert.Equal("scheduled", task.GetProperty("taskKey").GetString());
+            Assert.Equal("Scheduled check", task.GetProperty("title").GetString());
+            Assert.Equal("pending", task.GetProperty("status").GetString());
+            Assert.False(task.TryGetProperty("dependsOn", out _));
+            Assert.False(task.TryGetProperty("goalOrCmd", out _));
+            Assert.False(task.TryGetProperty("acceptance", out _));
+            Assert.False(task.TryGetProperty("context", out _));
+            Assert.False(task.TryGetProperty("workerResult", out _));
+            Assert.False(task.TryGetProperty("gateVerdict", out _));
         }
         var saved = (await ctx.Store.LoadTrackAggregateAsync(track.Track.Id, default))!;
         Assert.Equal("Check ${inputs.unit}", Assert.Single(saved.Tasks).GoalOrCmd);

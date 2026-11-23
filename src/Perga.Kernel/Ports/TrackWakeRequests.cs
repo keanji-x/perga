@@ -36,8 +36,9 @@ public static class TrackWakeRequests
             TargetSessionId: null);
     public static TrackWakeRequest Mail(MailDto mail) => Prompt(mail.ToTrackId, TrackWakeKinds.Mail, MailKey(mail.Id),
         $"New cross-track mail '{mail.Id}' from track '{mail.FromTrackId}': {mail.Summary}\n\n{mail.Body}", TrackWakePresentations.SystemMail);
-    public static TrackWakeRequest TaskSettled(TaskDto task, string? prompt = null) => Prompt(task.TrackId,
-        TrackWakeKinds.TaskSettled, $"task:{task.Id}:{task.RunCount}",
+    internal static string TaskSettledKey(string taskId, int runCount) => $"task:{taskId}:{runCount}";
+    public static TrackWakeRequest TaskSettled(TaskDto task, string? prompt = null, string? coalesceKey = null) => Prompt(task.TrackId,
+        TrackWakeKinds.TaskSettled, coalesceKey ?? TaskSettledKey(task.Id, task.RunCount),
         prompt ?? $"Task '{task.TaskKey}' (run #{task.RunCount}) settled as {task.Status}. {task.StatusDetail}",
         task.Status == TaskRunStatus.Done ? TrackWakePresentations.SystemTaskCompleted : TrackWakePresentations.SystemTaskFailed);
     public static TrackWakeRequest Ask(AskDto ask) => Prompt(ask.TrackId, TrackWakeKinds.AskAnswered, "ask:" + ask.Id,
