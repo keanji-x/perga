@@ -110,6 +110,10 @@ public sealed record McpToolDescriptor(
 public static class KernelMcpCatalog
 {
     private static readonly IReadOnlyList<McpToolDescriptor> AllDescriptors = BuildDescriptors();
+    private static readonly HashSet<string> ReadOnlyTools = AllDescriptors
+        .Where(d => d.Annotations?.ReadOnlyHint == true && d.Annotations?.OpenWorldHint == false)
+        .Select(d => d.Name)
+        .ToHashSet(StringComparer.Ordinal);
 
     public static IReadOnlyList<McpToolDescriptor> GetAllTools() => AllDescriptors;
 
@@ -135,13 +139,7 @@ public static class KernelMcpCatalog
         KernelMcpToolNames.TemplateUpdateInputs or
         KernelMcpToolNames.TrackSet;
 
-    public static bool IsBeforeHookExemptReadOnly(string toolName) => toolName is
-        KernelMcpToolNames.TemplateList or KernelMcpToolNames.TemplateRead or KernelMcpToolNames.TrackStatus or
-        KernelMcpToolNames.FlowRead or KernelMcpToolNames.ProviderList;
-
-    public static bool IsReadOnlyTool(string toolName) => IsBeforeHookExemptReadOnly(toolName) || toolName is
-        KernelMcpToolNames.ReportRead or KernelMcpToolNames.TaskList or KernelMcpToolNames.AreaList or KernelMcpToolNames.TrackList or
-        KernelMcpToolNames.SessionList or KernelMcpToolNames.SessionRead or KernelMcpToolNames.MailList;
+    public static bool IsReadOnlyTool(string toolName) => ReadOnlyTools.Contains(toolName);
 
     public static bool IsCompletionOnly(string toolName) => toolName is
         KernelMcpToolNames.TaskDone or
@@ -209,7 +207,7 @@ public static class KernelMcpCatalog
             new(KernelMcpToolNames.TerminalOpen, "Open or reuse an idempotent PTY terminal in the workspace.",
                 Schema("""{"type":"object","properties":{"title":{"type":"string"},"program":{"type":"string"},"args":{"type":"array","items":{"type":"string"}},"cwd":{"type":"string"},"idempotencyKey":{"type":"string"},"cols":{"type":"integer"},"rows":{"type":"integer"}}}"""), openWorldDestructive),
             new(KernelMcpToolNames.TerminalRead, "Observe terminal screen frame and optional wait condition.",
-                Schema(KernelMcpReportSupport.TerminalReadSchemaJson), readOnlyLocal),
+                Schema(KernelMcpReportSupport.TerminalReadSchemaJson), readOnlyOpenWorld),
             new(KernelMcpToolNames.TerminalInput, "Send text, keys, paste, or submit action to a terminal.",
                 Schema(KernelMcpReportSupport.TerminalInputSchemaJson), openWorldDestructive),
             new(KernelMcpToolNames.FlowRead, "Read the current Flow revision and Host file path (Lead only). Use format 'summary' (default) for live status, 'spec' for the committed JSON to edit, or 'full' for both with prompts and gate output.",
@@ -240,7 +238,7 @@ public static class KernelMcpCatalog
             new(KernelMcpToolNames.TemplateUpdateInputs, "Merge inputs into the active template. Stored business data can be changed with data_patch (Track Lead only).",
                 Schema("""{"type":"object","required":["inputs"],"properties":{"inputs":{"type":"object"}}}"""), localIdempotentWrite),
             new(KernelMcpToolNames.TrackSet, "Apply a templateId, local template package path, or JSON/.perga.js source with inputs. Use dryRun to preview or clear to detach while keeping the report (Track Lead only).",
-                Schema("""{"type":"object","properties":{"templateId":{"type":"string","minLength":1},"source":{"type":"string","minLength":1},"path":{"type":"string","minLength":1,"description":"Package directory or template file inside the local Track workspace."},"inputs":{"type":"object"},"dryRun":{"type":"boolean"},"clear":{"type":"boolean"},"resetData":{"type":"boolean","description":"Initialize fresh template data, or clear stored data when used with clear: true."},"seedReport":{"type":"boolean","description":"Seed an empty report. Defaults to true when the report is empty and the template provides initial Markdown."}}}"""), localWrite),
+                Schema("""{"type":"object","properties":{"templateId":{"type":"string","minLength":1},"source":{"type":"string","minLength":1},"path":{"type":"string","minLength":1,"description":"Package directory or template file inside the local Track workspace. Selecting a subdirectory's template.perga.js or template.perga.json packs its parent directory. Workspace-root and custom-named template files load standalone."},"inputs":{"type":"object"},"dryRun":{"type":"boolean"},"clear":{"type":"boolean"},"resetData":{"type":"boolean","description":"Initialize fresh template data, or clear stored data when used with clear: true."},"seedReport":{"type":"boolean","description":"Seed an empty report. Defaults to true when the report is empty and the template provides initial Markdown."}}}"""), localWrite),
             new(KernelMcpToolNames.TrackClose, "Close the current track and cancel active tasks (governance only).",
                 Schema("""{"type":"object","properties":{}}"""), localDestructive),
             new(KernelMcpToolNames.TaskDone, "Submit completed work for the bound task with optional neutral outcome (ok|attention|blocked) and summary, and trigger gate verification (contract subagent only).",
@@ -356,7 +354,7 @@ public static class KernelMcpDispatcher
             return await kernel.InvokeSystemUpgradeAsync(caller,
                 toolName == KernelMcpToolNames.SystemUpgradeCheck ? "check" : toolName == KernelMcpToolNames.SystemUpgradeApply ? "apply" : "rollback", args, ct).ConfigureAwait(false);
         }
-        var write = KernelMcpCatalog.GetAllTools().Single(tool => tool.Name == toolName).Annotations?.ReadOnlyHint != true;
+        var write = !KernelMcpCatalog.IsReadOnlyTool(toolName);
         var expectedPolicyGeneration = await kernel.GuardMcpToolCallAsync(caller, "perga", toolName, args, ct, write)
             .ConfigureAwait(false);
         var origin = KernelMcpCatalog.IsCompletionOnly(toolName)

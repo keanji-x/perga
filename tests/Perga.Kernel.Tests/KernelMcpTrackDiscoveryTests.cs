@@ -12,7 +12,7 @@ public sealed class KernelMcpTrackDiscoveryTests
     [InlineData("""{"area":"*"}""")]
     [InlineData("""{"includeClosed":true}""")]
     [InlineData("""{"query":"restricted"}""")]
-    public async Task TrackList_BeforeHookCanGuardDiscoveryArguments(string args)
+    public async Task TrackList_BypassesBeforeButStillValidatesArguments(string args)
     {
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
         var (_, caller) = await ctx.CreateDefaultTrackAsync();
@@ -29,11 +29,14 @@ public sealed class KernelMcpTrackDiscoveryTests
             """;
         var runtimeCaller = await ctx.OpenMcpCallerAsync(caller.Track.LeadSessionId!);
         await ctx.Kernel.InvokeKernelMcpToolAsync(runtimeCaller, KernelMcpToolNames.TrackSet, TestJson.FromObject(new { source }));
-        var denied = await Assert.ThrowsAsync<KernelException>(() => Call(ctx, caller, KernelMcpToolNames.TrackList, args));
-        Assert.Equal(KernelErrorCode.PolicyDenied, denied.Code);
-        var alternateCase = await Assert.ThrowsAsync<KernelException>(() =>
-            Call(ctx, caller, KernelMcpToolNames.TrackList, """{"AREA":"*"}"""));
-        Assert.Equal(KernelErrorCode.InvalidArgument, alternateCase.Code);
+        var result = await Call(ctx, caller, KernelMcpToolNames.TrackList, args);
+        Assert.Equal(JsonValueKind.Array, result.GetProperty("tracks").ValueKind);
+        foreach (var invalid in new[] { """{"AREA":"*"}""", """{"unknown":true}""" })
+        {
+            var error = await Assert.ThrowsAsync<KernelException>(() =>
+                Call(ctx, caller, KernelMcpToolNames.TrackList, invalid));
+            Assert.Equal(KernelErrorCode.InvalidArgument, error.Code);
+        }
     }
 
     [Fact]

@@ -51,6 +51,75 @@ public sealed class TemplateBindingToolsTests
     }
 
     [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    public async Task TrackSetPreservesSummaryWhenSeedingBlankContent(bool summaryOnly, bool explicitSeed)
+    {
+        await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
+        var (_, track) = await ctx.CreateDefaultTrackAsync();
+        var initial = await Call(ctx, track, KernelMcpToolNames.ReportRead, new { });
+        var originalBlocks = new[] { new { op = "upsert", blockKind = "prose", markdown = "Old content" } };
+        await Call(ctx, track, KernelMcpToolNames.ReportCommit, new
+        {
+            anchor = initial.GetProperty("anchor"),
+            ops = summaryOnly ? [] : originalBlocks,
+            summary = "Previous summary"
+        });
+        var populated = await Call(ctx, track, KernelMcpToolNames.ReportRead, new { });
+        Assert.Equal(1, populated.GetProperty("docRev").GetInt32());
+        if (!summaryOnly)
+        {
+            var block = Assert.Single(populated.GetProperty("blocks").EnumerateArray());
+            await Call(ctx, track, KernelMcpToolNames.ReportCommit, new
+            {
+                anchor = populated.GetProperty("anchor"),
+                ops = new[] { new { op = "delete", id = block.GetProperty("id").GetString() } }
+            });
+        }
+        var blankRev = summaryOnly ? 1 : 2;
+        var emptied = await ctx.Kernel.ReadReportAsync(track.Track.Id);
+        Assert.Equal(blankRev, emptied.DocRev);
+        Assert.Empty(emptied.Blocks);
+        Assert.Empty(emptied.RenderedMarkdown);
+        Assert.Equal("Previous summary", emptied.Summary);
+
+        var preview = await Call(ctx, track, KernelMcpToolNames.TrackSet, new { source = InlineSource, dryRun = true });
+        Assert.Equal("seed", preview.GetProperty("plan").GetProperty("reportAction").GetString());
+        Assert.Equal(blankRev, (await ctx.Kernel.ReadReportAsync(track.Track.Id)).DocRev);
+
+        object args = explicitSeed ? new { source = InlineSource, seedReport = true } : new { source = InlineSource };
+        var bound = await Call(ctx, track, KernelMcpToolNames.TrackSet, args);
+        Assert.Equal("seed", bound.GetProperty("plan").GetProperty("reportAction").GetString());
+        var seeded = await ctx.Kernel.ReadReportAsync(track.Track.Id);
+        Assert.Equal(blankRev + 1, seeded.DocRev);
+        Assert.Equal("Previous summary", seeded.Summary);
+        Assert.Contains("Units: km", seeded.RenderedMarkdown, StringComparison.Ordinal);
+        Assert.NotEmpty(seeded.Blocks);
+    }
+
+    [Fact]
+    public async Task TrackSetRequiresExactPackageEntryCaseOnLinux()
+    {
+        if (!OperatingSystem.IsLinux())
+            return;
+
+        await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
+        var (_, track) = await ctx.CreateDefaultTrackAsync(cwd: ctx.DataDir);
+        var folder = Directory.CreateDirectory(Path.Combine(track.Track.Cwd, "package"));
+        await File.WriteAllTextAsync(Path.Combine(folder.FullName, "Template.Perga.Js"), InlineSource);
+
+        var error = await Assert.ThrowsAsync<KernelException>(() =>
+            Call(ctx, track, KernelMcpToolNames.TrackSet, new { path = "package/template.perga.js" }));
+        Assert.Equal(KernelErrorCode.InvalidArgument, error.Code);
+        Assert.Contains("template.perga.js", error.Message, StringComparison.Ordinal);
+        Assert.Null((await ctx.Kernel.GetTrackAggregateAsync(track.Track.Id)).Track.TemplateId);
+
+        await Call(ctx, track, KernelMcpToolNames.TrackSet, new { path = "package/Template.Perga.Js" });
+        Assert.Equal("inline", (await ctx.Kernel.GetTrackAggregateAsync(track.Track.Id)).Track.TemplateId);
+    }
+
+    [Theory]
     [InlineData("template.perga.js")]
     [InlineData("template.perga.json")]
     public async Task TrackSetReadsWorkspacePackageAndProjectsFiles(string entry)
@@ -81,22 +150,63 @@ public sealed class TemplateBindingToolsTests
         Assert.Equal(KernelErrorCode.NotFound, missing.Code);
     }
 
-    [Fact]
-    public async Task TrackSetAcceptsSingleFileAndRejectsPathEscapesAndMultipleSelectors()
+    [Theory]
+    [InlineData("template.perga.js", "local-js")]
+    [InlineData("Template.Perga.Js", "local-js")]
+    [InlineData("template.perga.json", "local-json")]
+    public async Task TrackSetPacksSiblingsAndUsesRequestedPackageEntry(string entry, string templateId)
+    {
+        await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
+        var (_, track) = await ctx.CreateDefaultTrackAsync(cwd: ctx.DataDir);
+        var folder = Directory.CreateDirectory(Path.Combine(track.Track.Cwd, "tmp_local_pkg"));
+        const string markdown = "Report from sibling Markdown";
+        await File.WriteAllTextAsync(Path.Combine(folder.FullName, "report.md"), markdown);
+        await File.WriteAllTextAsync(Path.Combine(folder.FullName, "views.js"), "export const rows = () => ({ count: 3 });");
+        var jsEntry = templateId == "local-js" ? entry : "template.perga.js";
+        await File.WriteAllTextAsync(Path.Combine(folder.FullName, jsEntry), """
+            import { rows } from './views.js';
+            export default defineTemplate({
+              id: 'local-js', title: 'Local JS',
+              report: { template: './report.md', views: { rows } }
+            });
+            """);
+        await File.WriteAllTextAsync(Path.Combine(folder.FullName, "template.perga.json"),
+            """{"id":"local-json","title":"Local JSON","report":{"template":"./report.md"}}""");
+
+        await Call(ctx, track, KernelMcpToolNames.TrackSet, new { path = $"tmp_local_pkg/{entry}" });
+        Assert.Equal(templateId, (await ctx.Kernel.GetTrackAggregateAsync(track.Track.Id)).Track.TemplateId);
+        Assert.Equal(markdown, Assert.Single((await ctx.Kernel.ReadReportAsync(track.Track.Id)).Blocks).Markdown);
+        if (templateId == "local-js")
+        {
+            var views = await ctx.Kernel.GetTrackViewsAsync(track.Track.Id);
+            Assert.Equal(3, views.Views["rows"].GetProperty("count").GetInt32());
+        }
+    }
+
+    [Theory]
+    [InlineData("template.perga.js")]
+    [InlineData("pkg/custom.perga.js")]
+    public async Task TrackSetAcceptsSingleFileAndRejectsPathEscapesAndMultipleSelectors(string standalonePath)
     {
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
         var workspace = Directory.CreateDirectory(Path.Combine(ctx.DataDir, "workspace"));
         var (_, track) = await ctx.CreateDefaultTrackAsync(cwd: workspace.FullName);
-        var file = Path.Combine(workspace.FullName, "inline.perga.js");
+        var file = Path.Combine(workspace.FullName, standalonePath);
+        var fileFolder = Directory.CreateDirectory(Path.GetDirectoryName(file)!);
         await File.WriteAllTextAsync(file, InlineSource);
-        var outside = Path.Combine(ctx.DataDir, "outside.perga.js");
+        await File.WriteAllTextAsync(Path.Combine(fileFolder.FullName, "sibling.md"), "Standalone files must not pack siblings");
+        var outside = Path.Combine(ctx.DataDir, "template.perga.js");
         await File.WriteAllTextAsync(outside, InlineSource);
+        var package = Directory.CreateDirectory(Path.Combine(workspace.FullName, "linked-pkg"));
+        var prohibited = new List<string> { "linked-pkg/../../template.perga.js", outside };
         // Windows development accounts may lack the OS privilege to create symbolic links.
         if (!OperatingSystem.IsWindows())
-            File.CreateSymbolicLink(Path.Combine(workspace.FullName, "linked.perga.js"), outside);
-
-        var prohibited = new List<string> { "../outside.perga.js", outside };
-        if (!OperatingSystem.IsWindows()) prohibited.Add("linked.perga.js");
+        {
+            File.CreateSymbolicLink(Path.Combine(package.FullName, "template.perga.js"), outside);
+            Directory.CreateSymbolicLink(Path.Combine(workspace.FullName, "linked-dir"), ctx.DataDir);
+            prohibited.Add("linked-pkg/template.perga.js");
+            prohibited.Add("linked-dir/template.perga.js");
+        }
         foreach (var path in prohibited)
         {
             var denied = await Assert.ThrowsAsync<KernelException>(() =>
@@ -109,7 +219,9 @@ public sealed class TemplateBindingToolsTests
 
         await Call(ctx, track, KernelMcpToolNames.TrackSet, new { path = file });
         var files = await Call(ctx, track, KernelMcpToolNames.TemplateRead, new { templateId = "__current__", format = "files" });
-        Assert.Equal(InlineSource, files.GetProperty("files").GetProperty("template.perga.js").GetString());
+        var source = Assert.Single(files.GetProperty("files").EnumerateObject());
+        Assert.Equal("template.perga.js", source.Name);
+        Assert.Equal(InlineSource, source.Value.GetString());
     }
 
     [Fact]
@@ -140,9 +252,7 @@ public sealed class TemplateBindingToolsTests
         await Call(ctx, track, KernelMcpToolNames.TemplateRead, new { templateId = "__current__" });
         await Call(ctx, track, KernelMcpToolNames.FlowRead, new { });
 
-        var deniedRead = await Assert.ThrowsAsync<KernelException>(() =>
-            Call(ctx, track, KernelMcpToolNames.TaskList, new { }));
-        Assert.Equal(KernelErrorCode.PolicyDenied, deniedRead.Code);
+        await Call(ctx, track, KernelMcpToolNames.TaskList, new { });
 
         var denied = await Assert.ThrowsAsync<KernelException>(() =>
             Call(ctx, track, KernelMcpToolNames.TrackSet, new { source = InlineSource }));

@@ -476,13 +476,15 @@ public sealed partial class TrackActor
     private TemplateReportSeed? PrepareTemplateReportSeedCore(
         TrackDto next, CompiledPolicy policy, bool? seedReport, string callerSessionId)
     {
-        var isBlank = TemplateReport.IsBlank(_reports.Document);
+        var previous = _reports.Document;
+        var isBlank = TemplateReport.IsBlank(previous);
         if (seedReport == true && !isBlank)
             throw KernelException.Conflict("Cannot seed a non-empty report.");
         if (seedReport == false || !isBlank || string.IsNullOrWhiteSpace(policy.Manifest.InitialReportMarkdown))
             return null;
 
-        var document = TemplateReport.Create(_reportEngine, _policyVm, policy, next.TemplateInputs, rev: 1);
+        var document = TemplateReport.Create(_reportEngine, _policyVm, policy, next.TemplateInputs,
+            rev: checked(previous.DocRev + 1), summary: previous.Summary);
         var changes = document.Blocks.Select((block, index) =>
             new BlockChangeRecord(block.Id, block.Kind, null, block.Rev, index, false)).ToArray();
         var evt = new EventEnvelopeDto(null, next.AreaId, TrackId, KernelEventKinds.ReportUpdated,

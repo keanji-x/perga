@@ -1,6 +1,7 @@
 using Dapper;
 using Microsoft.Data.Sqlite;
 using Perga.Storage.Sqlite;
+using Perga.Kernel;
 using Perga.Kernel.Ports;
 using Perga.ReportDoc;
 
@@ -158,6 +159,37 @@ public sealed class TrackTemplatePersistenceTests
         Assert.Equal("# Start", Assert.Single(saved.Report.Blocks).Markdown);
         Assert.Equal("# Start", Assert.Single(await reopened.GetReportRevisionBlocksAsync(track.Id, 1, default)).Markdown);
         Assert.Equal(["track.updated", "report.updated"], (await reopened.ListEventsSinceAsync(0, track.Id)).Select(evt => evt.Kind));
+    }
+
+    [Theory]
+    [InlineData(2, "<!-- Keep this comment -->", "Cannot seed a non-empty report.")]
+    [InlineData(3, "", "Report revision changed before seeding.")]
+    public async Task TemplateSeedRejectsNonEmptyOrChangedReportWithoutBinding(int currentRev, string leadingComment, string message)
+    {
+        await using var harness = await StorageTestHarness.CreateAsync();
+        var store = harness.Store;
+        await store.UpsertAreaAsync(StorageTestHarness.CreateArea(), default);
+        var (track, report, lead) = StorageTestHarness.CreateSeedTrack();
+        await store.CreateTrackAsync(track, report, "original", lead, default);
+
+        var current = new ReportDocument(currentRev, "", leadingComment, []);
+        var reportEvent = StorageTestHarness.CreateEvent("report.updated", track.Id, track.AreaId);
+        await store.SaveReportAsync(track.Id, current, [], lead.Id, "Clear report", reportEvent, default);
+        var seeded = new ReportDocEngine().Parse("New template content", docRev: 3);
+        var seed = new TemplateReportSeed(seeded, [], lead.Id, reportEvent);
+        var trackEvent = StorageTestHarness.CreateEvent("track.updated", track.Id, track.AreaId);
+
+        var error = await Assert.ThrowsAsync<KernelException>(() => store.UpdateTrackTemplateAndEmitAsync(
+            track with { TemplateId = "replacement" }, "replacement", trackEvent, default, reportSeed: seed));
+        Assert.Equal(KernelErrorCode.Conflict, error.Code);
+        Assert.Equal(message, error.Message);
+        var persisted = (await store.LoadTrackAggregateAsync(track.Id, default))!;
+        Assert.Equal("original", persisted.TemplateSnapshotSource);
+        Assert.Equal(currentRev, persisted.Report.DocRev);
+        Assert.Equal(leadingComment, persisted.Report.LeadingComment);
+        Assert.Empty(persisted.Report.Blocks);
+        Assert.Empty(await store.GetReportRevisionBlocksAsync(track.Id, 3, default));
+        Assert.Equal("report.updated", Assert.Single(await store.ListEventsSinceAsync(0, track.Id)).Kind);
     }
 
 }
