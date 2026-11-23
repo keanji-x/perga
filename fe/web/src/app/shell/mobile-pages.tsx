@@ -5,6 +5,7 @@ import {
 } from '@astryxdesign/core/SegmentedControl';
 
 import { areaOf, visibleAreas, type Area } from '../../../../core/domain/area.ts';
+import { MESSAGES } from '../../../../core/domain/messages.ts';
 import {
   userVisibleTracks, trackDisplayTitle, type Track,
 } from '../../../../core/domain/track.ts';
@@ -77,7 +78,7 @@ export function MobilePages({ areas, areaId, tracks, onOpenTrack, onBack, onNewT
           );
         })}
         {readError === null && !readLoading && shown.length === 0 && (
-          <MobileListEmpty icon={<Icon name={group === 'pinned' ? 'pin' : 'file'} />} title={group === 'pinned' ? '还没有置顶的 Page' : '还没有最近浏览的 Page'} description={group === 'pinned' ? '置顶的 Page 会显示在这里。' : '浏览过的 Page 会显示在这里。'} />
+          <MobileListEmpty icon={<Icon name={group === 'pinned' ? 'pin' : 'file'} />} title={group === 'pinned' ? MESSAGES.mobile.noPinnedPagesTitle : MESSAGES.mobile.noRecentPagesTitle} description={group === 'pinned' ? MESSAGES.mobile.noPinnedPagesDescription : MESSAGES.mobile.noRecentPagesDescription} />
         )}
       </MobileList>
       </div>

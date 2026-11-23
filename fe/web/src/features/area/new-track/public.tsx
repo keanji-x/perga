@@ -11,13 +11,7 @@ import { Icon } from '@astryxdesign/core/Icon';
 import { VStack } from '@astryxdesign/core/VStack';
 
 import type { CreateExecutionTargetBody, ExecutionTargetDto } from '../../../../../core/domain/area.ts';
-import { isBlankForKernel, type TrackTemplate } from '../../../../../core/domain/track.ts';
-import { extractTemplateMentions } from '../../../../../core/domain/mentions.ts';
-import {
-  compilePergaTemplateInputs,
-  parsePergaInputsSchema,
-  type PergaTemplateRawValues,
-} from '../../../../../core/domain/template-input.ts';
+import { isBlankForKernel } from '../../../../../core/domain/track.ts';
 import { DirectoryPicker } from '../directory-picker.tsx';
 import type { ListDirectory } from '../../../ui/directory-browser/public.tsx';
 import { useState } from '../../../ui/state/public.ts';
@@ -41,23 +35,16 @@ export type NewTrackDraft = Readonly<{
   executionTargetId?: string;
   isolation?: RepoIsolationMode;
   workspaceOptionId?: string;
-  templateId?: string;
-  templateInput?: Readonly<Record<string, unknown>>;
 }>;
 
 export type NewTrackFormProps = Readonly<{
   workspaceOptions?: Readonly<{
     cwd: string;
     targetId?: string;
-    templateId?: string;
     result: import('../../../../../core/domain/track.ts').TrackWorkspaceOptions | null;
   }>;
   /** App-composed model controls beside the send button. */
   modelControls?: ReactNode;
-  /** Available Perga templates for explicit selection and typed `inputsSchema` entry. */
-  templates?: readonly TrackTemplate[];
-  /** Area's default template ID when starting a fresh draft. */
-  defaultTemplateId?: string | null;
   /** The `@` menu over this Area's reports, composed by the app: the sentence is the new track's Planner's first message. Kept stable by the caller. */
   mentionTrigger?: ChatComposerTrigger;
   submitting: boolean;
@@ -102,13 +89,10 @@ export type NewTrackFormState = Readonly<{
   isolation?: RepoIsolationMode;
   workspaceOptionId?: string;
   workspaceOptionCwd?: string;
-  activeTemplateId?: string;
-  templateId?: string | null;
-  templateInputs?: PergaTemplateRawValues;
 }>;
 
 export function NewTrackForm({
-  modelControls, templates, defaultTemplateId, submitting, error, readNotice, initialCwd,
+  modelControls, submitting, error, readNotice, initialCwd,
   initialExecutionTargetId, executionTargets, listDirectory, listDirectoryForTarget, onCreateExecutionTarget, onSubmit,
   errorAction, initialDraft, onDraftChange, submitBlocked = false, locked = false, mentionTrigger,
   workspaceOptions: workspaceOptionsState,
@@ -122,40 +106,11 @@ export function NewTrackForm({
   const [isolation, setIsolation] = useState<RepoIsolationMode>(initialDraft?.isolation ?? 'worktree');
   const [workspaceChoice, setWorkspaceChoice] = useState(initialDraft?.workspaceOptionId === undefined ? null
     : { id: initialDraft.workspaceOptionId, cwd: initialDraft.workspaceOptionCwd ?? initialDraft.cwd });
-  const [templateId, setTemplateId] = useState<string | null>(
-    initialDraft?.templateId === undefined ? defaultTemplateId ?? null : initialDraft.templateId);
-  const [templateInputs, setTemplateInputs] = useState<PergaTemplateRawValues>(initialDraft?.templateInputs ?? {});
   const [browsing, setBrowsing] = useState<DialogOrigin | null>(null);
   const composerHostRef = useRef<HTMLDivElement | null>(null);
   /* One array per trigger: `useTriggerMenu` drops an open menu when the list changes identity. */
   const triggers = useMemo(() => mentionTrigger === undefined ? undefined : [mentionTrigger], [mentionTrigger]);
   const folderId = `${fieldId}-folder`;
-  const templateSelectId = `${fieldId}-template`;
-  const hasTemplates = templates !== undefined;
-  const hasTemplatePicker = templates !== undefined && templates.length > 0;
-
-  const activeTemplate = useMemo(() => {
-    if (!hasTemplatePicker) return undefined;
-    if (templateId !== null && templateId !== '') {
-      return templates.find((candidate) => candidate.id === templateId && candidate.availability.status === 'ready');
-    }
-    const mentioned = extractTemplateMentions(message);
-    if (mentioned.length === 1) {
-      return templates.find((candidate) => candidate.id === mentioned[0] && candidate.availability.status === 'ready');
-    }
-    return undefined;
-  }, [hasTemplatePicker, message, templateId, templates]);
-
-  const templateFields = useMemo(
-    () => parsePergaInputsSchema(activeTemplate?.input_schema),
-    [activeTemplate?.input_schema],
-  );
-  const compiledTemplateInputs = useMemo(
-    () => compilePergaTemplateInputs(templateFields, templateInputs),
-    [templateFields, templateInputs],
-  );
-
-  const activeTemplateId = activeTemplate?.id;
   const hasTargetPicker = executionTargets !== undefined || onCreateExecutionTarget !== undefined;
   const resolvedTargetLabel = executionTargetId !== 'local'
     ? (executionTargets?.find((candidate) => candidate.id === executionTargetId)?.label ?? executionTargetId)
@@ -163,7 +118,6 @@ export function NewTrackForm({
   const workspaceOptions = workspaceOptionsState === undefined ? undefined
     : workspaceOptionsState.cwd === cwd
       && (workspaceOptionsState.targetId ?? 'local') === executionTargetId
-      && workspaceOptionsState.templateId === activeTemplateId
       ? workspaceOptionsState.result : null;
   const selectedWorkspaceOption = workspaceChoice === null ? workspaceOptions?.defaultId ?? undefined
     : workspaceChoice.cwd === cwd ? workspaceOptions?.options.find((option) => option.id === workspaceChoice.id)?.id : undefined;
@@ -171,12 +125,8 @@ export function NewTrackForm({
   useEffect(() => {
     const workspace = workspaceChoice === null ? {} : { workspaceOptionId: workspaceChoice.id, workspaceOptionCwd: workspaceChoice.cwd };
     const targetField = hasTargetPicker || initialExecutionTargetId !== undefined ? { executionTargetId } : {};
-    if (hasTemplates) {
-      onDraftChange?.({ message, cwd, ...targetField, isolation, templateId, templateInputs, activeTemplateId, ...workspace });
-    } else {
-      onDraftChange?.({ message, cwd, ...targetField, isolation, ...workspace });
-    }
-  }, [message, cwd, executionTargetId, hasTargetPicker, initialExecutionTargetId, isolation, templateId, templateInputs, activeTemplateId, workspaceChoice, hasTemplates, onDraftChange]);
+    onDraftChange?.({ message, cwd, ...targetField, isolation, ...workspace });
+  }, [message, cwd, executionTargetId, hasTargetPicker, initialExecutionTargetId, isolation, workspaceChoice, onDraftChange]);
 
   /* The caret starts in the field. Found by query, not ref: `ChatComposerInput`
    * forwards its DOM `ref` to the wrapper, which is not focusable. Mount-only, so
@@ -186,14 +136,13 @@ export function NewTrackForm({
     field?.focus();
   }, []);
 
-  const templateInputsValid = locked || activeTemplate === undefined || compiledTemplateInputs.valid;
   const workspaceSelectionValid = workspaceOptions === undefined || selectedWorkspaceOption !== undefined || locked;
-  const valid = !isBlankForKernel(message) && templateInputsValid && workspaceSelectionValid;
+  const valid = !isBlankForKernel(message) && workspaceSelectionValid;
 
   function draftFor(text: string, forAction = false): NewTrackDraft | null {
     /* Blank refuses the submit; it does not rewrite it. `text` goes to the caller
            exactly as typed, and the kernel forwards it untrimmed. */
-    if (isBlankForKernel(text) || !templateInputsValid || !workspaceSelectionValid || submitting || (submitBlocked && !forAction)) return null;
+    if (isBlankForKernel(text) || !workspaceSelectionValid || submitting || (submitBlocked && !forAction)) return null;
     /* Spread, not `cwd: cwd || undefined`: the caller keys managed-vs-attached on
            whether the key is there. A path travels byte-for-byte; leading/trailing
            spaces are legal POSIX path characters. */
@@ -204,14 +153,6 @@ export function NewTrackForm({
         ? { executionTargetId }
         : {}),
       ...(selectedWorkspaceOption === undefined ? {} : { workspaceOptionId: selectedWorkspaceOption }),
-      ...(activeTemplate === undefined
-        ? {}
-        : {
-            templateId: activeTemplate.id,
-            ...(Object.keys(compiledTemplateInputs.input).length > 0
-              ? { templateInput: compiledTemplateInputs.input }
-              : {}),
-          }),
     };
   }
 
@@ -231,117 +172,7 @@ export function NewTrackForm({
     <div className={centeredComposerPageClassName}>
       <VStack gap={2} className={centeredComposerColumnClassName}>
 
-        <CenteredComposerIntroduction title="What would you like to work on?">
-          Describe your request and optionally choose a Repo for your repository.
-          An Area groups a project&apos;s work; a Track keeps one request, its conversation and report.
-        </CenteredComposerIntroduction>
-
-        {hasTemplatePicker && (
-          <div className={styles.templatePanel} data-nc-new-track-templates>
-            <div className={styles.templateHeader}>
-              <label className={styles.templateLabel} htmlFor={templateSelectId}>Template</label>
-              <select
-                id={templateSelectId}
-                className={styles.templateSelect}
-                value={activeTemplate?.id ?? ''}
-                disabled={submitting || locked}
-                onChange={(event) => {
-                  const nextId = event.target.value;
-                  setTemplateId(nextId === '' ? null : nextId);
-                  setTemplateInputs({});
-                }}
-              >
-                <option value="">Blank track (no template)</option>
-                {templates.filter((candidate) => candidate.availability.status === 'ready').map((candidate) => (
-                  <option key={candidate.id} value={candidate.id}>{candidate.title}</option>
-                ))}
-              </select>
-            </div>
-            {activeTemplate?.description != null && activeTemplate.description !== '' && (
-              <p className={styles.templateDescription}>{activeTemplate.description}</p>
-            )}
-            {templateFields.length > 0 && (
-              <div className={styles.templateFields}>
-                {templateFields.map((field) => {
-                  const inputId = `${fieldId}-tpl-${field.key}`;
-                  const errorText = compiledTemplateInputs.errors[field.key];
-                  if (field.type === 'boolean') {
-                    const checked = Object.hasOwn(templateInputs, field.key)
-                      ? templateInputs[field.key] === true || templateInputs[field.key] === 'true'
-                      : field.defaultValue;
-                    return (
-                      <div key={field.key} className={styles.fieldGroup}>
-                        <label className={styles.checkboxRow} htmlFor={inputId}>
-                          <input
-                            id={inputId}
-                            type="checkbox"
-                            checked={checked}
-                            disabled={submitting || locked}
-                            onChange={(event) => {
-                              const next = event.target.checked;
-                              setTemplateInputs((prev) => ({ ...prev, [field.key]: next }));
-                            }}
-                          />
-                          <span>{field.label}</span>
-                        </label>
-                      </div>
-                    );
-                  }
-                  if (field.type === 'enum') {
-                    const currentVal = Object.hasOwn(templateInputs, field.key)
-                      ? String(templateInputs[field.key] ?? '')
-                      : (field.defaultValue ?? (field.optional ? '' : (field.values[0] ?? '')));
-                    return (
-                      <div key={field.key} className={styles.fieldGroup}>
-                        <label className={styles.templateLabel} htmlFor={inputId}>
-                          {field.label}{!field.optional ? ' *' : ''}
-                        </label>
-                        <select
-                          id={inputId}
-                          className={styles.fieldInput}
-                          value={currentVal}
-                          disabled={submitting || locked}
-                          onChange={(event) => {
-                            const next = event.target.value;
-                            setTemplateInputs((prev) => ({ ...prev, [field.key]: next }));
-                          }}
-                        >
-                          {field.optional && <option value="">—</option>}
-                          {field.values.map((option) => (
-                            <option key={option} value={option}>{option}</option>
-                          ))}
-                        </select>
-                        {errorText !== undefined && <span className={styles.fieldError}>{errorText}</span>}
-                      </div>
-                    );
-                  }
-                  const currentVal = Object.hasOwn(templateInputs, field.key)
-                    ? String(templateInputs[field.key] ?? '')
-                    : (field.defaultValue !== undefined ? String(field.defaultValue) : '');
-                  return (
-                    <div key={field.key} className={styles.fieldGroup}>
-                      <label className={styles.templateLabel} htmlFor={inputId}>
-                        {field.label}{!field.optional ? ' *' : ''}
-                      </label>
-                      <input
-                        id={inputId}
-                        type={field.type === 'number' ? 'number' : 'text'}
-                        className={styles.fieldInput}
-                        value={currentVal}
-                        disabled={submitting || locked}
-                        onChange={(event) => {
-                          const next = event.target.value;
-                          setTemplateInputs((prev) => ({ ...prev, [field.key]: next }));
-                        }}
-                      />
-                      {errorText !== undefined && <span className={styles.fieldError}>{errorText}</span>}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        )}
+        <CenteredComposerIntroduction title="What would you like to work on?" />
 
         <div
           ref={composerHostRef}

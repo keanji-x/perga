@@ -14,7 +14,7 @@
     --type-navigation-label-family: var(--font-sans);
     --type-reading: 400 1rem/1.5rem var(--font-serif);
     --type-reading-family: var(--font-serif);
-    --type-chapter: 700 1.25rem/1.75rem var(--font-serif);
+    --type-chapter: 400 1.25rem/1.75rem var(--font-serif);
     --type-chapter-family: var(--font-serif);
     --type-table: 400 0.875rem/1.25rem var(--font-sans);
     --type-table-family: var(--font-sans);
@@ -32,14 +32,14 @@
     --type-metric-primary-family: var(--font-sans);
     --type-heading: 600 1.25rem/1.75rem var(--font-serif);
     --type-heading-family: var(--font-serif);
-    --type-subheading: 600 1rem/1.5rem var(--font-serif);
+    --type-subheading: 500 1.125rem/1.625rem var(--font-serif);
     --type-subheading-family: var(--font-serif);
-    --type-subheading-small: 600 0.875rem/1.25rem var(--font-serif);
-    --type-subheading-small-family: var(--font-serif);
+    --type-subheading-small: 600 0.875rem/1.25rem var(--font-sans);
+    --type-subheading-small-family: var(--font-sans);
     --type-interface-heading: 600 1.25rem/1.75rem var(--font-sans);
     --type-interface-heading-family: var(--font-sans);
-    --type-empty-heading: 600 1.5rem/1.875rem var(--font-sans);
-    --type-empty-heading-family: var(--font-sans);
+    --type-empty-heading: 400 1.25rem/1.75rem var(--font-serif);
+    --type-empty-heading-family: var(--font-serif);
     --type-display-title: 500 1.75rem/2.25rem var(--font-sans);
     --type-display-title-family: var(--font-sans);
     --type-compact-metadata: 400 0.75rem/0.75rem var(--font-sans);

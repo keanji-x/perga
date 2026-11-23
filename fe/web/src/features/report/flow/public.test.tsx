@@ -184,7 +184,7 @@ describe('ReportFlowBlock (builtin:flow)', () => {
 
     // 1. Topological layers: fix-r2 (0) -> wait-ci (1) -> [recheck-a, fix-ci] (2)
     expect(container.querySelectorAll('[data-nc-flow-layer]')).toHaveLength(3);
-    expect(screen.getByText('PR #115 · 3/5 checks · 等待中')).toBeTruthy();
+    expect(screen.getByText('PR #115 · 3/5 checks · Waiting')).toBeTruthy();
 
     // 2. Attention node auto-selected by default with summary highlight (strictly read-only: no cancel button)
     const panel = screen.getByRole('article', { name: 'CI 红灯自动修复' });
@@ -259,7 +259,7 @@ describe('ReportFlowBlock (builtin:flow)', () => {
     const panel = screen.getByRole('article', { name: '等待 PR #122 CI' });
     const watchRegion = within(panel).getByRole('region', { name: '探针等待进度' });
     expect(watchRegion.textContent).toContain('PR #122 · 3/3 checks');
-    expect(watchRegion.textContent).not.toContain('等待中');
+    expect(watchRegion.textContent).not.toContain('Waiting');
   });
 
   it('shows evergreen watch progress without a timeout deadline', () => {
@@ -307,7 +307,7 @@ describe('ReportFlowBlock (builtin:flow)', () => {
       })],
     }} />);
     const panel = screen.getByRole('article', { name: '常青探针' });
-    expect(within(panel).getByText('待下一轮')).toBeTruthy();
-    expect(within(panel).queryByText('已完成')).toBeNull();
+    expect(within(panel).getByText('Next cycle')).toBeTruthy();
+    expect(within(panel).queryByText('Completed')).toBeNull();
   });
 });

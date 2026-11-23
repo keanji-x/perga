@@ -12,9 +12,9 @@ it('renders queued text with steer and withdraw only', async () => {
     queueDisplayAccounting={{ displayed: [], suppressed: [] }} onDelete={onDelete} onSteer={onSteer} />);
   expect(screen.getByText('检查报告')).toBeTruthy();
   expect(screen.queryByRole('button', { name: /Edit/ })).toBeNull();
-  await userEvent.click(screen.getByRole('button', { name: '立即插队' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Send now' }));
   expect(onSteer).toHaveBeenCalledWith(entry);
-  await userEvent.click(screen.getByRole('button', { name: '撤回' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Withdraw' }));
   expect(onDelete).toHaveBeenCalledWith(entry);
 });
 it('hides the empty queue', () => {
@@ -28,7 +28,7 @@ it('allows withdrawing an unconfirmed input while keeping steer unavailable', as
   const onDelete = vi.fn(() => Promise.resolve({ kind: 'done' as const }));
   render(<PendingQueue entries={[entry]} pendingInputCount={0} overflow={0} busy={false}
     queueDisplayAccounting={{ displayed: [], suppressed: [] }} onDelete={onDelete} onSteer={vi.fn()} />);
-  expect(screen.queryByRole('button', { name: '立即插队' })).toBeNull();
-  await userEvent.click(screen.getByRole('button', { name: '撤回' }));
+  expect(screen.queryByRole('button', { name: 'Send now' })).toBeNull();
+  await userEvent.click(screen.getByRole('button', { name: 'Withdraw' }));
   expect(onDelete).toHaveBeenCalledExactlyOnceWith(entry);
 });

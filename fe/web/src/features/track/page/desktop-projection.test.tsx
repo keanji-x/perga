@@ -186,7 +186,7 @@ describe('marker-literal hygiene guard: the page spells no MARKER name', () => {
 it('keeps desktop sharing beside the title with an anchored origin while conversation is open', () => {
   const onShareTrack = vi.fn<NonNullable<TrackPageProps['onShareTrack']>>();
   renderPage({ onShareTrack, conversationOpen: true });
-  const share = screen.getByRole('button', { name: '分享' });
+  const share = screen.getByRole('button', { name: 'Share' });
   const title = within(share.closest('header')!).getByRole('heading', { level: 1 });
   expect(title.closest('header')).toBe(share.closest('header'));
   expect(title.compareDocumentPosition(share) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();

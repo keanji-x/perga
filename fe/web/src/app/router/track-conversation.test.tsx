@@ -343,7 +343,7 @@ it('keeps history failures out of the send channel and offers a retry', async ()
     expect((await screen.findByRole('alert')).textContent).toContain('无法加载对话记录。');
     /* A 503's text is the server's: only the fixed sentence shows. */
     expect(screen.getByRole('alert').textContent).not.toContain('history unavailable');
-    expect(screen.queryByText(/聊聊你想做什么/)).toBeNull();
+    expect(screen.queryByText(/Start a conversation/)).toBeNull();
     expect(messageField().getAttribute('contenteditable')).toBe('false');
     expect(requests.some((request) => request.path.endsWith('/messages'))).toBe(false);
 
@@ -860,7 +860,7 @@ it('keeps an in-flight draft locked across a route remount', async () => {
     await openDraft();
 
     expect(screen.getByText('words still in flight')).toBeTruthy();
-    expect(screen.getByText('正在发送…')).toBeTruthy();
+    expect(screen.getAllByText('Sending…').length).toBeGreaterThan(0);
     expect(messageField().getAttribute('contenteditable')).toBe('false');
     await write('edited while the first request is pending');
     expect(creates(requests, CONVERSATIONS)).toHaveLength(1);

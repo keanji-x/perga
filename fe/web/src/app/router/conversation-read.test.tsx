@@ -16,12 +16,12 @@ it.each([true, false])('does not claim Running after a failed run read (initial 
   const field = screen.getByRole('combobox', { name: 'Message' });
   fireEvent.input(field, { target: { textContent: 'Keep this draft.' } });
   if (!initialFailure) {
-    await screen.findByText('本轮生成中', { exact: true });
+    await screen.findByText('Working…', { exact: true });
     fixture.failRun(true);
     await act(async () => { await fixture.client.invalidateQueries({ queryKey: queryKeys.plannerRun('daily-planner') }); });
   }
   await screen.findByText('无法同步最新对话状态', { exact: true });
-  expect(screen.queryByText('本轮生成中', { exact: true }) !== null).toBe(!initialFailure);
+  expect(screen.queryByText('Working…', { exact: true }) !== null).toBe(!initialFailure);
   const alert = await screen.findByRole('alert');
   expect(alert.textContent).toContain('无法同步对话状态。');
   expect(alert.textContent).not.toContain('private transport diagnostic');
@@ -30,7 +30,7 @@ it.each([true, false])('does not claim Running after a failed run read (initial 
   const before = fixture.requests.length;
   fixture.failRun(false);
   fireEvent.click(within(alert).getByRole('button', { name: '刷新' }));
-  await screen.findByText('本轮生成中', { exact: true });
+  await screen.findByText('Working…', { exact: true });
   await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
   expect(screen.queryByText('无法同步最新对话状态', { exact: true })).toBeNull();
   expect(screen.getByText('Retained reply.')).toBeTruthy();
@@ -71,7 +71,7 @@ it('keeps execution status unconfirmed throughout a cold retry', async () => {
     await waitFor(() => expect(fixture.client.isFetching({ queryKey: queryKeys.plannerRun('daily-planner') })).toBe(1));
     expect(screen.getByRole('button', { name: '刷新' }).getAttribute('aria-busy')).toBe('true');
     await screen.findByText('无法同步最新对话状态', { exact: true });
-    expect(screen.queryByText('本轮生成中', { exact: true })).toBeNull();
+    expect(screen.queryByText('Working…', { exact: true })).toBeNull();
   } finally { act(() => { release(); }); }
-  await screen.findByText('本轮生成中', { exact: true });
+  await screen.findByText('Working…', { exact: true });
 });

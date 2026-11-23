@@ -1,7 +1,7 @@
 import { Button as AstryxButton } from '@astryxdesign/core/Button';
 import { TextInput as AstryxTextInput } from '@astryxdesign/core/TextInput';
 import { VisuallyHidden as AstryxVisuallyHidden } from '@astryxdesign/core/VisuallyHidden';
-import { useRef } from 'react';
+import { useLayoutEffect, useRef } from 'react';
 
 import { SETTINGS_FAILURES, SETTINGS_TEXT } from '../../../../core/domain/settings.ts';
 import { writeFailureText } from '../../../../core/domain/failure-class.ts';
@@ -45,9 +45,10 @@ type SettingSave =
   | Readonly<{ phase: 'saved'; value: string }>
   | Readonly<{ phase: 'failed'; value: string; message: string }>;
 
-export function SettingEditor({ value, readRevision, loaded, loadError, onRetryLoad, onSave, copy, inline = false }:
-  SettingEditorProps & { copy: SettingEditorCopy; inline?: boolean }) {
+export function SettingEditor({ value, readRevision, loaded, loadError, onRetryLoad, onSave, copy, inline = false, hideLabel = false, describedById }:
+  SettingEditorProps & { copy: SettingEditorCopy; inline?: boolean; hideLabel?: boolean; describedById?: string }) {
   const { label, unit, inputMode, name, description, resetLabel, parse, parseStored = parse } = copy;
+  const inputRef = useRef<HTMLInputElement | null>(null);
   const valueSuffix = inline ? unit : ` ${unit}`;
   const [seed, setSeed] = useState({ loaded, value, readRevision });
   const [draft, setDraft] = useState(loaded ? settingText(parseStored, value) : '');
@@ -125,13 +126,21 @@ export function SettingEditor({ value, readRevision, loaded, loadError, onRetryL
     ? `Stored ${name} is invalid. ${stored.error} Restore default to repair it.`
     : parsedDraft.ok ? null : validationError ?? parsedDraft.error;
   const saved = save.phase === 'saved' && save.value === draft && inputError === null;
+  useLayoutEffect(() => {
+    const input = inputRef.current;
+    if (input === null || describedById === undefined) return;
+    const existing = (input.getAttribute('aria-describedby') ?? '').split(/\s+/).filter(Boolean);
+    if (!existing.includes(describedById)) {
+      input.setAttribute('aria-describedby', [describedById, ...existing].join(' '));
+    }
+  }, [describedById, inputError, loaded, saved]);
   return <div className={styles.durationControl}>
     {loadError !== null && <ErrorBox message={loadError} onRetry={onRetryLoad} />}
     {!loaded ? loadError === null && <span role="status">Loading {name}…</span> : <>
       <div className={inline ? styles.actions : styles.durationControl}>
         {inline && <AstryxVisuallyHidden role="status">{saved ? 'Saved.' : ''}</AstryxVisuallyHidden>}
-        <AstryxTextInput label={label} isLabelHidden={inline} value={draft} width={inline ? '5.5rem' : CONTROL_WIDTH}
-          ref={(input) => { if (input !== null) input.inputMode = inputMode; }}
+        <AstryxTextInput label={label} isLabelHidden={inline || hideLabel} value={draft} width={inline ? '5.5rem' : CONTROL_WIDTH}
+          ref={(input) => { inputRef.current = input; if (input !== null) input.inputMode = inputMode; }}
           description={description}
           status={inputError !== null ? { type: 'error', message: inputError }
             : inline && saved ? { type: 'success' } : undefined}

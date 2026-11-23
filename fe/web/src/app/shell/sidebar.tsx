@@ -1,3 +1,4 @@
+import { MESSAGES } from '../../../../core/domain/messages.ts';
 import type { DialogOrigin } from '../../ui/dialog/public.tsx';
 import { EmptyState } from '../../ui/empty-state/public.tsx';
 import type { SidebarTrackGroups } from './sidebar-track-groups.ts';
@@ -32,6 +33,7 @@ import { AreaGroup } from './area-group.tsx';
 import { ConnectionIndicator } from './connection-indicator.tsx';
 import styles from './shell.module.css';
 import { SidebarTrackGroup,revealSidebarRow,type GroupManagement } from './sidebar-group.tsx';
+import { SystemUpgradeBannerHost } from './system-upgrade-banner.tsx';
 
 export type SidebarProps = Readonly<{
   areas: readonly Area[];
@@ -306,6 +308,18 @@ export function Sidebar({
 
       {collapsed ? (
         <div className={styles.collapsedFolders}>
+          <button
+            type="button"
+            data-nc-role="row"
+            className={`${styles.stripItem} ${todayActive ? styles.stripItemActive : ''}`}
+            aria-label="Today"
+            aria-current={todayActive ? 'page' : undefined}
+            title="Today"
+            onClick={() => onGo({ name: 'today' })}
+          >
+            <Icon name="calendar" size="md" />
+          </button>
+          <span className={styles.stripDivider} aria-hidden="true" />
           {/* The rail's colours belong only to the indicator vocabulary and the current
                         location; titles never carry a state colour. */}
           {preferences.sidebarGroupVisible('focus') && waiting.length > 0 && (
@@ -369,9 +383,24 @@ export function Sidebar({
             })}
           </div>}
           {sectionVisible('areas') && <div className={styles.areaGroups} data-nc-sidebar-scrollport="">
+              <div className={styles.areasHeader}>
+                <ListText tone="section" className={styles.areasHeading}>Areas</ListText>
+                <span ref={createRef} className={styles.newAreaAnchor}>
+                  <button
+                    type="button"
+                    data-nc-role="icon"
+                    className={styles.newAreaButton}
+                    aria-label="New area"
+                    title="New area"
+                    onClick={() => onRequestCreateArea({ kind: 'anchor', anchor: { ref: createRef }, unavailable: 'surface-center' })}
+                  >
+                    <Icon name="plus" size="sm" />
+                  </button>
+                </span>
+              </div>
               {readError === null && !readLoading && userAreas.length === 0 && (
                 <div className={styles.emptyArea}>
-                  <EmptyState variant="compact" icon={<Icon name="folder" />} title="还没有 Area" description="项目与 Track 会按 Area 归类。" />
+                  <EmptyState variant="compact" icon={<Icon name="folder" />} title={MESSAGES.sidebar.noAreasTitle} description={MESSAGES.sidebar.noAreasDescription} />
                 </div>
               )}
 
@@ -399,30 +428,27 @@ export function Sidebar({
                   {...rowPropsFor(`area:${area.id}`)}
                 />
               ))}
-
-              <div className={`${styles.areaRowWrap} ${primaryNavPresentation.className}`}>
-                <span ref={createRef} className={styles.newAreaAnchor}>
-                  <button
-                    type="button"
-                    data-nc-role="row"
-                    className={`${styles.areaRow} ${styles.newAreaRow} ${rowLayout('content')}`}
-                    aria-label="New area"
-                    onClick={() => onRequestCreateArea({ kind: 'anchor', anchor: { ref: createRef }, unavailable: 'surface-center' })}
-                  >
-                    <span className={`${styles.newAreaIcon} ${rowLayout('leading')}`} aria-hidden="true">
-                      <Icon name="plus" size="md" />
-                    </span>
-                    <ListText tone={primaryNavPresentation.tone} className={styles.areaName} title="New area">New area</ListText>
-                  </button>
-                </span>
-              </div>
             </div>}
           </div>
 
         </>
       )}
 
-      <div className={styles.userRow}>
+      <div className={styles.railFooter}>
+        <SystemUpgradeBannerHost variant={collapsed ? 'collapsed' : 'sidebar'} />
+        {collapsed && (
+          <button
+            type="button"
+            data-nc-role="icon"
+            className={styles.iconButton}
+            aria-label="Open settings"
+            title="Settings"
+            onClick={onOpenSettings}
+          >
+            <Icon name="settings" size="sm" />
+          </button>
+        )}
+        <div className={styles.userRow}>
             <Menu
               items={[
                 { label: 'Settings', onSelect: onOpenSettings },
@@ -457,6 +483,7 @@ export function Sidebar({
                 <Icon name="settings" size="sm" />
               </button>
             )}
+        </div>
       </div>
 
       <DeleteConfirmDialog confirm={trackConfirm} copy={DELETE_TRACK_COPY} />

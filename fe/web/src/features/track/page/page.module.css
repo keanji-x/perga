@@ -8,7 +8,7 @@
        opening a wider conversation spends those margins before shrinking text.
        At the default root size, 40rem is 640px (about 35 CJK glyphs at 18px).
        Keep this local: the global prose token also sizes unrelated UI surfaces. */
-    --document-measure-max: 40rem;
+    --document-measure-max: 45rem;
     /* Preserve the reading measure whenever it fits. A wide
        conversation may consume the margin before the shell reaches compact
        mode; then the measure shrinks to the real first grid track instead of
@@ -89,7 +89,7 @@
     display: flex;
     flex: 0 1 auto;
     align-items: center;
-    gap: var(--space-2);
+    gap: var(--space-1);
     min-inline-size: 0;
     max-inline-size: 100%;
   }
@@ -165,7 +165,7 @@
    */
   .page > .workspace {
     position: relative;
-    --track-column-gap: var(--space-5);
+    --track-column-gap: var(--space-6);
     display: grid;
     grid-template-rows: minmax(max-content, 1fr);
     min-block-size: 0;
@@ -302,13 +302,13 @@
    */
   .panel {
     position: sticky;
-    inset-block-start: calc(var(--header-band) + var(--header-h) + var(--space-4));
+    inset-block-start: calc(var(--header-band) + var(--header-h) + var(--space-6));
     align-self: start;
     display: flex;
     flex-direction: column;
-    gap: var(--space-1);
+    gap: var(--space-2);
     min-inline-size: 0;
-    max-block-size: calc(100dvh - var(--header-band) - var(--header-h) - var(--space-4) * 2);
+    max-block-size: calc(100dvh - var(--header-band) - var(--header-h) - var(--space-6) * 2);
     overflow: auto;
   }
 
@@ -599,38 +599,166 @@
 
   }
   /* Desktop controls stay separate from the compact Report action. */
-  @media (width >= 60rem) {.workHeaderBesideDrawer { padding-inline-end: calc(var(--conversation-span) + var(--space-4)); }
-    .page:has(> .workHeader) {
-      --header-band: 0px;
-      --header-h: var(--workspace-header-bottom, var(--navigation-header-height));
+  @media (width >= 60rem) {
+    .workHeaderBesideDrawer {
+      padding-inline-end: calc(var(--conversation-span) + var(--space-6));
     }
 
     .workHeader {
-      /* Center the title in the full reading header, sharing its bottom
-         divider with the independently inset conversation card. */
-      --navigation-header-height: var(--header-h);
-      padding-block-start: var(--header-band);
-      border-block-end-color: var(--hairline);
+      border-block-end-color: transparent;
     }
 
+    [data-nc-scrolled] .workHeader {
+      border-block-end-color: color-mix(in srgb, var(--hairline) 60%, transparent);
+    }
+
+    /* Running folio: restrained sans metadata (`dir · Updated YYYY-MM-DD`) anchors the top bar
+       alongside the sidebar and right drawer; hovering the header or scrolling past the masthead
+       silently cross-fades to reveal the full article title in place with zero layout shift. */
+    .runningHeadCluster {
+      display: flex;
+      align-items: center;
+      gap: var(--space-1);
+      min-inline-size: 0;
+      flex: 0 1 auto;
+    }
+
+    .runningHeadSwap {
+      display: grid;
+      align-items: center;
+      min-inline-size: 0;
+    }
+
+    .runningHeadFolio,
+    .runningHeadTitle {
+      grid-area: 1 / 1;
+      min-inline-size: 0;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+      transition: opacity var(--motion-snappy) var(--ease-feedback);
+    }
+
+    .runningHeadFolio {
+      display: inline-flex;
+      align-items: center;
+      font: var(--type-metadata);
+      letter-spacing: 0.01em;
+      font-variant-numeric: tabular-nums;
+      color: var(--text-3);
+      opacity: 1;
+    }
+
+    .folioPart {
+      display: inline-flex;
+      align-items: center;
+      min-inline-size: 0;
+    }
+
+    .folioDot {
+      margin-inline: var(--space-2);
+      color: var(--text-4);
+      font-weight: var(--weight-bold);
+    }
+
+    .runningHeadTitle {
+      font: var(--type-ui);
+      font-weight: var(--weight-medium);
+      letter-spacing: var(--type-ui-tracking);
+      color: var(--text-2);
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    [data-nc-scrolled] .runningHeadFolio,
+    .workHeader:hover .runningHeadFolio,
+    .workHeader:focus-within .runningHeadFolio {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    [data-nc-scrolled] .runningHeadTitle,
+    .workHeader:hover .runningHeadTitle,
+    .workHeader:focus-within .runningHeadTitle {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    /* Formal publication masthead: lives inside the reading column on the exact
+       same left spine and measure as the body prose, clearly commanding the page
+       above subordinate numbered chapters. */
+    .articleMasthead {
+      margin-inline-start: var(--document-start, 0px);
+      inline-size: min(100%, var(--document-measure, 45rem));
+      padding-block-end: var(--space-5);
+      margin-block-end: var(--space-6);
+      border-block-end: 1px solid color-mix(in srgb, var(--hairline) 80%, transparent);
+    }
+
+    .mastheadCluster {
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+      min-inline-size: 0;
+      max-inline-size: 100%;
+    }
+
+    .mastheadHeading {
+      flex: 1 1 auto;
+      min-inline-size: 0;
+    }
+
+    .mastheadTitle {
+      display: inline-block;
+      font-family: var(--font-serif);
+      font-size: var(--font-step-7-size);
+      font-weight: var(--weight-normal);
+      line-height: 1.3;
+      letter-spacing: -0.012em;
+      color: var(--text);
+      white-space: normal;
+      overflow: visible;
+      text-overflow: clip;
+      max-inline-size: calc(100% + var(--space-1));
+    }
+
+    input.mastheadTitle {
+      inline-size: 100%;
+    }
+
+    /* Harmonious opening top air aligned with the floating right context card. */
+    .doc {
+      padding-block-start: var(--space-4);
+    }
+
+    .panel {
+      /* Give the floating card's soft shadow room inside the sticky scroll container so none of the 4 edges clip. */
+      margin-inline: calc(var(--space-3) * -1);
+      padding: var(--space-5) var(--space-3) var(--space-5);
+    }
+
+    /* Running head: quiet, poised sans so the Report's serif Chapter 1 owns the visual hierarchy. */
     .title {
-      font: var(--type-heading);
-      letter-spacing: var(--type-heading-tracking);
+      font: var(--type-ui);
+      font-weight: var(--weight-medium);
+      letter-spacing: var(--type-ui-tracking);
+      color: var(--text-2);
     }
 
     .desktopChatAction {
       min-block-size: var(--control-h);
-      padding-inline: var(--space-3);
-      border: 1px solid var(--hairline-strong);
-      border-radius: var(--radius-md);
-      background: var(--surface-card);
-      color: var(--text);
+      padding-inline: var(--space-2);
+      border: 1px solid transparent;
+      border-radius: var(--radius-highlight);
+      background: transparent;
+      color: var(--text-2);
     }
 
     .desktopChatAction:hover,
     .desktopChatAction:focus-visible {
-      background: var(--accent-soft);
-      border-color: var(--accent);
+      background: var(--overlay-hover);
+      border-color: transparent;
+      color: var(--text);
     }
   }
 

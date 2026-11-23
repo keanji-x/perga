@@ -5,13 +5,42 @@
     background: none;
     padding: 0;
     cursor: pointer;
-    border-radius: var(--radius-pill);
-    max-inline-size: 100%;
+    inline-size: var(--control-h-sm);
+    block-size: var(--control-h-sm);
+    border-radius: var(--radius-highlight);
+    flex: none;
+    display: inline-grid;
+    place-items: center;
+    color: var(--text-3);
+    transition: color var(--motion-quick) var(--ease-feedback),
+      background-color var(--motion-quick) var(--ease-feedback);
+  }
+
+  .trigger:hover,
+  .trigger:focus-visible {
+    color: var(--text);
+    background: var(--overlay-hover);
   }
 
   .trigger:focus-visible {
     outline: var(--space-half) solid var(--accent);
     outline-offset: var(--space-half);
+  }
+
+  .icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+  }
+
+  .srOnly {
+    position: absolute;
+    inline-size: 1px;
+    block-size: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
 
   .explanation {

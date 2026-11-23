@@ -85,3 +85,96 @@ export function effortsFor<Provider extends string>(
     : chosen?.default_reasoning_effort ?? null;
   return { efforts, effortDefault };
 }
+
+export function shortProviderLabel<Provider extends string>(
+  group: ModelGroup<Provider>,
+  provider: Provider,
+  fallback?: string,
+): string {
+  return providerPresentation(provider).shortLabel ?? fallback ?? providerLabel(group, provider);
+}
+
+function isAcronymSubsequence(needle: string, words: readonly string[]): boolean {
+  let cursor = 0;
+  for (const word of words) {
+    if (cursor >= needle.length) break;
+    let wi = 0;
+    while (wi < word.length && cursor < needle.length && word[wi] === needle[cursor]) {
+      wi += 1;
+      cursor += 1;
+    }
+  }
+  return cursor === needle.length;
+}
+
+/** True when `a` and `b` are within 1 substitution, insertion, deletion, or adjacent transposition. */
+function withinOneEdit(a: string, b: string): boolean {
+  const diff = Math.abs(a.length - b.length);
+  if (diff > 1) return false;
+  if (a.length === b.length) {
+    let first = -1;
+    let mismatches = 0;
+    for (let i = 0; i < a.length; i += 1) {
+      if (a[i] !== b[i]) {
+        mismatches += 1;
+        if (first === -1) first = i;
+        else if (mismatches === 2 && i === first + 1 && a[first] === b[i] && a[i] === b[first]) continue;
+        else if (mismatches > 1) return false;
+      }
+    }
+    return mismatches <= 2;
+  }
+  const [shorter, longer] = a.length < b.length ? [a, b] : [b, a];
+  let si = 0;
+  let li = 0;
+  let skipped = false;
+  while (si < shorter.length && li < longer.length) {
+    if (shorter[si] === longer[li]) {
+      si += 1;
+      li += 1;
+    } else if (!skipped) {
+      skipped = true;
+      li += 1;
+    } else {
+      return false;
+    }
+  }
+  return true;
+}
+
+function scoreToken(token: string, raw: string, compact: string, words: readonly string[]): number {
+  const compactToken = token.replace(/[^a-z0-9]+/g, '');
+  if (words.some((word) => word.startsWith(token) || (compactToken !== '' && word.startsWith(compactToken)))) return 100;
+  if (raw.includes(token)) return 80;
+  if (compactToken !== '' && compact.includes(compactToken)) return 70;
+  if (compactToken.length >= 2 && isAcronymSubsequence(compactToken, words)) return 60;
+  if (compactToken.length >= 3) {
+    const firstChar = compactToken[0];
+    for (const word of words) {
+      if (word.length < 3 || word[0] !== firstChar) continue;
+      const prefix = word.slice(0, compactToken.length);
+      if (withinOneEdit(compactToken, prefix)) return 50;
+      if (word.length >= compactToken.length + 1 && withinOneEdit(compactToken, word.slice(0, compactToken.length + 1))) return 48;
+      if (word.length >= compactToken.length - 1 && withinOneEdit(compactToken, word)) return 48;
+    }
+  }
+  return 0;
+}
+
+/** Multi-token, punctuation-tolerant, subsequence + 1-typo fuzzy scorer for model search. Returns 0 when unmatched. */
+export function scoreModelSearch(fields: readonly (string | null | undefined)[], query: string): number {
+  const tokens = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return 1;
+  const raw = fields.filter((part): part is string => typeof part === 'string' && part.length > 0).join(' ').toLowerCase();
+  const compact = raw.replace(/[^a-z0-9]+/g, '');
+  const words = raw.split(/[^a-z0-9]+/).filter(Boolean);
+  let total = 0;
+  for (const token of tokens) {
+    const score = scoreToken(token, raw, compact, words);
+    if (score === 0) return 0;
+    total += score;
+  }
+  const primary = (fields[0] ?? '').toLowerCase();
+  if (primary !== '' && tokens.some((token) => primary.includes(token))) total += 15;
+  return total;
+}

@@ -107,33 +107,18 @@
     box-shadow: none;
   }
 
-  /* Spacious, borderless well on both surfaces, including a composer that
-     normally uses Astryx's compact bordered docked treatment. */
+  /* Elevated composer card: distinct depth plane via surface + soft shadow, zero hard border. */
   .composer [data-density] > *:has([contenteditable]) {
-    border: none;
+    border: 0;
     outline: none;
-    padding: var(--space-3);
-    gap: var(--space-2);
+    padding: var(--space-4);
+    gap: var(--space-3);
+    box-shadow: var(--shadow-float);
+    transition: box-shadow var(--motion-quick) var(--ease-feedback);
   }
 
-  /*
-   * `:has(… :focus)` and not `:focus-within`, because the chips live inside
-   * this same element: with `:focus-within` the ring lit up around the whole
-   * composer whenever the model or folder chip took focus, on top of that
-   * button's own `:focus-visible` ring. Two rings for one focus is worse than
-   * none — it makes "where am I" ambiguous, which is the exact question the
-   * ring exists to answer. Scoped to the editable, it means one thing.
-   *
-   * `:focus` and not `:focus-visible`, which is where this departs from
-   * `base.css`'s global convention — so a pointer click rings it too. That is
-   * deliberate for a *text* field: the ring is saying "your keystrokes land
-   * here", which is as true after a click as after a Tab, and `base.css` itself
-   * treats fields specially for the same reason (it swaps their outline for a
-   * border rule rather than using the global ring). The colour and width still
-   * match the global ring so the two read as one system.
-   */
   .composer [data-density]:has([contenteditable]) > *:has([contenteditable="true"]:focus) {
-    box-shadow: inset 0 0 0 2px var(--accent);
+    box-shadow: var(--shadow-float), 0 0 0 2px var(--accent-soft);
   }
 
   /* The desktop request gets four lines so it remains the primary writing surface. */

@@ -1,5 +1,5 @@
 import { providerPresentation } from '../../../../../core/domain/provider-presentation.ts';
-import { catalogReason, defaultNameOf, effortsFor, FOLLOW_DEFAULT_LABEL, providerLabel, visibleModelGroups, type CatalogEntry, type ModelGroup } from './model-selection.ts';
+import { catalogReason, defaultNameOf, effortsFor, FOLLOW_DEFAULT_LABEL, providerLabel, scoreModelSearch, shortProviderLabel, visibleModelGroups, type CatalogEntry, type ModelGroup } from './model-selection.ts';
 // The model picker in a planner conversation's composer footer, and on the new-track page. Presentational:
 // every value is a prop; the queries and the write live in `app/router`. Each provider's catalog is one
 // group; on the new-track page the pick also decides the Planner's provider (#1810), and each group
@@ -14,6 +14,7 @@ import { HStack } from '@astryxdesign/core/HStack';
 import { Icon as AstryxIcon } from '@astryxdesign/core/Icon';
 import { Popover } from '@astryxdesign/core/Popover';
 import { Text } from '@astryxdesign/core/Text';
+import { Tooltip } from '@astryxdesign/core/Tooltip';
 import { VisuallyHidden } from '@astryxdesign/core/VisuallyHidden';
 
 import { useCallback, useEffect, useRef, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
@@ -22,6 +23,7 @@ import type { AgentProvider } from '../../../../../core/domain/presentation-type
 import type { PermissionModeOptionDto } from '../../../../../core/api/perga-v1.ts';
 import { unavailableCreationNote } from '../../../../../core/domain/agent-providers.ts';
 import type { ModelSelection } from '../../../../../core/domain/conversation.ts';
+import { Icon } from '../../../ui/icon/public.tsx';
 import { useState } from '../../../ui/state/public.ts';
 import styles from './model-pill.module.css';
 // Keep the shared CSS after Astryx imports: importing the slider earlier changes layer order.
@@ -91,12 +93,15 @@ export function ModelPill<Provider extends string = AgentProvider>({
   appliesNextTurn?: boolean;
 }>) {
   const [open, setOpen] = useState(false);
-  const [viewedProvider, setViewedProvider] = useState<Provider>(provider);
+  const [providerFilter, setProviderFilter] = useState<Provider | 'all'>('all');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [hoveredEffortIndex, setHoveredEffortIndex] = useState<number | null>(null);
   const [draft, setDraft] = useState<Readonly<{ provider: Provider; selection: ModelSelection }>>({
     provider,
     selection,
   });
   const hostRef = useRef<HTMLSpanElement | null>(null);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
   const { onEscape, onOpenChange } = useEscapeFocus(open, setOpen, hostRef);
 
   const shown = visibleModelGroups(groups, provider);
@@ -129,115 +134,248 @@ export function ModelPill<Provider extends string = AgentProvider>({
   const triggerDisabled = isDisabled
     || (unreachable && !shown.some(group => group.selectionProblem === null || group.acceptsUnavailableBlankTrack === true));
 
-  const viewedGroup = shown.find((group) => group.provider === viewedProvider)
+  const activeProviderGroup = shown.find((group) => group.provider === draft.provider)
     ?? shown.find((group) => group.provider === provider)
     ?? shown[0];
+  const filteredGroup = providerFilter === 'all'
+    ? null
+    : shown.find((group) => group.provider === providerFilter) ?? null;
 
   const handleOpenChange = (nextOpen: boolean) => {
+    setHoveredEffortIndex(null);
+    setSearchQuery('');
     if (nextOpen) {
-      setViewedProvider(provider);
+      setProviderFilter(shown.length > 1 ? 'all' : (shown[0]?.provider ?? 'all'));
       setDraft({ provider, selection });
     }
     onOpenChange(nextOpen);
   };
 
-  const viewedIsDraft = viewedGroup !== undefined && viewedGroup.provider === draft.provider;
-  const viewedModelId = viewedIsDraft ? draft.selection.model : null;
-  const viewedEffortValue = viewedIsDraft ? draft.selection.reasoning_effort : null;
-  const savedEffort = viewedGroup?.provider === provider && viewedModelId === selection.model
-    ? selection.reasoning_effort : null;
-  const retainedEffort = viewedEffortValue ?? savedEffort;
-  const viewedEffortInfo = effortsFor(viewedGroup, viewedModelId);
-  const viewedReason = viewedGroup ? catalogReason(viewedGroup) : { reason: null, refused: false, blocked: null };
-  const draftGroup = shown.find((group) => group.provider === draft.provider);
-  const draftBlocked = draftGroup === undefined || catalogReason(draftGroup).blocked !== null;
+  const totalModelCount = shown.reduce((sum, group) => sum + (group.catalog?.models.length ?? 0), 0);
+  const showSearch = totalModelCount > 6;
+  const normalizedQuery = searchQuery.trim().toLowerCase();
 
-  const effortStops: { value: string | null; label: string }[] = viewedEffortInfo.efforts.map((entry) => ({
+  // Anchor the Effort band to the actual draft provider/model so browsing another
+  // provider filter chip cannot bypass `defaultAvailable: false` or mismatch Save.
+  const draftGroup = shown.find((group) => group.provider === draft.provider) ?? activeProviderGroup;
+  const draftModelId = draft.selection.model;
+  const draftEffortValue = draft.selection.reasoning_effort;
+  const savedEffort = draftGroup?.provider === provider && draftModelId === selection.model
+    ? selection.reasoning_effort : null;
+  const retainedEffort = draftEffortValue ?? savedEffort;
+  const draftEffortInfo = effortsFor(draftGroup, draftModelId);
+  const draftReason = draftGroup ? catalogReason(draftGroup) : { reason: null, refused: false, blocked: null };
+  const draftBlocked = draftGroup === undefined || draftReason.blocked !== null;
+
+  const effortStops = draftEffortInfo.efforts.map((entry) => ({
     value: entry.reasoning_effort,
     label: entry.reasoning_effort,
   }));
-  if (effortStops.length > 0 || retainedEffort !== null) {
-    const defaultEffort = viewedEffortInfo.effortDefault;
-    effortStops.unshift({ value: null, label: defaultEffort !== null && effortStops.some(stop => stop.value === defaultEffort)
-      ? `${FOLLOW_DEFAULT_LABEL} (${defaultEffort})` : FOLLOW_DEFAULT_LABEL });
-  }
-  // Keep an unavailable saved value visible until the user deliberately replaces it.
-  if (retainedEffort !== null && !effortStops.some(stop => stop.value === retainedEffort)) {
-    effortStops.splice(1, 0, { value: retainedEffort, label: `${retainedEffort} (Unavailable)` });
-  }
-  const sliderIndex = effortStops.findIndex(stop => stop.value === viewedEffortValue);
+  const defaultEffort = draftEffortInfo.effortDefault;
+  const defaultEffortIndex = defaultEffort === null ? -1 : effortStops.findIndex(stop => stop.value === defaultEffort);
+  const selectedEffortIndex = draftEffortValue === null ? -1 : effortStops.findIndex(stop => stop.value === draftEffortValue);
   const hasEffortChoices = effortStops.length > 0;
-  const displayedEffortLabel = effortStops[sliderIndex]?.label ?? 'N/A';
+  const unavailableEffort = draftEffortValue !== null && selectedEffortIndex === -1 ? draftEffortValue : null;
+  const effortValueText = unavailableEffort !== null
+    ? `${unavailableEffort} (Unavailable)`
+    : selectedEffortIndex >= 0
+      ? effortStops[selectedEffortIndex].label
+      : !hasEffortChoices && retainedEffort === null
+        ? 'N/A'
+        : defaultEffortIndex >= 0
+          ? `${FOLLOW_DEFAULT_LABEL} (${effortStops[defaultEffortIndex].label})`
+          : FOLLOW_DEFAULT_LABEL;
+  const hoveredEffort = hoveredEffortIndex !== null ? effortStops[hoveredEffortIndex] ?? null : null;
+  const canResetEffort = draftEffortValue !== null && draftReason.blocked === null;
+  const resetEffort = () => {
+    setDraft({
+      provider: draftGroup?.provider ?? draft.provider,
+      selection: { model: draftModelId, reasoning_effort: null },
+    });
+  };
 
-  const popoverContent = viewedGroup === undefined ? null : (
-    <div className={styles.pickerPanel}>
-      <div className={styles.pickerColumns}>
-        <div className={styles.providerColumn} role="group" aria-label="Providers">
-          {shown.map((group) => {
-            const heading = providerLabel(group, group.provider);
-            const isViewed = group.provider === viewedGroup.provider;
-            const isSelectedProvider = group.provider === draft.provider;
-            return (
+  const selectModel = (targetProvider: Provider, model: string | null) => {
+    if (draft.provider === targetProvider && draft.selection.model === model) return;
+    setDraft({ provider: targetProvider, selection: { model, reasoning_effort: null } });
+  };
+
+  const popoverContent = draftGroup === undefined ? null : (
+    <div
+      className={styles.pickerPanel}
+      role="presentation"
+      /* Stop React synthetic events from bubbling into a host ChatComposer, whose click handler yanks focus back to the message editor. */
+      onMouseDown={(event) => event.stopPropagation()}
+      onClick={(event) => event.stopPropagation()}
+    >
+      {(showSearch || shown.length > 1) && (
+        <div className={styles.filterHeader}>
+          {showSearch && (
+            <div className={styles.searchWrap}>
+              <label className={styles.searchField}>
+                <span className={styles.searchIcon} aria-hidden="true"><Icon name="search" size="sm" /></span>
+                <input
+                  ref={searchInputRef}
+                  type="search"
+                  className={styles.searchInput}
+                  value={searchQuery}
+                  aria-label="Filter models"
+                  placeholder="Search models or providers…"
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                />
+              </label>
+              {searchQuery !== '' && (
+                <button
+                  type="button"
+                  className={styles.searchClear}
+                  aria-label="Clear search"
+                  onClick={() => {
+                    setSearchQuery('');
+                    searchInputRef.current?.focus();
+                  }}
+                >
+                  <Icon name="close" size="sm" />
+                </button>
+              )}
+            </div>
+          )}
+          {shown.length > 1 && (
+            <div className={styles.providerFilterBar} role="group" aria-label="Providers">
               <button
-                key={group.provider}
                 type="button"
                 role="radio"
-                aria-checked={isViewed}
-                data-nc-active={isViewed ? 'true' : 'false'}
-                className={styles.pickerRow}
-                onClick={() => {
-                  setViewedProvider(group.provider);
-                  if (group.provider !== draft.provider && catalogReason(group).blocked === null) {
-                    if (group.provider === provider) {
-                      setDraft({ provider: group.provider, selection });
-                    } else if (group.defaultAvailable !== false) {
-                      setDraft({ provider: group.provider, selection: { model: null, reasoning_effort: null } });
-                    }
-                  }
-                }}
+                aria-checked={providerFilter === 'all'}
+                data-nc-active={providerFilter === 'all' ? 'true' : 'false'}
+                className={styles.filterChip}
+                onClick={() => setProviderFilter('all')}
               >
-                <span className={styles.pickerRowLabel}>{heading}</span>
-                {isSelectedProvider && (
-                  <AstryxIcon icon="check" size="sm" color="accent" className={styles.pickerCheck} />
-                )}
+                All
               </button>
-            );
-          })}
+              {shown.map((group) => {
+                const heading = providerLabel(group, group.provider);
+                const isActiveFilter = providerFilter === group.provider;
+                const isUnavailable = catalogReason(group).blocked !== null;
+                return (
+                  <button
+                    key={group.provider}
+                    type="button"
+                    role="radio"
+                    aria-checked={isActiveFilter}
+                    data-nc-active={isActiveFilter ? 'true' : 'false'}
+                    data-nc-unavailable={isUnavailable ? 'true' : 'false'}
+                    className={styles.filterChip}
+                    onClick={() => {
+                      setProviderFilter(group.provider);
+                      if (group.provider !== draft.provider && !isUnavailable) {
+                        if (group.provider === provider) {
+                          setDraft({ provider: group.provider, selection });
+                        } else if (group.defaultAvailable !== false) {
+                          setDraft({ provider: group.provider, selection: { model: null, reasoning_effort: null } });
+                        }
+                      }
+                    }}
+                  >
+                    {shortProviderLabel(group, group.provider, heading)}
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
-        <div className={styles.modelColumn} role="group" aria-label="Models">
+      )}
+      <div className={styles.modelList} role="group" aria-label="Models">
+        {filteredGroup !== null ? (
           <GroupChoices
-            group={viewedGroup}
-            selection={viewedIsDraft ? draft.selection : null}
-            onChange={(model) => {
-              if (viewedIsDraft && model === viewedModelId) return;
-              setDraft({ provider: viewedGroup.provider, selection: { model, reasoning_effort: null } });
-            }}
+            group={filteredGroup}
+            selection={filteredGroup.provider === draft.provider ? draft.selection : null}
+            query={normalizedQuery}
+            onClearFilter={normalizedQuery !== '' ? () => setProviderFilter('all') : undefined}
+            onChange={(model) => selectModel(filteredGroup.provider, model)}
           />
+        ) : shown.length === 1 ? (
+          <GroupChoices
+            group={shown[0]}
+            selection={shown[0].provider === draft.provider ? draft.selection : null}
+            query={normalizedQuery}
+            onChange={(model) => selectModel(shown[0].provider, model)}
+          />
+        ) : (
+          <UnifiedModelList
+            groups={shown}
+            activeGroup={activeProviderGroup}
+            draft={draft}
+            query={normalizedQuery}
+            onSelect={selectModel}
+          />
+        )}
+      </div>
+      <div className={styles.effortBand}>
+        <div className={styles.effortRow}>
+          <span className={styles.effortTitle}>Effort</span>
+          <EffortSlider
+            stops={effortStops}
+            selectedIndex={selectedEffortIndex}
+            defaultIndex={defaultEffortIndex}
+            valueText={effortValueText}
+            isDisabled={(!hasEffortChoices && !canResetEffort) || draftReason.blocked !== null}
+            onChangeIndex={(idx) => {
+              const stop = effortStops.at(idx);
+              if (!stop) return;
+              setDraft({
+                provider: draftGroup.provider,
+                selection: { model: draftModelId, reasoning_effort: stop.value },
+              });
+            }}
+            onResetToDefault={canResetEffort ? resetEffort : undefined}
+            onHoverChange={setHoveredEffortIndex}
+          />
+          <span className={styles.effortReadout}>
+            {hoveredEffort !== null ? (
+              <span className={styles.effortPreview}>{hoveredEffort.label}</span>
+            ) : selectedEffortIndex >= 0 ? (
+              <>
+                <span className={styles.effortValue}>{effortStops[selectedEffortIndex].label}</span>
+                {canResetEffort && (
+                  <Tooltip content="Reset to default" placement="above">
+                    <button
+                      type="button"
+                      className={styles.effortResetIcon}
+                      aria-label="Reset effort to Default"
+                      onClick={resetEffort}
+                    >
+                      <Icon name="reset" size="sm" />
+                    </button>
+                  </Tooltip>
+                )}
+              </>
+            ) : unavailableEffort !== null ? (
+              <>
+                <span className={styles.effortUnavailable}>{unavailableEffort}</span>
+                {canResetEffort && (
+                  <Tooltip content="Reset to default" placement="above">
+                    <button
+                      type="button"
+                      className={styles.effortResetIcon}
+                      aria-label="Reset effort to Default"
+                      onClick={resetEffort}
+                    >
+                      <Icon name="reset" size="sm" />
+                    </button>
+                  </Tooltip>
+                )}
+              </>
+            ) : defaultEffortIndex >= 0 ? (
+              <>
+                <span className={styles.effortInherited}>{effortStops[defaultEffortIndex].label}</span>
+                <span className={styles.effortDefaultHint}>default</span>
+              </>
+            ) : (
+              <span className={styles.effortMuted}>{hasEffortChoices ? FOLLOW_DEFAULT_LABEL : 'N/A'}</span>
+            )}
+          </span>
         </div>
       </div>
-      <Divider />
-      <div className={styles.effortSection}>
-        <div className={styles.effortHeader}>
-          <span>Effort</span>
-          <span className={styles.effortValue}>{displayedEffortLabel}</span>
-        </div>
-        <EffortSlider
-          stops={hasEffortChoices ? effortStops : [{ value: null, label: 'N/A' }]}
-          selectedIndex={hasEffortChoices ? sliderIndex : 0}
-          isDisabled={!hasEffortChoices || viewedReason.blocked !== null}
-          onChangeIndex={(idx) => {
-            const stop = effortStops.at(idx);
-            if (!stop) return;
-            setDraft({
-              provider: viewedGroup.provider,
-              selection: { model: viewedModelId, reasoning_effort: stop.value },
-            });
-          }}
-        />
-      </div>
-      <Divider />
-      {appliesNextTurn && <div className={styles.settingNote} role="note"><Text type="supporting">{PERMISSION_NOTE}</Text></div>}
       <div className={styles.pickerActions}>
+        {appliesNextTurn && <div className={styles.settingNote} role="note"><Text type="supporting">{PERMISSION_NOTE}</Text></div>}
         <Button
           label="Cancel"
           variant="ghost"
@@ -266,7 +404,7 @@ export function ModelPill<Provider extends string = AgentProvider>({
         <Popover
           placement={placement}
           alignment="start"
-          width="19rem"
+          width="min(23rem, calc(100vw - 1.5rem))"
           label="Select model and reasoning effort"
           hasCloseButton={false}
           className={styles.compactPopover}
@@ -293,21 +431,160 @@ export function ModelPill<Provider extends string = AgentProvider>({
   );
 }
 
+function modelSearchScore<Provider extends string>(
+  group: ModelGroup<Provider>,
+  model: CatalogEntry,
+  query: string,
+): number {
+  const fullProvider = providerLabel(group, group.provider);
+  const shortProvider = shortProviderLabel(group, group.provider, fullProvider);
+  return scoreModelSearch(
+    [model.display_name, model.model, model.resolved_model, shortProvider, fullProvider, String(group.provider)],
+    query,
+  );
+}
+
+/** All providers combined into one model-centric list with right-aligned provider badges. */
+function UnifiedModelList<Provider extends string>({
+  groups, activeGroup, draft, query, onSelect,
+}: Readonly<{
+  groups: readonly ModelGroup<Provider>[];
+  activeGroup: ModelGroup<Provider>;
+  draft: Readonly<{ provider: Provider; selection: ModelSelection }>;
+  query: string;
+  onSelect: (provider: Provider, model: string | null) => void;
+}>) {
+  const orderedGroups = [activeGroup, ...groups.filter((group) => group.provider !== activeGroup.provider)];
+  const activeDefaultName = defaultNameOf(activeGroup.catalog);
+  const activeReason = catalogReason(activeGroup);
+  const activeBadge = shortProviderLabel(activeGroup, activeGroup.provider);
+  const showDefaultRow = query === '' || scoreModelSearch([FOLLOW_DEFAULT_LABEL, activeDefaultName, activeBadge, String(activeGroup.provider)], query) > 0;
+  const defaultLabel = activeGroup.catalog?.default_source === 'acp_session'
+    ? <ResolvedLabel name="Session settings" resolved={activeDefaultName ?? 'current'} />
+    : activeDefaultName === null
+      ? FOLLOW_DEFAULT_LABEL
+      : <ResolvedLabel name={FOLLOW_DEFAULT_LABEL} resolved={activeDefaultName} />;
+
+  const entries: { group: ModelGroup<Provider>; model: CatalogEntry; blocked: boolean; score: number }[] = [];
+  const noticeGroups: ModelGroup<Provider>[] = [];
+  for (const group of orderedGroups) {
+    const info = catalogReason(group);
+    const blocked = info.blocked !== null;
+    const providerMatchesQuery = query !== '' && scoreModelSearch(
+      [shortProviderLabel(group, group.provider), providerLabel(group, group.provider), String(group.provider)],
+      query,
+    ) > 0;
+    const hasNotice = (group.selectionProblem !== undefined && group.availability?.authentication_notice != null)
+      || info.reason !== null;
+    if (hasNotice && (group.provider === activeGroup.provider || !blocked || providerMatchesQuery)) {
+      noticeGroups.push(group);
+    }
+    if (blocked) continue;
+    for (const model of group.catalog?.models ?? []) {
+      const score = modelSearchScore(group, model, query);
+      if (score > 0) entries.push({ group, model, blocked, score });
+    }
+  }
+  if (query !== '') {
+    entries.sort((left, right) => right.score - left.score);
+  }
+
+  // Group identical unavailable notices in `All` view so shared server issues (e.g. missing bridge) render once concisely.
+  const groupedReasons: {
+    key: string;
+    labels: string[];
+    reason: string;
+    refused: boolean;
+  }[] = [];
+  const authNotices: { key: string; text: string }[] = [];
+  for (const group of noticeGroups) {
+    if (group.selectionProblem !== undefined && group.availability?.authentication_notice != null) {
+      authNotices.push({ key: `auth:${group.provider}`, text: group.availability.authentication_notice.text });
+    }
+    const { reason, refused } = catalogReason(group);
+    if (reason === null) continue;
+    const label = providerLabel(group, group.provider);
+    const existing = groupedReasons.find((entry) => entry.reason === reason && entry.refused === refused);
+    if (existing !== undefined) {
+      existing.labels.push(label);
+    } else {
+      groupedReasons.push({ key: `reason:${group.provider}`, labels: [label], reason, refused });
+    }
+  }
+
+  return <>
+    {authNotices.map((notice) => (
+      <div key={notice.key} className={styles.reason} role="note">
+        <Text type="supporting">{notice.text}</Text>
+      </div>
+    ))}
+    {groupedReasons.map(({ key, labels, reason, refused }) => {
+      const subject = labels.length === 1
+        ? `${labels[0]} is unavailable`
+        : `${labels.join(', ')} are unavailable`;
+      const suffix = refused ? '' : ` ${unavailableCreationNote(labels.length === 1 ? labels[0] : 'the provider')}`;
+      return (
+        <div key={key} className={refused ? styles.reason : `${styles.reason} ${styles.warning}`} role="note">
+          <Text type="supporting" color={refused ? undefined : 'inherit'}>
+            {`${subject}: ${reason}${suffix}`}
+          </Text>
+        </div>
+      );
+    })}
+    {showDefaultRow && (
+      <>
+        <ModelRow
+          label={defaultLabel}
+          providerTag={activeBadge}
+          isSelected={draft.provider === activeGroup.provider && draft.selection.model === null}
+          isDisabled={activeReason.blocked !== null || activeGroup.defaultAvailable === false}
+          onSelect={() => onSelect(activeGroup.provider, null)}
+        />
+        {entries.length > 0 && <div className={styles.defaultDivider} aria-hidden="true" />}
+      </>
+    )}
+    {entries.map(({ group, model, blocked }) => (
+      <ModelRow
+        key={`${group.provider}:${model.id}`}
+        label={model.resolved_model === null ? model.display_name
+          : <ResolvedLabel name={model.display_name} resolved={model.resolved_model} />}
+        providerTag={shortProviderLabel(group, group.provider)}
+        isSelected={draft.provider === group.provider && draft.selection.model === model.model}
+        isDisabled={blocked}
+        onSelect={() => onSelect(group.provider, model.model)}
+      />
+    ))}
+    {entries.length === 0 && !showDefaultRow && noticeGroups.length === 0 && (
+      <div className={styles.pickerEmpty}>No matching models</div>
+    )}
+  </>;
+}
+
 /** One group's rows: Default, then the catalog. `selection` is `null` when the pick lies in another group. */
-function GroupChoices<Provider extends string>({ group, selection, onChange }: Readonly<{
+function GroupChoices<Provider extends string>({ group, selection, query = '', onClearFilter, onChange }: Readonly<{
   group: ModelGroup<Provider>;
   selection: ModelSelection | null;
+  query?: string;
+  onClearFilter?: () => void;
   onChange: (model: string | null) => void;
 }>) {
-  const models: readonly CatalogEntry[] = group.catalog?.models ?? [];
+  const allModels: readonly CatalogEntry[] = group.catalog?.models ?? [];
+  const models = query === ''
+    ? allModels
+    : allModels
+      .map((model) => ({ model, score: modelSearchScore(group, model, query) }))
+      .filter((entry) => entry.score > 0)
+      .sort((left, right) => right.score - left.score)
+      .map((entry) => entry.model);
   const defaultName = defaultNameOf(group.catalog);
   const unreachable = group.catalog !== null && group.catalog.source === 'unavailable';
   const { reason, refused, blocked } = catalogReason(group);
+  const showDefault = query === '' || scoreModelSearch([FOLLOW_DEFAULT_LABEL, defaultName], query) > 0;
   const defaultLabel = group.catalog?.default_source === 'acp_session'
-    ? `Session settings (${defaultName ?? 'current'})`
-    : defaultName === null ? FOLLOW_DEFAULT_LABEL
-      : group.catalog?.default_source === 'claude_cli' ? <ResolvedLabel name={FOLLOW_DEFAULT_LABEL} resolved={defaultName} />
-        : `${FOLLOW_DEFAULT_LABEL} (${defaultName})`;
+    ? <ResolvedLabel name="Session settings" resolved={defaultName ?? 'current'} />
+    : defaultName === null
+      ? FOLLOW_DEFAULT_LABEL
+      : <ResolvedLabel name={FOLLOW_DEFAULT_LABEL} resolved={defaultName} />;
 
   return <>
     {group.selectionProblem !== undefined && group.availability?.authentication_notice != null && (
@@ -320,12 +597,17 @@ function GroupChoices<Provider extends string>({ group, selection, onChange }: R
         </Text>
       </div>
     )}
-    <ModelRow
-      label={defaultLabel}
-      isSelected={selection !== null && selection.model === null}
-      isDisabled={blocked !== null || group.defaultAvailable === false}
-      onSelect={() => onChange(null)}
-    />
+    {showDefault && (
+      <>
+        <ModelRow
+          label={defaultLabel}
+          isSelected={selection !== null && selection.model === null}
+          isDisabled={blocked !== null || group.defaultAvailable === false}
+          onSelect={() => onChange(null)}
+        />
+        {models.length > 0 && <div className={styles.defaultDivider} aria-hidden="true" />}
+      </>
+    )}
     {models.map((model) => (
       <ModelRow
         key={model.id}
@@ -336,7 +618,15 @@ function GroupChoices<Provider extends string>({ group, selection, onChange }: R
         onSelect={() => onChange(model.model)}
       />
     ))}
-    {models.length === 0 && reason === null && (
+    {models.length === 0 && !showDefault && (
+      <div className={styles.pickerEmpty}>
+        <span>No matching models</span>
+        {onClearFilter !== undefined && (
+          <button type="button" className={styles.emptyAction} onClick={onClearFilter}>Search all providers</button>
+        )}
+      </div>
+    )}
+    {allModels.length === 0 && reason === null && (
       <div className={styles.pickerEmpty}>
         {unreachable ? (group.selectionProblem !== undefined ? `${group.provider} model catalog is unavailable`
           : providerPresentation(group.provider)?.unavailable ?? `${group.provider} is unavailable`) : 'No models available on this account'}
@@ -346,9 +636,10 @@ function GroupChoices<Provider extends string>({ group, selection, onChange }: R
 }
 
 function ModelRow({
-  label, isSelected, isDisabled = false, onSelect,
+  label, providerTag, isSelected, isDisabled = false, onSelect,
 }: Readonly<{
   label: ReactNode;
+  providerTag?: string;
   isSelected: boolean;
   isDisabled?: boolean;
   onSelect: () => void;
@@ -363,6 +654,7 @@ function ModelRow({
       onClick={onSelect}
     >
       <span className={styles.pickerRowLabel}>{label}</span>
+      {providerTag !== undefined && <span className={styles.providerBadge}>{providerTag}</span>}
       {isSelected && (
         <>
           <AstryxIcon icon="check" size="sm" color="accent" className={styles.pickerCheck} />

@@ -1,3 +1,4 @@
+import { MESSAGES } from '../../../../../core/domain/messages.ts';
 import { parseComposerCommand } from '../../../../../core/domain/composer-command.ts';
 import { PLANNER_SWITCH_ARGUMENTS } from '../../../../../core/domain/planner-switch.ts';
 import type { IconName } from '../../../ui/icon/public.tsx';
@@ -19,25 +20,27 @@ export type ComposerCommand = Readonly<{
 export type CommandBinding = Pick<ComposerCommand, 'execute' | 'unavailableReason' | 'hidden'>;
 
 // The sole display order, shared by every surface. Bindings supply policy and effects, never ordering.
-const COMMANDS = Object.freeze([
-  Object.freeze({ id: 'track-stop', name: 'stop', icon: 'status-exited', hint: '停止当前回复', arguments: 'none' }),
-  Object.freeze({ id: 'reconnect-conversation', name: 'reconnect', icon: 'chat', hint: '重连原会话，保留上下文', arguments: 'none' }),
-  Object.freeze({ id: 'reset-conversation', name: 'reset', icon: 'chat', hint: '重置上下文，保留聊天记录', arguments: 'none' }),
-  Object.freeze({ id: 'new-conversation', name: 'new', icon: 'plus', hint: '新建对话，当前对话保留', arguments: 'none' }),
-  Object.freeze({ id: 'side-conversation', name: 'side', icon: 'chat', hint: 'Discuss with a text snapshot', arguments: 'optional' }),
-  Object.freeze({ id: 'planner-switch', name: 'planner', icon: 'chat', hint: 'Promote this Assistant to Planner', arguments: 'none', argumentError: PLANNER_SWITCH_ARGUMENTS }),
-  Object.freeze({ id: 'compact-conversation', name: 'compact', icon: 'compact', hint: '压缩当前对话上下文', arguments: 'none' }),
-  Object.freeze({ id: 'terminal-workbench', name: 'terminal', icon: 'terminal', hint: 'Open the Track terminal workbench', arguments: 'none', argumentError: TERMINAL_ARGUMENTS_MESSAGE }),
-  Object.freeze({ id: 'track-close', name: 'close', icon: 'status-done', hint: 'Close this Track', arguments: 'none' }),
-  Object.freeze({ id: 'track-open', name: 'open', icon: 'status-running', hint: 'Reopen this Track', arguments: 'none' }),
-] as const satisfies readonly Omit<ComposerCommand, 'execute'>[]);
+function commandDefinitions(): readonly Omit<ComposerCommand, 'execute'>[] {
+  return [
+    { id: 'track-stop', name: 'stop', icon: 'status-exited', hint: 'Stop the current response', arguments: 'none' },
+    { id: 'reconnect-conversation', name: 'reconnect', icon: 'chat', hint: 'Reconnect session and keep context', arguments: 'none' },
+    { id: 'reset-conversation', name: 'reset', icon: 'chat', hint: MESSAGES.chat.slashResetDesc, arguments: 'none' },
+    { id: 'new-conversation', name: 'new', icon: 'plus', hint: MESSAGES.chat.slashNewDesc, arguments: 'none' },
+    { id: 'side-conversation', name: 'side', icon: 'chat', hint: MESSAGES.chat.slashSideDesc, arguments: 'optional' },
+    { id: 'planner-switch', name: 'planner', icon: 'chat', hint: 'Promote this Assistant to Planner', arguments: 'none', argumentError: PLANNER_SWITCH_ARGUMENTS },
+    { id: 'compact-conversation', name: 'compact', icon: 'compact', hint: 'Compact conversation context', arguments: 'none' },
+    { id: 'terminal-workbench', name: 'terminal', icon: 'terminal', hint: MESSAGES.chat.slashTerminalDesc, arguments: 'none', argumentError: TERMINAL_ARGUMENTS_MESSAGE },
+    { id: 'track-close', name: 'close', icon: 'status-done', hint: MESSAGES.chat.slashCloseDesc, arguments: 'none' },
+    { id: 'track-open', name: 'open', icon: 'status-running', hint: 'Reopen this track', arguments: 'none' },
+  ];
+}
 
-export type CommandName = typeof COMMANDS[number]['name'];
+export type CommandName = 'stop' | 'reconnect' | 'reset' | 'new' | 'side' | 'planner' | 'compact' | 'terminal' | 'close' | 'open';
 export type CommandBindings = Readonly<Partial<Record<CommandName, CommandBinding>>>;
 
 export function composerCommands(bindings: CommandBindings): readonly ComposerCommand[] {
-  return COMMANDS.flatMap(command => {
-    const binding = bindings[command.name];
+  return commandDefinitions().flatMap(command => {
+    const binding = bindings[command.name as CommandName];
     return binding === undefined ? command.name === 'planner'
       ? [{ ...command, hidden: true, unavailableReason: 'Planner switching is not available in this conversation.', execute: () => false }] : []
       : [{ ...command, ...binding }];

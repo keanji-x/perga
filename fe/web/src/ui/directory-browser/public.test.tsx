@@ -133,7 +133,7 @@ describe('DirectoryBrowser behavior', () => {
     expect(screen.getByText('No matches')).toBeTruthy();
     fireEvent.change(input, { target: { value: '/work/src/' } });
     fireEvent.keyDown(input, { key: 'Enter' });
-    expect(await screen.findByText('这个文件夹是空的')).toBeTruthy();
+    expect(await screen.findByText('This folder is empty.')).toBeTruthy();
   });
   it('returns focus through two animation frames after loading', async () => {
     const callbacks: FrameRequestCallback[] = [];
@@ -149,12 +149,12 @@ describe('DirectoryBrowser behavior', () => {
 it('does not claim an empty directory after navigation fails', async () => {
   render(<DirectoryBrowser initialPath="/empty" onCancel={vi.fn()} onSelect={vi.fn()}
     listDirectory={(path) => path === '/empty' ? Promise.resolve({ path: '/empty', parent: '/', entries: [] }) : Promise.reject(new Error('Directory unavailable'))} />);
-  await screen.findByRole('heading', { name: '这个文件夹是空的' });
+  await screen.findByRole('heading', { name: 'This folder is empty.' });
   const input = screen.getByRole('combobox');
   fireEvent.change(input, { target: { value: '/failed/' } });
   fireEvent.keyDown(input, { key: 'Enter' });
   await screen.findByRole('alert');
-  expect(screen.queryByRole('heading', { name: '这个文件夹是空的' })).toBeNull();
+  expect(screen.queryByRole('heading', { name: 'This folder is empty.' })).toBeNull();
   expect(screen.queryByRole('heading', { name: 'No matches' })).toBeNull();
 });
 

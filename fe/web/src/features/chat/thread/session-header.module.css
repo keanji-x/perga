@@ -1,13 +1,101 @@
 @layer features {
-.header {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-}
+  .header {
+    display: inline-flex;
+    align-items: center;
+    flex-wrap: nowrap;
+    flex: none;
+    gap: var(--space-1);
+    min-inline-size: 0;
+  }
 
-.epoch {
-  color: var(--text-3);
-  font-size: var(--font-step-1-size);
-}
+  .signals {
+    display: inline-flex;
+    align-items: center;
+    flex-wrap: nowrap;
+    gap: var(--space-1);
+    min-inline-size: 0;
+  }
+
+  .signals:empty {
+    display: none;
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: calc(var(--space-1) + var(--space-half));
+    block-size: var(--control-h-sm);
+    max-inline-size: 11rem;
+    padding-inline: var(--space-2);
+    border: var(--space-px) solid var(--hairline);
+    border-radius: var(--radius-pill);
+    background: transparent;
+    color: var(--text-2);
+    font: var(--type-metadata);
+    letter-spacing: var(--type-metadata-tracking);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  .chipText {
+    min-inline-size: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .dot {
+    flex: none;
+    inline-size: var(--dot-sm);
+    block-size: var(--dot-sm);
+    border-radius: var(--radius-pill);
+    background: currentcolor;
+  }
+
+  .live {
+    border-color: var(--hairline);
+    background: var(--overlay-hover-faint);
+    color: var(--text-2);
+  }
+
+  .live .dot {
+    background: var(--accent);
+  }
+
+  .warning {
+    border-color: var(--warn-border);
+    background: var(--warn-soft);
+    color: var(--warn-text);
+  }
+
+  .error {
+    border-color: var(--error-border);
+    background: var(--error-soft);
+    color: var(--error-text);
+  }
+
+  .muted {
+    border-color: var(--hairline);
+    background: transparent;
+    color: var(--text-3);
+  }
+
+  .menuButton {
+    color: var(--text-3);
+  }
+
+  .menuMeta {
+    display: flex;
+    align-items: center;
+    padding: var(--space-1) var(--space-2);
+    color: var(--text-3);
+    font: var(--type-metadata);
+    letter-spacing: var(--type-metadata-tracking);
+    user-select: none;
+  }
+
+  .menuRole {
+    color: var(--text-2);
+    font-weight: var(--weight-medium);
+  }
 }

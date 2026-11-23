@@ -4,20 +4,25 @@
 
     position: absolute;
     inset-block: 0;
-    inset-inline-start: max(0px, calc(var(--document-start) - var(--control-h) - var(--space-1)));
+    inset-inline-start: max(0px, calc(var(--document-start) - var(--control-h) - var(--space-4)));
     inline-size: var(--control-h);
     pointer-events: none;
   }
   .viewport {
     position: sticky;
-    inset-block-start: 50vh;
+    inset-block-start: calc(var(--header-band) + var(--header-h) + var(--space-7));
     block-size: 0;
   }
   .navigator {
-    block-size: min(320px, calc(100dvh - var(--header-band) - var(--header-h) - var(--space-5) * 2));
+    block-size: min(320px, calc(100dvh - var(--header-band) - var(--header-h) - var(--space-7) * 2));
     inline-size: var(--control-h);
-    translate: 0 -50%;
+    opacity: 0.45;
     pointer-events: auto;
+    transition: opacity var(--motion-quick) var(--ease-feedback);
+  }
+  .navigator:hover,
+  .navigator:focus-within {
+    opacity: 1;
   }
   @media (width < 60rem) {
     .rail { display: none; }

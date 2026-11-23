@@ -108,7 +108,7 @@ describe('central theme generation', () => {
   it('preserves the independently pinned interface, reading and editor font stacks', () => {
     expect(source().typography.families).toEqual({
       ui: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif',
-      reading: '"New York", "Iowan Old Style", Charter, Georgia, "Songti SC", SimSun, "Noto Serif CJK SC", serif',
+      reading: '"New York", "Iowan Old Style", Charter, Georgia, "Source Han Serif SC", "Noto Serif CJK SC", "Songti SC", SimSun, serif',
       code: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace',
     });
   });

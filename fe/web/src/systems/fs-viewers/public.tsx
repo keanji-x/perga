@@ -7,6 +7,7 @@ import { Suspense, lazy, useCallback, useEffect, useRef, type ReactNode } from '
 
 import type { ApiFailure } from '../../../../core/api/types.ts';
 import type { CardFilesPort, DirectoryListingWire, GitChangedFileWire, GitDiffWire } from '../../../../core/domain/fs.ts';
+import { MESSAGES } from '../../../../core/domain/messages.ts';
 import { readFailureOf } from '../../../../core/domain/read-failure.ts';
 import { joinDirectoryPath } from '../../ui/directory-browser/public.tsx';
 import { useState } from '../../ui/state/public.ts';
@@ -254,7 +255,7 @@ export function FileViewer({ path, files, theme, slots }: FileViewerProps) {
             : listingError !== null
               ? <FileReadError failure={listingError.failure} resource="folder" onRetry={() => setListingRetry((value) => value + 1)} />
               : entries.length === 0
-                ? <div className="fv-state"><EmptyState variant="compact" icon={<Icon name="folder" />} title="这个文件夹是空的" description="这里还没有文件或子文件夹。" /></div>
+                ? <div className="fv-state"><EmptyState variant="compact" icon={<Icon name="folder" />} title={MESSAGES.fs.emptyFolderTitle} description={MESSAGES.fs.emptyFolderDescription} /></div>
                 : entries.map((entry) => {
                   const entryPath = joinDirectoryPath(listingPath, entry.name);
                   return (
@@ -347,7 +348,7 @@ function CodeTab({ state, selectedPath, theme, rawUrl, onRetry, onImageError }: 
   onRetry: () => void;
   onImageError: () => void;
 }): ReactNode {
-  if (selectedPath === null) return <div className="fv-empty"><EmptyState variant="compact" icon={<Icon name="file" />} title="选择一个文件以查看内容" description="文件内容会显示在这里。" /></div>;
+  if (selectedPath === null) return <div className="fv-empty"><EmptyState variant="compact" icon={<Icon name="file" />} title={MESSAGES.fs.selectFileTitle} description={MESSAGES.fs.selectFileDescription} /></div>;
   if (state.kind === 'idle' || state.kind === 'loading') {
     return <p className="fv-state">Loading file…</p>;
   }
@@ -490,7 +491,7 @@ function DiffTab({ files, selected, listLoading, error, diff, diffLoading, theme
         {listLoading
           ? <p className="fv-state">Loading changes…</p>
           : files.length === 0
-            ? error === null && <div className="fv-state"><EmptyState variant="compact" icon={<Icon name="file" />} title="工作区没有未提交的更改" description="修改文件后，可在这里查看差异。" /></div>
+            ? error === null && <div className="fv-state"><EmptyState variant="compact" icon={<Icon name="file" />} title={MESSAGES.fs.noChangesTitle} description={MESSAGES.fs.noChangesDescription} /></div>
             : files.map((file) => (
               <button
                 key={`${file.status}:${file.path}`}
@@ -510,7 +511,7 @@ function DiffTab({ files, selected, listLoading, error, diff, diffLoading, theme
         {error !== null
           ? <FileReadError failure={error.failure} resource="changes" onRetry={onRetry} />
           : selected === null
-            ? <div className="fv-state"><EmptyState variant="compact" icon={<Icon name="file" />} title="Select a changed file" description="选择更改过的文件以查看差异。" /></div>
+            ? <div className="fv-state"><EmptyState variant="compact" icon={<Icon name="file" />} title={MESSAGES.fs.selectDiffTitle} description={MESSAGES.fs.selectDiffDescription} /></div>
           : diffLoading || diff === null
             ? <p className="fv-state">Loading diff…</p>
             : (

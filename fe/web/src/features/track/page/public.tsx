@@ -1,3 +1,4 @@
+import { MESSAGES } from '../../../../../core/domain/messages.ts';
 import { activityLabelOf } from '../../../../../core/domain/activity.ts';
 import inventoryStyles from './inventory.module.css';
 import { LayerDismissal } from '../../../ui/dialog/public.tsx';
@@ -50,7 +51,7 @@ import styles from './page.module.css';
 type MobilePanelKind = 'outline' | Exclude<RowModuleView['key'], 'work' | 'temporary'> | 'conversations';
 
 export type TrackPageProps = Readonly<{
-  track: Pick<Track, 'id' | 'title' | 'closedAt' | 'working' | 'attention' | 'cards'> & Partial<Pick<Track, 'isolation'>>;
+  track: Pick<Track, 'id' | 'title' | 'closedAt' | 'working' | 'attention' | 'cards'> & Partial<Pick<Track, 'isolation' | 'updatedAt' | 'cwd'>>;
   /** Fill the reading column with an app-owned interactive surface. */
   fillReading?: boolean;
   /** Daily planning surfaces have no checkout isolation to explain. */
@@ -127,6 +128,26 @@ export type TrackPageProps = Readonly<{
   /** After a delete that holds, the server's answer or a 404 to a retry alike. */
   onTrackDeleted?: () => void;
 }>;
+
+function formatFolioDate(ms: number | undefined): string | null {
+  if (ms === undefined || !Number.isFinite(ms) || ms <= 0) return null;
+  const date = new Date(ms);
+  if (Number.isNaN(date.getTime())) return null;
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  return `Updated ${yyyy}-${mm}-${dd}`;
+}
+
+function directoryLeafOf(cwd: string | undefined): string | null {
+  if (cwd === undefined) return null;
+  const trimmed = cwd.trim().replace(/[\\/]+$/, '');
+  if (trimmed === '') return null;
+  const parts = trimmed.split(/[\\/]/);
+  const leaf = parts[parts.length - 1] || null;
+  if (leaf === null || /^trk_[0-9a-f]{16,}$/i.test(leaf)) return null;
+  return leaf;
+}
 
 /** The view model's module under `key`, by key rather than by index. Missing is an error rather than an empty page. */
 function rowModule(view: TrackPageView, key: RowModuleView['key']): RowModuleView {
@@ -207,7 +228,7 @@ export function TrackPage({ fillReading = false, showWorkspaceIsolation = true, 
     ] : []),
   ];
   const desktopSourceRef = useRef<HTMLSpanElement | null>(null);
-  const deleteTrackAction = (origin: DialogOrigin) => ({ label: 'Delete track', onClick: () => deletion.request(track.id, origin) });
+  const deleteTrackAction = (origin: DialogOrigin) => ({ label: 'Delete track', variant: 'destructive' as const, onClick: () => deletion.request(track.id, origin) });
   const trackMutationActions = [
     ...trackWorkActions,
     ...(!compactViewport && onShareTrack !== undefined ? [{ label: 'Share track', onClick: () => onShareTrack({ kind: 'anchor', anchor: { ref: desktopSourceRef }, unavailable: 'surface-center' }) }] : []),
@@ -224,6 +245,7 @@ export function TrackPage({ fillReading = false, showWorkspaceIsolation = true, 
     suppressEmpty: desktopConversations !== undefined || onStartConversation !== undefined || recentFiles !== undefined,
   });
   const [desktopActionsOpen, setDesktopActionsOpen] = useState(false);
+  const [pageScrolled, setPageScrolled] = useState(false);
   const desktopActionsRef = useRef<HTMLButtonElement | null>(null);
   const mobilePanelRef = useRef<HTMLElement | null>(null);
   const shareTriggerRef = useRef<HTMLButtonElement | null>(null);
@@ -294,10 +316,51 @@ export function TrackPage({ fillReading = false, showWorkspaceIsolation = true, 
     </span>
   ) : undefined;
 
+  const showArticleMasthead = !compactViewport && !fillReading && closeSurface === undefined;
+  const isDirectFolder = showWorkspaceIsolation && track.isolation === 'none';
+  const folioDate = formatFolioDate(track.updatedAt);
+  const folioDir = directoryLeafOf(track.cwd);
+  const folioParts = [
+    ...(isDirectFolder ? [folioDir ?? NO_ISOLATION_LABEL] : folioDir !== null ? [folioDir] : []),
+    ...(folioDate !== null ? [folioDate] : []),
+  ];
+
+  const titleBlock = (
+    <div className={styles.titleSlot} ref={titleSlotRef}>
+      <div
+        className={titleInHeader ? styles.mobileHeaderIdentity : showArticleMasthead ? styles.mastheadCluster : styles.titleCluster}
+        onFocusCapture={(event) => { lastFocusedTitleRef.current = event.target; }}
+        onBlurCapture={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget)) lastFocusedTitleRef.current = null;
+        }}
+      >
+        <h1 className={showArticleMasthead ? styles.mastheadHeading : styles.titleHeading}>
+          {onRenameTrack === undefined
+            ? <span className={showArticleMasthead ? styles.mastheadTitle : styles.title} data-nc-page-title=""><TrackTitle track={track} /></span>
+            : <EditableTitle value={track.title} placeholder={UNTITLED_TRACK_LABEL}
+                displayContent={<TrackTitle track={track} />} emptyCommit="clear" onCommit={onRenameTrack}
+                readCommitFailure={writeFailureText(TRACK_PATCH_FAILURES, TRACK_PATCH_TEXT.rename)} editLabel="Rename track" inputLabel="Track title"
+                className={showArticleMasthead ? styles.mastheadTitle : styles.title} isPageTitle titleRef={titleReadControlRef}
+                readView={titleInHeader && mobileTitleReadView !== undefined ? (controls) => <MobileTitleReadView
+                  controls={controls} host={mobileHeaderTitleHost} view={mobileTitleReadView} register={registerMobileTitleEdit} /> : undefined} />}
+        </h1>
+        {!titleInHeader && !showArticleMasthead && isDirectFolder && <ExplanationBadge label={NO_ISOLATION_LABEL}>{NO_ISOLATION_EXPLANATION}</ExplanationBadge>}
+        {!titleInHeader && <TrackClosedBadge closedAt={track.closedAt} />}
+        {/* Shared track activity and conversation unread state. */}
+        {!titleInHeader && <ActivityIndicator state={activity} />}
+      </div>
+    </div>
+  );
+
   return (
     <section
       className={`${styles.page} ${fillReading ? styles.fillReading : ''} ${closeSurface !== undefined ? styles.pageBoard : ''}`}
       data-nc-track-page=""
+      data-nc-scrolled={pageScrolled ? '' : undefined}
+      onScroll={(event) => {
+        const next = event.currentTarget.scrollTop > 72;
+        if (next !== pageScrolled) setPageScrolled(next);
+      }}
     >
       {dismissalLayer}
       <PageHeader
@@ -318,37 +381,36 @@ export function TrackPage({ fillReading = false, showWorkspaceIsolation = true, 
               </button>
             )}
             {/* The raw title, with the fallback as the placeholder. `emptyCommit="clear"`: the planner's `track_rename` succeeds only while the title is empty, so clearing the name is a real request here, not a cancel. */}
-            <div className={styles.titleSlot} ref={titleSlotRef}>
-      <div className={titleInHeader ? styles.mobileHeaderIdentity : styles.titleCluster}
-        onFocusCapture={(event) => { lastFocusedTitleRef.current = event.target; }}
-        onBlurCapture={(event) => {
-          if (!event.currentTarget.contains(event.relatedTarget)) lastFocusedTitleRef.current = null;
-        }}>
-        <h1 className={styles.titleHeading}>{onRenameTrack === undefined ? <span className={styles.title} data-nc-page-title=""><TrackTitle track={track} /></span> : <EditableTitle value={track.title} placeholder={UNTITLED_TRACK_LABEL}
-          displayContent={<TrackTitle track={track} />} emptyCommit="clear" onCommit={onRenameTrack}
-          readCommitFailure={writeFailureText(TRACK_PATCH_FAILURES, TRACK_PATCH_TEXT.rename)} editLabel="Rename track" inputLabel="Track title"
-          className={styles.title} isPageTitle titleRef={titleReadControlRef}
-          readView={titleInHeader && mobileTitleReadView !== undefined ? (controls) => <MobileTitleReadView
-            controls={controls} host={mobileHeaderTitleHost} view={mobileTitleReadView} register={registerMobileTitleEdit} /> : undefined} />}</h1>
-        {showWorkspaceIsolation && track.isolation === 'none' && <ExplanationBadge label={NO_ISOLATION_LABEL}>{NO_ISOLATION_EXPLANATION}</ExplanationBadge>}
-        {!titleInHeader && <TrackClosedBadge closedAt={track.closedAt} />}
-        {/* Shared track activity and conversation unread state. */}
-        {!titleInHeader && <ActivityIndicator state={activity} />}
-      </div>
-
-</div>
+            {showArticleMasthead ? (
+              <div className={styles.runningHeadCluster}>
+                {isDirectFolder && <ExplanationBadge label={NO_ISOLATION_LABEL}>{NO_ISOLATION_EXPLANATION}</ExplanationBadge>}
+                <div className={styles.runningHeadSwap}>
+                  <span className={styles.runningHeadFolio}>
+                    {folioParts.length > 0
+                      ? folioParts.map((part, index) => (
+                        <span key={part} className={styles.folioPart}>
+                          {index > 0 && <span className={styles.folioDot} aria-hidden="true">·</span>}
+                          <span>{part}</span>
+                        </span>
+                      ))
+                      : <span>Report</span>}
+                  </span>
+                  <span className={styles.runningHeadTitle} aria-hidden={!pageScrolled}><TrackTitle track={track} /></span>
+                </div>
+              </div>
+            ) : titleBlock}
           </>
         }
         meta={!compactViewport && !boardOpen && onShareTrack !== undefined && <AstryxButton ref={shareTriggerRef}
-          isIconOnly label="分享" tooltip="分享" variant="ghost" size="sm" icon={<Icon name="share" size="sm" />} className={styles.shareTrigger}
+          isIconOnly label={MESSAGES.common.share} tooltip={MESSAGES.common.share} variant="ghost" size="sm" icon={<Icon name="share" size="sm" />} className={styles.shareTrigger}
           onClick={() => onShareTrack({ kind: 'anchor', anchor: { ref: shareTriggerRef }, unavailable: 'surface-center' })} />}
         actions={(
           <span className={styles.headerActions}>
             {showConversationAction && !boardOpen && !conversationOpen && (onReply !== undefined || onStartConversation !== undefined) && (
               <AstryxButton
                 className={styles.desktopChatAction}
-                label="讨论这项工作"
-                tooltip={activityLabel ?? (onReply === undefined ? 'Open conversation' : 'Open Planner conversation')}
+                label={MESSAGES.track.discussAction}
+                tooltip={activityLabel ?? (onReply === undefined ? 'Open conversation' : MESSAGES.track.discussTooltip)}
                 variant="ghost"
                 size="sm"
                 icon={<><Icon name="chat" /><ActivityIndicator state={activity} /></>}
@@ -405,6 +467,7 @@ export function TrackPage({ fillReading = false, showWorkspaceIsolation = true, 
         inert={boardOpen}
       >
         <div className={styles.doc} inert={fileViewer !== undefined}>
+          {showArticleMasthead && <header className={styles.articleMasthead}>{titleBlock}</header>}
           {compactViewport && mobileReportIntro}
           {compactViewport && (panelHeader !== undefined || panelContent !== undefined) && <div className={styles.compactPanelContent}><PanelCard>{panelHeader}{panelContent}</PanelCard></div>}
           {report}
@@ -465,7 +528,7 @@ export function TrackPage({ fillReading = false, showWorkspaceIsolation = true, 
                 onBack={closeMobilePanel}
               >
                 <div className={styles.mobileConversationList}>
-                  {conversationList ?? <EmptyState variant="compact" icon={<Icon name="chat" />} title="还没有对话" description="在这里发起的对话会显示在列表中。" />}
+                  {conversationList ?? <EmptyState variant="compact" icon={<Icon name="chat" />} title={MESSAGES.chat.noConversationsTitle} description={MESSAGES.chat.noConversationsDescription} />}
                 </div>
               </MobileListPage>
             ) : (

@@ -2,6 +2,7 @@ import { providerPresentation } from '../../../../core/domain/provider-presentat
 // Settings › Planners — whether each Planner provider can run on this server right now, and the fix
 // when one cannot (#1817), plus the next turn's execution budget (#2618).
 
+import { useId } from 'react';
 import { Badge as AstryxBadge } from '@astryxdesign/core/Badge';
 import { Button as AstryxButton } from '@astryxdesign/core/Button';
 import { Text as AstryxText } from '@astryxdesign/core/Text';
@@ -12,6 +13,7 @@ import {
 } from '../../../../core/domain/agent-providers.ts';
 import { ErrorBox } from '../../ui/error-box/public.tsx';
 import { plannerTurnDuration } from '../../../../core/domain/settings.ts';
+import { MESSAGES } from '../../../../core/domain/messages.ts';
 import { SettingRow, SettingsList, SettingsPane } from './public.tsx';
 import { SettingEditor, type SettingEditorCopy, type SettingEditorProps } from './setting-editor.tsx';
 import styles from './settings.module.css';
@@ -49,7 +51,6 @@ const TURN_DURATION: SettingEditorCopy = Object.freeze({
   unit: 'minutes',
   inputMode: 'numeric',
   name: 'duration',
-  description: 'Default: 30 minutes. Choose 1–240 minutes. Changes apply to the next turn; retrying an unconfirmed start keeps its frozen budget. Hold waiting time does not count. Backends without steer support receive only the budget reminder at the start of the turn, without a mid-turn warning.',
   resetLabel: 'Restore default duration',
   parse(value: string | undefined) {
     const parsed = plannerTurnDuration(value);
@@ -87,6 +88,7 @@ function oldestCheck(providers: readonly ProviderAvailability[]): number | null 
 export function PlannersPane({
   providers, loadError, onRetryLoad, onRecheck, rechecking, recheckError, authenticationRecovery, turnDuration,
 }: PlannersPaneProps) {
+  const durationDescriptionId = useId();
   const checkedAt = providers === undefined ? null : oldestCheck(providers.map(({ availability }) => availability));
   return (
     <SettingsPane
@@ -95,8 +97,12 @@ export function PlannersPane({
       lede="Which Planner providers this server can run right now, and how to fix one that cannot."
     >
       <SettingsList>
-        <SettingRow title="Maximum turn duration" titleSuffix={TURN_DURATION.unit}
-          control={<SettingEditor {...turnDuration} copy={TURN_DURATION} />} />
+        <SettingRow
+          title={MESSAGES.settings.turnDurationLabel}
+          titleSuffix={TURN_DURATION.unit}
+          description={<span id={durationDescriptionId} className={styles.plannerReason}>{MESSAGES.settings.turnDurationDescription}</span>}
+          control={<SettingEditor {...turnDuration} copy={TURN_DURATION} hideLabel describedById={durationDescriptionId} />}
+        />
       </SettingsList>
       {loadError !== null && <ErrorBox message={loadError} onRetry={onRetryLoad} />}
       {providers === undefined
@@ -114,7 +120,7 @@ export function PlannersPane({
                   {describe({ availability: entry, accepts_unavailable_blank_track })}
                 </span>}
                 control={<>
-                  <AstryxBadge className={styles.pluginStateChip}
+                  <AstryxBadge className={styles.plannerStatusStamp} data-nc-planner-status={entry.status}
                     variant={STATUS_BADGES[entry.status].variant} label={STATUS_BADGES[entry.status].label} />
                   {authenticationRecovery?.provider === entry.provider && entry.authentication_notice?.kind === 'sign_in_required'
                     && <AstryxButton label="Retry queued messages after server sign-in" variant="secondary"

@@ -7,8 +7,9 @@
     --text-body-size: var(--type-metadata-size);
     --text-body-leading: var(--type-metadata-leading);
     --font-weight-semibold: var(--weight-normal);
+    --color-border: color-mix(in srgb, var(--hairline) 65%, transparent);
     color: var(--text-3);
-    margin-block: var(--space-2);
+    margin-block: var(--space-3) var(--space-1);
   }
 
   .notice > [role='separator'] { margin-block-end: var(--space-1); }
@@ -23,6 +24,8 @@
   .warning .label { color: var(--warn-text); }
   .error .label { color: var(--error-text); }
   .clock { color: var(--text-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .detailSep { color: var(--text-3); opacity: 0.6; }
+  .detailItem { color: var(--text-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
   .actions {
     margin-inline-start: auto;
     display: flex;

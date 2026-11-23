@@ -44,7 +44,7 @@ it('commits the Track shell before report preparation and content', async () => 
   expect(fixture.requests.some(request => request.path === '/api/v1/tracks/daily')).toBe(true);
   expect(parse.mock.calls.filter(([source]) => source === SOURCE)).toHaveLength(0);
   expect(document.querySelector('[data-nc-report]')).toBeNull();
-  expect(screen.getByRole('button', { name: '讨论这项工作' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Discuss' })).toBeTruthy();
   await frame.next(); await frame.next();
   await screen.findByRole('heading', { name: 'Staged report' });
 });
@@ -180,7 +180,7 @@ it('completes a valid empty report through the same committed read boundary', as
   await act(() => fixture.client.setQueryData<TrackAggregateSnapshotDto>(queryKeys.trackDetail('daily'), detail => detail === undefined ? detail : ({ ...detail, report: fixtureReport() })));
   expect(fixture.kernel.posts()).toHaveLength(0);
   await frame.next(); await frame.next();
-  await screen.findByRole('heading', { name: '进展会整理在这里' });
+  await screen.findByRole('heading', { name: 'Progress will be compiled here' });
   expect(document.querySelector('[data-nc-report]')).toBeNull();
   await waitFor(() => expect(fixture.kernel.stored('track', 'daily')).toBeDefined());
 });

@@ -47,7 +47,7 @@
        so the space above and below it reads as the dialog's own margin rather
        than as a panel that slid up. It is not centring, and it is not pretending
        to be. */
-    min-block-size: min(42rem, 78dvh);
+    min-block-size: min(30rem, 68dvh);
   }
 
   .sectionNav {
@@ -372,6 +372,28 @@
        has no other text in it. */
     --color-neutral: var(--chip-neutral);
     --color-text-primary: var(--chip-text-primary);
+  }
+
+  /* Quiet editorial ink-on-parchment status stamp for Settings > Planners (no loud colored pill). */
+  .plannerStatusStamp {
+    border-radius: var(--radius-sm);
+    font-weight: var(--weight-medium);
+    letter-spacing: 0.01em;
+    --color-warning: transparent;
+    --color-on-warning: var(--text-2);
+    --color-success: transparent;
+    --color-on-success: var(--success-text);
+    --color-neutral: transparent;
+    --color-text-primary: var(--text-3);
+    box-shadow: inset 0 0 0 1px var(--hairline);
+  }
+
+  .plannerStatusStamp[data-nc-planner-status='unavailable'] {
+    box-shadow: inset 0 0 0 1px var(--hairline-strong);
+  }
+
+  .plannerStatusStamp[data-nc-planner-status='ready'] {
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--success) 32%, var(--hairline));
   }
 
 

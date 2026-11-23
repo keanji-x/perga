@@ -4,6 +4,7 @@ import { DropdownMenuItem } from '@astryxdesign/core/DropdownMenu';
 
 import type { Area } from '../../../../core/domain/area.ts';
 import { areaPinnedTracks, railAreaTracks, type Track } from '../../../../core/domain/track.ts';
+import { MESSAGES } from '../../../../core/domain/messages.ts';
 import { Icon } from '../../ui/icon/public.tsx';
 import { SidebarTrackGroup, type RowProps, type GroupManagement } from './sidebar-group.tsx';
 import styles from './shell.module.css';
@@ -36,7 +37,7 @@ export function AreaGroup({
     ? `${area.name} · ${targetLabel ?? area.executionTargetId}`
     : area.name;
   return <SidebarTrackGroup
-    emptyState={readReady ? { icon: <Icon name="file" />, title: '没有可显示的 Track', description: '此 Area 中符合当前筛选的 Track 会显示在这里。' } : null}
+    emptyState={readReady ? { icon: <Icon name="file" />, title: MESSAGES.sidebar.noVisibleTracksTitle, description: MESSAGES.sidebar.noVisibleTracksDescription } : null}
     title={areaTitle}
     label={`area ${area.name}`}
     icon="folder"
@@ -52,7 +53,7 @@ export function AreaGroup({
         onClick={() => onShare(origin)} />}
       <DropdownMenuItem label="Edit area" onClick={() => onEdit(origin)} />
       <DropdownMenuItem label={showClosed ? 'Hide closed' : 'Show closed'} onClick={() => onSetShowClosed(!showClosed)} />
-      <DropdownMenuItem label="Delete area" onClick={() => onRequestDelete(area.id, origin)} />
+      <DropdownMenuItem label="Delete area" variant="destructive" onClick={() => onRequestDelete(area.id, origin)} />
     </>}
     actions={
       <button type="button" data-nc-role="icon" className={`${styles.areaNew} ${rowLayout('outer')}`}

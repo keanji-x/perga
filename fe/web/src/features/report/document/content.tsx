@@ -117,11 +117,24 @@ function WorkspaceImage({ path, label, files, context }: {
   const image = <img className={styles.image} src={resource.url} alt={label} loading="lazy"
     onLoad={resource.onLoad} onError={resource.onError} />;
   if (context.inLink) return image;
+  const caption = label !== '' && label !== 'Image'
+    ? <span className={styles.figcaption} aria-hidden="true">{label}</span>
+    : null;
   if (context.onOpenFileLink !== undefined) {
-    return <button type="button" className={styles.imageButton} title={path}
-      onClick={() => context.onOpenFileLink?.({ path })}>{image}</button>;
+    return (
+      <span className={styles.figure}>
+        <button type="button" className={styles.imageButton} title={path}
+          onClick={() => context.onOpenFileLink?.({ path })}>{image}</button>
+        {caption}
+      </span>
+    );
   }
-  return <Destination destination={path} label={label} body={image} image context={{ ...context, fileBasePath: '' }} />;
+  return (
+    <span className={styles.figure}>
+      <Destination destination={path} label={label} body={image} image context={{ ...context, fileBasePath: '' }} />
+      {caption}
+    </span>
+  );
 }
 
 /** Narrow link capability for app composition; all admission remains in Destination. */

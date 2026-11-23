@@ -16,13 +16,17 @@ export function ConversationGroups({ conversations, children, emptyActive, enabl
   if (!enabled) return children(conversations);
   const active = conversations.filter(row => row.archivedAt == null);
   const archived = conversations.filter(row => row.archivedAt != null);
+  /* Only introduce Active/Archived group headers once archived rows actually exist. */
+  if (archived.length === 0) {
+    return active.length === 0 ? emptyActive : children(active);
+  }
   return <>
     <ConversationGroup title="Active" label="Active conversations" rows={active} defaultIsOpen>
       {active.length === 0 ? emptyActive : children(active)}
     </ConversationGroup>
-    {archived.length > 0 && <ConversationGroup title="Archived" label="Archived conversations" rows={archived} defaultIsOpen={false}>
+    <ConversationGroup title="Archived" label="Archived conversations" rows={archived} defaultIsOpen={false}>
       {children(archived)}
-    </ConversationGroup>}
+    </ConversationGroup>
   </>;
 }
 

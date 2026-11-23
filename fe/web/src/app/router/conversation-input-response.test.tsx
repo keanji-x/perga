@@ -101,7 +101,7 @@ it('shows the local sending state before a held request answers', async () => {
     await waitFor(() => expect(view.requests.filter(request => request.path.endsWith('/messages'))).toHaveLength(1));
     const localMessage = document.querySelector('[data-nc-thread] [data-nc-entry] [data-nc-turn="you"]');
     expect(localMessage?.textContent).toContain('Send without waiting for the server');
-    expect(screen.getByText('正在发送…')).toBeDefined();
+    expect(screen.getAllByText('Sending…').length).toBeGreaterThan(0);
     expect(buildConversationTranscript).not.toHaveBeenCalled();
     // Local dispatch is not a confirmed queued entry.
     expect(screen.queryByText('Queued · sends when this turn ends')).toBeNull();
@@ -123,7 +123,7 @@ it('shows first-message sending feedback while conversation creation is held', a
     fireEvent.keyDown(field(), { key: 'Enter' });
     await waitFor(() => expect(view.requests.some(request => request.method === 'POST' && request.path.endsWith('/sessions'))).toBe(true));
     expect(document.querySelector('[data-nc-turn="you"]')?.textContent).toBe('The first local message');
-    expect(screen.getByText('正在发送…')).toBeDefined();
+    expect(screen.getAllByText('Sending…').length).toBeGreaterThan(0);
     expect(screen.getByRole('button', { name: 'Send' }).hasAttribute('disabled')).toBe(true);
   } finally { await response.release(fixtureCreation(fixtureSession('created', 'daily'))); cleanup(); view.client.clear(); }
 });

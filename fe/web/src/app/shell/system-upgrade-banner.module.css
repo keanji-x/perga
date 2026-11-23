@@ -1,26 +1,120 @@
 @layer features {
-  .banner {
+  .card {
     flex: none;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-3);
-    padding: var(--space-2) var(--space-4);
-    border-block-end: 1px solid var(--hairline);
-    background: var(--paper);
+    border: var(--space-px) solid color-mix(in srgb, var(--hairline) 85%, transparent);
+    border-radius: var(--radius-md);
+    background: var(--surface-card);
     color: var(--text);
-    font-size: var(--font-step-1-size);
-    max-block-size: 30dvh;
-    overflow: auto;
+    font: var(--type-metadata);
+    letter-spacing: var(--type-metadata-tracking);
     overflow-wrap: anywhere;
   }
-  .banner p { margin: 0; }
-  .actions { display: flex; gap: var(--space-2); flex: none; }
-  .actions button {
-    padding: var(--space-2);
-    border: 1px solid var(--hairline);
-    border-radius: var(--radius-sm);
-    cursor: pointer;
+
+  .sidebar {
+    padding: var(--space-2) var(--space-3);
   }
-  .actions button:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+
+  .floating {
+    margin: var(--space-2) var(--space-3) 0;
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-md);
+  }
+
+  .popoverCard {
+    padding: var(--space-2) var(--space-3);
+    color: var(--text);
+    font: var(--type-metadata);
+    letter-spacing: var(--type-metadata-tracking);
+    overflow-wrap: anywhere;
+  }
+
+  .inner {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    min-inline-size: 0;
+  }
+
+  .head {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-inline-size: 0;
+  }
+
+  .title {
+    font-weight: var(--weight-medium);
+    color: var(--text);
+  }
+
+  .dot {
+    flex: none;
+    inline-size: var(--dot-sm);
+    block-size: var(--dot-sm);
+    border-radius: var(--radius-pill);
+  }
+
+  .accent { background: var(--accent); }
+  .warning { background: var(--warn); }
+  .error { background: var(--error); }
+
+  .messages {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-half);
+    min-inline-size: 0;
+    color: var(--text-2);
+  }
+
+  .messages p {
+    margin: 0;
+  }
+
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-1);
+    padding-block-start: var(--space-half);
+  }
+
+  .collapsedWrap {
+    flex: none;
+    display: grid;
+    place-items: center;
+  }
+
+  .collapsedTrigger {
+    position: relative;
+    display: grid;
+    place-items: center;
+    inline-size: var(--control-h);
+    block-size: var(--control-h);
+    border-radius: var(--radius-md);
+    border: var(--space-px) solid color-mix(in srgb, var(--hairline) 85%, transparent);
+    background: var(--surface-card);
+    color: var(--text-2);
+    cursor: pointer;
+    transition: background var(--motion-quick) var(--ease-feedback),
+      color var(--motion-quick) var(--ease-feedback);
+  }
+
+  .collapsedTrigger:focus-visible {
+    outline: 2px solid var(--text);
+    outline-offset: 2px;
+  }
+
+  .collapsedTrigger:hover {
+    background: var(--overlay-hover-strong);
+    color: var(--text);
+  }
+
+  .cornerDot {
+    position: absolute;
+    inset-block-start: var(--space-1);
+    inset-inline-end: var(--space-1);
+    inline-size: var(--dot-sm);
+    block-size: var(--dot-sm);
+    border-radius: var(--radius-pill);
+  }
 }

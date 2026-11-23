@@ -31,12 +31,25 @@ export function DirectoryBrowser({ listDirectory, initialPath, onCancel, onSelec
   const [listing, setListing] = useState<DirectoryListing | null>(null);
   const [pathText, setPathText] = useState(initialPath ? directoryInputValue(initialPath) : '');
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
+  const [showHidden, setShowHidden] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const requestSequence = useRef(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const optionsId = `${useId()}-directory-options`;
-  const visible = useMemo(() => listing?.entries.filter((entry) => entry.name.toLowerCase().startsWith(pathText.slice(directoryInputValue(listing.path).length).toLowerCase())) ?? [], [listing, pathText]);
+  const filterPrefix = listing ? pathText.slice(directoryInputValue(listing.path).length).toLowerCase() : '';
+  const hasHiddenEntries = useMemo(
+    () => listing?.entries.some((entry) => entry.name.startsWith('.')) ?? false,
+    [listing],
+  );
+  const visible = useMemo(() => {
+    const entries = listing?.entries ?? [];
+    const includeDotfiles = showHidden || filterPrefix.startsWith('.');
+    return entries.filter((entry) => {
+      if (!includeDotfiles && entry.name.startsWith('.')) return false;
+      return entry.name.toLowerCase().startsWith(filterPrefix);
+    });
+  }, [listing, filterPrefix, showHidden]);
   const interactive = (entry: DirectoryEntry) => entry.isDirectory || mode === 'file';
   const load = (path?: string) => {
     if (path !== undefined && !path.startsWith('/')) { setError('Enter an absolute path'); return; }
@@ -143,20 +156,32 @@ export function DirectoryBrowser({ listDirectory, initialPath, onCancel, onSelec
         {/* `role="none"`: a listbox owns options, and neither placeholder row is one. */}
         {listing !== null && !loading && error === null && visible.length === 0 && (
           <li className={styles.placeholder} role="none">
-            <EmptyState variant="compact" icon={<Icon name={empty ? 'folder' : 'search'} />} title={empty ? '这个文件夹是空的' : 'No matches'} description={empty ? '这里还没有文件或子文件夹。' : '试试其他文件夹名称。'} />
+            <EmptyState variant="compact" icon={<Icon name={empty ? 'folder' : 'search'} />} title={empty ? 'This folder is empty.' : 'No matches'} description={empty ? 'No files or subfolders here yet.' : 'Try another folder name.'} />
           </li>
         )}
       </ul>
 
       <div className={styles.actions}>
-        <Button type="button" variant="ghost" label="Cancel" onClick={onCancel} />
-        <Button
-          type="button"
-          variant="primary"
-          label={selectLabel}
-          isDisabled={!matchesListing}
-          onClick={() => { if (listing) onSelect(listing.path); }}
-        />
+        {hasHiddenEntries && (
+          <button
+            type="button"
+            className={styles.hiddenToggle}
+            aria-pressed={showHidden}
+            onClick={() => setShowHidden((current) => !current)}
+          >
+            {showHidden ? 'Hide hidden' : 'Show hidden'}
+          </button>
+        )}
+        <div className={styles.actionGroup}>
+          <Button type="button" variant="ghost" label="Cancel" onClick={onCancel} />
+          <Button
+            type="button"
+            variant="primary"
+            label={selectLabel}
+            isDisabled={!matchesListing}
+            onClick={() => { if (listing) onSelect(listing.path); }}
+          />
+        </div>
       </div>
     </section>
   );

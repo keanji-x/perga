@@ -8,6 +8,7 @@ import { Icon } from '../../../ui/icon/public.tsx';
 import { ConversationGroups } from './groups.tsx';
 import { activityLabelOf, type CardActivity } from '../../../../../core/domain/activity.ts';
 import { conversationName, CONVERSATION_KIND_LABEL, type Conversation } from '../../../../../core/domain/conversation.ts';
+import { MESSAGES } from '../../../../../core/domain/messages.ts';
 import { deriveConversationList } from '../../../../../core/view/conversation-list.ts';
 import { ContextIconSlot, ContextItem, ContextList } from '../../../ui/panel-card/context.tsx';
 import { ActivityIndicator } from '../../../ui/activity-indicator/public.tsx';
@@ -35,11 +36,11 @@ export function ChatList({
   conversations, cards, activeId = null, showTrack = true, onOpen, onArchive, unreadIds, awaitingInputIds, context = false,
 }: ChatListProps) {
   const descriptionPrefix = useId();
-  if (conversations.length === 0) return context ? null : <EmptyState variant="compact" icon={<Icon name="chat" />} title="还没有对话" description="在这里发起的对话会显示在列表中。" />;
+  if (conversations.length === 0) return context ? null : <EmptyState variant="compact" icon={<Icon name="chat" />} title={MESSAGES.chat.noConversationsTitle} description={MESSAGES.chat.noConversationsDescription} />;
 
   const List = context ? ContextList : 'ul';
   return (
-    <ConversationGroups enabled={onArchive !== undefined || conversations.some(row => row.archivedAt != null)} conversations={conversations} emptyActive={context ? null : <EmptyState variant="compact" icon={<Icon name="chat" />} title="暂无活跃对话" description="活跃对话会显示在这里。" />}>
+    <ConversationGroups enabled={onArchive !== undefined || conversations.some(row => row.archivedAt != null)} conversations={conversations} emptyActive={context ? null : <EmptyState variant="compact" icon={<Icon name="chat" />} title={MESSAGES.chat.noActiveConversationsTitle} description={MESSAGES.chat.noActiveConversationsDescription} />}>
     {shown => <List className={context ? undefined : styles.list}>
       {deriveConversationList({ conversations: shown, cards, unreadIds, awaitingInputIds }).map(({ conversation, activity, unread, name }) => {
         const description = activity === 'working' ? null : activityLabelOf(activity);

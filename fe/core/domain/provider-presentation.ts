@@ -2,7 +2,7 @@
 
 /** Known display labels and menu hints. Unknown runtime IDs remain usable and round-trip unchanged. */
 export const PROVIDER_PRESENTATION: Readonly<Record<string, Readonly<{
-  icon?: 'codex' | 'claude' | 'agent'; label: string; unavailable: string; hiddenUntilKnown: boolean; switchNote: boolean;
+  icon?: 'codex' | 'claude' | 'agent'; label: string; shortLabel?: string; unavailable: string; hiddenUntilKnown: boolean; switchNote: boolean;
 }>>> = Object.freeze({
   codex: Object.freeze({
     icon: 'codex', label: 'Codex', unavailable: 'codex is not running', hiddenUntilKnown: false, switchNote: true,
@@ -16,7 +16,7 @@ export const PROVIDER_PRESENTATION: Readonly<Record<string, Readonly<{
     switchNote: false,
   }),
   antigravity: Object.freeze({
-    icon: 'agent', label: 'Antigravity (agy)', unavailable: 'Antigravity (agy) cannot run on this server right now', hiddenUntilKnown: true,
+    icon: 'agent', label: 'Antigravity (agy)', shortLabel: 'AGY', unavailable: 'Antigravity (agy) cannot run on this server right now', hiddenUntilKnown: true,
     switchNote: false,
   }),
   grok: Object.freeze({
@@ -30,6 +30,7 @@ export function providerPresentation(provider: string) {
   const labelKey = provider.slice(provider.lastIndexOf(':') + 1);
   return (Object.hasOwn(PROVIDER_PRESENTATION, labelKey) ? PROVIDER_PRESENTATION[labelKey] : undefined) ?? {
     icon: undefined,
+    shortLabel: undefined,
     label: provider, unavailable: `${provider} cannot run on this server right now`,
     hiddenUntilKnown: false, switchNote: false,
   };

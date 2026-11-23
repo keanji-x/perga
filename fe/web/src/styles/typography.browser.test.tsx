@@ -21,9 +21,9 @@ it.each(['light', 'dark'])('retains serif heading hierarchy and independent acti
   const first = view.container.querySelector<HTMLElement>('[data-nc-report] h2')!;
   const second = view.container.querySelector<HTMLElement>('[data-nc-report] h3')!;
   const paragraph = view.container.querySelector<HTMLElement>('[data-nc-report] p')!;
-  expect(getComputedStyle(first).fontSize).toBe('20px');
+  expect(getComputedStyle(first).fontSize).toBe('24px');
   expect(getComputedStyle(first).fontWeight).toBe('700');
-  expect(getComputedStyle(second).fontSize).toBe('16px');
+  expect(getComputedStyle(second).fontSize).toBe('18px');
   expect(getComputedStyle(second).fontWeight).toBe('600');
   expect(getComputedStyle(second).fontFamily).toBe(getComputedStyle(paragraph).fontFamily);
   expect(getComputedStyle(paragraph).fontSize).toBe('16px');

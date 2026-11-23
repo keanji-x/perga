@@ -1,10 +1,14 @@
 @layer ui {
-  /* CardFrame owns the shared shape, material and clipping. Context panels
-     request its flat mode; this owner adds only module layout. */
+  /* Elevated floating card plane: distinct from the parchment reading ground via surface step + soft shadow, without harsh borders. */
   .card {
     display: flex;
     flex-direction: column;
     min-inline-size: 0;
+    border: 0;
+    border-radius: var(--radius-lg);
+    background: var(--surface-card);
+    box-shadow: var(--shadow-float);
+    padding-block: var(--space-3);
   }
 
   .fill { block-size: 100%; max-block-size: 100%; min-block-size: 0; }
@@ -15,9 +19,9 @@
     min-inline-size: 0;
   }
 
-  /* One surface; module separation comes from spacing. */
+  /* One surface; generous vertical rhythm separates marginalia modules without dividers. */
   .module + .module {
-    margin-block-start: var(--space-1);
+    margin-block-start: var(--space-5);
   }
 
   /*
@@ -50,7 +54,7 @@
      panel has no room to spend. The two always travel together — 11px uppercase
      without added tracking is not readable. */
   .title {
-    color: var(--text-2);
+    color: var(--text-3);
     display: flex;
     align-items: center;
     gap: var(--space-2);

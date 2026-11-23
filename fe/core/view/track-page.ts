@@ -1,6 +1,7 @@
 // The track page's panel view model, derived once for every viewport; the desktop and mobile
 // painters render from it and this file is the authority on the rules and the action wording.
 
+import { MESSAGES } from '../domain/messages.js';
 import { terminalPresentation } from '../domain/terminal-presentation.js';
 import { PROVIDER_PRESENTATION } from '../domain/provider-presentation.js';
 import { groupPanelRows, progressRowFinished } from './panel-groups.js';
@@ -221,13 +222,13 @@ export function deriveTrackPageView(input: Readonly<{
     title: 'Tools',
     rows: groupPanelRows(input.cards.map(card => cardRow(card, taskByCard.get(card.id) ?? null, input.activity, terminalNumbers.get(card.id) ?? null)), 'cards')
       .flatMap(group => group.rows),
-    empty: '还没有工具',
+    empty: MESSAGES.track.noToolsTitle,
   };
   const tasks: InventoryModuleView = {
     key: 'tasks',
     title: 'Tasks',
     rows: taskRows,
-    empty: '还没有任务',
+    empty: MESSAGES.track.noTasksTitle,
   };
   // A desktop work item owns its current worker's entry and maintenance actions.
   // Only an existing, openable destination can be absorbed; unknown tools remain reachable.
@@ -295,9 +296,9 @@ export function deriveTrackPageView(input: Readonly<{
   return {
     rowModules: [tasks, { ...cards, rows: cards.rows.map(row => independentById.get(row.id) ?? row) }],
     desktop: { rowModules: [{
-      key: 'work', title: 'Progress', empty: '还没有任务', rows: orderEntries(taskEntries).map(entry => entry.row),
+      key: 'work', title: 'Progress', empty: MESSAGES.track.noTasksTitle, rows: orderEntries(taskEntries).map(entry => entry.row),
     }, {
-      key: 'cards', title: 'Workbench', empty: '还没有工具', rows: orderEntries(resourceEntries.filter(entry => !entry.temporary)).map(entry => entry.row),
+      key: 'cards', title: 'Workbench', empty: MESSAGES.track.noToolsTitle, rows: orderEntries(resourceEntries.filter(entry => !entry.temporary)).map(entry => entry.row),
     }, ...(temporaryIds.size === 0 ? [] : [{
       key: 'temporary' as const, title: 'Temporary terminals', empty: 'No temporary terminals.',
       rows: orderEntries(resourceEntries.filter(entry => entry.temporary)).map(entry => entry.row),

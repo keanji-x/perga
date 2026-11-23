@@ -6,6 +6,7 @@ import { useState } from '../../ui/state/public.ts';
 import { useEdgePresence } from '../../ui/motion/edge-presence.ts';
 import { readSurfaceFrame } from '../../ui/motion/geometry.ts';
 import { visibleAreas, type Area } from '../../../../core/domain/area.ts';
+import { MESSAGES } from '../../../../core/domain/messages.ts';
 import { areaPinnedTracks, type Track } from '../../../../core/domain/track.ts';
 import { ErrorBox } from '../../ui/error-box/public.tsx';
 import { Icon } from '../../ui/icon/public.tsx';
@@ -84,14 +85,14 @@ function NavigationPage({
               onClick={() => onSelectArea(area.id)}>
               <span className={styles.trackIcon}><Icon name="folder" /></span>
               <span className={styles.trackCopy}><span className={styles.trackTitle}>{area.name}</span>
-                {tracksByArea.has(area.id) && <span className={styles.trackMeta}>{tracksByArea.get(area.id)!.length} 个 Tracks{area.id === selected?.id && <span> · {new Date(area.updatedAt).toDateString() === new Date().toDateString() ? '今天' : new Date(area.updatedAt).toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' }).replaceAll('/', '-')}更新</span>}</span>}
+                {tracksByArea.has(area.id) && <span className={styles.trackMeta}>{tracksByArea.get(area.id)!.length} {tracksByArea.get(area.id)!.length === 1 ? 'track' : 'tracks'}{area.id === selected?.id && <span> · {new Date(area.updatedAt).toDateString() === new Date().toDateString() ? MESSAGES.mobile.todayLabel : new Date(area.updatedAt).toLocaleDateString('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit' })} {MESSAGES.mobile.updatedSuffix}</span>}</span>}
               </span>
               <span className={styles.trackArrow}><Icon name="chevron-right" /></span>
             </button>
           </li>)}
-          {shown.length === 0 && !readLoading && readError === null && <MobileListEmpty icon={<Icon name="folder" />} title="还没有 Area" description="项目与 Track 会按 Area 归类。" />}
+          {shown.length === 0 && !readLoading && readError === null && <MobileListEmpty icon={<Icon name="folder" />} title={MESSAGES.sidebar.noAreasTitle} description={MESSAGES.sidebar.noAreasDescription} />}
         </MobileList> : <MobileTrackList tracks={tracks} currentTrackId={currentTrackId} onOpenTrack={onOpenTrack}
-          isUnread={isUnread} trackActions={trackActions} emptyState={readError === null && !readLoading ? { icon: <Icon name="file" />, title: '这个 Area 还没有 Track', description: '在此 Area 创建的 Track 会显示在这里。' } : undefined} />}
+          isUnread={isUnread} trackActions={trackActions} emptyState={readError === null && !readLoading ? { icon: <Icon name="file" />, title: MESSAGES.mobile.noAreaTracksTitle, description: MESSAGES.mobile.noAreaTracksDescription } : undefined} />}
       </MobileListGroup>
     </div>
   </div>;

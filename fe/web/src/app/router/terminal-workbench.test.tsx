@@ -63,7 +63,7 @@ it('deduplicates pending commands and retains the host when hidden', async () =>
   const fixture = setupWorkbench({ defer: true });
   const mount = mountedHost;
   const entry = await terminalCommandInput();
-  expect(screen.getByRole('region', { name: 'Workbench' }).textContent).toContain('还没有工具');
+  expect(screen.getByRole('region', { name: 'Workbench' }).textContent).toContain('No tools yet');
   expect(screen.getByRole('region', { name: 'Conversations' }).contains(entry)).toBe(false);
   await openTerminalCommand(); await openTerminalCommand();
   await waitFor(() => expect(fixture.posts()).toHaveLength(1));
@@ -327,11 +327,11 @@ it('keeps the Track conversation final frame during desktop close', async () => 
   fireEvent.click(await screen.findByRole('button', { name: /^New conversation$/u }));
   const drawer = await screen.findByRole('complementary', { name: 'Untitled' });
   const heading = within(drawer).getByRole('heading', { name: 'Untitled' });
-  expect(drawer.textContent).toContain('聊聊你想做什么');
+  expect(drawer.textContent).toContain('Start a conversation');
   fireEvent.click(screen.getByRole('button', { name: /^Close conversation$/u }));
   expect(drawer.hasAttribute('data-nc-drawer')).toBe(true);
   expect(drawer.hidden).toBe(false);
-  expect(drawer.textContent).toContain('聊聊你想做什么');
+  expect(drawer.textContent).toContain('Start a conversation');
   expect(drawer.contains(heading)).toBe(true);
   expect(heading.textContent).toBe('Untitled');
   expect(drawer.hasAttribute('inert')).toBe(true);
