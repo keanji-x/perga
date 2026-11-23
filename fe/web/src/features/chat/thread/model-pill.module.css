@@ -75,17 +75,21 @@
     color: var(--text-2);
   }
 
-  /* Why a provider cannot run (#1817): a standing explanation like `.note`, a
-     little wider because it carries a fix, and broken anywhere because that fix
-     can hold a long path. */
+  /* Why a provider cannot run (#1817): full-width calm callout inside the picker panel. */
   .reason {
-    max-inline-size: 14rem;
-    padding: var(--space-half) var(--space-2);
+    box-sizing: border-box;
+    inline-size: 100%;
+    max-inline-size: none;
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-md);
+    background: color-mix(in srgb, var(--surface-chip) 55%, transparent);
+    line-height: 1.5;
     overflow-wrap: anywhere;
   }
 
-  /* A provider create still accepts: its rows stay pickable, so the reason is a warning. */
+  /* A provider create still accepts: its rows stay pickable, so the reason is a subtle warning. */
   .warning {
+    background: color-mix(in srgb, var(--warn-soft) 45%, transparent);
     color: var(--warn-text);
   }
 

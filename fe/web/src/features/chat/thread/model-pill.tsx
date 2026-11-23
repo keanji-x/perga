@@ -165,7 +165,13 @@ export function ModelPill<Provider extends string = AgentProvider>({
   const retainedEffort = draftEffortValue ?? savedEffort;
   const draftEffortInfo = effortsFor(draftGroup, draftModelId);
   const draftReason = draftGroup ? catalogReason(draftGroup) : { reason: null, refused: false, blocked: null };
-  const draftBlocked = draftGroup === undefined || draftReason.blocked !== null;
+  const draftUnavailable = draftGroup === undefined
+    || draftReason.blocked !== null
+    || draftGroup.availability?.status === 'unavailable'
+    || draftGroup.catalog?.source === 'unavailable';
+  const draftBlocked = draftGroup === undefined
+    || draftReason.blocked !== null
+    || (draft.selection.model === null && draftGroup.defaultAvailable === false);
 
   const effortStops = draftEffortInfo.efforts.map((entry) => ({
     value: entry.reasoning_effort,
@@ -308,72 +314,74 @@ export function ModelPill<Provider extends string = AgentProvider>({
           />
         )}
       </div>
-      <div className={styles.effortBand}>
-        <div className={styles.effortRow}>
-          <span className={styles.effortTitle}>Effort</span>
-          <EffortSlider
-            stops={effortStops}
-            selectedIndex={selectedEffortIndex}
-            defaultIndex={defaultEffortIndex}
-            valueText={effortValueText}
-            isDisabled={(!hasEffortChoices && !canResetEffort) || draftReason.blocked !== null}
-            onChangeIndex={(idx) => {
-              const stop = effortStops.at(idx);
-              if (!stop) return;
-              setDraft({
-                provider: draftGroup.provider,
-                selection: { model: draftModelId, reasoning_effort: stop.value },
-              });
-            }}
-            onResetToDefault={canResetEffort ? resetEffort : undefined}
-            onHoverChange={setHoveredEffortIndex}
-          />
-          <span className={styles.effortReadout}>
-            {hoveredEffort !== null ? (
-              <span className={styles.effortPreview}>{hoveredEffort.label}</span>
-            ) : selectedEffortIndex >= 0 ? (
-              <>
-                <span className={styles.effortValue}>{effortStops[selectedEffortIndex].label}</span>
-                {canResetEffort && (
-                  <Tooltip content="Reset to default" placement="above">
-                    <button
-                      type="button"
-                      className={styles.effortResetIcon}
-                      aria-label="Reset effort to Default"
-                      onClick={resetEffort}
-                    >
-                      <Icon name="reset" size="sm" />
-                    </button>
-                  </Tooltip>
-                )}
-              </>
-            ) : unavailableEffort !== null ? (
-              <>
-                <span className={styles.effortUnavailable}>{unavailableEffort}</span>
-                {canResetEffort && (
-                  <Tooltip content="Reset to default" placement="above">
-                    <button
-                      type="button"
-                      className={styles.effortResetIcon}
-                      aria-label="Reset effort to Default"
-                      onClick={resetEffort}
-                    >
-                      <Icon name="reset" size="sm" />
-                    </button>
-                  </Tooltip>
-                )}
-              </>
-            ) : defaultEffortIndex >= 0 ? (
-              <>
-                <span className={styles.effortInherited}>{effortStops[defaultEffortIndex].label}</span>
-                <span className={styles.effortDefaultHint}>default</span>
-              </>
-            ) : (
-              <span className={styles.effortMuted}>{hasEffortChoices ? FOLLOW_DEFAULT_LABEL : 'N/A'}</span>
-            )}
-          </span>
+      {(!draftUnavailable || hasEffortChoices || canResetEffort) && (
+        <div className={styles.effortBand}>
+          <div className={styles.effortRow}>
+            <span className={styles.effortTitle}>Effort</span>
+            <EffortSlider
+              stops={effortStops}
+              selectedIndex={selectedEffortIndex}
+              defaultIndex={defaultEffortIndex}
+              valueText={effortValueText}
+              isDisabled={(!hasEffortChoices && !canResetEffort) || draftReason.blocked !== null}
+              onChangeIndex={(idx) => {
+                const stop = effortStops.at(idx);
+                if (!stop) return;
+                setDraft({
+                  provider: draftGroup.provider,
+                  selection: { model: draftModelId, reasoning_effort: stop.value },
+                });
+              }}
+              onResetToDefault={canResetEffort ? resetEffort : undefined}
+              onHoverChange={setHoveredEffortIndex}
+            />
+            <span className={styles.effortReadout}>
+              {hoveredEffort !== null ? (
+                <span className={styles.effortPreview}>{hoveredEffort.label}</span>
+              ) : selectedEffortIndex >= 0 ? (
+                <>
+                  <span className={styles.effortValue}>{effortStops[selectedEffortIndex].label}</span>
+                  {canResetEffort && (
+                    <Tooltip content="Reset to default" placement="above">
+                      <button
+                        type="button"
+                        className={styles.effortResetIcon}
+                        aria-label="Reset effort to Default"
+                        onClick={resetEffort}
+                      >
+                        <Icon name="reset" size="sm" />
+                      </button>
+                    </Tooltip>
+                  )}
+                </>
+              ) : unavailableEffort !== null ? (
+                <>
+                  <span className={styles.effortUnavailable}>{unavailableEffort}</span>
+                  {canResetEffort && (
+                    <Tooltip content="Reset to default" placement="above">
+                      <button
+                        type="button"
+                        className={styles.effortResetIcon}
+                        aria-label="Reset effort to Default"
+                        onClick={resetEffort}
+                      >
+                        <Icon name="reset" size="sm" />
+                      </button>
+                    </Tooltip>
+                  )}
+                </>
+              ) : defaultEffortIndex >= 0 ? (
+                <>
+                  <span className={styles.effortInherited}>{effortStops[defaultEffortIndex].label}</span>
+                  <span className={styles.effortDefaultHint}>default</span>
+                </>
+              ) : (
+                <span className={styles.effortMuted}>{hasEffortChoices ? FOLLOW_DEFAULT_LABEL : 'N/A'}</span>
+              )}
+            </span>
+          </div>
         </div>
-      </div>
+      )}
       <div className={styles.pickerActions}>
         {appliesNextTurn && <div className={styles.settingNote} role="note"><Text type="supporting">{PERMISSION_NOTE}</Text></div>}
         <Button
