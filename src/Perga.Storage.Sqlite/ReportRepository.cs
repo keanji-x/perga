@@ -57,8 +57,13 @@ internal sealed class ReportRepository
             "SELECT doc_rev AS DocRev, blocks_json AS Blocks, summary AS Summary, leading_comment AS Comment FROM reports WHERE track_id = @TrackId;",
             new { TrackId = trackId }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
         var previousBlocks = SqliteJsonUpcaster.DeserializeReportBlocks(previous.Blocks);
-        if (requireBlankReport && (previous.DocRev != 0 || previousBlocks.Count != 0 || !string.IsNullOrWhiteSpace(previous.Summary)))
-            throw KernelException.Conflict("Cannot seed a non-empty report.");
+        if (requireBlankReport)
+        {
+            if (previousBlocks.Count != 0 || !string.IsNullOrWhiteSpace(previous.Comment))
+                throw KernelException.Conflict("Cannot seed a non-empty report.");
+            if (report.DocRev != checked(previous.DocRev + 1))
+                throw KernelException.Conflict("Report revision changed before seeding.");
+        }
         var beforeBlocks = SqliteJsonUpcaster.CompressReportBlocksZstd(previousBlocks);
         await conn.ExecuteAsync(
             new CommandDefinition(

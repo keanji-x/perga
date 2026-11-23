@@ -448,11 +448,10 @@ public sealed partial class TrackActor
                 var kernelTool = !isPlugin && string.Equals(mcpServer, "perga", StringComparison.OrdinalIgnoreCase);
                 var open = write || principal.RuntimeBindingId is not null ? RequireRuntimeBindingCore(identity, authorized: false) : null;
 
-                if (kernelTool && KernelMcpCatalog.IsBeforeHookExemptReadOnly(toolName))
+                if (kernelTool && KernelMcpCatalog.IsReadOnlyTool(toolName))
                     return null;
 
                 var trackSet = kernelTool && toolName == KernelMcpToolNames.TrackSet;
-                var readOnly = kernelTool && KernelMcpCatalog.IsReadOnlyTool(toolName);
                 var dryRunOnly = trackSet && ValidateTemplateSetArguments(arguments);
                 // The current Lead can detach a template whose policy blocks ordinary writes.
                 if (trackSet && arguments.TryGetProperty("clear", out var clear) && clear.ValueKind == JsonValueKind.True)
@@ -471,8 +470,6 @@ public sealed partial class TrackActor
                     sessionId = caller.Id, isLead = caller.IsLead, boundTaskId = session.BoundTaskId,
                     mcpServer, toolName, arguments = arguments.ValueKind == JsonValueKind.Undefined ? JsonHelpers.EmptyObject : arguments
                 }), _track.TemplateInputs, _track.Data, session);
-                if (readOnly && eval is GuardDecision.AskHuman)
-                    throw KernelException.PolicyDenied($"Read-only tool '{toolName}' cannot request approval.");
                 if (dryRunOnly && eval is GuardDecision.AskHuman)
                     throw KernelException.PolicyDenied("Template preview requires human approval; dryRun cannot create an approval request.");
 

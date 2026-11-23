@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Perga.Contracts;
 using Perga.Host.IntegrationTests.Fixtures;
@@ -583,6 +584,205 @@ public sealed class UnifiedTemplateFlowTests
         using var rejected = await host.AuthenticatedClient.PatchAsJsonAsync(url, new Dictionary<string, object?> { ["required"] = null });
         Assert.Equal(HttpStatusCode.BadRequest, rejected.StatusCode);
         Assert.Equal(inputs.GetRawText(), (await kernel.GetTrackAggregateAsync(id)).Track.TemplateInputs.GetRawText());
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    public async Task TrackSetPreservesReportSummaryAcrossSqliteRestart(bool summaryOnly, bool explicitSeed)
+    {
+        const string summary = "Authored summary";
+        const string source = """
+            export default defineTemplate({
+              id: 'reseed', title: 'Reseed', report: { initialMarkdown: 'Seeded content' }
+            });
+            """;
+        var directory = Directory.CreateTempSubdirectory("perga-template-reseed-");
+        try
+        {
+            string id;
+            var blankRev = summaryOnly ? 1 : 2;
+            await using (var host = Host(directory.FullName))
+            {
+                var kernel = host.Services.GetRequiredService<IPergaKernel>();
+                var created = await host.CreateTrackAsync();
+                id = created.TrackId;
+                var caller = await kernel.OpenMcpCallerAsync(created.SessionId);
+                Task<JsonElement> Call(string tool, object args) =>
+                    kernel.InvokeKernelMcpToolAsync(caller, tool, JsonSerializer.SerializeToElement(args));
+
+                var initial = await Call(KernelMcpToolNames.ReportRead, new { });
+                var originalBlocks = new[] { new { op = "upsert", blockKind = "prose", markdown = "Original content" } };
+                await Call(KernelMcpToolNames.ReportCommit, new
+                {
+                    anchor = initial.GetProperty("anchor"),
+                    ops = summaryOnly ? [] : originalBlocks,
+                    summary
+                });
+                var populated = await Call(KernelMcpToolNames.ReportRead, new { });
+                Assert.Equal(1, populated.GetProperty("docRev").GetInt32());
+                if (!summaryOnly)
+                {
+                    var block = Assert.Single(populated.GetProperty("blocks").EnumerateArray());
+                    var conflict = await Assert.ThrowsAsync<KernelException>(() =>
+                        Call(KernelMcpToolNames.TrackSet, new { source, seedReport = true }));
+                    Assert.Equal(KernelErrorCode.Conflict, conflict.Code);
+
+                    await Call(KernelMcpToolNames.ReportCommit, new
+                    {
+                        anchor = populated.GetProperty("anchor"),
+                        ops = new[] { new { op = "delete", id = block.GetProperty("id").GetString() } }
+                    });
+                }
+                var emptied = await kernel.ReadReportAsync(id);
+                Assert.Equal(blankRev, emptied.DocRev);
+                Assert.Equal(summary, emptied.Summary);
+                Assert.Empty(emptied.Blocks);
+                Assert.Empty(emptied.RenderedMarkdown);
+
+                var preview = await Call(KernelMcpToolNames.TrackSet, new { source, dryRun = true });
+                Assert.Equal("seed", preview.GetProperty("plan").GetProperty("reportAction").GetString());
+                Assert.Equal(blankRev, (await kernel.ReadReportAsync(id)).DocRev);
+
+                object args = explicitSeed ? new { source, seedReport = true } : new { source };
+                var bound = await Call(KernelMcpToolNames.TrackSet, args);
+                Assert.Equal("seed", bound.GetProperty("plan").GetProperty("reportAction").GetString());
+                Assert.Equal(blankRev + 1, (await kernel.ReadReportAsync(id)).DocRev);
+            }
+
+            await using var restarted = Host(directory.FullName);
+            var kernelAfterRestart = restarted.Services.GetRequiredService<IPergaKernel>();
+            var saved = await kernelAfterRestart.GetTrackAggregateAsync(id);
+            Assert.Equal("reseed", saved.Track.TemplateId);
+            Assert.Equal(blankRev + 1, saved.Report.DocRev);
+            Assert.Equal(summary, saved.Report.Summary);
+            Assert.Equal("Seeded content", Assert.Single(saved.Report.Blocks).Markdown);
+            var store = restarted.Services.GetRequiredService<ITrackStore>();
+            if (!summaryOnly)
+                Assert.Equal("Original content", Assert.Single(await store.GetReportRevisionBlocksAsync(id, 1, default)).Markdown);
+            Assert.Empty(await store.GetReportRevisionBlocksAsync(id, blankRev, default));
+            Assert.Equal("Seeded content", Assert.Single(await store.GetReportRevisionBlocksAsync(id, blankRev + 1, default)).Markdown);
+
+            var dbPath = restarted.Services.GetRequiredService<ResolvedHostStoragePaths>().DbPath;
+            await using var conn = new SqliteConnection($"Data Source={dbPath};Pooling=False");
+            await conn.OpenAsync();
+            await using var revision = conn.CreateCommand();
+            revision.CommandText = "SELECT summary FROM report_revisions WHERE track_id = @trackId AND doc_rev = @docRev;";
+            revision.Parameters.AddWithValue("@trackId", id);
+            revision.Parameters.AddWithValue("@docRev", blankRev);
+            Assert.Equal(summary, Assert.IsType<string>(await revision.ExecuteScalarAsync()));
+        }
+        finally { directory.Delete(true); }
+    }
+
+    [Theory]
+    [InlineData(3, false)]
+    [InlineData(4, true)]
+    public async Task TrackSetReseedFencesAnchorsAfterBatchedUpserts(int upsertCount, bool useLegacyMarker)
+    {
+        var marker = useLegacyMarker ? "<!-- perga:b_legacy rev=7 -->\\n" : "";
+        var source = $$"""
+            export default defineTemplate({
+              id: 'reseed', title: 'Reseed',
+              report: { initialMarkdown: '# Overview\n\n{{marker}}Seeded content\n\n# Notes\n\nSecond block' }
+            });
+            """;
+        await using var host = Host();
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        var (id, leadId) = await host.CreateTrackAsync();
+        var caller = await kernel.OpenMcpCallerAsync(leadId);
+        Task<JsonElement> Call(string tool, object args) =>
+            kernel.InvokeKernelMcpToolAsync(caller, tool, JsonSerializer.SerializeToElement(args));
+
+        await Call(KernelMcpToolNames.TrackSet, new { source });
+        var original = await kernel.ReadReportAsync(id);
+        Assert.Equal(1, original.DocRev);
+        Assert.Equal(2, original.Blocks.Count);
+        var oldBlock = Assert.Single(original.Blocks, block => block.SectionH1 == "Overview");
+        Assert.Equal(1, oldBlock.Rev);
+        if (useLegacyMarker)
+            Assert.Equal("b_legacy", oldBlock.Id);
+        else
+            Assert.Matches("^b_[0-9a-f]{4}$", oldBlock.Id);
+
+        var prior = await Call(KernelMcpToolNames.ReportRead, new { });
+        if (useLegacyMarker)
+        {
+            await Call(KernelMcpToolNames.ReportCommit, new
+            {
+                anchor = prior.GetProperty("anchor"), ops = Array.Empty<object>(), summary = "One extra document revision"
+            });
+            prior = await Call(KernelMcpToolNames.ReportRead, new { });
+        }
+        await Call(KernelMcpToolNames.ReportCommit, new
+        {
+            anchor = prior.GetProperty("anchor"),
+            ops = Enumerable.Range(1, upsertCount).Select(index => new
+            {
+                op = "upsert", id = oldBlock.Id, blockKind = "prose", markdown = $"Edit {index}"
+            }).ToArray()
+        });
+
+        var scoped = await Call(KernelMcpToolNames.ReportRead, new { blockIds = new[] { oldBlock.Id } });
+        var whole = await Call(KernelMcpToolNames.ReportRead, new { });
+        var staleScoped = scoped.GetProperty("anchor");
+        var staleWhole = whole.GetProperty("anchor");
+        Assert.False(staleScoped.GetProperty("wholeDocumentRead").GetBoolean());
+        Assert.True(staleWhole.GetProperty("wholeDocumentRead").GetBoolean());
+        var reseedRev = scoped.GetProperty("docRev").GetInt32() + 2;
+        Assert.Equal(reseedRev, staleScoped.GetProperty("knownBlockRevs").GetProperty(oldBlock.Id).GetInt32());
+
+        await Call(KernelMcpToolNames.ReportCommit, new
+        {
+            anchor = staleWhole,
+            ops = original.Blocks.Select(block => new { op = "delete", id = block.Id }).ToArray()
+        });
+        var emptied = await kernel.ReadReportAsync(id);
+        Assert.Equal(reseedRev - 1, emptied.DocRev);
+        Assert.Empty(emptied.Blocks);
+        await Call(KernelMcpToolNames.TrackSet, new { source });
+
+        var staleOps = new (object Operation, string ScopedCode, string WholeCode)[]
+        {
+            (new { op = "upsert", id = oldBlock.Id, blockKind = "prose", markdown = "Stale edit" }, "block_deleted", "block_deleted"),
+            (new { op = "delete", id = oldBlock.Id }, "block_deleted", "block_deleted"),
+            (new { op = "move", id = oldBlock.Id, toIndex = 1 }, "block_deleted", "block_deleted"),
+            (new { op = "replace_section", sectionH1 = "Overview", markdown = "Stale replacement" }, "unread_block", "stale_doc_rev")
+        };
+        foreach (var (operation, scopedCode, wholeCode) in staleOps)
+        {
+            foreach (var (anchor, code) in new[] { (staleScoped, scopedCode), (staleWhole, wholeCode) })
+            {
+                var (text, isError) = await McpKernelAndVcsIntegrationTests.CallToolAsync(host, "/mcp/kernel", caller.Token,
+                    KernelMcpToolNames.ReportCommit, new { anchor, ops = new[] { operation } }, default);
+                Assert.True(isError, text);
+                using var conflict = JsonDocument.Parse(text);
+                Assert.Equal(code, conflict.RootElement.GetProperty("code").GetString());
+            }
+        }
+
+        var report = await kernel.ReadReportAsync(id);
+        Assert.Equal(reseedRev, report.DocRev);
+        Assert.Equal(2, report.Blocks.Select(block => block.Id).Distinct(StringComparer.Ordinal).Count());
+        Assert.All(report.Blocks, block =>
+        {
+            Assert.DoesNotContain(original.Blocks, old => old.Id == block.Id);
+            Assert.Matches("^b_[0-9a-f]{12}$", block.Id);
+            Assert.Equal(1, block.Rev);
+        });
+
+        var recreated = Assert.Single(report.Blocks, block => block.SectionH1 == "Overview");
+        Assert.Equal("Seeded content", recreated.Markdown);
+        var fresh = await Call(KernelMcpToolNames.ReportRead, new { blockIds = new[] { recreated.Id } });
+        await Call(KernelMcpToolNames.ReportCommit, new
+        {
+            anchor = fresh.GetProperty("anchor"),
+            ops = new[] { new { op = "upsert", id = recreated.Id, blockKind = "prose", markdown = "Fresh edit" } }
+        });
+        var edited = await kernel.ReadReportAsync(id);
+        Assert.Equal(reseedRev + 1, edited.DocRev);
+        Assert.Equal("Fresh edit", Assert.Single(edited.Blocks, block => block.Id == recreated.Id).Markdown);
     }
 
     [Theory]

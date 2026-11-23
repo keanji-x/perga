@@ -8,6 +8,7 @@ using Perga.Contracts;
 using Perga.Kernel.Events;
 using Perga.Kernel.Tasks;
 using Perga.Kernel.Ports;
+using Perga.Kernel.Templates;
 using Perga.PolicyVm;
 using Perga.ReportDoc;
 using Perga.TermClient;
@@ -616,6 +617,14 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
         {
             beforeWrite?.Invoke();
             if (FailTemplateUpdate) throw new IOException("template persistence failure");
+            if (reportSeed is not null)
+            {
+                var previous = _reports[track.Id];
+                if (!TemplateReport.IsBlank(previous))
+                    throw KernelException.Conflict("Cannot seed a non-empty report.");
+                if (reportSeed.Document.DocRev != checked(previous.DocRev + 1))
+                    throw KernelException.Conflict("Report revision changed before seeding.");
+            }
             _templateSnapshots[track.Id] = templateSnapshot;
             var settled = flow is not null
                 ? CommitTrackFlow(track, flow.ExpectedRev, flow.Tasks, flow.Clocks, flow.CanceledClockIds, [],

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Perga.Contracts;
 using Perga.Kernel.Mcp;
 using Perga.Kernel.Ports;
 using Perga.Kernel.Tests.Fakes;
@@ -414,34 +415,69 @@ public sealed class KernelMcpReportTests
         Assert.False(ctx.Kernel.Actors.IsTrackActiveInMemory(trackId));
     }
 
-    [Fact]
-    public async Task ReportRead_BeforeHookCanDenyCrossTrackTarget()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task LocalReadOnlyToolsBypassBeforeWhileOpenWorldReadsAndWritesRemainGuarded(bool crashes)
     {
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
-        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        var (area, snap) = await ctx.CreateDefaultTrackAsync();
+        var peer = await ctx.Kernel.CreateTrackAsync(new CreateTrackRequest(area.Id, Title: "Peer"));
         var caller = await ctx.OpenMcpCallerAsync(snap.Track.LeadSessionId!);
+        var terminal = await ctx.Kernel.OpenTerminalAsync(snap.Track.Id, caller.SessionId, new OpenTerminalRequest(Title: "Test"));
+        var hookBody = crashes ? "throw new Error('guarded tool');" : "return Deny('guarded tool');";
         await Call(ctx, caller, KernelMcpToolNames.TrackSet, new
         {
-            source = """
+            source = $$"""
                 export default defineTemplate({
-                  id: 'cross-read-policy', title: 'Cross-track read policy',
-                  before(action) {
-                    return action.type === 'tool.report_read' && action.arguments.trackId === 'trk_protected'
-                      ? Deny('Report is restricted') : Allow();
-                  }
+                  id: 'read-policy', title: 'Read policy',
+                  before: () => { {{hookBody}} }
                 });
                 """
         });
 
-        var error = await Assert.ThrowsAsync<KernelException>(() =>
-            Call(ctx, caller, KernelMcpToolNames.ReportRead, new { trackId = "trk_protected" }));
-        Assert.Equal(KernelErrorCode.PolicyDenied, error.Code);
-        Assert.Contains("Report is restricted", error.Message, StringComparison.Ordinal);
+        var local = await Call(ctx, caller, KernelMcpToolNames.ReportRead, new { });
+        Assert.True(local.TryGetProperty("anchor", out _));
+        var peerReport = await Call(ctx, caller, KernelMcpToolNames.ReportRead, new { trackId = peer.Track.Id });
+        Assert.Equal(peer.Track.Id, peerReport.GetProperty("trackId").GetString());
+        foreach (var (tool, args) in new (string, object)[]
+        {
+            (KernelMcpToolNames.TaskList, new { }),
+            (KernelMcpToolNames.TrackList, new { area = "*" }),
+            (KernelMcpToolNames.AreaList, new { }),
+            (KernelMcpToolNames.MailList, new { }),
+            (KernelMcpToolNames.SessionList, new { }),
+            (KernelMcpToolNames.SessionRead, new { sessionId = caller.SessionId }),
+            (KernelMcpToolNames.TrackStatus, new { }),
+            (KernelMcpToolNames.FlowRead, new { }),
+            (KernelMcpToolNames.ProviderList, new { }),
+            (KernelMcpToolNames.TemplateList, new { }),
+            (KernelMcpToolNames.TemplateRead, new { templateId = "__current__" })
+        })
+            await Call(ctx, caller, tool, args);
+
         var alternateCase = await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.InvokeKernelMcpToolAsync(
             caller, KernelMcpToolNames.ReportRead, TestJson.Parse("""{"TrackId":"trk_protected"}""")));
         Assert.Equal(KernelErrorCode.InvalidArgument, alternateCase.Code);
-        var local = await Call(ctx, caller, KernelMcpToolNames.ReportRead, new { });
-        Assert.True(local.TryGetProperty("anchor", out _));
+
+        foreach (var (tool, args) in new (string, object)[]
+        {
+            (KernelMcpToolNames.TerminalRead, new { terminalId = terminal.Id }),
+            (KernelMcpToolNames.SystemUpgradeCheck, new { }),
+            (KernelMcpToolNames.ReportCommit, new
+            {
+                anchor = local.GetProperty("anchor"),
+                ops = new[] { new { op = "upsert", blockKind = "prose", markdown = "# Guarded" } }
+            })
+        })
+        {
+            var failure = await Record.ExceptionAsync(() => Call(ctx, caller, tool, args));
+            if (crashes)
+                Assert.IsType<InvalidOperationException>(failure);
+            else
+                Assert.Equal(KernelErrorCode.PolicyDenied, Assert.IsType<KernelException>(failure).Code);
+            Assert.Contains("guarded tool", failure!.Message, StringComparison.Ordinal);
+        }
     }
 
     [Fact]

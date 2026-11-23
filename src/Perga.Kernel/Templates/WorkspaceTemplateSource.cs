@@ -38,18 +38,17 @@ internal static class WorkspaceTemplateSource
                 throw new InvalidOperationException("Template paths cannot contain symbolic links.");
 
             if (Directory.Exists(canonicalTarget))
-            {
-                var files = new SortedDictionary<string, string>(StringComparer.Ordinal);
-                long totalBytes = 0;
-                WalkPackageDirectory(canonicalTarget, canonicalTarget, string.Empty, files, ref totalBytes, relative);
-                var entry = files.ContainsKey("template.perga.js") ? "template.perga.js" : "template.perga.json";
-                return TemplateBundle.PackFiles(files, entry, relative);
-            }
+                return PackPackage(canonicalTarget, relative);
 
             if (!File.Exists(canonicalTarget))
                 throw new FileNotFoundException($"Template path '{path}' was not found.");
 
             var leaf = Path.GetFileName(canonicalTarget);
+            if (segments.Length >= 2 &&
+                (leaf.Equals("template.perga.js", StringComparison.OrdinalIgnoreCase) ||
+                 leaf.Equals("template.perga.json", StringComparison.OrdinalIgnoreCase)))
+                return PackPackage(Path.GetDirectoryName(canonicalTarget)!, string.Join('/', segments[..^1]), leaf);
+
             if (!leaf.EndsWith(".perga.js", StringComparison.OrdinalIgnoreCase) &&
                 !leaf.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("Template files must end in .perga.js or .json.");
@@ -64,6 +63,17 @@ internal static class WorkspaceTemplateSource
         {
             throw KernelException.InvalidArgument(ex.Message);
         }
+    }
+
+    private static string PackPackage(string canonicalRoot, string displayRoot, string? entry = null)
+    {
+        var files = new SortedDictionary<string, string>(StringComparer.Ordinal);
+        long totalBytes = 0;
+        WalkPackageDirectory(canonicalRoot, canonicalRoot, string.Empty, files, ref totalBytes, displayRoot);
+        var entryKey = entry ?? (files.ContainsKey("template.perga.js") ? "template.perga.js" : "template.perga.json");
+        if (entry is not null && (OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()) && !files.ContainsKey(entry))
+            entryKey = files.Keys.SingleOrDefault(key => key.Equals(entry, StringComparison.OrdinalIgnoreCase)) ?? entry;
+        return TemplateBundle.PackFiles(files, entryKey, displayRoot);
     }
 
     private static void WalkPackageDirectory(

@@ -40,6 +40,7 @@ public sealed class McpAnnotationsAndPermissionGuidanceTests
         Assert.Equal(true, byName[KernelMcpToolNames.TerminalOpen].Annotations!.DestructiveHint);
         Assert.Equal(true, byName[KernelMcpToolNames.TerminalOpen].Annotations!.OpenWorldHint);
         Assert.Equal(false, byName[KernelMcpToolNames.TerminalOpen].Annotations!.IdempotentHint);
+        Assert.Equal(true, byName[KernelMcpToolNames.TerminalRead].Annotations!.OpenWorldHint);
         Assert.Equal(true, byName[KernelMcpToolNames.TerminalInput].Annotations!.DestructiveHint);
         Assert.Equal(true, byName[KernelMcpToolNames.TerminalInput].Annotations!.OpenWorldHint);
     }
@@ -61,7 +62,6 @@ public sealed class McpAnnotationsAndPermissionGuidanceTests
             return new GuardDecision.Allow();
         };
         var args = TestJson.Parse(json);
-
         var mcp = await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.InvokeKernelMcpToolAsync(caller, tool, args));
         Assert.Equal(KernelErrorCode.Conflict, mcp.Code);
         Assert.Equal($"tool.{tool}", Assert.Single(actions));
@@ -73,10 +73,13 @@ public sealed class McpAnnotationsAndPermissionGuidanceTests
         Assert.Equal($"tool.{tool}", Assert.Single(actions));
     }
 
-    [Theory]
-    [InlineData(KernelMcpToolNames.AreaList)]
-    [InlineData(KernelMcpToolNames.TrackList)]
-    public void DiscoveryToolsAreReadOnly(string tool) => Assert.True(KernelMcpCatalog.IsReadOnlyTool(tool));
+    [Fact]
+    public void ReadOnlyClassificationMatchesEveryToolAnnotation()
+    {
+        Assert.All(KernelMcpCatalog.GetAllTools(), tool =>
+            Assert.Equal(tool.Annotations?.ReadOnlyHint == true && tool.Annotations?.OpenWorldHint == false,
+                KernelMcpCatalog.IsReadOnlyTool(tool.Name)));
+    }
 
     [Fact]
     public async Task BoundWorkersAndChildSubagentsReceivePermissionEscalationGuidanceInPrompts()
