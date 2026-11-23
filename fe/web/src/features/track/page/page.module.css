@@ -373,15 +373,25 @@
       display: none;
     }
 
-    .workHeaderInShell .titleSlot {
+    .workHeaderInShell .titleSlot,
+    .articleMastheadInShell .titleSlot {
       display: block;
       pointer-events: none;
       z-index: var(--z-overlay);
       min-block-size: var(--control-h-touch);
     }
 
-    .workHeaderInShell .titleSlot :is(input, button) {
+    .workHeaderInShell .titleSlot :is(input, button),
+    .articleMastheadInShell .titleSlot :is(input, button) {
       pointer-events: auto;
+    }
+
+    .articleMasthead {
+      display: none;
+    }
+
+    .articleMastheadInShell {
+      display: contents;
     }
 
     .mobileHeaderIdentity {
@@ -605,14 +615,6 @@
       padding-inline-end: calc(var(--conversation-span) + var(--space-6));
     }
 
-    .workHeader {
-      border-block-end-color: transparent;
-    }
-
-    [data-nc-scrolled] .workHeader {
-      border-block-end-color: color-mix(in srgb, var(--hairline) 60%, transparent);
-    }
-
     /* Running folio: restrained sans metadata (`dir · Updated YYYY-MM-DD`) anchors the top bar
        alongside the sidebar and right drawer; hovering the header or scrolling past the masthead
        silently cross-fades to reveal the full article title in place with zero layout shift. */
@@ -697,7 +699,7 @@
     }
 
     .mastheadCluster {
-      display: flex;
+      display: inline-flex;
       align-items: center;
       gap: var(--space-2);
       min-inline-size: 0;

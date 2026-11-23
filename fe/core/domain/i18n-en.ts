@@ -6,29 +6,14 @@
  */
 export const EN_MESSAGES = Object.freeze({
   common: Object.freeze({
-    cancel: 'Cancel',
-    save: 'Save',
-    close: 'Close',
-    reopen: 'Reopen',
-    delete: 'Delete',
     retry: 'Retry',
-    refresh: 'Refresh',
     settings: 'Settings',
     share: 'Share',
-    today: 'Today',
-    untitled: 'Untitled',
-    loading: 'Loading…',
-    noResults: 'No matching results',
   }),
 
   auth: Object.freeze({
-    brandSubtitle: 'Editorial Workspace for Agents',
-    signInTitle: 'Sign in',
-    signInLede: 'Enter your workspace credentials to continue.',
     usernameLabel: 'Username',
-    usernamePlaceholder: 'Enter username',
     passwordLabel: 'Password',
-    passwordPlaceholder: 'Enter password',
     submitLabel: 'Sign in',
     submittingLabel: 'Signing in…',
     missingCredentials: 'Enter your username and password.',
@@ -45,10 +30,6 @@ export const EN_MESSAGES = Object.freeze({
     noAreasDescription: 'Projects and tracks are organized by area.',
     noVisibleTracksTitle: 'No active tracks',
     noVisibleTracksDescription: 'Open tracks in this area appear here.',
-    connected: 'Connection: Connected',
-    connecting: 'Connection: Connecting…',
-    reconnecting: 'Connection: Reconnecting…',
-    disconnected: 'Connection: Offline',
     historyTitle: 'Conversations',
     thisTrack: 'This track',
     pinned: 'Pinned',
@@ -62,23 +43,18 @@ export const EN_MESSAGES = Object.freeze({
     greeting: 'What would you like to move forward today?',
     mobileTitle: 'Today’s focus',
     mobileSubtitle: 'Keep your work clear, calm, and well-ordered.',
-    composerPlaceholder: 'Write a message, or type / for commands…',
-    mobileComposerPlaceholder: 'What would you like to work on…',
   }),
 
   track: Object.freeze({
     discussAction: 'Discuss',
     discussTooltip: 'Open Planner conversation',
     directFolderLabel: 'Direct folder',
-    directFolderExplanation: 'This track runs directly inside the source folder without worktree isolation. Edits immediately modify the working directory.',
     reportEmptyTitle: 'Progress will be compiled here',
     reportEmptyDescription: 'Describe what you want to accomplish; the plan and findings will take shape as you converse.',
     noTasksTitle: 'No tasks yet',
     noTasksDescription: 'Tasks declared in the report appear here.',
     noToolsTitle: 'No tools yet',
     noToolsDescription: 'Opened workspace tools appear here.',
-    noWorkbenchTools: 'No tools',
-    closedBadge: 'Closed',
   }),
 
   repo: Object.freeze({
@@ -106,9 +82,7 @@ export const EN_MESSAGES = Object.freeze({
     placeholder: 'Write a message, or type / for commands…',
     placeholderCompact: 'Write a message…',
     turnDone: 'Done',
-    turnDoneWithDuration: 'Done · {duration}',
     turnFailed: 'Turn failed',
-    turnFailedWithDuration: 'Turn failed · {duration}',
     turnStopped: 'Stopped',
     turnRunning: 'Working…',
     thinking: 'Thinking',
@@ -193,24 +167,6 @@ export const EN_MESSAGES = Object.freeze({
     noAreaTracksDescription: 'Tracks created in this area appear here.',
     updatedSuffix: 'updated',
     todayLabel: 'Today',
-  }),
-
-  directory: Object.freeze({
-    showHidden: 'Show hidden',
-    hideHidden: 'Hide hidden',
-    emptyFolder: 'This folder is empty.',
-    noMatchingFolders: 'No matching folders.',
-  }),
-
-  flow: Object.freeze({
-    heading: 'Flow',
-    waitingDependencies: 'Waiting on dependencies',
-    scheduled: 'Scheduled',
-    running: 'Running',
-    completed: 'Completed',
-    failed: 'Needs attention',
-    canceled: 'Canceled',
-    actionRun: 'Run',
   }),
 
   settings: Object.freeze({

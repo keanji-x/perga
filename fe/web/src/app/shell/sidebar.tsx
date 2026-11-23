@@ -390,8 +390,8 @@ export function Sidebar({
                     type="button"
                     data-nc-role="icon"
                     className={styles.newAreaButton}
-                    aria-label="New area"
-                    title="New area"
+                    aria-label={MESSAGES.sidebar.newArea}
+                    title={MESSAGES.sidebar.newArea}
                     onClick={() => onRequestCreateArea({ kind: 'anchor', anchor: { ref: createRef }, unavailable: 'surface-center' })}
                   >
                     <Icon name="plus" size="sm" />

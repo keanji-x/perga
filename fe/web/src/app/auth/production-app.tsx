@@ -24,6 +24,7 @@ import { SystemUpgradeMonitor } from '../providers/system-upgrade.tsx';
 import { createFetchTransport } from '../providers/transport.ts';
 import { createUiPreferences } from '../providers/ui-preferences.tsx';
 import { createAppRouter } from '../router/public.tsx';
+import { ThemeProvider } from '../theme/public.tsx';
 import { createAuthChanges, type AuthChanges } from './auth-changes.ts';
 import { loginWithTransport } from './login.ts';
 import { LogoutGate } from './logout-gate.tsx';
@@ -40,7 +41,7 @@ export function ProductionApp({ transport, unauthorized, client, runtime, cursor
   renderError: (retry: () => void, error: SessionProbeError) => ReactNode;
 }>) {
   const content = <><SystemUpgradeMonitor transport={transport} unauthorized={unauthorized} /><RouterProvider router={router} /></>;
-  return <StrictMode><SystemUpgradeProvider><DepthFeedback />
+  return <StrictMode><ThemeProvider storage={runtime.storage}><SystemUpgradeProvider><DepthFeedback />
     <LogoutGate transport={transport} onComplete={() => {
       clearSessionArtifacts(client, cursorStore, runtime);
       authChanges?.publish();
@@ -53,7 +54,7 @@ export function ProductionApp({ transport, unauthorized, client, runtime, cursor
         </AppProviders>
       </SessionGate>
     </LogoutGate>
-  </SystemUpgradeProvider></StrictMode>;
+  </SystemUpgradeProvider></ThemeProvider></StrictMode>;
 }
 
 function renderSessionError(retry: () => void, error: SessionProbeError) {

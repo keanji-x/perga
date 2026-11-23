@@ -31,7 +31,7 @@ describe('central theme generation', () => {
     const css = renderTheme(config);
     expect(css).toContain('--type-ui: 400 0.9375rem/1.375rem var(--font-sans);');
     expect(css).toContain('--type-table: 400 0.9375rem/1.375rem var(--font-sans);');
-    expect(css).toContain('--type-subheading-small: 600 0.9375rem/1.375rem var(--font-serif);');
+    expect(css).toContain('--type-subheading-small: 600 0.9375rem/1.375rem var(--font-sans);');
     expect(css).toContain('--type-ui-tracking: 0.01em;');
     expect(css).toContain('--type-ui-size: 0.9375rem;');
     expect(css).toContain('--type-ui-leading: 1.4666666666666666;');

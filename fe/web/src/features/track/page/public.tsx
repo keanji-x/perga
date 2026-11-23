@@ -54,6 +54,8 @@ export type TrackPageProps = Readonly<{
   track: Pick<Track, 'id' | 'title' | 'closedAt' | 'working' | 'attention' | 'cards'> & Partial<Pick<Track, 'isolation' | 'updatedAt' | 'cwd'>>;
   /** Fill the reading column with an app-owned interactive surface. */
   fillReading?: boolean;
+  /** Render the desktop title as an editorial masthead in the reading column (viewport-invariant). */
+  articleMasthead?: boolean;
   /** Daily planning surfaces have no checkout isolation to explain. */
   showWorkspaceIsolation?: boolean;
   /** Visit-scoped choice supplied by the route owner, independently for each Track. */
@@ -139,13 +141,13 @@ function formatFolioDate(ms: number | undefined): string | null {
   return `Updated ${yyyy}-${mm}-${dd}`;
 }
 
-function directoryLeafOf(cwd: string | undefined): string | null {
+function directoryLeafOf(cwd: string | undefined, trackId: string): string | null {
   if (cwd === undefined) return null;
   const trimmed = cwd.trim().replace(/[\\/]+$/, '');
   if (trimmed === '') return null;
   const parts = trimmed.split(/[\\/]/);
   const leaf = parts[parts.length - 1] || null;
-  if (leaf === null || /^trk_[0-9a-f]{16,}$/i.test(leaf)) return null;
+  if (leaf === null || leaf === trackId) return null;
   return leaf;
 }
 
@@ -156,7 +158,7 @@ function rowModule(view: TrackPageView, key: RowModuleView['key']): RowModuleVie
   return found;
 }
 
-export function TrackPage({ fillReading = false, showWorkspaceIsolation = true, mobileReportIntro, mobileChatComposer,
+export function TrackPage({ fillReading = false, articleMasthead = !fillReading, showWorkspaceIsolation = true, mobileReportIntro, mobileChatComposer,
   panelHeader, panelContent, progressDisclosure, track, cards, existingCardIds, tasks, openableCards, outlineItems = [], report, conversationList, conversationContextList,
   shareLinks, onShareTrack, onStartConversation, showConversationAction = true, conversationOpen = false, mobilePanelObscured, unread = false, onReply,
   cardsAction, recentFiles, onOpenCard, onDeleteCard, onSetWorkbench, onOpenTask, onOpenOutline, board, onCloseBoard, fileViewer,
@@ -246,6 +248,7 @@ export function TrackPage({ fillReading = false, showWorkspaceIsolation = true, 
   });
   const [desktopActionsOpen, setDesktopActionsOpen] = useState(false);
   const [pageScrolled, setPageScrolled] = useState(false);
+  const mastheadRef = useRef<HTMLElement | null>(null);
   const desktopActionsRef = useRef<HTMLButtonElement | null>(null);
   const mobilePanelRef = useRef<HTMLElement | null>(null);
   const shareTriggerRef = useRef<HTMLButtonElement | null>(null);
@@ -316,10 +319,12 @@ export function TrackPage({ fillReading = false, showWorkspaceIsolation = true, 
     </span>
   ) : undefined;
 
-  const showArticleMasthead = !compactViewport && !fillReading && closeSurface === undefined;
+  // Keep the EditableTitle host viewport-invariant so resizing across compact/desktop never unmounts an active rename draft.
+  const usesMastheadHost = articleMasthead && closeSurface === undefined;
+  const showArticleMasthead = !compactViewport && usesMastheadHost;
   const isDirectFolder = showWorkspaceIsolation && track.isolation === 'none';
   const folioDate = formatFolioDate(track.updatedAt);
-  const folioDir = directoryLeafOf(track.cwd);
+  const folioDir = directoryLeafOf(track.cwd, track.id);
   const folioParts = [
     ...(isDirectFolder ? [folioDir ?? NO_ISOLATION_LABEL] : folioDir !== null ? [folioDir] : []),
     ...(folioDate !== null ? [folioDate] : []),
@@ -358,13 +363,14 @@ export function TrackPage({ fillReading = false, showWorkspaceIsolation = true, 
       data-nc-track-page=""
       data-nc-scrolled={pageScrolled ? '' : undefined}
       onScroll={(event) => {
-        const next = event.currentTarget.scrollTop > 72;
+        const threshold = mastheadRef.current?.offsetHeight || 72;
+        const next = event.currentTarget.scrollTop > threshold;
         if (next !== pageScrolled) setPageScrolled(next);
       }}
     >
       {dismissalLayer}
       <PageHeader
-        className={`${styles.workHeader} ${compactViewport && closeSurface === undefined ? styles.workHeaderInShell : ''} ${conversationOpen ? styles.workHeaderBesideDrawer : ''}`}
+        className={`${styles.workHeader} ${!usesMastheadHost && compactViewport && closeSurface === undefined ? styles.workHeaderInShell : ''} ${conversationOpen ? styles.workHeaderBesideDrawer : ''}`}
         title={
           <>
             {closeSurface !== undefined && (
@@ -381,7 +387,7 @@ export function TrackPage({ fillReading = false, showWorkspaceIsolation = true, 
               </button>
             )}
             {/* The raw title, with the fallback as the placeholder. `emptyCommit="clear"`: the planner's `track_rename` succeeds only while the title is empty, so clearing the name is a real request here, not a cancel. */}
-            {showArticleMasthead ? (
+            {usesMastheadHost ? (
               <div className={styles.runningHeadCluster}>
                 {isDirectFolder && <ExplanationBadge label={NO_ISOLATION_LABEL}>{NO_ISOLATION_EXPLANATION}</ExplanationBadge>}
                 <div className={styles.runningHeadSwap}>
@@ -447,7 +453,7 @@ export function TrackPage({ fillReading = false, showWorkspaceIsolation = true, 
 
       {titleInHeader && createPortal(<span aria-hidden="true" style={{ position: 'absolute' }} />, mobileHeaderTitleHost)}
       {headerActionsHost !== null && mobileActions !== undefined && createPortal(mobileActions, headerActionsHost)}
-      {titleInHeader && closeSurface === undefined ? null : <div className={styles.mobileTrackHeader}>
+      {compactViewport && !(titleInHeader && closeSurface === undefined) && <div className={styles.mobileTrackHeader}>
         <MobileHeader
           title={trackDisplayTitle(track.title)}
           titleText={<TrackTitle track={track} />}
@@ -467,7 +473,11 @@ export function TrackPage({ fillReading = false, showWorkspaceIsolation = true, 
         inert={boardOpen}
       >
         <div className={styles.doc} inert={fileViewer !== undefined}>
-          {showArticleMasthead && <header className={styles.articleMasthead}>{titleBlock}</header>}
+          {usesMastheadHost && (
+            <header ref={mastheadRef} className={`${styles.articleMasthead} ${titleInHeader ? styles.articleMastheadInShell : ''}`}>
+              {titleBlock}
+            </header>
+          )}
           {compactViewport && mobileReportIntro}
           {compactViewport && (panelHeader !== undefined || panelContent !== undefined) && <div className={styles.compactPanelContent}><PanelCard>{panelHeader}{panelContent}</PanelCard></div>}
           {report}

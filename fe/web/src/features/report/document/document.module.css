@@ -295,7 +295,7 @@
 
   .appendix {
     margin-inline-start: var(--document-start, 0);
-    inline-size: min(100%, var(--document-measure, 40rem));
+    inline-size: min(100%, var(--document-measure, 45rem));
     min-inline-size: 0;
   }
 
@@ -611,7 +611,7 @@
     .outlineOnly > .row { display: none; }
     .mobileEmpty { display: block; grid-column: 1; padding-block-start: var(--space-6); max-inline-size: 21rem; }
     .doc { font-family: var(--font-sans); font-size: var(--font-step-3-size); line-height: var(--font-step-3-line);
-      grid-template-columns: minmax(0, min(100%, var(--document-measure, 40rem)));
+      grid-template-columns: minmax(0, min(100%, var(--document-measure, 45rem)));
       justify-content: center;
       max-inline-size: 100%;
       overflow-wrap: anywhere;

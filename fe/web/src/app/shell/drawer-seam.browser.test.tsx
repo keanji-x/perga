@@ -205,21 +205,26 @@ describe('the drawer against a real rendering engine', () => {
     const heading = document.querySelector<HTMLElement>('[data-testid="section-heading"]')!;
     expect(report.getBoundingClientRect().right).toBeLessThanOrEqual(drawer.getBoundingClientRect().left);
     expect(getComputedStyle(outline).display).toBe('none');
-    expect(getComputedStyle(heading, '::before').opacity).toBe('0');
+    expect(getComputedStyle(heading, '::before').opacity).toBe('1');
 
     await page.viewport(1200, 800);
     expect(report.getBoundingClientRect().right).toBeLessThanOrEqual(drawer.getBoundingClientRect().left);
     expect(getComputedStyle(outline).display).toBe('none');
-    expect(getComputedStyle(heading, '::before').opacity).toBe('0');
+    expect(getComputedStyle(heading, '::before').opacity).toBe('1');
 
     await page.viewport(1440, 900);
-    expect(report.getBoundingClientRect().width).toBeCloseTo(640, 0);
+    expect(report.getBoundingClientRect().right).toBeLessThanOrEqual(drawer.getBoundingClientRect().left);
     expect(getComputedStyle(outline).display).toBe('none');
-    expect(getComputedStyle(heading, '::before').opacity).toBe('0');
+    expect(getComputedStyle(heading, '::before').opacity).toBe('1');
 
     await page.viewport(1600, 900);
+    expect(report.getBoundingClientRect().width).toBeCloseTo(720, 0);
+    expect(getComputedStyle(outline).display).toBe('none');
+    expect(getComputedStyle(heading, '::before').opacity).toBe('1');
+
+    await page.viewport(1800, 900);
     expect(getComputedStyle(outline).display).not.toBe('none');
-    await waitFor(() => expect(getComputedStyle(heading, '::before').opacity).toBe('0'));
+    expect(getComputedStyle(heading, '::before').opacity).toBe('1');
     await page.getByRole('button', { name: 'Section' }).hover();
     await waitFor(() => expect(document.querySelector('[data-nc-rail-preview]')).not.toBeNull());
     const preview = document.querySelector<HTMLElement>('[data-nc-rail-preview]')!;
@@ -227,13 +232,13 @@ describe('the drawer against a real rendering engine', () => {
     expect(preview.getBoundingClientRect().left).toBeGreaterThanOrEqual(main.getBoundingClientRect().left);
   });
 
-  it('shows the report outline at 1366px when no conversation consumes its gutter', async () => {
-    await page.viewport(1366, 800);
+  it('shows the report outline at 1512px when no conversation consumes its gutter', async () => {
+    await page.viewport(1512, 800);
     render(<TrackGeometryPage open={false} />);
     const outline = document.querySelector<HTMLElement>('nav[aria-label="Outline"]')!;
     const heading = document.querySelector<HTMLElement>('[data-testid="section-heading"]')!;
     expect(getComputedStyle(outline).display).not.toBe('none');
-    expect(getComputedStyle(heading, '::before').opacity).toBe('0');
+    expect(getComputedStyle(heading, '::before').opacity).toBe('1');
   });
 
   it('keeps section numbers on an ultrawide drawer report that has no outline', async () => {
@@ -245,28 +250,28 @@ describe('the drawer against a real rendering engine', () => {
   });
 
   it('hides the report outline before it overlaps the prose when a conversation is widened on desktop viewports', async () => {
-    await page.viewport(1280, 800);
+    await page.viewport(1512, 800);
     const view = render(<TrackGeometryPage open={false} />);
     const report = document.querySelector<HTMLElement>('[data-testid="report-measure"]')!;
     const outline = document.querySelector<HTMLElement>('nav[aria-label="Outline"]')!;
     const heading = document.querySelector<HTMLElement>('[data-testid="section-heading"]')!;
     expect(getComputedStyle(outline).display).not.toBe('none');
     expect(outline.getBoundingClientRect().right).toBeLessThanOrEqual(report.getBoundingClientRect().left);
-    expect(getComputedStyle(heading, '::before').opacity).toBe('0');
+    expect(getComputedStyle(heading, '::before').opacity).toBe('1');
 
     view.rerender(<TrackGeometryPage open drawerWidthRem={36} />);
     expect(getComputedStyle(outline).display).toBe('none');
-    expect(getComputedStyle(heading, '::before').opacity).toBe('0');
+    expect(getComputedStyle(heading, '::before').opacity).toBe('1');
 
-    await page.viewport(1600, 900);
+    await page.viewport(1800, 900);
     view.rerender(<TrackGeometryPage open />);
     expect(getComputedStyle(outline).display).not.toBe('none');
     expect(outline.getBoundingClientRect().right).toBeLessThanOrEqual(report.getBoundingClientRect().left);
-    expect(getComputedStyle(heading, '::before').opacity).toBe('0');
+    expect(getComputedStyle(heading, '::before').opacity).toBe('1');
 
     view.rerender(<TrackGeometryPage open drawerWidthRem={50} />);
     expect(getComputedStyle(outline).display).toBe('none');
-    expect(getComputedStyle(heading, '::before').opacity).toBe('0');
+    expect(getComputedStyle(heading, '::before').opacity).toBe('1');
   });
 
   /* The premise every claim below rests on. */
@@ -395,12 +400,12 @@ describe('the drawer against a real rendering engine', () => {
     /* 40% of the main region at this viewport; the trailing panel stays on its 25% track underneath. */
     expect(box.width / mainBox.width).toBeCloseTo(0.4, 2);
     expect(box.height).toBeGreaterThan(0);
-    /* The card keeps an equal breathing margin on its three exposed edges. */
+    /* The card aligns its vertical insets to the workspace header datum while preserving the 24px trailing seam. */
     const laid = getComputedStyle(card.closest('[data-nc-drawer-frame]')!);
     expect(laid.position).toBe('absolute');
     expect(Number.parseFloat(laid.insetBlockStart)).toBeGreaterThan(0);
     expect(laid.insetBlockEnd).toBe(laid.insetBlockStart);
-    expect(laid.insetInlineEnd).toBe(laid.insetBlockStart);
+    expect(Number.parseFloat(laid.insetInlineEnd)).toBeGreaterThanOrEqual(Number.parseFloat(laid.insetBlockStart));
     await untilGone.call(null).catch(() => undefined);
   });
 

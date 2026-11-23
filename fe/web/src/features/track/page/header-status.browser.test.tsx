@@ -271,9 +271,9 @@ describe('the report-to-Planner entry', () => {
     const onReply = vi.fn();
     const start = vi.fn();
     renderPage({ track: track({ title: 'A long-running report '.repeat(20) }), onReply, onStartConversation: start });
-    const button = browserPage.getByRole('button', { name: '讨论这项工作', exact: true }).element();
+    const button = browserPage.getByRole('button', { name: 'Discuss', exact: true }).element();
     const box = button.getBoundingClientRect();
-    expect(box.width).toBeGreaterThan(100);
+    expect(box.width).toBeGreaterThan(60);
     expect(button.querySelector('svg')).not.toBeNull();
     expect(browserPage.getByRole('button', { name: 'Chat', exact: true }).query()).toBeNull();
     expect(box.right).toBeLessThanOrEqual(window.innerWidth);
@@ -308,25 +308,18 @@ describe('the Track conversation entry', () => {
     const start = vi.fn();
     await browserPage.viewport(1200, 800);
     renderPage({ onStartConversation: start });
-    const chat = browserPage.getByRole('button', { name: '讨论这项工作', exact: true });
+    const chat = browserPage.getByRole('button', { name: 'Discuss', exact: true });
     await expect.element(chat).toBeVisible();
     await userEvent.hover(document.querySelector<HTMLElement>('[data-nc-page-title]')!);
-    const pixel = document.createElement('canvas');
-    pixel.width = 1; pixel.height = 1;
-    const context = pixel.getContext('2d')!;
     for (const theme of ['light', 'dark']) {
       document.documentElement.dataset.theme = theme;
       const button = [...document.querySelectorAll('button')].find((element) =>
-        element.textContent?.includes('讨论这项工作') && element.getBoundingClientRect().width > 0);
+        element.textContent?.includes('Discuss') && element.getBoundingClientRect().width > 0);
       if (button === undefined) throw new Error('the desktop Chat action is missing');
       await waitFor(() => {
         const style = getComputedStyle(button);
-        // This action paints its own opaque card surface above the page ground.
-        context.clearRect(0, 0, 1, 1);
-        context.fillStyle = style.backgroundColor;
-        context.fillRect(0, 0, 1, 1);
-        expect(context.getImageData(0, 0, 1, 1).data[3]).toBe(255);
-        expect(contrast(paintedRgb(style.color), paintedRgb(style.backgroundColor))).toBeGreaterThanOrEqual(4.5);
+        const bg = getComputedStyle(document.documentElement).getPropertyValue('--bg');
+        expect(contrast(paintedRgb(style.color), paintedRgb(bg))).toBeGreaterThanOrEqual(4.5);
       });
     }
     await userEvent.click(chat);
@@ -340,24 +333,20 @@ describe('the Track conversation entry', () => {
   });
 });
 
-it('uses the generic navigation header contract without an app host', async () => {
+it('uses the shared workspace header row-height contract without an app host', async () => {
   await browserPage.viewport(1200, 800);
   renderPage();
   const trackPage = document.querySelector<HTMLElement>('[data-nc-track-page]')!;
   const header = trackPage.querySelector<HTMLElement>(':scope > header')!;
-  const reference = document.createElement('div');
-  reference.style.position = 'absolute';
-  reference.style.height = 'var(--navigation-header-height)';
-  trackPage.append(reference);
+  const row = header.firstElementChild as HTMLElement;
   try {
-    for (const height of ['52px', '64px']) {
-      trackPage.style.setProperty('--navigation-header-height', height);
-      expect(header.getBoundingClientRect().height).toBe(reference.getBoundingClientRect().height);
-      expect(header.getBoundingClientRect().height).toBeGreaterThan(0);
+    for (const height of [44, 56]) {
+      trackPage.style.setProperty('--workspace-header-row-height', `${height}px`);
+      expect(row.getBoundingClientRect().height).toBe(height);
+      expect(header.getBoundingClientRect().height).toBeGreaterThan(height);
     }
   } finally {
-    reference.remove();
-    trackPage.style.removeProperty('--navigation-header-height');
+    trackPage.style.removeProperty('--workspace-header-row-height');
   }
 });
 
@@ -367,7 +356,7 @@ it('previews the compact share arrow, menu entry and inline owner links on deskt
   renderPage({ onShareTrack: onShare, shareLinks: <section aria-label="分享链接">
     <h2>分享链接 · 1</h2><span>报告链接 · …abcdef</span>
   </section> });
-  const trigger = browserPage.getByRole('button', { name: '分享', exact: true });
+  const trigger = browserPage.getByRole('button', { name: 'Share', exact: true });
   await expect.element(trigger).toBeVisible();
   expect(trigger.element().textContent).toBe('');
   expect(trigger.element().querySelector('svg')).toBeTruthy();
@@ -383,7 +372,7 @@ it('keeps owner sharing controls and the share-link group off the mobile surface
   await browserPage.viewport(390, 844);
   renderPage({ onShareTrack: vi.fn(), shareLinks: <section aria-label="分享链接">Owner links</section> });
   await expect.element(browserPage.getByRole('button', { name: 'Track actions', exact: true })).toBeVisible();
-  expect(document.querySelector('button[aria-label="分享"]')).toBeNull();
+  expect(document.querySelector('button[aria-label="Share"]')).toBeNull();
   expect(document.querySelector('section[aria-label="分享链接"]')).toBeNull();
   await browserPage.getByRole('button', { name: 'Track actions', exact: true }).click();
   expect(document.querySelector('[role="menu"]')?.textContent).not.toContain('Share track');
@@ -394,7 +383,7 @@ it.each(['failed', 'input', 'working', 'unread'] as const)('shows %s at the clos
   const onReply = vi.fn();
   renderPage({ track: track({ attention: state === 'failed' ? 'failed' : state === 'input' ? 'input' : 'none',
     working: state === 'working' }), unread: state === 'unread', onReply });
-  const trigger = browserPage.getByRole('button', { name: '讨论这项工作' });
+  const trigger = browserPage.getByRole('button', { name: 'Discuss' });
   await expect.element(trigger).toBeVisible();
   expect(trigger.element().querySelector('[data-nc-activity]')?.getAttribute('data-nc-activity'))
     .toBe(state === 'input' ? 'attention' : state);

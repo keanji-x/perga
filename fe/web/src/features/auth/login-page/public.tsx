@@ -10,19 +10,6 @@ export type LoginPageProps = Readonly<{
   reload: () => void;
 }>;
 
-function syncSystemTheme(): () => void {
-  if (typeof window === 'undefined' || typeof document === 'undefined') return () => {};
-  if (document.documentElement.dataset.theme === 'light' || document.documentElement.dataset.theme === 'dark') {
-    return () => {};
-  }
-  if (typeof window.matchMedia !== 'function') return () => {};
-  const media = window.matchMedia('(prefers-color-scheme: dark)');
-  const apply = () => { document.documentElement.dataset.theme = media.matches ? 'dark' : 'light'; };
-  apply();
-  media.addEventListener('change', apply);
-  return () => media.removeEventListener('change', apply);
-}
-
 export function LoginPage({ login, reload }: LoginPageProps) {
   const prefix = useId();
   const [username, setUsername] = useState('');
@@ -36,7 +23,6 @@ export function LoginPage({ login, reload }: LoginPageProps) {
     const attempt = pending.current; pending.current = null; attempt?.abort();
   }, []);
   useLayoutEffect(() => cancel, [cancel]);
-  useEffect(() => syncSystemTheme(), []);
   useEffect(() => {
     if (retryAt === null) return;
     const timer = window.setInterval(() => {

@@ -17,7 +17,6 @@
    * keep their own ink. The contrast recipes cover both composer surfaces.
    */
   .trigger,
-  .effort,
   .setting {
     font-size: var(--font-step-1-size);
     color: var(--text-3);
@@ -66,13 +65,6 @@
     border-radius: var(--radius-pill);
     max-inline-size: min(9rem, 220px);
     min-inline-size: 0;
-  }
-
-  .groupHeading {
-    font-size: var(--font-step-1-size);
-    font-weight: var(--weight-medium);
-    padding: var(--space-1) var(--space-2);
-    color: var(--text-2);
   }
 
   /* Why a provider cannot run (#1817): full-width calm callout inside the picker panel. */

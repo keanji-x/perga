@@ -72,7 +72,7 @@ it('deduplicates pending commands and retains the host when hidden', async () =>
   expect(mount).toHaveBeenCalledTimes(1);
   const hide = screen.getByRole('button', { name: 'Hide terminal' });
   expect(hide.textContent).toBe('');
-  expect(hide.querySelector('svg')?.classList.contains('lucide-chevron-right')).toBe(true);
+  expect(hide.querySelector('svg')?.classList.contains('lucide-panel-right')).toBe(true);
   const dock = document.querySelector('[data-nc-card-dock]');
   const resource = document.querySelector('[data-nc-terminal-card]');
   await userEvent.click(screen.getByRole('button', { name: 'Hide terminal' }));

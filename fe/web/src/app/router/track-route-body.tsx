@@ -448,6 +448,7 @@ export function TrackRouteBody({
     <TrackStage>
     <TrackPage
       fillReading={centerActive}
+      articleMasthead={center === undefined}
       showWorkspaceIsolation={showWorkspaceIsolation}
       shareLinks={undefined}
       progressDisclosure={progressDisclosure}

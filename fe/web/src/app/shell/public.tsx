@@ -24,6 +24,7 @@ import { AREA_CREATE_FAILURES,AREA_CREATE_TEXT,AREA_PATCH_FAILURES,AREA_PATCH_TE
 import type { Conversation } from '../../../../core/domain/conversation.ts';
 import { ApiError,classifyFailure,NotSentError,refusedText,writeFailureOf,writeFailureText } from '../../../../core/domain/failure-class.ts';
 import { MARK_UNREAD_TEXT,READ_RECEIPT_FAILURES } from '../../../../core/domain/read-receipts.ts';
+import { MESSAGES } from '../../../../core/domain/messages.ts';
 import type { Track } from '../../../../core/domain/track.ts';
 import { TRACK_PATCH_FAILURES,TRACK_PATCH_TEXT,trackDisplayTitle } from '../../../../core/domain/track.ts';
 import {
@@ -464,7 +465,7 @@ export function AppShell({
         onNew={conversationScope?.onNew ?? null} now={nowMs ?? Date.now()}
         onSelect={(row) => conversationScope?.onOpen(row)}
         onOpenSettings={onOpenSettings}
-        scopeLabel={conversationScope === null ? 'Current track' : `Current track · ${trackDisplayTitle(conversationScope.track.title)}`}
+        scopeLabel={conversationScope === null ? MESSAGES.sidebar.currentTrackPrefix : `${MESSAGES.sidebar.currentTrackPrefix} · ${trackDisplayTitle(conversationScope.track.title)}`}
         accountLabel={userLabel ?? 'Account'} accountInitial={userLabel?.slice(0, 1) ?? 'U'}
         onSignOut={onSignOut === undefined ? undefined : () => { closeMobileSection(); onSignOut(); }} />}
       {<div ref={mobileNavigationFrameRef} className={styles.navigationFrame}>

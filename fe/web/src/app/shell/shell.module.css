@@ -475,13 +475,10 @@
   .groupHeading,
   .newAreaAnchor { display: grid; min-inline-size: 0; margin: 0; }
 
-  .folderIcon,
-  .newAreaIcon { line-height: 1; color: var(--text-3); pointer-events: none; }
+  .folderIcon { line-height: 1; color: var(--text-3); pointer-events: none; }
 
   .folderRow:hover .folderIcon,
-  .folderRow:focus-visible .folderIcon,
-  .newAreaRow:hover .newAreaIcon,
-  .newAreaRow:focus-visible .newAreaIcon { color: var(--text); }
+  .folderRow:focus-visible .folderIcon { color: var(--text); }
 
   .folderTitleWrap {
     display: inline-flex;
@@ -533,7 +530,6 @@
 
   .primaryNavRow .areaName,
   .folderRow .areaName { color: var(--text-2); }
-  .newAreaRow .areaName { color: var(--text-3); }
   .primaryNavActive .areaName,
   .areaRow:hover .areaName,
   .areaRow:focus-visible .areaName { color: var(--text); }
@@ -794,8 +790,8 @@
       --workspace-header-inset: var(--space-3);
       --workspace-header-row-height: calc(var(--control-h) + var(--space-2) * 2);
       --workspace-header-bottom: calc(var(--workspace-header-inset) + var(--workspace-header-row-height));
-      --workspace-title-center: calc(var(--workspace-header-inset) + var(--workspace-header-row-height) / 2);
       --workspace-sidebar-brand-height: var(--workspace-header-bottom);
+      --nc-card-header-height: var(--workspace-header-row-height);
     }
 
     .rail,
@@ -830,21 +826,6 @@
       margin-inline: 0;
       padding-inline: 0;
       justify-content: center;
-    }
-
-    .main [data-nc-drawer-stack],
-    .main [data-nc-drawer-frame] {
-      inset-block: var(--workspace-header-inset);
-    }
-
-    .main [data-nc-drawer-stack],
-    .main [data-nc-drawer] {
-      --nc-card-header-height: var(--workspace-header-row-height);
-    }
-
-    /* The shared host owns header clearance; its cards stay inside their cells. */
-    .main [data-nc-drawer-stack] [data-nc-drawer-frame] {
-      inset-block: 0;
     }
 
     .brand {

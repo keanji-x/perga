@@ -65,6 +65,21 @@ describe('DirectoryBrowser behavior', () => {
     await screen.findByRole('option', { name: 'notes.txt' });
     expect(screen.getByRole('combobox').hasAttribute('aria-activedescendant')).toBe(false);
   });
+  it('indexes initial active option and hidden-toggle updates against the filtered visible list', async () => {
+    const withDotfiles: DirectoryListing = { path: '/work', parent: '/', entries: [
+      { name: '.git', path: '/work/.git', isDirectory: true },
+      { name: 'src', path: '/work/src', isDirectory: true },
+    ] };
+    const listDotfiles: ListDirectory = vi.fn((path?: string) => Promise.resolve(path === '/work/src' ? child : withDotfiles));
+    render(<DirectoryBrowser listDirectory={listDotfiles} initialPath="/work" onCancel={vi.fn()} onSelect={vi.fn()}/>);
+    const srcOption = await screen.findByRole('option', { name: 'src' });
+    const input = screen.getByRole('combobox');
+    expect(input.getAttribute('aria-activedescendant')).toBe(srcOption.id);
+    fireEvent.click(screen.getByRole('button', { name: 'Show hidden' }));
+    expect(input.getAttribute('aria-activedescendant')).toBe(screen.getByRole('option', { name: 'src' }).id);
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() => expect(listDotfiles).toHaveBeenLastCalledWith('/work/src'));
+  });
   it('uses distinct owned listbox and option ids for multiple instances', async () => {
     render(<><DirectoryBrowser listDirectory={listing} initialPath="/work" onCancel={vi.fn()} onSelect={vi.fn()}/>
       <DirectoryBrowser listDirectory={listing} initialPath="/work" onCancel={vi.fn()} onSelect={vi.fn()}/></>);

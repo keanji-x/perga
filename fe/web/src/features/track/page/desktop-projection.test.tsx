@@ -2,7 +2,7 @@
 //
 // The real page as a faithful projection of its view model, checked over the desktop panel subtree: the mobile surface is a sibling in the same DOM.
 
-import { cleanup, fireEvent, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, screen } from '@testing-library/react';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import type { ReportTaskRow } from '../../../../../core/domain/track-task-inventory.ts';
@@ -183,13 +183,15 @@ describe('marker-literal hygiene guard: the page spells no MARKER name', () => {
   });
 });
 
-it('keeps desktop sharing beside the title with an anchored origin while conversation is open', () => {
+it('keeps desktop sharing in the header with an anchored origin while conversation is open', () => {
   const onShareTrack = vi.fn<NonNullable<TrackPageProps['onShareTrack']>>();
   renderPage({ onShareTrack, conversationOpen: true });
   const share = screen.getByRole('button', { name: 'Share' });
-  const title = within(share.closest('header')!).getByRole('heading', { level: 1 });
-  expect(title.closest('header')).toBe(share.closest('header'));
-  expect(title.compareDocumentPosition(share) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  const header = share.closest('header');
+  expect(header).not.toBeNull();
+  const title = document.querySelector('[data-nc-page-title]')?.closest('h1');
+  expect(title).not.toBeNull();
+  expect(header!.compareDocumentPosition(title!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   fireEvent.click(share);
   const origin = onShareTrack.mock.calls[0]?.[0];
   expect(origin?.kind).toBe('anchor');

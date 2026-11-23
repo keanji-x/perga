@@ -126,6 +126,7 @@ export function SettingEditor({ value, readRevision, loaded, loadError, onRetryL
     ? `Stored ${name} is invalid. ${stored.error} Restore default to repair it.`
     : parsedDraft.ok ? null : validationError ?? parsedDraft.error;
   const saved = save.phase === 'saved' && save.value === draft && inputError === null;
+  // Astryx TextInput overwrites `...rest['aria-describedby']` with its internal field IDs, so merge an external row description ID post-commit.
   useLayoutEffect(() => {
     const input = inputRef.current;
     if (input === null || describedById === undefined) return;

@@ -211,10 +211,10 @@
       padding-block-start: var(--header-band);
       margin-inline: calc(var(--space-5) * -1);
       padding-inline: var(--space-5);
-    }
-    .header,
-    [data-nc-scrolled] .header {
       border-block-end-color: transparent;
+    }
+    [data-nc-scrolled] .header {
+      border-block-end-color: color-mix(in srgb, var(--hairline) 60%, transparent);
     }
     .header[data-nc-align='document'] {
       padding-inline-start: calc(var(--space-5) + var(--document-start, 0px));

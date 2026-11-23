@@ -2,7 +2,7 @@
   .positioner,
   .seamPositioner,
   .stack {
-    inset-block: 20px 28px;
+    inset-block: var(--workspace-header-inset, 20px) var(--workspace-header-inset, 28px);
   }
   /*
    * §7.6's drawer, now shaped as **a card**: absolutely positioned inside the

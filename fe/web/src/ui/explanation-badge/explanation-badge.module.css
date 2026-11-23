@@ -34,15 +34,6 @@
     line-height: 1;
   }
 
-  .srOnly {
-    position: absolute;
-    inline-size: 1px;
-    block-size: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-    white-space: nowrap;
-  }
-
   .explanation {
     max-inline-size: min(var(--measure-form), calc(100vw - var(--space-6)));
     padding: var(--space-3);

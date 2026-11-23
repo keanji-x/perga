@@ -13,7 +13,7 @@
     display: grid;
     grid-template-columns:
       var(--document-start, 0px)
-      minmax(0, var(--document-measure, 40rem))
+      minmax(0, var(--document-measure, 45rem))
       minmax(0, 1fr);
     row-gap: var(--space-3);
     inline-size: 100%;
@@ -147,7 +147,7 @@
     .bodyProse {
       grid-template-columns:
         minmax(0, 1fr)
-        minmax(0, min(100%, var(--document-measure, 40rem)))
+        minmax(0, min(100%, var(--document-measure, 45rem)))
         minmax(0, 1fr);
     }
 
@@ -164,7 +164,7 @@
     }
 
     .bodyProse .markdown > .notice {
-      margin-inline-start: max(0px, calc((100% - var(--document-measure, 40rem)) / 2));
+      margin-inline-start: max(0px, calc((100% - var(--document-measure, 45rem)) / 2));
     }
   }
 

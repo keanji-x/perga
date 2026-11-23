@@ -27,10 +27,10 @@
   @media (width < 60rem) {
     .rail { display: none; }
   }
-  /* 40rem reading ceiling + 2 × (28px control + 4px gap) = 40rem + 64px: hide
-     before `--document-start` drops below the rail's 32px footprint and clamps
+  /* 45rem reading ceiling + 2 × (28px control + 16px gap) = 45rem + 88px: hide
+     before `--document-start` drops below the rail's 44px footprint and clamps
      the dots onto the report prose. */
-  @container (inline-size < calc(40rem + 64px)) {
+  @container (inline-size < calc(45rem + 88px)) {
     .rail { display: none; }
   }
 }
