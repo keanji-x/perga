@@ -53,7 +53,7 @@ public sealed class McpAnnotationsAndPermissionGuidanceTests
         await using var ctx = new KernelTestContext();
         ctx.Kernel.Templates.RegisterTemplate("""export default {id:"upgrades", title:"Upgrades"};""");
         var (_, snap) = await ctx.CreateDefaultTrackAsync(templateId: "upgrades");
-        var caller = new Perga.Kernel.Ports.McpSessionPrincipal("token", snap.Track.Id, snap.Track.LeadSessionId!, true, null, null, []);
+        var caller = await ctx.OpenMcpCallerAsync(snap.Track.LeadSessionId!);
         var actions = new List<string>();
         ctx.PolicyVm.OnBefore = (_, action, _, _) =>
         {

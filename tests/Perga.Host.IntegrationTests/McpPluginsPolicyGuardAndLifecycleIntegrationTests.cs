@@ -44,7 +44,7 @@ public sealed class McpPluginsPolicyGuardAndLifecycleIntegrationTests
         var area = await kernel.CreateAreaAsync(new("Plugin policy", DefaultCwd: cluster.DataDir), ct);
         var track = (await kernel.CreateTrackAsync(new(area.Id, TemplateId: "plugin-init-policy",
             EnabledPlugins: ["test-plugin"]), ct)).Track;
-        var caller = new McpSessionPrincipal("", track.Id, track.LeadSessionId!, true, null, null, track.EnabledPlugins);
+        var caller = await kernel.OpenMcpCallerAsync(track.LeadSessionId!, ct);
         var upstream = new PausedPluginInitialization();
         using var httpClient = new HttpClient(upstream);
         await using var router = new McpPluginRouter(kernel, new PergaHostOptions(), httpClient);
@@ -65,13 +65,128 @@ public sealed class McpPluginsPolicyGuardAndLifecycleIntegrationTests
 
         var result = await call.WaitAsync(ct);
         Assert.True(result.IsError);
-        Assert.Equal("Active policy or template data changed after authorization.", Assert.Single(result.Content).Text);
+        Assert.Equal("Active policy changed after authorization.", Assert.Single(result.Content).Text);
         Assert.Equal(0, upstream.ToolCalls);
 
         var retry = await backend.CallToolAsync(caller, "update", McpToolResultFormatter.EmptyObject, ct);
         Assert.True(retry.IsError);
         Assert.Equal("Updates locked", Assert.Single(retry.Content).Text);
         Assert.Equal(0, upstream.ToolCalls);
+    }
+
+    [Theory]
+    [InlineData(false, "test-plugin")]
+    [InlineData(true, "test-plugin")]
+    [InlineData(false, "perga")]
+    [InlineData(true, "PeRgA")]
+    [InlineData(false, "vcs")]
+    [InlineData(true, "VcS")]
+    public async Task DisabledPluginCannotDispatchAfterApprovalOrClientInitialization(bool duringApproval, string pluginId)
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var ct = deadline.Token;
+        await using var host = new PergaHostTestCluster();
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        var (track, lead) = await host.CreateTrackAsync();
+        await kernel.PatchTrackAsync(track, new(EnabledPlugins: [pluginId]), ct);
+        var caller = await kernel.OpenMcpCallerAsync(lead, ct);
+        if (duringApproval)
+            await kernel.InvokeKernelMcpToolAsync(caller, KernelMcpToolNames.TrackSet, JsonSerializer.SerializeToElement(new
+            {
+                source = "export default {id:'guard',title:'Guard',before:a=>a.toolName==='update'?AskHuman('Update?'):Allow()};"
+            }), ct);
+
+        var upstream = new PausedPluginInitialization();
+        using var client = new HttpClient(upstream);
+        await using var router = new McpPluginRouter(kernel, new PergaHostOptions(), client);
+        router.RegisterPlugin(new(pluginId, "http", "http://plugin.test/mcp"));
+        var backend = router.TryCreateBackend(pluginId)!;
+        var pending = backend.CallToolAsync(caller, "update", McpToolResultFormatter.EmptyObject, ct);
+        try
+        {
+            if (duringApproval)
+            {
+                var approvals = (await kernel.GetTrackAggregateAsync(track, ct)).PendingApprovals;
+                while (approvals.Count == 0)
+                {
+                    await Task.Delay(5, ct);
+                    approvals = (await kernel.GetTrackAggregateAsync(track, ct)).PendingApprovals;
+                }
+                var approval = Assert.Single(approvals);
+                await kernel.PatchTrackAsync(track, new(EnabledPlugins: []), ct);
+                await kernel.RespondInteractionAsync(lead, approval.Id, new(ExecutionId: approval.ExecutionId, OptionId: "approve"),
+                    new InteropPrincipal.Human(), ct);
+            }
+            else
+            {
+                await upstream.Initializing.Task.WaitAsync(ct);
+                await kernel.PatchTrackAsync(track, new(EnabledPlugins: []), ct);
+            }
+            Assert.Contains(pluginId, caller.EnabledPlugins);
+        }
+        finally { upstream.Resume.TrySetResult(); }
+
+        var result = await pending.WaitAsync(ct);
+        Assert.True(result.IsError);
+        Assert.Contains("is not enabled", Assert.Single(result.Content).Text);
+        Assert.Equal(0, upstream.ToolCalls);
+        if (duringApproval) Assert.False(upstream.Initializing.Task.IsCompleted);
+    }
+
+    [Fact]
+    public async Task StdioPluginRechecksMembershipAfterAcquiringWriteLock()
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var ct = deadline.Token;
+        await using var host = new PergaHostTestCluster();
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        var (track, lead) = await host.CreateTrackAsync();
+        await kernel.PatchTrackAsync(track, new(EnabledPlugins: ["locked"]), ct);
+        var caller = await kernel.OpenMcpCallerAsync(lead, ct);
+        var script = Path.Combine(host.DataDir, "locked-plugin.mjs");
+        var marker = Path.Combine(host.DataDir, "plugin-called");
+        await File.WriteAllTextAsync(script, """
+            import { createInterface } from 'node:readline';
+            import { writeFileSync } from 'node:fs';
+            for await (const line of createInterface({input: process.stdin})) {
+              const msg = JSON.parse(line);
+              if (msg.id === undefined) continue;
+              let result = {};
+              if (msg.method === 'tools/list') result = {tools: []};
+              if (msg.method === 'tools/call') {
+                writeFileSync(process.argv[2], 'called');
+                result = {content: [{type: 'text', text: 'called'}], isError: false};
+              }
+              process.stdout.write(JSON.stringify({jsonrpc: '2.0', id: msg.id, result}) + '\n');
+            }
+            """, ct);
+        await using var router = new McpPluginRouter(kernel, new PergaHostOptions());
+        router.RegisterPlugin(new("locked", "stdio", Command: ResolveNodeExecutable(), Args: [script, marker]));
+        var backend = router.TryCreateBackend("locked")!;
+        await backend.ListToolsAsync(caller, ct);
+
+        // Hold the real client lock so the request is suspended inside WriteLineAsync.
+        const System.Reflection.BindingFlags fields = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        var clients = (System.Collections.IDictionary)typeof(McpPluginRouter).GetField("_clients", fields)!.GetValue(router)!;
+        var upstream = clients["locked"]!;
+        var writeLock = (SemaphoreSlim)upstream.GetType().GetField("_writeLock", fields)!.GetValue(upstream)!;
+        var waiting = (System.Collections.IDictionary)upstream.GetType().GetField("_pending", fields)!.GetValue(upstream)!;
+        await writeLock.WaitAsync(ct);
+        Task<McpCallToolResult> call;
+        try
+        {
+            call = backend.CallToolAsync(caller, "update", McpToolResultFormatter.EmptyObject, ct);
+            while (waiting.Count == 0 && !call.IsCompleted)
+                await Task.Delay(5, ct);
+            Assert.False(call.IsCompleted);
+            await kernel.PatchTrackAsync(track, new(EnabledPlugins: []), ct);
+        }
+        finally { writeLock.Release(); }
+
+        var denied = await call.WaitAsync(ct);
+        Assert.True(denied.IsError);
+        Assert.Contains("is not enabled", Assert.Single(denied.Content).Text);
+        Assert.False(File.Exists(marker));
     }
 
     private sealed class PausedPluginInitialization : HttpMessageHandler

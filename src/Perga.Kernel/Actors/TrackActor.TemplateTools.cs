@@ -55,7 +55,8 @@ public sealed partial class TrackActor
     }, ct);
 
     private Task<TemplateSetResult> DetachTemplateCoreAsync(
-        bool dryRun, CancellationToken ct, string? callerSessionId = null, bool resetData = false)
+        bool dryRun, CancellationToken ct, string? callerSessionId = null, bool resetData = false,
+        InteropPrincipal.Session? authorization = null)
     {
         var data = resetData ? JsonHelpers.EmptyObject : _track.Data;
         return ApplyTemplateBindingCoreAsync(_track with
@@ -65,12 +66,13 @@ public sealed partial class TrackActor
             Data = data,
             DataRev = JsonElement.DeepEquals(data, _track.Data) ? _track.DataRev : checked(_track.DataRev + 1),
             UpdatedAtMs = NowMs()
-        }, null, dryRun, ct, callerSessionId, resetData ? "reset" : "preserve", [], null);
+        }, null, dryRun, ct, callerSessionId, resetData ? "reset" : "preserve", [], null, authorization);
     }
 
     private async Task<TemplateSetResult> ApplyTemplateBindingCoreAsync(
         TrackDto next, CompiledPolicy? policy, bool dryRun, CancellationToken ct, string? callerSessionId,
-        string dataAction, IReadOnlyList<string> templateWarnings, TemplateReportSeed? reportSeed)
+        string dataAction, IReadOnlyList<string> templateWarnings, TemplateReportSeed? reportSeed,
+        InteropPrincipal.Session? authorization)
     {
         var (spec, flow, stoppingNodes) = await PrepareTemplateFlowCoreAsync(next, policy, ct).ConfigureAwait(false);
         var activeToStop = _taskCoordinator.Snapshot().Where(task => stoppingNodes.Contains(task.TaskKey) && _taskCoordinator.HasActiveRun(task.Id)).ToArray();
@@ -98,14 +100,19 @@ public sealed partial class TrackActor
             reportSeed is null ? "keep" : "seed",
             next.EnabledPlugins.Except(_track.EnabledPlugins, StringComparer.Ordinal).ToArray());
         var result = new TemplateSetResult(presented, warnings, dryRun, plan);
-        if (dryRun) return result;
+        if (dryRun)
+        {
+            RequireMcpAuthorizationCore(authorization);
+            return result;
+        }
 
         var evt = new EventEnvelopeDto(null, next.AreaId, TrackId, KernelEventKinds.TrackUpdated,
             JsonHelpers.ToElement(presented), next.UpdatedAtMs);
         await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
         var snapshot = policy?.JsSource;
         await _store.UpdateTrackTemplateAndEmitAsync(next, snapshot, evt, ct,
-            writeData: next.DataRev != _track.DataRev, flow: flow, reportSeed: reportSeed).ConfigureAwait(false);
+            writeData: next.DataRev != _track.DataRev, flow: flow, reportSeed: reportSeed,
+            beforeWrite: CaptureMcpWriteFenceCore(authorization)).ConfigureAwait(false);
         var pluginsChanged = !_track.EnabledPlugins.SequenceEqual(next.EnabledPlugins, StringComparer.Ordinal);
         _track = next;
         if (reportSeed is not null)
@@ -313,12 +320,13 @@ public sealed partial class TrackActor
     private async Task<TrackDto> ReadUpdatedTemplateTrackAsync(JsonElement patch, CancellationToken ct) =>
         (await UpdateTemplateInputsCoreAsync(null, patch, null, ct).ConfigureAwait(false)).Track;
 
-    public Task<TemplateInputsUpdateResult> UpdateTemplateInputsAsync(string sessionId, JsonElement patch, string generation, CancellationToken ct) =>
-        UpdateTemplateInputsCoreAsync(sessionId, patch, generation, ct);
+    public Task<TemplateInputsUpdateResult> UpdateTemplateInputsAsync(string sessionId, JsonElement patch, string generation, CancellationToken ct, InteropPrincipal.Session? authorization = null) =>
+        UpdateTemplateInputsCoreAsync(sessionId, patch, generation, ct, authorization);
 
-    private Task<TemplateInputsUpdateResult> UpdateTemplateInputsCoreAsync(string? sessionId, JsonElement patch, string? generation, CancellationToken ct) => EnqueueAsync(async _ =>
+    private Task<TemplateInputsUpdateResult> UpdateTemplateInputsCoreAsync(string? sessionId, JsonElement patch, string? generation, CancellationToken ct, InteropPrincipal.Session? authorization = null) => EnqueueAsync(async _ =>
     {
         await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
+        RequireMcpAuthorizationCore(authorization);
         if (sessionId is not null) RequireTemplateLeadCore(sessionId, KernelMcpToolNames.TemplateUpdateInputs);
         if (generation is not null && _policyGeneration != generation) throw KernelException.PolicyDenied("Active policy changed after authorization.");
         if (_track.ClosedAtMs is not null) throw KernelException.Conflict("Cannot update a closed track.");
@@ -363,7 +371,8 @@ public sealed partial class TrackActor
         var evt = new EventEnvelopeDto(null, next.AreaId, TrackId, KernelEventKinds.TrackUpdated,
             JsonHelpers.ToElement(presented), next.UpdatedAtMs);
         await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
-        await _store.UpdateTrackTemplateAndEmitAsync(next, _policy.JsSource, evt, ct, flow: flow).ConfigureAwait(false);
+        await _store.UpdateTrackTemplateAndEmitAsync(next, _policy.JsSource, evt, ct, flow: flow,
+            beforeWrite: CaptureMcpWriteFenceCore(authorization)).ConfigureAwait(false);
         _track = next;
         foreach (var task in updates) _taskCoordinator.ReplaceTaskInMemoryCore(task);
         _policyGeneration = Guid.NewGuid().ToString("N");
@@ -475,7 +484,8 @@ public sealed partial class TrackActor
 
     public async Task<TemplateSetResult> SetTemplateWithOptionsAsync(string callerSessionId, string? templateId,
         string? source, string expectedPolicyGeneration, JsonElement? inputs, bool dryRun, bool clear,
-        CancellationToken ct = default, bool resetData = false, string? path = null, bool? seedReport = null)
+        CancellationToken ct = default, bool resetData = false, string? path = null, bool? seedReport = null,
+        InteropPrincipal.Session? authorization = null)
     {
         string? workspaceSource = null;
         if (!clear && path is not null && templateId is null && source is null && !string.IsNullOrWhiteSpace(path))
@@ -483,6 +493,7 @@ public sealed partial class TrackActor
             var (cwd, targetId) = await EnqueueAsync(async _ =>
             {
                 await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
+                RequireMcpAuthorizationCore(authorization);
                 RequireTemplateLeadCore(callerSessionId, KernelMcpToolNames.TrackSet);
                 if (_policyGeneration != expectedPolicyGeneration)
                     throw KernelException.PolicyDenied("Active policy changed after template application was authorized.");
@@ -506,6 +517,7 @@ public sealed partial class TrackActor
         return await EnqueueAsync(async _ =>
         {
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
+            RequireMcpAuthorizationCore(authorization);
             RequireTemplateLeadCore(callerSessionId, KernelMcpToolNames.TrackSet);
             if (_policyGeneration != expectedPolicyGeneration)
                 throw KernelException.PolicyDenied("Active policy changed after template application was authorized.");
@@ -515,7 +527,7 @@ public sealed partial class TrackActor
             if (clear && (selectors.Length > 0 || inputs is not null || seedReport is not null))
                 throw KernelException.InvalidArgument("clear cannot be combined with a template, inputs, or seedReport.");
             if (clear)
-                return await DetachTemplateCoreAsync(dryRun, ct, callerSessionId, resetData).ConfigureAwait(false);
+                return await DetachTemplateCoreAsync(dryRun, ct, callerSessionId, resetData, authorization).ConfigureAwait(false);
 
             if (selectors.Length != 1 || string.IsNullOrWhiteSpace(selectors[0]))
                 throw KernelException.InvalidArgument("Specify exactly one non-empty 'templateId', 'source', or 'path'.");
@@ -570,6 +582,7 @@ public sealed partial class TrackActor
             }
             var dataRev = JsonElement.DeepEquals(data, _track.Data) ? _track.DataRev : checked(_track.DataRev + 1);
             var warnings = await TemplateWarningsCoreAsync(policy, nextInputs, ct).ConfigureAwait(false);
+            RequireMcpAuthorizationCore(authorization);
             var now = NowMs();
             var nextTrack = _track with
             {
@@ -582,7 +595,7 @@ public sealed partial class TrackActor
             };
             var reportSeed = PrepareTemplateReportSeedCore(nextTrack, policy, seedReport, callerSessionId);
             return await ApplyTemplateBindingCoreAsync(nextTrack, policy, dryRun, ct, callerSessionId,
-                dataAction, warnings, reportSeed).ConfigureAwait(false);
+                dataAction, warnings, reportSeed, authorization).ConfigureAwait(false);
         }, ct).ConfigureAwait(false);
     }
 }

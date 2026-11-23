@@ -11,9 +11,17 @@ public sealed partial class TrackActor
         _runtimes.TryGetOpen(session.Id, out var open) && open.RuntimeActivity.Epoch == session.Epoch &&
         session.Status != "unknown" && session.ArchivedAtMs is null ? open.RuntimeActivity : null;
 
-    private void RegisterRuntimeActivityCore(AgentSessionDto session, IAgentSession provider)
+    private async Task RegisterRuntimeActivityCoreAsync(AgentSessionDto session, IAgentSession provider)
     {
-        if (!_runtimes.TryGetOpen(session.Id, out var open)) return;
+        if (!_runtimes.TryGetOpen(session.Id, out var open) || !ReferenceEquals(open.Agent, provider) ||
+            !HasRuntimeCredential(session.Id, open))
+            throw KernelException.Conflict("The runtime binding changed during provider startup.");
+        lock (open.RuntimeControl.Sync)
+        {
+            if (open.RuntimeControl.Phase == ExecutionPhase.Ended)
+                throw KernelException.Conflict("The runtime binding was revoked during provider startup.");
+            open.RuntimeControl.Phase = ExecutionPhase.Running;
+        }
         var state = open.RuntimeActivity;
         if (state.Epoch != session.Epoch)
         {
@@ -28,45 +36,52 @@ public sealed partial class TrackActor
             _ = EnqueueRuntimeActivityAsync(session.Id, session.Epoch, provider, state, observation);
         });
         foreach (var observation in pending)
-            ApplyRuntimeActivityCore(session.Id, session.Epoch, provider, state, observation);
+            await ApplyRuntimeActivityCoreAsync(session.Id, session.Epoch, provider, state, observation).ConfigureAwait(false);
     }
 
     private async Task EnqueueRuntimeActivityAsync(string sessionId, int epoch, IAgentSession provider,
         LiveRuntimeActivity state, UnifiedAgentEvent observation)
     {
-        try
-        {
-            await EnqueueAsync(_ =>
-            {
-                ApplyRuntimeActivityCore(sessionId, epoch, provider, state, observation);
-                return Task.FromResult(true);
-            }, CancellationToken.None).ConfigureAwait(false);
-        }
-        catch (ObjectDisposedException) { }
-        catch (OperationCanceledException) when (_actorShutdownCts.IsCancellationRequested) { }
+        await EnqueueRuntimeObservationAsync(() =>
+            ApplyRuntimeActivityCoreAsync(sessionId, epoch, provider, state, observation)).ConfigureAwait(false);
     }
 
-    private void ApplyRuntimeActivityCore(string sessionId, int epoch, IAgentSession provider,
+    private async Task EnqueueRuntimeObservationAsync(Func<Task> apply)
+    {
+        try { await EnqueueAsync(_ => apply(), _actorShutdownCts.Token).ConfigureAwait(false); }
+        catch (ObjectDisposedException) when (_disposed) { }
+        catch (OperationCanceledException) when (_actorShutdownCts.IsCancellationRequested) { }
+        catch (Exception ex) { System.Diagnostics.Trace.TraceError("Runtime activity for {0} could not be stored: {1}", TrackId, ex); }
+    }
+
+    private async Task ApplyRuntimeActivityCoreAsync(string sessionId, int epoch, IAgentSession provider,
         LiveRuntimeActivity state, UnifiedAgentEvent observation)
     {
-        if (_disposed || _track.ClosedAtMs is not null || !_sessions.TryGetValue(sessionId, out var session) ||
-            session.Epoch != epoch || session.Status == "unknown" ||
+        if (_disposed || !_sessions.TryGetValue(sessionId, out var session) || session.Epoch != epoch ||
             !_runtimes.TryGetOpen(sessionId, out var open) || !ReferenceEquals(open.Agent, provider) ||
             !ReferenceEquals(state, open.RuntimeActivity) || state.Exited) return;
         var now = NowMs();
         if (observation is UnifiedAgentEvent.RuntimeExited)
         {
             state.Exited = true;
+            EndRuntimeBinding(sessionId, open);
             state.Status = null;
             state.Tasks.Clear();
             state.EndedOrder.Clear();
             _eventHub.PublishTransient(_track.AreaId, TrackId, KernelEventKinds.SessionRuntimeStatus,
                 JsonHelpers.ToElement(new { sessionId, status = (AgentRuntimeStatusDto?)null }), now);
+            await FlushRuntimeOutputCoreAsync(session, state).ConfigureAwait(false);
             return;
         }
+        if (_track.ClosedAtMs is not null || session.Status == "unknown" || session.ArchivedAtMs is not null) return;
+        lock (open.RuntimeControl.Sync)
+            if (open.RuntimeControl.Phase != ExecutionPhase.Running) return;
+        _runtimes.Get(sessionId).TouchUsed();
         if (observation is UnifiedAgentEvent.AgentStatusChanged changed)
         {
             var status = changed.Status;
+            if (status.IdleActivity is { } idle && state.Status?.IdleActivity?.LastEventAt != idle.LastEventAt)
+                state.LastIdleActivityTimestamp = _timeProvider.GetTimestamp();
             state.Status = new(status.Kind, status.Phase, status.ToolName, status.ToolCallId, status.Writing,
                 status.SinceSeq, status.RequestId, status.InputId, status.Released,
                 status.LastTurnOutcome is { } outcome ? new(outcome.Kind, outcome.Failure, outcome.Reason,
@@ -85,6 +100,17 @@ public sealed partial class TrackActor
                 JsonHelpers.ToElement(new { sessionId, status = state.Status }), now);
             return;
         }
+        if (observation is UnifiedAgentEvent.TextDelta or UnifiedAgentEvent.ThinkingDelta
+            or UnifiedAgentEvent.ToolCallStarted or UnifiedAgentEvent.ToolCallCompleted)
+        {
+            // Starting turns have not entered the adapter yet, so this output precedes
+            // their reply. After dispatch the stream can end before durable settlement.
+            if (_scheduler.TryGetActive(sessionId, out var turn) && turn.PromptDispatchStarted)
+                state.OutputAwaitingSettlement.Enqueue(observation);
+            else await ApplyRuntimeOutputCoreAsync(session, state, observation).ConfigureAwait(false);
+            return;
+        }
+
         var task = observation switch
         {
             UnifiedAgentEvent.TaskStarted started => started.Task,
@@ -118,5 +144,173 @@ public sealed partial class TrackActor
         if (_scheduler.TryGetActive(sessionId, out var active))
             PublishTurnActivity(active, KernelEventKinds.SessionTaskProgress, payload, now);
         else _eventHub.PublishTransient(_track.AreaId, TrackId, KernelEventKinds.SessionTaskProgress, payload, now);
+    }
+
+    private async Task ApplyRuntimeOutputCoreAsync(AgentSessionDto session, LiveRuntimeActivity state, UnifiedAgentEvent observation)
+    {
+        switch (observation)
+        {
+            case UnifiedAgentEvent.TextDelta text:
+                await BufferRuntimeOutputCoreAsync(session, state, "assistant_text", text.Delta).ConfigureAwait(false);
+                return;
+            case UnifiedAgentEvent.ThinkingDelta thinking:
+                await BufferRuntimeOutputCoreAsync(session, state, "thinking", thinking.Delta).ConfigureAwait(false);
+                return;
+            case UnifiedAgentEvent.ToolCallStarted tool:
+                await FlushRuntimeOutputCoreAsync(session, state, new(0, session.Id, null, "tool_call",
+                    JsonHelpers.ToElement(new { v = 1, callId = tool.CallId, name = tool.Name, args = tool.Args }), NowMs())).ConfigureAwait(false);
+                return;
+            case UnifiedAgentEvent.ToolCallCompleted tool:
+                await FlushRuntimeOutputCoreAsync(session, state, new(0, session.Id, null, "tool_result",
+                    JsonHelpers.ToElement(new { v = 1, callId = tool.CallId, output = tool.Output, isError = tool.IsError }), NowMs())).ConfigureAwait(false);
+                return;
+        }
+    }
+
+    private async Task ReleaseTurnAndDrainRuntimeOutputCoreAsync(AgentSessionDto session, string turnId)
+    {
+        if (!_scheduler.TryGetActive(session.Id, out var active) || active.TurnDto.Id != turnId) return;
+        _scheduler.RemoveActive(session.Id);
+        var state = active.RuntimeActivity;
+        if (state.OutputAwaitingSettlement.Count == 0) return;
+        while (state.OutputAwaitingSettlement.TryDequeue(out var observation))
+        {
+            try { await ApplyRuntimeOutputCoreAsync(session, state, observation).ConfigureAwait(false); }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Trace.TraceError("Post-turn runtime output for session {0} could not be stored: {1}", session.Id, ex);
+            }
+        }
+        if (state.Exited || !_runtimes.TryGetOpen(session.Id, out var open) || !ReferenceEquals(state, open.RuntimeActivity))
+            await FlushRuntimeOutputForCloseAsync(session, state).ConfigureAwait(false);
+    }
+
+    private bool HasRecentBackgroundActivityCore(string sessionId) =>
+        _runtimes.TryGetOpen(sessionId, out var open) &&
+        (open.RuntimeActivity.Tasks.Values.Any(task => task.Status is "running" or "pending") ||
+         open.RuntimeActivity.LastIdleActivityTimestamp is { } last && _timeProvider.GetElapsedTime(last) < TimeSpan.FromSeconds(5));
+
+    private const int RuntimeOutputMaxCharacters = 16 * 1024;
+    private static readonly TimeSpan RuntimeOutputQuietPeriod = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan RuntimeOutputMaxWait = TimeSpan.FromSeconds(5);
+
+    private async Task BufferRuntimeOutputCoreAsync(AgentSessionDto session, LiveRuntimeActivity state, string kind, string delta)
+    {
+        if (delta.Length == 0) return;
+        if (state.OutputKind != kind)
+            await FlushRuntimeOutputCoreAsync(session, state).ConfigureAwait(false);
+        state.OutputKind = kind;
+        state.LastOutputTimestamp = _timeProvider.GetTimestamp();
+        if (state.Output.Length == 0) state.FirstOutputTimestamp = state.LastOutputTimestamp;
+        state.Output.Append(delta);
+        var delay = RuntimeOutputFlushDelay(state);
+        if (state.Output.Length >= RuntimeOutputMaxCharacters || delay <= TimeSpan.Zero)
+        {
+            await FlushRuntimeOutputCoreAsync(session, state).ConfigureAwait(false);
+            return;
+        }
+        state.OutputTimer ??= _timeProvider.CreateTimer(_state =>
+        {
+            if (!_disposed) _ = EnqueueRuntimeObservationAsync(() => FlushQuietRuntimeOutputCoreAsync(session.Id, state));
+        }, null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+        state.OutputTimer.Change(delay, Timeout.InfiniteTimeSpan);
+    }
+
+    private Task FlushQuietRuntimeOutputCoreAsync(string sessionId, LiveRuntimeActivity state)
+    {
+        if (_disposed || state.OutputTimer is null || !_runtimes.TryGetOpen(sessionId, out var open) ||
+            !ReferenceEquals(open.RuntimeActivity, state) ||
+            !_sessions.TryGetValue(sessionId, out var session) || session.Epoch != state.Epoch)
+            return Task.CompletedTask;
+
+        var remaining = RuntimeOutputFlushDelay(state);
+        if (remaining <= TimeSpan.Zero) return FlushRuntimeOutputCoreAsync(session, state);
+        state.OutputTimer.Change(remaining, Timeout.InfiniteTimeSpan);
+        return Task.CompletedTask;
+    }
+
+    private TimeSpan RuntimeOutputFlushDelay(LiveRuntimeActivity state)
+    {
+        var now = _timeProvider.GetTimestamp();
+        var quiet = RuntimeOutputQuietPeriod - _timeProvider.GetElapsedTime(state.LastOutputTimestamp, now);
+        var maxWait = RuntimeOutputMaxWait - _timeProvider.GetElapsedTime(state.FirstOutputTimestamp, now);
+        return quiet < maxWait ? quiet : maxWait;
+    }
+
+    private Task FlushRuntimeOutputCoreAsync(AgentSessionDto session) =>
+        _runtimes.TryGetOpen(session.Id, out var open) ? FlushRuntimeOutputCoreAsync(session, open.RuntimeActivity) : Task.CompletedTask;
+
+    private async Task FlushRuntimeOutputCoreAsync(AgentSessionDto session, LiveRuntimeActivity state, SessionItemDto? tool = null)
+    {
+        var items = new List<SessionItemDto>(2);
+        if (state.OutputKind is { } kind && state.Output.Length > 0)
+            items.Add(new(0, session.Id, null, kind, JsonHelpers.ToElement(new { v = 1, text = state.Output.ToString() }), NowMs()));
+        if (tool is not null) items.Add(tool);
+        if (items.Count == 0) return;
+
+        var evt = SessionUpdatedEvent(session) with { CreatedAtMs = NowMs() };
+        await _eventHub.EnsureInitializedFromStoreAsync(_store, CancellationToken.None).ConfigureAwait(false);
+        await _store.AppendSessionItemsAsync(session.Id, items, CancellationToken.None, evt).ConfigureAwait(false);
+        state.Output.Clear();
+        state.OutputKind = null;
+        state.OutputTimer?.Dispose();
+        state.OutputTimer = null;
+        await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, CancellationToken.None).ConfigureAwait(false);
+    }
+
+    private void RevokeSessionRuntime(string sessionId)
+    {
+        if (_runtimes.TryGetOpen(sessionId, out var open)) EndRuntimeBinding(sessionId, open);
+        // A launch may have registered its credentials before creating the provider handle.
+        else _mcpBridge.RevokeSession(sessionId);
+    }
+
+    private void EndRuntimeBinding(string sessionId, OpenSessionHandle open)
+    {
+        _mcpBridge.RevokeSession(sessionId, open.RuntimeBindingId);
+        List<PendingApproval>? expired;
+        lock (open.RuntimeControl.Sync)
+        {
+            open.RuntimeControl.Phase = ExecutionPhase.Ended;
+            expired = CollectExpiredApprovalsLocked(open.RuntimeControl);
+        }
+        FinishExpiredApprovals(expired);
+        _interactions.ExpireRuntimeWaiters(open.RuntimeControl);
+    }
+
+    // Close admission is serialized with credential checks, callbacks, and writes.
+    private async Task<bool> PrepareRuntimeCloseAsync(string sessionId, OpenSessionHandle open, Func<bool>? shouldClose)
+    {
+        async Task<bool> PrepareAsync()
+        {
+            if (shouldClose is not null && !shouldClose()) return false;
+            EndRuntimeBinding(sessionId, open);
+            if (_sessions.TryGetValue(sessionId, out var session))
+                await FlushRuntimeOutputForCloseAsync(session, open.RuntimeActivity).ConfigureAwait(false);
+            return true;
+        }
+
+        if (!_disposed)
+        {
+            try { return await EnqueueAsync(_ => PrepareAsync(), _actorShutdownCts.Token, touchActivity: false).ConfigureAwait(false); }
+            catch (ObjectDisposedException) when (_disposed) { }
+            catch (OperationCanceledException) when (_disposed) { }
+        }
+        await _mailboxLoopTask.ConfigureAwait(false);
+        return await PrepareAsync().ConfigureAwait(false);
+    }
+
+    private async Task FlushRuntimeOutputForCloseAsync(AgentSessionDto session, LiveRuntimeActivity state)
+    {
+        try { await FlushRuntimeOutputCoreAsync(session, state).ConfigureAwait(false); }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Trace.TraceError("Runtime output for session {0} could not be flushed at shutdown: {1}", session.Id, ex);
+        }
+        finally
+        {
+            state.OutputTimer?.Dispose();
+            state.OutputTimer = null;
+        }
     }
 }

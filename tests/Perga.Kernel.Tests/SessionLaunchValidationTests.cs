@@ -79,9 +79,7 @@ public sealed class SessionLaunchValidationTests
         ctx.AgentRuntime.TurnScript = (_, _, token) => HoldTurnAsync(token);
         await ctx.Kernel.SendSessionMessageAsync(leadId, new("hold", "hold"), Human, ct);
         await started.Task.WaitAsync(ct);
-        var lead = await ctx.Kernel.GetSessionItemsAsync(leadId, new(), Human, ct);
-        var parent = ctx.Kernel.McpSessionBridge.RegisterSession(track.Id, leadId, true, null, null, []).Principal
-            with { ExecutionOrigin = new(lead.ActiveTurn!.Id) };
+        var parent = ctx.RuntimeCaller(leadId);
 
         var receipt = await ctx.Kernel.InvokeKernelMcpToolAsync(parent, KernelMcpToolNames.SessionCreate,
             TestJson.FromObject(model is null ? new { requestKey = "child" } : (object)new { requestKey = "child", model }), ct);

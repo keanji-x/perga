@@ -112,21 +112,23 @@ internal sealed class StdioSubprocess : ISubprocessHandle
         return new StdioSubprocess(process);
     }
 
-    public Task WriteLineAsync(string line, CancellationToken ct)
+    public Task WriteLineAsync(string line, CancellationToken ct, Func<CancellationToken, Task>? beforeWrite = null)
     {
         lock (_sync)
         {
             ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-            return WriteLineCoreAsync(line, ct);
+            return WriteLineCoreAsync(line, ct, beforeWrite);
         }
     }
 
-    private async Task WriteLineCoreAsync(string line, CancellationToken ct)
+    private async Task WriteLineCoreAsync(string line, CancellationToken ct, Func<CancellationToken, Task>? beforeWrite)
     {
         await _stdinLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
+            if (beforeWrite is not null) await beforeWrite(ct).ConfigureAwait(false);
             ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+            ct.ThrowIfCancellationRequested();
             await _process.StandardInput.WriteLineAsync(line.AsMemory(), ct).ConfigureAwait(false);
             await _process.StandardInput.FlushAsync(ct).ConfigureAwait(false);
         }

@@ -38,28 +38,30 @@ public sealed class PolicyGuardMailTerminalScheduleBootTests
         var trackId = snap.Track.Id;
         var leadId = snap.Track.LeadSessionId!;
 
+        var caller = await ctx.OpenMcpCallerAsync(leadId);
+
         // 1. Allow
         ctx.PolicyVm.OnBefore = (_, action, _, _) =>
             new GuardDecision.Allow();
-        await ctx.Kernel.GuardMcpToolCallAsync(trackId, leadId, "vcs", "status", TestJson.Parse("{}"));
+        await ctx.Kernel.GuardMcpToolCallAsync(caller, "vcs", "status", TestJson.Parse("{}"));
 
         // 2. Disabled plugin rejected immediately
         var disabledEx = await Assert.ThrowsAsync<KernelException>(() =>
-            ctx.Kernel.GuardMcpToolCallAsync(trackId, leadId, "unapproved-plugin", "fetch", TestJson.Parse("{}")));
+            ctx.Kernel.GuardMcpToolCallAsync(caller, "unapproved-plugin", "fetch", TestJson.Parse("{}")));
         Assert.Equal(KernelErrorCode.Forbidden, disabledEx.Code);
 
         // 3. Policy Deny
         ctx.PolicyVm.OnBefore = (_, action, call, _) =>
             new GuardDecision.Deny($"Blocked tool {call.GetProperty("toolName").GetString()}");
         var denyEx = await Assert.ThrowsAsync<KernelException>(() =>
-            ctx.Kernel.GuardMcpToolCallAsync(trackId, leadId, "vcs", "pr_merge", TestJson.Parse("{}")));
+            ctx.Kernel.GuardMcpToolCallAsync(caller, "vcs", "pr_merge", TestJson.Parse("{}")));
         Assert.Equal(KernelErrorCode.PolicyDenied, denyEx.Code);
 
         // 4. Policy AskHuman -> suspends until human approves -> allows; if human denies -> throws PolicyDenied!
         ctx.PolicyVm.OnBefore = (_, action, _, _) =>
             new GuardDecision.AskHuman("Allow vcs_push?", "拒绝", "Approve");
 
-        var guardTask = ctx.Kernel.GuardMcpToolCallAsync(trackId, leadId, "vcs", "publish_pr", TestJson.Parse("{}"));
+        var guardTask = ctx.Kernel.GuardMcpToolCallAsync(caller, "vcs", "publish_pr", TestJson.Parse("{}"));
         ApprovalDto? openAsk = null;
         for (var i = 0; i < 50 && openAsk is null; i++)
         {
@@ -80,7 +82,7 @@ public sealed class PolicyGuardMailTerminalScheduleBootTests
         await guardTask; // Completes cleanly!
 
         // Now verify human rejection throws PolicyDenied
-        var rejectGuardTask = ctx.Kernel.GuardMcpToolCallAsync(trackId, leadId, "vcs", "pr_merge", TestJson.Parse("{}"));
+        var rejectGuardTask = ctx.Kernel.GuardMcpToolCallAsync(caller, "vcs", "pr_merge", TestJson.Parse("{}"));
         ApprovalDto? rejectAsk = null;
         for (var i = 0; i < 50 && rejectAsk is null; i++)
         {

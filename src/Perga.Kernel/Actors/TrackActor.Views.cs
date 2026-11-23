@@ -46,10 +46,11 @@ public sealed partial class TrackActor
         string? callerSessionId = null,
         CancellationToken ct = default,
         long? expectedDataRev = null,
-        string? expectedPolicyGeneration = null) =>
+        string? expectedPolicyGeneration = null, InteropPrincipal.Session? authorization = null) =>
         EnqueueAsync(async _ =>
         {
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
+            RequireMcpAuthorizationCore(authorization);
             if (expectedPolicyGeneration is not null && _policyGeneration != expectedPolicyGeneration)
                 throw KernelException.PolicyDenied("Active policy changed after data patch authorization.");
             if (_track.ClosedAtMs is not null)
@@ -111,7 +112,8 @@ public sealed partial class TrackActor
                     Payload: JsonHelpers.ToElement(TemplatePresentation.Project(nextTrack, _policy, _policyVm)),
                     CreatedAtMs: now);
                 await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
-                await _store.UpdateTrackAndEmitAsync(nextTrack, evt, ct, writeData: true).ConfigureAwait(false);
+                await _store.UpdateTrackAndEmitAsync(nextTrack, evt, ct, writeData: true,
+                    beforeWrite: CaptureMcpWriteFenceCore(authorization)).ConfigureAwait(false);
                 _track = nextTrack;
                 // Existing approvals evaluated the previous policy data snapshot.
                 _policyGeneration = Guid.NewGuid().ToString("N");

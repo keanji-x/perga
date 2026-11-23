@@ -29,6 +29,45 @@ public sealed class OarBridgeTests : IDisposable
     }
 
     [Fact]
+    public async Task SteerRechecksAuthorityAfterAcquiringRealStdinLock()
+    {
+        File.WriteAllText(_mockBridgePath, MockBridgeScript.Replace(
+            "if (req.method === 'session/steer') {", """
+            if (req.method === 'session/steer') {
+              fs.appendFileSync(req.params.message + '/steer-was-written', 'written');
+            """));
+        await using var runtime = new AgentRuntime(new AgentRuntimeOptions { BridgeScriptPath = _mockBridgePath });
+        await using var session = Assert.IsType<OarAgentSession>(runtime.CreateSession(new HarnessLaunchSpec(
+            "codex", null, _workspaceDir, null, null, new Dictionary<string, McpServerConfig>())));
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var ct = deadline.Token;
+        await session.InitializeAsync(ct);
+        var stdinLock = (SemaphoreSlim)typeof(StdioSubprocess)
+            .GetField("_stdinLock", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .GetValue(session.Subprocess)!;
+        var checks = 0;
+        var allowed = true;
+        await stdinLock.WaitAsync(ct);
+        Task<SteerDelivery> pending;
+        try
+        {
+            pending = session.SteerAsync("turn", _workspaceDir, ct, _ =>
+            {
+                checks++;
+                return allowed ? Task.CompletedTask : Task.FromException(new InvalidOperationException("Runtime authority revoked."));
+            });
+            Assert.False(pending.IsCompleted);
+            Assert.Equal(0, checks);
+            allowed = false;
+        }
+        finally { stdinLock.Release(); }
+        var failure = await Assert.ThrowsAsync<InvalidOperationException>(() => pending.WaitAsync(ct));
+        Assert.Equal("Runtime authority revoked.", failure.Message);
+        Assert.Equal(1, checks);
+        Assert.False(File.Exists(Path.Combine(_workspaceDir, "steer-was-written")));
+    }
+
+    [Fact]
     public async Task RuntimeActivityReplaysBeforeAttachAndForwardsDuringAndAfterTurns()
     {
         File.WriteAllText(_mockBridgePath, MockBridgeScript
@@ -72,6 +111,48 @@ public sealed class OarBridgeTests : IDisposable
         await exited.Task.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal(5, live.Count);
         Assert.Empty(session.AttachRuntimeActivityHandler(null));
+    }
+
+    [Fact]
+    public async Task BackgroundOutputAfterPromptIsDeliveredOnlyAsRuntimeActivity()
+    {
+        File.WriteAllText(_mockBridgePath, MockBridgeScript.Replace("usedTokens: 150 } } });", """
+            usedTokens: 150 } } });
+              for (const params of [
+                {kind:'thinking_delta',delta:'background thinking'},
+                {kind:'tool_call_started',callId:'background',name:'perga:flow_commit',args:{}},
+                {kind:'tool_call_completed',callId:'background',output:'committed'},
+                {kind:'text_delta',delta:'background reply'}
+              ]) send({jsonrpc:'2.0',method:'oar/event',params});
+            """));
+        await using var runtime = new AgentRuntime(new AgentRuntimeOptions { BridgeScriptPath = _mockBridgePath });
+        await using var session = runtime.CreateSession(new HarnessLaunchSpec("agy", null, _workspaceDir,
+            null, null, new Dictionary<string, McpServerConfig>()));
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await session.InitializeAsync(deadline.Token);
+        var activity = new System.Collections.Concurrent.ConcurrentQueue<UnifiedAgentEvent>();
+        var finished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Assert.Empty(session.AttachRuntimeActivityHandler(observation =>
+        {
+            activity.Enqueue(observation);
+            if (observation is UnifiedAgentEvent.TextDelta { Delta: "background reply" })
+                finished.TrySetResult();
+        }));
+        var streamed = new List<UnifiedAgentEvent>();
+        await foreach (var observation in session.StreamTurnAsync(new TurnInput("hello", "turn"), deadline.Token))
+            streamed.Add(observation);
+        Assert.Contains(streamed, e => e is UnifiedAgentEvent.TextDelta { Delta: "Reply from antigravity: hello" });
+        Assert.Contains(streamed, e => e is UnifiedAgentEvent.ThinkingDelta { Delta: "thinking..." });
+        Assert.Contains(streamed, e => e is UnifiedAgentEvent.ToolCallStarted { CallId: "c1" });
+        Assert.Contains(streamed, e => e is UnifiedAgentEvent.ToolCallCompleted { CallId: "c1" });
+        Assert.DoesNotContain(streamed, e => e is UnifiedAgentEvent.ToolCallStarted { CallId: "background" });
+
+        await finished.Task.WaitAsync(deadline.Token);
+        Assert.Collection(activity,
+            e => Assert.Equal("background thinking", Assert.IsType<UnifiedAgentEvent.ThinkingDelta>(e).Delta),
+            e => Assert.Equal("background", Assert.IsType<UnifiedAgentEvent.ToolCallStarted>(e).CallId),
+            e => Assert.Equal("background", Assert.IsType<UnifiedAgentEvent.ToolCallCompleted>(e).CallId),
+            e => Assert.Equal("background reply", Assert.IsType<UnifiedAgentEvent.TextDelta>(e).Delta));
     }
 
     [Fact]

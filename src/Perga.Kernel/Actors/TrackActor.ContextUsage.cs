@@ -73,7 +73,7 @@ public sealed partial class TrackActor
     {
         var sessionId = session.Id;
         var expectedEpoch = session.Epoch;
-        RegisterRuntimeActivityCore(session, agentSession);
+        await RegisterRuntimeActivityCoreAsync(session, agentSession).ConfigureAwait(false);
         var pending = agentSession.AttachIdleContextUsageHandler(idleUsage =>
             EnqueueIdleContextUsage(sessionId, agentSession, expectedEpoch, idleUsage));
 

@@ -57,7 +57,7 @@ public sealed partial class TrackActor
             {
                 _taskCoordinator.SetPaused(pauseTask, true);
                 active.CloseRuntimeOnStop = true;
-                _mcpBridge.RevokeSession(active.SessionId);
+                RevokeSessionRuntime(active.SessionId);
             }
 
             if (control.StopDispatch is { IsCompleted: false } inFlight)
@@ -82,7 +82,7 @@ public sealed partial class TrackActor
             control.Phase = ExecutionPhase.Stopping;
             // Queue the transition before cancellation, but never make provider stop wait for SQLite.
             ObserveTaskFault(EnterStoppingAsync(active));
-            expired = CollectExpiredApprovalsLocked(control);
+            expired = CollectExpiredApprovalsLocked(control, includeStopControl: true);
             stopTask = control.StopDispatch = started
                 ? StartTurnStopDispatch(active, observeTerminal)
                 : Task.CompletedTask;
@@ -183,15 +183,21 @@ public sealed partial class TrackActor
             {
                 await using var events = active.AgentSession.StreamTurnAsync(input, observation.Token)
                     .GetAsyncEnumerator(observation.Token);
-                ValueTask<bool> read;
-                lock (active.Control.Sync)
+                var read = await EnqueueAsync<ValueTask<bool>>(async _ =>
                 {
-                    if (active.Control.Phase != ExecutionPhase.Starting)
-                        return;
-                    active.Control.Phase = ExecutionPhase.Running;
-                    // Enter the adapter before allowing Stop to target this binding.
-                    read = events.MoveNextAsync();
-                }
+                    observation.Token.ThrowIfCancellationRequested();
+                    await FlushRuntimeOutputCoreAsync(RequireSessionCore(active.SessionId)).ConfigureAwait(false);
+                    lock (active.Control.Sync)
+                    {
+                        if (active.Control.Phase != ExecutionPhase.Starting)
+                            return new ValueTask<bool>(false);
+                        observation.Token.ThrowIfCancellationRequested();
+                        active.PromptDispatchStarted = true;
+                        active.Control.Phase = ExecutionPhase.Running;
+                        // Enter the adapter before allowing Stop to target this binding.
+                        return events.MoveNextAsync();
+                    }
+                }, _actorShutdownCts.Token).ConfigureAwait(false);
 
                 while (await read.ConfigureAwait(false))
                 {
@@ -259,7 +265,7 @@ public sealed partial class TrackActor
             active.Control.StopRequested = true;
             active.Control.Stopping.TrySetResult();
             active.Control.Phase = ExecutionPhase.Stopping;
-            expired = CollectExpiredApprovalsLocked(active.Control);
+            expired = CollectExpiredApprovalsLocked(active.Control, includeStopControl: true);
         }
 
         FinishExpiredApprovals(expired);
@@ -280,17 +286,25 @@ public sealed partial class TrackActor
         await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
         await _store.RecordTurnAndItemsAsync(turn, items, session, ct).ConfigureAwait(false);
         _sessions[session.Id] = session;
-        await _store.AppendEventAsync(turnEvent, ct).ConfigureAwait(false);
-        await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, turnEvent, ct).ConfigureAwait(false);
-        var sessionEvent = SessionUpdatedEvent(session);
-        await _store.AppendEventAsync(sessionEvent, ct).ConfigureAwait(false);
-        await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, sessionEvent, ct).ConfigureAwait(false);
+        try
+        {
+            await _store.AppendEventAsync(turnEvent, ct).ConfigureAwait(false);
+            await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, turnEvent, ct).ConfigureAwait(false);
+            var sessionEvent = SessionUpdatedEvent(session);
+            await _store.AppendEventAsync(sessionEvent, ct).ConfigureAwait(false);
+            await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, sessionEvent, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            await ReleaseTurnAndDrainRuntimeOutputCoreAsync(session, turn.Id).ConfigureAwait(false);
+        }
     }
 
     private sealed class ActiveTurnState(
         string sessionId,
         SessionConfiguration executionConfiguration,
         LiveContextUsage contextBinding,
+        LiveRuntimeActivity runtimeActivity,
         SessionTurnDto turnDto,
         IAgentSession agentSession,
         CancellationTokenSource turnCts,
@@ -304,11 +318,13 @@ public sealed partial class TrackActor
         public CancellationTokenSource TurnCts { get; } = turnCts;
         public ExecutionControl Control { get; } = new(starting: true);
         public TurnActivity Activity { get; } = new();
+        public bool PromptDispatchStarted { get; set; }
         public bool CloseRuntimeOnStop { get; set; }
         public long OpenGeneration { get; } = openGeneration;
         public bool CloseRuntimeOnSettle { get; set; }
         public SessionConfiguration Configuration { get; } = executionConfiguration;
         public LiveContextUsage ContextBinding { get; } = contextBinding;
+        public LiveRuntimeActivity RuntimeActivity { get; } = runtimeActivity;
         // Frozen inputs can execute a configuration different from the committed selection.
         public bool MatchesSessionConfiguration(AgentSessionDto session) =>
             Configuration == SessionConfiguration.FromNullable(session.Model, session.ReasoningEffort, session.PermissionMode);
@@ -341,7 +357,7 @@ public sealed partial class TrackActor
             {
                 var evaluation = _policyVm.PrepareTurn(_policy, new(TrackId, session.Id, session.IsLead,
                     _taskCoordinator.TryGetActiveTaskForSessionCore(session.Id)?.Task.Id, CurrentContextUsageRatioCore(session) ?? 0, _track.TemplateInputs), _track.Data);
-                var suspension = ApplyGuardDecisionCore(evaluation.Decision, sessionId, null, ct);
+                var suspension = ApplyGuardDecisionCore(evaluation.Decision, sessionId, new ExecutionControl(), ct);
                 return (new(generation, evaluation.Context, null), suspension);
             }
             catch (Exception ex) when (!ct.IsCancellationRequested)

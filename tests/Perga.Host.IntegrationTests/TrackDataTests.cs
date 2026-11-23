@@ -47,7 +47,7 @@ public sealed class TrackDataTests
                 var created = (await kernel.CreateTrackAsync(new(area.Id, TemplateId: "ledger"))).Track;
                 id = created.Id;
                 var url = $"/api/v1/tracks/{id}";
-                var principal = new McpSessionPrincipal("token", id, created.LeadSessionId!, true, null, null, []);
+                var principal = await kernel.OpenMcpCallerAsync(created.LeadSessionId!);
                 Task<JsonElement> Apply(string tool, object args) => KernelMcpDispatcher.ExecuteGuardedAsync(
                     kernel, principal, tool, JsonSerializer.SerializeToElement(args));
 

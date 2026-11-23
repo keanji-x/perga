@@ -10,7 +10,7 @@ public sealed partial class TrackActor
 {
     private WorkspacePreparation? _workspacePreparation;
     private Task? _workspacePreparationJob;
-    private bool _deletingTrack;
+    private volatile bool _deletingTrack;
 
     private bool WorkspaceReady => _workspacePreparation is null or { Phase: WorkspacePreparationPhase.Ready };
 

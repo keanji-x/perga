@@ -218,8 +218,7 @@ public sealed class TemplateBindingToolsTests
             await Task.Delay(5, ct);
             lead = await ctx.Kernel.GetSessionItemsAsync(leadId, new(), human, ct);
         }
-        var caller = ctx.Kernel.McpSessionBridge.RegisterSession(track.Track.Id, leadId, true, null, null, []).Principal
-            with { ExecutionOrigin = new(lead.ActiveTurn.Id) };
+        var caller = ctx.RuntimeCaller(leadId);
         try
         {
             var commit = await KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller, KernelMcpToolNames.FlowCommit,
@@ -319,9 +318,9 @@ public sealed class TemplateBindingToolsTests
         Assert.Equal(0, proc.ExitCode);
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var caller = await ctx.OpenMcpCallerAsync(track.Track.LeadSessionId!, cts.Token);
         var ex = await Assert.ThrowsAsync<KernelException>(() =>
-            KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel,
-                new McpSessionPrincipal("token", track.Track.Id, track.Track.LeadSessionId!, true, null, null, []),
+            KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller,
                 KernelMcpToolNames.TrackSet,
                 TestJson.FromObject(new { path = "pipe.perga.js", dryRun = true }),
                 cts.Token));
@@ -470,8 +469,9 @@ public sealed class TemplateBindingToolsTests
                 [new BlockOp.UpsertBlockOp("b_md_bad", ReportBlockKind.Widget, """{"use":"builtin:list","view":"missing"}""", null)])));
     }
 
-    private static Task<JsonElement> Call(KernelTestContext ctx, TrackAggregateSnapshot track, string tool, object arguments) =>
-        KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel,
-            new McpSessionPrincipal("token", track.Track.Id, track.Track.LeadSessionId!, true, null, null, []),
-            tool, TestJson.FromObject(arguments));
+    private static async Task<JsonElement> Call(KernelTestContext ctx, TrackAggregateSnapshot track, string tool, object arguments)
+    {
+        var caller = await ctx.OpenMcpCallerAsync(track.Track.LeadSessionId!);
+        return await KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller, tool, TestJson.FromObject(arguments));
+    }
 }

@@ -43,8 +43,8 @@ public partial interface IPergaKernel : IAsyncDisposable
     Task<JsonElement> InspectCurrentTemplateAsync(string trackId, string sessionId, CancellationToken ct = default, string? format = null, string? file = null);
     Task<TemplateSetResult> SetTrackTemplateWithOptionsAsync(string trackId, string sessionId, string? templateId,
         string? source, string generation, JsonElement? inputs, bool dryRun, bool clear, CancellationToken ct = default, bool resetData = false,
-        string? path = null, bool? seedReport = null);
-    Task<TemplateInputsUpdateResult> UpdateTemplateInputsAsync(string trackId, string sessionId, JsonElement inputs, string generation, CancellationToken ct = default);
+        string? path = null, bool? seedReport = null, InteropPrincipal.Session? authorization = null);
+    Task<TemplateInputsUpdateResult> UpdateTemplateInputsAsync(string trackId, string sessionId, JsonElement inputs, string generation, CancellationToken ct = default, InteropPrincipal.Session? authorization = null);
     Task<TrackDto> SetTrackTemplateAsync(string trackId, string callerSessionId, string? templateId, string? source, string expectedPolicyGeneration, JsonElement? inputs = null, CancellationToken ct = default, bool resetData = false);
     Task<BootReconcileResult> ReconcileOnBootAsync(CancellationToken ct = default);
     Task<DbMaintenanceStatsDto> RunMaintenancePassAsync(CancellationToken ct = default);
@@ -69,8 +69,8 @@ public partial interface IPergaKernel : IAsyncDisposable
     Task<TrackStatusDto> GetTrackStatusAsync(string trackId, CancellationToken ct = default);
     Task<string?> GetTrackLeadSessionIdAsync(string trackId, CancellationToken ct);
     Task<TrackDto> PatchTrackAsync(string trackId, PatchTrackRequest req, CancellationToken ct = default);
-    Task<TrackDto> RenameTrackAsync(string trackId, string callerSessionId, string newTitle, CancellationToken ct = default);
-    Task<TrackDto> CloseTrackAsync(string trackId, string callerSessionId, CancellationToken ct = default);
+    Task<TrackDto> RenameTrackAsync(string trackId, string callerSessionId, string newTitle, CancellationToken ct = default, InteropPrincipal.Session? authorization = null);
+    Task<TrackDto> CloseTrackAsync(string trackId, string callerSessionId, CancellationToken ct = default, InteropPrincipal.Session? authorization = null);
     Task DeleteTrackAsync(string trackId, CancellationToken ct = default);
 
     // Workspace Files & VCS Diff
@@ -84,16 +84,16 @@ public partial interface IPergaKernel : IAsyncDisposable
     Task<ReportSnapshot> ReadReportSnapshotAsync(
         string trackId, string? sectionH1, IReadOnlySet<string>? blockIds, bool includeTemplateViews, CancellationToken ct = default);
     Task<TemplateViewsProjection> GetTrackViewsAsync(string trackId, CancellationToken ct = default);
-    Task<FlowSnapshotDto> GetTrackFlowAsync(string trackId, CancellationToken ct = default);
+    Task<FlowSnapshotDto> GetTrackFlowAsync(string trackId, CancellationToken ct = default, InteropPrincipal.Session? authorization = null);
     Task<FlowCommitResultDto> CommitTrackFlowAsync(string trackId, bool dryRun, long? expectedFlowRev, InteropPrincipal caller, CancellationToken ct = default, string? content = null);
-    Task<TrackDataPatchResult> PatchTrackDataAsync(string trackId, JsonElement patch, string source, string? callerSessionId = null, CancellationToken ct = default, long? expectedDataRev = null, string? expectedPolicyGeneration = null);
+    Task<TrackDataPatchResult> PatchTrackDataAsync(string trackId, JsonElement patch, string source, string? callerSessionId = null, CancellationToken ct = default, long? expectedDataRev = null, string? expectedPolicyGeneration = null, InteropPrincipal.Session? authorization = null);
     Task<IReadOnlyList<ReportBlock>> GetReportRevisionBlocksAsync(string trackId, int docRev, CancellationToken ct = default);
     Task<ReportReadResult> CommitReportAsync(string trackId, string callerSessionId, ReportCommitRequest req,
-        CancellationToken ct = default, McpExecutionOrigin? origin = null, string? expectedPolicyGeneration = null);
+        CancellationToken ct = default, InteropPrincipal.Session? authorization = null);
 
     // Tasks, Governance & Completion
     Task<IReadOnlyList<TaskDto>> ListTasksAsync(string trackId, CancellationToken ct = default);
-    Task<TaskDto> CancelTaskAsync(string trackId, string? callerSessionId, string taskKeyOrId, string? reason = null, CancellationToken ct = default);
+    Task<TaskDto> CancelTaskAsync(string trackId, string? callerSessionId, string taskKeyOrId, string? reason = null, CancellationToken ct = default, InteropPrincipal.Session? authorization = null);
     Task<TaskDto> CompleteTaskDoneAsync(string trackId, string callerSessionId, JsonElement? workerResult = null, CancellationToken ct = default, WorkerCompletionOrigin? origin = null, FlowOutcome outcome = FlowOutcome.Ok, string? summary = null);
     Task<TaskDto> CompleteTaskFailAsync(string trackId, string callerSessionId, string reason, JsonElement? workerResult = null, CancellationToken ct = default, WorkerCompletionOrigin? origin = null);
 
@@ -102,28 +102,27 @@ public partial interface IPergaKernel : IAsyncDisposable
     Task<ReadReceiptDto> MarkReadAsync(string kind, string targetId, long readThroughMs, CancellationToken ct = default);
     Task<ReadReceiptDto> MarkUnreadAsync(string kind, string targetId, CancellationToken ct = default);
     // Asks
-    Task<JsonElement> AskUserAsync(string trackId, string? callerSessionId, IReadOnlyList<AskQuestionDto> questions, CancellationToken ct = default);
+    Task<JsonElement> AskUserAsync(string trackId, string? callerSessionId, IReadOnlyList<AskQuestionDto> questions, CancellationToken ct = default, InteropPrincipal.Session? authorization = null);
 
 
     // Cross-Track Mail
-    Task<MailDto> SendMailAsync(string fromTrackId, string callerSessionId, string? toTrackId, string summary, string body, CancellationToken ct = default, string? replyToMailId = null);
+    Task<MailDto> SendMailAsync(string fromTrackId, string callerSessionId, string? toTrackId, string summary, string body, CancellationToken ct = default, string? replyToMailId = null, InteropPrincipal.Session? authorization = null);
     Task<IReadOnlyList<MailDto>> ListMailsAsync(string trackId, bool unreadOnly = false, CancellationToken ct = default);
-    Task<MailDto> ReadMailAsync(string trackId, string mailId, CancellationToken ct = default);
+    Task<MailDto> ReadMailAsync(string trackId, string mailId, CancellationToken ct = default, InteropPrincipal.Session? authorization = null);
 
     // Terminals
     Task<IReadOnlyList<TerminalDto>> ListTerminalsAsync(string trackId, CancellationToken ct = default);
-    Task<TerminalDto> OpenTerminalAsync(string trackId, string? callerSessionId, OpenTerminalRequest req, CancellationToken ct = default);
+    Task<TerminalDto> OpenTerminalAsync(string trackId, string? callerSessionId, OpenTerminalRequest req, CancellationToken ct = default, InteropPrincipal.Session? authorization = null);
     Task<TermObserveResult> ObserveTerminalAsync(string trackId, TermObserveRequest req, CancellationToken ct = default);
-    Task<TermActionResult> SendTerminalInputAsync(string trackId, TermActionRequest req, CancellationToken ct = default);
+    Task<TermActionResult> SendTerminalInputAsync(string trackId, TermActionRequest req, CancellationToken ct = default, InteropPrincipal.Session? authorization = null);
     Task ResizeTerminalAsync(string trackId, string terminalId, ushort cols, ushort rows, CancellationToken ct = default);
     Task<TerminalDto> CloseTerminalAsync(string trackId, string terminalId, int graceMs = 2000, CancellationToken ct = default);
     Task<ITerminalBridgeClient> ResolveTerminalClientAsync(string terminalId, CancellationToken ct = default);
 
     // MCP Policy Guard, Tool Dispatch & Schedules
-    McpSessionPrincipal ObserveMcpExecution(McpSessionPrincipal caller);
-    Task<string> GuardMcpToolCallAsync(string trackId, string sessionId, string mcpServer, string toolName, JsonElement arguments,
-        CancellationToken ct = default, McpExecutionOrigin? origin = null);
-    Task EnsurePolicyGenerationAsync(string trackId, string? expectedGeneration, CancellationToken ct = default);
+    Task<string> GuardMcpToolCallAsync(McpSessionPrincipal caller, string mcpServer, string toolName, JsonElement arguments,
+        CancellationToken ct = default, bool write = true, bool isPlugin = false);
+    Task EnsureMcpAuthorizationAsync(McpSessionPrincipal caller, string generation, string mcpServer, string toolName, CancellationToken ct = default, bool isPlugin = false);
     Task<JsonElement> InvokeKernelMcpToolAsync(McpSessionPrincipal caller, string toolName, JsonElement arguments, CancellationToken ct = default);
     Task<bool> CancelPendingWakeAsync(string trackId, string wakeId, CancellationToken ct = default);
     Task<IReadOnlyList<FiredTrackSchedule>> FireDueTrackSchedulesAsync(long nowMs, CancellationToken ct = default);
@@ -428,11 +427,11 @@ public sealed partial class PergaKernelService : IPergaKernel
 
     public Task<TemplateSetResult> SetTrackTemplateWithOptionsAsync(string trackId, string sessionId, string? templateId,
         string? source, string generation, JsonElement? inputs, bool dryRun, bool clear, CancellationToken ct = default, bool resetData = false,
-        string? path = null, bool? seedReport = null) =>
-        Actors.GetOrActivate(trackId).SetTemplateWithOptionsAsync(sessionId, templateId, source, generation, inputs, dryRun, clear, ct, resetData, path, seedReport);
+        string? path = null, bool? seedReport = null, InteropPrincipal.Session? authorization = null) =>
+        Actors.GetOrActivate(trackId).SetTemplateWithOptionsAsync(sessionId, templateId, source, generation, inputs, dryRun, clear, ct, resetData, path, seedReport, authorization);
 
-    public Task<TemplateInputsUpdateResult> UpdateTemplateInputsAsync(string trackId, string sessionId, JsonElement inputs, string generation, CancellationToken ct = default) =>
-        Actors.GetOrActivate(trackId).UpdateTemplateInputsAsync(sessionId, inputs, generation, ct);
+    public Task<TemplateInputsUpdateResult> UpdateTemplateInputsAsync(string trackId, string sessionId, JsonElement inputs, string generation, CancellationToken ct = default, InteropPrincipal.Session? authorization = null) =>
+        Actors.GetOrActivate(trackId).UpdateTemplateInputsAsync(sessionId, inputs, generation, ct, authorization);
 
     public Task<TrackDto> SetTrackTemplateAsync(string trackId, string callerSessionId, string? templateId,
         string? source, string expectedPolicyGeneration, JsonElement? inputs = null, CancellationToken ct = default, bool resetData = false) =>
@@ -767,11 +766,11 @@ public sealed partial class PergaKernelService : IPergaKernel
         string trackId,
         string callerSessionId,
         string newTitle,
-        CancellationToken ct = default) =>
-        Actors.GetOrActivate(trackId).RenameTrackBySessionAsync(callerSessionId, newTitle, ct);
+        CancellationToken ct = default, InteropPrincipal.Session? authorization = null) =>
+        Actors.GetOrActivate(trackId).RenameTrackBySessionAsync(callerSessionId, newTitle, ct, authorization);
 
-    public Task<TrackDto> CloseTrackAsync(string trackId, string callerSessionId, CancellationToken ct = default) =>
-        Actors.GetOrActivate(trackId).CloseTrackBySessionAsync(callerSessionId, ct);
+    public Task<TrackDto> CloseTrackAsync(string trackId, string callerSessionId, CancellationToken ct = default, InteropPrincipal.Session? authorization = null) =>
+        Actors.GetOrActivate(trackId).CloseTrackBySessionAsync(callerSessionId, ct, authorization);
 
     public async Task DeleteTrackAsync(string trackId, CancellationToken ct = default)
     {
@@ -962,8 +961,8 @@ public sealed partial class PergaKernelService : IPergaKernel
         string trackId,
         string callerSessionId,
         ReportCommitRequest req,
-        CancellationToken ct = default, McpExecutionOrigin? origin = null, string? expectedPolicyGeneration = null) =>
-        Actors.GetOrActivate(trackId).CommitReportBySessionAsync(callerSessionId, req, ct, origin, expectedPolicyGeneration);
+        CancellationToken ct = default, InteropPrincipal.Session? authorization = null) =>
+        Actors.GetOrActivate(trackId).CommitReportBySessionAsync(callerSessionId, req, ct, authorization);
 
     // ------------------- Tasks, Governance & Completion -------------------
 
@@ -975,8 +974,8 @@ public sealed partial class PergaKernelService : IPergaKernel
         string? callerSessionId,
         string taskKeyOrId,
         string? reason = null,
-        CancellationToken ct = default) =>
-        Actors.GetOrActivate(trackId).CancelTaskAsync(callerSessionId, taskKeyOrId, reason, ct);
+        CancellationToken ct = default, InteropPrincipal.Session? authorization = null) =>
+        Actors.GetOrActivate(trackId).CancelTaskAsync(callerSessionId, taskKeyOrId, reason, ct, authorization);
 
     public Task<TaskDto> CompleteTaskDoneAsync(
         string trackId,
@@ -1005,8 +1004,8 @@ public sealed partial class PergaKernelService : IPergaKernel
         string trackId,
         string? callerSessionId,
         IReadOnlyList<AskQuestionDto> questions,
-        CancellationToken ct = default) =>
-        Actors.GetOrActivate(trackId).AskUserAsync(callerSessionId, questions, ct);
+        CancellationToken ct = default, InteropPrincipal.Session? authorization = null) =>
+        Actors.GetOrActivate(trackId).AskUserAsync(callerSessionId, questions, ct, authorization);
 
     // ------------------- Cross-Track Mail -------------------
 
@@ -1017,7 +1016,7 @@ public sealed partial class PergaKernelService : IPergaKernel
         string summary,
         string body,
         CancellationToken ct = default,
-        string? replyToMailId = null)
+        string? replyToMailId = null, InteropPrincipal.Session? authorization = null)
     {
         var senderActor = Actors.GetOrActivate(fromTrackId);
         return senderActor.SendCrossTrackMailAsync(
@@ -1025,12 +1024,12 @@ public sealed partial class PergaKernelService : IPergaKernel
             toTrackId,
             summary,
             body,
-            deliverToTargetTrack: async (mail, token) =>
+            deliverToTargetTrack: async (mail, authorizeDelivery, token) =>
             {
                 var targetActor = Actors.GetOrActivate(mail.ToTrackId);
-                await targetActor.ReceiveMailAsync(mail, token).ConfigureAwait(false);
+                await targetActor.ReceiveMailAsync(mail, token, authorizeDelivery).ConfigureAwait(false);
             },
-            ct, replyToMailId);
+            ct, replyToMailId, authorization);
     }
 
     public Task<IReadOnlyList<MailDto>> ListMailsAsync(
@@ -1039,8 +1038,8 @@ public sealed partial class PergaKernelService : IPergaKernel
         CancellationToken ct = default) =>
         Actors.GetOrActivate(trackId).ListMailsAsync(unreadOnly, ct);
 
-    public Task<MailDto> ReadMailAsync(string trackId, string mailId, CancellationToken ct = default) =>
-        Actors.GetOrActivate(trackId).ReadMailAsync(mailId, ct);
+    public Task<MailDto> ReadMailAsync(string trackId, string mailId, CancellationToken ct = default, InteropPrincipal.Session? authorization = null) =>
+        Actors.GetOrActivate(trackId).ReadMailAsync(mailId, ct, authorization);
 
     // ------------------- Terminals -------------------
 
@@ -1051,8 +1050,8 @@ public sealed partial class PergaKernelService : IPergaKernel
         string trackId,
         string? callerSessionId,
         OpenTerminalRequest req,
-        CancellationToken ct = default) =>
-        Actors.GetOrActivate(trackId).OpenTerminalAsync(callerSessionId, req, ct);
+        CancellationToken ct = default, InteropPrincipal.Session? authorization = null) =>
+        Actors.GetOrActivate(trackId).OpenTerminalAsync(callerSessionId, req, ct, authorization);
 
     public Task<TermObserveResult> ObserveTerminalAsync(
         string trackId,
@@ -1063,8 +1062,8 @@ public sealed partial class PergaKernelService : IPergaKernel
     public Task<TermActionResult> SendTerminalInputAsync(
         string trackId,
         TermActionRequest req,
-        CancellationToken ct = default) =>
-        Actors.GetOrActivate(trackId).SendTerminalInputAsync(req, ct);
+        CancellationToken ct = default, InteropPrincipal.Session? authorization = null) =>
+        Actors.GetOrActivate(trackId).SendTerminalInputAsync(req, ct, authorization);
 
     public Task ResizeTerminalAsync(
         string trackId,
@@ -1098,26 +1097,12 @@ public sealed partial class PergaKernelService : IPergaKernel
 
     // ------------------- MCP Policy Guard, Tool Dispatch & Schedules -------------------
 
-    public McpSessionPrincipal ObserveMcpExecution(McpSessionPrincipal caller)
-    {
-        var turnId = Actors.TryGetActive(caller.TrackId, out var actor) ? actor?.ReadActiveTurnId(caller.SessionId) : null;
-        return caller with { ExecutionOrigin = new McpExecutionOrigin(turnId) };
-    }
+    public Task<string> GuardMcpToolCallAsync(McpSessionPrincipal caller, string mcpServer, string toolName,
+        JsonElement arguments, CancellationToken ct = default, bool write = true, bool isPlugin = false) =>
+        Actors.GetOrActivate(caller.TrackId).GuardMcpToolCallAsync(caller, mcpServer, toolName, arguments, ct, write, isPlugin);
 
-    public Task<string> GuardMcpToolCallAsync(
-        string trackId,
-        string sessionId,
-        string mcpServer,
-        string toolName,
-        JsonElement arguments,
-        CancellationToken ct = default,
-        McpExecutionOrigin? origin = null) =>
-        Actors.GetOrActivate(trackId).GuardMcpToolCallAsync(sessionId, mcpServer, toolName, arguments, ct, origin);
-
-    public Task EnsurePolicyGenerationAsync(string trackId, string? expectedGeneration, CancellationToken ct = default) =>
-        expectedGeneration is null
-            ? Task.CompletedTask
-            : Actors.GetOrActivate(trackId).EnsurePolicyGenerationAsync(expectedGeneration, ct);
+    public Task EnsureMcpAuthorizationAsync(McpSessionPrincipal caller, string generation, string mcpServer, string toolName, CancellationToken ct = default, bool isPlugin = false) =>
+        Actors.GetOrActivate(caller.TrackId).EnsureMcpAuthorizationAsync(caller, generation, mcpServer, toolName, ct, isPlugin);
 
     public Task<JsonElement> InvokeKernelMcpToolAsync(
         McpSessionPrincipal caller,

@@ -48,10 +48,15 @@ public sealed partial class TrackActor
         }
     }
 
-    public Task<FlowSnapshotDto> GetFlowSnapshotAsync(CancellationToken ct = default) =>
+    public Task<FlowSnapshotDto> GetFlowSnapshotAsync(CancellationToken ct = default, InteropPrincipal.Session? authorization = null) =>
         EnqueueAsync(async _ =>
         {
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
+            if (authorization is not null)
+            {
+                RequireMcpToolAccessCore(authorization.SessionId, "perga", KernelMcpToolNames.FlowRead);
+                RequireRuntimeBindingCore(authorization);
+            }
             await ProjectCommittedFlowFileCoreAsync(ct).ConfigureAwait(false);
             var projection = await BuildFlowProjectionCoreAsync(ct).ConfigureAwait(false);
             var spec = JsonHelpers.ParseClone(TrackFlowSerializer.SerializeCanonical(_flowSpec));
@@ -65,6 +70,7 @@ public sealed partial class TrackActor
         CancellationToken ct = default,
         string? content = null)
     {
+        var authorization = caller as InteropPrincipal.Session;
         var (result, cleanup) = await EnqueueAsync<(FlowCommitResultDto, Task)>(async _ =>
         {
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
@@ -87,13 +93,15 @@ public sealed partial class TrackActor
                     parsedSpec, _flowSpec, _taskCoordinator.Snapshot(), CollectActiveFlowTaskIdsCore(), _sessions,
                     _track.LeadSessionId, _policy, _policyVm, _track.TemplateInputs, _scheduleCronEvaluator, _timeProvider,
                     workerCatalog: await GetFlowWorkerCatalogCoreAsync(parsedSpec, ct).ConfigureAwait(false));
+                RequireMcpAuthorizationCore(authorization);
                 if (errors.Count == 0)
                 {
                     // An explicit submission replaces the current Host draft. Keep its hash
                     // so projection and restart recovery still preserve any newer file edit.
                     if (content is not null && !dryRun)
                         draftSha = _flowFileStore.TryReadFlowFile(TrackId)?.Sha256;
-                    return await ApplyFlowSpecCoreAsync(parsedSpec, dryRun, draftSha, ct).ConfigureAwait(false);
+                    return await ApplyFlowSpecCoreAsync(parsedSpec, dryRun, draftSha, ct,
+                        authorization: authorization).ConfigureAwait(false);
                 }
             }
 
@@ -105,7 +113,8 @@ public sealed partial class TrackActor
         return result;
     }
 
-    private async Task<Task> CancelFlowTaskCoreAsync(TaskDto task, string? reason, CancellationToken ct)
+    private async Task<Task> CancelFlowTaskCoreAsync(TaskDto task, string? reason, CancellationToken ct,
+        InteropPrincipal.Session? authorization)
     {
         if (task.ArchivedAtMs is not null)
             return _taskCoordinator.TryGetActiveRun(task.Id, out var stopping)
@@ -127,13 +136,13 @@ public sealed partial class TrackActor
             Nodes = _flowSpec.Nodes.Select(existing => existing.Id == node.Id ? existing with { Canceled = true } : existing).ToArray()
         };
         var (_, cleanup) = await ApplyFlowSpecCoreAsync(proposal, false, _track.FlowFileSha256, ct,
-            task.Id, string.IsNullOrWhiteSpace(reason) ? null : reason.Trim()).ConfigureAwait(false);
+            task.Id, string.IsNullOrWhiteSpace(reason) ? null : reason.Trim(), authorization).ConfigureAwait(false);
         return cleanup;
     }
 
     private async Task<(FlowCommitResultDto Result, Task Cleanup)> ApplyFlowSpecCoreAsync(
         FlowSpecDto proposed, bool dryRun, string? sourceSha, CancellationToken ct,
-        string? canceledTaskId = null, string? cancellationReason = null)
+        string? canceledTaskId = null, string? cancellationReason = null, InteropPrincipal.Session? authorization = null)
     {
         // A targeted cancellation commits the node's canceled flag. Normal GC can archive it later.
         var prunedIds = canceledTaskId is null
@@ -209,7 +218,7 @@ public sealed partial class TrackActor
             var index = upsertedTasks.FindIndex(task => task.Id == canceledTaskId);
             if (index >= 0) upsertedTasks[index] = upsertedTasks[index] with { StatusDetail = cancellationReason };
         }
-        var events = await PersistFlowCoreAsync(nextSpec, sourceSha, upsertedTasks, schedules, canceledClocks, now, ct)
+        var events = await PersistFlowCoreAsync(nextSpec, sourceSha, upsertedTasks, schedules, canceledClocks, now, ct, authorization)
             .ConfigureAwait(false);
         var cleanup = BeginFlowCancellationCore(canceledRuns, canceledNodes);
         if (canceledTaskId is null && canceledNodes.Count > 0 && cleanup == Task.CompletedTask)
@@ -279,7 +288,8 @@ public sealed partial class TrackActor
         IReadOnlyList<TrackScheduleDto> schedules,
         IReadOnlyList<string> canceledClocks,
         long now,
-        CancellationToken ct)
+        CancellationToken ct,
+        InteropPrincipal.Session? authorization = null)
     {
         // Persist the accepted source hash before projecting the canonical file. Hydration can
         // finish an interrupted write only while the file still contains those accepted bytes.
@@ -297,8 +307,8 @@ public sealed partial class TrackActor
             _taskCoordinator.CreateTaskUpdatedEventCore(now)
         ];
         await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
-        await _store.CommitTrackFlowAsync(nextTrack, _track.FlowRev, tasks, schedules, canceledClocks, events, ct)
-            .ConfigureAwait(false);
+        await _store.CommitTrackFlowAsync(nextTrack, _track.FlowRev, tasks, schedules, canceledClocks, events, ct,
+            beforeWrite: CaptureMcpWriteFenceCore(authorization)).ConfigureAwait(false);
         _track = nextTrack;
         _flowSpec = nextSpec;
         foreach (var task in tasks)

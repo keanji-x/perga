@@ -23,6 +23,8 @@ public class AnswerPublicationStoreProxy : DispatchProxy
     public Func<CancellationToken, Task>? NextEventRead;
     public Action? AfterNextAskWrite;
     public Action? BeforeNextApprovalAudit;
+    public Action? AfterNextMailEnqueue;
+    public Action<string>? AfterStoreCall;
 
     protected override object? Invoke(MethodInfo? method, object?[]? args)
     {
@@ -32,6 +34,9 @@ public class AnswerPublicationStoreProxy : DispatchProxy
         if (method.Name == nameof(ITrackStore.AppendEventAsync) && args?[0] is EventEnvelopeDto { Kind: "approval.decided" })
             Interlocked.Exchange(ref BeforeNextApprovalAudit, null)?.Invoke();
         var result = Forward(method, args);
+        AfterStoreCall?.Invoke(method.Name);
+        if (method.Name == nameof(ITrackStore.UpsertMailAsync))
+            Interlocked.Exchange(ref AfterNextMailEnqueue, null)?.Invoke();
         if (method.Name == nameof(ITrackStore.UpsertAskAsync) &&
             Interlocked.Exchange(ref AfterNextAskWrite, null) is { } writeHook)
             return AfterWrite((Task)result!, writeHook);

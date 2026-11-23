@@ -306,11 +306,11 @@ public sealed class SqliteTrackStore : ITrackStore, IAsyncDisposable, ISessionIn
     public Task<TrackAggregateSnapshot?> LoadTrackAggregateAsync(string trackId, CancellationToken ct) =>
         _trackReadRepository.LoadTrackAggregateAsync(trackId, ct);
 
-    public Task UpdateTrackAndEmitAsync(TrackDto track, EventEnvelopeDto? evt, CancellationToken ct, bool writeData = false) =>
-        _trackUpdateRepository.UpdateTrackAndEmitAsync(track, evt, ct, writeData);
+    public Task UpdateTrackAndEmitAsync(TrackDto track, EventEnvelopeDto? evt, CancellationToken ct, bool writeData = false, Action? beforeWrite = null) =>
+        _trackUpdateRepository.UpdateTrackAndEmitAsync(track, evt, ct, writeData, beforeWrite);
 
-    public Task UpdateTrackTemplateAndEmitAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto evt, CancellationToken ct, bool writeData = false, TrackFlowUpdate? flow = null, TemplateReportSeed? reportSeed = null) =>
-        _trackUpdateRepository.UpdateTrackTemplateAndEmitAsync(track, templateSnapshot, evt, ct, writeData, flow, reportSeed);
+    public Task UpdateTrackTemplateAndEmitAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto evt, CancellationToken ct, bool writeData = false, TrackFlowUpdate? flow = null, TemplateReportSeed? reportSeed = null, Action? beforeWrite = null) =>
+        _trackUpdateRepository.UpdateTrackTemplateAndEmitAsync(track, templateSnapshot, evt, ct, writeData, flow, reportSeed, beforeWrite);
 
     public Task RecordFlowFileHashAsync(string trackId, long flowRev, string sha256, CancellationToken ct) =>
         _trackUpdateRepository.RecordFlowFileHashAsync(trackId, flowRev, sha256, ct);
@@ -322,8 +322,9 @@ public sealed class SqliteTrackStore : ITrackStore, IAsyncDisposable, ISessionIn
         IReadOnlyList<TrackScheduleDto> activeFlowSchedules,
         IReadOnlyList<string> canceledFlowScheduleIds,
         IReadOnlyList<EventEnvelopeDto> events,
-        CancellationToken ct) =>
-        _trackUpdateRepository.CommitTrackFlowAsync(track, expectedFlowRev, upsertedTasks, activeFlowSchedules, canceledFlowScheduleIds, events, ct);
+        CancellationToken ct,
+        Action? beforeWrite = null) =>
+        _trackUpdateRepository.CommitTrackFlowAsync(track, expectedFlowRev, upsertedTasks, activeFlowSchedules, canceledFlowScheduleIds, events, ct, beforeWrite);
 
     public Task DeleteTrackAsync(string trackId, CancellationToken ct) =>
         _trackDeletionRepository.DeleteTrackAsync(trackId, ct);
@@ -335,8 +336,9 @@ public sealed class SqliteTrackStore : ITrackStore, IAsyncDisposable, ISessionIn
         string? authorSessionId,
         string commitMessage,
         EventEnvelopeDto evt,
-        CancellationToken ct) =>
-        _reportRepository.SaveReportAsync(trackId, report, compressedRevisionBlocks, authorSessionId, commitMessage, evt, ct);
+        CancellationToken ct,
+        Action? beforeWrite = null) =>
+        _reportRepository.SaveReportAsync(trackId, report, compressedRevisionBlocks, authorSessionId, commitMessage, evt, ct, beforeWrite);
 
     public Task<IReadOnlyList<ReportBlock>> GetReportRevisionBlocksAsync(
         string trackId,
@@ -379,8 +381,8 @@ public sealed class SqliteTrackStore : ITrackStore, IAsyncDisposable, ISessionIn
     public Task<IReadOnlyList<long>> AppendSessionItemsAsync(
         string sessionId,
         IReadOnlyList<SessionItemDto> newItems,
-        CancellationToken ct = default) =>
-        _sessionRepository.AppendSessionItemsAsync(sessionId, newItems, ct);
+        CancellationToken ct = default, EventEnvelopeDto? evt = null) =>
+        _sessionRepository.AppendSessionItemsAsync(sessionId, newItems, ct, evt);
 
     public Task<IReadOnlyList<SessionTurnDto>> ListSessionTurnsAsync(
         string sessionId,
@@ -400,8 +402,8 @@ public sealed class SqliteTrackStore : ITrackStore, IAsyncDisposable, ISessionIn
     public Task<AskDto?> GetAskAsync(string askId, CancellationToken ct = default) =>
         _correspondenceRepository.GetAskAsync(askId, ct);
 
-    public Task UpsertMailAsync(MailDto mail, EventEnvelopeDto evt, CancellationToken ct, bool requestWake = true) =>
-        _correspondenceRepository.UpsertMailAsync(mail, evt, ct, requestWake);
+    public Task UpsertMailAsync(MailDto mail, EventEnvelopeDto evt, CancellationToken ct, bool requestWake = true, Action? beforeWrite = null) =>
+        _correspondenceRepository.UpsertMailAsync(mail, evt, ct, requestWake, beforeWrite);
 
     public Task MarkMailReadAsync(string mailId, long readAtMs, CancellationToken ct = default) =>
         _correspondenceRepository.MarkMailReadAsync(mailId, readAtMs, ct);

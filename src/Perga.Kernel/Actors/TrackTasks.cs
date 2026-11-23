@@ -91,7 +91,7 @@ public sealed partial class TrackActor
                 throw KernelException.Forbidden("Only the Track Lead can govern a task without a session.");
         }
 
-        public async Task<TaskDto> CancelTaskAsync(string? callerSessionId, string taskKeyOrId, string? reason = null, CancellationToken ct = default)
+        public async Task<TaskDto> CancelTaskAsync(string? callerSessionId, string taskKeyOrId, string? reason = null, CancellationToken ct = default, InteropPrincipal.Session? authorization = null)
         {
             async Task<TaskDto> SettleCoreAsync(TaskDto task, ActiveTaskRunState? active)
             {
@@ -118,11 +118,12 @@ public sealed partial class TrackActor
             var cancellation = await actor.EnqueueAsync<(TaskDto? Completed, ActiveTaskRunState? Active, Task Cleanup)>(async _ =>
             {
                 await actor.EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
+                actor.RequireMcpAuthorizationCore(authorization);
                 var task = RequireTaskCore(taskKeyOrId);
                 RequireTaskOwnershipCore(callerSessionId, task);
                 if (FlowConstants.IsFlowTask(task))
                 {
-                    var cleanup = await actor.CancelFlowTaskCoreAsync(task, reason, ct).ConfigureAwait(false);
+                    var cleanup = await actor.CancelFlowTaskCoreAsync(task, reason, ct, authorization).ConfigureAwait(false);
                     return (RequireTaskCore(task.Id), null, cleanup);
                 }
                 var active = _activeTasks.TryGetValue(task.Id, out var found) ? found : null;
@@ -355,7 +356,7 @@ public sealed partial class TrackActor
                     orphaned ? previousSession with { Status = "idle" } : previousSession)) return true;
                 if (previousSession is not null && (task.RunCount > 0 || preserveSessionContext))
                 {
-                    actor._mcpBridge.RevokeSession(previousSession.Id);
+                    actor.RevokeSessionRuntime(previousSession.Id);
                     if (actor._runtimes.TryGetOpen(previousSession.Id, out _))
                     {
                         var cleanupReservation = Guid.NewGuid();
@@ -651,7 +652,7 @@ public sealed partial class TrackActor
                         UpdatedAtMs = now
                     };
                     ReplaceTaskInMemoryCore(verifyingTask);
-                    if (active.SessionId is { } sid) actor._mcpBridge.RevokeSession(sid);
+                    if (active.SessionId is { } sid) actor.RevokeSessionRuntime(sid);
 
                     await PersistAndEmitTaskUpdatedCoreAsync(verifyingTask, now, verificationToken)
                         .ConfigureAwait(false);
@@ -826,7 +827,7 @@ public sealed partial class TrackActor
                         throw KernelException.Conflict("The task run already changed.");
                     actor.CheckWorkerCompletionCore(state, origin);
                     state.BeginSettlement();
-                    if (state.SessionId is { } sid) actor._mcpBridge.RevokeSession(sid);
+                    if (state.SessionId is { } sid) actor.RevokeSessionRuntime(sid);
                     return state;
                 }, ct).ConfigureAwait(false);
 
@@ -977,7 +978,7 @@ public sealed partial class TrackActor
             if (active.SessionId is { } sessionId)
             {
                 actor._runtimes.Get(sessionId).CancelLaunch();
-                actor._mcpBridge.RevokeSession(sessionId);
+                actor.RevokeSessionRuntime(sessionId);
                 if (actor._scheduler.TryGetActive(sessionId, out var turn)) actor.AbortTurn(turn);
             }
         }

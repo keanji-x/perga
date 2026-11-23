@@ -631,8 +631,7 @@ public sealed class McpKernelAndVcsIntegrationTests
         var trackId = snap.RootElement.GetProperty("track").GetProperty("id").GetString()!;
         var leadId = snap.RootElement.GetProperty("track").GetProperty("leadSessionId").GetString()!;
 
-        var bridge = cluster.Services.GetRequiredService<IMcpSessionBridge>();
-        var token = bridge.RegisterSession(trackId, leadId, isLead: true, null, null, []).Principal.Token;
+        var token = (await cluster.Services.GetRequiredService<IPergaKernel>().OpenMcpCallerAsync(leadId, ct)).Token;
 
         // Verify tools/list exposes all 9 vcs_* tools with truthful MCP annotations!
         var vcsToolEntries = await ListToolsAsync(cluster, "/mcp/vcs", token, ct);

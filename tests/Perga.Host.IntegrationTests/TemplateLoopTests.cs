@@ -34,7 +34,7 @@ public sealed class TemplateLoopTests
             {
                 var kernel = host.Services.GetRequiredService<IPergaKernel>();
                 (trackId, leadId) = await CreateTrackAsync(host, kernel);
-                var token = kernel.McpSessionBridge.RegisterSession(trackId, leadId, true, null, null, []).Principal.Token;
+                var token = (await kernel.OpenMcpCallerAsync(leadId)).Token;
                 const string source = """
                     export default { id:'loop',title:'Loop',description:'Template loop',
                       inputs:{unit:{type:'string',default:'steps'},keep:{type:'string',optional:true}},
@@ -76,7 +76,7 @@ public sealed class TemplateLoopTests
             await using (var reopened = new PergaHostTestCluster(directory.FullName))
             {
                 var kernel = reopened.Services.GetRequiredService<IPergaKernel>();
-                var token = kernel.McpSessionBridge.RegisterSession(trackId, leadId, true, null, null, []).Principal.Token;
+                var token = (await kernel.OpenMcpCallerAsync(leadId)).Token;
                 var persisted = await kernel.GetTrackAggregateAsync(trackId);
                 Assert.Equal("m", persisted.Track.TemplateInputs.GetProperty("unit").GetString());
                 Assert.Equal(7, persisted.Track.Data.GetProperty("count").GetInt32());
@@ -97,7 +97,7 @@ public sealed class TemplateLoopTests
         await using var host = new PergaHostTestCluster();
         var kernel = host.Services.GetRequiredService<IPergaKernel>();
         var (trackId, leadId) = await CreateTrackAsync(host, kernel);
-        var caller = kernel.McpSessionBridge.RegisterSession(trackId, leadId, true, null, null, []).Principal;
+        var caller = await kernel.OpenMcpCallerAsync(leadId);
         var source = """
             {"id":"route","title":"Route","inputs":{"model":{"type":"string","default":"claude-sonnet-4-6"}},
             "tasks":{"routing":[{"when":{"role":"review","access":"read_only"},"provider":"claude","model":"${inputs.model}","enforce":true}]}}

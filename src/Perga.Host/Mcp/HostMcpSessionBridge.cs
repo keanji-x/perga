@@ -36,17 +36,9 @@ public sealed class HostMcpSessionBridge : IMcpSessionBridge
         bool isLead,
         string? boundTaskId,
         int? taskRunCount,
-        IReadOnlyList<string> enabledPlugins) =>
-        RegisterSession(trackId, sessionId, isLead, boundTaskId, taskRunCount, enabledPlugins, baseUriOverride: null);
-
-    public McpSessionRegistration RegisterSession(
-        string trackId,
-        string sessionId,
-        bool isLead,
-        string? boundTaskId,
-        int? taskRunCount,
         IReadOnlyList<string> enabledPlugins,
-        string? baseUriOverride)
+        string? runtimeBindingId = null,
+        string? baseUriOverride = null)
     {
         McpSessionPrincipal principal;
         lock (_gate)
@@ -64,7 +56,7 @@ public sealed class HostMcpSessionBridge : IMcpSessionBridge
                 isLead,
                 boundTaskId,
                 taskRunCount,
-                enabledPlugins.ToArray());
+                enabledPlugins.ToArray()) { RuntimeBindingId = runtimeBindingId };
 
             _byToken[token] = principal;
             _tokenBySession[sessionId] = token;
@@ -128,14 +120,14 @@ public sealed class HostMcpSessionBridge : IMcpSessionBridge
         }
     }
 
-    public void RevokeSession(string sessionId)
+    public void RevokeSession(string sessionId, string? runtimeBindingId = null)
     {
         lock (_gate)
         {
-            if (_tokenBySession.TryRemove(sessionId, out var token))
-            {
-                _byToken.TryRemove(token, out _);
-            }
+            if (!_tokenBySession.TryGetValue(sessionId, out var token) ||
+                runtimeBindingId is not null && _byToken[token].RuntimeBindingId != runtimeBindingId) return;
+            _tokenBySession.TryRemove(sessionId, out _);
+            _byToken.TryRemove(token, out _);
         }
     }
 

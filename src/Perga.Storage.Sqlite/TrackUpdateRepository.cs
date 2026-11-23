@@ -21,11 +21,11 @@ internal sealed class TrackUpdateRepository
         _reportRepository = reportRepository;
     }
 
-    public Task UpdateTrackAndEmitAsync(TrackDto track, EventEnvelopeDto? evt, CancellationToken ct, bool writeData = false) =>
-        UpdateTrackCoreAsync(track, null, evt, ct, writeData: writeData);
+    public Task UpdateTrackAndEmitAsync(TrackDto track, EventEnvelopeDto? evt, CancellationToken ct, bool writeData = false, Action? beforeWrite = null) =>
+        UpdateTrackCoreAsync(track, null, evt, ct, writeData: writeData, beforeWrite: beforeWrite);
 
-    public Task UpdateTrackTemplateAndEmitAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto evt, CancellationToken ct, bool writeData = false, TrackFlowUpdate? flow = null, TemplateReportSeed? reportSeed = null) =>
-        UpdateTrackCoreAsync(track, templateSnapshot, evt, ct, replaceTemplateSnapshot: true, writeData, flow, reportSeed);
+    public Task UpdateTrackTemplateAndEmitAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto evt, CancellationToken ct, bool writeData = false, TrackFlowUpdate? flow = null, TemplateReportSeed? reportSeed = null, Action? beforeWrite = null) =>
+        UpdateTrackCoreAsync(track, templateSnapshot, evt, ct, replaceTemplateSnapshot: true, writeData, flow, reportSeed, beforeWrite);
 
     public Task RecordFlowFileHashAsync(string trackId, long flowRev, string sha256, CancellationToken ct)
     {
@@ -46,7 +46,8 @@ internal sealed class TrackUpdateRepository
         IReadOnlyList<TrackScheduleDto> activeFlowSchedules,
         IReadOnlyList<string> canceledFlowScheduleIds,
         IReadOnlyList<EventEnvelopeDto> events,
-        CancellationToken ct)
+        CancellationToken ct,
+        Action? beforeWrite = null)
     {
         ArgumentNullException.ThrowIfNull(track);
         ArgumentNullException.ThrowIfNull(upsertedTasks);
@@ -58,6 +59,7 @@ internal sealed class TrackUpdateRepository
         return _context.Writer.EnqueueAsync(
             async (conn, tx, innerCt) =>
             {
+                beforeWrite?.Invoke();
                 await CommitTrackFlowInternalAsync(conn, tx, track, expectedFlowRev, upsertedTasks,
                     activeFlowSchedules, canceledFlowScheduleIds, innerCt).ConfigureAwait(false);
                 foreach (var evt in events)
@@ -130,7 +132,7 @@ internal sealed class TrackUpdateRepository
         }
     }
 
-    private Task UpdateTrackCoreAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto? evt, CancellationToken ct, bool replaceTemplateSnapshot = false, bool writeData = false, TrackFlowUpdate? flow = null, TemplateReportSeed? reportSeed = null)
+    private Task UpdateTrackCoreAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto? evt, CancellationToken ct, bool replaceTemplateSnapshot = false, bool writeData = false, TrackFlowUpdate? flow = null, TemplateReportSeed? reportSeed = null, Action? beforeWrite = null)
     {
         ArgumentNullException.ThrowIfNull(track);
         _context.EnsureInitialized();
@@ -143,6 +145,7 @@ internal sealed class TrackUpdateRepository
         return _context.Writer.EnqueueAsync(
             async (conn, tx, innerCt) =>
             {
+                beforeWrite?.Invoke();
                 if (writeData)
                 {
                     var expectedRev = checked(track.DataRev - 1);

@@ -117,13 +117,13 @@ public interface IVcsService
     Task<IsolatedWorkspace> CreateWorkspaceAsync(string repoPath, string workspaceName, string targetDir, string? baseRev = null,
         CancellationToken ct = default, VcsBackendKind? backend = null);
     Task RemoveWorkspaceAsync(IsolatedWorkspace workspace, CancellationToken ct = default);
-    Task<RevisionSnapshot> SnapshotWorkingCopyAsync(string workspacePath, string? commitMessageIfGit = null, CancellationToken ct = default);
-    Task RestoreOperationAsync(string workspacePath, string opId, CancellationToken ct = default);
-    Task<RevisionSnapshot> RebaseOntoUpstreamAsync(string workspacePath, string upstreamBranch = "main", CancellationToken ct = default);
-    Task<DiffSummary> DiffAsync(string workspacePath, string? fromRev = null, string? toRev = null, CancellationToken ct = default);
+    Task<RevisionSnapshot> SnapshotWorkingCopyAsync(string workspacePath, string? commitMessageIfGit = null, CancellationToken ct = default, Func<CancellationToken, Task>? authorizeMutation = null);
+    Task RestoreOperationAsync(string workspacePath, string opId, CancellationToken ct = default, Func<CancellationToken, Task>? authorizeMutation = null);
+    Task<RevisionSnapshot> RebaseOntoUpstreamAsync(string workspacePath, string upstreamBranch = "main", CancellationToken ct = default, Func<CancellationToken, Task>? authorizeMutation = null);
+    Task<DiffSummary> DiffAsync(string workspacePath, string? fromRev = null, string? toRev = null, CancellationToken ct = default, Func<CancellationToken, Task>? authorizeMutation = null);
     Task<DiffSummary> DiffDetailedAsync(string workspacePath, string? fromRev = null, string? toRev = null, string? filterPath = null, CancellationToken ct = default, bool searchAncestors = true) =>
         DiffAsync(workspacePath, fromRev, toRev, ct);
-    Task<PushResult> PushBookmarkAsync(string workspacePath, string bookmarkOrBranch, string? targetRev = null, CancellationToken ct = default);
+    Task<PushResult> PushBookmarkAsync(string workspacePath, string bookmarkOrBranch, string? targetRev = null, CancellationToken ct = default, Func<CancellationToken, Task>? authorizeMutation = null);
 }
 
 public sealed record PrPublishRequest(

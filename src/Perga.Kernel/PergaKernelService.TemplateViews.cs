@@ -9,8 +9,8 @@ public sealed partial class PergaKernelService
     public Task<TemplateViewsProjection> GetTrackViewsAsync(string trackId, CancellationToken ct = default) =>
         Actors.GetOrActivate(trackId).GetTemplateViewsAsync(ct);
 
-    public Task<FlowSnapshotDto> GetTrackFlowAsync(string trackId, CancellationToken ct = default) =>
-        Actors.GetOrActivate(trackId).GetFlowSnapshotAsync(ct);
+    public Task<FlowSnapshotDto> GetTrackFlowAsync(string trackId, CancellationToken ct = default, InteropPrincipal.Session? authorization = null) =>
+        Actors.GetOrActivate(trackId).GetFlowSnapshotAsync(ct, authorization);
 
     public Task<FlowCommitResultDto> CommitTrackFlowAsync(
         string trackId,
@@ -28,6 +28,6 @@ public sealed partial class PergaKernelService
         string? callerSessionId = null,
         CancellationToken ct = default,
         long? expectedDataRev = null,
-        string? expectedPolicyGeneration = null) =>
-        Actors.GetOrActivate(trackId).PatchTemplateDataAsync(patch, source, callerSessionId, ct, expectedDataRev, expectedPolicyGeneration);
+        string? expectedPolicyGeneration = null, InteropPrincipal.Session? authorization = null) =>
+        Actors.GetOrActivate(trackId).PatchTemplateDataAsync(patch, source, callerSessionId, ct, expectedDataRev, expectedPolicyGeneration, authorization);
 }

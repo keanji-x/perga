@@ -362,7 +362,7 @@ public sealed class SystemUpgradeTests
         var (track, lead) = await host.CreateTrackAsync();
         host.Services.GetRequiredService<Perga.Host.Configuration.PergaHostOptions>().InstallationRoot = host.DataDir;
         var kernel = host.Services.GetRequiredService<IPergaKernel>();
-        var principal = new McpSessionPrincipal("test", track, lead, false, null, null, []);
+        var principal = (await kernel.OpenMcpCallerAsync(lead)) with { IsLead = false };
         var subagent = (await kernel.CreateSessionAsync(track, new CreateSessionRequest(), Guid.NewGuid().ToString("N"), new InteropPrincipal.Human(), default)).Receipt.Session;
         foreach (var name in new[] { KernelMcpToolNames.SystemUpgradeCheck, KernelMcpToolNames.SystemUpgradeApply, KernelMcpToolNames.SystemUpgradeRollback })
         {
@@ -409,6 +409,39 @@ public sealed class SystemUpgradeTests
     }
 
     [Fact]
+    public async Task UpgradeApprovalCannotBeUsedAfterLeadTransfer()
+    {
+        var runner = new RecordingRunner();
+        await using var host = new PergaHostTestCluster(configureHostOptions: options =>
+            options.UpgradeSources["trusted"] = new() { Kind = UpgradeSourceKind.Tarball, Location = "/owner/release.tar" },
+            configureExtraServices: services => services.AddSingleton<IUpgradeProcessRunner>(runner));
+        using var deadline = new CancellationTokenSource(Deadline);
+        var ct = deadline.Token;
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        host.Services.GetRequiredService<Perga.Host.Configuration.PergaHostOptions>().InstallationRoot = host.DataDir;
+        var (track, lead) = await host.CreateTrackAsync();
+        var caller = await kernel.OpenMcpCallerAsync(lead, ct);
+        var human = new InteropPrincipal.Human();
+        var successor = (await kernel.CreateSessionAsync(track, new(), "successor", human, ct)).Receipt.Session;
+        await kernel.InvokeKernelMcpToolAsync(caller, KernelMcpToolNames.TrackSet, JsonSerializer.SerializeToElement(new
+        {
+            source = "export default {id:'guard',title:'Guard',before:a=>a.toolName==='system_upgrade_apply'?AskHuman('Upgrade?'):Allow()};"
+        }), ct);
+
+        var pending = kernel.InvokeKernelMcpToolAsync(caller, KernelMcpToolNames.SystemUpgradeApply,
+            JsonSerializer.SerializeToElement(new { sourceId = "trusted" }), ct);
+        await Until(async () => (await kernel.GetTrackAggregateAsync(track, ct)).PendingApprovals.Count == 1);
+        var approval = Assert.Single((await kernel.GetTrackAggregateAsync(track, ct)).PendingApprovals);
+        await kernel.PatchTrackAsync(track, new(LeadSessionId: successor.Id), ct);
+        Assert.Equal(caller.RuntimeBindingId, kernel.RuntimeCaller(lead).RuntimeBindingId);
+        await kernel.RespondInteractionAsync(lead, approval.Id, new(ExecutionId: approval.ExecutionId, OptionId: "approve"), human, ct);
+
+        var denied = await Assert.ThrowsAsync<KernelException>(() => pending.WaitAsync(ct));
+        Assert.Equal(KernelErrorCode.SystemUpgradeLeadRequired, denied.Code);
+        Assert.Empty(runner.Commands);
+    }
+
+    [Fact]
     public async Task UpgradeCallFromProviderReturnsBeforeDrainWaitsForItsTurn()
     {
         var runner = new RecordingRunner();
@@ -423,7 +456,7 @@ public sealed class SystemUpgradeTests
         host.AgentRuntime.SetTurnHandler(Upgrade);
         async IAsyncEnumerable<UnifiedAgentEvent> Upgrade(HarnessLaunchSpec spec, TurnInput input, [EnumeratorCancellation] CancellationToken ct)
         {
-            var principal = new McpSessionPrincipal("test", track, lead, true, null, null, []);
+            var principal = kernel.RuntimeCaller(lead);
             var result = await kernel.InvokeKernelMcpToolAsync(principal, KernelMcpToolNames.SystemUpgradeApply,
                 JsonSerializer.SerializeToElement(new { sourceId = "trusted" }), ct);
             Assert.Equal("queued", result.GetProperty("status").GetString());

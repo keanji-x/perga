@@ -296,6 +296,7 @@ test("OarBridgeServer supports Antigravity slash /compact and enforces timeoutMs
   const promptsSeen: string[] = [];
   let stallNextPrompt = false;
   let abortedCount = 0;
+  let emitBackgroundTools: (() => void) | undefined;
 
   const fakeAgyRuntime = defineRuntime(
     {
@@ -303,6 +304,16 @@ test("OarBridgeServer supports Antigravity slash /compact and enforces timeoutMs
       installation: async () => ({ kind: "available", via: "executable", command: "agy", version: "1.5.10" }),
       session: async () => {
         const kernel = createSessionKernel("agy-test-sess-1");
+        emitBackgroundTools = () => kernel.frame({
+          type: "tool_call_update",
+          native: {},
+          events: [
+            { kind: "tool_call_input", callId: "background", input: "{}" },
+            { kind: "tool_call_input", callId: "background", input: "{}" },
+            { kind: "tool_call_ended", callId: "background", result: "ok" },
+            { kind: "tool_call_input", callId: "background", input: "{}" },
+          ],
+        });
         kernel.frame({
           type: "available_commands_update",
           native: {
@@ -392,6 +403,10 @@ test("OarBridgeServer supports Antigravity slash /compact and enforces timeoutMs
   assert.equal(compacted.mode, "slash_command");
   assert.equal(compacted.summary, "Compacted summary");
   assert.deepEqual(promptsSeen, ["/compact"]);
+
+  emitBackgroundTools?.();
+  assert.deepEqual(transport.events().filter((event) => event.callId === "background").map((event) => event.kind),
+    ["tool_call_started", "tool_call_completed", "tool_call_started"]);
 
   // Stalled slash /compact must time out cleanly and invoke abort()
   stallNextPrompt = true;

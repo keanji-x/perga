@@ -12,6 +12,7 @@ using Perga.Host.IntegrationTests.Fixtures;
 using Perga.Host.Serialization;
 using Perga.Kernel;
 using Perga.Kernel.Mcp;
+using Perga.Kernel.Events;
 using Perga.Kernel.Ports;
 using Perga.Storage.Sqlite;
 using static Perga.Host.IntegrationTests.McpKernelAndVcsIntegrationTests;
@@ -21,6 +22,63 @@ namespace Perga.Host.IntegrationTests;
 public sealed class UnifiedSessionMcpTests
 {
     private static readonly InteropPrincipal Human = new InteropPrincipal.Human();
+
+    [Fact]
+    public async Task BackgroundRuntimeWritesTranscriptAndGovernanceThroughHost()
+    {
+        await using var host = new PergaHostTestCluster();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var ct = deadline.Token;
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        var (trackId, lead) = await host.CreateTrackAsync();
+        var caller = await kernel.OpenMcpCallerAsync(lead, ct);
+        var settled = await WaitPage(kernel, lead, page => page.State == "idle" && page.LastTurn?.Status == "completed", ct);
+        var store = host.Services.GetRequiredService<ITrackStore>();
+        var lastEvent = (await store.ListEventsSinceAsync(0, trackId, ct: ct)).Last().EventId!.Value;
+
+        host.AgentRuntime.EmitRuntimeActivity(lead, new UnifiedAgentEvent.ThinkingDelta("Checking background task"));
+        host.AgentRuntime.EmitRuntimeActivity(lead, new UnifiedAgentEvent.ToolCallStarted("background", "perga:flow_commit", JsonSerializer.SerializeToElement(new { })));
+        var flow = await Success<FlowCommitResultDto>(host, caller.Token, KernelMcpToolNames.FlowCommit,
+            new { content = """{"rev":0,"nodes":[]}""" }, ct);
+        Assert.True(flow.Ok);
+        Assert.Equal(1, flow.FlowRev);
+        host.AgentRuntime.EmitRuntimeActivity(lead, new UnifiedAgentEvent.ToolCallCompleted("background", "Committed", false));
+        host.AgentRuntime.EmitRuntimeActivity(lead, new UnifiedAgentEvent.TextDelta("Follow-up complete"));
+
+        var page = await WaitPage(kernel, lead, page => page.Items.Count(item => item.TurnId is null) == 4, ct);
+        Assert.Equal("idle", page.State);
+        Assert.Null(page.ActiveTurn);
+        Assert.Equal(settled.LastTurn!.Id, page.LastTurn!.Id);
+        Assert.Equal("completed", page.LastTurn.Status);
+        var events = await store.ListEventsSinceAsync(lastEvent, trackId, ct: ct);
+        Assert.Contains(events, evt => evt.Kind == KernelEventKinds.SessionUpdated && evt.Payload.GetProperty("id").GetString() == lead);
+        await using var db = new SqliteConnection($"Data Source={Path.Combine(host.DataDir, "perga.db")};Pooling=False");
+        await db.OpenAsync(ct);
+        Assert.Equal(["thinking", "tool_call", "tool_result", "assistant_text"], await db.QueryAsync<string>(
+            "SELECT kind FROM session_items WHERE session_id = @lead AND turn_id IS NULL ORDER BY id", new { lead }));
+        Assert.Equal(1, await db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM session_turns WHERE session_id = @lead", new { lead }));
+
+        var child = await Success<SessionCreationReceipt>(host, caller.Token, KernelMcpToolNames.SessionCreate,
+            new { title = "Continued", requestKey = "post-turn" }, ct);
+        var sent = await Success<SessionMessageReceipt>(host, caller.Token, KernelMcpToolNames.SessionSend,
+            new { sessionId = child.Session.Id, content = "Proceed", requestKey = "background-send" }, ct);
+        Assert.NotNull(sent.TurnId);
+        await Error(host, caller.Token, KernelMcpToolNames.SessionControl,
+            new { sessionId = child.Session.Id, action = "stop", turnId = "retired-turn" }, "conflict", ct);
+
+        var childSettled = await WaitPage(kernel, child.Session.Id, page => page.ActiveTurn is null && page.LastTurn?.Status == "completed", ct);
+        await Error(host, caller.Token, KernelMcpToolNames.SessionSend, new
+        {
+            sessionId = child.Session.Id, content = "Stale steer", requestKey = "stale-steer",
+            mode = "steer", turnId = childSettled.LastTurn!.Id
+        }, "conflict", ct);
+        var nonLead = kernel.RuntimeCaller(child.Session.Id);
+        await Error(host, nonLead.Token, KernelMcpToolNames.FlowCommit, new { dryRun = true }, "forbidden", ct);
+        await kernel.UpdateSessionAsync(lead, new(Archived: true), Human, ct);
+        using var revoked = await host.PostMcpAsync("/mcp/kernel", caller.Token,
+            new { jsonrpc = "2.0", id = 79, method = "tools/call", @params = new { name = KernelMcpToolNames.SessionCreate, arguments = new { } } }, ct: ct);
+        Assert.Equal(System.Net.HttpStatusCode.Unauthorized, revoked.StatusCode);
+    }
 
     [Fact]
     public async Task IndependentSessionsSpawnToDepthLimitAndControlTheirChildren()
@@ -365,7 +423,7 @@ public sealed class UnifiedSessionMcpTests
     }
 
     [Fact]
-    public async Task ApprovalNotificationIsTargetedEphemeralAndAuditAbortLeavesItPending()
+    public async Task ApprovalNotificationIsTargetedEphemeralAndRevokedResponderLeavesItPending()
     {
         AnswerPublicationStoreProxy proxy = null!;
         await using var host = new PergaHostTestCluster(configureExtraServices: services =>
@@ -407,7 +465,7 @@ public sealed class UnifiedSessionMcpTests
         await db.OpenAsync(ct);
         Assert.Equal(0, await db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM track_wakes"));
         var parentTurn = (await kernel.GetSessionItemsAsync(parent.Id, new(), new InteropPrincipal.Human(), ct)).ActiveTurn!.Id;
-        // Pause the audit outside the actor, then stop the responder before the secondary check.
+        // Pause the audit outside the actor while the delegate finishes and then loses its runtime authority.
         var auditing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var resumeAudit = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         proxy.BeforeNextApprovalAudit = () =>
@@ -421,6 +479,7 @@ public sealed class UnifiedSessionMcpTests
         await kernel.ControlSessionAsync(parent.Id, new("stop", TurnId: parentTurn), Human, ct);
         // The pending notification starts a fresh parent turn, never the Lead.
         await WaitPage(kernel, parent.Id, p => p.ActiveTurn is { } turn && turn.Id != parentTurn, ct);
+        await kernel.UpdateSessionAsync(parent.Id, new(Archived: true), Human, ct);
         resumeAudit.TrySetResult();
         Assert.True((await responding).IsError);
         Assert.Single((await kernel.GetTrackStatusAsync(track, ct)).PendingApprovals);
@@ -571,9 +630,8 @@ public sealed class UnifiedSessionMcpTests
     private static async Task<string> StartCaller(PergaHostTestCluster host, IPergaKernel kernel, string sessionId, CancellationToken ct)
     {
         await kernel.SendSessionMessageAsync(sessionId, new(Content: "hold:" + sessionId, RequestKey: Guid.NewGuid().ToString("N")), Human, ct);
-        var page = await WaitPage(kernel, sessionId, p => p.ActiveTurn is not null && p.Activity is { Sequence: > 0 }, ct);
-        return kernel.McpSessionBridge.RegisterSession(page.Session.TrackId, sessionId, page.Session.IsLead,
-            page.TaskBinding?.Task.Id, page.TaskBinding?.Task.RunCount, []).Principal.Token;
+        await WaitPage(kernel, sessionId, p => p.ActiveTurn is not null && p.Activity is { Sequence: > 0 }, ct);
+        return kernel.RuntimeCaller(sessionId).Token;
     }
 
     private static async Task<SessionItemsPageDto> WaitPage(IPergaKernel kernel, string session, Func<SessionItemsPageDto, bool> predicate, CancellationToken ct)
@@ -600,6 +658,7 @@ public sealed class UnifiedSessionMcpTests
         using var document = JsonDocument.Parse(text);
         Assert.Equal(code, document.RootElement.GetProperty("code").GetString());
         if (code == "forbidden") Assert.Equal(403, document.RootElement.GetProperty("status").GetInt32());
+        if (code == "conflict") Assert.Equal(409, document.RootElement.GetProperty("status").GetInt32());
     }
 
     private static async IAsyncEnumerable<UnifiedAgentEvent> CompleteTurn([EnumeratorCancellation] CancellationToken ct)

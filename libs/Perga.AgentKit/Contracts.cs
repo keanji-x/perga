@@ -154,6 +154,7 @@ public interface IAgentSession : IAsyncDisposable
     ValueTask<bool> ResolveNativeCompactSupportAsync(CancellationToken ct) =>
         ValueTask.FromResult(SupportsNativeCompact);
     IReadOnlyList<IdleContextUsage> AttachIdleContextUsageHandler(Action<IdleContextUsage>? handler) => [];
+    // Output delivered through this handler belongs to the runtime outside its prompt stream.
     IReadOnlyList<UnifiedAgentEvent> AttachRuntimeActivityHandler(Action<UnifiedAgentEvent>? handler) => [];
     WorkerProviderConfiguration? WorkerConfiguration => null;
     bool ShutdownConfirmed => true;
@@ -181,7 +182,8 @@ public interface IAgentSession : IAsyncDisposable
     SessionConfigurationCapabilities ConfigurationCapabilities { get; }
     ConfirmedConfiguration? ConfigurationState { get; }
     Task<SessionConfigurationOutcome> ConfigureAsync(SessionConfiguration configuration, CancellationToken ct = default);
-    Task<SteerDelivery> SteerAsync(string turnCorrelationId, string message, CancellationToken ct);
+    // The adapter runs beforeWrite at its transport write boundary and propagates rejection.
+    Task<SteerDelivery> SteerAsync(string turnCorrelationId, string message, CancellationToken ct, Func<CancellationToken, Task>? beforeWrite = null);
 }
 
 public interface IAgentRuntime : IAsyncDisposable

@@ -128,13 +128,15 @@ public sealed partial class TrackActor
                 if (request.Mode == "steer" && (!active.AgentSession.SupportsNativeSteer ||
                     request.MessageId is not null && !active.CanSteerQueuedMessages))
                     throw KernelException.PreconditionFailed("The runtime does not support steering this turn.");
+                var originatingTurn = caller is InteropPrincipal.Session callerSession &&
+                    _scheduler.TryGetActive(callerSession.SessionId, out var callerTurn) ? callerTurn : null;
                 var message = existing ?? new SessionMessage($"inp_{Guid.NewGuid():N}", sessionId,
                     author, request.RequestKey!, hash, turnId, null, request.Content!, "dispatching", NowMs(), "steer");
                 if (existing is null) await Messages.InsertAsync(message, ct).ConfigureAwait(false);
                 else if (!await Messages.ClaimQueuedSteerAsync(message, turnId, ct).ConfigureAwait(false))
                     throw KernelException.Conflict("This message is already being sent or has been withdrawn.");
                 _scheduler.TryGetSteering(sessionId, out var previous);
-                var send = RunSteeringAsync(previous.Attempt, message, turnId, existing is not null, startedAt);
+                var send = RunSteeringAsync(previous.Attempt, message, turnId, existing is not null, startedAt, caller, originatingTurn);
                 _scheduler.SetSteering(sessionId, (message.Id, send));
                 _ = TrackBackgroundJob(() => send);
                 NotifyQueueChangedCore(sessionId);
@@ -211,7 +213,7 @@ public sealed partial class TrackActor
                         if (activeTask is not null)
                         {
                             _taskCoordinator.SetPaused(activeTask, true);
-                            _mcpBridge.RevokeSession(sessionId);
+                            RevokeSessionRuntime(sessionId);
                         }
                         var stopping = session with { Status = "stopping", UpdatedAtMs = NowMs() };
                         await PersistAndEmitSessionUpdatedCoreAsync(stopping, stopping.UpdatedAtMs, CancellationToken.None).ConfigureAwait(false);
@@ -364,11 +366,11 @@ public sealed partial class TrackActor
                     }
                 }, ct).ConfigureAwait(false);
             }
-            var forceReopen = _runtimes.TryGetOpen(session.Id, out _) && _mcpBridge.GetTokenForSession(session.Id) is null;
+            var forceReopen = _runtimes.TryGetOpen(session.Id, out var previous) && !HasRuntimeCredential(session.Id, previous);
             var handle = await _runtimes.Get(session.Id).EnsureOpenAsync(EffectiveAgentRuntime,
                 SessionConfiguration.FromNullable(session.Model, session.ReasoningEffort, session.PermissionMode),
                 session.Provider,
-                () => EnqueueAsync(_ => BuildAgentLaunchSpecCoreAsync(session, overrideSystemPrompt, ct), ct),
+                bindingId => EnqueueAsync(_ => BuildAgentLaunchSpecCoreAsync(session, overrideSystemPrompt, bindingId, ct), ct),
                 agent =>
                 {
                     RequireConfirmedConfiguration(session, agent, agent.ConfigurationState);
@@ -400,22 +402,36 @@ public sealed partial class TrackActor
     }
 
     private async Task<HarnessLaunchSpec> BuildAgentLaunchSpecCoreAsync(
-        AgentSessionDto session, string? overrideSystemPrompt, CancellationToken ct)
+        AgentSessionDto session, string? overrideSystemPrompt, string bindingId, CancellationToken ct)
     {
         _taskCoordinator.RequireDispatchWorkspace(session);
         var mounted = await EnsureWorkspaceMountedCoreAsync(ct).ConfigureAwait(false);
         var activeTask = _taskCoordinator.TryGetActiveTaskForSessionCore(session.Id);
 
         var mcpBaseUri = await Env.ResolveMcpBaseUriAsync(_mcpBridge.ResolveBaseUri(), ct).ConfigureAwait(false);
-        RequireSessionWritableCore(RequireSessionCore(session.Id));
-        var mcpReg = _mcpBridge.RegisterSession(
-            TrackId,
-            session.Id,
-            session.IsLead,
-            activeTask?.Task.Id,
-            activeTask?.Active.RunCount,
-            _track.EnabledPlugins,
-            mcpBaseUri);
+        var current = RequireSessionCore(session.Id);
+        RequireSessionWritableCore(current);
+        if (_closingTrack || _deletingTrack || current.ConfigVersion != session.ConfigVersion || current.Epoch != session.Epoch)
+            throw KernelException.Conflict("The session changed during provider startup.");
+        ct.ThrowIfCancellationRequested();
+        McpSessionRegistration mcpReg;
+        try
+        {
+            mcpReg = _mcpBridge.RegisterSession(
+                TrackId,
+                session.Id,
+                session.IsLead,
+                activeTask?.Task.Id,
+                activeTask?.Active.RunCount,
+                _track.EnabledPlugins,
+                runtimeBindingId: bindingId, baseUriOverride: mcpBaseUri);
+            ct.ThrowIfCancellationRequested();
+        }
+        finally
+        {
+            // The mailbox operation can outlive its canceled waiter and launch cleanup.
+            if (ct.IsCancellationRequested) _mcpBridge.RevokeSession(session.Id, bindingId);
+        }
 
         var systemPrompt = overrideSystemPrompt ?? BuildDefaultSystemPromptCore(session);
         if (session.SystemPrompt is { } customPrompt) systemPrompt += "\n\n" + customPrompt;

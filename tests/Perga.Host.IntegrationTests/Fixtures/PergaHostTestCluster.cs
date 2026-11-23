@@ -55,6 +55,7 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
     public bool CanResumeSession(string provider) => true;
     private readonly ConcurrentQueue<RecordedSessionOpen> _openedSessions = new();
     private readonly ConcurrentQueue<RecordedTurnExecution> _executedTurns = new();
+    private readonly ConcurrentDictionary<string, Action<UnifiedAgentEvent>> _runtimeActivity = new();
     private Func<HarnessLaunchSpec, TurnInput, CancellationToken, IAsyncEnumerable<UnifiedAgentEvent>>? _turnHandler;
     private Func<string, Task<bool>>? _steerHandler;
     public Func<bool>? ApprovalClaimHandler { get; set; }
@@ -95,6 +96,8 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
     {
         _turnHandler = handler;
     }
+
+    public void EmitRuntimeActivity(string sessionId, UnifiedAgentEvent activity) => _runtimeActivity[sessionId](activity);
 
     public void SetSteerHandler(Func<string, Task<bool>> handler)
     {
@@ -178,6 +181,16 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
             if (_owner.BeforeOpenAsync is { } before) await before(_spec, ct);
             if (_owner.OpenError?.Invoke(_spec) is { } error) throw error;
             _owner._openedSessions.Enqueue(new RecordedSessionOpen(_spec, DateTimeOffset.UtcNow, NativeThreadId));
+        }
+
+        public IReadOnlyList<UnifiedAgentEvent> AttachRuntimeActivityHandler(Action<UnifiedAgentEvent>? handler)
+        {
+            if (_spec.StateKey is { } sessionId)
+            {
+                if (handler is null) _owner._runtimeActivity.TryRemove(sessionId, out _);
+                else _owner._runtimeActivity[sessionId] = handler;
+            }
+            return [];
         }
 
         public string? NativeThreadId { get; }
@@ -291,8 +304,9 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
             return Task.FromResult(outcome);
         }
 
-        public async Task<SteerDelivery> SteerAsync(string turnCorrelationId, string message, CancellationToken ct)
+        public async Task<SteerDelivery> SteerAsync(string turnCorrelationId, string message, CancellationToken ct, Func<CancellationToken, Task>? beforeWrite = null)
         {
+            if (beforeWrite is not null) await beforeWrite(ct);
             var accepted = _owner._steerHandler is null || await _owner._steerHandler(message).WaitAsync(ct);
             return accepted ? SteerDelivery.Accepted : SteerDelivery.Declined;
         }

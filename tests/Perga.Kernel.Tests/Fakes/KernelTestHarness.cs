@@ -448,10 +448,11 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
         }
     }
 
-    public Task UpdateTrackAndEmitAsync(TrackDto track, EventEnvelopeDto? evt, CancellationToken ct, bool writeData = false)
+    public Task UpdateTrackAndEmitAsync(TrackDto track, EventEnvelopeDto? evt, CancellationToken ct, bool writeData = false, Action? beforeWrite = null)
     {
         lock (_gate)
         {
+            beforeWrite?.Invoke();
             if (_tracks.TryGetValue(track.Id, out var existing))
             {
                 if (!writeData)
@@ -494,8 +495,10 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
         IReadOnlyList<TrackScheduleDto> activeFlowSchedules,
         IReadOnlyList<string> canceledFlowScheduleIds,
         IReadOnlyList<EventEnvelopeDto> events,
-        CancellationToken ct) =>
-        CommitTrackFlow(track, expectedFlowRev, upsertedTasks, activeFlowSchedules, canceledFlowScheduleIds, events);
+        CancellationToken ct,
+        Action? beforeWrite = null) =>
+        CommitTrackFlow(track, expectedFlowRev, upsertedTasks, activeFlowSchedules, canceledFlowScheduleIds, events,
+            beforeWrite: beforeWrite);
 
     private Task CommitTrackFlow(
         TrackDto track,
@@ -504,10 +507,12 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
         IReadOnlyList<TrackScheduleDto> activeFlowSchedules,
         IReadOnlyList<string> canceledFlowScheduleIds,
         IReadOnlyList<EventEnvelopeDto> events,
-        IReadOnlySet<string>? resetClockIds = null)
+        IReadOnlySet<string>? resetClockIds = null,
+        Action? beforeWrite = null)
     {
         lock (_gate)
         {
+            beforeWrite?.Invoke();
             if (!_tracks.TryGetValue(track.Id, out var existing))
                 throw KernelException.NotFound($"Track '{track.Id}' not found.");
             if (existing.FlowRev != expectedFlowRev)
@@ -588,10 +593,11 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
         }
     }
 
-    public Task UpdateTrackTemplateAndEmitAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto evt, CancellationToken ct, bool writeData = false, TrackFlowUpdate? flow = null, TemplateReportSeed? reportSeed = null)
+    public Task UpdateTrackTemplateAndEmitAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto evt, CancellationToken ct, bool writeData = false, TrackFlowUpdate? flow = null, TemplateReportSeed? reportSeed = null, Action? beforeWrite = null)
     {
         lock (_gate)
         {
+            beforeWrite?.Invoke();
             if (FailTemplateUpdate) throw new IOException("template persistence failure");
             _templateSnapshots[track.Id] = templateSnapshot;
             if (flow is not null)
@@ -621,10 +627,12 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
         string? authorSessionId,
         string commitMessage,
         EventEnvelopeDto evt,
-        CancellationToken ct)
+        CancellationToken ct,
+        Action? beforeWrite = null)
     {
         lock (_gate)
         {
+            beforeWrite?.Invoke();
             _reports[trackId] = report;
             if (authorSessionId is null) EnqueueWakeLocked(TrackWakeRequests.Report(trackId, report.DocRev, evt.Payload));
             _revisions[(trackId, report.DocRev)] = compressedRevisionBlocks.ToArray();
@@ -837,13 +845,20 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
         return (storedTurn, ids);
     }
 
+    public bool FailAppendSessionItems { get; set; }
+
     public Task<IReadOnlyList<long>> AppendSessionItemsAsync(
         string sessionId,
         IReadOnlyList<SessionItemDto> newItems,
-        CancellationToken ct = default)
+        CancellationToken ct = default, EventEnvelopeDto? evt = null)
     {
+        if (FailAppendSessionItems) throw new IOException("Transcript append failed.");
         lock (_gate)
-            return Task.FromResult(AppendSessionItemsLocked(sessionId, newItems));
+        {
+            var ids = AppendSessionItemsLocked(sessionId, newItems);
+            if (evt is not null) AppendEventLocked(evt);
+            return Task.FromResult(ids);
+        }
     }
 
     private IReadOnlyList<long> AppendSessionItemsLocked(string sessionId, IReadOnlyList<SessionItemDto> newItems)
@@ -883,10 +898,11 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
             return Task.FromResult(_mailsByToTrack.GetValueOrDefault(trackId)?.Find(mail => mail.Id == mailId));
     }
 
-    public Task UpsertMailAsync(MailDto mail, EventEnvelopeDto evt, CancellationToken ct, bool requestWake = true)
+    public Task UpsertMailAsync(MailDto mail, EventEnvelopeDto evt, CancellationToken ct, bool requestWake = true, Action? beforeWrite = null)
     {
         lock (_gate)
         {
+            beforeWrite?.Invoke();
             if (!_mailsByToTrack.TryGetValue(mail.ToTrackId, out var list))
             {
                 list = [];
@@ -1464,6 +1480,7 @@ internal sealed class ScriptableFakeAgentSession : IAgentSession
     public int CompactCalls { get; private set; }
     public bool Disposed { get; private set; }
     public bool CancelCalled { get; private set; }
+    public bool RequiresTerminalStop { get; set; }
     public Action? OnCancelTurn { get; set; }
     public ConcurrentQueue<string> SteeredMessages { get; } = new();
     public ConcurrentQueue<(string RequestId, bool Approved, string? Reason)> Approvals { get; } = new();
@@ -1597,15 +1614,19 @@ internal sealed class ScriptableFakeAgentSession : IAgentSession
             : Task.FromResult(new NativeCompactResult(null, "Context compacted."));
     }
 
+    public Func<CancellationToken, Task>? WaitForSteerWrite { get; set; }
     public SteerDelivery SteerResult { get; set; } = SteerDelivery.Accepted;
+    public Func<string, CancellationToken, Task<SteerDelivery>>? SteerHandler { get; set; }
 
-    public Task<SteerDelivery> SteerAsync(string turnCorrelationId, string message, CancellationToken ct)
+    public async Task<SteerDelivery> SteerAsync(string turnCorrelationId, string message, CancellationToken ct, Func<CancellationToken, Task>? beforeWrite = null)
     {
         if (!SupportsNativeSteer)
-            return Task.FromResult(SteerDelivery.Declined);
+            return SteerDelivery.Declined;
 
+        if (WaitForSteerWrite is { } wait) await wait(ct);
+        if (beforeWrite is not null) await beforeWrite(ct);
         SteeredMessages.Enqueue(message);
-        return Task.FromResult(SteerResult);
+        return SteerHandler is { } handler ? await handler(message, ct) : SteerResult;
     }
 
     private bool? _shutdownConfirmed;
@@ -1707,6 +1728,7 @@ internal sealed class SpyWorkspaceDriver : IWorkspaceDriver
     public string? OverrideMountedMergedCwd { get; set; }
     public bool VerifyMountOnAccess { get; set; }
     public Task? ProvisionGate { get; set; }
+    public Func<CancellationToken, Task>? BeforeEnsureMounted { get; set; }
     public Exception? TeardownError { get; set; }
 
     public ConcurrentQueue<WorkspaceProvisionRequest> ProvisionCalls { get; } = new();
@@ -1730,12 +1752,13 @@ internal sealed class SpyWorkspaceDriver : IWorkspaceDriver
             Metadata: TestJson.Parse("{}"));
     }
 
-    public Task<MountedWorkspace> EnsureMountedAsync(WorkspaceSpec spec, CancellationToken ct = default)
+    public async Task<MountedWorkspace> EnsureMountedAsync(WorkspaceSpec spec, CancellationToken ct = default)
     {
+        if (BeforeEnsureMounted is { } before) await before(ct);
         EnsureMountedCalls.Enqueue(spec);
         LifecycleTimeline.Enqueue($"ensure_mounted:{spec.MergedCwd}");
         var merged = OverrideMountedMergedCwd ?? spec.MergedCwd;
-        return Task.FromResult(new MountedWorkspace(DriverId, merged, OverlayLayersToInject));
+        return new MountedWorkspace(DriverId, merged, OverlayLayersToInject);
     }
 
     public Task TeardownTrackAsync(WorkspaceSpec spec, CancellationToken ct = default)
@@ -1854,19 +1877,19 @@ internal sealed class FakeVcsService : IVcsService
     public Task RemoveWorkspaceAsync(IsolatedWorkspace workspace, CancellationToken ct = default) =>
         Task.CompletedTask;
 
-    public Task<RevisionSnapshot> SnapshotWorkingCopyAsync(string workspacePath, string? commitMessageIfGit = null, CancellationToken ct = default) =>
+    public Task<RevisionSnapshot> SnapshotWorkingCopyAsync(string workspacePath, string? commitMessageIfGit = null, CancellationToken ct = default, Func<CancellationToken, Task>? authorizeMutation = null) =>
         Task.FromResult(new RevisionSnapshot(VcsBackendKind.JjColocated, "kkmpptxz", "abc123", "op_1", false, []));
 
-    public Task RestoreOperationAsync(string workspacePath, string opId, CancellationToken ct = default) =>
+    public Task RestoreOperationAsync(string workspacePath, string opId, CancellationToken ct = default, Func<CancellationToken, Task>? authorizeMutation = null) =>
         Task.CompletedTask;
 
-    public Task<RevisionSnapshot> RebaseOntoUpstreamAsync(string workspacePath, string upstreamBranch = "main", CancellationToken ct = default) =>
+    public Task<RevisionSnapshot> RebaseOntoUpstreamAsync(string workspacePath, string upstreamBranch = "main", CancellationToken ct = default, Func<CancellationToken, Task>? authorizeMutation = null) =>
         Task.FromResult(new RevisionSnapshot(VcsBackendKind.JjColocated, "kkmpptxz", "def456", "op_2", false, []));
 
-    public Task<DiffSummary> DiffAsync(string workspacePath, string? fromRev = null, string? toRev = null, CancellationToken ct = default) =>
+    public Task<DiffSummary> DiffAsync(string workspacePath, string? fromRev = null, string? toRev = null, CancellationToken ct = default, Func<CancellationToken, Task>? authorizeMutation = null) =>
         Task.FromResult(new DiffSummary($"diff in {workspacePath}", Truncated: false, ChangedFiles: ["README.md"]));
 
-    public Task<PushResult> PushBookmarkAsync(string workspacePath, string bookmarkOrBranch, string? targetRev = null, CancellationToken ct = default) =>
+    public Task<PushResult> PushBookmarkAsync(string workspacePath, string bookmarkOrBranch, string? targetRev = null, CancellationToken ct = default, Func<CancellationToken, Task>? authorizeMutation = null) =>
         Task.FromResult(new PushResult(bookmarkOrBranch, "origin", "def456"));
 }
 

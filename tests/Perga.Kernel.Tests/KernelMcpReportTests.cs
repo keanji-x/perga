@@ -8,11 +8,11 @@ namespace Perga.Kernel.Tests;
 
 public sealed class KernelMcpReportTests
 {
-    private static McpSessionPrincipal Caller(TrackAggregateSnapshot snap) =>
-        new("token", snap.Track.Id, snap.Track.LeadSessionId!, true, null, null, []);
-
     private static Task<JsonElement> Call(KernelTestContext ctx, McpSessionPrincipal caller, string tool, object args) =>
         KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller, tool, TestJson.FromObject(args));
+
+    private static McpSessionPrincipal ReadCaller(TrackAggregateSnapshot snapshot) =>
+        new("token", snapshot.Track.Id, snapshot.Track.LeadSessionId!, true, null, null, []);
 
     [Fact]
     public void ToolSchemas_ExplicitlyDescribeNestedContracts()
@@ -61,7 +61,7 @@ public sealed class KernelMcpReportTests
     {
         await using var ctx = new KernelTestContext();
         var (_, snap) = await ctx.CreateDefaultTrackAsync();
-        var caller = Caller(snap);
+        var caller = await ctx.OpenMcpCallerAsync(snap.Track.LeadSessionId!);
 
         var initial = await Call(ctx, caller, KernelMcpToolNames.ReportRead, new { });
         var anchor0 = initial.GetProperty("anchor");
@@ -106,7 +106,7 @@ public sealed class KernelMcpReportTests
     {
         await using var ctx = new KernelTestContext();
         var (_, snap) = await ctx.CreateDefaultTrackAsync();
-        var caller = Caller(snap);
+        var caller = await ctx.OpenMcpCallerAsync(snap.Track.LeadSessionId!);
 
         var r0 = await Call(ctx, caller, KernelMcpToolNames.ReportRead, new { });
         var c1 = await Call(ctx, caller, KernelMcpToolNames.ReportCommit, new
@@ -225,7 +225,7 @@ public sealed class KernelMcpReportTests
             });
             """);
         var (_, snap) = await ctx.CreateDefaultTrackAsync(templateId: widget ? "same-track-views" : null);
-        var caller = Caller(snap);
+        var caller = await ctx.OpenMcpCallerAsync(snap.Track.LeadSessionId!);
         var local = await Call(ctx, caller, KernelMcpToolNames.ReportRead, new { });
         const string widgetMarkdown = """
             ```perga-block widget
@@ -269,8 +269,9 @@ public sealed class KernelMcpReportTests
         await using var ctx = new KernelTestContext();
         var (area, source) = await ctx.CreateDefaultTrackAsync();
         var target = await ctx.Kernel.CreateTrackAsync(new CreateTrackRequest(area.Id, Title: "Peer"));
-        var local = await Call(ctx, Caller(target), KernelMcpToolNames.ReportRead, new { });
-        var commit = await Call(ctx, Caller(target), KernelMcpToolNames.ReportCommit, new
+        var targetCaller = await ctx.OpenMcpCallerAsync(target.Track.LeadSessionId!);
+        var local = await Call(ctx, targetCaller, KernelMcpToolNames.ReportRead, new { });
+        var commit = await Call(ctx, targetCaller, KernelMcpToolNames.ReportCommit, new
         {
             anchor = local.GetProperty("anchor"),
             ops = new[]
@@ -289,7 +290,7 @@ public sealed class KernelMcpReportTests
         await ctx.Kernel.Actors.RemoveAndDisposeAsync(trackId);
         Assert.False(ctx.Kernel.Actors.IsTrackActiveInMemory(trackId));
 
-        Task<JsonElement> Read(object arguments) => Call(ctx, Caller(source), KernelMcpToolNames.ReportRead, arguments);
+        Task<JsonElement> Read(object arguments) => Call(ctx, ReadCaller(source), KernelMcpToolNames.ReportRead, arguments);
 
         var full = await Read(new { trackId });
         Assert.Equal(commit.GetProperty("docRev").GetInt32(), full.GetProperty("docRev").GetInt32());
@@ -348,8 +349,9 @@ public sealed class KernelMcpReportTests
             """);
         var target = await ctx.Kernel.CreateTrackAsync(new CreateTrackRequest(area.Id, TemplateId: "cross-views"));
         var trackId = target.Track.Id;
-        var local = await Call(ctx, Caller(target), KernelMcpToolNames.ReportRead, new { });
-        await Call(ctx, Caller(target), KernelMcpToolNames.ReportCommit, new
+        var targetCaller = await ctx.OpenMcpCallerAsync(target.Track.LeadSessionId!);
+        var local = await Call(ctx, targetCaller, KernelMcpToolNames.ReportRead, new { });
+        await Call(ctx, targetCaller, KernelMcpToolNames.ReportCommit, new
         {
             anchor = local.GetProperty("anchor"),
             ops = new[]
@@ -371,25 +373,25 @@ public sealed class KernelMcpReportTests
         await ctx.Kernel.WaitForTrackIdleAsync(trackId);
         await ctx.Kernel.Actors.RemoveAndDisposeAsync(trackId);
 
-        var outline = await Call(ctx, Caller(caller), KernelMcpToolNames.ReportRead, new { trackId, format = "outline" });
+        var outline = await Call(ctx, ReadCaller(caller), KernelMcpToolNames.ReportRead, new { trackId, format = "outline" });
         Assert.False(outline.TryGetProperty("templateViews", out _));
         Assert.False(ctx.Kernel.Actors.IsTrackActiveInMemory(trackId));
 
-        var prose = await Call(ctx, Caller(caller), KernelMcpToolNames.ReportRead, new { trackId, sectionH1 = "Prose" });
+        var prose = await Call(ctx, ReadCaller(caller), KernelMcpToolNames.ReportRead, new { trackId, sectionH1 = "Prose" });
         Assert.False(prose.TryGetProperty("templateViews", out _));
-        var widget = await Call(ctx, Caller(caller), KernelMcpToolNames.ReportRead, new { trackId, sectionH1 = "Widget" });
+        var widget = await Call(ctx, ReadCaller(caller), KernelMcpToolNames.ReportRead, new { trackId, sectionH1 = "Widget" });
         var view = Assert.Single(widget.GetProperty("templateViews").EnumerateObject());
         Assert.Equal("overview", view.Name);
         var widgetBlock = Assert.Single(widget.GetProperty("blocks").EnumerateArray(), block => block.GetProperty("kind").GetString() == "widget");
-        var byId = await Call(ctx, Caller(caller), KernelMcpToolNames.ReportRead, new
+        var byId = await Call(ctx, ReadCaller(caller), KernelMcpToolNames.ReportRead, new
         {
             trackId, blockIds = new[] { widgetBlock.GetProperty("id").GetString() }
         });
         Assert.Equal("overview", Assert.Single(byId.GetProperty("templateViews").EnumerateObject()).Name);
-        var flow = await Call(ctx, Caller(caller), KernelMcpToolNames.ReportRead, new { trackId, sectionH1 = "Flow" });
+        var flow = await Call(ctx, ReadCaller(caller), KernelMcpToolNames.ReportRead, new { trackId, sectionH1 = "Flow" });
         Assert.False(flow.TryGetProperty("templateViews", out _));
 
-        var full = await Call(ctx, Caller(caller), KernelMcpToolNames.ReportRead, new { trackId });
+        var full = await Call(ctx, ReadCaller(caller), KernelMcpToolNames.ReportRead, new { trackId });
         Assert.Equal("overview", Assert.Single(full.GetProperty("templateViews").EnumerateObject()).Name);
         Assert.Equal("Visible from another Track", full.GetProperty("templateViews").GetProperty("overview")
             .GetProperty("items")[0].GetString());
@@ -406,7 +408,7 @@ public sealed class KernelMcpReportTests
         var (_, snap) = await ctx.CreateDefaultTrackAsync();
         const string trackId = "trk_missing_report";
         var error = await Assert.ThrowsAsync<KernelException>(() =>
-            Call(ctx, Caller(snap), KernelMcpToolNames.ReportRead, new { trackId }));
+            Call(ctx, ReadCaller(snap), KernelMcpToolNames.ReportRead, new { trackId }));
         Assert.Equal(KernelErrorCode.NotFound, error.Code);
         Assert.Equal($"Track '{trackId}' not found.", error.Message);
         Assert.False(ctx.Kernel.Actors.IsTrackActiveInMemory(trackId));
@@ -417,7 +419,7 @@ public sealed class KernelMcpReportTests
     {
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
         var (_, snap) = await ctx.CreateDefaultTrackAsync();
-        var caller = Caller(snap);
+        var caller = await ctx.OpenMcpCallerAsync(snap.Track.LeadSessionId!);
         await Call(ctx, caller, KernelMcpToolNames.TrackSet, new
         {
             source = """
@@ -454,8 +456,9 @@ public sealed class KernelMcpReportTests
             });
             """);
         var target = await ctx.Kernel.CreateTrackAsync(new CreateTrackRequest(area.Id, TemplateId: "markdown-widget"));
-        var local = await Call(ctx, Caller(target), KernelMcpToolNames.ReportRead, new { });
-        await Call(ctx, Caller(target), KernelMcpToolNames.ReportCommit, new
+        var targetCaller = await ctx.OpenMcpCallerAsync(target.Track.LeadSessionId!);
+        var local = await Call(ctx, targetCaller, KernelMcpToolNames.ReportRead, new { });
+        await Call(ctx, targetCaller, KernelMcpToolNames.ReportCommit, new
         {
             anchor = local.GetProperty("anchor"),
             ops = new[] { new { op = "upsert", id = "b_widget", blockKind = "widget", markdown = """{"use":"builtin:list","view":"summary"}""" } }
@@ -463,7 +466,7 @@ public sealed class KernelMcpReportTests
         await ctx.Kernel.WaitForTrackIdleAsync(target.Track.Id);
         await ctx.Kernel.Actors.RemoveAndDisposeAsync(target.Track.Id);
 
-        var response = await Call(ctx, Caller(source), KernelMcpToolNames.ReportRead,
+        var response = await Call(ctx, ReadCaller(source), KernelMcpToolNames.ReportRead,
             new { trackId = target.Track.Id, blockIds = new[] { "b_widget" }, format = "blocks" });
         var view = Assert.Single(response.GetProperty("templateViews").EnumerateObject());
         Assert.Equal("summary", view.Name);
@@ -490,7 +493,7 @@ public sealed class KernelMcpReportTests
         await using var ctx = new KernelTestContext();
         var (_, snap) = await ctx.CreateDefaultTrackAsync();
         var error = await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.InvokeKernelMcpToolAsync(
-            Caller(snap), KernelMcpToolNames.ReportRead, TestJson.Parse(arguments)));
+            ReadCaller(snap), KernelMcpToolNames.ReportRead, TestJson.Parse(arguments)));
         Assert.Equal(KernelErrorCode.InvalidArgument, error.Code);
     }
 
@@ -501,8 +504,9 @@ public sealed class KernelMcpReportTests
     {
         await using var ctx = new KernelTestContext();
         var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        var caller = await ctx.OpenMcpCallerAsync(snap.Track.LeadSessionId!);
         var error = await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.InvokeKernelMcpToolAsync(
-            Caller(snap), KernelMcpToolNames.ReportCommit, TestJson.Parse(arguments)));
+            caller, KernelMcpToolNames.ReportCommit, TestJson.Parse(arguments)));
         Assert.Equal(KernelErrorCode.InvalidArgument, error.Code);
         Assert.Contains("only supports writing the caller's Track", error.Message, StringComparison.Ordinal);
     }
@@ -512,7 +516,7 @@ public sealed class KernelMcpReportTests
     {
         await using var ctx = new KernelTestContext();
         var (_, snap) = await ctx.CreateDefaultTrackAsync();
-        var caller = Caller(snap);
+        var caller = await ctx.OpenMcpCallerAsync(snap.Track.LeadSessionId!);
 
         var badFormat = await Assert.ThrowsAsync<KernelException>(() =>
             Call(ctx, caller, KernelMcpToolNames.ReportRead, new { format = "xml" }));

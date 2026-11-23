@@ -36,7 +36,8 @@ public sealed class SqliteMigratorTests
             Assert.Equal(Enumerable.Range(1, SqliteMigrator.CurrentSchemaVersion), migrator.Migrations.Select(m => m.Version));
             Assert.Equal("0024_area_execution_target.sql", migrator.Migrations[23].Name);
             Assert.Equal("0025_track_flow.sql", migrator.Migrations[24].Name);
-            Assert.Equal("0026_auth_users_sessions.sql", migrator.Migrations[^1].Name);
+            Assert.Equal("0026_auth_users_sessions.sql", migrator.Migrations[25].Name);
+            Assert.Equal("0027_session_runtime_activity.sql", migrator.Migrations[^1].Name);
             await migrator.MigrateAsync(dbPath);
 
             // Idempotent re-run on already-initialized v1 database must not create a spurious backup.

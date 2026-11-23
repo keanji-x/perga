@@ -132,9 +132,7 @@ public sealed class McpReportErgonomicsIntegrationTests
         var leadSessionId = created.RootElement.GetProperty("track").GetProperty("leadSessionId").GetString()!;
         await cluster.Services.GetRequiredService<IPergaKernel>().WaitForTrackIdleAsync(trackId, ct);
 
-        var bridge = cluster.Services.GetRequiredService<IMcpSessionBridge>();
-        var registration = bridge.RegisterSession(trackId, leadSessionId, isLead: true, boundTaskId: null, taskRunCount: null, enabledPlugins: []);
-        var leadToken = registration.Principal.Token;
+        var leadToken = (await cluster.Services.GetRequiredService<IPergaKernel>().OpenMcpCallerAsync(leadSessionId, ct)).Token;
 
         // 1. Verify tools/list publishes enriched nested schemas over Streamable HTTP
         using var listResp = await cluster.PostMcpAsync(

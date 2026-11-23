@@ -172,6 +172,8 @@ public sealed partial class TrackActor
         var turn = new SessionTurnDto(input.Receipt.TurnId, session.Id, input.TurnIndex, input.Epoch,
             "user", JsonHelpers.ToElement(new { }), "unknown", null, "Dispatch outcome could not be saved.", null, null);
         var delivery = input.Receipt.DeliveryState == "delivered" ? "delivered" : "unknown";
+        if (_scheduler.TryGetActive(session.Id, out var active) && active.TurnDto.Id == turn.Id)
+            active.RuntimeActivity.OutputAwaitingSettlement.Clear();
         await SettleDurableTurnCoreAsync(input, delivery, turn, [], session).ConfigureAwait(false);
         return input.Receipt with { DeliveryState = delivery, TurnStatus = "unknown" };
     }
@@ -210,7 +212,7 @@ public sealed partial class TrackActor
                 throw;
         }
         _sessions[session.Id] = session;
-        _scheduler.RemoveActive(session.Id);
+        await ReleaseTurnAndDrainRuntimeOutputCoreAsync(session, turn.Id).ConfigureAwait(false);
         await PublishInputEventAsync(turnEvent).ConfigureAwait(false);
     }
 

@@ -27,7 +27,8 @@ public sealed class KernelMcpTrackDiscoveryTests
               }
             });
             """;
-        await Call(ctx, caller, KernelMcpToolNames.TrackSet, TestJson.FromObject(new { source }).GetRawText());
+        var runtimeCaller = await ctx.OpenMcpCallerAsync(caller.Track.LeadSessionId!);
+        await ctx.Kernel.InvokeKernelMcpToolAsync(runtimeCaller, KernelMcpToolNames.TrackSet, TestJson.FromObject(new { source }));
         var denied = await Assert.ThrowsAsync<KernelException>(() => Call(ctx, caller, KernelMcpToolNames.TrackList, args));
         Assert.Equal(KernelErrorCode.PolicyDenied, denied.Code);
         var alternateCase = await Assert.ThrowsAsync<KernelException>(() =>

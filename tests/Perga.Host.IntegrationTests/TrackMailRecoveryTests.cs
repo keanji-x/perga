@@ -1,19 +1,79 @@
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Dapper;
 using Microsoft.Data.Sqlite;
-using Perga.Storage.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Perga.AgentKit;
 using Perga.Contracts;
 using Perga.Host.IntegrationTests.Fixtures;
 using Perga.Kernel;
+using Perga.Kernel.Mcp;
 using Perga.Kernel.Ports;
+using Perga.Storage.Sqlite;
 
 namespace Perga.Host.IntegrationTests;
 
 public sealed class TrackMailRecoveryTests
 {
+    [Fact]
+    public async Task RevokedSenderCannotCommitMailAlreadyQueuedAtSqliteWriter()
+    {
+        AnswerPublicationStoreProxy proxy = null!;
+        await using var host = new PergaHostTestCluster(configureExtraServices: services =>
+        {
+            services.RemoveAll<ITrackStore>();
+            services.AddSingleton<ITrackStore>(sp =>
+            {
+                var store = DispatchProxy.Create<ITrackStore, AnswerPublicationStoreProxy>();
+                proxy = (AnswerPublicationStoreProxy)store;
+                var sqlite = sp.GetRequiredService<SqliteTrackStore>();
+                sqlite.InitializeAsync().GetAwaiter().GetResult();
+                proxy.Inner = sqlite;
+                return store;
+            });
+        });
+
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var ct = deadline.Token;
+        var (from, lead) = await host.CreateTrackAsync();
+        var (to, _) = await host.CreateTrackAsync();
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        var caller = await kernel.OpenMcpCallerAsync(lead, ct);
+        const BindingFlags privateInstance = BindingFlags.Instance | BindingFlags.NonPublic;
+        var context = typeof(SqliteTrackStore).GetField("_context", privateInstance)!.GetValue(proxy.Inner)!;
+        var writer = (SqliteSingleWriter)context.GetType().GetProperty("Writer", privateInstance)!.GetValue(context)!;
+        var writerBlocked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseWriter = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var hold = writer.EnqueueAsync(async (_, _, token) =>
+        {
+            writerBlocked.TrySetResult();
+            await releaseWriter.Task.WaitAsync(token);
+        }, ct);
+        var mailQueued = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        proxy.AfterNextMailEnqueue = () => mailQueued.TrySetResult();
+        Task<JsonElement> send;
+        try
+        {
+            await writerBlocked.Task.WaitAsync(ct);
+            send = kernel.InvokeKernelMcpToolAsync(caller, KernelMcpToolNames.MailSend,
+                JsonSerializer.SerializeToElement(new { toTrackId = to, summary = "Queued", body = "Must not deliver" }), ct);
+            await mailQueued.Task.WaitAsync(ct);
+            Assert.False(send.IsCompleted);
+            kernel.McpSessionBridge.RevokeSession(lead, caller.RuntimeBindingId);
+        }
+        finally { releaseWriter.TrySetResult(); }
+
+        await hold.WaitAsync(ct);
+        var error = await Assert.ThrowsAsync<KernelException>(() => send.WaitAsync(ct));
+        Assert.Equal(KernelErrorCode.Conflict, error.Code);
+        Assert.Empty(await proxy.Inner.ListMailsAsync(to, ct: ct));
+        Assert.Empty(await proxy.Inner.TrackWakes.ListAsync(to, ct));
+        Assert.DoesNotContain(await proxy.Inner.ListEventsSinceAsync(0, to, ct: ct), evt =>
+            evt.Kind == "mail.received" && evt.Payload.GetProperty("fromTrackId").GetString() == from);
+    }
+
     [Theory]
     [InlineData(false, false)]
     [InlineData(true, false)]

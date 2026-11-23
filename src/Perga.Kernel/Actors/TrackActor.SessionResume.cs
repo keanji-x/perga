@@ -32,6 +32,7 @@ public sealed partial class TrackActor
             UnknownLastError = lastError ?? session.UnknownLastError,
             UpdatedAtMs = now
         };
+        RevokeSessionRuntime(session.Id);
         return PersistAndEmitSessionUpdatedCoreAsync(unknown, now, CancellationToken.None);
     }
 
@@ -94,6 +95,7 @@ public sealed partial class TrackActor
             }
             if (!_scheduler.TryBeginRecovery(sessionId))
                 throw KernelException.Conflict("Session recovery is already in progress.");
+            RevokeSessionRuntime(sessionId);
             NotifyQueueChangedCore(sessionId);
             var completion = new TaskCompletionSource<AgentSessionDto>(TaskCreationOptions.RunContinuationsAsynchronously);
             _ = actor.TrackBackgroundJob(async () =>
@@ -125,25 +127,25 @@ public sealed partial class TrackActor
             return await _runtimes.Get(sessionId).RunAsync(async owner =>
             {
                 await owner.CloseLockedAsync(_options.SessionStartupTimeout, ct, scoped: mode == "reconnect").ConfigureAwait(false);
-                var spec = await EnqueueAsync(async _ =>
-                {
-                    var session = RequireSessionCore(sessionId);
-                    RequireResumeWorkspaceCore(session);
-                    if (session.Epoch != opEpoch) throw KernelException.Conflict("Session epoch changed during recovery.");
-                    _mcpBridge.RevokeSession(sessionId);
-                    return mode == "reconnect" ? await BuildAgentLaunchSpecCoreAsync(session, null, ct).ConfigureAwait(false) : null;
-                }, ct).ConfigureAwait(false);
+                HarnessLaunchSpec? spec = null;
                 try
                 {
-                    if (spec is not null)
+                    if (mode == "reconnect")
                     {
                         using var launch = await _options.DispatchAdmission.EnterAsync(ct).ConfigureAwait(false);
-                        var opened = await owner.OpenLockedAsync(EffectiveAgentRuntime, spec, agent =>
+                        var opened = await owner.OpenLockedAsync(EffectiveAgentRuntime, bindingId => EnqueueAsync(async _ =>
+                        {
+                            var session = RequireSessionCore(sessionId);
+                            RequireResumeWorkspaceCore(session);
+                            if (session.Epoch != opEpoch) throw KernelException.Conflict("Session epoch changed during recovery.");
+                            return await BuildAgentLaunchSpecCoreAsync(session, null, bindingId, ct).ConfigureAwait(false);
+                        }, ct), agent =>
                         {
                             if (!agent.SupportsSessionResume || agent.NativeThreadId != nativeId)
                                 throw new ProviderSessionNotFoundException("The provider did not restore the original session.");
                         }, _options.SessionStartupTimeout, ct).ConfigureAwait(false);
                         replacement = opened.Agent;
+                        spec = opened.LaunchSpec;
                         var launched = await EnqueueAsync(_ => Task.FromResult(RequireSessionCore(sessionId) with
                             { Model = spec.Model, ReasoningEffort = spec.ReasoningEffort, PermissionMode = spec.PermissionMode }), ct).ConfigureAwait(false);
                         RequireConfirmedConfiguration(launched, replacement, replacement.ConfigurationState);
@@ -215,7 +217,6 @@ public sealed partial class TrackActor
             if (!_actorShutdownCts.IsCancellationRequested)
                 await EnqueueAsync(async _ =>
                 {
-                    if (!success) _mcpBridge.RevokeSession(sessionId);
                     NotifyQueueChangedCore(sessionId);
                     if (success && mode != "reset_context") await PokeSessionCoreAsync(sessionId).ConfigureAwait(false);
                 }, CancellationToken.None).ConfigureAwait(false);
@@ -245,7 +246,8 @@ public sealed partial class TrackActor
             var session = RequireSessionCore(sessionId);
             RequireSessionMutationCore(session, principal ?? new InteropPrincipal.Human(), expectedEpoch, destructive: true);
             RequireSessionDispatchAvailableCore(sessionId);
-            if (automatic && !(CurrentContextUsageRatioCore(session) >= _options.AutoCompactionThreshold))
+            if (automatic && (!(CurrentContextUsageRatioCore(session) >= _options.AutoCompactionThreshold) ||
+                HasRecentBackgroundActivityCore(sessionId)))
                 return null;
             if (_scheduler.IsOccupied(session, allowFinishingDispatch: true))
             {
@@ -274,7 +276,15 @@ public sealed partial class TrackActor
                 var oldAgent = await GetOrOpenAgentSessionCoreAsync(prepared.Session, null, ct).ConfigureAwait(false);
                 var prep = (OldAgentSession: oldAgent, ContextBinding: _runtimes.Get(sessionId).ContextUsage,
                     HandoverTurnIndex: prepared.HandoverTurnIndex);
-                if (await prep.OldAgentSession.ResolveNativeCompactSupportAsync(ct).AsTask().WaitAsync(ct).ConfigureAwait(false))
+                var native = await prep.OldAgentSession.ResolveNativeCompactSupportAsync(ct).AsTask().WaitAsync(ct).ConfigureAwait(false);
+                var currentSession = await EnqueueAsync(_ =>
+                {
+                    var session = RequireSessionCore(sessionId);
+                    RequireSessionMutationCore(session, principal ?? new InteropPrincipal.Human(), expectedEpoch, destructive: true);
+                    return Task.FromResult((Session: session, Skip: automatic && HasRecentBackgroundActivityCore(sessionId)));
+                }, ct).ConfigureAwait(false);
+                if (currentSession.Skip) return currentSession.Session;
+                if (native)
                 {
                     var compactTurnId = $"trn_{prep.HandoverTurnIndex:D6}_{Guid.NewGuid():N}";
                     var nativeStartedAt = NowMs();
@@ -287,6 +297,8 @@ public sealed partial class TrackActor
                     return await EnqueueAsync(async _ =>
                     {
                         var current = RequireSessionCore(sessionId);
+                        if (principal is InteropPrincipal.Session)
+                            RequireSessionMutationCore(current, principal, expectedEpoch, destructive: true);
                         var now = NowMs();
 
                         var compactTurn = new SessionTurnDto(
@@ -358,6 +370,13 @@ public sealed partial class TrackActor
 
                 var handoverSummary = summaryBuilder.ToString().Trim();
 
+                if (principal is InteropPrincipal.Session)
+                    await EnqueueAsync(_ =>
+                    {
+                        RequireSessionMutationCore(RequireSessionCore(sessionId), principal, expectedEpoch, destructive: true);
+                        return Task.CompletedTask;
+                    }, ct).ConfigureAwait(false);
+
                 // 2. Dispose old IAgentSession instance.
                 await _runtimes.Get(sessionId).CloseAsync(_options.SessionStartupTimeout, ct).ConfigureAwait(false);
 
@@ -366,6 +385,8 @@ public sealed partial class TrackActor
                 {
 
                     var current = RequireSessionCore(sessionId);
+                    if (principal is InteropPrincipal.Session)
+                        RequireSessionMutationCore(current, principal, expectedEpoch, destructive: true);
                     var now = NowMs();
 
                     var handoverTurn = new SessionTurnDto(

@@ -74,8 +74,9 @@ public sealed class SubprocessTransportTests
         public bool ShutdownConfirmed => HasExited;
         public int? TryGetExitCode() => HasExited ? 0 : null;
 
-        public Task WriteLineAsync(string line, CancellationToken ct)
+        public async Task WriteLineAsync(string line, CancellationToken ct, Func<CancellationToken, Task>? beforeWrite = null)
         {
+            if (beforeWrite is not null) await beforeWrite(ct);
             using var doc = JsonDocument.Parse(line);
             var root = doc.RootElement;
             if (root.TryGetProperty("id", out var idElem) && root.TryGetProperty("method", out var methodElem))
@@ -93,7 +94,7 @@ public sealed class SubprocessTransportTests
                 }
             }
 
-            return Task.CompletedTask;
+            return;
         }
 
         public async ValueTask<string?> ReadStdoutLineAsync(CancellationToken ct)

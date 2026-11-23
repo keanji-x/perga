@@ -72,15 +72,15 @@ public sealed partial class TrackFlowTests
         public Action<string>? OnRevoke { get; set; }
 
         public McpSessionRegistration RegisterSession(string trackId, string sessionId, bool isLead,
-            string? boundTaskId, int? taskRunCount, IReadOnlyList<string> enabledPlugins) =>
-            _inner.RegisterSession(trackId, sessionId, isLead, boundTaskId, taskRunCount, enabledPlugins);
+            string? boundTaskId, int? taskRunCount, IReadOnlyList<string> enabledPlugins, string? runtimeBindingId = null, string? baseUriOverride = null) =>
+            _inner.RegisterSession(trackId, sessionId, isLead, boundTaskId, taskRunCount, enabledPlugins, runtimeBindingId, baseUriOverride);
         public McpSessionPrincipal? ResolveToken(string token) => _inner.ResolveToken(token);
         public string? GetTokenForSession(string sessionId) => _inner.GetTokenForSession(sessionId);
         public void UpdateLeadStatus(string trackId, string? newLeadSessionId) => _inner.UpdateLeadStatus(trackId, newLeadSessionId);
         public void UpdateTrackPlugins(string trackId, IReadOnlyList<string> enabledPlugins) => _inner.UpdateTrackPlugins(trackId, enabledPlugins);
-        public void RevokeSession(string sessionId)
+        public void RevokeSession(string sessionId, string? runtimeBindingId = null)
         {
-            _inner.RevokeSession(sessionId);
+            _inner.RevokeSession(sessionId, runtimeBindingId);
             OnRevoke?.Invoke(sessionId);
         }
         public void RevokeTrack(string trackId) => _inner.RevokeTrack(trackId);
@@ -826,8 +826,8 @@ public sealed partial class TrackFlowTests
         Assert.Equal("Check staging", Assert.Single(okCommit.Flow.Nodes).Title);
 
         // Update template inputs via MCP -> flow.json keeps ${inputs.targetEnv}, projection & execution interpolate "prod"!
-        var leadReg = ctx.Kernel.McpSessionBridge.RegisterSession(trackId, snap.Track.LeadSessionId!, isLead: true, null, null, []);
-        await ctx.Kernel.InvokeKernelMcpToolAsync(leadReg.Principal, KernelMcpToolNames.TemplateUpdateInputs,
+        var lead = await ctx.OpenMcpCallerAsync(snap.Track.LeadSessionId!);
+        await ctx.Kernel.InvokeKernelMcpToolAsync(lead, KernelMcpToolNames.TemplateUpdateInputs,
             TestJson.FromObject(new { inputs = new { targetEnv = "prod" } }));
         Assert.Contains("${inputs.targetEnv}", await File.ReadAllTextAsync(flowPath), StringComparison.Ordinal);
         var updatedFlow = await ctx.Kernel.GetTrackFlowAsync(trackId);
