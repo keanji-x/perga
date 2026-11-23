@@ -1,69 +1,21 @@
 using Perga.Contracts;
 using Perga.Kernel.Tests.Fakes;
-using Perga.ReportDoc;
 
 namespace Perga.Kernel.Tests;
 
 [Collection("Template policy sandbox")]
 public sealed class TemplateEntryOptimizationTests
 {
-    private const string SeededTemplateSource = """
-        export default defineTemplate({
-          id: "delivery-entry",
-          title: "交付流程",
-          description: "按计划与验收推进",
-          report: { initialMarkdown: "# 交付概览\n\n目标与验收标准。\n" },
-          data: {
-            initial: { stage: "plan" }
-          }
-        });
-        """;
-
     [Fact]
-    public async Task ApplyTrackTemplateByHuman_SeedsBlankReportAndPreservesEditedReport()
-    {
-        await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
-        ctx.Kernel.Templates.RegisterTemplate(SeededTemplateSource);
-
-        var (_, blankSnap) = await ctx.CreateDefaultTrackAsync();
-        var applied = await ctx.Kernel.ApplyTrackTemplateAsync(
-            blankSnap.Track.Id,
-            new ApplyTrackTemplateRequest(TemplateId: "delivery-entry"));
-
-        Assert.Equal("delivery-entry", applied.TemplateId);
-        Assert.Equal("plan", applied.Data.GetProperty("stage").GetString());
-        var seededReport = await ctx.Kernel.ReadReportAsync(blankSnap.Track.Id);
-        Assert.Equal(1, seededReport.DocRev);
-        Assert.Contains("交付概览", seededReport.RenderedMarkdown, StringComparison.Ordinal);
-
-        var (_, editedSnap) = await ctx.CreateDefaultTrackAsync();
-        var initial = await ctx.Kernel.ReadReportAsync(editedSnap.Track.Id);
-        await ctx.Kernel.CommitReportAsync(
-            editedSnap.Track.Id,
-            editedSnap.Track.LeadSessionId!,
-            new ReportCommitRequest(
-                Anchor: initial.Anchor,
-                Ops: [new BlockOp.UpsertBlockOp(null, ReportBlockKind.Prose, "# 手动记录\n\n已写下的正文。\n", null, null)],
-                Summary: "Manual edit"));
-
-        var appliedEdited = await ctx.Kernel.ApplyTrackTemplateAsync(
-            editedSnap.Track.Id,
-            new ApplyTrackTemplateRequest(TemplateId: "delivery-entry"));
-
-        Assert.Equal("delivery-entry", appliedEdited.TemplateId);
-        var preservedReport = await ctx.Kernel.ReadReportAsync(editedSnap.Track.Id);
-        Assert.Contains("手动记录", preservedReport.RenderedMarkdown, StringComparison.Ordinal);
-        Assert.DoesNotContain("交付概览", preservedReport.RenderedMarkdown, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public async Task LeadSystemPrompt_DescribesTrackSurfacesAndUpfrontTemplateScoping()
+    public async Task LeadSystemPrompt_DescribesTrackModelUpfrontTemplateScopingAndPreservesFlowAndGovernanceContracts()
     {
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
         var (_, snap) = await ctx.CreateDefaultTrackAsync();
         await ctx.SendAndWaitForTurnAsync(snap.Track.LeadSessionId!, new SendSessionMessageRequest("帮我做小米投研", "lead-prompt-check"));
 
         var leadPrompt = Assert.Single(ctx.AgentRuntime.OpenedSessions).LaunchSpec.SystemPrompt;
+
+        // Track Model + upfront template scoping
         Assert.Contains("## Track Model", leadPrompt, StringComparison.Ordinal);
         Assert.Contains("**Title**", leadPrompt, StringComparison.Ordinal);
         Assert.Contains("**Report**", leadPrompt, StringComparison.Ordinal);
@@ -71,5 +23,18 @@ public sealed class TemplateEntryOptimizationTests
         Assert.Contains("before doing deep work or writing the Report", leadPrompt, StringComparison.Ordinal);
         Assert.Contains("composable rather than all-or-nothing", leadPrompt, StringComparison.Ordinal);
         Assert.Contains("format: \"files\"", leadPrompt, StringComparison.Ordinal);
+
+        // Preserved Flow orchestration contract
+        Assert.Contains("## Track Flow Orchestration", leadPrompt, StringComparison.Ordinal);
+        Assert.Contains("flow_commit(dryRun: true)", leadPrompt, StringComparison.Ordinal);
+        Assert.Contains("flow_read(format: \"spec\")", leadPrompt, StringComparison.Ordinal);
+        Assert.Contains("\"canceled\": true", leadPrompt, StringComparison.Ordinal);
+
+        // Preserved Session & Worker governance contract
+        Assert.Contains("session_create", leadPrompt, StringComparison.Ordinal);
+        Assert.Contains("requestKey", leadPrompt, StringComparison.Ordinal);
+        Assert.Contains("task_done", leadPrompt, StringComparison.Ordinal);
+        Assert.Contains("provider_list", leadPrompt, StringComparison.Ordinal);
+        Assert.Contains("session_respond", leadPrompt, StringComparison.Ordinal);
     }
 }

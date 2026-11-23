@@ -9,7 +9,6 @@ export type AgentSessionDto = { "archivedAtMs": number | null; "configVersion": 
 export type AgentStopEvidenceDto = { "abortedOnExit": boolean; "pendingAbortIds": Array<string> };
 export type AgentTurnOutcomeDto = { "credential": string | null; "failure": string | null; "kind": string; "rateLimitType": string | null; "reason": string | null; "resetsAt": string | null; "status": number | null; "structuredOutput": unknown | null };
 export type ApiErrorResponse = { "code": string; "error": string; "nextStep": string | null };
-export type ApplyTrackTemplateRequest = { "inputs"?: unknown | null; "resetData"?: boolean; "seedReport"?: boolean | null; "source"?: string | null; "templateId"?: string | null };
 export type ApprovalChoiceDto = { "id": string; "isApproval": boolean; "label": string };
 export type ApprovalDto = { "arguments": unknown | null; "createdAtMs": number; "delegateSessionId": string | null; "executionId": string; "id": string; "options": Array<ApprovalChoiceDto>; "sessionId": string; "source": string; "title": string; "toolName": string | null; "turnId": string | null };
 export type AreaDto = { "color": string; "createdAtMs": number; "defaultCwd": string | null; "executionTargetId": string; "folders": Array<string>; "id": string; "name": string; "sortOrder": number; "updatedAtMs": number };

@@ -4,7 +4,7 @@ import { type TrackAggregateSnapshotDto } from '../../../../core/api/perga-v1.ts
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { ApiError } from '../../../../core/domain/failure-class.ts';
-import { listTrackTerminalsOperation,toTrack,trackDetailOperation,trackOverlaysOperation,tracksInAreaOperation,trackTemplatesOperation,type Track,type TrackTemplate } from '../../../../core/domain/track.ts';
+import { listTrackTerminalsOperation,toTrack,trackDetailOperation,trackOverlaysOperation,tracksInAreaOperation,type Track } from '../../../../core/domain/track.ts';
 import { runOperation } from './query-operation.ts';
 export function trackOverlaysQueryOptions(transport: ApiTransportPort, unauthorized: UnauthorizedChannel) {
   return {
@@ -52,15 +52,6 @@ export function trackToolsQueryOptions(transport: ApiTransportPort, trackId: str
     queryKey: queryKeys.trackTools(trackId),
     queryFn: ({ signal }: { signal: AbortSignal }) =>
       runOperation(transport, { ...listTrackTerminalsOperation(trackId), signal }, unauthorized),
-  };
-}
-
-export function trackTemplatesQueryOptions(transport: ApiTransportPort, unauthorized: UnauthorizedChannel, enabled = true) {
-  return {
-    queryKey: queryKeys.trackTemplates(),
-    enabled,
-    queryFn: ({ signal }: { signal: AbortSignal }): Promise<TrackTemplate[]> =>
-      runOperation(transport, { ...trackTemplatesOperation(), signal }, unauthorized),
   };
 }
 

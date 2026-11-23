@@ -711,53 +711,6 @@
         ],
         "type": "object"
       },
-      "ApplyTrackTemplateRequest": {
-        "properties": {
-          "inputs": {
-            "anyOf": [
-              {},
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "resetData": {
-            "type": "boolean"
-          },
-          "seedReport": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "source": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "templateId": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "required": [],
-        "type": "object"
-      },
       "ApprovalChoiceDto": {
         "properties": {
           "id": {
@@ -8215,50 +8168,6 @@
             "content": {
               "application/json": {
                 "schema": {}
-              }
-            },
-            "description": "HTTP 200"
-          },
-          "default": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "Error mapped by Host exception handling or request guards"
-          }
-        }
-      },
-      "post": {
-        "parameters": [
-          {
-            "in": "path",
-            "name": "trackId",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ApplyTrackTemplateRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TrackDto"
-                }
               }
             },
             "description": "HTTP 200"

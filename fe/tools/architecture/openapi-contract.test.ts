@@ -237,7 +237,6 @@ it('declares all Perga /api/v1 REST endpoints in openapi.json', () => {
     '/api/v1/areas/{areaId}/tracks',
     '/api/v1/tracks',
     '/api/v1/tracks/{trackId}',
-    '/api/v1/tracks/{trackId}/template',
     '/api/v1/tracks/{trackId}/files',
     '/api/v1/tracks/{trackId}/vcs-diff',
     '/api/v1/tracks/{trackId}/report',

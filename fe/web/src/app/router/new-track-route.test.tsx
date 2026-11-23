@@ -1426,8 +1426,7 @@ it('leaves a pasted template reference to the first message when no catalog was 
   await waitFor(() => expect(createdTrackBodies(sent)).toHaveLength(1));
   expect(createdTrackBodies(sent)[0]).not.toHaveProperty('first_message');
   expect(createdTrackBodies(sent)[0]).not.toHaveProperty('template_id');
-  const createIndex = sent.findIndex(request => request.method === 'POST' && request.path === '/api/v1/tracks');
-  expect(sent.slice(0, createIndex + 1).some(request => request.path === '/api/v1/templates')).toBe(false);
+  expect(sent.some(request => request.path === '/api/v1/templates')).toBe(false);
 });
 
 it('keeps Perga creation implicit even when templates and an Area default exist', async () => {

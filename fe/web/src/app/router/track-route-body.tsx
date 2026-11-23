@@ -39,7 +39,7 @@ import {
 toTrack,trackActivityFromSnapshot,trackDisplayTitle
 } from '../../../../core/domain/track.ts';
 import { parkedWorkerNotices,workbenchTerminalCardIds } from '../../../../core/view/track-page.ts';
-import { ReportEmpty, type ReportEmptyLeadState } from '../../features/report/empty/public.tsx';
+import { ReportEmpty } from '../../features/report/empty/public.tsx';
 import { ReportFileViewer } from '../../features/report/file-viewer/public.tsx';
 import { ReportOutline } from '../../features/report/outline/public.tsx';
 import { RecentFiles } from '../../features/report/recent-files/public.tsx';
@@ -72,7 +72,7 @@ type RecentFileHistory
 } from '../providers/recent-files.ts';
 import { useTrackConversationMutations } from '../providers/track-conversation-mutations.ts';
 import { useTrackMutations } from '../providers/track-mutations.ts';
-import { trackTemplatesQueryOptions,trackToolsQueryOptions } from '../providers/track-queries.ts';
+import { trackToolsQueryOptions } from '../providers/track-queries.ts';
 import { useUiPreferences } from '../providers/ui-preferences.tsx';
 import { useMobileConversationOwner,useMobileHeaderActionsHost,useMobileHeaderTitleHost,useOpenMobileSection } from '../shell/public.tsx';
 import { TrackSelector } from '../shell/track-selector.tsx';
@@ -427,39 +427,11 @@ export function TrackRouteBody({
     },
   });
   const protocolWritable = snapshot.track.closedAtMs == null;
-  const templateEntryAvailable = reportEmpty === undefined
-    && snapshot.track.templateId == null
-    && protocolWritable
-    && reportPresentation.report === null;
-  const templatesQuery = useQuery(trackTemplatesQueryOptions(transport, unauthorized, templateEntryAvailable));
 
   const hasFlowContent = templateViews?.status === 'ready'
     && templateViews.projection.flow != null
     && (templateViews.projection.flow.nodes.length > 0 || templateViews.projection.flow.archived.length > 0);
   const hasDailyReportContent = reportPresentation.visible?.preparation.kind !== 'empty' || hasFlowContent;
-
-  const openWorkerSession = (cardId: string) => {
-    if (!openableWorkerIds.has(cardId)) return;
-    if (rows.some((row) => row.id === cardId)) {
-      registry.requestOpen(cardId, { focusComposer: false });
-      return;
-    }
-    go({ name: 'track', trackId: track.id, cardId, from: routeFrom });
-  };
-
-  const leadActivity = plannerCard === undefined ? null : cardActivityOf(track, plannerCard.id);
-  const leadGuide: ReportEmptyLeadState | undefined = plannerCard === undefined ? undefined : {
-    id: plannerCard.id,
-    phase: leadActivity === 'failed' || plannerCard.status === 'failed'
-      ? 'failed'
-      : leadActivity === 'working' || track.working || plannerCard.status === 'running' || plannerCard.status === 'starting' || plannerCard.status === 'turn_pending'
-        ? 'running'
-        : leadActivity === 'input' || openAsks.length > 0 || plannerCard.lastNotifiableTurnAtMs !== null
-          ? 'waiting_reply'
-          : 'idle',
-    modelLabel: plannerCard.model ?? plannerCard.provider,
-    startedAtMs: plannerCard.updatedAtMs,
-  };
 
   const reportRegion = <>
     <TemplateProtocolBar track={track} inputsSchema={templateQuery.data?.manifest?.inputsSchema}
@@ -478,19 +450,19 @@ export function TrackRouteBody({
 
         onOpenLink={openReportLink}
         onOpenFileLink={openReportFile}
-        onOpenWorker={openWorkerSession}
+        onOpenWorker={(cardId) => {
+          if (!openableWorkerIds.has(cardId)) return;
+          if (rows.some((row) => row.id === cardId)) {
+            registry.requestOpen(cardId, { focusComposer: false });
+            return;
+          }
+          go({ name: 'track', trackId: track.id, cardId, from: routeFrom });
+        }}
         onOpenSourceLink={openReportSource}
         fileRoot={track.agentCwd}
         linkPreview={linkPreview}
         outlineEmpty={reportEmpty}
-        empty={reportEmpty === undefined
-          ? <ReportEmpty
-              track={track}
-              lead={leadGuide}
-              onOpenLead={openWorkerSession}
-              templates={templateEntryAvailable ? templatesQuery.data : undefined}
-            />
-          : reportEmpty}
+        empty={reportEmpty === undefined ? <ReportEmpty /> : reportEmpty}
       >{reportEvidence}</TrackReportRegion>
     )}
   </>;

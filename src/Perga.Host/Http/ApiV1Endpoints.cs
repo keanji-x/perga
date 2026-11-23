@@ -156,13 +156,6 @@ public static class ApiV1Endpoints
             return TypedResults.Json(template, PergaJsonDefaults.ApiOptions);
         }).Produces<JsonElement>();
 
-        v1.MapPost("/tracks/{trackId}/template", async (string trackId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
-        {
-            var req = await ReadRequiredJsonBodyAsync<ApplyTrackTemplateRequest>(ctx, ct).ConfigureAwait(false);
-            var track = await kernel.ApplyTrackTemplateAsync(trackId, req, ct).ConfigureAwait(false);
-            return TypedResults.Json(track, PergaJsonDefaults.ApiOptions);
-        }).Produces<TrackDto>().WithMetadata(new JsonRequestContract(typeof(ApplyTrackTemplateRequest), IsOptional: false));
-
         v1.MapDelete("/tracks/{trackId}/template", async (string trackId, IPergaKernel kernel, CancellationToken ct) =>
         {
             var track = await kernel.Actors.GetOrActivate(trackId).ClearTemplateAsync(ct).ConfigureAwait(false);
