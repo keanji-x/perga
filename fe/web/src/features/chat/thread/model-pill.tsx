@@ -187,6 +187,13 @@ export function ModelPill<Provider extends string = AgentProvider>({
                 className={styles.pickerRow}
                 onClick={() => {
                   setViewedProvider(group.provider);
+                  if (group.provider !== draft.provider && catalogReason(group).blocked === null) {
+                    if (group.provider === provider) {
+                      setDraft({ provider: group.provider, selection });
+                    } else if (group.defaultAvailable !== false) {
+                      setDraft({ provider: group.provider, selection: { model: null, reasoning_effort: null } });
+                    }
+                  }
                 }}
               >
                 <span className={styles.pickerRowLabel}>{heading}</span>
@@ -276,7 +283,7 @@ export function ModelPill<Provider extends string = AgentProvider>({
             isDisabled={triggerDisabled}
             className={styles.trigger}
           >
-            <Text type="inherit" color="inherit" maxLines={1} hasTruncateTooltip>
+            <Text key={label} type="inherit" color="inherit" maxLines={1} hasTruncateTooltip={!open}>
               {label}
             </Text>
           </Button>

@@ -81,7 +81,7 @@ export function RepoPill({
           ref: triggerRef,
           label: accessibleName,
           children: (
-            <Text type="inherit" color="inherit" maxLines={1} hasTruncateTooltip>
+            <Text key={visibleLabel} type="inherit" color="inherit" maxLines={1} hasTruncateTooltip={!open}>
               {visibleLabel}
             </Text>
           ),
