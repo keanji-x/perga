@@ -81,7 +81,7 @@ it('sends a typed /Side question once and reopens the saved side from its source
     await screen.findByText('Side reply');
     const writes = () => fixture.requests.filter(request => request.method === 'POST');
     expect(writes().map(request => [request.path, request.body])).toEqual([['/api/v1/tracks/daily/sessions', {
-      title: 'Explore this', prompt: 'Conversation excerpt:\nAssistant: Original discussion\n\nQuestion:\nExplore this',
+      title: 'Explore this', prompt: 'Explore this', sourceExcerpt: 'Assistant: Original discussion',
       provider: 'codex', sourceSessionId: parent,
     }]]);
     await userEvent.click(screen.getByRole('button', { name: 'Close side conversation' }));

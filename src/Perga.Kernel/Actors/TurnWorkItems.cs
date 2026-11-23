@@ -74,7 +74,9 @@ public sealed partial class TrackActor
         public bool IsQueuedMessage => true;
         public bool WaitForWorkspacePreparation => false;
         public bool HoldsResumeWhenInconclusive => input.IsQueuedFollowUp;
-        public Task<string?> PreparePromptAsync(CancellationToken ct) => Task.FromResult<string?>(input.Content);
+        public Task<string?> PreparePromptAsync(CancellationToken ct) => Task.FromResult<string?>(input.SourceExcerpt is { Length: > 0 } excerpt
+            ? $"Conversation excerpt:\n{excerpt}\n\nQuestion:\n{input.Content}"
+            : input.Content);
         public bool IsOccupiedCore(AgentSessionDto session) => actor._scheduler.IsOccupied(session, input);
 
         public SessionTurnDto CreateTurnCore(AgentSessionDto session, string prompt, long now) =>

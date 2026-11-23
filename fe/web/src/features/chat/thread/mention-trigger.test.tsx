@@ -407,6 +407,17 @@ describe('the @ menu in the real composer', () => {
     expect(await screen.findByText('No matches')).toBeTruthy();
   });
 
+  it('discovers and dispatches a mixed-case command without sending chat text', async () => {
+    const onNewConversation = vi.fn();
+    const onSend = vi.fn();
+    render(<MentionComposer search={vi.fn<MentionSearch>()} onSend={onSend} onNewConversation={onNewConversation} />);
+    await userEvent.type(field(), '/Ne');
+    await screen.findByRole('option', { name: /^new/ });
+    await userEvent.type(field(), 'W {Enter}');
+    expect(onNewConversation).toHaveBeenCalledOnce();
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
   it('keeps the / command beside it', async () => {
     const onNewConversation = vi.fn();
     const onSend = vi.fn();

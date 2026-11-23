@@ -17,6 +17,7 @@ public sealed record BootstrapDto(
     bool AuthRequired = true,
     IReadOnlyList<ExecutionTargetDto>? ExecutionTargets = null)
 {
+    // Older v1 Hosts omit this capability. See docs/design/side-conversations.md for its retirement condition.
     public bool ConversationSide => true;
 }
 
@@ -120,7 +121,8 @@ public sealed record CreateSessionRequest(
     string? ReasoningEffort = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? PermissionMode = null,
     string? SystemPrompt = null, string? Prompt = null, string? NotifyParent = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? SourceSessionId = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? SourceSessionId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? SourceExcerpt = null);
 
 public sealed record SteeringResult(string InputId, string Delivery);
 

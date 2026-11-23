@@ -26,7 +26,7 @@ internal sealed class SessionInputsRepository
     private const string InputSelect = """
         SELECT i.id AS InputId, i.turn_id AS TurnId, i.session_id AS SessionId,
                CASE WHEN i.delivery = 'queued' THEN 'accepted' ELSE i.delivery END AS DeliveryState, i.resolved_at_ms AS ResolvedAtMs, t.status AS TurnStatus,
-               i.request_hash AS RequestHash, i.content AS Content, t.turn_index AS TurnIndex,
+               i.request_hash AS RequestHash, i.content AS Content, t.turn_index AS TurnIndex, t.source_excerpt AS SourceExcerpt,
                i.kind IN ('queue', 'steer') AS IsQueuedFollowUp,
                t.epoch AS Epoch, t.provider AS Provider, t.model AS Model, t.reasoning_effort AS ReasoningEffort, s.track_id AS TrackId,
                track.area_id AS AreaId, t.started_at_ms AS StartedAtMs,
@@ -198,16 +198,16 @@ internal sealed class SessionInputsRepository
         }, ct);
 
     private static async Task<(string TurnId, int TurnIndex)> CreateInputTurnAsync(
-        SqliteConnection conn, SqliteTransaction tx, AgentSessionDto session, CancellationToken ct)
+        SqliteConnection conn, SqliteTransaction tx, AgentSessionDto session, CancellationToken ct, string? sourceExcerpt = null)
     {
         var turnIndex = checked(await ReadLastTurnIndexAsync(conn, tx, session.Id, ct).ConfigureAwait(false) + 1);
         var turnId = $"trn_{turnIndex:D6}_{Guid.NewGuid():N}";
         await conn.ExecuteAsync(new CommandDefinition(
             """
-            INSERT INTO session_turns (id, session_id, turn_index, epoch, trigger_kind, status, accepted_at_ms, provider, model, reasoning_effort)
-            VALUES (@TurnId, @SessionId, @TurnIndex, @Epoch, 'user', 'queued', @Now, @Provider, @Model, @ReasoningEffort);
+            INSERT INTO session_turns (id, session_id, turn_index, epoch, trigger_kind, status, accepted_at_ms, provider, model, reasoning_effort, source_excerpt)
+            VALUES (@TurnId, @SessionId, @TurnIndex, @Epoch, 'user', 'queued', @Now, @Provider, @Model, @ReasoningEffort, @SourceExcerpt);
             """, new { TurnId = turnId, SessionId = session.Id, TurnIndex = turnIndex,
-                session.Epoch, Now = session.UpdatedAtMs, session.Provider, session.Model, session.ReasoningEffort }, tx, cancellationToken: ct)).ConfigureAwait(false);
+                session.Epoch, Now = session.UpdatedAtMs, session.Provider, session.Model, session.ReasoningEffort, SourceExcerpt = sourceExcerpt }, tx, cancellationToken: ct)).ConfigureAwait(false);
 
         return (turnId, turnIndex);
     }
@@ -217,7 +217,7 @@ internal sealed class SessionInputsRepository
     {
         var message = new SessionMessage($"inp_{Guid.NewGuid():N}", session.Id, request.AuthorId, request.Key, request.Hash,
             null, null, request.Content, "queued", session.UpdatedAtMs, "input");
-        var (turnId, turnIndex) = await CreateInputTurnAsync(conn, tx, session, ct).ConfigureAwait(false);
+        var (turnId, turnIndex) = await CreateInputTurnAsync(conn, tx, session, ct, request.SourceExcerpt).ConfigureAwait(false);
         var ordinal = await SessionMessageSql.InsertSessionMessageAsync(conn, tx, message with { TurnId = turnId }, ct).ConfigureAwait(false);
 
         var userItemId = await conn.ExecuteScalarAsync<long>(new CommandDefinition("""
@@ -227,7 +227,7 @@ internal sealed class SessionInputsRepository
             tx, cancellationToken: ct)).ConfigureAwait(false);
 
         return new PersistedSessionInput(new(message.Id, turnId, session.Id, "accepted", "queued", null),
-            message.RequestHash, message.Content, turnIndex, session.Epoch, session.Provider, session.Model, session.ReasoningEffort, false, userItemId);
+            message.RequestHash, message.Content, turnIndex, session.Epoch, session.Provider, session.Model, session.ReasoningEffort, false, userItemId, request.SourceExcerpt);
     }
 
     public Task<bool> ClaimAsync(
@@ -421,6 +421,7 @@ internal sealed class SessionInputsRepository
         public long? ResolvedAtMs { get; init; }
         public string RequestHash { get; init; } = "";
         public string Content { get; init; } = "";
+        public string? SourceExcerpt { get; init; }
         public bool IsQueuedFollowUp { get; init; }
         public int TurnIndex { get; init; }
         public int Epoch { get; init; }
@@ -430,6 +431,6 @@ internal sealed class SessionInputsRepository
 
         public PersistedSessionInput ToInput() => new(
             new(InputId, TurnId, SessionId, DeliveryState, TurnStatus, ResolvedAtMs),
-            RequestHash, Content, TurnIndex, Epoch, Provider, Model, ReasoningEffort, IsQueuedFollowUp, UserItemId);
+            RequestHash, Content, TurnIndex, Epoch, Provider, Model, ReasoningEffort, IsQueuedFollowUp, UserItemId, SourceExcerpt);
     }
 }
