@@ -84,10 +84,7 @@ jobs:
         run: dotnet test Perga.sln --configuration Release --no-build --maxcpucount:1
       - name: Publish Host and bundle terminal bridge and templates
         run: |
-          dotnet publish src/Perga.Host/Perga.Host.csproj --configuration Release --no-build --output perga
-          install -m 755 "$PERGA_TERM_BRIDGE_BIN" perga/perga-term-bridge
-          cp -R templates perga/
-          cp LICENSE perga/
+          bash tools/publish-host.sh perga "$PERGA_TERM_BRIDGE_BIN"
           tar -czf host.tar.gz perga
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
@@ -158,54 +155,66 @@ jobs:
         run: echo '::warning::The report-only Chromium tests failed or timed out. See the test log.'
 
   package:
-    name: Package Linux x64
+    name: Package ${{ matrix.label }}
     needs: [backend, frontend]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    strategy:
+      matrix:
+        include:
+          - label: Linux x64
+            runner: ubuntu-24.04
+            package: perga-linux-x64
+          - label: macOS Apple Silicon
+            runner: macos-15
+            package: perga-darwin-arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
     steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
         with:
           dotnet-version: '11.0.x'
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        if: runner.os == 'Linux'
         with:
           name: perga-host
-      - run: tar -xzf host.tar.gz
+      - if: runner.os == 'Linux'
+        run: tar -xzf host.tar.gz
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+      - name: Build native Apple Silicon Host and bridges
+        if: runner.os == 'macOS'
+        run: |
+          test "$(uname -m)" = arm64
+          (cd tools/perga-oar-bridge && npm ci && npm run build)
+          rustup toolchain install --no-self-update
+          (cd tools/perga-term-bridge && cargo test --locked --release && cargo build --locked --release)
+          bridge="$PWD/tools/perga-term-bridge/target/release/perga-term-bridge"
+          PERGA_TERM_BRIDGE_BIN="$bridge" dotnet test tests/Perga.TermClient.Tests --configuration Release
+          bash tools/publish-host.sh perga "$bridge"
+          lipo perga/Perga.Host -verify_arch arm64
+          lipo perga/perga-term-bridge -verify_arch arm64
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: perga-web
-          path: perga/web/next/
-      - name: Verify packaged Host, terminal bridge and web frontend
-        working-directory: perga
+          path: perga/web/
+      - name: Archive and verify the native package
         env:
-          ASPNETCORE_URLS: http://127.0.0.1:4041
-          Perga__EagerStartTerminalBridge: 'true'
+          PACKAGE: ${{ matrix.package }}
         run: |
-          # Host serves static files at their physical paths and uses web/index.html
-          # for SPA routes. Vite builds its asset URLs under /next/.
-          cp web/next/index.html web/index.html
-          export PERGA_STATIC_WEB_DIR="$PWD/web"
-          dotnet Perga.Host.dll > "$RUNNER_TEMP/perga.log" 2>&1 &
-          host_pid=$!
-          trap 'status=$?; kill "$host_pid" 2>/dev/null || true; wait "$host_pid" || true; if (( status != 0 )); then cat "$RUNNER_TEMP/perga.log"; fi' EXIT
-          curl -fsS --retry 20 --retry-connrefused --retry-delay 1 --max-time 5 "$ASPNETCORE_URLS/healthz"
-          curl -fsS "$ASPNETCORE_URLS/next/" -o "$RUNNER_TEMP/perga-index.html"
-          cmp web/index.html "$RUNNER_TEMP/perga-index.html"
-          curl -fsS "$ASPNETCORE_URLS/next/track/smoke" -o "$RUNNER_TEMP/perga-index.html"
-          cmp web/index.html "$RUNNER_TEMP/perga-index.html"
-          asset=$(find web/next/assets -maxdepth 1 -name 'index-*.js' -print -quit)
-          test -n "$asset"
-          curl -fsS "$ASPNETCORE_URLS/${asset#web/}" -o "$RUNNER_TEMP/perga-index.js"
-          cmp "$asset" "$RUNNER_TEMP/perga-index.js"
-      - name: Archive verified package
-        run: |
-          tar -czf perga-linux-x64.tar.gz perga
-          sha256sum perga-linux-x64.tar.gz > perga-linux-x64.tar.gz.sha256
+          tar -czf "$PACKAGE.tar.gz" perga
+          shasum -a 256 "$PACKAGE.tar.gz" > "$PACKAGE.tar.gz.sha256"
+          shasum -a 256 -c "$PACKAGE.tar.gz.sha256"
+          tar -xzf "$PACKAGE.tar.gz" -C "$RUNNER_TEMP"
+          bash tools/smoke-package.sh "$RUNNER_TEMP/perga"
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: perga-linux-x64
+          name: ${{ matrix.package }}
           path: |
-            perga-linux-x64.tar.gz
-            perga-linux-x64.tar.gz.sha256
+            ${{ matrix.package }}.tar.gz
+            ${{ matrix.package }}.tar.gz.sha256
           if-no-files-found: error
           overwrite: true
           compression-level: 0
@@ -222,10 +231,14 @@ jobs:
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: perga-linux-x64
-      - name: Publish verified package to the version tag
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: perga-darwin-arm64
+      - name: Publish verified packages to the version tag
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          sha256sum -c perga-linux-x64.tar.gz.sha256
+          sha256sum -c perga-linux-x64.tar.gz.sha256 perga-darwin-arm64.tar.gz.sha256
           gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes \
-            perga-linux-x64.tar.gz perga-linux-x64.tar.gz.sha256
+            perga-linux-x64.tar.gz perga-linux-x64.tar.gz.sha256 \
+            perga-darwin-arm64.tar.gz perga-darwin-arm64.tar.gz.sha256

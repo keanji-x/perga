@@ -9,7 +9,7 @@ Perga moves multi-day and multi-week work — maintaining a repository, driving 
 - **Living reports over drifting chat.** Keep conversation in the margin and anchor long-running state in a read-only report combining schema-validated ledgers with non-forgeable kernel facts (task status, actual model, gate exit codes, timestamps). Context limits trigger native compaction or report-anchored epoch handover.
 - **Heterogeneous agents with shared control.** A single Lead coordinates Claude Code, Codex, and ACP workers inside the same track. Execution is structurally separated from acceptance, reviews can be enforced on a different model, and humans share the exact same live stream, steering, interrupt, and model controls as the Lead.
 - **Unified flows and zero-token watches.** A lightweight declarative `flow.json` unifies parallel dependencies, `cron`/`at` schedules, and zero-token external probes (`prChecks` or shell commands). Nothing spends tokens while idle; state changes and exceptions wake the Lead to decide next steps.
-- **Real isolated workspaces, local sovereignty.** Isolate tracks via Git worktrees, Jujutsu (`jj`), Linux OverlayFS (shared prewarmed build caches), or remote SSH targets. Terminals run in an independent Rust bridge (`perga-term-bridge`) that survives host upgrades, and all state stays in a local SQLite database you own.
+- **Real isolated workspaces, local sovereignty.** Isolate tracks via Git worktrees, Jujutsu (`jj`), Linux OverlayFS (shared prewarmed build caches), or remote SSH targets. Terminals run in a Rust bridge (`perga-term-bridge`), and all state stays in a local SQLite database you own.
 - **Zero-template start, progressive structure.** Start any track with a single sentence. Attach a lightweight built-in protocol (27–40 lines) or ask the Lead to author one only when recurring rules and guardrails emerge.
 
 ## Built-in Protocols
@@ -20,27 +20,70 @@ Perga moves multi-day and multi-week work — maintaining a repository, driving 
 
 ## Quickstart
 
-Download the latest verified archive from GitHub Releases (requires the **ASP.NET Core 11** runtime and at least one configured agent CLI such as `claude`, `codex`, or an ACP provider):
+Install the **ASP.NET Core 11 runtime** for your platform. The bundled OAR bridge uses **Node.js 24 or later** to run agent sessions. Install and configure the provider CLI you want to use, such as `claude` or `codex`.
+
+Download the archive and its matching `.sha256` file from the same [GitHub Release](https://github.com/keanji-x/perga/releases). To try a CI build, download and unzip the matching package artifact from the workflow run. In the directory containing both files, use the commands for your machine.
+
+**Linux x64** (`uname -sm` prints `Linux x86_64`)
 
 ```sh
-sha256sum -c perga-linux-x64.tar.gz.sha256
-tar -xzf perga-linux-x64.tar.gz
+sha256sum -c perga-linux-x64.tar.gz.sha256 && tar -xzf perga-linux-x64.tar.gz
+```
+
+**macOS on Apple Silicon** (`uname -sm` prints `Darwin arm64`)
+
+```sh
+shasum -a 256 -c perga-darwin-arm64.tar.gz.sha256 && tar -xzf perga-darwin-arm64.tar.gz
+```
+
+On either platform, enter the extracted directory. Set a persistent data directory outside the package, or keep your existing data directory when upgrading. On first use, create the owner account and choose its password at the prompt.
+
+```sh
 cd perga
-PERGA_DATA_DIR="$PWD/data" PERGA_STATIC_WEB_DIR="$PWD/web" \
+export PERGA_DATA_DIR="${PERGA_DATA_DIR:-$HOME/.local/share/perga}"
+dotnet Perga.Host.dll auth init-owner --username owner --allow-migrate
+```
+
+To start the Host, run the following from the same `perga` directory. Use the same data directory on subsequent starts to keep your owner account and tracks.
+
+```sh
+PERGA_DATA_DIR="${PERGA_DATA_DIR:-$HOME/.local/share/perga}" PERGA_STATIC_WEB_DIR="$PWD/web" \
   dotnet Perga.Host.dll --urls http://127.0.0.1:4041
 ```
 
-Open [http://127.0.0.1:4041/](http://127.0.0.1:4041/) in your browser (installable as a PWA on desktop and mobile).
+Open [Perga on localhost](http://127.0.0.1:4041/) and sign in. The web app is installable as a PWA. The Host starts the bundled native terminal bridge when needed.
 
-### Codex in Linux Sandboxes
+### Build from source
 
-Sandboxed tasks store Codex state in an isolated session directory under Perga's data directory. Configure the OpenAI API key for sandboxed tasks via the Host setting `Perga__CodexSandboxApiKey`. Standard Codex CLI ChatGPT login continues to be managed by the CLI itself.
+Start in the repository root on the target machine with the .NET 11 SDK, Node.js 24 or later, npm, rustup and a native C linker installed. On macOS, Xcode Command Line Tools supply the linker.
+
+```sh
+(cd tools/perga-oar-bridge && npm ci && npm run build)
+(cd fe && npm ci && npm run build)
+case "$(uname -sm)" in
+  "Linux x86_64") target=x86_64-unknown-linux-musl ;;
+  "Darwin arm64") target=aarch64-apple-darwin ;;
+  *) echo "Unsupported platform" >&2; exit 1 ;;
+esac
+rustup target add "$target"
+(cd tools/perga-term-bridge && cargo build --locked --release --target "$target")
+out=$(mktemp -d)
+bash tools/publish-host.sh "$out/perga" "tools/perga-term-bridge/target/$target/release/perga-term-bridge"
+cp -R fe/web/dist "$out/perga/web"
+cd "$out/perga"
+```
+
+This directory has the same layout as the extracted release. Follow the owner and Host commands above from here.
+
+### Linux-specific deployment
+
+The foreground Host and local terminals run on both platforms. The managed installer and hot-upgrade services use Linux systemd user units. OverlayFS workspaces and optional terminal user/PID namespaces also require Linux kernel support. See [managed installation](docs/design/install-and-upgrade.md) and [OverlayFS prerequisites](docs/track-overlayfs.md).
 
 ## CI and Releases
 
-Pushes to `main`, pull requests targeting `main`, and manual runs of **CI and release** in GitHub Actions run .NET tests, Rust terminal bridge checks, and frontend lint, unit tests, and production builds. Chromium browser tests run as a separate job. After checks pass, Actions verifies that the packaged host boots, the terminal bridge responds, and static web assets are served, then uploads the `perga-linux-x64` artifact.
+Pushes to `main`, pull requests targeting `main`, and manual runs of **CI and release** run the .NET, Rust, OAR and frontend checks. Chromium tests run in a separate advisory job. Linux x64 uses the tested static musl terminal bridge. The macOS arm64 runner builds and tests its native bridge. Each runner extracts its archive, boots the Host with eager terminal bridge startup, checks `/healthz`, and fetches the JavaScript entry named by the served homepage.
 
-Pushing a `vX.Y.Z` tag (for example `v0.1.0`) runs the same pipeline and publishes the verified Linux x64 archive and SHA-256 checksum to GitHub Releases.
+Actions uploads `perga-linux-x64` and `perga-darwin-arm64`. Pushing a `vX.Y.Z` tag (for example `v0.1.0`) publishes both verified archives and their SHA-256 checksums to GitHub Releases.
 
 ## Documentation
 
