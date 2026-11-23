@@ -489,6 +489,16 @@
           "reconnectInvalidated": {
             "type": "boolean"
           },
+          "sourceSessionId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "spawnDepth": {
             "type": "integer"
           },
@@ -992,6 +1002,9 @@
           "authRequired": {
             "type": "boolean"
           },
+          "conversationSide": {
+            "type": "boolean"
+          },
           "databaseId": {
             "type": "string"
           },
@@ -1030,6 +1043,7 @@
         "required": [
           "areas",
           "authRequired",
+          "conversationSide",
           "databaseId",
           "dbInstanceId",
           "executionTargets",
@@ -1381,6 +1395,16 @@
             ]
           },
           "reasoningEffort": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sourceSessionId": {
             "anyOf": [
               {
                 "type": "string"

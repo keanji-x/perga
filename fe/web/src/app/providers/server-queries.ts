@@ -29,7 +29,7 @@ export function serverVersionOperation(): ApiOperation<ServerVersionInfo> {
         assistantProviders: true,
         conversationCreateModel: true,
         conversationInitialInput: true,
-        conversationSide: false,
+        conversationSide: bootstrap.conversationSide === true,
         webCompatVersion: WEB_COMPAT_VERSION,
         minWebCompatVersion: WEB_COMPAT_VERSION,
         syncEventVersion: 1,

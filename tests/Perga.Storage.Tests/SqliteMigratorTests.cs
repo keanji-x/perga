@@ -53,7 +53,7 @@ public sealed class SqliteMigratorTests
 
             await migrator.MigrateAsync(dbPath);
             await db.OpenAsync();
-            Assert.Equal(28, await db.ExecuteScalarAsync<int>("SELECT MAX(version) FROM schema_migrations;"));
+            Assert.Equal(SqliteMigrator.CurrentSchemaVersion, await db.ExecuteScalarAsync<int>("SELECT MAX(version) FROM schema_migrations;"));
             Assert.Equal(["archived", "reuse", "wake"],
                 await db.QueryAsync<string>("SELECT id FROM tasks WHERE owns_session = 0 ORDER BY id;"));
             Assert.Equal(4, await db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM tasks WHERE owns_session = 1;"));
@@ -78,7 +78,8 @@ public sealed class SqliteMigratorTests
             Assert.Equal("0025_track_flow.sql", migrator.Migrations[24].Name);
             Assert.Equal("0026_auth_users_sessions.sql", migrator.Migrations[25].Name);
             Assert.Equal("0027_session_runtime_activity.sql", migrator.Migrations[26].Name);
-            Assert.Equal("0028_task_session_ownership.sql", migrator.Migrations[^1].Name);
+            Assert.Equal("0028_task_session_ownership.sql", migrator.Migrations[27].Name);
+            Assert.Equal("0029_side_conversation_source.sql", migrator.Migrations[^1].Name);
             await migrator.MigrateAsync(dbPath);
 
             // Idempotent re-run on already-initialized v1 database must not create a spurious backup.

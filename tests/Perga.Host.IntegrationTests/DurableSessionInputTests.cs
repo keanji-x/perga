@@ -134,6 +134,46 @@ public sealed class DurableSessionInputTests
     }
 
     [Fact]
+    public async Task SideCreationRequiresALocalSourceAndReplaysItsLinkAfterRestart()
+    {
+        var directory = Directory.CreateTempSubdirectory("perga-side-");
+        try
+        {
+            string trackId, sourceId, sideId;
+            const string prompt = "Question with a conversation excerpt";
+            await using (var host = new PergaHostTestCluster(directory.FullName))
+            {
+                (trackId, sourceId) = await host.CreateTrackAsync();
+                var (_, otherSource) = await host.CreateTrackAsync();
+                var bootstrap = await host.AuthenticatedClient.GetFromJsonAsync<JsonElement>("/api/v1/bootstrap");
+                Assert.True(bootstrap.GetProperty("conversationSide").GetBoolean());
+                var path = $"/api/v1/tracks/{trackId}/sessions";
+                using var invalid = await SendAsync(host.AuthenticatedClient, path, "side", new { sourceSessionId = otherSource, prompt });
+                Assert.Equal(HttpStatusCode.NotFound, invalid.StatusCode);
+                using var created = await SendAsync(host.AuthenticatedClient, path, "side", new { sourceSessionId = sourceId, prompt });
+                Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+                var receipt = (await created.Content.ReadFromJsonAsync<SessionCreationReceipt>(PergaJsonDefaults.ApiOptions))!;
+                Assert.Equal(sourceId, receipt.Session.SourceSessionId);
+                Assert.Null(receipt.Session.ParentSessionId);
+                sideId = receipt.Session.Id;
+                await host.Services.GetRequiredService<IPergaKernel>().WaitForTrackIdleAsync(trackId);
+                Assert.Equal(prompt, Assert.Single(host.AgentRuntime.ExecutedTurns).Input.Prompt);
+            }
+
+            await using var reopened = new PergaHostTestCluster(directory.FullName);
+            var sessions = $"/api/v1/tracks/{trackId}/sessions";
+            using var replay = await SendAsync(reopened.AuthenticatedClient, sessions, "side", new { sourceSessionId = sourceId, prompt });
+            Assert.Equal(HttpStatusCode.OK, replay.StatusCode);
+            var recovered = (await replay.Content.ReadFromJsonAsync<SessionCreationReceipt>(PergaJsonDefaults.ApiOptions))!;
+            Assert.Equal((sideId, sourceId), (recovered.Session.Id, recovered.Session.SourceSessionId));
+            using var changed = await SendAsync(reopened.AuthenticatedClient, sessions, "side", new { sourceSessionId = sideId, prompt });
+            Assert.Equal(HttpStatusCode.Conflict, changed.StatusCode);
+            Assert.Empty(reopened.AgentRuntime.ExecutedTurns);
+        }
+        finally { directory.Delete(recursive: true); }
+    }
+
+    [Fact]
     public async Task CreateWithFirstMessageReplaysTheSameSessionInputAndTranscript()
     {
         var directory = Directory.CreateTempSubdirectory("perga-create-input-");

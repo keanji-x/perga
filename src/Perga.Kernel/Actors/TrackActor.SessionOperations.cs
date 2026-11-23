@@ -290,7 +290,8 @@ public sealed partial class TrackActor
             UpdatedAtMs: now,
             ReasoningEffort: effort ?? (canInheritReasoningEffort ? parent?.ReasoningEffort : null),
             ParentSessionId: parent?.Id, SpawnDepth: parent is null ? 0 : parent.SpawnDepth + 1,
-            PermissionMode: permissionMode, SystemPrompt: request.SystemPrompt, NotifyParent: request.NotifyParent ?? "none");
+            PermissionMode: permissionMode, SystemPrompt: request.SystemPrompt, NotifyParent: request.NotifyParent ?? "none",
+            SourceSessionId: request.SourceSessionId);
     }
 
     private Task<SessionItemsPageDto> ReadSessionItemsAsync(string sessionId, long afterId, int limit, CancellationToken ct,

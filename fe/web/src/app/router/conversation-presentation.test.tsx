@@ -1,5 +1,6 @@
-import { sessionPage } from './conversation-session-data.ts';
-import { fixtureBootstrap, fixtureSession } from './session-contract-fixture.ts';
+import { sessionItem, sessionPage, sessionReply } from './conversation-session-data.ts';
+import { fixtureBootstrap, fixtureCreation, fixtureSession } from './session-contract-fixture.ts';
+import { renderSessionFixture } from './conversation-session-fixture.tsx';
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -7,14 +8,15 @@ import { renderDailyFixture } from './daily-planner-fixture.tsx';
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); document.getElementById('root')?.remove(); });
 
-it('keeps the side command text and requires support when v1 does not advertise side creation', async () => {
+it.each([true, false])('opens a side draft from the command menu only when v1 advertises support (%s)', async supported => {
   const frames = new Map<number, FrameRequestCallback>();
   let sequence = 0;
   vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { frames.set(++sequence, callback); return sequence; });
   vi.stubGlobal('cancelAnimationFrame', (id: number) => { frames.delete(id); });
   const fixture = renderDailyFixture({ initial: '/track/daily?panel=conversations', extraPlanner: true,
     reply: request => {
-      if (request.path === '/api/v1/bootstrap') return { status: 200, statusText: 'OK', body: fixtureBootstrap() };
+      if (request.path === '/api/v1/bootstrap') return { status: 200, statusText: 'OK',
+        body: { ...fixtureBootstrap(), ...(supported ? { conversationSide: true } : {}) } };
       if (request.path.includes('/second-planner/items') && !request.path.includes('limit=1')) return { status: 200, statusText: 'OK', body: sessionPage(fixtureSession('second-planner', 'daily'), [{ id: 1, sessionId: 'second-planner', turnId: 'turn', kind: 'assistant_text', payload: { text: 'Source ready for presentation.' }, createdAtMs: 1 }]) };
       return undefined;
     },
@@ -45,9 +47,74 @@ it('keeps the side command text and requires support when v1 does not advertise 
     expect(screen.queryByRole('region', { name: 'Side conversation · Codex' })).toBeNull();
     expect(fixture.requests.filter(request => ['POST', 'PATCH', 'PUT', 'DELETE'].includes(request.method))).toHaveLength(0);
     await userEvent.keyboard('{Enter}');
-    await screen.findByText('Side conversations require a server that reports support. Update or reconnect, then try again.');
-    expect(screen.queryByRole('region', { name: 'Side conversation · Codex' })).toBeNull();
+    if (supported) {
+      await screen.findByRole('button', { name: 'Close side conversation' });
+    } else {
+      await screen.findByText('Side conversations require a server that reports support. Update or reconnect, then try again.');
+      expect(screen.queryByRole('button', { name: 'Close side conversation' })).toBeNull();
+    }
     expect(fixture.requests.filter(request => request.method === 'POST'
       && request.path.endsWith('/messages'))).toHaveLength(0);
+  } finally { cleanup(); fixture.client.clear(); }
+});
+
+it('sends a typed /Side question once and reopens the saved side from its source', async () => {
+  const parent = 'daily-planner';
+  const side = fixtureSession('side-id', 'daily', { title: 'Explore this', sourceSessionId: parent, updatedAtMs: 10 });
+  const fixture = renderSessionFixture({ initial: '/track/daily?panel=conversations', reply: request => {
+    if (request.path.startsWith('/api/v1/bootstrap')) return sessionReply({ ...fixtureBootstrap(), conversationSide: true });
+    if (request.method === 'POST' && request.path === '/api/v1/tracks/daily/sessions') {
+      fixture.sessions.push(side);
+      fixture.items.set(side.id, [sessionItem(side.id, 2, 'Side reply')]);
+      return sessionReply(fixtureCreation(side));
+    }
+    return undefined;
+  } });
+  try {
+    fixture.sessions.push(fixtureSession('earlier', 'daily', { sourceSessionId: parent }),
+      fixtureSession('archived', 'daily', { sourceSessionId: parent, updatedAtMs: 20, archivedAtMs: 20 }));
+    fixture.items.set(parent, [sessionItem(parent, 1, 'Original discussion')]);
+    await userEvent.click(await screen.findByRole('button', { name: /Conversation Daily Planner conversation/ }));
+    await screen.findByText('Original discussion');
+    const field = await screen.findByRole('combobox', { name: 'Message' });
+    await userEvent.type(field, '/Side Explore this{Enter}');
+    await screen.findByText('Side reply');
+    const writes = () => fixture.requests.filter(request => request.method === 'POST');
+    expect(writes().map(request => [request.path, request.body])).toEqual([['/api/v1/tracks/daily/sessions', {
+      title: 'Explore this', prompt: 'Conversation excerpt:\nAssistant: Original discussion\n\nQuestion:\nExplore this',
+      provider: 'codex', sourceSessionId: parent,
+    }]]);
+    await userEvent.click(screen.getByRole('button', { name: 'Close side conversation' }));
+    await userEvent.type(field, '/side ');
+    await userEvent.keyboard('{Enter}');
+    await screen.findByText('Side reply');
+    expect(writes()).toHaveLength(1);
+  } finally { cleanup(); fixture.client.clear(); }
+});
+
+it('starts an ordinary conversation from Conversations + after a refused side command', async () => {
+  const ordinary = fixtureSession('new-id', 'daily', { title: 'Fresh topic' });
+  const fixture = renderSessionFixture({ initial: '/track/daily?panel=conversations', reply: request => {
+    if (request.method === 'POST' && request.path === '/api/v1/tracks/daily/sessions') {
+      fixture.sessions.push(ordinary);
+      fixture.items.set(ordinary.id, [sessionItem(ordinary.id, 2, 'Fresh reply')]);
+      return sessionReply(fixtureCreation(ordinary));
+    }
+    return undefined;
+  } });
+  try {
+    fixture.items.set('daily-planner', [sessionItem('daily-planner', 1, 'Original discussion')]);
+    await userEvent.click(await screen.findByRole('button', { name: /Conversation Daily Planner conversation/ }));
+    await screen.findByText('Original discussion');
+    await userEvent.type(screen.getByRole('combobox', { name: 'Message' }), '/side question{Enter}');
+    const error = /Side conversations require a server that reports support/;
+    await screen.findByText(error);
+    await userEvent.click(screen.getByRole('button', { name: 'Close conversation' }));
+    await userEvent.click(screen.getByRole('button', { name: 'New conversation' }));
+    await userEvent.type(await screen.findByRole('combobox', { name: 'Message' }), 'Fresh topic{Enter}');
+    await screen.findByText('Fresh reply');
+    expect(screen.queryByText(error)).toBeNull();
+    expect(fixture.requests.filter(request => request.method === 'POST').map(request => request.body))
+      .toEqual([{ title: 'Fresh topic', prompt: 'Fresh topic', provider: 'codex' }]);
   } finally { cleanup(); fixture.client.clear(); }
 });

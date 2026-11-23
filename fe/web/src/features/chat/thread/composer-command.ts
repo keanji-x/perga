@@ -67,11 +67,16 @@ export function conversationCommands(options: Parameters<typeof conversationComm
   return composerCommands(conversationCommandBindings(options));
 }
 
+export function matchesCommandName(name: string, typed: string, match: 'prefix' | 'exact'): boolean {
+  const query = name === 'side' ? typed.toLowerCase() : typed;
+  return match === 'prefix' ? name.startsWith(query) : name === query;
+}
+
 /** All chat send surfaces use the same recognition and binding policy. */
 export function dispatchComposerCommand(commands: readonly ComposerCommand[], text: string,
   run: (command: ComposerCommand, argument: string) => void): boolean {
   const parsed = parseComposerCommand(text);
-  const command = parsed === null ? undefined : commands.find(candidate => candidate.name === parsed.name);
+  const command = parsed === null ? undefined : commands.find(candidate => matchesCommandName(candidate.name, parsed.name, 'exact'));
   if (command === undefined || parsed === null) return false;
   run(command, parsed.argument);
   return true;
