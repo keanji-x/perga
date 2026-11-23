@@ -283,7 +283,7 @@ export interface PergaTemplateSetupResult<TInputs = Record<string, any>, TData =
 
   /** Advanced policy and workspace hooks. */
   headerView?: (ctx: TemplateContext<TInputs, TData>) => TemplateHeaderView;
-  /** Perga read-only introspection and the Lead’s track_set({ clear: true }) bypass this hook. */
+  /** Perga read-only introspection tools such as track_status and template_read bypass this hook. */
   before?: (action: TemplateBeforeAction,
     ctx: TemplateContext<TInputs, TData> & { readonly session?: TemplateSessionContext }) => GuardDecision;
   workspace?: {

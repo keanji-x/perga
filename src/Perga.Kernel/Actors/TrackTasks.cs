@@ -123,7 +123,7 @@ public sealed partial class TrackActor
                 RequireTaskOwnershipCore(callerSessionId, task);
                 if (FlowConstants.IsFlowTask(task))
                 {
-                    var cleanup = await actor.CancelFlowTaskCoreAsync(task, reason, ct).ConfigureAwait(false);
+                    var cleanup = await actor.CancelFlowTaskCoreAsync(task, reason, ct, authorization).ConfigureAwait(false);
                     return (RequireTaskCore(task.Id), null, cleanup);
                 }
                 var active = _activeTasks.TryGetValue(task.Id, out var found) ? found : null;

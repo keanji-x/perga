@@ -600,8 +600,7 @@ public sealed class UnifiedTemplateFlowTests
                 var kernel = host.Services.GetRequiredService<IPergaKernel>();
                 var created = await host.CreateTrackAsync();
                 id = created.TrackId;
-                var token = host.Services.GetRequiredService<IMcpSessionBridge>()
-                    .RegisterSession(id, created.SessionId, true, null, null, []).Principal.Token;
+                var token = (await kernel.OpenMcpCallerAsync(created.SessionId)).Token;
                 var (bound, bindError) = await McpKernelAndVcsIntegrationTests.CallToolAsync(host, "/mcp/kernel", token,
                     KernelMcpToolNames.TrackSet, new { source = Source }, default);
                 Assert.False(bindError, bound);
@@ -646,9 +645,9 @@ public sealed class UnifiedTemplateFlowTests
     public async Task TrackSetUsesLiveHostPluginRegistrationForWarnings()
     {
         await using var host = Host();
-        var (id, leadId) = await host.CreateTrackAsync();
-        var bridge = host.Services.GetRequiredService<IMcpSessionBridge>();
-        var token = bridge.RegisterSession(id, leadId, true, null, null, []).Principal.Token;
+        var (_, leadId) = await host.CreateTrackAsync();
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        var token = (await kernel.OpenMcpCallerAsync(leadId)).Token;
         host.Services.GetRequiredService<McpPluginRouter>().RegisterPlugin(
             new McpPluginDefinition("known-test-plugin", "stdio", Command: "unused"));
         const string source = """

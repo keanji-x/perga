@@ -63,6 +63,14 @@ public sealed partial class TrackActor
         if (authorization is not null) RequireRuntimeBindingCore(authorization);
     }
 
+    // The store runs this after its writer wait, before the transaction changes any state.
+    private Action? CaptureMcpWriteFenceCore(InteropPrincipal.Session? authorization)
+    {
+        if (authorization is null) return null;
+        var open = RequireRuntimeBindingCore(authorization);
+        return () => RequireRuntimeWriteFence(authorization, open);
+    }
+
     private void RequireSessionMutationCore(AgentSessionDto session, InteropPrincipal principal, int? expectedEpoch = null,
         bool destructive = false)
     {

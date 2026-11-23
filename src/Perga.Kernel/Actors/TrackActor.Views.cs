@@ -112,7 +112,8 @@ public sealed partial class TrackActor
                     Payload: JsonHelpers.ToElement(TemplatePresentation.Project(nextTrack, _policy, _policyVm)),
                     CreatedAtMs: now);
                 await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
-                await _store.UpdateTrackAndEmitAsync(nextTrack, evt, ct, writeData: true).ConfigureAwait(false);
+                await _store.UpdateTrackAndEmitAsync(nextTrack, evt, ct, writeData: true,
+                    beforeWrite: CaptureMcpWriteFenceCore(authorization)).ConfigureAwait(false);
                 _track = nextTrack;
                 // Existing approvals evaluated the previous policy data snapshot.
                 _policyGeneration = Guid.NewGuid().ToString("N");

@@ -117,7 +117,7 @@ public interface ITrackStore : ITrackReadStore
     Task<IReadOnlyList<string>> RecoverWorkspacePreparationsAsync(CancellationToken ct);
     Task<bool> TryClaimWorkspacePreparationAsync(string trackId, WorkspacePreparationPhase expected, WorkspacePreparation claimed, CancellationToken ct);
     Task SaveWorkspacePreparationAsync(string trackId, WorkspacePreparation preparation, TrackDto? readyTrack, EventEnvelopeDto? evt, CancellationToken ct);
-    Task UpdateTrackAndEmitAsync(TrackDto track, EventEnvelopeDto? evt, CancellationToken ct, bool writeData = false);
+    Task UpdateTrackAndEmitAsync(TrackDto track, EventEnvelopeDto? evt, CancellationToken ct, bool writeData = false, Action? beforeWrite = null);
     Task RecordFlowFileHashAsync(string trackId, long flowRev, string sha256, CancellationToken ct);
     Task CommitTrackFlowAsync(
         TrackDto track,
@@ -126,9 +126,9 @@ public interface ITrackStore : ITrackReadStore
         IReadOnlyList<TrackScheduleDto> activeFlowSchedules,
         IReadOnlyList<string> canceledFlowScheduleIds,
         IReadOnlyList<EventEnvelopeDto> events,
-        CancellationToken ct) =>
+        CancellationToken ct, Action? beforeWrite = null) =>
         throw new NotSupportedException("Flow commit is not implemented by this store.");
-    Task UpdateTrackTemplateAndEmitAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto evt, CancellationToken ct, bool writeData = false, TrackFlowUpdate? flow = null, TemplateReportSeed? reportSeed = null);
+    Task UpdateTrackTemplateAndEmitAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto evt, CancellationToken ct, bool writeData = false, TrackFlowUpdate? flow = null, TemplateReportSeed? reportSeed = null, Action? beforeWrite = null);
     Task DeleteTrackAsync(string trackId, CancellationToken ct);
 
     Task SaveReportAsync(
@@ -138,7 +138,8 @@ public interface ITrackStore : ITrackReadStore
         string? authorSessionId,
         string commitMessage,
         EventEnvelopeDto evt,
-        CancellationToken ct);
+        CancellationToken ct,
+        Action? beforeWrite = null);
 
     Task UpsertTaskAsync(TaskDto task, EventEnvelopeDto? evt, CancellationToken ct,
         AgentSessionDto? session = null, EventEnvelopeDto? sessionEvent = null, string? wakePrompt = null,

@@ -93,7 +93,7 @@ public sealed partial class TrackActor
                     }
 
                     return (await FinalizeReportCommitCoreAsync(preview, callerSessionId,
-                        request.CommitMessage ?? $"Report commit ({editorRole})", diagnostics, ct).ConfigureAwait(false), null);
+                        request.CommitMessage ?? $"Report commit ({editorRole})", diagnostics, ct, authorization).ConfigureAwait(false), null);
                 }, CancellationToken.None).ConfigureAwait(false);
 
                 if (completed is not null) return completed;
@@ -105,7 +105,7 @@ public sealed partial class TrackActor
                     actor.RequireMcpAuthorizationCore(authorization);
                     var (preview, editorRole, diagnostics) = PreviewReportCommitCore(callerSessionId, request);
                     return await FinalizeReportCommitCoreAsync(preview, callerSessionId,
-                        request.CommitMessage ?? $"Report commit ({editorRole}, human-approved)", diagnostics, ct).ConfigureAwait(false);
+                        request.CommitMessage ?? $"Report commit ({editorRole}, human-approved)", diagnostics, ct, authorization).ConfigureAwait(false);
                 }, ct).ConfigureAwait(false);
             }
             finally
@@ -130,7 +130,8 @@ public sealed partial class TrackActor
             string? authorSessionId,
             string commitMessage,
             IReadOnlyList<ReportDiagnosticDto> diagnostics,
-            CancellationToken ct)
+            CancellationToken ct,
+            InteropPrincipal.Session? authorization)
         {
             var now = actor.NowMs();
             var compressedBlocks = actor._reportEngine.CompressZstd(commitResult.NextDocument.Blocks);
@@ -156,7 +157,8 @@ public sealed partial class TrackActor
                 authorSessionId,
                 commitMessage,
                 reportEvt,
-                ct).ConfigureAwait(false);
+                ct,
+                actor.CaptureMcpWriteFenceCore(authorization)).ConfigureAwait(false);
 
             _report = commitResult.NextDocument;
             var committedCt = actor._actorShutdownCts.Token;

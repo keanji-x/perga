@@ -430,10 +430,11 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
         }
     }
 
-    public Task UpdateTrackAndEmitAsync(TrackDto track, EventEnvelopeDto? evt, CancellationToken ct, bool writeData = false)
+    public Task UpdateTrackAndEmitAsync(TrackDto track, EventEnvelopeDto? evt, CancellationToken ct, bool writeData = false, Action? beforeWrite = null)
     {
         lock (_gate)
         {
+            beforeWrite?.Invoke();
             if (_tracks.TryGetValue(track.Id, out var existing))
             {
                 if (!writeData)
@@ -476,8 +477,10 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
         IReadOnlyList<TrackScheduleDto> activeFlowSchedules,
         IReadOnlyList<string> canceledFlowScheduleIds,
         IReadOnlyList<EventEnvelopeDto> events,
-        CancellationToken ct) =>
-        CommitTrackFlow(track, expectedFlowRev, upsertedTasks, activeFlowSchedules, canceledFlowScheduleIds, events);
+        CancellationToken ct,
+        Action? beforeWrite = null) =>
+        CommitTrackFlow(track, expectedFlowRev, upsertedTasks, activeFlowSchedules, canceledFlowScheduleIds, events,
+            beforeWrite: beforeWrite);
 
     private Task CommitTrackFlow(
         TrackDto track,
@@ -486,10 +489,12 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
         IReadOnlyList<TrackScheduleDto> activeFlowSchedules,
         IReadOnlyList<string> canceledFlowScheduleIds,
         IReadOnlyList<EventEnvelopeDto> events,
-        IReadOnlySet<string>? resetClockIds = null)
+        IReadOnlySet<string>? resetClockIds = null,
+        Action? beforeWrite = null)
     {
         lock (_gate)
         {
+            beforeWrite?.Invoke();
             if (!_tracks.TryGetValue(track.Id, out var existing))
                 throw KernelException.NotFound($"Track '{track.Id}' not found.");
             if (existing.FlowRev != expectedFlowRev)
@@ -570,10 +575,11 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
         }
     }
 
-    public Task UpdateTrackTemplateAndEmitAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto evt, CancellationToken ct, bool writeData = false, TrackFlowUpdate? flow = null, TemplateReportSeed? reportSeed = null)
+    public Task UpdateTrackTemplateAndEmitAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto evt, CancellationToken ct, bool writeData = false, TrackFlowUpdate? flow = null, TemplateReportSeed? reportSeed = null, Action? beforeWrite = null)
     {
         lock (_gate)
         {
+            beforeWrite?.Invoke();
             if (FailTemplateUpdate) throw new IOException("template persistence failure");
             _templateSnapshots[track.Id] = templateSnapshot;
             if (flow is not null)
@@ -603,10 +609,12 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
         string? authorSessionId,
         string commitMessage,
         EventEnvelopeDto evt,
-        CancellationToken ct)
+        CancellationToken ct,
+        Action? beforeWrite = null)
     {
         lock (_gate)
         {
+            beforeWrite?.Invoke();
             _reports[trackId] = report;
             if (authorSessionId is null) EnqueueWakeLocked(TrackWakeRequests.Report(trackId, report.DocRev, evt.Payload));
             _revisions[(trackId, report.DocRev)] = compressedRevisionBlocks.ToArray();

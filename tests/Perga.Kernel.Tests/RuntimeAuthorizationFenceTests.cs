@@ -122,6 +122,45 @@ public sealed class RuntimeAuthorizationFenceTests
     }
 
     [Fact]
+    public async Task RuntimeRevokedDuringFlowReasoningEffortProbeCannotCommit()
+    {
+        await using var ctx = new KernelTestContext(options: new KernelOptions { DefaultModel = "worker" });
+        ctx.AgentRuntime.Providers =
+        [
+            new("codex", true, null, null, ["worker"],
+                [new("worker", "Worker", "", true, "low", [new("low", "")])])
+        ];
+        var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var ct = deadline.Token;
+        var caller = await ctx.OpenMcpCallerAsync(snapshot.Track.LeadSessionId!, ct);
+        var probing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finishProbe = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        ctx.AgentRuntime.ProbeScript = async token =>
+        {
+            probing.TrySetResult();
+            await finishProbe.Task.WaitAsync(token);
+            return ctx.AgentRuntime.Providers;
+        };
+        var commit = ctx.Kernel.InvokeKernelMcpToolAsync(caller, KernelMcpToolNames.FlowCommit, TestJson.FromObject(new
+        {
+            content = """
+                {"rev":0,"nodes":[{"id":"worker","do":{"kind":"run","prompt":"Review","reasoningEffort":"low"}}]}
+                """
+        }), ct);
+        try
+        {
+            await probing.Task.WaitAsync(ct);
+            ctx.Kernel.McpSessionBridge.RevokeSession(caller.SessionId, caller.RuntimeBindingId);
+            finishProbe.TrySetResult();
+            var error = await Assert.ThrowsAsync<KernelException>(() => commit.WaitAsync(ct));
+            Assert.Equal(KernelErrorCode.Conflict, error.Code);
+            Assert.Equal(0, (await ctx.Kernel.GetTrackFlowAsync(caller.TrackId, ct)).FlowRev);
+        }
+        finally { finishProbe.TrySetResult(); }
+    }
+
+    [Fact]
     public async Task StopDuringDecisionAuditPreventsPolicyApprovalDelivery()
     {
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());

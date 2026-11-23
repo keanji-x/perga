@@ -24,7 +24,8 @@ internal sealed class ReportRepository
         string? authorSessionId,
         string commitMessage,
         EventEnvelopeDto evt,
-        CancellationToken ct)
+        CancellationToken ct,
+        Action? beforeWrite = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(trackId);
         ArgumentNullException.ThrowIfNull(report);
@@ -34,8 +35,11 @@ internal sealed class ReportRepository
         _context.EnsureInitialized();
 
         return _context.Writer.EnqueueAsync((conn, tx, innerCt) =>
-            SaveReportInternalAsync(conn, tx, trackId, report, compressedRevisionBlocks, authorSessionId,
-                commitMessage, evt, innerCt), ct);
+        {
+            beforeWrite?.Invoke();
+            return SaveReportInternalAsync(conn, tx, trackId, report, compressedRevisionBlocks, authorSessionId,
+                commitMessage, evt, innerCt);
+        }, ct);
     }
 
     internal async ValueTask SaveReportInternalAsync(

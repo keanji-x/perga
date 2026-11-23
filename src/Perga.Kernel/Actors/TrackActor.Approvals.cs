@@ -452,14 +452,11 @@ public sealed partial class TrackActor
                     return null;
 
                 var trackSet = kernelTool && toolName == KernelMcpToolNames.TrackSet;
-                var previewOnly = (kernelTool && KernelMcpCatalog.IsReadOnlyTool(toolName)) ||
-                    (trackSet && ValidateTemplateSetArguments(arguments));
-                if (trackSet && caller.Id == _track.LeadSessionId &&
-                    arguments.TryGetProperty("clear", out var clear) && clear.ValueKind == JsonValueKind.True)
-                    return null;
+                var readOnly = kernelTool && KernelMcpCatalog.IsReadOnlyTool(toolName);
+                var dryRunOnly = trackSet && ValidateTemplateSetArguments(arguments);
                 if (kernelTool && toolName == KernelMcpToolNames.FlowCommit &&
                     arguments.ValueKind == JsonValueKind.Object && arguments.TryGetProperty("dryRun", out var dryRun))
-                    previewOnly = dryRun.ValueKind == JsonValueKind.True;
+                    dryRunOnly = dryRun.ValueKind == JsonValueKind.True;
                 if (!trackSet)
                     RequirePolicyAvailableCore();
                 if (_policy is null)
@@ -471,7 +468,9 @@ public sealed partial class TrackActor
                     sessionId = caller.Id, isLead = caller.IsLead, boundTaskId = session.BoundTaskId,
                     mcpServer, toolName, arguments = arguments.ValueKind == JsonValueKind.Undefined ? JsonHelpers.EmptyObject : arguments
                 }), _track.TemplateInputs, _track.Data, session);
-                if (previewOnly && eval is GuardDecision.AskHuman)
+                if (readOnly && eval is GuardDecision.AskHuman)
+                    throw KernelException.PolicyDenied($"Read-only tool '{toolName}' cannot request approval.");
+                if (dryRunOnly && eval is GuardDecision.AskHuman)
                     throw KernelException.PolicyDenied("Template preview requires human approval; dryRun cannot create an approval request.");
 
                 if (eval is GuardDecision.Allow) return null;
