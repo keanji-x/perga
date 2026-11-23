@@ -50,22 +50,19 @@ it.each([1440, 390, 320])('keeps the empty daily report and conversation reachab
   await settle();
   await page.screenshot({ path: `./__screenshots__/empty-audit/chat-${width}.png` });
 });
-it.each([1440, 390])('uses the fixed report schema without actions at %i', async (width) => {
+it.each([1440, 390])('renders the airy blank report guide and interactive Flow sample at %i', async (width) => {
   await page.viewport(width, 900);
   const { requests } = renderDailyFixture({ initial: '/track/project', reply: request => request.path === '/api/v1/tracks/project' ? { status: 200, statusText: 'OK', body: fixtureSnapshot(fixtureTrack('project', { areaId: 'project-area', title: '新项目' })) } : undefined });
   await expect.poll(() => document.querySelector('[data-nc-report-empty]') !== null).toBe(true);
-  const title = page.getByRole('heading', { name: '进展会整理在这里' }).element();
-  expect(getComputedStyle(title).fontSize).toBe('20px');
-  expect(getComputedStyle(title).fontWeight).toBe('500');
-  const copy = title.parentElement!;
-  expect(copy.getBoundingClientRect().width).toBeLessThanOrEqual(352);
-  const visual = title.previousElementSibling!;
-  expect(visual.getBoundingClientRect().width).toBeCloseTo(16, 2);
-  expect(visual.getBoundingClientRect().right).toBeLessThan(title.getBoundingClientRect().left);
-  expect(Math.abs((visual.getBoundingClientRect().top + visual.getBoundingClientRect().bottom) / 2 - (title.getBoundingClientRect().top + title.getBoundingClientRect().bottom) / 2)).toBeLessThan(1);
-  expect(copy.nextElementSibling!.getBoundingClientRect().top).toBeGreaterThan(copy.getBoundingClientRect().bottom);
-  expect(document.querySelector('[data-nc-report-empty]')!.querySelector('button, a, input, textarea')).toBeNull();
+  await expect.element(page.getByRole('heading', { name: '进展会整理在这里' })).toBeVisible();
+  await expect.element(page.getByRole('heading', { name: 'Flow 示例：多步工作如何自动流转' })).toBeVisible();
+  await expect.element(page.getByRole('region', { name: '流程示例' })).toBeVisible();
+  expect(document.querySelector('[data-nc-report]')).toBeNull();
+  expect(document.querySelector('[aria-label="Template protocol"]')).toBeNull();
+  await page.getByRole('button', { name: /^汇总沉淀进 Report/ }).click();
+  await expect.element(page.getByText(/上游步骤完成后自动唤醒 Lead/)).toBeVisible();
   await settle();
   await page.screenshot({ path: `./__screenshots__/empty-audit/track-${width}.png` });
   expect(requests.every(request => request.method === 'GET')).toBe(true);
+  expect(requests.some(request => request.path === '/api/v1/templates')).toBe(false);
 });

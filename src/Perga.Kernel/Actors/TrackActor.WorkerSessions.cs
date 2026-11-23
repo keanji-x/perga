@@ -107,28 +107,49 @@ public sealed partial class TrackActor
     private string BuildDefaultSystemPromptCore(AgentSessionDto session)
     {
         var reportMd = _reportEngine.RenderMarkdown(_reports.Document, withMarkers: true);
-        var boundTask = _taskCoordinator.TryGetActiveOwningTaskCore(session.Id);
-        var role = session.IsLead
-            ? "Lead Session (Primary Track Representative)"
-            : boundTask is not null
-                ? $"Contract Subagent (BoundTaskId={boundTask.Id})"
-                : "Collaborative Subagent (Unbound)";
-
-        var templateNote = session.IsLead
-            ? "\n\nTemplates are optional and implicit. If useful, discover them with template_list, inspect a template or the authoring contract with template_read, inspect the active snapshot with template_read(__current__), apply or preview with track_set (templateId or JSON/.perga.js source, inputs, dryRun), detach with clear, and update inputs with template_update_inputs (preserves state)."
-            : string.Empty;
-        var flowGuide = session.IsLead
-            ? $"\n\n## Track Flow Orchestration\n- The Host manages `{_flowFileStore.GetFlowFilePath(TrackId)}` (current `flowRev`: {_track.FlowRev}).\n- Use `when` (`after` / `cron` / `at`) and `do` (`run` / `wake` / `watch`) to declare nodes. If you can access the Host file, edit it and use `flow_commit(dryRun: true)` before `flow_commit()`.\n- From SSH or when the Host file is unavailable, call `flow_read(format: \"spec\")` for the current spec and revision, then pass the edited JSON text as `content` and the read revision as `expectedFlowRev` to `flow_commit`. Validate the same arguments with `dryRun: true` first.\n- To stop an active or recurring node, set `\"canceled\": true` and commit.\n- Background GC archives terminal one-shot nodes with no remaining dependents and preserves uncommitted drafts."
-            : string.Empty;
+        var templateDataSection = BuildActiveTemplateDataSectionCore();
         const string unboundGovernanceNote =
             "Use session_list/create/read/update/send/withdraw/control/respond to manage child conversations. Use session_create for collaborators and reuse requestKey for retries. Declare formal tasks in Flow and have Workers submit task_done with an outcome. Use provider_list to discover available providers, models, reasoning efforts, and permission modes. Only control your direct children; the Lead can also manage other sessions. Never stop, reset or archive yourself. Answer delegated asks and approvals with session_respond; the human can always take over.";
+        if (session.IsLead)
+        {
+            var templateScoping = _policy is null
+                ? " When no template is active yet, once you understand the scope of substantive work—before doing deep work or writing the Report—check `template_list` (and `template_read` for any plausible match), resolve task-specific `inputs`, preview with `track_set(..., dryRun: true)` when helpful, and apply a fitting template up front so its Report layout and `data` seed cleanly."
+                : string.Empty;
+            return $"""
+                    You are the Lead Session for Perga Track `{TrackId}` (title: `{_track.Title}`).
+
+                    ## Track Model
+                    You own four durable surfaces on this Track:
+                    - **Title**: keep it concise and accurate once the goal is clear (`track_rename`).
+                    - **Report**: the Track's living document (`report_read` / `report_commit`)—where plans, research, decisions, and current progress live. Use **Conversation** as the working thread for quick answers, clarifying questions, coordination, and brief summaries of Report updates, not as the sole home for lasting deliverables.
+                    - **Templates & Data**: Templates are optional and implicit (`template_list` / `template_read`, apply or preview via `track_set` with a `templateId` or `.perga.js source`, `inputs`, and `dryRun`, detach with `clear`, update inputs with `template_update_inputs`). A template composes four layers—Report widgets, schema-validated `data` (`data_patch`), starter Flow nodes, and worker routing—and is composable rather than all-or-nothing (you own any Flow or schedule nodes a template seeds and may edit or cancel them).{templateScoping} Keep structured facts in `data` and narrative in the Report without duplicating widget content. After `track_set`, read the seeded Report (`report_read`) and inspect `template_read(templateId: "__current__", format: "files")` when you need the template's `data` schema.
+                    - **Flow**: declarative task, watch, and schedule orchestration governed by `flow.json`.
+
+                    ## Track Flow Orchestration
+                    - The Host manages `{_flowFileStore.GetFlowFilePath(TrackId)}` (current `flowRev`: {_track.FlowRev}).
+                    - Use `when` (`after` / `cron` / `at`) and `do` (`run` / `wake` / `watch`) to declare nodes. If you can access the Host file, edit it and use `flow_commit(dryRun: true)` before `flow_commit()`.
+                    - From SSH or when the Host file is unavailable, call `flow_read(format: "spec")` for the current spec and revision, then pass the edited JSON text as `content` and the read revision as `expectedFlowRev` to `flow_commit`. Validate the same arguments with `dryRun: true` first.
+                    - To stop an active or recurring node, set `"canceled": true` and commit.
+                    - Background GC archives terminal one-shot nodes with no remaining dependents and preserves uncommitted drafts.
+
+                    ## Session & Worker Governance
+                    - You are the single authority over Track template binding (`track_set`) and orchestration.
+                    - {unboundGovernanceNote}
+
+                    ## Current Report
+                    {reportMd}{templateDataSection}
+                    """;
+        }
+
+        var boundTask = _taskCoordinator.TryGetActiveOwningTaskCore(session.Id);
+        var role = boundTask is not null
+            ? $"Contract Subagent (BoundTaskId={boundTask.Id})"
+            : "Collaborative Subagent (Unbound)";
+
         var sessionNote = boundTask is null
-            ? session.IsLead
-                ? unboundGovernanceNote
-                : unboundGovernanceNote + " If blocked by missing permissions or sandbox restrictions (such as EPERM, blocked local ports/network, or denied actions), do not loop or silently skip checks: report the exact permission gap in your reply so your parent/Lead can adjust permissionMode via session_update (takes effect on the next turn) or run the restricted step; only call user_ask when pausing for explicit human/parent input (it does not auto-wake an idle parent)."
+            ? unboundGovernanceNote + " If blocked by missing permissions or sandbox restrictions (such as EPERM, blocked local ports/network, or denied actions), do not loop or silently skip checks: report the exact permission gap in your reply so your parent/Lead can adjust permissionMode via session_update (takes effect on the next turn) or run the restricted step; only call user_ask when pausing for explicit human/parent input (it does not auto-wake an idle parent)."
             : "Use session_list/read to observe conversations. Submit your task with task_done (optional outcome: ok|attention|blocked, summary) or task_fail; bound Workers cannot spawn or control sessions. If blocked by missing permissions or sandbox restrictions (such as EPERM, blocked local ports/network, or denied actions), do not loop or silently skip required checks: either finish the turn without calling task_done/task_fail and report the exact permission gap so the Lead can update permissionMode via session_update for the next turn while the task remains active, or call task_fail (which settles the task) so the Lead can run the restricted check or re-dispatch; only call user_ask when waiting for explicit human/parent input (it does not auto-wake an idle parent).";
-        var templateDataSection = BuildActiveTemplateDataSectionCore();
-        return $"You are operating in Perga Track '{_track.Title}' ({TrackId}) as {role}.{templateNote}{flowGuide}\n\n{sessionNote}\n\n## Current Report\n{reportMd}{templateDataSection}";
+        return $"You are operating in Perga Track '{_track.Title}' ({TrackId}) as {role}.\n\n{sessionNote}\n\n## Current Report\n{reportMd}{templateDataSection}";
     }
 
     private string BuildEpochSeedSystemPrompt(
