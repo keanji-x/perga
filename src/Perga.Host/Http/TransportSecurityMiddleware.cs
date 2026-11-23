@@ -31,8 +31,9 @@ internal sealed class TransportSecurityMiddleware(
     RequestDelegate next, PergaHostOptions options, SystemManagementAuthorization management)
 {
     private static readonly object VerifiedLoopbackManagement = new();
-    private readonly bool _allowDirectHttp = options.AuthIngressMode == AuthIngressMode.Direct &&
+    private readonly bool _allowDirectLoopbackHttp = options.AuthIngressMode == AuthIngressMode.Direct &&
         options.AuthCookieSecurePolicy == AuthCookieSecurePolicy.Auto;
+    private readonly bool _allowInsecureHttp = options.AuthAllowInsecureHttp;
 
     internal static bool IsVerifiedLoopbackManagement(HttpContext context) => context.Items.ContainsKey(VerifiedLoopbackManagement);
 
@@ -40,15 +41,15 @@ internal sealed class TransportSecurityMiddleware(
     {
         var raw = context.Features.Get<RawTransport>()!;
         var secure = context.Request.IsHttps && (raw.IsHttps || options.TrustForwardedHeaders && raw.RemoteIp is not null);
-        var loopbackManagement = !_allowDirectHttp && management.VerifyDirectLoopbackSystemRequest(context);
+        var loopbackManagement = !_allowDirectLoopbackHttp && management.VerifyDirectLoopbackSystemRequest(context);
         if (loopbackManagement)
             context.Items[VerifiedLoopbackManagement] = true;
 
         if (context.Request.Path.StartsWithSegments("/api") && !secure && !loopbackManagement &&
-            !(_allowDirectHttp && raw.IsDirectLoopback(context)))
+            !_allowInsecureHttp && !(_allowDirectLoopbackHttp && raw.IsDirectLoopback(context)))
         {
-            var nextStep = _allowDirectHttp
-                ? "Access Perga over HTTPS or connect directly via http://localhost."
+            var nextStep = _allowDirectLoopbackHttp
+                ? "Access Perga over HTTPS, connect directly via http://localhost, or set PERGA_AUTH_ALLOW_INSECURE_HTTP=true on a trusted private network."
                 : "Access Perga over HTTPS using direct TLS or a configured trusted reverse proxy.";
             return HttpErrorHandling.Forbidden("insecure_transport_required", "An HTTPS connection is required.", nextStep)
                 .ExecuteAsync(context);

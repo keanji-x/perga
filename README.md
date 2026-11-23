@@ -55,6 +55,8 @@ PERGA_DATA_DIR="${PERGA_DATA_DIR:-$HOME/.local/share/perga}" PERGA_STATIC_WEB_DI
 
 Open [Perga on localhost](http://127.0.0.1:4041/) and sign in. The web app is installable as a PWA. The Host starts the bundled native terminal bridge when needed.
 
+By default, Perga allows cleartext HTTP only on direct loopback connections (`http://localhost` / `http://127.0.0.1`) and requires HTTPS for LAN or proxied access. On a trusted private network where you want plain HTTP access (for example `--urls http://0.0.0.0:4041`), opt in explicitly with `PERGA_AUTH_ALLOW_INSECURE_HTTP=true` (or `--Perga:AuthAllowInsecureHttp=true`, keeping `AuthCookieSecurePolicy=Auto`). Owner login, origin/host guards, and HTTPS-or-loopback management bearer checks remain active.
+
 ### Build from source
 
 Start in the repository root on the target machine with the .NET 11 SDK, Node.js 24 or later, npm, rustup and a native C linker installed. On macOS, Xcode Command Line Tools supply the linker.

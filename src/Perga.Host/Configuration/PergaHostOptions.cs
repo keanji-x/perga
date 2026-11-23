@@ -38,6 +38,7 @@ public sealed class PergaHostOptions
 
     public AuthIngressMode AuthIngressMode { get; set; } = AuthIngressMode.Direct;
     public AuthCookieSecurePolicy AuthCookieSecurePolicy { get; set; } = AuthCookieSecurePolicy.Auto;
+    public bool AuthAllowInsecureHttp { get; set; }
     public int AuthSessionLifetimeDays { get; set; } = 30;
     public string? AuthPublicOrigin { get; set; }
     public bool TrustForwardedHeaders { get; set; }
@@ -48,13 +49,18 @@ public sealed class PergaHostOptions
     {
         if (!Enum.IsDefined(AuthIngressMode) || !Enum.IsDefined(AuthCookieSecurePolicy))
             throw new InvalidOperationException("Invalid auth ingress or cookie security policy.");
+        if (AuthAllowInsecureHttp && AuthCookieSecurePolicy == AuthCookieSecurePolicy.Always)
+            throw new InvalidOperationException("AuthAllowInsecureHttp cannot be combined with AuthCookieSecurePolicy.Always.");
         if (AuthSessionLifetimeDays is < 1 or > 365)
             throw new InvalidOperationException("AuthSessionLifetimeDays must be between 1 and 365.");
         if (AuthWsRevalidationInterval < TimeSpan.FromSeconds(1) || AuthWsRevalidationInterval > TimeSpan.FromMinutes(5))
             throw new InvalidOperationException("AuthWsRevalidationInterval must be between one second and five minutes.");
         if (AuthPublicOrigin is not null &&
-            (!RequestOriginGuard.TryOrigin(AuthPublicOrigin, out var origin) || !origin.StartsWith("https://", StringComparison.Ordinal)))
-            throw new InvalidOperationException("AuthPublicOrigin must be an HTTPS origin.");
+            (!RequestOriginGuard.TryOrigin(AuthPublicOrigin, out var origin) ||
+             (!AuthAllowInsecureHttp && !origin.StartsWith("https://", StringComparison.Ordinal))))
+            throw new InvalidOperationException(AuthAllowInsecureHttp
+                ? "AuthPublicOrigin must be an HTTP(S) origin."
+                : "AuthPublicOrigin must be an HTTPS origin.");
         if (AuthIngressMode == AuthIngressMode.Proxied && AuthPublicOrigin is null && AllowedHosts.Length == 0)
             throw new InvalidOperationException("Proxied ingress requires AuthPublicOrigin or AllowedHosts.");
         if (TrustForwardedHeaders && AuthIngressMode != AuthIngressMode.Proxied)
@@ -118,6 +124,8 @@ public sealed class PergaHostOptions
             opts.AuthIngressMode = Enum.Parse<AuthIngressMode>(ingress, ignoreCase: true);
         if (section[nameof(AuthCookieSecurePolicy)] is null && configuration["PERGA_AUTH_COOKIE_SECURE"] is { } secure)
             opts.AuthCookieSecurePolicy = Enum.Parse<AuthCookieSecurePolicy>(secure, ignoreCase: true);
+        if (section[nameof(AuthAllowInsecureHttp)] is null && configuration["PERGA_AUTH_ALLOW_INSECURE_HTTP"] is { } allowInsecureHttp)
+            opts.AuthAllowInsecureHttp = bool.Parse(allowInsecureHttp);
         if (section[nameof(AuthSessionLifetimeDays)] is null && configuration["PERGA_AUTH_SESSION_DAYS"] is { } days)
             opts.AuthSessionLifetimeDays = int.Parse(days, CultureInfo.InvariantCulture);
         if (section[nameof(AuthPublicOrigin)] is null)

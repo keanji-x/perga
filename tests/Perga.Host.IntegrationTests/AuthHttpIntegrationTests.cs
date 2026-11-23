@@ -2,7 +2,9 @@ using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Net.WebSockets;
 using System.Text;
+using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.Configuration;
@@ -399,6 +401,7 @@ public sealed class AuthHttpIntegrationTests
         {
             ["PERGA_AUTH_INGRESS_MODE"] = "Proxied",
             ["PERGA_AUTH_COOKIE_SECURE"] = "Always",
+            ["PERGA_AUTH_ALLOW_INSECURE_HTTP"] = "true",
             ["PERGA_AUTH_SESSION_DAYS"] = "150",
             ["PERGA_AUTH_PUBLIC_ORIGIN"] = "https://alias.example",
             ["PERGA_TRUST_FORWARDED_HEADERS"] = "true"
@@ -407,18 +410,21 @@ public sealed class AuthHttpIntegrationTests
         var fallback = PergaHostOptions.BindFrom(config.Build(), Directory.GetCurrentDirectory());
         Assert.Equal(AuthIngressMode.Proxied, fallback.AuthIngressMode);
         Assert.Equal(AuthCookieSecurePolicy.Always, fallback.AuthCookieSecurePolicy);
+        Assert.True(fallback.AuthAllowInsecureHttp);
         Assert.Equal(150, fallback.AuthSessionLifetimeDays);
         Assert.Equal("https://alias.example", fallback.AuthPublicOrigin);
         Assert.True(fallback.TrustForwardedHeaders);
 
         config.AddCommandLine([
             "--Perga:AuthIngressMode=Direct", "--Perga:AuthCookieSecurePolicy=Auto",
+            "--Perga:AuthAllowInsecureHttp=false",
             "--Perga:AuthSessionLifetimeDays=45", "--Perga:AuthPublicOrigin=https://explicit.example",
             "--Perga:TrustForwardedHeaders=false"
         ]);
         var explicitOptions = PergaHostOptions.BindFrom(config.Build(), Directory.GetCurrentDirectory());
         Assert.Equal(AuthIngressMode.Direct, explicitOptions.AuthIngressMode);
         Assert.Equal(AuthCookieSecurePolicy.Auto, explicitOptions.AuthCookieSecurePolicy);
+        Assert.False(explicitOptions.AuthAllowInsecureHttp);
         Assert.Equal(45, explicitOptions.AuthSessionLifetimeDays);
         Assert.Equal("https://explicit.example", explicitOptions.AuthPublicOrigin);
         Assert.False(explicitOptions.TrustForwardedHeaders);
@@ -541,6 +547,446 @@ public sealed class AuthHttpIntegrationTests
         Assert.Contains("expires=Thu, 01 Jan 1970", setCookie, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    [InlineData(AuthIngressMode.Direct, AuthCookieSecurePolicy.Always, true, null, "AuthCookieSecurePolicy.Always")]
+    [InlineData(AuthIngressMode.Proxied, AuthCookieSecurePolicy.Always, true, "http://perga.lan", "AuthCookieSecurePolicy.Always")]
+    [InlineData(AuthIngressMode.Proxied, AuthCookieSecurePolicy.Auto, false, "http://perga.lan", "HTTPS origin")]
+    [InlineData(AuthIngressMode.Proxied, AuthCookieSecurePolicy.Auto, true, "ftp://perga.lan", "HTTP(S) origin")]
+    [InlineData(AuthIngressMode.Proxied, AuthCookieSecurePolicy.Auto, true, "http://perga.lan/sub", "HTTP(S) origin")]
+    public void AllowInsecureHttpValidationRejectsAlwaysCookiePolicyAndInvalidOrigins(
+        AuthIngressMode ingress, AuthCookieSecurePolicy cookiePolicy, bool allowInsecureHttp, string? publicOrigin, string expectedMessage)
+    {
+        var directory = Directory.CreateTempSubdirectory("perga-auth-http-validate-");
+        try
+        {
+            using var factory = new IsolatedPergaHostFactory(directory.FullName, options =>
+            {
+                options.AuthIngressMode = ingress;
+                options.AuthCookieSecurePolicy = cookiePolicy;
+                options.AuthAllowInsecureHttp = allowInsecureHttp;
+                options.AuthPublicOrigin = publicOrigin;
+            });
+            var error = Assert.Throws<InvalidOperationException>(() => factory.CreateClient());
+            Assert.Contains(expectedMessage, error.Message);
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+
+        var invalidEnv = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["PERGA_AUTH_ALLOW_INSECURE_HTTP"] = "yes" })
+            .Build();
+        Assert.Throws<FormatException>(() => PergaHostOptions.BindFrom(invalidEnv, Directory.GetCurrentDirectory()));
+    }
+
+    [Fact]
+    public async Task AllowInsecureHttpDirectModeAllowsNonLoopbackCleartextWhileKeepingAuthAndOriginGuards()
+    {
+        var defaultLogs = new LogCaptureProvider(LogLevel.Warning);
+        await using (var defaultHost = new PergaHostTestCluster(configureExtraServices: services => services.AddSingleton<ILoggerProvider>(defaultLogs)))
+        {
+            Assert.DoesNotContain(defaultLogs.Entries, e => e.Message.Contains("AuthAllowInsecureHttp", StringComparison.Ordinal));
+        }
+
+        var logs = new LogCaptureProvider(LogLevel.Warning);
+        await using var host = new PergaHostTestCluster(
+            configureHostOptions: options => options.AuthAllowInsecureHttp = true,
+            configureExtraServices: services => services.AddSingleton<ILoggerProvider>(logs));
+        Assert.Contains(logs.Entries, e => e.Level == LogLevel.Warning && e.Message.Contains("AuthAllowInsecureHttp", StringComparison.Ordinal));
+        await BrowserAuthentication.InitializeOwnerAsync(host.Factory);
+
+        // Non-loopback HTTP still requires authentication (401 unauthorized, not 403 insecure_transport_required).
+        var unauthenticated = await host.Factory.Server.SendAsync(context =>
+        {
+            context.Connection.RemoteIpAddress = IPAddress.Parse("192.0.2.1");
+            context.Connection.LocalIpAddress = IPAddress.Parse("192.0.2.10");
+            context.Request.Scheme = "http";
+            context.Request.Host = new HostString("192.0.2.10", 4041);
+            context.Request.Path = "/api/v1/areas";
+        });
+        await AssertServerErrorAsync(unauthenticated, 401, "unauthorized");
+
+        // Non-loopback HTTP login succeeds and issues non-Secure perga_session cookie.
+        var loginPayload = Encoding.UTF8.GetBytes(
+            $$"""{"username":"{{BrowserAuthentication.Username}}","password":"{{BrowserAuthentication.Password}}"}""");
+        var lanLogin = await host.Factory.Server.SendAsync(context =>
+        {
+            context.Connection.RemoteIpAddress = IPAddress.Parse("192.0.2.1");
+            context.Connection.LocalIpAddress = IPAddress.Parse("192.0.2.10");
+            context.Request.Method = HttpMethods.Post;
+            context.Request.Scheme = "http";
+            context.Request.Host = new HostString("192.0.2.10", 4041);
+            context.Request.Path = "/api/v1/auth/login";
+            context.Request.ContentType = "application/json";
+            context.Request.Headers["Origin"] = "http://192.0.2.10:4041";
+            context.Request.Body = new MemoryStream(loginPayload);
+            context.Request.ContentLength = loginPayload.Length;
+        });
+        Assert.Equal(200, lanLogin.Response.StatusCode);
+        var setCookie = Assert.Single(lanLogin.Response.Headers.SetCookie);
+        Assert.NotNull(setCookie);
+        Assert.StartsWith("perga_session=", setCookie);
+        Assert.Contains("; httponly", setCookie, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("; samesite=lax", setCookie, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("; secure", setCookie, StringComparison.OrdinalIgnoreCase);
+        var cookiePair = setCookie.Split(';', 2)[0];
+
+        // Spoofed X-Forwarded-Proto: https in Direct mode does not elevate IsHttps or cookie flags.
+        var spoofedLogin = await host.Factory.Server.SendAsync(context =>
+        {
+            context.Connection.RemoteIpAddress = IPAddress.Parse("192.0.2.1");
+            context.Connection.LocalIpAddress = IPAddress.Parse("192.0.2.10");
+            context.Request.Method = HttpMethods.Post;
+            context.Request.Scheme = "http";
+            context.Request.Host = new HostString("192.0.2.10", 4041);
+            context.Request.Path = "/api/v1/auth/login";
+            context.Request.ContentType = "application/json";
+            context.Request.Headers["Origin"] = "http://192.0.2.10:4041";
+            context.Request.Headers["X-Forwarded-Proto"] = "https";
+            context.Request.Headers["X-Forwarded-For"] = "198.51.100.7";
+            context.Request.Body = new MemoryStream(loginPayload);
+            context.Request.ContentLength = loginPayload.Length;
+        });
+        Assert.Equal(200, spoofedLogin.Response.StatusCode);
+        var spoofedSetCookie = Assert.Single(spoofedLogin.Response.Headers.SetCookie);
+        Assert.NotNull(spoofedSetCookie);
+        Assert.StartsWith("perga_session=", spoofedSetCookie);
+        Assert.DoesNotContain("; secure", spoofedSetCookie, StringComparison.OrdinalIgnoreCase);
+
+        // Authenticated non-loopback HTTP API call works with the issued cookie.
+        var lanAreas = await host.Factory.Server.SendAsync(context =>
+        {
+            context.Connection.RemoteIpAddress = IPAddress.Parse("192.0.2.1");
+            context.Connection.LocalIpAddress = IPAddress.Parse("192.0.2.10");
+            context.Request.Scheme = "http";
+            context.Request.Host = new HostString("192.0.2.10", 4041);
+            context.Request.Path = "/api/v1/areas";
+            context.Request.Headers["Origin"] = "http://192.0.2.10:4041";
+            context.Request.Headers.Cookie = cookiePair;
+        });
+        Assert.Equal(200, lanAreas.Response.StatusCode);
+
+        // HTTPS login on the same host still upgrades cookie to __Host-perga_session; Secure.
+        using var httpsClient = host.Factory.CreateDefaultClient(new Uri("https://localhost"));
+        using var httpsLogin = await LoginAsync(httpsClient);
+        Assert.True(httpsLogin.IsSuccessStatusCode, await httpsLogin.Content.ReadAsStringAsync());
+        AssertCookie(httpsLogin, secure: true);
+
+        // Cross-site Origin and Sec-Fetch-Site are still rejected.
+        var foreignOrigin = await host.Factory.Server.SendAsync(context =>
+        {
+            context.Connection.RemoteIpAddress = IPAddress.Parse("192.0.2.1");
+            context.Connection.LocalIpAddress = IPAddress.Parse("192.0.2.10");
+            context.Request.Scheme = "http";
+            context.Request.Host = new HostString("192.0.2.10", 4041);
+            context.Request.Path = "/api/v1/areas";
+            context.Request.Headers["Origin"] = "https://evil.example";
+            context.Request.Headers.Cookie = cookiePair;
+        });
+        await AssertServerErrorAsync(foreignOrigin, 403, "request_origin_forbidden");
+
+        var crossSite = await host.Factory.Server.SendAsync(context =>
+        {
+            context.Connection.RemoteIpAddress = IPAddress.Parse("192.0.2.1");
+            context.Connection.LocalIpAddress = IPAddress.Parse("192.0.2.10");
+            context.Request.Scheme = "http";
+            context.Request.Host = new HostString("192.0.2.10", 4041);
+            context.Request.Path = "/api/v1/areas";
+            context.Request.Headers["Origin"] = "http://192.0.2.10:4041";
+            context.Request.Headers["Sec-Fetch-Site"] = "cross-site";
+            context.Request.Headers.Cookie = cookiePair;
+        });
+        await AssertServerErrorAsync(crossSite, 403, "request_origin_forbidden");
+
+        // Browser write without JSON/Origin/Referer is still rejected.
+        var writeWithoutSource = await host.Factory.Server.SendAsync(context =>
+        {
+            context.Connection.RemoteIpAddress = IPAddress.Parse("192.0.2.1");
+            context.Connection.LocalIpAddress = IPAddress.Parse("192.0.2.10");
+            context.Request.Method = HttpMethods.Post;
+            context.Request.Scheme = "http";
+            context.Request.Host = new HostString("192.0.2.10", 4041);
+            context.Request.Path = "/api/v1/auth/logout";
+            context.Request.Headers.Cookie = cookiePair;
+        });
+        await AssertServerErrorAsync(writeWithoutSource, 403, "request_origin_forbidden");
+
+        // Loopback socket DNS rebinding guard remains active.
+        var loopbackRebinding = await host.Factory.Server.SendAsync(context =>
+        {
+            context.Connection.RemoteIpAddress = IPAddress.Loopback;
+            context.Connection.LocalIpAddress = IPAddress.Loopback;
+            context.Request.Scheme = "http";
+            context.Request.Host = new HostString("evil.example");
+            context.Request.Path = "/api/v1/areas";
+            context.Request.Headers.Cookie = cookiePair;
+        });
+        await AssertServerErrorAsync(loopbackRebinding, 403, "request_host_forbidden");
+
+        // Remote or forwarded cleartext system management bearer remains rejected.
+        var tokenFile = host.Services.GetRequiredService<SystemManagementAuthorization>().TokenFilePath;
+        var token = (await File.ReadAllTextAsync(tokenFile)).Trim();
+        var drainPayload = Encoding.UTF8.GetBytes("""{"draining":true}""");
+        var remoteManagement = await host.Factory.Server.SendAsync(context =>
+        {
+            context.Connection.RemoteIpAddress = IPAddress.Parse("192.0.2.1");
+            context.Connection.LocalIpAddress = IPAddress.Parse("192.0.2.10");
+            context.Request.Method = HttpMethods.Post;
+            context.Request.Scheme = "http";
+            context.Request.Host = new HostString("192.0.2.10", 4041);
+            context.Request.Path = "/api/v1/system/drain";
+            context.Request.ContentType = "application/json";
+            context.Request.Headers.Authorization = $"Bearer {token}";
+            context.Request.Body = new MemoryStream(drainPayload);
+            context.Request.ContentLength = drainPayload.Length;
+        });
+        await AssertServerErrorAsync(remoteManagement, 403, "system_management_forbidden");
+
+        var forwardedLoopbackManagement = await host.Factory.Server.SendAsync(context =>
+        {
+            context.Connection.RemoteIpAddress = IPAddress.Loopback;
+            context.Connection.LocalIpAddress = IPAddress.Loopback;
+            context.Request.Method = HttpMethods.Post;
+            context.Request.Scheme = "http";
+            context.Request.Host = new HostString("localhost");
+            context.Request.Path = "/api/v1/system/drain";
+            context.Request.ContentType = "application/json";
+            context.Request.Headers["X-Forwarded-Proto"] = "https";
+            context.Request.Headers.Authorization = $"Bearer {token}";
+            context.Request.Body = new MemoryStream(drainPayload);
+            context.Request.ContentLength = drainPayload.Length;
+        });
+        await AssertServerErrorAsync(forwardedLoopbackManagement, 403, "system_management_forbidden");
+
+        // Non-loopback HTTP logout with valid Origin revokes session and clears perga_session cookie.
+        var lanLogout = await host.Factory.Server.SendAsync(context =>
+        {
+            context.Connection.RemoteIpAddress = IPAddress.Parse("192.0.2.1");
+            context.Connection.LocalIpAddress = IPAddress.Parse("192.0.2.10");
+            context.Request.Method = HttpMethods.Post;
+            context.Request.Scheme = "http";
+            context.Request.Host = new HostString("192.0.2.10", 4041);
+            context.Request.Path = "/api/v1/auth/logout";
+            context.Request.Headers["Origin"] = "http://192.0.2.10:4041";
+            context.Request.Headers.Cookie = cookiePair;
+        });
+        Assert.Equal(204, lanLogout.Response.StatusCode);
+        var clearedCookie = Assert.Single(lanLogout.Response.Headers.SetCookie);
+        Assert.NotNull(clearedCookie);
+        Assert.StartsWith("perga_session=", clearedCookie);
+        Assert.Contains("expires=Thu, 01 Jan 1970", clearedCookie, StringComparison.OrdinalIgnoreCase);
+
+        // Revoked cookie is rejected on subsequent calls.
+        var afterLogout = await host.Factory.Server.SendAsync(context =>
+        {
+            context.Connection.RemoteIpAddress = IPAddress.Parse("192.0.2.1");
+            context.Connection.LocalIpAddress = IPAddress.Parse("192.0.2.10");
+            context.Request.Scheme = "http";
+            context.Request.Host = new HostString("192.0.2.10", 4041);
+            context.Request.Path = "/api/v1/areas";
+            context.Request.Headers["Origin"] = "http://192.0.2.10:4041";
+            context.Request.Headers.Cookie = cookiePair;
+        });
+        await AssertServerErrorAsync(afterLogout, 401, "unauthorized");
+    }
+
+    [Fact]
+    public async Task AllowInsecureHttpProxiedModeAllowsCleartextPublicOriginAndPreservesLoopbackManagementAndHostPinning()
+    {
+        var directory = Directory.CreateTempSubdirectory("perga-auth-proxy-http-");
+        try
+        {
+            await using var factory = new IsolatedPergaHostFactory(directory.FullName, options =>
+            {
+                options.AuthIngressMode = AuthIngressMode.Proxied;
+                options.AuthAllowInsecureHttp = true;
+                options.AuthPublicOrigin = "http://perga.lan:8080";
+                options.TrustForwardedHeaders = true;
+            });
+            factory.UseKestrel(0);
+            using var client = factory.CreateClient();
+            await BrowserAuthentication.InitializeOwnerAsync(factory);
+
+            // Proxied cleartext HTTP login matching AuthPublicOrigin succeeds and issues non-Secure cookie.
+            using var loginRequest = new HttpRequestMessage(HttpMethod.Post, "/api/v1/auth/login")
+            {
+                Content = JsonContent.Create(new { username = BrowserAuthentication.Username, password = BrowserAuthentication.Password })
+            };
+            loginRequest.Headers.Host = "perga.lan:8080";
+            loginRequest.Headers.Add("X-Forwarded-Proto", "http");
+            loginRequest.Headers.Add("X-Forwarded-For", "192.0.2.20");
+            loginRequest.Headers.Add("Origin", "http://perga.lan:8080");
+            using var loginResponse = await client.SendAsync(loginRequest);
+            Assert.True(loginResponse.IsSuccessStatusCode, await loginResponse.Content.ReadAsStringAsync());
+            AssertCookie(loginResponse, secure: false);
+            var cookie = BrowserAuthentication.ReadCookie(loginResponse);
+
+            using var areasRequest = new HttpRequestMessage(HttpMethod.Get, "/api/v1/areas");
+            areasRequest.Headers.Host = "perga.lan:8080";
+            areasRequest.Headers.Add("X-Forwarded-Proto", "http");
+            areasRequest.Headers.Add("X-Forwarded-For", "192.0.2.20");
+            areasRequest.Headers.Add("Origin", "http://perga.lan:8080");
+            areasRequest.Headers.Add("Cookie", cookie);
+            using var areasResponse = await client.SendAsync(areasRequest);
+            Assert.Equal(HttpStatusCode.OK, areasResponse.StatusCode);
+
+            // Authenticated WebSocket over cleartext HTTP succeeds with matching Origin and rejects foreign Origin.
+            var wsUri = new UriBuilder(client.BaseAddress!) { Scheme = "ws", Path = "/api/v1/events" }.Uri;
+            using var wsTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            using (var ws = new ClientWebSocket())
+            {
+                ws.Options.SetRequestHeader("Host", "perga.lan:8080");
+                ws.Options.SetRequestHeader("Origin", "http://perga.lan:8080");
+                ws.Options.SetRequestHeader("Cookie", cookie);
+                await ws.ConnectAsync(wsUri, wsTimeout.Token);
+                using var frame = await PergaHostTestCluster.ReceiveTextJsonFrameAsync(ws, wsTimeout.Token);
+                Assert.Equal("_replay_complete", frame.RootElement.GetProperty("kind").GetString());
+            }
+            using (var badWs = new ClientWebSocket())
+            {
+                badWs.Options.SetRequestHeader("Host", "perga.lan:8080");
+                badWs.Options.SetRequestHeader("Origin", "http://evil.lan:8080");
+                badWs.Options.SetRequestHeader("Cookie", cookie);
+                await Assert.ThrowsAsync<WebSocketException>(() => badWs.ConnectAsync(wsUri, wsTimeout.Token));
+            }
+
+            // Foreign host and unpinned direct loopback /api requests remain forbidden.
+            using var foreignHostRequest = new HttpRequestMessage(HttpMethod.Get, "/api/v1/areas");
+            foreignHostRequest.Headers.Host = "different.lan:8080";
+            foreignHostRequest.Headers.Add("Origin", "http://different.lan:8080");
+            foreignHostRequest.Headers.Add("Cookie", cookie);
+            using var foreignHostResponse = await client.SendAsync(foreignHostRequest);
+            await AssertErrorAsync(foreignHostResponse, 403, "request_host_forbidden");
+
+            using var directLoopbackApi = await client.GetAsync("/api/v1/areas");
+            await AssertErrorAsync(directLoopbackApi, 403, "request_host_forbidden");
+
+            // Cross-site request matching AuthPublicOrigin remains rejected.
+            using var crossSiteRequest = new HttpRequestMessage(HttpMethod.Get, "/api/v1/areas");
+            crossSiteRequest.Headers.Host = "perga.lan:8080";
+            crossSiteRequest.Headers.Add("Origin", "http://perga.lan:8080");
+            crossSiteRequest.Headers.Add("Sec-Fetch-Site", "cross-site");
+            crossSiteRequest.Headers.Add("Cookie", cookie);
+            using var crossSiteResponse = await client.SendAsync(crossSiteRequest);
+            await AssertErrorAsync(crossSiteResponse, 403, "request_origin_forbidden");
+
+            // Direct loopback management (perga-ctl) remains available in Proxied + AllowInsecureHttp mode.
+            var tokenFile = factory.Services.GetRequiredService<SystemManagementAuthorization>().TokenFilePath;
+            var bearer = new AuthenticationHeaderValue("Bearer", (await File.ReadAllTextAsync(tokenFile)).Trim());
+            using var management = factory.CreateClient();
+            management.DefaultRequestHeaders.Authorization = bearer;
+
+            using var info = await management.GetAsync("/api/v1/system/info");
+            Assert.Equal(HttpStatusCode.OK, info.StatusCode);
+            using var drain = await management.PostAsJsonAsync("/api/v1/system/drain", new { draining = true });
+            Assert.Equal(HttpStatusCode.Accepted, drain.StatusCode);
+            var status = await management.GetFromJsonAsync<SystemAuthStatusDto>("/api/v1/system/auth-status");
+            Assert.True(status!.Configured);
+
+            // Forwarded cleartext management remains rejected.
+            using var forwardedManagement = new HttpRequestMessage(HttpMethod.Post, "/api/v1/system/drain")
+            {
+                Content = JsonContent.Create(new { draining = false })
+            };
+            forwardedManagement.Headers.Host = "perga.lan:8080";
+            forwardedManagement.Headers.Add("X-Forwarded-Proto", "http");
+            forwardedManagement.Headers.Add("X-Forwarded-For", "192.0.2.20");
+            forwardedManagement.Headers.Authorization = bearer;
+            using var forwardedManagementRes = await client.SendAsync(forwardedManagement);
+            await AssertErrorAsync(forwardedManagementRes, 403, "system_management_forbidden");
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+
+        // Proxied + AllowInsecureHttp with AllowedHosts (no AuthPublicOrigin) and untrusted-proxy spoofing check.
+        var allowedHostsDir = Directory.CreateTempSubdirectory("perga-auth-proxy-hosts-");
+        try
+        {
+            await using var allowedHostsFactory = new IsolatedPergaHostFactory(allowedHostsDir.FullName, options =>
+            {
+                options.AuthIngressMode = AuthIngressMode.Proxied;
+                options.AuthAllowInsecureHttp = true;
+                options.AllowedHosts = ["perga.lan"];
+                options.TrustForwardedHeaders = true;
+                options.TrustedProxyAddresses = ["192.0.2.5"];
+            });
+            await BrowserAuthentication.InitializeOwnerAsync(allowedHostsFactory);
+            var loginPayload = Encoding.UTF8.GetBytes(
+                $$"""{"username":"{{BrowserAuthentication.Username}}","password":"{{BrowserAuthentication.Password}}"}""");
+
+            // Trusted proxy with X-Forwarded-Proto: https issues Secure __Host-perga_session.
+            var trustedHttps = await allowedHostsFactory.Server.SendAsync(context =>
+            {
+                context.Connection.RemoteIpAddress = IPAddress.Parse("192.0.2.5");
+                context.Request.Method = HttpMethods.Post;
+                context.Request.Scheme = "http";
+                context.Request.Host = new HostString("perga.lan");
+                context.Request.Path = "/api/v1/auth/login";
+                context.Request.ContentType = "application/json";
+                context.Request.Headers["X-Forwarded-Proto"] = "https";
+                context.Request.Headers["X-Forwarded-For"] = "198.51.100.12";
+                context.Request.Headers["Origin"] = "https://perga.lan";
+                context.Request.Body = new MemoryStream(loginPayload);
+                context.Request.ContentLength = loginPayload.Length;
+            });
+            Assert.Equal(200, trustedHttps.Response.StatusCode);
+            var secureCookie = Assert.Single(trustedHttps.Response.Headers.SetCookie);
+            Assert.StartsWith("__Host-perga_session=", secureCookie);
+            Assert.Contains("; secure", secureCookie, StringComparison.OrdinalIgnoreCase);
+
+            // Untrusted proxy spoofing X-Forwarded-Proto: https stays cleartext HTTP (non-Secure perga_session).
+            var untrustedSpoof = await allowedHostsFactory.Server.SendAsync(context =>
+            {
+                context.Connection.RemoteIpAddress = IPAddress.Loopback;
+                context.Request.Method = HttpMethods.Post;
+                context.Request.Scheme = "http";
+                context.Request.Host = new HostString("perga.lan");
+                context.Request.Path = "/api/v1/auth/login";
+                context.Request.ContentType = "application/json";
+                context.Request.Headers["X-Forwarded-Proto"] = "https";
+                context.Request.Headers["X-Forwarded-For"] = "198.51.100.12";
+                context.Request.Headers["Origin"] = "http://perga.lan";
+                context.Request.Body = new MemoryStream(loginPayload);
+                context.Request.ContentLength = loginPayload.Length;
+            });
+            Assert.Equal(200, untrustedSpoof.Response.StatusCode);
+            var cleartextCookie = Assert.Single(untrustedSpoof.Response.Headers.SetCookie);
+            Assert.StartsWith("perga_session=", cleartextCookie);
+            Assert.DoesNotContain("; secure", cleartextCookie, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            allowedHostsDir.Delete(recursive: true);
+        }
+
+        // Proxied + AllowInsecureHttp with an https:// AuthPublicOrigin still rejects cleartext HTTP scheme mismatch.
+        var httpsOriginDir = Directory.CreateTempSubdirectory("perga-auth-proxy-scheme-");
+        try
+        {
+            await using var httpsOriginFactory = new IsolatedPergaHostFactory(httpsOriginDir.FullName, options =>
+            {
+                options.AuthIngressMode = AuthIngressMode.Proxied;
+                options.AuthAllowInsecureHttp = true;
+                options.AuthPublicOrigin = "https://perga.example";
+            });
+            var schemeMismatch = await httpsOriginFactory.Server.SendAsync(context =>
+            {
+                context.Connection.RemoteIpAddress = IPAddress.Loopback;
+                context.Request.Scheme = "http";
+                context.Request.Host = new HostString("perga.example");
+                context.Request.Path = "/api/v1/areas";
+            });
+            await AssertServerErrorAsync(schemeMismatch, 403, "request_host_forbidden");
+        }
+        finally
+        {
+            httpsOriginDir.Delete(recursive: true);
+        }
+    }
+
     private static HttpRequestMessage ProxyRequest(string host, bool tls)
     {
         var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/auth/login")
@@ -566,6 +1012,16 @@ public sealed class AuthHttpIntegrationTests
         Assert.Equal(status, (int)response.StatusCode);
         Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
         var error = (await response.Content.ReadFromJsonAsync<ApiErrorResponse>())!;
+        Assert.Equal(code, error.Code);
+        return error;
+    }
+
+    private static async Task<ApiErrorResponse> AssertServerErrorAsync(HttpContext context, int status, string code)
+    {
+        Assert.Equal(status, context.Response.StatusCode);
+        if (context.Response.Body.CanSeek)
+            context.Response.Body.Position = 0;
+        var error = (await JsonSerializer.DeserializeAsync<ApiErrorResponse>(context.Response.Body, new JsonSerializerOptions(JsonSerializerDefaults.Web)))!;
         Assert.Equal(code, error.Code);
         return error;
     }
@@ -604,6 +1060,25 @@ public sealed class AuthHttpIntegrationTests
             {
                 if (IsEnabled(logLevel))
                     entries.Enqueue((formatter(state, exception), exception));
+            }
+        }
+    }
+
+    private sealed class LogCaptureProvider(LogLevel minLevel) : ILoggerProvider
+    {
+        public ConcurrentQueue<(LogLevel Level, string Message)> Entries { get; } = new();
+        public ILogger CreateLogger(string categoryName) => new Recorder(minLevel, Entries);
+        public void Dispose() { }
+
+        private sealed class Recorder(LogLevel minLevel, ConcurrentQueue<(LogLevel Level, string Message)> entries) : ILogger
+        {
+            public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+            public bool IsEnabled(LogLevel logLevel) => logLevel >= minLevel;
+            public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+                Func<TState, Exception?, string> formatter)
+            {
+                if (IsEnabled(logLevel))
+                    entries.Enqueue((logLevel, formatter(state, exception)));
             }
         }
     }
