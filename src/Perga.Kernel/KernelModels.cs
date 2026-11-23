@@ -167,8 +167,6 @@ public sealed record ApplyTrackTemplateRequest(
     bool ResetData = false,
     bool? SeedReport = null);
 
-public sealed record StartTemplateSelectorRequest(string UserMessage);
-
 public sealed record OpenTerminalRequest(
     string? Title = null,
     string? Program = null,

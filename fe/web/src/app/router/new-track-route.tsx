@@ -145,12 +145,8 @@ function NewTrackEditor({ transport, unauthorized, workspace, session, store }: 
     store.update(areaId, { creating: true, request, error: null, canRetryAsNewTrack: false });
     const creation = trackMutations.create(request.body, request.key);
     void creation.then((track) => {
-      const firstMessage = request.message !== undefined && !isBlankForKernel(request.message) ? request.message : null;
-      const persistConfirmation = firstMessage === null
-        || conversationRegistry.queueTrackInitialSend(track.id, firstMessage, `${request.key}:init`);
-      if (firstMessage !== null && request.body.templateId == null) {
-        void trackMutations.startTemplateSelector(track.id, firstMessage).catch(() => undefined);
-      }
+      const persistConfirmation = request.message === undefined || isBlankForKernel(request.message)
+        || conversationRegistry.queueTrackInitialSend(track.id, request.message, `${request.key}:init`);
       // A late acknowledgement belongs to its draft; it never steals the
       // navigation the reader made while waiting. Returning offers Open track.
       // If saving the first send failed, the saved request can still replay both keys after reload.

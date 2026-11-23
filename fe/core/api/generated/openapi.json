@@ -4306,17 +4306,6 @@
         ],
         "type": "object"
       },
-      "StartTemplateSelectorRequest": {
-        "properties": {
-          "userMessage": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "userMessage"
-        ],
-        "type": "object"
-      },
       "SystemAuthStatusDto": {
         "properties": {
           "activeSessions": {
@@ -8273,65 +8262,6 @@
               }
             },
             "description": "HTTP 200"
-          },
-          "default": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            },
-            "description": "Error mapped by Host exception handling or request guards"
-          }
-        }
-      }
-    },
-    "/api/v1/tracks/{trackId}/template-selector": {
-      "post": {
-        "parameters": [
-          {
-            "in": "path",
-            "name": "trackId",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/StartTemplateSelectorRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SessionCreationReceipt"
-                }
-              }
-            },
-            "description": "HTTP 200"
-          },
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SessionCreationReceipt"
-                }
-              }
-            },
-            "description": "HTTP 201"
-          },
-          "204": {
-            "description": "HTTP 204"
           },
           "default": {
             "content": {

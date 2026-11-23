@@ -1428,10 +1428,6 @@ it('leaves a pasted template reference to the first message when no catalog was 
   expect(createdTrackBodies(sent)[0]).not.toHaveProperty('template_id');
   const createIndex = sent.findIndex(request => request.method === 'POST' && request.path === '/api/v1/tracks');
   expect(sent.slice(0, createIndex + 1).some(request => request.path === '/api/v1/templates')).toBe(false);
-  await waitFor(() => expect(sent.some(request =>
-    request.method === 'POST'
-    && request.path === '/api/v1/tracks/w-new/template-selector'
-    && (request.body as { userMessage?: string } | undefined)?.userMessage === 'use @`template:deploy`')).toBe(true));
 });
 
 it('keeps Perga creation implicit even when templates and an Area default exist', async () => {

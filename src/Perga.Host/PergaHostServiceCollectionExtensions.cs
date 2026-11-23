@@ -224,7 +224,6 @@ public static class PergaHostServiceCollectionExtensions
                 DefaultWorkspaceDriver = opts.DefaultWorkspaceDriver,
                 McpBaseUri = baseUri,
                 DispatchWakesInBackground = opts.DispatchWakesInBackground,
-                EnableTemplateSelectorSubagent = opts.EnableTemplateSelectorSubagent,
                 SessionStartupTimeout = opts.SessionStartupTimeout,
                 SessionIdleTimeout = opts.SessionIdleTimeout,
                 SessionCompactionTimeout = opts.SessionCompactionTimeout,

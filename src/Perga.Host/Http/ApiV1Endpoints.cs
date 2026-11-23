@@ -163,20 +163,6 @@ public static class ApiV1Endpoints
             return TypedResults.Json(track, PergaJsonDefaults.ApiOptions);
         }).Produces<TrackDto>().WithMetadata(new JsonRequestContract(typeof(ApplyTrackTemplateRequest), IsOptional: false));
 
-        v1.MapPost("/tracks/{trackId}/template-selector", async (string trackId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
-        {
-            var req = await ReadRequiredJsonBodyAsync<StartTemplateSelectorRequest>(ctx, ct).ConfigureAwait(false);
-            var started = await kernel.StartTemplateSelectorAsync(trackId, req, AuthenticatedSession.Human(ctx), ct).ConfigureAwait(false);
-            if (started is null)
-                return Results.NoContent();
-            var (receipt, replay) = started.Value;
-            return TypedResults.Json(receipt, PergaJsonDefaults.ApiOptions,
-                statusCode: replay ? StatusCodes.Status200OK : StatusCodes.Status201Created);
-        }).Produces<SessionCreationReceipt>(StatusCodes.Status201Created)
-          .Produces<SessionCreationReceipt>(StatusCodes.Status200OK)
-          .Produces(StatusCodes.Status204NoContent)
-          .WithMetadata(new JsonRequestContract(typeof(StartTemplateSelectorRequest), IsOptional: false));
-
         v1.MapDelete("/tracks/{trackId}/template", async (string trackId, IPergaKernel kernel, CancellationToken ct) =>
         {
             var track = await kernel.Actors.GetOrActivate(trackId).ClearTemplateAsync(ct).ConfigureAwait(false);

@@ -82,7 +82,6 @@ export type SessionSummaryDto = { "lastTurn": SessionTurnDto | null; "pendingInt
 export type SessionTaskBindingDto = { "phase": string; "task": TaskDto; "waitingReason": string | null };
 export type SessionTurnDto = { "completedAtMs": number | null; "epoch": number; "errorText": string | null; "id": string; "input": unknown; "sessionId": string; "startedAtMs": number | null; "status": string; "triggerKind": string; "turnIndex": number; "usage": unknown | null; "userItemId": number | null };
 export type SessionUnknownDetailDto = { "canReconnect": boolean; "canResetContext": boolean; "detail": string; "lastError": string | null; "reason": string; "recovering": boolean };
-export type StartTemplateSelectorRequest = { "userMessage": string };
 export type SystemAuthStatusDto = { "activeSessions": number; "configured": boolean; "disabled": boolean; "displayName": string | null; "schemaVersion": number; "username": string | null };
 export type SystemDrainRequest = { "draining": boolean };
 export type SystemDrainResponse = { "activeDispatches": number; "draining": boolean };

@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Perga.Contracts;
 using Perga.Kernel.Tests.Fakes;
 using Perga.ReportDoc;
@@ -58,57 +57,7 @@ public sealed class TemplateEntryOptimizationTests
     }
 
     [Fact]
-    public async Task StartTemplateSelector_SkipsWhenCatalogEmptyOrAlreadyTemplatedOrDisabled()
-    {
-        await using (var emptyCatalogCtx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm()))
-        {
-            var (_, snap) = await emptyCatalogCtx.CreateDefaultTrackAsync();
-            var skipped = await emptyCatalogCtx.Kernel.StartTemplateSelectorAsync(
-                snap.Track.Id,
-                new StartTemplateSelectorRequest("帮我规划一个迭代"));
-            Assert.Null(skipped);
-
-            var blankErr = await Assert.ThrowsAsync<KernelException>(() =>
-                emptyCatalogCtx.Kernel.StartTemplateSelectorAsync(
-                    snap.Track.Id,
-                    new StartTemplateSelectorRequest("   ")));
-            Assert.Equal(KernelErrorCode.InvalidArgument, blankErr.Code);
-        }
-
-        await using (var disabledCtx = new KernelTestContext(
-            options: new KernelOptions { EnableTemplateSelectorSubagent = false },
-            policyVm: new global::Perga.PolicyVm.PolicyVm()))
-        {
-            disabledCtx.Kernel.Templates.RegisterTemplate(SeededTemplateSource);
-            var (_, snap) = await disabledCtx.CreateDefaultTrackAsync();
-            var skipped = await disabledCtx.Kernel.StartTemplateSelectorAsync(
-                snap.Track.Id,
-                new StartTemplateSelectorRequest("帮我规划一个迭代"));
-            Assert.Null(skipped);
-        }
-
-        await using (var templatedCtx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm()))
-        {
-            templatedCtx.Kernel.Templates.RegisterTemplate(SeededTemplateSource);
-            var (area, _) = await templatedCtx.CreateDefaultTrackAsync();
-            var templated = await templatedCtx.Kernel.CreateTrackAsync(
-                new CreateTrackRequest(area.Id, TemplateId: "delivery-entry"));
-            var skipped = await templatedCtx.Kernel.StartTemplateSelectorAsync(
-                templated.Track.Id,
-                new StartTemplateSelectorRequest("帮我规划一个迭代"));
-            Assert.Null(skipped);
-
-            await templatedCtx.Kernel.CloseTrackAsync(templated.Track.Id, templated.Track.LeadSessionId!);
-            var closedErr = await Assert.ThrowsAsync<KernelException>(() =>
-                templatedCtx.Kernel.StartTemplateSelectorAsync(
-                    templated.Track.Id,
-                    new StartTemplateSelectorRequest("帮我规划一个迭代")));
-            Assert.Equal(KernelErrorCode.Conflict, closedErr.Code);
-        }
-    }
-
-    [Fact]
-    public async Task LeadSystemPrompt_DescribesTrackSurfacesAndComposableTemplateModel()
+    public async Task LeadSystemPrompt_DescribesTrackSurfacesAndUpfrontTemplateScoping()
     {
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
         var (_, snap) = await ctx.CreateDefaultTrackAsync();
@@ -119,6 +68,7 @@ public sealed class TemplateEntryOptimizationTests
         Assert.Contains("**Title**", leadPrompt, StringComparison.Ordinal);
         Assert.Contains("**Report**", leadPrompt, StringComparison.Ordinal);
         Assert.Contains("Templates are optional and implicit", leadPrompt, StringComparison.Ordinal);
+        Assert.Contains("before doing deep work or writing the Report", leadPrompt, StringComparison.Ordinal);
         Assert.Contains("composable rather than all-or-nothing", leadPrompt, StringComparison.Ordinal);
         Assert.Contains("format: \"files\"", leadPrompt, StringComparison.Ordinal);
     }
