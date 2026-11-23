@@ -311,12 +311,22 @@ public sealed class TemplateV2BundleAndSchemaTests
     [Fact]
     public void ResolveRoutingRules_Respects_Custom_Setup_Inputs_And_TargetAccess()
     {
-        var dir = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "templates", "agents-delivery"));
-        var compiled = _vm.Compile(TemplateBundle.PackDirectory(dir));
-        var customInputs = JsonDocument.Parse("""{"reviewModel":"o3-pro","implModel":"claude-sonnet-4-5"}""").RootElement;
+        var compiled = _vm.Compile("""
+            export default defineTemplate({
+              id: "setup-routing", title: "Setup Routing",
+              inputs: { reviewModel: { type: "string", default: "default-reviewer" } },
+              setup(inputs) {
+                return { tasks: { routing: [
+                  { when: { role: "review" }, model: inputs.reviewModel, access: "read_only", enforce: true }
+                ] } };
+              },
+            });
+            """);
+        var customInputs = JsonSerializer.SerializeToElement(new { reviewModel = "o3-pro" });
 
         var rules = _vm.ResolveRoutingRules(compiled, customInputs);
-        var reviewRule = Assert.Single(rules, r => string.Equals(r.When.Role, "review", StringComparison.OrdinalIgnoreCase));
+        var reviewRule = Assert.Single(rules);
+        Assert.Equal("review", reviewRule.When.Role);
         Assert.Equal("o3-pro", reviewRule.Model);
         Assert.True(reviewRule.Enforce);
         Assert.Equal("read_only", reviewRule.TargetAccess);

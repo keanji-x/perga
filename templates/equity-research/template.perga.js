@@ -22,32 +22,25 @@ export default defineTemplate({
       prompt: "刷新 ${inputs.ticker} 现价与同行估值快照，用 data_patch 更新 valuation；检查价格异动与临近 events，必要时在 flow.json 中安排单次 at 核查节点。",
     },
   }],
-  setup(inputs) {
-    return {
-      data: {
-        schema,
-        initial,
+  data: { schema, initial },
+  report: {
+    template: "./report.md",
+    views,
+  },
+  tasks: {
+    routing: [
+      {
+        when: { role: "earnings" },
+        provider: "${inputs.earningsProvider}",
+        model: "${inputs.earningsModel}",
+        access: "read_only",
       },
-      report: {
-        template: "./report.md",
-        views,
+      {
+        when: { role: "event_review" },
+        provider: "${inputs.reviewProvider}",
+        model: "${inputs.reviewModel}",
+        access: "read_only", enforce: true,
       },
-      tasks: {
-        routing: [
-          {
-            when: { role: "earnings" },
-            ...(inputs.earningsProvider ? { provider: inputs.earningsProvider } : {}),
-            ...(inputs.earningsModel ? { model: inputs.earningsModel } : {}),
-            access: "read_only",
-          },
-          {
-            when: { role: "event_review" },
-            ...(inputs.reviewProvider ? { provider: inputs.reviewProvider } : {}),
-            ...(inputs.reviewModel ? { model: inputs.reviewModel } : {}),
-            access: "read_only", enforce: true,
-          },
-        ],
-      },
-    };
+    ],
   },
 });

@@ -162,7 +162,8 @@ public sealed partial class TrackActor
             return string.Empty;
         }
 
-        var hasViews = _policy.Manifest.ViewNames is { Count: > 0 };
+        var viewNames = _policy.Manifest.ViewNames ?? [];
+        var hasViews = viewNames.Count > 0;
         var hasState = _track.Data.ValueKind == JsonValueKind.Object &&
                        _track.Data.EnumerateObject().Any();
         if (!hasViews && !hasState)
@@ -178,7 +179,9 @@ public sealed partial class TrackActor
         sb.AppendLine($"dataRev: {_track.DataRev} (pass expectedDataRev to data_patch to reject stale writes).");
         if (hasViews)
         {
-            sb.AppendLine("Report `perga-block widget` blocks render live from this structured template data (and Track kernel facts). Call `data_patch` to update structured fields, or `report_read` to inspect the latest projected views.");
+            var views = string.Join("`, `", viewNames);
+            sb.AppendLine($"Report `perga-block widget` blocks render views (`{views}`) live from structured template data and Track facts, and `{KernelMcpToolNames.ReportRead}` includes view projections when the report contains widget blocks.");
+            sb.AppendLine($"Update structured facts with `{KernelMcpToolNames.DataPatch}`, keep narrative and layout in `{KernelMcpToolNames.ReportCommit}`, and avoid duplicating widget tables or lists in Markdown prose.");
         }
 
         if (hasState)
@@ -186,7 +189,7 @@ public sealed partial class TrackActor
             var rawJson = _track.Data.GetRawText();
             if (rawJson.Length > maxChars)
             {
-                rawJson = rawJson[..maxChars] + "\n... (truncated; call perga_report_read for latest projected views)";
+                rawJson = rawJson[..maxChars] + "\n... (truncated)";
             }
 
             sb.AppendLine("```json");

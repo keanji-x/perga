@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Jint;
 using Jint.Native;
 using Jint.Native.Object;
@@ -107,8 +108,31 @@ public sealed partial class PolicyVm
 
     private PolicyTaskRoute ResolveRoutingTarget(CompiledPolicy policy, TaskRoutingRule rule, JsonElement inputs)
     {
-        return new PolicyTaskRoute(rule.Provider is null ? null : InterpolateInputs(policy, rule.Provider, inputs),
-            rule.Model is null ? null : InterpolateInputs(policy, rule.Model, inputs), null, rule.TargetAccess);
+        return new PolicyTaskRoute(ResolveOptionalRoutingInput(policy, rule.Provider, inputs),
+            ResolveOptionalRoutingInput(policy, rule.Model, inputs), Access: rule.TargetAccess);
+    }
+
+    private string? ResolveOptionalRoutingInput(CompiledPolicy policy, string? value, JsonElement inputs)
+    {
+        if (value is null) return null;
+
+        var match = Regex.Match(value, @"\A\$\{inputs\.([A-Za-z0-9_]+)\}\z");
+        if (match.Success)
+        {
+            var key = match.Groups[1].Value;
+            if (policy.Manifest.InputsSchema.TryGetProperty(key, out var schema) &&
+                schema.TryGetProperty("optional", out var optional) && optional.ValueKind == JsonValueKind.True)
+            {
+                if ((inputs.ValueKind != JsonValueKind.Object || !inputs.TryGetProperty(key, out _)) &&
+                    !schema.TryGetProperty("default", out _))
+                    return null;
+
+                var resolved = InterpolateInputs(policy, value, inputs);
+                return string.IsNullOrWhiteSpace(resolved) ? null : resolved;
+            }
+        }
+
+        return InterpolateInputs(policy, value, inputs);
     }
 
     private static IReadOnlyList<TaskRoutingRule> ReadRoutingRules(Engine engine, ObjectInstance definition)

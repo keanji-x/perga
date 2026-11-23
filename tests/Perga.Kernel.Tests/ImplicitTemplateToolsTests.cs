@@ -667,4 +667,30 @@ public sealed class ImplicitTemplateToolsTests
         Assert.Contains("track_set", prompt);
         Assert.Contains(".perga.js source", prompt);
     }
+
+    [Fact]
+    public async Task LeadWithTemplateViews_ReceivesReportAuthoringGuidance()
+    {
+        await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
+        ctx.Kernel.Templates.RegisterTemplate("""
+            export default {
+              id: 'live-report', title: 'Live Report',
+              data: { schema: (t) => ({ note: t.string() }), initial: () => ({ note: 'x'.repeat(17 * 1024) }) },
+              report: { views: { summary: () => ({ items: [] }) } }
+            };
+            """);
+        var area = await ctx.Kernel.CreateAreaAsync(new CreateAreaRequest("Area"));
+        var track = await ctx.Kernel.CreateTrackAsync(new CreateTrackRequest(AreaId: area.Id, TemplateId: "live-report"));
+        await ctx.SendAndWaitForTurnAsync(track.Track.LeadSessionId!, new SendSessionMessageRequest("hello", "live-report"));
+
+        var prompt = Assert.Single(ctx.AgentRuntime.OpenedSessions).LaunchSpec.SystemPrompt;
+        Assert.Contains("## Active Template Data (live-report)", prompt);
+        Assert.Contains("`perga-block widget` blocks render views (`summary`)", prompt);
+        Assert.Contains("`report_read` includes view projections when the report contains widget blocks", prompt);
+        Assert.Contains("Update structured facts with `data_patch`", prompt);
+        Assert.Contains("keep narrative and layout in `report_commit`", prompt);
+        Assert.Contains("avoid duplicating widget tables or lists in Markdown prose", prompt);
+        Assert.Contains("... (truncated)", prompt);
+        Assert.DoesNotContain("perga_report_read", prompt);
+    }
 }
