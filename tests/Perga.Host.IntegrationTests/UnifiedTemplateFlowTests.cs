@@ -177,7 +177,7 @@ public sealed class UnifiedTemplateFlowTests
             var row = Assert.Single((await store.LoadTrackAggregateAsync(id, default))!.Tasks);
             await kernel.Actors.RemoveAndDisposeAsync(id);
             await store.UpsertTaskAsync(row with { Context = JsonSerializer.SerializeToElement(new { flowNode = true }) },
-                null, default, suppressDefaultWake: true);
+                null, default);
         }
         var original = Assert.Single((await store.LoadTrackAggregateAsync(id, default))!.Tasks);
         var before = await kernel.GetTrackFlowAsync(id);

@@ -50,20 +50,27 @@ internal sealed class BootRecoveryRepository
                         transaction: tx,
                         cancellationToken: innerCt)).ConfigureAwait(false)).ToList();
 
+                var ownedSessionIds = (await conn.QueryAsync<string>(new CommandDefinition("""
+                    SELECT DISTINCT tk.session_id FROM tasks tk
+                    JOIN tracks tr ON tr.id = tk.track_id
+                    WHERE tk.status IN ('running', 'verifying') AND tk.owns_session = 1
+                      AND tk.session_id IS NOT NULL AND tk.session_id IS NOT tr.lead_session_id;
+                    """, transaction: tx, cancellationToken: innerCt)).ConfigureAwait(false)).AsList();
+                foreach (var sessionId in ownedSessionIds)
+                    await SessionMessageSql.InterruptUnstartedOwnedSessionWorkAsync(conn, tx, sessionId, nowMs, innerCt)
+                        .ConfigureAwait(false);
+
+                await conn.ExecuteAsync(new CommandDefinition("""
+                    UPDATE agent_sessions SET archived_at_ms = COALESCE(archived_at_ms, @NowMs), updated_at_ms = @NowMs,
+                        status = CASE WHEN status = 'running' OR (status = 'queued' AND NOT EXISTS (
+                            SELECT 1 FROM session_turns t WHERE t.session_id = agent_sessions.id
+                              AND LOWER(t.status) IN ('queued', 'running', 'verifying')
+                        )) THEN 'idle' ELSE status END
+                    WHERE id IN @OwnedSessionIds;
+                    """, new { OwnedSessionIds = ownedSessionIds, NowMs = nowMs }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
                 await conn.ExecuteAsync(
                     new CommandDefinition(
                         """
-                        UPDATE session_messages SET delivery = 'interrupted'
-                        WHERE delivery = 'queued' AND session_id IN (
-                            SELECT session_id FROM tasks WHERE status IN ('running', 'verifying') AND session_id IS NOT NULL
-                        );
-                        UPDATE agent_sessions
-                        SET archived_at_ms = COALESCE(archived_at_ms, @NowMs), updated_at_ms = @NowMs,
-                            status = CASE WHEN status IN ('queued', 'running') THEN 'idle' ELSE status END
-                        WHERE id IN (
-                            SELECT session_id FROM tasks WHERE status IN ('running', 'verifying') AND session_id IS NOT NULL
-                                AND NOT (block_id = 'flow:' || task_key AND json_type(context_json, '$.flowNode') IS 'true' AND (kind = 'flow_wake' OR json_type(context_json, '$.reuseSession') IS 'true'))
-                        );
                         UPDATE tasks
                         SET status = 'failed',
                             status_detail = 'The host stopped during this task.',
@@ -77,13 +84,18 @@ internal sealed class BootRecoveryRepository
                         transaction: tx,
                         cancellationToken: innerCt)).ConfigureAwait(false);
 
+                // Durable input recovery also updates delivery and emits its turn outcome event.
                 await conn.ExecuteAsync(
                     new CommandDefinition(
                         """
                         UPDATE session_turns
                         SET status = 'unknown',
                             completed_at_ms = COALESCE(completed_at_ms, @NowMs)
-                        WHERE LOWER(status) IN ('running', 'verifying');
+                        WHERE LOWER(status) IN ('running', 'verifying')
+                          AND NOT (status = 'running' AND EXISTS (
+                              SELECT 1 FROM session_messages m
+                              WHERE m.turn_id = session_turns.id AND m.session_id = session_turns.session_id
+                          ));
                         """,
                         new { NowMs = nowMs },
                         transaction: tx,

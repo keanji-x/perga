@@ -20,6 +20,12 @@ public static partial class FlowConstants
         task.Context is { ValueKind: JsonValueKind.Object } context &&
         context.TryGetProperty("flowNode", out var marker) && marker.ValueKind == JsonValueKind.True;
 
+    public static bool IsFlowSessionReuse(TaskDto task) =>
+        IsFlowTask(task) &&
+        task.Context is { ValueKind: JsonValueKind.Object } context &&
+        context.TryGetProperty("reuseSession", out var reuse) &&
+        reuse.ValueKind == JsonValueKind.True;
+
     public static string MakeBlockId(string nodeId) => FlowBlockIdPrefix + nodeId;
     public static string MakeScheduleId(string nodeId) => FlowScheduleIdPrefix + nodeId;
     internal static string MakeArchivedTaskKey(string taskId) => "@archived:" + taskId;

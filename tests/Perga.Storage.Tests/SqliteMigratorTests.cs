@@ -25,6 +25,46 @@ public sealed class SqliteMigratorTests
     }
 
     [Fact]
+    public async Task V28BackfillsLiveAndArchivedBorrowedTaskOwnership()
+    {
+        var directory = Directory.CreateTempSubdirectory("perga-ownership-migration-");
+        try
+        {
+            var dbPath = Path.Combine(directory.FullName, "old.db");
+            var migrator = new SqliteMigrator();
+            await new SqliteMigrator(migrator.Migrations.Take(27).ToArray()).MigrateAsync(dbPath);
+            await using var db = new SqliteConnection(new SqliteConnectionStringBuilder
+                { DataSource = dbPath, Pooling = false }.ToString());
+            await db.OpenAsync();
+            await db.ExecuteAsync("""
+                INSERT INTO areas (id, name, created_at_ms, updated_at_ms) VALUES ('area', 'Area', 1, 1);
+                INSERT INTO tracks (id, area_id, cwd, created_at_ms, updated_at_ms) VALUES ('track', 'area', '.', 1, 1);
+                INSERT INTO tasks (id, track_id, block_id, task_key, kind, goal_or_cmd, context_json, archived_at_ms, created_at_ms, updated_at_ms)
+                VALUES
+                    ('wake', 'track', 'flow:wake', 'wake', 'flow_wake', 'wake', '{"flowNode":true}', NULL, 1, 1),
+                    ('reuse', 'track', 'flow:reuse', 'reuse', 'subagent', 'reuse', '{"flowNode":true,"reuseSession":true}', NULL, 1, 1),
+                    ('archived', 'track', 'flow:wake', '@archived:archived', 'flow_wake', 'wake', '{"flowNode":true}', 2, 1, 1),
+                    ('fresh', 'track', 'flow:fresh', 'fresh', 'subagent', 'run', '{"flowNode":true,"reuseSession":false}', NULL, 1, 1),
+                    ('spoof', 'track', 'other', 'spoof', 'flow_wake', 'run', '{"flowNode":true,"reuseSession":true}', NULL, 1, 1),
+                    ('string', 'track', 'flow:string', 'string', 'subagent', 'run', '{"flowNode":true,"reuseSession":"true"}', NULL, 1, 1),
+                    ('ordinary', 'track', 'block', 'ordinary', 'subagent', 'run', NULL, NULL, 1, 1);
+                """);
+            await db.CloseAsync();
+
+            await migrator.MigrateAsync(dbPath);
+            await db.OpenAsync();
+            Assert.Equal(28, await db.ExecuteScalarAsync<int>("SELECT MAX(version) FROM schema_migrations;"));
+            Assert.Equal(["archived", "reuse", "wake"],
+                await db.QueryAsync<string>("SELECT id FROM tasks WHERE owns_session = 0 ORDER BY id;"));
+            Assert.Equal(4, await db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM tasks WHERE owns_session = 1;"));
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task MigrateAsync_OnFreshDatabase_SetsIncrementalAutoVacuumWalAndCreatesAllFrozenTablesAndIndexes()
     {
         var tempDir = Path.Combine(Path.GetTempPath(), $"perga-migrator-{Guid.NewGuid():N}");
@@ -37,7 +77,8 @@ public sealed class SqliteMigratorTests
             Assert.Equal("0024_area_execution_target.sql", migrator.Migrations[23].Name);
             Assert.Equal("0025_track_flow.sql", migrator.Migrations[24].Name);
             Assert.Equal("0026_auth_users_sessions.sql", migrator.Migrations[25].Name);
-            Assert.Equal("0027_session_runtime_activity.sql", migrator.Migrations[^1].Name);
+            Assert.Equal("0027_session_runtime_activity.sql", migrator.Migrations[26].Name);
+            Assert.Equal("0028_task_session_ownership.sql", migrator.Migrations[^1].Name);
             await migrator.MigrateAsync(dbPath);
 
             // Idempotent re-run on already-initialized v1 database must not create a spurious backup.

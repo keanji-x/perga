@@ -21,7 +21,7 @@ public sealed partial class TrackActor
         RequirePolicyAvailableCore();
         var model = task.Context is { ValueKind: JsonValueKind.Object } context &&
             context.TryGetProperty("initialModel", out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
-        var reuseFlowSession = IsFlowSessionReuse(task);
+        var reuseFlowSession = FlowConstants.IsFlowSessionReuse(task);
         var session = !FlowConstants.IsFlowTask(task) || reuseFlowSession ? ReadTaskDispatchSessionCore(task) : null;
         var provider = task.Provider;
         if (reuseFlowSession)
@@ -40,7 +40,7 @@ public sealed partial class TrackActor
             task.Role, ReadTaskRequestedAccessCore(task), provider, model, _track.TemplateInputs);
         if (route.Denial is null)
             route = route with { Model = SessionLaunchValidator.NormalizeRequestedModel(route.Model) };
-        if (IsFlowSessionReuse(task) && route.Denial is null && route.Model != model)
+        if (FlowConstants.IsFlowSessionReuse(task) && route.Denial is null && route.Model != model)
             throw KernelException.PolicyDenied($"Template routing requires model '{route.Model}' on the reuse session.");
         if (session is null) return (route, false);
         // Reused sessions can carry a Track default that the catalog does not list.
@@ -176,8 +176,7 @@ public sealed partial class TrackActor
                     else
                     {
                         var failed = current with { Status = TaskRunStatus.Failed, Outcome = FlowOutcome.Attention, StatusDetail = "Task dispatch denied by human.", FinishedAtMs = NowMs(), UpdatedAtMs = NowMs() };
-                        await _taskCoordinator.PersistAndEmitTaskUpdatedCoreAsync(failed, failed.UpdatedAtMs, _actorShutdownCts.Token).ConfigureAwait(false);
-                        _taskCoordinator.ReplaceTaskInMemoryCore(failed);
+                        await _taskCoordinator.PersistAndEmitTaskSettlementCoreAsync(failed, failed.UpdatedAtMs, _actorShutdownCts.Token).ConfigureAwait(false);
                         await OnTaskSettledFlowHookCoreAsync(failed, _actorShutdownCts.Token).ConfigureAwait(false);
                     }
                 }

@@ -48,7 +48,8 @@ public sealed partial class TrackActor
         }
         public void RemoveActiveRun(string id)
         {
-            _activeTasks.Remove(id);
+            if (_activeTasks.Remove(id, out var active))
+                active.Cts.Dispose();
             Volatile.Write(ref _activeTaskCount, _activeTasks.Count);
         }
 
@@ -97,9 +98,7 @@ public sealed partial class TrackActor
             {
                 var now = actor.NowMs();
                 if (active is not null)
-                    await FinalizeCanceledTaskCoreAsync(active, CancellationToken.None).ConfigureAwait(false);
-                else if (task.SessionId is { } sid)
-                    await InterruptSessionQueueForTaskSettlementCoreAsync(sid, CancellationToken.None).ConfigureAwait(false);
+                    RequireCanceledTaskStoppedCore(active);
                 var updatedTask = task with
                 {
                     Status = TaskRunStatus.Canceled,
@@ -108,8 +107,8 @@ public sealed partial class TrackActor
                     FinishedAtMs = task.FinishedAtMs ?? now,
                     UpdatedAtMs = now
                 };
-                ReplaceTaskInMemoryCore(updatedTask);
-                await PersistAndEmitTaskUpdatedCoreAsync(updatedTask, now, CancellationToken.None).ConfigureAwait(false);
+                await PersistAndEmitTaskSettlementCoreAsync(updatedTask, now, CancellationToken.None, activeRun: active)
+                    .ConfigureAwait(false);
                 await ScheduleEligibleTasksCoreAsync(CancellationToken.None).ConfigureAwait(false);
                 await actor.OnTaskSettledFlowHookCoreAsync(updatedTask, CancellationToken.None).ConfigureAwait(false);
                 return updatedTask;
@@ -244,8 +243,7 @@ public sealed partial class TrackActor
                                     FinishedAtMs = actor.NowMs(),
                                     UpdatedAtMs = actor.NowMs()
                                 };
-                                await PersistAndEmitTaskUpdatedCoreAsync(failedWatch, failedWatch.UpdatedAtMs, ct).ConfigureAwait(false);
-                                ReplaceTaskInMemoryCore(failedWatch);
+                                await PersistAndEmitTaskSettlementCoreAsync(failedWatch, failedWatch.UpdatedAtMs, ct).ConfigureAwait(false);
                                 preparationFailed |= await actor.EvaluateFlowAfterTriggersCoreAsync(ct).ConfigureAwait(false);
                                 await actor.TryRunFlowGcCoreAsync(ct).ConfigureAwait(false);
                                 continue;
@@ -305,8 +303,7 @@ public sealed partial class TrackActor
                             FinishedAtMs = actor.NowMs(),
                             UpdatedAtMs = actor.NowMs()
                         };
-                        await PersistAndEmitTaskUpdatedCoreAsync(failed, failed.UpdatedAtMs, ct).ConfigureAwait(false);
-                        ReplaceTaskInMemoryCore(failed);
+                        await PersistAndEmitTaskSettlementCoreAsync(failed, failed.UpdatedAtMs, ct).ConfigureAwait(false);
                         preparationFailed |= await actor.EvaluateFlowAfterTriggersCoreAsync(ct).ConfigureAwait(false);
                         await actor.TryRunFlowGcCoreAsync(ct).ConfigureAwait(false);
                         continue;
@@ -337,7 +334,7 @@ public sealed partial class TrackActor
                                     string.Equals(task.Kind, "terminal", StringComparison.OrdinalIgnoreCase);
                 var workerProvider = route.Provider ?? actor.GetDefaultProviderCore();
                 var previousSession = actor.ReadTaskDispatchSessionCore(task);
-                var preserveSessionContext = TrackActor.IsFlowSessionReuse(task) && previousSession is not null;
+                var preserveSessionContext = FlowConstants.IsFlowSessionReuse(task) && previousSession is not null;
                 if (previousSession is not null &&
                     TryGetActiveOwningTaskCore(previousSession.Id) is { } owningTask &&
                     owningTask.Id != task.Id)
@@ -459,8 +456,7 @@ public sealed partial class TrackActor
                 {
                     var failedAt = actor.NowMs();
                     var failed = task with { Status = TaskRunStatus.Failed, Outcome = FlowOutcome.Attention, OutcomeSummary = ex.Message, StatusDetail = ex.Message, FinishedAtMs = failedAt, UpdatedAtMs = failedAt };
-                    await PersistAndEmitTaskUpdatedCoreAsync(failed, failed.UpdatedAtMs, CancellationToken.None).ConfigureAwait(false);
-                    ReplaceTaskInMemoryCore(failed);
+                    await PersistAndEmitTaskSettlementCoreAsync(failed, failed.UpdatedAtMs, CancellationToken.None).ConfigureAwait(false);
                     await actor.OnTaskSettledFlowHookCoreAsync(failed, CancellationToken.None).ConfigureAwait(false);
                     return false;
                 }
@@ -599,11 +595,14 @@ public sealed partial class TrackActor
             finally
             {
                 if (!actor._actorShutdownCts.IsCancellationRequested)
-                    await actor.EnqueueAsync(_ =>
+                    await actor.EnqueueAsync(async _ =>
                     {
                         if (actor._scheduler.TryGetReservation(initial.SessionId, out var held) && held == reservation)
+                        {
                             actor._scheduler.ReleaseReservation(initial.SessionId);
-                        return Task.CompletedTask;
+                            if (TaskSessionOwnership.UsesBorrowedSession(RequireTaskCore(taskId)))
+                                await actor.PokeSessionCoreAsync(initial.SessionId).ConfigureAwait(false);
+                        }
                     }, CancellationToken.None).ConfigureAwait(false);
             }
 
@@ -651,11 +650,10 @@ public sealed partial class TrackActor
                         WorkerResult = clonedWorkerResult,
                         UpdatedAtMs = now
                     };
-                    ReplaceTaskInMemoryCore(verifyingTask);
-                    if (active.SessionId is { } sid) actor.RevokeSessionRuntime(sid);
-
                     await PersistAndEmitTaskUpdatedCoreAsync(verifyingTask, now, verificationToken)
                         .ConfigureAwait(false);
+                    ReplaceTaskInMemoryCore(verifyingTask);
+                    if (active.SessionId is { } sid) actor.RevokeSessionRuntime(sid);
 
                     return (actor.InterpolateFlowTaskForExecutionCore(verifyingTask), active, mounted.MergedCwd, actor._policy?.Manifest.AfterWorkerDoneCmd);
                 }, verificationToken).ConfigureAwait(false);
@@ -749,10 +747,6 @@ public sealed partial class TrackActor
                     if (!_activeTasks.TryGetValue(taskId, out var current) || !ReferenceEquals(current, prep.Active) ||
                         currentTask.Status != TaskRunStatus.Verifying)
                         throw KernelException.Conflict("The task ended while its gate was running.");
-                    _activeTasks.Remove(taskId);
-                    Volatile.Write(ref _activeTaskCount, _activeTasks.Count);
-                    current.Cts.Dispose();
-                    await InterruptSessionQueueForTaskSettlementCoreAsync(current.SessionId, verificationToken).ConfigureAwait(false);
                     var now = actor.NowMs();
 
                     var resolvedOutcome = gatePassed
@@ -773,7 +767,6 @@ public sealed partial class TrackActor
                         FinishedAtMs = now,
                         UpdatedAtMs = now
                     };
-                    ReplaceTaskInMemoryCore(settledTask);
 
                     var summarySb = new StringBuilder();
                     summarySb.Append($"Task '{settledTask.TaskKey}' (run #{settledTask.RunCount}) settled as {settledTask.Status} (outcome={FlowConstants.FormatOutcome(resolvedOutcome)}).");
@@ -786,10 +779,25 @@ public sealed partial class TrackActor
                         summarySb.Append($" Summary: {resolvedSummary}");
                     }
 
-                    await PersistAndEmitTaskUpdatedCoreAsync(settledTask, now, verificationToken, summarySb.ToString())
-                        .ConfigureAwait(false);
+                    try
+                    {
+                        await PersistAndEmitTaskSettlementCoreAsync(settledTask, now, verificationToken, summarySb.ToString(), activeRun: current)
+                            .ConfigureAwait(false);
+                    }
+                    catch
+                    {
+                        // The gate has finished. If persistence failed, cancellation can still release the run.
+                        if (_activeTasks.ContainsKey(taskId))
+                            current.VerificationWriteFailed = true;
+                        throw;
+                    }
 
-                    if (current.SessionId is { } sid) actor.ScheduleSessionRuntimeCloseCore(sid);
+                    if (current.SessionId is { } sid)
+                    {
+                        actor.ScheduleSessionRuntimeCloseCore(sid);
+                        if (TaskSessionOwnership.UsesBorrowedSession(settledTask))
+                            await actor.PokeSessionCoreAsync(sid).ConfigureAwait(false);
+                    }
                     await actor.EvaluateFlowAfterTriggersCoreAsync(verificationToken).ConfigureAwait(false);
                     await ScheduleEligibleTasksCoreAsync(verificationToken).ConfigureAwait(false);
                     await actor.TryRunFlowGcCoreAsync(verificationToken).ConfigureAwait(false);
@@ -815,33 +823,28 @@ public sealed partial class TrackActor
             Interlocked.Increment(ref actor._inFlightExternalOps);
             try
             {
+                var settlementToken = actor._actorShutdownCts.Token;
                 var active = await actor.EnqueueAsync(async _ =>
                 {
                     await actor.EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
+                    ct.ThrowIfCancellationRequested();
                     if (!_activeTasks.TryGetValue(taskId, out var state))
-                    {
                         throw KernelException.Conflict($"Task '{taskId}' is not active on track '{actor.TrackId}'.");
-                    }
-
                     if (expectedRunCount is { } run && (state.RunCount != run || state.Settling || state.Paused))
                         throw KernelException.Conflict("The task run already changed.");
                     actor.CheckWorkerCompletionCore(state, origin);
                     state.BeginSettlement();
                     if (state.SessionId is { } sid) actor.RevokeSessionRuntime(sid);
                     return state;
-                }, ct).ConfigureAwait(false);
+                }, settlementToken).ConfigureAwait(false);
 
-                var (failedTask, wakePrompt) = await actor.EnqueueAsync<(TaskDto FailedTask, string WakePrompt)>(async _ =>
+                var failedTask = await actor.EnqueueAsync(async _ =>
                 {
                     if (!_activeTasks.TryGetValue(taskId, out var current) || !ReferenceEquals(current, active))
                         throw KernelException.Conflict("The task run already ended.");
                     var currentTask = RequireTaskCore(active.TaskId);
                     if (current.Cts.IsCancellationRequested || currentTask.Status != TaskRunStatus.Running)
                         throw KernelException.Conflict("The task run is no longer running.");
-                    _activeTasks.Remove(taskId);
-                    Volatile.Write(ref _activeTaskCount, _activeTasks.Count);
-                    current.Cts.Dispose();
-                    await InterruptSessionQueueForTaskSettlementCoreAsync(current.SessionId, ct).ConfigureAwait(false);
                     var now = actor.NowMs();
                     var clonedWorkerResult = workerResult?.Clone();
 
@@ -855,19 +858,37 @@ public sealed partial class TrackActor
                         FinishedAtMs = now,
                         UpdatedAtMs = now
                     };
-                    ReplaceTaskInMemoryCore(updatedTask);
 
                     var msg = $"Task '{updatedTask.TaskKey}' (run #{updatedTask.RunCount}) failed: {reason}";
-                    await PersistAndEmitTaskUpdatedCoreAsync(updatedTask, now, ct, msg)
-                        .ConfigureAwait(false);
-                    if (current.SessionId is { } sid) actor.ScheduleSessionRuntimeCloseCore(sid);
-                    await ScheduleEligibleTasksCoreAsync(ct).ConfigureAwait(false);
-                    await actor.OnTaskSettledFlowHookCoreAsync(updatedTask, ct).ConfigureAwait(false);
+                    try
+                    {
+                        await PersistAndEmitTaskSettlementCoreAsync(updatedTask, now, settlementToken, msg, activeRun: current)
+                            .ConfigureAwait(false);
+                    }
+                    catch
+                    {
+                        // A failed transaction leaves the run eligible for completion or cancellation.
+                        if (_activeTasks.ContainsKey(taskId))
+                        {
+                            current.EndSettlement();
+                            if (current.SessionId is { } workerId)
+                                actor.ScheduleSessionRuntimeCloseCore(workerId);
+                        }
+                        throw;
+                    }
+                    if (current.SessionId is { } sid)
+                    {
+                        actor.ScheduleSessionRuntimeCloseCore(sid);
+                        if (TaskSessionOwnership.UsesBorrowedSession(updatedTask))
+                            await actor.PokeSessionCoreAsync(sid).ConfigureAwait(false);
+                    }
+                    await ScheduleEligibleTasksCoreAsync(settlementToken).ConfigureAwait(false);
+                    await actor.OnTaskSettledFlowHookCoreAsync(updatedTask, settlementToken).ConfigureAwait(false);
 
-                    return (updatedTask, msg);
-                }, ct).ConfigureAwait(false);
+                    return updatedTask;
+                }, settlementToken).ConfigureAwait(false);
 
-                await actor.PokePendingWakesAsync(ct).ConfigureAwait(false);
+                await actor.PokePendingWakesAsync(settlementToken).ConfigureAwait(false);
                 return failedTask;
             }
             finally
@@ -897,7 +918,7 @@ public sealed partial class TrackActor
                     return task;
                 }
 
-                if (task.Status == TaskRunStatus.Pending && !TrackActor.IsFlowSessionReuse(task))
+                if (task.Status == TaskRunStatus.Pending && !FlowConstants.IsFlowSessionReuse(task))
                 {
                     pending ??= task;
                 }
@@ -926,20 +947,6 @@ public sealed partial class TrackActor
         public bool IsSessionAutoDrainPausedCore(string sessionId) =>
             TryGetActiveTaskForSessionCore(sessionId) is { Active.Paused: true };
 
-        public async Task InterruptSessionQueueForTaskSettlementCoreAsync(string? sessionId, CancellationToken ct)
-        {
-            if (sessionId is null || actor._store.SessionMessages is null) return;
-            var queued = await actor.Messages.ListQueueAsync(sessionId, ct).ConfigureAwait(false);
-            var changed = false;
-            foreach (var message in queued)
-            {
-                if (message.Delivery is not ("queued" or "unknown")) continue;
-                if (await actor.Messages.TransitionAsync(message with { Delivery = "interrupted" }, message.Delivery, ct).ConfigureAwait(false))
-                    changed = true;
-            }
-            if (changed) actor.NotifyQueueChangedCore(sessionId);
-        }
-
         public void RequireDispatchWorkspace(AgentSessionDto session)
         {
             if (TryGetActiveOwningTaskCore(session.Id) is { } task &&
@@ -964,24 +971,30 @@ public sealed partial class TrackActor
             return null;
         }
 
-        public void RequireTasksOutsideVerification(IEnumerable<ActiveTaskRunState> runs)
+        public void RequireTasksOutsideVerification(IEnumerable<ActiveTaskRunState> runs, bool allowFailedSettlement = false)
         {
-            if (runs.Any(run => _tasks.FirstOrDefault(t => string.Equals(t.Id, run.TaskId, StringComparison.Ordinal))?.Status == TaskRunStatus.Verifying))
+            if (runs.Any(run => !(allowFailedSettlement && run.VerificationWriteFailed) &&
+                _tasks.FirstOrDefault(t => string.Equals(t.Id, run.TaskId, StringComparison.Ordinal))?.Status == TaskRunStatus.Verifying))
                 throw KernelException.Conflict("Wait for the current verification to finish.");
         }
 
         public void BeginTaskCancellationCore(ActiveTaskRunState active)
         {
-            RequireTasksOutsideVerification([active]);
+            RequireTasksOutsideVerification([active], allowFailedSettlement: true);
             active.BeginSettlement();
             active.Cts.Cancel();
             if (active.SessionId is { } sessionId)
             {
-                actor._runtimes.Get(sessionId).CancelLaunch();
+                if (!HasQueuedBorrowedInputCore(active, sessionId))
+                    actor._runtimes.Get(sessionId).CancelLaunch();
                 actor.RevokeSessionRuntime(sessionId);
                 if (actor._scheduler.TryGetActive(sessionId, out var turn)) actor.AbortTurn(turn);
             }
         }
+
+        private bool HasQueuedBorrowedInputCore(ActiveTaskRunState active, string sessionId) =>
+            actor._sessions.TryGetValue(sessionId, out var session) && session.Status == "queued" &&
+            TaskSessionOwnership.UsesBorrowedSession(RequireTaskCore(active.TaskId));
 
         // The provider may call back into the actor during shutdown, so never await it in the mailbox.
         public async Task CloseCanceledWorkerAsync(ActiveTaskRunState active)
@@ -1008,23 +1021,27 @@ public sealed partial class TrackActor
             }
         }
 
-        public async Task FinalizeCanceledTaskCoreAsync(ActiveTaskRunState active, CancellationToken ct)
+        public void FinalizeCanceledTaskCore(ActiveTaskRunState active)
+        {
+            RequireCanceledTaskStoppedCore(active);
+            RemoveActiveRun(active.TaskId);
+        }
+
+        private void RequireCanceledTaskStoppedCore(ActiveTaskRunState active)
         {
             if (!_activeTasks.TryGetValue(active.TaskId, out var current) || !ReferenceEquals(active, current))
                 throw KernelException.Conflict("The task run already ended.");
-            if (active.SessionId is { } id && (actor._scheduler.IsBusy(id) || actor._runtimes.Get(id).HasActiveWork || actor._runtimes.TryGetOpen(id, out _)))
+            if (active.SessionId is { } id && (actor._scheduler.IsBusy(id) ||
+                actor._runtimes.TryGetOpen(id, out _) || actor._runtimes.IsShutdownUnconfirmed(id) ||
+                (!HasQueuedBorrowedInputCore(active, id) && actor._runtimes.Get(id).HasActiveWork)))
                 throw new KernelException(KernelErrorCode.SessionRecoveryRequired, "Worker shutdown has not been confirmed.");
-            _activeTasks.Remove(active.TaskId);
-            Volatile.Write(ref _activeTaskCount, _activeTasks.Count);
-            active.Cts.Dispose();
-            await InterruptSessionQueueForTaskSettlementCoreAsync(active.SessionId, ct).ConfigureAwait(false);
         }
 
         public async Task CancelAllInFlightTasksAsync(string reason, CancellationToken ct)
         {
             var (runs, watches) = await actor.EnqueueAsync(async _ =>
             {
-                RequireTasksOutsideVerification(_activeTasks.Values);
+                RequireTasksOutsideVerification(_activeTasks.Values, allowFailedSettlement: true);
                 var activeRuns = _activeTasks.Values.ToArray();
                 ct.ThrowIfCancellationRequested();
                 var canceledWatches = new List<ActiveWatchState>();
@@ -1037,9 +1054,8 @@ public sealed partial class TrackActor
                         Status = TaskRunStatus.Canceled, Ready = false, StatusDetail = reason,
                         FinishedAtMs = now, UpdatedAtMs = now
                     };
-                    await PersistAndEmitTaskUpdatedCoreAsync(canceled, now, CancellationToken.None, suppressDefaultWake: true)
+                    await PersistAndEmitTaskSettlementCoreAsync(canceled, now, CancellationToken.None, suppressDefaultWake: true)
                         .ConfigureAwait(false);
-                    ReplaceTaskInMemoryCore(canceled);
                     canceledWatches.AddRange(actor.BeginWatchCancellationForNodeCore(watch.NodeId));
                 }
                 foreach (var active in activeRuns) BeginTaskCancellationCore(active);
@@ -1055,11 +1071,11 @@ public sealed partial class TrackActor
                 await actor.EnqueueAsync(async _ =>
                 {
                     var now = actor.NowMs();
-                    await FinalizeCanceledTaskCoreAsync(active, CancellationToken.None).ConfigureAwait(false);
+                    RequireCanceledTaskStoppedCore(active);
                     var task = RequireTaskCore(active.TaskId);
                     var canceledTask = task with { Status = TaskRunStatus.Canceled, Ready = false, StatusDetail = reason, FinishedAtMs = now, UpdatedAtMs = now };
-                    ReplaceTaskInMemoryCore(canceledTask);
-                    await PersistAndEmitTaskUpdatedCoreAsync(canceledTask, now, CancellationToken.None).ConfigureAwait(false);
+                    await PersistAndEmitTaskSettlementCoreAsync(canceledTask, now, CancellationToken.None, activeRun: active)
+                        .ConfigureAwait(false);
                 }, CancellationToken.None).ConfigureAwait(false);
             }
         }
@@ -1090,18 +1106,57 @@ public sealed partial class TrackActor
         public EventEnvelopeDto CreateTaskUpdatedEventCore(long now) =>
             new(null, actor._track.AreaId, actor.TrackId, KernelEventKinds.TaskUpdated, JsonHelpers.EmptyObject, now);
 
-        public async Task PersistAndEmitTaskUpdatedCoreAsync(
-            TaskDto task,
-            long now,
-            CancellationToken ct, string? wakePrompt = null, bool suppressDefaultWake = false)
+        public async Task PersistAndEmitTaskUpdatedCoreAsync(TaskDto task, long now, CancellationToken ct)
         {
             var evt = CreateTaskUpdatedEventCore(now);
             await actor._eventHub.EnsureInitializedFromStoreAsync(actor._store, ct).ConfigureAwait(false);
-            await actor._store.UpsertTaskAsync(task, evt, ct, wakePrompt: wakePrompt, suppressDefaultWake: suppressDefaultWake).ConfigureAwait(false);
-            if (task.FinishedAtMs is not null && task.SessionId is { } childId && actor._sessions.TryGetValue(childId, out var child) &&
+            await actor._store.UpsertTaskAsync(task, evt, ct).ConfigureAwait(false);
+            await actor._eventHub.PublishSyncedAfterStoreWriteAsync(actor._store, evt, ct).ConfigureAwait(false);
+        }
+
+        private string? ReadOwnedSessionForSettlementCore(TaskDto task) =>
+            TaskSessionOwnership.OwnsSessionLifecycle(task) && task.SessionId != actor._track.LeadSessionId
+                ? task.SessionId : null;
+
+        public IReadOnlyDictionary<string, string?> FlowSettlementsCore(IReadOnlyList<TaskDto> tasks) =>
+            tasks.Where(task => task.Status == TaskRunStatus.Canceled &&
+                    _tasks.Any(previous => previous.Id == task.Id &&
+                        previous.Status is TaskRunStatus.Pending or TaskRunStatus.Running or TaskRunStatus.Verifying))
+                .ToDictionary(task => task.Id, ReadOwnedSessionForSettlementCore, StringComparer.Ordinal);
+
+        public void ApplyTaskSessionSettlementCore(string sessionId, TaskSettlementResult result)
+        {
+            if (result.Session is { } session)
+                actor._sessions[sessionId] = session;
+            if (result.QueueChanged)
+                actor.NotifyQueueChangedCore(sessionId);
+        }
+
+        public async Task PersistAndEmitTaskSettlementCoreAsync(
+            TaskDto task, long now, CancellationToken ct, string? wakePrompt = null, bool suppressDefaultWake = false,
+            ActiveTaskRunState? activeRun = null)
+        {
+            var evt = CreateTaskUpdatedEventCore(now);
+            await actor._eventHub.EnsureInitializedFromStoreAsync(actor._store, ct).ConfigureAwait(false);
+            var ownedSessionId = ReadOwnedSessionForSettlementCore(task);
+            var result = await actor._store.SettleTaskAsync(task, evt, ct, ownedSessionId, wakePrompt, suppressDefaultWake)
+                .ConfigureAwait(false);
+            ReplaceTaskInMemoryCore(task);
+            if (activeRun is not null)
+                RemoveActiveRun(activeRun.TaskId);
+            if (ownedSessionId is { } sessionId)
+                ApplyTaskSessionSettlementCore(sessionId, result);
+            try
+            {
+                await actor._eventHub.PublishSyncedAfterStoreWriteAsync(actor._store, evt, ct, allowFallback: false).ConfigureAwait(false);
+            }
+            catch (Exception error) when (!actor._actorShutdownCts.IsCancellationRequested)
+            {
+                System.Diagnostics.Trace.TraceWarning("Could not publish settlement for task {0}: {1}", task.Id, error);
+            }
+            if (!suppressDefaultWake && task.SessionId is { } childId && actor._sessions.TryGetValue(childId, out var child) &&
                 child.NotifyParent == "task_settled" && child.ParentSessionId is { } parentId)
                 await actor.PokeSessionCoreAsync(parentId).ConfigureAwait(false);
-            await actor._eventHub.PublishSyncedAfterStoreWriteAsync(actor._store, evt, ct).ConfigureAwait(false);
         }
 
         public sealed class ActiveTaskRunState(
@@ -1117,9 +1172,11 @@ public sealed partial class TrackActor
             public CancellationTokenSource Cts { get; } = cts;
             public CancellationToken Token { get; } = cts.Token;
             public bool Paused { get; private set; }
+            public bool VerificationWriteFailed { get; set; }
             public void SetPaused(bool paused) => Paused = paused;
             public bool Settling { get; private set; }
             public void BeginSettlement() => Settling = true;
+            public void EndSettlement() => Settling = false;
         }
 
     }

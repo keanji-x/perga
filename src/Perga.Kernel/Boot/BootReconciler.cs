@@ -32,11 +32,11 @@ public sealed class BootReconciler : IBootReconciler
     {
         // Phase 1 converges persistence before activating any actor.
         var preparingTracks = await _store.RecoverWorkspacePreparationsAsync(ct).ConfigureAwait(false);
-        var queuedInputs = await _store.RecoverSessionInputsAsync(ct).ConfigureAwait(false);
         var affectedTrackIds = new HashSet<string>(StringComparer.Ordinal);
 
         // Mark all in-flight turns & tasks as interrupted in persistent store.
         var storeAffected = await _store.MarkInFlightInterruptedOnBootAsync(ct).ConfigureAwait(false);
+        var queuedInputs = await _store.RecoverSessionInputsAsync(ct).ConfigureAwait(false);
         foreach (var trackId in storeAffected)
         {
             affectedTrackIds.Add(trackId);

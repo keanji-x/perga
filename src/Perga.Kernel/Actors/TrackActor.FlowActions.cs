@@ -35,8 +35,7 @@ public sealed partial class TrackActor
                 FinishedAtMs = failNow,
                 UpdatedAtMs = failNow
             };
-            _taskCoordinator.ReplaceTaskInMemoryCore(failed);
-            await _taskCoordinator.PersistAndEmitTaskUpdatedCoreAsync(failed, failNow, ct).ConfigureAwait(false);
+            await _taskCoordinator.PersistAndEmitTaskSettlementCoreAsync(failed, failNow, ct).ConfigureAwait(false);
             await OnTaskSettledFlowHookCoreAsync(failed, ct).ConfigureAwait(false);
             return false;
         }
@@ -157,9 +156,6 @@ public sealed partial class TrackActor
                 return;
             }
 
-            _taskCoordinator.RemoveActiveRun(taskId);
-            active.Cts.Dispose();
-
             var now = NowMs();
             var current = _taskCoordinator.RequireTaskCore(taskId);
             var succeeded = errorMessage is null && turn is { Status: "completed" };
@@ -172,8 +168,9 @@ public sealed partial class TrackActor
                 FinishedAtMs = now,
                 UpdatedAtMs = now
             };
-            _taskCoordinator.ReplaceTaskInMemoryCore(settled);
-            await _taskCoordinator.PersistAndEmitTaskUpdatedCoreAsync(settled, now, CancellationToken.None, suppressDefaultWake: true).ConfigureAwait(false);
+            await _taskCoordinator.PersistAndEmitTaskSettlementCoreAsync(settled, now, CancellationToken.None,
+                suppressDefaultWake: true, activeRun: active).ConfigureAwait(false);
+            await PokeSessionCoreAsync(targetSessionId).ConfigureAwait(false);
             await OnTaskSettledFlowHookCoreAsync(settled, CancellationToken.None).ConfigureAwait(false);
         }, CancellationToken.None).ConfigureAwait(false);
     }
@@ -557,9 +554,8 @@ public sealed partial class TrackActor
                 : null;
             shouldPokeLead = wakePrompt is not null;
 
-            await _taskCoordinator.PersistAndEmitTaskUpdatedCoreAsync(settled, now, CancellationToken.None, wakePrompt: wakePrompt, suppressDefaultWake: wakePrompt is null)
+            await _taskCoordinator.PersistAndEmitTaskSettlementCoreAsync(settled, now, CancellationToken.None, wakePrompt: wakePrompt, suppressDefaultWake: wakePrompt is null)
                 .ConfigureAwait(false);
-            _taskCoordinator.ReplaceTaskInMemoryCore(settled);
             _activeWatches.Remove(watchState.TaskId);
             watchState.Cts.Dispose();
             await OnTaskSettledFlowHookCoreAsync(settled, CancellationToken.None).ConfigureAwait(false);

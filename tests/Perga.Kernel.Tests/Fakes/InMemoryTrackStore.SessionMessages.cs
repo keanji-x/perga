@@ -20,6 +20,46 @@ internal sealed partial class InMemoryTrackStore : ISessionInputStore, ISessionM
     public Task<IReadOnlyList<SessionTurnDto>> ListSessionTurnsAsync(string sessionId, CancellationToken ct) =>
         Task.FromResult(GetTurnsForSession(sessionId));
 
+    private TaskSettlementResult InterruptUnstartedOwnedSessionWorkLocked(string sessionId, long now)
+    {
+        var turns = _turnsBySession.GetValueOrDefault(sessionId);
+        var interrupted = new HashSet<string>(StringComparer.Ordinal);
+        if (turns is not null)
+        {
+            for (var i = 0; i < turns.Count; i++)
+            {
+                var turn = turns[i];
+                if (turn.Status != "queued" || turn.StartedAtMs is not null) continue;
+                var messages = _messages.Values.Where(message => message.TurnId == turn.Id).ToArray();
+                if (messages.Length == 0 || messages.Any(message => message.SessionId != sessionId ||
+                    message.Delivery != "queued" || message.DeliveredTurnId is not null))
+                    continue;
+                turns[i] = turn with { Status = "interrupted", CompletedAtMs = now, ErrorText = "Task settled before turn started." };
+                interrupted.Add(turn.Id);
+            }
+        }
+
+        var changed = false;
+        foreach (var message in _messages.Values.Where(message => message.SessionId == sessionId && message.Delivery == "queued" &&
+            (message.TurnId is null || interrupted.Contains(message.TurnId))).ToArray())
+        {
+            var key = Key(message);
+            _messages[key] = message with { Delivery = "interrupted" };
+            if (_inputs.TryGetValue(key, out var input))
+                _inputs[key] = input with { Receipt = input.Receipt with { DeliveryState = "interrupted", TurnStatus = "interrupted" } };
+            changed = true;
+        }
+
+        if (interrupted.Count > 0 && _sessions[sessionId] is { Status: "queued" } session &&
+            !turns!.Any(turn => turn.Status is "queued" or "running" or "verifying"))
+        {
+            var idle = session with { Status = "idle", UpdatedAtMs = now };
+            _sessions[sessionId] = idle;
+            return new(changed, idle);
+        }
+        return new(changed);
+    }
+
     public Task<PersistedSessionInput?> FindByKeyAsync(string sessionId, string key, CancellationToken ct)
     {
         lock (_gate)

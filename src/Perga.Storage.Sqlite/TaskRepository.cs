@@ -1,7 +1,10 @@
+using System.Text.Json;
 using Dapper;
 using Microsoft.Data.Sqlite;
 using Perga.Contracts;
+using Perga.Kernel.Events;
 using Perga.Kernel.Ports;
+using Perga.Kernel.Tasks;
 
 namespace Perga.Storage.Sqlite;
 
@@ -23,10 +26,8 @@ internal sealed class TaskRepository
         CancellationToken ct,
         AgentSessionDto? session = null,
         EventEnvelopeDto? sessionEvent = null,
-        string? wakePrompt = null,
         SessionMessage? initialMessage = null,
-        bool writeNewRunBoundary = false,
-        bool suppressDefaultWake = false)
+        bool writeNewRunBoundary = false)
     {
         ArgumentNullException.ThrowIfNull(task);
         _context.EnsureInitialized();
@@ -51,31 +52,68 @@ internal sealed class TaskRepository
                 if (initialMessage is not null)
                     await SessionMessageSql.InsertSessionMessageAsync(conn, tx, initialMessage, innerCt).ConfigureAwait(false);
 
-                if (task.FinishedAtMs is not null && task.SessionId is not null)
-                {
-                    await conn.ExecuteAsync(new CommandDefinition("""
-                        UPDATE session_messages SET delivery = 'interrupted'
-                        WHERE session_id = @SessionId AND delivery = 'queued';
-                        """, new { task.SessionId }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
-                }
-
-                if (task.FinishedAtMs is not null && !suppressDefaultWake)
-                {
-                    var child = task.SessionId is null ? null : await conn.QuerySingleOrDefaultAsync<(string? Parent, string Notify)?>(new CommandDefinition(
-                        "SELECT parent_session_id, notify_parent FROM agent_sessions WHERE id=@Id;", new { Id = task.SessionId }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
-                    if (child?.Parent is { } parentId && child.Value.Notify == "task_settled" &&
-                        await conn.ExecuteScalarAsync<bool>(new CommandDefinition(
-                            "SELECT EXISTS(SELECT 1 FROM agent_sessions WHERE id=@Id AND archived_at_ms IS NULL);", new { Id = parentId }, tx, cancellationToken: innerCt)).ConfigureAwait(false))
-                        await TrackWakesRepository.EnqueueWakeOnceInternalAsync(conn, tx, TrackWakeRequests.TaskSettled(task, wakePrompt) with { TargetSessionId = parentId }, task.UpdatedAtMs, innerCt).ConfigureAwait(false);
-                    else if (child is null || child.Value.Parent is null)
-                        await TrackWakesRepository.EnqueueWakeOnceInternalAsync(conn, tx, TrackWakeRequests.TaskSettled(task, wakePrompt), task.UpdatedAtMs, innerCt).ConfigureAwait(false);
-                }
                 if (evt is not null)
                 {
                     await EventRepository.InsertEventInternalAsync(conn, tx, evt, innerCt).ConfigureAwait(false);
                 }
             },
             ct);
+    }
+
+    public Task<TaskSettlementResult> SettleTaskAsync(
+        TaskDto task, EventEnvelopeDto? evt, CancellationToken ct,
+        string? interruptOwnedSessionId, string? wakePrompt, bool suppressDefaultWake)
+    {
+        _context.EnsureInitialized();
+        return _context.Writer.EnqueueAsync(async (conn, tx, innerCt) =>
+        {
+            var result = await SettleTaskInternalAsync(conn, tx, task, interruptOwnedSessionId, wakePrompt,
+                suppressDefaultWake, innerCt).ConfigureAwait(false);
+            if (evt is not null)
+                await EventRepository.InsertEventInternalAsync(conn, tx, evt, innerCt).ConfigureAwait(false);
+            return result;
+        }, ct);
+    }
+
+    internal async Task<TaskSettlementResult> SettleTaskInternalAsync(
+        SqliteConnection conn, SqliteTransaction tx, TaskDto task, string? interruptOwnedSessionId,
+        string? wakePrompt, bool suppressDefaultWake, CancellationToken ct)
+    {
+        await UpsertTaskInternalAsync(conn, tx, task, ct).ConfigureAwait(false);
+        var queueChanged = false;
+        AgentSessionDto? session = null;
+        if (interruptOwnedSessionId is { } sessionId)
+        {
+            (queueChanged, var sessionConverged) = await SessionMessageSql.InterruptUnstartedOwnedSessionWorkAsync(
+                conn, tx, sessionId, task.UpdatedAtMs, ct).ConfigureAwait(false);
+            if (sessionConverged)
+            {
+                var row = await conn.QuerySingleAsync<SessionRepository.SessionRow>(new CommandDefinition(
+                    $"SELECT {SessionRepository.SessionColumns} FROM agent_sessions WHERE id = @Id;",
+                    new { Id = sessionId }, tx, cancellationToken: ct)).ConfigureAwait(false);
+                var track = await conn.QuerySingleAsync<(string AreaId, string? LeadSessionId)>(new CommandDefinition(
+                    "SELECT area_id, lead_session_id FROM tracks WHERE id = @Id;",
+                    new { Id = row.TrackId }, tx, cancellationToken: ct)).ConfigureAwait(false);
+                session = SessionRepository.MapSession(row, track.LeadSessionId);
+                var sessionEvent = new EventEnvelopeDto(null, track.AreaId, session.TrackId, KernelEventKinds.SessionUpdated,
+                    JsonSerializer.SerializeToElement(session, SqliteJsonUpcaster.FlexibleJsonOptions), session.UpdatedAtMs);
+                await EventRepository.InsertEventInternalAsync(conn, tx, sessionEvent, ct).ConfigureAwait(false);
+            }
+        }
+
+        if (!suppressDefaultWake)
+        {
+            var child = task.SessionId is null ? null : await conn.QuerySingleOrDefaultAsync<(string? Parent, string Notify)?>(new CommandDefinition(
+                "SELECT parent_session_id, notify_parent FROM agent_sessions WHERE id = @Id;", new { Id = task.SessionId }, tx, cancellationToken: ct)).ConfigureAwait(false);
+            if (child?.Parent is { } parentId && child.Value.Notify == "task_settled" &&
+                await conn.ExecuteScalarAsync<bool>(new CommandDefinition(
+                    "SELECT EXISTS(SELECT 1 FROM agent_sessions WHERE id = @Id AND archived_at_ms IS NULL);", new { Id = parentId }, tx, cancellationToken: ct)).ConfigureAwait(false))
+                await TrackWakesRepository.EnqueueWakeOnceInternalAsync(conn, tx, TrackWakeRequests.TaskSettled(task, wakePrompt) with { TargetSessionId = parentId }, task.UpdatedAtMs, ct).ConfigureAwait(false);
+            else if (child?.Parent is null)
+                await TrackWakesRepository.EnqueueWakeOnceInternalAsync(conn, tx, TrackWakeRequests.TaskSettled(task, wakePrompt), task.UpdatedAtMs, ct).ConfigureAwait(false);
+        }
+
+        return new(queueChanged, session);
     }
 
     internal async Task UpsertTaskInternalAsync(
@@ -99,7 +137,7 @@ internal sealed class TaskRepository
                     id, track_id, block_id, task_key, generation, kind, provider, role,
                     access_mode, ready, depends_on_json, goal_or_cmd, context_json,
                     acceptance, gate_json, status, status_detail, semantic_verdict,
-                    semantic_note, session_id, run_count, worker_result_json, meta_json,
+                    semantic_note, session_id, owns_session, run_count, worker_result_json, meta_json,
                     gate_verdict_json, started_at_ms, finished_at_ms,
                     outcome, outcome_summary, trigger_run_key, archived_at_ms,
                     created_at_ms, updated_at_ms
@@ -108,7 +146,7 @@ internal sealed class TaskRepository
                     @Id, @TrackId, @BlockId, @TaskKey, @Generation, @Kind, @Provider, @Role,
                     @AccessMode, @Ready, @DependsOnJson, @GoalOrCmd, @ContextJson,
                     @Acceptance, @GateJson, @Status, @StatusDetail, @SemanticVerdict,
-                    @SemanticNote, @SessionId, @RunCount, @WorkerResultJson, @MetaJson,
+                    @SemanticNote, @SessionId, @OwnsSession, @RunCount, @WorkerResultJson, @MetaJson,
                     @GateVerdictJson, @StartedAtMs, @FinishedAtMs,
                     @Outcome, @OutcomeSummary, @TriggerRunKey, @ArchivedAtMs,
                     @CreatedAtMs, @UpdatedAtMs
@@ -132,6 +170,7 @@ internal sealed class TaskRepository
                     semantic_verdict = excluded.semantic_verdict,
                     semantic_note = excluded.semantic_note,
                     session_id = excluded.session_id,
+                    owns_session = excluded.owns_session,
                     run_count = excluded.run_count,
                     worker_result_json = excluded.worker_result_json,
                     meta_json = excluded.meta_json,
@@ -166,6 +205,7 @@ internal sealed class TaskRepository
                     SemanticVerdict = SqliteJsonUpcaster.FormatSemanticVerdict(task.SemanticVerdict),
                     task.SemanticNote,
                     task.SessionId,
+                    OwnsSession = TaskSessionOwnership.UsesBorrowedSession(task) ? 0 : 1,
                     task.RunCount,
                     WorkerResultJson = SqliteJsonUpcaster.SerializeNullableElement(task.WorkerResult),
                     MetaJson = task.Meta.HasValue ? SqliteJsonUpcaster.SerializeElement(task.Meta.Value) : "{}",

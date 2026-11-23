@@ -110,7 +110,9 @@ public sealed partial class TrackActor
             JsonHelpers.ToElement(presented), next.UpdatedAtMs);
         await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
         var snapshot = policy?.JsSource;
-        await _store.UpdateTrackTemplateAndEmitAsync(next, snapshot, evt, ct,
+        if (flow is not null)
+            flow = flow with { SettlingTasks = _taskCoordinator.FlowSettlementsCore(flow.Tasks) };
+        var settled = await _store.UpdateTrackTemplateAndEmitAsync(next, snapshot, evt, ct,
             writeData: next.DataRev != _track.DataRev, flow: flow, reportSeed: reportSeed,
             beforeWrite: CaptureMcpWriteFenceCore(authorization)).ConfigureAwait(false);
         var pluginsChanged = !_track.EnabledPlugins.SequenceEqual(next.EnabledPlugins, StringComparer.Ordinal);
@@ -125,6 +127,8 @@ public sealed partial class TrackActor
         if (flow is not null)
             foreach (var task in flow.Tasks) _taskCoordinator.ReplaceTaskInMemoryCore(task);
         _ = BeginFlowCancellationCore(canceledRuns, stoppingNodes);
+        foreach (var (sessionId, settlement) in settled)
+            _taskCoordinator.ApplyTaskSessionSettlementCore(sessionId, settlement);
 
         var lifecycle = _actorShutdownCts.Token;
         try

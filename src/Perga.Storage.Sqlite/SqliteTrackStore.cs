@@ -309,13 +309,13 @@ public sealed class SqliteTrackStore : ITrackStore, IAsyncDisposable, ISessionIn
     public Task UpdateTrackAndEmitAsync(TrackDto track, EventEnvelopeDto? evt, CancellationToken ct, bool writeData = false, Action? beforeWrite = null) =>
         _trackUpdateRepository.UpdateTrackAndEmitAsync(track, evt, ct, writeData, beforeWrite);
 
-    public Task UpdateTrackTemplateAndEmitAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto evt, CancellationToken ct, bool writeData = false, TrackFlowUpdate? flow = null, TemplateReportSeed? reportSeed = null, Action? beforeWrite = null) =>
+    public Task<IReadOnlyDictionary<string, TaskSettlementResult>> UpdateTrackTemplateAndEmitAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto evt, CancellationToken ct, bool writeData = false, TrackFlowUpdate? flow = null, TemplateReportSeed? reportSeed = null, Action? beforeWrite = null) =>
         _trackUpdateRepository.UpdateTrackTemplateAndEmitAsync(track, templateSnapshot, evt, ct, writeData, flow, reportSeed, beforeWrite);
 
     public Task RecordFlowFileHashAsync(string trackId, long flowRev, string sha256, CancellationToken ct) =>
         _trackUpdateRepository.RecordFlowFileHashAsync(trackId, flowRev, sha256, ct);
 
-    public Task CommitTrackFlowAsync(
+    public Task<IReadOnlyDictionary<string, TaskSettlementResult>> CommitTrackFlowAsync(
         TrackDto track,
         long expectedFlowRev,
         IReadOnlyList<TaskDto> upsertedTasks,
@@ -323,8 +323,9 @@ public sealed class SqliteTrackStore : ITrackStore, IAsyncDisposable, ISessionIn
         IReadOnlyList<string> canceledFlowScheduleIds,
         IReadOnlyList<EventEnvelopeDto> events,
         CancellationToken ct,
-        Action? beforeWrite = null) =>
-        _trackUpdateRepository.CommitTrackFlowAsync(track, expectedFlowRev, upsertedTasks, activeFlowSchedules, canceledFlowScheduleIds, events, ct, beforeWrite);
+        Action? beforeWrite = null,
+        IReadOnlyDictionary<string, string?>? settlingTasks = null) =>
+        _trackUpdateRepository.CommitTrackFlowAsync(track, expectedFlowRev, upsertedTasks, activeFlowSchedules, canceledFlowScheduleIds, events, ct, beforeWrite, settlingTasks);
 
     public Task DeleteTrackAsync(string trackId, CancellationToken ct) =>
         _trackDeletionRepository.DeleteTrackAsync(trackId, ct);
@@ -352,11 +353,13 @@ public sealed class SqliteTrackStore : ITrackStore, IAsyncDisposable, ISessionIn
         CancellationToken ct,
         AgentSessionDto? session = null,
         EventEnvelopeDto? sessionEvent = null,
-        string? wakePrompt = null,
         SessionMessage? initialMessage = null,
-        bool writeNewRunBoundary = false,
-        bool suppressDefaultWake = false) =>
-        _taskRepository.UpsertTaskAsync(task, evt, ct, session, sessionEvent, wakePrompt, initialMessage, writeNewRunBoundary, suppressDefaultWake);
+        bool writeNewRunBoundary = false) =>
+        _taskRepository.UpsertTaskAsync(task, evt, ct, session, sessionEvent, initialMessage, writeNewRunBoundary);
+
+    public Task<TaskSettlementResult> SettleTaskAsync(TaskDto task, EventEnvelopeDto? evt, CancellationToken ct,
+        string? interruptOwnedSessionId = null, string? wakePrompt = null, bool suppressDefaultWake = false) =>
+        _taskRepository.SettleTaskAsync(task, evt, ct, interruptOwnedSessionId, wakePrompt, suppressDefaultWake);
 
     public Task UpsertSessionAsync(AgentSessionDto session, EventEnvelopeDto? evt, CancellationToken ct) =>
         _sessionRepository.UpsertSessionAsync(session, evt, ct);

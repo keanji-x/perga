@@ -37,6 +37,13 @@ internal sealed class SessionInputsRepository
         JOIN tracks track ON track.id = s.track_id
         """;
 
+    private const string WholeQueuedBatch = """
+        t.status = 'queued' AND t.started_at_ms IS NULL AND t.completed_at_ms IS NULL AND t.provider_turn_ref IS NULL
+        AND NOT EXISTS (SELECT 1 FROM session_messages member WHERE member.turn_id = t.id
+                        AND (member.delivery <> 'queued' OR member.session_id <> t.session_id
+                             OR member.delivered_turn_id IS NOT NULL OR member.resolved_at_ms IS NOT NULL))
+        """;
+
     public async Task<bool> HasSessionTurnAsync(string sessionId, string turnId, CancellationToken ct)
     {
         _context.EnsureInitialized();
@@ -77,7 +84,12 @@ internal sealed class SessionInputsRepository
         _context.EnsureInitialized();
         await using var conn = await _context.OpenReadConnectionAsync(ct).ConfigureAwait(false);
         var rows = await conn.QueryAsync<InputRow>(new CommandDefinition(
-            InputSelect + "\nWHERE s.track_id = @TrackId AND i.delivery = 'queued' AND t.status = 'queued' ORDER BY i.ordinal;",
+            InputSelect + $"""
+
+            WHERE s.track_id = @TrackId AND i.delivery = 'queued' AND t.epoch = s.epoch
+              AND {WholeQueuedBatch}
+            ORDER BY i.ordinal;
+            """,
             new { TrackId = trackId }, cancellationToken: ct)).ConfigureAwait(false);
         return GroupInputs(rows).Select(g => CombineInput(g)).ToArray();
     }
@@ -223,10 +235,14 @@ internal sealed class SessionInputsRepository
         _context.Writer.EnqueueAsync(async (conn, tx, innerCt) =>
         {
             var updated = await conn.ExecuteAsync(new CommandDefinition(
-                """
+                $"""
+                WITH claimable(id) AS MATERIALIZED (
+                    SELECT t.id FROM session_turns t
+                    WHERE t.id = @TurnId AND t.session_id = @Id AND {WholeQueuedBatch}
+                )
                 UPDATE session_messages SET delivery = 'dispatching'
-                WHERE turn_id = @TurnId AND delivery = 'queued';
-                """, new { input.Receipt.TurnId }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
+                WHERE turn_id IN (SELECT id FROM claimable) AND delivery = 'queued';
+                """, new { input.Receipt.TurnId, session.Id }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
             if (updated == 0) return false;
             RequireSome(updated);
             SessionMessageSql.RequireOne(await conn.ExecuteAsync(new CommandDefinition(
@@ -323,8 +339,45 @@ internal sealed class SessionInputsRepository
                     .ConfigureAwait(false);
             }
 
+            // Older task settlement could interrupt an unclaimed user's promoted turn without updating the turn.
+            await conn.ExecuteAsync(new CommandDefinition("""
+                UPDATE session_messages SET delivery = 'queued'
+                WHERE delivery = 'interrupted' AND turn_id IN (
+                    SELECT t.id FROM session_turns t
+                    JOIN agent_sessions s ON s.id = t.session_id
+                    JOIN tracks tr ON tr.id = s.track_id
+                    WHERE t.status = 'queued' AND t.started_at_ms IS NULL AND t.completed_at_ms IS NULL
+                      AND t.provider_turn_ref IS NULL AND t.trigger_kind = 'user'
+                      AND tr.closed_at_ms IS NULL AND s.archived_at_ms IS NULL AND s.status = 'queued' AND t.epoch = s.epoch
+                      AND NOT EXISTS (
+                          SELECT 1 FROM session_turns other WHERE other.session_id = s.id AND other.id <> t.id
+                            AND (LOWER(other.status) IN ('queued', 'running', 'verifying', 'unknown')
+                                 OR other.turn_index > t.turn_index)
+                      )
+                      AND NOT EXISTS (SELECT 1 FROM tasks tk WHERE tk.session_id = s.id AND tk.owns_session = 1)
+                      AND EXISTS (SELECT 1 FROM session_messages m WHERE m.turn_id = t.id AND m.delivery = 'interrupted')
+                      AND NOT EXISTS (
+                          SELECT 1 FROM session_messages m WHERE m.turn_id = t.id
+                            AND (m.session_id <> t.session_id OR m.delivery NOT IN ('queued', 'interrupted')
+                                 OR m.delivered_turn_id IS NOT NULL OR m.resolved_at_ms IS NOT NULL
+                                 OR m.kind NOT IN ('input', 'queue', 'steer')
+                                 OR EXISTS (
+                                     SELECT 1 FROM session_message_steers st WHERE st.message_ordinal = m.ordinal
+                                       AND st.delivery IN ('dispatching', 'delivered', 'unknown')
+                                 ))
+                      )
+                );
+                """, transaction: tx, cancellationToken: innerCt)).ConfigureAwait(false);
+
             var queued = await conn.QueryAsync<InputRow>(new CommandDefinition(
-                InputSelect + "\nWHERE i.delivery = 'queued' AND t.status = 'queued' AND s.archived_at_ms IS NULL AND NOT EXISTS (SELECT 1 FROM tasks tk WHERE tk.session_id = s.id AND (tk.kind <> 'flow_wake' OR tk.block_id <> 'flow:' || tk.task_key OR json_type(tk.context_json, '$.flowNode') IS NOT 'true') AND LOWER(tk.status) IN ('pending', 'running', 'verifying')) ORDER BY i.ordinal;",
+                InputSelect + $"""
+
+                WHERE i.delivery = 'queued' AND s.archived_at_ms IS NULL
+                  AND NOT EXISTS (SELECT 1 FROM tasks tk WHERE tk.session_id = s.id AND tk.owns_session = 1
+                                    AND LOWER(tk.status) IN ('pending', 'running', 'verifying'))
+                  AND {WholeQueuedBatch}
+                ORDER BY i.ordinal;
+                """,
                 transaction: tx, cancellationToken: innerCt)).ConfigureAwait(false);
             return GroupInputs(queued).Select(g => (g.First().TrackId, CombineInput(g))).ToArray();
         }, ct);

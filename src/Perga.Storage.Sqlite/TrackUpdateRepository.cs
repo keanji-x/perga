@@ -24,7 +24,7 @@ internal sealed class TrackUpdateRepository
     public Task UpdateTrackAndEmitAsync(TrackDto track, EventEnvelopeDto? evt, CancellationToken ct, bool writeData = false, Action? beforeWrite = null) =>
         UpdateTrackCoreAsync(track, null, evt, ct, writeData: writeData, beforeWrite: beforeWrite);
 
-    public Task UpdateTrackTemplateAndEmitAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto evt, CancellationToken ct, bool writeData = false, TrackFlowUpdate? flow = null, TemplateReportSeed? reportSeed = null, Action? beforeWrite = null) =>
+    public Task<IReadOnlyDictionary<string, TaskSettlementResult>> UpdateTrackTemplateAndEmitAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto evt, CancellationToken ct, bool writeData = false, TrackFlowUpdate? flow = null, TemplateReportSeed? reportSeed = null, Action? beforeWrite = null) =>
         UpdateTrackCoreAsync(track, templateSnapshot, evt, ct, replaceTemplateSnapshot: true, writeData, flow, reportSeed, beforeWrite);
 
     public Task RecordFlowFileHashAsync(string trackId, long flowRev, string sha256, CancellationToken ct)
@@ -39,7 +39,7 @@ internal sealed class TrackUpdateRepository
         }, ct);
     }
 
-    public Task CommitTrackFlowAsync(
+    public Task<IReadOnlyDictionary<string, TaskSettlementResult>> CommitTrackFlowAsync(
         TrackDto track,
         long expectedFlowRev,
         IReadOnlyList<TaskDto> upsertedTasks,
@@ -47,7 +47,8 @@ internal sealed class TrackUpdateRepository
         IReadOnlyList<string> canceledFlowScheduleIds,
         IReadOnlyList<EventEnvelopeDto> events,
         CancellationToken ct,
-        Action? beforeWrite = null)
+        Action? beforeWrite = null,
+        IReadOnlyDictionary<string, string?>? settlingTasks = null)
     {
         ArgumentNullException.ThrowIfNull(track);
         ArgumentNullException.ThrowIfNull(upsertedTasks);
@@ -60,21 +61,22 @@ internal sealed class TrackUpdateRepository
             async (conn, tx, innerCt) =>
             {
                 beforeWrite?.Invoke();
-                await CommitTrackFlowInternalAsync(conn, tx, track, expectedFlowRev, upsertedTasks,
-                    activeFlowSchedules, canceledFlowScheduleIds, innerCt).ConfigureAwait(false);
+                var settled = await CommitTrackFlowInternalAsync(conn, tx, track, expectedFlowRev, upsertedTasks,
+                    activeFlowSchedules, canceledFlowScheduleIds, innerCt, settlingTasks: settlingTasks).ConfigureAwait(false);
                 foreach (var evt in events)
                 {
                     await EventRepository.InsertEventInternalAsync(conn, tx, evt, innerCt).ConfigureAwait(false);
                 }
+                return settled;
             },
             ct);
     }
 
-    private async Task CommitTrackFlowInternalAsync(
+    private async Task<IReadOnlyDictionary<string, TaskSettlementResult>> CommitTrackFlowInternalAsync(
         SqliteConnection conn, SqliteTransaction tx, TrackDto track, long expectedFlowRev,
         IReadOnlyList<TaskDto> upsertedTasks, IReadOnlyList<TrackScheduleDto> activeFlowSchedules,
         IReadOnlyList<string> canceledFlowScheduleIds, CancellationToken innerCt,
-        IReadOnlySet<string>? resetClockIds = null)
+        IReadOnlySet<string>? resetClockIds = null, IReadOnlyDictionary<string, string?>? settlingTasks = null)
     {
         var updated = await conn.ExecuteAsync(new CommandDefinition(
             """
@@ -102,9 +104,20 @@ internal sealed class TrackUpdateRepository
                 $"Flow revision conflict: expected {expectedFlowRev}, but the track flow was modified concurrently.");
         }
 
+        var settled = new Dictionary<string, TaskSettlementResult>(StringComparer.Ordinal);
         foreach (var task in upsertedTasks)
         {
-            await _taskRepository.UpsertTaskInternalAsync(conn, tx, task, innerCt).ConfigureAwait(false);
+            if (settlingTasks?.TryGetValue(task.Id, out var ownedSessionId) == true)
+            {
+                var result = await _taskRepository.SettleTaskInternalAsync(conn, tx, task, ownedSessionId,
+                    wakePrompt: null, suppressDefaultWake: true, innerCt).ConfigureAwait(false);
+                if (ownedSessionId is not null && result.QueueChanged)
+                    settled[ownedSessionId] = result;
+            }
+            else
+            {
+                await _taskRepository.UpsertTaskInternalAsync(conn, tx, task, innerCt).ConfigureAwait(false);
+            }
         }
 
         foreach (var schedule in activeFlowSchedules)
@@ -130,9 +143,10 @@ internal sealed class TrackUpdateRepository
         {
             await TrackSchedulesRepository.InsertSchedulesEventAsync(conn, tx, track.Id, track.UpdatedAtMs, innerCt).ConfigureAwait(false);
         }
+        return settled;
     }
 
-    private Task UpdateTrackCoreAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto? evt, CancellationToken ct, bool replaceTemplateSnapshot = false, bool writeData = false, TrackFlowUpdate? flow = null, TemplateReportSeed? reportSeed = null, Action? beforeWrite = null)
+    private Task<IReadOnlyDictionary<string, TaskSettlementResult>> UpdateTrackCoreAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto? evt, CancellationToken ct, bool replaceTemplateSnapshot = false, bool writeData = false, TrackFlowUpdate? flow = null, TemplateReportSeed? reportSeed = null, Action? beforeWrite = null)
     {
         ArgumentNullException.ThrowIfNull(track);
         _context.EnsureInitialized();
@@ -198,9 +212,10 @@ internal sealed class TrackUpdateRepository
                         transaction: tx,
                         cancellationToken: innerCt)).ConfigureAwait(false);
 
-                if (flow is not null)
-                    await CommitTrackFlowInternalAsync(conn, tx, track, flow.ExpectedRev, flow.Tasks,
-                        flow.Clocks, flow.CanceledClockIds, innerCt, flow.ResetClockIds).ConfigureAwait(false);
+                var settled = flow is not null
+                    ? await CommitTrackFlowInternalAsync(conn, tx, track, flow.ExpectedRev, flow.Tasks,
+                        flow.Clocks, flow.CanceledClockIds, innerCt, flow.ResetClockIds, flow.SettlingTasks).ConfigureAwait(false)
+                    : new Dictionary<string, TaskSettlementResult>();
                 if (track.ClosedAtMs is not null)
                     await conn.ExecuteAsync(new CommandDefinition($"""
                         UPDATE track_wakes SET state='{TrackWakeStates.Dropped}', reason='{TrackWakeReasons.TrackClosed}', updated_at_ms=@Now
@@ -224,6 +239,7 @@ internal sealed class TrackUpdateRepository
                     await _reportRepository.SaveReportInternalAsync(conn, tx, track.Id, reportSeed.Document,
                         reportSeed.CompressedBlocks, reportSeed.AuthorSessionId, "Seed template report", reportSeed.Event,
                         innerCt, requireBlankReport: true).ConfigureAwait(false);
+                return settled;
             },
             ct);
     }
