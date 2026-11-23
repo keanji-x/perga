@@ -76,6 +76,113 @@ internal static class TrackFlowReconciler
             unchanged);
     }
 
+    internal static bool HasActiveLeadWakeNode(FlowSpecDto spec, string? leadSessionId) =>
+        spec.Nodes.Any(node => IsActiveLeadWakeNode(node, leadSessionId));
+
+    internal static bool HasPendingExplicitLeadWake(
+        FlowSpecDto spec,
+        IReadOnlyList<TaskDto> tasks,
+        TaskDto settledTask,
+        string leadSessionId,
+        IReadOnlyList<TrackScheduleDto> schedules)
+    {
+        if (!FlowConstants.IsFlowTask(settledTask) || settledTask.ArchivedAtMs is not null)
+            return false;
+
+        var subscriptions = spec.Nodes.Where(node => IsActiveLeadWakeNode(node, leadSessionId) &&
+            node.When?.After?.Any(dep => dep.Node == settledTask.TaskKey && FlowConstants.OutcomeMatchesCondition(settledTask, dep.On)) == true)
+            .ToArray();
+        if (subscriptions.Length == 0)
+            return false;
+
+        var nodesById = spec.Nodes.ToDictionary(node => node.Id, StringComparer.Ordinal);
+        var tasksByKey = BuildTasksByKey(tasks);
+        var activeClocks = schedules.Where(schedule => schedule.NodeKey is not null &&
+                schedule.State == TrackScheduleStates.Active && schedule.NextFireAtMs is not null)
+            .Select(schedule => schedule.NodeKey!).ToHashSet(StringComparer.Ordinal);
+        var inactiveSources = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var node in spec.Nodes)
+        {
+            if ((node.When?.Cron is not null || node.When?.At is not null) && !activeClocks.Contains(node.Id))
+                inactiveSources.Add(node.Id);
+            if (FlowConstants.IsRepeatingWatch(node) && tasksByKey.TryGetValue(node.Id, out var watch) && FlowConstants.IsWatchPaused(watch))
+                inactiveSources.Add(node.Id);
+        }
+
+        var recurring = BuildRecurringClosure(spec, BuildDownstreamIndex(spec), inactiveSources);
+        var reachable = new Dictionary<FlowAfterRefDto, bool>();
+        var visiting = new HashSet<FlowAfterRefDto>();
+        var waveMember = $"{settledTask.TaskKey}#{settledTask.RunCount}";
+        return subscriptions.Any(node => tasksByKey.TryGetValue(node.Id, out var wake) &&
+            wake.ArchivedAtMs is null &&
+            !(IsTerminal(wake) && wake.TriggerRunKey?.Split(',').Contains(waveMember, StringComparer.Ordinal) == true) &&
+            CanSatisfyAfter(node.When!.After!));
+
+        bool CanSatisfyAfter(IReadOnlyList<FlowAfterRefDto> dependencies) =>
+            HaveCompatibleOutcomes(dependencies) && dependencies.All(CanSatisfy);
+
+        bool CanSatisfy(FlowAfterRefDto dependency)
+        {
+            if (reachable.TryGetValue(dependency, out var known))
+                return known;
+            if (!visiting.Add(dependency))
+                return false;
+
+            var result = CanSatisfyCore(dependency);
+            visiting.Remove(dependency);
+            return reachable[dependency] = result;
+        }
+
+        bool CanSatisfyCore(FlowAfterRefDto dependency)
+        {
+            if (!nodesById.TryGetValue(dependency.Node, out var upstream) || upstream.Canceled ||
+                !tasksByKey.TryGetValue(dependency.Node, out var task) || task.ArchivedAtMs is not null)
+                return false;
+            if (FlowConstants.OutcomeMatchesCondition(task, dependency.On))
+                return true;
+            if (FlowConstants.IsRepeatingWatch(upstream) && FlowConstants.IsWatchPaused(task))
+                return false;
+            if (upstream.Do.Kind == "watch" && FlowConstants.WatchTimeoutSeconds(upstream.Do) is null)
+                return false;
+            if (task.Status is TaskRunStatus.Running or TaskRunStatus.Verifying)
+                return true;
+            if (IsTerminal(task) && !recurring.Contains(upstream.Id))
+                return false;
+
+            // A clock's final occurrence can already be armed even though the clock is exhausted.
+            if (!task.Ready && inactiveSources.Contains(upstream.Id))
+                return false;
+            return upstream.When?.After is not { } after || CanSatisfyAfter(after);
+        }
+
+        static bool IsTerminal(TaskDto task) =>
+            task.Status is TaskRunStatus.Done or TaskRunStatus.Failed or TaskRunStatus.Canceled;
+    }
+
+    private static bool HaveCompatibleOutcomes(IReadOnlyList<FlowAfterRefDto> dependencies)
+    {
+        if (dependencies.Count < 2)
+            return true;
+
+        var outcomesByNode = new Dictionary<string, FlowOutcome>(StringComparer.Ordinal);
+        foreach (var dependency in dependencies)
+        {
+            var condition = string.IsNullOrWhiteSpace(dependency.On) ? "ok" : dependency.On;
+            if (!FlowConstants.TryParseOutcome(condition, out var outcome))
+                continue;
+            if (outcomesByNode.TryGetValue(dependency.Node, out var previous) && previous != outcome)
+                return false;
+            outcomesByNode[dependency.Node] = outcome;
+        }
+        return true;
+    }
+
+    private static bool IsActiveLeadWakeNode(FlowNodeSpecDto node, string? leadSessionId) =>
+        !node.Canceled &&
+        node.Do is { Kind: "wake", Session: var target } &&
+        (string.Equals(target, "lead", StringComparison.Ordinal) ||
+         (!string.IsNullOrWhiteSpace(leadSessionId) && string.Equals(target, leadSessionId, StringComparison.Ordinal)));
+
     /// <summary>
     /// Computes node IDs eligible for background GC archiving:
     /// 1) One-shot nodes (`when.cron == null`) in terminal status (`Done`/`Failed`/`Canceled`) with NO non-terminal
@@ -98,35 +205,7 @@ internal static class TrackFlowReconciler
 
         var downstream = BuildDownstreamIndex(spec);
 
-        var recurring = new HashSet<string>(StringComparer.Ordinal);
-        var queue = new Queue<string>();
-        foreach (var node in spec.Nodes)
-        {
-            if (FlowConstants.IsRecurringSource(node))
-            {
-                if (recurring.Add(node.Id))
-                {
-                    queue.Enqueue(node.Id);
-                }
-            }
-        }
-
-        while (queue.Count > 0)
-        {
-            var cur = queue.Dequeue();
-            if (!downstream.TryGetValue(cur, out var children))
-            {
-                continue;
-            }
-
-            foreach (var child in children)
-            {
-                if (recurring.Add(child))
-                {
-                    queue.Enqueue(child);
-                }
-            }
-        }
+        var recurring = BuildRecurringClosure(spec, downstream);
 
         bool IsTerminal(FlowNodeSpecDto node)
         {
@@ -193,6 +272,7 @@ internal static class TrackFlowReconciler
         // Every surviving node must retain its prerequisites, including one-shot
         // prerequisites of a join that is still fed by a recurring upstream.
         var retained = new HashSet<string>(StringComparer.Ordinal);
+        var queue = new Queue<string>();
         foreach (var node in spec.Nodes)
         {
             if (recurring.Contains(node.Id) || (!IsTerminal(node) && !unreachable.Contains(node.Id)))
@@ -225,6 +305,28 @@ internal static class TrackFlowReconciler
 
         eligible.UnionWith(nodesById.Keys.Where(id => !retained.Contains(id)));
         return eligible;
+    }
+
+    private static HashSet<string> BuildRecurringClosure(
+        FlowSpecDto spec,
+        Dictionary<string, List<string>> downstream,
+        IReadOnlySet<string>? inactiveSources = null)
+    {
+        var recurring = spec.Nodes
+            .Where(node => FlowConstants.IsRecurringSource(node) &&
+                           inactiveSources?.Contains(node.Id) != true)
+            .Select(node => node.Id)
+            .ToHashSet(StringComparer.Ordinal);
+        var pending = new Queue<string>(recurring);
+        while (pending.TryDequeue(out var id))
+        {
+            if (!downstream.TryGetValue(id, out var children))
+                continue;
+            foreach (var child in children)
+                if (recurring.Add(child))
+                    pending.Enqueue(child);
+        }
+        return recurring;
     }
 
     internal static Dictionary<string, List<string>> BuildDownstreamIndex(FlowSpecDto spec)

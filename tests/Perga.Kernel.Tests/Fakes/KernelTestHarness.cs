@@ -489,6 +489,8 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
         return Task.CompletedTask;
     }
 
+    public Action<TrackDto, long>? OnBeforeCommitTrackFlow { get; set; }
+
     public Task<IReadOnlyDictionary<string, TaskSettlementResult>> CommitTrackFlowAsync(
         TrackDto track,
         long expectedFlowRev,
@@ -498,9 +500,12 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
         IReadOnlyList<EventEnvelopeDto> events,
         CancellationToken ct,
         Action? beforeWrite = null,
-        IReadOnlyDictionary<string, string?>? settlingTasks = null) =>
-        Task.FromResult(CommitTrackFlow(track, expectedFlowRev, upsertedTasks, activeFlowSchedules, canceledFlowScheduleIds, events,
+        IReadOnlyDictionary<string, string?>? settlingTasks = null)
+    {
+        OnBeforeCommitTrackFlow?.Invoke(track, expectedFlowRev);
+        return Task.FromResult(CommitTrackFlow(track, expectedFlowRev, upsertedTasks, activeFlowSchedules, canceledFlowScheduleIds, events,
             beforeWrite: beforeWrite, settlingTasks: settlingTasks));
+    }
 
     private IReadOnlyDictionary<string, TaskSettlementResult> CommitTrackFlow(
         TrackDto track,
@@ -697,7 +702,8 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
     }
 
     public Task<TaskSettlementResult> SettleTaskAsync(TaskDto task, EventEnvelopeDto? evt, CancellationToken ct,
-        string? interruptOwnedSessionId = null, string? wakePrompt = null, bool suppressDefaultWake = false)
+        string? interruptOwnedSessionId = null, string? wakePrompt = null, bool suppressDefaultWake = false,
+        string? wakeCoalesceKey = null)
     {
         lock (_gate)
         {
@@ -717,9 +723,9 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
                 if (child?.ParentSessionId is { } parentId)
                 {
                     if (child.NotifyParent == "task_settled" && _sessions.GetValueOrDefault(parentId)?.ArchivedAtMs is null)
-                        EnqueueWakeLocked(TrackWakeRequests.TaskSettled(task, wakePrompt) with { TargetSessionId = parentId }, once: true);
+                        EnqueueWakeLocked(TrackWakeRequests.TaskSettled(task, wakePrompt, wakeCoalesceKey) with { TargetSessionId = parentId }, once: true);
                 }
-                else EnqueueWakeLocked(TrackWakeRequests.TaskSettled(task, wakePrompt), once: true);
+                else EnqueueWakeLocked(TrackWakeRequests.TaskSettled(task, wakePrompt, wakeCoalesceKey), once: true);
             }
 
             if (evt is not null)

@@ -31,6 +31,7 @@ public static class TrackWakeReasons
     public const string Coalesced = "coalesced";
     public const string Canceled = "canceled";
     public const string Delivered = "delivered";
+    public const string SupersededByFlowWake = "superseded_by_flow_wake";
     public const string ConclusiveError = "conclusive_error";
     public const string Interrupted = "interrupted";
     public const string RuntimeFailed = "runtime_failed";

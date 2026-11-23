@@ -2,7 +2,9 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using Perga.Contracts;
 using Perga.Host.IntegrationTests.Fixtures;
+using Perga.Host.Lifecycle;
 using Perga.Kernel;
 using Perga.Kernel.Ports;
 
@@ -182,6 +184,101 @@ public sealed class TrackFlowIntegrationTests
             reopened.TimeProvider.Advance(TimeSpan.FromHours(2));
             Assert.Empty(await restarted.FireDueTrackSchedulesAsync(reopened.TimeProvider.GetUtcNow().ToUnixTimeMilliseconds()));
             Assert.Equal(1, Assert.Single((await restarted.GetTrackFlowAsync(trackId)).Projection.Nodes).RunCount);
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ReopenedHostDeliversOriginalSettlementWakeAfterLeadReconnects()
+    {
+        var directory = Directory.CreateTempSubdirectory("perga-flow-wake-recovery-");
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var ct = deadline.Token;
+        var human = new InteropPrincipal.Human();
+        const string explicitPrompt = "Explicit review update";
+        const string interruptedTurnId = "turn_explicit_before_delivery";
+        const string leadThread = "thr_interrupted_lead";
+        try
+        {
+            string trackId;
+            string leadId;
+            TrackWake pending;
+            await using (var host = NewHost(directory.FullName))
+            {
+                (trackId, leadId) = await host.CreateTrackAsync();
+                var kernel = host.Services.GetRequiredService<IPergaKernel>();
+                var store = host.Services.GetRequiredService<ITrackStore>();
+                var review = await FlowFixture.StartWorkerAsync(kernel, trackId, "review", "Review", ct);
+                await FlowFixture.AddAsync(kernel, trackId,
+                    FlowFixture.Wake("notify", explicitPrompt, new(After: [new("review", "any")])));
+                await kernel.WaitForTrackIdleAsync(trackId, ct);
+                var snapshot = (await store.LoadTrackAggregateAsync(trackId, ct))!;
+                var notify = Assert.Single(snapshot.Tasks, task => task.TaskKey == "notify");
+                var lead = Assert.Single(snapshot.Sessions, session => session.Id == leadId);
+                await kernel.Actors.RemoveAndDisposeAsync(trackId);
+
+                // Persist the state left by a process exit before the explicit prompt reached the provider.
+                var now = host.TimeProvider.GetUtcNow().ToUnixTimeMilliseconds();
+                var settled = review.Task with
+                {
+                    Status = TaskRunStatus.Done, Outcome = FlowOutcome.Attention, FinishedAtMs = now, UpdatedAtMs = now
+                };
+                await store.SettleTaskAsync(settled, null, ct);
+                await store.UpsertTaskAsync(notify with
+                {
+                    Status = TaskRunStatus.Running, Ready = true, SessionId = leadId, RunCount = 1,
+                    TriggerRunKey = $"review#{settled.RunCount}", StartedAtMs = now, UpdatedAtMs = now
+                }, null, ct);
+                var turn = new SessionTurnDto(interruptedTurnId, leadId, 1, lead.Epoch, "wake",
+                    JsonSerializer.SerializeToElement(new { prompt = explicitPrompt }), "running", null, null, now, null);
+                await store.RecordTurnAndItemsAsync(turn, [], lead with { Status = "running", NativeThreadId = leadThread }, ct);
+                pending = Assert.Single(await store.TrackWakes.ListAsync(trackId, ct),
+                    row => row.CoalesceKey == TrackWakeRequests.TaskSettled(settled).CoalesceKey);
+                Assert.Equal(TrackWakeStates.Pending, pending.State);
+                Assert.Equal(0, pending.Attempts);
+            }
+
+            await using var reopened = NewHost(directory.FullName);
+            var restarted = reopened.Services.GetRequiredService<IPergaKernel>();
+            var reopenedStore = reopened.Services.GetRequiredService<ITrackStore>();
+            var boot = reopened.Services.GetRequiredService<PergaBootHostedService>();
+            Assert.Contains(trackId, boot.LastReconcileResult!.AffectedTrackIds);
+            var blocked = await restarted.GetSessionItemsAsync(leadId, new(), human, ct);
+            Assert.Equal("unknown", blocked.State);
+            Assert.Equal(interruptedTurnId, blocked.LastTurn?.Id);
+            Assert.Equal("unknown", blocked.LastTurn?.Status);
+            Assert.Equal("host_restarted", blocked.UnknownDetail?.Reason);
+            Assert.True(blocked.UnknownDetail?.CanReconnect);
+            var actor = restarted.Actors.GetOrActivate(trackId);
+            await actor.EnsureMountedAsync(ct);
+            await actor.PokePendingWakesAsync(ct);
+            await restarted.WaitForTrackIdleAsync(trackId, ct);
+            Assert.Equal(pending, Assert.Single(await reopenedStore.TrackWakes.ListAsync(trackId, ct), row => row.Id == pending.Id));
+            Assert.Empty(reopened.AgentRuntime.ExecutedTurns);
+            var recoveredTask = Assert.Single((await reopenedStore.LoadTrackAggregateAsync(trackId, ct))!.Tasks,
+                task => task.TaskKey == "notify");
+            Assert.Equal(TaskRunStatus.Failed, recoveredTask.Status);
+            Assert.Equal(FlowOutcome.Blocked, recoveredTask.Outcome);
+
+            await restarted.ControlSessionAsync(leadId, new("reconnect"), human, ct);
+            await restarted.WaitForTrackIdleAsync(trackId, ct);
+            var delivered = Assert.Single(await reopenedStore.TrackWakes.ListAsync(trackId, ct),
+                row => row.CoalesceKey == pending.CoalesceKey);
+            Assert.Equal(pending.Id, delivered.Id);
+            Assert.Equal(TrackWakeStates.Done, delivered.State);
+            Assert.Equal(TrackWakeReasons.Delivered, delivered.Reason);
+            Assert.Equal(1, delivered.Attempts);
+            var execution = Assert.Single(reopened.AgentRuntime.ExecutedTurns);
+            Assert.Equal(leadId, execution.Spec.StateKey);
+            Assert.Equal(leadThread, execution.Spec.ResumeNativeThreadId);
+            Assert.Contains("Task 'review' (run #1) settled", execution.Input.Prompt);
+            Assert.DoesNotContain(explicitPrompt, execution.Input.Prompt);
+            var completed = (await restarted.GetSessionItemsAsync(leadId, new(), human, ct)).LastTurn;
+            Assert.Equal("completed", completed?.Status);
+            Assert.Equal(completed?.Id, delivered.TurnId);
         }
         finally
         {

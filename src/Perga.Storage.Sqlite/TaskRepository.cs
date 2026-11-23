@@ -62,13 +62,13 @@ internal sealed class TaskRepository
 
     public Task<TaskSettlementResult> SettleTaskAsync(
         TaskDto task, EventEnvelopeDto? evt, CancellationToken ct,
-        string? interruptOwnedSessionId, string? wakePrompt, bool suppressDefaultWake)
+        string? interruptOwnedSessionId, string? wakePrompt, bool suppressDefaultWake, string? wakeCoalesceKey = null)
     {
         _context.EnsureInitialized();
         return _context.Writer.EnqueueAsync(async (conn, tx, innerCt) =>
         {
             var result = await SettleTaskInternalAsync(conn, tx, task, interruptOwnedSessionId, wakePrompt,
-                suppressDefaultWake, innerCt).ConfigureAwait(false);
+                suppressDefaultWake, innerCt, wakeCoalesceKey).ConfigureAwait(false);
             if (evt is not null)
                 await EventRepository.InsertEventInternalAsync(conn, tx, evt, innerCt).ConfigureAwait(false);
             return result;
@@ -77,7 +77,7 @@ internal sealed class TaskRepository
 
     internal async Task<TaskSettlementResult> SettleTaskInternalAsync(
         SqliteConnection conn, SqliteTransaction tx, TaskDto task, string? interruptOwnedSessionId,
-        string? wakePrompt, bool suppressDefaultWake, CancellationToken ct)
+        string? wakePrompt, bool suppressDefaultWake, CancellationToken ct, string? wakeCoalesceKey = null)
     {
         await UpsertTaskInternalAsync(conn, tx, task, ct).ConfigureAwait(false);
         var queueChanged = false;
@@ -108,9 +108,9 @@ internal sealed class TaskRepository
             if (child?.Parent is { } parentId && child.Value.Notify == "task_settled" &&
                 await conn.ExecuteScalarAsync<bool>(new CommandDefinition(
                     "SELECT EXISTS(SELECT 1 FROM agent_sessions WHERE id = @Id AND archived_at_ms IS NULL);", new { Id = parentId }, tx, cancellationToken: ct)).ConfigureAwait(false))
-                await TrackWakesRepository.EnqueueWakeOnceInternalAsync(conn, tx, TrackWakeRequests.TaskSettled(task, wakePrompt) with { TargetSessionId = parentId }, task.UpdatedAtMs, ct).ConfigureAwait(false);
+                await TrackWakesRepository.EnqueueWakeOnceInternalAsync(conn, tx, TrackWakeRequests.TaskSettled(task, wakePrompt, wakeCoalesceKey) with { TargetSessionId = parentId }, task.UpdatedAtMs, ct).ConfigureAwait(false);
             else if (child?.Parent is null)
-                await TrackWakesRepository.EnqueueWakeOnceInternalAsync(conn, tx, TrackWakeRequests.TaskSettled(task, wakePrompt), task.UpdatedAtMs, ct).ConfigureAwait(false);
+                await TrackWakesRepository.EnqueueWakeOnceInternalAsync(conn, tx, TrackWakeRequests.TaskSettled(task, wakePrompt, wakeCoalesceKey), task.UpdatedAtMs, ct).ConfigureAwait(false);
         }
 
         return new(queueChanged, session);

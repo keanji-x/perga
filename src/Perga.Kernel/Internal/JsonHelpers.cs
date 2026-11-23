@@ -33,6 +33,12 @@ internal static class JsonHelpers
         return element.Deserialize<T>(SerializerOptions);
     }
 
+    public static string? GetStringProperty(JsonElement? element, string name) =>
+        element is { ValueKind: JsonValueKind.Object } obj &&
+        obj.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
+            ? value.GetString()
+            : null;
+
     public static JsonElement EnsureClonedObject(JsonElement? element)
     {
         if (element is null || element.Value.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null)

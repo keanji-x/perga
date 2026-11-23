@@ -153,7 +153,8 @@ public interface ITrackStore : ITrackReadStore
         AgentSessionDto? session = null, EventEnvelopeDto? sessionEvent = null,
         SessionMessage? initialMessage = null, bool writeNewRunBoundary = false);
     Task<TaskSettlementResult> SettleTaskAsync(TaskDto task, EventEnvelopeDto? evt, CancellationToken ct,
-        string? interruptOwnedSessionId = null, string? wakePrompt = null, bool suppressDefaultWake = false);
+        string? interruptOwnedSessionId = null, string? wakePrompt = null, bool suppressDefaultWake = false,
+        string? wakeCoalesceKey = null);
     Task<bool> HasSessionTurnAsync(string sessionId, string turnId, CancellationToken ct);
     Task<IReadOnlyList<SessionTurnDto>> ListSessionTurnsAsync(string sessionId, CancellationToken ct) =>
         Task.FromResult<IReadOnlyList<SessionTurnDto>>([]);

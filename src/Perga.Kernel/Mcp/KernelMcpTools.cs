@@ -212,14 +212,15 @@ public static class KernelMcpCatalog
                 Schema(KernelMcpReportSupport.TerminalReadSchemaJson), readOnlyLocal),
             new(KernelMcpToolNames.TerminalInput, "Send text, keys, paste, or submit action to a terminal.",
                 Schema(KernelMcpReportSupport.TerminalInputSchemaJson), openWorldDestructive),
-            new(KernelMcpToolNames.FlowRead, "Read the Track's committed flow spec, current revision, Host file path, and live projection (Lead only).",
-                Schema("""{"type":"object","additionalProperties":false,"properties":{}}"""), readOnlyLocal),
+            new(KernelMcpToolNames.FlowRead, "Read the current Flow revision and Host file path (Lead only). Use format 'summary' (default) for live status, 'spec' for the committed JSON to edit, or 'full' for both with prompts and gate output.",
+                Schema("""{"type":"object","additionalProperties":false,"properties":{"format":{"type":"string","enum":["summary","spec","full"]}}}"""), readOnlyLocal),
             new(KernelMcpToolNames.FlowCommit,
                 "Validate and commit a flow JSON draft supplied as content or read from the Host's flow.json (Lead only).\n" +
                 "Cheatsheet:\n" +
                 "- Root: { rev, nodes: [{ id, title?, source?, when?, do, canceled? }] }\n" +
                 "- when (omit = run once immediately): { after: [\"id\" | { node, on?: ok|attention|blocked|any }], on? } | { cron, tz?, maxOccurrences? } | { at: ISO-8601 }\n" +
                 "- do.kind='run': { kind:'run', prompt, session?:'new'|'ses_...', role?, access?, provider?, model?, reasoningEffort?, gate?, acceptance? } OR { kind:'run', cmd }. Use provider_list for supported reasoning efforts. Reused sessions must match an explicit effort.\n" +
+                "- Use Host do.gate for builds and tests that need loopback sockets restricted in the Worker sandbox.\n" +
                 "- do.kind='wake': { kind:'wake', session:'lead'|'ses_...', prompt }\n" +
                 "- do.kind='watch' (0-token): { kind:'watch', prChecks, repo?, headSha?, interval?, timeout? } OR { kind:'watch', cmd, interval?, timeout?, repeat? } (exit 0=ok, 75=wait, other=attention). Default interval is 60s. Timeout accepts 'never' or a duration (e.g. '60m', '7d'), defaulting to 'never' with repeat:true and '60m' otherwise. Repeating command watches re-arm after downstream tasks settle.\n" +
                 "- Reusing an existing ses_... preserves NativeThreadId & context.\n" +
@@ -575,8 +576,19 @@ public static class KernelMcpDispatcher
             case KernelMcpToolNames.FlowRead:
             {
                 RejectUnknownArgs(args, ToolSchema(toolName));
+                var format = args.TryGetProperty("format", out var value)
+                    ? (value.ValueKind == JsonValueKind.String ? value.GetString() : null)
+                    : "summary";
+                if (format is not ("summary" or "spec" or "full"))
+                    throw KernelException.InvalidArgument("Argument 'format' must be one of: summary, spec, full.");
+
                 var snapshot = await kernel.GetTrackFlowAsync(caller.TrackId, ct, authorization).ConfigureAwait(false);
-                return JsonHelpers.ToElement(new { snapshot.FlowRev, FlowPath = snapshot.FilePath, snapshot.Spec, snapshot.Projection });
+                return format switch
+                {
+                    "summary" => JsonHelpers.ToElement(new { snapshot.FlowRev, FlowPath = snapshot.FilePath, Projection = SlimFlowProjection(snapshot.Projection) }),
+                    "spec" => JsonHelpers.ToElement(new { snapshot.FlowRev, FlowPath = snapshot.FilePath, snapshot.Spec }),
+                    _ => JsonHelpers.ToElement(new { snapshot.FlowRev, FlowPath = snapshot.FilePath, snapshot.Spec, snapshot.Projection })
+                };
             }
 
             case KernelMcpToolNames.FlowCommit:
@@ -595,7 +607,7 @@ public static class KernelMcpDispatcher
                 var res = await kernel.CommitTrackFlowAsync(caller.TrackId, dryRun, expectedFlowRev,
                     authorization, ct, content)
                     .ConfigureAwait(false);
-                return JsonHelpers.ToElement(res);
+                return JsonHelpers.ToElement(res with { Flow = SlimFlowProjection(res.Flow) });
             }
 
             case KernelMcpToolNames.TaskCancel:
@@ -731,6 +743,20 @@ public static class KernelMcpDispatcher
         return number;
     }
 
+    private static FlowProjectionDto SlimFlowProjection(FlowProjectionDto projection) => projection with
+    {
+        Nodes = projection.Nodes.Select(node => node with
+        {
+            Prompt = null,
+            OutcomeSummary = KernelMcpReportSupport.BoundMcpSummary(node.OutcomeSummary),
+            Gates = node.Gates.Select(gate => gate with { Output = null }).ToArray()
+        }).ToArray(),
+        Archived = projection.Archived.Select(archived => archived with
+        {
+            OutcomeSummary = KernelMcpReportSupport.BoundMcpSummary(archived.OutcomeSummary)
+        }).ToArray()
+    };
+
     private static JsonElement ToolSchema(string toolName) =>
         KernelMcpCatalog.GetAllTools().Single(tool => tool.Name == toolName).InputSchema;
 
@@ -739,8 +765,11 @@ public static class KernelMcpDispatcher
         if (args.ValueKind != JsonValueKind.Object)
             throw KernelException.InvalidArgument("Tool arguments must be a JSON object.");
         var properties = schema.GetProperty("properties").EnumerateObject().ToArray();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (var prop in args.EnumerateObject())
         {
+            if (!seen.Add(prop.Name))
+                throw KernelException.InvalidArgument($"Duplicate argument '{prop.Name}'.");
             var allowed = properties.FirstOrDefault(p => string.Equals(prop.Name, p.Name, StringComparison.Ordinal));
             if (allowed.Value.ValueKind == JsonValueKind.Undefined)
                 throw KernelException.InvalidArgument(

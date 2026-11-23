@@ -358,8 +358,9 @@ public sealed class SqliteTrackStore : ITrackStore, IAsyncDisposable, ISessionIn
         _taskRepository.UpsertTaskAsync(task, evt, ct, session, sessionEvent, initialMessage, writeNewRunBoundary);
 
     public Task<TaskSettlementResult> SettleTaskAsync(TaskDto task, EventEnvelopeDto? evt, CancellationToken ct,
-        string? interruptOwnedSessionId = null, string? wakePrompt = null, bool suppressDefaultWake = false) =>
-        _taskRepository.SettleTaskAsync(task, evt, ct, interruptOwnedSessionId, wakePrompt, suppressDefaultWake);
+        string? interruptOwnedSessionId = null, string? wakePrompt = null, bool suppressDefaultWake = false,
+        string? wakeCoalesceKey = null) =>
+        _taskRepository.SettleTaskAsync(task, evt, ct, interruptOwnedSessionId, wakePrompt, suppressDefaultWake, wakeCoalesceKey);
 
     public Task UpsertSessionAsync(AgentSessionDto session, EventEnvelopeDto? evt, CancellationToken ct) =>
         _sessionRepository.UpsertSessionAsync(session, evt, ct);
@@ -478,8 +479,9 @@ public sealed class SqliteTrackStore : ITrackStore, IAsyncDisposable, ISessionIn
     public Task<IReadOnlyList<string>> ListPendingTracksAsync(CancellationToken ct) =>
         _trackWakesRepository.ListPendingTracksAsync(ct);
 
-    public Task<IReadOnlyList<TrackWake>> ClaimBatchAsync(string trackId, string targetSessionId, int limit, CancellationToken ct) =>
-        _trackWakesRepository.ClaimBatchAsync(trackId, targetSessionId, limit, ct);
+    public Task<IReadOnlyList<TrackWake>> ClaimBatchAsync(string trackId, string targetSessionId, int limit, CancellationToken ct,
+        IReadOnlyCollection<string>? excludeWakeIds = null) =>
+        _trackWakesRepository.ClaimBatchAsync(trackId, targetSessionId, limit, ct, excludeWakeIds);
 
     public Task MarkDoneAsync(IReadOnlyList<TrackWake> batch, string reason, string turnId, CancellationToken ct) =>
         _trackWakesRepository.MarkDoneAsync(batch, reason, turnId, ct);

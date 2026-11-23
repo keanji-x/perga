@@ -112,7 +112,7 @@ internal static class TrackFlowProjector
                     "flow_watch" => "watch",
                     _ => "run"
                 };
-                var title = ExtractTitleFromContext(t.Context) ?? t.TaskKey;
+                var title = JsonHelpers.GetStringProperty(t.Context, "title") ?? t.TaskKey;
                 return new FlowArchivedNodeProjectionDto(
                     Id: t.TaskKey,
                     Title: title,
@@ -122,7 +122,7 @@ internal static class TrackFlowProjector
                     OutcomeSummary: t.OutcomeSummary ?? t.StatusDetail,
                     RunCount: t.RunCount,
                     SessionId: t.SessionId,
-                    Model: session?.Model ?? ExtractModelFromContext(t.Context),
+                    Model: session?.Model ?? JsonHelpers.GetStringProperty(t.Context, "initialModel"),
                     FinishedAtMs: t.FinishedAtMs,
                     ArchivedAtMs: t.ArchivedAtMs!.Value);
             })
@@ -235,16 +235,4 @@ internal static class TrackFlowProjector
 
         return list;
     }
-
-    private static string? ExtractTitleFromContext(JsonElement? context) =>
-        context is { ValueKind: JsonValueKind.Object } obj &&
-        obj.TryGetProperty("title", out var el) && el.ValueKind == JsonValueKind.String
-            ? el.GetString()
-            : null;
-
-    private static string? ExtractModelFromContext(JsonElement? context) =>
-        context is { ValueKind: JsonValueKind.Object } obj &&
-        obj.TryGetProperty("initialModel", out var el) && el.ValueKind == JsonValueKind.String
-            ? el.GetString()
-            : null;
 }

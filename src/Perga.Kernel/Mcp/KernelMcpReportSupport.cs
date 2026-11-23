@@ -185,18 +185,13 @@ internal static class KernelMcpReportSupport
         ReportReadOptions options,
         Perga.PolicyVm.TemplateViewsProjection? templateViews = null)
     {
-        if (!options.IsScoped && options.Format == "full" && !options.IncludeContract && templateViews is null)
-        {
-            return JsonHelpers.ToElement(res);
-        }
-
         var blocks = ReportBlockSelection.FilterBlocks(res.Blocks, options.SectionH1, options.BlockIds);
         var markdown = options.IsScoped && options.Format is "full" or "markdown"
             ? ScopedRenderer.RenderMarkdown(new ReportDocument(res.DocRev, res.Summary, string.Empty, blocks), withMarkers: true)
             : res.RenderedMarkdown;
         var report = new McpReportReadResponse(
             DocRev: res.DocRev, Summary: res.Summary, Sections: null, RenderedMarkdown: markdown,
-            Blocks: blocks, OutlineBlocks: null, Tasks: res.Tasks, Anchor: res.Anchor,
+            Blocks: blocks, OutlineBlocks: null, Tasks: SummarizeTasks(res.Tasks), Anchor: res.Anchor,
             Diagnostics: res.Diagnostics, BlockContract: null,
             TemplateViews: templateViews is { Views.Count: > 0 } ? templateViews.Views : null,
             DataRev: templateViews?.DataRev ?? res.DataRev);
@@ -255,12 +250,33 @@ internal static class KernelMcpReportSupport
             Summary: res.Summary,
             Anchor: res.Anchor,
             Changes: res.Changes ?? [],
-            Tasks: res.Tasks,
+            Tasks: SummarizeTasks(res.Tasks),
             Diagnostics: res.Diagnostics,
             RenderedMarkdown: includeDocument ? res.RenderedMarkdown : null,
             Blocks: includeDocument ? res.Blocks : null);
         return JsonHelpers.ToElement(receipt);
     }
+
+    internal const int McpSummaryMaxChars = 400;
+
+    internal static string? BoundMcpSummary(string? text, int maxChars = McpSummaryMaxChars)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return null;
+        var trimmed = text.Trim();
+        if (trimmed.Length <= maxChars)
+            return trimmed;
+        var cut = Math.Max(0, maxChars - 3);
+        if (cut > 0 && char.IsHighSurrogate(trimmed[cut - 1]))
+            cut--;
+        return trimmed[..cut] + "...";
+    }
+
+    private static McpReportTaskSummary[] SummarizeTasks(IReadOnlyList<TaskDto> tasks) =>
+        tasks.Select(task => new McpReportTaskSummary(
+            task.Id, task.TaskKey, task.Kind, JsonHelpers.GetStringProperty(task.Context, "title"),
+            task.Status, task.Outcome, BoundMcpSummary(task.OutcomeSummary ?? task.StatusDetail), task.RunCount,
+            task.SessionId, task.DependsOn.Count > 0 ? task.DependsOn : null, task.ArchivedAtMs)).ToArray();
 
     private static string ParseReadFormat(JsonElement args)
     {
@@ -425,7 +441,7 @@ internal static class KernelMcpReportSupport
         [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? RenderedMarkdown,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<ReportBlock>? Blocks,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<ReportOutlineBlock>? OutlineBlocks,
-        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<TaskDto>? Tasks,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<McpReportTaskSummary>? Tasks,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ReadAnchor? Anchor,
         IReadOnlyList<ReportDiagnosticDto> Diagnostics,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] JsonElement? BlockContract,
@@ -439,8 +455,21 @@ internal static class KernelMcpReportSupport
         string Summary,
         ReadAnchor Anchor,
         IReadOnlyList<BlockChangeRecord> Changes,
-        IReadOnlyList<TaskDto> Tasks,
+        IReadOnlyList<McpReportTaskSummary> Tasks,
         IReadOnlyList<ReportDiagnosticDto> Diagnostics,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? RenderedMarkdown,
         [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<ReportBlock>? Blocks);
+
+    private sealed record McpReportTaskSummary(
+        string Id,
+        string TaskKey,
+        string Kind,
+        string? Title,
+        TaskRunStatus Status,
+        FlowOutcome Outcome,
+        string? OutcomeSummary,
+        int RunCount,
+        string? SessionId,
+        IReadOnlyList<string>? DependsOn,
+        long? ArchivedAtMs);
 }

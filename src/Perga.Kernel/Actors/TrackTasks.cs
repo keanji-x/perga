@@ -199,6 +199,7 @@ public sealed partial class TrackActor
             foreach (var watch in _tasks.Where(t => t.Kind == "flow_watch" && FlowConstants.IsFlowTask(t) && t.Status == TaskRunStatus.Running &&
                 !actor._activeWatches.ContainsKey(t.Id)).ToArray())
                 await actor.StartFlowWatchRunCoreAsync(watch, mounted, ct).ConfigureAwait(false);
+            var flowDispatchFailed = false;
             bool preparationFailed;
             do
             {
@@ -244,6 +245,7 @@ public sealed partial class TrackActor
                                     UpdatedAtMs = actor.NowMs()
                                 };
                                 await PersistAndEmitTaskSettlementCoreAsync(failedWatch, failedWatch.UpdatedAtMs, ct).ConfigureAwait(false);
+                                flowDispatchFailed = true;
                                 preparationFailed |= await actor.EvaluateFlowAfterTriggersCoreAsync(ct).ConfigureAwait(false);
                                 await actor.TryRunFlowGcCoreAsync(ct).ConfigureAwait(false);
                                 continue;
@@ -304,6 +306,7 @@ public sealed partial class TrackActor
                             UpdatedAtMs = actor.NowMs()
                         };
                         await PersistAndEmitTaskSettlementCoreAsync(failed, failed.UpdatedAtMs, ct).ConfigureAwait(false);
+                        flowDispatchFailed |= FlowConstants.IsFlowTask(failed);
                         preparationFailed |= await actor.EvaluateFlowAfterTriggersCoreAsync(ct).ConfigureAwait(false);
                         await actor.TryRunFlowGcCoreAsync(ct).ConfigureAwait(false);
                         continue;
@@ -312,6 +315,8 @@ public sealed partial class TrackActor
                         preparationFailed = true;
                 }
             } while (preparationFailed);
+            if (flowDispatchFailed)
+                await actor.TryPokeLeadForPendingWakesCoreAsync().ConfigureAwait(false);
         }
 
         public async Task<bool> StartTaskRunCoreAsync(
@@ -456,7 +461,8 @@ public sealed partial class TrackActor
                 {
                     var failedAt = actor.NowMs();
                     var failed = task with { Status = TaskRunStatus.Failed, Outcome = FlowOutcome.Attention, OutcomeSummary = ex.Message, StatusDetail = ex.Message, FinishedAtMs = failedAt, UpdatedAtMs = failedAt };
-                    await PersistAndEmitTaskSettlementCoreAsync(failed, failed.UpdatedAtMs, CancellationToken.None).ConfigureAwait(false);
+                    await PersistAndEmitTaskSettlementCoreAsync(failed, failed.UpdatedAtMs, CancellationToken.None,
+                        wakeCoalesceKey: $"task:{failed.Id}:{failed.RunCount}:start:{Guid.NewGuid():N}").ConfigureAwait(false);
                     await actor.OnTaskSettledFlowHookCoreAsync(failed, CancellationToken.None).ConfigureAwait(false);
                     return false;
                 }
@@ -1144,12 +1150,12 @@ public sealed partial class TrackActor
 
         public async Task PersistAndEmitTaskSettlementCoreAsync(
             TaskDto task, long now, CancellationToken ct, string? wakePrompt = null, bool suppressDefaultWake = false,
-            ActiveTaskRunState? activeRun = null)
+            ActiveTaskRunState? activeRun = null, string? wakeCoalesceKey = null)
         {
             var evt = CreateTaskUpdatedEventCore(now);
             await actor._eventHub.EnsureInitializedFromStoreAsync(actor._store, ct).ConfigureAwait(false);
             var ownedSessionId = ReadOwnedSessionForSettlementCore(task);
-            var result = await actor._store.SettleTaskAsync(task, evt, ct, ownedSessionId, wakePrompt, suppressDefaultWake)
+            var result = await actor._store.SettleTaskAsync(task, evt, ct, ownedSessionId, wakePrompt, suppressDefaultWake, wakeCoalesceKey)
                 .ConfigureAwait(false);
             ReplaceTaskInMemoryCore(task);
             if (activeRun is not null)
@@ -1165,7 +1171,8 @@ public sealed partial class TrackActor
                 System.Diagnostics.Trace.TraceWarning("Could not publish settlement for task {0}: {1}", task.Id, error);
             }
             if (!suppressDefaultWake && task.SessionId is { } childId && actor._sessions.TryGetValue(childId, out var child) &&
-                child.NotifyParent == "task_settled" && child.ParentSessionId is { } parentId)
+                child.NotifyParent == "task_settled" && child.ParentSessionId is { } parentId &&
+                (parentId != actor._track.LeadSessionId || !FlowConstants.IsFlowTask(task)))
                 await actor.PokeSessionCoreAsync(parentId).ConfigureAwait(false);
         }
 

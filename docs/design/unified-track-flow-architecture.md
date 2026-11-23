@@ -60,7 +60,7 @@ PR #112 已将底层理顺为单向 `Task -> SessionId` 并退役了 `TaskAttemp
 ## 三、五个核心架构拍板
 
 ### 1. 唯一调度文件 + 防误删 + 后台安全 GC（彻底解决文件膨胀）
-- **文件位置与权限**：`{DataDir}/tracks/{trackId}/flow.json` 由 Host 托管。能访问该路径的 Lead 可直接编辑草稿。SSH Lead 可用 `flow_read()` 读取已提交的规格和版本，再通过 MCP 提交 JSON 文本。
+- **文件位置与权限**：`{DataDir}/tracks/{trackId}/flow.json` 由 Host 托管。能访问该路径的 Lead 可直接编辑草稿。SSH Lead 可用 `flow_read(format: "spec")` 读取已提交的规格和版本，再通过 MCP 提交 JSON 文本。
 - **统一提交门禁**：
   ```ts
   flow_commit({
