@@ -39,7 +39,7 @@ import {
 toTrack,trackActivityFromSnapshot,trackDisplayTitle
 } from '../../../../core/domain/track.ts';
 import { parkedWorkerNotices,workbenchTerminalCardIds } from '../../../../core/view/track-page.ts';
-import { ReportEmpty } from '../../features/report/empty/public.tsx';
+import { ReportEmpty, type ReportEmptyLeadState } from '../../features/report/empty/public.tsx';
 import { ReportFileViewer } from '../../features/report/file-viewer/public.tsx';
 import { ReportOutline } from '../../features/report/outline/public.tsx';
 import { RecentFiles } from '../../features/report/recent-files/public.tsx';
@@ -450,6 +450,29 @@ export function TrackRouteBody({
     && (templateViews.projection.flow.nodes.length > 0 || templateViews.projection.flow.archived.length > 0);
   const hasDailyReportContent = reportPresentation.visible?.preparation.kind !== 'empty' || hasFlowContent;
 
+  const openWorkerSession = (cardId: string) => {
+    if (!openableWorkerIds.has(cardId)) return;
+    if (rows.some((row) => row.id === cardId)) {
+      registry.requestOpen(cardId, { focusComposer: false });
+      return;
+    }
+    go({ name: 'track', trackId: track.id, cardId, from: routeFrom });
+  };
+
+  const leadActivity = plannerCard === undefined ? null : cardActivityOf(track, plannerCard.id);
+  const leadGuide: ReportEmptyLeadState | undefined = plannerCard === undefined ? undefined : {
+    id: plannerCard.id,
+    phase: leadActivity === 'failed' || plannerCard.status === 'failed'
+      ? 'failed'
+      : leadActivity === 'working' || track.working || plannerCard.status === 'running' || plannerCard.status === 'starting' || plannerCard.status === 'turn_pending'
+        ? 'running'
+        : leadActivity === 'input' || openAsks.length > 0 || plannerCard.lastNotifiableTurnAtMs !== null
+          ? 'waiting_reply'
+          : 'idle',
+    modelLabel: plannerCard.model ?? plannerCard.provider,
+    startedAtMs: plannerCard.updatedAtMs,
+  };
+
   const reportRegion = <>
     <TemplateProtocolBar track={track} inputsSchema={templateQuery.data?.manifest?.inputsSchema}
       loading={templateQuery.isLoading}
@@ -467,20 +490,16 @@ export function TrackRouteBody({
 
         onOpenLink={openReportLink}
         onOpenFileLink={openReportFile}
-        onOpenWorker={(cardId) => {
-          if (!openableWorkerIds.has(cardId)) return;
-          if (rows.some((row) => row.id === cardId)) {
-            registry.requestOpen(cardId, { focusComposer: false });
-            return;
-          }
-          go({ name: 'track', trackId: track.id, cardId, from: routeFrom });
-        }}
+        onOpenWorker={openWorkerSession}
         onOpenSourceLink={openReportSource}
         fileRoot={track.agentCwd}
         linkPreview={linkPreview}
         outlineEmpty={reportEmpty}
         empty={reportEmpty === undefined
           ? <ReportEmpty
+              track={track}
+              lead={leadGuide}
+              onOpenLead={openWorkerSession}
               templates={templateEntryAvailable ? templatesQuery.data : undefined}
               onApplyTemplate={templateEntryAvailable ? async (templateId) => { await applyTemplateMutation.mutateAsync(templateId); } : undefined}
             />

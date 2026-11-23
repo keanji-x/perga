@@ -81,6 +81,8 @@ it('applies a template directly from the blank report parchment ledger and repla
     },
   });
 
+  await expect.element(page.getByRole('region', { name: 'Template protocol' })).toBeVisible();
+  await expect.element(page.getByRole('region', { name: '起步流程' })).toBeVisible();
   await expect.element(page.getByRole('heading', { name: '进展会整理在这里' })).toBeVisible();
   await expect.element(page.getByRole('heading', { name: '从模板起稿' })).toBeVisible();
   const option = page.getByRole('button', { name: /AGENTS\.md 阶段交付协议/ });

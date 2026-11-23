@@ -32,16 +32,36 @@ describe('ReportEmpty', () => {
     expect(container.querySelector('button, a, input, textarea')).toBeNull();
   });
 
-  it('renders the parchment folio guide and applies a selected template in one click', async () => {
+  it('reuses TemplateProtocolBar, ReportDocument, and ReportFlowBlock and applies a template in one click', async () => {
     const onApplyTemplate = vi.fn(() => Promise.resolve());
     render(<ReportEmpty templates={TEMPLATES} onApplyTemplate={onApplyTemplate} />);
 
+    expect(screen.getByRole('region', { name: 'Template protocol' })).toBeTruthy();
+    expect(screen.getByRole('region', { name: '起步流程' })).toBeTruthy();
     expect(screen.getByRole('heading', { name: '进展会整理在这里' })).toBeTruthy();
     expect(screen.getByRole('heading', { name: '从模板起稿' })).toBeTruthy();
 
-    await userEvent.click(screen.getByRole('button', { name: /AGENTS\.md 阶段交付协议/ }));
+    await userEvent.click(screen.getByRole('button', { name: /^切换模板或保持空白/ }));
+    expect(screen.getByText(/套用最匹配的模板/)).toBeTruthy();
 
+    await userEvent.click(screen.getByRole('button', { name: /AGENTS\.md 阶段交付协议/ }));
     await waitFor(() => expect(onApplyTemplate).toHaveBeenCalledWith('agents-delivery'));
+  });
+
+  it('reflects live running Lead state in the protocol bar and flow node and opens Lead on click', async () => {
+    const onOpenLead = vi.fn();
+    render(
+      <ReportEmpty
+        templates={TEMPLATES}
+        onApplyTemplate={() => Promise.resolve()}
+        lead={{ id: 'ses_lead_1', phase: 'running', modelLabel: 'claude-sonnet', startedAtMs: 1_700_000_000_000 }}
+        onOpenLead={onOpenLead}
+      />,
+    );
+
+    expect(screen.getByText('Lead 运行中')).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: 'claude-sonnet' }));
+    expect(onOpenLead).toHaveBeenCalledWith('ses_lead_1');
   });
 
   it('shows an inline alert when applying a template fails', async () => {

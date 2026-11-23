@@ -14,9 +14,7 @@
     text-align: center;
   }
 
-  /* Mirrors real Report + TemplateProtocolBar: unboxed, laid directly on the
-     parchment ground inside the reading column (`--document-start` / `--document-measure`). */
-  .sheet {
+  .guide {
     display: flex;
     flex-direction: column;
     flex: 1 1 auto;
@@ -26,157 +24,20 @@
     text-align: start;
   }
 
-  .protocolBar {
+  /* Aligned to the same reading column (`--document-start` / `--document-measure`)
+     as the real `ReportDocument` rendered directly above it. */
+  .picker {
     display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
+    flex-direction: column;
     gap: var(--space-2);
-    margin-block: var(--space-3) var(--space-5);
+    margin-block-start: var(--space-4);
     margin-inline-start: var(--document-start, 0px);
     max-inline-size: min(100%, var(--document-measure, 40rem));
-    color: var(--text-2);
-    font: var(--type-ui);
-  }
-
-  .protocolBadges {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    min-inline-size: 0;
-  }
-
-  .protocolName {
-    color: var(--text-3);
-    font-weight: var(--weight-normal);
-  }
-
-  .protocolPill {
-    padding: var(--space-half) var(--space-2);
-    border-radius: var(--radius-sm);
-    background: var(--surface-chip);
-    color: var(--text-2);
-    font: var(--type-metadata);
-  }
-
-  .protocolHint {
-    color: var(--text-3);
-    font: var(--type-metadata);
-  }
-
-  .doc {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-7);
-    margin-inline-start: var(--document-start, 0px);
-    max-inline-size: min(100%, var(--document-measure, 40rem));
-    font: var(--type-reading);
-    letter-spacing: var(--type-reading-tracking);
-  }
-
-  .section {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-3);
-    min-inline-size: 0;
-  }
-
-  .chapterRow {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: var(--space-3);
-  }
-
-  /* Same marginalia treatment as Report `.h1` / `.referenceHead`:
-     indigo mono chapter number pulled into `--document-start` on desktop,
-     walking gracefully inline on narrow viewports with zero breakpoint literals. */
-  .chapter {
-    position: relative;
-    display: flex;
-    align-items: baseline;
-    gap: var(--space-3);
-    margin: 0;
-    color: var(--text);
-    font: var(--type-chapter);
-    letter-spacing: var(--type-chapter-tracking);
-  }
-
-  .chapterNum {
-    --_pull: min(2ch + var(--space-5), var(--document-start, 0px));
-
-    flex: none;
-    margin-inline-start: calc(-1 * var(--_pull));
-    margin-inline-end: max(0px, calc(var(--_pull) - 2ch - var(--space-3)));
-    color: var(--accent);
-    font: var(--type-code);
-    letter-spacing: var(--type-code-tracking);
-    font-variant-numeric: tabular-nums;
-  }
-
-  .chapterMeta {
-    flex: none;
-    color: var(--text-3);
-    font: var(--type-metadata);
-    font-variant-numeric: tabular-nums;
-  }
-
-  .prose {
-    margin: 0;
-    color: var(--text-2);
-    font: var(--type-reading);
-    line-height: 1.75;
-    text-wrap: pretty;
-  }
-
-  .prose strong {
-    color: var(--text);
-    font-weight: var(--weight-semibold);
-  }
-
-  .codeCue {
-    padding: 0 var(--space-1);
-    border-radius: var(--radius-sm);
-    background: var(--surface-code);
-    color: var(--text);
-    font: var(--type-code);
-  }
-
-  /* Borderless hairline table matching Report's own "nothing is boxed, one rule per row" rule. */
-  .surfaceTable {
-    display: flex;
-    flex-direction: column;
-    margin: var(--space-1) 0 0;
-    border-block-start: var(--space-px) solid var(--hairline);
-  }
-
-  .surfaceRow {
-    display: grid;
-    grid-template-columns: minmax(7.5rem, 9.5rem) minmax(0, 1fr);
-    align-items: baseline;
-    gap: var(--space-4);
-    padding-block: var(--space-3);
-    border-block-end: var(--space-px) solid var(--hairline);
-  }
-
-  .surfaceName {
-    margin: 0;
-    color: var(--text);
-    font: var(--type-ui);
-    font-weight: var(--weight-semibold);
-  }
-
-  .surfaceRole {
-    margin: 0;
-    color: var(--text-2);
-    font: var(--type-ui);
-    line-height: 1.6;
   }
 
   .templateList {
     display: flex;
     flex-direction: column;
-    margin-block-start: var(--space-1);
     border-block-start: var(--space-px) solid var(--hairline);
   }
 
