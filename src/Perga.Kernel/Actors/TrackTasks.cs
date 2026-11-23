@@ -650,10 +650,20 @@ public sealed partial class TrackActor
                         WorkerResult = clonedWorkerResult,
                         UpdatedAtMs = now
                     };
-                    await PersistAndEmitTaskUpdatedCoreAsync(verifyingTask, now, verificationToken)
-                        .ConfigureAwait(false);
+                    var verifyingEvt = CreateTaskUpdatedEventCore(now);
+                    await actor._eventHub.EnsureInitializedFromStoreAsync(actor._store, verificationToken).ConfigureAwait(false);
+                    await actor._store.UpsertTaskAsync(verifyingTask, verifyingEvt, verificationToken).ConfigureAwait(false);
                     ReplaceTaskInMemoryCore(verifyingTask);
                     if (active.SessionId is { } sid) actor.RevokeSessionRuntime(sid);
+                    try
+                    {
+                        await actor._eventHub.PublishSyncedAfterStoreWriteAsync(actor._store, verifyingEvt, verificationToken, allowFallback: false)
+                            .ConfigureAwait(false);
+                    }
+                    catch (Exception error) when (!actor._actorShutdownCts.IsCancellationRequested)
+                    {
+                        System.Diagnostics.Trace.TraceWarning("Could not publish verifying state for task {0}: {1}", task.Id, error);
+                    }
 
                     return (actor.InterpolateFlowTaskForExecutionCore(verifyingTask), active, mounted.MergedCwd, actor._policy?.Manifest.AfterWorkerDoneCmd);
                 }, verificationToken).ConfigureAwait(false);

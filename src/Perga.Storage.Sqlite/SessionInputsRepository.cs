@@ -351,7 +351,15 @@ internal sealed class SessionInputsRepository
                       AND tr.closed_at_ms IS NULL AND s.archived_at_ms IS NULL AND s.status = 'queued' AND t.epoch = s.epoch
                       AND NOT EXISTS (
                           SELECT 1 FROM session_turns other WHERE other.session_id = s.id AND other.id <> t.id
-                            AND (LOWER(other.status) IN ('queued', 'running', 'verifying', 'unknown')
+                            AND (LOWER(other.status) IN ('queued', 'running', 'verifying')
+                                 OR (LOWER(other.status) = 'unknown' AND other.epoch >= s.epoch
+                                     AND (s.unknown_turn_id = other.id
+                                          OR EXISTS (SELECT 1 FROM session_messages um
+                                                     WHERE um.session_id = s.id AND um.turn_id = other.id
+                                                       AND um.resolved_at_ms IS NULL)
+                                          OR (other.trigger_kind = 'user'
+                                              AND NOT EXISTS (SELECT 1 FROM session_messages um
+                                                              WHERE um.session_id = s.id AND um.turn_id = other.id))))
                                  OR other.turn_index > t.turn_index)
                       )
                       AND NOT EXISTS (SELECT 1 FROM tasks tk WHERE tk.session_id = s.id AND tk.owns_session = 1)

@@ -505,6 +505,127 @@ public sealed class FlowSessionSettlementTests
         finally { directory.Delete(recursive: true); }
     }
 
+    [Fact]
+    public async Task VerifyingEventReadFailureStillRevokesWorkerBindingAndFinishesGate()
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var ct = deadline.Token;
+        PromotionGate gate = null!;
+        await using var host = new PergaHostTestCluster(configureExtraServices: services => AddPromotionGate(services, g => gate = g));
+        var (trackId, _) = await host.CreateTrackAsync();
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        var store = host.Services.GetRequiredService<ITrackStore>();
+        var sessionId = (await kernel.CreateSessionAsync(trackId, new(Title: "Reuse verify test"), "reuse-verify", Human, ct)).Receipt.Session.Id;
+        var started = Signal();
+        var release = Signal();
+        host.AgentRuntime.SetTurnHandler((spec, input, turnCt) => spec.StateKey == sessionId &&
+            input.Prompt.Contains("Execute contract task", StringComparison.Ordinal)
+                ? HoldTurnAsync(started, release.Task, turnCt) : CompletedTurnAsync());
+
+        try
+        {
+            await FlowFixture.AddAsync(kernel, trackId, new FlowNodeSpecDto("borrowed",
+                new("run", Session: sessionId, Prompt: "borrowed run", Access: "read_only")));
+            await started.Task.WaitAsync(ct);
+            var workerToken = Token(host.AgentRuntime.OpenedSessions.Last(open => open.Spec.StateKey == sessionId));
+            Assert.NotNull(kernel.McpSessionBridge.ResolveToken(workerToken)!.BoundTaskId);
+            var sent = await kernel.SendSessionMessageAsync(sessionId,
+                new(Content: "after verifying event failure", RequestKey: "after-verify", Mode: "queue"), Human, ct);
+
+            var failedOnce = 0;
+            gate.OnListEventsSince = () =>
+            {
+                if (Interlocked.Exchange(ref failedOnce, 1) == 0)
+                    throw new IOException("Transient event history read failure after Verifying commit");
+            };
+
+            var done = await kernel.CompleteTaskDoneAsync(trackId, sessionId, ct: ct);
+            Assert.Equal(TaskRunStatus.Done, done.Status);
+            Assert.Equal(1, Volatile.Read(ref failedOnce));
+            Assert.Null(kernel.McpSessionBridge.ResolveToken(workerToken));
+
+            release.TrySetResult();
+            await kernel.WaitForTrackIdleAsync(trackId).WaitAsync(ct);
+            var receipt = (await store.SessionInputs.FindByIdAsync(sessionId, sent.MessageId, ct))!.Receipt;
+            Assert.Equal("completed", receipt.TurnStatus);
+            Assert.Single(host.AgentRuntime.ExecutedTurns, turn => turn.Input.Prompt == "after verifying event failure");
+        }
+        finally
+        {
+            gate.OnListEventsSince = null;
+            release.TrySetResult();
+        }
+    }
+
+    [Fact]
+    public async Task FrozenClaimRefusalRedispatchesOriginalTurnAfterReuseTaskSettles()
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var ct = deadline.Token;
+        PromotionGate gate = null!;
+        await using var host = new PergaHostTestCluster(configureExtraServices: services => AddPromotionGate(services, g => gate = g));
+        var (trackId, _) = await host.CreateTrackAsync();
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        var store = host.Services.GetRequiredService<ITrackStore>();
+        var sessionId = (await kernel.CreateSessionAsync(trackId, new(Title: "Frozen claim test"), "frozen-claim", Human, ct)).Receipt.Session.Id;
+        var started = Signal();
+        var release = Signal();
+        var promoted = new TaskCompletionSource<PersistedSessionInput>(TaskCreationOptions.RunContinuationsAsynchronously);
+        host.AgentRuntime.SetTurnHandler((spec, input, turnCt) => spec.StateKey == sessionId &&
+            input.Prompt.Contains("Execute contract task", StringComparison.Ordinal)
+                ? HoldTurnAsync(started, release.Task, turnCt) : CompletedTurnAsync());
+
+        var gateDir = Directory.CreateTempSubdirectory("perga-frozen-claim-gate-");
+        var gateReleaseFile = Path.Combine(gateDir.FullName, "release");
+        var gateStartedFile = Path.Combine(gateDir.FullName, "started");
+        try
+        {
+            var gateCmd = $"touch \"{gateStartedFile}\" && while [ ! -f \"{gateReleaseFile}\" ]; do sleep 0.02; done";
+            await FlowFixture.AddAsync(kernel, trackId, new FlowNodeSpecDto("borrowed",
+                new("run", Session: sessionId, Prompt: "borrowed run", Access: "read_only", Gate: gateCmd)));
+            await started.Task.WaitAsync(ct);
+            gate.OnPromoted = input =>
+            {
+                if (input.Receipt.SessionId != sessionId) return;
+                kernel.DispatchAdmission.SetDraining(true);
+                promoted.TrySetResult(input);
+            };
+            var sent = await kernel.SendSessionMessageAsync(sessionId,
+                new(Content: "redispatched after freeze", RequestKey: "frozen-redispatch", Mode: "queue"), Human, ct);
+            release.TrySetResult();
+            var accepted = await promoted.Task.WaitAsync(ct);
+
+            // Enter Verifying so IsSessionFrozenForDispatchCore is true, then un-drain dispatch so the
+            // promoted input actually hits ClaimCoreAsync, gets refused cleanly, and stays queued until Done.
+            var doneTask = kernel.CompleteTaskDoneAsync(trackId, sessionId, ct: ct);
+            while (!File.Exists(gateStartedFile))
+                await Task.Delay(10, ct);
+            Assert.Equal(TaskRunStatus.Verifying, Assert.Single(await kernel.ListTasksAsync(trackId, ct)).Status);
+            gate.OnPromoted = null;
+            kernel.DispatchAdmission.SetDraining(false);
+            await Task.Delay(150, ct);
+            var stillQueued = (await store.SessionInputs.FindByIdAsync(sessionId, sent.MessageId, ct))!.Receipt;
+            Assert.Equal((accepted.Receipt.TurnId, "accepted", "queued"), (stillQueued.TurnId, stillQueued.DeliveryState, stillQueued.TurnStatus));
+            Assert.DoesNotContain(host.AgentRuntime.ExecutedTurns, turn => turn.Input.Prompt == "redispatched after freeze");
+
+            await File.WriteAllTextAsync(gateReleaseFile, "go", ct);
+            var done = await doneTask.WaitAsync(ct);
+            Assert.Equal(TaskRunStatus.Done, done.Status);
+            await kernel.WaitForTrackIdleAsync(trackId).WaitAsync(ct);
+            var execution = Assert.Single(host.AgentRuntime.ExecutedTurns, turn => turn.Input.Prompt == "redispatched after freeze");
+            Assert.Equal(accepted.Receipt.TurnId, execution.Input.CorrelationId);
+            Assert.Equal("completed", (await store.SessionInputs.FindByIdAsync(sessionId, sent.MessageId, ct))!.Receipt.TurnStatus);
+        }
+        finally
+        {
+            gate.OnPromoted = null;
+            kernel.DispatchAdmission.SetDraining(false);
+            release.TrySetResult();
+            try { File.WriteAllText(gateReleaseFile, "go"); } catch { }
+            try { gateDir.Delete(recursive: true); } catch { }
+        }
+    }
+
     private static TaskDto BorrowedTask(AgentSessionDto session, string kind) =>
         new("fixture-task", session.TrackId, $"flow:{kind}", kind, 1, kind == "wake" ? "flow_wake" : "subagent",
             session.Provider, AccessMode.ReadOnly, true, [], "Test wake",
@@ -553,10 +674,13 @@ public sealed class FlowSessionSettlementTests
     {
         public SqliteTrackStore Inner { private get; set; } = null!;
         public Action<PersistedSessionInput>? OnPromoted { get; set; }
+        public Action? OnListEventsSince { get; set; }
 
         protected override object? Invoke(MethodInfo? method, object?[]? args)
         {
-            if (method!.Name != "get_SessionInputs")
+            if (method!.Name == nameof(ITrackReadStore.ListEventsSinceAsync))
+                OnListEventsSince?.Invoke();
+            if (method.Name != "get_SessionInputs")
                 return method.Invoke(Inner, args);
             var proxy = DispatchProxy.Create<ISessionInputStore, PromotionInputStore>();
             ((PromotionInputStore)proxy).Gate = this;

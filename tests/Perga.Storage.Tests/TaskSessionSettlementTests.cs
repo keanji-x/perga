@@ -189,6 +189,50 @@ public sealed class TaskSessionSettlementTests
         Assert.Equal(["queued", "interrupted"], await db.QueryAsync<string>("SELECT delivery FROM session_messages ORDER BY ordinal;"));
     }
 
+    [Theory]
+    [InlineData("reset_context", true)]
+    [InlineData("reconnect_durable", true)]
+    [InlineData("reconnect_wake", true)]
+    [InlineData("unresolved_durable", false)]
+    public async Task HistoricalRepairRespectsResolvedVsUnresolvedPriorUnknownTurns(string scenario, bool shouldRecover)
+    {
+        await using var h = await StorageTestHarness.CreateAsync();
+        var session = await SeedTrackAsync(h);
+        if (scenario == "reset_context")
+        {
+            session = session with { Epoch = 2 };
+            await h.Store.UpsertSessionAsync(session, null, default);
+        }
+
+        await h.Store.UpsertTaskAsync(CreateTask(session, "wake") with { Status = TaskRunStatus.Done }, null, default);
+        using var db = h.OpenRawInspectConnection();
+        var priorEpoch = scenario == "reset_context" ? 1 : session.Epoch;
+        var priorTrigger = scenario == "reconnect_wake" ? "wake" : "user";
+        await db.ExecuteAsync("""
+            INSERT INTO session_turns(id, session_id, turn_index, epoch, trigger_kind, status)
+            VALUES ('prior-unknown', @SessionId, 1, @Epoch, @Trigger, 'unknown');
+            """, new { SessionId = session.Id, Epoch = priorEpoch, Trigger = priorTrigger });
+        if (scenario is "reset_context" or "reconnect_durable" or "unresolved_durable")
+        {
+            await db.ExecuteAsync("""
+                INSERT INTO session_messages(id, session_id, kind, author_id, request_key, request_hash,
+                                             turn_id, content, delivery, created_at_ms, resolved_at_ms)
+                VALUES ('prior-msg', @SessionId, 'input', 'owner:installation', 'prior-key', 'hash',
+                        'prior-unknown', 'old input', 'unknown', 1000, @ResolvedAtMs);
+                """, new { SessionId = session.Id, ResolvedAtMs = scenario == "unresolved_durable" ? (long?)null : 1500L });
+        }
+
+        var batch = await PromoteBatchAsync(h, session, 1);
+        await db.ExecuteAsync("UPDATE session_messages SET delivery = 'interrupted' WHERE turn_id = @TurnId;",
+            new { batch.Receipt.TurnId });
+
+        var recovered = await h.Store.RecoverSessionInputsAsync(default);
+        if (shouldRecover)
+            Assert.Equal(batch, Assert.Single(recovered).Input);
+        else
+            Assert.Empty(recovered);
+    }
+
     private static async Task<AgentSessionDto> SeedTrackAsync(StorageTestHarness h)
     {
         await h.Store.UpsertAreaAsync(StorageTestHarness.CreateArea(), default);

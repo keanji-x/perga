@@ -15,11 +15,12 @@ internal static class SessionMessageSql
             UPDATE session_turns AS t
             SET status = 'interrupted', completed_at_ms = @Now, error_text = 'Task settled before turn started.'
             WHERE t.session_id = @SessionId AND t.status = 'queued'
-              AND t.started_at_ms IS NULL AND t.provider_turn_ref IS NULL
+              AND t.started_at_ms IS NULL AND t.completed_at_ms IS NULL AND t.provider_turn_ref IS NULL
               AND EXISTS (SELECT 1 FROM session_messages m WHERE m.turn_id = t.id)
               AND NOT EXISTS (
                   SELECT 1 FROM session_messages m WHERE m.turn_id = t.id
-                    AND (m.session_id <> t.session_id OR m.delivery <> 'queued' OR m.delivered_turn_id IS NOT NULL)
+                    AND (m.session_id <> t.session_id OR m.delivery <> 'queued'
+                         OR m.delivered_turn_id IS NOT NULL OR m.resolved_at_ms IS NOT NULL)
               )
             RETURNING id;
             """, new { SessionId = sessionId, Now = nowMs }, tx, cancellationToken: ct)).ConfigureAwait(false)).AsList();
