@@ -186,7 +186,7 @@ public sealed class TrackWakeStoreTests
         var task = new TaskDto("task", "trk_1", "block", "key", 1, "subagent", "codex", AccessMode.ReadWrite,
             true, [], "Goal", null, null, null, TaskRunStatus.Done, null, SemanticVerdict.None, null, 1000, 1000,
             SessionId: "sess_lead_1", RunCount: 1, Meta: StorageTestHarness.Json("{}"), StartedAtMs: 1000, FinishedAtMs: 1001);
-        await Assert.ThrowsAsync<SqliteException>(() => h.Store.UpsertTaskAsync(task, evt, default));
+        await Assert.ThrowsAsync<SqliteException>(() => h.Store.SettleTaskAsync(task, evt, default));
         Assert.Equal(0, await db.ExecuteScalarAsync<int>("SELECT count(*) FROM tasks;"));
         var snapshot = (await h.Store.LoadTrackAggregateAsync("trk_1", default))!;
         await Assert.ThrowsAsync<SqliteException>(() => h.Store.SaveReportAsync("trk_1",
@@ -194,8 +194,8 @@ public sealed class TrackWakeStoreTests
             evt, default));
         Assert.Equal(1, (await h.Store.LoadTrackAggregateAsync("trk_1", default))!.Report.DocRev);
         await db.ExecuteAsync("DROP TRIGGER reject_wake;");
-        await h.Store.UpsertTaskAsync(task, evt, default);
-        await h.Store.UpsertTaskAsync(task, evt, default);
+        await h.Store.SettleTaskAsync(task, evt, default);
+        await h.Store.SettleTaskAsync(task, evt, default);
         Assert.Single(await h.Store.TrackWakes.ListAsync("trk_1", default), w => w.Kind == "task_settled");
         await h.Store.SaveReportAsync("trk_1", snapshot.Report with { DocRev = 2 }, [], null, "Human edit",
             evt, default);

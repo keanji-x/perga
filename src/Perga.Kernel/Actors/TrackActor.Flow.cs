@@ -5,6 +5,7 @@ using Perga.Kernel.Flow;
 using Perga.Kernel.Internal;
 using Perga.Kernel.Mcp;
 using Perga.Kernel.Ports;
+using Perga.Kernel.Tasks;
 using Perga.Kernel.Templates;
 using Perga.PolicyVm;
 
@@ -156,7 +157,7 @@ public sealed partial class TrackActor
         var canceledNodes = proposed.Nodes.Where(n => n.Canceled).Select(n => n.Id).ToHashSet(StringComparer.Ordinal);
         var canceledRuns = _taskCoordinator.Snapshot().Where(t => canceledNodes.Contains(t.TaskKey) && _taskCoordinator.HasActiveRun(t.Id))
             .Select(t => _taskCoordinator.GetActiveRun(t.Id)).ToArray();
-        _taskCoordinator.RequireTasksOutsideVerification(canceledRuns);
+        _taskCoordinator.RequireTasksOutsideVerification(canceledRuns, allowFailedSettlement: true);
 
         if (dryRun)
         {
@@ -203,7 +204,16 @@ public sealed partial class TrackActor
             if (existing is not null && previous is not null &&
                 !TrackFlowValidator.WhenEquals(previous.When, node.When))
                 existing = existing with { Ready = false, TriggerRunKey = null };
-            upsertedTasks.Add(TrackFlowReconciler.BuildOrUpdateTaskForNode(TrackId, node, existing, now, ResolveFlowTaskAccessCore(node), previous));
+            var updated = TrackFlowReconciler.BuildOrUpdateTaskForNode(TrackId, node, existing, now, ResolveFlowTaskAccessCore(node), previous);
+            if (existing is not null && TaskSessionOwnership.OwnsSessionLifecycle(existing) &&
+                TaskSessionOwnership.UsesBorrowedSession(updated))
+            {
+                // Keep the old worker's durable ownership evidence when this node switches to borrowing.
+                var archivedId = $"tsk_{Guid.NewGuid():N}";
+                upsertedTasks.Add(TrackFlowReconciler.ArchiveTaskForGc(existing with
+                    { Id = archivedId, TaskKey = FlowConstants.MakeArchivedTaskKey(archivedId) }, now));
+            }
+            upsertedTasks.Add(updated);
             var schedule = TrackFlowReconciler.BuildScheduleForNode(TrackId, node, now, _scheduleCronEvaluator, _timeProvider);
             if (schedule is not null)
                 schedules.Add(node.Source == "template" && _policy is not null
@@ -250,7 +260,12 @@ public sealed partial class TrackActor
             await EnqueueAsync(async _ =>
             {
                 if (_taskCoordinator.TryGetActiveRun(run.TaskId, out var current) && ReferenceEquals(current, run))
-                    await _taskCoordinator.FinalizeCanceledTaskCoreAsync(run, CancellationToken.None).ConfigureAwait(false);
+                {
+                    _taskCoordinator.FinalizeCanceledTaskCore(run);
+                    var task = _taskCoordinator.RequireTaskCore(run.TaskId);
+                    if (TaskSessionOwnership.UsesBorrowedSession(task) && task.SessionId is { } sessionId)
+                        await PokeSessionCoreAsync(sessionId).ConfigureAwait(false);
+                }
                 await EvaluateFlowAfterTriggersCoreAsync(CancellationToken.None).ConfigureAwait(false);
                 await _taskCoordinator.ScheduleEligibleTasksCoreAsync(CancellationToken.None).ConfigureAwait(false);
                 await TryRunFlowGcCoreAsync(CancellationToken.None).ConfigureAwait(false);
@@ -307,12 +322,15 @@ public sealed partial class TrackActor
             _taskCoordinator.CreateTaskUpdatedEventCore(now)
         ];
         await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
-        await _store.CommitTrackFlowAsync(nextTrack, _track.FlowRev, tasks, schedules, canceledClocks, events, ct,
-            beforeWrite: CaptureMcpWriteFenceCore(authorization)).ConfigureAwait(false);
+        var settled = await _store.CommitTrackFlowAsync(nextTrack, _track.FlowRev, tasks, schedules, canceledClocks, events, ct,
+            beforeWrite: CaptureMcpWriteFenceCore(authorization),
+            settlingTasks: _taskCoordinator.FlowSettlementsCore(tasks)).ConfigureAwait(false);
         _track = nextTrack;
         _flowSpec = nextSpec;
         foreach (var task in tasks)
             _taskCoordinator.ReplaceTaskInMemoryCore(task);
+        foreach (var (sessionId, result) in settled)
+            _taskCoordinator.ApplyTaskSessionSettlementCore(sessionId, result);
         return events;
     }
 
@@ -577,19 +595,13 @@ public sealed partial class TrackActor
 
     private bool HasPendingFlowTaskForSessionCore(string sessionId) =>
         _taskCoordinator.Snapshot().Any(task => task.Status == TaskRunStatus.Pending && task.Ready &&
-            ((task.Kind == "flow_wake" && FlowConstants.IsFlowTask(task)) || (IsFlowSessionReuse(task) && ReadTaskDispatchSessionCore(task)?.Id == sessionId)));
+            ((task.Kind == "flow_wake" && FlowConstants.IsFlowTask(task)) || (FlowConstants.IsFlowSessionReuse(task) && ReadTaskDispatchSessionCore(task)?.Id == sessionId)));
 
     private AgentSessionDto? ReadTaskDispatchSessionCore(TaskDto task)
     {
-        var id = IsFlowSessionReuse(task) ? task.Context!.Value.GetProperty("targetSession").GetString() : task.SessionId;
+        var id = FlowConstants.IsFlowSessionReuse(task) ? task.Context!.Value.GetProperty("targetSession").GetString() : task.SessionId;
         return id is not null && _sessions.TryGetValue(id, out var session) ? session : null;
     }
-
-    private static bool IsFlowSessionReuse(TaskDto task) =>
-        FlowConstants.IsFlowTask(task) &&
-        task.Context is { ValueKind: JsonValueKind.Object } ctx &&
-        ctx.TryGetProperty("reuseSession", out var el) &&
-        el.ValueKind == JsonValueKind.True;
 
     private HashSet<string> CollectActiveFlowTaskIdsCore()
     {

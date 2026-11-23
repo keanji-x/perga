@@ -392,13 +392,17 @@ internal static class TrackFlowReconciler
         string? statusDetail = existing.StatusDetail;
 
         if (node.Canceled)
-        {
-            nextStatus = TaskRunStatus.Canceled;
-            nextReady = false;
-            finishedAt ??= nowMs;
-            statusDetail = string.IsNullOrWhiteSpace(statusDetail) ? "Canceled in flow." : statusDetail;
-        }
-        else if (FlowConstants.IsRepeatingWatch(node) &&
+            return existing with
+            {
+                // A cancellation can edit the declaration. Its task still describes the run being canceled.
+                Status = TaskRunStatus.Canceled,
+                Ready = false,
+                FinishedAtMs = finishedAt ?? nowMs,
+                StatusDetail = string.IsNullOrWhiteSpace(statusDetail) ? "Canceled in flow." : statusDetail,
+                ArchivedAtMs = null,
+                UpdatedAtMs = nowMs
+            };
+        if (FlowConstants.IsRepeatingWatch(node) &&
                  existing.Status == TaskRunStatus.Done &&
                  FlowConstants.IsWatchPaused(existing) &&
                  (previousNode is null || !TrackFlowValidator.DoEquals(previousNode.Do, node.Do) || !TrackFlowValidator.WhenEquals(previousNode.When, node.When)))
@@ -416,9 +420,7 @@ internal static class TrackFlowReconciler
             nextReady = isImmediate || existing.Ready;
         }
 
-        var sessionId = existing.SessionId;
-
-        return existing with
+        var updated = existing with
         {
             BlockId = FlowConstants.MakeBlockId(node.Id),
             Kind = kind,
@@ -431,7 +433,6 @@ internal static class TrackFlowReconciler
             Context = context,
             Acceptance = acceptance,
             Gate = gate,
-            SessionId = sessionId,
             Status = nextStatus,
             Outcome = nextOutcome,
             OutcomeSummary = nextOutcomeSummary,
@@ -440,6 +441,10 @@ internal static class TrackFlowReconciler
             ArchivedAtMs = null,
             UpdatedAtMs = nowMs
         };
+        // The edited declaration cannot reinterpret an earlier run's session binding.
+        return TaskSessionOwnership.UsesBorrowedSession(existing) != TaskSessionOwnership.UsesBorrowedSession(updated)
+            ? updated with { SessionId = null }
+            : updated;
     }
 
     internal static (string Title, string Prompt) ScheduleText(FlowNodeSpecDto node) =>

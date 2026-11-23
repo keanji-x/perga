@@ -16,6 +16,20 @@ public sealed partial class TrackFlowTests
     private static readonly InteropPrincipal Human = new InteropPrincipal.Human();
 
     [Fact]
+    public void EditingABorrowedNodeForFreshRunsClearsThePreviousSessionBinding()
+    {
+        var borrowed = new FlowNodeSpecDto("worker", new("run", Session: "ses_borrowed", Prompt: "Review"));
+        var previous = TrackFlowReconciler.BuildOrUpdateTaskForNode("track", borrowed, null, 1) with
+        {
+            Status = TaskRunStatus.Done, SessionId = "ses_borrowed", RunCount = 1, FinishedAtMs = 2
+        };
+        var fresh = borrowed with { Do = borrowed.Do with { Session = null } };
+        var edited = TrackFlowReconciler.BuildOrUpdateTaskForNode("track", fresh, previous, 3, previousNode: borrowed);
+        Assert.Null(edited.SessionId);
+        Assert.False(FlowConstants.IsFlowSessionReuse(edited));
+    }
+
+    [Fact]
     public async Task FailureReservedBeforeCancellationCannotSettleOrReleaseWorkspace()
     {
         var bridge = new ObservedMcpSessionBridge();

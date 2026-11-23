@@ -160,13 +160,26 @@ public sealed partial class TrackActor
         public async Task<Func<CancellationToken, Task>?> PokeAsync(string sessionId, bool allowWorker = true, bool allowInline = false)
         {
             if (actor._options.DispatchAdmission.Draining || !actor.WorkspaceReady || actor._track.ClosedAtMs is not null ||
-                !actor._sessions.TryGetValue(sessionId, out var session) || session.ArchivedAtMs is not null || IsOccupied(session))
+                !actor._sessions.TryGetValue(sessionId, out var session) || session.ArchivedAtMs is not null)
+                return null;
+            var hasAcceptedInput = session.Status == "queued";
+            if (IsOccupied(hasAcceptedInput ? session with { Status = "idle" } : session))
                 return null;
 
             if (actor._taskCoordinator.IsSessionFrozenForDispatchCore(session) || actor._taskCoordinator.IsSessionAutoDrainPausedCore(sessionId))
                 return null;
             if (!allowWorker && actor._taskCoordinator.IsTaskOwnedSessionCore(sessionId))
                 return null;
+
+            if (hasAcceptedInput)
+            {
+                // A task can freeze dispatch between promotion and claim. Once it releases the
+                // session, re-dispatch the durable input with its original turn and input IDs.
+                var inputs = await actor._store.ListAcceptedTrackInputsAsync(actor.TrackId, CancellationToken.None).ConfigureAwait(false);
+                if (inputs.FirstOrDefault(input => input.Receipt.SessionId == sessionId) is { } pending)
+                    actor.DispatchAcceptedInput(pending);
+                return null;
+            }
 
             if (actor._store.SessionMessages is not null &&
                 await actor.Messages.NextAsync(sessionId, CancellationToken.None).ConfigureAwait(false) is { } next)

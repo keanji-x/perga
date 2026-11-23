@@ -380,6 +380,31 @@ internal sealed class SessionRepository
                 cancellationToken: ct));
     }
 
+    internal const string SessionColumns = """
+        id AS Id,
+        track_id AS TrackId,
+        title AS Title,
+        provider AS Provider,
+        model AS Model,
+        reasoning_effort AS ReasoningEffort,
+        native_thread_id AS NativeThreadId,
+        epoch AS Epoch,
+        status AS Status,
+        context_used_tokens AS ContextUsedTokens,
+        context_window_tokens AS ContextWindowTokens,
+        context_usage_at_ms AS ContextUsageAtMs,
+        archived_at_ms AS ArchivedAtMs,
+        created_at_ms AS CreatedAtMs,
+        updated_at_ms AS UpdatedAtMs,
+        permission_mode AS PermissionMode,
+        unknown_reason AS UnknownReason, unknown_turn_id AS UnknownTurnId,
+        (SELECT MAX(t.completed_at_ms) FROM session_turns t WHERE t.session_id = agent_sessions.id
+         AND LOWER(t.status) IN ('completed', 'failed') AND t.completed_at_ms IS NOT NULL) AS LastNotifiableTurnAtMs,
+        unknown_last_error AS UnknownLastError, reconnect_invalidated AS ReconnectInvalidated,
+        parent_session_id AS ParentSessionId, spawn_depth AS SpawnDepth,
+        config_version AS ConfigVersion, notify_parent AS NotifyParent, system_prompt AS SystemPrompt
+        """;
+
     internal static AgentSessionDto MapSession(SessionRow r, string? leadSessionId) =>
         new(
             Id: r.Id,

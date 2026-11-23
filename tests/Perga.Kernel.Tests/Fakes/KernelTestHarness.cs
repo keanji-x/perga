@@ -6,6 +6,7 @@ using System.Text.RegularExpressions;
 using Perga.AgentKit;
 using Perga.Contracts;
 using Perga.Kernel.Events;
+using Perga.Kernel.Tasks;
 using Perga.Kernel.Ports;
 using Perga.PolicyVm;
 using Perga.ReportDoc;
@@ -488,7 +489,7 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
         return Task.CompletedTask;
     }
 
-    public Task CommitTrackFlowAsync(
+    public Task<IReadOnlyDictionary<string, TaskSettlementResult>> CommitTrackFlowAsync(
         TrackDto track,
         long expectedFlowRev,
         IReadOnlyList<TaskDto> upsertedTasks,
@@ -496,11 +497,12 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
         IReadOnlyList<string> canceledFlowScheduleIds,
         IReadOnlyList<EventEnvelopeDto> events,
         CancellationToken ct,
-        Action? beforeWrite = null) =>
-        CommitTrackFlow(track, expectedFlowRev, upsertedTasks, activeFlowSchedules, canceledFlowScheduleIds, events,
-            beforeWrite: beforeWrite);
+        Action? beforeWrite = null,
+        IReadOnlyDictionary<string, string?>? settlingTasks = null) =>
+        Task.FromResult(CommitTrackFlow(track, expectedFlowRev, upsertedTasks, activeFlowSchedules, canceledFlowScheduleIds, events,
+            beforeWrite: beforeWrite, settlingTasks: settlingTasks));
 
-    private Task CommitTrackFlow(
+    private IReadOnlyDictionary<string, TaskSettlementResult> CommitTrackFlow(
         TrackDto track,
         long expectedFlowRev,
         IReadOnlyList<TaskDto> upsertedTasks,
@@ -508,7 +510,8 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
         IReadOnlyList<string> canceledFlowScheduleIds,
         IReadOnlyList<EventEnvelopeDto> events,
         IReadOnlySet<string>? resetClockIds = null,
-        Action? beforeWrite = null)
+        Action? beforeWrite = null,
+        IReadOnlyDictionary<string, string?>? settlingTasks = null)
     {
         lock (_gate)
         {
@@ -532,9 +535,18 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
                 _tasksByTrack[track.Id] = list;
             }
 
+            var settled = new Dictionary<string, TaskSettlementResult>(StringComparer.Ordinal);
             foreach (var task in upsertedTasks)
             {
                 list.RemoveAll(t => t.TaskKey == task.TaskKey && t.Id != task.Id);
+                if (settlingTasks?.TryGetValue(task.Id, out var ownedSessionId) == true)
+                {
+                    var result = SettleTaskAsync(task, null, CancellationToken.None, ownedSessionId, suppressDefaultWake: true)
+                        .GetAwaiter().GetResult();
+                    if (ownedSessionId is not null && result.QueueChanged)
+                        settled[ownedSessionId] = result;
+                    continue;
+                }
                 var idx = list.FindIndex(t => t.Id == task.Id);
                 if (idx >= 0) list[idx] = task;
                 else list.Add(task);
@@ -589,25 +601,27 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
                 AppendEventLocked(evt);
             }
 
-            return Task.CompletedTask;
+            return settled;
         }
     }
 
-    public Task UpdateTrackTemplateAndEmitAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto evt, CancellationToken ct, bool writeData = false, TrackFlowUpdate? flow = null, TemplateReportSeed? reportSeed = null, Action? beforeWrite = null)
+    public Task<IReadOnlyDictionary<string, TaskSettlementResult>> UpdateTrackTemplateAndEmitAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto evt, CancellationToken ct, bool writeData = false, TrackFlowUpdate? flow = null, TemplateReportSeed? reportSeed = null, Action? beforeWrite = null)
     {
         lock (_gate)
         {
             beforeWrite?.Invoke();
             if (FailTemplateUpdate) throw new IOException("template persistence failure");
             _templateSnapshots[track.Id] = templateSnapshot;
-            if (flow is not null)
-                CommitTrackFlow(track, flow.ExpectedRev, flow.Tasks, flow.Clocks, flow.CanceledClockIds, [], flow.ResetClockIds).GetAwaiter().GetResult();
-            var commit = UpdateTrackAndEmitAsync(track, evt, ct, writeData);
+            var settled = flow is not null
+                ? CommitTrackFlow(track, flow.ExpectedRev, flow.Tasks, flow.Clocks, flow.CanceledClockIds, [],
+                    flow.ResetClockIds, settlingTasks: flow.SettlingTasks)
+                : new Dictionary<string, TaskSettlementResult>();
+            UpdateTrackAndEmitAsync(track, evt, ct, writeData).GetAwaiter().GetResult();
             if (reportSeed is not null)
                 SaveReportAsync(track.Id, reportSeed.Document, reportSeed.CompressedBlocks, reportSeed.AuthorSessionId,
                     "Seed template report", reportSeed.Event, ct).GetAwaiter().GetResult();
             AfterTemplateCommit?.Invoke();
-            return commit;
+            return Task.FromResult(settled);
         }
     }
 
@@ -649,9 +663,8 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
         EventEnvelopeDto? evt,
         CancellationToken ct,
         AgentSessionDto? session = null,
-        EventEnvelopeDto? sessionEvent = null, string? wakePrompt = null, SessionMessage? initialMessage = null,
-        bool writeNewRunBoundary = false,
-        bool suppressDefaultWake = false)
+        EventEnvelopeDto? sessionEvent = null, SessionMessage? initialMessage = null,
+        bool writeNewRunBoundary = false)
     {
         lock (_gate)
         {
@@ -677,7 +690,28 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
                 list.Add(task);
             }
 
-            if (task.FinishedAtMs is not null && !suppressDefaultWake)
+            if (evt is not null)
+                AppendEventLocked(evt);
+            return Task.CompletedTask;
+        }
+    }
+
+    public Task<TaskSettlementResult> SettleTaskAsync(TaskDto task, EventEnvelopeDto? evt, CancellationToken ct,
+        string? interruptOwnedSessionId = null, string? wakePrompt = null, bool suppressDefaultWake = false)
+    {
+        lock (_gate)
+        {
+            UpsertTaskAsync(task, null, ct).GetAwaiter().GetResult();
+            var result = interruptOwnedSessionId is { } sessionId
+                ? InterruptUnstartedOwnedSessionWorkLocked(sessionId, task.UpdatedAtMs)
+                : new TaskSettlementResult(false);
+            if (result.Session is { } session)
+            {
+                var sessionEvent = new EventEnvelopeDto(null, _tracks[session.TrackId].AreaId, session.TrackId,
+                    KernelEventKinds.SessionUpdated, TestJson.FromObject(session), session.UpdatedAtMs);
+                AppendEventLocked(sessionEvent);
+            }
+            if (!suppressDefaultWake)
             {
                 var child = task.SessionId is { } childId ? _sessions.GetValueOrDefault(childId) : null;
                 if (child?.ParentSessionId is { } parentId)
@@ -693,7 +727,7 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
                 AppendEventLocked(evt);
             }
 
-            return Task.CompletedTask;
+            return Task.FromResult(result);
         }
     }
 
@@ -734,7 +768,9 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
                 AppendEventLocked(new(null, _tracks[session.TrackId].AreaId, session.TrackId, KernelEventKinds.TurnCompleted,
                     TestJson.FromObject(turns[index]), DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
             }
-            return Task.FromResult<IReadOnlyList<(string, PersistedSessionInput)>>(_inputs.Values.Where(i => i.Receipt.TurnStatus == "queued")
+            return Task.FromResult<IReadOnlyList<(string, PersistedSessionInput)>>(_inputs.Values.Where(i =>
+                    i.Receipt.TurnStatus == "queued" && i.Receipt.DeliveryState == "accepted" &&
+                    _sessions[i.Receipt.SessionId].ArchivedAtMs is null)
                 .GroupBy(i => i.Receipt.TurnId).Select(g => (_sessions[g.First().Receipt.SessionId].TrackId,
                     g.First() with { Content = string.Join("\n\n", g.Select(i => i.Content)) })).ToArray());
         }
@@ -983,6 +1019,11 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
                     var turn = kvp.Value[i];
                     if (string.Equals(turn.Status, "running", StringComparison.OrdinalIgnoreCase))
                     {
+                        if (_inputs.Values.Any(input => input.Receipt.TurnId == turn.Id))
+                        {
+                            affected.Add(_sessions[turn.SessionId].TrackId);
+                            continue;
+                        }
                         kvp.Value[i] = turn with { Status = "interrupted", ErrorText = "Interrupted on boot." };
                         if (_sessions.TryGetValue(turn.SessionId, out var ses))
                         {
@@ -1007,8 +1048,15 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
                 for (var i = 0; i < kvp.Value.Count; i++)
                 {
                     var t = kvp.Value[i];
-                    if (t.Status is TaskRunStatus.Running or TaskRunStatus.Verifying)
+                    if (t.Kind != "flow_watch" && t.Status is TaskRunStatus.Running or TaskRunStatus.Verifying)
                     {
+                        if (TaskSessionOwnership.OwnsSessionLifecycle(t) && t.SessionId is { } owned &&
+                            _tracks[t.TrackId].LeadSessionId != owned && _sessions.TryGetValue(owned, out var session))
+                        {
+                            var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                            var result = InterruptUnstartedOwnedSessionWorkLocked(owned, now);
+                            _sessions[owned] = (result.Session ?? session) with { ArchivedAtMs = session.ArchivedAtMs ?? now };
+                        }
                         kvp.Value[i] = t with { Status = TaskRunStatus.Failed, StatusDetail = "interrupted", FinishedAtMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() };
                         affected.Add(t.TrackId);
                     }

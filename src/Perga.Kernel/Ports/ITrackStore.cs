@@ -51,9 +51,12 @@ public sealed record TrackFlowUpdate(
 {
     public IReadOnlyList<string> CanceledClockIds { get; init; } = [];
     public IReadOnlySet<string>? ResetClockIds { get; init; }
+    public IReadOnlyDictionary<string, string?>? SettlingTasks { get; init; }
 }
 
 public sealed record AreaTrackCounts(int OpenCount, int ClosedCount);
+
+public sealed record TaskSettlementResult(bool QueueChanged, AgentSessionDto? Session = null);
 
 public interface ITrackReadStore
 {
@@ -122,16 +125,18 @@ public interface ITrackStore : ITrackReadStore
     Task SaveWorkspacePreparationAsync(string trackId, WorkspacePreparation preparation, TrackDto? readyTrack, EventEnvelopeDto? evt, CancellationToken ct);
     Task UpdateTrackAndEmitAsync(TrackDto track, EventEnvelopeDto? evt, CancellationToken ct, bool writeData = false, Action? beforeWrite = null);
     Task RecordFlowFileHashAsync(string trackId, long flowRev, string sha256, CancellationToken ct);
-    Task CommitTrackFlowAsync(
+    Task<IReadOnlyDictionary<string, TaskSettlementResult>> CommitTrackFlowAsync(
         TrackDto track,
         long expectedFlowRev,
         IReadOnlyList<TaskDto> upsertedTasks,
         IReadOnlyList<TrackScheduleDto> activeFlowSchedules,
         IReadOnlyList<string> canceledFlowScheduleIds,
         IReadOnlyList<EventEnvelopeDto> events,
-        CancellationToken ct, Action? beforeWrite = null) =>
+        CancellationToken ct,
+        Action? beforeWrite = null,
+        IReadOnlyDictionary<string, string?>? settlingTasks = null) =>
         throw new NotSupportedException("Flow commit is not implemented by this store.");
-    Task UpdateTrackTemplateAndEmitAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto evt, CancellationToken ct, bool writeData = false, TrackFlowUpdate? flow = null, TemplateReportSeed? reportSeed = null, Action? beforeWrite = null);
+    Task<IReadOnlyDictionary<string, TaskSettlementResult>> UpdateTrackTemplateAndEmitAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto evt, CancellationToken ct, bool writeData = false, TrackFlowUpdate? flow = null, TemplateReportSeed? reportSeed = null, Action? beforeWrite = null);
     Task DeleteTrackAsync(string trackId, CancellationToken ct);
 
     Task SaveReportAsync(
@@ -145,8 +150,10 @@ public interface ITrackStore : ITrackReadStore
         Action? beforeWrite = null);
 
     Task UpsertTaskAsync(TaskDto task, EventEnvelopeDto? evt, CancellationToken ct,
-        AgentSessionDto? session = null, EventEnvelopeDto? sessionEvent = null, string? wakePrompt = null,
-        SessionMessage? initialMessage = null, bool writeNewRunBoundary = false, bool suppressDefaultWake = false);
+        AgentSessionDto? session = null, EventEnvelopeDto? sessionEvent = null,
+        SessionMessage? initialMessage = null, bool writeNewRunBoundary = false);
+    Task<TaskSettlementResult> SettleTaskAsync(TaskDto task, EventEnvelopeDto? evt, CancellationToken ct,
+        string? interruptOwnedSessionId = null, string? wakePrompt = null, bool suppressDefaultWake = false);
     Task<bool> HasSessionTurnAsync(string sessionId, string turnId, CancellationToken ct);
     Task<IReadOnlyList<SessionTurnDto>> ListSessionTurnsAsync(string sessionId, CancellationToken ct) =>
         Task.FromResult<IReadOnlyList<SessionTurnDto>>([]);

@@ -152,7 +152,7 @@ internal sealed class SessionMessagesRepository : ISessionMessageStore
             SELECT DISTINCT s.track_id, s.id FROM session_messages m
             JOIN agent_sessions s ON s.id = m.session_id JOIN tracks t ON t.id = s.track_id
             WHERE m.delivery = 'queued' AND m.turn_id IS NULL AND t.closed_at_ms IS NULL AND s.archived_at_ms IS NULL
-              AND NOT EXISTS (SELECT 1 FROM tasks tk WHERE tk.session_id = s.id AND (tk.kind <> 'flow_wake' OR tk.block_id <> 'flow:' || tk.task_key OR json_type(tk.context_json, '$.flowNode') IS NOT 'true') AND LOWER(tk.status) IN ('pending', 'running', 'verifying'));
+              AND NOT EXISTS (SELECT 1 FROM tasks tk WHERE tk.session_id = s.id AND tk.owns_session = 1 AND LOWER(tk.status) IN ('pending', 'running', 'verifying'));
             """, cancellationToken: ct)).ConfigureAwait(false);
         return rows.AsList();
     }

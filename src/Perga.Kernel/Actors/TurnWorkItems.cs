@@ -85,7 +85,7 @@ public sealed partial class TrackActor
         public async Task<AgentSessionDto?> ClaimCoreAsync(AgentSessionDto session, AgentSessionDto runningSession,
             EventEnvelopeDto runningEvent, CancellationToken ct)
         {
-            if (actor._track.ClosedAtMs is not null || session.Epoch != input.Epoch)
+            if (actor._taskCoordinator.IsSessionFrozenForDispatchCore(session) || session.Epoch != input.Epoch)
                 return null;
             await actor._eventHub.EnsureInitializedFromStoreAsync(actor._store, ct).ConfigureAwait(false);
             if (!await actor._store.SessionInputs.ClaimAsync(input, runningSession, runningEvent, ct).ConfigureAwait(false))
