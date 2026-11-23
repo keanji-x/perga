@@ -274,7 +274,7 @@ export interface PergaTemplateSetupResult<TInputs = Record<string, any>, TData =
   };
   tasks?: {
     /** First matching defaults fill omitted fields. enforce denies explicit conflicts.
-     * provider/model support ${inputs.key}, including input schema defaults. */
+     * provider/model support ${inputs.key} and schema defaults. An exact "${inputs.key}" leaves the target unset when the optional input has no value or resolves to a blank string. */
     routing?: TaskRoutingRuleSpec[];
     requireGateForReadWrite?: boolean;
     afterWorkerDoneCmd?: string;

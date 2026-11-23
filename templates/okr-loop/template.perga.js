@@ -22,32 +22,25 @@ export default defineTemplate({
       prompt: "检查 ${inputs.checkCmd} 是否可用。可用时采集过去 24 小时 CI 指标，用 data_patch 更新 KR 总账，并核对异常。",
     },
   }],
-  setup(inputs) {
-    return {
-      data: {
-        schema,
-        initial: () => initial(),
+  data: { schema, initial },
+  report: {
+    template: "./report.md",
+    views,
+  },
+  tasks: {
+    routing: [
+      {
+        when: { role: "triage" },
+        provider: "${inputs.triageProvider}",
+        model: "${inputs.triageModel}",
+        access: "read_only", enforce: true,
       },
-      report: {
-        template: "./report.md",
-        views,
+      {
+        when: { role: "optimize" },
+        provider: "${inputs.optimizeProvider}",
+        model: "${inputs.optimizeModel}",
+        access: "read_write",
       },
-      tasks: {
-        routing: [
-          {
-            when: { role: "triage" },
-            ...(inputs.triageProvider ? { provider: inputs.triageProvider } : {}),
-            ...(inputs.triageModel ? { model: inputs.triageModel } : {}),
-            access: "read_only", enforce: true,
-          },
-          {
-            when: { role: "optimize" },
-            ...(inputs.optimizeProvider ? { provider: inputs.optimizeProvider } : {}),
-            ...(inputs.optimizeModel ? { model: inputs.optimizeModel } : {}),
-            access: "read_write",
-          },
-        ],
-      },
-    };
+    ],
   },
 });

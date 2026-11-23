@@ -10,21 +10,17 @@ export default defineTemplate({
   report: {
     template: "./report.md",
   },
-  setup(inputs) {
-    return {
-      tasks: {
-        requireGateForReadWrite: true,
-        routing: [
-          {
-            when: { role: "review" },
-            ...(inputs.reviewProvider ? { provider: inputs.reviewProvider } : {}),
-            ...(inputs.reviewModel ? { model: inputs.reviewModel } : {}),
-            access: "read_only", enforce: true,
-          },
-          { when: { role: "impl" }, access: "read_write" },
-        ],
+  tasks: {
+    requireGateForReadWrite: true,
+    routing: [
+      {
+        when: { role: "review" },
+        provider: "${inputs.reviewProvider}",
+        model: "${inputs.reviewModel}",
+        access: "read_only", enforce: true,
       },
-    };
+      { when: { role: "impl" }, access: "read_write" },
+    ],
   },
   turnContext({ inputs, session }) {
     if (!session.isLead) return;
