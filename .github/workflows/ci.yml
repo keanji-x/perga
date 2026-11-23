@@ -188,7 +188,7 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           test "$(uname -m)" = arm64
-          (cd tools/perga-oar-bridge && npm ci && npm run build)
+          (cd tools/perga-oar-bridge && npm ci && npm run build && npm test)
           rustup toolchain install --no-self-update
           (cd tools/perga-term-bridge && cargo test --locked --release && cargo build --locked --release)
           bridge="$PWD/tools/perga-term-bridge/target/release/perga-term-bridge"
