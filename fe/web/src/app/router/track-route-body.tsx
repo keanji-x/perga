@@ -3,8 +3,8 @@ import type { TrackAggregateSnapshotDto } from "../../../../core/api/perga-v1.ts
 import { priorityConversation } from '../../../../core/domain/activity.ts';
 import { DELETE_FAILURES,DELETE_TEXT,writeFailureText } from '../../../../core/domain/failure-class.ts';
 import { terminalPresentation } from '../../../../core/domain/terminal-presentation.ts';
-import { applyTrackTemplateOperation, trackTemplateOperation, updateTrackTemplateInputsOperation } from '../../../../core/domain/track-template.ts';
-import { trackDetail, tracksInArea, trackTemplate, trackViews as trackViewsKey } from '../../../../core/events/query-keys.ts';
+import { trackTemplateOperation, updateTrackTemplateInputsOperation } from '../../../../core/domain/track-template.ts';
+import { trackDetail, trackTemplate, trackViews as trackViewsKey } from '../../../../core/events/query-keys.ts';
 import { TemplateProtocolBar } from '../../features/report/template-protocol/public.tsx';
 import { useTrackClosedControl } from '../../features/track/page/closed-control.ts';
 import { TerminalWorkbenchView,useTerminalWorkbench } from '../../features/track/workbench/public.tsx';
@@ -432,18 +432,6 @@ export function TrackRouteBody({
     && protocolWritable
     && reportPresentation.report === null;
   const templatesQuery = useQuery(trackTemplatesQueryOptions(transport, unauthorized, templateEntryAvailable));
-  const applyTemplateMutation = useOnlineMutation({
-    mutationFn: (templateId: string) =>
-      runOperation(transport, applyTrackTemplateOperation(track.id, { templateId }), unauthorized),
-    onSuccess: async () => {
-      await Promise.all([
-        protocolClient.invalidateQueries({ queryKey: trackTemplate(track.id) }),
-        protocolClient.invalidateQueries({ queryKey: trackDetail(track.id) }),
-        protocolClient.invalidateQueries({ queryKey: trackViewsKey(track.id) }),
-        protocolClient.invalidateQueries({ queryKey: tracksInArea(track.areaId) }),
-      ]);
-    },
-  });
 
   const hasFlowContent = templateViews?.status === 'ready'
     && templateViews.projection.flow != null
@@ -501,7 +489,6 @@ export function TrackRouteBody({
               lead={leadGuide}
               onOpenLead={openWorkerSession}
               templates={templateEntryAvailable ? templatesQuery.data : undefined}
-              onApplyTemplate={templateEntryAvailable ? async (templateId) => { await applyTemplateMutation.mutateAsync(templateId); } : undefined}
             />
           : reportEmpty}
       >{reportEvidence}</TrackReportRegion>
