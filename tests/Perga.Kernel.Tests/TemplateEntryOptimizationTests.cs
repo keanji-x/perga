@@ -20,6 +20,9 @@ public sealed class TemplateEntryOptimizationTests
         Assert.Contains("**Title**", leadPrompt, StringComparison.Ordinal);
         Assert.Contains("**Report**", leadPrompt, StringComparison.Ordinal);
         Assert.Contains("Templates are optional and implicit", leadPrompt, StringComparison.Ordinal);
+        Assert.Contains("When no template is active yet", leadPrompt, StringComparison.Ordinal);
+        Assert.Contains("dryRun", leadPrompt, StringComparison.Ordinal);
+        Assert.Contains("inputs", leadPrompt, StringComparison.Ordinal);
         Assert.Contains("before doing deep work or writing the Report", leadPrompt, StringComparison.Ordinal);
         Assert.Contains("composable rather than all-or-nothing", leadPrompt, StringComparison.Ordinal);
         Assert.Contains("format: \"files\"", leadPrompt, StringComparison.Ordinal);

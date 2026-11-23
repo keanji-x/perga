@@ -14,6 +14,7 @@ describe('ReportEmpty', () => {
     expect(screen.getByRole('heading', { name: 'Flow 示例：多步工作如何自动流转' })).toBeTruthy();
     expect(screen.getByRole('region', { name: '流程示例' })).toBeTruthy();
     expect(screen.queryByRole('region', { name: 'Template protocol' })).toBeNull();
+    expect(document.querySelector('[data-nc-report]')).toBeNull();
     expect(screen.queryByRole('table')).toBeNull();
 
     // Default-selected running sample node and clickable inspection of sibling sample nodes.

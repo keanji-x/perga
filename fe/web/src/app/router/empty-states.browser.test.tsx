@@ -57,10 +57,12 @@ it.each([1440, 390])('renders the airy blank report guide and interactive Flow s
   await expect.element(page.getByRole('heading', { name: '进展会整理在这里' })).toBeVisible();
   await expect.element(page.getByRole('heading', { name: 'Flow 示例：多步工作如何自动流转' })).toBeVisible();
   await expect.element(page.getByRole('region', { name: '流程示例' })).toBeVisible();
+  expect(document.querySelector('[data-nc-report]')).toBeNull();
   expect(document.querySelector('[aria-label="Template protocol"]')).toBeNull();
   await page.getByRole('button', { name: /^汇总沉淀进 Report/ }).click();
   await expect.element(page.getByText(/上游步骤完成后自动唤醒 Lead/)).toBeVisible();
   await settle();
   await page.screenshot({ path: `./__screenshots__/empty-audit/track-${width}.png` });
   expect(requests.every(request => request.method === 'GET')).toBe(true);
+  expect(requests.some(request => request.path === '/api/v1/templates')).toBe(false);
 });

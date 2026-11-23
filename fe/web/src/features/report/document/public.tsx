@@ -62,6 +62,8 @@ export type ReportDocumentProps = Readonly<{
   templateViews?: TemplateViewsProjection | TemplateViewsState;
   /** Whether to auto-inject `builtin:flow` when the Track has flow nodes but no explicit flow widget. Defaults to true. */
   allowAutoFlow?: boolean;
+  /** Whether this document represents a committed Track report (`data-nc-report`). Defaults to true. */
+  authored?: boolean;
 }>;
 
 function resolveAutoFlow(
@@ -89,7 +91,7 @@ function isTargetSectionProse(slot: PreparedReportBlock | undefined): boolean {
 /** Agent-authored destinations become admitted preview controls. Navigation stays behind typed callbacks or explicit external activation. */
 export function ReportDocument({
   report, preparation, empty, outlineEmpty, rail, byline, sourceInsertion, backlinkCounts, onOpenLink, onOpenFileLink, onOpenWorker, onOpenSourceLink, fileRoot, fileBasePath, linkPreview,
-  templateViews, allowAutoFlow = true, arrivalAnchorId, taskRows,
+  templateViews, allowAutoFlow = true, authored = true, arrivalAnchorId, taskRows,
 }: ReportDocumentProps) {
   const compactViewport = useCompactViewport();
   const prepared = useMemo(() => preparation ?? prepareReportDocument(report), [preparation, report]);
@@ -122,7 +124,7 @@ export function ReportDocument({
   if (prepared.kind === 'empty') {
     if (autoFlowNode === null) return <>{empty}</>;
     return (
-      <article className={`calm-prose ${styles.doc}`} data-nc-report="" tabIndex={-1}>
+      <article className={`calm-prose ${styles.doc}`} data-nc-report={authored ? '' : undefined} tabIndex={-1}>
         {rail}
         {byline !== undefined && <div className={styles.byline}>{byline}</div>}
         {autoFlowNode}
@@ -133,7 +135,7 @@ export function ReportDocument({
   const outlineOnly = compactViewport && prepared.outlineOnly && autoFlowNode === null;
 
   return (
-    <article className={`calm-prose ${styles.doc} ${outlineOnly ? styles.outlineOnly : ''}`} data-nc-report="" tabIndex={-1}>
+    <article className={`calm-prose ${styles.doc} ${outlineOnly ? styles.outlineOnly : ''}`} data-nc-report={authored ? '' : undefined} tabIndex={-1}>
       {outlineOnly && <div className={styles.mobileEmpty}><EmptyState icon={<Icon name="file" />} title="进展会整理在这里" description="说说想做的事，计划与结论会随对话整理。" /></div>}
       {rail}
       {byline !== undefined && <div className={styles.byline}>{byline}</div>}

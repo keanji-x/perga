@@ -113,7 +113,7 @@ public sealed partial class TrackActor
         if (session.IsLead)
         {
             var templateScoping = _policy is null
-                ? " Once you understand the scope of substantive work—before doing deep work or writing the Report—check `template_list` (and `template_read` for any plausible match) and apply a fitting template with `track_set` up front so its Report layout and `data` seed cleanly."
+                ? " When no template is active yet, once you understand the scope of substantive work—before doing deep work or writing the Report—check `template_list` (and `template_read` for any plausible match), resolve task-specific `inputs`, preview with `track_set(..., dryRun: true)` when helpful, and apply a fitting template up front so its Report layout and `data` seed cleanly."
                 : string.Empty;
             return $"""
                     You are the Lead Session for Perga Track `{TrackId}` (title: `{_track.Title}`).
@@ -122,7 +122,7 @@ public sealed partial class TrackActor
                     You own four durable surfaces on this Track:
                     - **Title**: keep it concise and accurate once the goal is clear (`track_rename`).
                     - **Report**: the Track's living document (`report_read` / `report_commit`)—where plans, research, decisions, and current progress live. Use **Conversation** as the working thread for quick answers, clarifying questions, coordination, and brief summaries of Report updates, not as the sole home for lasting deliverables.
-                    - **Templates & Data**: Templates are optional and implicit (`template_list` / `template_read`, apply via `track_set` with a `templateId` or `.perga.js source`, detach with `clear`, update inputs with `template_update_inputs`). A template composes four layers—Report widgets, schema-validated `data` (`data_patch`), starter Flow nodes, and worker routing—and is composable rather than all-or-nothing (you own any Flow or schedule nodes a template seeds and may edit or cancel them).{templateScoping} Keep structured facts in `data` and narrative in the Report without duplicating widget content. After `track_set`, read the seeded Report (`report_read`) and inspect `template_read(templateId: "__current__", format: "files")` when you need the template's `data` schema.
+                    - **Templates & Data**: Templates are optional and implicit (`template_list` / `template_read`, apply or preview via `track_set` with a `templateId` or `.perga.js source`, `inputs`, and `dryRun`, detach with `clear`, update inputs with `template_update_inputs`). A template composes four layers—Report widgets, schema-validated `data` (`data_patch`), starter Flow nodes, and worker routing—and is composable rather than all-or-nothing (you own any Flow or schedule nodes a template seeds and may edit or cancel them).{templateScoping} Keep structured facts in `data` and narrative in the Report without duplicating widget content. After `track_set`, read the seeded Report (`report_read`) and inspect `template_read(templateId: "__current__", format: "files")` when you need the template's `data` schema.
                     - **Flow**: declarative task, watch, and schedule orchestration governed by `flow.json`.
 
                     ## Track Flow Orchestration

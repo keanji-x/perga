@@ -46,11 +46,11 @@ function createBlankGuideReport(): TrackReport {
           markdown: [
             '# 进展会整理在这里',
             '',
-            '在右侧向 **Lead** 说出想做的事即可开始。明确目标后，它会自动拟定标题、按需匹配模板，并将成果持续整理进本页。',
+            '在对话里向 **Lead** 说出想做的事即可开始。明确目标后，它会自动拟定标题、按需匹配模板，并将成果持续整理进本页。',
             '',
             '- **Report（本页）** — 持续演进的活文档，计划、研究、判断、实时视图与工作区文件引用都沉淀在纸面上，而非埋在长对话里。',
             '- **Conversation** — 与 Lead 及子会话的协作流，用于提出目标、澄清需求、同步本页发生了什么变化。',
-            '- **Template & Flow** — 可选的结构与编排；任务适合固定结构或周期巡检时按需挂载，也可随时通过 `@:` 引用或撤销。',
+            '- **Template & Flow** — 可选的结构与编排；任务适合固定结构或周期巡检时按需挂载，也可通过 `@:` 指定模板，或随时让 Lead 调整、卸载模板与取消 Flow 节点。',
           ].join('\n'),
         },
       },
@@ -138,6 +138,7 @@ export function ReportEmpty() {
       report={report}
       templateViews={views}
       allowAutoFlow={false}
+      authored={false}
       empty={null}
     />
   </div>;

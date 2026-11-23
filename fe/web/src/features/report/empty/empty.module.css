@@ -10,11 +10,11 @@
   }
 
   /* Airier vertical rhythm for the static blank-track intro and Flow sample. */
-  .guide [data-nc-report] {
+  .guide > article {
     row-gap: var(--space-6);
   }
 
-  .guide [data-nc-report] li + li {
+  .guide > article li + li {
     margin-block-start: var(--space-3);
   }
 }
