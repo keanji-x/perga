@@ -76,8 +76,9 @@ Migrations `0001`–`0025` remain byte-frozen. Add forward migration `0026_auth_
 ### Strongly-Typed Configuration (`PergaHostOptions`)
 - `AuthIngressMode AuthIngressMode { get; set; } = AuthIngressMode.Direct;` (`Direct | Proxied`, env `PERGA_AUTH_INGRESS_MODE`)
 - `AuthCookieSecurePolicy AuthCookieSecurePolicy { get; set; } = AuthCookieSecurePolicy.Auto;` (`Auto | Always`, env `PERGA_AUTH_COOKIE_SECURE`)
+- `bool AuthAllowInsecureHttp { get; set; } = false;` (opt-in cleartext HTTP for trusted local/LAN/VPN deployments; incompatible with `AuthCookieSecurePolicy.Always`; env `PERGA_AUTH_ALLOW_INSECURE_HTTP`)
 - `int AuthSessionLifetimeDays { get; set; } = 30;` (`1..365`, throws on invalid, env `PERGA_AUTH_SESSION_DAYS`)
-- `string? AuthPublicOrigin { get; set; }` (required in `Proxied` mode unless `AllowedHosts` is non-empty, env `PERGA_AUTH_PUBLIC_ORIGIN`)
+- `string? AuthPublicOrigin { get; set; }` (required in `Proxied` mode unless `AllowedHosts` is non-empty; requires `https://` unless `AuthAllowInsecureHttp` is true; env `PERGA_AUTH_PUBLIC_ORIGIN`)
 - `bool TrustForwardedHeaders { get; set; }` (env `PERGA_TRUST_FORWARDED_HEADERS`; requires `Proxied` mode)
 - `string[] TrustedProxyAddresses { get; set; } = [];` (IP literals; defaults to `127.0.0.1` and `::1` when `TrustForwardedHeaders` is true)
 - `TimeSpan AuthWsRevalidationInterval { get; set; } = TimeSpan.FromSeconds(15);` (`1s..5m`, throws on invalid)
@@ -92,7 +93,7 @@ Migrations `0001`–`0025` remain byte-frozen. Add forward migration `0026_auth_
 1. `CaptureRawTransportMiddleware` (records pre-forwarding `RemoteIpAddress`, `IsHttps`, and whether `Forwarded` / `X-Forwarded-*` headers were present).
 2. If `TrustForwardedHeaders`: standard `app.UseForwardedHeaders(...)` configured with `ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto`, `ForwardLimit = 1`, cleared default `KnownNetworks` / `KnownIPNetworks` / `KnownProxies`, and explicit `TrustedProxyAddresses` (or loopback defaults).
 3. `HttpErrorHandling.InvokeExceptionShieldMiddlewareAsync` (scrubs client response bodies, logs full `Exception ex` + method + path on 500s).
-4. `TransportSecurityMiddleware` enforces HTTPS on `/api/*`. Direct loopback HTTP is available in `Direct` ingress with `Auto` cookie security. In strict transport modes, direct loopback HTTP is available on `/api/v1/system/*` with a verified management bearer token, a loopback Host, and no forwarding or browser-origin headers. Rejected requests receive `403 insecure_transport_required` with connection guidance.
+4. `TransportSecurityMiddleware` enforces HTTPS on `/api/*` by default. Direct loopback HTTP is available in `Direct` ingress with `Auto` cookie security, and operators on trusted private networks can explicitly opt in to cleartext HTTP via `AuthAllowInsecureHttp = true` (requires `Auto` cookie security). In strict transport modes (and in `Proxied` mode generally), direct loopback HTTP remains available on `/api/v1/system/*` with a verified management bearer token, a loopback Host, and no forwarding or browser-origin headers. Rejected requests receive `403 insecure_transport_required` with connection guidance.
 5. `RequestOriginGuard` checks loopback Hosts, pins the public Host in `Proxied` mode, and recognizes the same verified loopback management requests. It checks `Origin` and `Sec-Fetch-Site`, requires `Origin` on WebSockets, and requires JSON or an acceptable `Origin`/`Referer` on browser write APIs.
 6. `app.UseWebSockets(...)`
 7. `app.UseRouting()`
@@ -102,7 +103,7 @@ Migrations `0001`–`0025` remain byte-frozen. Add forward migration `0026_auth_
 
 ### Authentication Schemes & Authorization Policies
 - **Schemes**:
-  - `PergaAuthSchemes.WebSession`: validates `__Host-perga_session` (HTTPS) or `perga_session` (loopback HTTP) cookie via `IAuthStore.GetValidOwnerSessionByTokenHashAsync`.
+  - `PergaAuthSchemes.WebSession`: validates `__Host-perga_session` (HTTPS) or `perga_session` (cleartext HTTP) cookie via `IAuthStore.GetValidOwnerSessionByTokenHashAsync`.
   - `PergaAuthSchemes.SystemManagement`: validates `Bearer <token>` via `SystemManagementAuthorization.Verify`.
   - `PergaAuthSchemes.McpSession`: validates `Bearer <mcp-session-token>` via `McpStreamableHttpEndpoints.AuthenticateCaller`.
 - **Policies**:

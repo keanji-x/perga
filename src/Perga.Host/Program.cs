@@ -38,6 +38,11 @@ if (exportPath is not null)
 
 var options = app.Services.GetRequiredService<PergaHostOptions>();
 options.ValidateAuth();
+if (options.AuthAllowInsecureHttp)
+{
+    app.Logger.LogWarning(
+        "Perga:AuthAllowInsecureHttp is enabled. Cleartext HTTP requests are permitted on /api; use only on trusted local or private networks.");
+}
 app.UseMiddleware<CaptureRawTransportMiddleware>();
 if (options.TrustForwardedHeaders)
 {
