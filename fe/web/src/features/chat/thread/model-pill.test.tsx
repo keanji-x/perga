@@ -269,6 +269,58 @@ describe('ModelPill', () => {
     expect(onChange).toHaveBeenCalledWith({ model: 'sonnet', reasoning_effort: null }, 'claude');
   });
 
+  it('selects a provider default when clicking another ready provider and saving directly', () => {
+    const onChange = vi.fn();
+    render(
+      <ModelPill provider="codex" groups={both()} selection={{ model: 'gpt-5', reasoning_effort: 'high' }} onChange={onChange} />,
+    );
+    const menu = openMenu(/^Model:/);
+    const providers = within(menu).getByRole('group', { name: 'Providers' });
+    fireEvent.click(within(providers).getByRole('radio', { name: 'Claude' }));
+    expect(onChange).not.toHaveBeenCalled();
+
+    const models = within(menu).getByRole('group', { name: 'Models' });
+    expect(within(models).getByRole('radio', { name: /^Default/ }).getAttribute('aria-checked')).toBe('true');
+
+    fireEvent.click(within(menu).getByRole('button', { name: 'Save' }));
+    expect(onChange).toHaveBeenCalledWith({ model: null, reasoning_effort: null }, 'claude');
+  });
+
+  it('restores the committed selection when switching back to the initial provider before saving', () => {
+    const onChange = vi.fn();
+    render(
+      <ModelPill provider="codex" groups={both()} selection={{ model: 'gpt-5', reasoning_effort: 'high' }} onChange={onChange} />,
+    );
+    const menu = openMenu(/^Model:/);
+    const providers = within(menu).getByRole('group', { name: 'Providers' });
+    fireEvent.click(within(providers).getByRole('radio', { name: 'Claude' }));
+    fireEvent.click(within(providers).getByRole('radio', { name: 'Codex' }));
+    fireEvent.click(within(menu).getByRole('button', { name: 'Save' }));
+    expect(onChange).toHaveBeenCalledWith({ model: 'gpt-5', reasoning_effort: 'high' }, 'codex');
+  });
+
+  it('does not select null default on provider click when defaultAvailable is false', () => {
+    const onChange = vi.fn();
+    render(
+      <ModelPill
+        provider="codex"
+        groups={[
+          { provider: 'codex', availability: ready('codex'), catalog: catalog() },
+          { provider: 'claude', availability: ready('claude'), catalog: claudeCatalog(), defaultAvailable: false },
+        ]}
+        selection={{ model: 'gpt-5', reasoning_effort: 'high' }}
+        onChange={onChange}
+      />,
+    );
+    const menu = openMenu(/^Model:/);
+    const providers = within(menu).getByRole('group', { name: 'Providers' });
+    fireEvent.click(within(providers).getByRole('radio', { name: 'Claude' }));
+    const models = within(menu).getByRole('group', { name: 'Models' });
+    expect(within(models).getByRole('radio', { name: /^Default/ }).getAttribute('aria-checked')).toBe('false');
+    fireEvent.click(within(menu).getByRole('button', { name: 'Save' }));
+    expect(onChange).toHaveBeenCalledWith({ model: 'gpt-5', reasoning_effort: 'high' }, 'codex');
+  });
+
   it('offers a distinct Default plus ordered explicit effort choices', () => {
     const onChange = vi.fn();
     const multiEffortCatalog = catalog({
