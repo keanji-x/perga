@@ -87,6 +87,7 @@ public sealed class PergaHostOptions
     public string? OarBridgeScriptPath { get; set; }
     public string DefaultWorkspaceDriver { get; set; } = "direct";
     public bool DispatchWakesInBackground { get; set; } = true;
+    public bool EnableTemplateSelectorSubagent { get; set; } = true;
 
     public string? TerminalBridgeEndpoint { get; set; }
     public string? TerminalBridgeExecutablePath { get; set; }

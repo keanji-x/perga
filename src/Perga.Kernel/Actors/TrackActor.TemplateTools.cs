@@ -474,7 +474,7 @@ public sealed partial class TrackActor
         (await SetTemplateWithOptionsAsync(callerSessionId, templateId, source, expectedPolicyGeneration, inputs, false, false, ct, resetData).ConfigureAwait(false)).Track;
 
     private TemplateReportSeed? PrepareTemplateReportSeedCore(
-        TrackDto next, CompiledPolicy policy, bool? seedReport, string callerSessionId)
+        TrackDto next, CompiledPolicy policy, bool? seedReport, string? callerSessionId)
     {
         var previous = _reports.Document;
         var isBlank = TemplateReport.IsBlank(previous);
@@ -533,79 +533,100 @@ public sealed partial class TrackActor
                 throw KernelException.PolicyDenied("Active policy changed after template application was authorized.");
             if (_track.ClosedAtMs is not null)
                 throw KernelException.Conflict("Cannot set a template on a closed track.");
-            var selectors = new[] { templateId, source, path }.OfType<string>().ToArray();
-            if (clear && (selectors.Length > 0 || inputs is not null || seedReport is not null))
-                throw KernelException.InvalidArgument("clear cannot be combined with a template, inputs, or seedReport.");
-            if (clear)
-                return await DetachTemplateCoreAsync(dryRun, ct, callerSessionId, resetData, authorization).ConfigureAwait(false);
+            return await ApplyTemplateSelectionCoreAsync(
+                callerSessionId, templateId, source, workspaceSource, path, inputs,
+                dryRun, clear, resetData, seedReport, authorization, ct).ConfigureAwait(false);
+        }, ct).ConfigureAwait(false);
+    }
 
-            if (selectors.Length != 1 || string.IsNullOrWhiteSpace(selectors[0]))
-                throw KernelException.InvalidArgument("Specify exactly one non-empty 'templateId', 'source', or 'path'.");
-            if (inputs is { ValueKind: not JsonValueKind.Object })
-                throw KernelException.InvalidArgument("'inputs' must be an object.");
+    private async Task<TemplateSetResult> ApplyTemplateSelectionCoreAsync(
+        string? callerSessionId,
+        string? templateId,
+        string? source,
+        string? workspaceSource,
+        string? path,
+        JsonElement? inputs,
+        bool dryRun,
+        bool clear,
+        bool resetData,
+        bool? seedReport,
+        InteropPrincipal.Session? authorization,
+        CancellationToken ct)
+    {
+        var selectors = new[] { templateId, source, path }.OfType<string>().ToArray();
+        if (clear && (selectors.Length > 0 || inputs is not null || seedReport is not null))
+            throw KernelException.InvalidArgument("clear cannot be combined with a template, inputs, or seedReport.");
+        if (clear)
+            return await DetachTemplateCoreAsync(dryRun, ct, callerSessionId, resetData, authorization).ConfigureAwait(false);
 
-            CompiledPolicy policy;
-            JsonElement nextInputs;
+        if (selectors.Length != 1 || string.IsNullOrWhiteSpace(selectors[0]))
+            throw KernelException.InvalidArgument(path is null && callerSessionId is null
+                ? "Specify exactly one non-empty 'templateId' or 'source'."
+                : "Specify exactly one non-empty 'templateId', 'source', or 'path'.");
+        if (inputs is { ValueKind: not JsonValueKind.Object })
+            throw KernelException.InvalidArgument("'inputs' must be an object.");
+
+        CompiledPolicy policy;
+        JsonElement nextInputs;
+        try
+        {
+            if (templateId is not null)
+                policy = _templateCatalog.GetRequiredPolicy(templateId);
+            else
+                policy = _templateCatalog.GetOrCompileSnapshot(workspaceSource ?? source!);
+            var preserveInputs = inputs is null && !resetData && _track.TemplateId is not null &&
+                string.Equals(_track.TemplateId, policy.TemplateId, StringComparison.Ordinal);
+            nextInputs = preserveInputs
+                ? JsonHelpers.EnsureClonedObject(_track.TemplateInputs)
+                : JsonHelpers.EnsureClonedObject(inputs);
+            TemplateFlow.ValidateInputs(_policyVm, policy, nextInputs);
+        }
+        catch (KernelException) { throw; }
+        catch (Exception ex)
+        {
+            throw KernelException.InvalidArgument($"Template compilation or input validation failed: {ex.Message}");
+        }
+
+        var data = _track.Data.ValueKind == JsonValueKind.Object ? _track.Data : JsonHelpers.EmptyObject;
+        var dataAction = resetData ? "reset" : HasBusinessDataFields(data) ? "preserve" : "init";
+        if (dataAction != "preserve")
+        {
+            try { data = _policyVm.InitData(policy, nextInputs); }
+            catch (InvalidOperationException ex) { throw KernelException.InvalidArgument(ex.Message); }
+        }
+        else
+        {
+            DataPatchValidationResult upgraded;
             try
             {
-                if (templateId is not null)
-                    policy = _templateCatalog.GetRequiredPolicy(templateId);
-                else
-                    policy = _templateCatalog.GetOrCompileSnapshot(workspaceSource ?? source!);
-                var preserveInputs = inputs is null && !resetData && _track.TemplateId is not null &&
-                    string.Equals(_track.TemplateId, policy.TemplateId, StringComparison.Ordinal);
-                nextInputs = preserveInputs
-                    ? JsonHelpers.EnsureClonedObject(_track.TemplateInputs)
-                    : JsonHelpers.EnsureClonedObject(inputs);
-                TemplateFlow.ValidateInputs(_policyVm, policy, nextInputs);
+                var knownTaskKeys = _taskCoordinator.Snapshot().Select(task => task.TaskKey).ToArray();
+                upgraded = _policyVm.ValidateAndPatchData(policy, nextInputs, data, JsonHelpers.EmptyObject,
+                    knownTaskKeys, _timeProvider.GetUtcNow().ToString("O"), "template:upgrade");
             }
-            catch (KernelException) { throw; }
-            catch (Exception ex)
+            catch (InvalidOperationException ex)
             {
-                throw KernelException.InvalidArgument($"Template compilation or input validation failed: {ex.Message}");
+                throw KernelException.InvalidArgument($"Template data schema evaluation failed: {ex.Message}");
             }
-
-            var data = _track.Data.ValueKind == JsonValueKind.Object ? _track.Data : JsonHelpers.EmptyObject;
-            var dataAction = resetData ? "reset" : HasBusinessDataFields(data) ? "preserve" : "init";
-            if (dataAction != "preserve")
-            {
-                try { data = _policyVm.InitData(policy, nextInputs); }
-                catch (InvalidOperationException ex) { throw KernelException.InvalidArgument(ex.Message); }
-            }
-            else
-            {
-                DataPatchValidationResult upgraded;
-                try
-                {
-                    var knownTaskKeys = _taskCoordinator.Snapshot().Select(task => task.TaskKey).ToArray();
-                    upgraded = _policyVm.ValidateAndPatchData(policy, nextInputs, data, JsonHelpers.EmptyObject,
-                        knownTaskKeys, _timeProvider.GetUtcNow().ToString("O"), "template:upgrade");
-                }
-                catch (InvalidOperationException ex)
-                {
-                    throw KernelException.InvalidArgument($"Template data schema evaluation failed: {ex.Message}");
-                }
-                RequireCompatibleTrackData(upgraded.Errors,
-                    "Existing track data is incompatible with the new template",
-                    ". Existing data can be preserved only when it satisfies the new template schema. Pass resetData: true to initialize fresh data.");
-                data = upgraded.NextData;
-            }
-            var dataRev = JsonElement.DeepEquals(data, _track.Data) ? _track.DataRev : checked(_track.DataRev + 1);
-            var warnings = await TemplateWarningsCoreAsync(policy, nextInputs, ct).ConfigureAwait(false);
-            RequireMcpAuthorizationCore(authorization);
-            var now = NowMs();
-            var nextTrack = _track with
-            {
-                TemplateId = policy.TemplateId,
-                TemplateInputs = nextInputs,
-                Data = data,
-                DataRev = dataRev,
-                EnabledPlugins = _track.EnabledPlugins.Concat(policy.Manifest.DefaultPlugins).Distinct(StringComparer.Ordinal).ToArray(),
-                UpdatedAtMs = now
-            };
-            var reportSeed = PrepareTemplateReportSeedCore(nextTrack, policy, seedReport, callerSessionId);
-            return await ApplyTemplateBindingCoreAsync(nextTrack, policy, dryRun, ct, callerSessionId,
-                dataAction, warnings, reportSeed, authorization).ConfigureAwait(false);
-        }, ct).ConfigureAwait(false);
+            RequireCompatibleTrackData(upgraded.Errors,
+                "Existing track data is incompatible with the new template",
+                ". Existing data can be preserved only when it satisfies the new template schema. Pass resetData: true to initialize fresh data.");
+            data = upgraded.NextData;
+        }
+        var dataRev = JsonElement.DeepEquals(data, _track.Data) ? _track.DataRev : checked(_track.DataRev + 1);
+        var warnings = await TemplateWarningsCoreAsync(policy, nextInputs, ct).ConfigureAwait(false);
+        RequireMcpAuthorizationCore(authorization);
+        var now = NowMs();
+        var nextTrack = _track with
+        {
+            TemplateId = policy.TemplateId,
+            TemplateInputs = nextInputs,
+            Data = data,
+            DataRev = dataRev,
+            EnabledPlugins = _track.EnabledPlugins.Concat(policy.Manifest.DefaultPlugins).Distinct(StringComparer.Ordinal).ToArray(),
+            UpdatedAtMs = now
+        };
+        var reportSeed = PrepareTemplateReportSeedCore(nextTrack, policy, seedReport, callerSessionId);
+        return await ApplyTemplateBindingCoreAsync(nextTrack, policy, dryRun, ct, callerSessionId,
+            dataAction, warnings, reportSeed, authorization).ConfigureAwait(false);
     }
 }

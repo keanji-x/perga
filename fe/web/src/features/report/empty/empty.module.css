@@ -13,4 +13,73 @@
     padding: var(--space-6) var(--space-6);
     text-align: center;
   }
+
+  .action {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .panel {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    min-inline-size: 16rem;
+    max-inline-size: 20rem;
+    padding: var(--space-1);
+    text-align: start;
+  }
+
+  .list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+
+  .option {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-half);
+    inline-size: 100%;
+    padding: var(--space-2) var(--space-2);
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text);
+    font: var(--type-ui);
+    text-align: start;
+    cursor: pointer;
+  }
+
+  .option:disabled {
+    color: var(--text-3);
+    cursor: default;
+  }
+
+  .option:focus-visible {
+    background: var(--overlay-hover);
+    outline: var(--space-half) solid var(--accent);
+    outline-offset: var(--space-half);
+  }
+
+  .option:hover:not(:disabled) {
+    background: var(--overlay-hover);
+  }
+
+  .optionTitle {
+    color: var(--text);
+    font-weight: var(--weight-medium);
+  }
+
+  .optionDesc {
+    color: var(--text-3);
+    font: var(--type-metadata);
+  }
+
+  .error {
+    margin: 0;
+    padding-inline: var(--space-2);
+    color: var(--error-text);
+    font: var(--type-metadata);
+  }
 }

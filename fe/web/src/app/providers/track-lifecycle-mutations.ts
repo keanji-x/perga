@@ -4,6 +4,7 @@ import { useOnlineMutation } from './online-mutation.ts';
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { createTrackOperation, deleteTrackOperation, toTrack, updateTrackOperation, type NewTrackBody, type TrackPatchBody } from '../../../../core/domain/track.ts';
+import { startTemplateSelectorOperation } from '../../../../core/domain/track-template.ts';
 import { cancelThenInvalidate } from '../events/query-refresh.ts';
 import { deleteDone, runOperation } from './query-operation.ts';
 export function useTrackLifecycleMutations(transport: ApiTransportPort, unauthorized: UnauthorizedChannel) {
@@ -56,5 +57,7 @@ export function useTrackLifecycleMutations(transport: ApiTransportPort, unauthor
       return patchTrack(trackId, areaId, { pinned });
     },
     remove: async (trackId: string, areaId: string, signal?: AbortSignal) => { await remove.mutateAsync({ trackId, areaId, signal }); },
+    startTemplateSelector: (trackId: string, userMessage: string) =>
+      runOperation(transport, startTemplateSelectorOperation(trackId, userMessage), unauthorized),
   };
 }

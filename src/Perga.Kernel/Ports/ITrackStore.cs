@@ -18,7 +18,7 @@ public sealed record TrackAggregateSnapshot(
 }
 
 public sealed record TemplateReportSeed(
-    ReportDocument Document, byte[] CompressedBlocks, string AuthorSessionId, EventEnvelopeDto Event);
+    ReportDocument Document, byte[] CompressedBlocks, string? AuthorSessionId, EventEnvelopeDto Event);
 
 public sealed record ResourceCreationKey(string Operation, string ScopeId, string Key, string Hash);
 

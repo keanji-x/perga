@@ -46,6 +46,8 @@ public partial interface IPergaKernel : IAsyncDisposable
         string? path = null, bool? seedReport = null, InteropPrincipal.Session? authorization = null);
     Task<TemplateInputsUpdateResult> UpdateTemplateInputsAsync(string trackId, string sessionId, JsonElement inputs, string generation, CancellationToken ct = default, InteropPrincipal.Session? authorization = null);
     Task<TrackDto> SetTrackTemplateAsync(string trackId, string callerSessionId, string? templateId, string? source, string expectedPolicyGeneration, JsonElement? inputs = null, CancellationToken ct = default, bool resetData = false);
+    Task<TrackDto> ApplyTrackTemplateAsync(string trackId, ApplyTrackTemplateRequest req, CancellationToken ct = default);
+    Task<(SessionCreationReceipt Receipt, bool Replay)?> StartTemplateSelectorAsync(string trackId, StartTemplateSelectorRequest req, InteropPrincipal? caller = null, CancellationToken ct = default);
     Task<BootReconcileResult> ReconcileOnBootAsync(CancellationToken ct = default);
     Task<DbMaintenanceStatsDto> RunMaintenancePassAsync(CancellationToken ct = default);
 
@@ -436,6 +438,16 @@ public sealed partial class PergaKernelService : IPergaKernel
     public Task<TrackDto> SetTrackTemplateAsync(string trackId, string callerSessionId, string? templateId,
         string? source, string expectedPolicyGeneration, JsonElement? inputs = null, CancellationToken ct = default, bool resetData = false) =>
         Actors.GetOrActivate(trackId).SetTemplateBySessionAsync(callerSessionId, templateId, source, expectedPolicyGeneration, inputs, ct, resetData);
+
+    public Task<TrackDto> ApplyTrackTemplateAsync(string trackId, ApplyTrackTemplateRequest req, CancellationToken ct = default) =>
+        Actors.GetOrActivate(trackId).ApplyTemplateByHumanAsync(req, ct);
+
+    public Task<(SessionCreationReceipt Receipt, bool Replay)?> StartTemplateSelectorAsync(
+        string trackId,
+        StartTemplateSelectorRequest req,
+        InteropPrincipal? caller = null,
+        CancellationToken ct = default) =>
+        Actors.GetOrActivate(trackId).StartTemplateSelectorAsync(req, ct, caller);
 
     public Task<BootReconcileResult> ReconcileOnBootAsync(CancellationToken ct = default) =>
         BootReconciler.ReconcileAsync(ct);

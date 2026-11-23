@@ -160,6 +160,15 @@ public sealed record TemplateFlowDiffDto(IReadOnlyList<string> Added, IReadOnlyL
 
 public sealed record TemplateInputsUpdateResult(TrackDto Track, IReadOnlyList<string> Warnings);
 
+public sealed record ApplyTrackTemplateRequest(
+    string? TemplateId = null,
+    string? Source = null,
+    JsonElement? Inputs = null,
+    bool ResetData = false,
+    bool? SeedReport = null);
+
+public sealed record StartTemplateSelectorRequest(string UserMessage);
+
 public sealed record OpenTerminalRequest(
     string? Title = null,
     string? Program = null,

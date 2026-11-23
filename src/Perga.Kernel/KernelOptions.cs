@@ -17,6 +17,7 @@ public sealed record KernelOptions
     public double AutoCompactionThreshold { get; init; } = 0.80;
     public string McpBaseUri { get; init; } = "http://127.0.0.1:5000";
     public bool DispatchWakesInBackground { get; init; } = false;
+    public bool EnableTemplateSelectorSubagent { get; init; } = true;
     public int DefaultHookTimeoutSecs { get; init; } = 300;
     public static readonly TimeSpan DefaultProviderCancelDispatchGrace = TimeSpan.FromSeconds(2);
     public static readonly TimeSpan DefaultProviderTerminalStopGrace = TimeSpan.FromSeconds(10);
