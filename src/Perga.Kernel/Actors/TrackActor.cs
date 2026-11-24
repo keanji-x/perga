@@ -21,6 +21,7 @@ namespace Perga.Kernel.Actors;
 public sealed partial class TrackActor : IAsyncDisposable
 {
     private readonly ITrackStore _store;
+    private readonly IFlowTrackSpawner _flowTrackSpawner;
     private readonly IReportDocEngine _reportEngine;
     private readonly IPolicyVm _policyVm;
     private readonly ITemplateCatalog _templateCatalog;
@@ -72,6 +73,7 @@ public sealed partial class TrackActor : IAsyncDisposable
     internal TrackActor(
         string trackId,
         ITrackStore store,
+        IFlowTrackSpawner flowTrackSpawner,
         IReportDocEngine reportEngine,
         IPolicyVm policyVm,
         ITemplateCatalog templateCatalog,
@@ -91,6 +93,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         _scheduler = new SessionTurnScheduler(this);
         _turnRunner = new SessionTurnRunner(this);
         _store = store;
+        _flowTrackSpawner = flowTrackSpawner;
         _scheduleCronEvaluator = scheduleCronEvaluator;
         _memoryContext = memoryContext ?? NoMemoryContextProvider.Instance;
         _flowFileStore = new TrackFlowFileStore(options);

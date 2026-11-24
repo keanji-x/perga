@@ -11,7 +11,7 @@ export const FLOW_NODE_STATUSES = Object.freeze([
   'failed',
   'canceled',
 ] as const);
-export const FLOW_DO_KINDS = Object.freeze(['run', 'wake', 'watch'] as const);
+export const FLOW_DO_KINDS = Object.freeze(['run', 'wake', 'watch', 'track'] as const);
 export const FLOW_WHEN_KINDS = Object.freeze(['immediate', 'after', 'cron', 'at'] as const);
 
 export const flowOutcomeSchema = z.enum(FLOW_OUTCOMES);
@@ -82,6 +82,7 @@ export const flowNodeProjectionSchema = z.object({
   outcomeSummary: z.string().nullish(),
   runCount: z.number().int().nonnegative().default(0),
   sessionId: z.string().nullish(),
+  childTrackId: z.string().nullish(),
   startedAtMs: z.number().nullish(),
   finishedAtMs: z.number().nullish(),
   nextFireAtMs: z.number().nullish(),
@@ -103,6 +104,7 @@ export const flowArchivedNodeProjectionSchema = z.object({
   outcomeSummary: z.string().nullish(),
   runCount: z.number().int().nonnegative().default(0),
   sessionId: z.string().nullish(),
+  childTrackId: z.string().nullish(),
   model: z.string().nullish(),
   finishedAtMs: z.number().nullish(),
   archivedAtMs: z.number(),

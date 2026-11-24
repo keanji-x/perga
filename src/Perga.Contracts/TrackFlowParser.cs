@@ -29,6 +29,12 @@ public static class TrackFlowParser
         "prompt", "acceptance", "cmd", "prChecks", "repo", "headSha", "interval", "timeout", "repeat", "reasoningEffort", "permissionMode"
     };
 
+    private static readonly HashSet<string> TrackDoProperties = new(StringComparer.Ordinal)
+    {
+        "kind", "prompt", "title", "area", "template", "templateInputs", "cwd", "workspaceDriver",
+        "executionTargetId", "provider", "model", "reasoningEffort", "permissionMode"
+    };
+
     private static readonly HashSet<string> AllowedSources = new(StringComparer.Ordinal)
     {
         "agent", "user", "template"
@@ -41,7 +47,7 @@ public static class TrackFlowParser
 
     private static readonly HashSet<string> AllowedDoKinds = new(StringComparer.Ordinal)
     {
-        "run", "wake", "watch"
+        "run", "wake", "watch", "track"
     };
 
     public static (FlowSpecDto? Spec, IReadOnlyList<FlowValidationErrorDto> Errors) Parse(string rawJson)
@@ -256,7 +262,7 @@ public static class TrackFlowParser
             errors.Add(new FlowValidationErrorDto(
                 $"{path}.do",
                 "Node is missing required 'do' object.",
-                """Add "do": { "kind": "run" | "wake" | "watch", ... }."""));
+                """Add "do": { "kind": "run" | "wake" | "watch" | "track", ... }."""));
         }
         else
         {
@@ -475,26 +481,30 @@ public static class TrackFlowParser
             return null;
         }
 
+        var kind = ReadOptionalString(doEl, "kind", $"{path}.kind", errors);
+        var allowedProperties = kind == "track" ? TrackDoProperties : DoProperties;
         foreach (var prop in doEl.EnumerateObject())
         {
-            if (!DoProperties.Contains(prop.Name))
+            if (!allowedProperties.Contains(prop.Name))
             {
                 errors.Add(new FlowValidationErrorDto(
                     $"{path}.{prop.Name}",
                     $"Unknown field '{prop.Name}' in 'do'.",
-                    "Allowed 'do' fields: kind, session, role, access, provider, model, reasoningEffort, permissionMode, gate, prompt, acceptance, cmd, prChecks, repo, headSha, interval, timeout, repeat."));
+                    $"Allowed 'do' fields: {string.Join(", ", allowedProperties)}."));
             }
         }
 
-        var kind = ReadOptionalString(doEl, "kind", $"{path}.kind", errors);
         if (string.IsNullOrWhiteSpace(kind) || !AllowedDoKinds.Contains(kind))
         {
             errors.Add(new FlowValidationErrorDto(
                 $"{path}.kind",
                 $"Invalid or missing 'do.kind' ('{kind ?? ""}').",
-                """Set "do": { "kind": "run" | "wake" | "watch", ... }."""));
+                """Set "do": { "kind": "run" | "wake" | "watch" | "track", ... }."""));
             return null;
         }
+
+        if (kind == "track")
+            return ParseTrackDo(doEl, path, errors);
 
         var session = ReadOptionalString(doEl, "session", $"{path}.session", errors);
         var role = ReadOptionalString(doEl, "role", $"{path}.role", errors);
@@ -509,12 +519,8 @@ public static class TrackFlowParser
         var headSha = ReadOptionalString(doEl, "headSha", $"{path}.headSha", errors);
         var interval = ReadOptionalString(doEl, "interval", $"{path}.interval", errors);
         var timeout = ReadOptionalString(doEl, "timeout", $"{path}.timeout", errors);
-        var effort = ReadOptionalString(doEl, "reasoningEffort", $"{path}.reasoningEffort", errors)?.Trim();
-        if (doEl.TryGetProperty("reasoningEffort", out var effortEl) && effortEl.ValueKind == JsonValueKind.Null)
-            errors.Add(new($"{path}.reasoningEffort", "'reasoningEffort' must be a string."));
-        var permissionMode = ReadOptionalString(doEl, "permissionMode", $"{path}.permissionMode", errors)?.Trim();
-        if (doEl.TryGetProperty("permissionMode", out var permEl) && permEl.ValueKind == JsonValueKind.Null)
-            errors.Add(new($"{path}.permissionMode", "'permissionMode' must be a string."));
+        var effort = ReadOptionalString(doEl, "reasoningEffort", $"{path}.reasoningEffort", errors, allowNull: false)?.Trim();
+        var permissionMode = ReadOptionalString(doEl, "permissionMode", $"{path}.permissionMode", errors, allowNull: false)?.Trim();
 
         bool? repeat = null;
         if (doEl.TryGetProperty("repeat", out var repeatEl))
@@ -563,6 +569,29 @@ public static class TrackFlowParser
         }
 
         return repeat == false ? action with { Repeat = null } : action;
+    }
+
+    private static FlowDoSpecDto ParseTrackDo(JsonElement doEl, string path, List<FlowValidationErrorDto> errors)
+    {
+        string? ReadString(string name) =>
+            ReadOptionalString(doEl, name, $"{path}.{name}", errors, allowNull: false);
+
+        var action = new FlowDoSpecDto(
+            "track",
+            Provider: ReadString("provider"),
+            Model: ReadString("model"),
+            Prompt: ReadOptionalString(doEl, "prompt", $"{path}.prompt", errors),
+            ReasoningEffort: ReadString("reasoningEffort")?.Trim(),
+            PermissionMode: ReadString("permissionMode")?.Trim(),
+            Title: ReadString("title"),
+            Area: ReadString("area"),
+            Template: ReadString("template"),
+            TemplateInputs: doEl.TryGetProperty("templateInputs", out var inputs) ? inputs.Clone() : null,
+            Cwd: ReadString("cwd"),
+            WorkspaceDriver: ReadString("workspaceDriver"),
+            ExecutionTargetId: ReadString("executionTargetId"));
+        FlowSyntax.ValidateActionOptions(action, path, errors);
+        return action;
     }
 
     private static void ValidateRunDo(
@@ -718,9 +747,10 @@ public static class TrackFlowParser
         }
     }
 
-    private static string? ReadOptionalString(JsonElement obj, string name, string path, List<FlowValidationErrorDto> errors)
+    private static string? ReadOptionalString(
+        JsonElement obj, string name, string path, List<FlowValidationErrorDto> errors, bool allowNull = true)
     {
-        if (!obj.TryGetProperty(name, out var el) || el.ValueKind == JsonValueKind.Null)
+        if (!obj.TryGetProperty(name, out var el) || (allowNull && el.ValueKind == JsonValueKind.Null))
         {
             return null;
         }
@@ -741,7 +771,7 @@ public static class TrackFlowParser
         "cron" or "at" or "schedule" or "tz" or "timezone" =>
             """Use "when": { "cron": "..." } or "when": { "at": "..." }.""",
         "kind" or "cmd" or "command" or "prompt" or "role" or "access" or "model" or "provider" or "gate" or "session" or "prchecks" or "permissionmode" or "reasoningeffort" =>
-            """Move execution fields inside "do": { "kind": "run" | "wake" | "watch", ... }.""",
+            """Move execution fields inside "do": { "kind": "run" | "wake" | "watch" | "track", ... }.""",
         _ => "Allowed node fields: id, title, source, when, do, canceled."
     };
 }

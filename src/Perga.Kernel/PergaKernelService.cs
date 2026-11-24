@@ -132,7 +132,7 @@ public partial interface IPergaKernel : IAsyncDisposable
     Task WaitForTrackIdleAsync(string trackId, CancellationToken ct = default);
 }
 
-public sealed partial class PergaKernelService : IPergaKernel
+public sealed partial class PergaKernelService : IPergaKernel, IFlowTrackSpawner
 {
     private const long ProviderProbeCacheTtlMs = 60_000L;
     private static readonly string ProcessDbInstanceId = Guid.NewGuid().ToString("N");
@@ -205,6 +205,7 @@ public sealed partial class PergaKernelService : IPergaKernel
         McpSessionBridge = mcpSessionBridge ?? new InMemoryMcpSessionBridge(_options.McpBaseUri);
         Actors = new TrackActorRegistry(
             _store,
+            this,
             _reportEngine,
             _policyVm,
             Templates,
@@ -599,14 +600,15 @@ public sealed partial class PergaKernelService : IPergaKernel
     public Task<TrackAggregateSnapshot> CreateTrackAsync(CreateTrackRequest req, CancellationToken ct = default, string? requestKey = null) =>
         CreateTrackCoreAsync(req, ct, requestKey);
 
-    private async Task<TrackAggregateSnapshot> CreateTrackCoreAsync(CreateTrackRequest req, CancellationToken ct, string? requestKey, string? dailyDate = null,
-        AreaDto? systemArea = null, string? memoryScopeKey = null, string? memoryAreaId = null)
+    private async Task<TrackAggregateSnapshot> CreateTrackCoreAsync(CreateTrackRequest req, CancellationToken ct, string? requestKey,
+        string? dailyDate = null, AreaDto? systemArea = null, string? memoryScopeKey = null, string? memoryAreaId = null,
+        ResourceCreationKey? flowKey = null)
     {
         if (req.AreaId == MemoryTrackBinding.SystemAreaId && memoryScopeKey is null)
             throw KernelException.NotFound($"Area '{req.AreaId}' not found.");
         if (memoryScopeKey is null && req.TemplateId == MemoryTemplate.Id)
             throw KernelException.Forbidden(MemoryTemplate.ReservedMessage);
-        var key = CreateKey("track", req.AreaId, requestKey, req);
+        var key = flowKey ?? CreateKey("track", req.AreaId, requestKey, req);
         if (key is not null && await _store.FindCreationAsync(key, ct).ConfigureAwait(false) is { } replay)
             return await ReadCreatedTrackAsync(replay, ct).ConfigureAwait(false);
 
@@ -713,7 +715,8 @@ public sealed partial class PergaKernelService : IPergaKernel
             SortOrder: req.SortOrder ?? 0.0,
             CreatedAtMs: now,
             UpdatedAtMs: now,
-            ExecutionTargetId: trackTargetId);
+            ExecutionTargetId: trackTargetId,
+            OriginTrackId: req.OriginTrackId);
 
         var leadProvider = SessionLaunchValidator.NormalizeTaskProviderId(req.Provider) ?? _options.DefaultProvider;
         var leadPermissionMode = RuntimePermissionModes.Resolve(leadProvider, req.PermissionMode);
@@ -723,7 +726,7 @@ public sealed partial class PergaKernelService : IPergaKernel
             IsLead: true,
             Title: "Lead",
             Provider: leadProvider,
-            Model: req.Model ?? _options.DefaultModel,
+            Model: req.Model ?? (flowKey is null ? _options.DefaultModel : null),
             NativeThreadId: null,
             Epoch: 1,
             Status: "idle",

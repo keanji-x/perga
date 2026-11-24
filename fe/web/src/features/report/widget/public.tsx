@@ -106,6 +106,7 @@ export function ReportWidgetBlock({
         renderText={renderText}
         renderMarkdown={renderMarkdown}
         onOpenWorker={onOpenWorker}
+        onOpenTrack={onOpenTrack}
       />
     );
   }

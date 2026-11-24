@@ -1095,7 +1095,7 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
                 for (var i = 0; i < kvp.Value.Count; i++)
                 {
                     var t = kvp.Value[i];
-                    if (t.Kind != "flow_watch" && t.Status is TaskRunStatus.Running or TaskRunStatus.Verifying)
+                    if (t.Kind is not ("flow_watch" or "flow_track") && t.Status is TaskRunStatus.Running or TaskRunStatus.Verifying)
                     {
                         if (TaskSessionOwnership.OwnsSessionLifecycle(t) && t.SessionId is { } owned &&
                             _tracks[t.TrackId].LeadSessionId != owned && _sessions.TryGetValue(owned, out var session))

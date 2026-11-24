@@ -97,7 +97,8 @@ internal static class TrackFlowProjector
                 WatchProgress: watchProgress,
                 Repeat: FlowConstants.IsRepeatingWatch(node),
                 ReasoningEffort: boundSession?.ReasoningEffort ?? node.Do.ReasoningEffort,
-                PermissionMode: boundSession is not null ? boundSession.PermissionMode : node.Do.PermissionMode));
+                PermissionMode: boundSession is not null ? boundSession.PermissionMode : node.Do.PermissionMode,
+                ChildTrackId: JsonHelpers.GetStringProperty(task?.Meta, "childTrackId")));
         }
 
         var archived = tasks
@@ -111,6 +112,7 @@ internal static class TrackFlowProjector
                 {
                     "flow_wake" => "wake",
                     "flow_watch" => "watch",
+                    "flow_track" => "track",
                     _ => "run"
                 };
                 var title = JsonHelpers.GetStringProperty(t.Context, "title") ?? t.TaskKey;
@@ -125,7 +127,8 @@ internal static class TrackFlowProjector
                     SessionId: t.SessionId,
                     Model: session?.Model ?? JsonHelpers.GetStringProperty(t.Context, "initialModel"),
                     FinishedAtMs: t.FinishedAtMs,
-                    ArchivedAtMs: t.ArchivedAtMs!.Value);
+                    ArchivedAtMs: t.ArchivedAtMs!.Value,
+                    ChildTrackId: JsonHelpers.GetStringProperty(t.Meta, "childTrackId"));
             })
             .ToArray();
 

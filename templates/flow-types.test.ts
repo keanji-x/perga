@@ -35,6 +35,15 @@ const wakeWithEffort: FlowAction = { kind: "wake", session: "lead", prompt: "Rev
 const commandWithPermissionMode: FlowAction = { kind: "run", cmd: "verify", permissionMode: "full" };
 // @ts-expect-error wake reuses a session's existing permissionMode
 const wakeWithPermissionMode: FlowAction = { kind: "wake", session: "lead", prompt: "Review", permissionMode: "full" };
+// @ts-expect-error a Track Lead requires a first instruction
+const trackWithoutPrompt: FlowAction = { kind: "track" };
+// @ts-expect-error template inputs require a template
+const trackWithUnboundInputs: FlowAction = { kind: "track", prompt: "Explore", templateInputs: {} };
+// @ts-expect-error template inputs must be an object
+const trackWithArrayInputs: FlowAction = { kind: "track", prompt: "Explore", template: "agents-delivery", templateInputs: [] };
+const trackWithSession = { kind: "track" as const, prompt: "Explore", session: "new" };
+// @ts-expect-error a Track spawn cannot target a conversation
+const invalidTrack: FlowAction = trackWithSession;
 
 const triggers: FlowWhen[] = [
   {},
@@ -48,6 +57,12 @@ const actions: FlowAction[] = [
   { kind: "wake", session: "lead", prompt: "Check progress" },
   { kind: "watch", prChecks: 1, repo: "example/project", timeout: "7d" },
   { kind: "watch", cmd: "verify", interval: "5s", timeout: "never", repeat: true },
+  { kind: "track", prompt: "Explore" },
+  {
+    kind: "track", prompt: "Explore", title: "Research", area: "Engineering", template: "agents-delivery",
+    templateInputs: { feature: "cache", targets: ["web"] }, cwd: "${inputs.cwd}", workspaceDriver: "vcs-workspace",
+    executionTargetId: "local", provider: "codex", model: "gpt-5", reasoningEffort: "high", permissionMode: "full",
+  },
 ];
 
 const before: NonNullable<PergaTemplateSetupResult["before"]> = (action, ctx) => {

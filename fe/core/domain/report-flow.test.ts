@@ -86,6 +86,23 @@ describe('report-flow domain contracts', () => {
     expect(parsed.nodes[1].permissionMode).toBe('full');
   });
 
+  it('preserves child Track IDs in the live views projection and archive', () => {
+    const projection = templateViewsProjectionSchema.parse({
+      flow: {
+        nodes: [
+          { id: 'cache', title: 'Cache', doKind: 'track', status: 'done', childTrackId: 'trk_cache' },
+          { id: 'later', title: 'Later', doKind: 'track', childTrackId: null },
+        ],
+        archived: [{ id: 'storage', title: 'Storage', doKind: 'track', childTrackId: 'trk_storage', archivedAtMs: 10 }],
+      },
+    });
+    expect(projection.flow?.nodes).toMatchObject([
+      { doKind: 'track', childTrackId: 'trk_cache' },
+      { doKind: 'track', childTrackId: null },
+    ]);
+    expect(projection.flow?.archived).toMatchObject([{ doKind: 'track', childTrackId: 'trk_storage' }]);
+  });
+
   it('parses FlowCommitResult including plan diff and validation diagnostics', () => {
     const result = flowCommitResultSchema.parse({
       ok: false,

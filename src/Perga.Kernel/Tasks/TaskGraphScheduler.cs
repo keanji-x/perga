@@ -128,7 +128,7 @@ public static class TaskGraphScheduler
             return false;
         }
 
-        if (task.Kind == "flow_wake")
+        if (task.Kind is "flow_wake" or "flow_track")
         {
             return true;
         }

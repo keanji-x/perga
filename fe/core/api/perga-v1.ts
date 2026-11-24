@@ -206,6 +206,7 @@ export const trackDtoSchema = z.object({
   createdAtMs: z.number(),
   updatedAtMs: z.number(),
   executionTargetId: z.string().optional(),
+  originTrackId: z.string().nullish(),
 });
 export type TrackDto = z.infer<typeof trackDtoSchema>;
 

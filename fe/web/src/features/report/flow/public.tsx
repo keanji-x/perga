@@ -35,6 +35,7 @@ export type ReportFlowBlockProps = Readonly<{
   renderText?: (text: string) => ReactNode;
   renderMarkdown?: (markdown: string, key: string) => ReactNode;
   onOpenWorker?: (sessionId: string) => void;
+  onOpenTrack?: (trackId: string) => void;
 }>;
 
 function formatLayerNumber(index: number): string {
@@ -260,6 +261,7 @@ export function ReportFlowBlock({
   renderText,
   renderMarkdown,
   onOpenWorker,
+  onOpenTrack,
 }: ReportFlowBlockProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [activeGateKey, setActiveGateKey] = useState<string | null>(null);
@@ -413,6 +415,7 @@ export function ReportFlowBlock({
         const timestamp = formatFlowTimestamp(activeNode.finishedAtMs ?? activeNode.startedAtMs ?? activeNode.nextFireAtMs);
         const hasOutcomeSummary = activeNode.outcomeSummary != null && activeNode.outcomeSummary.trim() !== '';
         const whenRule = formatWhenRule(activeNode, titleById);
+        const childTrackId = activeNode.childTrackId;
 
         return (
           <article className={styles.detailArticle} aria-label={activeNode.title}>
@@ -464,6 +467,14 @@ export function ReportFlowBlock({
                   <>
                     <span className={styles.metaSep} aria-hidden="true">·</span>
                     <span className={styles.contextReuseHint}>复用上下文</span>
+                  </>
+                )}
+                {childTrackId != null && onOpenTrack !== undefined && (
+                  <>
+                    <span className={styles.metaSep} aria-hidden="true">·</span>
+                    <button type="button" className={styles.childTrackButton} onClick={() => { onOpenTrack(childTrackId); }}>
+                      Open child track
+                    </button>
                   </>
                 )}
               </div>
@@ -556,12 +567,19 @@ export function ReportFlowBlock({
                   {flow.archived.map((item) => {
                     const ts = formatFlowTimestamp(item.archivedAtMs) ?? '—';
                     const modelDisplay = item.model ?? (item.sessionId != null ? 'Worker' : '—');
+                    const childTrackId = item.childTrackId;
                     return (
                       <tr key={`${item.id}-${item.archivedAtMs}`}>
                         <td>
                           <div className={styles.archiveTitle}>{item.title}</div>
                           {item.outcomeSummary != null && item.outcomeSummary.trim() !== '' && (
                             <div className={styles.archiveSummary}>{text(item.outcomeSummary)}</div>
+                          )}
+                          {childTrackId != null && onOpenTrack !== undefined && (
+                            <button type="button" className={styles.childTrackButton}
+                              aria-label={`Open child track from ${item.title}`} onClick={() => { onOpenTrack(childTrackId); }}>
+                              Open child track
+                            </button>
                           )}
                         </td>
                         <td className={archiveToneClass(item)}>{archivedOutcomeLabel(item)}</td>

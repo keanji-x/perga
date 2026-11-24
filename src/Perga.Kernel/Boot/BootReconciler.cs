@@ -40,7 +40,7 @@ public sealed class BootReconciler : IBootReconciler
         var preparingTracks = await _store.RecoverWorkspacePreparationsAsync(ct).ConfigureAwait(false);
         var affectedTrackIds = new HashSet<string>(StringComparer.Ordinal);
 
-        // Mark all in-flight turns & tasks as interrupted in persistent store.
+        // Replayable Flow watches and Track spawns keep their running state and resume in phase 2.
         var storeAffected = await _store.MarkInFlightInterruptedOnBootAsync(ct).ConfigureAwait(false);
         var queuedInputs = await _store.RecoverSessionInputsAsync(ct).ConfigureAwait(false);
         foreach (var trackId in storeAffected)

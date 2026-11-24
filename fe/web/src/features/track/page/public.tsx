@@ -50,7 +50,8 @@ import styles from './page.module.css';
 type MobilePanelKind = 'outline' | Exclude<RowModuleView['key'], 'work' | 'temporary'> | 'conversations';
 
 export type TrackPageProps = Readonly<{
-  track: Pick<Track, 'id' | 'title' | 'closedAt' | 'working' | 'attention' | 'cards'> & Partial<Pick<Track, 'isolation' | 'updatedAt' | 'cwd'>>;
+  track: Pick<Track, 'id' | 'title' | 'closedAt' | 'working' | 'attention' | 'cards' | 'originTrackId'> & Partial<Pick<Track, 'isolation' | 'updatedAt' | 'cwd'>>;
+  onOpenOriginTrack?: (trackId: string) => void;
   /** Fill the reading column with an app-owned interactive surface. */
   fillReading?: boolean;
   /** Render the desktop title as an editorial masthead in the reading column (viewport-invariant). */
@@ -122,7 +123,6 @@ export type TrackPageProps = Readonly<{
   /** The server's capabilities; at most one is true, so the menu offers Close or Reopen, never both. */
   canReopenTrack: boolean;
   canCloseTrack: boolean;
-  /** The server's `admin_granted_at`: the Admin badge. The role is changed in the Planner conversation's composer. */
   onRenameTrack?: (title: string) => void | Promise<void>;
   closedControl?: TrackClosedControl;
   onDeleteTrack?: (signal: AbortSignal) => void | Promise<void>;
@@ -163,7 +163,7 @@ export function TrackPage({ fillReading = false, articleMasthead = !fillReading,
   cardsAction, recentFiles, onOpenCard, onDeleteCard, onSetWorkbench, onOpenTask, onOpenOutline, board, onCloseBoard, fileViewer,
   panel = null, onOpenPanel, onClosePanel,
   mobileBackLabel = 'Pages', onMobileBack, mobileHeaderActionsHost = null, mobileHeaderTitleHost = null, mobileTitleReadView,
-  canReopenTrack, canCloseTrack, onRenameTrack, closedControl, onDeleteTrack, onTrackDeleted,
+  canReopenTrack, canCloseTrack, onRenameTrack, onOpenOriginTrack, closedControl, onDeleteTrack, onTrackDeleted,
 }: TrackPageProps) {
   const compactViewport = useCompactViewport();
   const headerActionsHost = compactViewport ? mobileHeaderActionsHost : null;
@@ -328,6 +328,13 @@ export function TrackPage({ fillReading = false, articleMasthead = !fillReading,
     ...(isDirectFolder ? [folioDir ?? NO_ISOLATION_LABEL] : folioDir !== null ? [folioDir] : []),
     ...(folioDate !== null ? [folioDate] : []),
   ];
+  const { originTrackId } = track;
+  const hasMobileTitleReadView = titleInHeader && onRenameTrack !== undefined && mobileTitleReadView !== undefined;
+  const originLink = originTrackId === undefined || onOpenOriginTrack === undefined ? null : (
+    <button type="button" className={styles.originLink} onClick={() => { onOpenOriginTrack(originTrackId); }}>
+      Origin track
+    </button>
+  );
 
   const titleBlock = (
     <div className={styles.titleSlot} ref={titleSlotRef}>
@@ -345,9 +352,13 @@ export function TrackPage({ fillReading = false, articleMasthead = !fillReading,
                 displayContent={<TrackTitle track={track} />} emptyCommit="clear" onCommit={onRenameTrack}
                 readCommitFailure={writeFailureText(TRACK_PATCH_FAILURES, TRACK_PATCH_TEXT.rename)} editLabel="Rename track" inputLabel="Track title"
                 className={showArticleMasthead ? styles.mastheadTitle : styles.title} isPageTitle titleRef={titleReadControlRef}
-                readView={titleInHeader && mobileTitleReadView !== undefined ? (controls) => <MobileTitleReadView
-                  controls={controls} host={mobileHeaderTitleHost} view={mobileTitleReadView} register={registerMobileTitleEdit} /> : undefined} />}
+                readView={hasMobileTitleReadView ? (controls) => <MobileTitleReadView
+                  controls={controls} host={mobileHeaderTitleHost} register={registerMobileTitleEdit}
+                  view={originLink === null ? mobileTitleReadView : (readControls) => (
+                    <div className={styles.mobileOriginTitle}>{mobileTitleReadView(readControls)}{originLink}</div>
+                  )} /> : undefined} />}
         </h1>
+        {(!compactViewport || (titleInHeader && !hasMobileTitleReadView)) && originLink}
         {!titleInHeader && !showArticleMasthead && isDirectFolder && <ExplanationBadge label={NO_ISOLATION_LABEL}>{NO_ISOLATION_EXPLANATION}</ExplanationBadge>}
         {!titleInHeader && <TrackClosedBadge closedAt={track.closedAt} />}
         {/* Shared track activity and conversation unread state. */}
@@ -456,7 +467,11 @@ export function TrackPage({ fillReading = false, articleMasthead = !fillReading,
         <MobileHeader
           title={trackDisplayTitle(track.title)}
           titleText={<TrackTitle track={track} />}
-          meta={<>{showWorkspaceIsolation && track.isolation === 'none' && <ExplanationBadge label={NO_ISOLATION_LABEL}>{NO_ISOLATION_EXPLANATION}</ExplanationBadge>}<TrackClosedBadge closedAt={track.closedAt} /></>}
+          meta={<>
+            {isDirectFolder && <ExplanationBadge label={NO_ISOLATION_LABEL}>{NO_ISOLATION_EXPLANATION}</ExplanationBadge>}
+            <TrackClosedBadge closedAt={track.closedAt} />
+            {!titleInHeader && originLink}
+          </>}
           level={1}
           backLabel={closeSurface === undefined ? mobileBackLabel : 'Report'}
           onBack={closeSurface ?? onMobileBack}

@@ -14,6 +14,7 @@ public sealed class TrackActorRegistry : IAsyncDisposable
 {
     private readonly ConcurrentDictionary<string, TrackActor> _actors = new(StringComparer.Ordinal);
     private readonly ITrackStore _store;
+    private readonly IFlowTrackSpawner _flowTrackSpawner;
     private readonly IReportDocEngine _reportEngine;
     private readonly IPolicyVm _policyVm;
     private readonly ITemplateCatalog _templateCatalog;
@@ -30,6 +31,7 @@ public sealed class TrackActorRegistry : IAsyncDisposable
 
     public TrackActorRegistry(
         ITrackStore store,
+        IFlowTrackSpawner flowTrackSpawner,
         IReportDocEngine reportEngine,
         IPolicyVm policyVm,
         ITemplateCatalog templateCatalog,
@@ -42,6 +44,7 @@ public sealed class TrackActorRegistry : IAsyncDisposable
         IMemoryContextProvider? memoryContext = null)
     {
         _store = store;
+        _flowTrackSpawner = flowTrackSpawner;
         _scheduleCronEvaluator = scheduleCronEvaluator;
         _memoryContext = memoryContext ?? NoMemoryContextProvider.Instance;
         _reportEngine = reportEngine;
@@ -161,6 +164,7 @@ public sealed class TrackActorRegistry : IAsyncDisposable
         return new TrackActor(
             trackId,
             _store,
+            _flowTrackSpawner,
             _reportEngine,
             _policyVm,
             _templateCatalog,

@@ -1506,6 +1506,16 @@
               }
             ]
           },
+          "originTrackId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "permissionMode": {
             "anyOf": [
               {
@@ -1854,6 +1864,16 @@
           "archivedAtMs": {
             "type": "integer"
           },
+          "childTrackId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "doKind": {
             "type": "string"
           },
@@ -2092,6 +2112,16 @@
           },
           "canceled": {
             "type": "boolean"
+          },
+          "childTrackId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "cmd": {
             "anyOf": [
@@ -5566,6 +5596,16 @@
             "type": "string"
           },
           "leadSessionId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "originTrackId": {
             "anyOf": [
               {
                 "type": "string"

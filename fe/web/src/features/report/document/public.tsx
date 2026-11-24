@@ -47,7 +47,7 @@ export type ReportDocumentProps = Readonly<{
   onOpenFileLink?: (target: ReportFileLinkTarget) => void;
   /** Opens a Worker conversation linked from a Report widget. */
   onOpenWorker?: (sessionId: string) => void;
-  /** Opens a Track linked from a Report widget. */
+  /** Opens a Track linked from a Report widget or Flow node. */
   onOpenTrack?: (trackId: string) => void;
   /** A `perga://source/…` citation was activated. Absent ⇒ citations render as an inline badge plus their label. */
   onOpenSourceLink?: (target: ReportSourceLinkTarget) => void;
@@ -117,6 +117,7 @@ export function ReportDocument({
               <ProseBlock markdown={markdown} blockId={key} compact {...textContext} />
             )}
             onOpenWorker={onOpenWorker}
+            onOpenTrack={onOpenTrack}
           />
         </div>
       </div>

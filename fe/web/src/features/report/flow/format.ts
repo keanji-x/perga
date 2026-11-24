@@ -202,5 +202,6 @@ export function formatDoKindLabel(doKind: FlowNodeProjection['doKind']): string 
     case 'run': return 'Run';
     case 'wake': return 'Wake';
     case 'watch': return 'Watch';
+    case 'track': return 'Spawn track';
   }
 }
