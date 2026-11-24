@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { useTranslator } from '@astryxdesign/core/i18n';
 import { useLightbox } from '@astryxdesign/core/Lightbox';
 import type { PlannerAttachment } from '../../../../../core/domain/presentation-types.ts';
@@ -33,6 +34,6 @@ export function MessageImages({ attachments, edited = false }: {
         </li>
       ))}
     </ul>
-    {mounted && lightbox.element}
+    {mounted && createPortal(lightbox.element, document.body)}
   </>;
 }

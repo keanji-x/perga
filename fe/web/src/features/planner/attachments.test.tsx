@@ -86,3 +86,15 @@ it('enforces the combined image size before allocating the preview', () => {
   expect(result.current.error).toBe(TOO_MANY_IMAGE_BYTES);
   expect(createPreview).toHaveBeenCalledTimes(2);
 });
+
+it('renders inline thumbnails cleanly without an external collapsible box', () => {
+  function Picker() {
+    const attachments = useDraft();
+    return <><PlannerAttachButton attachments={attachments} available /><PlannerAttachmentDrawer attachments={attachments} /></>;
+  }
+  const { container } = render(<Picker />);
+  const picker = container.querySelector('input[type="file"]')!;
+  fireEvent.change(picker, { target: { files: [image()] } });
+  expect(screen.queryByRole('button', { name: /Images/ })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Open Image 1' })).toBeTruthy();
+});

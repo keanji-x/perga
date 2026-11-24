@@ -6,9 +6,10 @@ import type { DialogOrigin } from '../../../ui/dialog/public.tsx';
 import { useEffect, useMemo, useRef, useId, type ReactNode } from 'react';
 import { Banner } from '@astryxdesign/core/Banner';
 import { Button } from '@astryxdesign/core/Button';
-import { ChatComposer, ChatComposerInput, type ChatComposerTrigger } from '@astryxdesign/core/Chat';
+import { ChatComposer, type ChatComposerTrigger } from '@astryxdesign/core/Chat';
 import { Icon } from '@astryxdesign/core/Icon';
 import { VStack } from '@astryxdesign/core/VStack';
+import { ComposerInputField } from '../../../ui/composer-attachments/public.tsx';
 
 import type { CreateExecutionTargetBody, ExecutionTargetDto } from '../../../../../core/domain/area.ts';
 import { isBlankForKernel } from '../../../../../core/domain/track.ts';
@@ -45,6 +46,14 @@ export type NewTrackFormProps = Readonly<{
   }>;
   /** App-composed model controls beside the send button. */
   modelControls?: ReactNode;
+  /** App-composed image attachment button beside footer preferences. */
+  attachButton?: ReactNode;
+  /** App-composed inline image attachment preview rendered inside the composer field. */
+  inlineAttachments?: ReactNode;
+  /** Whether a blank text message is still submittable (for image-only track creation). */
+  allowEmptyText?: boolean;
+  /** Files dropped or pasted into the field; the caller owns validation and previews. */
+  onFiles?: (files: File[]) => void;
   /** The `@` menu over this Area's reports, composed by the app: the sentence is the new track's Planner's first message. Kept stable by the caller. */
   mentionTrigger?: ChatComposerTrigger;
   submitting: boolean;
@@ -92,7 +101,8 @@ export type NewTrackFormState = Readonly<{
 }>;
 
 export function NewTrackForm({
-  modelControls, submitting, error, readNotice, initialCwd,
+  modelControls, attachButton, inlineAttachments, allowEmptyText = false, onFiles,
+  submitting, error, readNotice, initialCwd,
   initialExecutionTargetId, executionTargets, listDirectory, listDirectoryForTarget, onCreateExecutionTarget, onSubmit,
   errorAction, initialDraft, onDraftChange, submitBlocked = false, locked = false, mentionTrigger,
   workspaceOptions: workspaceOptionsState,
@@ -137,12 +147,12 @@ export function NewTrackForm({
   }, []);
 
   const workspaceSelectionValid = workspaceOptions === undefined || selectedWorkspaceOption !== undefined || locked;
-  const valid = !isBlankForKernel(message) && workspaceSelectionValid;
+  const valid = (!isBlankForKernel(message) || allowEmptyText || locked) && workspaceSelectionValid;
 
   function draftFor(text: string, forAction = false): NewTrackDraft | null {
-    /* Blank refuses the submit; it does not rewrite it. `text` goes to the caller
+    /* Blank refuses the submit unless inline attachments carry the turn or a locked create is retrying; it does not rewrite it. `text` goes to the caller
            exactly as typed, and the kernel forwards it untrimmed. */
-    if (isBlankForKernel(text) || !workspaceSelectionValid || submitting || (submitBlocked && !forAction)) return null;
+    if ((isBlankForKernel(text) && !allowEmptyText && !locked) || !workspaceSelectionValid || submitting || (submitBlocked && !forAction)) return null;
     /* Spread, not `cwd: cwd || undefined`: the caller keys managed-vs-attached on
            whether the key is there. A path travels byte-for-byte; leading/trailing
            spaces are legal POSIX path characters. */
@@ -211,25 +221,37 @@ export function NewTrackForm({
             placeholder={TASK_PLACEHOLDER}
             isDisabled={submitting}
             onSubmit={submit}
-            input={<div className={styles.editor}>
-              <ChatComposerInput className={styles.input} label={TASK_LABEL} placeholder={TASK_PLACEHOLDER} isDisabled={submitting || locked}
+            input={(
+              <ComposerInputField
+                className={styles.editor}
+                inputClassName={styles.input}
+                inlineAttachments={inlineAttachments}
+                label={TASK_LABEL}
+                placeholder={TASK_PLACEHOLDER}
+                disabled={submitting || locked}
+                onFiles={onFiles}
                 /* The `@` source delays its own requests; Astryx's delay would let its per-keystroke probe search fire. */
-                {...(triggers === undefined ? {} : { triggers, debounceMs: 0 })} />
-            </div>}
-            footerActions={<ComposerPreferences browsing={browsing !== null}
-              folder={{ buttonId: folderId, value: cwd, targetLabel: resolvedTargetLabel, isolation, clearLabel: FOLDER_CLEAR_LABEL,
-                workspaceOptions, workspaceOptionId: selectedWorkspaceOption,
-                onWorkspaceOptionChange: (id) => setWorkspaceChoice({ id, cwd }),
-                onIsolationChange: setIsolation,
-                onBrowse: (origin) => setBrowsing(origin),
-                onClear: () => {
-                  setCwd('');
-                  if (hasTargetPicker) setExecutionTargetId('local');
-                  setIsolation('worktree');
-                  setWorkspaceChoice(null);
-                },
-                isDisabled: submitting || locked }}
-            />}
+                triggers={triggers}
+                debounceMs={triggers === undefined ? undefined : 0}
+              />
+            )}
+            footerActions={<>
+              {attachButton}
+              <ComposerPreferences browsing={browsing !== null}
+                folder={{ buttonId: folderId, value: cwd, targetLabel: resolvedTargetLabel, isolation, clearLabel: FOLDER_CLEAR_LABEL,
+                  workspaceOptions, workspaceOptionId: selectedWorkspaceOption,
+                  onWorkspaceOptionChange: (id) => setWorkspaceChoice({ id, cwd }),
+                  onIsolationChange: setIsolation,
+                  onBrowse: (origin) => setBrowsing(origin),
+                  onClear: () => {
+                    setCwd('');
+                    if (hasTargetPicker) setExecutionTargetId('local');
+                    setIsolation('worktree');
+                    setWorkspaceChoice(null);
+                  },
+                  isDisabled: submitting || locked }}
+              />
+            </>}
             /* Model and Create stay together at the trailing edge. */
             sendActions={modelControls === undefined ? undefined : <span className={styles.modelControls}>{modelControls}</span>}
             sendButton={(

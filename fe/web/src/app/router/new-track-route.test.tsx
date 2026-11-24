@@ -1440,3 +1440,21 @@ it('keeps Perga creation implicit even when templates and an Area default exist'
   expect(screen.queryByLabelText('Template')).toBeNull();
   expect(sent.some(request => request.path === '/api/v1/templates')).toBe(false);
 });
+
+it('keeps an unconfirmed image-only creation retryable after reload without storing an empty text initial send', async () => {
+  const submittedStorage = createMemoryStorage();
+  submittedStorage.setItem(DRAFT_KEY, JSON.stringify({
+    key: 'image-only-unconfirmed-key',
+    body: { areaId: 'c1', provider: 'codex' },
+  }));
+  const { sent } = harness({ submittedStorage });
+  await userEvent.click(await screen.findByRole('button', { name: 'New track in Work' }));
+  await findComposer();
+  await waitFor(() => expect(screen.getByLabelText(TASK_LABEL).getAttribute('contenteditable')).toBe('false'));
+  const submit = screen.getByRole('button', { name: 'Create track' });
+  expect(submit.hasAttribute('disabled')).toBe(false);
+  await userEvent.click(submit);
+  await waitFor(() => expect(createdTrackRequests(sent)).toHaveLength(1));
+  expect(createdTrackRequests(sent)[0]?.headers?.['Idempotency-Key']).toBe('image-only-unconfirmed-key');
+  expect(submittedStorage.getItem(FIRST_SEND_KEY)).toBeNull();
+});

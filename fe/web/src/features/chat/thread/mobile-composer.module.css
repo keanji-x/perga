@@ -4,6 +4,7 @@
   /* Astryx owns editing and submission. Its documented input/footer slots share one row here. */
   .vendorComposer > div:has(.input) { --nc-mobile-input-row: 1; display: grid; position: relative; grid-template-columns: minmax(0, 1fr) var(--rail-w-collapsed); align-items: center; gap: var(--space-1); padding: var(--space-px); min-block-size: var(--control-h-touch); border-radius: calc(var(--radius-md) * 2); background: var(--nc-float-fill); border: 1px solid var(--nc-float-edge); box-shadow: var(--nc-float-shadow); box-sizing: border-box; overflow: visible; }
   .vendorComposer > div:has([data-nc-edit-bar]) { --nc-mobile-input-row: 2; }
+  .vendorComposer > div:has(.input):has([data-nc-attachment-strip]) { align-items: end; padding-block: var(--space-2); }
   .vendorComposer > div:has([data-nc-edit-bar]) > div:has([data-nc-edit-bar]) { grid-column: 1 / -1; grid-row: 1; }
   .vendorComposer > div:has(.input) > div:has(.input) { grid-column: 1; grid-row: var(--nc-mobile-input-row); min-inline-size: 0; }
   .vendorComposer > div:has(.input) > div:has(.options),

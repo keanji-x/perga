@@ -15,6 +15,7 @@ trackWorkspaceOptionsOperation,type NewTrackBody,
 import { NewTrackForm,type NewTrackDraft,type NewTrackFormState } from '../../features/area/new-track/public.tsx';
 import { useMentionTrigger } from '../../features/chat/thread/mention-trigger.tsx';
 import { ModelPill,PermissionModePill } from '../../features/chat/thread/model-pill.tsx';
+import { PlannerAttachButton, PlannerAttachmentDrawer, usePlannerAttachments, type AttachmentDraft } from '../../features/planner/attachments.tsx';
 import { ErrorBox } from '../../ui/error-box/public.tsx';
 import { useCompactViewport } from '../../ui/viewport/public.ts';
 import { useConversationCommands } from '../conversations/public.tsx';
@@ -103,18 +104,29 @@ function NewTrackEditor({ transport, unauthorized, workspace, session, store }: 
     return () => { liveRef.current = false; };
   }, []);
   const saveForm = useCallback((form: NewTrackFormState) => { store.update(areaId, { form }); }, [areaId, store]);
+  const changeAttachments = useCallback((change: (current: AttachmentDraft) => Required<AttachmentDraft>) => {
+    const current = store.get(areaId);
+    if (current === null || current.creating || current.request !== null || current.createdTrackId !== null) return;
+    store.update(areaId, change(current));
+  }, [areaId, store]);
+  const attachments = usePlannerAttachments(
+    { attachments: session.attachments, attachmentError: session.attachmentError },
+    changeAttachments,
+  );
+  const configurationLocked = session.creating || session.request !== null || !available || session.createdTrackId !== null;
 
   const openCreated = (trackId: string) => {
     const synced = conversationRegistry.hydratePendingTrackInitialSends();
-    const message = store.get(areaId)?.request?.message;
-    const hasMessage = message !== undefined && !isBlankForKernel(message);
+    const request = store.get(areaId)?.request;
+    const hasAttachments = (request?.attachments?.length ?? 0) > 0;
+    const hasMessage = (request?.message !== undefined && !isBlankForKernel(request.message)) || hasAttachments;
     const canForget = !hasMessage || synced;
     if (!canForget && !conversationRegistry.hasPendingTrackInitialSend(trackId)) {
       store.update(areaId, { error: 'Your track was created, but its saved first message is unavailable. Try opening the track again.' });
       return;
     }
     // Keep the saved request as a recovery copy while the first message is only in memory.
-    if (canForget) store.forget(areaId);
+    if (canForget) store.forget(areaId, { revokeAttachments: false });
     go({ name: 'track', trackId, openPlanner: true });
   };
 
@@ -137,16 +149,31 @@ function NewTrackEditor({ transport, unauthorized, workspace, session, store }: 
       ...(draft.workspaceOptionId === undefined ? {} : { cwd: draft.cwd ?? '', workspaceOptionId: draft.workspaceOptionId }),
       ...(draft.executionTargetId === undefined ? {} : { executionTargetId: draft.executionTargetId }),
     } satisfies NewTrackBody;
+    const draftAttachments = current.attachments ?? [];
+    const hasInitialSend = !isBlankForKernel(draft.message) || draftAttachments.length > 0;
     // The original wire body travels with the key. A retry after navigation,
     // theme changes or template refresh must not silently change its payload.
     const request: TrackCreationRequest = current.request !== null
       ? current.request
-      : { body, key: attemptKey, ...(isBlankForKernel(draft.message) ? {} : { message: draft.message }) };
+      : {
+          body,
+          key: attemptKey,
+          ...(hasInitialSend ? { message: draft.message } : {}),
+          ...(draftAttachments.length > 0 ? { attachments: draftAttachments } : {}),
+        };
     store.update(areaId, { creating: true, request, error: null, canRetryAsNewTrack: false });
     const creation = trackMutations.create(request.body, request.key);
     void creation.then((track) => {
-      const persistConfirmation = request.message === undefined || isBlankForKernel(request.message)
-        || conversationRegistry.queueTrackInitialSend(track.id, request.message, `${request.key}:init`);
+      const requestAttachments = request.attachments ?? [];
+      const hasInitialMessage = (request.message !== undefined && !isBlankForKernel(request.message))
+        || requestAttachments.length > 0;
+      const persistConfirmation = !hasInitialMessage
+        || conversationRegistry.queueTrackInitialSend(
+          track.id,
+          request.message ?? '',
+          `${request.key}:init`,
+          requestAttachments,
+        );
       // A late acknowledgement belongs to its draft; it never steals the
       // navigation the reader made while waiting. Returning offers Open track.
       // If saving the first send failed, the saved request can still replay both keys after reload.
@@ -175,7 +202,6 @@ function NewTrackEditor({ transport, unauthorized, workspace, session, store }: 
     ? readErrorText(workspace.areasError, 'Areas could not be refreshed. Your draft is kept here.')
     : !workspace.areasLoading && !available ? 'Area unavailable. Your draft is kept here; select and copy it to use elsewhere.' : null;
   const createdTrackId = session.createdTrackId;
-  const configurationLocked = session.creating || session.request !== null || !available || createdTrackId !== null;
 
   const permissionControl = resolvePermissionControl({
     storedMode: session.permissionMode,
@@ -194,6 +220,10 @@ function NewTrackEditor({ transport, unauthorized, workspace, session, store }: 
           onRetry={() => { void workspaceOptionsQuery.refetch(); }} />
         : undefined}
     mentionTrigger={mentionTrigger}
+    allowEmptyText={attachments.items.length > 0}
+    onFiles={configurationLocked ? undefined : attachments.attach}
+    inlineAttachments={<PlannerAttachmentDrawer attachments={attachments} disabled={configurationLocked} />}
+    attachButton={<PlannerAttachButton attachments={attachments} available disabled={configurationLocked} />}
     modelControls={<>
       {permissionControl.visible && (
         <PermissionModePill

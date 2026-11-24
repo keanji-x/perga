@@ -324,3 +324,39 @@ it('uses the card radius for the composer while retaining full pill and send con
     await page.viewport(1280, 720);
   }
 });
+
+it('keeps attach button and options aligned without overlap on narrow mobile viewports', async () => {
+  await page.viewport(320, 740);
+  const catalog: ModelCatalog = {
+    models: [{ id: 'test-model', model: 'test-model', resolved_model: null, display_name: 'Test model', description: '',
+      is_default: true, default_reasoning_effort: 'low', supported_reasoning_efforts: [{ reasoning_effort: 'low', description: 'Faster' }] }],
+    default: { model: null, reasoning_effort: null, supported_reasoning_efforts: null }, default_source: 'unknown',
+    source: 'live', fetched_at_ms: 1,
+  };
+  const view = render(
+    <NewTrackForm
+      submitting={false}
+      error={null}
+      initialCwd={null}
+      listDirectory={(path) => Promise.resolve({ path: path ?? '/', parent: null, entries: [] })}
+      onSubmit={vi.fn()}
+      attachButton={<button type="button" data-nc-attach="">Attach</button>}
+      modelControls={<ModelPill provider="codex" groups={[{ provider: 'codex', catalog, availability: null }]} selection={FOLLOW_INSTALLATION_DEFAULT} effortControl="in-menu" onChange={() => undefined} />}
+    />,
+  );
+  try {
+    const attach = await screen.findByRole('button', { name: 'Attach' });
+    const options = await screen.findByRole('button', { name: 'Track options' });
+    const model = await screen.findByRole('button', { name: 'Model: Default' });
+    await waitFor(() => {
+      const attachRect = attach.getBoundingClientRect();
+      const optionsRect = options.getBoundingClientRect();
+      const modelRect = model.getBoundingClientRect();
+      expect(attachRect.right).toBeLessThanOrEqual(optionsRect.left + 0.5);
+      expect(optionsRect.right).toBeLessThanOrEqual(modelRect.left + 0.5);
+    });
+  } finally {
+    view.unmount();
+    await page.viewport(1280, 720);
+  }
+});

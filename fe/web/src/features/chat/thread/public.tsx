@@ -17,12 +17,12 @@ import { Fragment, memo, useEffect, useImperativeHandle, useLayoutEffect, useMem
 import { createPortal } from 'react-dom';
 import {
   ChatComposer as AstryxChatComposer,
-  ChatComposerInput,
   ChatSendButton,
   ChatLayoutScrollButton,
   type ChatComposerInputHandle,
   type ChatComposerTrigger,
 } from '@astryxdesign/core/Chat';
+import { ComposerInputField } from '../../../ui/composer-attachments/public.tsx';
 import { Button } from '@astryxdesign/core/Button';
 import { Divider } from '@astryxdesign/core/Divider';
 import { useIcon } from '@astryxdesign/core/Icon';
@@ -401,7 +401,7 @@ export function ChatComposer({
   onSend, onStop, commands = [], disabled = false, sendDisabled = false, sendWaiting = false, canQueueWhileRunning = false,
   editing, focusOnMount = false, focusRequest = 0,
   draft: controlledDraft, commandScope, footerActions, sendAdornment,
-  drawer, headerActions, allowEmptyText = false, mentionTrigger, onFiles, layout = 'standard', focusHandle,
+  drawer, inlineAttachments, headerActions, allowEmptyText = false, mentionTrigger, onFiles, layout = 'standard', focusHandle,
 }: {
   /** Hand over the words, or return `false` when they were not taken and stay in the field. Words of a send taken
    * and later given back return through the caller's `draft`; the composer has no second way to restore them. */
@@ -434,6 +434,7 @@ export function ChatComposer({
   sendAdornment?: ReactNode;
   /** The composer's two vendor slots, passed as nodes: `features-no-cross-domain` forbids importing `features/planner`. */
   drawer?: ReactNode;
+  inlineAttachments?: ReactNode;
   headerActions?: ReactNode;
   /** Whether a send with no words is a real send (an attached image); a prop because the drawer is an opaque node. */
   allowEmptyText?: boolean;
@@ -673,39 +674,22 @@ export function ChatComposer({
             <>{sendAdornment}{sendDoor}</>
           )}
           input={(
-            <div ref={messageInputRef} className={layout === 'mobile' ? mobileStyles.input : `${styles.input} ${composerLayoutStyles.input}`}
-              onPasteCapture={disabled || onFiles === undefined ? undefined : event => {
-                const files = Array.from(event.clipboardData.files);
-                const text = event.clipboardData.getData('text/plain');
-                // Astryx consumes the file list before invoking its text paste hook.
-                if (files.length === 0 || text === '') return;
-                event.preventDefault();
-                event.stopPropagation();
-                onFiles(files);
-                inputHandle.current?.insertText(text);
-              }}><ChatComposerInput
+            <ComposerInputField
+              wrapperRef={messageInputRef}
+              className={layout === 'mobile' ? mobileStyles.input : `${styles.input} ${composerLayoutStyles.input}`}
+              inlineAttachments={inlineAttachments}
               handleRef={inputHandle}
               /* Longer drafts scroll inside the editor, leaving room for a shared pane's recovery strip and Send. */
               maxRows={3}
-              onFiles={disabled ? undefined : onFiles}
-              onPaste={disabled || onFiles === undefined ? undefined : (event, text) => {
-                if (event.clipboardData.files.length > 0) return;
-                const files = Array.from(event.clipboardData.items ?? []).flatMap(item => {
-                  if (item.kind !== 'file' || !item.type.startsWith('image/')) return [];
-                  const file = item.getAsFile();
-                  return file === null ? [] : [file];
-                });
-                if (files.length === 0) return;
-                onFiles(files);
-                return text === '';
-              }}
+              disabled={disabled}
+              onFiles={onFiles}
               label="Message"
               placeholder={layout === 'mobile' ? 'Write a message…' : 'Write a message, or type / for commands…'}
               /* No triggers where there is neither a command nor a mention: otherwise the field becomes an `aria-expanded="false"` combobox that can never expand. */
-              {...(triggers.length === 0 ? {} : { triggers })}
+              triggers={triggers.length === 0 ? undefined : triggers}
               /* The `@` source waits out keystrokes itself (`MENTION_SEARCH_DELAY_MS` says why Astryx's own delay must be off); the `/` source is synchronous and never delayed. */
               debounceMs={0}
-            /></div>
+            />
           )}
           /* Send's availability is Astryx's own (`canSend`). Astryx renders `aria-disabled` only with a `tooltip`, which `ChatSendButton` does not take, so this is a native `disabled` that drops focus to `<body>` — the focus effect above moves it back into the field first. */
           /* Keep the native Send/Stop control mounted. Its public icon slot gives

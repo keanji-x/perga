@@ -1,11 +1,7 @@
 import { useCallback, useRef } from 'react';
-import { Banner } from '@astryxdesign/core/Banner';
-import { ChatComposerDrawer } from '@astryxdesign/core/Chat';
-import { HStack } from '@astryxdesign/core/HStack';
 import { IconButton } from '@astryxdesign/core/IconButton';
-import { Thumbnail } from '@astryxdesign/core/Thumbnail';
-import { VStack } from '@astryxdesign/core/VStack';
 
+import { ComposerAttachmentStrip } from '../../ui/composer-attachments/public.tsx';
 import { Icon } from '../../ui/icon/public.tsx';
 
 import { ATTACHABLE_IMAGE_TYPES, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS_PER_MESSAGE, MAX_TOTAL_ATTACHMENT_BYTES } from '../../../../core/api/perga-v1.ts';
@@ -109,31 +105,14 @@ export function PlannerAttachButton({ attachments, available, disabled = false }
   );
 }
 
-/** The strip of pending images. `Thumbnail` samples the image behind its remove button (APCA) so the button stays legible on any picture. */
+/** The strip of pending images rendered inline inside the composer body. */
 export function PlannerAttachmentDrawer({ attachments, disabled = false }: { attachments: PlannerAttachments; disabled?: boolean }) {
-  const { items, error } = attachments;
-  if (items.length === 0 && error === null) return null;
   return (
-    <ChatComposerDrawer count={items.length} label="Images">
-      <VStack gap={2}>
-        <HStack gap={2} wrap="wrap" data-nc-attachments="">
-          {items.map((item, index) => (
-            <Thumbnail
-              key={item.id}
-              src={item.url}
-              label={`Image ${index + 1}`}
-              onRemove={disabled ? undefined : () => attachments.remove(item.id)}
-            />
-          ))}
-        </HStack>
-        {error !== null && (
-          <Banner
-            status="error"
-            title="That image was not attached"
-            description={error}
-          />
-        )}
-      </VStack>
-    </ChatComposerDrawer>
+    <ComposerAttachmentStrip
+      items={attachments.items}
+      error={attachments.error}
+      onRemove={attachments.remove}
+      disabled={disabled}
+    />
   );
 }

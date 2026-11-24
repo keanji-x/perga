@@ -1,0 +1,18 @@
+@layer ui {
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    min-inline-size: 0;
+  }
+
+  .strip {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  .row {
+    padding-block-start: var(--space-1);
+  }
+}

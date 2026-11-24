@@ -16,7 +16,11 @@ export const NO_TURNS: readonly TranscriptEntry[] = Object.freeze([]);
 const NO_CONVERSATIONS: readonly Conversation[] = Object.freeze([]);
 
 type ById<T> = Readonly<Record<string, T>>;
-type PendingTrackInitialSend = Readonly<{ text: string; key: string }>;
+type PendingTrackInitialSend = Readonly<{
+  text: string;
+  key: string;
+  attachments?: readonly ConversationAttachment[];
+}>;
 
 export type ConversationSnapshot = Readonly<{
   entries: ById<RememberedConversation>;
@@ -70,6 +74,7 @@ function previewUrls(state: ConversationSnapshot) {
   };
   for (const composer of Object.values(state.composers)) add(composer.attachments);
   for (const ops of Object.values(state.outboxes)) for (const op of ops) add(op.echo.attachments);
+  for (const pending of Object.values(state.pendingTrackInitialSends)) add(pending.attachments);
   for (const slot of Object.values(state.drafts)) {
     if (slot.kind !== 'held') continue;
     add(slot.draft.attachments);
@@ -113,8 +118,14 @@ function writePendingTrackInitialSends(key: string, map: ById<PendingTrackInitia
   if (submittedStorage === undefined) return true;
   try {
     const storage = submittedStorage();
-    if (Object.keys(map).length === 0) storage.removeItem(key);
-    else storage.setItem(key, JSON.stringify(map));
+    const serializable = Object.fromEntries(
+      Object.entries(map)
+        // Image-only initial sends hold non-serializable attachments; never persist a bare empty text replay.
+        .filter(([, entry]) => entry.text.trim() !== '')
+        .map(([id, entry]) => [id, { text: entry.text, key: entry.key }]),
+    );
+    if (Object.keys(serializable).length === 0) storage.removeItem(key);
+    else storage.setItem(key, JSON.stringify(serializable));
     return true;
   } catch {
     return false;
@@ -143,7 +154,10 @@ export function createConversationOwner(submittedStorage?: () => Storage) {
   const listeners = new Set<() => void>();
   const commit = (next: ConversationSnapshot) => {
     if (next === state) return;
-    const previews = next.composers !== state.composers || next.outboxes !== state.outboxes || next.drafts !== state.drafts
+    const previews = next.composers !== state.composers
+      || next.outboxes !== state.outboxes
+      || next.drafts !== state.drafts
+      || next.pendingTrackInitialSends !== state.pendingTrackInitialSends
       ? previewUrls(state) : undefined;
     state = next;
     if (previews && previews.size !== 0) {
@@ -255,9 +269,12 @@ export function createConversationOwner(submittedStorage?: () => Storage) {
     },
     hydratePendingTrackInitialSends,
     hasPendingTrackInitialSend: (trackId) => Object.hasOwn(state.pendingTrackInitialSends, trackId),
-    queueTrackInitialSend: (trackId, text, key) => {
+    queueTrackInitialSend: (trackId, text, key, attachments) => {
       if (!pendingInitialSendsHydrated) hydratePendingTrackInitialSends();
-      const pendingTrackInitialSends = put(state.pendingTrackInitialSends, trackId, { text, key });
+      const pending: PendingTrackInitialSend = attachments !== undefined && attachments.length > 0
+        ? { text, key, attachments }
+        : { text, key };
+      const pendingTrackInitialSends = put(state.pendingTrackInitialSends, trackId, pending);
       const saved = pendingInitialSendsHydrated && savePendingTrackInitialSends(pendingTrackInitialSends);
       commit({ ...state, pendingTrackInitialSends });
       return saved;
