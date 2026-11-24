@@ -126,6 +126,7 @@ public static class TrackFlowSerializer
         if (!string.IsNullOrWhiteSpace(action.Provider)) obj["provider"] = action.Provider;
         if (!string.IsNullOrWhiteSpace(action.Model)) obj["model"] = action.Model;
         if (!string.IsNullOrWhiteSpace(action.ReasoningEffort)) obj["reasoningEffort"] = action.ReasoningEffort;
+        if (!string.IsNullOrWhiteSpace(action.PermissionMode)) obj["permissionMode"] = action.PermissionMode;
         if (!string.IsNullOrWhiteSpace(action.Gate)) obj["gate"] = action.Gate;
         if (!string.IsNullOrWhiteSpace(action.Prompt)) obj["prompt"] = action.Prompt;
         if (!string.IsNullOrWhiteSpace(action.Acceptance)) obj["acceptance"] = action.Acceptance;

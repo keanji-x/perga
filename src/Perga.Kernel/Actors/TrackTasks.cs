@@ -278,14 +278,25 @@ public sealed partial class TrackActor
                         }
                         if (!actor.EnsureTaskDispatchApprovedCore(task, route)) continue;
                         var effort = ReadTaskReasoningEffort(task);
-                        if (route.Provider is not null || route.Model is not null || effort is not null)
+                        var permissionMode = ReadTaskPermissionMode(task);
+                        var reusedSession = FlowConstants.IsFlowSessionReuse(task) ? actor.ReadTaskDispatchSessionCore(task) : null;
+                        var effectiveProvider = SessionLaunchValidator.NormalizeProvider(route.Provider ?? actor.GetDefaultProviderCore());
+                        var isDynamicPermissionMode = permissionMode is not null &&
+                            ProviderPermissionModes.GetProfile(effectiveProvider).CatalogSource == PermissionCatalogSource.Dynamic;
+                        // Static permission catalogs are authoritative in-process and do not require a live probe.
+                        if (permissionMode is not null && !isDynamicPermissionMode && reusedSession is null)
+                            RuntimePermissionModes.Resolve(effectiveProvider, permissionMode);
+                        if (route.Provider is not null || route.Model is not null || effort is not null ||
+                            (isDynamicPermissionMode && reusedSession is null))
                         {
                             if (providers is null)
                             {
                                 actor.StartTaskProviderProbeCore();
                                 continue;
                             }
-                            actor.ValidateTaskProviderModelCore(route, providers, effort, validateModel: !taskRoute.UsesPreparedDefault);
+                            actor.ValidateTaskProviderModelCore(route, providers, effort, validateModel: !taskRoute.UsesPreparedDefault,
+                                permissionMode: reusedSession is null ? permissionMode : null,
+                                preferredSessionId: reusedSession?.Id);
                         }
                     }
                     catch (KernelException ex) when (ex.Code == KernelErrorCode.Conflict && !ct.IsCancellationRequested)
@@ -389,6 +400,7 @@ public sealed partial class TrackActor
                     actor._scheduler.Clear(previousSession.Id);
                 }
                 var isFlowFreshEpoch = FlowConstants.IsFlowTask(task) && !preserveSessionContext;
+                var explicitPermissionMode = ReadTaskPermissionMode(task);
                 var subagent = isCommandTask ? null : previousSession is not null ? (preserveSessionContext ? previousSession with
                 {
                     Status = "idle",
@@ -401,6 +413,9 @@ public sealed partial class TrackActor
                     Provider = isFlowFreshEpoch ? workerProvider : previousSession.Provider,
                     Model = isFlowFreshEpoch ? (route.Model ?? actor.ResolveTaskWorkerModelCore(workerProvider)) : previousSession.Model,
                     ReasoningEffort = isFlowFreshEpoch ? ReadTaskReasoningEffort(task) : (ReadTaskReasoningEffort(task) ?? previousSession.ReasoningEffort),
+                    PermissionMode = isFlowFreshEpoch
+                        ? actor.ResolveTaskWorkerPermissionModeCore(task, workerProvider)
+                        : (explicitPermissionMode is not null ? actor.ResolveTaskWorkerPermissionModeCore(task, workerProvider) : previousSession.PermissionMode),
                     ArchivedAtMs = null,
                     UnknownReason = null, UnknownTurnId = null, UnknownLastError = null, ReconnectInvalidated = false,
                     Epoch = task.RunCount == 0 ? previousSession.Epoch : checked(previousSession.Epoch + 1),
@@ -419,7 +434,7 @@ public sealed partial class TrackActor
                     CreatedAtMs: now,
                     UpdatedAtMs: now,
                     ReasoningEffort: ReadTaskReasoningEffort(task),
-                    PermissionMode: RuntimePermissionModes.Resolve(workerProvider, null));
+                    PermissionMode: actor.ResolveTaskWorkerPermissionModeCore(task, workerProvider));
 
                 var effectiveTask = actor.InterpolateFlowTaskForExecutionCore(task);
                 var runningTask = task with

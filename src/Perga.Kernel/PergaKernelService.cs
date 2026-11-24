@@ -707,7 +707,7 @@ public sealed partial class PergaKernelService : IPergaKernel
             {
                 var spec = new FlowSpecDto(1, seed, FlowConstants.SchemaPointer);
                 TrackFlowValidator.WorkerCatalog? catalog = null;
-                if (seed.Any(node => !node.Canceled && node.Do.ReasoningEffort is not null))
+                if (seed.Any(node => !node.Canceled && (node.Do.ReasoningEffort is not null || node.Do.PermissionMode is not null)))
                     catalog = new(await env.AgentRuntime.ProbeProvidersAsync(ct).ConfigureAwait(false), leadProvider, leadSession.Model);
                 TemplateFlow.RequireValid(TrackFlowValidator.Validate(spec, new(0, []), [], new HashSet<string>(),
                     new Dictionary<string, AgentSessionDto> { [leadSessionId] = leadSession }, leadSessionId,

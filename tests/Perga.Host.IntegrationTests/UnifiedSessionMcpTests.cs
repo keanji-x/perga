@@ -157,7 +157,8 @@ public sealed class UnifiedSessionMcpTests
         Assert.Equal("codex", child.Provider);
         Assert.Null(child.Model);
         Assert.Null(child.ReasoningEffort);
-        Assert.Equal("never", child.PermissionMode);
+        // Full access maps across providers when permissionMode is omitted.
+        Assert.Equal("full", child.PermissionMode);
 
         var inherited = (await Success<SessionCreationReceipt>(host, token, KernelMcpToolNames.SessionCreate,
             new { provider = "agy" }, ct)).Session;
@@ -165,7 +166,7 @@ public sealed class UnifiedSessionMcpTests
             (inherited.Provider, inherited.Model, inherited.ReasoningEffort, inherited.PermissionMode));
         var switched = await Success<AgentSessionDto>(host, token, KernelMcpToolNames.SessionUpdate,
             new { sessionId = inherited.Id, expectedConfigVersion = inherited.ConfigVersion, provider = "codex" }, ct);
-        Assert.Equal((child.Provider, child.Model, child.ReasoningEffort, child.PermissionMode),
+        Assert.Equal((child.Provider, child.Model, child.ReasoningEffort, "never"),
             (switched.Provider, switched.Model, switched.ReasoningEffort, switched.PermissionMode));
         Assert.Equal(switched, (await kernel.GetSessionItemsAsync(switched.Id, new(), Human, ct)).Session);
     }

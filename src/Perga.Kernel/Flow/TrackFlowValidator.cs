@@ -12,7 +12,11 @@ namespace Perga.Kernel.Flow;
 /// </summary>
 internal static class TrackFlowValidator
 {
-    internal sealed record WorkerCatalog(IReadOnlyList<ProviderStatus> Providers, string DefaultProvider, string? DefaultModel);
+    internal sealed record WorkerCatalog(
+        IReadOnlyList<ProviderStatus> Providers,
+        string DefaultProvider,
+        string? DefaultModel,
+        Func<string, ProviderStatus?, string?, IReadOnlyList<PermissionModeOption>?>? ResolvePermissionCatalog = null);
 
     public static IReadOnlyList<FlowValidationErrorDto> Validate(
         FlowSpecDto nextSpec,
@@ -472,6 +476,9 @@ internal static class TrackFlowValidator
             if (node.Do.ReasoningEffort is { } effort && effort != reusedSession.ReasoningEffort)
                 errors.Add(new($"$.nodes[{index}].do.reasoningEffort", "Requested reasoningEffort differs from the target session.",
                     "Use the current session reasoning effort or create a new session."));
+            if (node.Do.PermissionMode is { } perm && perm != reusedSession.PermissionMode)
+                errors.Add(new($"$.nodes[{index}].do.permissionMode", "Requested permissionMode differs from the target session.",
+                    "Use the current session permission mode, update it via session_update first, or create a new session."));
         }
 
         var route = policy is null
@@ -516,6 +523,40 @@ internal static class TrackFlowValidator
             catch (KernelException ex)
             {
                 errors.Add(new($"$.nodes[{index}].do.reasoningEffort", ex.Message, ex.NextStep));
+            }
+        }
+
+        if (node.Do.PermissionMode is { } requestedPermissionMode)
+        {
+            if (workerCatalog is not null)
+            {
+                var defaultProvider = SessionLaunchValidator.NormalizeProvider(workerCatalog.DefaultProvider);
+                var selected = SessionLaunchValidator.NormalizeProvider(reusedSession?.Provider ?? route.Provider ?? defaultProvider);
+                try
+                {
+                    var status = SessionLaunchValidator.ValidateProvider(workerCatalog.Providers, selected, explicitlySelected: true, requireAvailable: true);
+                    var openModes = workerCatalog.ResolvePermissionCatalog?.Invoke(selected, status, reusedSession?.Id) ?? status?.PermissionModes;
+                    RuntimePermissionModes.Resolve(selected, requestedPermissionMode, openModes);
+                }
+                catch (KernelException ex)
+                {
+                    errors.Add(new($"$.nodes[{index}].do.permissionMode", ex.Message, ex.NextStep));
+                }
+            }
+            else if ((reusedSession?.Provider ?? route.Provider) is { } explicitProvider)
+            {
+                var selected = SessionLaunchValidator.NormalizeProvider(explicitProvider);
+                if (ProviderPermissionModes.GetProfile(selected).CatalogSource == PermissionCatalogSource.Static)
+                {
+                    try
+                    {
+                        RuntimePermissionModes.Resolve(selected, requestedPermissionMode);
+                    }
+                    catch (KernelException ex)
+                    {
+                        errors.Add(new($"$.nodes[{index}].do.permissionMode", ex.Message, ex.NextStep));
+                    }
+                }
             }
         }
     }

@@ -77,12 +77,13 @@ describe('report-flow domain contracts', () => {
           repeat: true,
           watchProgress: { probeKind: 'cmd', label: 'Poll', timeoutAtMs: null },
         },
-        { id: 'review', title: 'Review', reasoningEffort: 'high' },
+        { id: 'review', title: 'Review', reasoningEffort: 'high', permissionMode: 'full' },
       ],
     });
     expect(parsed.nodes[0].repeat).toBe(true);
     expect(parsed.nodes[0].watchProgress?.timeoutAtMs).toBeNull();
     expect(parsed.nodes[1].reasoningEffort).toBe('high');
+    expect(parsed.nodes[1].permissionMode).toBe('full');
   });
 
   it('parses FlowCommitResult including plan diff and validation diagnostics', () => {

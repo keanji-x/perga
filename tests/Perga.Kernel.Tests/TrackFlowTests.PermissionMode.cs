@@ -1,0 +1,361 @@
+using System.Text.Json;
+using Perga.AgentKit;
+using Perga.Contracts;
+using Perga.Kernel.Flow;
+using Perga.Kernel.Mcp;
+using Perga.Kernel.Ports;
+using Perga.Kernel.Tests.Fakes;
+
+namespace Perga.Kernel.Tests;
+
+public sealed partial class TrackFlowTests
+{
+    [Theory]
+    [InlineData("""{"kind":"watch","cmd":"poll","permissionMode":"full"}""", "permissionMode")]
+    [InlineData("""{"kind":"wake","session":"lead","prompt":"Review","permissionMode":"full"}""", "permissionMode")]
+    [InlineData("""{"kind":"run","cmd":"poll","permissionMode":"full"}""", "permissionMode")]
+    [InlineData("""{"kind":"run","prompt":"Review","permissionMode":" "}""", "permissionMode")]
+    [InlineData("""{"kind":"run","prompt":"Review","permissionMode":null}""", "permissionMode")]
+    public void ParserRejectsPermissionModeOnUnsupportedOrBlankActions(string action, string field)
+    {
+        var (spec, errors) = TrackFlowParser.Parse($$"""
+            {"rev":0,"nodes":[{"id":"node","do":{{action}}}]}
+            """);
+        Assert.Null(spec);
+        Assert.Contains(errors, e => e.Path == $"$.nodes[0].do.{field}");
+    }
+
+    [Fact]
+    public void SerializerPreservesExplicitPermissionModeRoundTrip()
+    {
+        var (spec, errors) = TrackFlowParser.Parse("""
+            {"rev":0,"nodes":[{"id":"impl","do":{"kind":"run","provider":"codex","permissionMode":"full","prompt":"Run tests"}}]}
+            """);
+        Assert.Empty(errors);
+        Assert.Equal("full", Assert.Single(spec!.Nodes).Do.PermissionMode);
+
+        var canonical = TrackFlowSerializer.SerializeCanonical(spec);
+        using var doc = JsonDocument.Parse(canonical);
+        Assert.Equal("full", doc.RootElement.GetProperty("nodes")[0].GetProperty("do").GetProperty("permissionMode").GetString());
+    }
+
+    [Fact]
+    public async Task FlowCommitValidatesExplicitPermissionModeAndReusedSessionMatch()
+    {
+        await using var ctx = new KernelTestContext();
+        ctx.AgentRuntime.Providers =
+        [
+            new("codex", true, "1", null, ["gpt-5"]),
+            new("claude", true, "1", null, ["sonnet"])
+        ];
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        var trackId = snap.Track.Id;
+
+        var badStatic = await ctx.Kernel.CommitTrackFlowAsync(trackId, dryRun: true, expectedFlowRev: 0, Human, content: """
+            {"rev":0,"nodes":[{"id":"bad","do":{"kind":"run","provider":"codex","permissionMode":"bypassPermissions","prompt":"Run"}}]}
+            """);
+        Assert.False(badStatic.Ok);
+        Assert.Contains(badStatic.Diagnostics, d => d.Path == "$.nodes[0].do.permissionMode");
+
+        var sub = (await ctx.Kernel.CreateSessionAsync(trackId,
+            new CreateSessionRequest(Title: "Helper", Provider: "codex", PermissionMode: "never"),
+            "req-reuse-perm", Human, default)).Receipt.Session;
+
+        var mismatch = await ctx.Kernel.CommitTrackFlowAsync(trackId, dryRun: true, expectedFlowRev: 0, Human, content: $$$"""
+            {"rev":0,"nodes":[{"id":"reuse","do":{"kind":"run","session":"{{{sub.Id}}}","permissionMode":"full","prompt":"Run"}}]}
+            """);
+        Assert.False(mismatch.Ok);
+        Assert.Contains(mismatch.Diagnostics, d => d.Path == "$.nodes[0].do.permissionMode");
+
+        var match = await ctx.Kernel.CommitTrackFlowAsync(trackId, dryRun: true, expectedFlowRev: 0, Human, content: $$$"""
+            {"rev":0,"nodes":[{"id":"reuse","do":{"kind":"run","session":"{{{sub.Id}}}","permissionMode":"never","prompt":"Run"}}]}
+            """);
+        Assert.True(match.Ok, JsonSerializer.Serialize(match.Diagnostics));
+    }
+
+    [Fact]
+    public async Task ExplicitFlowPermissionModeAppliesToWorkerLaunchAndProjection()
+    {
+        await using var ctx = new KernelTestContext();
+        ctx.AgentRuntime.Providers = [new("codex", true, "1", null, ["gpt-5"])];
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        var trackId = snap.Track.Id;
+
+        var commit = await ctx.Kernel.CommitTrackFlowAsync(trackId, dryRun: false, expectedFlowRev: 0, Human, content: """
+            {"rev":0,"nodes":[{"id":"explicit-full","do":{"kind":"run","access":"read_only","provider":"codex","permissionMode":"full","prompt":"Run checks"}}]}
+            """);
+        Assert.True(commit.Ok, JsonSerializer.Serialize(commit.Diagnostics));
+        await ctx.Kernel.WaitForTrackIdleAsync(trackId);
+
+        var workerLaunch = Assert.Single(ctx.AgentRuntime.OpenedSessions, s =>
+            s.LaunchSpec.SystemPrompt?.Contains("BoundTaskId=", StringComparison.Ordinal) == true);
+        Assert.Equal("full", workerLaunch.LaunchSpec.PermissionMode);
+
+        var flow = await ctx.Kernel.GetTrackFlowAsync(trackId);
+        var projected = Assert.Single(flow.Projection.Nodes, n => n.Id == "explicit-full");
+        Assert.Equal("full", projected.PermissionMode);
+    }
+
+    [Theory]
+    [InlineData("acp:antigravity", null, "codex", "read_write", "full")]
+    [InlineData("acp:antigravity", null, "codex", "read_only", "never")]
+    [InlineData("acp:antigravity", null, "claude", "read_write", "bypassPermissions")]
+    [InlineData("acp:antigravity", null, "claude", "read_only", "dontAsk")]
+    [InlineData("acp:opencode", null, "codex", "read_write", "never")]
+    [InlineData("claude", "bypassPermissions", "codex", "read_write", "full")]
+    [InlineData("claude", "bypassPermissions", "codex", "read_only", "never")]
+    [InlineData("claude", "acceptEdits", "codex", "read_write", "never")]
+    [InlineData("claude", "plan", "claude", "read_write", "dontAsk")]
+    [InlineData("codex", "full", "claude", "read_write", "bypassPermissions")]
+    [InlineData("codex", "never", "codex", "read_write", "never")]
+    public async Task OmittedFlowPermissionModeInheritsFromLeadByAccessAndProviderPolicy(
+        string leadProvider,
+        string? leadPermissionMode,
+        string workerProvider,
+        string access,
+        string? expectedWorkerMode)
+    {
+        await using var ctx = new KernelTestContext();
+        ctx.AgentRuntime.Providers =
+        [
+            new("codex", true, "1", null, ["gpt-5"]),
+            new("claude", true, "1", null, ["sonnet"]),
+            new("acp:antigravity", true, "1", null, ["gemini-4-neon"]),
+            new("acp:opencode", true, "1", null, ["opencode/default"])
+        ];
+
+        var area = await ctx.Kernel.CreateAreaAsync(new CreateAreaRequest("Flow Permission Inheritance", DefaultCwd: "/workspace/demo"));
+        var snap = await ctx.Kernel.CreateTrackAsync(new CreateTrackRequest(
+            AreaId: area.Id,
+            Title: "Inheritance Test",
+            Cwd: "/workspace/demo",
+            Provider: leadProvider,
+            PermissionMode: leadPermissionMode));
+        var trackId = snap.Track.Id;
+        await ctx.Kernel.Actors.GetOrActivate(trackId).EnsureMountedAsync();
+
+        var commit = await ctx.Kernel.CommitTrackFlowAsync(trackId, dryRun: false, expectedFlowRev: 0, Human, content: $$$"""
+            {"rev":0,"nodes":[{"id":"worker","do":{"kind":"run","access":"{{{access}}}","provider":"{{{workerProvider}}}","prompt":"Execute"}}]}
+            """);
+        Assert.True(commit.Ok, JsonSerializer.Serialize(commit.Diagnostics));
+        await ctx.Kernel.WaitForTrackIdleAsync(trackId);
+
+        var workerLaunch = Assert.Single(ctx.AgentRuntime.OpenedSessions, s =>
+            s.LaunchSpec.SystemPrompt?.Contains("BoundTaskId=", StringComparison.Ordinal) == true);
+        Assert.Equal(expectedWorkerMode, workerLaunch.LaunchSpec.PermissionMode);
+    }
+
+    [Fact]
+    public async Task SessionCreateInheritsCrossProviderFullAccessFromAgyLeadAndFailsClosedFromAcceptEdits()
+    {
+        await using var ctx = new KernelTestContext();
+        ctx.AgentRuntime.Providers =
+        [
+            new("codex", true, "1", null, ["gpt-5"]),
+            new("claude", true, "1", null, ["sonnet"]),
+            new("acp:antigravity", true, "1", null, ["gemini-4-neon"])
+        ];
+
+        var area = await ctx.Kernel.CreateAreaAsync(new CreateAreaRequest("Collaborator Inheritance", DefaultCwd: "/workspace/demo"));
+        var agyTrack = await ctx.Kernel.CreateTrackAsync(new CreateTrackRequest(
+            AreaId: area.Id, Title: "AGY Lead", Cwd: "/workspace/demo", Provider: "acp:antigravity"));
+        await ctx.Kernel.Actors.GetOrActivate(agyTrack.Track.Id).EnsureMountedAsync();
+        var agyCaller = await ctx.OpenMcpCallerAsync(agyTrack.Track.LeadSessionId!);
+        var agyResult = await ctx.Kernel.InvokeKernelMcpToolAsync(agyCaller, KernelMcpToolNames.SessionCreate,
+            TestJson.Parse("""{"title":"Codex Helper","provider":"codex","requestKey":"req-agy-codex"}"""));
+        Assert.Equal("full", agyResult.GetProperty("session").GetProperty("permissionMode").GetString());
+
+        var claudeTrack = await ctx.Kernel.CreateTrackAsync(new CreateTrackRequest(
+            AreaId: area.Id, Title: "Claude Lead", Cwd: "/workspace/demo", Provider: "claude", PermissionMode: "acceptEdits"));
+        await ctx.Kernel.Actors.GetOrActivate(claudeTrack.Track.Id).EnsureMountedAsync();
+        var claudeCaller = await ctx.OpenMcpCallerAsync(claudeTrack.Track.LeadSessionId!);
+        var claudeResult = await ctx.Kernel.InvokeKernelMcpToolAsync(claudeCaller, KernelMcpToolNames.SessionCreate,
+            TestJson.Parse("""{"title":"Codex Helper","provider":"codex","requestKey":"req-claude-codex"}"""));
+        Assert.Equal("never", claudeResult.GetProperty("session").GetProperty("permissionMode").GetString());
+    }
+
+    [Fact]
+    public async Task LaterWaveNonReuseWorkerAppliesClearedPermissionMode()
+    {
+        var clock = new ControllableTimeProvider();
+        await using var ctx = new KernelTestContext(timeProvider: clock);
+        ctx.AgentRuntime.Providers = [new("codex", true, "1", null, ["gpt-5"])];
+        var trackId = (await ctx.CreateDefaultTrackAsync()).TrackSnap.Track.Id;
+        var probeHits = 0;
+        ctx.CommandRunner.Handler = (_, _) =>
+        {
+            var n = Interlocked.Increment(ref probeHits);
+            return Task.FromResult(new ShellCommandResult(n <= 2 ? 0 : 75, $"wave {n}", "", false, 1));
+        };
+
+        var commit1 = await ctx.Kernel.CommitTrackFlowAsync(trackId, false, 0, Human, content: """
+            {
+              "rev": 0,
+              "nodes": [
+                {"id": "watch", "do": {"kind": "watch", "cmd": "probe", "repeat": true, "interval": "5s"}},
+                {"id": "worker", "when": {"after": ["watch"]}, "do": {"kind": "run", "access": "read_only", "provider": "codex", "permissionMode": "full", "prompt": "Wave 1"}}
+              ]
+            }
+            """);
+        Assert.True(commit1.Ok, JsonSerializer.Serialize(commit1.Diagnostics));
+        await WaitUntilAsync(() => Task.FromResult(ctx.AgentRuntime.OpenedSessions.Any(s => s.LaunchSpec.PermissionMode == "full")));
+        var wave1Task = Assert.Single((await ctx.Store.LoadTrackAggregateAsync(trackId, default))!.Tasks, t => t.TaskKey == "worker");
+        await ctx.Kernel.CompleteTaskDoneAsync(trackId, wave1Task.SessionId!, outcome: FlowOutcome.Ok, summary: "done 1");
+        await WaitUntilAsync(async () =>
+            Assert.Single((await ctx.Store.LoadTrackAggregateAsync(trackId, default))!.Tasks, t => t.TaskKey == "worker").Status == TaskRunStatus.Done);
+
+        var rev = (await ctx.Kernel.GetTrackFlowAsync(trackId)).FlowRev;
+        var commit2 = await ctx.Kernel.CommitTrackFlowAsync(trackId, false, rev, Human, content: $$$"""
+            {
+              "rev": {{{rev}}},
+              "nodes": [
+                {"id": "watch", "do": {"kind": "watch", "cmd": "probe", "repeat": true, "interval": "5s"}},
+                {"id": "worker", "when": {"after": ["watch"]}, "do": {"kind": "run", "access": "read_only", "provider": "codex", "prompt": "Wave 2"}}
+              ]
+            }
+            """);
+        Assert.True(commit2.Ok, JsonSerializer.Serialize(commit2.Diagnostics));
+        await WaitUntilAsync(() => Task.FromResult(clock.HasTimerDueAt(clock.GetUtcNow() + TimeSpan.FromSeconds(5))));
+        clock.Advance(TimeSpan.FromSeconds(5));
+        await WaitUntilAsync(() => Task.FromResult(ctx.AgentRuntime.OpenedSessions.Count(s => s.LaunchSpec.StateKey == wave1Task.SessionId) >= 2));
+
+        var wave2Launch = ctx.AgentRuntime.OpenedSessions.Last(s => s.LaunchSpec.StateKey == wave1Task.SessionId).LaunchSpec;
+        Assert.Equal("never", wave2Launch.PermissionMode);
+    }
+
+    [Fact]
+    public async Task TrackCreationRejectsInvalidTemplateSeededPermissionModeAgainstDefaultProvider()
+    {
+        await using var ctx = new KernelTestContext(policyVm: new Perga.PolicyVm.PolicyVm());
+        ctx.AgentRuntime.Providers = [new("codex", true, "1", null, ["gpt-5"])];
+        ctx.Kernel.Templates.RegisterTemplate("""
+            export default {
+              id: "bad-perm-seed",
+              title: "Bad Perm Seed",
+              flow: [{ id: "seed-node", do: { kind: "run", permissionMode: "bypassPermissions", prompt: "Run" } }]
+            };
+            """);
+
+        var area = await ctx.Kernel.CreateAreaAsync(new CreateAreaRequest("Seed Validation", DefaultCwd: "/workspace/demo"));
+        var ex = await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.CreateTrackAsync(new CreateTrackRequest(
+            AreaId: area.Id,
+            Title: "Seeded Invalid Perm",
+            Cwd: "/workspace/demo",
+            Provider: "codex",
+            TemplateId: "bad-perm-seed")));
+        Assert.Equal(KernelErrorCode.InvalidArgument, ex.Code);
+        Assert.Contains("permissionMode", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task FlowProjectionPreservesBoundAcpSessionNullPermissionModeAfterReset()
+    {
+        await using var ctx = new KernelTestContext();
+        ctx.AgentRuntime.Providers =
+        [
+            new("acp:custom", true, "1", null, ["m1"], PermissionModes:
+            [
+                new("inspect", "Inspect", "", "neutral", true),
+                new("act", "Act", "", "warning")
+            ])
+        ];
+        var area = await ctx.Kernel.CreateAreaAsync(new CreateAreaRequest("Projection Null Perm", DefaultCwd: "/workspace/demo"));
+        var snap = await ctx.Kernel.CreateTrackAsync(new CreateTrackRequest(
+            AreaId: area.Id, Title: "Projection Null", Cwd: "/workspace/demo", Provider: "acp:custom"));
+        var trackId = snap.Track.Id;
+        await ctx.Kernel.Actors.GetOrActivate(trackId).EnsureMountedAsync();
+
+        var commit = await ctx.Kernel.CommitTrackFlowAsync(trackId, dryRun: false, expectedFlowRev: 0, Human, content: """
+            {"rev":0,"nodes":[{"id":"acp-node","do":{"kind":"run","provider":"acp:custom","permissionMode":"act","prompt":"Inspect"}}]}
+            """);
+        Assert.True(commit.Ok, JsonSerializer.Serialize(commit.Diagnostics));
+        await ctx.Kernel.WaitForTrackIdleAsync(trackId);
+
+        var task = Assert.Single(await ctx.Kernel.ListTasksAsync(trackId), t => t.TaskKey == "acp-node");
+        Assert.Equal("act", Assert.Single((await ctx.Kernel.GetTrackFlowAsync(trackId)).Projection.Nodes).PermissionMode);
+
+        // Reset the bound ACP session's permissionMode to null; projection must report null, not the stale declaration.
+        await ctx.Kernel.UpdateSessionAsync(task.SessionId!, new UpdateSessionRequest(PermissionMode: new(null)), Human, default);
+        var afterReset = Assert.Single((await ctx.Kernel.GetTrackFlowAsync(trackId)).Projection.Nodes, n => n.Id == "acp-node");
+        Assert.Null(afterReset.PermissionMode);
+    }
+
+    [Fact]
+    public async Task FlowCommitValidatesDynamicAcpPermissionCatalogAndDispatchRejectsPostCommitReuseDrift()
+    {
+        await using var ctx = new KernelTestContext();
+        ctx.AgentRuntime.Providers =
+        [
+            new("codex", true, "1", null, ["gpt-5"]),
+            new("acp:custom", true, "1", null, ["m1"], PermissionModes:
+            [
+                new("inspect", "Inspect", "", "neutral", true),
+                new("act", "Act", "", "warning")
+            ])
+        ];
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        var trackId = snap.Track.Id;
+
+        var badDynamic = await ctx.Kernel.CommitTrackFlowAsync(trackId, dryRun: true, expectedFlowRev: 0, Human, content: """
+            {"rev":0,"nodes":[{"id":"dyn-bad","do":{"kind":"run","provider":"acp:custom","permissionMode":"unknown","prompt":"Run"}}]}
+            """);
+        Assert.False(badDynamic.Ok);
+        Assert.Contains(badDynamic.Diagnostics, d => d.Path == "$.nodes[0].do.permissionMode");
+
+        var sub = (await ctx.Kernel.CreateSessionAsync(trackId,
+            new CreateSessionRequest(Title: "Reusable", Provider: "codex", PermissionMode: "never"),
+            "req-drift-sub", Human, default)).Receipt.Session;
+
+        var commit = await ctx.Kernel.CommitTrackFlowAsync(trackId, dryRun: false, expectedFlowRev: 0, Human, content: $$$"""
+            {
+              "rev": 0,
+              "nodes": [
+                {"id": "gate-step", "do": {"kind": "run", "access": "read_only", "prompt": "Wait"}},
+                {"id": "reuse-step", "when": {"after": ["gate-step"]}, "do": {"kind": "run", "session": "{{{sub.Id}}}", "permissionMode": "never", "prompt": "Reuse"}}
+              ]
+            }
+            """);
+        Assert.True(commit.Ok, JsonSerializer.Serialize(commit.Diagnostics));
+        await WaitUntilAsync(async () => (await ctx.Kernel.ListTasksAsync(trackId)).Any(t => t.TaskKey == "gate-step" && t.SessionId is not null));
+        var gateTask = Assert.Single(await ctx.Kernel.ListTasksAsync(trackId), t => t.TaskKey == "gate-step");
+
+        // Mutate reused session's permissionMode before reuse-step is dispatched.
+        await ctx.Kernel.UpdateSessionAsync(sub.Id, new UpdateSessionRequest(PermissionMode: new("full")), Human, default);
+        await ctx.Kernel.CompleteTaskDoneAsync(trackId, gateTask.SessionId!, outcome: FlowOutcome.Ok);
+
+        await WaitUntilAsync(async () =>
+            Assert.Single(await ctx.Kernel.ListTasksAsync(trackId), t => t.TaskKey == "reuse-step").Status == TaskRunStatus.Failed);
+        var failed = Assert.Single(await ctx.Kernel.ListTasksAsync(trackId), t => t.TaskKey == "reuse-step");
+        Assert.Contains("permissionMode", failed.StatusDetail ?? "", StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task DefaultProviderStaticExplicitPermissionModeDispatchesWithoutProviderProbe()
+    {
+        await using var ctx = new KernelTestContext();
+        ctx.AgentRuntime.Providers = [new("codex", true, "1", null, ["gpt-5"])];
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        var trackId = snap.Track.Id;
+
+        var commit = await ctx.Kernel.CommitTrackFlowAsync(trackId, dryRun: false, expectedFlowRev: 0, Human, content: """
+            {
+              "rev": 0,
+              "nodes": [
+                {"id": "first", "do": {"kind": "run", "access": "read_only", "prompt": "Hold"}},
+                {"id": "second", "when": {"after": ["first"]}, "do": {"kind": "run", "permissionMode": "full", "prompt": "Run"}}
+              ]
+            }
+            """);
+        Assert.True(commit.Ok, JsonSerializer.Serialize(commit.Diagnostics));
+        await WaitUntilAsync(async () => (await ctx.Kernel.ListTasksAsync(trackId)).Any(t => t.TaskKey == "first" && t.SessionId is not null));
+        var first = Assert.Single(await ctx.Kernel.ListTasksAsync(trackId), t => t.TaskKey == "first");
+
+        // Simulate provider probe outage before dispatching 'second' (default provider + static permissionMode).
+        ctx.AgentRuntime.ProbeScript = _ => throw new InvalidOperationException("probe unavailable");
+        await ctx.Kernel.CompleteTaskDoneAsync(trackId, first.SessionId!, outcome: FlowOutcome.Ok);
+        await WaitUntilAsync(() => Task.FromResult(ctx.AgentRuntime.OpenedSessions.Any(s => s.LaunchSpec.PermissionMode == "full")));
+
+        var secondLaunch = ctx.AgentRuntime.OpenedSessions.Last(s => s.LaunchSpec.PermissionMode == "full").LaunchSpec;
+        Assert.Equal("full", secondLaunch.PermissionMode);
+    }
+}

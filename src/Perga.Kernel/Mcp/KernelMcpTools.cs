@@ -217,7 +217,7 @@ public static class KernelMcpCatalog
                 "Cheatsheet:\n" +
                 "- Root: { rev, nodes: [{ id, title?, source?, when?, do, canceled? }] }\n" +
                 "- when (omit = run once immediately): { after: [\"id\" | { node, on?: ok|attention|blocked|any }], on? } | { cron, tz?, maxOccurrences? } | { at: ISO-8601 }\n" +
-                "- do.kind='run': { kind:'run', prompt, session?:'new'|'ses_...', role?, access?, provider?, model?, reasoningEffort?, gate?, acceptance? } OR { kind:'run', cmd }. Use provider_list for supported reasoning efforts. Reused sessions must match an explicit effort.\n" +
+                "- do.kind='run': { kind:'run', prompt, session?:'new'|'ses_...', role?, access?, provider?, model?, reasoningEffort?, permissionMode?, gate?, acceptance? } OR { kind:'run', cmd }. Use provider_list for supported reasoning efforts and permission modes. Reused sessions must match an explicit effort or permissionMode; omitted permissionMode inherits from Lead for read_write runs and uses provider default for read_only runs.\n" +
                 "- Use Host do.gate for builds and tests that need loopback sockets restricted in the Worker sandbox.\n" +
                 "- do.kind='wake': { kind:'wake', session:'lead'|'ses_...', prompt }\n" +
                 "- do.kind='watch' (0-token): { kind:'watch', prChecks, repo?, headSha?, interval?, timeout? } OR { kind:'watch', cmd, interval?, timeout?, repeat? } (exit 0=ok, 75=wait, other=attention). Default interval is 60s. Timeout accepts 'never' or a duration (e.g. '60m', '7d'), defaulting to 'never' with repeat:true and '60m' otherwise. Repeating command watches re-arm after downstream tasks settle.\n" +
