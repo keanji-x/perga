@@ -1,9 +1,8 @@
 import { MarkdownBlocks, markdownInlineText } from '../../../ui/markdown/public.tsx';
 import { parse, sanitizeAstPolicy } from '../../../../../core/markdown/public.ts';
 import { createElement, memo, useMemo, type ReactNode } from 'react';
-import { createPortal } from 'react-dom';
 import { useTranslator } from '@astryxdesign/core/i18n';
-import { useLightbox } from '@astryxdesign/core/Lightbox';
+import { usePortalLightbox } from '../../../ui/lightbox/public.tsx';
 import { GitHubPreviewLink, useGitHubPreviewsEnabled } from '../../../systems/github-links/public.tsx';
 
 import type { WorkspaceFilePort } from '../../../../../core/domain/fs.ts';
@@ -24,7 +23,6 @@ function ReplyImage({ src, alt, inLink, imageFiles }: {
 }) {
   const t = useTranslator();
   const [failed, setFailed] = useState(false);
-  const [mounted, setMounted] = useState(false);
   // Preserve network images; local destinations must go through the Track-scoped port.
   const remote = /^(https?:\/\/|\/\/)/i.test(src);
   const target = remote ? null : parseReportFileLink(src);
@@ -32,7 +30,7 @@ function ReplyImage({ src, alt, inLink, imageFiles }: {
     : reportFilePathRelativeToRoot(imageFiles.root, target);
   const url = remote ? src : relative === null ? null : imageFiles?.files.rawUrl(relative) ?? null;
   const media = useMemo(() => (url === null || failed || inLink ? [] : [{ src: url, alt }]), [alt, failed, inLink, url]);
-  const lightbox = useLightbox({ media, hasZoom: true });
+  const lightbox = usePortalLightbox(media);
   if (url === null || failed) {
     return <span className={styles.unavailable}>Image unavailable: {alt || src}</span>;
   }
@@ -46,14 +44,11 @@ function ReplyImage({ src, alt, inLink, imageFiles }: {
         className={styles.imageButton}
         aria-haspopup="dialog"
         aria-label={alt === '' ? t('@astryx.thumbnail.open', { accessibleName: t('@astryx.thumbnail.fallbackName') }) : undefined}
-        onClick={() => {
-          setMounted(true);
-          lightbox.open();
-        }}
+        onClick={() => lightbox.open()}
       >
         {image}
       </button>
-      {mounted && createPortal(lightbox.element, document.body)}
+      {lightbox.portal}
     </>
   );
 }

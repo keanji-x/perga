@@ -3,8 +3,9 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { useRef } from 'react';
 import { MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS_PER_MESSAGE } from '../../../../core/api/perga-v1.ts';
 import { TOO_MANY_IMAGES, TOO_MANY_IMAGE_BYTES } from '../../../../core/domain/conversation-commands.ts';
+import { ComposerAttachmentStrip } from '../../ui/composer-attachments/public.tsx';
 import { useState } from '../../ui/state/public.ts';
-import { PlannerAttachButton, PlannerAttachmentDrawer, usePlannerAttachments, type AttachmentDraft } from './attachments.tsx';
+import { PlannerAttachButton, usePlannerAttachments, type AttachmentDraft } from './attachments.tsx';
 
 function image(type = 'image/png', size = 4) {
   return new File([new Uint8Array(size)], 'screenshot.png', { type });
@@ -34,7 +35,10 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 it('opens the picker and previews the original selected file synchronously', () => {
   function Picker() {
     const attachments = useDraft();
-    return <><PlannerAttachButton attachments={attachments} available /><PlannerAttachmentDrawer attachments={attachments} /></>;
+    return <>
+      <PlannerAttachButton attachments={attachments} available />
+      <ComposerAttachmentStrip items={attachments.items} error={attachments.error} onRemove={attachments.remove} />
+    </>;
   }
   const { container } = render(<Picker />);
   const picker = container.querySelector('input[type="file"]')!;
@@ -90,7 +94,10 @@ it('enforces the combined image size before allocating the preview', () => {
 it('renders inline thumbnails cleanly without an external collapsible box', () => {
   function Picker() {
     const attachments = useDraft();
-    return <><PlannerAttachButton attachments={attachments} available /><PlannerAttachmentDrawer attachments={attachments} /></>;
+    return <>
+      <PlannerAttachButton attachments={attachments} available />
+      <ComposerAttachmentStrip items={attachments.items} error={attachments.error} onRemove={attachments.remove} />
+    </>;
   }
   const { container } = render(<Picker />);
   const picker = container.querySelector('input[type="file"]')!;

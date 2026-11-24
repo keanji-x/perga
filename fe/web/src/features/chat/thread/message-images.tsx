@@ -1,9 +1,7 @@
 import { useMemo } from 'react';
-import { createPortal } from 'react-dom';
 import { useTranslator } from '@astryxdesign/core/i18n';
-import { useLightbox } from '@astryxdesign/core/Lightbox';
 import type { PlannerAttachment } from '../../../../../core/domain/presentation-types.ts';
-import { useState } from '../../../ui/state/public.ts';
+import { usePortalLightbox } from '../../../ui/lightbox/public.tsx';
 import styles from './thread.module.css';
 
 export function MessageImages({ attachments, edited = false }: {
@@ -11,9 +9,8 @@ export function MessageImages({ attachments, edited = false }: {
   edited?: boolean;
 }) {
   const t = useTranslator();
-  const [mounted, setMounted] = useState(false);
   const media = useMemo(() => attachments.map(image => ({ src: image.url, alt: '' })), [attachments]);
-  const lightbox = useLightbox({ media, hasZoom: true });
+  const lightbox = usePortalLightbox(media);
 
   return <>
     <ul className={styles.attachments} data-nc-turn-attachments="" {...(edited ? { 'data-nc-editing': '' } : {})}>
@@ -24,16 +21,13 @@ export function MessageImages({ attachments, edited = false }: {
             className={styles.attachmentButton}
             aria-haspopup="dialog"
             aria-label={t('@astryx.lightbox.imagePosition', { index: index + 1, total: media.length })}
-            onClick={() => {
-              setMounted(true);
-              lightbox.open(index);
-            }}
+            onClick={() => lightbox.open(index)}
           >
             <img src={image.url} alt="" />
           </button>
         </li>
       ))}
     </ul>
-    {mounted && createPortal(lightbox.element, document.body)}
+    {lightbox.portal}
   </>;
 }

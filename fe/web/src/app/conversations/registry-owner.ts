@@ -4,6 +4,7 @@ import { DEPLOYMENT_OWNER_USER_ID } from '../../../../core/api/auth.ts';
 import { isOptimisticConversationTurn } from '../../../../core/domain/conversation.ts';
 import { beginSendOp, type ConversationOutboxOp } from '../../../../core/domain/conversation-outbox.ts';
 import { EMPTY_COMPOSER, withRefill, type ComposerContent } from '../../../../core/domain/conversation-composer.ts';
+import { isBlankForKernel } from '../../../../core/domain/track.ts';
 import {
   moveDraft, slotHolds,
   type ConversationOpenRequest,
@@ -121,7 +122,7 @@ function writePendingTrackInitialSends(key: string, map: ById<PendingTrackInitia
     const serializable = Object.fromEntries(
       Object.entries(map)
         // Image-only initial sends hold non-serializable attachments; never persist a bare empty text replay.
-        .filter(([, entry]) => entry.text.trim() !== '')
+        .filter(([, entry]) => !isBlankForKernel(entry.text))
         .map(([id, entry]) => [id, { text: entry.text, key: entry.key }]),
     );
     if (Object.keys(serializable).length === 0) storage.removeItem(key);

@@ -1,12 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, type ReactNode, type Ref } from 'react';
-import { createPortal } from 'react-dom';
+import { useCallback, useMemo, useRef, type ReactNode, type Ref } from 'react';
 import { Banner } from '@astryxdesign/core/Banner';
 import { ChatComposerInput, type ChatComposerInputHandle, type ChatComposerTrigger } from '@astryxdesign/core/Chat';
 import { HStack } from '@astryxdesign/core/HStack';
-import { useLightbox } from '@astryxdesign/core/Lightbox';
 import { Thumbnail } from '@astryxdesign/core/Thumbnail';
 
-import { useState } from '../state/public.ts';
+import { usePortalLightbox } from '../lightbox/public.tsx';
 import styles from './composer-attachments.module.css';
 
 export type ComposerAttachmentItem = Readonly<{
@@ -30,15 +28,11 @@ export function ComposerAttachmentStrip({
   onRemove?: (id: string) => void;
   disabled?: boolean;
 }>) {
-  const [lightboxMounted, setLightboxMounted] = useState(false);
   const media = useMemo(
     () => items.map((item, index) => ({ src: item.url, alt: item.label ?? `Image ${index + 1}` })),
     [items],
   );
-  const lightbox = useLightbox({ media, hasZoom: true });
-  useEffect(() => {
-    if (items.length === 0 && lightbox.isOpen) lightbox.close();
-  }, [items.length, lightbox]);
+  const lightbox = usePortalLightbox(media);
 
   if (items.length === 0 && (error === null || error === undefined)) return null;
 
@@ -51,10 +45,7 @@ export function ComposerAttachmentStrip({
               key={item.id}
               src={item.url}
               label={item.label ?? `Image ${index + 1}`}
-              onClick={() => {
-                setLightboxMounted(true);
-                lightbox.open(index);
-              }}
+              onClick={() => lightbox.open(index)}
               onRemove={disabled || onRemove === undefined ? undefined : () => onRemove(item.id)}
             />
           ))}
@@ -67,7 +58,7 @@ export function ComposerAttachmentStrip({
           description={error}
         />
       )}
-      {lightboxMounted && items.length > 0 && createPortal(lightbox.element, document.body)}
+      {lightbox.portal}
     </div>
   );
 }

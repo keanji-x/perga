@@ -1,8 +1,7 @@
 import { LayerDepthProvider, useLayerDismissal } from '@astryxdesign/core/Layer';
-import { useLightbox } from '@astryxdesign/core/Lightbox';
 import { ReadOnlyCode } from '../../../ui/code/public.tsx';
+import { usePortalLightbox } from '../../../ui/lightbox/public.tsx';
 import { useEffect, useMemo, useRef } from 'react';
-import { createPortal } from 'react-dom';
 
 import type { WorkspaceFilePort } from '../../../../../core/domain/fs.ts';
 import type { TrackReport } from '../../../../../core/domain/report.ts';
@@ -55,14 +54,10 @@ export function ReportFileViewer({
     : { summary: '', body: markdownText, blocks: null }, [markdownText]);
   /* A page opens rendered; its source is one toggle away. */
   const [pageView, setPageView] = useState<'page' | 'source'>('page');
-  const [imageLightboxMounted, setImageLightboxMounted] = useState(false);
   const imageUrl = resource.kind === 'image' ? resource.url : null;
   const imageAlt = resource.kind === 'image' ? resource.path : '';
   const imageMedia = useMemo(() => (imageUrl === null ? [] : [{ src: imageUrl, alt: imageAlt }]), [imageAlt, imageUrl]);
-  const imageLightbox = useLightbox({ media: imageMedia, hasZoom: true });
-  useEffect(() => {
-    if (imageUrl === null && imageLightbox.isOpen) imageLightbox.close();
-  }, [imageLightbox, imageUrl]);
+  const imageLightbox = usePortalLightbox(imageMedia);
 
   useEffect(() => { layerRef.current?.focus({ preventScroll: true }); }, []);
 
@@ -99,10 +94,7 @@ export function ReportFileViewer({
               className={styles.imageButton}
               aria-haspopup="dialog"
               aria-label={`Inspect ${basename(resource.path)}`}
-              onClick={() => {
-                setImageLightboxMounted(true);
-                imageLightbox.open();
-              }}
+              onClick={() => imageLightbox.open()}
             >
               <img
                 className={styles.image}
@@ -115,7 +107,7 @@ export function ReportFileViewer({
                 }}
               />
             </button>
-            {imageLightboxMounted && createPortal(imageLightbox.element, document.body)}
+            {imageLightbox.portal}
           </figure>
         )}
         {resource.kind === 'html' && (

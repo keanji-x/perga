@@ -3,7 +3,7 @@ import { FOLLOW_INSTALLATION_DEFAULT, type ConversationAttachment, type ModelSel
 import { permissionModeAfterProviderChange } from '../../../../core/domain/planner-permission-mode.ts';
 import type { AgentProvider } from '../../../../core/domain/presentation-types.ts';
 import type { Area } from '../../../../core/domain/area.ts';
-import { type NewTrackBody, TRACK_CREATE_TEXT, isBlankForKernel } from '../../../../core/domain/track.ts';
+import { type NewTrackBody, TRACK_CREATE_TEXT } from '../../../../core/domain/track.ts';
 import type { NewTrackFormState } from '../../features/area/new-track/public.tsx';
 import { useState } from '../../ui/state/public.ts';
 import { mintIdempotencyKey } from '../providers/idempotency-key.ts';
@@ -56,7 +56,7 @@ function createDraftStore(submittedStorage?: () => Storage, userId?: string) {
         request: {
           key,
           body,
-          ...(typeof message === 'string' && !isBlankForKernel(message) ? { message } : {}),
+          ...(message === undefined ? {} : { message }),
         },
         createdTrackId: typeof createdTrackId === 'string' && createdTrackId.trim() !== '' ? createdTrackId : null,
       };
@@ -73,7 +73,7 @@ function createDraftStore(submittedStorage?: () => Storage, userId?: string) {
         const serializable = {
           body: request.body,
           key: request.key,
-          ...(request.message !== undefined && !isBlankForKernel(request.message) ? { message: request.message } : {}),
+          ...(request.message === undefined ? {} : { message: request.message }),
           ...(createdTrackId === null ? {} : { createdTrackId }),
         };
         storage.setItem(keyOf(areaId), JSON.stringify(serializable));

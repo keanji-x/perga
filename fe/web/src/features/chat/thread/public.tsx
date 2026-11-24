@@ -436,7 +436,7 @@ export function ChatComposer({
   drawer?: ReactNode;
   inlineAttachments?: ReactNode;
   headerActions?: ReactNode;
-  /** Whether a send with no words is a real send (an attached image); a prop because the drawer is an opaque node. */
+  /** Whether a send with no words is a real send (e.g., inline image attachments). */
   allowEmptyText?: boolean;
   /** Files dropped or pasted into the field; the caller owns validation and draft previews. */
   onFiles?: (files: File[]) => void;

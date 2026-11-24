@@ -1,7 +1,6 @@
 import { useCallback, useRef } from 'react';
 import { IconButton } from '@astryxdesign/core/IconButton';
 
-import { ComposerAttachmentStrip } from '../../ui/composer-attachments/public.tsx';
 import { Icon } from '../../ui/icon/public.tsx';
 
 import { ATTACHABLE_IMAGE_TYPES, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS_PER_MESSAGE, MAX_TOTAL_ATTACHMENT_BYTES } from '../../../../core/api/perga-v1.ts';
@@ -102,17 +101,5 @@ export function PlannerAttachButton({ attachments, available, disabled = false }
         }}
       />
     </span>
-  );
-}
-
-/** The strip of pending images rendered inline inside the composer body. */
-export function PlannerAttachmentDrawer({ attachments, disabled = false }: { attachments: PlannerAttachments; disabled?: boolean }) {
-  return (
-    <ComposerAttachmentStrip
-      items={attachments.items}
-      error={attachments.error}
-      onRemove={attachments.remove}
-      disabled={disabled}
-    />
   );
 }

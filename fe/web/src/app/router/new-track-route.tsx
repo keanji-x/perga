@@ -15,7 +15,8 @@ trackWorkspaceOptionsOperation,type NewTrackBody,
 import { NewTrackForm,type NewTrackDraft,type NewTrackFormState } from '../../features/area/new-track/public.tsx';
 import { useMentionTrigger } from '../../features/chat/thread/mention-trigger.tsx';
 import { ModelPill,PermissionModePill } from '../../features/chat/thread/model-pill.tsx';
-import { PlannerAttachButton, PlannerAttachmentDrawer, usePlannerAttachments, type AttachmentDraft } from '../../features/planner/attachments.tsx';
+import { PlannerAttachButton, usePlannerAttachments, type AttachmentDraft } from '../../features/planner/attachments.tsx';
+import { ComposerAttachmentStrip } from '../../ui/composer-attachments/public.tsx';
 import { ErrorBox } from '../../ui/error-box/public.tsx';
 import { useCompactViewport } from '../../ui/viewport/public.ts';
 import { useConversationCommands } from '../conversations/public.tsx';
@@ -150,7 +151,6 @@ function NewTrackEditor({ transport, unauthorized, workspace, session, store }: 
       ...(draft.executionTargetId === undefined ? {} : { executionTargetId: draft.executionTargetId }),
     } satisfies NewTrackBody;
     const draftAttachments = current.attachments ?? [];
-    const hasInitialSend = !isBlankForKernel(draft.message) || draftAttachments.length > 0;
     // The original wire body travels with the key. A retry after navigation,
     // theme changes or template refresh must not silently change its payload.
     const request: TrackCreationRequest = current.request !== null
@@ -158,7 +158,7 @@ function NewTrackEditor({ transport, unauthorized, workspace, session, store }: 
       : {
           body,
           key: attemptKey,
-          ...(hasInitialSend ? { message: draft.message } : {}),
+          ...(isBlankForKernel(draft.message) ? {} : { message: draft.message }),
           ...(draftAttachments.length > 0 ? { attachments: draftAttachments } : {}),
         };
     store.update(areaId, { creating: true, request, error: null, canRetryAsNewTrack: false });
@@ -222,7 +222,7 @@ function NewTrackEditor({ transport, unauthorized, workspace, session, store }: 
     mentionTrigger={mentionTrigger}
     allowEmptyText={attachments.items.length > 0}
     onFiles={configurationLocked ? undefined : attachments.attach}
-    inlineAttachments={<PlannerAttachmentDrawer attachments={attachments} disabled={configurationLocked} />}
+    inlineAttachments={<ComposerAttachmentStrip items={attachments.items} error={attachments.error} onRemove={attachments.remove} disabled={configurationLocked} />}
     attachButton={<PlannerAttachButton attachments={attachments} available disabled={configurationLocked} />}
     modelControls={<>
       {permissionControl.visible && (
