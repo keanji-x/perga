@@ -65,10 +65,7 @@ public sealed partial class TrackActor
             return new GuardDecision.Allow();
         var effectiveProvider = route.Provider ?? GetDefaultProviderCore();
         var effectiveAccess = route.Access ?? FormatAccessModeForPolicy(task.Access);
-        var reused = FlowConstants.IsFlowSessionReuse(task) ? ReadTaskDispatchSessionCore(task) : null;
-        var effectivePermissionMode = reused is not null
-            ? reused.PermissionMode
-            : ReadTaskPermissionMode(task) ?? ResolveInheritedTaskPermissionModeCore(task, effectiveProvider, effectiveAccess);
+        var effectivePermissionMode = ResolveEffectiveTaskPermissionModeCore(task, effectiveProvider, effectiveAccess);
         return _policyVm.Before(_policy, "task.dispatch", TrackId, JsonHelpers.ToElement(new
         {
             taskKey = task.TaskKey,
@@ -117,33 +114,33 @@ public sealed partial class TrackActor
         context.TryGetProperty("initialPermissionMode", out var value) && value.ValueKind == JsonValueKind.String
             ? value.GetString() : null;
 
-    private string? ResolveInheritedTaskPermissionModeCore(TaskDto task, string workerProvider, string? accessOverride = null)
+    private string? ResolveEffectiveTaskPermissionModeCore(
+        TaskDto task,
+        string workerProvider,
+        string? accessOverride = null,
+        bool validateExplicit = false)
     {
-        var normalizedWorker = SessionLaunchValidator.NormalizeProvider(workerProvider);
-        var lead = _track.LeadSessionId is { } leadId ? _sessions.GetValueOrDefault(leadId) : null;
-        var allowFullInheritance = accessOverride is not null
-            ? !string.Equals(accessOverride, "read_only", StringComparison.OrdinalIgnoreCase)
-            : task.Access != AccessMode.ReadOnly;
-        return ProviderPermissionModes.ResolveInheritedMode(
-            lead?.Provider,
-            lead?.PermissionMode,
-            normalizedWorker,
-            allowFullInheritance: allowFullInheritance,
-            forReadWriteTask: allowFullInheritance);
-    }
+        if (FlowConstants.IsFlowSessionReuse(task) && ReadTaskDispatchSessionCore(task) is { } reused)
+            return reused.PermissionMode;
 
-    private string? ResolveTaskWorkerPermissionModeCore(TaskDto task, string workerProvider, ProviderStatus? providerStatus = null)
-    {
         var normalizedWorker = SessionLaunchValidator.NormalizeProvider(workerProvider);
         if (ReadTaskPermissionMode(task) is { } explicitMode)
-            return RuntimePermissionModes.Resolve(normalizedWorker, explicitMode,
-                ResolvePermissionCatalogCore(normalizedWorker, providerStatus, null));
+        {
+            return validateExplicit
+                ? RuntimePermissionModes.Resolve(normalizedWorker, explicitMode, ResolvePermissionCatalogCore(normalizedWorker, null, null))
+                : explicitMode.Trim();
+        }
 
-        return ResolveInheritedTaskPermissionModeCore(task, normalizedWorker);
+        var lead = _track.LeadSessionId is { } leadId ? _sessions.GetValueOrDefault(leadId) : null;
+        var isReadOnly = accessOverride is not null
+            ? string.Equals(accessOverride, "read_only", StringComparison.OrdinalIgnoreCase)
+            : task.Access == AccessMode.ReadOnly;
+        var scope = isReadOnly ? PermissionInheritanceScope.ReadOnlyTask : PermissionInheritanceScope.ReadWriteTask;
+        return ProviderPermissionModes.ResolveInheritedMode(lead?.Provider, lead?.PermissionMode, normalizedWorker, scope);
     }
 
     private void ValidateTaskProviderModelCore(PolicyTaskRoute route, IReadOnlyList<ProviderStatus> providers,
-        string? effort, bool validateModel, string? permissionMode = null, string? preferredSessionId = null)
+        string? effort, bool validateModel, string? permissionMode = null)
     {
         var provider = SessionLaunchValidator.NormalizeProvider(route.Provider ?? GetDefaultProviderCore());
         try
@@ -152,7 +149,7 @@ public sealed partial class TrackActor
             SessionLaunchValidator.ValidateModelAndEffort(provider, status, validateModel ? route.Model : null,
                 route.Model ?? ResolveTaskWorkerModelCore(provider), effort, requireKnownEffort: effort is not null);
             if (permissionMode is not null)
-                RuntimePermissionModes.Resolve(provider, permissionMode, ResolvePermissionCatalogCore(provider, status, preferredSessionId));
+                RuntimePermissionModes.Resolve(provider, permissionMode, ResolvePermissionCatalogCore(provider, status, null));
         }
         catch (KernelException ex) when (ex.Code == KernelErrorCode.PreconditionFailed)
         {

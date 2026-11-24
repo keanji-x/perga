@@ -271,7 +271,8 @@ public sealed partial class TrackActor
         var status = SessionLaunchValidator.ValidateProvider(providers, provider, request.Provider is not null, requireAvailable);
         SessionLaunchValidator.ValidateModelAndEffort(provider, status, requestedModel, model, effort);
         var permissionMode = request.PermissionMode is null
-            ? ProviderPermissionModes.ResolveInheritedMode(parent?.Provider, parent?.PermissionMode, provider)
+            ? ProviderPermissionModes.ResolveInheritedMode(parent?.Provider, parent?.PermissionMode, provider,
+                PermissionInheritanceScope.Collaborator)
             : RuntimePermissionModes.Resolve(provider, request.PermissionMode,
                 ResolvePermissionCatalogCore(provider, status, parent?.Id));
 

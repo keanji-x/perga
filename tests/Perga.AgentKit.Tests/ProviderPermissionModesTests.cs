@@ -5,49 +5,49 @@ namespace Perga.AgentKit.Tests;
 public sealed class ProviderPermissionModesTests
 {
     [Theory]
-    [InlineData("codex", "full", "codex", true, true, "full")]
-    [InlineData("codex", "never", "codex", true, true, "never")]
-    [InlineData("claude", "bypassPermissions", "claude", true, true, "bypassPermissions")]
-    [InlineData("claude", "acceptEdits", "claude", true, true, "acceptEdits")]
+    [InlineData("codex", "full", "codex", PermissionInheritanceScope.ReadWriteTask, "full")]
+    [InlineData("codex", "never", "codex", PermissionInheritanceScope.ReadWriteTask, "never")]
+    [InlineData("claude", "bypassPermissions", "claude", PermissionInheritanceScope.ReadWriteTask, "bypassPermissions")]
+    [InlineData("claude", "acceptEdits", "claude", PermissionInheritanceScope.ReadWriteTask, "acceptEdits")]
     // Claude "plan" is read-only planning: not inherited onto read_write tasks, preserved for collaborators.
-    [InlineData("claude", "plan", "claude", true, true, "dontAsk")]
-    [InlineData("claude", "plan", "claude", true, false, "plan")]
-    // Cross-provider explicit Full access mapping.
-    [InlineData("codex", "full", "claude", true, true, "bypassPermissions")]
-    [InlineData("claude", "bypassPermissions", "codex", true, true, "full")]
-    [InlineData("codex", "full", "acp:antigravity", true, true, null)]
-    [InlineData("acp:opencode", "bypassPermissions", "codex", true, true, "full")]
-    [InlineData("acp:antigravity", "bypassPermissions", "codex", true, true, "full")]
-    // Cross-provider non-Full modes fail closed to the target provider default.
-    [InlineData("codex", "never", "claude", true, true, "dontAsk")]
-    [InlineData("claude", "acceptEdits", "codex", true, true, "never")]
-    [InlineData("claude", "plan", "codex", true, true, "never")]
-    [InlineData("acp:opencode", null, "codex", true, true, "never")]
-    [InlineData("acp:custom", null, "codex", true, true, "never")]
-    // Isolated temporary workaround: acp:antigravity with null mode maps to Full for read_write inheritance only.
-    [InlineData("acp:antigravity", null, "codex", true, true, "full")]
-    [InlineData("acp:antigravity", null, "claude", true, true, "bypassPermissions")]
-    [InlineData("acp:antigravity", "plan", "codex", true, true, "never")]
-    // Read-only tasks (allowFullInheritance: false) never inherit elevated permissions.
-    [InlineData("codex", "full", "codex", false, false, "never")]
-    [InlineData("claude", "bypassPermissions", "claude", false, false, "dontAsk")]
-    [InlineData("claude", "bypassPermissions", "codex", false, false, "never")]
-    [InlineData("acp:antigravity", null, "codex", false, false, "never")]
-    [InlineData("acp:antigravity", null, "claude", false, false, "dontAsk")]
+    [InlineData("claude", "plan", "claude", PermissionInheritanceScope.ReadWriteTask, "dontAsk")]
+    [InlineData("claude", "plan", "claude", PermissionInheritanceScope.Collaborator, "plan")]
+    // Cross-provider explicit Full access mapping from declared provider profiles.
+    [InlineData("codex", "full", "claude", PermissionInheritanceScope.ReadWriteTask, "bypassPermissions")]
+    [InlineData("claude", "bypassPermissions", "codex", PermissionInheritanceScope.ReadWriteTask, "full")]
+    [InlineData("codex", "full", "acp:antigravity", PermissionInheritanceScope.ReadWriteTask, null)]
+    // Cross-provider non-Full and undeclared dynamic ACP modes fail closed to the target provider default (no name guessing).
+    [InlineData("codex", "never", "claude", PermissionInheritanceScope.ReadWriteTask, "dontAsk")]
+    [InlineData("claude", "acceptEdits", "codex", PermissionInheritanceScope.ReadWriteTask, "never")]
+    [InlineData("claude", "plan", "codex", PermissionInheritanceScope.ReadWriteTask, "never")]
+    [InlineData("acp:opencode", null, "codex", PermissionInheritanceScope.ReadWriteTask, "never")]
+    [InlineData("acp:opencode", "bypassPermissions", "codex", PermissionInheritanceScope.ReadWriteTask, "never")]
+    [InlineData("acp:custom", null, "codex", PermissionInheritanceScope.ReadWriteTask, "never")]
+    [InlineData("acp:custom", "full", "codex", PermissionInheritanceScope.ReadWriteTask, "never")]
+    [InlineData("acp:antigravity", "bypassPermissions", "codex", PermissionInheritanceScope.ReadWriteTask, "never")]
+    // Isolated temporary workaround: acp:antigravity with null mode maps to Full for read_write/collaborator inheritance only.
+    [InlineData("acp:antigravity", null, "codex", PermissionInheritanceScope.ReadWriteTask, "full")]
+    [InlineData("acp:antigravity", null, "codex", PermissionInheritanceScope.Collaborator, "full")]
+    [InlineData("acp:antigravity", null, "claude", PermissionInheritanceScope.ReadWriteTask, "bypassPermissions")]
+    [InlineData("acp:antigravity", "plan", "codex", PermissionInheritanceScope.ReadWriteTask, "never")]
+    // Read-only tasks never inherit elevated permissions.
+    [InlineData("codex", "full", "codex", PermissionInheritanceScope.ReadOnlyTask, "never")]
+    [InlineData("claude", "bypassPermissions", "claude", PermissionInheritanceScope.ReadOnlyTask, "dontAsk")]
+    [InlineData("claude", "bypassPermissions", "codex", PermissionInheritanceScope.ReadOnlyTask, "never")]
+    [InlineData("acp:antigravity", null, "codex", PermissionInheritanceScope.ReadOnlyTask, "never")]
+    [InlineData("acp:antigravity", null, "claude", PermissionInheritanceScope.ReadOnlyTask, "dontAsk")]
     public void ResolveInheritedMode_HandlesSameProviderCrossProviderReadOnlyAndAgyWorkaround(
         string sourceProvider,
         string? sourceMode,
         string targetProvider,
-        bool allowFullInheritance,
-        bool forReadWriteTask,
+        PermissionInheritanceScope scope,
         string? expectedMode)
     {
         var resolved = ProviderPermissionModes.ResolveInheritedMode(
             sourceProvider,
             sourceMode,
             targetProvider,
-            allowFullInheritance: allowFullInheritance,
-            forReadWriteTask: forReadWriteTask);
+            scope);
 
         Assert.Equal(expectedMode, resolved);
     }

@@ -6,9 +6,18 @@ public enum PermissionCatalogSource
     Dynamic
 }
 
+public enum PermissionInheritanceScope
+{
+    ReadOnlyTask,
+    ReadWriteTask,
+    Collaborator
+}
+
 public sealed record ProviderPermissionProfile(
     PermissionCatalogSource CatalogSource,
-    IReadOnlyList<PermissionModeOption> StaticModes)
+    IReadOnlyList<PermissionModeOption> StaticModes,
+    string? FullAccessModeId = null,
+    string? ReadOnlyPlanningModeId = null)
 {
     public static ProviderPermissionProfile EmptyStatic { get; } = new(PermissionCatalogSource.Static, []);
     public static ProviderPermissionProfile PlainDynamic { get; } = new(PermissionCatalogSource.Dynamic, []);
@@ -27,7 +36,8 @@ public static class ProviderPermissionModes
         [
             new("never", "Never", "Sandbox only; never asks.", "neutral", IsDefault: true),
             new("full", "Full access", "No sandbox; never asks. Runs with your account's access.", "danger")
-        ]);
+        ],
+        FullAccessModeId: "full");
 
     private static readonly ProviderPermissionProfile ClaudeProfile = new(
         PermissionCatalogSource.Static,
@@ -36,7 +46,9 @@ public static class ProviderPermissionModes
             new("acceptEdits", "Accept edits", "Auto-approves edits; denies unapproved commands.", "warning"),
             new("plan", "Plan", "Plans without executing changes.", "neutral"),
             new("bypassPermissions", "Full access", "No sandbox; never asks. Runs with your account's access.", "danger")
-        ]);
+        ],
+        FullAccessModeId: "bypassPermissions",
+        ReadOnlyPlanningModeId: "plan");
 
     public static ProviderPermissionProfile GetProfile(string provider)
     {
@@ -57,23 +69,22 @@ public static class ProviderPermissionModes
     /// <summary>
     /// Resolves the inherited permission mode when spawning a child/worker session whose
     /// permissionMode was omitted.
-    /// - When <paramref name="allowFullInheritance"/> is false (e.g., read_only Flow tasks),
-    ///   never inherits elevated permissions and always returns the target provider's default mode.
-    /// - For the same provider, inherits <paramref name="sourceMode"/> directly (except Claude's
-    ///   read-only "plan" mode is not inherited when <paramref name="forReadWriteTask"/> is true).
-    /// - Across providers, only maps explicit Full access equivalents to the target provider's
+    /// - <see cref="PermissionInheritanceScope.ReadOnlyTask"/> never inherits elevated permissions
+    ///   and always returns the target provider's default mode.
+    /// - For the same provider, inherits <paramref name="sourceMode"/> directly (except read-only
+    ///   planning modes such as Claude "plan" are not inherited onto <see cref="PermissionInheritanceScope.ReadWriteTask"/>).
+    /// - Across providers, only maps declared Full access equivalents to the target provider's
     ///   Full access mode; all intermediate/unknown modes fail closed to the target default.
     /// </summary>
     public static string? ResolveInheritedMode(
         string? sourceProvider,
         string? sourceMode,
         string targetProvider,
-        bool allowFullInheritance = true,
-        bool forReadWriteTask = false)
+        PermissionInheritanceScope scope = PermissionInheritanceScope.Collaborator)
     {
         var normalizedTarget = AgentRuntime.NormalizeProviderName(targetProvider);
         var defaultMode = GetDefaultMode(normalizedTarget);
-        if (!allowFullInheritance || string.IsNullOrWhiteSpace(sourceProvider))
+        if (scope == PermissionInheritanceScope.ReadOnlyTask || string.IsNullOrWhiteSpace(sourceProvider))
             return defaultMode;
 
         var normalizedSource = AgentRuntime.NormalizeProviderName(sourceProvider);
@@ -83,7 +94,8 @@ public static class ProviderPermissionModes
         {
             if (trimmedSource is null)
                 return defaultMode;
-            if (forReadWriteTask && IsReadOnlyPlanningMode(normalizedSource, trimmedSource))
+            if (scope == PermissionInheritanceScope.ReadWriteTask &&
+                string.Equals(trimmedSource, GetProfile(normalizedSource).ReadOnlyPlanningModeId, StringComparison.Ordinal))
                 return defaultMode;
             return trimmedSource;
         }
@@ -102,39 +114,15 @@ public static class ProviderPermissionModes
         if (IsImplicitFullAccessWorkaround(normalized, trimmed))
             return true;
 
-        if (trimmed is null)
-            return false;
-
-        if (normalized.Equals("codex", StringComparison.OrdinalIgnoreCase))
-            return string.Equals(trimmed, "full", StringComparison.Ordinal);
-
-        if (normalized.Equals("claude", StringComparison.OrdinalIgnoreCase))
-            return string.Equals(trimmed, "bypassPermissions", StringComparison.Ordinal);
-
-        if (normalized.StartsWith("acp:", StringComparison.OrdinalIgnoreCase))
-            return string.Equals(trimmed, "bypassPermissions", StringComparison.Ordinal) ||
-                   string.Equals(trimmed, "full", StringComparison.Ordinal);
-
-        return false;
+        var fullAccessModeId = GetProfile(normalized).FullAccessModeId;
+        return fullAccessModeId is not null && string.Equals(trimmed, fullAccessModeId, StringComparison.Ordinal);
     }
 
     public static string? GetFullAccessMode(string provider)
     {
-        var normalized = AgentRuntime.NormalizeProviderName(provider);
-        if (normalized.Equals("codex", StringComparison.OrdinalIgnoreCase))
-            return "full";
-        if (normalized.Equals("claude", StringComparison.OrdinalIgnoreCase))
-            return "bypassPermissions";
-        // Dynamic ACP providers (e.g., acp:antigravity, acp:opencode) run non-interactively
-        // with null permissionMode under OAR; returning null avoids injecting an unadvertised ID.
-        if (normalized.StartsWith("acp:", StringComparison.OrdinalIgnoreCase))
-            return null;
-        return GetDefaultMode(normalized);
+        var profile = GetProfile(provider);
+        return profile.FullAccessModeId ?? profile.DefaultModeId;
     }
-
-    private static bool IsReadOnlyPlanningMode(string normalizedProvider, string mode) =>
-        normalizedProvider.Equals("claude", StringComparison.OrdinalIgnoreCase) &&
-        string.Equals(mode, "plan", StringComparison.Ordinal);
 
     /// <summary>
     /// TEMPORARY COMPATIBILITY HACK (non-default policy — isolated here intentionally):
