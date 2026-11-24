@@ -42,7 +42,6 @@ import {
 cancelTaskOperation,
 taskEvidence,
 } from '../domain/task-recovery.js';
-import { compilePergaTemplateInputs,parsePergaInputsSchema } from '../domain/template-input.js';
 import {
 createTerminalOperation,
 createTrackOperation,
@@ -697,18 +696,6 @@ describe('Perga /api/v1 protocol contracts', () => {
     expect(trackWorkspaceRawFileUrl('trk_1', 'assets/logo.png'))
       .toBe('/api/v1/tracks/trk_1/files/raw?path=assets%2Flogo.png');
 
-    const pergaFields = parsePergaInputsSchema({
-      baseBranch: { type: 'string', default: 'main', label: 'Base Branch' },
-      horizonMonths: { type: 'number', default: 12, label: 'Horizon' },
-      requirePrReview: { type: 'boolean', default: true, label: 'Require PR Review' },
-      riskLevel: { type: 'enum', values: ['low', 'medium', 'high'], default: 'medium', label: 'Risk Level' },
-    });
-    expect(pergaFields).toHaveLength(4);
-    expect(compilePergaTemplateInputs(pergaFields, { horizonMonths: '24', riskLevel: 'high' })).toEqual({
-      valid: true,
-      input: { baseBranch: 'main', horizonMonths: 24, requirePrReview: true, riskLevel: 'high' },
-      errors: {},
-    });
     expect(selectedReadyTemplateId('Use @`template:blank`', [{
       id: 'blank', title: 'Blank', description: null, availability: { status: 'ready' }, input_schema: {}, tasks: [],
     }])).toBe('blank');
