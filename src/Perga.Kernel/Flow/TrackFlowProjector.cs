@@ -96,7 +96,8 @@ internal static class TrackFlowProjector
                 Gates: gates,
                 WatchProgress: watchProgress,
                 Repeat: FlowConstants.IsRepeatingWatch(node),
-                ReasoningEffort: boundSession?.ReasoningEffort ?? node.Do.ReasoningEffort));
+                ReasoningEffort: boundSession?.ReasoningEffort ?? node.Do.ReasoningEffort,
+                PermissionMode: boundSession is not null ? boundSession.PermissionMode : node.Do.PermissionMode));
         }
 
         var archived = tasks

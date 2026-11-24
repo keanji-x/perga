@@ -2191,6 +2191,16 @@
               }
             ]
           },
+          "permissionMode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "prompt": {
             "anyOf": [
               {
@@ -2324,6 +2334,7 @@
           "nextFireAtMs",
           "outcome",
           "outcomeSummary",
+          "permissionMode",
           "prompt",
           "provider",
           "reasoningEffort",

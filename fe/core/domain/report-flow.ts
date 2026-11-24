@@ -72,6 +72,7 @@ export const flowNodeProjectionSchema = z.object({
   provider: z.string().nullish(),
   model: z.string().nullish(),
   reasoningEffort: z.string().nullish(),
+  permissionMode: z.string().nullish(),
   prompt: z.string().nullish(),
   cmd: z.string().nullish(),
   gate: z.string().nullish(),

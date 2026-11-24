@@ -31,6 +31,10 @@ const repeatedPrCheck: FlowAction = { kind: "watch", prChecks: 1, repeat: true }
 const commandWithEffort: FlowAction = { kind: "run", cmd: "verify", reasoningEffort: "high" };
 // @ts-expect-error wake reuses a session's existing configuration
 const wakeWithEffort: FlowAction = { kind: "wake", session: "lead", prompt: "Review", reasoningEffort: "high" };
+// @ts-expect-error shell runs have no permissionMode
+const commandWithPermissionMode: FlowAction = { kind: "run", cmd: "verify", permissionMode: "full" };
+// @ts-expect-error wake reuses a session's existing permissionMode
+const wakeWithPermissionMode: FlowAction = { kind: "wake", session: "lead", prompt: "Review", permissionMode: "full" };
 
 const triggers: FlowWhen[] = [
   {},
@@ -40,7 +44,7 @@ const triggers: FlowWhen[] = [
 ];
 const actions: FlowAction[] = [
   { kind: "run", cmd: "verify" },
-  { kind: "run", prompt: "Review", session: "new", reasoningEffort: "high" },
+  { kind: "run", prompt: "Review", session: "new", reasoningEffort: "high", permissionMode: "full" },
   { kind: "wake", session: "lead", prompt: "Check progress" },
   { kind: "watch", prChecks: 1, repo: "example/project", timeout: "7d" },
   { kind: "watch", cmd: "verify", interval: "5s", timeout: "never", repeat: true },
@@ -51,7 +55,7 @@ const before: NonNullable<PergaTemplateSetupResult["before"]> = (action, ctx) =>
     case "report.commit":
       return action.editorRole === "lead" && action.nextMarkdown !== action.prevMarkdown ? Allow() : Deny("no change");
     case "task.dispatch":
-      return action.taskKey && action.access === "read_only" ? Allow() : Deny("requires a gate");
+      return action.taskKey && action.access === "read_only" && action.permissionMode !== "full" ? Allow() : Deny("requires a gate");
     case "turn.before":
       return action.contextUsageRatio < 1 ? Allow() : Deny("context full");
     default:

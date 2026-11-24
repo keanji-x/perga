@@ -33,6 +33,7 @@ export type TemplateBeforeAction =
       access: "read_only" | "read_write";
       provider?: string | null;
       model?: string | null;
+      permissionMode?: string | null;
       gate?: unknown;
       acceptance?: string | null;
     }
@@ -221,18 +222,20 @@ export type FlowAction =
       prChecks?: never; repo?: never; headSha?: never; interval?: never; timeout?: never; repeat?: never } & (
       | { prompt: string; cmd?: never; session?: "new" | `ses_${string}`; role?: string; provider?: string; model?: string;
           /** Supported by the selected provider/model. Must match an explicitly reused session. */
-          reasoningEffort?: string }
-      | { cmd: string; prompt?: never; session?: never; role?: never; provider?: never; model?: never; reasoningEffort?: never }
+          reasoningEffort?: string;
+          /** Native permission mode supported by the selected provider. Must match an explicitly reused session. */
+          permissionMode?: string }
+      | { cmd: string; prompt?: never; session?: never; role?: never; provider?: never; model?: never; reasoningEffort?: never; permissionMode?: never }
     ))
   | { kind: "wake"; session: "lead" | `ses_${string}`; prompt: string;
       run?: never; wake?: never; watch?: never; cmd?: never; reuseSession?: never;
       role?: never; access?: never; provider?: never; model?: never; gate?: never; acceptance?: never;
-      prChecks?: never; repo?: never; headSha?: never; interval?: never; timeout?: never; repeat?: never; reasoningEffort?: never }
+      prChecks?: never; repo?: never; headSha?: never; interval?: never; timeout?: never; repeat?: never; reasoningEffort?: never; permissionMode?: never }
   | ({ kind: "watch"; interval?: string;
       /** Overall timeout (e.g. "60m", "7d", "never"). Defaults to "never" with repeat, otherwise "60m". */
       timeout?: string;
       run?: never; wake?: never; watch?: never; prompt?: never; session?: never; reuseSession?: never;
-      role?: never; access?: never; provider?: never; model?: never; gate?: never; acceptance?: never; reasoningEffort?: never } & (
+      role?: never; access?: never; provider?: never; model?: never; gate?: never; acceptance?: never; reasoningEffort?: never; permissionMode?: never } & (
       | { prChecks: number; cmd?: never; repo?: string; headSha?: string; repeat?: never }
       | { cmd: string; prChecks?: never; repo?: never; headSha?: never;
           /** Re-arm after a successful probe and completion of the downstream wave. */

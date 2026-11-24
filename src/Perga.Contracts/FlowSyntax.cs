@@ -22,6 +22,9 @@ public static partial class FlowSyntax
         if (action.ReasoningEffort is { } effort &&
             (action.Kind != "run" || hasCommand || string.IsNullOrWhiteSpace(effort)))
             errors.Add(new($"{path}.reasoningEffort", "'reasoningEffort' must be non-blank and is only valid for agent runs."));
+        if (action.PermissionMode is { } permissionMode &&
+            (action.Kind != "run" || hasCommand || string.IsNullOrWhiteSpace(permissionMode)))
+            errors.Add(new($"{path}.permissionMode", "'permissionMode' must be non-blank and is only valid for agent runs."));
     }
 
     [GeneratedRegex(@"^[a-z0-9][a-z0-9._:-]{0,63}$", RegexOptions.CultureInvariant)]

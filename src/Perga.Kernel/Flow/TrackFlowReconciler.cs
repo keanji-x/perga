@@ -712,6 +712,7 @@ internal static class TrackFlowReconciler
                         title = node.Title ?? node.Id,
                         initialModel = d.Model,
                         initialReasoningEffort = d.ReasoningEffort,
+                        initialPermissionMode = d.PermissionMode,
                         targetSession = d.Session,
                         reuseSession
                     }));

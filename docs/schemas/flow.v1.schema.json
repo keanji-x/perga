@@ -123,6 +123,11 @@
               "pattern": "\\S",
               "description": "Provider/model-supported reasoning effort. Must match the current effort when reusing a session."
             },
+            "permissionMode": {
+              "type": "string",
+              "pattern": "\\S",
+              "description": "Provider-supported native permission mode. Must match the current permission mode when reusing a session."
+            },
             "gate": { "type": "string" },
             "prompt": { "type": "string", "minLength": 1 },
             "acceptance": { "type": "string" }

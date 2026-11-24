@@ -26,7 +26,7 @@ public static class TrackFlowParser
     private static readonly HashSet<string> DoProperties = new(StringComparer.Ordinal)
     {
         "kind", "session", "role", "access", "provider", "model", "gate",
-        "prompt", "acceptance", "cmd", "prChecks", "repo", "headSha", "interval", "timeout", "repeat", "reasoningEffort"
+        "prompt", "acceptance", "cmd", "prChecks", "repo", "headSha", "interval", "timeout", "repeat", "reasoningEffort", "permissionMode"
     };
 
     private static readonly HashSet<string> AllowedSources = new(StringComparer.Ordinal)
@@ -482,7 +482,7 @@ public static class TrackFlowParser
                 errors.Add(new FlowValidationErrorDto(
                     $"{path}.{prop.Name}",
                     $"Unknown field '{prop.Name}' in 'do'.",
-                    "Allowed 'do' fields: kind, session, role, access, provider, model, reasoningEffort, gate, prompt, acceptance, cmd, prChecks, repo, headSha, interval, timeout, repeat."));
+                    "Allowed 'do' fields: kind, session, role, access, provider, model, reasoningEffort, permissionMode, gate, prompt, acceptance, cmd, prChecks, repo, headSha, interval, timeout, repeat."));
             }
         }
 
@@ -512,6 +512,9 @@ public static class TrackFlowParser
         var effort = ReadOptionalString(doEl, "reasoningEffort", $"{path}.reasoningEffort", errors)?.Trim();
         if (doEl.TryGetProperty("reasoningEffort", out var effortEl) && effortEl.ValueKind == JsonValueKind.Null)
             errors.Add(new($"{path}.reasoningEffort", "'reasoningEffort' must be a string."));
+        var permissionMode = ReadOptionalString(doEl, "permissionMode", $"{path}.permissionMode", errors)?.Trim();
+        if (doEl.TryGetProperty("permissionMode", out var permEl) && permEl.ValueKind == JsonValueKind.Null)
+            errors.Add(new($"{path}.permissionMode", "'permissionMode' must be a string."));
 
         bool? repeat = null;
         if (doEl.TryGetProperty("repeat", out var repeatEl))
@@ -544,7 +547,7 @@ public static class TrackFlowParser
         }
 
         var action = new FlowDoSpecDto(kind, session, role, access, provider, model, gate, prompt,
-            acceptance, cmd, prChecks, repo, headSha, interval, timeout, repeat, effort);
+            acceptance, cmd, prChecks, repo, headSha, interval, timeout, repeat, effort, permissionMode);
         FlowSyntax.ValidateActionOptions(action, path, errors);
         switch (kind)
         {
@@ -737,7 +740,7 @@ public static class TrackFlowParser
             """Use "when": { "after": [...] }.""",
         "cron" or "at" or "schedule" or "tz" or "timezone" =>
             """Use "when": { "cron": "..." } or "when": { "at": "..." }.""",
-        "kind" or "cmd" or "command" or "prompt" or "role" or "access" or "model" or "provider" or "gate" or "session" or "prchecks" =>
+        "kind" or "cmd" or "command" or "prompt" or "role" or "access" or "model" or "provider" or "gate" or "session" or "prchecks" or "permissionmode" or "reasoningeffort" =>
             """Move execution fields inside "do": { "kind": "run" | "wake" | "watch", ... }.""",
         _ => "Allowed node fields: id, title, source, when, do, canceled."
     };

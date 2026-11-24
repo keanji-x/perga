@@ -97,7 +97,8 @@ public sealed partial class TrackActor
                 errors = TrackFlowValidator.Validate(
                     parsedSpec, _flowSpec, _taskCoordinator.Snapshot(), CollectActiveFlowTaskIdsCore(), _sessions,
                     _track.LeadSessionId, _policy, _policyVm, _track.TemplateInputs, _scheduleCronEvaluator, _timeProvider,
-                    workerCatalog: await GetFlowWorkerCatalogCoreAsync(parsedSpec, ct).ConfigureAwait(false));
+                    workerCatalog: await GetFlowWorkerCatalogCoreAsync(parsedSpec, _policy, _track.TemplateInputs, ct).ConfigureAwait(false),
+                    defaultProvider: GetDefaultProviderCore());
                 RequireMcpAuthorizationCore(authorization);
                 if (errors.Count == 0)
                 {
