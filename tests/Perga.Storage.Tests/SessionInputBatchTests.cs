@@ -131,6 +131,44 @@ public sealed class SessionInputBatchTests
     }
 
     [Fact]
+    public async Task PromotionIsolatesAnImageBetweenTextBatchesInQueueOrder()
+    {
+        await using var h = await StorageTestHarness.CreateAsync();
+        await h.Store.UpsertAreaAsync(StorageTestHarness.CreateArea(), default);
+        var (track, report, lead) = StorageTestHarness.CreateSeedTrack();
+        await h.Store.CreateTrackAsync(track, report, null, lead, default);
+        var messages = h.Store.SessionMessages!;
+        var first = new SessionMessage("text1", lead.Id, "owner:installation", "text1", "hash",
+            null, null, "First", "queued", 1000, "queue");
+        var second = first with { Id = "text2", RequestKey = "text2", Content = "Second" };
+        var bytes = new byte[] { 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a };
+        var image = new StoredImageAttachment($"{Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(bytes))}.png",
+            "image/png", bytes.Length);
+        var imageMessage = first with { Id = "img1", RequestKey = "img1", Content = "Image", Attachments = [image] };
+        var last = first with { Id = "text3", RequestKey = "text3", Content = "Third" };
+        await messages.InsertAsync(first, default);
+        await messages.InsertAsync(second, default);
+        await messages.InsertWithMediaAsync(track.Id, imageMessage, [new(image, bytes)], default);
+        await messages.InsertAsync(last, default);
+
+        var evt = StorageTestHarness.CreateEvent("session.updated");
+        var batches = new[] { (first, "First\n\nSecond"), (imageMessage, "Image"), (last, "Third") };
+        foreach (var (message, prompt) in batches)
+        {
+            Assert.Equal(message.Id, (await messages.NextAsync(lead.Id, default))?.Id);
+            var input = await h.Store.SessionInputs.PromoteQueuedBatchAsync(lead with { Status = "queued" }, message, evt, default);
+            Assert.NotNull(input);
+            Assert.Equal(prompt, input.Content);
+            Assert.Equal(message.Attachments, input.Attachments);
+            Assert.True(await h.Store.SessionInputs.ClaimAsync(input, lead with { Status = "running" }, evt, default));
+            var turn = new SessionTurnDto(input.Receipt.TurnId, lead.Id, input.TurnIndex, lead.Epoch, "user",
+                StorageTestHarness.Json("{}"), "completed", null, null, 1000, 2000);
+            await h.Store.SessionInputs.SettleAsync(input, "delivered", turn, [], lead, [evt], default);
+        }
+        Assert.Null(await messages.NextAsync(lead.Id, default));
+    }
+
+    [Fact]
     public async Task SettlementUpdatesAllMessagesAndKeepsEachReceiptIdentity()
     {
         await using var h = await StorageTestHarness.CreateAsync();

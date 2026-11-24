@@ -148,15 +148,10 @@ internal sealed class SessionInputsRepository
             long primaryItemId = 0;
             var attachments = new List<StoredImageAttachment>();
             var prompts = new List<string>();
-            long totalImageBytes = 0;
             foreach (var next in messages)
             {
                 var images = TrackMediaStore.Deserialize(next.AttachmentsJson);
-                var nextTotal = totalImageBytes + images.Sum(image => image.Size);
-                if (attachments.Count + images.Count > ImageAttachmentContract.MaxAttachmentsPerMessage ||
-                    nextTotal > ImageAttachmentContract.MaxTotalBytes)
-                    break;
-                totalImageBytes = nextTotal;
+                if (prompts.Count > 0 && (attachments.Count > 0 || images.Count > 0)) break;
                 attachments.AddRange(images);
                 prompts.Add(next.Content);
                 SessionMessageSql.RequireOne(await conn.ExecuteAsync(new CommandDefinition("""

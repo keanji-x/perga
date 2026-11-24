@@ -143,9 +143,10 @@ export function createConversationOwner(submittedStorage?: () => Storage) {
   const listeners = new Set<() => void>();
   const commit = (next: ConversationSnapshot) => {
     if (next === state) return;
-    const previews = previewUrls(state);
+    const previews = next.composers !== state.composers || next.outboxes !== state.outboxes || next.drafts !== state.drafts
+      ? previewUrls(state) : undefined;
     state = next;
-    if (previews.size !== 0) {
+    if (previews && previews.size !== 0) {
       for (const url of previewUrls(next)) previews.delete(url);
       for (const url of previews) URL.revokeObjectURL(url);
     }
