@@ -39,15 +39,17 @@ describe('ComposerInputField', () => {
     const onFiles = vi.fn();
     const clip = new File([new Uint8Array([1, 2])], 'shot.png', { type: 'image/png' });
     render(
-      <ComposerInputField
-        label="Draft"
-        placeholder="Write..."
-        onFiles={onFiles}
-        inlineAttachments={<button type="button">Thumb action</button>}
-      />,
+      <div>
+        <button type="button">Outside action</button>
+        <ComposerInputField
+          label="Draft"
+          placeholder="Write..."
+          onFiles={onFiles}
+        />
+      </div>,
     );
 
-    fireEvent.paste(screen.getByRole('button', { name: 'Thumb action' }), {
+    fireEvent.paste(screen.getByRole('button', { name: 'Outside action' }), {
       clipboardData: { files: [clip], items: [], getData: () => 'hello' },
     });
     expect(onFiles).not.toHaveBeenCalled();

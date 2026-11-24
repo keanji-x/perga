@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, type ReactNode, type Ref } from 'react';
+import { useCallback, useMemo, useRef, type Ref } from 'react';
 import { Banner } from '@astryxdesign/core/Banner';
 import { ChatComposerInput, type ChatComposerInputHandle, type ChatComposerTrigger } from '@astryxdesign/core/Chat';
 import { HStack } from '@astryxdesign/core/HStack';
@@ -14,8 +14,8 @@ export type ComposerAttachmentItem = Readonly<{
 }>;
 
 /**
- * Inline thumbnail strip rendered inside the composer body above the text field,
- * with a portal Lightbox preview (with zoom) when any thumbnail is clicked.
+ * Floating thumbnail strip rendered directly above the composer without an outer
+ * collapsible card, with a portal Lightbox preview (with zoom) on click.
  */
 export function ComposerAttachmentStrip({
   items,
@@ -39,10 +39,11 @@ export function ComposerAttachmentStrip({
   return (
     <div className={styles.strip} data-nc-attachment-strip="">
       {items.length > 0 && (
-        <HStack gap={2} wrap="wrap" data-nc-attachments="" className={styles.row}>
+        <HStack gap={2} wrap="wrap" data-nc-attachments="">
           {items.map((item, index) => (
             <Thumbnail
               key={item.id}
+              className={styles.thumb}
               src={item.url}
               label={item.label ?? `Image ${index + 1}`}
               onClick={() => lightbox.open(index)}
@@ -64,14 +65,13 @@ export function ComposerAttachmentStrip({
 }
 
 /**
- * Shared composer input field combining inline image attachment previews with
- * unified clipboard image/mixed-content paste and file-drop handling.
+ * Shared composer input field combining unified clipboard image/mixed-content
+ * paste and file-drop handling.
  */
 export function ComposerInputField({
   wrapperRef,
   className,
   inputClassName,
-  inlineAttachments,
   handleRef,
   label,
   placeholder,
@@ -84,7 +84,6 @@ export function ComposerInputField({
   wrapperRef?: Ref<HTMLDivElement>;
   className?: string;
   inputClassName?: string;
-  inlineAttachments?: ReactNode;
   handleRef?: Ref<ChatComposerInputHandle>;
   label: string;
   placeholder: string;
@@ -121,7 +120,6 @@ export function ComposerInputField({
         innerHandle.current?.insertText(text);
       }}
     >
-      {inlineAttachments}
       <ChatComposerInput
         className={inputClassName}
         handleRef={assignHandle}

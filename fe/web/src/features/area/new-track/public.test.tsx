@@ -355,7 +355,7 @@ describe('The folder is optional, and its absence is the managed default', () =>
       onFiles,
       allowEmptyText: true,
       attachButton: <button type="button">Attach test</button>,
-      inlineAttachments: <div data-nc-attachments="">Preview strip</div>,
+      drawer: <div data-nc-attachments="">Preview strip</div>,
     });
     expect(screen.getByRole('button', { name: 'Attach test' })).toBeTruthy();
     expect(screen.getByText('Preview strip')).toBeTruthy();

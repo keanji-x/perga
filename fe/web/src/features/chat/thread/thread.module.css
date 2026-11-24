@@ -793,6 +793,15 @@
     background: var(--error-soft);
   }
 
+  /* When floating attachments or command errors occupy the transparent drawer above the well,
+     keep the notice above them instead of tucking behind the well's rounded top corners. */
+  .footerNotice:has(+ [data-nc-composer] :is([data-nc-attachment-strip], [role='alert'])),
+  [data-nc-conversation-action]:has(+ [data-nc-composer] :is([data-nc-attachment-strip], [role='alert'])) .footerNotice {
+    padding-block-end: var(--space-2);
+    margin-block-end: var(--space-2);
+    border-radius: var(--nc-card-radius, var(--radius-lg));
+  }
+
   /* The caption rank — the 11px `--text-xs` the transcript keeps for machinery.
      It is the smaller half of the strip; the button carries its own geometry
      from base.css. */

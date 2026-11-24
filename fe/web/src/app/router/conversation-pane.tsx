@@ -459,7 +459,7 @@ export function useConversationPane(
               onFiles={editingQueue || !composerView.attachmentsSupported || composerView.sendBlocked || draftOnly
                 ? undefined : composerAttachments.attach}
               /* Questions and attachments belong to the composer; waiting messages follow the running status. */
-              inlineAttachments={<ComposerAttachmentStrip items={composerAttachments.items} error={composerAttachments.error} onRemove={composerAttachments.remove} />}
+              drawer={<ComposerAttachmentStrip items={composerAttachments.items} error={composerAttachments.error} onRemove={composerAttachments.remove} />}
               /* Renders nothing until the harness has reported a usage frame. */
               sendAdornment={compactComposer ? undefined : <ContextRing usage={composerView.contextUsage} />}
               /* `stopping` keeps Stop shown while the interrupt is in flight; `interrupt()`
@@ -546,7 +546,7 @@ export function useConversationPane(
               changeText={setNewConversationText}
               allowEmptyText={draftAttachments.items.length > 0}
               onFiles={draftImagesSupported && !draftImagesLocked ? draftAttachments.attach : undefined}
-              inlineAttachments={<ComposerAttachmentStrip items={draftAttachments.items} error={draftAttachments.error} onRemove={draftAttachments.remove} disabled={draftImagesLocked} />}
+              drawer={<ComposerAttachmentStrip items={draftAttachments.items} error={draftAttachments.error} onRemove={draftAttachments.remove} disabled={draftImagesLocked} />}
               /* Menu membership and readiness come from the managed backend declarations. */
               footerActions={(() => {
                 const draftPermissionControl = resolvePermissionControl({

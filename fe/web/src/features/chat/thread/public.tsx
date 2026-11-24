@@ -401,7 +401,7 @@ export function ChatComposer({
   onSend, onStop, commands = [], disabled = false, sendDisabled = false, sendWaiting = false, canQueueWhileRunning = false,
   editing, focusOnMount = false, focusRequest = 0,
   draft: controlledDraft, commandScope, footerActions, sendAdornment,
-  drawer, inlineAttachments, headerActions, allowEmptyText = false, mentionTrigger, onFiles, layout = 'standard', focusHandle,
+  drawer, headerActions, allowEmptyText = false, mentionTrigger, onFiles, layout = 'standard', focusHandle,
 }: {
   /** Hand over the words, or return `false` when they were not taken and stay in the field. Words of a send taken
    * and later given back return through the caller's `draft`; the composer has no second way to restore them. */
@@ -434,9 +434,8 @@ export function ChatComposer({
   sendAdornment?: ReactNode;
   /** The composer's two vendor slots, passed as nodes: `features-no-cross-domain` forbids importing `features/planner`. */
   drawer?: ReactNode;
-  inlineAttachments?: ReactNode;
   headerActions?: ReactNode;
-  /** Whether a send with no words is a real send (e.g., inline image attachments). */
+  /** Whether a send with no words is a real send (e.g., floating image attachments); a prop because the drawer is an opaque node. */
   allowEmptyText?: boolean;
   /** Files dropped or pasted into the field; the caller owns validation and draft previews. */
   onFiles?: (files: File[]) => void;
@@ -677,7 +676,6 @@ export function ChatComposer({
             <ComposerInputField
               wrapperRef={messageInputRef}
               className={layout === 'mobile' ? mobileStyles.input : `${styles.input} ${composerLayoutStyles.input}`}
-              inlineAttachments={inlineAttachments}
               handleRef={inputHandle}
               /* Longer drafts scroll inside the editor, leaving room for a shared pane's recovery strip and Send. */
               maxRows={3}

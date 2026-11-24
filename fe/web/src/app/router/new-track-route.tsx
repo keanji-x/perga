@@ -222,7 +222,7 @@ function NewTrackEditor({ transport, unauthorized, workspace, session, store }: 
     mentionTrigger={mentionTrigger}
     allowEmptyText={attachments.items.length > 0}
     onFiles={configurationLocked ? undefined : attachments.attach}
-    inlineAttachments={<ComposerAttachmentStrip items={attachments.items} error={attachments.error} onRemove={attachments.remove} disabled={configurationLocked} />}
+    drawer={<ComposerAttachmentStrip items={attachments.items} error={attachments.error} onRemove={attachments.remove} disabled={configurationLocked} />}
     attachButton={<PlannerAttachButton attachments={attachments} available disabled={configurationLocked} />}
     modelControls={<>
       {permissionControl.visible && (

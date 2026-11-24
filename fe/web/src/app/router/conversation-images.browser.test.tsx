@@ -252,6 +252,9 @@ it.each([[409, 'attachments_unsupported'], [413, 'payload_too_large']] as const)
     await composer().click();
     await userEvent.keyboard('{Enter}');
     await expect.element(page.getByRole('complementary', { name: 'Untitled' }).getByRole('alert')).toHaveTextContent('The image was refused.');
+    const stripRect = document.querySelector('[data-nc-attachment-strip]')!.getBoundingClientRect();
+    const notice = page.getByRole('complementary', { name: 'Untitled' }).getByRole('alert').element();
+    expect(notice.getBoundingClientRect().bottom).toBeLessThanOrEqual(stripRect.top + 0.5);
     await expect.element(composer()).toHaveTextContent('Edit this message');
     await expect.element(page.getByRole('button', { name: /^Model:/ })).toBeEnabled();
     await page.getByRole('button', { name: /Remove/ }).click();
@@ -347,10 +350,11 @@ it('shows inline composer previews without an external drawer and zooms any clic
   const field = composer().element();
   paste(field, screenshot());
   expect(previews()).toHaveLength(1);
-  // Inline inside the same composer group, never wrapped in an external collapsible Images drawer.
+  // Floats directly above the input box inside the composer group, never wrapped in an external collapsible Images drawer or inside [contenteditable].
   await expect.element(page.getByRole('button', { name: /Images/ })).not.toBeInTheDocument();
   const group = field.closest('[role="group"][aria-label="Message composer"]');
   expect(group?.contains(previews()[0])).toBe(true);
+  expect(field.parentElement?.contains(previews()[0])).toBe(false);
 
   await page.getByRole('button', { name: 'Open Image 1' }).click();
   await expect.element(page.getByRole('dialog', { name: 'Image 1' })).toBeVisible();

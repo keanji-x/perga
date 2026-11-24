@@ -48,8 +48,8 @@ export type NewTrackFormProps = Readonly<{
   modelControls?: ReactNode;
   /** App-composed image attachment button beside footer preferences. */
   attachButton?: ReactNode;
-  /** App-composed inline image attachment preview rendered inside the composer field. */
-  inlineAttachments?: ReactNode;
+  /** App-composed floating image attachment strip rendered directly above the composer. */
+  drawer?: ReactNode;
   /** Whether a blank text message is still submittable (for image-only track creation). */
   allowEmptyText?: boolean;
   /** Files dropped or pasted into the field; the caller owns validation and previews. */
@@ -101,7 +101,7 @@ export type NewTrackFormState = Readonly<{
 }>;
 
 export function NewTrackForm({
-  modelControls, attachButton, inlineAttachments, allowEmptyText = false, onFiles,
+  modelControls, attachButton, drawer, allowEmptyText = false, onFiles,
   submitting, error, readNotice, initialCwd,
   initialExecutionTargetId, executionTargets, listDirectory, listDirectoryForTarget, onCreateExecutionTarget, onSubmit,
   errorAction, initialDraft, onDraftChange, submitBlocked = false, locked = false, mentionTrigger,
@@ -221,11 +221,11 @@ export function NewTrackForm({
             placeholder={TASK_PLACEHOLDER}
             isDisabled={submitting}
             onSubmit={submit}
+            {...(drawer === undefined ? {} : { drawer })}
             input={(
               <ComposerInputField
                 className={styles.editor}
                 inputClassName={styles.input}
-                inlineAttachments={inlineAttachments}
                 label={TASK_LABEL}
                 placeholder={TASK_PLACEHOLDER}
                 disabled={submitting || locked}
