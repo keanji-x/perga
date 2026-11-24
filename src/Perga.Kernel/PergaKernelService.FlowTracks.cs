@@ -1,5 +1,6 @@
 using Perga.AgentKit;
 using Perga.Contracts;
+using Perga.Kernel.Actors;
 using Perga.Kernel.Internal;
 using Perga.Kernel.Ports;
 
@@ -15,19 +16,18 @@ public sealed partial class PergaKernelService
 
         var runKey = FormattableString.Invariant($"{parent.Id}:{taskId}:r{runCount}");
         var creationKey = CreateKey("flow_track", parent.Id, $"flow_track:{runKey}", action)!;
+        var firstInput = new SessionInputRequest($"flow_track_prompt:{runKey}",
+            TrackActor.HashMessage(action.Prompt, "default", null, null, []), action.Prompt);
         var child = await _store.FindCreationAsync(creationKey, ct).ConfigureAwait(false) is { } existingId
             ? await ReadCreatedTrackAsync(existingId, ct).ConfigureAwait(false)
-            : await CreateFlowTrackAsync(parent, parentLead, action, creationKey, ct).ConfigureAwait(false);
+            : await CreateFlowTrackAsync(parent, parentLead, action, creationKey, firstInput, ct).ConfigureAwait(false);
 
-        // Once the Track exists, finish the durable handoff even if the parent operation is canceled.
-        await SendSessionMessageAsync(child.Track.LeadSessionId!,
-            new(action.Prompt, $"flow_track_prompt:{runKey}"), new InteropPrincipal.Human(), CancellationToken.None)
-            .ConfigureAwait(false);
+        await Actors.GetOrActivate(child.Track.Id).WarmWorkspaceAsync(CancellationToken.None).ConfigureAwait(false);
         return child.Track;
     }
 
     private async Task<TrackAggregateSnapshot> CreateFlowTrackAsync(TrackDto parent, AgentSessionDto? parentLead,
-        FlowDoSpecDto action, ResourceCreationKey creationKey, CancellationToken ct)
+        FlowDoSpecDto action, ResourceCreationKey creationKey, SessionInputRequest firstInput, CancellationToken ct)
     {
         await RequireTrackSpawnDepthAsync(parent.Id, ct).ConfigureAwait(false);
         var area = string.IsNullOrWhiteSpace(action.Area)
@@ -82,11 +82,15 @@ public sealed partial class PergaKernelService
             mode is not null && !modes.Any(candidate => candidate.Id == mode))
             mode = modes.FirstOrDefault(candidate => candidate.IsDefault)?.Id;
 
+        var workspaceOptionId = action.WorkspaceDriver is null
+            ? (await GetTrackWorkspaceOptionsAsync(area.Id, action.Cwd, action.Template, ct, targetId).ConfigureAwait(false)).DefaultId
+            : null;
         var request = new CreateTrackRequest(area.Id, Title: action.Title, Cwd: action.Cwd,
             WorkspaceDriver: action.WorkspaceDriver, TemplateId: action.Template, TemplateInputs: action.TemplateInputs,
             Provider: provider, Model: model, ReasoningEffort: effort, PermissionMode: mode,
-            ExecutionTargetId: action.ExecutionTargetId, OriginTrackId: parent.Id);
-        return await CreateTrackCoreAsync(request, ct, requestKey: null, flowKey: creationKey).ConfigureAwait(false);
+            ExecutionTargetId: action.ExecutionTargetId, WorkspaceOptionId: workspaceOptionId);
+        return await CreateTrackCoreAsync(request, ct, requestKey: null, flowKey: creationKey, originTrackId: parent.Id,
+            firstInput: firstInput).ConfigureAwait(false);
     }
 
     private async Task RequireTrackSpawnDepthAsync(string parentTrackId, CancellationToken ct)

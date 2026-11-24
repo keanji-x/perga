@@ -93,6 +93,9 @@ public sealed class TrackActorRegistry : IAsyncDisposable
         }
     }
 
+    internal Task ClearTrackOriginsAsync(string originTrackId) =>
+        Task.WhenAll(_actors.Values.Select(actor => actor.ClearOriginAsync(originTrackId)));
+
     public async Task<int> EvictIdleActorsAsync(CancellationToken ct = default)
     {
         if (_disposed || Interlocked.Exchange(ref _evicting, 1) != 0)

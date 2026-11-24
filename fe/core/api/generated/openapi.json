@@ -1506,16 +1506,6 @@
               }
             ]
           },
-          "originTrackId": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
           "permissionMode": {
             "anyOf": [
               {

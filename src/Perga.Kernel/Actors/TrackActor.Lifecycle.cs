@@ -301,7 +301,25 @@ public sealed partial class TrackActor
         await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, delEvt, CancellationToken.None, allowFallback: false).ConfigureAwait(false);
     }
 
-    // ------------------- Report Read & Commit -------------------
+    internal async Task ClearOriginAsync(string originTrackId)
+    {
+        try
+        {
+            await EnqueueAsync(async _ =>
+            {
+                if (!_hydrated || _track.OriginTrackId != originTrackId)
+                    return;
+
+                var now = NowMs();
+                _track = _track with { OriginTrackId = null, UpdatedAtMs = now };
+                await EmitTrackUpdatedCoreAsync(now, CancellationToken.None).ConfigureAwait(false);
+            }, touchActivity: false).ConfigureAwait(false);
+        }
+        catch (ObjectDisposedException) when (_disposed)
+        {
+            // A replacement actor hydrates the origin from SQLite.
+        }
+    }
 
     private async Task EmitTrackUpdatedCoreAsync(long now, CancellationToken ct)
     {

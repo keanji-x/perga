@@ -418,8 +418,6 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
         {
             if (key is not null && FindCreationAsync(key, ct).Result is { } replay)
                 return Task.FromResult(replay);
-            if (firstInput is not null)
-                throw new NotSupportedException("Durable first inputs are tested with SQLite.");
             _tracks.Add(track.Id, track);
             _trackSchedules.AddRange(creation.FlowClocks);
             _reports[track.Id] = report;
@@ -427,6 +425,8 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
             _templateSnapshots[track.Id] = templateSnapshot;
             _tasksByTrack[track.Id] = tasks.ToList();
             _sessions[lead.Id] = lead;
+            if (firstInput is not null)
+                InsertInputLocked(lead, firstInput);
             if (preparation is not null)
                 _workspacePreparations.Add(track.Id, preparation);
             foreach (var evt in events)

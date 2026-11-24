@@ -34,7 +34,7 @@ public sealed partial class TrackFlowTests
         ctx.Kernel.Templates.RegisterTemplate("""
             export default { id: "gate-required", title: "Gate Required", tasks: { requireGateForReadWrite: true } };
             """);
-        var (_, parent) = await ctx.CreateDefaultTrackAsync(templateId: "gate-required");
+        var (_, parent) = await ctx.CreateDefaultTrackAsync(templateId: "gate-required", cwd: null);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var workerEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseWorker = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -113,7 +113,7 @@ public sealed partial class TrackFlowTests
             export default { id: "child-template", title: "Child template", inputs: { ticket: { type: "string" } } };
             """);
 
-        var area = await ctx.Kernel.CreateAreaAsync(new("Engineering", DefaultCwd: "/workspace/engineering"));
+        var area = await ctx.Kernel.CreateAreaAsync(new("Engineering"));
         var research = await ctx.Kernel.CreateAreaAsync(new("Research", DefaultCwd: "/workspace/research"));
         var parent = await ctx.Kernel.CreateTrackAsync(new(area.Id, TemplateId: "parent-template", Provider: "codex",
             Model: "gpt-5", ReasoningEffort: "high", PermissionMode: "full", TemplateInputs: TestJson.Parse("""
@@ -166,7 +166,7 @@ public sealed partial class TrackFlowTests
     public async Task TrackCronSpawnsOncePerOccurrenceAndCanceledClockNeverSpawns()
     {
         await using var ctx = new KernelTestContext();
-        var (_, parent) = await ctx.CreateDefaultTrackAsync();
+        var (_, parent) = await ctx.CreateDefaultTrackAsync(cwd: null);
         var when = new FlowWhenSpecDto(Cron: "* * * * *", Tz: "UTC", MaxOccurrences: 2);
         var recurring = new FlowNodeSpecDto("recurring", new("track", Prompt: "Monthly work"), When: when);
         var canceled = new FlowNodeSpecDto("canceled", new("track", Prompt: "Canceled work"), When: when, Canceled: true);
@@ -192,7 +192,7 @@ public sealed partial class TrackFlowTests
     public async Task TrackSpawnDepthFuseSettlesAttentionAndFiresTheAttentionBranch()
     {
         await using var ctx = new KernelTestContext(options: new() { MaxTrackSpawnDepth = 1 });
-        var (_, parent) = await ctx.CreateDefaultTrackAsync();
+        var (_, parent) = await ctx.CreateDefaultTrackAsync(cwd: null);
         await FlowFixture.AddAsync(ctx.Kernel, parent.Track.Id, new FlowNodeSpecDto("child", new("track", Prompt: "Start")));
         await ctx.Kernel.WaitForTrackIdleAsync(parent.Track.Id).WaitAsync(TimeSpan.FromSeconds(10));
         var childId = Assert.Single((await ctx.Kernel.GetTrackFlowAsync(parent.Track.Id)).Projection.Archived).ChildTrackId!;

@@ -108,7 +108,7 @@ public sealed partial class TrackActor
         var evaluation = EvaluateTaskDispatchCore(task, route);
         if (evaluation is GuardDecision.Deny denied)
             throw KernelException.PolicyDenied(denied.Reason);
-        if (_policy.Manifest.RequireGateForReadWrite && !((task.Kind is "flow_watch" or "flow_track") && FlowConstants.IsFlowTask(task)) &&
+        if (_policy.Manifest.RequireGateForReadWrite && !(task.Kind == "flow_watch" && FlowConstants.IsFlowTask(task)) &&
             (route.Access ?? FormatAccessModeForPolicy(task.Access)) == "read_write" &&
             (task.Gate is null || task.Gate.Steps.Count == 0))
             throw KernelException.PolicyDenied("Template policy requires a gate for this task.");

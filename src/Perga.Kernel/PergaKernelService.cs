@@ -602,7 +602,7 @@ public sealed partial class PergaKernelService : IPergaKernel, IFlowTrackSpawner
 
     private async Task<TrackAggregateSnapshot> CreateTrackCoreAsync(CreateTrackRequest req, CancellationToken ct, string? requestKey,
         string? dailyDate = null, AreaDto? systemArea = null, string? memoryScopeKey = null, string? memoryAreaId = null,
-        ResourceCreationKey? flowKey = null)
+        ResourceCreationKey? flowKey = null, string? originTrackId = null, SessionInputRequest? firstInput = null)
     {
         if (req.AreaId == MemoryTrackBinding.SystemAreaId && memoryScopeKey is null)
             throw KernelException.NotFound($"Area '{req.AreaId}' not found.");
@@ -716,7 +716,7 @@ public sealed partial class PergaKernelService : IPergaKernel, IFlowTrackSpawner
             CreatedAtMs: now,
             UpdatedAtMs: now,
             ExecutionTargetId: trackTargetId,
-            OriginTrackId: req.OriginTrackId);
+            OriginTrackId: originTrackId);
 
         var leadProvider = SessionLaunchValidator.NormalizeTaskProviderId(req.Provider) ?? _options.DefaultProvider;
         var leadPermissionMode = RuntimePermissionModes.Resolve(leadProvider, req.PermissionMode);
@@ -729,7 +729,7 @@ public sealed partial class PergaKernelService : IPergaKernel, IFlowTrackSpawner
             Model: req.Model ?? (flowKey is null ? _options.DefaultModel : null),
             NativeThreadId: null,
             Epoch: 1,
-            Status: "idle",
+            Status: firstInput is null ? "idle" : "queued",
             ArchivedAtMs: null,
             CreatedAtMs: now,
             UpdatedAtMs: now,
@@ -764,7 +764,7 @@ public sealed partial class PergaKernelService : IPergaKernel, IFlowTrackSpawner
         await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
         var id = await _store.CreateTrackAsync(
             new(track, initialReport, policy?.JsSource, leadSession,
-                initialFlow?.Tasks ?? [], null, preparation, events, dailyDate, systemArea)
+                initialFlow?.Tasks ?? [], firstInput, preparation, events, dailyDate, systemArea)
             {
                 FlowClocks = initialFlow?.Clocks ?? [],
                 MemoryBinding = memoryScopeKey is null ? null : new(memoryScopeKey, memoryAreaId, trackId)
@@ -819,6 +819,7 @@ public sealed partial class PergaKernelService : IPergaKernel, IFlowTrackSpawner
         var actor = Actors.GetOrActivate(trackId);
         await actor.TeardownAndDeleteTrackAsync(ct).ConfigureAwait(false);
         await Actors.RemoveAndDisposeAsync(trackId).ConfigureAwait(false);
+        await Actors.ClearTrackOriginsAsync(trackId).ConfigureAwait(false);
     }
 
     // ------------------- Workspace Files & VCS Diff -------------------
