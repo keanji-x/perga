@@ -108,13 +108,16 @@ public sealed class FlowTrackIntegrationTests
                 // Hold provider dispatch so shutdown leaves the real creation transaction committed
                 // with its first input still unclaimed.
                 kernel.DispatchAdmission.SetDraining(true);
-                child = await ((IFlowTrackSpawner)kernel).SpawnAsync(parent.Track, Assert.Single(parent.Sessions),
+                var parentLead = Assert.Single(parent.Sessions);
+                child = await ((IFlowTrackSpawner)kernel).SpawnAsync(parent.Track, parentLead,
                     taskId, 1, action, ct);
                 var runKey = $"{parent.Track.Id}:{taskId}:r1";
                 var creationKey = $"flow_track:{runKey}";
                 inputKey = $"flow_track_prompt:{runKey}";
+                var message = Assert.IsType<SessionMessage>(
+                    await store.SessionMessages!.FindAsync(child.LeadSessionId!, parentLead.Id, inputKey, ct));
                 input = Assert.IsType<PersistedSessionInput>(
-                    await store.SessionInputs.FindByKeyAsync(child.LeadSessionId!, inputKey, ct));
+                    await store.SessionInputs.FindByIdAsync(child.LeadSessionId!, message.Id, ct));
                 Assert.Equal(("accepted", "queued", Prompt), (input.Receipt.DeliveryState, input.Receipt.TurnStatus, input.Content));
                 Assert.Empty(host.AgentRuntime.ExecutedTurns);
                 await using var db = OpenDatabase(directory.FullName);
@@ -136,7 +139,7 @@ public sealed class FlowTrackIntegrationTests
             await restarted.WaitForTrackIdleAsync(child.Id, ct);
 
             var completed = Assert.IsType<PersistedSessionInput>(
-                await reopenedStore.SessionInputs.FindByKeyAsync(child.LeadSessionId!, inputKey, ct));
+                await reopenedStore.SessionInputs.FindByIdAsync(child.LeadSessionId!, input.Receipt.InputId, ct));
             Assert.Equal((input.Receipt.InputId, "completed"), (completed.Receipt.InputId, completed.Receipt.TurnStatus));
             Assert.Single(reopened.AgentRuntime.ExecutedTurns);
             Assert.Equal(child.Id, Assert.Single(await restarted.ListTracksAsync(ct: ct), candidate => candidate.OriginTrackId == parent.Track.Id).Id);
@@ -175,6 +178,13 @@ public sealed class FlowTrackIntegrationTests
 
         var direct = await ReadChildAsync("direct");
         Assert.Equal(("direct", source), (direct.WorkspaceDriver, direct.Cwd));
+
+        var blankDriverChild = await ((IFlowTrackSpawner)kernel).SpawnAsync(parent.Track, Assert.Single(parent.Sessions),
+            "blank-driver", 1, new("track", Prompt: "Use isolated default on blank driver", WorkspaceDriver: "   "), ct);
+        await kernel.WaitForTrackIdleAsync(blankDriverChild.Id, ct);
+        var blankDriver = (await kernel.GetTrackAggregateAsync(blankDriverChild.Id, ct)).Track;
+        Assert.Equal("vcs-workspace", blankDriver.WorkspaceDriver);
+        Assert.NotEqual(source, blankDriver.Cwd);
 
         async Task<TrackDto> ReadChildAsync(string nodeId)
         {
@@ -215,6 +225,31 @@ public sealed class FlowTrackIntegrationTests
         var updated = frame.RootElement.GetProperty("payload").Deserialize<TrackDto>(PergaJsonDefaults.ApiOptions)!;
         Assert.Equal(child.Id, updated.Id);
         Assert.Null(updated.OriginTrackId);
+    }
+
+    [Fact]
+    public async Task FlowTrackFirstInputUsesNonOwnerAuthorAndSkipsOwnerMemoryExpansion()
+    {
+        await using var host = new PergaHostTestCluster();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var ct = timeout.Token;
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        var store = host.Services.GetRequiredService<ITrackStore>();
+        var parent = await CreateParentAsync(host, kernel, ct);
+        var parentLead = Assert.Single(parent.Sessions);
+
+        var child = await ((IFlowTrackSpawner)kernel).SpawnAsync(parent.Track, parentLead,
+            "memory-check", 1, new("track", Prompt: "Check @memory:area/release-notes before planning"), ct);
+        await kernel.WaitForTrackIdleAsync(child.Id, ct);
+
+        var message = await store.SessionMessages!.FindAsync(child.LeadSessionId!, parentLead.Id,
+            $"flow_track_prompt:{parent.Track.Id}:memory-check:r1", ct);
+        Assert.NotNull(message);
+        var input = await store.SessionInputs.FindByIdAsync(child.LeadSessionId!, message!.Id, ct);
+        Assert.NotNull(input);
+        Assert.Null(input!.OwnerContent);
+        var delivered = Assert.Single(host.AgentRuntime.ExecutedTurns);
+        Assert.Equal("Check @memory:area/release-notes before planning", delivered.Input.Prompt);
     }
 
     private static async Task<TrackAggregateSnapshot> CreateParentAsync(PergaHostTestCluster host, IPergaKernel kernel, CancellationToken ct)

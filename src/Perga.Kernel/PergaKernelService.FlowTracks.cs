@@ -17,12 +17,20 @@ public sealed partial class PergaKernelService
         var runKey = FormattableString.Invariant($"{parent.Id}:{taskId}:r{runCount}");
         var creationKey = CreateKey("flow_track", parent.Id, $"flow_track:{runKey}", action)!;
         var firstInput = new SessionInputRequest($"flow_track_prompt:{runKey}",
-            TrackActor.HashMessage(action.Prompt, "default", null, null, []), action.Prompt);
+            TrackActor.HashMessage(action.Prompt, "default", null, null, []), action.Prompt,
+            AuthorId: parentLead?.Id ?? parent.Id);
         var child = await _store.FindCreationAsync(creationKey, ct).ConfigureAwait(false) is { } existingId
             ? await ReadCreatedTrackAsync(existingId, ct).ConfigureAwait(false)
             : await CreateFlowTrackAsync(parent, parentLead, action, creationKey, firstInput, ct).ConfigureAwait(false);
 
-        await Actors.GetOrActivate(child.Track.Id).WarmWorkspaceAsync(CancellationToken.None).ConfigureAwait(false);
+        try
+        {
+            await Actors.GetOrActivate(child.Track.Id).WarmWorkspaceAsync(CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Trace.TraceWarning("Could not warm spawned Track {0}: {1}", child.Track.Id, ex.Message);
+        }
         return child.Track;
     }
 
@@ -82,11 +90,12 @@ public sealed partial class PergaKernelService
             mode is not null && !modes.Any(candidate => candidate.Id == mode))
             mode = modes.FirstOrDefault(candidate => candidate.IsDefault)?.Id;
 
-        var workspaceOptionId = action.WorkspaceDriver is null
+        var requestedDriver = string.IsNullOrWhiteSpace(action.WorkspaceDriver) ? null : action.WorkspaceDriver.Trim();
+        var workspaceOptionId = requestedDriver is null
             ? (await GetTrackWorkspaceOptionsAsync(area.Id, action.Cwd, action.Template, ct, targetId).ConfigureAwait(false)).DefaultId
             : null;
         var request = new CreateTrackRequest(area.Id, Title: action.Title, Cwd: action.Cwd,
-            WorkspaceDriver: action.WorkspaceDriver, TemplateId: action.Template, TemplateInputs: action.TemplateInputs,
+            WorkspaceDriver: requestedDriver, TemplateId: action.Template, TemplateInputs: action.TemplateInputs,
             Provider: provider, Model: model, ReasoningEffort: effort, PermissionMode: mode,
             ExecutionTargetId: action.ExecutionTargetId, WorkspaceOptionId: workspaceOptionId);
         return await CreateTrackCoreAsync(request, ct, requestKey: null, flowKey: creationKey, originTrackId: parent.Id,
