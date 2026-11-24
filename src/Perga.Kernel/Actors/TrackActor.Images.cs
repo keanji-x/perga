@@ -21,7 +21,7 @@ public sealed partial class TrackActor
             SessionLaunchValidator.NormalizeProvider(handle.LaunchSpec.Provider) == session.Provider)
             return handle.Agent.SupportsImages;
         return EffectiveAgentRuntime.GetImageSupport(session.Provider)
-            ?? (session.Provider.StartsWith("acp:", StringComparison.OrdinalIgnoreCase));
+            ?? session.Provider.StartsWith("acp:", StringComparison.OrdinalIgnoreCase);
     }
 
     private static void RequireImagesSupported(bool supported)

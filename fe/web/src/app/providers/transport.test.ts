@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { multipartMessagePayloadSchema } from '../../../../core/api/perga-v1.ts';
 import { performApiRequest } from '../../../../core/api/client.ts';
 import { sendPlannerInputOperation } from '../../../../core/domain/conversation-commands.ts';
 import { setPlannerPermissionModeOperation } from '../../../../core/domain/planner-permission-mode.ts';
@@ -70,13 +71,17 @@ describe('fetch transport bodies', () => {
       .mockResolvedValue(new Response('{}', { status: 400 }));
     vi.stubGlobal('fetch', fetch);
     const file = new File(['image bytes'], 'image.png', { type: 'image/png' });
-    await performApiRequest(createFetchTransport(), sendPlannerInputOperation('session', '', [file], 'the-key'));
+    await performApiRequest(createFetchTransport(), sendPlannerInputOperation('session', '', [file], 'the-key', false, true, 3));
     const [path, init] = fetch.mock.calls[0];
     expect(path).toBe('/api/v1/sessions/session/messages');
     expect(init.headers).toEqual({ 'Idempotency-Key': 'the-key' });
     expect(init.body).toBeInstanceOf(FormData);
     const form = init.body as FormData;
-    expect(form.get('payload')).toBe('{"content":"","mode":"default"}');
+    const encoded = form.get('payload');
+    if (typeof encoded !== 'string') throw new Error('Expected a JSON payload form field.');
+    expect(multipartMessagePayloadSchema.parse(JSON.parse(encoded))).toEqual({
+      content: '', mode: 'queue', expectedEpoch: 3,
+    });
     expect(form.getAll('attachments')).toEqual([file]);
   });
 

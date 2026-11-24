@@ -17,6 +17,9 @@ namespace Perga.Host.Http;
 public sealed record CancelTaskHttpBody(
     string? Reason = null);
 
+internal sealed record MultipartMessagePayload(string? Content = null, string Mode = "default", string? TurnId = null,
+    int? ExpectedEpoch = null);
+
 public static class ApiV1Endpoints
 {
     private static readonly JsonSerializerOptions SessionJsonOptions = new(PergaJsonDefaults.ApiOptions)
@@ -316,7 +319,7 @@ public static class ApiV1Endpoints
             return TypedResults.Json(receipt, PergaJsonDefaults.ApiOptions,
                 statusCode: replay ? StatusCodes.Status200OK : StatusCodes.Status201Created);
         }).WithMetadata(new JsonRequestContract(typeof(CreateSessionRequest), IsOptional: true),
-            new MultipartImageRequest("prompt may be omitted or empty for image-only input.")).WithMetadata(new SuccessStatus(201, ReplayedAsOk: true)).WithMetadata(new StrictRequest()).WithMetadata(new RequestHeader("Idempotency-Key", true));
+            new MultipartImageRequest(typeof(CreateSessionRequest), "prompt may be omitted or empty for image-only input.")).WithMetadata(new SuccessStatus(201, ReplayedAsOk: true)).WithMetadata(new StrictRequest()).WithMetadata(new RequestHeader("Idempotency-Key", true));
 
         v1.MapGet("/sessions/{sessionId}/items", async (string sessionId, long? afterId, long? beforeId, int? limit,
             bool? latest, string? activityTurnId, long? afterSequence, int? waitMs, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
@@ -349,8 +352,9 @@ public static class ApiV1Endpoints
             SendSessionMessageRequest request;
             if (MultipartImageInput.IsMultipart(ctx.Request))
             {
-                var (payload, images) = await MultipartImageInput.ReadAsync<SendSessionMessageRequest>(ctx, SessionJsonOptions, ct).ConfigureAwait(false);
-                request = payload with { Images = images, RequestKey = RequiredMessageKey(ctx) };
+                var (payload, images) = await MultipartImageInput.ReadAsync<MultipartMessagePayload>(ctx, SessionJsonOptions, ct).ConfigureAwait(false);
+                request = new(payload.Content, RequiredMessageKey(ctx), payload.Mode, payload.TurnId, ExpectedEpoch: payload.ExpectedEpoch)
+                { Images = images };
             }
             else
             {
@@ -360,7 +364,9 @@ public static class ApiV1Endpoints
             return TypedResults.Json(await kernel.SendSessionMessageAsync(sessionId, request, AuthenticatedSession.Human(ctx), ct).ConfigureAwait(false),
                 PergaJsonDefaults.ApiOptions);
         }).WithMetadata(new JsonRequestContract(typeof(SendSessionMessageRequest), IsOptional: false),
-            new MultipartImageRequest("content may be omitted or empty for image-only input. Do not include messageId. Idempotency-Key is required.")).WithMetadata(new StrictRequest()).WithMetadata(new RequestHeader("Idempotency-Key", false));
+            new MultipartImageRequest(typeof(MultipartMessagePayload), "content may be omitted or empty for image-only input."))
+            .WithMetadata(new StrictRequest(), new RequestHeader("Idempotency-Key", false,
+                "Required for multipart requests and JSON requests containing content."));
 
         v1.MapDelete("/sessions/{sessionId}/messages/{messageId}", async (string sessionId, string messageId,
             HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>

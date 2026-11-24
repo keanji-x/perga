@@ -5,6 +5,7 @@ import { agentProvidersOperation,managedProvidersOperation } from '../domain/age
 import { sessionContextUsage } from '../domain/session-context-usage.js';
 import { trackTemplatesOperation } from '../domain/track.js';
 import { bootstrapOperation,whoamiOperation } from './auth.js';
+import openapi from './generated/openapi.json';
 import hostPayloads from './fixtures/unified-host-payloads.json';
 import { taskDtoSchema } from './perga-v1.js';
 
@@ -23,7 +24,7 @@ import { modelCatalogOperation, setPlannerModelOperation } from '../domain/conve
 import { decodeEventFrame } from '../events/protocol.js';
 import { initialEventState,reduceEventFrame } from '../events/reducer.js';
 import { DEPLOYMENT_OWNER_USER_ID,loginOperation } from './auth.js';
-import { agentSessionDtoSchema, bootstrapDtoSchema, createSessionRequestSchema, decodePergaEventEnvelope, sessionCreationReceiptSchema, sessionItemsPageDtoSchema, MAX_ATTACHMENT_BYTES, trackAggregateSnapshotDtoSchema, trackDataPatchResultSchema, trackDtoSchema } from './perga-v1.js';
+import { agentSessionDtoSchema, bootstrapDtoSchema, createSessionRequestSchema, decodePergaEventEnvelope, sessionCreationReceiptSchema, sessionItemsPageDtoSchema, MAX_ATTACHMENT_BYTES, messageAttachmentDtoSchema, multipartMessagePayloadSchema, trackAggregateSnapshotDtoSchema, trackDataPatchResultSchema, trackDtoSchema } from './perga-v1.js';
 import { decodeWireEvent } from './schemas.js';
 
 
@@ -823,4 +824,30 @@ describe('session image attachment contract', () => {
     expect(parsed.success).toBe(false);
     if (!parsed.success) expect([...new Set(parsed.error.issues.map(issue => issue.path[0]))]).toEqual(['items', 'queuedMessages']);
   });
+});
+
+
+it('uses the dedicated Host multipart message payload and requires the idempotency header', () => {
+  const post = openapi.paths['/api/v1/sessions/{sessionId}/messages'].post;
+  const multipart = post.requestBody.content['multipart/form-data'];
+  expect(multipart['x-required-headers']).toEqual(['Idempotency-Key']);
+  expect(multipart.schema.properties.payload.contentSchema.$ref).toBe('#/components/schemas/MultipartMessagePayload');
+  const hostFields = Object.keys(openapi.components.schemas.MultipartMessagePayload.properties).sort();
+  expect(Object.keys(multipartMessagePayloadSchema.shape).sort()).toEqual(hostFields);
+  expect(multipartMessagePayloadSchema.safeParse({ content: '', mode: 'queue', expectedEpoch: 3 }).success).toBe(true);
+  expect(multipartMessagePayloadSchema.safeParse({ content: '', messageId: 'queued' }).success).toBe(false);
+  expect(multipartMessagePayloadSchema.safeParse({ content: '', requestKey: 'body-key' }).success).toBe(false);
+});
+
+it('decodes every extension and MIME pair exported by Host', () => {
+  const schema = openapi.components.schemas.MessageAttachmentDto;
+  for (const variant of schema.oneOf) {
+    const contentType = variant.properties.contentType.const;
+    const extension = variant.properties.id.pattern.split('.').at(-1)!.slice(0, -1);
+    const id = `${'a'.repeat(64)}.${extension}`;
+    const image = { id, contentType, size: schema.properties.size.maximum, url: `/api/v1/tracks/track/media/${id}` };
+    expect(messageAttachmentDtoSchema.parse(image)).toEqual(image);
+    const otherType = schema.properties.contentType.enum.find(mime => mime !== contentType);
+    expect(messageAttachmentDtoSchema.safeParse({ ...image, contentType: otherType }).success).toBe(false);
+  }
 });

@@ -11,7 +11,7 @@ import type { ConversationCreationSource } from './contracts.ts';
 type DraftEdit = Partial<Pick<ConversationDraft, 'text' | 'creating' | 'error' | 'remedy'>>;
 
 export type ConversationDraftActionInput = Readonly<{
-  registry: Pick<ConversationRegistry, 'editDraft' | 'startDraft' | 'acceptDraft' | 'discardDraft'>;
+  registry: Pick<ConversationRegistry, 'editDraft' | 'startDraft' | 'acceptDraft' | 'discardDraft' | 'draftOf' | 'editNewConversationComposer'>;
   draft: ConversationDraft | null;
   creating: boolean;
   source: ConversationCreationSource;
@@ -208,10 +208,12 @@ export function createConversationDraftActions({ registry, draft, creating, sour
         amendDraft(attempt, { error: message, remedy: 'new-conversation' });
         return attempt;
       case 'blocked':
-        /* Nothing committed and the key is unspent, so both it and the words are kept. */
-        if (attempt.attachments?.length && previouslySubmitted === null) {
-          withDraft(attempt, current => ({ ...current, submitted: null, error: message, remedy: 'retry' }));
-        } else amendDraft(attempt, { error: message, remedy: 'retry' });
+        if (previouslySubmitted !== null) {
+          amendDraft(attempt, { error: CONVERSATION_CREATE_TEXT.unknown, remedy: 'retry' });
+        } else if (registry.draftOf(attempt.scopeId)?.key === attempt.key) {
+          withDraft(attempt, current => ({ ...current, text: null, submitted: null, error: message, remedy: null }));
+          registry.editNewConversationComposer(attempt.scopeId, current => current === '' ? attempt.text ?? '' : current);
+        }
         return attempt;
       case 'exists':
       case 'retry':

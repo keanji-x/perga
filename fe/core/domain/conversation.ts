@@ -125,7 +125,7 @@ export type ConversationTurn = NativeTurnContext & Readonly<{
   inputSource?: Readonly<{ cardId: string; threadId: string; itemId: number; segmentIndex: number; turnId: string | null; entryRev: number | null }>;
 }>;
 
-/** A local message while its request is unanswered; receipts end this state. */
+/** A local message shown while awaiting a server history or queue row. */
 export type OptimisticConversationTurn = ConversationTurn & Readonly<{
   localSend: true;
   queued: boolean;
@@ -361,7 +361,8 @@ export const CONVERSATION_CREATE_FAILURES: FailureTable<ConversationCreateFailur
     Object.freeze({ code: 'idempotency_key_reused', is: 'stale-payload' as const }),
     Object.freeze({ code: 'idempotency_key_concurrent', is: 'retry' as const }),
     Object.freeze({ status: Object.freeze([404]), is: 'gone' as const }),
-    Object.freeze({ status: Object.freeze([400]), is: 'blocked' as const }),
+    Object.freeze({ code: 'attachments_unsupported', is: 'blocked' as const }),
+    Object.freeze({ status: Object.freeze([400, 413]), is: 'blocked' as const }),
     Object.freeze({ status: Object.freeze([409]), is: 'exists' as const }),
   ]),
   unauthorized: 'retry',

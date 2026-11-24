@@ -152,7 +152,5 @@ export function usePlannerMutations(transport: ApiTransportPort, cardId: string,
     /* Each actual PUT publishes its ACK inside the serial writer, before the next queued intent. */
     setPermissionMode: (mode: PlannerPermissionMode): Promise<SetPlannerPermissionModeResponse> =>
       setPermissionModeWrite(mode),
-    /* No `refreshAfter`: an upload changes nothing any query holds until a send names it. Failures reject with the sentence
-     * the strip shows, read against the route's table. */
   };
 }

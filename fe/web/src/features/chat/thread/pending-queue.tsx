@@ -159,7 +159,7 @@ export function PendingQueue({ entries, pendingInputCount, queueDisplayAccountin
               {(message.text !== '' || !message.attachments?.length) && <OutgoingMessage speaker={message.author === 'you' ? 'you' : message.author === 'human' ? 'human' : 'unknown'} text={message.text} mobile={mobile} />}
               {message.attachments?.length ? <MessageImages attachments={message.attachments} /> : null}
             </div>
-            <span className={styles.delivery} role="status">{message.delivery === 'failed' ? 'Not sent' : 'Sending…'}</span>
+            <span className={styles.delivery} role="status">{message.delivery === 'queued' ? 'Queued' : message.delivery === 'failed' ? 'Not sent' : 'Sending…'}</span>
           </div>)}
           {pendingInputCount > 0 && <p className={styles.notice} role="status">
             {`${pendingInputCount} ${pendingInputCount === 1 ? 'input is' : 'inputs are'} waiting for execution.`}

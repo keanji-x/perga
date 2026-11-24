@@ -292,3 +292,29 @@ it('revokes all previews for a permanently deleted Track before notifying reader
     else Object.defineProperty(URL, 'revokeObjectURL', original);
   }
 });
+
+
+it('transfers a created conversation’s preview to its accepted outbox row before revoking it', () => {
+  const revoke = vi.fn();
+  const original = Object.getOwnPropertyDescriptor(URL, 'revokeObjectURL');
+  Object.defineProperty(URL, 'revokeObjectURL', { value: revoke, configurable: true });
+  try {
+    const registry = createConversationOwner().commands;
+    const image = { id: 'local', contentType: 'image/png', size: 1, url: 'blob:first-image',
+      file: new File(['x'], 'image.png', { type: 'image/png' }) };
+    const submitted = { text: '', attachments: [image], atMs: 2 };
+    const held = { ...draft, attachments: [image], submitted };
+    const receipt = { inputId: 'first', sessionId: card, turnId: 'turn', deliveryState: 'accepted', turnStatus: 'queued' } as const;
+    registry.startDraft(held);
+    expect(registry.acceptDraft(held, { conversation, sessionInput: receipt }, submitted)).toBe(true);
+    expect(revoke).not.toHaveBeenCalled();
+    expect(registry.rememberedTurnsOf(card)).toEqual([]);
+    expect(registry.outboxOf(card)).toMatchObject([{ key: held.key, phase: 'accepted',
+      messageId: 'first', echo: { attachments: [image] } }]);
+    registry.removeSend(card, held.key);
+    expect(revoke).toHaveBeenCalledExactlyOnceWith(image.url);
+  } finally {
+    if (original === undefined) Reflect.deleteProperty(URL, 'revokeObjectURL');
+    else Object.defineProperty(URL, 'revokeObjectURL', original);
+  }
+});

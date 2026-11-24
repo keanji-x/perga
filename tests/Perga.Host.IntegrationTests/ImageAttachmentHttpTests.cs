@@ -14,6 +14,7 @@ using Perga.Contracts;
 using Perga.Host.IntegrationTests.Fixtures;
 using Perga.Host.Serialization;
 using Perga.Kernel;
+using Perga.Kernel.Mcp;
 using Perga.Kernel.Ports;
 
 namespace Perga.Host.IntegrationTests;
@@ -124,6 +125,53 @@ public sealed class ImageAttachmentHttpTests
         await using var db = await OpenDbAsync(host);
         Assert.Equal(1, await db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM track_media_refs WHERE track_id = @TrackId", new { TrackId = trackId }));
         Assert.Equal(1, await db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM session_messages WHERE session_id = @SessionId", new { SessionId = sessionId }));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ColdAcpSessionWithUnprobedImageCapabilityAllowsFirstImage(bool createSession)
+    {
+        await using var host = new PergaHostTestCluster(configureAgentRuntime: runtime =>
+            runtime.ProviderStatuses =
+            [
+                new("codex", true, null, null, []),
+                new("acp:antigravity", true, null, null, [], SupportsImages: null)
+            ]);
+        var (trackId, _) = await host.CreateTrackAsync();
+        var createPath = $"/api/v1/tracks/{trackId}/sessions";
+        var endpoint = createPath;
+        object payload = new { provider = "acp:antigravity" };
+        if (!createSession)
+        {
+            using var cold = await PostAsync(host.AuthenticatedClient, createPath, "cold-acp", JsonContent.Create(payload));
+            cold.EnsureSuccessStatusCode();
+            var session = (await cold.Content.ReadFromJsonAsync<SessionCreationReceipt>())!.Session;
+            Assert.True((await PageAsync(host, session.Id, default)).AttachmentsSupported);
+            endpoint = MessagePath(session.Id);
+            payload = new { };
+        }
+
+        using var response = await PostImagesAsync(host.AuthenticatedClient, endpoint, "first-acp-image", payload, Png(1));
+        response.EnsureSuccessStatusCode();
+    }
+
+    [Fact]
+    public async Task SessionPrincipalRequestKeyIsAbsentFromHttpHistory()
+    {
+        await using var host = ImageHost();
+        var (trackId, leadId) = await host.CreateTrackAsync();
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        var caller = await kernel.OpenMcpCallerAsync(leadId);
+        var child = (await kernel.CreateSessionAsync(trackId, new(), "key-visibility-child", new InteropPrincipal.Human(), default)).Receipt.Session;
+        var (text, isError) = await McpKernelAndVcsIntegrationTests.CallToolAsync(host, "/mcp/kernel", caller.Token,
+            KernelMcpToolNames.SessionSend, new { sessionId = child.Id, content = "From the lead", requestKey = "session-private" }, default);
+        Assert.False(isError, text);
+        var sent = JsonSerializer.Deserialize<SessionMessageReceipt>(text, PergaJsonDefaults.ApiOptions)!;
+        await kernel.WaitForTrackIdleAsync(trackId);
+        var item = Assert.Single((await PageAsync(host, child.Id, default)).Items, item => item.Kind == "user");
+        Assert.Equal(sent.MessageId, item.Payload.GetProperty("inputId").GetString());
+        Assert.False(item.Payload.TryGetProperty("requestKey", out _));
     }
 
     [Fact]
@@ -273,6 +321,76 @@ public sealed class ImageAttachmentHttpTests
     }
 
     [Fact]
+    public async Task QueuedImageSteerRejectsWhenTaskCancellationRevokesWorkspaceBeforeDispatch()
+    {
+        await using var host = ImageHost();
+        var (trackId, _) = await host.CreateTrackAsync();
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        var messages = host.Services.GetRequiredService<ITrackStore>().SessionMessages!;
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var ct = deadline.Token;
+        var turnStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var turnCanceled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseTurn = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var firstSteerStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFirstSteer = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var adapterCalls = 0;
+        host.AgentRuntime.SetTurnHandler((_, _, token) => HoldWorkerTurnAsync(token));
+        host.AgentRuntime.ImageSteerHandler = async (_, beforeWrite, token) =>
+        {
+            Interlocked.Increment(ref adapterCalls);
+            await beforeWrite!(token);
+            firstSteerStarted.TrySetResult();
+            await releaseFirstSteer.Task.WaitAsync(token);
+            return SteerDelivery.Accepted;
+        };
+
+        try
+        {
+            var (worker, task) = await FlowFixture.StartWorkerAsync(kernel, trackId, "cancel-image-steer", "Hold worker", ct);
+            await turnStarted.Task.WaitAsync(ct);
+            var endpoint = MessagePath(worker.Id);
+            var turnId = (await PageAsync(host, worker.Id, ct)).ActiveTurn!.Id;
+            using var queued = await PostImagesAsync(host.AuthenticatedClient, endpoint, "waiting-image", new { mode = "queue" }, Png(1));
+            queued.EnsureSuccessStatusCode();
+            var messageId = (await queued.Content.ReadFromJsonAsync<SessionMessageReceipt>(ct))!.MessageId;
+            var first = PostImagesAsync(host.AuthenticatedClient, endpoint, "first-steer", new { mode = "steer", turnId }, Png(2));
+            await firstSteerStarted.Task.WaitAsync(ct);
+            var waiting = PostAsync(host.AuthenticatedClient, endpoint, null, JsonContent.Create(new { mode = "steer", turnId, messageId }));
+            while ((await messages.GetAsync(worker.Id, messageId, ct))!.Delivery != "dispatching")
+                await Task.Delay(10, ct);
+            var cancellation = kernel.CancelTaskAsync(trackId, null, task.Id, ct: ct);
+            await turnCanceled.Task.WaitAsync(ct);
+            releaseFirstSteer.TrySetResult();
+
+            using var firstResponse = await first.WaitAsync(ct);
+            firstResponse.EnsureSuccessStatusCode();
+            using var response = await waiting.WaitAsync(ct);
+            await AssertErrorAsync(response, HttpStatusCode.Conflict, "conflict");
+            Assert.Contains("task workspace is no longer available", await response.Content.ReadAsStringAsync(ct));
+            Assert.Equal("interrupted", (await messages.GetAsync(worker.Id, messageId, ct))!.Delivery);
+            Assert.Equal(1, Volatile.Read(ref adapterCalls));
+
+            releaseTurn.TrySetResult();
+            await cancellation.WaitAsync(ct);
+        }
+        finally
+        {
+            releaseFirstSteer.TrySetResult();
+            releaseTurn.TrySetResult();
+        }
+
+        async IAsyncEnumerable<UnifiedAgentEvent> HoldWorkerTurnAsync([EnumeratorCancellation] CancellationToken token)
+        {
+            using var canceled = token.Register(() => turnCanceled.TrySetResult());
+            yield return new UnifiedAgentEvent.TurnAccepted("worker-turn");
+            turnStarted.TrySetResult();
+            await releaseTurn.Task;
+            yield return new UnifiedAgentEvent.TurnInterrupted();
+        }
+    }
+
+    [Fact]
     public async Task MalformedMultipartSectionHeadersAndAliasesReturn400()
     {
         await using var host = ImageHost();
@@ -287,6 +405,19 @@ public sealed class ImageAttachmentHttpTests
         form.Add(new ByteArrayContent(Png(1)), "files", "alias.png");
         using var alias = await PostAsync(host.AuthenticatedClient, MessagePath(sessionId), "alias", form);
         await AssertErrorAsync(alias, HttpStatusCode.BadRequest, "invalid_argument");
+    }
+
+    [Fact]
+    public async Task MultipartMessageRequiresAHeaderKeyAndRejectsQueuedMessageId()
+    {
+        await using var host = ImageHost();
+        var (_, sessionId) = await host.CreateTrackAsync();
+        var endpoint = MessagePath(sessionId);
+        using var missingKey = await PostAsync(host.AuthenticatedClient, endpoint, null, ImageForm(new { }, [Png(1)]));
+        await AssertErrorAsync(missingKey, HttpStatusCode.BadRequest, "invalid_argument");
+        using var invalid = await PostImagesAsync(host.AuthenticatedClient, endpoint, "unexpected-message-id",
+            new { messageId = "queued" }, Png(1));
+        await AssertErrorAsync(invalid, HttpStatusCode.BadRequest, "invalid_json");
     }
 
     [Fact]

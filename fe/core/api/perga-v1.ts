@@ -438,9 +438,13 @@ export const updateSessionRequestSchema = z.object({
   expectedConfigVersion: z.number().int().nullish(), title: z.string().nullish(), archived: z.boolean().nullish(),
   provider: z.string().nullish(), model: z.string().nullish(), reasoningEffort: z.string().nullish(), permissionMode: z.string().nullish(),
 }).strict();
-export const sendSessionMessageRequestSchema = z.object({
+export const multipartMessagePayloadSchema = z.object({
   content: z.string().nullish(), mode: z.enum(['default', 'steer', 'queue']).optional(), turnId: z.string().nullish(),
-  messageId: z.string().nullish(), requestKey: z.string().nullish(), expectedEpoch: z.number().int().nullish(),
+  expectedEpoch: z.number().int().nullish(),
+}).strict();
+export const sendSessionMessageRequestSchema = z.object({
+  ...multipartMessagePayloadSchema.shape,
+  messageId: z.string().nullish(), requestKey: z.string().nullish(),
 }).strict();
 export const sessionControlRequestSchema = z.object({
   action: z.enum(['stop', 'reconnect', 'reset_context', 'compact']), turnId: z.string().nullish(),

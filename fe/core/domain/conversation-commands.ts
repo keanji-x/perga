@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { agentSessionDtoSchema, MAX_ATTACHMENTS_PER_MESSAGE, sessionMessageReceiptSchema } from '../api/perga-v1.js';
+import { agentSessionDtoSchema, MAX_ATTACHMENTS_PER_MESSAGE, multipartMessagePayloadSchema, sessionMessageReceiptSchema } from '../api/perga-v1.js';
 import { imageMessageBody, type MultipartFile } from '../api/multipart.js';
 
 import type { ApiFailure, ApiOperation } from '../api/types.js';
@@ -47,12 +47,13 @@ export function sendPlannerInputOperation(
   queueIfBusy = false,
   expectedEpoch?: number,
 ): ApiOperation<SentPlannerInput> {
+  const payload = { content: text, mode: steerIfRunning ? 'steer' : queueIfBusy ? 'queue' : 'default',
+    ...(expectedEpoch === undefined ? {} : { expectedEpoch }) } satisfies z.input<typeof multipartMessagePayloadSchema>;
   return {
     method: 'POST',
     path: `/api/v1/sessions/${encodeURIComponent(cardId)}/messages`,
     timeoutMs: 10 * 60_000,
-    body: imageMessageBody({ content: text, mode: steerIfRunning ? 'steer' : queueIfBusy ? 'queue' : 'default',
-      ...(expectedEpoch === undefined ? {} : { expectedEpoch }) }, attachments),
+    body: imageMessageBody(payload, attachments),
     headers: { 'Idempotency-Key': idempotencyKey },
     responseSchema: sessionMessageReceiptSchema.refine(receipt => receipt.sessionId === cardId).transform(receipt => ({
       card_id: receipt.sessionId, worker_session_id: receipt.sessionId, entry_id: receipt.messageId, delivery: receipt.delivery,

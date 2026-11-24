@@ -50,6 +50,7 @@ import { ChatList } from '../../features/chat/list/public.tsx';
 import { ContextRing } from '../../features/chat/thread/context-ring.tsx';
 import { useMentionTrigger } from '../../features/chat/thread/mention-trigger.tsx';
 import { ModelPill,PermissionModePill } from '../../features/chat/thread/model-pill.tsx';
+import { MessageImages } from '../../features/chat/thread/message-images.tsx';
 import { OutgoingMessage } from '../../features/chat/thread/outgoing-message.tsx';
 import {
 ChatEmpty,
@@ -206,7 +207,7 @@ export function useConversationPane(
     && (store.historyReady || openTurns.length > 0 || hasPendingMessages || store.stopFeedback !== null);
   const threadPresented = useContentAdmission(open?.id ?? null, threadAvailable);
   const outgoingPreview = open === null || threadPresented ? undefined : openTurns.findLast((entry): entry is ConversationTurn & { author: 'you' | 'human' | 'unknown' } =>
-    isUserConversationTurn(entry) && entry.text !== '' && (entry.attachments?.length ?? 0) === 0);
+    isUserConversationTurn(entry) && (entry.text !== '' || (entry.attachments?.length ?? 0) > 0));
   const conversationBodyVisible = hasPendingMessages || (threadPresented ? openTurns.length > 0 : outgoingPreview !== undefined);
   const sideSourceReady = threadPresented && store.historyReady;
   /* While an Edit is held nothing else acts on the conversation; its replace, once sent, blocks as any send does. */
@@ -625,7 +626,10 @@ export function useConversationPane(
                           `ChatThread` draws its empty state (with the live dot) for an empty list.
                           `turnsOf` is the second arm so a reopen whose query was collected still
                           shows the remembered transcript. */}
-            {!threadPresented && outgoingPreview !== undefined && <OutgoingMessage speaker={outgoingPreview.author} text={outgoingPreview.text} mobile={compactViewport} />}
+            {!threadPresented && outgoingPreview !== undefined && <>
+              {outgoingPreview.text !== '' && <OutgoingMessage speaker={outgoingPreview.author} text={outgoingPreview.text} mobile={compactViewport} />}
+              {outgoingPreview.attachments?.length ? <MessageImages attachments={outgoingPreview.attachments} /> : null}
+            </>}
             {!threadPresented && hasPendingMessages && pendingMessages}
             {threadPresented && !centeredEmpty && (
               <ChatThread historyPrefetch={historyPrefetch} readingView={threadReadingView} key={open.id} pendingMessages={pendingMessages}

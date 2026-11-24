@@ -74,7 +74,9 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
 
     public bool SupportsSteering { get; set; } = true;
     public bool SupportsImages { get; set; }
-    public bool? GetImageSupport(string provider) => SupportsImages;
+    public bool? GetImageSupport(string provider) => ProviderStatuses is { } statuses
+        ? statuses.FirstOrDefault(status => status.Provider == provider)?.SupportsImages
+        : SupportsImages;
     public Func<TurnInput, Func<CancellationToken, Task>?, CancellationToken, Task<SteerDelivery>>? ImageSteerHandler { get; set; }
     public Func<SessionConfiguration, SessionConfigurationOutcome>? ConfigureHandler { get; set; }
     public Func<HarnessLaunchSpec, ConfirmedConfiguration?>? LaunchConfirmationHandler { get; set; }

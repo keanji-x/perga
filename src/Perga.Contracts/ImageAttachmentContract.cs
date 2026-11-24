@@ -14,8 +14,16 @@ public static class ImageAttachmentContract
     public const long MaxAttachmentBytes = 10L * 1024 * 1024;
     public const long MaxTotalBytes = 25L * 1024 * 1024;
 
-    public static IReadOnlyList<string> MediaTypes { get; } =
-        Array.AsReadOnly(new[] { "image/png", "image/jpeg", "image/gif", "image/webp" });
+    public static IReadOnlyDictionary<string, string> MediaTypesByExtension { get; } =
+        new System.Collections.ObjectModel.ReadOnlyDictionary<string, string>(new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["png"] = "image/png",
+            ["jpg"] = "image/jpeg",
+            ["gif"] = "image/gif",
+            ["webp"] = "image/webp"
+        });
+
+    public static IReadOnlyList<string> MediaTypes { get; } = Array.AsReadOnly(MediaTypesByExtension.Values.ToArray());
 
     public static bool TryDetectImageFormat(ReadOnlySpan<byte> bytes, out string contentType, out string ext)
     {
@@ -24,8 +32,8 @@ public static class ImageAttachmentContract
             bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47 &&
             bytes[4] == 0x0D && bytes[5] == 0x0A && bytes[6] == 0x1A && bytes[7] == 0x0A)
         {
-            contentType = "image/png";
             ext = "png";
+            contentType = MediaTypesByExtension[ext];
             return true;
         }
 
@@ -33,8 +41,8 @@ public static class ImageAttachmentContract
         if (bytes.Length >= 3 &&
             bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF)
         {
-            contentType = "image/jpeg";
             ext = "jpg";
+            contentType = MediaTypesByExtension[ext];
             return true;
         }
 
@@ -43,8 +51,8 @@ public static class ImageAttachmentContract
             bytes[0] == (byte)'G' && bytes[1] == (byte)'I' && bytes[2] == (byte)'F' &&
             bytes[3] == (byte)'8' && (bytes[4] == (byte)'7' || bytes[4] == (byte)'9') && bytes[5] == (byte)'a')
         {
-            contentType = "image/gif";
             ext = "gif";
+            contentType = MediaTypesByExtension[ext];
             return true;
         }
 
@@ -53,8 +61,8 @@ public static class ImageAttachmentContract
             bytes[0] == (byte)'R' && bytes[1] == (byte)'I' && bytes[2] == (byte)'F' && bytes[3] == (byte)'F' &&
             bytes[8] == (byte)'W' && bytes[9] == (byte)'E' && bytes[10] == (byte)'B' && bytes[11] == (byte)'P')
         {
-            contentType = "image/webp";
             ext = "webp";
+            contentType = MediaTypesByExtension[ext];
             return true;
         }
 
@@ -86,16 +94,9 @@ public static class ImageAttachmentContract
             }
         }
 
-        var ext = fileName[(dot + 1)..];
-        contentType = ext switch
-        {
-            "png" => "image/png",
-            "jpg" => "image/jpeg",
-            "gif" => "image/gif",
-            "webp" => "image/webp",
-            _ => string.Empty
-        };
-        return contentType.Length > 0;
+        if (!MediaTypesByExtension.TryGetValue(fileName[(dot + 1)..], out var mediaType)) return false;
+        contentType = mediaType;
+        return true;
     }
 
     public static string BuildMediaUrl(string trackId, string id) =>

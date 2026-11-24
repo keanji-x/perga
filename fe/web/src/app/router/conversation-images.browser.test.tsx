@@ -5,7 +5,7 @@ import { commands, page, userEvent } from 'vitest/browser';
 import type { ApiRequest, ApiTransportResponse } from '../../../../core/api/types.ts';
 import { queryKeys } from '../providers/query-keys.ts';
 import { renderSessionFixture } from './conversation-session-fixture.tsx';
-import { sessionInput, sessionItem, sessionReply } from './conversation-session-data.ts';
+import { sessionInput, sessionItem, sessionPage, sessionReply, sessionTurn } from './conversation-session-data.ts';
 import { fixtureCreation, fixtureSession } from './session-contract-fixture.ts';
 
 declare module 'vitest/browser' {
@@ -89,7 +89,7 @@ it('previews files and screenshot items, restores a refused image, then retries 
   await expect.poll(() => transcriptImages().map(image => image.src)).toEqual([blobUrl]);
   expect(previews()).toHaveLength(0);
   await expect.poll(() => transcriptImages()[0]?.naturalWidth).toBe(320);
-  decline({ status: 400, statusText: 'Bad Request', body: { code: 'invalid_argument', error: 'Image refused.' } });
+  decline({ status: 409, statusText: 'Conflict', body: { code: 'attachments_unsupported', error: 'Image refused.' } });
   await page.getByRole('button', { name: '放回输入框', exact: true }).click();
   await expect.poll(() => previews().map(image => image.src)).toEqual([blobUrl]);
   await expect.poll(() => transcriptImages().length).toBe(0);
@@ -236,4 +236,104 @@ it.each(['', '这是一张截图'])('shows one canonical message when history wi
   respond(sessionReply(sessionInput(session, 'persisted-before-receipt')));
   await expect.poll(() => transcriptImages().map(image => image.getAttribute('src'))).toEqual([mediaUrl]);
   expect(posts()).toHaveLength(1);
+});
+
+
+it.each([[409, 'attachments_unsupported'], [413, 'payload_too_large']] as const)(
+  'unlocks a newly refused image draft after %s %s', async (status, code) => {
+    await page.viewport(1280, 900);
+    const view = renderSessionFixture({ initial: '/track/daily?panel=conversations', reply: request => {
+      if (request.method === 'POST' && request.path === '/api/v1/tracks/daily/sessions')
+        return { status, statusText: 'Refused', body: { code, error: 'The image was refused.' } };
+    } });
+    await page.getByRole('button', { name: 'New conversation', exact: true }).click();
+    await expect.element(page.getByRole('button', { name: 'Attach an image' })).toBeEnabled();
+    paste(composer().element(), screenshot(), true, 'Edit this message');
+    await composer().click();
+    await userEvent.keyboard('{Enter}');
+    await expect.element(page.getByRole('complementary', { name: 'Untitled' }).getByRole('alert')).toHaveTextContent('The image was refused.');
+    await expect.element(composer()).toHaveTextContent('Edit this message');
+    await expect.element(page.getByRole('button', { name: /^Model:/ })).toBeEnabled();
+    await page.getByRole('button', { name: /Remove/ }).click();
+    await expect.poll(() => previews().length).toBe(0);
+    expect(view.requests.filter(request => request.method === 'POST')).toHaveLength(1);
+  },
+);
+
+it('keeps the original draft image locked when a refusal follows an unconfirmed creation', async () => {
+  await page.viewport(1280, 900);
+  let attempts = 0;
+  const view = renderSessionFixture({ initial: '/track/daily?panel=conversations', reply: request => {
+    if (request.method !== 'POST' || request.path !== '/api/v1/tracks/daily/sessions') return;
+    return ++attempts === 1
+      ? { status: 503, statusText: 'Unavailable', body: { code: 'service_unavailable', error: 'Unknown' } }
+      : { status: 409, statusText: 'Conflict', body: { code: 'attachments_unsupported', error: 'Image refused.' } };
+  } });
+  await page.getByRole('button', { name: 'New conversation', exact: true }).click();
+  await expect.element(page.getByRole('button', { name: 'Attach an image' })).toBeEnabled();
+  paste(composer().element(), screenshot(), true);
+  await send();
+  await page.getByRole('button', { name: 'Try again', exact: true }).click();
+  await expect.poll(() => attempts).toBe(2);
+  await expect.element(page.getByRole('complementary', { name: 'Untitled' }).getByRole('alert')).toHaveTextContent('Starting the conversation is unconfirmed');
+  expect(page.getByRole('button', { name: /Remove/ }).query()).toBeNull();
+  expect(previews()).toHaveLength(1);
+  await expect.element(page.getByRole('button', { name: /^Model:/ })).toBeDisabled();
+  const posts = view.requests.filter(request => request.method === 'POST');
+  expect(posts[1].headers?.['Idempotency-Key']).toBe(posts[0].headers?.['Idempotency-Key']);
+  expect(form(posts[1]).get('attachments')).toBe(form(posts[0]).get('attachments'));
+});
+
+it.each(['existing', 'new', 'queued'] as const)('retains the %s image and its blob after ACK until the server displays it', async kind => {
+  await page.viewport(1280, 900);
+  await commands.mockConversationMedia(mediaUrl, png);
+  const id = kind === 'new' ? 'first-image-session' : session;
+  const created = fixtureSession(id, 'daily', { title: 'First image session' });
+  const messageId = kind === 'new' ? 'first-input' : 'acked-input';
+  const active = kind === 'queued' ? sessionTurn(id) : null;
+  let acked = false;
+  let release!: () => void;
+  const waitForRead = new Promise<void>(resolve => { release = resolve; });
+  const view = renderSessionFixture({ initial: '/track/daily?panel=conversations', attachmentsSupported: true,
+    reply: async request => {
+      if (request.method === 'POST' && request.path === (kind === 'new'
+        ? '/api/v1/tracks/daily/sessions' : `/api/v1/sessions/${id}/messages`)) {
+        acked = true;
+        if (kind === 'new') {
+          view.sessions.push(created);
+          return { status: 201, statusText: 'Created', body: fixtureCreation(created) };
+        }
+        return sessionReply({ ...sessionInput(id, messageId), ...(kind === 'queued' ? { delivery: 'queued', turnId: null } : {}) });
+      }
+      if (request.method === 'GET' && request.path.startsWith(`/api/v1/sessions/${id}/items?`) && acked) {
+        await waitForRead;
+        const base = sessionPage(kind === 'new' ? created : view.sessions[0],
+          kind === 'queued' ? [] : [savedItem(id, messageId, '')], active, undefined, true);
+        return sessionReply(kind === 'queued' ? { ...base,
+          queuedMessages: [{ id: messageId, text: '', queuedAtMs: 1, state: 'waiting', attachments: [attachment] }],
+        } : base);
+      }
+    },
+  });
+  if (active !== null) view.activeTurns.set(id, active);
+  await page.getByRole('button', { name: kind === 'new' ? 'New conversation' : /Conversation Daily Planner conversation/ }).click();
+  await expect.element(page.getByRole('button', { name: 'Attach an image' })).toBeEnabled();
+  paste(composer().element(), screenshot(), true);
+  const blobUrl = previews()[0].src;
+  const images = () => [...document.querySelectorAll<HTMLImageElement>('[data-nc-turn-attachments] img')];
+  try {
+    await send();
+    await expect.poll(() => view.requests.some(request => acked && request.method === 'GET'
+      && request.path.startsWith(`/api/v1/sessions/${id}/items?`))).toBe(true);
+    if (kind === 'new')
+      await expect.element(page.getByRole('complementary', { name: 'First image session' })).toBeVisible();
+    else
+      await expect.element(page.getByRole('group', { name: 'Message composer' })).not.toHaveAttribute('aria-busy', 'true');
+    await expect.poll(() => images().map(image => image.src)).toEqual([blobUrl]);
+    expect(await (await fetch(blobUrl)).bytes()).toEqual(bytes());
+  } finally {
+    release();
+  }
+  await expect.poll(() => images().map(image => image.getAttribute('src'))).toEqual([mediaUrl]);
+  await expect(fetch(blobUrl)).rejects.toThrow();
 });

@@ -375,7 +375,7 @@ public sealed class RuntimeAuthorizationFenceTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task HumanSteerRejectedBeforeWritingHasRejectedReceipt(bool queued)
+    public async Task HumanSteerRejectedBeforeWritingReturnsConflictAndKeepsRejectedReceipt(bool queued)
     {
         await using var ctx = new KernelTestContext();
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
@@ -411,7 +411,8 @@ public sealed class RuntimeAuthorizationFenceTests
         }
         finally { release.TrySetResult(); }
 
-        Assert.Equal("rejected", (await steering.WaitAsync(ct)).Delivery);
+        var error = await Assert.ThrowsAsync<KernelException>(() => steering.WaitAsync(ct));
+        Assert.Equal(KernelErrorCode.Conflict, error.Code);
         Assert.Equal("rejected", (await ctx.Kernel.SendSessionMessageAsync(sessionId, request, Human, ct)).Delivery);
         Assert.Empty(provider.SteeredMessages);
     }

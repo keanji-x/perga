@@ -6,7 +6,7 @@ import type { HarnessQueueEntryRef } from './presentation-types.js';
 /** A message submission keeps its session epoch and delivery choice across retries. */
 export type ConversationSendTarget = Readonly<{ epoch: number; queue: boolean }>;
 
-/** No operation means idle. A receipt ends local send state; session reads own accepted messages. */
+/** An accepted image send retains its preview until a session read supplies its message. */
 export type SendOp = Readonly<{
   key: string;
   target?: ConversationSendTarget;
@@ -15,18 +15,19 @@ export type SendOp = Readonly<{
 } & (
   | { phase: 'sending'; unknown: boolean }
   | { phase: 'failed'; delivery: SendFailureKind; message: string; code?: string }
+  | { phase: 'accepted'; messageId: string; queued: boolean }
 )>;
 export type ConversationOutboxOp = SendOp;
 export type FailedSendOp = Extract<SendOp, { phase: 'failed' }>;
 
 export function wasUnknown(op: SendOp): boolean {
-  return op.phase === 'sending' ? op.unknown : op.delivery === 'unknown';
+  return op.phase === 'sending' ? op.unknown : op.phase === 'failed' && op.delivery === 'unknown';
 }
 
 /** Only the held failure can be retried, under its original idempotency key. */
 export function beginSendOp(ops: readonly SendOp[], op: SendOp): readonly SendOp[] | null {
-  if (ops.some(held => held.phase === 'sending' || held.key !== op.key)) return null;
-  return [op];
+  if (ops.some(held => held.phase === 'failed' ? held.key !== op.key : held.phase === 'sending' || held.key === op.key)) return null;
+  return [...ops.filter(held => held.phase === 'accepted'), op];
 }
 
 export function settleSendOp(ops: readonly SendOp[], key: string, next: SendOp | null): readonly SendOp[] {
@@ -62,29 +63,38 @@ export type OutboxView = Readonly<{
 export type OutboxFacts = Omit<OutboxView, 'transcript'> & Readonly<{
   entries: readonly TranscriptEntry[];
   echoes: readonly ConversationTurn[];
-  observedKeys: ReadonlySet<string> | null;
+  observed: readonly SendOp[];
+  unresolved: readonly SendOp[];
 }>;
 
-export function outboxFacts({ serverEntries, stalled, ops }: {
+export function outboxFacts({ serverEntries, stalled, ops, queue = [] }: {
   serverEntries: readonly TranscriptEntry[];
   stalled: boolean;
   ops: readonly SendOp[];
+  queue?: readonly PendingQueueEntry[];
 }): OutboxFacts {
-  const observedKeys = ops.length === 0 ? null : requestKeysInHistory(serverEntries);
-  const unresolved = ops.filter(op => !observedKeys?.has(op.key));
+  const observed = observedSends(serverEntries, queue, ops);
+  const unresolved = observed.length === 0 ? ops : ops.filter(op => !observed.includes(op));
   const failed = unresolved.find((op): op is FailedSendOp => op.phase === 'failed') ?? null;
   const sending = unresolved.some(op => op.phase === 'sending');
   // A lost answer cannot give an echo an accepted identity or promise queue delivery.
-  const echoes = unresolved.filter(op => op.echo.waitForIdentity !== true || (op.phase === 'failed' && op.delivery === 'refused'))
+  const echoes = unresolved.filter(op => op.phase === 'accepted' ? !op.queued
+    : op.echo.waitForIdentity !== true || (op.phase === 'failed' && op.delivery === 'refused'))
     .map(op => ({ ...op.echo, queued: false }));
-  return { entries: serverEntries, echoes, observedKeys, shown: echoes.filter(echo => failed?.echo.id !== echo.id),
+  return { entries: serverEntries, echoes, observed, unresolved, shown: echoes.filter(echo => failed?.echo.id !== echo.id),
     sending, blocked: stalled || sending || failed !== null, failed };
 }
 
-function requestKeysInHistory(entries: readonly TranscriptEntry[]): ReadonlySet<string> {
-  return new Set(entries.flatMap(entry =>
-    (entry.author === 'you' || entry.author === 'human') && entry.human !== undefined && entry.requestKey !== undefined
-      ? [entry.requestKey] : []));
+function observedSends(entries: readonly TranscriptEntry[], queue: readonly PendingQueueEntry[], ops: readonly SendOp[]): readonly SendOp[] {
+  if (ops.length === 0) return ops;
+  const requestKeys = new Set<string>();
+  const messageIds = new Set(queue.map(entry => entry.entry_id));
+  for (const entry of entries) {
+    if ((entry.author !== 'you' && entry.author !== 'human') || entry.human === undefined) continue;
+    messageIds.add(entry.human.messageId);
+    if (entry.requestKey !== undefined) requestKeys.add(entry.requestKey);
+  }
+  return ops.filter(op => requestKeys.has(op.key) || (op.phase === 'accepted' && messageIds.has(op.messageId)));
 }
 
 /** Complete a stored running tool in place when its live result arrives. */
@@ -108,13 +118,14 @@ export function outboxView(input: Parameters<typeof outboxFacts>[0] & { liveRepl
   return withOutboxLiveReplies(outboxFacts(input), input.liveReplies);
 }
 
-export type PendingQueueSend = ConversationTurn & Readonly<{ delivery: 'sending' | 'failed' }>;
+export type PendingQueueSend = ConversationTurn & Readonly<{ delivery: 'sending' | 'failed' | 'queued' }>;
 
-/** Accepted queue entries belong to the run response. Only pre-receipt sends remain local. */
+/** Provisional queue rows yield to the authoritative queue or transcript. */
 export function presentPendingMessages(entries: readonly TranscriptEntry[], queue: readonly PendingQueueEntry[], ops: readonly SendOp[]) {
-  const observedKeys = ops.length === 0 ? null : requestKeysInHistory(entries);
-  const waiting = ops.filter(op => op.echo.queued && op.echo.waitForIdentity !== true && !observedKeys?.has(op.key));
+  const observed = observedSends(entries, queue, ops);
+  const waiting = ops.filter(op => !observed.includes(op) && (op.phase === 'accepted'
+    ? op.queued : op.echo.queued && op.echo.waitForIdentity !== true));
   const hidden = new Set(waiting.map(op => op.echo.id));
   return { transcript: entries.filter(entry => !hidden.has(entry.id)), queue,
-    sending: waiting.map((op): PendingQueueSend => ({ ...op.echo, delivery: op.phase === 'sending' ? 'sending' : 'failed' })) };
+    sending: waiting.map((op): PendingQueueSend => ({ ...op.echo, delivery: op.phase === 'accepted' ? 'queued' : op.phase })) };
 }

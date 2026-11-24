@@ -3,7 +3,7 @@ import { onlineManager } from '@tanstack/react-query';
 
 import type { MultipartFile } from '../../../../core/api/multipart.ts';
 import { type SentPlannerInput } from '../../../../core/domain/conversation-commands.ts';
-import { type ConversationAttachment, type TranscriptEntry } from '../../../../core/domain/conversation.ts';
+import { type ConversationAttachment, type PendingQueueEntry, type TranscriptEntry } from '../../../../core/domain/conversation.ts';
 import { KeyedSendFailure, retryUnknownSend, sendRetryDelay, sendFailureCode, sendFailureMessage, SEND_FAILURES, SEND_RETRIES } from '../../../../core/domain/conversation-delivery.ts';
 import {
   outboxFacts,
@@ -23,11 +23,11 @@ import { useConversationCommands, useConversationSendOps } from './public.tsx';
  * The open conversation's keyed sends (#2043): the press, the retries under one key, Try again, Edit
  * and Dismiss of a failed one, and its view of the thread. The ops live in the registry's outbox for
  * that conversation, so a send settles there whichever conversation is shown, and leaves it only when
- * a receipt or a matching history item arrives, or the reader drops a failure.
+ * a matching history or queue item takes over its preview, or the reader drops a failure.
  */
 export function useConversationOutbox({
   cardId, send, serverEntries, liveReplies, stalled,
-  queuesInput, queueIfBusy, pressed, target,
+  queuesInput, queueIfBusy, pressed, target, pendingQueue,
 }: {
   cardId: string;
   /** Mark the receipt before starting the reads that reconcile it. */
@@ -36,6 +36,7 @@ export function useConversationOutbox({
   target?: ConversationSendTarget;
   serverEntries: readonly TranscriptEntry[];
   liveReplies: readonly TranscriptEntry[];
+  pendingQueue?: readonly PendingQueueEntry[];
   stalled: boolean;
   /** Whether the kernel queues a message posted now (`kernelQueuesInput`), read at the press. */
   queuesInput: boolean;
@@ -49,14 +50,14 @@ export function useConversationOutbox({
   /** The card shown now; a send's own `cardId` is the one it was pressed in. */
   const shownCardId = useRef(cardId);
   shownCardId.current = cardId;
-  const facts = useMemo(() => outboxFacts({ serverEntries, stalled, ops }), [serverEntries, stalled, ops]);
+  const facts = useMemo(() => outboxFacts({ serverEntries, stalled, ops, queue: pendingQueue }), [serverEntries, stalled, ops, pendingQueue]);
   const accountQueueDisplay = useCallback((entries: readonly TranscriptEntry[], suppressed: QueueDisplayAccounting['suppressed']) =>
     queueDisplayAccounting(entries, suppressed), []);
   const view = useMemo(() => withOutboxLiveReplies(facts, liveReplies), [facts, liveReplies]);
 
   useEffect(() => {
-    for (const op of ops) if (facts.observedKeys?.has(op.key)) removeSend(cardId, op.key);
-  }, [cardId, facts.observedKeys, ops, removeSend]);
+    for (const op of facts.observed) removeSend(cardId, op.key);
+  }, [cardId, facts.observed, removeSend]);
 
   /** One run of a begun op: its attempts under one key, settled into the outbox of the card it was pressed in. */
   const run = (op: SendOp & { phase: 'sending' }): Promise<void> => {
@@ -95,7 +96,8 @@ export function useConversationOutbox({
     return delivery.then(answer => {
       if (!current()) return;
       if (answer.sent.turnId !== undefined) registry.rememberAcceptedTurn(sentTo, answer.sent.turnId);
-      settle(null);
+      settle(attachments.length === 0 || answer.sent.entry_id === null ? null
+        : { ...op, phase: 'accepted', messageId: answer.sent.entry_id, queued: answer.sent.queued === true });
     }, (error: unknown) => {
       if (!current()) return;
       const failed = error instanceof KeyedSendFailure ? error : new KeyedSendFailure(error, 'unknown');
@@ -106,7 +108,7 @@ export function useConversationOutbox({
   };
 
   return {
-    view, accountQueueDisplay,
+    view, accountQueueDisplay, unresolved: facts.unresolved,
     /** An admitted send moves its draft images into the outbox under one key. */
     send: (conversationId: string, text: string, attachments: readonly ConversationAttachment[], fromComposer: boolean,
       idempotencyKey?: string): Promise<void> | null => {

@@ -109,3 +109,12 @@ it('exposes recovery codes and preserves ordinary refusal reasons for app presen
   expect(sendFailureCode(new ApiError({ kind: 'transport', message: 'Offline' }))).toBeUndefined();
   expect(sendFailureMessage(new Error('Ordinary refusal'))).toBe('Ordinary refusal');
 });
+
+
+it.each([false, true])('does not retry an explicit image refusal (previously unknown: %s)', async unknown => {
+  let attempts = 0;
+  const failure: ApiFailure = { kind: 'http', status: 409, code: 'attachments_unsupported', message: 'Images unsupported.' };
+  await expect(retryUnknownSend(() => { attempts++; return Promise.reject(new ApiError(failure)); },
+    () => failure, () => Promise.resolve(), unknown)).rejects.toMatchObject({ delivery: unknown ? 'unknown' : 'refused' });
+  expect(attempts).toBe(1);
+});

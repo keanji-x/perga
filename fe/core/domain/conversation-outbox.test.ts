@@ -83,3 +83,24 @@ it.each(['', 'An image with words'])('deduplicates an early history item for %j 
     expect(presentPendingMessages([canonical], [], [waiting]).sending).toEqual([]);
   }
 });
+
+
+it('shows an acknowledged image until history or queue supplies its exact message ID, while other sends stay available', () => {
+  const submitted = send();
+  const local = { id: 'local-image', contentType: 'image/png', size: 1, url: 'blob:preview' };
+  const ack = { ...submitted, phase: 'accepted', messageId: 'stored-image', queued: false,
+    echo: { ...submitted.echo, attachments: [local], text: '' } } as const;
+  expect(view([ack])).toMatchObject({ transcript: [ack.echo], blocked: false, sending: false });
+  expect(beginSendOp([ack], send('next'))).toEqual([ack, send('next')]);
+  expect(beginSendOp([ack], submitted)).toBeNull();
+
+  const canonical: TranscriptEntry = { id: 'human:stored-image', author: 'human', text: '', atMs: 3,
+    human: { userId: 'owner', displayName: 'Owner', messageId: ack.messageId, revision: 1 } };
+  expect(view([ack], [canonical]).transcript).toEqual([canonical]);
+
+  const queued = { ...ack, queued: true };
+  const queue = [{ entry_id: ack.messageId, text: '', rev: 1, queued_at_ms: 3 }];
+  expect(presentPendingMessages(view([queued]).transcript, [], [queued]).sending).toMatchObject([{ delivery: 'queued', attachments: [local] }]);
+  expect(presentPendingMessages([], queue, [queued])).toEqual({ transcript: [], queue, sending: [] });
+  expect(outboxView({ serverEntries: [], queue, ops: [queued], liveReplies: [], stalled: false }).transcript).toEqual([]);
+});

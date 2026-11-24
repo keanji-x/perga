@@ -402,7 +402,7 @@ export function ChatComposer({
   headerActions?: ReactNode;
   /** Whether a send with no words is a real send (an attached image); a prop because the drawer is an opaque node. */
   allowEmptyText?: boolean;
-  /** Files dropped or pasted into the field; the caller owns attachment admission and upload. */
+  /** Files dropped or pasted into the field; the caller owns validation and draft previews. */
   onFiles?: (files: File[]) => void;
   /** The `@` menu (`useMentionTrigger`), present only where a Planner reads what is sent; the caller keeps it stable. */
   mentionTrigger?: ChatComposerTrigger;

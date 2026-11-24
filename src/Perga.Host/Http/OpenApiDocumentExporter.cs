@@ -15,9 +15,9 @@ public sealed record ResponseHeader(int StatusCode, string Name, string SchemaTy
 // Unlike IAcceptsMetadata, this never participates in content-type route matching.
 public sealed record JsonRequestContract(Type RequestType, bool IsOptional);
 public sealed record NoRequestBody;
-public sealed record MultipartImageRequest(string PayloadDescription);
+public sealed record MultipartImageRequest(Type PayloadType, string PayloadDescription);
 public sealed record BinaryResponse(IReadOnlyList<string> ContentTypes);
-public sealed record RequestHeader(string Name, bool Required);
+public sealed record RequestHeader(string Name, bool Required, string? Description = null);
 public sealed record StrictRequest;
 public sealed record SuccessStatus(int Code, bool ReplayedAsOk = false);
 
@@ -55,8 +55,9 @@ public static class OpenApiDocumentExporter
             {
                 if (body is null || accepts is null)
                     throw new InvalidOperationException($"Multipart images require a JSON payload contract: {method} {route}");
-                body["content"]!["multipart/form-data"] = MultipartImageSchema(
-                    registry.Schema(accepts.RequestType, request: true), multipart);
+                var payload = registry.Schema(multipart.PayloadType, request: true);
+                registry.Schemas[multipart.PayloadType.Name]!["additionalProperties"] = false;
+                body["content"]!["multipart/form-data"] = MultipartImageSchema(payload, multipart);
             }
             foreach (var parameter in endpoint.Metadata.GetRequiredMetadata<MethodInfo>().GetParameters())
             {
@@ -75,8 +76,12 @@ public static class OpenApiDocumentExporter
                     ["schema"] = registry.Schema(type, nullability.Create(parameter)) });
             }
             foreach (var header in endpoint.Metadata.OfType<RequestHeader>())
-                parameters.Add(new JsonObject { ["name"] = header.Name, ["in"] = "header", ["required"] = header.Required,
-                    ["schema"] = new JsonObject { ["type"] = "string" } });
+            {
+                var parameter = new JsonObject { ["name"] = header.Name, ["in"] = "header", ["required"] = header.Required,
+                    ["schema"] = new JsonObject { ["type"] = "string" } };
+                if (header.Description is { } description) parameter["description"] = description;
+                parameters.Add(parameter);
+            }
             if (method is "POST" or "PATCH" or "PUT" && body is null && !endpoint.Metadata.OfType<NoRequestBody>().Any())
                 throw new InvalidOperationException($"Missing HTTP request contract: {method} {route}");
             if (accepts?.RequestType is { } strictType && endpoint.Metadata.OfType<StrictRequest>().Any())
@@ -149,6 +154,8 @@ public static class OpenApiDocumentExporter
 
     private static JsonObject MultipartImageSchema(JsonNode payloadSchema, MultipartImageRequest contract) => new()
     {
+        // OpenAPI header parameters are operation-wide and cannot express a media-type condition.
+        ["x-required-headers"] = new JsonArray("Idempotency-Key"),
         ["schema"] = new JsonObject
         {
             ["type"] = "object",

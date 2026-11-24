@@ -13,6 +13,7 @@ import { codexRuntime } from "@botiverse/oar/runtimes/codex";
 import { scriptedRuntime } from "@botiverse/oar/testing";
 import { OarBridgeServer, type BridgeTransport } from "../src/bridge.ts";
 import { prepareMcpServers } from "../src/mcp-proxy.ts";
+import { preparePromptImages } from "../src/prompt-images.ts";
 
 class MemoryTransport implements BridgeTransport {
   public readonly messages: Array<Record<string, unknown>> = [];
@@ -607,6 +608,7 @@ test("OarBridgeServer delivers image-only prompts and steers to the correlated r
     const prompt = call(2, "session/prompt", { prompt: "", correlationId: "current", images: [payload] });
     const promptPath = await started;
     assert.ok(fs.existsSync(promptPath));
+    if (process.platform !== "win32") assert.equal(fs.statSync(promptPath).mode & 0o777, 0o600);
     await call(3, "session/steer", { message: "", correlationId: "stale", images: [payload] });
     assert.deepEqual(transport.responseFor(3).result, { delivery: "declined" });
     assert.equal(steerPath, undefined);
@@ -649,5 +651,31 @@ test("OarBridgeServer refuses images before calling an unnegotiated runtime", as
     assert.equal(calls, 0);
   } finally {
     await bridge.dispose();
+  }
+});
+
+test("preparePromptImages removes its directory after a later image fails", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "perga-image-cleanup-test-"));
+  const tempVariable = process.platform === "win32" ? "TEMP" : "TMPDIR";
+  const previous = process.env[tempVariable];
+  process.env[tempVariable] = root;
+  try {
+    const first = { mediaType: "image/png", data: "AQIDBA==" };
+    const invalid = {
+      get mediaType() {
+        const entries = fs.readdirSync(root);
+        assert.equal(entries.length, 1);
+        const written = path.join(root, entries[0]!, "0.png");
+        assert.deepEqual(fs.readFileSync(written), Buffer.from(first.data, "base64"));
+        return "image/unsupported";
+      },
+      data: first.data,
+    };
+    await assert.rejects(preparePromptImages([first, invalid]), { message: "Unsupported image type." });
+    assert.deepEqual(fs.readdirSync(root), []);
+  } finally {
+    if (previous === undefined) delete process.env[tempVariable];
+    else process.env[tempVariable] = previous;
+    fs.rmSync(root, { recursive: true, force: true });
   }
 });

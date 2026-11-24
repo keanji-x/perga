@@ -48,6 +48,7 @@ export type HostListDirResultDto = { "entries": Array<HostDirEntryDto>; "parent"
 export type LoginRequest = { "password": string | null; "username": string | null };
 export type MarkReadRequest = { "readThroughMs"?: number | null };
 export type MessageAttachmentDto = { "contentType": "image/png" | "image/jpeg" | "image/gif" | "image/webp"; "id": string; "size": number; "url": string };
+export type MultipartMessagePayload = { "content"?: string | null; "expectedEpoch"?: number | null; "mode"?: string; "turnId"?: string | null };
 export type NotifiableSessionWatermarkDto = { "lastNotifiableTurnAtMs": number; "sessionId": string };
 export type OpenTerminalRequest = { "args"?: Array<string> | null; "cols"?: number; "cwd"?: string | null; "env"?: { [key: string]: string } | null; "idempotencyKey"?: string | null; "program"?: string | null; "rows"?: number; "title"?: string | null };
 export type PatchAreaRequest = { "clearDefaultCwd"?: boolean; "color"?: string | null; "defaultCwd"?: string | null; "executionTargetId"?: string | null; "folders"?: Array<string> | null; "name"?: string | null; "sortOrder"?: number | null };

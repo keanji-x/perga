@@ -282,12 +282,20 @@ export function createConversationOwner(submittedStorage?: () => Storage) {
     acceptDraft: (from, result, submitted) => {
       if (!slotHolds(state.drafts[from.scopeId], from)) return false;
       conversationTracks.set(result.conversation.id, result.conversation.trackId);
-      const accepted = { conversation: result.conversation, turns: [{
-        id: `human:${result.sessionInput.inputId}`, author: 'you' as const, text: submitted.text, atMs: submitted.atMs,
-        human: { userId: DEPLOYMENT_OWNER_USER_ID, displayName: 'Owner', messageId: result.sessionInput.inputId, revision: 1 },
-      }] };
-      const entries = put(state.entries, result.conversation.id, accepted);
-      commit({ ...state, entries, conversations: Object.values(entries).map(entry => entry.conversation),
+      const id = result.conversation.id;
+      const inputId = result.sessionInput.inputId;
+      const firstTurn = { id: `human:${inputId}`, author: 'you' as const, text: submitted.text, atMs: submitted.atMs };
+      const attachments = submitted.attachments;
+      const acceptedImage = attachments?.length ? [{
+        key: from.key, phase: 'accepted', messageId: inputId, queued: false, fromComposer: false,
+        echo: { ...firstTurn, id: `echo-${from.key}`, attachments, queued: false, localSend: true },
+      } as const] : [];
+      const turns = acceptedImage.length > 0 ? NO_TURNS : [{ ...firstTurn,
+        human: { userId: DEPLOYMENT_OWNER_USER_ID, displayName: 'Owner', messageId: inputId, revision: 1 },
+      }];
+      const entries = put(state.entries, id, { conversation: result.conversation, turns });
+      const next = acceptedImage.length === 0 ? state : withOutbox(state, id, [...state.outboxes[id] ?? NO_SENDS, ...acceptedImage]);
+      commit({ ...next, entries, conversations: Object.values(entries).map(entry => entry.conversation),
         acceptedTurns: put(state.acceptedTurns, result.conversation.id, result.sessionInput.turnId),
         drafts: moveDraft(state.drafts, { kind: 'adopt', from, conversationId: result.conversation.id }) });
       return true;
@@ -312,7 +320,7 @@ export function createConversationOwner(submittedStorage?: () => Storage) {
       sendGenerations.set(id, (sendGenerations.get(id) ?? 0) + 1);
       let next = state;
       for (const op of state.outboxes[id] ?? []) {
-        if (op.fromComposer) next = withRefilledComposer(next, id, { text: op.echo.text, attachments: op.echo.attachments ?? [] });
+        if (op.phase !== 'accepted' && op.fromComposer) next = withRefilledComposer(next, id, { text: op.echo.text, attachments: op.echo.attachments ?? [] });
       }
       commit({ ...withOutbox(next, id, NO_SENDS), acceptedTurns: put(next.acceptedTurns, id, undefined) });
     },

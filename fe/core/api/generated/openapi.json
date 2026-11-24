@@ -2699,6 +2699,60 @@
         "type": "object"
       },
       "MessageAttachmentDto": {
+        "oneOf": [
+          {
+            "properties": {
+              "contentType": {
+                "const": "image/gif"
+              },
+              "id": {
+                "pattern": "^[0-9a-f]{64}\\.gif$"
+              },
+              "url": {
+                "pattern": "^/api/v1/tracks/[A-Za-z0-9_-]\u002B/media/[0-9a-f]{64}\\.gif$"
+              }
+            }
+          },
+          {
+            "properties": {
+              "contentType": {
+                "const": "image/jpeg"
+              },
+              "id": {
+                "pattern": "^[0-9a-f]{64}\\.jpg$"
+              },
+              "url": {
+                "pattern": "^/api/v1/tracks/[A-Za-z0-9_-]\u002B/media/[0-9a-f]{64}\\.jpg$"
+              }
+            }
+          },
+          {
+            "properties": {
+              "contentType": {
+                "const": "image/png"
+              },
+              "id": {
+                "pattern": "^[0-9a-f]{64}\\.png$"
+              },
+              "url": {
+                "pattern": "^/api/v1/tracks/[A-Za-z0-9_-]\u002B/media/[0-9a-f]{64}\\.png$"
+              }
+            }
+          },
+          {
+            "properties": {
+              "contentType": {
+                "const": "image/webp"
+              },
+              "id": {
+                "pattern": "^[0-9a-f]{64}\\.webp$"
+              },
+              "url": {
+                "pattern": "^/api/v1/tracks/[A-Za-z0-9_-]\u002B/media/[0-9a-f]{64}\\.webp$"
+              }
+            }
+          }
+        ],
         "properties": {
           "contentType": {
             "enum": [
@@ -2710,7 +2764,6 @@
             "type": "string"
           },
           "id": {
-            "pattern": "^[0-9a-f]{64}\\.(png|jpg|gif|webp)$",
             "type": "string"
           },
           "size": {
@@ -2719,7 +2772,6 @@
             "type": "integer"
           },
           "url": {
-            "pattern": "^/api/v1/tracks/[A-Za-z0-9_-]\u002B/media/[0-9a-f]{64}\\.(png|jpg|gif|webp)$",
             "type": "string"
           }
         },
@@ -2729,6 +2781,46 @@
           "size",
           "url"
         ],
+        "type": "object"
+      },
+      "MultipartMessagePayload": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expectedEpoch": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mode": {
+            "type": "string"
+          },
+          "turnId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [],
         "type": "object"
       },
       "NotifiableSessionWatermarkDto": {
@@ -6945,6 +7037,7 @@
             }
           },
           {
+            "description": "Required for multipart requests and JSON requests containing content.",
             "in": "header",
             "name": "Idempotency-Key",
             "required": false,
@@ -6977,9 +7070,9 @@
                   "payload": {
                     "contentMediaType": "application/json",
                     "contentSchema": {
-                      "$ref": "#/components/schemas/SendSessionMessageRequest"
+                      "$ref": "#/components/schemas/MultipartMessagePayload"
                     },
-                    "description": "JSON-encoded request. content may be omitted or empty for image-only input. Do not include messageId. Idempotency-Key is required.",
+                    "description": "JSON-encoded request. content may be omitted or empty for image-only input.",
                     "type": "string"
                   }
                 },
@@ -6988,7 +7081,10 @@
                   "attachments"
                 ],
                 "type": "object"
-              }
+              },
+              "x-required-headers": [
+                "Idempotency-Key"
+              ]
             }
           },
           "required": true
@@ -8272,7 +8368,10 @@
                   "attachments"
                 ],
                 "type": "object"
-              }
+              },
+              "x-required-headers": [
+                "Idempotency-Key"
+              ]
             }
           },
           "required": false

@@ -69,19 +69,35 @@ internal sealed class OpenApiSchemaRegistry(JsonSerializerOptions options)
                 var ignore = member?.GetCustomAttribute<JsonIgnoreAttribute>()?.Condition;
                 if (property.IsRequired || (request ? parameter?.HasDefaultValue == false : ignore is not (JsonIgnoreCondition.WhenWritingNull or JsonIgnoreCondition.WhenWritingDefault))) required.Add(property.Name);
             }
+            var schema = new JsonObject { ["type"] = "object", ["properties"] = properties, ["required"] = required };
             if (type == typeof(MessageAttachmentDto))
-            {
-                const string fileName = @"[0-9a-f]{64}\.(png|jpg|gif|webp)";
-                properties["id"]!["pattern"] = "^" + fileName + "$";
-                properties["contentType"]!["enum"] = new JsonArray(
-                    ImageAttachmentContract.MediaTypes.Select(value => (JsonNode?)JsonValue.Create(value)).ToArray());
-                properties["size"]!["minimum"] = 1;
-                properties["size"]!["maximum"] = ImageAttachmentContract.MaxAttachmentBytes;
-                properties["url"]!["pattern"] = "^/api/v1/tracks/[A-Za-z0-9_-]+/media/" + fileName + "$";
-            }
-            Schemas[name] = new JsonObject { ["type"] = "object", ["properties"] = properties, ["required"] = required };
+                ConstrainImageAttachment(schema, properties);
+            Schemas[name] = schema;
         }
         return new JsonObject { ["$ref"] = "#/components/schemas/" + name };
+    }
+
+    private static void ConstrainImageAttachment(JsonObject schema, JsonObject properties)
+    {
+        properties["contentType"]!["enum"] = new JsonArray(
+            ImageAttachmentContract.MediaTypes.Select(value => (JsonNode?)JsonValue.Create(value)).ToArray());
+        properties["size"]!["minimum"] = 1;
+        properties["size"]!["maximum"] = ImageAttachmentContract.MaxAttachmentBytes;
+        schema["oneOf"] = new JsonArray(ImageAttachmentContract.MediaTypesByExtension
+            .OrderBy(format => format.Key, StringComparer.Ordinal)
+            .Select(format =>
+            {
+                var fileName = @"[0-9a-f]{64}\." + format.Key + "$";
+                return (JsonNode)new JsonObject
+                {
+                    ["properties"] = new JsonObject
+                    {
+                        ["id"] = new JsonObject { ["pattern"] = "^" + fileName },
+                        ["contentType"] = new JsonObject { ["const"] = format.Value },
+                        ["url"] = new JsonObject { ["pattern"] = "^/api/v1/tracks/[A-Za-z0-9_-]+/media/" + fileName }
+                    }
+                };
+            }).ToArray());
     }
 
     private static JsonNode OrNull(JsonNode schema) => new JsonObject { ["anyOf"] = new JsonArray(schema, new JsonObject { ["type"] = "null" }) };

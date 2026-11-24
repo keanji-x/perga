@@ -38,10 +38,10 @@ public sealed partial class TrackActor
                 ex.Message, innerException: ex);
             outcome = queued ? "queued" : "rejected";
         }
-        catch (KernelException ex) when (caller is InteropPrincipal.Session)
+        catch (KernelException ex)
         {
             deterministicFailure = ex;
-            outcome = queued ? "queued" : "rejected";
+            outcome = "rejected";
         }
         catch (Exception) when (!ct.IsCancellationRequested)
         {
@@ -151,6 +151,7 @@ public sealed partial class TrackActor
                 throw KernelException.Conflict("The originating turn stopped before steering was written.");
             var session = RequireSessionCore(message.SessionId);
             RequireInteropCore(caller, session, write: true);
+            _taskCoordinator.RequireDispatchWorkspace(session);
             if (!_scheduler.TryGetActive(session.Id, out var active) || !ReferenceEquals(active, target) || target.Interrupted)
                 throw KernelException.Conflict("The target turn changed before steering was written.");
             Volatile.Write(ref mayHaveWritten, 1);
@@ -164,10 +165,9 @@ public sealed partial class TrackActor
                 deadline.Token, AuthorizeWriteAsync)
                 .WaitAsync(deadline.Token).ConfigureAwait(false);
         }
-        catch (KernelException) when (caller is InteropPrincipal.Human)
+        catch (KernelException) when (Volatile.Read(ref mayHaveWritten) != 0)
         {
-            // A rejected write fence leaves the transport untouched.
-            return null;
+            return SteerDelivery.Unconfirmed;
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
