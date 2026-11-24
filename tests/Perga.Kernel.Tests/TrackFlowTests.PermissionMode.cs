@@ -604,4 +604,64 @@ public sealed partial class TrackFlowTests
         Assert.Equal(FlowOutcome.Ok, tasks.Single(t => t.TaskKey == "shell-step").Outcome);
         Assert.Equal(FlowOutcome.Ok, tasks.Single(t => t.TaskKey == "watch-step").Outcome);
     }
+
+    [Fact]
+    public async Task DispatchApprovalDrift_ReevaluatesWhenReusedSessionModelResetsToNull()
+    {
+        await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
+        ctx.AgentRuntime.Providers = [new("codex", true, "1", null, ["gpt-5", "gpt-6"])];
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        var trackId = snap.Track.Id;
+        var leadId = snap.Track.LeadSessionId!;
+
+        await ctx.Kernel.UpdateSessionAsync(leadId, new UpdateSessionRequest(Model: new("gpt-5")), Human, default);
+        var reusable = (await ctx.Kernel.CreateSessionAsync(trackId,
+            new CreateSessionRequest(Title: "Reusable", Provider: "codex", Model: "gpt-5", PermissionMode: "never"),
+            "req-reuse-null-model", Human, default)).Receipt.Session;
+
+        var caller = await ctx.OpenMcpCallerAsync(leadId);
+        await KernelMcpDispatcher.ExecuteGuardedAsync(
+            ctx.Kernel,
+            caller,
+            KernelMcpToolNames.TrackSet,
+            JsonSerializer.SerializeToElement(new
+            {
+                source = """
+                    export default {
+                      id: 'reuse-null-model-guard',
+                      title: 'Reuse Null Model Guard',
+                      before(action) {
+                        if (action.type !== 'task.dispatch') return Allow();
+                        if (action.model == null) return Deny('Provider-default null model blocked');
+                        return AskHuman('Approve dispatch?', { approve: 'Approve', deny: 'Reject' });
+                      }
+                    };
+                    """
+            }));
+
+        var commit = await ctx.Kernel.CommitTrackFlowAsync(trackId, dryRun: false, expectedFlowRev: 0, Human, content: $$$"""
+            {"rev":0,"nodes":[{"id":"reuse-model-drift","do":{"kind":"run","session":"{{{reusable.Id}}}","access":"read_write","prompt":"Edit"}}]}
+            """);
+        Assert.True(commit.Ok, JsonSerializer.Serialize(commit.Diagnostics));
+
+        await WaitUntilAsync(async () => (await ctx.Kernel.GetTrackAggregateAsync(trackId)).PendingApprovals.Count == 1);
+        var firstApproval = Assert.Single((await ctx.Kernel.GetTrackAggregateAsync(trackId)).PendingApprovals);
+
+        // Reset reused session's model from "gpt-5" (matching Lead) to null (provider default) while approval is pending.
+        await ctx.Kernel.UpdateSessionAsync(reusable.Id, new UpdateSessionRequest(Model: new((string?)null)), Human, default);
+
+        // Approving the stale gpt-5 ask must NOT launch under model=null; policy must re-evaluate and deny it.
+        await ctx.Kernel.RespondInteractionAsync(
+            firstApproval.SessionId,
+            firstApproval.Id,
+            new(ExecutionId: firstApproval.ExecutionId, OptionId: firstApproval.Options.Single(o => o.IsApproval).Id),
+            Human,
+            default);
+
+        await WaitUntilAsync(async () =>
+            Assert.Single(await ctx.Kernel.ListTasksAsync(trackId), t => t.TaskKey == "reuse-model-drift").Status == TaskRunStatus.Failed);
+        var failed = Assert.Single(await ctx.Kernel.ListTasksAsync(trackId), t => t.TaskKey == "reuse-model-drift");
+        Assert.Contains("Provider-default null model blocked", failed.StatusDetail ?? "", StringComparison.Ordinal);
+        Assert.DoesNotContain(ctx.AgentRuntime.OpenedSessions, s => s.LaunchSpec.Model is null);
+    }
 }

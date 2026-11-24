@@ -229,9 +229,18 @@ public sealed partial class TrackActor
     private string TaskDispatchFieldsCore(TaskDto task, PolicyTaskRoute route)
     {
         var isHostTask = IsHostExecutorTask(task);
+        var preservedSession = !isHostTask && (!FlowConstants.IsFlowTask(task) || FlowConstants.IsFlowSessionReuse(task))
+            ? ReadTaskDispatchSessionCore(task)
+            : null;
         var effectiveAccess = route.Access ?? FormatAccessModeForPolicy(task.Access);
-        var effectiveProvider = isHostTask ? null : SessionLaunchValidator.NormalizeProvider(route.Provider ?? GetDefaultProviderCore());
-        var effectiveModel = isHostTask ? null : (route.Model ?? ResolveTaskWorkerModelCore(effectiveProvider!));
+        var effectiveProvider = isHostTask
+            ? null
+            : SessionLaunchValidator.NormalizeProvider(preservedSession?.Provider ?? route.Provider ?? GetDefaultProviderCore());
+        var effectiveModel = isHostTask
+            ? null
+            : preservedSession is not null
+                ? preservedSession.Model
+                : (route.Model ?? ResolveTaskWorkerModelCore(effectiveProvider!));
         var effectivePermissionMode = isHostTask
             ? null
             : ResolveEffectiveTaskPermissionModeCore(task, effectiveProvider!, effectiveAccess);
