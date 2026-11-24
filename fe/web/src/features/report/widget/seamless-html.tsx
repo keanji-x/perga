@@ -1,8 +1,7 @@
-// Scheme B HTML Graphic Widget host:
-// Runs inside `sandbox="allow-scripts"` (opaque origin, zero cookies/API access) and speaks
-// the closed 4-message Perga Bridge:
-//   Host -> Widget: `perga:data`, `perga:theme`
-//   Widget -> Host: `perga:resize`, `perga:intent` (`open_file` | `open_session`, read-only)
+// The HTML widget runs in an opaque-origin iframe with sandbox="allow-scripts".
+//   Host -> Widget: perga:data, perga:theme
+//   Widget -> Host: perga:ready, perga:resize, perga:intent
+//   Navigation intents: open_file, open_session, open_url, open_track
 
 import { useCallback, useEffect, useRef } from 'react';
 import { parseWorkspaceRelativeFilePath } from '../../../../../core/domain/report-file.ts';
@@ -55,6 +54,7 @@ export function SeamlessHtmlWidget({
   initialHeight = 140,
   onOpenFile,
   onOpenWorker,
+  onOpenTrack,
 }: Readonly<{
   html: string;
   title: string;
@@ -63,6 +63,7 @@ export function SeamlessHtmlWidget({
   initialHeight?: number;
   onOpenFile?: (path: string) => void;
   onOpenWorker?: (sessionId: string) => void;
+  onOpenTrack?: (trackId: string) => void;
 }>) {
   const frameRef = useRef<HTMLIFrameElement | null>(null);
   const [height, setHeight] = useState<number>(initialHeight);
@@ -111,6 +112,18 @@ export function SeamlessHtmlWidget({
           }
         } else if (kind === 'open_session' && typeof record.sessionId === 'string' && record.sessionId.trim() !== '') {
           onOpenWorker?.(record.sessionId.trim());
+        } else if (kind === 'open_url' && typeof record.url === 'string') {
+          let parsed: URL;
+          try {
+            parsed = new URL(record.url);
+          } catch {
+            return;
+          }
+          if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+            window.open(parsed.href, '_blank', 'noopener,noreferrer');
+          }
+        } else if (kind === 'open_track' && typeof record.trackId === 'string' && /^trk_[A-Za-z0-9_-]+$/.test(record.trackId)) {
+          onOpenTrack?.(record.trackId);
         }
       }
     };
@@ -131,7 +144,7 @@ export function SeamlessHtmlWidget({
       observer.disconnect();
       media?.removeEventListener?.('change', onSchemeChange);
     };
-  }, [pushState, onOpenFile, onOpenWorker]);
+  }, [pushState, onOpenFile, onOpenWorker, onOpenTrack]);
 
   return (
     <figure className={styles.host}>

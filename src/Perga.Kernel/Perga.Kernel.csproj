@@ -4,8 +4,8 @@
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="../../templates/perga-template.d.ts" LogicalName="Perga.TemplateContract" />
-    <EmbeddedResource Include="../../templates/memory/*" LogicalName="Perga.Templates.Memory.%(Filename)%(Extension)" />
-    <EmbeddedResource Include="../../templates/memory/widgets/entries.html" LogicalName="Perga.Templates.Memory.widgets/entries.html" />
+    <EmbeddedResource Include="Templates/Memory/*" LogicalName="Perga.Templates.Memory.%(Filename)%(Extension)" />
+    <EmbeddedResource Include="Templates/Memory/widgets/entries.html" LogicalName="Perga.Templates.Memory.widgets/entries.html" />
     <EmbeddedResource Include="../../docs/schemas/flow.v1.schema.json" LogicalName="Perga.FlowSchemaV1" />
   </ItemGroup>
   <ItemGroup>

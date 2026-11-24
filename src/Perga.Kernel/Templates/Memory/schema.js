@@ -1,4 +1,4 @@
-/** @param {import("../perga-template.d.ts").SchemaBuilder} t */
+/** @param {import("../../../../templates/perga-template.d.ts").SchemaBuilder} t */
 export const schema = (t) => ({
   scope: t.enum(["area", "global"]),
   areaId: t.string().optional(),

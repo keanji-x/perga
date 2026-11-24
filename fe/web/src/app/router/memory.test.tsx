@@ -1,21 +1,22 @@
-import { act, cleanup, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 
-import entriesHtml from '../../../../../templates/memory/widgets/entries.html?raw';
+import entriesHtml from '../../../../../src/Perga.Kernel/Templates/Memory/widgets/entries.html?raw';
 import { invalidationPlanFor } from '../../../../core/events/invalidation-plan.ts';
 import { applyEventEffects } from '../events/query-invalidation-adapter.ts';
 import { sessionItem, sessionPage, sessionReply } from './conversation-session-data.ts';
 import { renderDailyFixture } from './daily-planner-fixture.tsx';
-import { fixtureSession, fixtureSnapshot, fixtureTrack, fixtureWidgetReport } from './session-contract-fixture.ts';
+import { fixtureReport, fixtureSession, fixtureSnapshot, fixtureTrack, fixtureWidgetReport } from './session-contract-fixture.ts';
 
 afterEach(cleanup);
 
+const provenanceTrack = 'trk_review';
+
 function renderMemory(initial = '/area/project-area/memory', staleBinding = false) {
   const report = fixtureWidgetReport([
-    { title: 'Pinned', use: './widgets/entries.html', view: 'pinned' },
-    { title: 'Notes / Topics', use: './widgets/entries.html', view: 'topics' },
-    { title: 'Maintenance Flow', use: 'builtin:flow', view: 'flow' },
+    { title: 'Always Pinned', use: './widgets/entries.html', view: 'pinned' },
+    { title: 'Notes & Topics', use: './widgets/entries.html', view: 'topics' },
   ]);
   const areaId = 'project-area';
   const areaTrackId = 'trk_area_memory';
@@ -35,6 +36,10 @@ function renderMemory(initial = '/area/project-area/memory', staleBinding = fals
     if (request.path === '/api/v1/tracks/trk_stale') {
       return { status: 404, statusText: 'Not Found', body: { error: 'Stale Planner Track' } };
     }
+    if (request.path === `/api/v1/tracks/${provenanceTrack}`) {
+      return sessionReply(fixtureSnapshot(fixtureTrack(provenanceTrack, { areaId, title: 'Original review' }), [],
+        fixtureReport('# Review evidence\n\nOriginal review notes.')));
+    }
     const lead = request.path.startsWith(`/api/v1/tracks/${areaTrackId}`) ? areaLead : globalLead;
     const isArea = lead === areaLead;
     const uri = `/api/v1/tracks/${lead.trackId}`;
@@ -50,7 +55,7 @@ function renderMemory(initial = '/area/project-area/memory', staleBinding = fals
       }), [lead], report));
     }
     if (request.path === uri + '/views') {
-      const meta = { summary: '', tags: [], sources: [], updatedAtMs: Date.UTC(2026, 10, 24), repeatedSummary: false };
+      const meta = { summary: '', tags: [], sources: [], updatedAtMs: Date.UTC(2026, 10, 24) };
       return sessionReply({
         templateId: 'memory', views: {
           pinned: { kind: 'pinned', entries: [{ ...meta, ...(isArea
@@ -93,7 +98,9 @@ it.each([
 
   expect((await report.findByTitle('pinned')).getAttribute('srcdoc')).toBe(entriesHtml);
   expect((await report.findByTitle('topics')).getAttribute('srcdoc')).toBe(entriesHtml);
-  expect(report.getByRole('heading', { name: 'Maintenance Flow' })).toBeTruthy();
+  expect(report.getByRole('heading', { name: 'Always Pinned' })).toBeTruthy();
+  expect(report.getByRole('heading', { name: 'Notes & Topics' })).toBeTruthy();
+  expect(report.queryByRole('heading', { name: 'Maintenance Flow' })).toBeNull();
   if (path !== '/memory') {
     expect(protocol.getByText('Global Inherited')).toBeTruthy();
   } else {
@@ -115,6 +122,22 @@ it('opens the native Planner and retains scoped mention pills', async () => {
   expect(screen.getByRole('link', { name: 'Global Memory' }).getAttribute('href')).toBe('/memory');
   await userEvent.click(screen.getByRole('button', { name: 'Close conversation' }));
   expect(router.state.location.pathname).toBe('/area/project-area/memory');
+});
+
+it('routes a provenance intent from a Memory widget to the source Track', async () => {
+  const { router } = renderMemory();
+  const frame = await screen.findByTitle<HTMLIFrameElement>('topics');
+  const post = vi.spyOn(frame.contentWindow!, 'postMessage');
+  await vi.waitFor(() => {
+    fireEvent(window, new MessageEvent('message', { source: frame.contentWindow, data: { type: 'perga:ready' } }));
+    expect(post).toHaveBeenCalledWith(expect.objectContaining({ type: 'perga:data' }), '*');
+  });
+  fireEvent(window, new MessageEvent('message', {
+    source: frame.contentWindow,
+    data: { type: 'perga:intent', kind: 'open_track', trackId: provenanceTrack },
+  }));
+  await vi.waitFor(() => expect(router.state.location.pathname).toBe(`/track/${provenanceTrack}`));
+  expect(await screen.findByRole('heading', { name: 'Review evidence' })).toBeTruthy();
 });
 
 it('refreshes the native protocol and report views on memory.updated', async () => {

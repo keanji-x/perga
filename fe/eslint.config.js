@@ -66,6 +66,8 @@ export default tseslint.config(
         { file: 'core/domain/conversation-tool.test.ts', values: ['perga:', 'perga:perga_'] },
         { file: 'web/src/features/report/widget/seamless-html.tsx', values: ['perga:theme', 'perga:data', 'perga:ready', 'perga:resize', 'perga:intent'] },
         { file: 'web/src/features/report/widget/public.test.tsx', values: ['perga:resize', 'perga:intent'] },
+        // The route fixture simulates a widget handshake and Track navigation.
+        { file: 'web/src/app/router/memory.test.tsx', values: ['perga:ready', 'perga:data', 'perga:intent'] },
       ] }],
       'architecture/no-class-dom-query': ['error', {
         allowlist: [

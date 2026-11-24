@@ -116,7 +116,7 @@ public sealed partial class MemoryIntegrationTests
         Assert.EndsWith(McpPath, builtIn.Url, StringComparison.Ordinal);
         Assert.EndsWith("/mcp/p/memory", plugin.Url, StringComparison.Ordinal);
         var caller = await kernel.OpenMcpCallerAsync(sessionId, ct);
-        Assert.Contains("memory_list", await ListToolNamesAsync(host, McpPath, caller.Token, ct));
+        Assert.Contains("list", await ListToolNamesAsync(host, McpPath, caller.Token, ct));
         Assert.Equal(["plugin_lookup"], await ListToolNamesAsync(host, "/mcp/p/memory", caller.Token, ct));
     }
 
@@ -151,9 +151,57 @@ public sealed partial class MemoryIntegrationTests
         Assert.Equal(HttpStatusCode.Forbidden, patch.StatusCode);
         Assert.Equal(planner, await kernel.GetOrEnsureMemoryTrackAsync(null, ct));
         Assert.Null((await kernel.GetTrackAggregateAsync(planner.TrackId, ct)).Track.ClosedAtMs);
-        await SuccessfulCallAsync(host, lead, "memory_put", Entry("still-writable"), ct);
+        await SuccessfulCallAsync(host, lead, "put", Entry("still-writable"), ct);
         Assert.Equal("global/still-writable", Assert.Single((await ReadTrackAsync(host, planner, ct)).GetProperty("track").GetProperty("data")
             .GetProperty("entries").EnumerateArray()).GetProperty("ref").GetString());
+    }
+
+    [Fact]
+    public async Task BuiltInMemoryTemplateIsPrivateWithThePublicTemplateDirectoryConfigured()
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var ct = timeout.Token;
+        var templates = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../templates"));
+        await using var host = new PergaHostTestCluster(configureHostOptions: options => options.TemplatesDirectory = templates);
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+
+        var planner = await EnsureAsync(host, "/global/track", ct);
+        Assert.Equal("memory", (await ReadTrackAsync(host, planner, ct)).GetProperty("track").GetProperty("templateId").GetString());
+        Assert.Null(kernel.Templates.TryGetPolicy("memory"));
+        AssertPublicTemplates(await host.AuthenticatedClient.GetFromJsonAsync<JsonElement>("/api/v1/templates", ct));
+
+        var area = await kernel.CreateAreaAsync(new("Project"), ct);
+        const string message = "The built-in 'memory' template is reserved for Memory Planner Tracks.";
+        using var create = await host.AuthenticatedClient.PostAsJsonAsync("/api/v1/tracks",
+            new { areaId = area.Id, templateId = "memory" }, ct);
+        Assert.Equal(HttpStatusCode.Forbidden, create.StatusCode);
+        Assert.Equal(message, (await create.Content.ReadFromJsonAsync<JsonElement>(ct)).GetProperty("error").GetString());
+
+        var ordinary = await kernel.CreateTrackAsync(new(area.Id), ct);
+        var lead = await kernel.OpenMcpCallerAsync(ordinary.Sessions.Single().Id, ct);
+        var catalog = await CallToolAsync(host, "/mcp/kernel", lead.Token, KernelMcpToolNames.TemplateList, new { }, ct);
+        Assert.False(catalog.IsError, catalog.Text);
+        AssertPublicTemplates(JsonSerializer.Deserialize<JsonElement>(catalog.Text));
+
+        foreach (var request in new object[]
+        {
+            new { templateId = "memory" },
+            new { source = "export default defineTemplate({ id: 'memory', title: 'Memory' });" }
+        })
+        {
+            var refused = await Assert.ThrowsAsync<KernelException>(() => KernelMcpDispatcher.ExecuteGuardedAsync(
+                kernel, lead, KernelMcpToolNames.TrackSet, JsonSerializer.SerializeToElement(request, PergaJsonDefaults.ApiOptions), ct));
+            Assert.Equal(KernelErrorCode.Forbidden, refused.Code);
+            Assert.Equal(message, refused.Message);
+        }
+        Assert.Null((await kernel.GetTrackAggregateAsync(ordinary.Track.Id, ct)).Track.TemplateId);
+
+        static void AssertPublicTemplates(JsonElement items)
+        {
+            var ids = items.EnumerateArray().Select(item => item.GetProperty("id").GetString()).ToArray();
+            Assert.Contains("equity-research", ids);
+            Assert.DoesNotContain("memory", ids);
+        }
     }
 
     [Fact]
@@ -171,7 +219,7 @@ public sealed partial class MemoryIntegrationTests
         Assert.Equal("0", Metric(globalTrack, "Entries"));
         var initial = await ReadTrackAsync(host, local, ct);
         Assert.Equal("memory", initial.GetProperty("track").GetProperty("templateId").GetString());
-        Assert.Equal([("./widgets/entries.html", "pinned"), ("./widgets/entries.html", "topics"), ("builtin:flow", "flow")],
+        Assert.Equal([("./widgets/entries.html", "pinned"), ("./widgets/entries.html", "topics")],
             initial.GetProperty("report").GetProperty("blocks").EnumerateArray()
             .Where(block => block.GetProperty("kind").GetString() == "widget")
             .Select(block => block.GetProperty("payload"))
@@ -189,10 +237,10 @@ public sealed partial class MemoryIntegrationTests
         Assert.Empty(globalViews.GetProperty("diagnostics").EnumerateArray());
         var manualNote = globalViews.GetProperty("views").GetProperty("topics").GetProperty("entries")[0];
         Assert.Equal("global/manual", manualNote.GetProperty("ref").GetString());
-        Assert.True(manualNote.GetProperty("repeatedSummary").GetBoolean());
+        Assert.False(manualNote.TryGetProperty("repeatedSummary", out _));
 
         var lead = await kernel.OpenMcpCallerAsync(local.LeadSessionId, ct);
-        var put = await SuccessfulCallAsync(host, lead, "memory_put", Entry("local", "Use the runbook.", pinned: true), ct);
+        var put = await SuccessfulCallAsync(host, lead, "put", Entry("local", "Use the runbook.", pinned: true), ct);
         var track = (await ReadTrackAsync(host, local, ct)).GetProperty("track");
         var data = track.GetProperty("data");
         Assert.Equal(area.Id, data.GetProperty("areaId").GetString());
@@ -215,7 +263,7 @@ public sealed partial class MemoryIntegrationTests
         using var clear = await host.AuthenticatedClient.DeleteAsync(uri + "/template", ct);
         Assert.Equal(HttpStatusCode.Forbidden, clear.StatusCode);
 
-        await SuccessfulCallAsync(host, lead, "memory_delete", new { key = "local", expectedEtag = put.GetProperty("etag").GetString() }, ct);
+        await SuccessfulCallAsync(host, lead, "delete", new { key = "local", expectedEtag = put.GetProperty("etag").GetString() }, ct);
         var after = (await ReadTrackAsync(host, local, ct)).GetProperty("track");
         Assert.Equal("0", Metric(after, "Entries"));
         Assert.Empty(after.GetProperty("data").GetProperty("entries").EnumerateArray());
@@ -246,12 +294,13 @@ public sealed partial class MemoryIntegrationTests
         var planner = await EnsureAsync(host, "/global/track", ct);
         var directory = Directory.CreateDirectory(Path.Combine(host.DataDir, "memory", "global"));
         var longBody = new string('λ', 3100) + "\n\nThe end of the full note.";
+        const int entriesPerView = 1_000;
         foreach (var (prefix, pinned) in new[] { ("pinned", "true"), ("topic", "false") })
         {
             // Hand-written files are readable even beyond the Planner's pinned write budget.
-            for (var i = 0; i <= 100; i++)
+            for (var i = 0; i < entriesPerView; i++)
             {
-                var body = i == 100 ? longBody : $"Short note {i}.";
+                var body = i == entriesPerView - 1 ? longBody : $"Short note {i}.";
                 var content = $"---\ntitle: \"{prefix} {i}\"\nsummary: \"Separate summary\"\npinned: {pinned}\ntags: [\"checklist\"]\nsources: [\"Team handbook\"]\n---\n{body}";
                 await File.WriteAllTextAsync(Path.Combine(directory.FullName, $"{prefix}-{i}.md"), content, ct);
             }
@@ -264,22 +313,25 @@ public sealed partial class MemoryIntegrationTests
             var view = projection.GetProperty("views").GetProperty(kind);
             Assert.Equal(kind, view.GetProperty("kind").GetString());
             var entries = view.GetProperty("entries");
-            Assert.Equal(101, entries.GetArrayLength());
-            Assert.Equal(Enumerable.Range(0, 101).Select(i => $"global/{prefix}-{i}").Order(),
+            Assert.Equal(entriesPerView, entries.GetArrayLength());
+            Assert.Equal(Enumerable.Range(0, entriesPerView).Select(i => $"global/{prefix}-{i}").Order(),
                 entries.EnumerateArray().Select(entry => entry.GetProperty("ref").GetString()).Order());
-            var longEntry = Assert.Single(entries.EnumerateArray(), entry => entry.GetProperty("ref").GetString() == $"global/{prefix}-100");
+            var longEntry = Assert.Single(entries.EnumerateArray(),
+                entry => entry.GetProperty("ref").GetString() == $"global/{prefix}-{entriesPerView - 1}");
             Assert.Equal(longBody, longEntry.GetProperty("body").GetString());
-            Assert.Equal($"{prefix} 100", longEntry.GetProperty("title").GetString());
+            Assert.Equal($"{prefix} {entriesPerView - 1}", longEntry.GetProperty("title").GetString());
             Assert.Equal("Separate summary", longEntry.GetProperty("summary").GetString());
             Assert.Equal("checklist", longEntry.GetProperty("tags")[0].GetString());
             Assert.Equal("Team handbook", longEntry.GetProperty("sources")[0].GetString());
             Assert.True(longEntry.GetProperty("updatedAtMs").GetInt64() > 0);
-            Assert.False(longEntry.GetProperty("repeatedSummary").GetBoolean());
+            Assert.False(longEntry.TryGetProperty("repeatedSummary", out _));
         }
     }
 
-    [Fact]
-    public async Task EnsureBindsAnExistingMemoryPlannerAndPreservesItsReport()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task EnsureInstallsTheCurrentTemplateOnAnExistingMemoryPlannerAndPreservesItsReport(bool hasOlderTemplate)
     {
         await using var host = new PergaHostTestCluster();
         var kernel = host.Services.GetRequiredService<IPergaKernel>();
@@ -294,13 +346,15 @@ public sealed partial class MemoryIntegrationTests
             AreaId = MemoryTrackBinding.SystemAreaId,
             LeadSessionId = leadId,
             Cwd = workspace.FullName,
-            WorkspaceDriver = VcsWorkspaceDriver.Id
+            WorkspaceDriver = VcsWorkspaceDriver.Id,
+            TemplateId = hasOlderTemplate ? "memory" : null
         };
         var lead = source.Sessions.Single() with { Id = leadId, TrackId = trackId };
         var oldReport = new ReportDocEngine().Parse("# Existing report\n\nKeep this block.", docRev: 2);
         var systemArea = area with { Id = legacyTrack.AreaId, Name = "Memory" };
         var store = host.Services.GetRequiredService<ITrackStore>();
-        await store.CreateTrackAsync(new(legacyTrack, oldReport, null, lead, [], null, null, [], SystemArea: systemArea)
+        var oldTemplate = hasOlderTemplate ? "export default defineTemplate({ id: 'memory', title: 'Old Memory' });" : null;
+        await store.CreateTrackAsync(new(legacyTrack, oldReport, oldTemplate, lead, [], null, null, [], SystemArea: systemArea)
         {
             MemoryBinding = new("global", null, legacyTrack.Id)
         }, null, default);
@@ -310,9 +364,11 @@ public sealed partial class MemoryIntegrationTests
         Assert.Equal(binding, await EnsureAsync(host, "/global/track", default));
         var snapshot = await kernel.GetTrackAggregateAsync(binding.TrackId);
         Assert.Equal("memory", snapshot.Track.TemplateId);
-        Assert.Equal(3, snapshot.Report.DocRev);
-        Assert.Equal(3, snapshot.Report.Blocks.Count(block => block.Kind == ReportBlockKind.Widget));
+        Assert.Equal(hasOlderTemplate ? 2 : 3, snapshot.Report.DocRev);
+        Assert.Equal(hasOlderTemplate ? 0 : 2, snapshot.Report.Blocks.Count(block => block.Kind == ReportBlockKind.Widget));
         Assert.Equal(oldReport.Blocks, snapshot.Report.Blocks.TakeLast(oldReport.Blocks.Count));
+        var projection = await host.AuthenticatedClient.GetFromJsonAsync<JsonElement>($"/api/v1/tracks/{trackId}/views");
+        Assert.True(projection.GetProperty("widgets").TryGetProperty("./widgets/entries.html", out _));
     }
 
     [Fact]
@@ -330,50 +386,50 @@ public sealed partial class MemoryIntegrationTests
         var globalLead = await kernel.OpenMcpCallerAsync(global.LeadSessionId, ct);
         var areaLead = await kernel.OpenMcpCallerAsync(area.LeadSessionId, ct);
 
-        string[] reads = ["memory_list", "memory_read", "memory_recall"];
-        Assert.Equal(reads.Append("memory_propose"), await ListToolNamesAsync(host, McpPath, lead.Token, ct));
-        Assert.Equal(reads.Concat(["memory_put", "memory_delete"]), await ListToolNamesAsync(host, McpPath, globalLead.Token, ct));
-        Assert.Equal(reads.Concat(["memory_put", "memory_delete"]), await ListToolNamesAsync(host, McpPath, areaLead.Token, ct));
-        Assert.True((await CallToolAsync(host, McpPath, lead.Token, "memory_put", Entry("ordinary"), ct)).IsError);
-        Assert.True((await CallToolAsync(host, McpPath, lead.Token, "memory_delete", new { key = "ordinary" }, ct)).IsError);
-        Assert.True((await CallToolAsync(host, McpPath, globalLead.Token, "memory_propose",
+        string[] reads = ["list", "read", "recall"];
+        Assert.Equal(reads.Append("propose"), await ListToolNamesAsync(host, McpPath, lead.Token, ct));
+        Assert.Equal(reads.Concat(["put", "delete"]), await ListToolNamesAsync(host, McpPath, globalLead.Token, ct));
+        Assert.Equal(reads.Concat(["put", "delete"]), await ListToolNamesAsync(host, McpPath, areaLead.Token, ct));
+        Assert.True((await CallToolAsync(host, McpPath, lead.Token, "put", Entry("ordinary"), ct)).IsError);
+        Assert.True((await CallToolAsync(host, McpPath, lead.Token, "delete", new { key = "ordinary" }, ct)).IsError);
+        Assert.True((await CallToolAsync(host, McpPath, globalLead.Token, "propose",
             new { scope = "global", summary = "Suggestion", details = "Details" }, ct)).IsError);
-        Assert.True((await CallToolAsync(host, McpPath, areaLead.Token, "memory_put", Entry("outside", scope: "global"), ct)).IsError);
-        Assert.True((await CallToolAsync(host, McpPath, areaLead.Token, "memory_delete", new { key = "outside", scope = "global" }, ct)).IsError);
+        Assert.True((await CallToolAsync(host, McpPath, areaLead.Token, "put", Entry("outside", scope: "global"), ct)).IsError);
+        Assert.True((await CallToolAsync(host, McpPath, areaLead.Token, "delete", new { key = "outside", scope = "global" }, ct)).IsError);
 
         using var events = kernel.EventBus.Subscribe();
-        var invalid = await CallToolAsync(host, McpPath, areaLead.Token, "memory_put", Entry("../escape"), ct);
+        var invalid = await CallToolAsync(host, McpPath, areaLead.Token, "put", Entry("../escape"), ct);
         Assert.True(invalid.IsError);
         Assert.Contains("memory_validation", invalid.Text);
-        var overflow = await CallToolAsync(host, McpPath, areaLead.Token, "memory_put", Entry("large", new string('X', 2000), pinned: true), ct);
+        var overflow = await CallToolAsync(host, McpPath, areaLead.Token, "put", Entry("large", new string('X', 2000), pinned: true), ct);
         Assert.True(overflow.IsError);
         Assert.Contains("pinnedBudget", overflow.Text);
         Assert.False(events.Reader.TryRead(out _));
 
-        await SuccessfulCallAsync(host, globalLead, "memory_put", Entry("shared", "Global reference"), ct);
+        await SuccessfulCallAsync(host, globalLead, "put", Entry("shared", "Global reference"), ct);
         var globalUpdate = await events.Reader.ReadAsync(ct);
         Assert.Null(globalUpdate.EventId);
         Assert.Equal(KernelEventKinds.MemoryUpdated, globalUpdate.Kind);
         Assert.Equal("global", globalUpdate.Payload.GetProperty("scope").GetString());
         Assert.Equal(global.TrackId, globalUpdate.Payload.GetProperty("trackId").GetString());
         Assert.Equal("shared", globalUpdate.Payload.GetProperty("key").GetString());
-        var put = await SuccessfulCallAsync(host, areaLead, "memory_put", Entry("local", "Area reference"), ct);
+        var put = await SuccessfulCallAsync(host, areaLead, "put", Entry("local", "Area reference"), ct);
         var areaUpdate = await events.Reader.ReadAsync(ct);
         Assert.Equal(userTrack.AreaId, areaUpdate.AreaId);
         Assert.Equal(area.TrackId, areaUpdate.Payload.GetProperty("trackId").GetString());
         Assert.Equal("put", areaUpdate.Payload.GetProperty("action").GetString());
 
-        var readable = await SuccessfulCallAsync(host, areaLead, "memory_read", new { refs = new[] { "global/shared", "area/local" } }, ct);
+        var readable = await SuccessfulCallAsync(host, areaLead, "read", new { refs = new[] { "global/shared", "area/local" } }, ct);
         Assert.Equal(["area/local", "global/shared"], readable.GetProperty("entries").EnumerateArray().Select(item => item.GetProperty("ref").GetString()));
-        var denied = await CallToolAsync(host, McpPath, globalLead.Token, "memory_read", new { refs = new[] { "area/local" }, areaId = userTrack.AreaId }, ct);
+        var denied = await CallToolAsync(host, McpPath, globalLead.Token, "read", new { refs = new[] { "area/local" }, areaId = userTrack.AreaId }, ct);
         Assert.True(denied.IsError);
-        var globalRead = await SuccessfulCallAsync(host, globalLead, "memory_read", new { refs = new[] { "area/local" } }, ct);
+        var globalRead = await SuccessfulCallAsync(host, globalLead, "read", new { refs = new[] { "area/local" } }, ct);
         Assert.Empty(globalRead.GetProperty("entries").EnumerateArray());
         Assert.Equal("area/local", Assert.Single(globalRead.GetProperty("notFound").EnumerateArray()).GetString());
 
         var etag = put.GetProperty("etag").GetString();
-        Assert.True((await CallToolAsync(host, McpPath, areaLead.Token, "memory_delete", new { key = "local" }, ct)).IsError);
-        await SuccessfulCallAsync(host, areaLead, "memory_delete", new { key = "local", expectedEtag = etag }, ct);
+        Assert.True((await CallToolAsync(host, McpPath, areaLead.Token, "delete", new { key = "local" }, ct)).IsError);
+        await SuccessfulCallAsync(host, areaLead, "delete", new { key = "local", expectedEtag = etag }, ct);
         var deletion = await events.Reader.ReadAsync(ct);
         Assert.Null(deletion.EventId);
         Assert.Equal(area.TrackId, deletion.Payload.GetProperty("trackId").GetString());
@@ -394,9 +450,9 @@ public sealed partial class MemoryIntegrationTests
             var worker = kernel.RuntimeCaller(workerSession.Id);
             Assert.NotNull(worker.BoundTaskId);
             Assert.Equal(reads, await ListToolNamesAsync(host, McpPath, worker.Token, ct));
-            Assert.True((await CallToolAsync(host, McpPath, worker.Token, "memory_propose",
+            Assert.True((await CallToolAsync(host, McpPath, worker.Token, "propose",
                 new { scope = "area", summary = "Suggestion", details = "Details" }, ct)).IsError);
-            await SuccessfulCallAsync(host, worker, "memory_list", new { }, ct);
+            await SuccessfulCallAsync(host, worker, "list", new { }, ct);
         }
         finally
         {
@@ -415,7 +471,7 @@ public sealed partial class MemoryIntegrationTests
         var track = (await kernel.GetTrackAggregateAsync(trackId, ct)).Track;
         var lead = await kernel.OpenMcpCallerAsync(sessionId, ct);
 
-        var proposal = await SuccessfulCallAsync(host, lead, "memory_propose",
+        var proposal = await SuccessfulCallAsync(host, lead, "propose",
             new { scope = "area", summary = "Capture a durable decision", details = "Always prefer the reviewed dataset.", suggestedPinned = true }, ct);
         var target = await kernel.GetOrEnsureMemoryTrackAsync(track.AreaId, ct);
         Assert.Equal(target.TrackId, proposal.GetProperty("trackId").GetString());
@@ -451,9 +507,9 @@ public sealed partial class MemoryIntegrationTests
 
         var empty = await SendAndReadTurnAsync(host, kernel, trackId, sessionId, "Empty memory", ct);
         Assert.Equal("Empty memory", empty.Input.Prompt);
-        var pinned = await SuccessfulCallAsync(host, areaLead, "memory_put", Entry("team", "Area pinned body", pinned: true), ct);
-        await SuccessfulCallAsync(host, areaLead, "memory_put", Entry("topic", "Workspace topic body"), ct);
-        await SuccessfulCallAsync(host, globalLead, "memory_put", Entry("shared", "Catalogued kestrels are reviewed annually."), ct);
+        var pinned = await SuccessfulCallAsync(host, areaLead, "put", Entry("team", "Area pinned body", pinned: true), ct);
+        await SuccessfulCallAsync(host, areaLead, "put", Entry("topic", "Workspace topic body"), ct);
+        await SuccessfulCallAsync(host, globalLead, "put", Entry("shared", "Catalogued kestrels are reviewed annually."), ct);
 
         var first = await SendAndReadTurnAsync(host, kernel, trackId, sessionId, "First with entries", ct);
         Assert.StartsWith("<memory_context>\n", first.Input.Prompt, StringComparison.Ordinal);
@@ -464,7 +520,7 @@ public sealed partial class MemoryIntegrationTests
         var unchanged = await SendAndReadTurnAsync(host, kernel, trackId, sessionId, "Unchanged", ct);
         Assert.Equal("Unchanged", unchanged.Input.Prompt);
 
-        await SuccessfulCallAsync(host, areaLead, "memory_put", new
+        await SuccessfulCallAsync(host, areaLead, "put", new
         {
             key = "team", title = "team", summary = "team summary", body = "Revised area pinned body", pinned = true,
             expectedEtag = pinned.GetProperty("etag").GetString()
@@ -681,12 +737,12 @@ public sealed partial class MemoryIntegrationTests
         var (trackId, sessionId) = await host.CreateTrackAsync();
         var planner = await kernel.GetOrEnsureMemoryTrackAsync(null, ct);
         var plannerLead = await kernel.OpenMcpCallerAsync(planner.LeadSessionId, ct);
-        var saved = await SuccessfulCallAsync(host, plannerLead, "memory_put",
+        var saved = await SuccessfulCallAsync(host, plannerLead, "put",
             Entry("last", "One remaining memory entry.", pinned: true), ct);
 
         var loaded = await SendAndReadTurnAsync(host, kernel, trackId, sessionId, "Load memory", ct);
         Assert.Contains("One remaining memory entry.", loaded.Input.Prompt);
-        await SuccessfulCallAsync(host, plannerLead, "memory_delete",
+        await SuccessfulCallAsync(host, plannerLead, "delete",
             new { key = "last", expectedEtag = saved.GetProperty("etag").GetString() }, ct);
         var cleared = await SendAndReadTurnAsync(host, kernel, trackId, sessionId, "After deletion", ct);
         Assert.StartsWith(ClearedContext, cleared.Input.Prompt, StringComparison.Ordinal);
@@ -884,13 +940,13 @@ public sealed partial class MemoryIntegrationTests
                 areaPlanner = await EnsureAsync(host, $"/areas/{areaId}/track", ct);
                 var globalLead = await kernel.OpenMcpCallerAsync(globalPlanner.LeadSessionId, ct);
                 var areaLead = await kernel.OpenMcpCallerAsync(areaPlanner.LeadSessionId, ct);
-                await SuccessfulCallAsync(host, globalLead, "memory_put", Entry("global-rule", "# Global rule"), ct);
-                await SuccessfulCallAsync(host, areaLead, "memory_put", Entry("area-rule", "# Area rule\n\n<!-- preserve me -->", pinned: true), ct);
+                await SuccessfulCallAsync(host, globalLead, "put", Entry("global-rule", "# Global rule"), ct);
+                await SuccessfulCallAsync(host, areaLead, "put", Entry("area-rule", "# Area rule\n\n<!-- preserve me -->", pinned: true), ct);
 
                 var sender = await kernel.CreateTrackAsync(new(areaId, Title: "Proposal source"), ct);
                 var caller = await kernel.OpenMcpCallerAsync(sender.Track.LeadSessionId!, ct);
                 kernel.DispatchAdmission.SetDraining(true);
-                await SuccessfulCallAsync(host, caller, "memory_propose",
+                await SuccessfulCallAsync(host, caller, "propose",
                     new { scope = "area", summary = "Pending before restart", details = "Recover this durable proposal." }, ct);
                 var wakes = host.Services.GetRequiredService<ITrackStore>().TrackWakes;
                 Assert.Contains(areaPlanner.TrackId, await wakes.ListPendingTracksAsync(ct));

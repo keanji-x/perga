@@ -5,6 +5,7 @@ namespace Perga.Kernel.Templates;
 internal static class MemoryTemplate
 {
     internal const string Id = "memory";
+    internal const string ReservedMessage = "The built-in 'memory' template is reserved for Memory Planner Tracks.";
 
     private static readonly Lazy<string> Source = new(() =>
     {

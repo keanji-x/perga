@@ -6,6 +6,36 @@ namespace Perga.MemoryKit.Tests;
 public sealed class MemoryMarkdownAndWritesTests
 {
     [Fact]
+    public async Task Entry_limit_allows_updates_and_deletes_at_and_above_capacity()
+    {
+        using var disk = new MemoryTestDirectory();
+        for (var i = 0; i < 1_998; i++)
+            disk.WriteHandwritten(Global, $"imported-{i}.md", "A note added outside the engine.");
+        var first = await disk.Engine.PutAsync(Global, Request("first"), Ct);
+        await disk.Engine.PutAsync(Global, Request("second"), Ct);
+        await disk.Engine.PutAsync(Area, Request("independent"), Ct);
+
+        var added = Request("new");
+        var full = await Assert.ThrowsAsync<MemoryValidationException>(() => disk.Engine.PutAsync(Global, added, Ct));
+        Assert.Equal("This memory scope has reached the 2000-entry limit. Merge or delete existing entries before adding new ones.", full.Message);
+        var updated = await disk.Engine.PutAsync(Global, Request("first", "Updated at capacity.")
+            with { ExpectedEtag = first.Meta.Etag }, Ct);
+        Assert.NotEqual(first.Meta.Etag, updated.Meta.Etag);
+
+        disk.WriteHandwritten(Global, "manual.md", "A note added outside the engine.");
+        await Assert.ThrowsAsync<MemoryValidationException>(() => disk.Engine.PutAsync(Global, added, Ct));
+        updated = await disk.Engine.PutAsync(Global, Request("first", "Updated above capacity.")
+            with { ExpectedEtag = updated.Meta.Etag }, Ct);
+        Assert.True((await disk.Engine.DeleteAsync(Global, "first", updated.Meta.Etag, Ct)).Deleted);
+        await Assert.ThrowsAsync<MemoryValidationException>(() => disk.Engine.PutAsync(Global, added, Ct));
+
+        var manual = Assert.Single(await disk.Engine.ListAsync(GlobalOnly, Ct), entry => entry.Ref.Key == "manual");
+        Assert.True((await disk.Engine.DeleteAsync(Global, "manual", manual.Etag, Ct)).Deleted);
+        var created = await disk.Engine.PutAsync(Global, added, Ct);
+        Assert.Equal("global/new", created.Meta.Ref.ToString());
+    }
+
+    [Fact]
     public async Task FallbackSummarySkipsLeadingHtmlComments()
     {
         using var disk = new MemoryTestDirectory();

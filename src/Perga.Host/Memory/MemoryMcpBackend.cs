@@ -13,12 +13,12 @@ public sealed class MemoryMcpBackend(
     IPergaKernel kernel, ITrackReadStore tracks, IMemoryTrackStore memoryTracks, IMemoryEngine engine, TimeProvider time)
     : IMcpToolBackend
 {
-    private const string List = "memory_list";
-    private const string Read = "memory_read";
-    private const string Recall = "memory_recall";
-    private const string Put = "memory_put";
-    private const string Delete = "memory_delete";
-    private const string Propose = "memory_propose";
+    private const string List = "list";
+    private const string Read = "read";
+    private const string Recall = "recall";
+    private const string Put = "put";
+    private const string Delete = "delete";
+    private const string Propose = "propose";
     private const int MaxBytes = 64 * 1024;
 
     private static readonly IReadOnlyList<McpToolWireDescriptor> Descriptors =

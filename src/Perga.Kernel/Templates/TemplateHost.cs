@@ -54,8 +54,7 @@ public class TemplateHost : ITemplateCatalog
             return null;
         }
 
-        return _policiesById.TryGetValue(templateId, out var policy) ? policy
-            : templateId == MemoryTemplate.Id ? MemoryTemplate.Resolve(this) : null;
+        return _policiesById.TryGetValue(templateId, out var policy) ? policy : null;
     }
 
     public CompiledPolicy GetRequiredPolicy(string templateId)
@@ -90,6 +89,8 @@ public class TemplateHost : ITemplateCatalog
 
     private CompiledPolicy Register(CompiledPolicy compiled)
     {
+        if (compiled.TemplateId == MemoryTemplate.Id)
+            throw KernelException.Forbidden(MemoryTemplate.ReservedMessage);
         _policiesById[compiled.TemplateId] = compiled;
         _snapshotCacheByHash[ComputeSha256Hex(compiled.JsSource)] = compiled;
         return compiled;
@@ -105,7 +106,8 @@ public class TemplateHost : ITemplateCatalog
             return 0;
         }
 
-        var pending = sources.Select(_policyVm.Compile).ToList();
+        // An older installation may still have the former public Memory package on disk.
+        var pending = sources.Select(_policyVm.Compile).Where(policy => policy.TemplateId != MemoryTemplate.Id).ToList();
         var count = 0;
         while (pending.Count > 0)
         {

@@ -1,12 +1,12 @@
 import '../../styles/entry.css';
 import { cleanup } from '@testing-library/react';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { commands, page, userEvent } from 'vitest/browser';
 
-import entriesHtml from '../../../../../templates/memory/widgets/entries.html?raw';
+import entriesHtml from '../../../../../src/Perga.Kernel/Templates/Memory/widgets/entries.html?raw';
 import { sessionItem, sessionPage, sessionReply } from './conversation-session-data.ts';
 import { renderDailyFixture } from './daily-planner-fixture.tsx';
-import { fixtureSession, fixtureSnapshot, fixtureTrack, fixtureWidgetReport } from './session-contract-fixture.ts';
+import { fixtureReport, fixtureSession, fixtureSnapshot, fixtureTrack, fixtureWidgetReport } from './session-contract-fixture.ts';
 
 afterEach(async () => { cleanup(); await page.viewport(1280, 800); });
 
@@ -14,21 +14,29 @@ declare module 'vitest/browser' {
   interface BrowserCommands {
     readMemoryWidget(view: 'pinned' | 'topics', filter?: string): Promise<{
       entries: number; expanded: number; headings: string[]; refs: string[]; strong?: string;
-      body?: string; sources?: string; links: { href: string; target: string; rel: string }[];
+      body?: string; sources: { text: string; trackId: string | null }[]; dates: string[]; summaries: string[];
+      table: string[][]; quote?: string; links: { href: string; target: string; rel: string }[];
       injectedElements: number; scrollable: boolean;
     }>;
+    clickMemoryWidgetLink(link: string): Promise<void>;
+    clickMemoryWidgetSource(trackId: string): Promise<void>;
   }
 }
 
 const longBody = 'Long review paragraph. '.repeat(150) + 'Full body ends here.';
+const provenanceTrack = 'trk_review_7b1ed2f1cbec';
+const updatedAtMs = Date.UTC(2026, 10, 24, 0, 30);
 
 function renderMemory(initial = '/area/project-area/memory') {
   const report = fixtureWidgetReport([
-    { title: 'Pinned', use: './widgets/entries.html', view: 'pinned' },
-    { title: 'Notes / Topics', use: './widgets/entries.html', view: 'topics' },
-    { title: 'Maintenance Flow', use: 'builtin:flow', view: 'flow' },
+    { title: 'Always Pinned', use: './widgets/entries.html', view: 'pinned' },
+    { title: 'Notes & Topics', use: './widgets/entries.html', view: 'topics' },
   ]);
   return renderDailyFixture({ initial, reply: request => {
+    if (request.path === `/api/v1/tracks/${provenanceTrack}`) {
+      return sessionReply(fixtureSnapshot(fixtureTrack(provenanceTrack, { areaId: 'project-area', title: 'Original review' }), [],
+        fixtureReport('# Review evidence\n\nOriginal review notes.')));
+    }
     const global = request.path.includes('/global/') || request.path.includes('trk_global') || request.path.includes('ses_global');
     const scope = global ? 'global' : 'area';
     const areaId = global ? null : 'project-area';
@@ -48,17 +56,19 @@ function renderMemory(initial = '/area/project-area/memory') {
       }), [lead], report));
     }
     if (request.path === `/api/v1/tracks/${trackId}/views`) {
-      const meta = { summary: 'Separate summary', tags: ['review'], sources: ['Review handbook'],
-        updatedAtMs: Date.UTC(2026, 10, 24), repeatedSummary: false };
+      const meta = { summary: 'Separate summary', tags: ['review'], sources: ['Review handbook'], updatedAtMs };
       return sessionReply({ templateId: 'memory', views: {
         pinned: { kind: 'pinned', entries: [
           { ...meta, ref: `${scope}/releases`, title: 'Release checklist', body: 'Run **smoke tests** before tagging.' },
-          { ...meta, ref: `${scope}/runbook`, title: 'Runbook', body: 'Follow all steps in the runbook.' },
+          { ...meta, ref: `${scope}/runbook`, title: 'Runbook', summary: 'Follow all steps in the runbook.',
+            body: 'Follow all steps in the runbook.' },
         ] },
         topics: { kind: 'topics', entries: Array.from({ length: 101 }, (_, index) => ({
           ...meta, ref: `${scope}/review-${index}`, title: `Review cadence ${index}`,
+          sources: index === 100 ? [...meta.sources, provenanceTrack] : meta.sources,
           body: index === 100
-            ? longBody + '\n\n<img src=x> [unsafe](javascript:alert(1)) [handbook](https://example.com/review)'
+            ? longBody + '\n\n<img src=x> [unsafe](javascript:alert(1)) [handbook](https://example.com/review)' +
+              '\n\n| Stage | Status |\n|---|---|\n| Review | **Ready** |\n\n> Review the checklist before tagging.'
             : 'Use the **review checklist**.',
         })) },
       }, widgets: { './widgets/entries.html': entriesHtml }, flow: { rev: 0, nodes: [], archived: [] } });
@@ -86,24 +96,45 @@ it.each([
   const protocol = page.getByRole('region', { name: 'Template protocol' });
   await expect.element(protocol.getByText(budget)).toBeVisible();
   const report = page.getByRole('region', { name: 'Track report' });
+  const date = new Intl.DateTimeFormat('sv-SE', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(updatedAtMs);
   expect(await commands.readMemoryWidget('pinned')).toMatchObject({
     entries: 2, expanded: 2, headings: ['Release checklist', 'Runbook'],
     refs: [reference, reference.replace('/releases', '/runbook')], strong: 'smoke tests',
+    dates: [date, date], summaries: ['Separate summary'],
   });
   expect(await commands.readMemoryWidget('topics')).toMatchObject({ entries: 101, expanded: 0, scrollable: true });
   await expect.poll(() => report.getByTitle('topics').query()?.getAttribute('style')).toContain('block-size: 2400px');
   const opened = await commands.readMemoryWidget('topics', 'Review cadence 100');
   expect(opened).toMatchObject({
     entries: 101, expanded: 1, headings: ['Review cadence 100'],
-    sources: 'Sources · Review handbook', injectedElements: 0,
+    sources: [{ text: 'Review handbook', trackId: null }, { text: 'trk_review_7…cbec', trackId: provenanceTrack }],
+    injectedElements: 0, table: [['Stage', 'Status'], ['Review', 'Ready']], quote: 'Review the checklist before tagging.',
     links: [{ href: 'https://example.com/review', target: '_blank', rel: 'noopener noreferrer' }],
   });
   expect(opened.body).toContain(longBody);
   expect(opened.body).toContain('<img src=x>');
   expect(report.getByRole('alert').query()).toBeNull();
-  await expect.element(report.getByRole('heading', { name: 'Maintenance Flow' })).toBeVisible();
+  await expect.element(report.getByRole('heading', { name: 'Always Pinned' })).toBeVisible();
+  await expect.element(report.getByRole('heading', { name: 'Notes & Topics' })).toBeVisible();
+  expect(report.getByRole('heading', { name: 'Maintenance Flow' }).query()).toBeNull();
   expect(report.getByRole('textbox').query()).toBeNull();
   expect(report.getByRole('button', { name: /edit|delete/i }).query()).toBeNull();
+});
+
+it('opens an external handbook and navigates to the original Track from a topic', async () => {
+  await page.viewport(1440, 900);
+  const { router } = renderMemory();
+  const open = vi.spyOn(window, 'open').mockReturnValue(null);
+  try {
+    await commands.readMemoryWidget('topics', 'Review cadence 100');
+    await commands.clickMemoryWidgetLink('handbook');
+    await expect.poll(() => open.mock.calls).toEqual([['https://example.com/review', '_blank', 'noopener,noreferrer']]);
+    await commands.clickMemoryWidgetSource(provenanceTrack);
+    await expect.poll(() => router.state.location.pathname).toBe(`/track/${provenanceTrack}`);
+    await expect.element(page.getByRole('heading', { name: 'Review evidence' })).toBeVisible();
+  } finally {
+    open.mockRestore();
+  }
 });
 
 it('uses the right-side Planner panel with Area and Global Memory mentions', async () => {
@@ -131,6 +162,6 @@ it('opens a native mobile outline anchor on the Area Memory URL', async () => {
   await page.viewport(390, 844);
   const { router } = renderMemory('/area/project-area/memory?panel=outline');
   await expect.element(page.getByRole('heading', { name: 'Outline', exact: true })).toBeVisible();
-  await page.getByRole('button', { name: /Maintenance Flow/ }).click();
-  await expect.poll(() => router.state.location.href).toBe('/area/project-area/memory#flow-heading-h1');
+  await page.getByRole('button', { name: /Notes & Topics/ }).click();
+  await expect.poll(() => router.state.location.href).toBe('/area/project-area/memory#topics-heading-h1');
 });

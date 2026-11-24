@@ -556,6 +556,8 @@ public sealed partial class TrackActor
                 throw KernelException.InvalidArgument("Specify exactly one non-empty 'templateId', 'source', or 'path'.");
             if (inputs is { ValueKind: not JsonValueKind.Object })
                 throw KernelException.InvalidArgument("'inputs' must be an object.");
+            if (templateId == MemoryTemplate.Id)
+                throw KernelException.Forbidden(MemoryTemplate.ReservedMessage);
 
             CompiledPolicy policy;
             JsonElement nextInputs;
@@ -565,6 +567,8 @@ public sealed partial class TrackActor
                     policy = _templateCatalog.GetRequiredPolicy(templateId);
                 else
                     policy = _templateCatalog.GetOrCompileSnapshot(workspaceSource ?? source!);
+                if (policy.TemplateId == MemoryTemplate.Id)
+                    throw KernelException.Forbidden(MemoryTemplate.ReservedMessage);
                 var preserveInputs = inputs is null && !resetData && _track.TemplateId is not null &&
                     string.Equals(_track.TemplateId, policy.TemplateId, StringComparison.Ordinal);
                 nextInputs = preserveInputs

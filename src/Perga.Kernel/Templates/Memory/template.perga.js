@@ -13,7 +13,7 @@ export default defineTemplate({
   },
   before(action) {
     return action.type === "report.commit"
-      ? Deny("The Memory report is generated from Markdown entries. Curate entries with memory_put and memory_delete.")
+      ? Deny("The Memory report is generated from Markdown entries. Curate entries with perga_memory put and delete.")
       : Allow();
   },
 });
