@@ -1,11 +1,11 @@
-import type { AgentProvider, PlannerAttachment } from '../../../../core/domain/presentation-types.ts';
+import type { AgentProvider } from '../../../../core/domain/presentation-types.ts';
 import type { PlannerPermissionMode } from '../../../../core/domain/planner-permission-mode.ts';
-import type { Conversation, CreatedConversation, SideConversation, ConversationKind, ConversationState, ModelSelection, PendingQueueEntry, PlannerRunTokenUsage, TranscriptEntry } from '../../../../core/domain/conversation.ts';
+import type { Conversation, ConversationAttachment, CreatedConversation, SideConversation, ConversationKind, ConversationState, ModelSelection, PendingQueueEntry, PlannerRunTokenUsage, TranscriptEntry } from '../../../../core/domain/conversation.ts';
 import type { ModelCatalog } from '../../../../core/domain/conversation-models.ts';
 import type { PlannerQueueWriteOutcome } from '../../../../core/domain/conversation-commands.ts';
 import type { FailedSendOp, PendingQueueSend, QueueDisplayAccounting } from '../../../../core/domain/conversation-outbox.ts';
 import type { ConversationStopFeedback } from '../../../../core/domain/conversation-stop.ts';
-import type { UploadAttachment } from '../../features/planner/attachments.tsx';
+import type { MultipartFile } from '../../../../core/api/multipart.ts';
 import type { PermissionModeOptionDto } from '../../../../core/api/perga-v1.ts';
 
 export type ConversationStore = Readonly<{
@@ -70,15 +70,12 @@ export type ConversationStore = Readonly<{
   discardFailedSend: (key: string) => void;
   /** Dismiss: the failed send leaves the outbox and nothing of it comes back, its composer images included. */
   dismissFailedSend: (key: string) => void;
-  /**
-   * What became of the send. `attachments` are ids already uploaded; naming one here is what makes it permanent.
-   * `fromComposer`: they are the composer's own, so a delivery clears them (and the upload refusal) there.
-   */
-  send: (conversationId: string, text: string, attachments: readonly PlannerAttachment[], fromComposer: boolean,
+  /** Send image bytes with the message. Composer images transfer to the outbox on admission. */
+  send: (conversationId: string, text: string, attachments: readonly ConversationAttachment[], fromComposer: boolean,
     idempotencyKey?: string) => Promise<void> | null;
   /** How full this conversation's context is; `null` when the harness has never said. */
   contextUsage: PlannerRunTokenUsage | null;
-  uploadAttachment: UploadAttachment;
+  attachmentsSupported: boolean;
   interrupt: () => void;
   /** Declared by the bound Planner backend; false until the run read answers. */
   manualCompactSupported: boolean;
@@ -135,5 +132,5 @@ export type PlannerConversationScope = Readonly<{
 /** First-message creation and authoritative session/input receipt replay. */
 export type ConversationCreationSource = Readonly<{
   create: (text: string, idempotencyKey: string, provider: AgentProvider, selection: ModelSelection, side: SideConversation | undefined,
-    answered: (result: CreatedConversation) => void, permissionMode?: string | null) => Promise<CreatedConversation>;
+    answered: (result: CreatedConversation) => void, permissionMode?: string | null, attachments?: readonly MultipartFile[]) => Promise<CreatedConversation>;
 }>;

@@ -32,12 +32,8 @@ export function createFetchTransport(): ApiTransportPort {
           credentials: request.credentials,
           ...(request.redirect === undefined ? {} : { redirect: request.redirect }),
           ...(request.headers === undefined ? {} : { headers: request.headers }),
-          /* A `Uint8Array` body is the bytes themselves: `JSON.stringify` of a typed array is `{"0":137,…}`,
-           * which no type would catch. `content-type` comes from the operation's own headers. */
           ...(request.body === undefined || request.method === 'GET' ? {} : {
-            body: request.body instanceof Uint8Array
-              ? (request.body as unknown as BodyInit)
-              : JSON.stringify(request.body),
+            body: request.body instanceof FormData ? request.body : JSON.stringify(request.body),
           }),
           signal: controller.signal,
         });

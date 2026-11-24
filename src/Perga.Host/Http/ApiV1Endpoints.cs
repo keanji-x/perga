@@ -282,6 +282,19 @@ public static class ApiV1Endpoints
             return TypedResults.Json(task, PergaJsonDefaults.ApiOptions);
         }).WithMetadata(new JsonRequestContract(typeof(CancelTaskHttpBody), IsOptional: true));
 
+        v1.MapGet("/tracks/{trackId}/media/{fileName}", async (string trackId, string fileName, HttpContext ctx,
+            ITrackReadStore store, CancellationToken ct) =>
+        {
+            var media = await store.OpenTrackMediaAsync(trackId, fileName, ct).ConfigureAwait(false)
+                ?? throw KernelException.NotFound("Image attachment not found.");
+            ctx.Response.Headers.CacheControl = "private, max-age=31536000, immutable";
+            ctx.Response.Headers.XContentTypeOptions = "nosniff";
+            ctx.Response.Headers.ContentSecurityPolicy = "sandbox";
+            return TypedResults.File(media.Content, media.ContentType);
+        }).WithMetadata(new BinaryResponse(ImageAttachmentContract.MediaTypes),
+            new ResponseHeader(200, "Cache-Control"), new ResponseHeader(200, "X-Content-Type-Options"),
+            new ResponseHeader(200, "Content-Security-Policy")).Produces<ApiErrorResponse>(404);
+
         // ------------------- Unified sessions -------------------
         v1.MapGet("/tracks/{trackId}/sessions", async (string trackId, bool? includeArchived, string? parentSessionId,
             HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
@@ -291,20 +304,37 @@ public static class ApiV1Endpoints
         v1.MapPost("/tracks/{trackId}/sessions", async (string trackId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
         {
             var key = RequiredMessageKey(ctx);
-            var request = await ReadOptionalJsonBodyAsync(ctx, () => new CreateSessionRequest(), ct, SessionJsonOptions).ConfigureAwait(false);
+            CreateSessionRequest request;
+            if (MultipartImageInput.IsMultipart(ctx.Request))
+            {
+                var (payload, images) = await MultipartImageInput.ReadAsync<CreateSessionRequest>(ctx, SessionJsonOptions, ct).ConfigureAwait(false);
+                request = payload with { Images = images };
+            }
+            else
+                request = await ReadOptionalJsonBodyAsync(ctx, () => new CreateSessionRequest(), ct, SessionJsonOptions).ConfigureAwait(false);
             var (receipt, replay) = await kernel.CreateSessionAsync(trackId, request, key, AuthenticatedSession.Human(ctx), ct).ConfigureAwait(false);
             return TypedResults.Json(receipt, PergaJsonDefaults.ApiOptions,
                 statusCode: replay ? StatusCodes.Status200OK : StatusCodes.Status201Created);
-        }).WithMetadata(new JsonRequestContract(typeof(CreateSessionRequest), IsOptional: true)).WithMetadata(new SuccessStatus(201, ReplayedAsOk: true)).WithMetadata(new StrictRequest()).WithMetadata(new RequestHeader("Idempotency-Key", true));
+        }).WithMetadata(new JsonRequestContract(typeof(CreateSessionRequest), IsOptional: true),
+            new MultipartImageRequest("prompt may be omitted or empty for image-only input.")).WithMetadata(new SuccessStatus(201, ReplayedAsOk: true)).WithMetadata(new StrictRequest()).WithMetadata(new RequestHeader("Idempotency-Key", true));
 
         v1.MapGet("/sessions/{sessionId}/items", async (string sessionId, long? afterId, long? beforeId, int? limit,
             bool? latest, string? activityTurnId, long? afterSequence, int? waitMs, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
         {
             if (limit is < 1 or > 100 || waitMs is < 0 or > 10000 || afterId is < 0 || beforeId is < 0 || afterSequence is < 0)
                 throw KernelException.InvalidArgument("Invalid session read range.");
-            return TypedResults.Json(await kernel.GetSessionItemsAsync(sessionId,
+            var page = await kernel.GetSessionItemsAsync(sessionId,
                 new(afterId ?? 0, beforeId, limit ?? 20, latest ?? false, activityTurnId, afterSequence, waitMs ?? 0),
-                AuthenticatedSession.Human(ctx), ct).ConfigureAwait(false), PergaJsonDefaults.ApiOptions);
+                AuthenticatedSession.Human(ctx), ct).ConfigureAwait(false);
+            var items = page.Items.Select(item =>
+            {
+                if (item.OwnerRequestKey is not { } requestKey || item.Payload.ValueKind != JsonValueKind.Object)
+                    return item;
+                var payload = item.Payload.Deserialize<Dictionary<string, JsonElement>>()!;
+                payload["requestKey"] = JsonSerializer.SerializeToElement(requestKey);
+                return item with { Payload = JsonSerializer.SerializeToElement(payload) };
+            }).ToArray();
+            return TypedResults.Json(page with { Items = items }, PergaJsonDefaults.ApiOptions);
         });
 
         v1.MapPatch("/sessions/{sessionId}", async (string sessionId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
@@ -316,11 +346,21 @@ public static class ApiV1Endpoints
 
         v1.MapPost("/sessions/{sessionId}/messages", async (string sessionId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
         {
-            var request = await ReadRequiredJsonBodyAsync<SendSessionMessageRequest>(ctx, ct, SessionJsonOptions).ConfigureAwait(false);
-            request = request with { RequestKey = request.Content is not null ? RequiredMessageKey(ctx) : null };
+            SendSessionMessageRequest request;
+            if (MultipartImageInput.IsMultipart(ctx.Request))
+            {
+                var (payload, images) = await MultipartImageInput.ReadAsync<SendSessionMessageRequest>(ctx, SessionJsonOptions, ct).ConfigureAwait(false);
+                request = payload with { Images = images, RequestKey = RequiredMessageKey(ctx) };
+            }
+            else
+            {
+                request = await ReadRequiredJsonBodyAsync<SendSessionMessageRequest>(ctx, ct, SessionJsonOptions).ConfigureAwait(false);
+                request = request with { RequestKey = request.Content is not null ? RequiredMessageKey(ctx) : null };
+            }
             return TypedResults.Json(await kernel.SendSessionMessageAsync(sessionId, request, AuthenticatedSession.Human(ctx), ct).ConfigureAwait(false),
                 PergaJsonDefaults.ApiOptions);
-        }).WithMetadata(new JsonRequestContract(typeof(SendSessionMessageRequest), IsOptional: false)).WithMetadata(new StrictRequest()).WithMetadata(new RequestHeader("Idempotency-Key", false));
+        }).WithMetadata(new JsonRequestContract(typeof(SendSessionMessageRequest), IsOptional: false),
+            new MultipartImageRequest("content may be omitted or empty for image-only input. Do not include messageId. Idempotency-Key is required.")).WithMetadata(new StrictRequest()).WithMetadata(new RequestHeader("Idempotency-Key", false));
 
         v1.MapDelete("/sessions/{sessionId}/messages/{messageId}", async (string sessionId, string messageId,
             HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>

@@ -13,9 +13,11 @@ public sealed partial class TrackActor
         CreateSessionRequest request, string key, CancellationToken ct, InteropPrincipal? principal = null)
     {
         ValidateRequestKey(key);
+        var images = ImageAttachmentPolicy.Validate(request.Images);
+        if (images.Count > 0) request = request with { Prompt = request.Prompt ?? "" };
         if (request.NotifyParent is not (null or "none" or "turn_end"))
             throw KernelException.InvalidArgument("notifyParent must be 'none' or 'turn_end'.");
-        if (request.Prompt is { } prompt && string.IsNullOrWhiteSpace(prompt))
+        if (images.Count == 0 && request.Prompt is { } prompt && string.IsNullOrWhiteSpace(prompt))
             throw KernelException.InvalidArgument("First message cannot be empty.");
         if (request.SourceExcerpt is not null && (request.SourceSessionId is null || request.Prompt is null))
             throw KernelException.InvalidArgument("sourceExcerpt requires sourceSessionId and a first message.");
@@ -24,6 +26,8 @@ public sealed partial class TrackActor
         var receiptIdentity = JsonSerializer.SerializeToNode(request)!.AsObject();
         receiptIdentity["Task"] = null;
         receiptIdentity["Role"] = null;
+        if (images.Count > 0)
+            receiptIdentity["Attachments"] = JsonSerializer.SerializeToNode(images.Select(image => image.Attachment.Id));
         var hash = RequestIdentity.Hash(receiptIdentity);
         var intent = new SessionCreateIntent(TrackId, key, hash,
             principal is InteropPrincipal.Session identity ? identity.SessionId : InstallationAuthor);
@@ -61,8 +65,15 @@ public sealed partial class TrackActor
                 SessionInputRequest? first = null;
                 if (request.Prompt is { } content)
                 {
-                    var firstHash = RequestIdentity.Hash(new { version = 4, Content = content, Mode = "default", TurnId = (string?)null, ExpectedEpoch = (int?)null });
-                    first = new(key, firstHash, content, intent.AuthorId, request.SourceExcerpt);
+                    var firstHash = HashMessage(content, "default", null, null, images);
+                    if (images.Count > 0)
+                    {
+                        RequireSessionWritableCore(session);
+                        var providerImages = providers.FirstOrDefault(status =>
+                            SessionLaunchValidator.NormalizeProvider(status.Provider) == session.Provider)?.SupportsImages;
+                        RequireImagesSupported(providerImages ?? ReadAttachmentSupportCore(session));
+                    }
+                    first = new(key, firstHash, content, intent.AuthorId, request.SourceExcerpt) { MediaWrites = images };
                     session = session with { Status = "queued" };
                 }
 
@@ -248,7 +259,8 @@ public sealed partial class TrackActor
         if (_store.SessionMessages is null) return ([], []);
         var messages = await Messages.ListQueueAsync(sessionId, ct).ConfigureAwait(false);
         var queue = messages.Select(message => new QueuedSessionMessageDto(message.Id, message.Content, message.CreatedAtMs,
-            message.Delivery switch { "dispatching" => "steering", "unknown" => "unconfirmed", _ => "waiting" })).ToArray();
+            message.Delivery switch { "dispatching" => "steering", "unknown" => "unconfirmed", _ => "waiting" },
+            message.Attachments.Count == 0 ? null : message.Attachments.Select(image => image.ToDto(TrackId)).ToArray())).ToArray();
         return (queue, await Messages.ListHandoffsAsync(sessionId, ct).ConfigureAwait(false));
     }
 

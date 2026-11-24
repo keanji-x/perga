@@ -61,6 +61,8 @@ public sealed record TaskSettlementResult(bool QueueChanged, AgentSessionDto? Se
 public interface ITrackReadStore
 {
     string DatabaseId => string.Empty;
+    Task<TrackMedia?> OpenTrackMediaAsync(string trackId, string fileName, CancellationToken ct) =>
+        Task.FromResult<TrackMedia?>(null);
 
     Task<IReadOnlyList<AreaDto>> ListAreasAsync(CancellationToken ct, bool includeSystem = false);
     Task<AreaDto?> GetAreaAsync(string areaId, CancellationToken ct);

@@ -140,12 +140,13 @@ export function createConversationDraftActions({ registry, draft, creating, sour
         if (recheck === 'new-conversation') attempt = rekeyDraft(attempt, mintIdempotencyKey());
         if (refuseOfflineDraft(attempt, text, answers)) return;
         previouslySubmitted = attempt.submitted;
-        const submitted = attempt.submitted ?? Object.freeze({ text, atMs: Date.now() });
+        const submitted = attempt.submitted ?? Object.freeze({ text, atMs: Date.now(), ...(attempt.attachments?.length ? { attachments: attempt.attachments } : {}) });
         markDraftSent(attempt, submitted);
         attempt = { ...attempt, text, submitted };
-        await create(submitted.text, attempt.key, attempt.provider, attempt.model, attempt.side, (result) => {
-          adopt(attempt, result);
-        }, attempt.permissionMode);
+        const files = submitted.attachments?.flatMap(image => image.file === undefined ? [] : [image.file]);
+        const answered = (result: CreatedConversation) => adopt(attempt, result);
+        if (files?.length) await create(submitted.text, attempt.key, attempt.provider, attempt.model, attempt.side, answered, attempt.permissionMode, files);
+        else await create(submitted.text, attempt.key, attempt.provider, attempt.model, attempt.side, answered, attempt.permissionMode);
       } catch (error: unknown) {
         if (error instanceof NotSentError) {
           // Marking a request optimistically must not invent dispatch when the
@@ -153,7 +154,7 @@ export function createConversationDraftActions({ registry, draft, creating, sour
           registry.editDraft(attempt, (current) => ({ ...current, submitted: previouslySubmitted }));
           amendDraft(attempt, { error: notSentText(previouslySubmitted), remedy: 'retry' });
         } else {
-          attempt = handleCreateFailure(error, attempt);
+          attempt = handleCreateFailure(error, attempt, previouslySubmitted);
         }
       } finally {
         amendDraft(attempt, { creating: false });
@@ -166,7 +167,7 @@ export function createConversationDraftActions({ registry, draft, creating, sour
     /* The server refuses `text.trim().is_empty()` but counts `chars()` on the
            untrimmed text, in Unicode scalar values: so the blank check trims, the
            length check does not, and `Array.from` counts code points. */
-    if (text.trim() === '') return false;
+    if (text.trim() === '' && !(draft.attachments?.length)) return false;
     if (Array.from(text).length > CONVERSATION_TEXT_MAX) {
       /* Shown back, but never recorded as sent: no request left the browser, so
          the key is untouched and the next press is not "the text changed". */
@@ -190,6 +191,7 @@ export function createConversationDraftActions({ registry, draft, creating, sour
   function handleCreateFailure(
     error: unknown,
     attempt: ConversationDraft,
+    previouslySubmitted: SubmittedConversationInput | null,
   ): ConversationDraft {
     const failure = conversationCreateFailure(error instanceof ApiError ? error.failure : null);
     const message = failure.message;
@@ -207,7 +209,9 @@ export function createConversationDraftActions({ registry, draft, creating, sour
         return attempt;
       case 'blocked':
         /* Nothing committed and the key is unspent, so both it and the words are kept. */
-        amendDraft(attempt, { error: message, remedy: 'retry' });
+        if (attempt.attachments?.length && previouslySubmitted === null) {
+          withDraft(attempt, current => ({ ...current, submitted: null, error: message, remedy: 'retry' }));
+        } else amendDraft(attempt, { error: message, remedy: 'retry' });
         return attempt;
       case 'exists':
       case 'retry':

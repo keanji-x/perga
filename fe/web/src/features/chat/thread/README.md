@@ -59,7 +59,7 @@ or unmounting cancels the pending frames; visit identity rejects late callbacks.
 
 The app gates read acknowledgements on this presentation boundary plus its existing
 history/error checks, so readiness alone cannot acknowledge an unmounted transcript.
-Sends, stops, drafts, uploads and query/outbox reconciliation retain their owners.
+The conversation owner retains draft images and their previews through query and outbox reconciliation.
 The app keeps `/side` recognized while presentation is pending, but its command
 returns false until the source is mounted, preserving the draft. Removing the
 handler would incorrectly turn the command into an ordinary sent message.

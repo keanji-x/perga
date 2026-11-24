@@ -1,13 +1,12 @@
 import { z } from 'zod';
-import { agentSessionDtoSchema } from '../api/perga-v1.js';
-
-import { sessionMessageReceiptSchema } from '../api/perga-v1.js';
+import { agentSessionDtoSchema, MAX_ATTACHMENTS_PER_MESSAGE, sessionMessageReceiptSchema } from '../api/perga-v1.js';
+import { imageMessageBody, type MultipartFile } from '../api/multipart.js';
 
 import type { ApiFailure, ApiOperation } from '../api/types.js';
 import { classifyFailure, failureReason, type FailureTable, type WriteFailure } from './failure-class.js';
 import type { PendingQueueEntry } from './conversation.js';
 
-/** What a `POST /planner/input` answers, including where the text landed. */
+/** What steering a queued message answers, including where the text landed. */
 export function steerQueuedSessionMessageOperation(sessionId: string, inputId: string, turnId: string) {
   return {
     method: 'POST',
@@ -42,7 +41,7 @@ export type SentPlannerInput = Readonly<{
 export function sendPlannerInputOperation(
   cardId: string,
   text: string,
-  _attachments: readonly string[],
+  attachments: readonly MultipartFile[],
   idempotencyKey: string,
   steerIfRunning = false,
   queueIfBusy = false,
@@ -52,8 +51,8 @@ export function sendPlannerInputOperation(
     method: 'POST',
     path: `/api/v1/sessions/${encodeURIComponent(cardId)}/messages`,
     timeoutMs: 10 * 60_000,
-    body: { content: text, mode: steerIfRunning ? 'steer' : queueIfBusy ? 'queue' : 'default',
-      ...(expectedEpoch === undefined ? {} : { expectedEpoch }) },
+    body: imageMessageBody({ content: text, mode: steerIfRunning ? 'steer' : queueIfBusy ? 'queue' : 'default',
+      ...(expectedEpoch === undefined ? {} : { expectedEpoch }) }, attachments),
     headers: { 'Idempotency-Key': idempotencyKey },
     responseSchema: sessionMessageReceiptSchema.refine(receipt => receipt.sessionId === cardId).transform(receipt => ({
       card_id: receipt.sessionId, worker_session_id: receipt.sessionId, entry_id: receipt.messageId, delivery: receipt.delivery,
@@ -69,29 +68,8 @@ export function recoverSessionOperation(sessionId: string, mode: 'reconnect' | '
   } satisfies ApiOperation<unknown>;
 }
 
-/** The image formats the upload endpoint accepts; the server's magic-number sniff is the judgement. */
-export const ATTACHABLE_IMAGE_TYPES = Object.freeze(
-  ['image/png', 'image/jpeg', 'image/gif', 'image/webp'] as const,
-);
-
-/** Mirrors `MAX_ATTACHMENTS_PER_MESSAGE` in `planner_attachments::bind`. */
-export const MAX_ATTACHMENTS_PER_MESSAGE = 8;
-
-/** Why the composer took no more images: its one cap, for a pick and a refill alike. */
 export const TOO_MANY_IMAGES = `A message can carry at most ${MAX_ATTACHMENTS_PER_MESSAGE} images.`;
-
-/**
- * What a failed `POST /planner/attachments` says: 400 (not an accepted image, an attached workspace, the card's
- * budget spent, a body that stopped arriving), 403, 404 and 413 store nothing; anything else may have stored it.
- */
-export const PLANNER_ATTACHMENT_FAILURES: FailureTable<WriteFailure> = Object.freeze({
-  rules: Object.freeze([Object.freeze({ status: Object.freeze([400, 403, 404, 413]), is: 'refused' as const })]),
-  unauthorized: 'refused',
-  otherwise: 'unknown',
-});
-
-/** What a failed upload says (`refusalText`): not uploaded, or, when it may have been stored, could not be. */
-export const UPLOAD_TEXT = Object.freeze({ refused: 'The image was not uploaded.', unknown: 'The image could not be uploaded.' });
+export const TOO_MANY_IMAGE_BYTES = 'Images in one message must total at most 25 MiB.';
 
 export type PlannerQueueEditOutcome =
   | Readonly<{ kind: 'done'; entry: PendingQueueEntry }>

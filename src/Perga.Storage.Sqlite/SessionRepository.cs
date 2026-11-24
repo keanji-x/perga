@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Dapper;
 using Microsoft.Data.Sqlite;
 using Perga.Contracts;
@@ -289,6 +290,10 @@ internal sealed class SessionRepository
                             ELSE json_object('v', 1, 'content', input.content, 'triggerKind', 'user', 'inputId', input.id)
                        END AS PayloadJson,
                        item.created_at_ms AS CreatedAtMs,
+                       input.attachments_json AS AttachmentsJson,
+                       CASE WHEN item.kind = 'user' AND input.author_id = @OwnerAuthor
+                            THEN input.request_key END AS OwnerRequestKey,
+                       (SELECT track_id FROM agent_sessions WHERE id = item.session_id) AS TrackId,
                        CASE WHEN item.turn_id IS NULL AND json_extract(item.payload_json,'$.archived') = 1 THEN json_extract(item.payload_json,'$.status') ELSE turn.status END AS TurnStatus,
                        CASE WHEN input.delivery = 'queued' THEN 'accepted' ELSE input.delivery END AS InputDelivery
                 FROM session_items item
@@ -304,7 +309,8 @@ internal sealed class SessionRepository
                     SessionId = sessionId,
                     AfterId = afterId,
                     BeforeId = beforeId,
-                    Limit = clampedLimit
+                    Limit = clampedLimit,
+                    SessionInputsRepository.OwnerAuthor
                 },
                 cancellationToken: ct)).ConfigureAwait(false);
 
@@ -451,8 +457,19 @@ internal sealed class SessionRepository
             SessionId: r.SessionId,
             TurnId: r.TurnId,
             Kind: r.Kind,
-            Payload: _context.ColdBlobs.Hydrate(r.PayloadJson, "session_items.payload_json"),
-            CreatedAtMs: r.CreatedAtMs) { TurnStatus = r.TurnStatus, InputDelivery = r.InputDelivery };
+            Payload: MapSessionPayload(r),
+            CreatedAtMs: r.CreatedAtMs) { TurnStatus = r.TurnStatus, InputDelivery = r.InputDelivery, OwnerRequestKey = r.OwnerRequestKey };
+
+    private JsonElement MapSessionPayload(SessionItemRow row)
+    {
+        var payload = _context.ColdBlobs.Hydrate(row.PayloadJson, "session_items.payload_json");
+        if (row.Kind != "user" || row.AttachmentsJson is null) return payload;
+        var fields = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(payload)!;
+        fields["attachments"] = JsonSerializer.SerializeToElement(
+            TrackMediaStore.Deserialize(row.AttachmentsJson).Select(image => image.ToDto(row.TrackId)),
+            JsonSerializerOptions.Web);
+        return JsonSerializer.SerializeToElement(fields);
+    }
 
     internal sealed class SessionRow
     {
@@ -507,8 +524,11 @@ internal sealed class SessionRepository
         public string? TurnId { get; init; }
         public string Kind { get; init; } = string.Empty;
         public string PayloadJson { get; init; } = "{}";
+        public string? AttachmentsJson { get; init; }
+        public string TrackId { get; init; } = "";
         public long CreatedAtMs { get; init; }
         public string? TurnStatus { get; init; }
         public string? InputDelivery { get; init; }
+        public string? OwnerRequestKey { get; init; }
     }
 }

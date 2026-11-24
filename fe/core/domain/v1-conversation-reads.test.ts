@@ -5,7 +5,7 @@ import { buildConversationTranscript, conversationItemsOperation, conversationRu
 
 const session = Object.freeze({ lastNotifiableTurnAtMs: null, id: 'session', trackId: 'track', isLead: true, provider: 'codex', model: 'model',
   nativeThreadId: 'thread', epoch: 1, status: 'idle', contextUsage: { usedTokens: 64_000, windowTokens: 256_000, observedAtMs: 7, ratio: 0.25 }, archivedAtMs: null, createdAtMs: 1, updatedAtMs: 2 });
-const page = Object.freeze({ session, activeTurn: null, state: 'idle', readonlyReason: null, canReopen: false, workerPaused: false, lastTurn: null, unknownDetail: null, items: [
+const page = Object.freeze({ session, activeTurn: null, state: 'idle', readonlyReason: null, canReopen: false, workerPaused: false, lastTurn: null, unknownDetail: null, attachmentsSupported: false, items: [
   { id: 1, sessionId: session.id, turnId: 'turn', kind: 'assistant_text', payload: { text: 'Actual v1 reply' }, createdAtMs: 2 },
 ] });
 

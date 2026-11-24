@@ -70,6 +70,12 @@ export default defineConfig({
             instances: [{ browser: 'chromium' }],
             /* `prefers-reduced-motion` is a media feature only the driver can emulate, so it is exposed as a command. */
             commands: {
+              mockConversationMedia: async ({ page }, path: string, pngBase64?: string) => {
+                const url = `**${path}`;
+                await page.unroute(url);
+                if (pngBase64 !== undefined) await page.route(url, route =>
+                  route.fulfill({ contentType: 'image/png', body: Buffer.from(pngBase64, 'base64') }));
+              },
               mockChatPerformanceImage: async ({ page }, enabled: boolean) => {
                 const url = 'https://chat-benchmark.invalid/image.svg';
                 await page.unroute(url);

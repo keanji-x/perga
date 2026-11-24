@@ -57,9 +57,8 @@ ChatFooterError,ChatFooterNotice,ChatFooterRemedy,ChatThread,
 type ComposerFocusHandle,
 } from '../../features/chat/thread/public.tsx';
 import {
-ATTACHED_WORKSPACE_REASON,PlannerAttachButton,PlannerAttachmentDrawer,
-usePlannerAttachments,
-type AttachmentStore,
+PlannerAttachButton,PlannerAttachmentDrawer,usePlannerAttachments,
+type AttachmentDraft,
 } from '../../features/planner/attachments.tsx';
 import { useCommittedCallback } from '../../ui/state/committed-callback.ts';
 import { useState } from '../../ui/state/public.ts';
@@ -68,7 +67,7 @@ import {
 useConversationAttachments,
 useConversationCommands,
 useConversationDraft,
-useConversationUpload,
+useConversationAttachmentError,
 type ConversationDraftId
 } from '../conversations/public.tsx';
 import { createTrackWorkspaceFilesPort } from '../providers/directory.ts';
@@ -156,6 +155,12 @@ export function useConversationPane(
        so closing keeps them and switching shows the other conversation's own. */
   const composerId = scope?.cardId ?? null;
   const heldAttachments = useConversationAttachments(composerId);
+  const attachmentError = useConversationAttachmentError(composerId);
+  const scopeTrackId = scope?.id;
+  useEffect(() => {
+    registry.bindDraftScope(sourceScopeId, source.scopeId);
+    if (composerId !== null && scopeTrackId !== undefined) registry.bindConversation(composerId, scopeTrackId);
+  }, [registry, sourceScopeId, source.scopeId, composerId, scopeTrackId]);
   const { editComposer } = registry;
   const setComposerText = useCallback<Dispatch<SetStateAction<string>>>((action) => {
     if (composerId === null) return;
@@ -164,18 +169,11 @@ export function useConversationPane(
       return text === current.text ? current : { ...current, text };
     });
   }, [composerId, editComposer]);
-  const { editUpload } = registry;
-  const uploadState = useConversationUpload(composerId);
-  const attachmentStore = useMemo<AttachmentStore>(() => ({
-    items: heldAttachments,
-    update: (cardId, next) => editComposer(cardId, (current) => {
-      const attachments = next(current.attachments);
-      return attachments === current.attachments ? current : { ...current, attachments };
-    }),
-    upload: uploadState,
-    editUpload,
-  }), [heldAttachments, editComposer, editUpload, uploadState]);
-  const attachments = usePlannerAttachments(store.uploadAttachment, composerId ?? '', attachmentStore);
+  const changeAttachments = useCallback((change: (current: AttachmentDraft) => Required<AttachmentDraft>) => {
+    if (composerId === null) return;
+    editComposer(composerId, current => ({ ...current, ...change(current) }));
+  }, [composerId, editComposer]);
+  const attachments = usePlannerAttachments({ attachments: heldAttachments, attachmentError }, changeAttachments);
   const [composerFocusRequest, setComposerFocusRequest] = useState(0);
   const requestComposerFocus = useCallback((id: string) => {
     setComposerFocusFor(id);
@@ -227,6 +225,14 @@ export function useConversationPane(
   /* Only this route's slot is visible, reopenable or sendable here. */
   const draft = useConversationDraft(sourceScopeId);
   const creating = draft?.creating ?? false;
+  const changeDraftAttachments = (change: (current: AttachmentDraft) => Required<AttachmentDraft>) => {
+    if (draft === null) return;
+    registry.editDraft(draft, current => current.creating || current.submitted !== null
+      ? current : { ...current, ...change(current) });
+  };
+  const draftAttachments = usePlannerAttachments(draft ?? {}, changeDraftAttachments);
+  const draftImagesSupported = draftCapabilities.data?.conversationInitialInput === true;
+  const draftImagesLocked = creating || draft?.submitted != null;
   const draftFocus = useMemo(() => ({ key: draft?.key ?? null, handle: createRef<ComposerFocusHandle>() }), [draft?.key]);
   // Rekey keeps this scope's event channel, but only the actual current attempt
   // may hand focus to its adopted row. Its UI handle stays bound to that key.
@@ -323,10 +329,9 @@ export function useConversationPane(
     store.answerAsk(askId, answers));
   const attach = useCommittedCallback(existingId, attachments.attach);
   const removeAttachment = useCommittedCallback(existingId, attachments.remove);
-  const { items: attachmentItems, ids: attachmentIds, busy: attachmentBusy, error: attachmentError, atCapacity } = attachments;
-  const composerAttachments = useMemo(() => ({ items: attachmentItems, ids: attachmentIds, busy: attachmentBusy,
-    error: attachmentError, atCapacity, attach, remove: removeAttachment }),
-  [attachmentItems, attachmentIds, attachmentBusy, attachmentError, atCapacity, attach, removeAttachment]);
+  const { items: attachmentItems, error: imageError, atCapacity } = attachments;
+  const composerAttachments = useMemo(() => ({ items: attachmentItems, error: imageError, atCapacity, attach, remove: removeAttachment }),
+    [attachmentItems, imageError, atCapacity, attach, removeAttachment]);
   const canSteer = store.steerQueuedEntry !== undefined;
   const [pendingPresentation, setPendingPresentation] = useState<Readonly<{ conversationId: string | null; visible: boolean }> | null>(null);
   const pendingPresenceChanged = useCallback((visible: boolean) => {
@@ -349,7 +354,7 @@ export function useConversationPane(
     compact: compact,
     compacting: store.compacting,
     manualCompactSupported: store.manualCompactSupported,
-    attachmentsSupported: false,
+    attachmentsSupported: store.attachmentsSupported,
     contextUsage: store.contextUsage,
     historyReady: store.historyReady,
     runReady: store.runReady,
@@ -368,7 +373,7 @@ export function useConversationPane(
     setPermissionMode: setPermissionMode,
     stopping: store.stopping,
     working: store.working
-  }), [compact, store.compacting, store.manualCompactSupported, store.contextUsage, store.historyReady, store.runReady, interrupt, store.model, store.modelCatalog, store.modelDefaultAvailable, store.modelChangeDisabled, store.permissionChangeDisabled,
+  }), [compact, store.compacting, store.manualCompactSupported, store.attachmentsSupported, store.contextUsage, store.historyReady, store.runReady, interrupt, store.model, store.modelCatalog, store.modelDefaultAvailable, store.modelChangeDisabled, store.permissionChangeDisabled,
     store.permissionMode, store.sendBlocked, store.composerBlocked, store.sending, store.canQueueWhileRunning, setModel, setPermissionMode, store.stopping, store.working]);
   const permissionOptions = store.permissionOptions ?? scopePermissionModes;
   const permissionControl = useMemo(() => resolvePermissionControl({
@@ -444,14 +449,13 @@ export function useConversationPane(
               disabled={(!draftOnly && composerView.composerBlocked) || !composerView.historyReady || !composerView.runReady || replacing}
               sendDisabled={draftOnly || composerView.sendBlocked}
               sendWaiting={composerView.sending}
-              /* The images stay with the composer until the store reports them delivered; the press waits out its Edit. */
+              /* Admission transfers these previews to the conversation outbox. */
               commands={paneCommands}
               onSend={sendText}
               canQueueWhileRunning={composerView.canQueueWhileRunning}
               allowEmptyText={!editingQueue && composerAttachments.items.length > 0}
-              onFiles={editingQueue || !composerView.attachmentsSupported || composerAttachments.busy || composerAttachments.atCapacity ? undefined : (files) => {
-                for (const file of files) void composerAttachments.attach(file);
-              }}
+              onFiles={editingQueue || !composerView.attachmentsSupported || composerView.sendBlocked || draftOnly
+                ? undefined : composerAttachments.attach}
               /* Questions and attachments belong to the composer; waiting messages follow the running status. */
               drawer={(
                 <>
@@ -473,10 +477,7 @@ export function useConversationPane(
                 <HStack gap={1} align="center" wrap="wrap" className={footerStyles.group}>
                   <PlannerAttachButton
                     attachments={composerAttachments}
-                    support={{
-                      available: composerView.attachmentsSupported,
-                      reason: ATTACHED_WORKSPACE_REASON,
-                    }}
+                    available={composerView.attachmentsSupported}
                     disabled={editingQueue || composerView.sendBlocked || !composerView.historyReady || replacing}
                   />
                   {sessionConfigurationControls}
@@ -545,6 +546,9 @@ export function useConversationPane(
               focusOnMount={panePresented} focusRequest={composerFocusRequest} focusHandle={draftFocus.handle}
               mentionTrigger={mentionTrigger}
               changeText={setNewConversationText}
+              allowEmptyText={draftAttachments.items.length > 0}
+              onFiles={draftImagesSupported && !draftImagesLocked ? draftAttachments.attach : undefined}
+              drawer={<PlannerAttachmentDrawer attachments={draftAttachments} disabled={draftImagesLocked} />}
               /* Menu membership and readiness come from the managed backend declarations. */
               footerActions={(() => {
                 const draftPermissionControl = resolvePermissionControl({
@@ -556,9 +560,9 @@ export function useConversationPane(
                 return (
                   <HStack gap={1} align="center" wrap="wrap" className={footerStyles.group}>
                     <PlannerAttachButton
-                      attachments={composerAttachments}
-                      support={{ available: false, reason: ATTACHED_WORKSPACE_REASON }}
-                      disabled
+                      attachments={draftAttachments}
+                      available={draftImagesSupported}
+                      disabled={draftImagesLocked}
                     />
                     <ModelPill groups={managed.groups} provider={draft.provider} selection={draft.model}
                       effortControl={compactComposer ? 'in-menu' : 'separate'}
@@ -606,7 +610,7 @@ export function useConversationPane(
         {draftOpen && (draft?.text == null
           ? <ChatEmpty />
           : <>
-            <OutgoingMessage speaker="you" text={draft.text} mobile={compactViewport} />
+            {draft.text !== '' && <OutgoingMessage speaker="you" text={draft.text} mobile={compactViewport} />}
             {creating && <p role="status">Sending…</p>}
           </>)}
         {open !== null && (

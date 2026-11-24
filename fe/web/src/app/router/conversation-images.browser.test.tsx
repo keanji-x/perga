@@ -1,0 +1,239 @@
+import '../../styles/entry.css';
+import { cleanup, fireEvent } from '@testing-library/react';
+import { afterEach, expect, it } from 'vitest';
+import { commands, page, userEvent } from 'vitest/browser';
+import type { ApiRequest, ApiTransportResponse } from '../../../../core/api/types.ts';
+import { queryKeys } from '../providers/query-keys.ts';
+import { renderSessionFixture } from './conversation-session-fixture.tsx';
+import { sessionInput, sessionItem, sessionReply } from './conversation-session-data.ts';
+import { fixtureCreation, fixtureSession } from './session-contract-fixture.ts';
+
+declare module 'vitest/browser' {
+  interface BrowserCommands { mockConversationMedia(path: string, pngBase64?: string): Promise<void> }
+}
+
+const png = 'iVBORw0KGgoAAAANSUhEUgAAAUAAAAC0CAIAAABqhmJGAAACLUlEQVR4nO3TMQ3AMBDAwIdRRKVR+CHQpVs4dIksnXQAvHiu+wGi5ngB8JuBIczAEGZgCDMwhBkYwgwMYQaGMANDmIEhzMAQZmAIMzCEGRjCDAxhBoYwA0OYgSHMwBBmYAgzMIQZGMIMDGEGhrBZ7wdEGRjCDAxhBoYwA0OYgSHMwBBmYAgzMIQZGMIMDGEGhjADQ5iBIczAEGZgCDMwhBkYwgwMYQaGMANDmIEhzMAQZmAIMzCEGRjCDAxhBoYwA0OYgSHMwBBmYAgzMIQZGMIMDGEGhjADQ5iBIczAEGZgCDMwhBkYwgwMYQaGMANDmIEhzMAQZmAIMzCEGRjCDAxhBoYwA0OYgSHMwBBmYAgzMIQZGMIMDGEGhjADQ5iBIczAEGZgCDMwhBkYwgwMYQaGMANDmIEhzMAQZmAIMzCEGRjCDAxhBoYwA0OYgSHMwBBmYAgzMIQZGMIMDGEGhjADQ5iBIczAEGZgCDMwhBkYwgwMYQaGMANDmIEhzMAQZmAIMzCEGRjCDAxhBoYwA0OYgSHMwBBmYAgzMIQZGMIMDGEGhjADQ5iBIczAEGZgCDMwhBkYwgwMYQaGMANDmIEhzMAQZmAIMzCEGRjCDAxhBoYwA0OYgSHMwBBmYAgzMIQZGMIMDGEGhjADQ5iBIczAEGZgCDMwhBkYwgwMYQaGMANDmIEhzMAQZmAIMzCEGRjCDAxhBoYwA0OYgSHMwBBmYAgzMIQZGMIMDGEb/HgmtocxoioAAAAASUVORK5CYII=';
+const bytes = () => Uint8Array.from(atob(png), ch => ch.charCodeAt(0));
+const screenshot = () => new File([bytes()], 'screenshot.png', { type: 'image/png' });
+const session = 'daily-planner';
+const mediaId = `${'a'.repeat(64)}.png`;
+const mediaUrl = `/api/v1/tracks/daily/media/${mediaId}`;
+const attachment = Object.freeze({ id: mediaId, contentType: 'image/png', size: atob(png).length, url: mediaUrl });
+
+const previews = () => [...document.querySelectorAll<HTMLImageElement>('[data-nc-attachments] img')];
+const transcriptImages = () => [...document.querySelectorAll<HTMLImageElement>('[data-nc-thread] [data-nc-turn-attachments] img')];
+const composer = () => page.getByRole('combobox', { name: 'Message', exact: true });
+const send = () => page.getByRole('button', { name: 'Send image', exact: true }).click();
+
+function paste(field: Element, file: File, itemsOnly = false, text = '') {
+  const data = new DataTransfer();
+  data.items.add(file);
+  if (text !== '') data.setData('text/plain', text);
+  if (itemsOnly) Object.defineProperty(data, 'files', { value: [] });
+  fireEvent(field, new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+}
+
+function form(request: ApiRequest) {
+  expect(request.body).toBeInstanceOf(FormData);
+  expect(request.headers?.['content-type']).toBeUndefined();
+  const body = request.body as FormData;
+  expect([...body.keys()]).toEqual(['payload', 'attachments']);
+  return body;
+}
+
+function payload(body: FormData): unknown {
+  const text = body.get('payload');
+  if (typeof text !== 'string') throw new Error('Expected a payload form field.');
+  return JSON.parse(text);
+}
+
+function savedItem(id: string, input: string, content: string) {
+  return { ...sessionItem(id, 1, content, 'user'), payload: { inputId: input, content, attachments: [attachment] } };
+}
+
+afterEach(async () => {
+  cleanup();
+  document.getElementById('root')?.remove();
+  await commands.mockConversationMedia(mediaUrl);
+});
+
+it('previews files and screenshot items, restores a refused image, then retries and opens canonical history', async () => {
+  await page.viewport(1280, 900);
+  await commands.mockConversationMedia(mediaUrl, png);
+  let decline!: (response: ApiTransportResponse) => void;
+  const pending = new Promise<ApiTransportResponse>(resolve => { decline = resolve; });
+  let attempts = 0;
+  const view = renderSessionFixture({ initial: '/track/daily?panel=conversations', attachmentsSupported: true,
+    reply: request => {
+    if (request.path !== `/api/v1/sessions/${session}/messages` || request.method !== 'POST') return;
+    attempts += 1;
+    if (attempts === 1) return pending;
+    if (attempts === 2) return { status: 429, statusText: 'Too many requests', body: { code: 'rate_limited', error: 'Try the same image again.' } };
+    view.items.set(session, [savedItem(session, 'image-input', '')]);
+    return sessionReply(sessionInput(session, 'image-input'));
+  } });
+  await page.getByRole('button', { name: /Conversation Daily Planner conversation/ }).click();
+  await expect.element(composer()).toHaveAttribute('contenteditable', 'true');
+  await expect.element(page.getByRole('button', { name: 'Attach an image' })).toBeEnabled();
+  const file = screenshot();
+  paste(composer().element(), file);
+  await expect.poll(() => previews().map(image => image.naturalWidth)).toEqual([320]);
+  await page.getByRole('button', { name: /Remove/ }).click();
+  await expect.poll(() => previews().length).toBe(0);
+
+  paste(composer().element(), file, true);
+  const blobUrl = previews()[0].src;
+  expect(view.requests.some(request => request.method === 'POST')).toBe(false);
+  expect(composer().element().textContent).toBe('');
+  await send();
+  await expect.poll(() => transcriptImages().map(image => image.src)).toEqual([blobUrl]);
+  expect(previews()).toHaveLength(0);
+  await expect.poll(() => transcriptImages()[0]?.naturalWidth).toBe(320);
+  decline({ status: 400, statusText: 'Bad Request', body: { code: 'invalid_argument', error: 'Image refused.' } });
+  await page.getByRole('button', { name: '放回输入框', exact: true }).click();
+  await expect.poll(() => previews().map(image => image.src)).toEqual([blobUrl]);
+  await expect.poll(() => transcriptImages().length).toBe(0);
+
+  await send();
+  const retry = page.getByRole('button', { name: '重试', exact: true });
+  await expect.element(retry).toBeVisible();
+  await expect.poll(() => transcriptImages()[0]?.naturalWidth).toBe(320);
+  await retry.click();
+
+  await expect.poll(() => attempts).toBe(3);
+  const posts = view.requests.filter(request => request.path.endsWith('/messages') && request.method === 'POST');
+  expect(posts).toHaveLength(3);
+  for (const post of posts) {
+    const body = form(post);
+    expect(payload(body)).toMatchObject({ content: '' });
+    expect(await (body.getAll('attachments')[0] as File).bytes()).toEqual(bytes());
+  }
+  expect(posts[2].headers?.['Idempotency-Key']).toBe(posts[1].headers?.['Idempotency-Key']);
+  await expect.poll(() => transcriptImages().map(image => image.getAttribute('src'))).toEqual([mediaUrl]);
+  await expect.poll(() => transcriptImages()[0]?.naturalWidth).toBe(320);
+  await expect(fetch(blobUrl)).rejects.toThrow();
+  await page.getByRole('button', { name: 'Image 1 of 1' }).click();
+  const lightbox = page.getByRole('dialog', { name: 'Media viewer' });
+  await expect.element(lightbox).toBeVisible();
+  const zoom = lightbox.getByRole('button', { name: 'Zoom' });
+  (await zoom.findElement() as HTMLElement).focus();
+  await userEvent.keyboard('{Enter}');
+  await expect.element(zoom).toHaveAttribute('aria-pressed', 'true');
+});
+
+it('accepts drops, picker files and mixed clipboard images in a new conversation, then sends an image-only first message', async () => {
+  await page.viewport(1280, 900);
+  await commands.mockConversationMedia(mediaUrl, png);
+  const created = fixtureSession('new-with-image', 'daily', { title: 'Image conversation' });
+  let attempts = 0;
+  const view = renderSessionFixture({ initial: '/track/daily?panel=conversations', attachmentsSupported: true, reply: request => {
+    if (request.path !== '/api/v1/tracks/daily/sessions' || request.method !== 'POST') return;
+    attempts += 1;
+    if (attempts === 1) return { status: 503, statusText: 'Unavailable', body: { code: 'service_unavailable', error: 'Unconfirmed' } };
+    view.sessions.push(created);
+    view.items.set(created.id, [savedItem(created.id, 'first-input', '')]);
+    return { status: 201, statusText: 'Created', body: fixtureCreation(created) };
+  } });
+  await page.getByRole('button', { name: 'New conversation', exact: true }).click();
+  await expect.element(page.getByRole('button', { name: 'Attach an image' })).toBeEnabled();
+  const field = await composer().findElement();
+  const file = screenshot();
+
+  paste(field, file, true, '截图与文字');
+  expect(field.textContent).toBe('截图与文字');
+  paste(field, file, false, '和另一张图');
+  expect(field.textContent).toContain('和另一张图');
+  const dropped = new DataTransfer();
+  dropped.items.add(file);
+  fireEvent(field, new DragEvent('drop', { dataTransfer: dropped, bubbles: true, cancelable: true }));
+  const picker = document.querySelector<HTMLInputElement>('[data-nc-attach] input[type="file"]')!;
+  const picked = new DataTransfer();
+  picked.items.add(file);
+  picker.files = picked.files;
+  fireEvent.change(picker);
+  await expect.poll(() => previews().map(image => image.naturalWidth)).toEqual([320, 320, 320, 320]);
+
+  const deleted = previews()[0].src;
+  await page.getByRole('button', { name: /Remove/ }).first().click();
+  expect(previews()).toHaveLength(3);
+  await expect(fetch(deleted)).rejects.toThrow();
+  await page.getByRole('button', { name: /Remove/ }).first().click();
+  await page.getByRole('button', { name: /Remove/ }).first().click();
+
+  await composer().fill('');
+  const posts = () => view.requests.filter(request => request.path === '/api/v1/tracks/daily/sessions' && request.method === 'POST');
+  expect(posts()).toHaveLength(0);
+  await composer().click();
+  fireEvent.compositionStart(field);
+  fireEvent.keyDown(field, { key: 'Enter', code: 'Enter', isComposing: true, keyCode: 229 });
+  expect(posts()).toHaveLength(0);
+  expect(previews()).toHaveLength(1);
+  fireEvent.compositionEnd(field);
+  await userEvent.keyboard('{Enter}');
+  const retry = page.getByRole('button', { name: 'Try again', exact: true });
+  await expect.element(retry).toBeVisible();
+  expect(posts()).toHaveLength(1);
+  await expect.poll(() => previews()[0]?.naturalWidth).toBe(320);
+  await retry.click();
+  await expect.poll(() => posts().length).toBe(2);
+  for (const post of posts()) {
+    const body = form(post);
+    expect(payload(body)).toMatchObject({ prompt: '', provider: 'codex' });
+    expect(await (body.get('attachments') as File).bytes()).toEqual(bytes());
+  }
+  expect(posts()[1].headers?.['Idempotency-Key']).toBe(posts()[0].headers?.['Idempotency-Key']);
+  await expect.poll(() => transcriptImages().map(image => image.getAttribute('src'))).toEqual([mediaUrl]);
+});
+
+it('rejects unsupported, oversized and surplus images in a draft and releases its previews on close', async () => {
+  const view = renderSessionFixture({ initial: '/track/daily?panel=conversations' });
+  await page.getByRole('button', { name: 'New conversation', exact: true }).click();
+  await expect.element(page.getByRole('button', { name: 'Attach an image' })).toBeEnabled();
+  const field = await composer().findElement();
+  paste(field, new File(['invalid'], 'image.svg', { type: 'image/svg+xml' }));
+  await expect.element(page.getByText('Choose a PNG, JPEG, GIF or WebP image.')).toBeVisible();
+  paste(field, new File([new Uint8Array(10 * 1024 * 1024 + 1)], 'large.png', { type: 'image/png' }));
+  await expect.element(page.getByText('Each image must be at most 10 MiB.')).toBeVisible();
+  expect(previews()).toHaveLength(0);
+  const many = new DataTransfer();
+  for (let index = 0; index < 9; index += 1) many.items.add(screenshot());
+  fireEvent(field, new DragEvent('drop', { dataTransfer: many, bubbles: true, cancelable: true }));
+  await expect.element(page.getByRole('alert').getByText('A message can carry at most 8 images.', { exact: true })).toBeVisible();
+  await expect.poll(() => previews().length).toBe(8);
+  const preview = previews()[0].src;
+  await page.getByRole('button', { name: 'Close conversation', exact: true }).click();
+  await expect.poll(() => previews().length).toBe(0);
+  await expect(fetch(preview)).rejects.toThrow();
+  expect(view.requests.some(request => request.method === 'POST')).toBe(false);
+});
+
+it.each(['', '这是一张截图'])('shows one canonical message when history wins the POST race (%j)', async text => {
+  await page.viewport(1280, 900);
+  await commands.mockConversationMedia(mediaUrl, png);
+  let respond!: (response: ApiTransportResponse) => void;
+  const heldReceipt = new Promise<ApiTransportResponse>(resolve => { respond = resolve; });
+  const view = renderSessionFixture({ initial: '/track/daily?panel=conversations', attachmentsSupported: true, reply: request => {
+    if (request.method === 'POST' && request.path === `/api/v1/sessions/${session}/messages`) return heldReceipt;
+  } });
+  const posts = () => view.requests.filter(request => request.method === 'POST' && request.path.endsWith('/messages'));
+  await page.getByRole('button', { name: /Conversation Daily Planner conversation/ }).click();
+  await expect.element(page.getByRole('button', { name: 'Attach an image' })).toBeEnabled();
+  paste(composer().element(), screenshot(), true, text);
+  await expect.poll(() => previews().length).toBe(1);
+  const blobUrl = previews()[0].src;
+  if (text === '') await send();
+  else { await composer().click(); await userEvent.keyboard('{Enter}'); }
+  await expect.poll(() => posts().length).toBe(1);
+  await expect.poll(() => transcriptImages().map(image => image.src)).toEqual([blobUrl]);
+  const requestKey = posts()[0].headers?.['Idempotency-Key'];
+  expect(requestKey).toBeTruthy();
+  const stored = savedItem(session, 'persisted-before-receipt', text);
+  view.items.set(session, [{ ...stored, payload: { ...stored.payload, requestKey } }]);
+  await view.client.invalidateQueries({ queryKey: queryKeys.conversationHistory(session) });
+  await expect.poll(() => transcriptImages().map(image => image.getAttribute('src'))).toEqual([mediaUrl]);
+  await expect(fetch(blobUrl)).rejects.toThrow();
+
+  respond(sessionReply(sessionInput(session, 'persisted-before-receipt')));
+  await expect.poll(() => transcriptImages().map(image => image.getAttribute('src'))).toEqual([mediaUrl]);
+  expect(posts()).toHaveLength(1);
+});

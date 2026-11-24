@@ -112,7 +112,7 @@ it.each([false, true])('renders ACP approvals for a null mode (assistant=%s)', a
       if (request.path.startsWith(`/api/v1/sessions/${id}/items?`)) return { status: 200, statusText: 'OK', body: {
         session: { id, trackId: 'daily', provider: 'acp:opencode', permissionMode: null,
           isLead: !assistant, contextUsage: null, status: 'idle', createdAtMs: 1, updatedAtMs: 2 },
-        items: [], state: 'idle', readonlyReason: null, canReopen: false, workerPaused: false, lastTurn: null, unknownDetail: null, activeTurn: null, canSteer: true, queuedMessages: [],
+        items: [], state: 'idle', readonlyReason: null, canReopen: false, workerPaused: false, lastTurn: null, unknownDetail: null, attachmentsSupported: false, activeTurn: null, canSteer: true, queuedMessages: [],
       } };
       return undefined;
     } });

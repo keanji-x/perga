@@ -17,6 +17,7 @@ public sealed partial class TrackActor
         string SessionId { get; }
         string TriggerKind { get; }
         string? DispatchInputId => null;
+        IReadOnlyList<StoredImageAttachment> Attachments => [];
 
         // A durable input was accepted and stored before dispatch. Its provider outcome must be confirmed,
         // so an inconclusive stream settles as unknown, and caller cancellation never abandons it.
@@ -70,6 +71,7 @@ public sealed partial class TrackActor
         public string SessionId => input.Receipt.SessionId;
         public string TriggerKind => "user";
         public string? DispatchInputId => input.Receipt.InputId;
+        public IReadOnlyList<StoredImageAttachment> Attachments => input.Attachments;
         public bool IsDurable => true;
         public bool IsQueuedMessage => true;
         public bool WaitForWorkspacePreparation => false;

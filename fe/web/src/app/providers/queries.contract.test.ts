@@ -2,6 +2,7 @@ import { isTrackUnread,toReadState } from '../../../../core/domain/read-receipts
 import { sessionItem,sessionPage } from '../router/conversation-session-data.ts';
 import { fixtureSession } from '../router/session-contract-fixture.ts';
 import { useTestConversationRegistry } from './permission-registry-fixture.ts';
+import { ConversationProvider, useConversationCommands } from '../conversations/public.tsx';
 
 // @vitest-environment jsdom
 // Invariants owned by the shared query layer.
@@ -266,6 +267,35 @@ describe('delete mutation wiring', () => {
     controller.abort();
     await expect(pending).rejects.toBeInstanceOf(ApiError);
     expect(requestSignal?.aborted).toBe(true);
+  });
+
+  it.each([204, 404])('retires Track previews at the confirmed DELETE response (%d)', async status => {
+    const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+    const transport: ApiTransportPort = { send: () => Promise.resolve({ status, statusText: '', body: undefined }) };
+    const revoke = vi.fn();
+    vi.stubGlobal('URL', class extends URL { static revokeObjectURL = revoke; });
+    try {
+      const { result, unmount } = renderHook(() => ({
+        registry: useConversationCommands(), mutations: useTrackMutations(transport, unauthorized),
+      }), { wrapper: ({ children }: { children: ReactNode }) => createElement(QueryClientProvider, { client },
+        createElement(ConversationProvider, { children })) });
+      const { registry, mutations } = result.current;
+      registry.bindConversation('session', 'w1');
+      registry.editComposer('session', current => ({ ...current, attachments: [
+        { id: 'local', contentType: 'image/png', size: 1, url: 'blob:composer', file: new File(['x'], 'image.png') },
+      ] }));
+      expect(revoke).not.toHaveBeenCalled();
+      await act(async () => {
+        const deletion = mutations.remove('w1', 'c1');
+        if (status === 404) await expect(deletion).rejects.toBeInstanceOf(ApiError);
+        else await deletion;
+        expect(revoke).toHaveBeenCalledExactlyOnceWith('blob:composer');
+      });
+      expect(registry.composerOf('session').attachments).toEqual([]);
+      unmount();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('invalidates the track list even when an aborted delete may have committed', async () => {

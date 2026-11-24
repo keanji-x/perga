@@ -56,16 +56,24 @@ public sealed partial class TrackActor
     public async Task<SessionMessageReceipt> SendSessionMessageAsync(string sessionId, SendSessionMessageRequest request,
         InteropPrincipal caller, CancellationToken ct)
     {
+        var images = ImageAttachmentPolicy.Validate(request.Images);
+        if (images.Count > 0)
+        {
+            if (request.MessageId is not null)
+                throw KernelException.InvalidArgument("A queued message already has its own attachments.");
+            request = request with { Content = request.Content ?? "" };
+        }
         if (request.Mode is not ("default" or "queue" or "steer") ||
             (request.Content is null) == (request.MessageId is null) ||
             request.Mode == "steer" && request.TurnId is null || request.Mode != "steer" && request.TurnId is not null ||
             request.MessageId is not null && request.Mode != "steer")
             throw KernelException.InvalidArgument("Choose content or a queued messageId and a valid delivery mode.");
-        if (request.Content is not null && string.IsNullOrWhiteSpace(request.Content))
+        if (images.Count == 0 && request.Content is not null && string.IsNullOrWhiteSpace(request.Content))
             throw KernelException.InvalidArgument("Message content cannot be empty.");
         if (request.Content is not null) ValidateRequestKey(request.RequestKey!);
-        var hash = RequestIdentity.Hash(new { version = 4, request.Content, request.Mode, request.TurnId, request.ExpectedEpoch });
-        var author = caller is InteropPrincipal.Session identity ? identity.SessionId : InstallationAuthor;
+        var hash = HashMessage(request.Content, request.Mode, request.TurnId, request.ExpectedEpoch, images);
+        var attachments = images.Select(image => image.Attachment).ToArray();
+        var author = caller is InteropPrincipal.Session sessionAuthor ? sessionAuthor.SessionId : InstallationAuthor;
         var startedAt = _timeProvider.GetTimestamp();
         var delivery = await EnqueueAsync(async actor =>
         {
@@ -109,6 +117,8 @@ public sealed partial class TrackActor
 
             RequireSessionWritableCore(session);
             RequireSessionDispatchAvailableCore(sessionId);
+            if ((existing?.Attachments ?? attachments).Count > 0)
+                RequireImagesSupported(ReadAttachmentSupportCore(session));
             _scheduler.TryGetActive(sessionId, out var active);
             var turnId = request.TurnId;
             if (turnId is not null)
@@ -131,8 +141,10 @@ public sealed partial class TrackActor
                 var originatingTurn = caller is InteropPrincipal.Session callerSession &&
                     _scheduler.TryGetActive(callerSession.SessionId, out var callerTurn) ? callerTurn : null;
                 var message = existing ?? new SessionMessage($"inp_{Guid.NewGuid():N}", sessionId,
-                    author, request.RequestKey!, hash, turnId, null, request.Content!, "dispatching", NowMs(), "steer");
-                if (existing is null) await Messages.InsertAsync(message, ct).ConfigureAwait(false);
+                    author, request.RequestKey!, hash, turnId, null, request.Content!, "dispatching", NowMs(), "steer")
+                    { Attachments = attachments };
+                if (existing is null)
+                    await Messages.InsertWithMediaAsync(TrackId, message, images, ct).ConfigureAwait(false);
                 else if (!await Messages.ClaimQueuedSteerAsync(message, turnId, ct).ConfigureAwait(false))
                     throw KernelException.Conflict("This message is already being sent or has been withdrawn.");
                 _scheduler.TryGetSteering(sessionId, out var previous);
@@ -154,8 +166,9 @@ public sealed partial class TrackActor
                 RequireWorkspaceReadyCore();
                 _taskCoordinator.RequireDispatchWorkspace(session);
                 var message = new SessionMessage($"inp_{Guid.NewGuid():N}", sessionId, author,
-                    request.RequestKey!, hash, null, null, request.Content!, "queued", NowMs(), "queue");
-                await Messages.InsertAsync(message, ct).ConfigureAwait(false);
+                    request.RequestKey!, hash, null, null, request.Content!, "queued", NowMs(), "queue")
+                    { Attachments = attachments };
+                await Messages.InsertWithMediaAsync(TrackId, message, images, ct).ConfigureAwait(false);
                 // Persist the resume input before opening the existing queue for dispatch.
                 if (resuming) _taskCoordinator.SetPaused(activeTask!, false);
                 await PokeSessionCoreAsync(sessionId).ConfigureAwait(false);
@@ -166,7 +179,7 @@ public sealed partial class TrackActor
             var evt = SessionUpdatedEvent(session);
             await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
             var accepted = await _store.SessionInputs.AcceptAsync(session,
-                new(request.RequestKey!, hash, request.Content!, author), evt, ct).ConfigureAwait(false);
+                new(request.RequestKey!, hash, request.Content!, author) { MediaWrites = images }, evt, ct).ConfigureAwait(false);
             if (resuming) _taskCoordinator.SetPaused(activeTask!, false);
             RegisterAcceptedInput(session, accepted);
             await PublishInputEventAsync(evt).ConfigureAwait(false);
@@ -321,7 +334,8 @@ public sealed partial class TrackActor
                 binding?.Phase == "paused", lastTurn, ReadUnknownDetailCore(session), settingsSession?.AvailablePermissionModes,
                 ReadActivityCore(running, activityTurnId, afterSequence), binding, ReadCapabilitiesCore(session),
                 ReadInteractionsCore(session, principal ?? new InteropPrincipal.Human()),
-                ReadRuntimeActivityCore(session)?.Status, ReadRuntimeActivityCore(session)?.Tasks.Values.ToArray());
+                ReadRuntimeActivityCore(session)?.Status, ReadRuntimeActivityCore(session)?.Tasks.Values.ToArray(),
+                AttachmentsSupported: ReadAttachmentSupportCore(session));
         }, ct);
     }
 

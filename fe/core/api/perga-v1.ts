@@ -384,12 +384,31 @@ export const sessionCreationReceiptSchema = z.object({
 
 export type SessionCreationReceipt = z.infer<typeof sessionCreationReceiptSchema>;
 
+export const ATTACHABLE_IMAGE_TYPES = Object.freeze(['image/png', 'image/jpeg', 'image/gif', 'image/webp'] as const);
+export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+export const MAX_TOTAL_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+export const MAX_ATTACHMENTS_PER_MESSAGE = 8;
+
+const attachmentMimeByExtension = Object.freeze({
+  png: 'image/png', jpg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp',
+});
+export const messageAttachmentDtoSchema = z.object({
+  id: z.string().regex(/^[0-9a-f]{64}\.(png|jpg|gif|webp)$/),
+  contentType: z.enum(ATTACHABLE_IMAGE_TYPES),
+  size: z.number().int().positive().max(MAX_ATTACHMENT_BYTES),
+  url: z.string().regex(/^\/api\/v1\/tracks\/[A-Za-z0-9_-]+\/media\/[0-9a-f]{64}\.(png|jpg|gif|webp)$/),
+}).refine(attachment => attachment.url.endsWith(`/${attachment.id}`), { path: ['url'] })
+  .refine(attachment => {
+    const extension = attachment.id.slice(65) as keyof typeof attachmentMimeByExtension;
+    return attachment.contentType === attachmentMimeByExtension[extension];
+  }, { path: ['contentType'] });
+
 export const sessionItemDtoSchema = z.object({
   id: z.number().int(),
   sessionId: z.string(),
   turnId: z.string().nullable(),
   kind: z.enum(['user', 'thinking', 'assistant_text', 'tool_call', 'tool_result', 'turn_outcome', 'turn_error', 'epoch_boundary']).or(z.string()),
-  payload: z.unknown(),
+  payload: z.object({ attachments: z.array(messageAttachmentDtoSchema).optional(), requestKey: z.string().optional() }).passthrough(),
   createdAtMs: z.number(),
   messageStatus: z.enum(['queued', 'sending', 'processing', 'completed', 'failed', 'unconfirmed']).nullish(),
 });
@@ -499,7 +518,9 @@ export const sessionItemsPageDtoSchema = z.object({
   unknownDetail: z.object({ reason: z.string(), detail: z.string(), canReconnect: z.boolean(),
     canResetContext: z.boolean(), recovering: z.boolean(), lastError: z.string().nullable() }).nullable(),
   queuedMessages: z.array(z.object({ id: z.string(), text: z.string(), queuedAtMs: z.number(),
-    state: z.enum(['waiting', 'steering', 'sending', 'processing', 'unconfirmed']) })).optional(),
+    state: z.enum(['waiting', 'steering', 'sending', 'processing', 'unconfirmed']),
+    attachments: z.array(messageAttachmentDtoSchema).nullish() })).optional(),
+  attachmentsSupported: z.boolean(),
   canSteer: z.boolean().optional(),
   queueHandoffIds: z.array(z.string()).optional(),
   session: agentSessionDtoSchema,

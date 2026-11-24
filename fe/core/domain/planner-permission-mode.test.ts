@@ -36,7 +36,7 @@ describe('session permission mode', () => {
     const basePage = {
       items: [],
       activeTurn: null,
-      state: 'idle', readonlyReason: null, canReopen: false, workerPaused: false, lastTurn: null, unknownDetail: null,
+      state: 'idle', readonlyReason: null, canReopen: false, workerPaused: false, lastTurn: null, unknownDetail: null, attachmentsSupported: false,
     };
     const lead = responseSchema.parse({
       ...basePage,

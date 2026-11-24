@@ -1,6 +1,8 @@
 using System.Text;
 using Dapper;
 using Microsoft.Data.Sqlite;
+using Perga.Contracts;
+using Perga.Kernel.Ports;
 
 namespace Perga.Storage.Sqlite;
 
@@ -44,6 +46,7 @@ internal sealed class SqliteStoreContext : IAsyncDisposable
         _migrator = migrator ?? new SqliteMigrator(timeProvider: _timeProvider);
         _writer = new SqliteSingleWriter(options);
         _coldBlobStore = new ColdBlobStore(options, _upcaster);
+        Media = new TrackMediaStore(options.ResolveDataDir());
 
         var readCsb = new SqliteConnectionStringBuilder
         {
@@ -89,6 +92,11 @@ internal sealed class SqliteStoreContext : IAsyncDisposable
             var dbExistedBeforeInit = File.Exists(fullDbPath);
             await _migrator.MigrateAsync(fullDbPath, ct).ConfigureAwait(false);
             await _writer.InitializeAsync(ct).ConfigureAwait(false);
+            await _writer.EnqueueNonTransactionalAsync<object?>(async (conn, innerCt) =>
+            {
+                await Media.SweepDeletedTracksAsync(conn, innerCt).ConfigureAwait(false);
+                return null;
+            }, ct).ConfigureAwait(false);
             _databaseId = ResolveOrCreateDatabaseId(fullDbPath, dbExistedBeforeInit);
             _initialized = true;
         }
@@ -116,6 +124,50 @@ internal sealed class SqliteStoreContext : IAsyncDisposable
             await conn.DisposeAsync().ConfigureAwait(false);
             throw;
         }
+    }
+
+    internal TrackMediaStore Media { get; }
+
+    internal async Task<TrackMedia?> OpenTrackMediaAsync(string trackId, string fileName, CancellationToken ct)
+    {
+        if (!TrackMediaStore.IsTrackSegment(trackId) ||
+            !ImageAttachmentContract.TryParseMediaFileName(fileName, out var contentType)) return null;
+        EnsureInitialized();
+        await using var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);
+        return await TrackMediaStore.IsReferencedAsync(conn, null, trackId, fileName, ct).ConfigureAwait(false)
+            ? Media.Open(trackId, fileName, contentType) : null;
+    }
+
+    internal Task<T> WriteWithMediaAsync<T>(string trackId, IReadOnlyList<ImageMediaWrite> images,
+        Func<SqliteConnection, SqliteTransaction, CancellationToken, ValueTask<T>> write, CancellationToken ct) =>
+        images.Count == 0 ? Writer.EnqueueAsync(write, ct) :
+        Writer.EnqueueNonTransactionalAsync(async (conn, innerCt) =>
+        {
+            var created = new List<string>(images.Count);
+            try
+            {
+                await using var tx = conn.BeginTransaction(deferred: false);
+                // Check SQL admission before touching CAS. Both the message and refs stay invisible until commit.
+                var result = await write(conn, tx, innerCt).ConfigureAwait(false);
+                await Media.SaveAsync(trackId, images, created, innerCt).ConfigureAwait(false);
+                await tx.CommitAsync(CancellationToken.None).ConfigureAwait(false);
+                return result;
+            }
+            catch
+            {
+                await Media.CleanupUncommittedAsync(conn, trackId, created).ConfigureAwait(false);
+                throw;
+            }
+        }, ct);
+
+    internal void DeleteTrackFiles(string trackId)
+    {
+        try { ColdBlobs.DeleteTrackBlobsDirectory(trackId); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            System.Diagnostics.Trace.TraceWarning("Could not clean up blobs for deleted Track {0}: {1}", trackId, ex.Message);
+        }
+        Media.DeleteTrack(trackId);
     }
 
     internal void EnsureInitialized()

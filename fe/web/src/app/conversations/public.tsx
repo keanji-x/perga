@@ -1,6 +1,5 @@
-import { createContext, useCallback, useContext, useSyncExternalStore, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useSyncExternalStore, type ReactNode } from 'react';
 import { EMPTY_COMPOSER, isComposerEmpty } from '../../../../core/domain/conversation-composer.ts';
-import { NO_UPLOAD } from '../../features/planner/attachments.tsx';
 import { useState } from '../../ui/state/public.ts';
 import { createConversationOwner, NO_SENDS, NO_TURNS, type ConversationSnapshot } from './registry-owner.ts';
 
@@ -11,6 +10,7 @@ const ConversationContext = createContext<ReturnType<typeof createConversationOw
 
 export function ConversationProvider({ children, submittedStorage }: { children: ReactNode; submittedStorage?: () => Storage }) {
   const [owner] = useState(() => createConversationOwner(submittedStorage));
+  useEffect(() => owner.retain(), [owner]);
   return <ConversationContext.Provider value={owner}>{children}</ConversationContext.Provider>;
 }
 
@@ -75,8 +75,12 @@ export function usePendingTrackInitialSend(trackId: string | null) {
   return useSnapshot(useCallback((state: ConversationSnapshot) => trackId === null ? undefined : state.pendingTrackInitialSends[trackId], [trackId]), trackId !== null);
 }
 
-export function useConversationUpload(cardId: string | null) {
-  return useSnapshot(useCallback((state: ConversationSnapshot) => cardId === null ? NO_UPLOAD : state.uploads[cardId] ?? NO_UPLOAD, [cardId]), cardId !== null);
+export function useConversationAttachmentError(cardId: string | null) {
+  return useSnapshot(useCallback((state: ConversationSnapshot) => cardId === null ? null : state.composers[cardId]?.attachmentError ?? null, [cardId]), cardId !== null);
+}
+
+export function useRetireTrackConversations() {
+  return useContext(ConversationContext)?.commands.retireTrack;
 }
 
 export function useConversationQueueWriteOut(cardId: string | null) {

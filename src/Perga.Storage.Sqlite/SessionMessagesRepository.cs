@@ -21,7 +21,7 @@ internal sealed class SessionMessagesRepository : ISessionMessageStore
         SELECT id AS Id, session_id AS SessionId, author_id AS AuthorId,
                request_key AS RequestKey, request_hash AS RequestHash, target_turn_id AS TargetTurnId,
                turn_id AS TurnId, content AS Content, delivery AS Delivery, created_at_ms AS CreatedAtMs,
-               kind AS Kind, delivered_turn_id AS DeliveredTurnId
+               kind AS Kind, delivered_turn_id AS DeliveredTurnId, attachments_json AS AttachmentsJson
         FROM session_messages
         """;
 
@@ -44,13 +44,17 @@ internal sealed class SessionMessagesRepository : ISessionMessageStore
     {
         _context.EnsureInitialized();
         await using var conn = await _context.OpenReadConnectionAsync(ct).ConfigureAwait(false);
-        return await conn.QuerySingleOrDefaultAsync<SessionMessage>(new CommandDefinition(
+        var row = await conn.QuerySingleOrDefaultAsync<MessageRow>(new CommandDefinition(
             MessageSelect + "\n" + clause, parameters, cancellationToken: ct)).ConfigureAwait(false);
+        return row?.ToMessage();
     }
 
     Task ISessionMessageStore.InsertAsync(SessionMessage message, CancellationToken ct) =>
-        _context.Writer.EnqueueAsync(async (conn, tx, innerCt) =>
-            { await SessionMessageSql.InsertSessionMessageAsync(conn, tx, message, innerCt).ConfigureAwait(false); }, ct);
+        InsertWithMediaAsync("", message, [], ct);
+
+    public Task InsertWithMediaAsync(string trackId, SessionMessage message, IReadOnlyList<ImageMediaWrite> images, CancellationToken ct) =>
+        _context.WriteWithMediaAsync(trackId, images, async (conn, tx, innerCt) =>
+            await SessionMessageSql.InsertSessionMessageAsync(conn, tx, message, innerCt).ConfigureAwait(false), ct);
 
     Task<bool> ISessionMessageStore.TransitionAsync(SessionMessage message, string expected, CancellationToken ct) =>
         _context.Writer.EnqueueAsync(async (conn, tx, innerCt) =>
@@ -127,12 +131,21 @@ internal sealed class SessionMessagesRepository : ISessionMessageStore
     async Task<IReadOnlyList<SessionMessage>> ISessionMessageStore.ListQueueAsync(string sessionId, CancellationToken ct)
     {
         await using var conn = await _context.OpenReadConnectionAsync(ct).ConfigureAwait(false);
-        var rows = await conn.QueryAsync<SessionMessage>(new CommandDefinition(MessageSelect + "\n" + """
+        var rows = await conn.QueryAsync<MessageRow>(new CommandDefinition(MessageSelect + "\n" + """
             WHERE session_id = @SessionId AND turn_id IS NULL
               AND kind IN ('queue', 'steer') AND delivery IN ('queued', 'dispatching', 'unknown')
             ORDER BY ordinal;
             """, new { SessionId = sessionId }, cancellationToken: ct)).ConfigureAwait(false);
-        return rows.AsList();
+        return rows.Select(row => row.ToMessage()).ToArray();
+    }
+
+    private sealed record MessageRow(string Id, string SessionId, string AuthorId, string RequestKey, string RequestHash,
+        string? TargetTurnId, string? TurnId, string Content, string Delivery, long CreatedAtMs, string Kind,
+        string? DeliveredTurnId, string? AttachmentsJson)
+    {
+        public SessionMessage ToMessage() => new(Id, SessionId, AuthorId, RequestKey, RequestHash, TargetTurnId,
+            TurnId, Content, Delivery, CreatedAtMs, Kind, DeliveredTurnId)
+        { Attachments = TrackMediaStore.Deserialize(AttachmentsJson) };
     }
 
     async Task<IReadOnlyList<string>> ISessionMessageStore.ListHandoffsAsync(string sessionId, CancellationToken ct)

@@ -6,7 +6,7 @@ import { ANSWER_ASK_FAILURES } from './ask.js';
 import { SEND_FAILURES } from './conversation-delivery.js';
 import { PLANNER_INTERRUPT_FAILURES } from './conversation-stop.js';
 import { CONVERSATION_CREATE_FAILURES } from './conversation.js';
-import { PLANNER_ATTACHMENT_FAILURES, PLANNER_QUEUE_WRITE_FAILURES } from './conversation-commands.js';
+import { PLANNER_QUEUE_WRITE_FAILURES } from './conversation-commands.js';
 import { PLANNER_MODEL_FAILURES } from './conversation-models.js';
 import {
 ApiError,classifyFailure,DELETE_FAILURES,DELETE_TEXT,failureReason,NotSentError,refusalText,refusedText,writeClassOf,
@@ -79,12 +79,6 @@ const cases: ReadonlyArray<readonly [string, FailureTable<string>, ReadonlyArray
     /* Only the dormant 409 is answered before a dispatch; any other may follow one. */
     [http(409, 'conflict'), 'unknown'], [http(400), 'unknown'], [http(500, 'internal'), 'unknown'],
     [http(503, 'service_unavailable'), 'unknown'],
-    [transport, 'unknown'], [decode, 'unknown'], [null, 'unknown'],
-  ]],
-['POST /planner/attachments', PLANNER_ATTACHMENT_FAILURES, [
-    [http(400, 'bad_request'), 'refused'], [http(403, 'forbidden'), 'refused'], [http(404, 'not_found'), 'refused'],
-    [http(413, 'payload_too_large'), 'refused'], [unauthorized, 'refused'],
-    [http(500, 'internal'), 'unknown'], [http(503, 'service_unavailable'), 'unknown'],
     [transport, 'unknown'], [decode, 'unknown'], [null, 'unknown'],
   ]],
 ['PUT /sessions/permission-mode', PLANNER_PERMISSION_MODE_FAILURES, [

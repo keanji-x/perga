@@ -81,16 +81,16 @@ it('treats malformed initial-send JSON as an empty queue', () => {
 it('notifies only changed selected facts and preserves no-op, empty and summary snapshots', () => {
   const owner = createConversationOwner();
   const registry = owner.commands;
-  const text = vi.fn(); const other = vi.fn(); const upload = vi.fn(); const empty = vi.fn(); const summary = vi.fn();
+  const text = vi.fn(); const other = vi.fn(); const attachmentError = vi.fn(); const empty = vi.fn(); const summary = vi.fn();
   owner.subscribe(state => state.composers[card]?.text ?? '', text);
   owner.subscribe(state => state.composers.other?.text ?? '', other);
-  owner.subscribe(state => state.uploads[card], upload);
+  owner.subscribe(state => state.composers[card]?.attachmentError, attachmentError);
   owner.subscribe(state => isComposerEmpty(state.composers[card] ?? EMPTY_COMPOSER), empty);
   owner.subscribe(state => state.conversations, summary);
   registry.editComposer(card, current => ({ ...current, text: 'First' }));
   registry.editComposer(card, current => ({ ...current, text: 'First words' }));
   expect(text).toHaveBeenCalledTimes(2); expect(empty).toHaveBeenCalledOnce();
-  expect(other).not.toHaveBeenCalled(); expect(upload).not.toHaveBeenCalled(); expect(summary).not.toHaveBeenCalled();
+  expect(other).not.toHaveBeenCalled(); expect(attachmentError).not.toHaveBeenCalled(); expect(summary).not.toHaveBeenCalled();
   const before = owner.getSnapshot();
   registry.editComposer(card, current => current); registry.nextRead();
   expect(owner.getSnapshot()).toBe(before);
@@ -246,4 +246,49 @@ it('retains the three-generation permission barrier until every real write settl
   await Promise.allSettled([first, second, third]);
   await Promise.resolve();
   expect(registry.permissionWriteOf('a')).toBeUndefined();
+});
+
+it('revokes all previews for a permanently deleted Track before notifying readers', () => {
+  const revoke = vi.fn();
+  const original = Object.getOwnPropertyDescriptor(URL, 'revokeObjectURL');
+  Object.defineProperty(URL, 'revokeObjectURL', { value: revoke, configurable: true });
+  try {
+    const owner = createConversationOwner();
+    const registry = owner.commands;
+    const local = (id: string) => ({ id, contentType: 'image/png', size: 1, url: `blob:${id}`,
+      file: new File(['x'], `${id}.png`, { type: 'image/png' }) });
+    const compose = local('composer');
+    const outbox = local('outbox');
+    const side = local('side-draft');
+    const elsewhere = local('another-track');
+    registry.remember(conversation, []);
+    registry.bindConversation('another-session', conversation.trackId);
+    registry.bindConversation('retained-session', 'retained-track');
+    registry.bindDraftScope(draft.scopeId, conversation.trackId);
+    registry.startDraft({ ...draft, attachments: [side] });
+    registry.editComposer(card, current => ({ ...current, attachments: [compose] }));
+    registry.editComposer('another-session', current => ({ ...current, attachments: [outbox] }));
+    registry.editComposer('retained-session', current => ({ ...current, attachments: [elsewhere] }));
+    const op = { key: 'key', fromComposer: true, phase: 'sending', unknown: false,
+      echo: { id: 'echo', author: 'you', text: '', atMs: 0, queued: false, localSend: true, attachments: [outbox] } } as const;
+    expect(registry.beginSend('another-session', op)).toBe(true);
+    expect(revoke).not.toHaveBeenCalled();
+    const generation = registry.sendGenerationOf('another-session');
+    const observer = vi.fn(() => expect(revoke).toHaveBeenCalledTimes(3));
+    owner.subscribe(snapshot => snapshot.outboxes, observer);
+
+    registry.retireTrack(conversation.trackId);
+
+    expect(observer).toHaveBeenCalledOnce();
+    expect(revoke.mock.calls.flat().sort()).toEqual([compose.url, outbox.url, side.url].sort());
+    expect(registry.composerOf(card).attachments).toEqual([]);
+    expect(registry.outboxOf('another-session')).toEqual([]);
+    expect(registry.draftOf(draft.scopeId)).toBeNull();
+    expect(registry.composerOf('retained-session').attachments).toEqual([elsewhere]);
+    expect(registry.sendGenerationOf('another-session')).not.toBe(generation);
+    expect(registry.beginSend('another-session', op)).toBe(false);
+  } finally {
+    if (original === undefined) Reflect.deleteProperty(URL, 'revokeObjectURL');
+    else Object.defineProperty(URL, 'revokeObjectURL', original);
+  }
 });

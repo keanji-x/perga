@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
+using Perga.Contracts;
 
 namespace Perga.Host.Http;
 
@@ -56,10 +57,27 @@ internal sealed class OpenApiSchemaRegistry(JsonSerializerOptions options)
                 if (property.Get is null && property.Set is null) continue;
                 var member = property.AttributeProvider as PropertyInfo;
                 var nullInfo = member is null ? null : _nullability.Create(member);
-                properties[property.Name] = Schema(property.PropertyType, nullInfo, request);
+                properties[property.Name] = type == typeof(SessionItemDto) && member?.Name == nameof(SessionItemDto.Payload)
+                    ? new JsonObject { ["type"] = "object", ["additionalProperties"] = true,
+                        ["properties"] = new JsonObject
+                        {
+                            ["attachments"] = Schema(typeof(MessageAttachmentDto[])),
+                            ["requestKey"] = new JsonObject { ["type"] = "string" }
+                        } }
+                    : Schema(property.PropertyType, nullInfo, request);
                 var parameter = constructor?.GetParameters().FirstOrDefault(p => string.Equals(p.Name, member?.Name, StringComparison.OrdinalIgnoreCase));
                 var ignore = member?.GetCustomAttribute<JsonIgnoreAttribute>()?.Condition;
                 if (property.IsRequired || (request ? parameter?.HasDefaultValue == false : ignore is not (JsonIgnoreCondition.WhenWritingNull or JsonIgnoreCondition.WhenWritingDefault))) required.Add(property.Name);
+            }
+            if (type == typeof(MessageAttachmentDto))
+            {
+                const string fileName = @"[0-9a-f]{64}\.(png|jpg|gif|webp)";
+                properties["id"]!["pattern"] = "^" + fileName + "$";
+                properties["contentType"]!["enum"] = new JsonArray(
+                    ImageAttachmentContract.MediaTypes.Select(value => (JsonNode?)JsonValue.Create(value)).ToArray());
+                properties["size"]!["minimum"] = 1;
+                properties["size"]!["maximum"] = ImageAttachmentContract.MaxAttachmentBytes;
+                properties["url"]!["pattern"] = "^/api/v1/tracks/[A-Za-z0-9_-]+/media/" + fileName + "$";
             }
             Schemas[name] = new JsonObject { ["type"] = "object", ["properties"] = properties, ["required"] = required };
         }

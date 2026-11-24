@@ -16,8 +16,8 @@ export function sessionInput(sessionId: string, inputId = 'input-2') {
 }
 
 export function sessionPage(session: AgentSessionDto, items: SessionItemDto[] = [], activeTurn: SessionTurnDto | null = null,
-  state: SessionItemsPageDto['state'] = activeTurn?.status === 'running' ? 'running' : 'idle'): SessionItemsPageDto {
-  return { session, items, activeTurn, state, readonlyReason: session.archivedAtMs != null ? 'archived' : null,
+  state: SessionItemsPageDto['state'] = activeTurn?.status === 'running' ? 'running' : 'idle', attachmentsSupported = false): SessionItemsPageDto {
+  return { session, items, activeTurn, state, attachmentsSupported, readonlyReason: session.archivedAtMs != null ? 'archived' : null,
     capabilities: { models: [], defaultModel: null, defaultReasoningEffort: null, permissionModes: [], supportsNativeSteer: true, supportsSessionResume: true, supportsCompact: true },
     canReopen: session.archivedAtMs != null, workerPaused: false, lastTurn: activeTurn, unknownDetail: null };
 }

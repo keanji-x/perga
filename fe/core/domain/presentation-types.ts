@@ -34,7 +34,7 @@ export type ConversationDisplayIdentity = { "kind": "human", message_id: string,
 
 export type ConversationDisplayItem = { cursor: ConversationCursor, source: ConversationDisplaySource, };
 
-export type ConversationDisplaySource = { "kind": "human", message_id: string, revision: number, author: ConversationHumanAuthor, text: string, attachments: Array<PlannerAttachment>, created_at_ms: number, delivery_error?: string | undefined, supplemental?: boolean | undefined, message_status?: "queued" | "sending" | "processing" | "completed" | "failed" | "unconfirmed" | undefined, } | { "kind": "system", observation_id: string, presentation: SystemInputPresentation, text: string, created_at_ms: number, } | { "kind": "native", item: HarnessItem, } | { "kind": "imported_item", item: HarnessItem, provenance: ImportedProvenance, } | { "kind": "historical_raw", item: HarnessItem, } | { "kind": "removed", identity: ConversationDisplayIdentity, };
+export type ConversationDisplaySource = { "kind": "human", message_id: string, request_key?: string, revision: number, author: ConversationHumanAuthor, text: string, attachments: Array<PlannerAttachment>, created_at_ms: number, delivery_error?: string | undefined, supplemental?: boolean | undefined, message_status?: "queued" | "sending" | "processing" | "completed" | "failed" | "unconfirmed" | undefined, } | { "kind": "system", observation_id: string, presentation: SystemInputPresentation, text: string, created_at_ms: number, } | { "kind": "native", item: HarnessItem, } | { "kind": "imported_item", item: HarnessItem, provenance: ImportedProvenance, } | { "kind": "historical_raw", item: HarnessItem, } | { "kind": "removed", identity: ConversationDisplayIdentity, };
 
 export type ConversationHumanAuthor = { user_id: string, display_name: string, };
 
@@ -123,15 +123,7 @@ revision: string, };
 
 export type MentionCandidates = { tags: Array<TagMention>, tracks: Array<TrackMention>, blocks: Array<BlockMention>, };
 
-export type PlannerAttachment = { id: AttachmentId,
-/**
- * Derived from `id`, never stored separately.
- */
-contentType: string, size: number,
-/**
- * Where to read the bytes; derived by [`attachment_url`]. The server's host path is NOT here and must not be.
- */
-url: string, };
+export type PlannerAttachment = { id: AttachmentId, contentType: string, size: number, url: string };
 
 export type PlannerPermissionMode = string;
 
@@ -172,12 +164,5 @@ export type TrackMention = {
 label: string, track_id: TrackId, insert: string, };
 
 export type TrackSourceDetail = { source_id: string, provenance: SourceProvenance, origin: SourceOrigin, title: string, published_at?: string, content_id?: string, url?: string, body_bytes: number, body_sha256: string, captured_at: string, quotes: Array<SourceQuote>, body: string, };
-
-export type UploadAttachmentResponse = { attachmentId: AttachmentId, contentType: string, size: number,
-/**
- * Absolute REST path the browser reads the bytes back from. Durable only once the attachment is
- * bound: a staged upload never sent is swept after the 24h orphan TTL, after which this path answers 400.
- */
-url: string, };
 
 export type WorkspaceIsolation = "managed" | "worktree" | "none";

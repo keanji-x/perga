@@ -4,7 +4,10 @@ namespace Perga.Kernel.Ports;
 public sealed record SessionMessage(
     string Id, string SessionId, string AuthorId, string RequestKey, string RequestHash,
     string? TargetTurnId, string? TurnId, string Content, string Delivery, long CreatedAtMs, string Kind,
-    string? DeliveredTurnId = null);
+    string? DeliveredTurnId = null)
+{
+    public IReadOnlyList<Perga.Contracts.StoredImageAttachment> Attachments { get; init; } = [];
+}
 
 public interface ISessionMessageStore
 {
@@ -12,6 +15,9 @@ public interface ISessionMessageStore
     Task<SessionMessage?> GetAsync(string sessionId, string messageId, CancellationToken ct);
     Task<SessionMessage?> NextAsync(string sessionId, CancellationToken ct);
     Task InsertAsync(SessionMessage message, CancellationToken ct);
+    Task InsertWithMediaAsync(string trackId, SessionMessage message, IReadOnlyList<ImageMediaWrite> images, CancellationToken ct) =>
+        images.Count == 0 ? InsertAsync(message, ct)
+            : throw new NotSupportedException("This message store does not support image attachments.");
     Task<bool> TransitionAsync(SessionMessage message, string expected, CancellationToken ct);
     Task<string?> FindQueuedSteerAsync(SessionMessage message, string turnId, CancellationToken ct);
     Task<bool> ClaimQueuedSteerAsync(SessionMessage message, string turnId, CancellationToken ct);

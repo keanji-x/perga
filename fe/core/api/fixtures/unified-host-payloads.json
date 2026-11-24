@@ -70,6 +70,7 @@
     "requestKey": null
   },
   "page": {
+    "attachmentsSupported": false,
     "items": [],
     "activeTurn": null,
     "session": {

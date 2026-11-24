@@ -18,7 +18,7 @@ public sealed partial class TrackActor
             await previous.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
         string outcome;
-        KernelException? authorizationFailure = null;
+        KernelException? deterministicFailure = null;
         try
         {
             var delivery = await AttemptSteeringAsync(message, turnId, startedAt, caller, originatingTurn, ct).ConfigureAwait(false);
@@ -26,14 +26,21 @@ public sealed partial class TrackActor
             {
                 SteerDelivery.Accepted => "delivered",
                 SteerDelivery.Declined when !queued => "rejected",
-                SteerDelivery.Declined when _timeProvider.GetElapsedTime(startedAt) < SteeringRequestTimeout => "queued",
+                SteerDelivery.Declined => "queued",
                 null => "rejected",
                 _ => "unknown",
             };
         }
+        catch (AttachmentDispatchException ex)
+        {
+            deterministicFailure = new KernelException(ex.Code == "attachments_unsupported"
+                ? KernelErrorCode.AttachmentsUnsupported : KernelErrorCode.AttachmentUnavailable,
+                ex.Message, innerException: ex);
+            outcome = queued ? "queued" : "rejected";
+        }
         catch (KernelException ex) when (caller is InteropPrincipal.Session)
         {
-            authorizationFailure = ex;
+            deterministicFailure = ex;
             outcome = queued ? "queued" : "rejected";
         }
         catch (Exception) when (!ct.IsCancellationRequested)
@@ -73,7 +80,7 @@ public sealed partial class TrackActor
             }
             return ToSteeringResult(message.Id, result);
         }, ct).ConfigureAwait(false);
-        if (authorizationFailure is not null) throw authorizationFailure;
+        if (deterministicFailure is not null) throw deterministicFailure;
         return settled;
     }
 
@@ -130,26 +137,31 @@ public sealed partial class TrackActor
             return Task.FromResult(current is not null && current.TurnDto.Id == turnId && !current.Interrupted ? current : null);
         }, ct).ConfigureAwait(false);
         var remaining = SteeringRequestTimeout - _timeProvider.GetElapsedTime(startedAt);
-        if (remaining <= TimeSpan.Zero) return SteerDelivery.Unconfirmed;
+        if (remaining <= TimeSpan.Zero) return SteerDelivery.Declined;
         if (target is null) return null;
         if (!target.AgentSession.SupportsNativeSteer) return SteerDelivery.Declined;
 
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
         deadline.CancelAfter(remaining < SteeringTimeout ? remaining : SteeringTimeout);
+        var mayHaveWritten = 0;
         Task AuthorizeWriteAsync(CancellationToken token) => EnqueueAsync(_ =>
         {
+            token.ThrowIfCancellationRequested();
             if (originatingTurn?.Interrupted == true)
                 throw KernelException.Conflict("The originating turn stopped before steering was written.");
             var session = RequireSessionCore(message.SessionId);
             RequireInteropCore(caller, session, write: true);
             if (!_scheduler.TryGetActive(session.Id, out var active) || !ReferenceEquals(active, target) || target.Interrupted)
                 throw KernelException.Conflict("The target turn changed before steering was written.");
+            Volatile.Write(ref mayHaveWritten, 1);
             return Task.CompletedTask;
         }, token);
 
         try
         {
-            return await target.AgentSession.SteerAsync(turnId, message.Content, deadline.Token, AuthorizeWriteAsync)
+            return await target.AgentSession.SteerAsync(
+                new TurnInput(message.Content, turnId, Attachments: ResolveTurnImages(message.Attachments)),
+                deadline.Token, AuthorizeWriteAsync)
                 .WaitAsync(deadline.Token).ConfigureAwait(false);
         }
         catch (KernelException) when (caller is InteropPrincipal.Human)
@@ -159,7 +171,7 @@ public sealed partial class TrackActor
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
-            return SteerDelivery.Unconfirmed;
+            return Volatile.Read(ref mayHaveWritten) == 0 ? SteerDelivery.Declined : SteerDelivery.Unconfirmed;
         }
     }
 }

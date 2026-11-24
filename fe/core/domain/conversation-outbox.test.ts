@@ -60,3 +60,26 @@ it('completes a persisted running tool in place with the live result, preserving
   expect(outboxView({ serverEntries: [running], stalled: false, ops: [], liveReplies: [done] }).transcript)
     .toEqual([{ ...done, atMs: 1 }]);
 });
+
+it.each(['', 'An image with words'])('deduplicates an early history item for %j in every local delivery state', text => {
+  const local = { id: 'local-png', contentType: 'image/png', size: 1, url: 'blob:preview' };
+  const id = `${'a'.repeat(64)}.png`;
+  const saved = { ...local, id, url: `/api/v1/tracks/track/media/${id}` };
+  const submitted = send();
+  const echo = { ...submitted.echo, text, attachments: [local] };
+  const canonical: TranscriptEntry = { id: 'human:stored', author: 'you', text, atMs: 2, attachments: [saved],
+    requestKey: submitted.key, human: { userId: 'owner', displayName: 'Owner', messageId: 'stored', revision: 1 } };
+  const another = { ...canonical, id: 'human:another', requestKey: 'another-client' };
+  const matchingStates: SendOp[] = [
+    { ...submitted, phase: 'sending', unknown: false, echo },
+    { ...submitted, phase: 'sending', unknown: true, echo },
+    { ...failed('unknown'), echo },
+    { ...failed('refused'), echo },
+  ];
+  expect(view([matchingStates[0]], [another]).transcript).toHaveLength(2);
+  for (const op of matchingStates) {
+    expect(view([op], [canonical])).toMatchObject({ transcript: [canonical], sending: false, failed: null });
+    const waiting = { ...op, echo: { ...echo, queued: true } };
+    expect(presentPendingMessages([canonical], [], [waiting]).sending).toEqual([]);
+  }
+});

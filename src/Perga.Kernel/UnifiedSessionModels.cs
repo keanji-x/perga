@@ -24,7 +24,11 @@ public sealed record UpdateSessionRequest(long? ExpectedConfigVersion = null, st
     string? Provider = null, OptionalString Model = default, OptionalString ReasoningEffort = default,
     OptionalString PermissionMode = default);
 public sealed record SendSessionMessageRequest(string? Content = null, string? RequestKey = null, string Mode = "default",
-    string? TurnId = null, string? MessageId = null, int? ExpectedEpoch = null);
+    string? TurnId = null, string? MessageId = null, int? ExpectedEpoch = null)
+{
+    [System.Text.Json.Serialization.JsonIgnore]
+    public IReadOnlyList<byte[]>? Images { get; init; }
+}
 public sealed record SessionMessageReceipt(string MessageId, string SessionId, string? TurnId, string Delivery, bool Replay = false);
 public sealed record SessionControlRequest(string Action, string? TurnId = null, int? ExpectedEpoch = null);
 public sealed record RespondInteractionRequest(string? ExecutionId = null, string? OptionId = null, JsonElement? Answers = null);

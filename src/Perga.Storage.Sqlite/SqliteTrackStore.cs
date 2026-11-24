@@ -106,6 +106,9 @@ public sealed class SqliteTrackStore : ITrackStore, IAsyncDisposable, ISessionIn
         }
     }
 
+    public Task<TrackMedia?> OpenTrackMediaAsync(string trackId, string fileName, CancellationToken ct) =>
+        _context.OpenTrackMediaAsync(trackId, fileName, ct);
+
     public Task InitializeAsync(CancellationToken ct = default) => _context.InitializeAsync(ct);
     public ValueTask DisposeAsync() => _context.DisposeAsync();
 
@@ -214,6 +217,10 @@ public sealed class SqliteTrackStore : ITrackStore, IAsyncDisposable, ISessionIn
 
     Task ISessionMessageStore.InsertAsync(SessionMessage message, CancellationToken ct) =>
         ((ISessionMessageStore)_sessionMessagesRepository).InsertAsync(message, ct);
+
+    Task ISessionMessageStore.InsertWithMediaAsync(string trackId, SessionMessage message,
+        IReadOnlyList<ImageMediaWrite> images, CancellationToken ct) =>
+        _sessionMessagesRepository.InsertWithMediaAsync(trackId, message, images, ct);
 
     Task<bool> ISessionMessageStore.TransitionAsync(SessionMessage message, string expected, CancellationToken ct) =>
         ((ISessionMessageStore)_sessionMessagesRepository).TransitionAsync(message, expected, ct);

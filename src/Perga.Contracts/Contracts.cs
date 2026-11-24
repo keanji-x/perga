@@ -173,6 +173,9 @@ public sealed record SessionItemDto(
     public string? InputDelivery { get; init; }
 
     public string? MessageStatus { get; init; }
+
+    [JsonIgnore]
+    public string? OwnerRequestKey { get; init; }
 }
 
 public sealed record GateStepDto(string Name, string Cmd);

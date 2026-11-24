@@ -161,7 +161,7 @@ describe('track conversations', () => {
   });
 
   it('sends a planner message under the key its retries reuse', () => {
-    const operation = sendPlannerInputOperation('card 1', 'hello', ['image.png'], 'key-a');
+    const operation = sendPlannerInputOperation('card 1', 'hello', [], 'key-a');
     expect(operation.responseSchema.safeParse({
       id: 'trn_old', sessionId: 'card 1', status: 'completed', startedAtMs: 1,
     }).success).toBe(false);

@@ -47,6 +47,7 @@ public sealed class OarAgentSession : IAgentSession
     private ConfirmedConfiguration? _configurationState;
     private WorkerProviderConfiguration? _workerConfiguration;
     private bool _supportsNativeSteer;
+    private bool _supportsImages;
     private bool _supportsNativeCompact;
     private bool _supportsSessionResume = true;
     private long _contextUsageRevision = 1;
@@ -77,6 +78,7 @@ public sealed class OarAgentSession : IAgentSession
     }
 
     public string? NativeThreadId => Volatile.Read(ref _nativeThreadId);
+    public bool SupportsImages => Volatile.Read(ref _supportsImages);
     public bool SupportsNativeSteer => Volatile.Read(ref _supportsNativeSteer);
     public bool SupportsNativeCompact => Volatile.Read(ref _supportsNativeCompact);
     public bool CanReuseContextWindow => true;
@@ -274,6 +276,17 @@ public sealed class OarAgentSession : IAgentSession
             yield break;
         }
 
+        EncodedTurnImage[]? images = null;
+        AttachmentDispatchException? refusal = null;
+        try { images = await PrepareImagesAsync(input, ct).ConfigureAwait(false); }
+        catch (AttachmentDispatchException ex) { refusal = ex; }
+        if (refusal is not null)
+        {
+            yield return new UnifiedAgentEvent.TurnError(refusal.Code, refusal.Message,
+                IsRetryable: false, IsConclusive: true, BeforePrompt: true);
+            yield break;
+        }
+
         await _turnLock.WaitAsync(ct).ConfigureAwait(false);
         var turn = new TurnStreamState();
         Volatile.Write(ref _currentTurn, turn);
@@ -287,7 +300,7 @@ public sealed class OarAgentSession : IAgentSession
                 turn.Events.Writer.TryWrite(new UnifiedAgentEvent.ThreadBound(sessionId));
             }
 
-            _ = RunPromptRpcAsync(input, turn, ct);
+            _ = RunPromptRpcAsync(input, images, turn, ct);
             await foreach (var evt in turn.Events.Reader.ReadAllAsync(ct).ConfigureAwait(false))
                 yield return evt;
         }
@@ -349,32 +362,48 @@ public sealed class OarAgentSession : IAgentSession
             _ => false
         };
 
-    public async Task<SteerDelivery> SteerAsync(string turnCorrelationId, string message, CancellationToken ct, Func<CancellationToken, Task>? beforeWrite = null)
+    public Task<SteerDelivery> SteerAsync(string turnCorrelationId, string message, CancellationToken ct,
+        Func<CancellationToken, Task>? beforeWrite = null) => SteerAsync(new TurnInput(message, turnCorrelationId), ct, beforeWrite);
+
+    public async Task<SteerDelivery> SteerAsync(TurnInput input, CancellationToken ct, Func<CancellationToken, Task>? beforeWrite = null)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-        if (!SupportsNativeSteer || string.IsNullOrWhiteSpace(message)) return SteerDelivery.Declined;
+        if (!SupportsNativeSteer || (string.IsNullOrWhiteSpace(input.Prompt) && input.Attachments is not { Count: > 0 }))
+            return SteerDelivery.Declined;
+        var images = await PrepareImagesAsync(input, ct).ConfigureAwait(false);
         var rejectedBeforeWrite = false;
+        var mayHaveWritten = false;
         async Task AuthorizeWriteAsync(CancellationToken token)
         {
-            try { await beforeWrite!(token).ConfigureAwait(false); }
-            catch
+            if (beforeWrite is not null)
             {
-                rejectedBeforeWrite = true;
-                throw;
+                try { await beforeWrite(token).ConfigureAwait(false); }
+                catch
+                {
+                    rejectedBeforeWrite = true;
+                    throw;
+                }
             }
+            mayHaveWritten = true;
         }
 
         try
         {
             var result = await _rpc.SendRequestAsync("session/steer",
-                new { message, correlationId = turnCorrelationId }, ct,
-                beforeWrite: beforeWrite is null ? null : AuthorizeWriteAsync).ConfigureAwait(false);
+                new { message = input.Prompt, correlationId = input.CorrelationId, images }, ct,
+                beforeWrite: AuthorizeWriteAsync).ConfigureAwait(false);
+            if (TryGetBool(result, "beforePrompt") == true && TryGetString(result, "code") is { } code)
+                throw new AttachmentDispatchException(code, TryGetString(result, "message") ?? "Image steering was refused.");
             return string.Equals(TryGetString(result, "delivery"), "accepted", StringComparison.OrdinalIgnoreCase)
                 ? SteerDelivery.Accepted
                 : SteerDelivery.Declined;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
-        catch when (!rejectedBeforeWrite) { return SteerDelivery.Unconfirmed; }
+        catch (AttachmentDispatchException) { throw; }
+        catch when (!rejectedBeforeWrite)
+        {
+            return mayHaveWritten ? SteerDelivery.Unconfirmed : SteerDelivery.Declined;
+        }
     }
 
     public async ValueTask DisposeAsync()
@@ -445,6 +474,7 @@ public sealed class OarAgentSession : IAgentSession
 
         if (TryGetString(result, "sessionId") is { Length: > 0 } sessionId)
             Volatile.Write(ref _nativeThreadId, sessionId);
+        Volatile.Write(ref _supportsImages, TryGetBool(result, "supportsImages") == true);
         Volatile.Write(ref _supportsNativeSteer, TryGetBool(result, "supportsNativeSteer") == true);
         Volatile.Write(ref _supportsNativeCompact, TryGetBool(result, "supportsNativeCompact") == true);
         Volatile.Write(ref _supportsSessionResume, TryGetBool(result, "supportsSessionResume") != false);
@@ -464,12 +494,19 @@ public sealed class OarAgentSession : IAgentSession
             PublishIdleContextUsage(initialUsage, revision);
     }
 
-    private async Task RunPromptRpcAsync(TurnInput input, TurnStreamState turn, CancellationToken ct)
+    private async Task<EncodedTurnImage[]?> PrepareImagesAsync(TurnInput input, CancellationToken ct)
+    {
+        if (input.Attachments is not { Count: > 0 } images) return null;
+        if (!SupportsImages) throw AttachmentDispatchException.Unsupported();
+        return await TurnAttachmentEncoder.EncodeAsync(images, ct).ConfigureAwait(false);
+    }
+
+    private async Task RunPromptRpcAsync(TurnInput input, EncodedTurnImage[]? images, TurnStreamState turn, CancellationToken ct)
     {
         try
         {
             await _rpc.SendRequestAsync("session/prompt",
-                new { prompt = input.Prompt, correlationId = input.CorrelationId }, ct, observeResult: response =>
+                new { prompt = input.Prompt, correlationId = input.CorrelationId, images }, ct, observeResult: response =>
                 {
                     // The next notification can already belong to the still-open session.
                     Interlocked.CompareExchange(ref _currentTurn, null, turn);

@@ -1,3 +1,4 @@
+import type { MultipartFile } from '../../../../core/api/multipart.ts';
 import { queryKeys } from './query-keys.ts';
 import { useQueryClient } from '@tanstack/react-query';
 import { type TrackAggregateSnapshotDto } from '../../../../core/api/perga-v1.ts';
@@ -14,7 +15,7 @@ export type ConversationMutations = Readonly<{
   archive: (cardId: string, archived: boolean) => Promise<void>;
   /** The key identifies the DRAFT, not the attempt: a retry after a timeout must reuse it, or it mints a second conversation. */
   create: (text: string, idempotencyKey: string, provider: AgentProvider, selection: ModelSelection, side: SideConversation | undefined,
-    answered: (result: CreatedConversation) => void, permissionMode?: string | null) => Promise<CreatedConversation>;
+    answered: (result: CreatedConversation) => void, permissionMode?: string | null, attachments?: readonly MultipartFile[]) => Promise<CreatedConversation>;
 }>;
 
 /** Session receipts and recovery reads update the Track's authoritative aggregate. */
@@ -23,10 +24,10 @@ export function useTrackConversationMutations(
 ): ConversationMutations {
   const client = useQueryClient();
   const create = useOnlineMutation({
-    mutationFn: async ({ text, idempotencyKey, provider, selection, side, permissionMode }: { text: string; idempotencyKey: string; provider: AgentProvider; selection: ModelSelection; side?: SideConversation; answered: (result: CreatedConversation) => void; permissionMode?: string | null }) => {
+    mutationFn: async ({ text, idempotencyKey, provider, selection, side, permissionMode, attachments }: { text: string; idempotencyKey: string; provider: AgentProvider; selection: ModelSelection; side?: SideConversation; answered: (result: CreatedConversation) => void; permissionMode?: string | null; attachments?: readonly MultipartFile[] }) => {
       return runOperation(
         transport,
-        createTrackConversationOperation(trackId, text, idempotencyKey, provider, selection, side, permissionMode),
+        createTrackConversationOperation(trackId, text, idempotencyKey, provider, selection, side, permissionMode, attachments),
         unauthorized,
       );
     },
@@ -56,7 +57,7 @@ export function useTrackConversationMutations(
     (cardId: string, archived: boolean) => archive.mutateAsync({ cardId, archived }));
   return {
     archive: changeArchive,
-    create: (text, idempotencyKey, provider, selection, side, answered, permissionMode) =>
-      create.mutateAsync({ text, idempotencyKey, provider, selection, side, answered, permissionMode }),
+    create: (text, idempotencyKey, provider, selection, side, answered, permissionMode, attachments) =>
+      create.mutateAsync({ text, idempotencyKey, provider, selection, side, answered, permissionMode, attachments }),
   };
 }

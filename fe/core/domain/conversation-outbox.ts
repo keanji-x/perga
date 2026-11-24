@@ -62,6 +62,7 @@ export type OutboxView = Readonly<{
 export type OutboxFacts = Omit<OutboxView, 'transcript'> & Readonly<{
   entries: readonly TranscriptEntry[];
   echoes: readonly ConversationTurn[];
+  observedKeys: ReadonlySet<string> | null;
 }>;
 
 export function outboxFacts({ serverEntries, stalled, ops }: {
@@ -69,18 +70,26 @@ export function outboxFacts({ serverEntries, stalled, ops }: {
   stalled: boolean;
   ops: readonly SendOp[];
 }): OutboxFacts {
-  const failed = ops.find((op): op is FailedSendOp => op.phase === 'failed') ?? null;
-  const sending = ops.some(op => op.phase === 'sending');
+  const observedKeys = ops.length === 0 ? null : requestKeysInHistory(serverEntries);
+  const unresolved = ops.filter(op => !observedKeys?.has(op.key));
+  const failed = unresolved.find((op): op is FailedSendOp => op.phase === 'failed') ?? null;
+  const sending = unresolved.some(op => op.phase === 'sending');
   // A lost answer cannot give an echo an accepted identity or promise queue delivery.
-  const echoes = ops.filter(op => op.echo.waitForIdentity !== true || (op.phase === 'failed' && op.delivery === 'refused'))
+  const echoes = unresolved.filter(op => op.echo.waitForIdentity !== true || (op.phase === 'failed' && op.delivery === 'refused'))
     .map(op => ({ ...op.echo, queued: false }));
-  return { entries: serverEntries, echoes, shown: echoes.filter(echo => failed?.echo.id !== echo.id),
+  return { entries: serverEntries, echoes, observedKeys, shown: echoes.filter(echo => failed?.echo.id !== echo.id),
     sending, blocked: stalled || sending || failed !== null, failed };
+}
+
+function requestKeysInHistory(entries: readonly TranscriptEntry[]): ReadonlySet<string> {
+  return new Set(entries.flatMap(entry =>
+    (entry.author === 'you' || entry.author === 'human') && entry.human !== undefined && entry.requestKey !== undefined
+      ? [entry.requestKey] : []));
 }
 
 /** Complete a stored running tool in place when its live result arrives. */
 export function withOutboxLiveReplies(facts: OutboxFacts, liveReplies: readonly TranscriptEntry[]): OutboxView {
-  const { entries, echoes, ...state } = facts;
+  const { entries, echoes, shown, sending, blocked, failed } = facts;
   const updates = new Map(liveReplies.flatMap(entry => entry.author === 'activity' && entry.state !== 'running'
     ? [[entry.id, entry] as const] : []));
   const merged = new Set<string>();
@@ -92,7 +101,7 @@ export function withOutboxLiveReplies(facts: OutboxFacts, liveReplies: readonly 
     return entry.state === 'running' ? { ...entry, ...update, atMs: entry.atMs,
       target: update.target ?? entry.target, tool: update.tool ?? entry.tool } : entry;
   });
-  return { ...state, transcript: mergeTranscript(mergeTranscript(current, liveReplies.filter(entry => !merged.has(entry.id))), echoes) };
+  return { shown, sending, blocked, failed, transcript: mergeTranscript(mergeTranscript(current, liveReplies.filter(entry => !merged.has(entry.id))), echoes) };
 }
 
 export function outboxView(input: Parameters<typeof outboxFacts>[0] & { liveReplies: readonly TranscriptEntry[] }): OutboxView {
@@ -103,7 +112,8 @@ export type PendingQueueSend = ConversationTurn & Readonly<{ delivery: 'sending'
 
 /** Accepted queue entries belong to the run response. Only pre-receipt sends remain local. */
 export function presentPendingMessages(entries: readonly TranscriptEntry[], queue: readonly PendingQueueEntry[], ops: readonly SendOp[]) {
-  const waiting = ops.filter(op => op.echo.queued && op.echo.waitForIdentity !== true);
+  const observedKeys = ops.length === 0 ? null : requestKeysInHistory(entries);
+  const waiting = ops.filter(op => op.echo.queued && op.echo.waitForIdentity !== true && !observedKeys?.has(op.key));
   const hidden = new Set(waiting.map(op => op.echo.id));
   return { transcript: entries.filter(entry => !hidden.has(entry.id)), queue,
     sending: waiting.map((op): PendingQueueSend => ({ ...op.echo, delivery: op.phase === 'sending' ? 'sending' : 'failed' })) };

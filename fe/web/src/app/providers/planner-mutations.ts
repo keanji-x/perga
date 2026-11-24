@@ -1,4 +1,4 @@
-import type { UploadAttachmentResponse } from '../../../../core/domain/presentation-types.ts';
+import type { MultipartFile } from '../../../../core/api/multipart.ts';
 import { KeyedSendFailure } from '../../../../core/domain/conversation-delivery.ts';
 import { type ConversationRun } from '../../../../core/domain/conversation-display.ts';
 import type { ConversationSendTarget } from '../../../../core/domain/conversation-outbox.ts';
@@ -111,7 +111,7 @@ export function usePlannerMutations(transport: ApiTransportPort, cardId: string,
     return result;
   };
   return {
-    send: (text: string, attachments: readonly string[], idempotencyKey: string,
+    send: (text: string, attachments: readonly MultipartFile[], idempotencyKey: string,
       queueIfBusy = false, target?: ConversationSendTarget) => {
       const sent = execute(transport, sendPlannerInputOperation(cardId, text, attachments, idempotencyKey, false, queueIfBusy || target?.queue === true, target?.epoch), unauthorized);
       return sent.then(receipt => {
@@ -154,6 +154,5 @@ export function usePlannerMutations(transport: ApiTransportPort, cardId: string,
       setPermissionModeWrite(mode),
     /* No `refreshAfter`: an upload changes nothing any query holds until a send names it. Failures reject with the sentence
      * the strip shows, read against the route's table. */
-    uploadAttachment: (() => Promise.reject(new Error('Image attachments are unavailable.'))) as (readBytes: () => Promise<Uint8Array>, contentType: string) => Promise<() => UploadAttachmentResponse>,
   };
 }

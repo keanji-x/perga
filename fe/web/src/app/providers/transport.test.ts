@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { performApiRequest } from '../../../../core/api/client.ts';
+import { sendPlannerInputOperation } from '../../../../core/domain/conversation-commands.ts';
 import { setPlannerPermissionModeOperation } from '../../../../core/domain/planner-permission-mode.ts';
 import { createFetchTransport } from './transport.ts';
 
@@ -64,21 +65,25 @@ describe('fetch transport bodies', () => {
     return seen;
   }
 
-  /* `JSON.stringify` of a typed array is `{"0":137,"1":80,…}` — not the file, not an error, and nothing in the type system objects. */
-  it('sends a Uint8Array body as the bytes themselves', async () => {
-    const seen = capture();
-    const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
-    await createFetchTransport().send({
-      method: 'POST', path: '/api/cards/c/planner/attachments', credentials: 'include',
-      headers: { 'content-type': 'image/png' }, body: bytes,
-    });
-    expect(seen.body).toBe(bytes);
+  it('passes one multipart body to fetch without overriding its boundary header', async () => {
+    const fetch = vi.fn<(path: string, init: RequestInit) => Promise<Response>>()
+      .mockResolvedValue(new Response('{}', { status: 400 }));
+    vi.stubGlobal('fetch', fetch);
+    const file = new File(['image bytes'], 'image.png', { type: 'image/png' });
+    await performApiRequest(createFetchTransport(), sendPlannerInputOperation('session', '', [file], 'the-key'));
+    const [path, init] = fetch.mock.calls[0];
+    expect(path).toBe('/api/v1/sessions/session/messages');
+    expect(init.headers).toEqual({ 'Idempotency-Key': 'the-key' });
+    expect(init.body).toBeInstanceOf(FormData);
+    const form = init.body as FormData;
+    expect(form.get('payload')).toBe('{"content":"","mode":"default"}');
+    expect(form.getAll('attachments')).toEqual([file]);
   });
 
   it('still serializes an ordinary object body as JSON', async () => {
     const seen = capture();
     await createFetchTransport().send({
-      method: 'POST', path: '/api/cards/c/planner/input', credentials: 'include',
+      method: 'POST', path: '/api/v1/sessions/session/messages', credentials: 'include',
       body: { text: 'hello' },
     });
     expect(seen.body).toBe('{"text":"hello"}');

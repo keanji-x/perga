@@ -26,7 +26,7 @@ internal sealed class SessionInputsRepository
     private const string InputSelect = """
         SELECT i.id AS InputId, i.turn_id AS TurnId, i.session_id AS SessionId,
                CASE WHEN i.delivery = 'queued' THEN 'accepted' ELSE i.delivery END AS DeliveryState, i.resolved_at_ms AS ResolvedAtMs, t.status AS TurnStatus,
-               i.request_hash AS RequestHash, i.content AS Content, t.turn_index AS TurnIndex, t.source_excerpt AS SourceExcerpt,
+               i.request_hash AS RequestHash, i.content AS Content, i.attachments_json AS AttachmentsJson, t.turn_index AS TurnIndex, t.source_excerpt AS SourceExcerpt,
                i.kind IN ('queue', 'steer') AS IsQueuedFollowUp,
                t.epoch AS Epoch, t.provider AS Provider, t.model AS Model, t.reasoning_effort AS ReasoningEffort, s.track_id AS TrackId,
                track.area_id AS AreaId, t.started_at_ms AS StartedAtMs,
@@ -124,7 +124,7 @@ internal sealed class SessionInputsRepository
 
     public Task<PersistedSessionInput> AcceptAsync(
         AgentSessionDto session, SessionInputRequest request, EventEnvelopeDto sessionEvent, CancellationToken ct) =>
-        _context.Writer.EnqueueAsync(async (conn, tx, innerCt) =>
+        _context.WriteWithMediaAsync(session.TrackId, request.MediaWrites, async (conn, tx, innerCt) =>
         {
             if (!await ReserveInputSlotAsync(conn, tx, session, innerCt).ConfigureAwait(false))
                 throw Perga.Kernel.KernelException.Conflict("The session already has an active or unresolved turn.");
@@ -137,21 +137,28 @@ internal sealed class SessionInputsRepository
         EventEnvelopeDto sessionEvent, CancellationToken ct) =>
         _context.Writer.EnqueueAsync<PersistedSessionInput?>(async (conn, tx, innerCt) =>
         {
-            if (!await conn.ExecuteScalarAsync<bool>(new CommandDefinition("""
-                SELECT EXISTS(SELECT 1 FROM session_messages WHERE session_id = @SessionId
-                    AND id = @Id AND delivery = 'queued' AND turn_id IS NULL);
-                """, new { SessionId = session.Id, message.Id }, tx, cancellationToken: innerCt)).ConfigureAwait(false))
-                return null;
-            if (!await ReserveInputSlotAsync(conn, tx, session, innerCt).ConfigureAwait(false))
-                return null;
             var messages = (await conn.QueryAsync<QueuedInputRow>(new CommandDefinition("""
-                SELECT ordinal AS Ordinal, id AS Id, content AS Content FROM session_messages WHERE session_id=@SessionId
+                SELECT ordinal AS Ordinal, id AS Id, content AS Content, attachments_json AS AttachmentsJson FROM session_messages WHERE session_id=@SessionId
                     AND delivery='queued' AND turn_id IS NULL AND kind IN ('queue', 'steer') ORDER BY ordinal;
                 """, new { SessionId = session.Id }, tx, cancellationToken: innerCt)).ConfigureAwait(false)).AsList();
+            if (messages.Count == 0 || messages[0].Id != message.Id ||
+                !await ReserveInputSlotAsync(conn, tx, session, innerCt).ConfigureAwait(false))
+                return null;
             var (turnId, turnIndex) = await CreateInputTurnAsync(conn, tx, session, innerCt).ConfigureAwait(false);
             long primaryItemId = 0;
+            var attachments = new List<StoredImageAttachment>();
+            var prompts = new List<string>();
+            long totalImageBytes = 0;
             foreach (var next in messages)
             {
+                var images = TrackMediaStore.Deserialize(next.AttachmentsJson);
+                var nextTotal = totalImageBytes + images.Sum(image => image.Size);
+                if (attachments.Count + images.Count > ImageAttachmentContract.MaxAttachmentsPerMessage ||
+                    nextTotal > ImageAttachmentContract.MaxTotalBytes)
+                    break;
+                totalImageBytes = nextTotal;
+                attachments.AddRange(images);
+                prompts.Add(next.Content);
                 SessionMessageSql.RequireOne(await conn.ExecuteAsync(new CommandDefinition("""
                     UPDATE session_messages SET turn_id=@TurnId WHERE ordinal=@Ordinal AND session_id=@SessionId
                         AND turn_id IS NULL AND delivery='queued';
@@ -165,8 +172,9 @@ internal sealed class SessionInputsRepository
                 if (next.Id == message.Id) primaryItemId = itemId;
             }
             var input = new PersistedSessionInput(new(message.Id, turnId, session.Id, "accepted", "queued", null),
-                message.RequestHash, string.Join("\n\n", messages.Select(m => m.Content)), turnIndex, session.Epoch,
-                session.Provider, session.Model, session.ReasoningEffort, true, primaryItemId);
+                message.RequestHash, CombineContent(prompts), turnIndex, session.Epoch,
+                session.Provider, session.Model, session.ReasoningEffort, true, primaryItemId)
+            { Attachments = attachments.Count == 0 ? [] : attachments.ToArray() };
             await EventRepository.InsertEventInternalAsync(conn, tx, sessionEvent, innerCt).ConfigureAwait(false);
             return input;
         }, ct);
@@ -181,7 +189,7 @@ internal sealed class SessionInputsRepository
     public Task<PersistedSessionInput?> CreateAsync(
         SessionCreateIntent intent, AgentSessionDto session, SessionInputRequest? firstInput,
         EventEnvelopeDto sessionEvent, CancellationToken ct) =>
-        _context.Writer.EnqueueAsync(async (conn, tx, innerCt) =>
+        _context.WriteWithMediaAsync(session.TrackId, firstInput?.MediaWrites ?? [], async (conn, tx, innerCt) =>
         {
             await SessionRepository.UpsertSessionInternalAsync(conn, tx, session, innerCt).ConfigureAwait(false);
             var input = firstInput is null ? null
@@ -216,7 +224,8 @@ internal sealed class SessionInputsRepository
         SqliteConnection conn, SqliteTransaction tx, AgentSessionDto session, SessionInputRequest request, CancellationToken ct)
     {
         var message = new SessionMessage($"inp_{Guid.NewGuid():N}", session.Id, request.AuthorId, request.Key, request.Hash,
-            null, null, request.Content, "queued", session.UpdatedAtMs, "input");
+            null, null, request.Content, "queued", session.UpdatedAtMs, "input")
+        { Attachments = request.MediaWrites.Select(write => write.Attachment).ToArray() };
         var (turnId, turnIndex) = await CreateInputTurnAsync(conn, tx, session, ct, request.SourceExcerpt).ConfigureAwait(false);
         var ordinal = await SessionMessageSql.InsertSessionMessageAsync(conn, tx, message with { TurnId = turnId }, ct).ConfigureAwait(false);
 
@@ -227,7 +236,8 @@ internal sealed class SessionInputsRepository
             tx, cancellationToken: ct)).ConfigureAwait(false);
 
         return new PersistedSessionInput(new(message.Id, turnId, session.Id, "accepted", "queued", null),
-            message.RequestHash, message.Content, turnIndex, session.Epoch, session.Provider, session.Model, session.ReasoningEffort, false, userItemId, request.SourceExcerpt);
+            message.RequestHash, message.Content, turnIndex, session.Epoch, session.Provider, session.Model, session.ReasoningEffort, false, userItemId, request.SourceExcerpt)
+        { Attachments = message.Attachments };
     }
 
     public Task<bool> ClaimAsync(
@@ -395,10 +405,17 @@ internal sealed class SessionInputsRepository
     private static PersistedSessionInput CombineInput(IEnumerable<InputRow> rows)
     {
         var batch = rows.ToArray();
-        return batch[0].ToInput() with { Content = string.Join("\n\n", batch.Select(r => r.Content)) };
+        return batch[0].ToInput() with
+        {
+            Content = CombineContent(batch.Select(row => row.Content)),
+            Attachments = batch.SelectMany(row => TrackMediaStore.Deserialize(row.AttachmentsJson)).ToArray()
+        };
     }
 
-    private sealed record QueuedInputRow(long Ordinal, string Id, string Content);
+    private static string CombineContent(IEnumerable<string> prompts) =>
+        string.Join("\n\n", prompts.Where(prompt => prompt.Length > 0));
+
+    private sealed record QueuedInputRow(long Ordinal, string Id, string Content, string? AttachmentsJson);
 
     private static void RequireSome(int updated)
     {
@@ -422,6 +439,7 @@ internal sealed class SessionInputsRepository
         public string RequestHash { get; init; } = "";
         public string Content { get; init; } = "";
         public string? SourceExcerpt { get; init; }
+        public string? AttachmentsJson { get; init; }
         public bool IsQueuedFollowUp { get; init; }
         public int TurnIndex { get; init; }
         public int Epoch { get; init; }
@@ -431,6 +449,7 @@ internal sealed class SessionInputsRepository
 
         public PersistedSessionInput ToInput() => new(
             new(InputId, TurnId, SessionId, DeliveryState, TurnStatus, ResolvedAtMs),
-            RequestHash, Content, TurnIndex, Epoch, Provider, Model, ReasoningEffort, IsQueuedFollowUp, UserItemId, SourceExcerpt);
+            RequestHash, Content, TurnIndex, Epoch, Provider, Model, ReasoningEffort, IsQueuedFollowUp, UserItemId, SourceExcerpt)
+        { Attachments = TrackMediaStore.Deserialize(AttachmentsJson) };
     }
 }

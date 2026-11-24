@@ -1,9 +1,9 @@
-import type { PlannerAttachment } from './presentation-types.js';
-import { isUserConversationTurn, isPlannerTurnContext, type ConversationTurn, type TranscriptEntry } from './conversation.js';
-import { MAX_ATTACHMENTS_PER_MESSAGE } from './conversation-commands.js';
+import { MAX_ATTACHMENTS_PER_MESSAGE, MAX_TOTAL_ATTACHMENT_BYTES } from '../api/perga-v1.js';
+import { isUserConversationTurn, isPlannerTurnContext, type ConversationAttachment, type ConversationTurn, type TranscriptEntry } from './conversation.js';
+import { TOO_MANY_IMAGES, TOO_MANY_IMAGE_BYTES } from './conversation-commands.js';
 
-/** What one conversation's composer holds: its words and the images already uploaded for it. */
-export type ComposerContent = Readonly<{ text: string; attachments: readonly PlannerAttachment[] }>;
+/** What one conversation's composer holds: its words and image previews. */
+export type ComposerContent = Readonly<{ text: string; attachments: readonly ConversationAttachment[]; attachmentError?: string | null }>;
 
 export const EMPTY_COMPOSER: ComposerContent = Object.freeze({ text: '', attachments: Object.freeze([]) });
 
@@ -42,7 +42,7 @@ export function editedTurnRefill(entries: readonly TranscriptEntry[], outcomeId:
   const span = editedTurnSpan(entries, outcomeId);
   if (span === null) return null;
   const said = entries.slice(span.start, span.end).filter((entry): entry is ConversationTurn => isUserConversationTurn(entry));
-  const images = new Map<string, PlannerAttachment>();
+  const images = new Map<string, ConversationAttachment>();
   for (const image of said.flatMap((turn) => turn.attachments ?? [])) if (!images.has(image.id)) images.set(image.id, image);
   return { text: said.map((turn) => turn.text).filter((text) => text !== '').join('\n\n'), attachments: [...images.values()] };
 }
@@ -71,13 +71,18 @@ export function withoutEditedTurn(entries: readonly TranscriptEntry[], outcomeId
 export function withRefill(content: ComposerContent, refill: ComposerContent): ComposerContent {
   const text = content.text.trim() === '' ? refill.text
     : refill.text === '' ? content.text : `${content.text}\n\n${refill.text}`;
-  const held = new Set(content.attachments.map((image) => image.id));
-  const added = refill.attachments.filter((image) => !held.has(image.id));
-  return { text, attachments: added.length === 0 ? content.attachments : [...content.attachments, ...added].slice(0, MAX_ATTACHMENTS_PER_MESSAGE) };
-}
-
-/** Whether `merged`, a composer `refill` was added to, holds every image of `refill`: false when the cap left some out. */
-export function tookEveryImage(merged: ComposerContent, refill: ComposerContent): boolean {
-  const held = new Set(merged.attachments.map((image) => image.id));
-  return refill.attachments.every((image) => held.has(image.id));
+  const held = new Set(content.attachments.map(image => image.id));
+  const attachments = [...content.attachments];
+  let total = attachments.reduce((bytes, image) => bytes + image.size, 0);
+  let attachmentError = content.attachmentError;
+  for (const image of refill.attachments) {
+    if (held.has(image.id)) continue;
+    if (attachments.length >= MAX_ATTACHMENTS_PER_MESSAGE) { attachmentError = TOO_MANY_IMAGES; break; }
+    if (total + image.size > MAX_TOTAL_ATTACHMENT_BYTES) { attachmentError = TOO_MANY_IMAGE_BYTES; continue; }
+    attachments.push(image);
+    held.add(image.id);
+    total += image.size;
+  }
+  return { text, attachments: attachments.length === content.attachments.length ? content.attachments : attachments,
+    ...(attachmentError === undefined ? {} : { attachmentError }) };
 }

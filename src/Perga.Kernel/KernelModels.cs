@@ -122,11 +122,16 @@ public sealed record CreateSessionRequest(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? PermissionMode = null,
     string? SystemPrompt = null, string? Prompt = null, string? NotifyParent = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? SourceSessionId = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? SourceExcerpt = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? SourceExcerpt = null)
+{
+    [JsonIgnore]
+    public IReadOnlyList<byte[]>? Images { get; init; }
+}
 
 public sealed record SteeringResult(string InputId, string Delivery);
 
-public sealed record QueuedSessionMessageDto(string Id, string Text, long QueuedAtMs, string State);
+public sealed record QueuedSessionMessageDto(string Id, string Text, long QueuedAtMs, string State,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<MessageAttachmentDto>? Attachments = null);
 public sealed record SessionUnknownDetailDto(string Reason, string Detail, bool CanReconnect,
     bool CanResetContext, bool Recovering, string? LastError);
 
@@ -147,7 +152,7 @@ public sealed record SessionItemsPageDto(
     IReadOnlyList<PermissionModeOption>? PermissionModes = null,
     SessionActivityDto? Activity = null, SessionTaskBindingDto? TaskBinding = null,
     SessionCapabilitiesDto? Capabilities = null, IReadOnlyList<PendingInteractionDto>? PendingInteractions = null,
-    AgentRuntimeStatusDto? RuntimeStatus = null, IReadOnlyList<AgentRuntimeTaskDto>? RuntimeTasks = null);
+    AgentRuntimeStatusDto? RuntimeStatus = null, IReadOnlyList<AgentRuntimeTaskDto>? RuntimeTasks = null, bool AttachmentsSupported = false);
 
 public sealed record WorkerActivityEvent(long Sequence, string Kind, JsonElement Payload, long CreatedAtMs);
 
