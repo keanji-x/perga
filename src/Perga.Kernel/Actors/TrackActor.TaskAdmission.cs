@@ -70,13 +70,21 @@ public sealed partial class TrackActor
         return node?.Do.Kind == "run" ? FlowTaskRouting.RequestedAccess(node) : FormatAccessModeForPolicy(task.Access);
     }
 
+    private static bool IsHostExecutorTask(TaskDto task) =>
+        string.Equals(task.Kind, "command", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(task.Kind, "cmd", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(task.Kind, "shell", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(task.Kind, "terminal", StringComparison.OrdinalIgnoreCase) ||
+        (string.Equals(task.Kind, "flow_watch", StringComparison.OrdinalIgnoreCase) && FlowConstants.IsFlowTask(task));
+
     private GuardDecision EvaluateTaskDispatchCore(TaskDto task, PolicyTaskRoute route)
     {
         if (_policy is null)
             return new GuardDecision.Allow();
-        var effectiveProvider = route.Provider ?? GetDefaultProviderCore();
         var effectiveAccess = route.Access ?? FormatAccessModeForPolicy(task.Access);
-        var effectivePermissionMode = ResolveEffectiveTaskPermissionModeCore(task, effectiveProvider, effectiveAccess);
+        var effectivePermissionMode = IsHostExecutorTask(task)
+            ? null
+            : ResolveEffectiveTaskPermissionModeCore(task, route.Provider ?? GetDefaultProviderCore(), effectiveAccess);
         return _policyVm.Before(_policy, "task.dispatch", TrackId, JsonHelpers.ToElement(new
         {
             taskKey = task.TaskKey,
@@ -220,9 +228,13 @@ public sealed partial class TrackActor
 
     private string TaskDispatchFieldsCore(TaskDto task, PolicyTaskRoute route)
     {
-        var effectiveProvider = SessionLaunchValidator.NormalizeProvider(route.Provider ?? GetDefaultProviderCore());
+        var isHostTask = IsHostExecutorTask(task);
         var effectiveAccess = route.Access ?? FormatAccessModeForPolicy(task.Access);
-        var effectivePermissionMode = ResolveEffectiveTaskPermissionModeCore(task, effectiveProvider, effectiveAccess);
+        var effectiveProvider = isHostTask ? null : SessionLaunchValidator.NormalizeProvider(route.Provider ?? GetDefaultProviderCore());
+        var effectiveModel = isHostTask ? null : (route.Model ?? ResolveTaskWorkerModelCore(effectiveProvider!));
+        var effectivePermissionMode = isHostTask
+            ? null
+            : ResolveEffectiveTaskPermissionModeCore(task, effectiveProvider!, effectiveAccess);
         return JsonSerializer.Serialize(new
         {
             task.Role,
@@ -232,7 +244,7 @@ public sealed partial class TrackActor
             task.Gate,
             task.Acceptance,
             effectiveProvider,
-            effectiveModel = route.Model,
+            effectiveModel,
             effectiveAccess,
             effectivePermissionMode
         });

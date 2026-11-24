@@ -497,4 +497,111 @@ public sealed partial class TrackFlowTests
         Assert.Null(failed.SessionId);
         Assert.Single(await ctx.Kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), Human, default));
     }
+
+    [Fact]
+    public async Task DispatchApprovalDrift_ReevaluatesWhenLeadModelChangesDuringPendingApproval()
+    {
+        await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
+        ctx.AgentRuntime.Providers = [new("codex", true, "1", null, ["gpt-5", "gpt-6"])];
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        var trackId = snap.Track.Id;
+        var leadId = snap.Track.LeadSessionId!;
+
+        await ctx.Kernel.UpdateSessionAsync(leadId, new UpdateSessionRequest(Model: new("gpt-5")), Human, default);
+        var caller = await ctx.OpenMcpCallerAsync(leadId);
+        await KernelMcpDispatcher.ExecuteGuardedAsync(
+            ctx.Kernel,
+            caller,
+            KernelMcpToolNames.TrackSet,
+            JsonSerializer.SerializeToElement(new
+            {
+                source = """
+                    export default {
+                      id: 'model-drift-guard',
+                      title: 'Model Drift Guard',
+                      before(action) {
+                        if (action.type !== 'task.dispatch') return Allow();
+                        return AskHuman('Approve dispatch?', { approve: 'Approve', deny: 'Reject' });
+                      }
+                    };
+                    """
+            }));
+
+        var commit = await ctx.Kernel.CommitTrackFlowAsync(trackId, dryRun: false, expectedFlowRev: 0, Human, content: """
+            {"rev":0,"nodes":[{"id":"model-drift","do":{"kind":"run","access":"read_write","prompt":"Edit"}}]}
+            """);
+        Assert.True(commit.Ok, JsonSerializer.Serialize(commit.Diagnostics));
+
+        await WaitUntilAsync(async () => (await ctx.Kernel.GetTrackAggregateAsync(trackId)).PendingApprovals.Count == 1);
+        var firstApproval = Assert.Single((await ctx.Kernel.GetTrackAggregateAsync(trackId)).PendingApprovals);
+
+        // Change Lead model while approval is pending; the worker would inherit the new model.
+        await ctx.Kernel.UpdateSessionAsync(leadId, new UpdateSessionRequest(Model: new("gpt-6")), Human, default);
+
+        // Approving the stale gpt-5 ask must NOT launch a gpt-6 worker; it must request a fresh approval.
+        await ctx.Kernel.RespondInteractionAsync(
+            firstApproval.SessionId,
+            firstApproval.Id,
+            new(ExecutionId: firstApproval.ExecutionId, OptionId: firstApproval.Options.Single(o => o.IsApproval).Id),
+            Human,
+            default);
+
+        await WaitUntilAsync(async () =>
+            (await ctx.Kernel.GetTrackAggregateAsync(trackId)).PendingApprovals.Any(a => a.Id != firstApproval.Id));
+        var secondApproval = Assert.Single((await ctx.Kernel.GetTrackAggregateAsync(trackId)).PendingApprovals);
+        Assert.NotEqual(firstApproval.Id, secondApproval.Id);
+        Assert.Equal(TaskRunStatus.Pending, Assert.Single(await ctx.Kernel.ListTasksAsync(trackId), t => t.TaskKey == "model-drift").Status);
+    }
+
+    [Fact]
+    public async Task HostCommandDispatch_ReportsNullPermissionModeEvenWithFullLead()
+    {
+        await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        var trackId = snap.Track.Id;
+        var leadId = snap.Track.LeadSessionId!;
+
+        await ctx.Kernel.UpdateSessionAsync(leadId, new UpdateSessionRequest(PermissionMode: new("full")), Human, default);
+        var caller = await ctx.OpenMcpCallerAsync(leadId);
+        await KernelMcpDispatcher.ExecuteGuardedAsync(
+            ctx.Kernel,
+            caller,
+            KernelMcpToolNames.TrackSet,
+            JsonSerializer.SerializeToElement(new
+            {
+                source = """
+                    export default {
+                      id: 'deny-full-agent',
+                      title: 'Deny Full Agent Only',
+                      before(action) {
+                        if (action.type === 'task.dispatch' && action.permissionMode != null) {
+                          return Deny('Unexpected permissionMode on host command: ' + action.permissionMode);
+                        }
+                        return Allow();
+                      }
+                    };
+                    """
+            }));
+
+        var commit = await ctx.Kernel.CommitTrackFlowAsync(trackId, dryRun: false, expectedFlowRev: 0, Human, content: """
+            {
+              "rev": 0,
+              "nodes": [
+                {"id":"shell-step","do":{"kind":"run","cmd":"echo ok","access":"read_write"}},
+                {"id":"watch-step","do":{"kind":"watch","cmd":"echo ok","interval":"5s"}}
+              ]
+            }
+            """);
+        Assert.True(commit.Ok, JsonSerializer.Serialize(commit.Diagnostics));
+
+        await WaitUntilAsync(async () =>
+        {
+            var tasks = await ctx.Kernel.ListTasksAsync(trackId);
+            return tasks.Single(t => t.TaskKey == "shell-step").Status == TaskRunStatus.Done &&
+                   tasks.Single(t => t.TaskKey == "watch-step").Status == TaskRunStatus.Done;
+        });
+        var tasks = await ctx.Kernel.ListTasksAsync(trackId);
+        Assert.Equal(FlowOutcome.Ok, tasks.Single(t => t.TaskKey == "shell-step").Outcome);
+        Assert.Equal(FlowOutcome.Ok, tasks.Single(t => t.TaskKey == "watch-step").Outcome);
+    }
 }
