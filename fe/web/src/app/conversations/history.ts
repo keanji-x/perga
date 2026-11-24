@@ -14,6 +14,7 @@ type LowerBound = Readonly<{ kind: 'start' } | { kind: 'from'; cursor: Conversat
 export type ObservedWindow<Upper extends TranscriptPosition = TranscriptPosition> = Readonly<{
   rows: Row[];
   page: ConversationPage;
+  turns?: readonly SessionTurnDto[];
   coverage: Readonly<{ lower: LowerBound; upper: Upper }>;
 }>;
 
@@ -52,8 +53,8 @@ export function useTranscriptReads(nextRead: () => number): TranscriptReads {
 
 /** Construct coverage only at the HTTP response boundary, before any compaction. */
 export function observedWindow<Upper extends TranscriptPosition>(page: ConversationPage, upper: Upper): ObservedWindow<Upper> {
-  return { rows: page.items, page, coverage: { upper, lower: page.next_cursor === null
-    ? { kind: 'start' } : { kind: 'from', cursor: page.next_cursor } } };
+  return { rows: page.items, page, ...(page.turns === undefined ? {} : { turns: page.turns }),
+    coverage: { upper, lower: page.next_cursor === null ? { kind: 'start' } : { kind: 'from', cursor: page.next_cursor } } };
 }
 
 type BeforePosition = Extract<TranscriptPosition, { kind: 'before' }>;
@@ -111,9 +112,49 @@ export function mergeObservedTurns(
 function mergePageTurns(windows: readonly ObservedWindow[]): readonly SessionTurnDto[] {
   const ordered: (readonly SessionTurnDto[] | undefined)[] = [];
   for (let index = windows.length - 1; index >= 0; index -= 1) {
-    ordered.push(windows[index]?.page.turns);
+    const window = windows[index];
+    ordered.push(window?.turns ?? window?.page.turns);
   }
   return mergeObservedTurns(...ordered);
+}
+
+/** Reconcile confirmed terminal turns into cached history windows while preserving `latest.page` identity for read numbering. */
+export function patchHistoryTurns(
+  previous: History | undefined,
+  terminalTurns: readonly SessionTurnDto[],
+): History | undefined {
+  if (previous === undefined || terminalTurns.length === 0) return previous;
+  const terminalById = new Map<string, SessionTurnDto>();
+  for (const turn of terminalTurns) {
+    if (confirmedTurnStatus(turn.status) !== undefined) terminalById.set(turn.id, turn);
+  }
+  if (terminalById.size === 0) return previous;
+  const patchWindow = <Upper extends TranscriptPosition>(window: ObservedWindow<Upper>): ObservedWindow<Upper> => {
+    const existing = window.turns ?? window.page.turns;
+    if (existing === undefined || existing.length === 0) return window;
+    let changed = false;
+    const nextTurns = existing.map(turn => {
+      const updated = terminalById.get(turn.id);
+      if (updated === undefined
+        || (turn.status === updated.status && turn.completedAtMs === updated.completedAtMs
+          && turn.startedAtMs === updated.startedAtMs && turn.errorText === updated.errorText)) {
+        return turn;
+      }
+      changed = true;
+      return updated;
+    });
+    return changed ? { ...window, turns: nextTurns } : window;
+  };
+  const nextLatest = patchWindow(previous.latest);
+  let retainedChanged = false;
+  const nextRetained = previous.retained.map(window => {
+    const patched = patchWindow(window);
+    if (patched !== window) retainedChanged = true;
+    return patched;
+  });
+  return nextLatest === previous.latest && !retainedChanged
+    ? previous
+    : { latest: nextLatest, retained: nextRetained };
 }
 
 function compactWindows(windows: readonly ObservedWindow[]): ObservedWindow[] {
@@ -126,7 +167,8 @@ function compactWindows(windows: readonly ObservedWindow[]): ObservedWindow[] {
         || (window.coverage.upper.kind === 'before' && window.coverage.upper.cursor.position === lower.cursor.position))) {
       const mergedTurns = mergePageTurns([previous, window]);
       compacted[compacted.length - 1] = { rows: rowsOfWindows([previous, window]),
-        page: mergedTurns.length === 0 ? previous.page : { ...previous.page, turns: mergedTurns },
+        page: previous.page,
+        ...(mergedTurns.length === 0 ? {} : { turns: mergedTurns }),
         coverage: { upper: previous.coverage.upper, lower: window.coverage.lower } };
     } else compacted.push(window);
   }

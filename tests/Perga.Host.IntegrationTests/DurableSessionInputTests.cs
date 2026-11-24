@@ -458,13 +458,16 @@ public sealed class DurableSessionInputTests
             Assert.StartsWith("trn_000003_", receipt.TurnId);
             await host.Services.GetRequiredService<IPergaKernel>().WaitForTrackIdleAsync(trackId);
             var afterTurnThree = (await host.AuthenticatedClient.GetFromJsonAsync<SessionItemsPageDto>(
-                $"/api/v1/sessions/{sessionId}/items?latest=true&limit=1", PergaJsonDefaults.ApiOptions))!;
-            Assert.Single(afterTurnThree.Items);
-            Assert.All(afterTurnThree.Items, item => Assert.NotEqual("trn_000001_fixture", item.TurnId));
+                $"/api/v1/sessions/{sessionId}/items?latest=true&limit=10", PergaJsonDefaults.ApiOptions))!;
             var turnsAfterThree = afterTurnThree.Turns!.ToDictionary(turn => turn.Id);
             Assert.Equal(1, turnsAfterThree["trn_000001_fixture"].CompletedAtMs);
             Assert.Equal(2, turnsAfterThree["trn_000002_fixture"].CompletedAtMs);
             Assert.True(turnsAfterThree[receipt.TurnId!].CompletedAtMs > 2);
+            var singleItemPage = (await host.AuthenticatedClient.GetFromJsonAsync<SessionItemsPageDto>(
+                $"/api/v1/sessions/{sessionId}/items?latest=true&limit=1", PergaJsonDefaults.ApiOptions))!;
+            Assert.Single(singleItemPage.Items);
+            Assert.DoesNotContain(singleItemPage.Turns!, turn => turn.Id == "trn_000001_fixture");
+            Assert.Contains(singleItemPage.Turns!, turn => turn.Id == receipt.TurnId);
 
             await using var check = new SqliteConnection($"Data Source={dbPath};Pooling=False;Foreign Keys=True");
             await check.OpenAsync();

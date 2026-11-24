@@ -8,7 +8,7 @@ import { afterEach,expect,it } from 'vitest';
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { applyEventEffects } from '../events/query-invalidation-adapter.ts';
 import { conversationHistoryQueryOptions as pageOptions } from '../providers/conversation-queries.ts';
-import { latestHistory as applyLatestPage,earlierReadingPosition,historyRows,mergeObservedTurns,observedWindow as observePage,useTranscriptHistory,useTranscriptReads,type History } from './history.ts';
+import { latestHistory as applyLatestPage,earlierReadingPosition,historyRows,mergeObservedTurns,observedWindow as observePage,patchHistoryTurns,useTranscriptHistory,useTranscriptReads,type History } from './history.ts';
 
 import type { ConversationCursor } from '../../../../core/domain/presentation-types.ts';
 import type { ConversationDisplayItem,ConversationPage } from '../../../../core/domain/conversation-display.ts';
@@ -359,21 +359,20 @@ it('retains observed terminal turn completion timestamps across overlapping comp
   // Overlapping windows compact into one retained window while preserving earlier turns' timestamps.
   const first = applyLatestPage(undefined, { ...page(rows(1)), turns: [t1, t2Running] });
   const overlapping = applyLatestPage(first, { ...page(rows(31)), turns: [t1, t2Completed] });
-  const compacted = applyLatestPage(overlapping, { ...page(rows(121)), turns: [t1, t2Completed, t3Running] });
+  const compacted = applyLatestPage(overlapping, { ...page(rows(121)), turns: [t3Running] });
   expect(compacted.retained).toHaveLength(1);
-  expect(compacted.retained[0]?.page.turns?.find(entry => entry.id === 'trn_1')?.completedAtMs).toBe(2000);
-  expect(compacted.retained[0]?.page.turns?.find(entry => entry.id === 'trn_2')?.completedAtMs).toBe(5000);
+  expect(compacted.retained[0]?.turns?.find(entry => entry.id === 'trn_1')?.completedAtMs).toBe(2000);
+  expect(compacted.retained[0]?.turns?.find(entry => entry.id === 'trn_2')?.completedAtMs).toBe(5000);
 
-  // Even when a retained window still carries stale non-terminal metadata, authoritative latest turns win and never downgrade.
-  const staleRetained = applyLatestPage(first, { ...page(rows(121)), turns: [t1, t2Completed, t3Running] });
-  const merged = mergeObservedTurns(
-    ...staleRetained.retained.map(window => window.page.turns),
-    staleRetained.latest.page.turns,
-  );
-  expect(merged.find(entry => entry.id === 'trn_1')?.completedAtMs).toBe(2000);
-  expect(merged.find(entry => entry.id === 'trn_2')).toMatchObject({ status: 'completed', completedAtMs: 5000 });
-  expect(merged.find(entry => entry.id === 'trn_3')).toMatchObject({ status: 'running', completedAtMs: null });
-  // Reverse order (stale snapshot arriving after terminal observation) also refuses to downgrade t2.
+  // Patching a newly confirmed terminal turn from a run response updates cached history in place
+  // without replacing latest.page identity, so rollover and reopen keep t2's completion timestamp.
+  const patched = patchHistoryTurns(first, [t2Completed])!;
+  expect(patched.latest.page).toBe(first.latest.page);
+  expect(patchHistoryTurns(patched, [t2Completed])).toBe(patched);
+  const rolledOver = applyLatestPage(patched, { ...page(rows(121)), turns: [t3Running] });
+  expect(rolledOver.retained[0]?.turns?.find(entry => entry.id === 'trn_2')).toMatchObject({ status: 'completed', completedAtMs: 5000 });
+
+  // Stale snapshots arriving after a confirmed terminal observation also refuse to downgrade t2.
   const noDowngrade = mergeObservedTurns([t2Completed], [t2Running]);
   expect(noDowngrade.find(entry => entry.id === 'trn_2')).toMatchObject({ status: 'completed', completedAtMs: 5000 });
 });

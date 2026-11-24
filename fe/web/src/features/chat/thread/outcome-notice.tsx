@@ -1,7 +1,7 @@
 import type { SessionItemsPageDto, SessionTurnDto } from '../../../../../core/api/perga-v1.ts';
 import type { CurrentConversationOutcome } from '../../../../../core/domain/conversation-display.ts';
 import type { ConversationTurnOutcome } from '../../../../../core/domain/conversation.ts';
-import { confirmedTurnStatus, turnCompletedClock } from '../../../../../core/domain/conversation-meta.ts';
+import { confirmedTurnStatus, turnCompletedClock, type ConfirmedTurnStatus } from '../../../../../core/domain/conversation-meta.ts';
 import { ThreadStatusNotice, type CopyResponseAction, type ResponseAction } from './status-notice.tsx';
 import { useRunningElapsedMs } from './running-clock.ts';
 import styles from './thread.module.css';
@@ -32,6 +32,10 @@ function runtimePhaseLabel(runtimeStatus: SessionItemsPageDto['runtimeStatus'] |
 export function activeBackgroundTaskCount(runtimeTasks: RuntimeTasksProp | undefined): number {
   return runtimeTasks?.filter(task => !task.ambient
     && (task.status === 'running' || task.status === 'pending' || task.status === 'paused')).length ?? 0;
+}
+
+function terminalStatusHeading(status: ConfirmedTurnStatus): string {
+  return status === 'completed' ? 'Done' : status === 'interrupted' ? 'Stopped' : 'Turn failed';
 }
 
 /** The current Turn line combines the server's lastTurn with live runtime phase and background task liveness. */
@@ -67,13 +71,13 @@ export function CurrentStatusNotice({ lastTurn, runtimeStatus, runtimeTasks, mes
   }
 
   const status = lastTurn.status;
-  const heading = status === 'running' ? (phaseLabel ?? 'Working…') : status === 'completed' ? 'Done'
-    : status === 'interrupted' ? 'Stopped' : status === 'failed' ? 'Turn failed' : 'Turn outcome unconfirmed';
+  const terminal = confirmedTurnStatus(status);
+  const heading = status === 'running' ? (phaseLabel ?? 'Working…')
+    : terminal !== undefined ? terminalStatusHeading(terminal) : 'Turn outcome unconfirmed';
   const details: string[] = [];
   if (status !== 'running' && phaseLabel !== null) details.push(phaseLabel);
   if (backgroundTasks > 0) details.push(`${backgroundTasks} background tasks`);
   else if (status !== 'running' && hasIdleActivity) details.push('Recent background activity');
-  const terminal = confirmedTurnStatus(status);
   const clock = status === 'running' ? { elapsedMs: elapsed, timestamp: null } : turnCompletedClock(lastTurn);
   return <ThreadStatusNotice messageActions={messageActions} detailsExpanded={detailsExpanded} onDetailsExpandedChange={onDetailsExpandedChange}
     heading={heading} details={details.length > 0 ? details : undefined}
@@ -93,7 +97,7 @@ export function HistoricalTurnStatusNotice({ turn, detailsExpanded, onDetailsExp
 }) {
   const terminal = confirmedTurnStatus(turn.status);
   if (terminal === undefined) return null;
-  const heading = terminal === 'completed' ? 'Done' : terminal === 'interrupted' ? 'Stopped' : 'Turn failed';
+  const heading = terminalStatusHeading(terminal);
   return <ThreadStatusNotice historical detailsExpanded={detailsExpanded} onDetailsExpandedChange={onDetailsExpandedChange}
     heading={heading}
     tone={terminal === 'failed' ? 'error' : terminal === 'interrupted' ? 'warning' : 'neutral'}

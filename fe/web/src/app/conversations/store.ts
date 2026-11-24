@@ -6,14 +6,14 @@ import { sessionSteeringOutcome, pendingQueueWithCurrentHumanVersions, pendingQu
 import { useCurrentUser } from '../auth/current-user.tsx';
 import { buildConversationTranscript, conversationPendingQueue, conversationRunPhase, nativeDisplayRows } from '../../../../core/domain/conversation-display.ts';
 import { useEffect, useMemo, useRef } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { COMPACT_FAILURES, COMPACT_TEXT, type PlannerQueueWriteOutcome } from '../../../../core/domain/conversation-commands.ts';
 import { FOLLOW_INSTALLATION_DEFAULT, isConversationMessage, isOptimisticConversationTurn, isUserConversationTurn, kernelQueuesInput, type PendingQueueEntry } from '../../../../core/domain/conversation.ts';
 import { MODEL_CHANGE_TEXT, PLANNER_MODEL_FAILURES } from '../../../../core/domain/conversation-models.ts';
 import { describeConversation, pendingConversationIds, withRememberedConversation, type ConversationFacts } from '../../../../core/domain/conversation-summary.ts';
-import { mergeObservedTurns, useTranscriptReads, useTranscriptHistory } from './history.ts';
+import { mergeObservedTurns, patchHistoryTurns, useTranscriptReads, useTranscriptHistory, type History } from './history.ts';
 import { presentPendingMessages } from '../../../../core/domain/conversation-outbox.ts';
 import { refusalText, writeFailureOf } from '../../../../core/domain/failure-class.ts';
 import { PERMISSION_MODE_CHANGE_TEXT, PLANNER_PERMISSION_MODE_FAILURES } from '../../../../core/domain/planner-permission-mode.ts';
@@ -40,6 +40,7 @@ export function useConversationStore(
   scope: PlannerConversationScope | null,
   routeIntent: ConversationRouteIntent,
 ): ConversationStore {
+  const queryClient = useQueryClient();
   const registry = useConversationCommands();
   const currentUser = useCurrentUser();
   const { remember, rememberedTurnsOf } = registry;
@@ -77,10 +78,14 @@ export function useConversationStore(
           if (acceptedAtStart !== null && registry.acceptedTurnOf(cardId) === acceptedAtStart
             && conversationStopTurn(page, acceptedAtStart, true) === null)
             registry.rememberAcceptedTurn(cardId, null);
+          const observed = mergeObservedTurns(page.turns, page.lastTurn == null ? null : [page.lastTurn]);
+          if (observed.length > 0) {
+            queryClient.setQueryData<History>(transcriptQuery.queryKey, previous => patchHistoryTurns(previous, observed));
+          }
           return page;
         });
       } };
-    }, [transport, cardId, unauthorized, registry],
+    }, [transport, cardId, unauthorized, registry, queryClient, transcriptQuery.queryKey],
   );
   const run = useQuery({ ...runQuery, enabled: scope !== null, refetchInterval: query =>
     query.state.data?.state === 'running' || query.state.data?.state === 'stopping' ? 1000 : false });
