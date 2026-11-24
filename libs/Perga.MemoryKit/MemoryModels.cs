@@ -49,9 +49,12 @@ public sealed record MemoryPutResult(MemoryEntryMeta Meta);
 
 public sealed record MemoryDeleteResult(bool Deleted);
 
-/// <summary>Per-scope write limits for the rendered pinned entries, in UTF-8 bytes.</summary>
+/// <summary>Per-scope limits for entry count and rendered pinned entries in UTF-8 bytes.</summary>
 public sealed record MemoryEngineOptions(
-    int AreaPinnedBytes = MemoryContext.AreaPinnedBytes, int GlobalPinnedBytes = MemoryContext.GlobalPinnedBytes);
+    int AreaPinnedBytes = MemoryContext.AreaPinnedBytes, int GlobalPinnedBytes = MemoryContext.GlobalPinnedBytes)
+{
+    public int MaxEntriesPerScope { get; init; } = 2_000;
+}
 
 public sealed record MemoryPinnedEntryBytes(string Key, int Bytes);
 

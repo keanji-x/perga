@@ -1,6 +1,5 @@
 using Perga.Contracts;
 using Perga.Kernel.Ports;
-using Perga.Kernel.Templates;
 
 namespace Perga.Kernel;
 
@@ -42,7 +41,7 @@ public sealed partial class PergaKernelService
                 systemArea: systemArea, memoryScopeKey: scopeKey, memoryAreaId: areaId).ConfigureAwait(false);
             track = created.Track;
         }
-        else if (track.TemplateId != MemoryTemplate.Id)
+        else
         {
             track = await Actors.GetOrActivate(track.Id).EnsureMemoryTemplateAsync(ct).ConfigureAwait(false);
         }

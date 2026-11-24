@@ -45,6 +45,7 @@ export function ReportWidgetBlock({
   renderMarkdown,
   onOpenFile,
   onOpenWorker,
+  onOpenTrack,
 }: Readonly<{
   payload: WidgetBlockPayload;
   projection?: TemplateViewsProjection | TemplateViewsState;
@@ -53,6 +54,7 @@ export function ReportWidgetBlock({
   renderMarkdown?: (markdown: string, key: string) => ReactNode;
   onOpenFile?: (path: string) => void;
   onOpenWorker?: (sessionId: string) => void;
+  onOpenTrack?: (trackId: string) => void;
 }>) {
   if (isTemplateViewsState(rawProjection)) {
     if (rawProjection.status === 'loading') {
@@ -208,6 +210,7 @@ export function ReportWidgetBlock({
       initialHeight={payload.height ?? 140}
       onOpenFile={onOpenFile}
       onOpenWorker={onOpenWorker}
+      onOpenTrack={onOpenTrack}
     />
   );
 }

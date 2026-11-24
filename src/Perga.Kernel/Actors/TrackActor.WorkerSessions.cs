@@ -179,7 +179,7 @@ public sealed partial class TrackActor
     private string BuildActiveTemplateDataSectionCore()
     {
         if (_memoryBinding is not null)
-            return "\n\nThis Track's report projects live Memory entries. Read scoped Markdown with memory_list and memory_read. Only the Memory Planner can update entries with memory_put and memory_delete.";
+            return "\n\nThis Track's report projects live Memory entries. Read scoped Markdown with perga_memory list and read. Only the Memory Planner can update entries with perga_memory put and delete.";
 
         if (_policy is null)
         {

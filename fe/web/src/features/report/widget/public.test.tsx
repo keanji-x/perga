@@ -232,6 +232,45 @@ describe('ReportWidgetBlock', () => {
     expect(onOpenWorker).toHaveBeenCalledWith('ses_research_1');
   });
 
+  it('opens only HTTP(S) URLs and well-formed Track IDs from the widget frame', () => {
+    const onOpenTrack = vi.fn();
+    const open = vi.spyOn(window, 'open').mockReturnValue(null);
+    try {
+      render(
+        <ReportWidgetBlock
+          payload={{ use: './widget.html', view: 'test' }}
+          projection={{ templateId: 'demo', views: { test: {} }, widgets: { './widget.html': '<p>Widget</p>' },
+            dataRev: 0, flowRev: 0, diagnostics: [] }}
+          renderText={(text) => text}
+          onOpenTrack={onOpenTrack}
+        />,
+      );
+      const frame = screen.getByTitle<HTMLIFrameElement>('test');
+      const send = (intent: Record<string, string>, source: Window | null = frame.contentWindow) => {
+        fireEvent(window, new MessageEvent('message', { source, data: { type: 'perga:intent', ...intent } }));
+      };
+      send({ kind: 'open_url', url: 'https://example.com' });
+      send({ kind: 'open_url', url: 'http://example.com/docs' });
+      for (const url of ['javascript:alert(1)', 'file:///readme', '/relative', '//example.com']) {
+        send({ kind: 'open_url', url });
+      }
+      send({ kind: 'open_url', url: 'https://example.com/spoofed' }, window);
+      expect(open.mock.calls).toEqual([
+        ['https://example.com/', '_blank', 'noopener,noreferrer'],
+        ['http://example.com/docs', '_blank', 'noopener,noreferrer'],
+      ]);
+
+      send({ kind: 'open_track', trackId: 'trk_abc-123_X' });
+      for (const trackId of ['trk_', 'ses_wrong', 'trk_invalid/path', ' trk_abc']) {
+        send({ kind: 'open_track', trackId });
+      }
+      send({ kind: 'open_track', trackId: 'trk_spoofed' }, window);
+      expect(onOpenTrack.mock.calls).toEqual([['trk_abc-123_X']]);
+    } finally {
+      open.mockRestore();
+    }
+  });
+
   it('renders empty builtin:list gracefully and surfaces schema/loading/error states', () => {
     const emptyProjection: TemplateViewsProjection = {
       templateId: 'equity-research',

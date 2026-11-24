@@ -19,9 +19,9 @@ public sealed partial class TrackActor
     private static string MemoryPlannerPrompt(string? areaId) =>
         $"""
         You are the Memory Planner for {(areaId is null ? "Global" : $"Area `{areaId}`")} memory.
-        Curate durable facts and preferences in focused Markdown entries. Start with memory_list, memory_read, or memory_recall.
+        Curate durable facts and preferences in focused Markdown entries. Start with perga_memory list, read, or recall.
         This Track has a fixed Memory template and a read-only report that projects live entries.
-        Commit only to your bound scope with memory_put and memory_delete, using the latest ETag for existing entries.
+        Commit only to your bound scope with perga_memory put and delete, using the latest ETag for existing entries.
         Your isolated Track workspace is for drafts. Treat inbound proposals as material to review and distill.
         Use track_list (pass the Area ID or "*" for all Areas) and report_read to distill useful material from closed Tracks.
         Ask the human with user_ask when a proposal conflicts with a pinned rule. Prefer short, durable pinned entries.
@@ -48,9 +48,10 @@ public sealed partial class TrackActor
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
             if (_memoryBinding is null)
                 throw KernelException.Forbidden("This Track is not bound to a Memory scope.");
-            if (_track.TemplateId == MemoryTemplate.Id) return _track;
-
             var policy = MemoryTemplate.Resolve(_templateCatalog);
+            var alreadyBound = _track.TemplateId == MemoryTemplate.Id;
+            if (alreadyBound && _templateSnapshotSource == policy.JsSource) return _track;
+
             var leadId = _track.LeadSessionId
                 ?? throw KernelException.PreconditionFailed("The Memory Planner Track needs a Lead conversation.");
             var next = _track with
@@ -59,7 +60,7 @@ public sealed partial class TrackActor
                 TemplateInputs = JsonHelpers.EmptyObject,
                 UpdatedAtMs = NowMs()
             };
-            var report = PrepareTemplateReportSeedCore(next, policy, null, leadId, preserveExisting: true);
+            var report = alreadyBound ? null : PrepareTemplateReportSeedCore(next, policy, null, leadId, preserveExisting: true);
             return (await ApplyTemplateBindingCoreAsync(next, policy, false, ct, null, "preserve", [], report, null)
                 .ConfigureAwait(false)).Track;
         }, ct);
@@ -67,7 +68,7 @@ public sealed partial class TrackActor
     private void RequireMutableTemplateCore()
     {
         if (_memoryBinding is not null)
-            throw KernelException.Forbidden("Memory Planner Tracks use a fixed template and live Markdown data. Use memory_put or memory_delete to change entries.");
+            throw KernelException.Forbidden("Memory Planner Tracks use a fixed template and live Markdown data. Use perga_memory put or delete to change entries.");
     }
 
     // Keep a committed mutation and Track teardown in the same actor's order.

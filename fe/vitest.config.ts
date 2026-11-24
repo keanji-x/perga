@@ -18,8 +18,8 @@ const setupFiles = [
 // plain filename and its ?raw module ID; leave all other filesystem rules intact.
 const readmeFixtureFiles = Object.freeze(['.', '../README.md', '../README.md?raw']);
 const memoryWidgetFixtureFiles = Object.freeze([
-  '../templates/memory/widgets/entries.html',
-  '../templates/memory/widgets/entries.html?raw',
+  '../src/Perga.Kernel/Templates/Memory/widgets/entries.html',
+  '../src/Perga.Kernel/Templates/Memory/widgets/entries.html?raw',
 ]);
 
 export default defineConfig({
@@ -89,11 +89,23 @@ export default defineConfig({
                   refs: Array.from(list.querySelectorAll('.entry:not([hidden]) .ref'), ref => ref.textContent),
                   strong: list.querySelector('strong')?.textContent,
                   body: list.querySelector('.markdown')?.textContent,
-                  sources: list.querySelector('footer')?.textContent,
+                  sources: Array.from(list.querySelectorAll('.entry:not([hidden]) footer .source'), source => ({
+                    text: source.textContent, trackId: source instanceof HTMLButtonElement ? source.title : null,
+                  })),
+                  dates: Array.from(list.querySelectorAll('.entry:not([hidden]) time'), time => time.textContent),
+                  summaries: Array.from(list.querySelectorAll('.entry:not([hidden]) .dek'), summary => summary.textContent),
+                  table: Array.from(list.querySelectorAll<HTMLTableRowElement>('table tr'), row => Array.from(row.cells, cell => cell.textContent)),
+                  quote: list.querySelector('blockquote')?.textContent,
                   links: Array.from(list.querySelectorAll('a'), link => ({ href: link.href, target: link.target, rel: link.rel })),
                   injectedElements: list.querySelectorAll('img, script').length,
                   scrollable: list.scrollHeight > list.clientHeight,
                 }));
+              },
+              clickMemoryWidgetLink: async ({ iframe }, link: string) => {
+                await iframe.frameLocator('iframe[title="topics"]').getByRole('link', { name: link }).click();
+              },
+              clickMemoryWidgetSource: async ({ iframe }, trackId: string) => {
+                await iframe.frameLocator('iframe[title="topics"]').getByRole('button', { name: `Open Track ${trackId}` }).click();
               },
               mockConversationMedia: async ({ page }, path: string, pngBase64?: string) => {
                 const url = `**${path}`;

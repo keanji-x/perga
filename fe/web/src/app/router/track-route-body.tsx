@@ -433,6 +433,7 @@ export function TrackRouteBody({
 
         onOpenLink={openReportLink}
         onOpenFileLink={openReportFile}
+        onOpenTrack={(trackId) => { go({ name: 'track', trackId }); }}
         onOpenWorker={(cardId) => {
           if (!openableWorkerIds.has(cardId)) return;
           if (rows.some((row) => row.id === cardId)) {

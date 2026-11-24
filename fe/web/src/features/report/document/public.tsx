@@ -47,6 +47,8 @@ export type ReportDocumentProps = Readonly<{
   onOpenFileLink?: (target: ReportFileLinkTarget) => void;
   /** Opens a Worker conversation linked from a Report widget. */
   onOpenWorker?: (sessionId: string) => void;
+  /** Opens a Track linked from a Report widget. */
+  onOpenTrack?: (trackId: string) => void;
   /** A `perga://source/…` citation was activated. Absent ⇒ citations render as an inline badge plus their label. */
   onOpenSourceLink?: (target: ReportSourceLinkTarget) => void;
   /** Absolute root used to admit relative or already-absolute workspace links. */
@@ -90,7 +92,7 @@ function isTargetSectionProse(slot: PreparedReportBlock | undefined): boolean {
 
 /** Agent-authored destinations become admitted preview controls. Navigation stays behind typed callbacks or explicit external activation. */
 export function ReportDocument({
-  report, preparation, empty, outlineEmpty, rail, byline, sourceInsertion, backlinkCounts, onOpenLink, onOpenFileLink, onOpenWorker, onOpenSourceLink, fileRoot, fileBasePath, linkPreview,
+  report, preparation, empty, outlineEmpty, rail, byline, sourceInsertion, backlinkCounts, onOpenLink, onOpenFileLink, onOpenWorker, onOpenTrack, onOpenSourceLink, fileRoot, fileBasePath, linkPreview,
   templateViews, allowAutoFlow = true, authored = true, arrivalAnchorId, taskRows,
 }: ReportDocumentProps) {
   const compactViewport = useCompactViewport();
@@ -171,6 +173,7 @@ export function ReportDocument({
               referenceRepository={referenceRepository} onOpenLink={onOpenLink}
               onOpenFileLink={onOpenFileLink}
               onOpenWorker={onOpenWorker}
+              onOpenTrack={onOpenTrack}
               taskRows={taskRows}
               onOpenSourceLink={onOpenSourceLink}
               fileRoot={fileRoot}
@@ -200,7 +203,7 @@ export function ReportDocument({
 
 /** One block, plus the sidenote that belongs to it. Reports are read-only publications. */
 function BlockSlot({
-  slot, backlinks, onOpenLink, onOpenFileLink, onOpenWorker, taskRows, onOpenSourceLink, fileRoot, fileBasePath, linkPreview, referenceRepository, templateViews, sourceInsertion,
+  slot, backlinks, onOpenLink, onOpenFileLink, onOpenWorker, onOpenTrack, taskRows, onOpenSourceLink, fileRoot, fileBasePath, linkPreview, referenceRepository, templateViews, sourceInsertion,
 }: {
   referenceRepository: ReferenceRepository | null;
   slot: PreparedReportBlock;
@@ -208,6 +211,7 @@ function BlockSlot({
   onOpenLink?: (target: ReportLinkTarget) => void;
   onOpenFileLink?: (target: ReportFileLinkTarget) => void;
   onOpenWorker?: (sessionId: string) => void;
+  onOpenTrack?: (trackId: string) => void;
   taskRows?: readonly ReportTaskRow[];
   onOpenSourceLink?: (target: ReportSourceLinkTarget) => void;
   fileRoot?: string;
@@ -234,7 +238,7 @@ function BlockSlot({
             />
           )
           : <BlockBody block={block} taskRows={taskRows} referenceRepository={referenceRepository} onOpenLink={onOpenLink}
-              onOpenFileLink={onOpenFileLink} onOpenWorker={onOpenWorker} fileRoot={fileRoot} fileBasePath={fileBasePath}
+              onOpenFileLink={onOpenFileLink} onOpenWorker={onOpenWorker} onOpenTrack={onOpenTrack} fileRoot={fileRoot} fileBasePath={fileBasePath}
               onOpenSourceLink={onOpenSourceLink} linkPreview={linkPreview} templateViews={templateViews} />}
         {!prose && sourceInsertion?.content}
       </div>
@@ -249,12 +253,13 @@ function BlockSlot({
 
 /** One bad block may not cost the page: an unknown kind or an unparsable payload degrades to one line. */
 function BlockBody({
-  block, taskRows, referenceRepository, onOpenLink, onOpenFileLink, onOpenWorker, fileRoot, fileBasePath, onOpenSourceLink, linkPreview, templateViews,
+  block, taskRows, referenceRepository, onOpenLink, onOpenFileLink, onOpenWorker, onOpenTrack, fileRoot, fileBasePath, onOpenSourceLink, linkPreview, templateViews,
 }: {
   referenceRepository: ReferenceRepository | null;
   onOpenLink?: (target: ReportLinkTarget) => void;
   onOpenFileLink?: (target: ReportFileLinkTarget) => void;
   onOpenWorker?: (sessionId: string) => void;
+  onOpenTrack?: (trackId: string) => void;
   fileRoot?: string;
   fileBasePath?: string;
   block: ReportBlock;
@@ -279,6 +284,7 @@ function BlockBody({
           )}
           onOpenFile={onOpenFileLink === undefined ? undefined : (path) => { onOpenFileLink({ path }); }}
           onOpenWorker={onOpenWorker}
+          onOpenTrack={onOpenTrack}
         />
       );
     case 'unsupported':

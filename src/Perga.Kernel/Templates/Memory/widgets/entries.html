@@ -68,69 +68,139 @@
       font: inherit;
     }
 
-    .entry { padding: 12px 2px; }
-    .entry:not([hidden]) ~ .entry:not([hidden]) { border-top: 1px solid var(--hairline); }
-
-    summary {
-      cursor: pointer;
-      color: var(--text-2);
+    article.entry {
+      padding: 14px 16px;
+      border: 1px solid var(--hairline);
+      border-inline-start: 2.5px solid var(--accent);
+      border-radius: 8px;
+      background: color-mix(in srgb, var(--accent) 4.5%, var(--paper));
     }
 
-    summary:hover .title { color: var(--accent); }
+    article.entry + article.entry { margin-top: 10px; }
+
+    details.entry:not([hidden]) ~ details.entry:not([hidden]) {
+      border-top: 1px solid var(--hairline);
+    }
+
+    summary {
+      position: relative;
+      display: block;
+      padding: 10px 10px 10px 28px;
+      border-radius: 5px;
+      cursor: pointer;
+    }
+
+    summary::-webkit-details-marker { display: none; }
+
+    summary::before {
+      position: absolute;
+      inset-block-start: 18px;
+      inset-inline-start: 10px;
+      width: 6px;
+      height: 6px;
+      border-block-start: 1px solid currentColor;
+      border-inline-end: 1px solid currentColor;
+      color: var(--text-3);
+      content: "";
+      transform: rotate(45deg);
+    }
+
+    details[open] > summary::before { transform: rotate(135deg); }
+    summary:hover, details[open] > summary {
+      background: color-mix(in srgb, var(--accent) 4%, var(--bg));
+    }
 
     :focus-visible {
       outline: 2px solid var(--accent);
-      outline-offset: -1px;
+      outline-offset: 1px;
+    }
+
+    .entry-heading {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 4px 12px;
     }
 
     .title {
       margin: 0;
       color: var(--text);
-      font: 600 17px/1.35 var(--font-serif);
+      font: 600 16px/1.35 var(--font-serif);
     }
+
+    article .title { font-size: 18px; }
 
     .meta {
       display: flex;
       flex-wrap: wrap;
       align-items: baseline;
-      gap: 4px 8px;
-      margin-top: 5px;
+      gap: 4px 6px;
       color: var(--text-2);
       font-size: 11px;
     }
 
-    summary .meta, summary .dek { margin-inline-start: 1em; }
-
     .ref, .tag {
       padding: 1px 6px;
       border: 1px solid var(--hairline);
-      border-radius: 4px;
-      background: var(--paper);
+      background: color-mix(in srgb, var(--paper) 70%, transparent);
+      line-height: 1.4;
     }
 
-    .ref { font-family: var(--font-mono); }
+    .ref { border-radius: 4px; font-family: var(--font-mono); }
+    .tag { border-radius: 999px; }
+    time { color: var(--text-3); font-variant-numeric: tabular-nums; }
 
     .dek {
       display: block;
-      margin-top: 6px;
+      margin-top: 4px;
       color: var(--text-2);
       font-size: 13px;
     }
 
-    .markdown { margin-top: 10px; }
-    .markdown > * { margin: 0 0 8px; }
+    .markdown { margin-top: 12px; line-height: 1.65; }
+    details > .markdown { margin: 10px 10px 12px 28px; }
+    .markdown > * { margin: 0 0 10px; }
     .markdown > :last-child { margin-bottom: 0; }
     .markdown :is(h1, h2, h3, h4, h5, h6) { font: 600 1.05em/1.4 var(--font-serif); }
     .markdown :is(h1, h2) { font-size: 1.2em; }
     .markdown :is(ul, ol) { padding-inline-start: 1.5em; }
-    .markdown a { color: var(--accent); }
+    .markdown a { color: var(--accent); text-underline-offset: 2px; }
+
+    .markdown blockquote {
+      padding: 5px 12px;
+      border-inline-start: 2px solid color-mix(in srgb, var(--accent) 65%, var(--hairline));
+      background: color-mix(in srgb, var(--accent) 3%, var(--paper));
+      color: var(--text-2);
+    }
+
+    .markdown blockquote p { margin: 0; }
+    .markdown blockquote p + p { margin-top: 6px; }
+
+    .table-scroll { overflow: auto; }
+
+    .markdown table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--paper);
+      font-size: 13px;
+    }
+
+    .markdown :is(th, td) {
+      padding: 5px 9px;
+      border: 1px solid var(--hairline);
+      text-align: start;
+      vertical-align: top;
+    }
+
+    .markdown th { background: var(--bg); font-weight: 600; }
 
     .markdown code {
       background: var(--paper);
       font: .9em var(--font-mono);
     }
 
-    .markdown p code, .markdown li code { padding: 1px 3px; }
+    .markdown :not(pre) > code { padding: 1px 4px; border-radius: 3px; }
 
     .markdown pre {
       overflow: auto;
@@ -141,10 +211,33 @@
     }
 
     footer {
-      margin-top: 8px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      gap: 4px 6px;
+      margin-top: 12px;
+      padding-top: 8px;
+      border-top: 1px solid var(--hairline);
       color: var(--text-2);
       font-size: 11px;
     }
+
+    details > footer { margin: 0 10px 12px 28px; }
+    .sources-label { margin-inline-end: 2px; color: var(--text-3); }
+
+    .source {
+      max-width: 100%;
+      padding: 1px 7px;
+      border: 1px solid var(--hairline);
+      border-radius: 999px;
+      background: var(--paper);
+      color: inherit;
+      font: inherit;
+      overflow-wrap: anywhere;
+    }
+
+    button.source { color: var(--accent); font-family: var(--font-mono); cursor: pointer; }
+    button.source:hover { border-color: var(--accent); }
 
     #empty {
       margin: 8px 0;
@@ -166,7 +259,7 @@
     const list = document.getElementById("entries");
     const filter = document.getElementById("filter");
     const empty = document.getElementById("empty");
-    const day = new Intl.DateTimeFormat("en", { dateStyle: "medium", timeZone: "UTC" });
+    const trackIdPattern = /^trk_[A-Za-z0-9_-]+$/;
     const tokens = {
       bg: "--bg", paper: "--paper", surface: "--surface", text: "--text", text2: "--text-2",
       text3: "--text-3", hairline: "--hairline", accent: "--accent",
@@ -226,6 +319,10 @@
             // The host sends Memory data to this frame, so a link must not navigate it.
             link.target = "_blank";
             link.rel = "noopener noreferrer";
+            link.addEventListener("click", event => {
+              event.preventDefault();
+              window.parent.postMessage({ type: "perga:intent", kind: "open_url", url: href }, "*");
+            });
             appendInline(link, label, false);
             parent.append(link);
           }
@@ -242,12 +339,40 @@
       parent.append(text.slice(offset));
     }
 
+    function tableCells(line) {
+      const cells = line.trim().split(/(?<!\\)\|/);
+      if (cells[0] === "") cells.shift();
+      if (cells.at(-1) === "") cells.pop();
+      return cells.map(cell => cell.trim().replace(/\\\|/g, "|"));
+    }
+
+    function tableHeader(line, separator) {
+      if (!line.includes("|") || !separator?.includes("|")) return null;
+      const headings = tableCells(line);
+      const rules = tableCells(separator);
+      return headings.length > 0 && headings.length === rules.length && rules.every(rule => /^:?-+:?$/.test(rule))
+        ? headings : null;
+    }
+
+    function appendTableRow(section, cells, columns, heading = false) {
+      const row = section.insertRow();
+      for (let i = 0; i < columns; i++) {
+        const cell = element(heading ? "th" : "td");
+        if (heading) cell.scope = "col";
+        appendInline(cell, cells[i] ?? "");
+        row.append(cell);
+      }
+    }
+
     function markdown(body) {
       const content = element("div", null, "markdown");
       const lines = body.split(/\r\n?|\n/);
       const fencePattern = /^ {0,3}(\x60{3,}|~{3,}).*$/;
       const headingPattern = /^ {0,3}(#{1,6})[ \t]+(.*)$/;
       const listPattern = /^ {0,3}([-+*]|\d{1,9}[.)])[ \t]+(.*)$/;
+      const quotePattern = /^ {0,3}>[ \t]?(.*)$/;
+      const startsBlock = line =>
+        fencePattern.test(line) || headingPattern.test(line) || listPattern.test(line) || quotePattern.test(line);
       let index = 0;
       while (index < lines.length) {
         const line = lines[index++];
@@ -287,9 +412,37 @@
           content.append(items);
           continue;
         }
+        const quote = line.match(quotePattern);
+        if (quote) {
+          const quoted = [quote[1]];
+          for (let next; (next = lines[index]?.match(quotePattern)); index++) quoted.push(next[1]);
+          const blockquote = element("blockquote");
+          for (const text of quoted.join("\n").split(/\n[ \t]*\n/)) {
+            if (!text.trim()) continue;
+            const paragraph = element("p");
+            appendInline(paragraph, text);
+            blockquote.append(paragraph);
+          }
+          content.append(blockquote);
+          continue;
+        }
+        const headings = tableHeader(line, lines[index]);
+        if (headings) {
+          const table = element("table");
+          appendTableRow(table.createTHead(), headings, headings.length, true);
+          const rows = table.createTBody();
+          index++;
+          while (lines[index]?.includes("|") && !startsBlock(lines[index])) {
+            appendTableRow(rows, tableCells(lines[index++]), headings.length);
+          }
+          const scroll = element("div", null, "table-scroll");
+          scroll.append(table);
+          content.append(scroll);
+          continue;
+        }
         const paragraph = [line];
         while (index < lines.length && lines[index].trim() &&
-          !fencePattern.test(lines[index]) && !headingPattern.test(lines[index]) && !listPattern.test(lines[index])) {
+          !startsBlock(lines[index]) && !tableHeader(lines[index], lines[index + 1])) {
           paragraph.push(lines[index++]);
         }
         const node = element("p");
@@ -299,21 +452,56 @@
       return content;
     }
 
+    function repeatsSummary({ body, summary }) {
+      const opening = body.replace(/<!--[\s\S]*?(?:-->|$)/g, "").trimStart()
+        .split(/\r\n?|\n/, 1)[0].replace(/\s+/g, " ");
+      const normalized = summary.trim().replace(/\s+/g, " ");
+      return opening.startsWith(normalized) || opening.replace(/^#{1,6}\s+/, "").startsWith(normalized);
+    }
+
+    function localDate(timestamp) {
+      return [String(timestamp.getFullYear()).padStart(4, "0"),
+        String(timestamp.getMonth() + 1).padStart(2, "0"), String(timestamp.getDate()).padStart(2, "0")].join("-");
+    }
+
     function header(entry, pinned) {
       const node = element(pinned ? "header" : "summary");
-      node.append(element(pinned ? "h2" : "span", entry.title, "title"));
+      const heading = element(pinned ? "div" : "span", null, "entry-heading");
+      heading.append(element(pinned ? "h2" : "span", entry.title, "title"));
       const meta = element("span", null, "meta");
       meta.append(element("code", entry.ref, "ref"));
       for (const tag of entry.tags) meta.append(element("span", tag, "tag"));
       const timestamp = new Date(entry.updatedAtMs);
       if (Number.isFinite(timestamp.valueOf())) {
-        const date = element("time", day.format(timestamp));
-        date.dateTime = timestamp.toISOString();
+        const date = element("time", localDate(timestamp));
+        date.dateTime = date.textContent;
         meta.append(date);
       }
-      node.append(meta);
-      if (entry.summary && !entry.repeatedSummary) node.append(element("span", entry.summary, "dek"));
+      heading.append(meta);
+      node.append(heading);
+      if (entry.summary && !repeatsSummary(entry)) node.append(element("span", entry.summary, "dek"));
       return node;
+    }
+
+    function sourceFooter(sources) {
+      const footer = element("footer");
+      footer.append(element("span", "Sources", "sources-label"));
+      for (const source of sources) {
+        if (!trackIdPattern.test(source)) {
+          footer.append(element("span", source, "source"));
+          continue;
+        }
+        const label = source.length > 18 ? source.slice(0, 12) + "…" + source.slice(-4) : source;
+        const chip = element("button", label, "source");
+        chip.type = "button";
+        chip.title = source;
+        chip.setAttribute("aria-label", "Open Track " + source);
+        chip.addEventListener("click", () => {
+          window.parent.postMessage({ type: "perga:intent", kind: "open_track", trackId: source }, "*");
+        });
+        footer.append(chip);
+      }
+      return footer;
     }
 
     function renderEntry(entry, pinned, open) {
@@ -324,7 +512,7 @@
         if (rendered) return;
         rendered = true;
         node.append(markdown(entry.body));
-        if (entry.sources.length) node.append(element("footer", "Sources · " + entry.sources.join(" · ")));
+        if (entry.sources.length) node.append(sourceFooter(entry.sources));
       }
       if (pinned) {
         showBody();

@@ -604,6 +604,8 @@ public sealed partial class PergaKernelService : IPergaKernel
     {
         if (req.AreaId == MemoryTrackBinding.SystemAreaId && memoryScopeKey is null)
             throw KernelException.NotFound($"Area '{req.AreaId}' not found.");
+        if (memoryScopeKey is null && req.TemplateId == MemoryTemplate.Id)
+            throw KernelException.Forbidden(MemoryTemplate.ReservedMessage);
         var key = CreateKey("track", req.AreaId, requestKey, req);
         if (key is not null && await _store.FindCreationAsync(key, ct).ConfigureAwait(false) is { } replay)
             return await ReadCreatedTrackAsync(replay, ct).ConfigureAwait(false);

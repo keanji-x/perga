@@ -16,6 +16,7 @@ public sealed partial class MemoryEngine : IMemoryEngine
         _options = options ?? new MemoryEngineOptions();
         ArgumentOutOfRangeException.ThrowIfNegative(_options.AreaPinnedBytes);
         ArgumentOutOfRangeException.ThrowIfNegative(_options.GlobalPinnedBytes);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(_options.MaxEntriesPerScope);
     }
 
     public async Task<IReadOnlyList<MemoryEntryMeta>> ListAsync(MemoryReadScope scope, CancellationToken ct) =>
@@ -103,19 +104,12 @@ public sealed partial class MemoryEngine : IMemoryEngine
 
         using var lease = await MemoryScopeLocks.AcquireAsync(directory, ct);
         var existingScope = _directory.OpenScope(directory);
-        if (existingScope is not null)
-            await RequireCurrentEtagAsync(existingScope, name, reference, request.ExpectedEtag, ct);
-        if (file.Meta.Pinned)
-            await CheckPinnedBudgetAsync(existingScope, file, ct);
+        await CheckPutAsync(existingScope, name, file, request.ExpectedEtag, ct);
 
         var newScope = existingScope is null ? _directory.OpenScope(directory, create: true) : null;
         var scopeDirectory = existingScope ?? newScope ?? throw new DirectoryNotFoundException(directory);
         if (newScope is not null)
-        {
-            await RequireCurrentEtagAsync(newScope, name, reference, request.ExpectedEtag, ct);
-            if (file.Meta.Pinned)
-                await CheckPinnedBudgetAsync(newScope, file, ct);
-        }
+            await CheckPutAsync(newScope, name, file, request.ExpectedEtag, ct);
         var updatedAt = await scopeDirectory.WriteFileAsync(name, bytes, ct);
         return new MemoryPutResult(file.Meta with { UpdatedAtMs = new DateTimeOffset(updatedAt).ToUnixTimeMilliseconds() });
     }
@@ -165,6 +159,24 @@ public sealed partial class MemoryEngine : IMemoryEngine
                     _directory.DeleteAreaDirectory(directory, ct);
             });
         }
+    }
+
+    private async Task CheckPutAsync(MemoryDirectory.ScopeDirectory? scope, string name, MemoryFile proposed,
+        string? expectedEtag, CancellationToken ct)
+    {
+        if (scope is not null && !await RequireCurrentEtagAsync(scope, name, proposed.Meta.Ref, expectedEtag, ct))
+        {
+            var count = 0;
+            foreach (var _ in EnumerateEntryNames(scope))
+            {
+                ct.ThrowIfCancellationRequested();
+                if (++count >= _options.MaxEntriesPerScope)
+                    throw new MemoryValidationException(
+                        $"This memory scope has reached the {_options.MaxEntriesPerScope}-entry limit. Merge or delete existing entries before adding new ones.");
+            }
+        }
+        if (proposed.Meta.Pinned)
+            await CheckPinnedBudgetAsync(scope, proposed, ct);
     }
 
     private async Task CheckPinnedBudgetAsync(MemoryDirectory.ScopeDirectory? scope, MemoryFile proposed, CancellationToken ct)
@@ -234,7 +246,7 @@ public sealed partial class MemoryEngine : IMemoryEngine
         var files = new List<MemoryFile>();
         var sourceEntryCount = 0;
         var names = refs is null
-            ? scope.EnumerateFileNames().Where(name => !name.StartsWith('.') && Path.GetExtension(name) == ".md")
+            ? EnumerateEntryNames(scope)
             : refs.Select(reference => MemoryDirectory.EntryName(reference.Key));
         foreach (var name in names)
         {
@@ -257,6 +269,9 @@ public sealed partial class MemoryEngine : IMemoryEngine
         }
         return new(files, sourceEntryCount);
     }
+
+    private static IEnumerable<string> EnumerateEntryNames(MemoryDirectory.ScopeDirectory scope) =>
+        scope.EnumerateFileNames().Where(name => !name.StartsWith('.') && Path.GetExtension(name) == ".md");
 
     private sealed record ScopeLoad(IReadOnlyList<MemoryFile> Files, int SourceEntryCount);
 

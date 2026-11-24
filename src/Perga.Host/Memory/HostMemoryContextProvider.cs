@@ -179,7 +179,7 @@ internal sealed partial class HostMemoryContextProvider(
     private static string RenderOmitted(int count)
     {
         var noun = count == 1 ? "entry" : "entries";
-        return $"Note: {count} additional {noun} omitted due to budget; call memory_list or memory_read for details.\n";
+        return $"Note: {count} additional {noun} omitted due to budget; call perga_memory list or read for details.\n";
     }
 
     private static string Render(string tag, IEnumerable<MemoryEntry> entries)
