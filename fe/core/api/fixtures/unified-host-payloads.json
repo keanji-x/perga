@@ -167,7 +167,8 @@
     "capabilities": null,
     "pendingInteractions": null,
     "runtimeStatus": null,
-    "runtimeTasks": null
+    "runtimeTasks": null,
+    "turns": null
   },
   "summary": {
     "session": {

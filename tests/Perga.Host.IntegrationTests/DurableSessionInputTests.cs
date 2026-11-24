@@ -439,15 +439,35 @@ public sealed class DurableSessionInputTests
             using var latestPage = JsonDocument.Parse(await latest.Content.ReadAsStringAsync());
             Assert.Equal(new long[] { 1000, 1001 },
                 latestPage.RootElement.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("id").GetInt64()));
+            var latestTurns = latestPage.RootElement.GetProperty("turns").EnumerateArray()
+                .ToDictionary(turn => turn.GetProperty("id").GetString()!);
+            Assert.Equal(1, latestTurns["trn_000001_fixture"].GetProperty("startedAtMs").GetInt64());
+            Assert.Equal(1, latestTurns["trn_000001_fixture"].GetProperty("completedAtMs").GetInt64());
+            Assert.Equal(2, latestTurns["trn_000002_fixture"].GetProperty("startedAtMs").GetInt64());
+            Assert.Equal(2, latestTurns["trn_000002_fixture"].GetProperty("completedAtMs").GetInt64());
             using var earlier = await host.AuthenticatedClient.GetAsync($"/api/v1/sessions/{sessionId}/items?beforeId=1000&limit=2");
             using var earlierPage = JsonDocument.Parse(await earlier.Content.ReadAsStringAsync());
             Assert.Equal(new long[] { 998, 999 },
                 earlierPage.RootElement.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("id").GetInt64()));
+            var earlierTurns = earlierPage.RootElement.GetProperty("turns").EnumerateArray()
+                .ToDictionary(turn => turn.GetProperty("id").GetString()!);
+            Assert.Equal(1, earlierTurns["trn_000001_fixture"].GetProperty("completedAtMs").GetInt64());
             using var accepted = await SendAsync(host.AuthenticatedClient, $"/api/v1/sessions/{sessionId}/messages", "long-history", new { content = "Turn three" });
             Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
             var receipt = (await accepted.Content.ReadFromJsonAsync<SessionMessageReceipt>(PergaJsonDefaults.ApiOptions))!;
             Assert.StartsWith("trn_000003_", receipt.TurnId);
             await host.Services.GetRequiredService<IPergaKernel>().WaitForTrackIdleAsync(trackId);
+            var afterTurnThree = (await host.AuthenticatedClient.GetFromJsonAsync<SessionItemsPageDto>(
+                $"/api/v1/sessions/{sessionId}/items?latest=true&limit=10", PergaJsonDefaults.ApiOptions))!;
+            var turnsAfterThree = afterTurnThree.Turns!.ToDictionary(turn => turn.Id);
+            Assert.Equal(1, turnsAfterThree["trn_000001_fixture"].CompletedAtMs);
+            Assert.Equal(2, turnsAfterThree["trn_000002_fixture"].CompletedAtMs);
+            Assert.True(turnsAfterThree[receipt.TurnId!].CompletedAtMs > 2);
+            var singleItemPage = (await host.AuthenticatedClient.GetFromJsonAsync<SessionItemsPageDto>(
+                $"/api/v1/sessions/{sessionId}/items?latest=true&limit=1", PergaJsonDefaults.ApiOptions))!;
+            Assert.Single(singleItemPage.Items);
+            Assert.DoesNotContain(singleItemPage.Turns!, turn => turn.Id == "trn_000001_fixture");
+            Assert.Contains(singleItemPage.Turns!, turn => turn.Id == receipt.TurnId);
 
             await using var check = new SqliteConnection($"Data Source={dbPath};Pooling=False;Foreign Keys=True");
             await check.OpenAsync();

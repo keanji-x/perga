@@ -132,14 +132,14 @@
   /* Published Collapsible theme hook, scoped to the current metadata row.
      Reversing its two presentation items keeps the native right/down arrow
      immediately after the label without targeting private component children. */
-  [data-nc-current-meta] .astryx-icon {
+  :is([data-nc-current-meta], [data-nc-turn='outcome']) .astryx-icon {
     font-size: var(--font-step-1-size);
     inline-size: var(--glyph-meta);
     block-size: var(--glyph-meta);
     color: var(--text-3);
   }
 
-  [data-nc-current-meta] .astryx-collapsible-trigger {
+  :is([data-nc-current-meta], [data-nc-turn='outcome']) .astryx-collapsible-trigger {
     font-size: var(--font-step-1-size);
     line-height: var(--font-step-1-line);
     min-block-size: var(--control-h);

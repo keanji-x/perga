@@ -320,8 +320,14 @@ public sealed partial class TrackActor
                 .ListSessionItemsPageAsync(sessionId, afterId, limit, ct, latest, beforeId)
                 .ConfigureAwait(false);
             var activeTurn = _scheduler.TryGetActive(sessionId, out var running) ? running.TurnDto : null;
-            var lastTurn = (await _store.ListSessionTurnsAsync(sessionId, ct).ConfigureAwait(false))
-                .MaxBy(turn => turn.TurnIndex);
+            var allTurns = await _store.ListSessionTurnsAsync(sessionId, ct).ConfigureAwait(false);
+            var lastTurn = allTurns.MaxBy(turn => turn.TurnIndex);
+            var pageTurnIds = new HashSet<string>(
+                items.Where(item => item.TurnId is not null).Select(item => item.TurnId!),
+                StringComparer.Ordinal);
+            if (lastTurn is not null) pageTurnIds.Add(lastTurn.Id);
+            if (activeTurn is not null) pageTurnIds.Add(activeTurn.Id);
+            var pageTurns = allTurns.Where(turn => pageTurnIds.Contains(turn.Id)).ToArray();
             var binding = ReadTaskBindingCore(session);
             var queue = await ReadMessageQueueCoreAsync(sessionId, ct).ConfigureAwait(false);
             var settingsSession = session.Provider.StartsWith("acp:", StringComparison.OrdinalIgnoreCase)
@@ -336,7 +342,8 @@ public sealed partial class TrackActor
                 ReadActivityCore(running, activityTurnId, afterSequence), binding, ReadCapabilitiesCore(session),
                 ReadInteractionsCore(session, principal ?? new InteropPrincipal.Human()),
                 ReadRuntimeActivityCore(session)?.Status, ReadRuntimeActivityCore(session)?.Tasks.Values.ToArray(),
-                AttachmentsSupported: ReadAttachmentSupportCore(session));
+                AttachmentsSupported: ReadAttachmentSupportCore(session),
+                Turns: pageTurns);
         }, ct);
     }
 

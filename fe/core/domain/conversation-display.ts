@@ -2,7 +2,7 @@
 
 import { DEPLOYMENT_OWNER_USER_ID } from '../api/auth.js';
 import type { ConversationCursor, ConversationDisplayItem as WireDisplayItem } from './presentation-types.js';
-import { sessionItemsPageDtoSchema, type SessionItemsPageDto } from '../api/perga-v1.js';
+import { sessionItemsPageDtoSchema, type SessionItemsPageDto, type SessionTurnDto } from '../api/perga-v1.js';
 import type { ApiOperation } from '../api/types.js';
 import { thinkingActivityContent,toolActivityContent } from './conversation-activity-content.js';
 import type { LiveReplyTranscriptRow } from './conversation-live.js';
@@ -12,9 +12,15 @@ import { retireFollowedThoughts,SYSTEM_PRESENTATION_LABELS,systemInputPresentati
 /** Authored fixtures and canonical human/system metadata use the same renderer contract. */
 type AuthoredSource = Exclude<Extract<WireDisplayItem['source'], { kind: 'human' | 'system' | 'removed' }>, { kind: 'system' }>
   | (Extract<WireDisplayItem['source'], { kind: 'system' }> & { statusLabel?: string });
-export type ConversationDisplayItem = Readonly<{ cursor: ConversationCursor; source: AuthoredSource
+export type ConversationDisplayItem = Readonly<{ cursor: ConversationCursor; turnId?: string; source: AuthoredSource
   | { kind: 'entry'; entry: TranscriptEntry; observation?: LiveReplyTranscriptRow & { id: number; outcome: boolean } } }>;
-export type ConversationPage = Readonly<{ contract: 'conversation_v1'; source: 'presentation' | 'historical_raw'; items: ConversationDisplayItem[]; next_cursor: ConversationCursor | null }>;
+export type ConversationPage = Readonly<{
+  contract: 'conversation_v1';
+  source: 'presentation' | 'historical_raw';
+  items: ConversationDisplayItem[];
+  next_cursor: ConversationCursor | null;
+  turns?: readonly SessionTurnDto[];
+}>;
 const TRANSCRIPT_PAGE_LIMIT = 60;
 
 export function nativeTranscriptEntryId(threadId: string, itemId: string | null, index: number): string {
@@ -58,7 +64,8 @@ export function sessionItemsPageDtoToConversationPage(
 
     const interrupted = item.turnId === null && payloadObj.archived === true
       && payloadObj.status === 'interrupted' && payloadObj.reason === 'session_reset';
-    if (item.kind === 'system') return [{ cursor: itemCursor, source: {
+    const itemTurn = item.turnId === null ? {} : { turnId: item.turnId };
+    if (item.kind === 'system') return [{ cursor: itemCursor, ...itemTurn, source: {
       kind: 'system', observation_id: typeof payloadObj.wakeId === 'string' ? payloadObj.wakeId : String(item.id),
       presentation: 'system', text: typeof payloadObj.content === 'string' ? payloadObj.content
         : typeof payloadObj.message === 'string' ? payloadObj.message : JSON.stringify(item.payload),
@@ -74,6 +81,7 @@ export function sessionItemsPageDtoToConversationPage(
         const presentation = systemInputPresentationSchema.safeParse(payloadObj.presentation);
         return [{
           cursor: itemCursor,
+          ...itemTurn,
           source: {
             kind: 'system',
             observation_id: String(item.id),
@@ -85,6 +93,7 @@ export function sessionItemsPageDtoToConversationPage(
       }
       return [{
         cursor: itemCursor,
+        ...itemTurn,
         source: {
           kind: 'human',
           message_id: typeof payloadObj.inputId === 'string' ? payloadObj.inputId : `msg-${item.id}`,
@@ -157,9 +166,15 @@ export function sessionItemsPageDtoToConversationPage(
         atMs: activeTurn.completedAtMs ?? activeTurn.startedAtMs ?? page.session.updatedAtMs } } });
   }
   const oldestPosition = sliced[0]?.id;
-  return { contract: 'conversation_v1', source: 'presentation', items: displayItems,
+  const pageTurns = page.turns != null ? page.turns : page.lastTurn != null ? [page.lastTurn] : undefined;
+  return {
+    contract: 'conversation_v1',
+    source: 'presentation',
+    items: displayItems,
     next_cursor: hasOlder && oldestPosition !== undefined
-      ? { contract: 'conversation_v1', card_id: card, source: 'presentation', position: oldestPosition } : null };
+      ? { contract: 'conversation_v1', card_id: card, source: 'presentation', position: oldestPosition } : null,
+    ...(pageTurns === undefined ? {} : { turns: pageTurns }),
+  };
 }
 
 export function conversationItemsOperation(card: string, cursor: ConversationCursor | null): ApiOperation<ConversationPage> {
@@ -179,17 +194,19 @@ export function nativeDisplayRows(items: readonly ConversationDisplayItem[]) {
 export function buildConversationTranscript(
   items: readonly ConversationDisplayItem[], viewerId: string | null, viewerIsOwner = false,
 ): readonly TranscriptEntry[] {
-  return retireFollowedThoughts([...items].sort((a, b) => a.cursor.position - b.cursor.position).flatMap(({ source, cursor }): TranscriptEntry[] => {
+  return retireFollowedThoughts([...items].sort((a, b) => a.cursor.position - b.cursor.position).flatMap(({ source, cursor, turnId }): TranscriptEntry[] => {
     if (source.kind === 'removed') return [];
     if (source.kind === 'entry') return source.entry.author === 'agent' && source.entry.text.trim() === '' ? []
       : [{ ...source.entry, displayPosition: cursor.position }];
     if (source.kind === 'system') return [{ id: `system:${source.observation_id}`, author: 'system',
       label: source.statusLabel ?? SYSTEM_PRESENTATION_LABELS[source.presentation], text: source.text,
-      atMs: source.created_at_ms, displayPosition: cursor.position }];
+      atMs: source.created_at_ms, displayPosition: cursor.position,
+      ...(turnId === undefined ? {} : { sessionTurnId: turnId }) }];
     const authorId = source.author.user_id;
     const authoredByViewer = authorId === viewerId || (viewerIsOwner && authorId === DEPLOYMENT_OWNER_USER_ID);
     return [{ id: `human:${source.message_id}`, author: authoredByViewer ? 'you' : 'human',
       human: { userId: source.author.user_id, displayName: source.author.display_name, messageId: source.message_id, revision: source.revision },
+      ...(turnId === undefined ? {} : { sessionTurnId: turnId }),
       ...(source.request_key === undefined ? {} : { requestKey: source.request_key }),
       text: source.text, attachments: source.attachments, atMs: source.created_at_ms, displayPosition: cursor.position,
       ...(source.supplemental === true ? { supplemental: true } : {}),

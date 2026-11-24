@@ -2,7 +2,7 @@ import { Fragment, useLayoutEffect, useMemo, useRef, type ReactNode } from 'reac
 import { Divider } from '@astryxdesign/core/Divider';
 import { Collapsible } from '@astryxdesign/core/Collapsible';
 import { MessageActions } from './message-actions.tsx';
-import type { ConversationMetaClock } from '../../../../../core/domain/conversation-meta.ts';
+import { formatTurnTimestamp, type ConversationMetaClock } from '../../../../../core/domain/conversation-meta.ts';
 import { useState } from '../../../ui/state/public.ts';
 import { restoreDrawerFocus } from '../../../ui/drawer/restore-focus.ts';
 import styles from './meta.module.css';
@@ -47,10 +47,11 @@ function elapsedText(ms: number): string {
 }
 
 /** One native metadata row; clocks are evidence, never inferred from transcript gaps. */
-export function ThreadStatusNotice({ historical = false, messageActions = 'all', heading, details, leading, children, clock, sending = false, tone = 'neutral', outcome, copyAction = null, regenerateAction = null, detailsExpanded, onDetailsExpandedChange }: {
+export function ThreadStatusNotice({ historical = false, ariaLabel, messageActions = 'all', heading, details, leading, children, clock, sending = false, tone = 'neutral', outcome, copyAction = null, regenerateAction = null, detailsExpanded, onDetailsExpandedChange }: {
   detailsExpanded?: boolean;
   onDetailsExpandedChange?: (expanded: boolean) => void;
   historical?: boolean;
+  ariaLabel?: string;
   messageActions?: 'all' | 'copy-only';
   heading: ReactNode;
   details?: readonly string[];
@@ -73,19 +74,18 @@ export function ThreadStatusNotice({ historical = false, messageActions = 'all',
       if (target !== null) restoreDrawerFocus(target);
     }
   }, [hasDetails]);
-  const [hovered, setHovered] = useState(false);
-  const [focused, setFocused] = useState(false);
   const copy = useFencedAction(copyAction === null ? null : JSON.stringify([copyAction.id, copyAction.text]));
   const feedback = copy.feedback;
   const regenerate = useFencedAction(regenerateAction?.id ?? null);
   const timestamp = clock.timestamp;
-  const showTime = timestamp !== null && (hovered || focused);
-  const timeText = timestamp === null ? null
-    : new Date(timestamp.atMs).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+  const formattedTime = timestamp === null ? null : formatTurnTimestamp(timestamp.atMs);
+  const timePrefix = timestamp?.kind === 'paused' ? 'Paused' : 'Ended';
   const title = <span className={styles.summary}><span className={styles.heading}>{leading ? <span className={styles.leading}>{leading}</span> : null}<span className={styles.label}>{heading}</span></span>
-    {showTime && timestamp !== null ? <span className={styles.clock}>· <time dateTime={new Date(timestamp.atMs).toISOString()}
-      aria-label={`${timestamp.kind === 'paused' ? 'Paused' : 'Finished'} at ${timeText}`}>{timeText}</time></span>
-      : clock.elapsedMs !== null && <span className={styles.clock} data-nc-meta-duration="">· {elapsedText(clock.elapsedMs)}</span>}
+    {clock.elapsedMs !== null && <span className={styles.clock} data-nc-meta-duration="">· {elapsedText(clock.elapsedMs)}</span>}
+    {formattedTime !== null && timestamp !== null && <span className={styles.timestamp} data-nc-meta-timestamp="">
+      <span className={styles.detailSep} aria-hidden="true">·</span>{' '}
+      <time dateTime={new Date(timestamp.atMs).toISOString()} aria-label={`${timePrefix} at ${formattedTime}`}>{timePrefix} {formattedTime}</time>
+    </span>}
     {details?.map((detail) => (
       <Fragment key={detail}>
         <span className={styles.detailSep} aria-hidden="true">·</span>
@@ -94,15 +94,13 @@ export function ThreadStatusNotice({ historical = false, messageActions = 'all',
     ))}
   </span>;
   return <div className={`${styles.notice} ${tone === 'warning' ? styles.warning : tone === 'error' ? styles.error : ''}`}
-    role="status" aria-label={historical ? "Imported historical response" : "Current response status"} data-nc-current-meta={historical ? undefined : ""} data-nc-turn={outcome === undefined ? undefined : 'outcome'}
+    role="status" aria-label={ariaLabel ?? (historical ? 'Historical response status' : 'Current response status')} data-nc-current-meta={historical ? undefined : ""} data-nc-turn={outcome === undefined ? undefined : 'outcome'}
     data-nc-turn-outcome={outcome}>
     <Divider />
     <div className={styles.row}>
-      <div ref={stateRef} className={styles.state} data-nc-meta-state="" tabIndex={timestamp !== null && !hasDetails ? 0 : -1}
-        onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}
-        onFocus={(event) => { lastFocused.current = event.target; setFocused(true); }} onBlur={(event) => {
+      <div ref={stateRef} className={styles.state} data-nc-meta-state="" tabIndex={-1}
+        onFocus={(event) => { lastFocused.current = event.target; }} onBlur={(event) => {
           if (!event.currentTarget.contains(event.relatedTarget)) {
-            setFocused(false);
             if (event.relatedTarget !== null || event.target.isConnected) lastFocused.current = null;
           }
         }}>

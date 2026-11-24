@@ -4129,6 +4129,19 @@
               }
             ]
           },
+          "turns": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/SessionTurnDto"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "unknownDetail": {
             "anyOf": [
               {
@@ -4163,6 +4176,7 @@
           "session",
           "state",
           "taskBinding",
+          "turns",
           "unknownDetail",
           "workerPaused"
         ],

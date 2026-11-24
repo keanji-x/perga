@@ -536,6 +536,7 @@ export const sessionItemsPageDtoSchema = z.object({
   permissionModes: z.array(permissionModeOptionDtoSchema).nullish(),
   runtimeStatus: agentRuntimeStatusSchema.nullish(),
   runtimeTasks: z.array(agentRuntimeTaskSchema).nullish(),
+  turns: z.array(sessionTurnDtoSchema).nullish(),
 });
 export type SessionItemsPageDto = z.infer<typeof sessionItemsPageDtoSchema>;
 

@@ -21,6 +21,7 @@ export type ConversationStore = Readonly<{
   taskId: string | null;
   workerPaused: boolean;
   lastTurn: import('../../../../core/api/perga-v1.ts').SessionTurnDto | null;
+  sessionTurns?: readonly import('../../../../core/api/perga-v1.ts').SessionTurnDto[];
   unknownDetail: import('../../../../core/api/perga-v1.ts').SessionItemsPageDto['unknownDetail'];
   recovering: boolean;
   recover: (mode: 'reconnect' | 'reset_context') => void;

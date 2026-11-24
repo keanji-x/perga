@@ -99,6 +99,8 @@ export type TurnAuthor = 'you' | 'agent' | 'human' | 'unknown';
 export type NativeTurnContext = Readonly<{
   displayPosition?: number;
   nativeTurn?: Readonly<{ threadId: string; turnId: string }>;
+  /** Persisted Perga turn id for entries that do not carry a native response boundary. */
+  sessionTurnId?: string;
 }>;
 
 export type ConversationTurn = NativeTurnContext & Readonly<{
