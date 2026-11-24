@@ -102,6 +102,35 @@ public sealed class SessionInputBatchTests
     }
 
     [Fact]
+    public async Task ImageBatchKeepsTheNextWholeMessageQueuedAndRecoversAttachments()
+    {
+        await using var h = await StorageTestHarness.CreateAsync();
+        await h.Store.UpsertAreaAsync(StorageTestHarness.CreateArea(), default);
+        var (track, report, lead) = StorageTestHarness.CreateSeedTrack();
+        await h.Store.CreateTrackAsync(track, report, null, lead, default);
+        var bytes = new byte[] { 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a };
+        var id = $"{Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(bytes))}.png";
+        var image = new StoredImageAttachment(id, "image/png", bytes.Length);
+        ImageMediaWrite write = new(image, bytes);
+        var first = new SessionMessage("first-images", lead.Id, "owner:installation", "first", "hash",
+            null, null, "", "queued", 1000, "queue")
+        { Attachments = Enumerable.Repeat(image, ImageAttachmentContract.MaxAttachmentsPerMessage).ToArray() };
+        var second = first with { Id = "second-image", RequestKey = "second", Attachments = [image] };
+        var messages = h.Store.SessionMessages!;
+        await messages.InsertWithMediaAsync(track.Id, first, Enumerable.Repeat(write, first.Attachments.Count).ToArray(), default);
+        await messages.InsertWithMediaAsync(track.Id, second, [write], default);
+
+        var input = (await h.Store.SessionInputs.PromoteQueuedBatchAsync(lead with { Status = "queued" }, first,
+            StorageTestHarness.CreateEvent("session.updated"), default))!;
+        Assert.Equal("", input.Content);
+        Assert.Equal(first.Attachments, input.Attachments);
+        var waiting = await messages.GetAsync(lead.Id, second.Id, default);
+        Assert.Null(waiting!.TurnId);
+        Assert.Equal(second.Attachments, waiting.Attachments);
+        Assert.Equal(first.Attachments, Assert.Single(await h.Store.RecoverSessionInputsAsync(default)).Input.Attachments);
+    }
+
+    [Fact]
     public async Task SettlementUpdatesAllMessagesAndKeepsEachReceiptIdentity()
     {
         await using var h = await StorageTestHarness.CreateAsync();

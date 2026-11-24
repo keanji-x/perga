@@ -5,6 +5,7 @@ using System.Reflection;
 using Microsoft.AspNetCore.Http.Metadata;
 using Microsoft.AspNetCore.Routing;
 using Perga.Host.Serialization;
+using Perga.Contracts;
 
 namespace Perga.Host.Http;
 
@@ -14,7 +15,9 @@ public sealed record ResponseHeader(int StatusCode, string Name, string SchemaTy
 // Unlike IAcceptsMetadata, this never participates in content-type route matching.
 public sealed record JsonRequestContract(Type RequestType, bool IsOptional);
 public sealed record NoRequestBody;
-public sealed record RequestHeader(string Name, bool Required);
+public sealed record MultipartImageRequest(Type PayloadType, string PayloadDescription);
+public sealed record BinaryResponse(IReadOnlyList<string> ContentTypes);
+public sealed record RequestHeader(string Name, bool Required, string? Description = null);
 public sealed record StrictRequest;
 public sealed record SuccessStatus(int Code, bool ReplayedAsOk = false);
 
@@ -48,6 +51,14 @@ public static class OpenApiDocumentExporter
             if (accepts?.RequestType is { } requestType)
                 body = new JsonObject { ["required"] = !accepts.IsOptional,
                     ["content"] = new JsonObject { ["application/json"] = new JsonObject { ["schema"] = registry.Schema(requestType, request: true) } } };
+            if (endpoint.Metadata.GetMetadata<MultipartImageRequest>() is { } multipart)
+            {
+                if (body is null || accepts is null)
+                    throw new InvalidOperationException($"Multipart images require a JSON payload contract: {method} {route}");
+                var payload = registry.Schema(multipart.PayloadType, request: true);
+                registry.Schemas[multipart.PayloadType.Name]!["additionalProperties"] = false;
+                body["content"]!["multipart/form-data"] = MultipartImageSchema(payload, multipart);
+            }
             foreach (var parameter in endpoint.Metadata.GetRequiredMetadata<MethodInfo>().GetParameters())
             {
                 var type = parameter.ParameterType;
@@ -65,8 +76,12 @@ public static class OpenApiDocumentExporter
                     ["schema"] = registry.Schema(type, nullability.Create(parameter)) });
             }
             foreach (var header in endpoint.Metadata.OfType<RequestHeader>())
-                parameters.Add(new JsonObject { ["name"] = header.Name, ["in"] = "header", ["required"] = header.Required,
-                    ["schema"] = new JsonObject { ["type"] = "string" } });
+            {
+                var parameter = new JsonObject { ["name"] = header.Name, ["in"] = "header", ["required"] = header.Required,
+                    ["schema"] = new JsonObject { ["type"] = "string" } };
+                if (header.Description is { } description) parameter["description"] = description;
+                parameters.Add(parameter);
+            }
             if (method is "POST" or "PATCH" or "PUT" && body is null && !endpoint.Metadata.OfType<NoRequestBody>().Any())
                 throw new InvalidOperationException($"Missing HTTP request contract: {method} {route}");
             if (accepts?.RequestType is { } strictType && endpoint.Metadata.OfType<StrictRequest>().Any())
@@ -79,8 +94,14 @@ public static class OpenApiDocumentExporter
             if (resultType == typeof(Microsoft.AspNetCore.Http.HttpResults.Accepted))
                 responses["202"] = new JsonObject { ["description"] = "HTTP 202" };
             if (resultType == typeof(Microsoft.AspNetCore.Http.HttpResults.FileStreamHttpResult))
-                responses["200"] = new JsonObject { ["description"] = "Binary file (range requests supported)",
-                    ["content"] = new JsonObject { ["application/octet-stream"] = new JsonObject { ["schema"] = new JsonObject { ["type"] = "string", ["format"] = "binary" } } } };
+            {
+                var binary = endpoint.Metadata.GetMetadata<BinaryResponse>();
+                var content = new JsonObject();
+                foreach (var type in binary?.ContentTypes ?? ["application/octet-stream"])
+                    content[type] = new JsonObject { ["schema"] = BinarySchema() };
+                responses["200"] = new JsonObject { ["description"] = binary is null
+                    ? "Binary file (range requests supported)" : "Original image bytes", ["content"] = content };
+            }
             if (resultType.IsGenericType && (resultType.GetGenericTypeDefinition() == typeof(Microsoft.AspNetCore.Http.HttpResults.JsonHttpResult<>)
                 || resultType.GetGenericTypeDefinition() == typeof(Microsoft.AspNetCore.Http.HttpResults.Ok<>)))
             {
@@ -128,6 +149,38 @@ public static class OpenApiDocumentExporter
             ["paths"] = paths, ["components"] = new JsonObject { ["schemas"] = registry.Schemas, ["securitySchemes"] = OpenApiAuthorization.Schemes() } };
         return Sort(document).ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + "\n";
     }
+
+    private static JsonObject BinarySchema() => new() { ["type"] = "string", ["format"] = "binary" };
+
+    private static JsonObject MultipartImageSchema(JsonNode payloadSchema, MultipartImageRequest contract) => new()
+    {
+        // OpenAPI header parameters are operation-wide and cannot express a media-type condition.
+        ["x-required-headers"] = new JsonArray("Idempotency-Key"),
+        ["schema"] = new JsonObject
+        {
+            ["type"] = "object",
+            ["additionalProperties"] = false,
+            ["required"] = new JsonArray(MultipartImageInput.PayloadField, MultipartImageInput.AttachmentsField),
+            ["properties"] = new JsonObject
+            {
+                [MultipartImageInput.PayloadField] = new JsonObject
+                {
+                    ["type"] = "string",
+                    ["contentMediaType"] = "application/json",
+                    ["contentSchema"] = payloadSchema,
+                    ["description"] = "JSON-encoded request. " + contract.PayloadDescription
+                },
+                [MultipartImageInput.AttachmentsField] = new JsonObject
+                {
+                    ["type"] = "array",
+                    ["minItems"] = 1,
+                    ["maxItems"] = ImageAttachmentContract.MaxAttachmentsPerMessage,
+                    ["description"] = $"PNG, JPEG, GIF or WebP. Up to {ImageAttachmentContract.MaxAttachmentBytes} bytes per image and {ImageAttachmentContract.MaxTotalBytes} bytes in total.",
+                    ["items"] = BinarySchema()
+                }
+            }
+        }
+    };
 
     private static JsonNode Sort(JsonNode node) => node switch
     {

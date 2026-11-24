@@ -37,7 +37,8 @@ public static class HttpErrorHandling
             KernelException kex => MapKernelException(kex),
 
             BadHttpRequestException { StatusCode: < 500 } badHttp => Results.Json(
-                new ApiErrorResponse("bad_request", badHttp.Message, null),
+                new ApiErrorResponse(badHttp.StatusCode == StatusCodes.Status413PayloadTooLarge ? "payload_too_large" : "bad_request",
+                    badHttp.Message, null),
                 PergaJsonDefaults.ApiOptions,
                 statusCode: badHttp.StatusCode),
 
@@ -97,6 +98,9 @@ public static class HttpErrorHandling
             KernelErrorCode.IdempotencyKeyExhausted => (StatusCodes.Status410Gone, "idempotency_key_exhausted"),
             KernelErrorCode.Gone => (StatusCodes.Status410Gone, "gone"),
             KernelErrorCode.NotFound => (StatusCodes.Status404NotFound, "not_found"),
+            KernelErrorCode.PayloadTooLarge => (StatusCodes.Status413PayloadTooLarge, "payload_too_large"),
+            KernelErrorCode.AttachmentsUnsupported => (StatusCodes.Status409Conflict, "attachments_unsupported"),
+            KernelErrorCode.AttachmentUnavailable => (StatusCodes.Status409Conflict, "attachment_unavailable"),
             KernelErrorCode.InvalidArgument => (StatusCodes.Status400BadRequest, "invalid_argument"),
             KernelErrorCode.SystemUpgradeLeadRequired => (StatusCodes.Status403Forbidden, "system_upgrade_lead_required"),
             KernelErrorCode.Forbidden => (StatusCodes.Status403Forbidden, "forbidden"),

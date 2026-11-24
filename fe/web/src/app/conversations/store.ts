@@ -1,5 +1,5 @@
 import { conversationStopTurn } from '../../../../core/domain/conversation-action.ts';
-import { sessionContextUsage } from '../../../../core/domain/session-context-usage.ts';
+import { formatSessionContextUsage } from '../../../../core/domain/session-context-usage.ts';
 import { NotSentError } from '../../../../core/domain/failure-class.ts';
 import { sessionModelCatalog } from '../../../../core/domain/worker-session.ts';
 import { sessionSteeringOutcome, pendingQueueWithCurrentHumanVersions, pendingQueueOwnsHumanEntry } from '../../../../core/domain/conversation-queue-controls.ts';
@@ -23,7 +23,7 @@ import { conversationHistoryQueryOptions, plannerRunQueryOptions } from '../prov
 import { modelCatalogQueryOptions } from '../providers/model-queries.ts';
 import { usePlannerMutations } from '../providers/planner-mutations.ts';
 import { useState } from '../../ui/state/public.ts';
-import { useConversationAcceptedTurn, useConversationCommands, useConversationSendOps, useConversationQueueWriteOut, useConversationRememberedTurns, useRememberedConversations } from './public.tsx';
+import { useConversationAcceptedTurn, useConversationCommands, useConversationQueueWriteOut, useConversationRememberedTurns, useRememberedConversations } from './public.tsx';
 import { NO_TURNS } from './registry-owner.ts';
 import { useConversationStop } from './stop.ts';
 import { useLiveReplies } from './live-replies.ts';
@@ -106,7 +106,6 @@ export function useConversationStore(
     [displayItems, rememberedEntries, viewerId, viewerIsOwner]);
   const serverTurns = useMemo(() => historyEntries.filter(isConversationMessage), [historyEntries]);
   const servedQueue = useMemo(() => run.data === undefined ? EMPTY_PENDING_QUEUE : conversationPendingQueue(run.data), [run.data]);
-  const queueOps = useConversationSendOps(scope === null ? null : cardId);
   const phase = run.data === undefined ? null : conversationRunPhase(run.data);
   const sessionState = run.data?.state ?? null;
   const readonlyReason = run.data?.readonlyReason ?? null;
@@ -186,13 +185,13 @@ export function useConversationStore(
   const canQueueWhileRunning = phase === 'turn_running' && working && runReadError === null;
   const steeringTarget = run.data?.activeTurn?.status === 'running' ? run.data.activeTurn.id : null;
   const outbox = useConversationOutbox({
-    cardId, send: mutations.send, serverEntries, liveReplies,
+    cardId, send: mutations.send, serverEntries, liveReplies, pendingQueue,
     stalled: false, target: run.data == null ? undefined : { epoch: run.data.session.epoch, queue: canQueueWhileRunning }, queuesInput: kernelQueuesInput(phase), queueIfBusy: canQueueWhileRunning,
     pressed: () => { setActionError(null); stop.clearFeedback(); },
   });
-  const { view, accountQueueDisplay } = outbox;
-  const presentation = useMemo(() => presentPendingMessages(view.transcript, pendingQueue, queueOps),
-    [view.transcript, pendingQueue, queueOps]);
+  const { view, accountQueueDisplay, unresolved } = outbox;
+  const presentation = useMemo(() => presentPendingMessages(view.transcript, pendingQueue, unresolved),
+    [view.transcript, pendingQueue, unresolved]);
   const queueDisplayAccounting = useMemo(() => accountQueueDisplay(presentation.transcript, []),
     [accountQueueDisplay, presentation.transcript]);
   /* What the reader is looking at, and what the tab may remember: a message is the conversation's only once the
@@ -252,8 +251,13 @@ export function useConversationStore(
   const conversations = useMemo(() => conversation === null
     ? serverRows
     : serverRows.map((row) => row.id === conversation.id ? { ...conversation, archivedAt: row.archivedAt } : row), [conversation, serverRows]);
-  const model = useMemo(() => run.data === undefined ? FOLLOW_INSTALLATION_DEFAULT
-    : { model: run.data.session.model ?? null, reasoning_effort: run.data.session.reasoningEffort ?? null }, [run.data]);
+  const modelId = run.data?.session.model ?? null;
+  const reasoningEffort = run.data?.session.reasoningEffort ?? null;
+  const hasRun = run.data !== undefined;
+  const model = useMemo(() => hasRun ? { model: modelId, reasoning_effort: reasoningEffort } : FOLLOW_INSTALLATION_DEFAULT,
+    [hasRun, modelId, reasoningEffort]);
+  const contextMeasurement = run.data?.session.contextUsage ?? null;
+  const contextUsage = useMemo(() => formatSessionContextUsage(contextMeasurement), [contextMeasurement]);
 
   /* Held in the registry, so a strip remounted on the way back still sees its conversation's write out (#2068). */
   const deleteQueuedEntry = (entry: PendingQueueEntry) =>
@@ -351,8 +355,8 @@ export function useConversationStore(
       return outbox.send(id, content, attachments, fromComposer, key);
     },
     manualCompactSupported: sessionState === 'idle' && readonlyReason === null && capabilities?.supportsCompact === true,
-    contextUsage: run.data === undefined ? null : sessionContextUsage(run.data.session),
-    uploadAttachment: mutations.uploadAttachment,
+    contextUsage,
+    attachmentsSupported: run.data?.attachmentsSupported === true,
     compacting: compactPending.has(cardId) || phase === 'compacting',
     compact: () => {
       if (!capabilities?.supportsCompact || sessionState !== 'idle' || readonlyReason !== null || compactLeases.current.has(cardId) || cardId === '') return;

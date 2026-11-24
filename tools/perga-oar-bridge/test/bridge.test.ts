@@ -13,6 +13,7 @@ import { codexRuntime } from "@botiverse/oar/runtimes/codex";
 import { scriptedRuntime } from "@botiverse/oar/testing";
 import { OarBridgeServer, type BridgeTransport } from "../src/bridge.ts";
 import { prepareMcpServers } from "../src/mcp-proxy.ts";
+import { preparePromptImages } from "../src/prompt-images.ts";
 
 class MemoryTransport implements BridgeTransport {
   public readonly messages: Array<Record<string, unknown>> = [];
@@ -561,5 +562,120 @@ exit 1
       process.env.OAR_CODEX_SANDBOX = originalCodexSandbox;
     }
     fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test("OarBridgeServer delivers image-only prompts and steers to the correlated runtime turn", async () => {
+  const payload = { mediaType: "image/png", data: Buffer.from([1, 2, 3, 4]).toString("base64") };
+  let releasePrompt!: () => void;
+  const hold = new Promise<void>(resolve => { releasePrompt = resolve; });
+  let promptStarted!: (value: string) => void;
+  const started = new Promise<string>(resolve => { promptStarted = resolve; });
+  let steerPath: string | undefined;
+  const runtime = scriptedRuntime({
+    turn: async ({ input, images }) => {
+      assert.equal(input, "");
+      assert.equal(images.length, 1);
+      assert.equal(images[0]?.mediaType, "image/png");
+      assert.deepEqual(fs.readFileSync(images[0]!.path), Buffer.from(payload.data, "base64"));
+      promptStarted(images[0]!.path);
+      await hold;
+    },
+  });
+  const imageRuntime = {
+    ...runtime,
+    session: async (...args: Parameters<NonNullable<typeof runtime.session>>) => {
+      const inner = await runtime.session!(...args);
+      return {
+        ...inner,
+        capabilities: { ...inner.capabilities, images: true },
+        steer: async (...args: Parameters<NonNullable<typeof inner.steer>>) => {
+          steerPath = args[1]?.images?.[0]?.path;
+          assert.ok(steerPath);
+          assert.deepEqual(fs.readFileSync(steerPath), Buffer.from(payload.data, "base64"));
+          return await inner.steer!(...args);
+        },
+      };
+    },
+  };
+  const transport = new MemoryTransport();
+  const bridge = new OarBridgeServer(transport, async () => imageRuntime);
+  const call = (id: number, method: string, params: Record<string, unknown>) =>
+    bridge.handleMessage({ id, method, params });
+  try {
+    await call(1, "session/open", { runtime: "codex", cwd: process.cwd() });
+    assert.equal((transport.responseFor(1).result as Record<string, unknown>).supportsImages, true);
+    const prompt = call(2, "session/prompt", { prompt: "", correlationId: "current", images: [payload] });
+    const promptPath = await started;
+    assert.ok(fs.existsSync(promptPath));
+    if (process.platform !== "win32") assert.equal(fs.statSync(promptPath).mode & 0o777, 0o600);
+    await call(3, "session/steer", { message: "", correlationId: "stale", images: [payload] });
+    assert.deepEqual(transport.responseFor(3).result, { delivery: "declined" });
+    assert.equal(steerPath, undefined);
+    await call(4, "session/steer", { message: "", correlationId: "current", images: [payload] });
+    assert.deepEqual(transport.responseFor(4).result, { delivery: "accepted" });
+    assert.ok(steerPath && fs.existsSync(steerPath));
+    releasePrompt();
+    await prompt;
+    assert.equal((transport.responseFor(2).result as Record<string, unknown>).status, "completed");
+    assert.equal(fs.existsSync(promptPath), false);
+    assert.equal(fs.existsSync(steerPath), false);
+  } finally {
+    releasePrompt();
+    await bridge.dispose();
+  }
+});
+
+test("OarBridgeServer refuses images before calling an unnegotiated runtime", async () => {
+  let calls = 0;
+  const runtime = scriptedRuntime({ turn: () => { calls++; } });
+  const unsupported = {
+    ...runtime,
+    session: async (...args: Parameters<NonNullable<typeof runtime.session>>) => {
+      const inner = await runtime.session!(...args);
+      return { ...inner, capabilities: { ...inner.capabilities, images: false } };
+    },
+  };
+  const transport = new MemoryTransport();
+  const bridge = new OarBridgeServer(transport, async () => unsupported);
+  try {
+    await bridge.handleMessage({ id: 1, method: "session/open", params: { runtime: "antigravity", cwd: process.cwd() } });
+    assert.equal((transport.responseFor(1).result as Record<string, unknown>).supportsImages, false);
+    const payload = { mediaType: "image/png", data: "AQIDBA==" };
+    for (const [id, method] of [[2, "session/prompt"], [3, "session/steer"]] as const) {
+      await bridge.handleMessage({ id, method, params: { images: [payload], correlationId: "turn" } });
+      const refusal = transport.responseFor(id).result as Record<string, unknown>;
+      assert.equal(refusal.code, "attachments_unsupported");
+      assert.equal(refusal.beforePrompt, true);
+    }
+    assert.equal(calls, 0);
+  } finally {
+    await bridge.dispose();
+  }
+});
+
+test("preparePromptImages removes its directory after a later image fails", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "perga-image-cleanup-test-"));
+  const tempVariable = process.platform === "win32" ? "TEMP" : "TMPDIR";
+  const previous = process.env[tempVariable];
+  process.env[tempVariable] = root;
+  try {
+    const first = { mediaType: "image/png", data: "AQIDBA==" };
+    const invalid = {
+      get mediaType() {
+        const entries = fs.readdirSync(root);
+        assert.equal(entries.length, 1);
+        const written = path.join(root, entries[0]!, "0.png");
+        assert.deepEqual(fs.readFileSync(written), Buffer.from(first.data, "base64"));
+        return "image/unsupported";
+      },
+      data: first.data,
+    };
+    await assert.rejects(preparePromptImages([first, invalid]), { message: "Unsupported image type." });
+    assert.deepEqual(fs.readdirSync(root), []);
+  } finally {
+    if (previous === undefined) delete process.env[tempVariable];
+    else process.env[tempVariable] = previous;
+    fs.rmSync(root, { recursive: true, force: true });
   }
 });

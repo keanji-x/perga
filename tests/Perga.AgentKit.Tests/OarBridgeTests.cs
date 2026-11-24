@@ -28,6 +28,77 @@ public sealed class OarBridgeTests : IDisposable
         try { if (Directory.Exists(_tempDir)) Directory.Delete(_tempDir, recursive: true); } catch { }
     }
 
+    [Theory]
+    [InlineData("codex", true)]
+    [InlineData("claude", true)]
+    [InlineData("acp:antigravity", true)]
+    [InlineData("acp:antigravity", false)]
+    public async Task ImageDispatchEncodesOncePerAttemptAndRefusesBeforeSending(string provider, bool supportsImages)
+    {
+        if (supportsImages)
+            File.WriteAllText(_mockBridgePath, MockBridgeScript.Replace(
+                "supportsNativeSteer: true, supportsNativeCompact: openRuntime",
+                "supportsImages: true, supportsNativeSteer: true, supportsNativeCompact: openRuntime"));
+        await using var runtime = new AgentRuntime(new AgentRuntimeOptions
+        {
+            BridgeScriptPath = _mockBridgePath,
+            ProviderOverrides = new Dictionary<string, ProviderCommandOverride>
+            {
+                [provider] = new("mock-executable", Env: new Dictionary<string, string> { ["MOCK_OAR_LOG"] = _logPath })
+            }
+        });
+        await using var session = runtime.CreateSession(new HarnessLaunchSpec(
+            provider, null, _workspaceDir, null, null, new Dictionary<string, McpServerConfig>()));
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var ct = deadline.Token;
+        await session.InitializeAsync(ct);
+        Assert.Equal(supportsImages, session.SupportsImages);
+
+        var readCount = 0;
+        var bytes = new byte[] { 1, 7, 99 };
+        var image = new TurnImage("image/png", bytes.Length, _ =>
+        {
+            readCount++;
+            return Task.FromResult<Stream?>(new MemoryStream(bytes));
+        });
+        var input = new TurnInput("", "turn", Attachments: [image]);
+        var events = new List<UnifiedAgentEvent>();
+        await foreach (var observation in session.StreamTurnAsync(input, ct)) events.Add(observation);
+        if (supportsImages)
+        {
+            Assert.Contains(events, observation => observation is UnifiedAgentEvent.TurnCompleted);
+            Assert.Equal(SteerDelivery.Accepted, await session.SteerAsync(input, ct));
+        }
+        else
+        {
+            var refused = Assert.Single(events.OfType<UnifiedAgentEvent.TurnError>());
+            Assert.True(refused.BeforePrompt);
+            Assert.Equal("attachments_unsupported", refused.Code);
+            var steerRefusal = await Assert.ThrowsAsync<AttachmentDispatchException>(() => session.SteerAsync(input, ct));
+            Assert.True(steerRefusal.BeforePrompt);
+            Assert.Equal(refused.Code, steerRefusal.Code);
+        }
+        Assert.Equal(supportsImages ? 2 : 0, readCount);
+
+        if (supportsImages)
+        {
+            var missing = input with { Attachments = [image with { OpenAsync = _ => Task.FromResult<Stream?>(null) }] };
+            var refused = await Assert.ThrowsAsync<AttachmentDispatchException>(() => session.SteerAsync(missing, ct));
+            Assert.True(refused.BeforePrompt);
+            Assert.Equal("attachment_unavailable", refused.Code);
+        }
+
+        var calls = File.ReadLines(_logPath).Select(line => JsonSerializer.Deserialize<JsonElement>(line))
+            .Where(call => call.GetProperty("method").GetString() is "session/prompt" or "session/steer").ToArray();
+        Assert.Equal(supportsImages ? 2 : 0, calls.Length);
+        foreach (var call in calls)
+        {
+            var encoded = call.GetProperty("params").GetProperty("images")[0];
+            Assert.Equal("image/png", encoded.GetProperty("mediaType").GetString());
+            Assert.Equal(bytes, Convert.FromBase64String(encoded.GetProperty("data").GetString()!));
+        }
+    }
+
     [Fact]
     public async Task SteerRechecksAuthorityAfterAcquiringRealStdinLock()
     {

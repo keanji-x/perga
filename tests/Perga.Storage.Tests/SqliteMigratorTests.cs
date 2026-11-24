@@ -80,7 +80,8 @@ public sealed class SqliteMigratorTests
             Assert.Equal("0027_session_runtime_activity.sql", migrator.Migrations[26].Name);
             Assert.Equal("0028_task_session_ownership.sql", migrator.Migrations[27].Name);
             Assert.Equal("0029_side_conversation_source.sql", migrator.Migrations[28].Name);
-            Assert.Equal("0030_side_conversation_excerpt.sql", migrator.Migrations[^1].Name);
+            Assert.Equal("0030_side_conversation_excerpt.sql", migrator.Migrations[29].Name);
+            Assert.Equal("0031_session_message_attachments.sql", migrator.Migrations[^1].Name);
             await migrator.MigrateAsync(dbPath);
 
             // Idempotent re-run on already-initialized v1 database must not create a spurious backup.
@@ -144,6 +145,7 @@ public sealed class SqliteMigratorTests
                 "track_wakes",
                 "track_schedules",
                 "session_message_steers",
+                "track_media_refs",
                 "execution_targets",
                 "auth_users",
                 "auth_sessions"

@@ -164,9 +164,7 @@ internal sealed class AreaRepository
             ct).ConfigureAwait(false);
 
         foreach (var trackId in cascadedTrackIds)
-        {
-            _context.ColdBlobs.DeleteTrackBlobsDirectory(trackId);
-        }
+            _context.DeleteTrackFiles(trackId);
     }
 
     private static AreaDto MapArea(AreaRow r) =>

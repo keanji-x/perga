@@ -1,13 +1,13 @@
 import { expect, it } from 'vitest';
 
-import { MAX_ATTACHMENTS_PER_MESSAGE } from './conversation-commands.js';
+import { MAX_ATTACHMENTS_PER_MESSAGE } from '../api/perga-v1.js';
 import { SYSTEM_PRESENTATION_LABELS, type TranscriptEntry } from './conversation.js';
 import {
   editedTurnMessageIds, editedTurnRefill, isLatestTurn, isSameComposer,
   withoutEditedTurn, withRefill,
 } from './conversation-composer.js';
 
-const image = (id: string) => ({ id, contentType: 'image/png', size: 4, url: `/api/cards/c/planner/attachments/${id}` });
+const image = (id: string) => ({ id, contentType: 'image/png', size: 4, url: `/api/v1/tracks/t/media/${id}` });
 
 /** Typed entry fixtures exercise composer policy independently of transport parsing. */
 type Segment = Readonly<{ presentation: string; text: string; attachments?: readonly import('./presentation-types.js').PlannerAttachment[] }>;

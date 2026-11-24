@@ -2,7 +2,7 @@ using Dapper;
 
 namespace Perga.Storage.Sqlite;
 
-/// <summary>Track deletion and post-commit cold-blob directory cleanup.</summary>
+/// <summary>Track deletion and post-commit file cleanup.</summary>
 internal sealed class TrackDeletionRepository
 {
     private readonly SqliteStoreContext _context;
@@ -29,13 +29,6 @@ internal sealed class TrackDeletionRepository
             },
             ct).ConfigureAwait(false);
 
-        try
-        {
-            _context.ColdBlobs.DeleteTrackBlobsDirectory(trackId);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            System.Diagnostics.Trace.TraceWarning("Could not clean up blobs for deleted Track {0}: {1}", trackId, ex.Message);
-        }
+        _context.DeleteTrackFiles(trackId);
     }
 }

@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
+using Perga.Contracts;
 
 namespace Perga.Host.Http;
 
@@ -56,14 +57,47 @@ internal sealed class OpenApiSchemaRegistry(JsonSerializerOptions options)
                 if (property.Get is null && property.Set is null) continue;
                 var member = property.AttributeProvider as PropertyInfo;
                 var nullInfo = member is null ? null : _nullability.Create(member);
-                properties[property.Name] = Schema(property.PropertyType, nullInfo, request);
+                properties[property.Name] = type == typeof(SessionItemDto) && member?.Name == nameof(SessionItemDto.Payload)
+                    ? new JsonObject { ["type"] = "object", ["additionalProperties"] = true,
+                        ["properties"] = new JsonObject
+                        {
+                            ["attachments"] = Schema(typeof(MessageAttachmentDto[])),
+                            ["requestKey"] = new JsonObject { ["type"] = "string" }
+                        } }
+                    : Schema(property.PropertyType, nullInfo, request);
                 var parameter = constructor?.GetParameters().FirstOrDefault(p => string.Equals(p.Name, member?.Name, StringComparison.OrdinalIgnoreCase));
                 var ignore = member?.GetCustomAttribute<JsonIgnoreAttribute>()?.Condition;
                 if (property.IsRequired || (request ? parameter?.HasDefaultValue == false : ignore is not (JsonIgnoreCondition.WhenWritingNull or JsonIgnoreCondition.WhenWritingDefault))) required.Add(property.Name);
             }
-            Schemas[name] = new JsonObject { ["type"] = "object", ["properties"] = properties, ["required"] = required };
+            var schema = new JsonObject { ["type"] = "object", ["properties"] = properties, ["required"] = required };
+            if (type == typeof(MessageAttachmentDto))
+                ConstrainImageAttachment(schema, properties);
+            Schemas[name] = schema;
         }
         return new JsonObject { ["$ref"] = "#/components/schemas/" + name };
+    }
+
+    private static void ConstrainImageAttachment(JsonObject schema, JsonObject properties)
+    {
+        properties["contentType"]!["enum"] = new JsonArray(
+            ImageAttachmentContract.MediaTypes.Select(value => (JsonNode?)JsonValue.Create(value)).ToArray());
+        properties["size"]!["minimum"] = 1;
+        properties["size"]!["maximum"] = ImageAttachmentContract.MaxAttachmentBytes;
+        schema["oneOf"] = new JsonArray(ImageAttachmentContract.MediaTypesByExtension
+            .OrderBy(format => format.Key, StringComparer.Ordinal)
+            .Select(format =>
+            {
+                var fileName = @"[0-9a-f]{64}\." + format.Key + "$";
+                return (JsonNode)new JsonObject
+                {
+                    ["properties"] = new JsonObject
+                    {
+                        ["id"] = new JsonObject { ["pattern"] = "^" + fileName },
+                        ["contentType"] = new JsonObject { ["const"] = format.Value },
+                        ["url"] = new JsonObject { ["pattern"] = "^/api/v1/tracks/[A-Za-z0-9_-]+/media/" + fileName }
+                    }
+                };
+            }).ToArray());
     }
 
     private static JsonNode OrNull(JsonNode schema) => new JsonObject { ["anyOf"] = new JsonArray(schema, new JsonObject { ["type"] = "null" }) };

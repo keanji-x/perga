@@ -40,14 +40,28 @@ internal static class SessionMessageSql
         return (interruptedMessages > 0, sessionConverged);
     }
 
-    internal static Task<long> InsertSessionMessageAsync(SqliteConnection conn, SqliteTransaction tx, SessionMessage message, CancellationToken ct) =>
-        conn.ExecuteScalarAsync<long>(new CommandDefinition("""
+    internal static async Task<long> InsertSessionMessageAsync(SqliteConnection conn, SqliteTransaction tx, SessionMessage message, CancellationToken ct)
+    {
+        var ordinal = await conn.ExecuteScalarAsync<long>(new CommandDefinition("""
             INSERT INTO session_messages (id, session_id, kind, author_id, request_key, request_hash,
-                                          target_turn_id, turn_id, delivered_turn_id, content, delivery, created_at_ms)
+                                          target_turn_id, turn_id, delivered_turn_id, content, delivery, created_at_ms, attachments_json)
             VALUES (@Id, @SessionId, @Kind, @AuthorId, @RequestKey, @RequestHash, @TargetTurnId, @TurnId, @DeliveredTurnId,
-                    @Content, @Delivery, @CreatedAtMs)
+                    @Content, @Delivery, @CreatedAtMs, @AttachmentsJson)
             RETURNING ordinal;
-            """, message, tx, cancellationToken: ct));
+            """, new
+        {
+            message.Id, message.SessionId, message.Kind, message.AuthorId, message.RequestKey, message.RequestHash,
+            message.TargetTurnId, message.TurnId, message.DeliveredTurnId, message.Content, message.Delivery,
+            message.CreatedAtMs, AttachmentsJson = TrackMediaStore.Serialize(message.Attachments)
+        }, tx, cancellationToken: ct)).ConfigureAwait(false);
+        foreach (var attachment in message.Attachments)
+            await conn.ExecuteAsync(new CommandDefinition("""
+                INSERT INTO track_media_refs (track_id, file_name)
+                SELECT track_id, @FileName FROM agent_sessions WHERE id = @SessionId
+                ON CONFLICT (track_id, file_name) DO NOTHING;
+                """, new { message.SessionId, FileName = attachment.Id }, tx, cancellationToken: ct)).ConfigureAwait(false);
+        return ordinal;
+    }
 
     internal static async Task<bool> TransitionMessageAsync(SqliteConnection conn, SqliteTransaction tx,
         SessionMessage message, string expected, CancellationToken ct) =>

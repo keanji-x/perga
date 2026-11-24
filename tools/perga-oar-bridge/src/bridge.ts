@@ -3,6 +3,7 @@ import {
   type Event,
   type AgentStatus,
   type InstallationSnapshot,
+  type InputImage,
   type RawEvent,
   type Runtime,
   type Session,
@@ -25,6 +26,7 @@ import {
   toValidInputId,
   withCodexSandboxEnv,
 } from "./bridge-helpers.ts";
+import { preparePromptImages } from "./prompt-images.ts";
 import { prepareMcpServers, type RawMcpServerInput } from "./mcp-proxy.ts";
 import { buildExecutableEnv, loadOarRuntime, normalizeRuntimeId } from "./runtime-loader.ts";
 
@@ -43,7 +45,19 @@ export interface BridgeTransport {
 
 interface ActiveTurnCollector {
   readonly captureText: boolean;
+  readonly correlationId: string | undefined;
+  readonly imageCleanups: Array<() => Promise<void>>;
   text: string;
+}
+
+function imageRefusal(code: "attachments_unsupported" | "attachment_unavailable") {
+  return {
+    code,
+    message: code === "attachments_unsupported"
+      ? "The provider session does not support image attachments."
+      : "The runtime host could not prepare image attachments.",
+    beforePrompt: true,
+  };
 }
 
 const DEFAULT_COMPACT_GRACE_MS = 2_000;
@@ -200,6 +214,7 @@ export class OarBridgeServer {
       version: installationVersion(installation),
       reason: probeReason,
       supportsNativeSteer: caps?.steer === true,
+      supportsImages: caps?.images ?? null,
       supportsManualCompaction,
       models: enabledModels.map((m) => ({
         id: m.id,
@@ -341,6 +356,7 @@ export class OarBridgeServer {
       model: resolvedModel,
       effort: resolvedEffort,
       supportsNativeSteer: typeof session.steer === "function",
+      supportsImages: session.capabilities?.images === true,
       supportsNativeCompact: nativeCompact || this._slashCompactAdvertised,
       supportsSessionResume: true,
       contextUsage: buildUsagePayload(session),
@@ -497,6 +513,14 @@ export class OarBridgeServer {
     const session = this.requireSession();
     const rawPrompt = typeof params.prompt === "string" ? params.prompt : "";
     const correlationId = asString(params.correlationId);
+    const incoming = Array.isArray(params.images) ? params.images : [];
+    if (incoming.length && session.capabilities?.images !== true) {
+      return { status: "failed", ...imageRefusal("attachments_unsupported") };
+    }
+    const prepared = incoming.length ? await preparePromptImages(incoming).catch(() => null) : null;
+    if (incoming.length && !prepared) {
+      return { status: "failed", ...imageRefusal("attachment_unavailable") };
+    }
 
     let effectivePrompt = rawPrompt;
     if (this._pendingSystemPrompt) {
@@ -504,7 +528,11 @@ export class OarBridgeServer {
       this._pendingSystemPrompt = null;
     }
 
-    return await this.runPromptTurn(session, effectivePrompt, correlationId, false);
+    try {
+      return await this.runPromptTurn(session, effectivePrompt, correlationId, false, prepared?.images);
+    } finally {
+      await prepared?.cleanup();
+    }
   }
 
   private async runPromptTurn(
@@ -512,16 +540,21 @@ export class OarBridgeServer {
     prompt: string,
     correlationId: string | undefined,
     captureText: boolean,
+    images?: readonly InputImage[],
   ): Promise<Record<string, unknown>> {
     const collector: ActiveTurnCollector = {
       captureText,
+      correlationId,
+      imageCleanups: [],
       text: "",
     };
     this._activeTurn = collector;
     try {
       const inputId = toValidInputId(correlationId);
-      const outcome = await session.prompt(prompt, { inputId });
+      const outcome = await session.prompt(prompt, { inputId, ...(images && { images }) });
       if (outcome.kind !== "accepted") {
+        if (images && outcome.code === "unsupported")
+          return { status: "failed", ...imageRefusal("attachments_unsupported") };
         return {
           status: "failed",
           code: outcome.code,
@@ -568,18 +601,48 @@ export class OarBridgeServer {
       if (this._activeTurn === collector) {
         this._activeTurn = null;
       }
+      await Promise.all(collector.imageCleanups.map(cleanup => cleanup()));
     }
   }
 
   private async handleSessionSteer(params: Record<string, unknown>): Promise<Record<string, unknown>> {
     const session = this.requireSession();
     const message = typeof params.message === "string" ? params.message : "";
-    if (!message || typeof session.steer !== "function") {
+    const incoming = Array.isArray(params.images) ? params.images : [];
+    if (incoming.length && session.capabilities?.images !== true) {
+      return { delivery: "declined", ...imageRefusal("attachments_unsupported") };
+    }
+    if ((!message && !incoming.length) || typeof session.steer !== "function") {
       return { delivery: "declined" };
     }
+    const collector = this._activeTurn;
     const correlationId = asString(params.correlationId);
-    const outcome = await session.steer(message, { inputId: toValidInputId(correlationId) });
-    return { delivery: outcome.kind === "accepted" ? "accepted" : "declined" };
+    if (incoming.length && (!collector || collector.correlationId !== correlationId)) {
+      return { delivery: "declined" };
+    }
+    const prepared = incoming.length ? await preparePromptImages(incoming).catch(() => null) : null;
+    if (incoming.length && !prepared) {
+      return { delivery: "declined", ...imageRefusal("attachment_unavailable") };
+    }
+
+    let accepted = false;
+    try {
+      if (prepared && this._activeTurn !== collector) return { delivery: "declined" };
+      const outcome = await session.steer(message, {
+        inputId: toValidInputId(correlationId), ...(prepared && { images: prepared.images }),
+      });
+      if (prepared && outcome.kind === "rejected" && outcome.code === "unsupported") {
+        return { delivery: "declined", ...imageRefusal("attachments_unsupported") };
+      }
+      accepted = outcome.kind === "accepted";
+      return { delivery: accepted ? "accepted" : "declined" };
+    } finally {
+      if (prepared) {
+        // Some runtimes acknowledge steer before consuming it. Hold files until the active prompt settles.
+        if (accepted && collector && this._activeTurn === collector) collector.imageCleanups.push(prepared.cleanup);
+        else await prepared.cleanup();
+      }
+    }
   }
 
   private async handleSessionAbort(): Promise<Record<string, unknown>> {

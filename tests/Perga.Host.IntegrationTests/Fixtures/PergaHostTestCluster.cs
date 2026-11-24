@@ -73,6 +73,11 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
     public ConcurrentQueue<(string RequestId, bool Approved)> ApprovalResponses { get; } = new();
 
     public bool SupportsSteering { get; set; } = true;
+    public bool SupportsImages { get; set; }
+    public bool? GetImageSupport(string provider) => ProviderStatuses is { } statuses
+        ? statuses.FirstOrDefault(status => status.Provider == provider)?.SupportsImages
+        : SupportsImages;
+    public Func<TurnInput, Func<CancellationToken, Task>?, CancellationToken, Task<SteerDelivery>>? ImageSteerHandler { get; set; }
     public Func<SessionConfiguration, SessionConfigurationOutcome>? ConfigureHandler { get; set; }
     public Func<HarnessLaunchSpec, ConfirmedConfiguration?>? LaunchConfirmationHandler { get; set; }
     public ConcurrentQueue<string?> DisposedSessions { get; } = new();
@@ -303,6 +308,14 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
                     PermissionMode = state.Selection.Permission.ValueOrNull };
             return Task.FromResult(outcome);
         }
+
+        public bool SupportsImages => _owner.SupportsImages;
+
+        public Task<SteerDelivery> SteerAsync(TurnInput input, CancellationToken ct, Func<CancellationToken, Task>? beforeWrite = null) =>
+            input.Attachments is { Count: > 0 }
+                ? _owner.ImageSteerHandler?.Invoke(input, beforeWrite, ct) ??
+                    Task.FromException<SteerDelivery>(AttachmentDispatchException.Unsupported())
+                : SteerAsync(input.CorrelationId, input.Prompt, ct, beforeWrite);
 
         public async Task<SteerDelivery> SteerAsync(string turnCorrelationId, string message, CancellationToken ct, Func<CancellationToken, Task>? beforeWrite = null)
         {

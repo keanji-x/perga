@@ -38,6 +38,50 @@ public sealed class OpenApiExportTests
     }
 
     [Fact]
+    public async Task Published_image_contract_pairs_media_types_and_declares_multipart_requirements()
+    {
+        var builder = PergaHttpEndpoints.CreateBuilder([], FindRoot());
+        await using var app = builder.Build();
+        app.MapPublishedHttpEndpoints();
+        using var document = JsonDocument.Parse(OpenApiDocumentExporter.Export(app));
+        var schemas = document.RootElement.GetProperty("components").GetProperty("schemas");
+        var attachment = schemas.GetProperty("MessageAttachmentDto");
+        var formats = attachment.GetProperty("oneOf").EnumerateArray()
+            .Select(branch => branch.GetProperty("properties"))
+            .ToDictionary(fields => fields.GetProperty("contentType").GetProperty("const").GetString()!);
+        Assert.Equal(4, formats.Count);
+        var hash = new string('a', 64);
+        foreach (var (mime, extension) in new[] { ("image/png", "png"), ("image/jpeg", "jpg"), ("image/gif", "gif"), ("image/webp", "webp") })
+        {
+            var fields = formats[mime];
+            var idPattern = fields.GetProperty("id").GetProperty("pattern").GetString()!;
+            var urlPattern = fields.GetProperty("url").GetProperty("pattern").GetString()!;
+            var ownUrl = $"/api/v1/tracks/trk_example/media/{hash}.{extension}";
+            Assert.Matches(idPattern, $"{hash}.{extension}");
+            Assert.DoesNotMatch(idPattern, $"{hash}.{(extension == "png" ? "jpg" : "png")}");
+            Assert.Matches(urlPattern, ownUrl);
+            Assert.DoesNotMatch(urlPattern, "https://example.com" + ownUrl);
+        }
+
+        var paths = document.RootElement.GetProperty("paths");
+        var send = paths.GetProperty("/api/v1/sessions/{sessionId}/messages").GetProperty("post");
+        var content = send.GetProperty("requestBody").GetProperty("content");
+        var multipart = content.GetProperty("multipart/form-data");
+        Assert.Equal("Idempotency-Key", Assert.Single(multipart.GetProperty("x-required-headers").EnumerateArray()).GetString());
+        var payload = multipart.GetProperty("schema").GetProperty("properties").GetProperty("payload");
+        var payloadRef = payload.GetProperty("contentSchema").GetProperty("$ref").GetString();
+        Assert.Equal("#/components/schemas/MultipartMessagePayload", payloadRef);
+        var message = schemas.GetProperty("MultipartMessagePayload");
+        var messageProperties = message.GetProperty("properties");
+        Assert.False(message.GetProperty("additionalProperties").GetBoolean());
+        Assert.False(messageProperties.TryGetProperty("messageId", out _));
+        Assert.True(schemas.GetProperty("SendSessionMessageRequest").GetProperty("properties").TryGetProperty("messageId", out _));
+        var key = Assert.Single(send.GetProperty("parameters").EnumerateArray(),
+            parameter => parameter.GetProperty("name").GetString() == "Idempotency-Key");
+        Assert.False(key.GetProperty("required").GetBoolean());
+    }
+
+    [Fact]
     public async Task Missing_response_metadata_fails_closed()
     {
         var builder = WebApplication.CreateBuilder();

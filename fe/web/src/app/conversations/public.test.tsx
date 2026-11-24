@@ -6,7 +6,7 @@ import { afterEach, expect, it } from 'vitest';
 
 import { StrictMode, useEffect, useLayoutEffect } from 'react';
 
-import { ConversationProvider, useConversationCommands, useConversationComposerText, useConversationUpload, type ConversationRegistry } from './public.tsx';
+import { ConversationProvider, useConversationCommands, useConversationComposerText, useConversationAttachmentError, type ConversationRegistry } from './public.tsx';
 
 const CONVERSATION = 'conversation-a';
 
@@ -24,19 +24,19 @@ function mountRegistry(): () => ConversationRegistry {
 
 afterEach(cleanup);
 
-it('does not execute an unrelated card upload reader when composer text changes', () => {
+it('does not execute an unrelated card attachment reader when composer text changes', () => {
   let registry!: ConversationRegistry;
   let renders = 0;
   function Commands() {
     registry = useConversationCommands();
     return null;
   }
-  function Upload() {
-    useConversationUpload('another-card');
+  function Attachments() {
+    useConversationAttachmentError('another-card');
     renders += 1;
     return null;
   }
-  render(<ConversationProvider><Commands /><Upload /></ConversationProvider>);
+  render(<ConversationProvider><Commands /><Attachments /></ConversationProvider>);
   const before = renders;
   act(() => { registry.editComposer(CONVERSATION, current => ({ ...current, text: 'First words' })); });
   expect(renders).toBe(before);

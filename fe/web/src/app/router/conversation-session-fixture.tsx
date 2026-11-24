@@ -5,7 +5,7 @@ import { fixtureSession, fixtureSnapshot, fixtureTrack } from './session-contrac
 import { sessionPage, sessionReply } from './conversation-session-data.ts';
 
 /** Supply actual v1 responses at the production router boundary, including every items view. */
-export function renderSessionFixture(options: Parameters<typeof renderDailyFixture>[0] = {}) {
+export function renderSessionFixture(options: NonNullable<Parameters<typeof renderDailyFixture>[0]> & { attachmentsSupported?: boolean } = {}) {
   const sessions = [fixtureSession('daily-planner', 'daily', { title: 'Daily Planner conversation', isLead: true }),
     fixtureSession('second-planner', 'daily', { title: 'Other conversation' })];
   const items = new Map<string, SessionItemDto[]>();
@@ -27,7 +27,7 @@ export function renderSessionFixture(options: Parameters<typeof renderDailyFixtu
       if (session === undefined) throw new Error(`Unknown fixture session ${id}`);
       const before = new URL(request.path, 'http://fixture').searchParams.get('beforeId');
       return sessionReply(sessionPage(session, (items.get(id) ?? []).filter(item => before === null || item.id < Number(before)).slice(-500),
-        activeTurns.get(id) ?? null));
+        activeTurns.get(id) ?? null, undefined, options.attachmentsSupported));
     }
     return undefined;
   } });

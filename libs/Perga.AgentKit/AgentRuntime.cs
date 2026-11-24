@@ -41,6 +41,14 @@ public sealed class AgentRuntime : IAgentRuntime
             ? supported
             : OarNodeResolver.TryMapProviderToOarRuntime(name) is not null;
     }
+    public bool? GetImageSupport(string provider)
+    {
+        var name = NormalizeProviderName(provider);
+        return Volatile.Read(ref _cachedProbeStatuses)?
+            .FirstOrDefault(status => status.Provider.Equals(name, StringComparison.OrdinalIgnoreCase))?.SupportsImages
+            ?? (OarNodeResolver.TryMapProviderToOarRuntime(name) is "codex" or "claude" ? true : null);
+    }
+
     public static string NormalizeProviderName(string provider)
     {
         if (string.IsNullOrWhiteSpace(provider)) return string.Empty;
@@ -207,7 +215,13 @@ public sealed class AgentRuntime : IAgentRuntime
                 Models: catalog.Select(m => m.Model).ToArray(),
                 ModelCatalog: catalog,
                 PermissionModes: permissionModes,
-                ConfigurationCapabilities: available ? SessionConfigurationCapabilities.LaunchOnly : SessionConfigurationCapabilities.Unknown);
+                ConfigurationCapabilities: available ? SessionConfigurationCapabilities.LaunchOnly : SessionConfigurationCapabilities.Unknown,
+                SupportsImages: response.TryGetProperty("supportsImages", out var images) ? images.ValueKind switch
+                {
+                    JsonValueKind.True => true,
+                    JsonValueKind.False => false,
+                    _ => null
+                } : null);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {

@@ -14,7 +14,10 @@ public enum KernelErrorCode
     IdempotencyKeyReused,
     IdempotencyKeyExhausted,
     WorkerTurnChanged,
-    SystemUpgradeLeadRequired
+    SystemUpgradeLeadRequired,
+    PayloadTooLarge,
+    AttachmentsUnsupported,
+    AttachmentUnavailable
 }
 
 public sealed class KernelException : Exception

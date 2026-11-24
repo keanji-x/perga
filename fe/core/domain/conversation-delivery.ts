@@ -27,6 +27,7 @@ export type SendFailureKind = 'unknown' | 'refused' | 'dormant' | 'rejected';
  */
 export const SEND_FAILURES: FailureTable<SendFailureKind> = Object.freeze({
   rules: Object.freeze([
+    Object.freeze({ code: 'attachments_unsupported', is: 'refused' as const }),
     Object.freeze({ code: 'session_recovery_required', is: 'refused' as const }),
     Object.freeze({ code: 'planner_harness_runtime_superseded', is: 'refused' as const }),
     Object.freeze({ code: 'planner_harness_dormant', is: 'dormant' as const }),

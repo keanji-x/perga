@@ -11,7 +11,7 @@ describe('system wake projection', () => {
   ])('renders %s with presentation %s as a System observation', (triggerKind, presentation, expected) => {
     const page = conversationItemsOperation('session', null).responseSchema.parse({
       session: { id: 'session', trackId: 'track', provider: 'codex', contextUsage: null, createdAtMs: 1, updatedAtMs: 1 },
-      state: 'idle', readonlyReason: null, canReopen: false, workerPaused: false, lastTurn: null, unknownDetail: null, items: [{ id: 1, sessionId: 'session', turnId: 'turn', kind: 'user',
+      state: 'idle', readonlyReason: null, canReopen: false, workerPaused: false, lastTurn: null, unknownDetail: null, attachmentsSupported: false, items: [{ id: 1, sessionId: 'session', turnId: 'turn', kind: 'user',
         payload: { content: 'Wake notice', triggerKind, presentation }, createdAtMs: 2 }],
     });
     expect(page.items[0].source).toEqual({ kind: 'system', observation_id: '1', presentation: expected,
@@ -29,7 +29,7 @@ it('rejects old run objects and raw arrays at the canonical run boundary', () =>
 it('preserves a nullable epoch boundary as a visible memory divider', () => {
   const page = conversationItemsOperation('session', null).responseSchema.parse({
     session: { id: 'session', trackId: 'track', provider: 'codex', contextUsage: null, createdAtMs: 1, updatedAtMs: 2 },
-    state: 'idle', readonlyReason: null, canReopen: false, workerPaused: false, lastTurn: null, unknownDetail: null,
+    state: 'idle', readonlyReason: null, canReopen: false, workerPaused: false, lastTurn: null, unknownDetail: null, attachmentsSupported: false,
     items: [{ id: 2, sessionId: 'session', turnId: null, kind: 'epoch_boundary',
       payload: { epoch: 2, reason: 'reset_context' }, createdAtMs: 2 }],
   });
@@ -42,7 +42,7 @@ it('retains archived interrupted inputs in order before the reset boundary', () 
   const content = 'Original\n  exact text <@person>'; const wake = '{"event":"mail","text":"Wake\\nbody"}';
   const page = conversationItemsOperation('session', null).responseSchema.parse({
     session: { id: 'session', trackId: 'track', provider: 'codex', contextUsage: null, createdAtMs: 1, updatedAtMs: 2 },
-    state: 'idle', readonlyReason: null, canReopen: false, workerPaused: false, lastTurn: null, unknownDetail: null,
+    state: 'idle', readonlyReason: null, canReopen: false, workerPaused: false, lastTurn: null, unknownDetail: null, attachmentsSupported: false,
     items: [
       { id: 1, sessionId: 'session', turnId: null, kind: 'user', payload: { v: 1, content, inputId: 'input', epoch: 1, status: 'interrupted', archived: true, reason: 'session_reset' }, createdAtMs: 1 },
       { id: 2, sessionId: 'session', turnId: null, kind: 'system', payload: { v: 1, content: wake, wakeId: 'wake', wakeKind: 'mail', epoch: 1, status: 'interrupted', archived: true, reason: 'session_reset' }, createdAtMs: 2 },
@@ -60,7 +60,7 @@ it('keeps an exhausted wake visible with its original payload and failure reason
   const content = '{"event":"task_settled"}';
   const page = conversationItemsOperation('session', null).responseSchema.parse({
     session: { id: 'session', trackId: 'track', provider: 'codex', contextUsage: null, createdAtMs: 1, updatedAtMs: 2 },
-    state: 'idle', readonlyReason: null, canReopen: false, workerPaused: false, lastTurn: null, unknownDetail: null,
+    state: 'idle', readonlyReason: null, canReopen: false, workerPaused: false, lastTurn: null, unknownDetail: null, attachmentsSupported: false,
     items: [{ id: 1, sessionId: 'session', turnId: null, kind: 'system', payload: { v: 1, content, wakeId: 'wake', wakeKind: 'task_settled', status: 'interrupted', archived: true, reason: 'max_attempts_exceeded' }, createdAtMs: 1 }],
   });
   expect(buildConversationTranscript(page.items, null)).toMatchObject([
@@ -71,7 +71,7 @@ it('keeps an exhausted wake visible with its original payload and failure reason
 const pergaPage = (items: unknown[], extra = {}) => ({
   session: { id: 'session', trackId: 'track', provider: 'codex', nativeThreadId: 'native-thread', epoch: 2,
     contextUsage: null, createdAtMs: 1, updatedAtMs: 10 },
-  state: 'idle', readonlyReason: null, canReopen: false, workerPaused: false, lastTurn: null, unknownDetail: null, items, ...extra,
+  state: 'idle', readonlyReason: null, canReopen: false, workerPaused: false, lastTurn: null, unknownDetail: null, attachmentsSupported: false, items, ...extra,
 });
 const item = (id: number, kind: string, payload: unknown, turnId: string | null = 'turn') =>
   ({ id, sessionId: 'session', turnId, kind, payload, createdAtMs: id });

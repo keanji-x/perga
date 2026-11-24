@@ -1,8 +1,4 @@
-// Images a person attaches to a planner message. Picking a file uploads it immediately; the strip
-// is a list of the server's answers, and the preview is the server's own copy. Removing one before
-// sending is a local forget, not a delete: the server reclaims orphans after their TTL.
-
-import { useCallback, useMemo, useRef } from 'react';
+import { useCallback, useRef } from 'react';
 import { Banner } from '@astryxdesign/core/Banner';
 import { ChatComposerDrawer } from '@astryxdesign/core/Chat';
 import { HStack } from '@astryxdesign/core/HStack';
@@ -12,146 +8,73 @@ import { VStack } from '@astryxdesign/core/VStack';
 
 import { Icon } from '../../ui/icon/public.tsx';
 
-import type { PlannerAttachment, UploadAttachmentResponse } from '../../../../core/domain/presentation-types.ts';
-import { ATTACHABLE_IMAGE_TYPES, MAX_ATTACHMENTS_PER_MESSAGE, TOO_MANY_IMAGES } from '../../../../core/domain/conversation-commands.js';
+import { ATTACHABLE_IMAGE_TYPES, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS_PER_MESSAGE, MAX_TOTAL_ATTACHMENT_BYTES } from '../../../../core/api/perga-v1.ts';
+import { TOO_MANY_IMAGES, TOO_MANY_IMAGE_BYTES } from '../../../../core/domain/conversation-commands.ts';
+import type { ConversationAttachment } from '../../../../core/domain/conversation.ts';
 import styles from './attachments.module.css';
 
-/** One upload, already bound to a card. A function rather than a transport: `performApiRequest` has two sanctioned call sites and a feature module is neither. */
-// Capture before file reading, then consume synchronously after the final await.
-// The returned reader checks the same admission before exposing server facts.
-// Either step fails with an `Error` whose message is the sentence to show: the caller has read the failure.
-export type UploadAttachment = (readBytes: () => Promise<Uint8Array>, contentType: string)
-=> Promise<() => UploadAttachmentResponse>;
-
-/** Explain why the server has not provided an attachment surface for this Track. */
-export type AttachmentSupport = Readonly<{ available: boolean; reason?: string }>;
-
-export const ATTACHED_WORKSPACE_REASON =
-  'This track works in a folder you own, and Perga never writes into one. Images can be attached on tracks with a managed workspace.';
-
-/** One card's uploads: how many are in flight, and the last refusal to show beside its strip. */
-export type UploadState = Readonly<{ inFlight: number; refusal: string | null }>;
-
-export const NO_UPLOAD: UploadState = Object.freeze({ inFlight: 0, refusal: null });
-
-/**
- * Where each card's picked images and uploads live: the caller's per-conversation store, so the
- * strip and an upload in flight survive closing, switching and remounts. Writes name the card, so
- * an upload lands where it started.
- */
-export type AttachmentStore = Readonly<{
-  /** The images of the open card's composer. */
-  items: readonly PlannerAttachment[];
-  update: (cardId: string, next: (items: readonly PlannerAttachment[]) => readonly PlannerAttachment[]) => void;
-  /** The open card's uploads. */
-  upload: UploadState;
-  editUpload: (cardId: string, next: (current: UploadState) => UploadState) => void;
+export type AttachmentDraft = Readonly<{
+  attachments?: readonly ConversationAttachment[];
+  attachmentError?: string | null;
 }>;
 
 export type PlannerAttachments = Readonly<{
-  items: readonly PlannerAttachment[];
-  /** Ids in the order they will be sent. */
-  ids: readonly string[];
-  attach: (file: File) => Promise<void>;
+  items: readonly ConversationAttachment[];
+  attach: (files: readonly File[]) => void;
   remove: (id: string) => void;
-  /** An upload of the open card is in flight. */
-  busy: boolean;
-  /** Last refusal for the open card, shown beside the strip. Cleared by the next pick. */
   error: string | null;
   atCapacity: boolean;
 }>;
 
-function refusalFor(contentType: string): string | null {
-  if ((ATTACHABLE_IMAGE_TYPES as readonly string[]).includes(contentType)) return null;
-  return 'That file is not one of PNG, JPEG, GIF or WebP.';
+function imageRefusal(file: File): string | null {
+  if (!(ATTACHABLE_IMAGE_TYPES as readonly string[]).includes(file.type)) return 'Choose a PNG, JPEG, GIF or WebP image.';
+  if (file.size === 0) return 'Choose an image that is not empty.';
+  if (file.size > MAX_ATTACHMENT_BYTES) return 'Each image must be at most 10 MiB.';
+  return null;
 }
 
-/** The composer's images for the open card. Uploads run one at a time per card and in pick order. */
+/** Both composers use the same validation. The registry keeps preview URLs while a draft or send owns them. */
 export function usePlannerAttachments(
-  upload: UploadAttachment,
-  cardId: string,
-  store: AttachmentStore,
+  draft: AttachmentDraft,
+  update: (change: (current: AttachmentDraft) => Required<AttachmentDraft>) => void,
 ): PlannerAttachments {
-  const { items, update, editUpload } = store;
-  /* Each card keeps its own lane, including while another card is open. A batch can
-   * reserve all its slots synchronously; byte reading happens in upload order. */
-  const lanes = useRef(new Map<string, { items: readonly PlannerAttachment[]; tail: Promise<void> | null; reserved: number }>());
-  let lane = lanes.current.get(cardId);
-  if (lane === undefined) {
-    lane = { items, tail: null, reserved: 0 };
-    lanes.current.set(cardId, lane);
-  }
-  lane.items = items;
-
-  const attach = useCallback((file: File): Promise<void> => {
-    const target = cardId;
-    const refuse = (refusal: string) => editUpload(target, (current) => ({ ...current, refusal }));
-    const refused = refusalFor(file.type);
-    if (refused !== null) { refuse(refused); return Promise.resolve(); }
-    if (lane.items.length + lane.reserved >= MAX_ATTACHMENTS_PER_MESSAGE) {
-      refuse(TOO_MANY_IMAGES);
-      return Promise.resolve();
-    }
-    lane.reserved += 1;
-    editUpload(target, (current) => ({ inFlight: current.inFlight + 1, refusal: null }));
-    const previous = lane.tail;
-    /* Start the upload intent now and wait for the previous upload before reading bytes. */
-    const pending = (async () => {
-      try {
-        const consume = await upload(async () => {
-          if (previous !== null) await previous;
-          return new Uint8Array(await file.arrayBuffer());
-        }, file.type);
-        if (previous !== null) await previous;
-        const uploaded = consume();
-        const item = {
-          id: uploaded.attachmentId, contentType: uploaded.contentType,
-          size: uploaded.size, url: uploaded.url,
-        };
-        lane.items = [...lane.items, item];
-        update(target, (current) => [...current, item]);
-      } catch (cause) {
-        refuse(cause instanceof Error ? cause.message : 'The image could not be uploaded.');
-      } finally {
-        lane.reserved -= 1;
-        editUpload(target, (current) => ({ ...current, inFlight: Math.max(0, current.inFlight - 1) }));
+  const items = draft.attachments ?? NO_IMAGES;
+  const attach = useCallback((files: readonly File[]) => {
+    update(current => {
+      const attachments = [...current.attachments ?? []];
+      let total = attachments.reduce((bytes, image) => bytes + image.size, 0);
+      let attachmentError: string | null = null;
+      for (const file of files) {
+        const refusal = imageRefusal(file);
+        if (refusal !== null) { attachmentError ??= refusal; continue; }
+        if (attachments.length >= MAX_ATTACHMENTS_PER_MESSAGE) { attachmentError ??= TOO_MANY_IMAGES; break; }
+        if (total + file.size > MAX_TOTAL_ATTACHMENT_BYTES) { attachmentError ??= TOO_MANY_IMAGE_BYTES; continue; }
+        const url = URL.createObjectURL(file);
+        total += file.size;
+        attachments.push({ id: `local-${url.slice('blob:'.length)}`, contentType: file.type, size: file.size, url, file });
       }
-    })();
-    /* A refused admission can finish before its predecessor. Keep that predecessor
-     * in the lane so the next reader cannot skip an upload still in flight. */
-    lane.tail = Promise.all([previous, pending]).then(() => undefined);
-
-    return pending;
-  }, [cardId, editUpload, lane, update, upload]);
-
-  /* Removing one before sending is a local forget; the server reclaims orphans after their TTL. */
+      return { attachments, attachmentError };
+    });
+  }, [update]);
   const remove = useCallback((id: string) => {
-    update(cardId, (current) => current.filter((item) => item.id !== id));
-  }, [cardId, update]);
-
-  const ids = useMemo(() => items.map((item) => item.id), [items]);
-  return {
-    items,
-    ids,
-    attach,
-    remove,
-    busy: store.upload.inFlight > 0,
-    error: store.upload.refusal,
-    atCapacity: items.length >= MAX_ATTACHMENTS_PER_MESSAGE,
-  };
+    update(current => ({ attachments: (current.attachments ?? NO_IMAGES).filter(image => image.id !== id), attachmentError: null }));
+  }, [update]);
+  return { items, attach, remove, error: draft.attachmentError ?? null, atCapacity: items.length >= MAX_ATTACHMENTS_PER_MESSAGE };
 }
+
+const NO_IMAGES: readonly ConversationAttachment[] = Object.freeze([]);
 
 /** The attach control: an `IconButton` with a hidden `<input type="file">` behind it, opened by `click()`. The unavailable reason rides on `tooltip` rather than `title`: Astryx switches a tooltipped disabled button to `aria-disabled` so it stays focusable. */
-export function PlannerAttachButton({ attachments, support, disabled = false }: {
+export function PlannerAttachButton({ attachments, available, disabled = false }: {
   attachments: PlannerAttachments;
-  support: AttachmentSupport;
+  available: boolean;
   disabled?: boolean;
 }) {
   const picker = useRef<HTMLInputElement | null>(null);
-  const unavailable = !support.available;
-  const blocked = disabled || unavailable || attachments.busy || attachments.atCapacity;
+  const unavailable = !available;
+  const blocked = disabled || unavailable || attachments.atCapacity;
   const tooltip = unavailable
-    ? (support.reason ?? ATTACHED_WORKSPACE_REASON)
+    ? 'Image attachments are unavailable for this conversation.'
     : attachments.atCapacity
       ? TOO_MANY_IMAGES
       : undefined;
@@ -163,7 +86,6 @@ export function PlannerAttachButton({ attachments, support, disabled = false }: 
         variant="ghost"
         size="sm"
         isDisabled={blocked}
-        isLoading={attachments.busy}
         tooltip={tooltip}
         onClick={() => { picker.current?.click(); }}
       />
@@ -171,15 +93,16 @@ export function PlannerAttachButton({ attachments, support, disabled = false }: 
         ref={picker}
         className={styles.attachInput}
         type="file"
+        multiple
         accept={ATTACHABLE_IMAGE_TYPES.join(',')}
         /* The button above is the control; a second announced file input would be a second thing to tab to that does nothing. */
         aria-hidden="true"
         tabIndex={-1}
         onChange={(event) => {
-          const file = event.target.files?.[0];
+          const files = Array.from(event.target.files ?? []);
           /* Cleared unconditionally so picking the same file twice in a row still fires a change event. */
           event.target.value = '';
-          if (file !== undefined) void attachments.attach(file);
+          if (!blocked && files.length > 0) attachments.attach(files);
         }}
       />
     </span>
@@ -187,9 +110,9 @@ export function PlannerAttachButton({ attachments, support, disabled = false }: 
 }
 
 /** The strip of pending images. `Thumbnail` samples the image behind its remove button (APCA) so the button stays legible on any picture. */
-export function PlannerAttachmentDrawer({ attachments }: { attachments: PlannerAttachments }) {
-  const { items, busy, error } = attachments;
-  if (items.length === 0 && error === null && !busy) return null;
+export function PlannerAttachmentDrawer({ attachments, disabled = false }: { attachments: PlannerAttachments; disabled?: boolean }) {
+  const { items, error } = attachments;
+  if (items.length === 0 && error === null) return null;
   return (
     <ChatComposerDrawer count={items.length} label="Images">
       <VStack gap={2}>
@@ -199,11 +122,9 @@ export function PlannerAttachmentDrawer({ attachments }: { attachments: PlannerA
               key={item.id}
               src={item.url}
               label={`Image ${index + 1}`}
-              onRemove={() => { attachments.remove(item.id); }}
+              onRemove={disabled ? undefined : () => attachments.remove(item.id)}
             />
           ))}
-          {/* An upload in flight has no url yet: the strip grows when the pick happens, not when the server answers. */}
-          {busy && <Thumbnail isLoading label="Uploading" />}
         </HStack>
         {error !== null && (
           <Banner

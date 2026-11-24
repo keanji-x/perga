@@ -1,11 +1,9 @@
 import { PENDING_TRACK_INITIAL_SENDS_KEY } from '../../../../core/keys/storage.ts';
-import type { TranscriptEntry, Conversation } from '../../../../core/domain/conversation.ts';
+import type { TranscriptEntry, Conversation, ConversationAttachment } from '../../../../core/domain/conversation.ts';
 import { DEPLOYMENT_OWNER_USER_ID } from '../../../../core/api/auth.ts';
 import { isOptimisticConversationTurn } from '../../../../core/domain/conversation.ts';
-import { TOO_MANY_IMAGES } from '../../../../core/domain/conversation-commands.ts';
 import { beginSendOp, type ConversationOutboxOp } from '../../../../core/domain/conversation-outbox.ts';
-import { EMPTY_COMPOSER, tookEveryImage, withRefill, type ComposerContent } from '../../../../core/domain/conversation-composer.ts';
-import { NO_UPLOAD, type UploadState } from '../../features/planner/attachments.tsx';
+import { EMPTY_COMPOSER, withRefill, type ComposerContent } from '../../../../core/domain/conversation-composer.ts';
 import {
   moveDraft, slotHolds,
   type ConversationOpenRequest,
@@ -30,7 +28,6 @@ export type ConversationSnapshot = Readonly<{
   acceptedTurns: ById<string>;
   composers: ById<ComposerContent>;
   newComposers: ById<string>;
-  uploads: ById<UploadState>;
   queueWrites: ById<number>;
   restarts: ById<true>;
   resolutions: ById<InputResolutionIntent>;
@@ -53,13 +50,8 @@ function sameTurns(left: readonly TranscriptEntry[], right: readonly TranscriptE
 }
 
 function withComposer(state: ConversationSnapshot, id: string, value: ComposerContent): ConversationSnapshot {
-  const composers = put(state.composers, id, value.text === '' && value.attachments.length === 0 ? undefined : value);
+  const composers = put(state.composers, id, value.text === '' && value.attachments.length === 0 && value.attachmentError == null ? undefined : value);
   return composers === state.composers ? state : { ...state, composers };
-}
-
-function withUpload(state: ConversationSnapshot, id: string, value: UploadState): ConversationSnapshot {
-  const uploads = put(state.uploads, id, value.inFlight === 0 && value.refusal === null ? undefined : value);
-  return uploads === state.uploads ? state : { ...state, uploads };
 }
 
 function withOutbox(state: ConversationSnapshot, id: string, value: readonly ConversationOutboxOp[]): ConversationSnapshot {
@@ -68,10 +60,26 @@ function withOutbox(state: ConversationSnapshot, id: string, value: readonly Con
 }
 
 function withRefilledComposer(state: ConversationSnapshot, id: string, refill: ComposerContent): ConversationSnapshot {
-  const merged = withRefill(state.composers[id] ?? EMPTY_COMPOSER, refill);
-  const next = withComposer(state, id, merged);
-  return tookEveryImage(merged, refill) ? next
-    : withUpload(next, id, { ...next.uploads[id] ?? NO_UPLOAD, refusal: TOO_MANY_IMAGES });
+  return withComposer(state, id, withRefill(state.composers[id] ?? EMPTY_COMPOSER, refill));
+}
+
+function previewUrls(state: ConversationSnapshot) {
+  const urls = new Set<string>();
+  const add = (items: readonly ConversationAttachment[] = []) => {
+    for (const image of items) if (image.file !== undefined) urls.add(image.url);
+  };
+  for (const composer of Object.values(state.composers)) add(composer.attachments);
+  for (const ops of Object.values(state.outboxes)) for (const op of ops) add(op.echo.attachments);
+  for (const slot of Object.values(state.drafts)) {
+    if (slot.kind !== 'held') continue;
+    add(slot.draft.attachments);
+    add(slot.draft.submitted?.attachments);
+  }
+  return urls;
+}
+
+function withoutIds<T>(items: ById<T>, ids: ReadonlySet<string>): ById<T> {
+  return Object.fromEntries(Object.entries(items).filter(([id]) => !ids.has(id)));
 }
 
 function isPendingTrackInitialSend(value: unknown): value is PendingTrackInitialSend {
@@ -123,16 +131,24 @@ export function createConversationOwner(submittedStorage?: () => Storage) {
   let state: ConversationSnapshot = {
     entries: {}, conversations: NO_CONVERSATIONS, drafts: {}, openRequest: null,
     pendingTrackInitialSends: initialRead.ok ? initialRead.map : {}, outboxes: {}, acceptedTurns: {},
-    composers: {}, newComposers: {}, uploads: {}, queueWrites: {}, restarts: {}, resolutions: {},
+    composers: {}, newComposers: {}, queueWrites: {}, restarts: {}, resolutions: {},
   };
   const sendGenerations = new Map<string, number>();
   const epochs = new Map<string, number>();
+  const conversationTracks = new Map<string, string>();
+  const draftTracks = new Map<string, string>();
+  const retiredTracks = new Set<string>();
   const permissionWrites = new Map<string, Promise<unknown>>();
   let read = 0;
   const listeners = new Set<() => void>();
   const commit = (next: ConversationSnapshot) => {
     if (next === state) return;
+    const previews = previewUrls(state);
     state = next;
+    if (previews.size !== 0) {
+      for (const url of previewUrls(next)) previews.delete(url);
+      for (const url of previews) URL.revokeObjectURL(url);
+    }
     for (const listener of listeners) listener();
   };
   const savePendingTrackInitialSends = (pendingTrackInitialSends: ById<PendingTrackInitialSend>) => {
@@ -161,6 +177,8 @@ export function createConversationOwner(submittedStorage?: () => Storage) {
     return !pendingInitialSendsDirty;
   };
   const rememberEntry = (id: string, conversation: Conversation, given: readonly TranscriptEntry[]) => {
+    if (retiredTracks.has(conversation.trackId)) return;
+    conversationTracks.set(id, conversation.trackId);
     const canonical = given.some(isOptimisticConversationTurn) ? given.filter(turn => !isOptimisticConversationTurn(turn)) : given;
     const previous = state.entries[id];
     const summary = previous !== undefined && equalRecord(previous.conversation, conversation) ? previous.conversation : conversation;
@@ -212,6 +230,28 @@ export function createConversationOwner(submittedStorage?: () => Storage) {
     },
     requestOpen: (id, options) => { commit({ ...state, openRequest: { id, focusComposer: options?.focusComposer ?? false } }); },
     clearOpenRequest: () => { if (state.openRequest !== null) commit({ ...state, openRequest: null }); },
+    bindConversation: (id, trackId) => { conversationTracks.set(id, trackId); },
+    bindDraftScope: (scopeId, trackId) => { draftTracks.set(scopeId, trackId); },
+    retireTrack: trackId => {
+      if (retiredTracks.has(trackId)) return;
+      retiredTracks.add(trackId);
+      const ids = new Set([...conversationTracks].filter(([, owner]) => owner === trackId).map(([id]) => id));
+      const scopes = new Set([trackId, ...[...draftTracks].filter(([, owner]) => owner === trackId).map(([id]) => id)]);
+      for (const id of ids) {
+        sendGenerations.delete(id);
+        epochs.delete(id);
+        permissionWrites.delete(id);
+      }
+      const entries = withoutIds(state.entries, ids);
+      const pendingTrackInitialSends = put(state.pendingTrackInitialSends, trackId, undefined);
+      if (pendingTrackInitialSends !== state.pendingTrackInitialSends && pendingInitialSendsHydrated)
+        savePendingTrackInitialSends(pendingTrackInitialSends);
+      commit({ ...state, entries, conversations: state.conversations.filter(row => !ids.has(row.id)),
+        drafts: withoutIds(state.drafts, scopes), newComposers: withoutIds(state.newComposers, scopes),
+        composers: withoutIds(state.composers, ids), outboxes: withoutIds(state.outboxes, ids),
+        acceptedTurns: withoutIds(state.acceptedTurns, ids), pendingTrackInitialSends,
+        openRequest: state.openRequest !== null && ids.has(state.openRequest.id) ? null : state.openRequest });
+    },
     hydratePendingTrackInitialSends,
     hasPendingTrackInitialSend: (trackId) => Object.hasOwn(state.pendingTrackInitialSends, trackId),
     queueTrackInitialSend: (trackId, text, key) => {
@@ -231,19 +271,31 @@ export function createConversationOwner(submittedStorage?: () => Storage) {
       commit({ ...state, pendingTrackInitialSends });
     },
     draftOf: scope => { const slot = state.drafts[scope]; return slot?.kind === 'held' ? slot.draft : null; },
-    startDraft: draft => { commit({ ...state, drafts: moveDraft(state.drafts, { kind: 'start', draft }) }); },
+    startDraft: draft => {
+      if (!retiredTracks.has(draftTracks.get(draft.scopeId) ?? draft.scopeId))
+        commit({ ...state, drafts: moveDraft(state.drafts, { kind: 'start', draft }) });
+    },
     editDraft: (from, next) => {
       const drafts = moveDraft(state.drafts, { kind: 'edit', from, next });
       if (drafts !== state.drafts) commit({ ...state, drafts });
     },
     acceptDraft: (from, result, submitted) => {
       if (!slotHolds(state.drafts[from.scopeId], from)) return false;
-      const accepted = { conversation: result.conversation, turns: [{
-        id: `human:${result.sessionInput.inputId}`, author: 'you' as const, text: submitted.text, atMs: submitted.atMs,
-        human: { userId: DEPLOYMENT_OWNER_USER_ID, displayName: 'Owner', messageId: result.sessionInput.inputId, revision: 1 },
-      }] };
-      const entries = put(state.entries, result.conversation.id, accepted);
-      commit({ ...state, entries, conversations: Object.values(entries).map(entry => entry.conversation),
+      conversationTracks.set(result.conversation.id, result.conversation.trackId);
+      const id = result.conversation.id;
+      const inputId = result.sessionInput.inputId;
+      const firstTurn = { id: `human:${inputId}`, author: 'you' as const, text: submitted.text, atMs: submitted.atMs };
+      const attachments = submitted.attachments;
+      const acceptedImage = attachments?.length ? [{
+        key: from.key, phase: 'accepted', messageId: inputId, queued: false, fromComposer: false,
+        echo: { ...firstTurn, id: `echo-${from.key}`, attachments, queued: false, localSend: true },
+      } as const] : [];
+      const turns = acceptedImage.length > 0 ? NO_TURNS : [{ ...firstTurn,
+        human: { userId: DEPLOYMENT_OWNER_USER_ID, displayName: 'Owner', messageId: inputId, revision: 1 },
+      }];
+      const entries = put(state.entries, id, { conversation: result.conversation, turns });
+      const next = acceptedImage.length === 0 ? state : withOutbox(state, id, [...state.outboxes[id] ?? NO_SENDS, ...acceptedImage]);
+      commit({ ...next, entries, conversations: Object.values(entries).map(entry => entry.conversation),
         acceptedTurns: put(state.acceptedTurns, result.conversation.id, result.sessionInput.turnId),
         drafts: moveDraft(state.drafts, { kind: 'adopt', from, conversationId: result.conversation.id }) });
       return true;
@@ -262,13 +314,13 @@ export function createConversationOwner(submittedStorage?: () => Storage) {
       if (drafts !== state.drafts) commit({ ...state, drafts });
     },
     acceptedTurnOf: id => state.acceptedTurns[id] ?? null,
-    rememberAcceptedTurn: (id, turnId) => { commit({ ...state, acceptedTurns: put(state.acceptedTurns, id, turnId ?? undefined) }); },
-    sendGenerationOf: id => sendGenerations.get(id) ?? 0,
+    rememberAcceptedTurn: (id, turnId) => { if (!retiredTracks.has(conversationTracks.get(id) ?? '')) commit({ ...state, acceptedTurns: put(state.acceptedTurns, id, turnId ?? undefined) }); },
+    sendGenerationOf: id => retiredTracks.has(conversationTracks.get(id) ?? '') ? -1 : sendGenerations.get(id) ?? 0,
     invalidateSends: id => {
       sendGenerations.set(id, (sendGenerations.get(id) ?? 0) + 1);
       let next = state;
       for (const op of state.outboxes[id] ?? []) {
-        if (op.fromComposer) next = withRefilledComposer(next, id, { text: op.echo.text, attachments: op.echo.attachments ?? [] });
+        if (op.phase !== 'accepted' && op.fromComposer) next = withRefilledComposer(next, id, { text: op.echo.text, attachments: op.echo.attachments ?? [] });
       }
       commit({ ...withOutbox(next, id, NO_SENDS), acceptedTurns: put(next.acceptedTurns, id, undefined) });
     },
@@ -279,11 +331,23 @@ export function createConversationOwner(submittedStorage?: () => Storage) {
     },
     outboxOf: id => state.outboxes[id] ?? NO_SENDS,
     beginSend: (id, op) => {
+      if (retiredTracks.has(conversationTracks.get(id) ?? '')) return false;
       const begun = beginSendOp(state.outboxes[id] ?? NO_SENDS, op);
       if (begun === null) return false;
-      const next = withOutbox(state, id, begun);
+      let next = withOutbox(state, id, begun);
+      if (op.fromComposer && op.echo.attachments?.length) {
+        const composer = state.composers[id] ?? EMPTY_COMPOSER;
+        const sent = new Set(op.echo.attachments.map(image => image.id));
+        next = withComposer(next, id, { ...composer, attachments: composer.attachments.filter(image => !sent.has(image.id)), attachmentError: null });
+      }
       commit(next);
       return true;
+    },
+    removeSend: (id, key, restore) => {
+      const ops = state.outboxes[id] ?? NO_SENDS;
+      if (!ops.some(op => op.key === key)) return;
+      const next = withOutbox(state, id, ops.filter(op => op.key !== key));
+      commit(restore === undefined ? next : withRefilledComposer(next, id, restore));
     },
     editOutbox: (id, update) => {
       const before = state.outboxes[id] ?? NO_SENDS;
@@ -294,19 +358,19 @@ export function createConversationOwner(submittedStorage?: () => Storage) {
     nextRead: () => ++read,
     composerOf: id => state.composers[id] ?? EMPTY_COMPOSER,
     editComposer: (id, update) => {
+      if (retiredTracks.has(conversationTracks.get(id) ?? '')) return EMPTY_COMPOSER;
       const after = update(state.composers[id] ?? EMPTY_COMPOSER);
       commit(withComposer(state, id, after));
       return after;
     },
-    refillComposer: (id, refill) => { commit(withRefilledComposer(state, id, refill)); },
+    refillComposer: (id, refill) => { if (!retiredTracks.has(conversationTracks.get(id) ?? '')) commit(withRefilledComposer(state, id, refill)); },
     newConversationComposerOf: scope => state.newComposers[scope] ?? '',
     editNewConversationComposer: (scope, update) => {
+      if (retiredTracks.has(draftTracks.get(scope) ?? scope)) return;
       const value = update(state.newComposers[scope] ?? '');
       const newComposers = put(state.newComposers, scope, value === '' ? undefined : value);
       if (newComposers !== state.newComposers) commit({ ...state, newComposers });
     },
-    uploadOf: id => state.uploads[id] ?? NO_UPLOAD,
-    editUpload: (id, update) => { commit(withUpload(state, id, update(state.uploads[id] ?? NO_UPLOAD))); },
     queueWriteOutOf: id => (state.queueWrites[id] ?? 0) > 0,
     holdQueueWrite: async (id, write) => {
       // Retain the existing clickAction async-transition boundary.
@@ -325,7 +389,18 @@ export function createConversationOwner(submittedStorage?: () => Storage) {
       return Promise.resolve().then(restart).finally(() => { commit({ ...state, restarts: put(state.restarts, id, undefined) }); });
     },
   };
+  let mounted = 0;
   return {
+    retain() {
+      mounted += 1;
+      return () => {
+        mounted -= 1;
+        // Strict Mode remounts effects on the same owner before this microtask runs.
+        queueMicrotask(() => {
+          if (mounted === 0) for (const url of previewUrls(state)) URL.revokeObjectURL(url);
+        });
+      };
+    },
     commands,
     getSnapshot: () => state,
     subscribe<T>(select: (snapshot: ConversationSnapshot) => T, listener: () => void) {

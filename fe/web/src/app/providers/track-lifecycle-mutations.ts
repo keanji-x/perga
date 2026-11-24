@@ -1,3 +1,4 @@
+import { useRetireTrackConversations } from '../conversations/public.tsx';
 import { queryKeys } from './query-keys.ts';
 import { useQueryClient } from '@tanstack/react-query';
 import { useOnlineMutation } from './online-mutation.ts';
@@ -8,6 +9,11 @@ import { cancelThenInvalidate } from '../events/query-refresh.ts';
 import { deleteDone, runOperation } from './query-operation.ts';
 export function useTrackLifecycleMutations(transport: ApiTransportPort, unauthorized: UnauthorizedChannel) {
   const client = useQueryClient();
+  const retireConversations = useRetireTrackConversations();
+  const retireTrack = (trackId: string) => {
+    retireConversations?.(trackId);
+    client.removeQueries({ queryKey: queryKeys.trackDetail(trackId) });
+  };
   const create = useOnlineMutation({
     mutationFn: (variables: { body: NewTrackBody; idempotencyKey: string }) =>
       runOperation(transport, createTrackOperation(variables.body, variables.idempotencyKey), unauthorized),
@@ -35,10 +41,10 @@ export function useTrackLifecycleMutations(transport: ApiTransportPort, unauthor
     mutationFn: ({ trackId, signal }: { trackId: string; areaId: string; signal?: AbortSignal }) =>
       runOperation(transport, { ...deleteTrackOperation(trackId), signal }, unauthorized),
     onSuccess: (_result, variables) => {
-      client.removeQueries({ queryKey: queryKeys.trackDetail(variables.trackId) });
+      retireTrack(variables.trackId);
     },
     onError: (error, variables) => {
-      if (deleteDone(error)) client.removeQueries({ queryKey: queryKeys.trackDetail(variables.trackId) });
+      if (deleteDone(error)) retireTrack(variables.trackId);
     },
     // Reconcile both list-derived surfaces even if abort raced a committed DELETE.
     onSettled: (_result, _error, variables) => {

@@ -5,6 +5,7 @@ import { agentProvidersOperation,managedProvidersOperation } from '../domain/age
 import { sessionContextUsage } from '../domain/session-context-usage.js';
 import { trackTemplatesOperation } from '../domain/track.js';
 import { bootstrapOperation,whoamiOperation } from './auth.js';
+import openapi from './generated/openapi.json';
 import hostPayloads from './fixtures/unified-host-payloads.json';
 import { taskDtoSchema } from './perga-v1.js';
 
@@ -23,7 +24,7 @@ import { modelCatalogOperation, setPlannerModelOperation } from '../domain/conve
 import { decodeEventFrame } from '../events/protocol.js';
 import { initialEventState,reduceEventFrame } from '../events/reducer.js';
 import { DEPLOYMENT_OWNER_USER_ID,loginOperation } from './auth.js';
-import { agentSessionDtoSchema, bootstrapDtoSchema, createSessionRequestSchema, decodePergaEventEnvelope, sessionCreationReceiptSchema, trackAggregateSnapshotDtoSchema, trackDataPatchResultSchema, trackDtoSchema } from './perga-v1.js';
+import { agentSessionDtoSchema, bootstrapDtoSchema, createSessionRequestSchema, decodePergaEventEnvelope, sessionCreationReceiptSchema, sessionItemsPageDtoSchema, MAX_ATTACHMENT_BYTES, messageAttachmentDtoSchema, multipartMessagePayloadSchema, trackAggregateSnapshotDtoSchema, trackDataPatchResultSchema, trackDtoSchema } from './perga-v1.js';
 import { decodeWireEvent } from './schemas.js';
 
 
@@ -452,7 +453,7 @@ describe('Perga /api/v1 protocol contracts', () => {
         { id: 5, sessionId: 'ses_lead', turnId: 'turn_1', kind: 'assistant_text', payload: { v: 1, text: 'Report inspected.' }, createdAtMs: 1300 },
       ],
       activeTurn: null,
-      state: 'idle', readonlyReason: null, canReopen: false, workerPaused: false, lastTurn: null, unknownDetail: null,
+      state: 'idle', readonlyReason: null, canReopen: false, workerPaused: false, lastTurn: null, unknownDetail: null, attachmentsSupported: false,
       session: {
         id: 'ses_lead',
         trackId: 'trk_1',
@@ -605,7 +606,7 @@ describe('Perga /api/v1 protocol contracts', () => {
       ],
       hasMoreBefore: true,
       activeTurn: null,
-      state: 'idle', readonlyReason: null, canReopen: false, workerPaused: false, lastTurn: null, unknownDetail: null,
+      state: 'idle', readonlyReason: null, canReopen: false, workerPaused: false, lastTurn: null, unknownDetail: null, attachmentsSupported: false,
       session: {
         id: 'ses_lead', trackId: 'trk_1', isLead: true,
         title: 'Lead', provider: 'codex', model: 'gpt-5', nativeThreadId: 'thr_1', epoch: 1,
@@ -630,7 +631,7 @@ describe('Perga /api/v1 protocol contracts', () => {
     const run = conversationRunOperation('ses_lead').responseSchema.parse({
       items: [],
       activeTurn: null,
-      state: 'idle', readonlyReason: null, canReopen: false, workerPaused: false, lastTurn: null, unknownDetail: null,
+      state: 'idle', readonlyReason: null, canReopen: false, workerPaused: false, lastTurn: null, unknownDetail: null, attachmentsSupported: false,
       session: {
         id: 'ses_lead', trackId: 'trk_1', isLead: true,
         title: 'Lead', provider: 'codex', model: 'gpt-5', nativeThreadId: 'thr_1', epoch: 1,
@@ -787,4 +788,66 @@ it('decodes task ownership and latest evidence from the C# task fixture', () => 
   expect(task).toMatchObject({ sessionId: 'session', runCount: 2, outcome: 'attention', workerResult: { summary: 'Latest result' } });
   expect(taskEvidence(task)).toMatchObject({ gatePassed: false, gateSteps: [{ output: 'Check failed' }] });
   expect(task).not.toHaveProperty('latestAttemptId');
+});
+
+describe('session image attachment contract', () => {
+  const id = `${'a'.repeat(64)}.png`;
+  const attachment = Object.freeze({ id, contentType: 'image/png', size: MAX_ATTACHMENT_BYTES, url: `/api/v1/tracks/trk_image/media/${id}` });
+  const pageWith = (image: unknown) => ({
+    ...hostPayloads.page,
+    attachmentsSupported: true,
+    items: [{ id: 1, sessionId: 'session', turnId: null, kind: 'user', createdAtMs: 1,
+      payload: { content: '', requestKey: 'key', attachments: [image] } }],
+    queuedMessages: [{ id: 'queued', text: '', queuedAtMs: 1, state: 'waiting', attachments: [image] }],
+  });
+
+  it('decodes matching canonical metadata in history and in the waiting queue', () => {
+    const page = sessionItemsPageDtoSchema.parse(pageWith(attachment));
+    expect(page.items[0].payload).toMatchObject({ requestKey: 'key', attachments: [attachment] });
+    expect(page.queuedMessages?.[0].attachments).toEqual([attachment]);
+    expect(page.attachmentsSupported).toBe(true);
+  });
+
+  it.each([
+    ['upper-case hash', { id: `${'A'.repeat(64)}.png` }],
+    ['invalid extension', { id: `${'a'.repeat(64)}.jpeg` }],
+    ['SVG', { contentType: 'image/svg+xml' }],
+    ['MIME/extension mismatch', { contentType: 'image/jpeg' }],
+    ['zero bytes', { size: 0 }],
+    ['fractional bytes', { size: 1.5 }],
+    ['over the limit', { size: MAX_ATTACHMENT_BYTES + 1 }],
+    ['off-origin URL', { url: `https://example.org${attachment.url}` }],
+    ['different file', { url: attachment.url.replace(id, `${'b'.repeat(64)}.png`) }],
+    ['relative traversal', { url: attachment.url.replace('trk_image', '..') }],
+  ])('rejects %s in history and queued attachments', (_label, changes) => {
+    const parsed = sessionItemsPageDtoSchema.safeParse(pageWith({ ...attachment, ...changes }));
+    expect(parsed.success).toBe(false);
+    if (!parsed.success) expect([...new Set(parsed.error.issues.map(issue => issue.path[0]))]).toEqual(['items', 'queuedMessages']);
+  });
+});
+
+
+it('uses the dedicated Host multipart message payload and requires the idempotency header', () => {
+  const post = openapi.paths['/api/v1/sessions/{sessionId}/messages'].post;
+  const multipart = post.requestBody.content['multipart/form-data'];
+  expect(multipart['x-required-headers']).toEqual(['Idempotency-Key']);
+  expect(multipart.schema.properties.payload.contentSchema.$ref).toBe('#/components/schemas/MultipartMessagePayload');
+  const hostFields = Object.keys(openapi.components.schemas.MultipartMessagePayload.properties).sort();
+  expect(Object.keys(multipartMessagePayloadSchema.shape).sort()).toEqual(hostFields);
+  expect(multipartMessagePayloadSchema.safeParse({ content: '', mode: 'queue', expectedEpoch: 3 }).success).toBe(true);
+  expect(multipartMessagePayloadSchema.safeParse({ content: '', messageId: 'queued' }).success).toBe(false);
+  expect(multipartMessagePayloadSchema.safeParse({ content: '', requestKey: 'body-key' }).success).toBe(false);
+});
+
+it('decodes every extension and MIME pair exported by Host', () => {
+  const schema = openapi.components.schemas.MessageAttachmentDto;
+  for (const variant of schema.oneOf) {
+    const contentType = variant.properties.contentType.const;
+    const extension = variant.properties.id.pattern.split('.').at(-1)!.slice(0, -1);
+    const id = `${'a'.repeat(64)}.${extension}`;
+    const image = { id, contentType, size: schema.properties.size.maximum, url: `/api/v1/tracks/track/media/${id}` };
+    expect(messageAttachmentDtoSchema.parse(image)).toEqual(image);
+    const otherType = schema.properties.contentType.enum.find(mime => mime !== contentType);
+    expect(messageAttachmentDtoSchema.safeParse({ ...image, contentType: otherType }).success).toBe(false);
+  }
 });

@@ -20,6 +20,7 @@ import {
   ChatComposerInput,
   ChatSendButton,
   ChatLayoutScrollButton,
+  type ChatComposerInputHandle,
   type ChatComposerTrigger,
 } from '@astryxdesign/core/Chat';
 import { Button } from '@astryxdesign/core/Button';
@@ -401,7 +402,7 @@ export function ChatComposer({
   headerActions?: ReactNode;
   /** Whether a send with no words is a real send (an attached image); a prop because the drawer is an opaque node. */
   allowEmptyText?: boolean;
-  /** Files dropped or pasted into the field; the caller owns attachment admission and upload. */
+  /** Files dropped or pasted into the field; the caller owns validation and draft previews. */
   onFiles?: (files: File[]) => void;
   /** The `@` menu (`useMentionTrigger`), present only where a Planner reads what is sent; the caller keeps it stable. */
   mentionTrigger?: ChatComposerTrigger;
@@ -433,6 +434,7 @@ export function ChatComposer({
 
   const rootRef = useRef<HTMLDivElement>(null);
   const messageInputRef = useRef<HTMLDivElement>(null);
+  const inputHandle = useRef<ChatComposerInputHandle>(null);
   const [sendCount, setSendCount] = useState(0);
   const wantsFieldFocus = useRef(focusOnMount);
   /** The element this component last put focus on; `null` while no restore is in flight. */
@@ -539,7 +541,7 @@ export function ChatComposer({
 
   /* `Send image`: `ChatSendButton` takes its availability from `canSend`, false on an empty draft, and an image-only message is an empty draft. Shown only while the vendor's own button is unavailable. */
   const commandError = commandFailure?.identity !== feedbackIdentity ? null : <p role="alert">{commandFailure.message}</p>;
-  const sendDoor = allowEmptyText && draft.trim() === '' && !stopShown && !sendWaiting && editing === undefined ? (
+  const sendDoor = allowEmptyText && draft.trim() === '' && (!stopShown || canQueueWhileRunning) && !sendWaiting && editing === undefined ? (
     <button
       type="button"
       className={styles.queueSend}
@@ -637,10 +639,32 @@ export function ChatComposer({
             <>{sendAdornment}{sendDoor}</>
           )}
           input={(
-            <div ref={messageInputRef} className={layout === 'mobile' ? mobileStyles.input : `${styles.input} ${composerLayoutStyles.input}`}><ChatComposerInput
+            <div ref={messageInputRef} className={layout === 'mobile' ? mobileStyles.input : `${styles.input} ${composerLayoutStyles.input}`}
+              onPasteCapture={disabled || onFiles === undefined ? undefined : event => {
+                const files = Array.from(event.clipboardData.files);
+                const text = event.clipboardData.getData('text/plain');
+                // Astryx consumes the file list before invoking its text paste hook.
+                if (files.length === 0 || text === '') return;
+                event.preventDefault();
+                event.stopPropagation();
+                onFiles(files);
+                inputHandle.current?.insertText(text);
+              }}><ChatComposerInput
+              handleRef={inputHandle}
               /* Longer drafts scroll inside the editor, leaving room for a shared pane's recovery strip and Send. */
               maxRows={3}
               onFiles={disabled ? undefined : onFiles}
+              onPaste={disabled || onFiles === undefined ? undefined : (event, text) => {
+                if (event.clipboardData.files.length > 0) return;
+                const files = Array.from(event.clipboardData.items ?? []).flatMap(item => {
+                  if (item.kind !== 'file' || !item.type.startsWith('image/')) return [];
+                  const file = item.getAsFile();
+                  return file === null ? [] : [file];
+                });
+                if (files.length === 0) return;
+                onFiles(files);
+                return text === '';
+              }}
               label="Message"
               placeholder={layout === 'mobile' ? 'Write a message…' : 'Write a message, or type / for commands…'}
               /* No triggers where there is neither a command nor a mention: otherwise the field becomes an `aria-expanded="false"` combobox that can never expand. */

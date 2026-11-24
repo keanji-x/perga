@@ -1,8 +1,7 @@
 import type { KeepConversationInputRequest, AgentProvider } from '../../../../core/domain/presentation-types.ts';
-import type { Conversation, CreatedConversation, ModelSelection, SideConversation, SubmittedConversationInput, TranscriptEntry } from '../../../../core/domain/conversation.ts';
+import type { Conversation, CreatedConversation, ModelSelection, SideConversation, ConversationAttachment, SubmittedConversationInput, TranscriptEntry } from '../../../../core/domain/conversation.ts';
 import type { ConversationOutboxOp, SendOp } from '../../../../core/domain/conversation-outbox.ts';
 import type { ComposerContent } from '../../../../core/domain/conversation-composer.ts';
-import type { UploadState } from '../../features/planner/attachments.tsx';
 
 export type ConversationOpenRequest = Readonly<{ id: string; focusComposer: boolean }>;
 
@@ -27,6 +26,8 @@ export type ConversationDraft = Readonly<{
   text: string | null;
   /** Original dispatched body and client display time; retries preserve this exact fact. */
   submitted: SubmittedConversationInput | null;
+  attachments?: readonly ConversationAttachment[];
+  attachmentError?: string | null;
   /** The create/recovery chain for this key has not settled yet. */
   creating: boolean;
   error: string | null;
@@ -119,6 +120,9 @@ export type ConversationRegistry = Readonly<{
   ) => void;
   requestOpen: (conversationId: string, options?: { focusComposer?: boolean }) => void;
   clearOpenRequest: () => void;
+  bindConversation: (id: string, trackId: string) => void;
+  bindDraftScope: (scopeId: string, trackId: string) => void;
+  retireTrack: (trackId: string) => void;
   /** Retries reading and saving the initial-send queue. Returns true once synced. */
   hydratePendingTrackInitialSends: () => boolean;
   /** Checks the current in-memory queue, including sends queued during a storage failure. */
@@ -147,6 +151,7 @@ export type ConversationRegistry = Readonly<{
   outboxOf: (conversationId: string) => readonly ConversationOutboxOp[];
   /** Start a send there (`beginSendOp`): false while that conversation cannot take it. One active operation per conversation. */
   beginSend: (conversationId: string, op: SendOp) => boolean;
+  removeSend: (conversationId: string, key: string, restore?: ComposerContent) => void;
   /** Change one conversation's outbox, whichever is shown; returns it as written. */
   editOutbox: (conversationId: string, next: (current: readonly ConversationOutboxOp[]) => readonly ConversationOutboxOp[]) => readonly ConversationOutboxOp[];
   /** The next number in the tab's one read order: a read numbered later started later, whichever view started it. */
@@ -165,9 +170,6 @@ export type ConversationRegistry = Readonly<{
    * Not `ConversationDraft.text`, which holds the words after the composer clears on send. */
   newConversationComposerOf: (scopeId: string) => string;
   editNewConversationComposer: (scopeId: string, next: (current: string) => string) => void;
-  /** One card's image uploads, held here so a remount or another route sees an upload still in flight. */
-  uploadOf: (cardId: string) => UploadState;
-  editUpload: (cardId: string, next: (current: UploadState) => UploadState) => void;
   /** Whether a write to one card's queued entries (a delete or a steer) is unanswered, held here so a remount or another
    * route sees it still out (#2068). */
   queueWriteOutOf: (cardId: string) => boolean;

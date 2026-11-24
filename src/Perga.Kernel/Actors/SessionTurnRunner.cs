@@ -194,7 +194,8 @@ public sealed partial class TrackActor
             var outcome = new TurnOutcome();
             try
             {
-                var input = new TurnInput(effectivePrompt, active.TurnDto.Id, active.AgentSession.ConfigurationState?.NativeModel ?? active.Configuration.Model.ValueOrNull, active.AgentSession.ConfigurationState?.NativeEffort ?? active.Configuration.Effort.ValueOrNull);
+                var input = new TurnInput(effectivePrompt, active.TurnDto.Id, active.AgentSession.ConfigurationState?.NativeModel ?? active.Configuration.Model.ValueOrNull, active.AgentSession.ConfigurationState?.NativeEffort ?? active.Configuration.Effort.ValueOrNull,
+                    actor.ResolveTurnImages(work.Attachments));
                 await foreach (var evt in actor.ObserveTurnAsync(active, input, active.TurnCts.Token).ConfigureAwait(false))
                     await HandleEventAsync(work, active, outcome, evt).ConfigureAwait(false);
             }

@@ -29,7 +29,21 @@ public sealed record TurnInput(
     string Prompt,
     string CorrelationId,
     string? Model = null,
-    string? ReasoningEffort = null);
+    string? ReasoningEffort = null,
+    IReadOnlyList<TurnImage>? Attachments = null);
+
+public sealed record TurnImage(string ContentType, int Size, Func<CancellationToken, Task<Stream?>> OpenAsync);
+
+/// <summary>A deterministic refusal before calling the provider prompt or steer operation.</summary>
+public sealed class AttachmentDispatchException(string code, string message, Exception? innerException = null)
+    : Exception(message, innerException)
+{
+    public string Code { get; } = code;
+    public bool BeforePrompt => true;
+
+    public static AttachmentDispatchException Unsupported() =>
+        new("attachments_unsupported", "The provider session does not support image attachments.");
+}
 
 public sealed record TokenUsage(
     long InputTokens,
@@ -106,7 +120,8 @@ public sealed record ProviderStatus(
     IReadOnlyList<string> Models,
     IReadOnlyList<ProviderModelInfo>? ModelCatalog = null,
     IReadOnlyList<PermissionModeOption>? PermissionModes = null,
-    [property: System.Text.Json.Serialization.JsonIgnore] SessionConfigurationCapabilities? ConfigurationCapabilities = null);
+    [property: System.Text.Json.Serialization.JsonIgnore] SessionConfigurationCapabilities? ConfigurationCapabilities = null,
+    [property: System.Text.Json.Serialization.JsonIgnore] bool? SupportsImages = null);
 
 public sealed record NativeCompactResult(
     TokenUsage? Usage = null,
@@ -148,6 +163,7 @@ public interface IAgentSession : IAsyncDisposable
     IReadOnlyList<PermissionModeOption> AvailablePermissionModes => [];
     string? NativeThreadId { get; }
     bool SupportsNativeSteer { get; }
+    bool SupportsImages => false;
     long? ContextUsageRevision => 0;
     bool CanReuseContextWindow => false;
     bool SupportsNativeCompact => false;
@@ -184,11 +200,16 @@ public interface IAgentSession : IAsyncDisposable
     Task<SessionConfigurationOutcome> ConfigureAsync(SessionConfiguration configuration, CancellationToken ct = default);
     // The adapter runs beforeWrite at its transport write boundary and propagates rejection.
     Task<SteerDelivery> SteerAsync(string turnCorrelationId, string message, CancellationToken ct, Func<CancellationToken, Task>? beforeWrite = null);
+    Task<SteerDelivery> SteerAsync(TurnInput input, CancellationToken ct, Func<CancellationToken, Task>? beforeWrite = null) =>
+        input.Attachments is { Count: > 0 }
+            ? Task.FromException<SteerDelivery>(AttachmentDispatchException.Unsupported())
+            : SteerAsync(input.CorrelationId, input.Prompt, ct, beforeWrite);
 }
 
 public interface IAgentRuntime : IAsyncDisposable
 {
     bool CanResumeSession(string provider) => false;
+    bool? GetImageSupport(string provider) => null;
     Task<IReadOnlyList<ProviderStatus>> ProbeProvidersAsync(CancellationToken ct);
     /// <summary>Starts and returns an owned session before initialization; the caller must dispose it.</summary>
     IAgentSession CreateSession(HarnessLaunchSpec spec);

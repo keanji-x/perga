@@ -4,6 +4,7 @@ import { Banner } from '@astryxdesign/core/Banner';
 import type { PendingQueueEntry } from '../../../../../core/domain/conversation.ts';
 import type { PlannerQueueWriteOutcome } from '../../../../../core/domain/conversation-commands.ts';
 import { queueEntryIsAccounted, type QueueDisplayAccounting, type PendingQueueSend } from '../../../../../core/domain/conversation-outbox.ts';
+import { MessageImages } from './message-images.tsx';
 import { OutgoingMessage } from './outgoing-message.tsx';
 import { MessageActions } from './message-actions.tsx';
 import { useCompactViewport } from '../../../ui/viewport/public.ts';
@@ -131,7 +132,10 @@ export function PendingQueue({ entries, pendingInputCount, queueDisplayAccountin
               <SizeMotion motionKey={isEditing}><div className={styles.rowSpace}><div className={styles.row} data-nc-pending-entry={alive || isEditing ? entry.entry_id : undefined}>
                 <div className={styles.content}>
                   <div className={styles.line}>
-                    <div data-nc-pending-entry-text=""><OutgoingMessage speaker="unknown" text={current.text} mobile={mobile} edited={isEditing} /></div>
+                    <div data-nc-pending-entry-text="">
+                      {(current.text !== '' || !current.attachments?.length) && <OutgoingMessage speaker="unknown" text={current.text} mobile={mobile} edited={isEditing} />}
+                      {current.attachments?.length ? <MessageImages attachments={current.attachments} /> : null}
+                    </div>
                     <div className={styles.actions}>
                       <MessageActions label="Queued message actions" actions={[
                         { id: 'undo', kind: 'undo', label: 'Withdraw', tooltip: 'Withdraw this queued message.', disabled: blocked || isEditing || !canWithdraw,
@@ -151,8 +155,11 @@ export function PendingQueue({ entries, pendingInputCount, queueDisplayAccountin
             </CollapsePresence>;
           })}
           {sending.map(message => <div key={message.id} className={styles.sending} data-nc-pending-send={message.id}>
-            <div><OutgoingMessage speaker={message.author === 'you' ? 'you' : message.author === 'human' ? 'human' : 'unknown'} text={message.text} mobile={mobile} /></div>
-            <span className={styles.delivery} role="status">{message.delivery === 'failed' ? 'Not sent' : 'Sending…'}</span>
+            <div>
+              {(message.text !== '' || !message.attachments?.length) && <OutgoingMessage speaker={message.author === 'you' ? 'you' : message.author === 'human' ? 'human' : 'unknown'} text={message.text} mobile={mobile} />}
+              {message.attachments?.length ? <MessageImages attachments={message.attachments} /> : null}
+            </div>
+            <span className={styles.delivery} role="status">{message.delivery === 'queued' ? 'Queued' : message.delivery === 'failed' ? 'Not sent' : 'Sending…'}</span>
           </div>)}
           {pendingInputCount > 0 && <p className={styles.notice} role="status">
             {`${pendingInputCount} ${pendingInputCount === 1 ? 'input is' : 'inputs are'} waiting for execution.`}

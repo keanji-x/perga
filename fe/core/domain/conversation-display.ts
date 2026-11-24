@@ -30,9 +30,7 @@ export function sessionItemsPageDtoToConversationPage(
   const resultsByCallId = new Map<string, { output: unknown; isError: boolean; createdAtMs: number }>();
   for (const item of page.items) {
     if (item.kind !== 'tool_result') continue;
-    const payloadObj = typeof item.payload === 'object' && item.payload !== null
-      ? (item.payload as Record<string, unknown>)
-      : {};
+    const payloadObj = item.payload;
     if (typeof payloadObj.callId === 'string') {
       resultsByCallId.set(payloadObj.callId, {
         output: payloadObj.output ?? null,
@@ -50,9 +48,7 @@ export function sessionItemsPageDtoToConversationPage(
 
   const displayItems: ConversationDisplayItem[] = sliced.flatMap((item): ConversationDisplayItem[] => {
     const itemCursor: ConversationCursor = { contract: 'conversation_v1', card_id: card, source: 'presentation', position: item.id };
-    const payloadObj = typeof item.payload === 'object' && item.payload !== null
-      ? (item.payload as Record<string, unknown>)
-      : {};
+    const payloadObj = item.payload;
 
     if (item.kind === 'epoch_boundary') return [{ cursor: itemCursor, source: {
       kind: 'system', observation_id: `epoch-${item.id}`, presentation: 'system',
@@ -92,6 +88,7 @@ export function sessionItemsPageDtoToConversationPage(
         source: {
           kind: 'human',
           message_id: typeof payloadObj.inputId === 'string' ? payloadObj.inputId : `msg-${item.id}`,
+          ...(payloadObj.requestKey === undefined ? {} : { request_key: payloadObj.requestKey }),
           revision: 1,
           author: { user_id: DEPLOYMENT_OWNER_USER_ID, display_name: 'Owner' },
           text: content,
@@ -99,7 +96,7 @@ export function sessionItemsPageDtoToConversationPage(
           ...(item.messageStatus == null ? {} : { message_status: item.messageStatus }),
           ...(interrupted ? { delivery_error: 'Interrupted · Unsent' }
             : typeof payloadObj.deliveryError === 'string' ? { delivery_error: payloadObj.deliveryError } : {}),
-          attachments: [],
+          attachments: payloadObj.attachments ?? [],
           created_at_ms: item.createdAtMs,
         },
       }];
@@ -193,6 +190,7 @@ export function buildConversationTranscript(
     const authoredByViewer = authorId === viewerId || (viewerIsOwner && authorId === DEPLOYMENT_OWNER_USER_ID);
     return [{ id: `human:${source.message_id}`, author: authoredByViewer ? 'you' : 'human',
       human: { userId: source.author.user_id, displayName: source.author.display_name, messageId: source.message_id, revision: source.revision },
+      ...(source.request_key === undefined ? {} : { requestKey: source.request_key }),
       text: source.text, attachments: source.attachments, atMs: source.created_at_ms, displayPosition: cursor.position,
       ...(source.supplemental === true ? { supplemental: true } : {}),
       ...(source.message_status === undefined ? {} : { messageStatus: source.message_status }),
@@ -225,5 +223,6 @@ export function conversationRunningTurn(run: ConversationRun, now: number): impo
 
 export function conversationPendingQueue(run: ConversationRun): readonly import('./conversation.js').PendingQueueEntry[] {
   return run.queuedMessages?.map(message => ({ entry_id: message.id, text: message.text,
-    rev: 1, queued_at_ms: message.queuedAtMs, state: message.state })) ?? [];
+    rev: 1, queued_at_ms: message.queuedAtMs, state: message.state,
+    ...(message.attachments == null ? {} : { attachments: message.attachments }) })) ?? [];
 }

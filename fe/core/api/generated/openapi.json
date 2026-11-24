@@ -2709,6 +2709,131 @@
         "required": [],
         "type": "object"
       },
+      "MessageAttachmentDto": {
+        "oneOf": [
+          {
+            "properties": {
+              "contentType": {
+                "const": "image/gif"
+              },
+              "id": {
+                "pattern": "^[0-9a-f]{64}\\.gif$"
+              },
+              "url": {
+                "pattern": "^/api/v1/tracks/[A-Za-z0-9_-]\u002B/media/[0-9a-f]{64}\\.gif$"
+              }
+            }
+          },
+          {
+            "properties": {
+              "contentType": {
+                "const": "image/jpeg"
+              },
+              "id": {
+                "pattern": "^[0-9a-f]{64}\\.jpg$"
+              },
+              "url": {
+                "pattern": "^/api/v1/tracks/[A-Za-z0-9_-]\u002B/media/[0-9a-f]{64}\\.jpg$"
+              }
+            }
+          },
+          {
+            "properties": {
+              "contentType": {
+                "const": "image/png"
+              },
+              "id": {
+                "pattern": "^[0-9a-f]{64}\\.png$"
+              },
+              "url": {
+                "pattern": "^/api/v1/tracks/[A-Za-z0-9_-]\u002B/media/[0-9a-f]{64}\\.png$"
+              }
+            }
+          },
+          {
+            "properties": {
+              "contentType": {
+                "const": "image/webp"
+              },
+              "id": {
+                "pattern": "^[0-9a-f]{64}\\.webp$"
+              },
+              "url": {
+                "pattern": "^/api/v1/tracks/[A-Za-z0-9_-]\u002B/media/[0-9a-f]{64}\\.webp$"
+              }
+            }
+          }
+        ],
+        "properties": {
+          "contentType": {
+            "enum": [
+              "image/png",
+              "image/jpeg",
+              "image/gif",
+              "image/webp"
+            ],
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "size": {
+            "maximum": 10485760,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "contentType",
+          "id",
+          "size",
+          "url"
+        ],
+        "type": "object"
+      },
+      "MultipartMessagePayload": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expectedEpoch": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mode": {
+            "type": "string"
+          },
+          "turnId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
       "NotifiableSessionWatermarkDto": {
         "properties": {
           "lastNotifiableTurnAtMs": {
@@ -3201,6 +3326,19 @@
       },
       "QueuedSessionMessageDto": {
         "properties": {
+          "attachments": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/MessageAttachmentDto"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "id": {
             "type": "string"
           },
@@ -3856,7 +3994,21 @@
               }
             ]
           },
-          "payload": {},
+          "payload": {
+            "additionalProperties": true,
+            "properties": {
+              "attachments": {
+                "items": {
+                  "$ref": "#/components/schemas/MessageAttachmentDto"
+                },
+                "type": "array"
+              },
+              "requestKey": {
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
           "sessionId": {
             "type": "string"
           },
@@ -3903,6 +4055,9 @@
                 "type": "null"
               }
             ]
+          },
+          "attachmentsSupported": {
+            "type": "boolean"
           },
           "canReopen": {
             "type": "boolean"
@@ -4043,6 +4198,7 @@
         "required": [
           "activeTurn",
           "activity",
+          "attachmentsSupported",
           "canReopen",
           "canSteer",
           "capabilities",
@@ -6892,6 +7048,7 @@
             }
           },
           {
+            "description": "Required for multipart requests and JSON requests containing content.",
             "in": "header",
             "name": "Idempotency-Key",
             "required": false,
@@ -6906,6 +7063,39 @@
               "schema": {
                 "$ref": "#/components/schemas/SendSessionMessageRequest"
               }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "attachments": {
+                    "description": "PNG, JPEG, GIF or WebP. Up to 10485760 bytes per image and 26214400 bytes in total.",
+                    "items": {
+                      "format": "binary",
+                      "type": "string"
+                    },
+                    "maxItems": 8,
+                    "minItems": 1,
+                    "type": "array"
+                  },
+                  "payload": {
+                    "contentMediaType": "application/json",
+                    "contentSchema": {
+                      "$ref": "#/components/schemas/MultipartMessagePayload"
+                    },
+                    "description": "JSON-encoded request. content may be omitted or empty for image-only input.",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "payload",
+                  "attachments"
+                ],
+                "type": "object"
+              },
+              "x-required-headers": [
+                "Idempotency-Key"
+              ]
             }
           },
           "required": true
@@ -7941,6 +8131,96 @@
         }
       }
     },
+    "/api/v1/tracks/{trackId}/media/{fileName}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "trackId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "fileName",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "image/gif": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              },
+              "image/jpeg": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              },
+              "image/png": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              },
+              "image/webp": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Original image bytes",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Content-Security-Policy": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Content-Type-Options": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "HTTP 404"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Error mapped by Host exception handling or request guards"
+          }
+        }
+      }
+    },
     "/api/v1/tracks/{trackId}/report": {
       "get": {
         "parameters": [
@@ -8070,6 +8350,39 @@
               "schema": {
                 "$ref": "#/components/schemas/CreateSessionRequest"
               }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "attachments": {
+                    "description": "PNG, JPEG, GIF or WebP. Up to 10485760 bytes per image and 26214400 bytes in total.",
+                    "items": {
+                      "format": "binary",
+                      "type": "string"
+                    },
+                    "maxItems": 8,
+                    "minItems": 1,
+                    "type": "array"
+                  },
+                  "payload": {
+                    "contentMediaType": "application/json",
+                    "contentSchema": {
+                      "$ref": "#/components/schemas/CreateSessionRequest"
+                    },
+                    "description": "JSON-encoded request. prompt may be omitted or empty for image-only input.",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "payload",
+                  "attachments"
+                ],
+                "type": "object"
+              },
+              "x-required-headers": [
+                "Idempotency-Key"
+              ]
             }
           },
           "required": false

@@ -6,6 +6,7 @@ import { sessionCreationReceiptSchema, sessionSummarySchema, type SessionInputRe
 
 import type { AgentProvider, HarnessInputPresentation, HarnessInterruptionReason, HarnessPhaseTag, HarnessTimeoutEvidence, PlannerAttachment, SystemInputPresentation } from './presentation-types.js';
 import type { ApiFailure, ApiOperation } from '../api/types.js';
+import { imageMessageBody, type MultipartFile } from '../api/multipart.js';
 
 import { classifyFailure, refusedText, type FailureTable, type WriteText } from './failure-class.js';
 
@@ -50,7 +51,12 @@ export type Conversation = Readonly<{
   turns?: number;
 }>;
 
-export type SubmittedConversationInput = Readonly<{ text: string; atMs: number }>;
+/** A compose-time image can carry its original file alongside its preview URL. */
+export type ConversationAttachment = Readonly<PlannerAttachment & { file?: MultipartFile }>;
+
+export type SubmittedConversationInput = Readonly<{
+  text: string; atMs: number; attachments?: readonly ConversationAttachment[];
+}>;
 
 export type CreatedConversation = Readonly<{
   conversation: Conversation;
@@ -106,7 +112,8 @@ export type ConversationTurn = NativeTurnContext & Readonly<{
   text: string;
   atMs: number;
   /** Images this turn carried; absent and empty mean the same thing. */
-  attachments?: readonly PlannerAttachment[];
+  attachments?: readonly ConversationAttachment[];
+  requestKey?: string;
   /** Set when the agent asked this through `neige_user_ask`; the quiet-sync fold keeps it outside the fold. */
   origin?: 'ask';
   /** Exact input provenance, including a known acceptance receipt; only inputSource names raw stored source. */
@@ -118,7 +125,7 @@ export type ConversationTurn = NativeTurnContext & Readonly<{
   inputSource?: Readonly<{ cardId: string; threadId: string; itemId: number; segmentIndex: number; turnId: string | null; entryRev: number | null }>;
 }>;
 
-/** A local message while its request is unanswered; receipts end this state. */
+/** A local message shown while awaiting a server history or queue row. */
 export type OptimisticConversationTurn = ConversationTurn & Readonly<{
   localSend: true;
   queued: boolean;
@@ -197,6 +204,7 @@ export type PendingQueueEntry = Readonly<{
   rev: number;
   queued_at_ms: number;
   state?: 'waiting' | 'steering' | 'sending' | 'processing' | 'unconfirmed';
+  attachments?: readonly ConversationAttachment[];
 }>;
 
 /**
@@ -278,13 +286,14 @@ export function listSessionsOperation(trackId: string, includeArchived = false, 
 
 export function createTrackConversationOperation(
   trackId: string, text: string, idempotencyKey: string, provider: AgentProvider, selection: ModelSelection, side?: SideConversation, permissionMode?: string | null,
+  attachments: readonly MultipartFile[] = [],
 ): ApiOperation<CreatedConversation & Readonly<{ session: AgentSessionDto }>> {
   const derivedTitle = conversationNameFrom(text);
   return {
     method: 'POST',
     path: `/api/v1/tracks/${encodeURIComponent(trackId)}/sessions`,
     headers: { 'Idempotency-Key': idempotencyKey },
-    body: {
+    body: imageMessageBody({
       ...(derivedTitle === null ? {} : { title: derivedTitle }),
       prompt: text,
       ...(side?.context ? { sourceExcerpt: side.context } : {}),
@@ -293,7 +302,7 @@ export function createTrackConversationOperation(
       ...(selection.model === null ? {} : { model: selection.model }),
       ...(selection.reasoning_effort === null ? {} : { reasoningEffort: selection.reasoning_effort }),
       ...(permissionMode == null ? {} : { permissionMode }),
-    },
+    }, attachments),
     responseSchema: sessionCreationReceiptSchema.refine(result => result.firstInput != null && result.session.trackId === trackId
       && (side === undefined || result.session.sourceSessionId === side.source_card_id))
         .transform((result) => ({
@@ -352,7 +361,8 @@ export const CONVERSATION_CREATE_FAILURES: FailureTable<ConversationCreateFailur
     Object.freeze({ code: 'idempotency_key_reused', is: 'stale-payload' as const }),
     Object.freeze({ code: 'idempotency_key_concurrent', is: 'retry' as const }),
     Object.freeze({ status: Object.freeze([404]), is: 'gone' as const }),
-    Object.freeze({ status: Object.freeze([400]), is: 'blocked' as const }),
+    Object.freeze({ code: 'attachments_unsupported', is: 'blocked' as const }),
+    Object.freeze({ status: Object.freeze([400, 413]), is: 'blocked' as const }),
     Object.freeze({ status: Object.freeze([409]), is: 'exists' as const }),
   ]),
   unauthorized: 'retry',
