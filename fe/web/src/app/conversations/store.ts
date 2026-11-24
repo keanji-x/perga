@@ -13,7 +13,7 @@ import { COMPACT_FAILURES, COMPACT_TEXT, type PlannerQueueWriteOutcome } from '.
 import { FOLLOW_INSTALLATION_DEFAULT, isConversationMessage, isOptimisticConversationTurn, isUserConversationTurn, kernelQueuesInput, type PendingQueueEntry } from '../../../../core/domain/conversation.ts';
 import { MODEL_CHANGE_TEXT, PLANNER_MODEL_FAILURES } from '../../../../core/domain/conversation-models.ts';
 import { describeConversation, pendingConversationIds, withRememberedConversation, type ConversationFacts } from '../../../../core/domain/conversation-summary.ts';
-import { useTranscriptReads, useTranscriptHistory } from './history.ts';
+import { mergeObservedTurns, useTranscriptReads, useTranscriptHistory } from './history.ts';
 import { presentPendingMessages } from '../../../../core/domain/conversation-outbox.ts';
 import { refusalText, writeFailureOf } from '../../../../core/domain/failure-class.ts';
 import { PERMISSION_MODE_CHANGE_TEXT, PLANNER_PERMISSION_MODE_FAILURES } from '../../../../core/domain/planner-permission-mode.ts';
@@ -96,6 +96,10 @@ export function useConversationStore(
     ...modelCatalogQueryOptions(transport, { kind: 'card', cardId, provider: provider ?? 'codex' }, unauthorized), enabled: scope !== null && (capabilities == null || capabilities.models.length === 0),
   });
   const displayItems = history.loadedRows;
+  const sessionTurns = useMemo(
+    () => mergeObservedTurns(history.loadedTurns, run.data?.turns, run.data?.lastTurn == null ? null : [run.data.lastTurn]),
+    [history.loadedTurns, run.data?.turns, run.data?.lastTurn],
+  );
   const items = useMemo(() => nativeDisplayRows(displayItems), [displayItems]);
   const rememberedSource = useConversationRememberedTurns(history.data === undefined && scope !== null ? cardId : null);
   const rememberedEntries = history.data === undefined ? rememberedSource : null;
@@ -295,6 +299,7 @@ export function useConversationStore(
     taskId: run.data?.taskBinding?.task.id ?? null,
     workerPaused: run.data?.workerPaused ?? false,
     lastTurn: run.data?.lastTurn ?? null,
+    sessionTurns,
     unknownDetail: run.data?.unknownDetail ?? null,
     recovering: recoveryPending.has(cardId) || run.data?.unknownDetail?.recovering === true,
     dismissActionError: () => { setActionError(null); stop.clearFeedback(); },

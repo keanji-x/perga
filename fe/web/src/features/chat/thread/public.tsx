@@ -50,11 +50,12 @@ import { MessageEntry } from './message-entry.tsx';
 import styles from './thread.module.css';
 import composerLayoutStyles from './composer-layout.module.css';
 import { currentResponseMessage, lastResponseEntryIndex, latestUserMessage } from '../../../../../core/domain/conversation-actions.ts';
-import { activeBackgroundTaskCount, CurrentStatusNotice, HistoricalOutcomeNotice } from './outcome-notice.tsx';
+import { activeBackgroundTaskCount, CurrentStatusNotice, HistoricalOutcomeNotice, HistoricalTurnStatusNotice } from './outcome-notice.tsx';
+import type { SessionTurnDto } from '../../../../../core/api/perga-v1.ts';
 import { SizeMotion } from '../../../ui/motion/size.tsx';
 import { editedTurnMessageIds } from '../../../../../core/domain/conversation-composer.ts';
 import type { ConversationStopFeedback } from '../../../../../core/domain/conversation-stop.ts';
-import type { RunningTurnAnchor } from '../../../../../core/domain/conversation-meta.ts';
+import { confirmedTurnStatus, type RunningTurnAnchor } from '../../../../../core/domain/conversation-meta.ts';
 import {
   toolCallGroupShowsRunning, untouchedToolCallGroup, useToolCallFocus,
 } from './activity-groups.tsx';
@@ -71,7 +72,8 @@ function emptyConversationContent(working: boolean): EmptyStateSchema {
 }
 
 export type ChatThreadProps = Readonly<{
-  lastSessionTurn?: import('../../../../../core/api/perga-v1.ts').SessionTurnDto | null;
+  lastSessionTurn?: SessionTurnDto | null;
+  sessionTurns?: readonly SessionTurnDto[];
   hasPendingInputs?: boolean;
   readingView?: ThreadReadingView;
   historyPrefetch?: HistoryPrefetch;
@@ -125,7 +127,7 @@ export type ChatThreadProps = Readonly<{
   renderLink?: ReplyLinkRenderer;
 }>;
 
-export const ChatThread = memo(function ChatThread({ conversation, turns, pendingMessages, hasPendingMessages, submissionRequest = 0, messageActions = 'all', copyText, regenerateMessage, editing = null, replacement = null, imageFiles = null, renderLink, readingView, historyPrefetch, lastSessionTurn = null, runtimeStatus, runtimeTasks }: ChatThreadProps) {
+export const ChatThread = memo(function ChatThread({ conversation, turns, pendingMessages, hasPendingMessages, submissionRequest = 0, messageActions = 'all', copyText, regenerateMessage, editing = null, replacement = null, imageFiles = null, renderLink, readingView, historyPrefetch, lastSessionTurn = null, sessionTurns, runtimeStatus, runtimeTasks }: ChatThreadProps) {
   const compactViewport = useCompactViewport();
   // Observe the browser timezone on render; keep formatters stable for memoized rows.
   const timeZone = new Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -167,6 +169,30 @@ export const ChatThread = memo(function ChatThread({ conversation, turns, pendin
     [turns, committedGroupKeys, conversation.id],
   );
   const transcriptGroups = projected.groups;
+  const historicalTurnsByGroup = useMemo(() => {
+    const byGroup = new Map<number, SessionTurnDto[]>();
+    if (sessionTurns === undefined || sessionTurns.length === 0) return byGroup;
+    const lastGroupForTurn = new Map<string, number>();
+    for (const [groupIndex, group] of transcriptGroups.entries()) {
+      const entries: readonly TranscriptEntry[] = group.body.quiet !== null ? group.body.quiet.entries : group.activities ?? [group.entry];
+      for (const entry of entries) {
+        const turnId = entry.author === 'turn' ? entry.turnId : (entry.nativeTurn?.turnId ?? entry.sessionTurnId ?? null);
+        if (turnId !== null) lastGroupForTurn.set(turnId, groupIndex);
+      }
+    }
+    for (const turn of sessionTurns) {
+      if (turn.id === lastSessionTurn?.id || confirmedTurnStatus(turn.status) === undefined) continue;
+      const groupIndex = lastGroupForTurn.get(turn.id);
+      if (groupIndex === undefined) continue;
+      const attached = byGroup.get(groupIndex) ?? [];
+      attached.push(turn);
+      byGroup.set(groupIndex, attached);
+    }
+    for (const attached of byGroup.values()) {
+      if (attached.length > 1) attached.sort((left, right) => left.turnIndex - right.turnIndex);
+    }
+    return byGroup;
+  }, [sessionTurns, lastSessionTurn?.id, transcriptGroups]);
   useLayoutEffect(() => {
     committedView.current = { owner: committedGroupKeys, id: conversation.id, view: projected };
     committedGroupKeys.current = projected.memory;
@@ -320,8 +346,9 @@ export const ChatThread = memo(function ChatThread({ conversation, turns, pendin
       <ExchangeNavigation turns={turns} frameRef={frameRef} seam={railSeam} navigate={scrollFollower.navigate} />
       <div className={`${styles.thread} ${empty ? styles.empty : ''} ${compactViewport ? mobileStyles.transcript : ''}`} data-nc-thread="" data-nc-link-reading="" data-nc-thread-empty={empty ? '' : undefined} ref={focus.ref} onFocus={focus.onFocus} onBlur={focus.onBlur}>
         {empty && <EmptyState variant="panel" align="center" {...emptyConversationContent(live)} />}
-        {transcriptGroups.map(({ entry: turn, activities, key, body, startsResponse }) => {
+        {transcriptGroups.map(({ entry: turn, activities, key, body, startsResponse }, groupIndex) => {
           const block = body.quiet;
+          const historicalTurns = historicalTurnsByGroup.get(groupIndex);
           return <Fragment key={key}>
             {startsResponse && <Divider label="New reply" />}
             {block !== null ? (
@@ -333,6 +360,14 @@ export const ChatThread = memo(function ChatThread({ conversation, turns, pendin
                 </QuietSyncFold>
               </div>
             ) : activities !== null ? renderRun(activities, key, live && activities.at(-1) === lastTurn) : renderEntry(turn, key)}
+            {historicalTurns?.map((historicalTurn) => (
+              <HistoricalTurnStatusNotice
+                key={`turn-status:${historicalTurn.id}`}
+                turn={historicalTurn}
+                detailsExpanded={reading.expanded.get(`turn-status:${historicalTurn.id}`) ?? false}
+                onDetailsExpandedChange={expanded => reading.setExpanded(`turn-status:${historicalTurn.id}`, expanded)}
+              />
+            ))}
           </Fragment>;
         })}
         {/* Decorative marks follow the visible activity or the current status row; this is the single spoken Working fact. */}

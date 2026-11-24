@@ -637,7 +637,7 @@ export function useConversationPane(
                 conversation={open}
                 imageFiles={imageFiles}
                 renderLink={chatLinks.renderLink}
-                turns={openTurns} lastSessionTurn={store.lastTurn}
+                turns={openTurns} lastSessionTurn={store.lastTurn} sessionTurns={store.sessionTurns}
                 runtimeStatus={store.runtimeStatus}
                 runtimeTasks={store.runtimeTasks}
                 sending={store.sending}

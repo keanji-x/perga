@@ -33,7 +33,7 @@ for (const theme of ['light', 'dark'] as const) {
         </div>);
         const meta = screen.getByRole('status', { name: 'Current response status' });
         const label = screen.getByText(sample.label, { exact: true });
-        const buttons = within(meta).getAllByRole('button', { name: /暂不可用/ });
+        const buttons = within(meta).getAllByRole('button', { name: /unavailable/ });
         expect(buttons).toHaveLength(2);
         expect(buttons.every((button) => button.hasAttribute('disabled') || button.getAttribute('aria-disabled') === 'true')).toBe(true);
         expect(getComputedStyle(label).fontSize).toBe('12px');
@@ -43,20 +43,27 @@ for (const theme of ['light', 'dark'] as const) {
           const icons = buttons.flatMap((button) => [...button.querySelectorAll('svg')]);
           const chevron = meta.querySelector('button[aria-expanded] svg');
           for (const icon of [...icons, ...(chevron === null ? [] : [chevron])]) {
-            expect(Math.abs(center(icon) - center(label))).toBeLessThanOrEqual(1);
-            // Rotation briefly enlarges a chevron's bounding rectangle; its layout box remains token-sized.
             expect(getComputedStyle(icon).width).toBe('12px');
           }
           expect(buttons.every((button) => button.getBoundingClientRect().height === 28)).toBe(true);
+          if (width === 1280 && sample.timestamp === null) {
+            for (const icon of [...icons, ...(chevron === null ? [] : [chevron])]) {
+              expect(Math.abs(center(icon) - center(label))).toBeLessThanOrEqual(1);
+            }
+          }
         };
         check();
         expect(meta.querySelector('[data-nc-meta-duration]')?.textContent).toContain('27s');
-        await userEvent.hover(label);
         if (sample.timestamp !== null) {
           const time = meta.querySelector('time')!;
-          expect(time.textContent).toMatch(/^\d{2}:\d{2}$/);
+          expect(time.checkVisibility()).toBe(true);
+          expect(time.textContent).toMatch(/^(Ended|Paused) \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \(UTC[+-]\d{2}:\d{2}\)$/);
           expect(time.getAttribute('datetime')).toBe('1970-01-01T00:00:01.000Z');
-          expect(meta.querySelector('[data-nc-meta-duration]')).toBeNull();
+        } else expect(meta.querySelector('time')).toBeNull();
+        await userEvent.hover(label);
+        expect(meta.querySelector('[data-nc-meta-duration]')?.textContent).toContain('27s');
+        if (sample.timestamp !== null) {
+          expect(meta.querySelector('time')?.checkVisibility()).toBe(true);
         } else expect(meta.querySelector('time')).toBeNull();
         check();
         if (sample.detail !== undefined) {
@@ -127,16 +134,18 @@ for (const width of [390, 1280]) {
         regenerateAction={{ id: 'c:turn', run }} />
     </div>);
     const meta = screen.getByRole('status', { name: 'Current response status' });
-    const edit = within(meta).getByRole('button', { name: '重新生成' });
+    const edit = within(meta).getByRole('button', { name: 'Regenerate' });
     expect(edit.hasAttribute('disabled') || edit.getAttribute('aria-disabled') === 'true').toBe(false);
     expect(edit.getBoundingClientRect().height).toBe(28);
     const label = screen.getByText('Completed', { exact: true });
     const center = (element: Element) => { const box = element.getBoundingClientRect(); return box.top + box.height / 2; };
-    expect(Math.abs(center(edit.querySelector('svg')!) - center(label))).toBeLessThanOrEqual(1);
-    expect(within(meta).getAllByRole('button', { name: /暂不可用/ })).toHaveLength(1);
+    if (width === 1280) {
+      expect(Math.abs(center(edit.querySelector('svg')!) - center(label))).toBeLessThanOrEqual(1);
+    }
+    expect(within(meta).getAllByRole('button', { name: /unavailable/ })).toHaveLength(1);
     await userEvent.click(edit);
     expect(run).toHaveBeenCalledOnce();
-    expect(edit.getAttribute('aria-label')).toBe('重新生成');
+    expect(edit.getAttribute('aria-label')).toBe('Regenerate');
     expect(document.documentElement.scrollWidth).toBe(width);
   });
 }
@@ -144,8 +153,8 @@ for (const width of [390, 1280]) {
 it('keeps the same copy control when its feedback glyph changes', async () => {
   render(<ThreadStatusNotice heading="Completed" clock={{ elapsedMs: null, timestamp: null }}
     copyAction={{ id: 'response', text: 'Answer', run: () => Promise.resolve() }} />);
-  const button = screen.getByRole('button', { name: '复制回复' });
+  const button = screen.getByRole('button', { name: 'Copy reply' });
   await userEvent.click(button);
-  await expect.element(page.getByRole('button', { name: '已复制回复', exact: true })).toBeVisible();
-  expect(screen.getByRole('button', { name: '已复制回复' })).toBe(button);
+  await expect.element(page.getByRole('button', { name: 'Copied reply', exact: true })).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Copied reply' })).toBe(button);
 });

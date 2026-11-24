@@ -152,7 +152,8 @@ public sealed record SessionItemsPageDto(
     IReadOnlyList<PermissionModeOption>? PermissionModes = null,
     SessionActivityDto? Activity = null, SessionTaskBindingDto? TaskBinding = null,
     SessionCapabilitiesDto? Capabilities = null, IReadOnlyList<PendingInteractionDto>? PendingInteractions = null,
-    AgentRuntimeStatusDto? RuntimeStatus = null, IReadOnlyList<AgentRuntimeTaskDto>? RuntimeTasks = null, bool AttachmentsSupported = false);
+    AgentRuntimeStatusDto? RuntimeStatus = null, IReadOnlyList<AgentRuntimeTaskDto>? RuntimeTasks = null, bool AttachmentsSupported = false,
+    IReadOnlyList<SessionTurnDto>? Turns = null);
 
 public sealed record WorkerActivityEvent(long Sequence, string Kind, JsonElement Payload, long CreatedAtMs);
 

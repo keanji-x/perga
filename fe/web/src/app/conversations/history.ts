@@ -5,6 +5,8 @@ import type { TranscriptPosition } from '../providers/conversation-queries.ts';
 import { numberReads } from './read-order.ts';
 import { useState } from '../../ui/state/public.ts';
 import type { ConversationPage, ConversationDisplayItem as Row } from '../../../../core/domain/conversation-display.ts';
+import { confirmedTurnStatus } from '../../../../core/domain/conversation-meta.ts';
+import type { SessionTurnDto } from '../../../../core/api/perga-v1.ts';
 
 /** Coverage is an observation, never an inference from adjacent row ids.
  * Only the server’s explicit terminal cursor supplies the start-of-history fact. */
@@ -88,6 +90,32 @@ export function historyRows(data: History | undefined): Row[] {
   return data === undefined ? [] : rowsOfWindows([data.latest, ...data.retained]);
 }
 
+/** Merge turn snapshots oldest-to-newest without downgrading an already observed terminal turn to a stale non-terminal state. */
+export function mergeObservedTurns(
+  ...sources: readonly (readonly SessionTurnDto[] | null | undefined)[]
+): readonly SessionTurnDto[] {
+  const byId = new Map<string, SessionTurnDto>();
+  for (const list of sources) {
+    if (list == null) continue;
+    for (const turn of list) {
+      const existing = byId.get(turn.id);
+      if (existing !== undefined && confirmedTurnStatus(existing.status) !== undefined && confirmedTurnStatus(turn.status) === undefined) {
+        continue;
+      }
+      byId.set(turn.id, turn);
+    }
+  }
+  return [...byId.values()];
+}
+
+function mergePageTurns(windows: readonly ObservedWindow[]): readonly SessionTurnDto[] {
+  const ordered: (readonly SessionTurnDto[] | undefined)[] = [];
+  for (let index = windows.length - 1; index >= 0; index -= 1) {
+    ordered.push(windows[index]?.page.turns);
+  }
+  return mergeObservedTurns(...ordered);
+}
+
 function compactWindows(windows: readonly ObservedWindow[]): ObservedWindow[] {
   const compacted: ObservedWindow[] = [];
   for (const window of windows) {
@@ -96,7 +124,9 @@ function compactWindows(windows: readonly ObservedWindow[]): ObservedWindow[] {
     if (previous !== undefined && lower?.kind === 'from' && window.coverage.lower.kind === 'from'
       && ((window.rows.at(-1)?.cursor.position ?? 0) >= lower.cursor.position
         || (window.coverage.upper.kind === 'before' && window.coverage.upper.cursor.position === lower.cursor.position))) {
-      compacted[compacted.length - 1] = { rows: rowsOfWindows([previous, window]), page: previous.page,
+      const mergedTurns = mergePageTurns([previous, window]);
+      compacted[compacted.length - 1] = { rows: rowsOfWindows([previous, window]),
+        page: mergedTurns.length === 0 ? previous.page : { ...previous.page, turns: mergedTurns },
         coverage: { upper: previous.coverage.upper, lower: window.coverage.lower } };
     } else compacted.push(window);
   }
@@ -185,7 +215,8 @@ export function useTranscriptHistory(options: ReadOptions, enabled: boolean, rea
   const latest = history.data?.latest;
   const retained = history.data?.retained;
   const loadedRows = useMemo(() => latest === undefined || retained === undefined ? [] : rowsOfWindows([latest, ...retained]), [latest, retained]);
-  return { ...history, loadedRows, isFetching: history.isFetching || earlierPending,
+  const loadedTurns = useMemo(() => latest === undefined || retained === undefined ? [] : mergePageTurns([latest, ...retained]), [latest, retained]);
+  return { ...history, loadedRows, loadedTurns, isFetching: history.isFetching || earlierPending,
     earlier: { cursor: position?.cursor.position ?? null, pending: earlierPending, failed: !earlierPending && earlierError !== null },
     error: history.error ?? (earlierPending ? null : earlierError), loadEarlier };
 }

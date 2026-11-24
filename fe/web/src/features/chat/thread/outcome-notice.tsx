@@ -1,6 +1,7 @@
 import type { SessionItemsPageDto, SessionTurnDto } from '../../../../../core/api/perga-v1.ts';
 import type { CurrentConversationOutcome } from '../../../../../core/domain/conversation-display.ts';
 import type { ConversationTurnOutcome } from '../../../../../core/domain/conversation.ts';
+import { confirmedTurnStatus, turnCompletedClock } from '../../../../../core/domain/conversation-meta.ts';
 import { ThreadStatusNotice, type CopyResponseAction, type ResponseAction } from './status-notice.tsx';
 import { useRunningElapsedMs } from './running-clock.ts';
 import styles from './thread.module.css';
@@ -72,22 +73,41 @@ export function CurrentStatusNotice({ lastTurn, runtimeStatus, runtimeTasks, mes
   if (status !== 'running' && phaseLabel !== null) details.push(phaseLabel);
   if (backgroundTasks > 0) details.push(`${backgroundTasks} background tasks`);
   else if (status !== 'running' && hasIdleActivity) details.push('Recent background activity');
-  const terminal = status === 'completed' || status === 'interrupted' || status === 'failed' ? status : undefined;
+  const terminal = confirmedTurnStatus(status);
+  const clock = status === 'running' ? { elapsedMs: elapsed, timestamp: null } : turnCompletedClock(lastTurn);
   return <ThreadStatusNotice messageActions={messageActions} detailsExpanded={detailsExpanded} onDetailsExpandedChange={onDetailsExpandedChange}
     heading={heading} details={details.length > 0 ? details : undefined}
     leading={status === 'running' || phaseLabel !== null ? leading : undefined}
     tone={status === 'failed' ? 'error' : status === 'unknown' || status === 'interrupted' ? 'warning' : 'neutral'}
-    clock={{ elapsedMs: status === 'running' ? elapsed : lastTurn.startedAtMs != null && lastTurn.completedAtMs != null
-      ? Math.max(0, lastTurn.completedAtMs - lastTurn.startedAtMs) : null, timestamp: null }}
+    clock={clock}
     outcome={terminal} copyAction={copyAction} regenerateAction={terminal === undefined ? null : regenerateAction}>
     {lastTurn.errorText ? <p className={styles.outcomeReason}>{lastTurn.errorText}</p> : undefined}
   </ThreadStatusNotice>;
 }
 
+/** Persisted Perga turns keep their own completion bar when later turns begin or history reloads. */
+export function HistoricalTurnStatusNotice({ turn, detailsExpanded, onDetailsExpandedChange }: {
+  turn: SessionTurnDto;
+  detailsExpanded?: boolean;
+  onDetailsExpandedChange?: (expanded: boolean) => void;
+}) {
+  const terminal = confirmedTurnStatus(turn.status);
+  if (terminal === undefined) return null;
+  const heading = terminal === 'completed' ? 'Done' : terminal === 'interrupted' ? 'Stopped' : 'Turn failed';
+  return <ThreadStatusNotice historical detailsExpanded={detailsExpanded} onDetailsExpandedChange={onDetailsExpandedChange}
+    heading={heading}
+    tone={terminal === 'failed' ? 'error' : terminal === 'interrupted' ? 'warning' : 'neutral'}
+    clock={turnCompletedClock(turn)}
+    outcome={terminal}>
+    {turn.errorText ? <p className={styles.outcomeReason}>{turn.errorText}</p> : undefined}
+  </ThreadStatusNotice>;
+}
+
 /** Imported outcomes remain at their historical position, with no execution actions. */
 export function HistoricalOutcomeNotice({ outcome }: { outcome: ConversationTurnOutcome }) {
-  return <ThreadStatusNotice historical heading={`Imported history · ${outcomeHeading(outcome.status)}`}
-    outcome={outcome.status} clock={{elapsedMs:outcome.elapsedMs,timestamp:{kind:'finished',atMs:outcome.atMs}}}>
+  return <ThreadStatusNotice historical ariaLabel="Imported historical response" heading={`Imported history · ${outcomeHeading(outcome.status)}`}
+    outcome={outcome.status} clock={{ elapsedMs: outcome.elapsedMs,
+      timestamp: Number.isFinite(outcome.atMs) ? { kind: 'finished', atMs: outcome.atMs } : null }}>
     {outcome.status === 'completed' ? undefined : <OutcomeDetails outcome={outcome} canContinue={false} />}
   </ThreadStatusNotice>;
 }

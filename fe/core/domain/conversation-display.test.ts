@@ -202,3 +202,22 @@ it('bounds thinking and tool disclosures without losing failure evidence', () =>
     expect(entry.content).toContain('(truncated)');
   }
 });
+
+it('preserves persisted turn metadata and user turn ids without adding nativeTurn boundaries to user entries', () => {
+  const turn1 = { id: 'trn_1', sessionId: 'session', turnIndex: 1, epoch: 1, triggerKind: 'user', status: 'completed', startedAtMs: 1000, completedAtMs: 5000 };
+  const turn2 = { id: 'trn_2', sessionId: 'session', turnIndex: 2, epoch: 1, triggerKind: 'user', status: 'failed', startedAtMs: 6000, completedAtMs: 9000, errorText: 'Boom' };
+  const page = conversationItemsOperation('session', null).responseSchema.parse({
+    ...pergaPage([
+      { id: 1, sessionId: 'session', turnId: 'trn_1', kind: 'user', payload: { content: 'First' }, createdAtMs: 1000 },
+      { id: 2, sessionId: 'session', turnId: 'trn_1', kind: 'assistant_text', payload: { text: 'Reply 1' }, createdAtMs: 5000 },
+      { id: 3, sessionId: 'session', turnId: 'trn_2', kind: 'user', payload: { content: 'Second' }, createdAtMs: 6000 },
+    ], { lastTurn: turn2 }),
+    turns: [turn1, turn2],
+  });
+  expect(page.turns).toEqual([turn1, turn2]);
+  const entries = buildConversationTranscript(page.items, null);
+  expect(entries[0]).toMatchObject({ author: 'human', text: 'First', sessionTurnId: 'trn_1' });
+  expect(entries[0]?.nativeTurn).toBeUndefined();
+  expect(entries[1]).toMatchObject({ author: 'agent', text: 'Reply 1', nativeTurn: { turnId: 'trn_1' } });
+  expect(entries[2]).toMatchObject({ author: 'human', text: 'Second', sessionTurnId: 'trn_2' });
+});
