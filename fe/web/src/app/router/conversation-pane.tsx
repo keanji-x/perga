@@ -59,9 +59,10 @@ ChatFooterError,ChatFooterNotice,ChatFooterRemedy,ChatThread,
 type ComposerFocusHandle,
 } from '../../features/chat/thread/public.tsx';
 import {
-PlannerAttachButton,PlannerAttachmentDrawer,usePlannerAttachments,
+PlannerAttachButton,usePlannerAttachments,
 type AttachmentDraft,
 } from '../../features/planner/attachments.tsx';
+import { ComposerAttachmentStrip } from '../../ui/composer-attachments/public.tsx';
 import { useCommittedCallback } from '../../ui/state/committed-callback.ts';
 import { useState } from '../../ui/state/public.ts';
 import { useCompactViewport } from '../../ui/viewport/public.ts';
@@ -468,11 +469,7 @@ export function useConversationPane(
               onFiles={editingQueue || !composerView.attachmentsSupported || composerView.sendBlocked || draftOnly
                 ? undefined : composerAttachments.attach}
               /* Questions and attachments belong to the composer; waiting messages follow the running status. */
-              drawer={(
-                <>
-                  <PlannerAttachmentDrawer attachments={composerAttachments} />
-                </>
-              )}
+              drawer={<ComposerAttachmentStrip items={composerAttachments.items} error={composerAttachments.error} onRemove={composerAttachments.remove} />}
               /* Renders nothing until the harness has reported a usage frame. */
               sendAdornment={mobileSheet ? undefined : <ContextRing usage={composerView.contextUsage} />}
               /* `stopping` keeps Stop shown while the interrupt is in flight; `interrupt()`
@@ -559,7 +556,7 @@ export function useConversationPane(
               changeText={setNewConversationText}
               allowEmptyText={draftAttachments.items.length > 0}
               onFiles={draftImagesSupported && !draftImagesLocked ? draftAttachments.attach : undefined}
-              drawer={<PlannerAttachmentDrawer attachments={draftAttachments} disabled={draftImagesLocked} />}
+              drawer={<ComposerAttachmentStrip items={draftAttachments.items} error={draftAttachments.error} onRemove={draftAttachments.remove} disabled={draftImagesLocked} />}
               /* Menu membership and readiness come from the managed backend declarations. */
               footerActions={(() => {
                 const draftPermissionControl = resolvePermissionControl({

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createStaticSource } from '@astryxdesign/core/Typeahead';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -347,5 +347,32 @@ describe('The folder is optional, and its absence is the managed default', () =>
     await userEvent.click(await screen.findByRole('menuitem', { name: /^Others…/ }));
     await screen.findByDisplayValue('/srv/app/');
     expect(props.listDirectory).toHaveBeenCalled();
+  });
+
+  it('forwards pasted images and mixed text+image clips through the shared input field and allows image-only submission', async () => {
+    const onFiles = vi.fn();
+    const { onSubmit } = renderForm({
+      onFiles,
+      allowEmptyText: true,
+      attachButton: <button type="button">Attach test</button>,
+      drawer: <div data-nc-attachments="">Preview strip</div>,
+    });
+    expect(screen.getByRole('button', { name: 'Attach test' })).toBeTruthy();
+    expect(screen.getByText('Preview strip')).toBeTruthy();
+
+    const field = screen.getByLabelText(TASK_LABEL);
+    await userEvent.click(field);
+    const clip = new File([new Uint8Array([1, 2, 3])], 'clip.png', { type: 'image/png' });
+    fireEvent.paste(field, {
+      clipboardData: {
+        files: [clip],
+        items: [],
+        getData: () => 'See screenshot',
+      },
+    });
+    expect(onFiles).toHaveBeenCalledExactlyOnceWith([clip]);
+
+    await userEvent.click(submitButton());
+    expect(onSubmit).toHaveBeenCalledWith({ message: 'See screenshot' });
   });
 });

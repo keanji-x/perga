@@ -118,6 +118,16 @@
     margin: 0;
   }
 
+  .imageButton {
+    display: block;
+    max-inline-size: 100%;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    border-radius: var(--radius-sm);
+    cursor: zoom-in;
+  }
+
   .image {
     max-inline-size: 100%;
     max-block-size: calc(100dvh - var(--header-band, 0px) - var(--space-6));

@@ -1,18 +1,22 @@
 import { createContext, useContext, useEffect, useSyncExternalStore, type ReactNode } from 'react';
-import { FOLLOW_INSTALLATION_DEFAULT, type ModelSelection } from '../../../../core/domain/conversation.ts';
+import { FOLLOW_INSTALLATION_DEFAULT, type ConversationAttachment, type ModelSelection } from '../../../../core/domain/conversation.ts';
 import { permissionModeAfterProviderChange } from '../../../../core/domain/planner-permission-mode.ts';
 import type { AgentProvider } from '../../../../core/domain/presentation-types.ts';
 import type { Area } from '../../../../core/domain/area.ts';
-import type { NewTrackBody } from '../../../../core/domain/track.ts';
+import { type NewTrackBody, TRACK_CREATE_TEXT } from '../../../../core/domain/track.ts';
 import type { NewTrackFormState } from '../../features/area/new-track/public.tsx';
 import { useState } from '../../ui/state/public.ts';
 import { mintIdempotencyKey } from '../providers/idempotency-key.ts';
 import { TRACK_CREATE_DRAFTS_KEY } from '../../../../core/keys/storage.ts';
 import { useCurrentUser } from '../auth/current-user.tsx';
-import { TRACK_CREATE_TEXT } from '../../../../core/domain/track.ts';
 
 /** One create's wire body, its key, and any initial message held for post-create send. */
-export type TrackCreationRequest = Readonly<{ body: NewTrackBody; key: string; message?: string }>;
+export type TrackCreationRequest = Readonly<{
+  body: NewTrackBody;
+  key: string;
+  message?: string;
+  attachments?: readonly ConversationAttachment[];
+}>;
 
 type SubmittedTrackDraft = Readonly<{ request: TrackCreationRequest; createdTrackId: string | null }>;
 
@@ -23,6 +27,8 @@ export type NewTrackDraftArea = Pick<Area, 'id' | 'name' | 'defaultCwd' | 'execu
 export type NewTrackSession = Readonly<{
   area: NewTrackDraftArea;
   form: NewTrackFormState | null;
+  attachments?: readonly ConversationAttachment[];
+  attachmentError?: string | null;
   /** The Planner's backend; `codex` until the reader picks a model from another provider's group. */
   provider: AgentProvider;
   permissionMode: string | null;
@@ -47,7 +53,11 @@ function createDraftStore(submittedStorage?: () => Storage, userId?: string) {
       if (typeof key !== 'string' || body?.areaId !== areaId
         || (message !== undefined && typeof message !== 'string')) return null;
       return {
-        request: { key, body, ...(message === undefined ? {} : { message }) },
+        request: {
+          key,
+          body,
+          ...(message === undefined ? {} : { message }),
+        },
         createdTrackId: typeof createdTrackId === 'string' && createdTrackId.trim() !== '' ? createdTrackId : null,
       };
     } catch {
@@ -59,8 +69,28 @@ function createDraftStore(submittedStorage?: () => Storage, userId?: string) {
     try {
       const storage = submittedStorage();
       if (request === null) storage.removeItem(keyOf(areaId));
-      else storage.setItem(keyOf(areaId), JSON.stringify({ ...request, ...(createdTrackId === null ? {} : { createdTrackId }) }));
+      else {
+        const serializable = {
+          body: request.body,
+          key: request.key,
+          ...(request.message === undefined ? {} : { message: request.message }),
+          ...(createdTrackId === null ? {} : { createdTrackId }),
+        };
+        storage.setItem(keyOf(areaId), JSON.stringify(serializable));
+      }
     } catch { /* Keep the in-memory draft when browser storage is unavailable. */ }
+  };
+  const draftPreviewUrls = (session: NewTrackSession) => {
+    const urls = new Set<string>();
+    for (const item of session.attachments ?? []) if (item.file !== undefined) urls.add(item.url);
+    for (const item of session.request?.attachments ?? []) if (item.file !== undefined) urls.add(item.url);
+    return urls;
+  };
+  const revokeUnused = (previous: NewTrackSession, next: NewTrackSession | null) => {
+    const gone = draftPreviewUrls(previous);
+    if (gone.size === 0) return;
+    if (next !== null) for (const url of draftPreviewUrls(next)) gone.delete(url);
+    for (const url of gone) URL.revokeObjectURL(url);
   };
   const drafts = new Map<string, NewTrackSession>();
   const listeners = new Set<() => void>();
@@ -104,13 +134,25 @@ function createDraftStore(submittedStorage?: () => Storage, userId?: string) {
       const request = patch.request === undefined ? current.request : patch.request;
       const createdTrackId = request === null ? null
         : patch.createdTrackId === undefined ? (request === current.request ? current.createdTrackId : null) : patch.createdTrackId;
-      drafts.set(areaId, { ...current, ...patch, permissionMode: nextPermissionMode, request, createdTrackId });
+      const nextSession = { ...current, ...patch, permissionMode: nextPermissionMode, request, createdTrackId };
+      drafts.set(areaId, nextSession);
+      revokeUnused(current, nextSession);
       if (patch.request !== undefined || (patch.createdTrackId !== undefined && persistConfirmation)) {
         remember(areaId, request, persistConfirmation ? createdTrackId : null);
       }
       notify();
     },
-    forget: (areaId: string) => { drafts.delete(areaId); remember(areaId, null, null); notify(); },
+    forget: (areaId: string, { revokeAttachments = true } = {}) => {
+      const current = drafts.get(areaId);
+      drafts.delete(areaId);
+      if (current !== undefined && revokeAttachments) revokeUnused(current, null);
+      remember(areaId, null, null);
+      notify();
+    },
+    dispose: () => {
+      for (const session of drafts.values()) revokeUnused(session, null);
+      drafts.clear();
+    },
   };
 }
 
@@ -120,6 +162,7 @@ const DraftContext = createContext<ReturnType<typeof createDraftStore> | null>(n
 export function NewTrackDraftProvider({ children, submittedStorage }: { children: ReactNode; submittedStorage?: () => Storage }) {
   const userId = useCurrentUser()?.userId;
   const [store] = useState(() => createDraftStore(submittedStorage, userId));
+  useEffect(() => () => store.dispose(), [store]);
   return <DraftContext.Provider value={store}>{children}</DraftContext.Provider>;
 }
 

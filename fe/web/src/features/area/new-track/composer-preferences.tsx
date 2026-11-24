@@ -96,8 +96,16 @@ export function ComposerPreferences({ folder, browsing }: Props) {
         setCollapsed(false);
         return;
       }
+      const slot = host.parentElement;
+      const slotGap = slot !== null ? (parseFloat(getComputedStyle(slot).columnGap) || 0) : 0;
+      let siblingSpace = 0;
+      if (slot !== null) {
+        for (const child of slot.children) {
+          if (child !== host) siblingSpace += child.getBoundingClientRect().width + slotGap;
+        }
+      }
       const gap = parseFloat(getComputedStyle(row).columnGap) || 0;
-      const available = row.clientWidth - actions.getBoundingClientRect().width - gap;
+      const available = row.clientWidth - actions.getBoundingClientRect().width - gap - siblingSpace;
       const next = compact && requiredWidth.current > available + 0.5;
       if (next !== collapsed) {
         restoreFocus.current = (items?.contains(document.activeElement) ?? false) || moreRef.current === document.activeElement;
@@ -113,6 +121,7 @@ export function ComposerPreferences({ folder, browsing }: Props) {
     const observer = new ResizeObserver(measure);
     observer.observe(row);
     observer.observe(actions);
+    if (host.parentElement !== null) observer.observe(host.parentElement);
     if (items !== null) observer.observe(items);
     return () => observer.disconnect();
   });

@@ -72,3 +72,17 @@ it.each([{ isComposing: true }, { keyCode: 229 }])('keeps file search and its ma
   fireEvent.keyDown(search, { key: 'Escape' });
   expect(screen.queryByRole('searchbox')).toBeNull();
 });
+
+it('opens zoomed media viewer for a report image and dismisses the lightbox before closing the viewer', async () => {
+  const close = vi.fn();
+  const dataPng = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="160" height="120"><rect width="160" height="120" fill="%234682b4"/></svg>';
+  render(<ReportFileViewer path="/repo/image.png" files={{ readFile: vi.fn(), rawUrl: () => dataPng }}
+    fileRoot="/repo" wide onClose={close} />);
+  await expect.element(page.getByRole('img')).toBeVisible();
+  await page.getByRole('button', { name: 'Inspect image.png' }).click();
+  await expect.element(page.getByRole('dialog', { name: '/repo/image.png' })).toBeVisible();
+  await expect.element(page.getByRole('button', { name: 'Zoom', exact: true })).toBeVisible();
+  await userEvent.keyboard('{Escape}');
+  await expect.element(page.getByRole('dialog', { name: '/repo/image.png' })).not.toBeInTheDocument();
+  expect(close).not.toHaveBeenCalled();
+});

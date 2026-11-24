@@ -6,7 +6,7 @@ import type { ApiRequest, ApiTransportResponse } from '../../../../core/api/type
 import { queryKeys } from '../providers/query-keys.ts';
 import { renderSessionFixture } from './conversation-session-fixture.tsx';
 import { sessionInput, sessionItem, sessionPage, sessionReply, sessionTurn } from './conversation-session-data.ts';
-import { fixtureCreation, fixtureSession } from './session-contract-fixture.ts';
+import { fixtureCreation, fixtureSession, fixtureSnapshot, fixtureTrack } from './session-contract-fixture.ts';
 
 declare module 'vitest/browser' {
   interface BrowserCommands { mockConversationMedia(path: string, pngBase64?: string): Promise<void> }
@@ -252,6 +252,9 @@ it.each([[409, 'attachments_unsupported'], [413, 'payload_too_large']] as const)
     await composer().click();
     await userEvent.keyboard('{Enter}');
     await expect.element(page.getByRole('complementary', { name: 'Untitled' }).getByRole('alert')).toHaveTextContent('The image was refused.');
+    const stripRect = document.querySelector('[data-nc-attachment-strip]')!.getBoundingClientRect();
+    const notice = page.getByRole('complementary', { name: 'Untitled' }).getByRole('alert').element();
+    expect(notice.getBoundingClientRect().bottom).toBeLessThanOrEqual(stripRect.top + 0.5);
     await expect.element(composer()).toHaveTextContent('Edit this message');
     await expect.element(page.getByRole('button', { name: /^Model:/ })).toBeEnabled();
     await page.getByRole('button', { name: /Remove/ }).click();
@@ -336,4 +339,95 @@ it.each(['existing', 'new', 'queued'] as const)('retains the %s image and its bl
   }
   await expect.poll(() => images().map(image => image.getAttribute('src'))).toEqual([mediaUrl]);
   await expect(fetch(blobUrl)).rejects.toThrow();
+});
+
+it('shows inline composer previews without an external drawer and zooms any clicked preview in a portal lightbox', async () => {
+  await page.viewport(1280, 900);
+  renderSessionFixture({ initial: '/track/daily?panel=conversations', attachmentsSupported: true });
+  await page.getByRole('button', { name: /Conversation Daily Planner conversation/ }).click();
+  await expect.element(page.getByRole('button', { name: 'Attach an image' })).toBeEnabled();
+
+  const field = composer().element();
+  paste(field, screenshot());
+  expect(previews()).toHaveLength(1);
+  // Floats directly above the input box inside the composer group, never wrapped in an external collapsible Images drawer or inside [contenteditable].
+  await expect.element(page.getByRole('button', { name: /Images/ })).not.toBeInTheDocument();
+  const group = field.closest('[role="group"][aria-label="Message composer"]');
+  expect(group?.contains(previews()[0])).toBe(true);
+  expect(field.parentElement?.contains(previews()[0])).toBe(false);
+
+  await page.getByRole('button', { name: 'Open Image 1' }).click();
+  await expect.element(page.getByRole('dialog', { name: 'Image 1' })).toBeVisible();
+  await expect.element(page.getByRole('button', { name: 'Zoom', exact: true })).toBeVisible();
+  await userEvent.keyboard('{Escape}');
+  await expect.element(page.getByRole('dialog', { name: 'Image 1' })).not.toBeInTheDocument();
+  expect(previews()).toHaveLength(1);
+});
+
+it('pastes, previews, zooms, and sends an initial image from the New Track composer', async () => {
+  await page.viewport(1280, 900);
+  const createdTrack = fixtureTrack('created-track', { areaId: 'project-area', leadSessionId: 'created-lead' });
+  const createdLead = fixtureSession('created-lead', 'created-track', { title: 'Lead planner', isLead: true });
+  const view = renderSessionFixture({
+    initial: '/area/project-area/new',
+    attachmentsSupported: true,
+    reply: request => {
+      if (request.method === 'POST' && request.path === '/api/v1/tracks') {
+        view.sessions.push(createdLead);
+        return { status: 201, statusText: 'Created', body: fixtureSnapshot(createdTrack, [createdLead]) };
+      }
+      if (request.method === 'GET' && request.path === '/api/v1/tracks/created-track') {
+        return sessionReply(fixtureSnapshot(createdTrack, [createdLead]));
+      }
+      if (request.method === 'GET' && request.path === '/api/v1/tracks/created-track/sessions') {
+        return sessionReply([createdLead]);
+      }
+      if (request.method === 'GET' && request.path.startsWith('/api/v1/sessions/created-lead/items?')) {
+        return sessionReply(sessionPage(createdLead, [], null, undefined, true));
+      }
+      if (request.method === 'POST' && request.path === '/api/v1/sessions/created-lead/messages') {
+        return sessionReply(sessionInput('created-lead', 'init-msg'));
+      }
+      return undefined;
+    },
+  });
+
+  await expect.element(page.getByRole('button', { name: 'Attach an image' })).toBeEnabled();
+  const field = page.getByRole('combobox', { name: 'What this track should do' }).element();
+  paste(field, screenshot());
+  expect(previews()).toHaveLength(1);
+  expect(field.closest('[data-nc-new-track-message]')?.contains(previews()[0])).toBe(true);
+
+  await page.getByRole('button', { name: 'Open Image 1' }).click();
+  await expect.element(page.getByRole('dialog', { name: 'Image 1' })).toBeVisible();
+  await userEvent.keyboard('{Escape}');
+  await expect.element(page.getByRole('dialog', { name: 'Image 1' })).not.toBeInTheDocument();
+
+  await page.getByRole('button', { name: 'Create track' }).click();
+  await expect.poll(() => view.requests.some(request =>
+    request.method === 'POST' && request.path === '/api/v1/sessions/created-lead/messages')).toBe(true);
+  const initialSend = view.requests.find(request =>
+    request.method === 'POST' && request.path === '/api/v1/sessions/created-lead/messages')!;
+  const body = form(initialSend);
+  expect(payload(body)).toMatchObject({ content: '' });
+  expect((body.get('attachments') as File).name).toBe('screenshot.png');
+});
+
+it('renders inline composer attachments inside mobile sheet composer and opens portal lightbox', async () => {
+  await page.viewport(390, 844);
+  renderSessionFixture({ initial: '/track/daily?panel=conversations', attachmentsSupported: true });
+  await page.getByRole('button', { name: /Conversation Daily Planner conversation/ }).click();
+  await expect.element(composer()).toBeVisible();
+  expect(document.querySelector('summary[aria-label="Conversation options"]')).not.toBeNull();
+
+  const field = composer().element();
+  paste(field, screenshot());
+  expect(previews()).toHaveLength(1);
+  expect(document.querySelector('[data-nc-attachment-strip]')).not.toBeNull();
+  expect(document.documentElement.scrollWidth).toBe(390);
+
+  await page.getByRole('button', { name: 'Open Image 1' }).click();
+  await expect.element(page.getByRole('dialog', { name: 'Image 1' })).toBeVisible();
+  await userEvent.keyboard('{Escape}');
+  await expect.element(page.getByRole('dialog', { name: 'Image 1' })).not.toBeInTheDocument();
 });

@@ -128,7 +128,7 @@ export type ConversationRegistry = Readonly<{
   /** Checks the current in-memory queue, including sends queued during a storage failure. */
   hasPendingTrackInitialSend: (trackId: string) => boolean;
   /** Queues in memory and reports whether configured storage accepted the write. */
-  queueTrackInitialSend: (trackId: string, text: string, key: string) => boolean;
+  queueTrackInitialSend: (trackId: string, text: string, key: string, attachments?: readonly ConversationAttachment[]) => boolean;
   consumeTrackInitialSend: (trackId: string) => void;
   /** Failed first-message attempts live here, above every route remount. */
   draftOf: (scopeId: string) => ConversationDraft | null;

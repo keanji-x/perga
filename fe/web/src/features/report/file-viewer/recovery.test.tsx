@@ -40,3 +40,10 @@ it('renders Markdown images relative to its file directory through the Track por
   expect(openFile).toHaveBeenCalledWith({ path: 'images/figure.svg' });
   expect(readFile.mock.calls).toEqual([['docs/note.md']]);
 });
+
+it('renders standalone report images inside an interactive inspection button', async () => {
+  render(<ReportFileViewer path="/repo/image.png" files={{ readFile: vi.fn(), rawUrl: (path) => path }}
+    fileRoot="/repo" wide onClose={() => {}} />);
+  const trigger = await screen.findByRole('button', { name: 'Inspect image.png' });
+  expect(trigger.getAttribute('aria-haspopup')).toBe('dialog');
+});
