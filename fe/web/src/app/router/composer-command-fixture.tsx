@@ -8,11 +8,13 @@ export function renderCommandFixture(options: Readonly<{
   closed?: boolean; canClose?: boolean; canReopen?: boolean; running?: boolean;
   patch?: (request: ApiRequest) => ApiTransportResponse | Promise<ApiTransportResponse>;
   staleDetail?: boolean;
+  areaId?: string;
+  shareScope?: unknown;
 }> = {}) {
   let closed = options.closed ?? false;
-  let track = fixtureTrack('daily', { areaId: 'daily-area', title: 'Command Track', cwd: '/tmp', sortOrder: 0, closedAtMs: closed ? 1 : null, createdAtMs: 1, updatedAtMs: 2 });
+  let track = fixtureTrack('daily', { areaId: options.areaId ?? 'daily-area', title: 'Command Track', cwd: '/tmp', sortOrder: 0, closedAtMs: closed ? 1 : null, createdAtMs: 1, updatedAtMs: 2 });
   const ok = (body: unknown): ApiTransportResponse => ({ status: 200, statusText: 'OK', body });
-  return renderDailyFixture({ initial: '/track/daily?panel=conversations', extraPlanner: true, reply: async request => {
+  return renderDailyFixture({ initial: '/track/daily?panel=conversations', extraPlanner: true, shareScope: options.shareScope, reply: async request => {
     if (request.method === 'PATCH' && request.path === '/api/v1/tracks/daily') {
       if (options.patch !== undefined) return options.patch(request);
       if (!options.staleDetail) {

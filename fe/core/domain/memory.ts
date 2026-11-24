@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import type { MemoryMentionDto, MemoryPlannerTrackDto } from '../api/generated/wire.js';
+import type { MemoryDistillRequest, MemoryDistillResultDto, MemoryMentionDto, MemoryPlannerTrackDto } from '../api/generated/wire.js';
 import type { ApiOperation } from '../api/types.js';
 
 const keyPattern = /^[a-z0-9][a-z0-9_-]{0,63}$/;
@@ -13,6 +13,43 @@ export const memoryPlannerTrackSchema = z.object({
   leadSessionId: id,
 }) satisfies z.ZodType<MemoryPlannerTrackDto>;
 export type MemoryPlannerTrack = z.output<typeof memoryPlannerTrackSchema>;
+
+export type MemoryDistillScope = 'area' | 'global';
+
+export const memoryDistillSchema = z.object({
+  scopeKey: z.string(),
+  areaId: id.nullable(),
+  memoryTrackId: id,
+  leadSessionId: id,
+  mailId: id,
+}).refine(({ scopeKey, areaId }) => scopeKey === (areaId === null ? 'global' : `area:${areaId}`)) satisfies z.ZodType<MemoryDistillResultDto>;
+
+export function memoryDistillOperation(trackId: string, scope?: MemoryDistillScope | 'auto', focus?: string, idempotencyKey?: string): ApiOperation<z.output<typeof memoryDistillSchema>> {
+  return {
+    method: 'POST',
+    path: '/api/v1/memory/distill',
+    ...(idempotencyKey === undefined ? {} : { headers: { 'Idempotency-Key': idempotencyKey } }),
+    body: { trackId, ...(scope === undefined ? {} : { scope }), ...(focus === undefined ? {} : { focus }) } satisfies MemoryDistillRequest,
+    responseSchema: memoryDistillSchema.refine(({ areaId }) => (scope !== 'global' || areaId === null) && (scope !== 'area' || areaId !== null)),
+  };
+}
+
+export function buildMemoryDistillPrompt({ scope, focus, hasUserArea }: {
+  scope?: MemoryDistillScope;
+  focus?: string;
+  hasUserArea: boolean;
+}): string {
+  const target = hasUserArea ? scope : 'global';
+  const requestedFocus = focus?.trim();
+  return [
+    'Distill durable takeaways from this Track and conversation into memory.',
+    'Check existing entries with perga_memory list or recall to avoid duplicates and identify related notes.',
+    target === undefined
+      ? 'Use perga_memory propose with scope: "area" for project-specific takeaways and scope: "global" for cross-project preferences. Send separate proposals if both apply.'
+      : `Use perga_memory propose with scope: "${target}" to send the takeaways to the Memory Planner.`,
+    ...(requestedFocus ? [`Focus: ${requestedFocus}`] : []),
+  ].join('\n');
+}
 
 export const memoryMentionSchema = z.object({
   ref: z.string(),

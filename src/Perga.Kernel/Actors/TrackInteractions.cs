@@ -250,6 +250,46 @@ public sealed partial class TrackActor
                 await actor.PokePendingWakesAsync(actor._actorShutdownCts.Token).ConfigureAwait(false);
         }
 
+        public async Task<MailDto> ReceiveDistillMailAsync(MailDto mail, bool idempotent, CancellationToken ct)
+        {
+            var (stored, shouldWake) = await actor.EnqueueAsync(async _ =>
+            {
+                ct.ThrowIfCancellationRequested();
+                await actor.EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
+                var requestWake = actor._track.ClosedAtMs is null && actor._track.LeadSessionId is not null;
+                if (idempotent)
+                {
+                    var existingMails = await actor._store.ListMailsAsync(actor.TrackId, ct: ct).ConfigureAwait(false);
+                    var existing = existingMails.FirstOrDefault(m => string.Equals(m.Id, mail.Id, StringComparison.Ordinal));
+                    if (existing is not null)
+                    {
+                        if (!string.Equals(existing.FromTrackId, mail.FromTrackId, StringComparison.Ordinal) ||
+                            !string.Equals(existing.Body, mail.Body, StringComparison.Ordinal))
+                            throw KernelException.Conflict("Idempotency-Key was already used with a different distillation request.");
+                        return (existing, requestWake);
+                    }
+                }
+
+                var evt = new EventEnvelopeDto(
+                    EventId: null,
+                    AreaId: actor._track.AreaId,
+                    TrackId: actor.TrackId,
+                    Kind: KernelEventKinds.MailReceived,
+                    Payload: JsonHelpers.ToElement(mail),
+                    CreatedAtMs: mail.CreatedAtMs);
+
+                await actor._eventHub.EnsureInitializedFromStoreAsync(actor._store, ct).ConfigureAwait(false);
+                await actor._store.UpsertMailAsync(mail, evt, ct, requestWake,
+                    beforeWrite: () => ct.ThrowIfCancellationRequested()).ConfigureAwait(false);
+                await actor._eventHub.PublishSyncedAfterStoreWriteAsync(actor._store, evt, CancellationToken.None).ConfigureAwait(false);
+                return (mail, requestWake);
+            }, CancellationToken.None).ConfigureAwait(false);
+
+            if (shouldWake)
+                await actor.PokePendingWakesAsync(actor._actorShutdownCts.Token).ConfigureAwait(false);
+            return stored;
+        }
+
         public Task<IReadOnlyList<MailDto>> ListMailsAsync(bool unreadOnly = false, CancellationToken ct = default)
         {
             return actor.EnqueueAsync(async _ =>

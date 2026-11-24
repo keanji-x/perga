@@ -19,7 +19,7 @@ export type EmbeddedConversationPresentation = Readonly<{
   label: string;
 }>;
 
-export function ConversationSurface({ embedded, centerEmptyComposer = false, mobileSheet, contextTitle, sessionHeader, focusInput = false, ...props }: ComponentProps<typeof Drawer> & Readonly<{ embedded?: EmbeddedConversationPresentation; centerEmptyComposer?: boolean; mobileSheet: boolean; contextTitle?: string; sessionHeader?: ReactNode; focusInput?: boolean }>) {
+export function ConversationSurface({ embedded, centerEmptyComposer = false, mobileSheet, contextTitle, titleAction, sessionHeader, focusInput = false, ...props }: ComponentProps<typeof Drawer> & Readonly<{ embedded?: EmbeddedConversationPresentation; centerEmptyComposer?: boolean; mobileSheet: boolean; contextTitle?: string; titleAction?: ReactNode; sessionHeader?: ReactNode; focusInput?: boolean }>) {
   const [editing, setEditing] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const previousOpen = useRef(props.open);
@@ -77,8 +77,8 @@ export function ConversationSurface({ embedded, centerEmptyComposer = false, mob
   // moving the one footer and retaining its caret. Only the active host paints history.
   return <>
     {embedded?.host != null && createPortal(<EmbeddedReadingHost centeredFooter={centerEmptyComposer} id={props.id} label={embedded.label} hidden={!embedded.active}
-      footer={<>{centerEmptyComposer && embedded.emptyIntroduction}<div ref={setEmbeddedNode} />{embedded.footerPrefix}</>}>{embedded.active ? <>{sessionHeader !== undefined && <div className={styles.embeddedHeader}>{sessionHeader}</div>}{props.children}</> : null}</EmbeddedReadingHost>, embedded.host)}
-    <Drawer {...props} headerActions={sessionHeader} open={!embedded?.active && !mobileSheet && props.open} companionVisible={!mobileSheet && props.companionVisible}
+      footer={<>{centerEmptyComposer && embedded.emptyIntroduction}<div ref={setEmbeddedNode} />{embedded.footerPrefix}</>}>{embedded.active ? <>{(titleAction !== undefined || sessionHeader !== undefined) && <div className={styles.embeddedHeader}>{titleAction}{sessionHeader}</div>}{props.children}</> : null}</EmbeddedReadingHost>, embedded.host)}
+    <Drawer {...props} titleActions={titleAction} headerActions={sessionHeader} open={!embedded?.active && !mobileSheet && props.open} companionVisible={!mobileSheet && props.companionVisible}
       footer={mobileSheet ? undefined : <div ref={setDesktopNode} />}>{mobileSheet || embedded?.active ? null : props.children}</Drawer>
     <Sheet enabled={mobileSheet} open={props.open} label={props.title || '对话'} frame={{ heightPx: sheetHeight, bottomInsetPx: visibleViewport.bottomInset }}
       desktopFooterRef={desktopSlot} dialogRef={dialog} panelRef={capturePanel} finalFocusRef={finalFocus}
@@ -87,6 +87,7 @@ export function ConversationSurface({ embedded, centerEmptyComposer = false, mob
         onFocusCapture={event => { if (event.target instanceof HTMLElement && event.target.matches('[contenteditable="true"], textarea')) setEditing(true); }}>{props.footer}</div>}>
       <section ref={mobileReadingHost} className={`${styles.content} ${mobileFontClassName}`} data-nc-fullscreen={fullscreen} id={props.id}>
       <header className={styles.conversationHeader}>
+        {titleAction !== undefined && <span className={styles.conversationTitleActions}>{titleAction}</span>}
         <h2 className={styles.conversationHeading}>{frame.contextTitle ?? frame.title}</h2>
         {sessionHeader}
         <button type="button" className={styles.close} aria-label={fullscreen ? 'Collapse conversation' : 'Expand conversation'} aria-pressed={fullscreen} onClick={() => setFullscreen(value => !value)}><Icon name={fullscreen ? 'compact' : 'fullscreen'} /></button>

@@ -2729,6 +2729,71 @@
         "required": [],
         "type": "object"
       },
+      "MemoryDistillRequest": {
+        "properties": {
+          "focus": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "trackId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "trackId"
+        ],
+        "type": "object"
+      },
+      "MemoryDistillResultDto": {
+        "properties": {
+          "areaId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "leadSessionId": {
+            "type": "string"
+          },
+          "mailId": {
+            "type": "string"
+          },
+          "memoryTrackId": {
+            "type": "string"
+          },
+          "scopeKey": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "areaId",
+          "leadSessionId",
+          "mailId",
+          "memoryTrackId",
+          "scopeKey"
+        ],
+        "type": "object"
+      },
       "MemoryMentionDto": {
         "properties": {
           "insert": {
@@ -6670,6 +6735,52 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/MemoryPlannerTrackDto"
+                }
+              }
+            },
+            "description": "HTTP 200"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Error mapped by Host exception handling or request guards"
+          }
+        }
+      }
+    },
+    "/api/v1/memory/distill": {
+      "post": {
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemoryDistillRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryDistillResultDto"
                 }
               }
             },

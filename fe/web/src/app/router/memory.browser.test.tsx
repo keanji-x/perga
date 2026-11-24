@@ -6,9 +6,49 @@ import { commands, page, userEvent } from 'vitest/browser';
 import entriesHtml from '../../../../../src/Perga.Kernel/Templates/Memory/widgets/entries.html?raw';
 import { sessionItem, sessionPage, sessionReply } from './conversation-session-data.ts';
 import { renderDailyFixture } from './daily-planner-fixture.tsx';
+import { renderMemoryShortcutFixture } from './memory-shortcut-fixture.ts';
 import { fixtureReport, fixtureSession, fixtureSnapshot, fixtureTrack, fixtureWidgetReport } from './session-contract-fixture.ts';
 
 afterEach(async () => { cleanup(); await page.viewport(1280, 800); });
+
+it.each([
+  [1440, 900],
+  [390, 844],
+] as const)('triggers Save to memory from the open Lead conversation header (%ix%i)', async (width, height) => {
+  await page.viewport(width, height);
+  const { requests } = renderMemoryShortcutFixture();
+  expect(page.getByRole('button', { name: 'Save to memory' }).query()).toBeNull();
+  if (width < 900) await page.getByRole('textbox', { name: 'Chat message' }).click();
+  else await page.getByRole('button', { name: /Conversation Lead/ }).click();
+  await expect.element(page.getByRole('button', { name: 'Close conversation' })).toBeVisible();
+  const saveButton = page.getByRole('button', { name: 'Save to memory' });
+  const heading = page.getByRole('heading', { name: width < 900 ? 'Review Track' : 'Lead', level: 2 });
+  const actionsButton = page.getByRole('button', { name: 'Session actions' });
+  expect(saveButton.element().querySelector('svg')?.classList.contains('lucide-notebook-pen')).toBe(true);
+  expect(saveButton.element().getBoundingClientRect().right).toBeLessThanOrEqual(heading.element().getBoundingClientRect().left);
+  expect(heading.element().getBoundingClientRect().right).toBeLessThanOrEqual(actionsButton.element().getBoundingClientRect().left);
+  await saveButton.click();
+  await expect.poll(() => requests.some(request => request.path === '/api/v1/sessions/project-lead/messages')).toBe(true);
+  const message = requests.find(request => request.path === '/api/v1/sessions/project-lead/messages');
+  expect(message?.method).toBe('POST');
+  expect(message?.body).toHaveProperty('content', expect.stringContaining('scope: "area" for project-specific takeaways and scope: "global" for cross-project preferences'));
+});
+
+it.each([
+  [false, 'project', 'Area', '/area/project-area/memory'],
+  [true, 'daily', 'Global', '/memory'],
+] as const)('saves a closed Track from the conversation header (Today: %s)', async (today, trackId, scope, destination) => {
+  await page.viewport(1440, 900);
+  const { requests, router } = renderMemoryShortcutFixture({ closed: true, today, hasTurns: today });
+  if (!today) await page.getByRole('button', { name: /Conversation Lead/ }).click();
+  await page.getByRole('button', { name: 'Save to memory' }).click();
+  await expect.element(page.getByText(`Sent to ${scope} Memory Planner`)).toBeVisible();
+  expect(requests.find(request => request.path === '/api/v1/memory/distill')).toMatchObject({
+    method: 'POST', body: { trackId },
+  });
+  await page.getByRole('button', { name: 'Open memory' }).click();
+  await expect.poll(() => router.state.location.pathname).toBe(destination);
+});
 
 declare module 'vitest/browser' {
   interface BrowserCommands {

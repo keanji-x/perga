@@ -6,9 +6,10 @@ import styles from './header.module.css';
  * optional resource action; the caller owns its confirmation and permission.
  * A host may mark its surface with `data-nc-header-scope` to reveal that
  * action on hover/focus anywhere in the surface, while keeping it tabbable. */
-export function DrawerHeader({ title, titleId, status, children, closeLabel, closeTitle = closeLabel, onClose, onDelete, deleteLabel }: {
+export function DrawerHeader({ title, titleId, titleActions, status, children, closeLabel, closeTitle = closeLabel, onClose, onDelete, deleteLabel }: {
   title: ReactNode;
   titleId?: string;
+  titleActions?: ReactNode;
   status?: ReactNode;
   children?: ReactNode;
   closeLabel: string;
@@ -18,6 +19,7 @@ export function DrawerHeader({ title, titleId, status, children, closeLabel, clo
   deleteLabel?: string;
 }) {
   return <header className={styles.header}>
+    {titleActions !== undefined && <span className={styles.titleActions}>{titleActions}</span>}
     <h2 id={titleId} className={styles.title} title={typeof title === 'string' ? title : undefined}>{title}</h2>
     {children}
     {status !== undefined && <span className={styles.status}>{status}</span>}

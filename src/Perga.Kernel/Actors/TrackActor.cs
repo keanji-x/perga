@@ -292,6 +292,9 @@ public sealed partial class TrackActor : IAsyncDisposable
     internal Task ReceiveMailAsync(MailDto mail, CancellationToken ct = default, Action? authorizeDelivery = null)
         => _interactions.ReceiveMailAsync(mail, ct, authorizeDelivery);
 
+    internal Task<MailDto> ReceiveDistillMailAsync(MailDto mail, bool idempotent, CancellationToken ct = default)
+        => _interactions.ReceiveDistillMailAsync(mail, idempotent, ct);
+
     public Task<IReadOnlyList<MailDto>> ListMailsAsync(bool unreadOnly = false, CancellationToken ct = default)
         => _interactions.ListMailsAsync(unreadOnly, ct);
 

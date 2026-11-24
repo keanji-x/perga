@@ -84,6 +84,11 @@
     color: var(--text-3);
   }
 
+  .menuButton:hover,
+  .menuButton:focus-visible {
+    color: var(--text);
+  }
+
   .menuMeta {
     display: flex;
     align-items: center;

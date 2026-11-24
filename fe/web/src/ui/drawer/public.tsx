@@ -31,7 +31,7 @@ function focusTook(element: HTMLElement): boolean {
   return document.activeElement === element;
 }
 
-export function Drawer({ open, title, headerActions, mobileBackLabel, mobileHeader, closeLabel = 'Close conversation', onClose, children, footer, resize, companion, inline = false, id, stacked = false, resizeGroup: suppliedResizeGroup = null, retainCompanion = false, companionVisible: suppliedCompanionVisible }: {
+export function Drawer({ open, title, titleActions, headerActions, mobileBackLabel, mobileHeader, closeLabel = 'Close conversation', onClose, children, footer, resize, companion, inline = false, id, stacked = false, resizeGroup: suppliedResizeGroup = null, retainCompanion = false, companionVisible: suppliedCompanionVisible }: {
   open: boolean;
   /** Keep only the independent companion slot mounted when both panes are closed. */
   retainCompanion?: boolean;
@@ -47,7 +47,9 @@ export function Drawer({ open, title, headerActions, mobileBackLabel, mobileHead
   inline?: boolean;
   /** The drawer's accessible name, painted once: in the desktop header row, or in the shared compact Header. */
   title: string;
-  /** Optional controls beside the title, supplied by the surface owner. */
+  /** Optional control placed immediately beside the title. */
+  titleActions?: ReactNode;
+  /** Optional controls on the trailing side beside the close control. */
   headerActions?: ReactNode;
   /** Accessible destination announced by the compact header's back control. */
   mobileBackLabel?: string;
@@ -222,7 +224,7 @@ export function Drawer({ open, title, headerActions, mobileBackLabel, mobileHead
           />}
         </div>
       ) : (
-        <DrawerHeader title={frame.title} titleId={titleId} closeLabel={closeLabel} closeTitle="Close" onClose={onClose}>{headerActions}</DrawerHeader>
+        <DrawerHeader title={frame.title} titleId={titleId} titleActions={titleActions} closeLabel={closeLabel} closeTitle="Close" onClose={onClose}>{headerActions}</DrawerHeader>
       )}
       <div ref={scrollRef} className={styles.scroll} data-nc-drawer-scroll="">
         <div className={styles.bodyInner}>

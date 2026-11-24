@@ -1,6 +1,7 @@
 @layer features {
   .conversationHeader { position: relative; display: flex; align-items: center; flex: none; gap: var(--space-1); padding: var(--space-4) var(--space-4) var(--space-3); border-block-end: 1px solid var(--hairline); }
   .conversationHeading { font-size: var(--font-step-3-size); font-weight: var(--weight-semibold); line-height: var(--font-step-3-line); flex: 1; min-inline-size: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .conversationTitleActions { flex: none; display: inline-flex; align-items: center; gap: var(--space-1); }
   .close { display: grid; place-items: center; flex: none; inline-size: var(--rail-w-collapsed); block-size: var(--rail-w-collapsed); border-radius: var(--radius-pill); cursor: pointer; }
   .close svg { inline-size: var(--glyph-xl); block-size: var(--glyph-xl); }
   .close:hover { background: var(--overlay-hover); }
@@ -16,5 +17,5 @@
   .scrollOverlay { position: absolute; inset-inline: 0; inset-block-end: 0; pointer-events: none; z-index: var(--z-raised); }
   .embeddedSlot { display: flex; flex: 1; min-block-size: 0; min-inline-size: 0; }
   .embeddedSlot[hidden] { display: none; }
-  .embeddedHeader { display: flex; align-items: center; justify-content: flex-end; padding-block-start: var(--space-1); }
+  .embeddedHeader { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-1); padding-block-start: var(--space-1); }
 }

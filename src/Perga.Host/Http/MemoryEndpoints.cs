@@ -8,6 +8,7 @@ namespace Perga.Host.Http;
 
 public sealed record MemoryMentionDto(string Ref, string Scope, string? Key, string Title, string? Summary,
     bool Pinned, string Insert);
+public sealed record MemoryDistillRequest(string TrackId, string? Scope = "auto", string? Focus = null);
 
 public static class MemoryEndpoints
 {
@@ -23,6 +24,11 @@ public static class MemoryEndpoints
             TypedResults.Json(await kernel.GetOrEnsureMemoryTrackAsync(areaId, ct).ConfigureAwait(false), PergaJsonDefaults.ApiOptions))
             .WithMetadata(new RequestOriginGuard.BrowserWriteApi(), new NoRequestBody());
 
+        memory.MapPost("/distill", async (MemoryDistillRequest req, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
+            TypedResults.Json(await kernel.DistillTrackToMemoryAsync(req.TrackId, req.Scope, req.Focus, OptionalIdempotencyKey(ctx), ct)
+                .ConfigureAwait(false), PergaJsonDefaults.ApiOptions))
+            .WithMetadata(new RequestOriginGuard.BrowserWriteApi(), new RequestHeader("Idempotency-Key", false));
+
         memory.MapGet("/mentions", async (string? areaId, string? q, IMemoryTrackStore tracks, IMemoryEngine engine,
             CancellationToken ct) =>
         {
@@ -31,6 +37,15 @@ public static class MemoryEndpoints
             var matches = Mentions(entries, q);
             return TypedResults.Json(matches, PergaJsonDefaults.ApiOptions);
         });
+    }
+
+    private static string? OptionalIdempotencyKey(HttpContext ctx)
+    {
+        if (!ctx.Request.Headers.TryGetValue("Idempotency-Key", out var values))
+            return null;
+        if (values.Count != 1)
+            throw KernelException.InvalidArgument("Exactly one Idempotency-Key is allowed.");
+        return values[0] ?? string.Empty;
     }
 
     private static async Task RequireAreaAsync(IMemoryTrackStore tracks, string areaId, CancellationToken ct)
