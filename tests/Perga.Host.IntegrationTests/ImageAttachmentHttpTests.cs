@@ -290,10 +290,11 @@ public sealed class ImageAttachmentHttpTests
         await host.Services.GetRequiredService<IPergaKernel>().WaitForTrackIdleAsync(trackId, ct);
         if (queued)
         {
-            var followup = host.AgentRuntime.ExecutedTurns.Last().Input;
-            Assert.Equal(decline ? 2 : 1, followup.Attachments!.Count);
-            Assert.Equal(first, await ReadImageAsync(followup.Attachments[0], ct));
-            if (decline) Assert.Equal(second, await ReadImageAsync(followup.Attachments[1], ct));
+            var followups = host.AgentRuntime.ExecutedTurns.Skip(1).ToArray();
+            Assert.Equal(decline ? 2 : 1, followups.Length);
+            Assert.Equal(first, await ReadImageAsync(Assert.Single(followups[0].Input.Attachments!), ct));
+            if (decline)
+                Assert.Equal(second, await ReadImageAsync(Assert.Single(followups[1].Input.Attachments!), ct));
         }
 
         async Task<HttpResponseMessage> Steer(byte[] bytes, string key)
@@ -310,6 +311,73 @@ public sealed class ImageAttachmentHttpTests
         async IAsyncEnumerable<UnifiedAgentEvent> TurnAsync(HarnessLaunchSpec _, TurnInput input,
             [EnumeratorCancellation] CancellationToken token)
         {
+            yield return new UnifiedAgentEvent.TurnAccepted("provider-turn");
+            if (input.Prompt == "running")
+            {
+                started.TrySetResult();
+                await release.Task.WaitAsync(token);
+            }
+            yield return new UnifiedAgentEvent.TurnCompleted(null);
+        }
+    }
+
+    [Theory]
+    [InlineData(true, "attachment_unavailable")]
+    [InlineData(false, "attachments_unsupported")]
+    public async Task QueuedImageFailureDoesNotPreventTheFollowingTextTurn(bool deleteImage, string errorCode)
+    {
+        await using var host = ImageHost();
+        var (trackId, sessionId) = await host.CreateTrackAsync();
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var ct = deadline.Token;
+        host.AgentRuntime.SetTurnHandler(TurnAsync);
+        var endpoint = MessagePath(sessionId);
+        var image = Png(1);
+        try
+        {
+            using var opening = await PostAsync(host.AuthenticatedClient, endpoint, "opening", JsonContent.Create(new { content = "running" }));
+            opening.EnsureSuccessStatusCode();
+            await started.Task.WaitAsync(ct);
+            using var queuedImage = await PostImagesAsync(host.AuthenticatedClient, endpoint, "image",
+                new { mode = "queue", content = "image prompt" }, image);
+            queuedImage.EnsureSuccessStatusCode();
+            using var queuedText = await PostAsync(host.AuthenticatedClient, endpoint, "text",
+                JsonContent.Create(new { mode = "queue", content = "text prompt" }));
+            queuedText.EnsureSuccessStatusCode();
+            if (deleteImage) File.Delete(MediaPath(host, trackId, image));
+        }
+        finally
+        {
+            release.TrySetResult();
+        }
+
+        await host.Services.GetRequiredService<IPergaKernel>().WaitForTrackIdleAsync(trackId, ct);
+        var inputs = host.AgentRuntime.ExecutedTurns.Select(turn => turn.Input).ToArray();
+        Assert.Equal(["running", "image prompt", "text prompt"], inputs.Select(input => input.Prompt));
+        Assert.Null(inputs[2].Attachments);
+        var store = host.Services.GetRequiredService<ITrackStore>();
+        var turns = await store.ListSessionTurnsAsync(sessionId, ct);
+        var failed = Assert.Single(turns, turn => turn.Id == inputs[1].CorrelationId);
+        Assert.Equal("failed", failed.Status);
+        Assert.StartsWith(errorCode + ":", failed.ErrorText);
+        Assert.Equal("completed", Assert.Single(turns, turn => turn.Id == inputs[2].CorrelationId).Status);
+
+        async IAsyncEnumerable<UnifiedAgentEvent> TurnAsync(HarnessLaunchSpec _, TurnInput input,
+            [EnumeratorCancellation] CancellationToken token)
+        {
+            if (input.Attachments is { Count: > 0 })
+            {
+                if (deleteImage)
+                {
+                    await using var stream = await Assert.Single(input.Attachments).OpenAsync(token);
+                    Assert.Null(stream);
+                }
+                yield return new UnifiedAgentEvent.TurnError(errorCode, "Image rejected before dispatch.",
+                    IsRetryable: false, IsConclusive: true, BeforePrompt: true);
+                yield break;
+            }
             yield return new UnifiedAgentEvent.TurnAccepted("provider-turn");
             if (input.Prompt == "running")
             {

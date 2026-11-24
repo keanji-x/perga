@@ -38,7 +38,7 @@ public sealed class OpenApiExportTests
     }
 
     [Fact]
-    public async Task Published_image_contract_pairs_media_types_and_declares_multipart_requirements()
+    public async Task Published_image_contract_constrains_attachment_fields_and_declares_multipart_requirements()
     {
         var builder = PergaHttpEndpoints.CreateBuilder([], FindRoot());
         await using var app = builder.Build();
@@ -46,22 +46,15 @@ public sealed class OpenApiExportTests
         using var document = JsonDocument.Parse(OpenApiDocumentExporter.Export(app));
         var schemas = document.RootElement.GetProperty("components").GetProperty("schemas");
         var attachment = schemas.GetProperty("MessageAttachmentDto");
-        var formats = attachment.GetProperty("oneOf").EnumerateArray()
-            .Select(branch => branch.GetProperty("properties"))
-            .ToDictionary(fields => fields.GetProperty("contentType").GetProperty("const").GetString()!);
-        Assert.Equal(4, formats.Count);
-        var hash = new string('a', 64);
-        foreach (var (mime, extension) in new[] { ("image/png", "png"), ("image/jpeg", "jpg"), ("image/gif", "gif"), ("image/webp", "webp") })
-        {
-            var fields = formats[mime];
-            var idPattern = fields.GetProperty("id").GetProperty("pattern").GetString()!;
-            var urlPattern = fields.GetProperty("url").GetProperty("pattern").GetString()!;
-            var ownUrl = $"/api/v1/tracks/trk_example/media/{hash}.{extension}";
-            Assert.Matches(idPattern, $"{hash}.{extension}");
-            Assert.DoesNotMatch(idPattern, $"{hash}.{(extension == "png" ? "jpg" : "png")}");
-            Assert.Matches(urlPattern, ownUrl);
-            Assert.DoesNotMatch(urlPattern, "https://example.com" + ownUrl);
-        }
+        Assert.False(attachment.TryGetProperty("oneOf", out _));
+        var fields = attachment.GetProperty("properties");
+        Assert.Equal(@"^[0-9a-f]{64}\.(png|jpg|gif|webp)$", fields.GetProperty("id").GetProperty("pattern").GetString());
+        Assert.Equal(["image/png", "image/jpeg", "image/gif", "image/webp"],
+            fields.GetProperty("contentType").GetProperty("enum").EnumerateArray().Select(value => value.GetString()));
+        Assert.Equal(1, fields.GetProperty("size").GetProperty("minimum").GetInt64());
+        Assert.Equal(10 * 1024 * 1024, fields.GetProperty("size").GetProperty("maximum").GetInt64());
+        Assert.Equal(@"^/api/v1/tracks/[A-Za-z0-9_-]+/media/[0-9a-f]{64}\.(png|jpg|gif|webp)$",
+            fields.GetProperty("url").GetProperty("pattern").GetString());
 
         var paths = document.RootElement.GetProperty("paths");
         var send = paths.GetProperty("/api/v1/sessions/{sessionId}/messages").GetProperty("post");

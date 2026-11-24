@@ -839,15 +839,18 @@ it('uses the dedicated Host multipart message payload and requires the idempoten
   expect(multipartMessagePayloadSchema.safeParse({ content: '', requestKey: 'body-key' }).success).toBe(false);
 });
 
-it('decodes every extension and MIME pair exported by Host', () => {
-  const schema = openapi.components.schemas.MessageAttachmentDto;
-  for (const variant of schema.oneOf) {
-    const contentType = variant.properties.contentType.const;
-    const extension = variant.properties.id.pattern.split('.').at(-1)!.slice(0, -1);
+it('decodes each supported extension and MIME pair within the Host attachment schema', () => {
+  const fields = openapi.components.schemas.MessageAttachmentDto.properties;
+  const formats = { png: 'image/png', jpg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp' };
+  expect(fields.contentType.enum).toEqual(Object.values(formats));
+  expect(fields.size).toMatchObject({ minimum: 1, maximum: MAX_ATTACHMENT_BYTES });
+  for (const [extension, contentType] of Object.entries(formats)) {
     const id = `${'a'.repeat(64)}.${extension}`;
-    const image = { id, contentType, size: schema.properties.size.maximum, url: `/api/v1/tracks/track/media/${id}` };
+    const image = { id, contentType, size: fields.size.maximum, url: `/api/v1/tracks/track/media/${id}` };
+    expect(id).toMatch(new RegExp(fields.id.pattern));
+    expect(image.url).toMatch(new RegExp(fields.url.pattern));
     expect(messageAttachmentDtoSchema.parse(image)).toEqual(image);
-    const otherType = schema.properties.contentType.enum.find(mime => mime !== contentType);
+    const otherType = fields.contentType.enum.find(mime => mime !== contentType);
     expect(messageAttachmentDtoSchema.safeParse({ ...image, contentType: otherType }).success).toBe(false);
   }
 });

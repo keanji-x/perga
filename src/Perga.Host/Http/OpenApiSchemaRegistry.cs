@@ -71,33 +71,21 @@ internal sealed class OpenApiSchemaRegistry(JsonSerializerOptions options)
             }
             var schema = new JsonObject { ["type"] = "object", ["properties"] = properties, ["required"] = required };
             if (type == typeof(MessageAttachmentDto))
-                ConstrainImageAttachment(schema, properties);
+                ConstrainImageAttachment(properties);
             Schemas[name] = schema;
         }
         return new JsonObject { ["$ref"] = "#/components/schemas/" + name };
     }
 
-    private static void ConstrainImageAttachment(JsonObject schema, JsonObject properties)
+    private static void ConstrainImageAttachment(JsonObject properties)
     {
+        var fileNamePattern = @"[0-9a-f]{64}\.(" + string.Join('|', ImageAttachmentContract.MediaTypesByExtension.Keys) + ")$";
+        properties["id"]!["pattern"] = "^" + fileNamePattern;
         properties["contentType"]!["enum"] = new JsonArray(
             ImageAttachmentContract.MediaTypes.Select(value => (JsonNode?)JsonValue.Create(value)).ToArray());
         properties["size"]!["minimum"] = 1;
         properties["size"]!["maximum"] = ImageAttachmentContract.MaxAttachmentBytes;
-        schema["oneOf"] = new JsonArray(ImageAttachmentContract.MediaTypesByExtension
-            .OrderBy(format => format.Key, StringComparer.Ordinal)
-            .Select(format =>
-            {
-                var fileName = @"[0-9a-f]{64}\." + format.Key + "$";
-                return (JsonNode)new JsonObject
-                {
-                    ["properties"] = new JsonObject
-                    {
-                        ["id"] = new JsonObject { ["pattern"] = "^" + fileName },
-                        ["contentType"] = new JsonObject { ["const"] = format.Value },
-                        ["url"] = new JsonObject { ["pattern"] = "^/api/v1/tracks/[A-Za-z0-9_-]+/media/" + fileName }
-                    }
-                };
-            }).ToArray());
+        properties["url"]!["pattern"] = "^/api/v1/tracks/[A-Za-z0-9_-]+/media/" + fileNamePattern;
     }
 
     private static JsonNode OrNull(JsonNode schema) => new JsonObject { ["anyOf"] = new JsonArray(schema, new JsonObject { ["type"] = "null" }) };
