@@ -185,25 +185,26 @@ it('does not repeat the run phase above the composer while the planner is workin
   });
 
 it('sends the chosen model to the server when the picker is used', async () => {
-    const { requests } = setupWithTurns((request) => request.method === 'PATCH'
-        && request.method === 'PATCH' && /\/api\/v1\/sessions\/[^/]+$/.test(request.path)
-      ? ok({
-        id: CARD.id, trackId: TRACK.id, provider: 'codex', model: 'gpt-5', createdAtMs: 1, updatedAtMs: 2,
-      })
-      : undefined);
+    const { requests } = setupWithTurns((request) => {
+      if (request.path.startsWith('/api/v1/bootstrap')) return ok(fixtureBootstrap(['codex'], ['gpt-5']));
+      if (request.method === 'PATCH' && /\/api\/v1\/sessions\/[^/]+$/.test(request.path)) {
+        return ok({
+          id: CARD.id, trackId: TRACK.id, provider: 'codex', model: 'gpt-5', createdAtMs: 1, updatedAtMs: 2,
+        });
+      }
+      return undefined;
+    });
     await openConversationWithTurns();
     const drawer = screen.getByRole('complementary', { name: 'Planner chat' });
     fireEvent.click(within(drawer).getByRole('button', { name: /^Model:/ }));
-    /* Bootstrap declares no models here, so "Default" is the one choice the menu can offer. */
-    fireEvent.click(await screen.findByRole('radio', { name: /^Default/ }));
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(await screen.findByRole('radio', { name: /^gpt-5/ }));
 
     await waitFor(() => {
       const writes = requests.filter((request) => request.method === 'PATCH' && /\/api\/v1\/sessions\/[^/]+$/.test(request.path));
       expect(writes).toHaveLength(1);
       expect(writes[0]?.method).toBe('PATCH');
       /* The v1 endpoint accepts only the model selection. */
-      expect(writes[0]?.body).toEqual({ model: null, reasoningEffort: null });
+      expect(writes[0]?.body).toEqual({ model: 'gpt-5', reasoningEffort: null });
     });
   });
 
@@ -220,9 +221,9 @@ it('offers exactly the close, the resize edge, Send, the model picker, the role,
     const names = within(drawer)
       .getAllByRole('button', { hidden: true })
       .map((button) => button.getAttribute('aria-label') ?? button.textContent);
-    /* Bootstrap declares no models, so the trigger reads `Model: Default` and no effort control appears; Cancel/Save live inside the closed popover. */
+    /* Bootstrap declares no models, so the trigger reads `Model: Default` and no effort control or Save/Cancel chrome appears. */
     expect([...names].sort()).toEqual([
-      'Attach an image', 'Cancel', 'Close conversation', 'Model: Default', 'Save', 'Send', 'Session actions',
+      'Attach an image', 'Close conversation', 'Model: Default', 'Send', 'Session actions',
     ]);
     /* One shell contract and one shared host edge serve the conversation layout. */
     expect(screen.getAllByRole('separator').map((edge) => edge.getAttribute('aria-label'))).toEqual(['Resize conversation']);

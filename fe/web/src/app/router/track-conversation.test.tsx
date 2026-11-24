@@ -674,11 +674,14 @@ it('send: says only that delivery is unconfirmed', async () => {
     });
 
 it('model select: says the change is unconfirmed', async () => {
-      setup((request) => request.method === 'PATCH' && /\/api\/v1\/sessions\/[^/]+$/.test(request.path) ? timedOut() : undefined);
+      setup((request) => {
+        if (request.path.startsWith('/api/v1/bootstrap')) return ok(fixtureBootstrap(['codex'], ['gpt-5']));
+        if (request.method === 'PATCH' && /\/api\/v1\/sessions\/[^/]+$/.test(request.path)) return timedOut();
+        return undefined;
+      });
       await openAssistant();
       fireEvent.click(within(drawerElement()).getByRole('button', { name: /^Model:/ }));
-      fireEvent.click(await screen.findByRole('radio', { name: /^Default/ }));
-      fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+      fireEvent.click(await screen.findByRole('radio', { name: /^gpt-5/ }));
       expect((await screen.findByRole('alert')).textContent).toContain('The model change is unconfirmed.');
       expect(chatText()).not.toMatch(CONNECTIVITY);
     });
@@ -1128,7 +1131,6 @@ it('selects a model before the first conversation message and sends it atomicall
   await openDraft();
   fireEvent.click(await screen.findByRole('button', { name: /^Model:/ }));
   fireEvent.click(await screen.findByRole('radio', { name: /^gpt-5/ }));
-  fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
   expect(creates(requests, CONVERSATIONS)).toHaveLength(0);
   await write('Use this model from the start');
@@ -1185,7 +1187,6 @@ it('keeps the first-message model fixed when a menu opened before sending is sel
   await waitFor(() => expect(modelPicker.hasAttribute('disabled') || modelPicker.getAttribute('aria-disabled') === 'true').toBe(false));
   fireEvent.click(modelPicker);
   fireEvent.click(await screen.findByRole('radio', { name: 'gpt-5' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Save' }));
   await write('Keep my choice');
   await waitFor(() => expect(creates(requests, CONVERSATIONS)).toHaveLength(1));
   try {

@@ -55,15 +55,13 @@ it('keeps phone preferences compact while selecting model and effort in one menu
   try {
     await userEvent.click(screen.getByRole('button', { name: /^Model:/ }));
     await userEvent.click(screen.getByRole('radio', { name: 'Test model' }));
-    // Navigate via Tab alone (no programmatic focus) to reach the effort slider inside the dialog.
-    const slider = screen.getByRole('slider', { name: 'Reasoning effort' });
-    for (let i = 0; i < 6 && document.activeElement !== slider; i += 1) {
-      await userEvent.keyboard('{Tab}');
-    }
-    expect(document.activeElement).toBe(slider);
+    expect(onChange).toHaveBeenLastCalledWith({ model: 'test-model', reasoning_effort: null });
+    // Picking a model with reasoning efforts automatically transitions into the Effort view.
+    const slider = within(await screen.findByRole('dialog')).getByRole('slider', { name: 'Reasoning effort' });
+    slider.focus();
     await userEvent.keyboard('{End}');
-    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
     expect(onChange).toHaveBeenLastCalledWith({ model: 'test-model', reasoning_effort: 'high' });
+    await userEvent.keyboard('{Escape}');
     expect(screen.queryByRole('button', { name: /^Reasoning effort:/ })).toBeNull();
     expect(screen.getAllByRole('button')).toHaveLength(3); // Options, Model and Create track.
     for (const [width, height] of [[390, 844], [320, 700]]) {
@@ -299,11 +297,12 @@ it('uses the card radius for the composer while retaining full pill and send con
     const body = input.closest('[data-density]')!.firstElementChild!;
     expect(getComputedStyle(body).borderRadius).toBe('16px');
     input.blur();
-    await expect.poll(() => getComputedStyle(body).boxShadow).toBe('none');
+    const restingShadow = getComputedStyle(body).boxShadow;
+    expect(restingShadow).not.toBe('none');
     await page.elementLocator(body).hover();
-    expect(getComputedStyle(body).boxShadow).toBe('none');
+    expect(getComputedStyle(body).boxShadow).toBe(restingShadow);
     await page.getByRole('textbox', { name: 'What this track should do' }).click();
-    await expect.poll(() => getComputedStyle(body).boxShadow).toContain('2px inset');
+    await expect.poll(() => getComputedStyle(body).boxShadow).toContain('0px 0px 0px 2px');
     expect(getComputedStyle(body).borderRadius).toBe('16px');
 
     for (const name of ['Track options', 'Model: Default', 'Create track']) {

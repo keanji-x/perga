@@ -72,11 +72,12 @@ const CLAUDE_DEFAULT_TRIGGER = 'Model: Claude Default';
 /** Pick `item` from the `group` section of the open model menu. */
 async function pick(trigger: string, group: 'Codex' | 'Claude', item: string | RegExp) {
   await userEvent.click(await screen.findByRole('button', { name: trigger }));
+  const drill = screen.queryByRole('button', { name: /^Change model:/ });
+  if (drill !== null) await userEvent.click(drill);
   const providers = await screen.findByRole('group', { name: 'Providers' });
   await userEvent.click(within(providers).getByRole('radio', { name: group }));
   const models = screen.getByRole('group', { name: 'Models' });
   await userEvent.click(within(models).getByRole('radio', { name: item }));
-  await userEvent.click(screen.getByRole('button', { name: 'Save' }));
   await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Select model and reasoning effort' })).toBeNull());
 }
 
@@ -249,7 +250,6 @@ describe('New track model selection', () => {
     await findComposer();
     await userEvent.click(await screen.findByRole('button', { name: 'Model: Default' }));
     await userEvent.click(await screen.findByRole('radio', { name: 'gpt-5' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Select model and reasoning effort' })).toBeNull());
     await userEvent.click(screen.getByLabelText(TASK_LABEL));
     await userEvent.paste('Use these settings from the first turn');
@@ -277,8 +277,9 @@ describe('New track model selection', () => {
     await findComposer();
     await userEvent.click(await screen.findByRole('button', { name: 'Model: Default' }));
     await userEvent.click(await screen.findByRole('radio', { name: 'gpt-5' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Select model and reasoning effort' })).toBeNull());
+    await userEvent.click(await screen.findByRole('button', { name: 'Model: gpt-5' }));
     await userEvent.click(screen.getByRole('radio', { name: 'Default' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Select model and reasoning effort' })).toBeNull());
     await userEvent.type(screen.getByLabelText(TASK_LABEL), 'Follow the default');
     await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
@@ -316,10 +317,10 @@ describe('New track model selection', () => {
     await userEvent.click(within(providers).getByRole('radio', { name: 'Claude' }));
     const models = screen.getByRole('group', { name: 'Models' });
     expect(within(models).getByRole('note').textContent).toBe(`Claude is unavailable: ${reason} A track can still be created; it runs once Claude is back.`);
-    const defaultChoice = within(models).getByRole('radio', { name: /^Default/ });
-    expect(defaultChoice.getAttribute('aria-disabled') === 'true' || defaultChoice.hasAttribute('disabled')).toBe(false);
-    await userEvent.click(defaultChoice);
-    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect(within(models).queryByRole('radio', { name: /^Default/ })).toBeNull();
+    const useAnyway = within(models).getByRole('button', { name: 'Use Claude anyway' });
+    expect(useAnyway.getAttribute('aria-disabled') === 'true' || useAnyway.hasAttribute('disabled')).toBe(false);
+    await userEvent.click(useAnyway);
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Select model and reasoning effort' })).toBeNull());
     await userEvent.type(screen.getByLabelText(TASK_LABEL), 'Plan while Claude is down');
     await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
@@ -440,7 +441,6 @@ describe('New track model selection', () => {
       .toEqual(['DefaultSelected', 'opus[1m]', 'claude-fable-5-1[1m]', 'sonnet', 'haiku']);
     expect(within(dialog).queryByRole('radio', { name: 'Codex' })).toBeNull();
     await userEvent.click(within(models).getByRole('radio', { name: /^haiku/ }));
-    await userEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(sent.filter((request) => request.method === 'PATCH'
       && request.path === '/api/v1/sessions/card-planner').map((request) => request.body))
       .toEqual([{ model: 'haiku', reasoningEffort: null }]));
