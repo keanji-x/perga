@@ -34,7 +34,7 @@ export type ConversationPanelSource = ConversationCreationSource & Readonly<{
     decideApproval: (approval: PendingApproval, optionId: string) => Promise<void>;
     /** The row and Area supplying report mention candidates; null without an Area context.
      * Candidate inserts are server-owned and the composer sends them verbatim.
-     * asks/answerAsk serve durable open asks above the composer; role supplies the Area admin state. */
+     * asks/answerAsk serve durable open asks above the composer. */
     planner: Readonly<{
       cardId: string; areaId: string | null; asks: readonly OpenAsk[];
       /** Use the report Area by default, null for Global, false in a share. */

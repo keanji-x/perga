@@ -118,12 +118,15 @@ internal sealed partial class InMemoryTrackStore : ISessionInputStore, ISessionM
             if (_sessions[session.Id].Status is "queued" or "running" or "unknown")
                 throw KernelException.Conflict("The session already has an active or unresolved turn.");
             BeforeInputWrite?.Invoke();
-            var input = BindInputLocked(session, new($"inp_{Guid.NewGuid():N}", session.Id, request.AuthorId, request.Key,
-                request.Hash, null, null, request.Content, "queued", session.UpdatedAtMs, "input"), false, request.SourceExcerpt);
+            var input = InsertInputLocked(session, request);
             AppendEventLocked(sessionEvent);
             return Task.FromResult(input);
         }
     }
+
+    private PersistedSessionInput InsertInputLocked(AgentSessionDto session, SessionInputRequest request) =>
+        BindInputLocked(session, new($"inp_{Guid.NewGuid():N}", session.Id, request.AuthorId, request.Key,
+            request.Hash, null, null, request.Content, "queued", session.UpdatedAtMs, "input"), false, request.SourceExcerpt);
 
     public Task<PersistedSessionInput?> PromoteQueuedBatchAsync(AgentSessionDto session, SessionMessage message, EventEnvelopeDto sessionEvent, CancellationToken ct)
     {
@@ -152,8 +155,7 @@ internal sealed partial class InMemoryTrackStore : ISessionInputStore, ISessionM
         lock (_gate)
         {
             _sessions[session.Id] = session;
-            var input = firstInput is null ? null : BindInputLocked(session, new($"inp_{Guid.NewGuid():N}", session.Id,
-                "owner:installation", firstInput.Key, firstInput.Hash, null, null, firstInput.Content, "queued", session.UpdatedAtMs, "input"), false, firstInput.SourceExcerpt);
+            var input = firstInput is null ? null : InsertInputLocked(session, firstInput);
             _sessionCreations.Add((intent.TrackId, intent.AuthorId, intent.Key), new(intent.Hash, session, input));
             AppendEventLocked(sessionEvent);
             return Task.FromResult(input);

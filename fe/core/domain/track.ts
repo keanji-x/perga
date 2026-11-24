@@ -59,6 +59,7 @@ export type Track = Readonly<{
   closedAt: number | null;
   createdAt: number;
   updatedAt: number;
+  originTrackId?: string;
   /** Historical snapshots may omit presentation metadata; toTrack supplies neutral defaults. */
   templateId?: TrackDto['templateId'];
   templateTitle?: TrackDto['templateTitle'];
@@ -95,6 +96,7 @@ export function toTrack(wire: TrackDto, activity: TrackActivity = NEUTRAL_ACTIVI
     closedAt: wire.closedAtMs ?? null,
     createdAt: wire.createdAtMs,
     updatedAt: wire.updatedAtMs,
+    originTrackId: wire.originTrackId ?? undefined,
     templateId: wire.templateId ?? null,
     templateTitle: wire.templateTitle ?? null,
     templateInputs: wire.templateInputs ?? {},

@@ -89,6 +89,14 @@ describe('track wire decode', () => {
     }));
   });
 
+  it('preserves the origin Track ID and treats a null origin as absent', () => {
+    const child = trackDtoSchema.parse({ ...baseWire, originTrackId: 'trk_origin' });
+    expect(toTrack(child).originTrackId).toBe('trk_origin');
+    expect(toTrack(trackDtoSchema.parse({ ...baseWire, originTrackId: null })).originTrackId).toBeUndefined();
+    const event = decodeWireEvent({ eventId: 1, createdAtMs: 2, kind: 'track.updated', payload: child });
+    expect(event).toMatchObject({ status: 'ready', value: { data: { originTrackId: 'trk_origin' } } });
+  });
+
   it('roots the agent at the track worktree when the kernel made one (#1830), else at the checkout', () => {
     const worktree = '/repo/.claude/worktrees/track-w1';
     const attached = toTrack(trackDtoSchema.parse({
@@ -451,11 +459,11 @@ it('preserves an explicit local workspace target', () => {
 
 it('writes only declared Host Track fields, even when a caller object has extra properties', () => {
   const body = { areaId: 'area', provider: 'runtime/future', reasoningEffort: 'deep', templateId: 'template', templateInputs: { x: 1 },
-    admin: true, theme: { fg: [], bg: [] }, area_id: 'ghost', planner_provider: 'ghost', attach_folder: true, recipe_id: 'ghost' };
+    theme: { fg: [], bg: [] }, area_id: 'ghost', planner_provider: 'ghost', attach_folder: true, recipe_id: 'ghost' };
   expect(JSON.parse(JSON.stringify(createTrackOperation(body, 'key').body))).toEqual({
     areaId: 'area', provider: 'runtime/future', reasoningEffort: 'deep', templateId: 'template', templateInputs: { x: 1 },
   });
-  const patch = { title: 'Title', pinned: true, sortOrder: 2, admin: true, pinned_at: 1, sort: 9, enabled_plugins: ['ghost'], lead_session_id: 'ghost' };
+  const patch = { title: 'Title', pinned: true, sortOrder: 2, pinned_at: 1, sort: 9, enabled_plugins: ['ghost'], lead_session_id: 'ghost' };
   expect(JSON.parse(JSON.stringify(updateTrackOperation('track', patch).body))).toEqual({ title: 'Title', pinned: true, sortOrder: 2 });
   const terminal = { title: 'Shell', theme: { fg: [], bg: [] }, sort: 3 };
   expect(JSON.parse(JSON.stringify(createTerminalOperation('track', terminal, 'key').body))).toEqual({ title: 'Shell', idempotencyKey: 'key' });

@@ -187,18 +187,23 @@ public sealed partial class TrackActor
 
         public async Task ScheduleEligibleTasksCoreAsync(CancellationToken ct, IReadOnlyList<ProviderStatus>? providers = null)
         {
-            if (actor._policyUnavailableReason is not null || actor._options.DispatchAdmission.Draining || actor._deletingTrack || actor._closingTrack || actor._track.ClosedAtMs is not null || !actor.WorkspaceReady)
+            if (actor._policyUnavailableReason is not null || actor._options.DispatchAdmission.Draining || actor._deletingTrack || actor._closingTrack || actor._track.ClosedAtMs is not null)
             {
                 return;
             }
 
-            if (HasCanceledRunStillSettling())
-                return;
+            foreach (var spawn in _tasks.Where(task => task.Kind == "flow_track" && FlowConstants.IsFlowTask(task) &&
+                task is { Status: TaskRunStatus.Running, ArchivedAtMs: null } && !HasActiveRun(task.Id)).ToArray())
+                await actor.StartFlowTrackRunCoreAsync(spawn, ct).ConfigureAwait(false);
 
-            var mounted = await actor.EnsureWorkspaceMountedCoreAsync(ct).ConfigureAwait(false);
-            foreach (var watch in _tasks.Where(t => t.Kind == "flow_watch" && FlowConstants.IsFlowTask(t) && t.Status == TaskRunStatus.Running &&
-                !actor._activeWatches.ContainsKey(t.Id)).ToArray())
-                await actor.StartFlowWatchRunCoreAsync(watch, mounted, ct).ConfigureAwait(false);
+            MountedWorkspace? mounted = null;
+            if (actor.WorkspaceReady && !HasCanceledRunStillSettling())
+            {
+                mounted = await actor.EnsureWorkspaceMountedCoreAsync(ct).ConfigureAwait(false);
+                foreach (var watch in _tasks.Where(t => t.Kind == "flow_watch" && FlowConstants.IsFlowTask(t) && t.Status == TaskRunStatus.Running &&
+                    !actor._activeWatches.ContainsKey(t.Id)).ToArray())
+                    await actor.StartFlowWatchRunCoreAsync(watch, mounted, ct).ConfigureAwait(false);
+            }
             var flowDispatchFailed = false;
             bool preparationFailed;
             do
@@ -209,6 +214,15 @@ public sealed partial class TrackActor
                 foreach (var task in schedulable)
                 {
                     if (FlowConstants.IsFlowTask(task) && actor._activeWatches.Values.Any(watch => watch.NodeId == task.TaskKey))
+                        continue;
+
+                    if (task.Kind == "flow_track" && FlowConstants.IsFlowTask(task))
+                    {
+                        await actor.StartFlowTrackRunCoreAsync(task, ct).ConfigureAwait(false);
+                        continue;
+                    }
+
+                    if (mounted is null)
                         continue;
 
                     if (task.Kind == "flow_wake" && FlowConstants.IsFlowTask(task))

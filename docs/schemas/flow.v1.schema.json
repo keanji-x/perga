@@ -221,6 +221,33 @@
               "description": "Re-arm after a successful probe and completion of the downstream wave. Attention or blocked pauses the watch."
             }
           }
+        },
+        {
+          "additionalProperties": false,
+          "required": ["kind", "prompt"],
+          "properties": {
+            "kind": { "const": "track" },
+            "prompt": { "type": "string", "pattern": "\\S", "description": "First instruction sent to the new Track Lead." },
+            "title": { "type": "string" },
+            "area": { "type": "string", "description": "Destination Area ID or exact name." },
+            "template": { "type": "string", "description": "Template ID for the new Track." },
+            "templateInputs": { "type": "object" },
+            "cwd": { "type": "string" },
+            "workspaceDriver": { "type": "string" },
+            "executionTargetId": { "type": "string" },
+            "provider": { "type": "string" },
+            "model": { "type": "string" },
+            "reasoningEffort": { "type": "string", "pattern": "\\S" },
+            "permissionMode": { "type": "string", "pattern": "\\S" }
+          },
+          "dependentSchemas": {
+            "templateInputs": {
+              "required": ["template"],
+              "properties": {
+                "template": { "pattern": "\\S" }
+              }
+            }
+          }
         }
       ]
     },

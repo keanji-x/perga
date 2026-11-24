@@ -217,7 +217,7 @@ it.each(['Explain /close', 'First line\n/close'])(
   });
 
 
-it.each(['/rename New title', '/pin', '/unpin', '/admin', '/member', '/askme', '/sandbox', '/fullaccess'])('sends removed command %s as ordinary text', async text => {
+it.each(['/rename New title', '/pin', '/unpin', '/askme', '/sandbox', '/fullaccess'])('sends removed command %s as ordinary text', async text => {
   const fixture = renderCommandFixture(); const input = await open();
   await submit(input, text);
   await waitFor(() => expect(fixture.requests.filter(request => request.path.endsWith('/messages')).map(request => request.body))

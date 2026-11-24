@@ -26,7 +26,8 @@ public sealed record TrackDiscoveryEntry(
     string ReportSummary,
     bool IsCurrent,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] long? ClosedAtMs,
-    long UpdatedAtMs);
+    long UpdatedAtMs,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? OriginTrackId = null);
 
 public sealed partial class PergaKernelService
 {
@@ -68,7 +69,7 @@ public sealed partial class PergaKernelService
             }
 
             entries.Add(new TrackDiscoveryEntry(track.Id, track.Title, track.AreaId,
-                trackArea.Name, summary, track.Id == currentTrackId, track.ClosedAtMs, track.UpdatedAtMs));
+                trackArea.Name, summary, track.Id == currentTrackId, track.ClosedAtMs, track.UpdatedAtMs, track.OriginTrackId));
         }
 
         return new TrackDiscoveryResult(scope,
@@ -98,18 +99,23 @@ public sealed partial class PergaKernelService
         if (area == "*")
             return ("all", null);
 
+        return ("area", await ResolveAreaByIdOrNameAsync(area, ct).ConfigureAwait(false));
+    }
+
+    private async Task<AreaDto> ResolveAreaByIdOrNameAsync(string area, CancellationToken ct)
+    {
         var areas = (await _store.ListAreasAsync(ct, includeSystem: true).ConfigureAwait(false))
             .Where(item => item.Id != MemoryTrackBinding.SystemAreaId).ToArray();
         var selectedArea = areas.FirstOrDefault(item => item.Id == area);
         if (selectedArea is not null)
-            return ("area", selectedArea);
+            return selectedArea;
 
         var name = area.Trim();
         var matches = areas.Where(item => string.Equals(item.Name.Trim(), name, StringComparison.OrdinalIgnoreCase)).ToArray();
         return matches.Length switch
         {
             0 => throw KernelException.NotFound($"Area '{area}' not found. Call area_list to inspect available Areas."),
-            1 => ("area", matches[0]),
+            1 => matches[0],
             _ => throw KernelException.InvalidArgument(
                 $"Area name '{area}' is ambiguous. Specify one of these Area IDs: {string.Join(", ", matches.Select(item => item.Id))}.")
         };

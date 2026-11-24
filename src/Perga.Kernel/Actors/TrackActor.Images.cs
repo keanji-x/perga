@@ -7,7 +7,7 @@ namespace Perga.Kernel.Actors;
 
 public sealed partial class TrackActor
 {
-    private static string HashMessage(string? content, string mode, string? turnId, int? expectedEpoch,
+    internal static string HashMessage(string? content, string mode, string? turnId, int? expectedEpoch,
         IReadOnlyList<ImageMediaWrite> images)
     {
         var identity = new { version = 4, Content = content, Mode = mode, TurnId = turnId, ExpectedEpoch = expectedEpoch };

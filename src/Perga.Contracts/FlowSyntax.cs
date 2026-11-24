@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 
 namespace Perga.Contracts;
@@ -19,12 +20,20 @@ public static partial class FlowSyntax
         var hasCommand = !string.IsNullOrWhiteSpace(action.Cmd);
         if (action.Repeat is not null && (action.Kind != "watch" || !hasCommand || action.PrChecks.HasValue))
             errors.Add(new($"{path}.repeat", "'repeat' is only valid for command watches."));
-        if (action.ReasoningEffort is { } effort &&
-            (action.Kind != "run" || hasCommand || string.IsNullOrWhiteSpace(effort)))
-            errors.Add(new($"{path}.reasoningEffort", "'reasoningEffort' must be non-blank and is only valid for agent runs."));
-        if (action.PermissionMode is { } permissionMode &&
-            (action.Kind != "run" || hasCommand || string.IsNullOrWhiteSpace(permissionMode)))
-            errors.Add(new($"{path}.permissionMode", "'permissionMode' must be non-blank and is only valid for agent runs."));
+        var supportsAgentOptions = action.Kind == "track" || (action.Kind == "run" && !hasCommand);
+        if (action.ReasoningEffort is { } effort && (!supportsAgentOptions || string.IsNullOrWhiteSpace(effort)))
+            errors.Add(new($"{path}.reasoningEffort", "'reasoningEffort' must be non-blank and is only valid for agent runs and Track spawns."));
+        if (action.PermissionMode is { } permissionMode && (!supportsAgentOptions || string.IsNullOrWhiteSpace(permissionMode)))
+            errors.Add(new($"{path}.permissionMode", "'permissionMode' must be non-blank and is only valid for agent runs and Track spawns."));
+
+        if (action.Kind == "track")
+        {
+            if (string.IsNullOrWhiteSpace(action.Prompt))
+                errors.Add(new($"{path}.prompt", "kind='track' requires a non-blank 'prompt' for the new Track Lead."));
+            if (action.TemplateInputs is { } inputs &&
+                (inputs.ValueKind != JsonValueKind.Object || string.IsNullOrWhiteSpace(action.Template)))
+                errors.Add(new($"{path}.templateInputs", "'templateInputs' must be a JSON object paired with a non-blank 'template'."));
+        }
     }
 
     [GeneratedRegex(@"^[a-z0-9][a-z0-9._:-]{0,63}$", RegexOptions.CultureInvariant)]

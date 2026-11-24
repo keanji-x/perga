@@ -240,6 +240,14 @@ export type FlowAction =
       | { cmd: string; prChecks?: never; repo?: never; headSha?: never;
           /** Re-arm after a successful probe and completion of the downstream wave. */
           repeat?: boolean }
+    ))
+  | ({ kind: "track"; prompt: string; provider?: string; model?: string; reasoningEffort?: string; permissionMode?: string;
+      title?: string; area?: string; cwd?: string; workspaceDriver?: string; executionTargetId?: string;
+      run?: never; wake?: never; watch?: never; track?: never; reuseSession?: never;
+      session?: never; role?: never; access?: never; gate?: never; cmd?: never; acceptance?: never;
+      prChecks?: never; repo?: never; headSha?: never; interval?: never; timeout?: never; repeat?: never } & (
+      | { template: string; templateInputs?: Record<string, unknown> }
+      | { template?: never; templateInputs?: never }
     ));
 
 export interface FlowNode {

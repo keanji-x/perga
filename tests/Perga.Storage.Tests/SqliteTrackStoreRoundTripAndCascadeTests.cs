@@ -87,8 +87,10 @@ public sealed class SqliteTrackStoreRoundTripAndCascadeTests
         await store.CreateTrackAsync(parentTrack, initialReport, "export default defineTemplate({ id: 'dev' });", leadSession, ct);
 
         var (childTrackSeed, childReport, childLead) = StorageTestHarness.CreateSeedTrack("trk_child", "area_b", "sess_child_lead");
-        var childTrack = childTrackSeed;
+        var childTrack = childTrackSeed with { OriginTrackId = parentTrack.Id };
         await store.CreateTrackAsync(childTrack, childReport, null, childLead, ct);
+        Assert.Equal(parentTrack.Id, (await store.GetTrackAsync(childTrack.Id, ct))!.OriginTrackId);
+        Assert.Equal(parentTrack.Id, (await store.LoadTrackAggregateAsync(childTrack.Id, ct))!.Track.OriginTrackId);
         // Released databases may contain these retired nullable fields. Runtime
         // updates must preserve them, and their historical FK still applies.
         using var legacyDb = harness.OpenRawInspectConnection();
@@ -166,7 +168,7 @@ public sealed class SqliteTrackStoreRoundTripAndCascadeTests
         Assert.Single(await store.ListTracksAsync(includeClosed: false, ct: ct));
         Assert.Equal(2, (await store.ListTracksAsync(includeClosed: true, ct: ct)).Count);
         Assert.Empty(await store.ListTracksAsync(areaId: "area_b", includeClosed: false, ct: ct));
-        Assert.Single(await store.ListTracksAsync(areaId: "area_b", includeClosed: true, ct: ct));
+        Assert.Equal(parentTrack.Id, Assert.Single(await store.ListTracksAsync(areaId: "area_b", includeClosed: true, ct: ct)).OriginTrackId);
 
         // 4. Create a >64KB cold blob on trk_parent, then DeleteAreaAsync("area_a") -> cascades trk_parent,
         // cleans blobs/trk_parent, and sets trk_child.parent_track_id = NULL (ON DELETE SET NULL)!
@@ -200,6 +202,7 @@ public sealed class SqliteTrackStoreRoundTripAndCascadeTests
 
         var survivingChild = await store.GetTrackAsync("trk_child", ct);
         Assert.NotNull(survivingChild);
+        Assert.Null(survivingChild.OriginTrackId);
         Assert.Null(await legacyDb.ExecuteScalarAsync<string?>("SELECT parent_track_id FROM tracks WHERE id='trk_child';"));
         Assert.Equal("att_spawn_1", await legacyDb.ExecuteScalarAsync<string>("SELECT parent_attempt_id FROM tracks WHERE id='trk_child';"));
     }

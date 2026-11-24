@@ -90,7 +90,7 @@ public sealed class SqliteMigratorTests
                 """, new { Attachment = attachment });
             await db.CloseAsync();
 
-            await migrator.MigrateAsync(dbPath);
+            await new SqliteMigrator(migrator.Migrations.Take(32).ToArray()).MigrateAsync(dbPath);
             await db.OpenAsync();
             Assert.Equal(32, await db.ExecuteScalarAsync<int>("SELECT MAX(version) FROM schema_migrations;"));
             Assert.Equal(v31[^1].ChecksumSha256, await db.ExecuteScalarAsync<string>(
@@ -99,6 +99,39 @@ public sealed class SqliteMigratorTests
             Assert.Equal("image.png", await db.ExecuteScalarAsync<string>("SELECT file_name FROM track_media_refs WHERE track_id = 'track';"));
             Assert.Equal(0, await db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM memory_tracks;"));
             Assert.Empty(await db.QueryAsync("PRAGMA foreign_key_check;"));
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task V33AddsNullableOriginWithoutBackfillingRetiredParentFields()
+    {
+        var directory = Directory.CreateTempSubdirectory("perga-track-origin-");
+        try
+        {
+            var dbPath = Path.Combine(directory.FullName, "v32.db");
+            var migrator = new SqliteMigrator();
+            await new SqliteMigrator(migrator.Migrations.Take(32).ToArray()).MigrateAsync(dbPath);
+            await using var db = new SqliteConnection(new SqliteConnectionStringBuilder
+                { DataSource = dbPath, Pooling = false }.ToString());
+            await db.OpenAsync();
+            await db.ExecuteAsync("""
+                INSERT INTO areas (id, name, created_at_ms, updated_at_ms) VALUES ('area', 'Area', 1, 1);
+                INSERT INTO tracks (id, area_id, cwd, created_at_ms, updated_at_ms)
+                VALUES ('parent', 'area', '.', 1, 1);
+                INSERT INTO tracks (id, area_id, cwd, parent_track_id, parent_attempt_id, created_at_ms, updated_at_ms)
+                VALUES ('child', 'area', '.', 'parent', 'attempt', 1, 1);
+                """);
+            await db.CloseAsync();
+
+            await migrator.MigrateAsync(dbPath);
+            await db.OpenAsync();
+            var child = await db.QuerySingleAsync<(string? Origin, string Parent, string Attempt)>(
+                "SELECT origin_track_id, parent_track_id, parent_attempt_id FROM tracks WHERE id = 'child';");
+            Assert.Equal((null, "parent", "attempt"), child);
         }
         finally
         {
@@ -124,7 +157,8 @@ public sealed class SqliteMigratorTests
             Assert.Equal("0029_side_conversation_source.sql", migrator.Migrations[28].Name);
             Assert.Equal("0030_side_conversation_excerpt.sql", migrator.Migrations[29].Name);
             Assert.Equal("0031_session_message_attachments.sql", migrator.Migrations[30].Name);
-            Assert.Equal("0032_memory_tracks.sql", migrator.Migrations[^1].Name);
+            Assert.Equal("0032_memory_tracks.sql", migrator.Migrations[31].Name);
+            Assert.Equal("0033_track_origin.sql", migrator.Migrations[32].Name);
             await migrator.MigrateAsync(dbPath);
 
             // Idempotent re-run on already-initialized v1 database must not create a spurious backup.
@@ -140,6 +174,8 @@ public sealed class SqliteMigratorTests
             await conn.OpenAsync();
 
             Assert.Equal(SqliteMigrator.CurrentSchemaVersion, await conn.ExecuteScalarAsync<long>("SELECT MAX(version) FROM schema_migrations;"));
+            Assert.Equal(1L, await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM pragma_table_info('tracks') WHERE name = 'origin_track_id';"));
+            Assert.Equal(1L, await conn.ExecuteScalarAsync<long>("SELECT partial FROM pragma_index_list('tracks') WHERE name = 'idx_tracks_origin';"));
             Assert.Equal(1L, await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM pragma_table_info('areas') WHERE name = 'execution_target_id';"));
             Assert.Equal(3L, await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM pragma_table_info('tracks') WHERE name IN ('flow_spec_json', 'flow_rev', 'flow_file_sha256');"));
             Assert.Equal(4L, await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM pragma_table_info('tasks') WHERE name IN ('trigger_run_key', 'outcome', 'outcome_summary', 'archived_at_ms');"));
@@ -218,6 +254,7 @@ public sealed class SqliteMigratorTests
                 "idx_track_schedules_track",
                 "idx_memory_tracks_area",
                 "idx_tracks_area",
+                "idx_tracks_origin",
                 "idx_tracks_parent",
                 "idx_tasks_track_status",
                 "idx_tasks_session",

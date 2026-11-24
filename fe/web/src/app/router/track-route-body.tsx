@@ -413,6 +413,7 @@ export function TrackRouteBody({
   const openReportAnchor = (blockId: string) => {
     go({ name: 'track', trackId: track.id, blockId, from: routeFrom });
   };
+  const openRelatedTrack = (trackId: string) => { go({ name: 'track', trackId }); };
 
   const hasFlowContent = templateViews?.status === 'ready'
     && templateViews.projection.flow != null
@@ -433,7 +434,7 @@ export function TrackRouteBody({
 
         onOpenLink={openReportLink}
         onOpenFileLink={openReportFile}
-        onOpenTrack={(trackId) => { go({ name: 'track', trackId }); }}
+        onOpenTrack={openRelatedTrack}
         onOpenWorker={(cardId) => {
           if (!openableWorkerIds.has(cardId)) return;
           if (rows.some((row) => row.id === cardId)) {
@@ -470,6 +471,7 @@ export function TrackRouteBody({
           ? { kind: 'pages' }
           : { kind: 'tracks', areaId: mobileAreaId, returnTo: 'report' })} />}
       track={track}
+      onOpenOriginTrack={openRelatedTrack}
       canReopenTrack={canReopenTrack}
       canCloseTrack={canCloseTrack}
       cards={panelCards}

@@ -82,7 +82,7 @@ internal sealed class TrackCreationRepository
                             template_id, template_snapshot, template_inputs_json, template_state_json, data_json, data_rev,
                             flow_spec_json, flow_rev, flow_file_sha256,
                             enabled_plugins_json, closed_at_ms, pinned_at_ms, sort_order,
-                            created_at_ms, updated_at_ms, execution_target_id
+                            created_at_ms, updated_at_ms, execution_target_id, origin_track_id
                         )
                         VALUES (
                             @Id, @AreaId, @Title, @Cwd,
@@ -90,7 +90,7 @@ internal sealed class TrackCreationRepository
                             @TemplateId, @TemplateSnapshot, @TemplateInputsJson, '{}', @DataJson, @DataRev,
                             @FlowSpecJson, @FlowRev, @FlowFileSha256,
                             @EnabledPluginsJson, @ClosedAtMs, @PinnedAtMs, @SortOrder,
-                            @CreatedAtMs, @UpdatedAtMs, @ExecutionTargetId
+                            @CreatedAtMs, @UpdatedAtMs, @ExecutionTargetId, @OriginTrackId
                         );
                         """,
                         new
@@ -116,7 +116,8 @@ internal sealed class TrackCreationRepository
                             track.SortOrder,
                             track.CreatedAtMs,
                             track.UpdatedAtMs,
-                            ExecutionTargetId = trackExecutionTargetId
+                            ExecutionTargetId = trackExecutionTargetId,
+                            track.OriginTrackId
                         },
                         transaction: tx,
                         cancellationToken: innerCt)).ConfigureAwait(false);

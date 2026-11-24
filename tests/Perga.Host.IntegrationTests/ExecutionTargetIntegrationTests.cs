@@ -529,6 +529,44 @@ public sealed class ExecutionTargetIntegrationTests
     }
 
     [Fact]
+    public async Task FlowTrackUsesTheTargetAreaAndFallsBackFromAnUnavailableInheritedProvider()
+    {
+        await using var host = new PergaHostTestCluster();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var ct = timeout.Token;
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        var alternate = new ScriptableAgentRuntime
+        {
+            ProviderStatuses = [new("claude", true, null, null, ["remote-default"])]
+        };
+        kernel.ExecutionEnvironments.Register(new FakeExecutionEnvironment(
+            "alternate", "Alternate", host.DataDir, alternate, new RecordingVcsService(),
+            new ScopedFakeFileSystem(host.DataDir), new RecordingTerminalBridgeClient()));
+        var targetArea = await kernel.CreateAreaAsync(new("Remote", DefaultCwd: host.DataDir, ExecutionTargetId: "alternate"), ct);
+        var sourceArea = await kernel.CreateAreaAsync(new("Local", DefaultCwd: host.DataDir), ct);
+        var parent = await kernel.CreateTrackAsync(new(sourceArea.Id, Provider: "codex", Model: "gpt-5.4",
+            ReasoningEffort: "high", PermissionMode: "full"), ct);
+        await kernel.Actors.GetOrActivate(parent.Track.Id).EnsureMountedAsync(ct);
+        var commit = await kernel.CommitTrackFlowAsync(parent.Track.Id, false, 0, new InteropPrincipal.Human(), ct, content: $$$"""
+            {"rev":0,"nodes":[{"id":"remote","do":{"kind":"track","prompt":"Work on the alternate target","area":"{{{targetArea.Id}}}"}}]}
+            """);
+        Assert.True(commit.Ok, string.Join(Environment.NewLine, commit.Diagnostics));
+        await kernel.WaitForTrackIdleAsync(parent.Track.Id, ct);
+
+        var archive = Assert.Single((await kernel.GetTrackFlowAsync(parent.Track.Id, ct)).Projection.Archived);
+        Assert.Equal("ok", archive.Outcome);
+        var child = await kernel.GetTrackAggregateAsync(archive.ChildTrackId!, ct);
+        Assert.Equal(targetArea.Id, child.Track.AreaId);
+        Assert.Equal("alternate", child.Track.ExecutionTargetId);
+        var lead = Assert.Single(child.Sessions);
+        Assert.Equal(("claude", "remote-default", null, "bypassPermissions"),
+            (lead.Provider, lead.Model, lead.ReasoningEffort, lead.PermissionMode));
+        await kernel.WaitForTrackIdleAsync(child.Track.Id, ct);
+        Assert.Equal("Work on the alternate target", Assert.Single(alternate.ExecutedTurns).Input.Prompt);
+        Assert.Empty(host.AgentRuntime.ExecutedTurns);
+    }
+
+    [Fact]
     public async Task AreaBoundExecutionTarget_RoutesFullPipeline_AndNeverFallsBackWhenUnconfigured()
     {
         var tempDir = Path.Combine(Path.GetTempPath(), $"perga-exec-target-{Guid.NewGuid():N}");

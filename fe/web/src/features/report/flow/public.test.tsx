@@ -81,6 +81,29 @@ describe('buildFlowLayout', () => {
 });
 
 describe('ReportFlowBlock (builtin:flow)', () => {
+  it('opens the child Track from active and archived steps once it has an ID', () => {
+    const onOpenTrack = vi.fn();
+    render(<ReportFlowBlock onOpenTrack={onOpenTrack} flow={{
+      rev: 2,
+      nodes: [
+        makeNode({ id: 'cache', title: 'Cache', doKind: 'track', status: 'done', outcome: 'ok', childTrackId: 'trk_cache' }),
+        makeNode({ id: 'later', title: 'Later', doKind: 'track' }),
+      ],
+      archived: [{ id: 'storage', title: 'Storage', doKind: 'track', status: 'done', outcome: 'ok',
+        runCount: 1, childTrackId: 'trk_storage', archivedAtMs: 1_760_000_000_000 }],
+    }} />);
+
+    const scheduled = within(screen.getByRole('article', { name: 'Later' }));
+    expect(scheduled.getByText('Spawn track')).toBeTruthy();
+    expect(scheduled.queryByRole('button', { name: 'Open child track' })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: /Cache/ }));
+    fireEvent.click(within(screen.getByRole('article', { name: 'Cache' })).getByRole('button', { name: 'Open child track' }));
+    fireEvent.click(screen.getByRole('button', { name: /已归档 1 项/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open child track from Storage' }));
+    expect(onOpenTrack.mock.calls).toEqual([['trk_cache'], ['trk_storage']]);
+  });
+
   it('renders layered branches, watch progress, attention auto-selection, worker jump, balanced periodic cards, and archived drawer without action buttons', () => {
     const onOpenWorker = vi.fn();
 

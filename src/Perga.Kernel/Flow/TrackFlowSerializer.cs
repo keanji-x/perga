@@ -137,6 +137,13 @@ public static class TrackFlowSerializer
         if (!string.IsNullOrWhiteSpace(action.Interval)) obj["interval"] = action.Interval;
         if (!string.IsNullOrWhiteSpace(action.Timeout)) obj["timeout"] = action.Timeout;
         if (action.Repeat == true) obj["repeat"] = true;
+        if (!string.IsNullOrWhiteSpace(action.Title)) obj["title"] = action.Title;
+        if (!string.IsNullOrWhiteSpace(action.Area)) obj["area"] = action.Area;
+        if (!string.IsNullOrWhiteSpace(action.Template)) obj["template"] = action.Template;
+        if (action.TemplateInputs is { } inputs) obj["templateInputs"] = JsonNode.Parse(inputs.GetRawText());
+        if (!string.IsNullOrWhiteSpace(action.Cwd)) obj["cwd"] = action.Cwd;
+        if (!string.IsNullOrWhiteSpace(action.WorkspaceDriver)) obj["workspaceDriver"] = action.WorkspaceDriver;
+        if (!string.IsNullOrWhiteSpace(action.ExecutionTargetId)) obj["executionTargetId"] = action.ExecutionTargetId;
         return obj;
     }
 }

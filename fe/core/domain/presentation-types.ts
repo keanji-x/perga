@@ -2,7 +2,7 @@
 
 export type AgentProvider = string;
 
-export type AskAction = { "kind": "objective_approval_v2", objective: string, standard_hash: string, } | { "kind": "objective_approval", objective: string, standard_hash: string, } | { "kind": "reopen_track", closed_at: number, } | { "kind": "grant_admin" } | { "kind": "track_plugin_access", plugin_id: string, enabled: boolean, manifest_sha256: string, expected_revision: number, } | { "kind": "forge_action", idempotency_key: string, payload_hash: string, };
+export type AskAction = { "kind": "objective_approval_v2", objective: string, standard_hash: string, } | { "kind": "objective_approval", objective: string, standard_hash: string, } | { "kind": "reopen_track", closed_at: number, } | { "kind": "track_plugin_access", plugin_id: string, enabled: boolean, manifest_sha256: string, expected_revision: number, } | { "kind": "forge_action", idempotency_key: string, payload_hash: string, };
 
 export type AskAnswer = { "option": number } | { "text": string };
 

@@ -11,6 +11,113 @@ namespace Perga.Kernel.Actors;
 
 public sealed partial class TrackActor
 {
+    private async Task StartFlowTrackRunCoreAsync(TaskDto task, CancellationToken ct)
+    {
+        var admission = _options.DispatchAdmission.TryEnter();
+        if (admission is null) return;
+
+        var parent = _track;
+        var lead = parent.LeadSessionId is { } leadId ? _sessions.GetValueOrDefault(leadId) : null;
+        var running = task;
+        EventEnvelopeDto? evt = null;
+        try
+        {
+            // The action (including the prompt) must replay unchanged if the host stops before settlement.
+            if (task.Status != TaskRunStatus.Running)
+            {
+                var node = _flowSpec.Nodes.First(n => n.Id == task.TaskKey);
+                var action = FlowTrackAction.Interpolate(node, InterpolateFlowTextCore);
+                var now = NowMs();
+                running = task with
+                {
+                    RunCount = checked(task.RunCount + 1),
+                    Status = TaskRunStatus.Running,
+                    StatusDetail = null,
+                    Outcome = FlowOutcome.None,
+                    OutcomeSummary = null,
+                    Meta = JsonHelpers.ToElement(action),
+                    StartedAtMs = now,
+                    FinishedAtMs = null,
+                    UpdatedAtMs = now
+                };
+                evt = _taskCoordinator.CreateTaskUpdatedEventCore(now);
+                await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
+                await _store.UpsertTaskAsync(running, evt, ct).ConfigureAwait(false);
+                _taskCoordinator.ReplaceTaskInMemoryCore(running);
+            }
+
+            var runCts = CancellationTokenSource.CreateLinkedTokenSource(_actorShutdownCts.Token);
+            var active = new TrackTasks.ActiveTaskRunState(task.Id, running.RunCount, null, runCts);
+            _taskCoordinator.RegisterActiveRun(active);
+            var runToken = runCts.Token;
+            active.Execution = TrackBackgroundJob(async () =>
+            {
+                using (admission)
+                    await RunFlowTrackInBackgroundAsync(parent, lead, running, runToken).ConfigureAwait(false);
+            });
+        }
+        catch
+        {
+            admission.Dispose();
+            throw;
+        }
+
+        if (evt is not null)
+        {
+            try
+            {
+                await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, _actorShutdownCts.Token).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Trace.TraceWarning("Could not publish Track spawn startup for task {0}: {1}", task.Id, ex);
+            }
+        }
+    }
+
+    private async Task RunFlowTrackInBackgroundAsync(TrackDto parent, AgentSessionDto? lead, TaskDto running, CancellationToken ct)
+    {
+        TrackDto? child = null;
+        string? error = null;
+        try
+        {
+            var action = JsonHelpers.Deserialize<FlowDoSpecDto>(running.Meta!.Value)!;
+            child = await _flowTrackSpawner.SpawnAsync(parent, lead, running.Id, running.RunCount, action, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            return;
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+
+        if (_actorShutdownCts.IsCancellationRequested) return;
+
+        await EnqueueAsync(async _ =>
+        {
+            if (!_taskCoordinator.TryGetActiveRun(running.Id, out var active) ||
+                active.Settling || active.RunCount != running.RunCount)
+                return;
+
+            var now = NowMs();
+            var settled = _taskCoordinator.RequireTaskCore(running.Id) with
+            {
+                Status = child is not null ? TaskRunStatus.Done : TaskRunStatus.Failed,
+                Outcome = child is not null ? FlowOutcome.Ok : FlowOutcome.Attention,
+                OutcomeSummary = child is not null ? $"Created Track '{child.Title}' ({child.Id})." : error,
+                StatusDetail = error,
+                Meta = child is not null ? JsonHelpers.ToElement(new { childTrackId = child.Id, childTrackTitle = child.Title }) : null,
+                FinishedAtMs = now,
+                UpdatedAtMs = now
+            };
+            await _taskCoordinator.PersistAndEmitTaskSettlementCoreAsync(settled, now, CancellationToken.None,
+                suppressDefaultWake: child is not null, activeRun: active).ConfigureAwait(false);
+            await OnTaskSettledFlowHookCoreAsync(settled, CancellationToken.None).ConfigureAwait(false);
+        }, CancellationToken.None).ConfigureAwait(false);
+    }
+
     // ------------------- Flow `wake` and `watch` Runners -------------------
 
     private async Task<bool> StartFlowWakeRunCoreAsync(TaskDto task, CancellationToken ct)

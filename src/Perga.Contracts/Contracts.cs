@@ -85,7 +85,8 @@ public sealed record TrackDto(
     string ExecutionTargetId = "local",
     long FlowRev = 0,
     string? FlowSpecJson = null,
-    string? FlowFileSha256 = null)
+    string? FlowFileSha256 = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? OriginTrackId = null)
 {
     private static readonly JsonElement EmptyData = JsonSerializer.SerializeToElement(new { });
 

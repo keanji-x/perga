@@ -72,7 +72,8 @@ internal sealed class TrackReadRepository
                    t.sort_order AS SortOrder,
                    t.created_at_ms AS CreatedAtMs,
                    t.updated_at_ms AS UpdatedAtMs,
-                   t.execution_target_id AS ExecutionTargetId
+                   t.execution_target_id AS ExecutionTargetId,
+                   t.origin_track_id AS OriginTrackId
             FROM tracks t
             WHERE (@IncludeSystem OR t.area_id != @MemorySystemAreaId)
             """);
@@ -281,7 +282,8 @@ internal sealed class TrackReadRepository
                        t.sort_order AS SortOrder,
                        t.created_at_ms AS CreatedAtMs,
                        t.updated_at_ms AS UpdatedAtMs,
-                       t.execution_target_id AS ExecutionTargetId
+                       t.execution_target_id AS ExecutionTargetId,
+                       t.origin_track_id AS OriginTrackId
                 FROM tracks t
                 WHERE t.id = @TrackId;
                 """,
@@ -312,7 +314,8 @@ internal sealed class TrackReadRepository
             SortOrder: r.SortOrder,
             CreatedAtMs: r.CreatedAtMs,
             UpdatedAtMs: r.UpdatedAtMs,
-            ExecutionTargetId: string.IsNullOrWhiteSpace(r.ExecutionTargetId) ? "local" : r.ExecutionTargetId);
+            ExecutionTargetId: string.IsNullOrWhiteSpace(r.ExecutionTargetId) ? "local" : r.ExecutionTargetId,
+            OriginTrackId: r.OriginTrackId);
 
     private sealed class TrackRow
     {
@@ -338,6 +341,7 @@ internal sealed class TrackReadRepository
         public long CreatedAtMs { get; init; }
         public long UpdatedAtMs { get; init; }
         public string ExecutionTargetId { get; init; } = "local";
+        public string? OriginTrackId { get; init; }
     }
 
     private sealed class ReportRow

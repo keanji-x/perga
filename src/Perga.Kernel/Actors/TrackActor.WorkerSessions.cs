@@ -116,18 +116,18 @@ public sealed partial class TrackActor
                 ? " When no template is active yet, once you understand the scope of substantive work—before doing deep work or writing the Report—check `template_list` (and `template_read` for any plausible match), resolve task-specific `inputs`, preview with `track_set(..., dryRun: true)` when helpful, and apply a fitting template up front so its Report layout and `data` seed cleanly."
                 : string.Empty;
             return $"""
-                    You are the Lead Session for Perga Track `{TrackId}` (title: `{_track.Title}`).
+                    You are the Lead Session for Perga Track `{TrackId}` (title: `{_track.Title}`).{BuildTrackOriginNote()}
 
                     ## Track Model
                     You own four durable surfaces on this Track:
                     - **Title**: keep it concise and accurate once the goal is clear (`track_rename`).
                     - **Report**: the Track's living document (`report_read` / `report_commit`)—where plans, research, decisions, and current progress live. Use **Conversation** as the working thread for quick answers, clarifying questions, coordination, and brief summaries of Report updates, not as the sole home for lasting deliverables.
                     - **Templates & Data**: Templates are optional and implicit (`template_list` / `template_read`, apply or preview via `track_set` with a `templateId` or `.perga.js source`, `inputs`, and `dryRun`, detach with `clear`, update inputs with `template_update_inputs`). A template composes four layers—Report widgets, schema-validated `data` (`data_patch`), starter Flow nodes, and worker routing—and is composable rather than all-or-nothing (you own any Flow or schedule nodes a template seeds and may edit or cancel them).{templateScoping} Keep structured facts in `data` and narrative in the Report without duplicating widget content. After `track_set`, read the seeded Report (`report_read`) and inspect `template_read(templateId: "__current__", format: "files")` when you need the template's `data` schema.
-                    - **Flow**: declarative task, watch, and schedule orchestration governed by `flow.json`.
+                    - **Flow**: declarative task, watch, Track spawn, and schedule orchestration governed by `flow.json`.
 
                     ## Track Flow Orchestration
                     - The Host manages `{_flowFileStore.GetFlowFilePath(TrackId)}` (current `flowRev`: {_track.FlowRev}).
-                    - Use `when` (`after` / `cron` / `at`) and `do` (`run` / `wake` / `watch`) to declare nodes. If you can access the Host file, edit it and use `flow_commit(dryRun: true)` before `flow_commit()`.
+                    - Use `when` (`after` / `cron` / `at`) and `do` (`run` / `wake` / `watch` / `track`) to declare nodes. A `track` action creates an independent Track and settles when its initial Lead prompt is durable. If you can access the Host file, edit it and use `flow_commit(dryRun: true)` before `flow_commit()`.
                     - From SSH or when the Host file is unavailable, call `flow_read(format: "spec")` for the current spec and revision, then pass the edited JSON text as `content` and the read revision as `expectedFlowRev` to `flow_commit`. Validate the same arguments with `dryRun: true` first.
                     - To stop an active or recurring node, set `"canceled": true` and commit.
                     - Background GC archives terminal one-shot nodes with no remaining dependents and preserves uncommitted drafts.
@@ -166,7 +166,7 @@ public sealed partial class TrackActor
         var templateDataSection = BuildActiveTemplateDataSectionCore();
 
         return $"""
-                You are resuming Perga Track '{_track.Title}' ({TrackId}) as {role} in Epoch {compactedSession.Epoch}.
+                You are resuming Perga Track '{_track.Title}' ({TrackId}) as {role} in Epoch {compactedSession.Epoch}.{(compactedSession.IsLead ? BuildTrackOriginNote() : string.Empty)}
 
                 ## Latest Track Report
                 {latestReportMarkdown}{templateDataSection}
@@ -175,6 +175,10 @@ public sealed partial class TrackActor
                 {handoverSummary}
                 """;
     }
+
+    private string BuildTrackOriginNote() => _track.OriginTrackId is { } origin
+        ? $"\n\nTrack `{origin}` spawned this Track. Use `report_read(trackId: \"{origin}\")` for context and `mail_send(toTrackId: \"{origin}\")` to coordinate."
+        : string.Empty;
 
     private string BuildActiveTemplateDataSectionCore()
     {

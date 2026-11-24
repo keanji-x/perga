@@ -651,6 +651,22 @@ internal static class TrackFlowReconciler
                         targetSession = d.Session
                     }));
 
+            case "track":
+                return (
+                    "flow_track",
+                    d.Prompt!,
+                    AccessMode.ReadOnly,
+                    null,
+                    null,
+                    null,
+                    null,
+                    JsonHelpers.ToElement(new
+                    {
+                        flowNode = true,
+                        flowSource = node.Source,
+                        title = node.Title ?? node.Id
+                    }));
+
             case "watch":
                 return (
                     "flow_watch",

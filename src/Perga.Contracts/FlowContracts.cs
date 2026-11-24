@@ -47,7 +47,21 @@ public sealed record FlowDoSpecDto(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     string? ReasoningEffort = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    string? PermissionMode = null);
+    string? PermissionMode = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    string? Title = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    string? Area = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    string? Template = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    JsonElement? TemplateInputs = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    string? Cwd = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    string? WorkspaceDriver = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    string? ExecutionTargetId = null);
 
 public sealed record FlowNodeSpecDto(
     string Id,
@@ -130,7 +144,9 @@ public sealed record FlowNodeProjectionDto(
     FlowWatchProgressDto? WatchProgress = null,
     bool Repeat = false,
     string? ReasoningEffort = null,
-    string? PermissionMode = null);
+    string? PermissionMode = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    string? ChildTrackId = null);
 
 public sealed record FlowArchivedNodeProjectionDto(
     string Id,
@@ -143,7 +159,9 @@ public sealed record FlowArchivedNodeProjectionDto(
     string? SessionId,
     string? Model,
     long? FinishedAtMs,
-    long ArchivedAtMs);
+    long ArchivedAtMs,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    string? ChildTrackId = null);
 
 public sealed record FlowProjectionDto(
     long Rev,

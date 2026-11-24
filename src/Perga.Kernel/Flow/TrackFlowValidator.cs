@@ -3,6 +3,7 @@ using System.Text.Json;
 using Perga.AgentKit;
 using Perga.Contracts;
 using Perga.Kernel.Ports;
+using Perga.Kernel.Templates;
 using Perga.PolicyVm;
 
 namespace Perga.Kernel.Flow;
@@ -77,7 +78,10 @@ internal static class TrackFlowValidator
         for (var i = 0; i < nextSpec.Nodes.Count; i++)
         {
             var node = nextSpec.Nodes[i];
-            FlowSyntax.ValidateActionOptions(node.Do, $"$.nodes[{i}].do", errors);
+            var action = node.Do.Kind == "track" && !node.Canceled
+                ? FlowTrackAction.Interpolate(node, text => TemplateFlow.Interpolate(text, templateInputs, policy, policyVm))
+                : node.Do;
+            FlowSyntax.ValidateActionOptions(action, $"$.nodes[{i}].do", errors);
             // Template binding archives the previous task before inserting the replacement.
             if (replacedTemplateNodeIds?.Contains(node.Id) == true)
                 continue;
@@ -626,5 +630,12 @@ internal static class TrackFlowValidator
         return true;
     }
 
-    internal static bool DoEquals(FlowDoSpecDto a, FlowDoSpecDto b) => a == b;
+    internal static bool DoEquals(FlowDoSpecDto a, FlowDoSpecDto b) =>
+        (a with { TemplateInputs = null }) == (b with { TemplateInputs = null }) &&
+        (a.TemplateInputs, b.TemplateInputs) switch
+        {
+            ({ } left, { } right) => JsonElement.DeepEquals(left, right),
+            (null, null) => true,
+            _ => false
+        };
 }
