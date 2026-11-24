@@ -5,7 +5,6 @@ import {
 } from '@astryxdesign/core/SegmentedControl';
 
 import { areaOf, visibleAreas, type Area } from '../../../../core/domain/area.ts';
-import { MESSAGES } from '../../../../core/domain/messages.ts';
 import {
   userVisibleTracks, trackDisplayTitle, type Track,
 } from '../../../../core/domain/track.ts';
@@ -78,7 +77,7 @@ export function MobilePages({ areas, areaId, tracks, onOpenTrack, onBack, onNewT
           );
         })}
         {readError === null && !readLoading && shown.length === 0 && (
-          <MobileListEmpty icon={<Icon name={group === 'pinned' ? 'pin' : 'file'} />} title={group === 'pinned' ? MESSAGES.mobile.noPinnedPagesTitle : MESSAGES.mobile.noRecentPagesTitle} description={group === 'pinned' ? MESSAGES.mobile.noPinnedPagesDescription : MESSAGES.mobile.noRecentPagesDescription} />
+          <MobileListEmpty icon={<Icon name={group === 'pinned' ? 'pin' : 'file'} />} title={group === 'pinned' ? 'No pinned pages yet' : 'No recent pages yet'} description={group === 'pinned' ? 'Pinned pages appear here.' : 'Recently viewed pages appear here.'} />
         )}
       </MobileList>
       </div>

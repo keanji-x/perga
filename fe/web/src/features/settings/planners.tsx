@@ -13,7 +13,6 @@ import {
 } from '../../../../core/domain/agent-providers.ts';
 import { ErrorBox } from '../../ui/error-box/public.tsx';
 import { plannerTurnDuration } from '../../../../core/domain/settings.ts';
-import { MESSAGES } from '../../../../core/domain/messages.ts';
 import { SettingRow, SettingsList, SettingsPane } from './public.tsx';
 import { SettingEditor, type SettingEditorCopy, type SettingEditorProps } from './setting-editor.tsx';
 import styles from './settings.module.css';
@@ -98,9 +97,9 @@ export function PlannersPane({
     >
       <SettingsList>
         <SettingRow
-          title={MESSAGES.settings.turnDurationLabel}
+          title="Maximum turn duration"
           titleSuffix={TURN_DURATION.unit}
-          description={<span id={durationDescriptionId} className={styles.plannerReason}>{MESSAGES.settings.turnDurationDescription}</span>}
+          description={<span id={durationDescriptionId} className={styles.plannerReason}>Default: 30 minutes. Choose 1–240 minutes. Changes apply to the next turn; retrying an unconfirmed start keeps its frozen budget. Hold waiting time does not count. Backends without steer support receive only the budget reminder at the start of the turn, without a mid-turn warning.</span>}
           control={<SettingEditor {...turnDuration} copy={TURN_DURATION} hideLabel describedById={durationDescriptionId} />}
         />
       </SettingsList>

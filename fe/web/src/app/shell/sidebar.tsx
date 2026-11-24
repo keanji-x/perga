@@ -1,4 +1,3 @@
-import { MESSAGES } from '../../../../core/domain/messages.ts';
 import type { DialogOrigin } from '../../ui/dialog/public.tsx';
 import { EmptyState } from '../../ui/empty-state/public.tsx';
 import type { SidebarTrackGroups } from './sidebar-track-groups.ts';
@@ -390,8 +389,8 @@ export function Sidebar({
                     type="button"
                     data-nc-role="icon"
                     className={styles.newAreaButton}
-                    aria-label={MESSAGES.sidebar.newArea}
-                    title={MESSAGES.sidebar.newArea}
+                    aria-label="New area"
+                    title="New area"
                     onClick={() => onRequestCreateArea({ kind: 'anchor', anchor: { ref: createRef }, unavailable: 'surface-center' })}
                   >
                     <Icon name="plus" size="sm" />
@@ -400,7 +399,7 @@ export function Sidebar({
               </div>
               {readError === null && !readLoading && userAreas.length === 0 && (
                 <div className={styles.emptyArea}>
-                  <EmptyState variant="compact" icon={<Icon name="folder" />} title={MESSAGES.sidebar.noAreasTitle} description={MESSAGES.sidebar.noAreasDescription} />
+                  <EmptyState variant="compact" icon={<Icon name="folder" />} title="No areas yet" description="Projects and tracks are organized by area." />
                 </div>
               )}
 

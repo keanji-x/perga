@@ -1,4 +1,3 @@
-import { MESSAGES } from '../../../../core/domain/messages.ts';
 import { queryKeys } from '../providers/query-keys.ts';
 import { DailyCalendar,type CalendarViewMode } from '../../features/today/daily-calendar.tsx';
 import { CenteredComposerIntroduction } from '../../ui/drawer/centered-composer-introduction.tsx';
@@ -143,13 +142,13 @@ export function DailyTodayRoute({ transport, unauthorized, selectedDate, onOpenT
   return renderTrack({ ...detail.data, track: { ...detail.data.track, title: date } },
     null,
     calendarNode,
-    <header className={styles.reportIntro}><h2>{isDefaultToday ? MESSAGES.today.mobileTitle : 'Focus for this day'}</h2><p>{MESSAGES.today.mobileSubtitle}</p></header>,
+    <header className={styles.reportIntro}><h2>{isDefaultToday ? 'Today’s focus' : 'Focus for this day'}</h2><p>Keep your work clear, calm, and well-ordered.</p></header>,
     supervisor,
     isDefaultToday ? {
       title: 'Today Assistant',
       presented: view === 'assistant',
       onOpenAssistant: () => setView('assistant'),
-      emptyIntroduction: <CenteredComposerIntroduction title={MESSAGES.today.greeting} />,
+      emptyIntroduction: <CenteredComposerIntroduction title="What would you like to move forward today?" />,
       footerPrefix: null,
       render: (assistant) => <TodayCenter view={view} backRef={backRef} onBack={() => { restoreGuide.current = true; setView('assistant'); }} assistant={assistant}
         changes={<DailyReportChanges key={date} standalone isToday date={shiftDailyDate(date, -1)} transport={transport} unauthorized={unauthorized} onOpenTrack={onOpenTrack} />}

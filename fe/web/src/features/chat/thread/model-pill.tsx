@@ -50,7 +50,6 @@ export function ModelPill<Provider extends string = AgentProvider>({
   const [open, setOpen] = useState(false);
   const [providerFilter, setProviderFilter] = useState<Provider | 'all'>('all');
   const [searchQuery, setSearchQuery] = useState('');
-  const [hoveredEffortIndex, setHoveredEffortIndex] = useState<number | null>(null);
   const [draft, setDraft] = useState<Readonly<{ provider: Provider; selection: ModelSelection }>>({
     provider,
     selection,
@@ -97,7 +96,6 @@ export function ModelPill<Provider extends string = AgentProvider>({
     : shown.find((group) => group.provider === providerFilter) ?? null;
 
   const handleOpenChange = (nextOpen: boolean) => {
-    setHoveredEffortIndex(null);
     setSearchQuery('');
     if (nextOpen) {
       setProviderFilter(shown.length > 1 ? 'all' : (shown[0]?.provider ?? 'all'));
@@ -128,25 +126,39 @@ export function ModelPill<Provider extends string = AgentProvider>({
     || draftReason.blocked !== null
     || (draft.selection.model === null && draftGroup.defaultAvailable === false);
 
-  const effortStops = draftEffortInfo.efforts.map((entry) => ({
+  const defaultEffort = draftEffortInfo.effortDefault;
+  const supportedEffortStops = draftEffortInfo.efforts.map((entry) => ({
     value: entry.reasoning_effort,
     label: entry.reasoning_effort,
   }));
-  const defaultEffort = draftEffortInfo.effortDefault;
-  const defaultEffortIndex = defaultEffort === null ? -1 : effortStops.findIndex(stop => stop.value === defaultEffort);
-  const selectedEffortIndex = draftEffortValue === null ? -1 : effortStops.findIndex(stop => stop.value === draftEffortValue);
-  const hasEffortChoices = effortStops.length > 0;
-  const unavailableEffort = draftEffortValue !== null && selectedEffortIndex === -1 ? draftEffortValue : null;
-  const effortValueText = unavailableEffort !== null
-    ? `${unavailableEffort} (Unavailable)`
-    : selectedEffortIndex >= 0
-      ? effortStops[selectedEffortIndex].label
-      : !hasEffortChoices && retainedEffort === null
-        ? 'N/A'
-        : defaultEffortIndex >= 0
-          ? `${FOLLOW_DEFAULT_LABEL} (${effortStops[defaultEffortIndex].label})`
-          : FOLLOW_DEFAULT_LABEL;
-  const hoveredEffort = hoveredEffortIndex !== null ? effortStops[hoveredEffortIndex] ?? null : null;
+  const advertisedDefault = defaultEffort !== null
+    && supportedEffortStops.some((stop) => stop.value === defaultEffort)
+    ? defaultEffort
+    : null;
+  const defaultStopLabel = advertisedDefault !== null
+    ? `${FOLLOW_DEFAULT_LABEL} (${advertisedDefault})`
+    : FOLLOW_DEFAULT_LABEL;
+  const hasEffortChoices = supportedEffortStops.length > 0;
+  const unavailableEffort = draftEffortValue !== null
+    && !supportedEffortStops.some((stop) => stop.value === draftEffortValue)
+    ? draftEffortValue
+    : null;
+  const sliderStops: readonly { value: string | null; label: string }[] = [
+    { value: null, label: defaultStopLabel },
+    ...(retainedEffort !== null && !supportedEffortStops.some((stop) => stop.value === retainedEffort)
+      ? [{ value: retainedEffort, label: `${retainedEffort} (Unavailable)` }]
+      : []),
+    ...supportedEffortStops,
+  ];
+  const sliderIndex = draftEffortValue === null
+    ? 0
+    : Math.max(0, sliderStops.findIndex((stop) => stop.value === draftEffortValue));
+  const selectedSupportedStop = draftEffortValue === null
+    ? null
+    : supportedEffortStops.find((stop) => stop.value === draftEffortValue) ?? null;
+  const effortValueText = sliderStops.length <= 1
+    ? 'N/A'
+    : (sliderStops.at(sliderIndex)?.label ?? FOLLOW_DEFAULT_LABEL);
   const canResetEffort = draftEffortValue !== null && draftReason.blocked === null;
   const resetEffort = () => {
     setDraft({
@@ -274,28 +286,23 @@ export function ModelPill<Provider extends string = AgentProvider>({
           <div className={styles.effortRow}>
             <span className={styles.effortTitle}>Effort</span>
             <EffortSlider
-              stops={effortStops}
-              selectedIndex={selectedEffortIndex}
-              defaultIndex={defaultEffortIndex}
+              stops={sliderStops}
+              selectedIndex={sliderIndex}
               valueText={effortValueText}
-              isDisabled={(!hasEffortChoices && !canResetEffort) || draftReason.blocked !== null}
+              isDisabled={sliderStops.length <= 1 || draftReason.blocked !== null}
               onChangeIndex={(idx) => {
-                const stop = effortStops.at(idx);
+                const stop = sliderStops.at(idx);
                 if (!stop) return;
                 setDraft({
                   provider: draftGroup.provider,
                   selection: { model: draftModelId, reasoning_effort: stop.value },
                 });
               }}
-              onResetToDefault={canResetEffort ? resetEffort : undefined}
-              onHoverChange={setHoveredEffortIndex}
             />
             <span className={styles.effortReadout}>
-              {hoveredEffort !== null ? (
-                <span className={styles.effortPreview}>{hoveredEffort.label}</span>
-              ) : selectedEffortIndex >= 0 ? (
+              {selectedSupportedStop !== null ? (
                 <>
-                  <span className={styles.effortValue}>{effortStops[selectedEffortIndex].label}</span>
+                  <span className={styles.effortValue}>{selectedSupportedStop.label}</span>
                   {canResetEffort && (
                     <Tooltip content="Reset to default" placement="above">
                       <button
@@ -325,9 +332,9 @@ export function ModelPill<Provider extends string = AgentProvider>({
                     </Tooltip>
                   )}
                 </>
-              ) : defaultEffortIndex >= 0 ? (
+              ) : advertisedDefault !== null ? (
                 <>
-                  <span className={styles.effortInherited}>{effortStops[defaultEffortIndex].label}</span>
+                  <span className={styles.effortInherited}>{advertisedDefault}</span>
                   <span className={styles.effortDefaultHint}>default</span>
                 </>
               ) : (

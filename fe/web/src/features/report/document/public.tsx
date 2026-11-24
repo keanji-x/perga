@@ -16,7 +16,6 @@ import {
   type ReportFileLinkTarget,
 } from '../../../../../core/domain/report-file.ts';
 import { type ReportSourceLinkTarget } from '../../../../../core/domain/report-source.ts';
-import { MESSAGES } from '../../../../../core/domain/messages.ts';
 import { type ReportLinkPreviewResources } from '../link-preview/public.tsx';
 import type { ReportSourceInsertion } from '../source/placement.ts';
 import { prepareReportDocument, type PreparedReport, type PreparedReportBlock } from './preparation.ts';
@@ -137,7 +136,7 @@ export function ReportDocument({
 
   return (
     <article className={`calm-prose ${styles.doc} ${outlineOnly ? styles.outlineOnly : ''}`} data-nc-report={authored ? '' : undefined} tabIndex={-1}>
-      {outlineOnly && <div className={styles.mobileEmpty}><EmptyState icon={<Icon name="file" />} title={MESSAGES.track.reportEmptyTitle} description={MESSAGES.track.reportEmptyDescription} /></div>}
+      {outlineOnly && <div className={styles.mobileEmpty}><EmptyState icon={<Icon name="file" />} title="Progress will be compiled here" description="Describe what you want to accomplish; the plan and findings will take shape as you converse." /></div>}
       {rail}
       {byline !== undefined && <div className={styles.byline}>{byline}</div>}
       {prepared.kind === 'legacy'

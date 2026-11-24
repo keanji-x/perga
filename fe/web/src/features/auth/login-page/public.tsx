@@ -3,7 +3,6 @@ import { useState } from '../../../ui/state/public.ts';
 import styles from './login-page.module.css';
 import type { SessionIdentity } from '../../../../../core/api/auth.ts';
 import { LoginThrottledError } from '../../../../../core/domain/login.ts';
-import { formatMessage, MESSAGES } from '../../../../../core/domain/messages.ts';
 
 export type LoginPageProps = Readonly<{
   login: (username: string, password: string, signal: AbortSignal) => Promise<SessionIdentity | null>;
@@ -38,14 +37,14 @@ export function LoginPage({ login, reload }: LoginPageProps) {
       event.preventDefault();
       if (pending.current !== null) return;
       if (username.trim() === '' || password.trim() === '') {
-        setError(MESSAGES.auth.missingCredentials);
+        setError('Enter your username and password.');
         return;
       }
       const attempt = new AbortController(); pending.current = attempt;
       setSubmitting(true); setError(null); setRetryAt(null); setRetrySeconds(0);
       void login(username, password, attempt.signal).then((result) => {
         if (attempt.signal.aborted) return;
-        if (!result) { setError(MESSAGES.auth.invalidCredentials); setSubmitting(false); return; }
+        if (!result) { setError('Wrong username or password.'); setSubmitting(false); return; }
         // A reload resets every persisted and in-memory cache under the new identity.
         reload();
       }).catch((cause: unknown) => {
@@ -54,7 +53,7 @@ export function LoginPage({ login, reload }: LoginPageProps) {
           setRetryAt(Date.now() + cause.retryAfterSeconds * 1000);
           setRetrySeconds(cause.retryAfterSeconds);
         }
-        setError(cause instanceof Error && cause.message ? cause.message : MESSAGES.auth.signInFailed);
+        setError(cause instanceof Error && cause.message ? cause.message : 'Sign-in failed.');
         setSubmitting(false);
       }).finally(() => {
         if (pending.current === attempt) pending.current = null;
@@ -69,13 +68,13 @@ export function LoginPage({ login, reload }: LoginPageProps) {
       {retryAt !== null && (
         <p className={styles.retryNote}>
           {retrySeconds > 0
-            ? formatMessage(retrySeconds === 1 ? MESSAGES.auth.retryInOne : MESSAGES.auth.retryIn, { seconds: retrySeconds })
-            : MESSAGES.auth.retryReady}
+            ? (retrySeconds === 1 ? 'Try again in 1 second.' : `Try again in ${retrySeconds} seconds.`)
+            : 'You can try again now.'}
         </p>
       )}
 
       <div className={styles.field}>
-        <label className={styles.label} htmlFor={`${prefix}-username`}>{MESSAGES.auth.usernameLabel}</label>
+        <label className={styles.label} htmlFor={`${prefix}-username`}>Username</label>
         <input
           id={`${prefix}-username`}
           className={styles.input}
@@ -90,7 +89,7 @@ export function LoginPage({ login, reload }: LoginPageProps) {
       </div>
 
       <div className={styles.field}>
-        <label className={styles.label} htmlFor={`${prefix}-password`}>{MESSAGES.auth.passwordLabel}</label>
+        <label className={styles.label} htmlFor={`${prefix}-password`}>Password</label>
         <input
           id={`${prefix}-password`}
           className={styles.input}
@@ -104,7 +103,7 @@ export function LoginPage({ login, reload }: LoginPageProps) {
       </div>
 
       <button type="submit" className={styles.submit} disabled={submitting}>
-        {submitting ? MESSAGES.auth.submittingLabel : MESSAGES.auth.submitLabel}
+        {submitting ? 'Signing in…' : 'Sign in'}
       </button>
     </form>
   </main>;

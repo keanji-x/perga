@@ -130,12 +130,15 @@ describe('Track actions menu text geometry', () => {
 });
 
 describe('the track closed status in the page header', () => {
+  const visibleClosedStatus = () => [...document.querySelectorAll<HTMLElement>('[aria-label="Track closed"]')]
+    .find((element) => element.getBoundingClientRect().height > 0)!;
+
   it('sits directly beside the title as quiet text', async () => {
     await browserPage.viewport(1200, 800);
     renderPage({ track: track({ title: 'Status preview', closedAt: 5 }) });
 
     const title = document.querySelector<HTMLElement>('[aria-label="Rename track"]')!;
-    const status = document.querySelector<HTMLElement>('[aria-label="Track closed"]')!;
+    const status = visibleClosedStatus();
     const gap = status.getBoundingClientRect().left - title.getBoundingClientRect().right;
 
     expect(gap).toBeGreaterThanOrEqual(4);
@@ -148,7 +151,7 @@ describe('the track closed status in the page header', () => {
     await browserPage.viewport(1200, 800);
     renderPage({ track: track({ closedAt: 5 }), canReopenTrack: true });
 
-    const status = document.querySelector<HTMLElement>('[aria-label="Track closed"]')!;
+    const status = visibleClosedStatus();
     const statusStyle = getComputedStyle(status);
 
     expect(status.getBoundingClientRect().height).toBe(24);
@@ -252,7 +255,7 @@ describe('the track closed status in the page header', () => {
   it('keeps the subdued closed colour readable in both themes', async () => {
     await browserPage.viewport(1200, 800);
     renderPage({ track: track({ closedAt: 5 }) });
-    const status = document.querySelector<HTMLElement>('[aria-label="Track closed"]')!;
+    const status = visibleClosedStatus();
 
     for (const theme of ['light', 'dark'] as const) {
       document.documentElement.dataset.theme = theme;

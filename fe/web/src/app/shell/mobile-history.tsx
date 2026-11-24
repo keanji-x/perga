@@ -1,4 +1,3 @@
-import { MESSAGES } from '../../../../core/domain/messages.ts';
 import { ConversationGroups } from '../../features/chat/list/groups.tsx';
 import { ConversationArchiveAction } from '../../features/chat/list/public.tsx';
 import { trackEmptyContent } from './track-empty-content.tsx';
@@ -22,10 +21,10 @@ type HistoryView = 'current' | 'pinned' | 'unread' | 'waiting';
 const VIEWS: readonly HistoryView[] = Object.freeze(['current', 'pinned', 'unread', 'waiting']);
 function viewLabel(view: HistoryView): string {
   switch (view) {
-    case 'current': return MESSAGES.sidebar.thisTrack;
-    case 'pinned': return MESSAGES.sidebar.pinned;
-    case 'unread': return MESSAGES.sidebar.unread;
-    case 'waiting': return MESSAGES.sidebar.needsAttention;
+    case 'current': return 'This track';
+    case 'pinned': return 'Pinned';
+    case 'unread': return 'Unread';
+    case 'waiting': return 'Attention';
   }
 }
 
@@ -125,7 +124,7 @@ export function MobileHistory({ owner, open, onOpenChange, conversations, loadin
     onOpenChange(false);
   };
   return <MobileNav key={session.key} id="mobile-conversation-history" ref={captureDialog} isOpen={open} onOpenChange={onOpenChange} side="start" width={320}
-    label={view === 'current' ? MESSAGES.sidebar.historyTitle : viewLabel(view)} header={<span className={styles.drawerHeading}>{view === 'current' ? MESSAGES.sidebar.historyTitle : viewLabel(view)}</span>} className={`${styles.drawer} ${mobileFontClassName}`}
+    label={view === 'current' ? 'Conversations' : viewLabel(view)} header={<span className={styles.drawerHeading}>{view === 'current' ? 'Conversations' : viewLabel(view)}</span>} className={`${styles.drawer} ${mobileFontClassName}`}
     >
     <div ref={content} className={styles.layout} inert={presentation.blocked || !open}
       onClickCapture={event => {
@@ -141,14 +140,14 @@ export function MobileHistory({ owner, open, onOpenChange, conversations, loadin
         })}
       </nav>
       {view === 'current' && <div className={styles.functions}>
-        <Button className={styles.functionButton} label={MESSAGES.sidebar.startNewConversation} variant="ghost" size="lg" isDisabled={onNew === null}
+        <Button className={styles.functionButton} label="New conversation" variant="ghost" size="lg" isDisabled={onNew === null}
           icon={<UiIcon name="plus" />} onClick={() => { if (onNew !== null) leave(onNew); }} />
 
       </div>}
       <div ref={captureList} className={styles.list}>
         {view === 'current' ? <>
         <p className={styles.scope}>{scopeLabel}</p>
-        {failed && <ErrorBox message="Some conversations could not be loaded." actionLabel={MESSAGES.common.retry} onRetry={onRetry} />}
+        {failed && <ErrorBox message="Some conversations could not be loaded." actionLabel="Retry" onRetry={onRetry} />}
         {loading && <p role="status">Loading conversations…</p>}
         <ConversationGroups conversations={conversations} emptyActive={!loading && !failed ? <EmptyState variant="compact" icon={<UiIcon name="chat" />} title={conversations.length === 0 ? 'No conversations in this track yet.' : 'No active conversations.'} description="Active conversations for this track appear here." /> : null}>
           {rows => {
@@ -174,7 +173,7 @@ export function MobileHistory({ owner, open, onOpenChange, conversations, loadin
         </ConversationGroups>
         </> : <>
           <p className={styles.scope}>{shareMode ? 'Shared tracks' : 'All areas'}</p>
-          {tracksError !== null && <ErrorBox message={tracksError} actionLabel={MESSAGES.common.retry} onRetry={onRetryTracks} />}
+          {tracksError !== null && <ErrorBox message={tracksError} actionLabel="Retry" onRetry={onRetryTracks} />}
           {tracksLoading && <p role="status">Loading tracks…</p>}
           <MobileTrackList tracks={trackGroups[view]} currentTrackId={currentTrackId} isUnread={isUnread}
             onOpenTrack={(trackId) => leave(() => onOpenTrack(trackId))}
@@ -189,7 +188,7 @@ export function MobileHistory({ owner, open, onOpenChange, conversations, loadin
         ) : (
           <span className={styles.footerButton}><span className={styles.avatar}>{accountInitial}</span>{accountLabel}</span>
         )}
-        <Button className={styles.footerButton} label={MESSAGES.common.settings} variant="ghost" size="lg" icon={<UiIcon name="settings" />}
+        <Button className={styles.footerButton} label="Settings" variant="ghost" size="lg" icon={<UiIcon name="settings" />}
           onClick={() => leave(onOpenSettings)} />
       </div>}
     </div>

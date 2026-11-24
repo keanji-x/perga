@@ -3,7 +3,6 @@ import { Divider } from '@astryxdesign/core/Divider';
 import { Collapsible } from '@astryxdesign/core/Collapsible';
 import { MessageActions } from './message-actions.tsx';
 import type { ConversationMetaClock } from '../../../../../core/domain/conversation-meta.ts';
-import { MESSAGES } from '../../../../../core/domain/messages.ts';
 import { useState } from '../../../ui/state/public.ts';
 import { restoreDrawerFocus } from '../../../ui/drawer/restore-focus.ts';
 import styles from './meta.module.css';
@@ -113,12 +112,12 @@ export function ThreadStatusNotice({ historical = false, messageActions = 'all',
       </div>
       {!historical && <MessageActions actions={[
         { id: 'copy', kind: feedback?.kind === 'done' ? 'copied' : 'copy',
-          label: copyAction === null ? MESSAGES.chat.copyReplyUnavailable : feedback === null || feedback.kind === 'pending' ? MESSAGES.chat.copyReply
-            : feedback.kind === 'done' ? MESSAGES.chat.copiedReply : MESSAGES.chat.copyFailed,
+          label: copyAction === null ? 'Copy reply (unavailable)' : feedback === null || feedback.kind === 'pending' ? 'Copy reply'
+            : feedback.kind === 'done' ? 'Copied reply' : 'Copy failed',
           disabled: copyAction === null || feedback?.kind === 'pending',
           run: () => { if (copyAction !== null) void copy.perform(copyAction.run); } },
-        ...(messageActions === 'copy-only' ? [] : [{ id: 'regenerate', kind: 'regenerate' as const, label: regenerateAction === null ? MESSAGES.chat.regenerateUnavailable : MESSAGES.chat.regenerate,
-          tooltip: MESSAGES.chat.regenerateTooltip,
+        ...(messageActions === 'copy-only' ? [] : [{ id: 'regenerate', kind: 'regenerate' as const, label: regenerateAction === null ? 'Regenerate (unavailable)' : 'Regenerate',
+          tooltip: 'Resend the original message in this conversation while keeping history.',
           disabled: regenerateAction === null || regenerate.feedback?.kind === 'pending',
           run: () => { if (regenerateAction !== null) void regenerate.perform(regenerateAction.run); } }]),
       ]} />}

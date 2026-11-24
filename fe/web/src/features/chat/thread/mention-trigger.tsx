@@ -9,7 +9,6 @@ import type { SearchableItem, SearchSource } from '@astryxdesign/core/Typeahead'
 import { Badge } from '@astryxdesign/core/Badge';
 
 import type { MentionKind, MentionSearch, MentionSuggestion } from '../../../../../core/domain/mentions.ts';
-import { MESSAGES } from '../../../../../core/domain/messages.ts';
 import styles from './mention-trigger.module.css';
 
 /** The headings Astryx's `groupItems` draws, in the order the suggestions arrive. */
@@ -191,7 +190,7 @@ export function mentionTrigger(source: SearchSource<MentionItem>): ChatComposerT
       const data = (item as MentionItem).auxiliaryData!;
       return 'category' in data ? enterCategory(data.category) : mentionToken(data.suggestion);
     },
-  }, { icon: <Icon name="search" />, title: 'No matches', description: MESSAGES.chat.noMentionDescription });
+  }, { icon: <Icon name="search" />, title: 'No matches', description: 'Try another keyword or reference type.' });
 }
 
 /**

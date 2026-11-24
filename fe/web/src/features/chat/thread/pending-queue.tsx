@@ -4,7 +4,6 @@ import { Banner } from '@astryxdesign/core/Banner';
 import type { PendingQueueEntry } from '../../../../../core/domain/conversation.ts';
 import type { PlannerQueueWriteOutcome } from '../../../../../core/domain/conversation-commands.ts';
 import { queueEntryIsAccounted, type QueueDisplayAccounting, type PendingQueueSend } from '../../../../../core/domain/conversation-outbox.ts';
-import { MESSAGES } from '../../../../../core/domain/messages.ts';
 import { OutgoingMessage } from './outgoing-message.tsx';
 import { MessageActions } from './message-actions.tsx';
 import { useCompactViewport } from '../../../ui/viewport/public.ts';
@@ -118,7 +117,7 @@ export function PendingQueue({ entries, pendingInputCount, queueDisplayAccountin
     } finally { writeLease.current = false; setWriting(false); }
   };
   return <SizeMotion motionKey={visible}>
-    {visible && <section ref={root} className={styles.queue} data-nc-pending-queue="" aria-label={MESSAGES.chat.queuedMessagesLabel} tabIndex={-1}>
+    {visible && <section ref={root} className={styles.queue} data-nc-pending-queue="" aria-label="Queued messages" tabIndex={-1}>
       <div className={styles.list}>
           {snapshot.rows.map(entry => {
             const isEditing = false;
@@ -134,18 +133,18 @@ export function PendingQueue({ entries, pendingInputCount, queueDisplayAccountin
                   <div className={styles.line}>
                     <div data-nc-pending-entry-text=""><OutgoingMessage speaker="unknown" text={current.text} mobile={mobile} edited={isEditing} /></div>
                     <div className={styles.actions}>
-                      <MessageActions label={MESSAGES.chat.queuedMessageActions} actions={[
-                        { id: 'undo', kind: 'undo', label: MESSAGES.chat.withdraw, tooltip: MESSAGES.chat.withdrawTooltip, disabled: blocked || isEditing || !canWithdraw,
+                      <MessageActions label="Queued message actions" actions={[
+                        { id: 'undo', kind: 'undo', label: 'Withdraw', tooltip: 'Withdraw this queued message.', disabled: blocked || isEditing || !canWithdraw,
                           run: () => { void run(current, () => onDelete(current)); } },
-                        ...(onSteer === undefined || (current.state !== undefined && current.state !== 'waiting') ? [] : [{ id: 'steer', kind: 'return' as const, label: MESSAGES.chat.steerNow, tooltip: MESSAGES.chat.steerNowTooltip, disabled: blocked || isEditing,
+                        ...(onSteer === undefined || (current.state !== undefined && current.state !== 'waiting') ? [] : [{ id: 'steer', kind: 'return' as const, label: 'Send now', tooltip: 'Steer into the current reply.', disabled: blocked || isEditing,
                           run: () => { void run(current, () => onSteer(current)); } }]),
                       ]} />
                     </div>
                   </div>
-                  {current.state === 'waiting' && <p className={styles.notice} role="status">{MESSAGES.chat.queued}</p>}
-                  {(current.state === 'steering' || current.state === 'sending') && <p className={styles.notice} role="status">{MESSAGES.chat.sending}</p>}
-                  {current.state === 'processing' && <p className={styles.notice} role="status">{MESSAGES.chat.processing}</p>}
-                  {current.state === 'unconfirmed' && <p className={styles.notice} role="status">{MESSAGES.chat.unconfirmedPaused}</p>}
+                  {current.state === 'waiting' && <p className={styles.notice} role="status">Queued</p>}
+                  {(current.state === 'steering' || current.state === 'sending') && <p className={styles.notice} role="status">Sending…</p>}
+                  {current.state === 'processing' && <p className={styles.notice} role="status">Processing</p>}
+                  {current.state === 'unconfirmed' && <p className={styles.notice} role="status">Delivery unconfirmed; message paused.</p>}
                   {failed !== null && <QueueWriteNotice outcome={failed} />}
                 </div>
               </div></div></SizeMotion>
@@ -153,7 +152,7 @@ export function PendingQueue({ entries, pendingInputCount, queueDisplayAccountin
           })}
           {sending.map(message => <div key={message.id} className={styles.sending} data-nc-pending-send={message.id}>
             <div><OutgoingMessage speaker={message.author === 'you' ? 'you' : message.author === 'human' ? 'human' : 'unknown'} text={message.text} mobile={mobile} /></div>
-            <span className={styles.delivery} role="status">{message.delivery === 'failed' ? MESSAGES.chat.sendIncomplete : MESSAGES.chat.sending}</span>
+            <span className={styles.delivery} role="status">{message.delivery === 'failed' ? 'Not sent' : 'Sending…'}</span>
           </div>)}
           {pendingInputCount > 0 && <p className={styles.notice} role="status">
             {`${pendingInputCount} ${pendingInputCount === 1 ? 'input is' : 'inputs are'} waiting for execution.`}

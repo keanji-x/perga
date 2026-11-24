@@ -1,4 +1,3 @@
-import { MESSAGES } from '../../../../../core/domain/messages.ts';
 import { activityLabelOf } from '../../../../../core/domain/activity.ts';
 import inventoryStyles from './inventory.module.css';
 import { LayerDismissal } from '../../../ui/dialog/public.tsx';
@@ -408,15 +407,15 @@ export function TrackPage({ fillReading = false, articleMasthead = !fillReading,
           </>
         }
         meta={!compactViewport && !boardOpen && onShareTrack !== undefined && <AstryxButton ref={shareTriggerRef}
-          isIconOnly label={MESSAGES.common.share} tooltip={MESSAGES.common.share} variant="ghost" size="sm" icon={<Icon name="share" size="sm" />} className={styles.shareTrigger}
+          isIconOnly label="Share" tooltip="Share" variant="ghost" size="sm" icon={<Icon name="share" size="sm" />} className={styles.shareTrigger}
           onClick={() => onShareTrack({ kind: 'anchor', anchor: { ref: shareTriggerRef }, unavailable: 'surface-center' })} />}
         actions={(
           <span className={styles.headerActions}>
             {showConversationAction && !boardOpen && !conversationOpen && (onReply !== undefined || onStartConversation !== undefined) && (
               <AstryxButton
                 className={styles.desktopChatAction}
-                label={MESSAGES.track.discussAction}
-                tooltip={activityLabel ?? (onReply === undefined ? 'Open conversation' : MESSAGES.track.discussTooltip)}
+                label="Discuss"
+                tooltip={activityLabel ?? (onReply === undefined ? 'Open conversation' : 'Open Planner conversation')}
                 variant="ghost"
                 size="sm"
                 icon={<><Icon name="chat" /><ActivityIndicator state={activity} /></>}
@@ -453,7 +452,7 @@ export function TrackPage({ fillReading = false, articleMasthead = !fillReading,
 
       {titleInHeader && createPortal(<span aria-hidden="true" style={{ position: 'absolute' }} />, mobileHeaderTitleHost)}
       {headerActionsHost !== null && mobileActions !== undefined && createPortal(mobileActions, headerActionsHost)}
-      {compactViewport && !(titleInHeader && closeSurface === undefined) && <div className={styles.mobileTrackHeader}>
+      {titleInHeader && closeSurface === undefined ? null : <div className={styles.mobileTrackHeader}>
         <MobileHeader
           title={trackDisplayTitle(track.title)}
           titleText={<TrackTitle track={track} />}
@@ -538,7 +537,7 @@ export function TrackPage({ fillReading = false, articleMasthead = !fillReading,
                 onBack={closeMobilePanel}
               >
                 <div className={styles.mobileConversationList}>
-                  {conversationList ?? <EmptyState variant="compact" icon={<Icon name="chat" />} title={MESSAGES.chat.noConversationsTitle} description={MESSAGES.chat.noConversationsDescription} />}
+                  {conversationList ?? <EmptyState variant="compact" icon={<Icon name="chat" />} title="No conversations yet" description="Conversations started here appear in this list." />}
                 </div>
               </MobileListPage>
             ) : (

@@ -1,4 +1,3 @@
-import { MESSAGES } from '../../../../../core/domain/messages.ts';
 import { parseComposerCommand } from '../../../../../core/domain/composer-command.ts';
 import { PLANNER_SWITCH_ARGUMENTS } from '../../../../../core/domain/planner-switch.ts';
 import type { IconName } from '../../../ui/icon/public.tsx';
@@ -24,13 +23,13 @@ function commandDefinitions(): readonly Omit<ComposerCommand, 'execute'>[] {
   return [
     { id: 'track-stop', name: 'stop', icon: 'status-exited', hint: 'Stop the current response', arguments: 'none' },
     { id: 'reconnect-conversation', name: 'reconnect', icon: 'chat', hint: 'Reconnect session and keep context', arguments: 'none' },
-    { id: 'reset-conversation', name: 'reset', icon: 'chat', hint: MESSAGES.chat.slashResetDesc, arguments: 'none' },
-    { id: 'new-conversation', name: 'new', icon: 'plus', hint: MESSAGES.chat.slashNewDesc, arguments: 'none' },
-    { id: 'side-conversation', name: 'side', icon: 'chat', hint: MESSAGES.chat.slashSideDesc, arguments: 'optional' },
+    { id: 'reset-conversation', name: 'reset', icon: 'chat', hint: 'Reset context while keeping chat history', arguments: 'none' },
+    { id: 'new-conversation', name: 'new', icon: 'plus', hint: 'Start a new conversation and keep this one', arguments: 'none' },
+    { id: 'side-conversation', name: 'side', icon: 'chat', hint: 'Discuss a snapshot in a side conversation', arguments: 'optional' },
     { id: 'planner-switch', name: 'planner', icon: 'chat', hint: 'Promote this Assistant to Planner', arguments: 'none', argumentError: PLANNER_SWITCH_ARGUMENTS },
     { id: 'compact-conversation', name: 'compact', icon: 'compact', hint: 'Compact conversation context', arguments: 'none' },
-    { id: 'terminal-workbench', name: 'terminal', icon: 'terminal', hint: MESSAGES.chat.slashTerminalDesc, arguments: 'none', argumentError: TERMINAL_ARGUMENTS_MESSAGE },
-    { id: 'track-close', name: 'close', icon: 'status-done', hint: MESSAGES.chat.slashCloseDesc, arguments: 'none' },
+    { id: 'terminal-workbench', name: 'terminal', icon: 'terminal', hint: 'Open the track terminal workbench', arguments: 'none', argumentError: TERMINAL_ARGUMENTS_MESSAGE },
+    { id: 'track-close', name: 'close', icon: 'status-done', hint: 'Close this Track', arguments: 'none' },
     { id: 'track-open', name: 'open', icon: 'status-running', hint: 'Reopen this track', arguments: 'none' },
   ];
 }

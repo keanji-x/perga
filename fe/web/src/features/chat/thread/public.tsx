@@ -57,7 +57,6 @@ import type { RunningTurnAnchor } from '../../../../../core/domain/conversation-
 import {
   toolCallGroupShowsRunning, untouchedToolCallGroup, useToolCallFocus,
 } from './activity-groups.tsx';
-import { MESSAGES } from '../../../../../core/domain/messages.ts';
 import { ActivityRun, toolCallOf } from './activity-run.tsx';
 import { SystemDisclosure } from './system-disclosure.tsx';
 
@@ -67,7 +66,7 @@ export function ChatEmpty({ working = false, children }: Readonly<{ working?: bo
 }
 
 function emptyConversationContent(working: boolean): EmptyStateSchema {
-  return { icon: working ? <ActivityIndicator state="working" motion="thinking" /> : <Icon name="chat" />, title: working ? 'Organizing your thoughts' : MESSAGES.chat.emptyTitle, description: working ? 'Replies will appear here.' : MESSAGES.chat.emptyDescription };
+  return { icon: working ? <ActivityIndicator state="working" motion="thinking" /> : <Icon name="chat" />, title: working ? 'Organizing your thoughts' : 'Start a conversation', description: working ? 'Replies will appear here.' : 'Begin with a question, task, or idea.' };
 }
 
 export type ChatThreadProps = Readonly<{
@@ -323,7 +322,7 @@ export const ChatThread = memo(function ChatThread({ conversation, turns, pendin
         {transcriptGroups.map(({ entry: turn, activities, key, body, startsResponse }) => {
           const block = body.quiet;
           return <Fragment key={key}>
-            {startsResponse && <Divider label={MESSAGES.chat.newReplyDivider} />}
+            {startsResponse && <Divider label="New reply" />}
             {block !== null ? (
               <div data-nc-entry={key}>
                 <QuietSyncFold expanded={reading.expanded.get(`quiet-${block.id}`) ?? false}
@@ -510,7 +509,7 @@ export function ChatComposer({
         const command = items.find(command => command.id === item.id)!;
         return `/${command.name}${command.argumentShape === 'optional' ? ' ' : ''}`;
       },
-    }, { icon: <Icon name="search" />, title: 'No command by that name', description: MESSAGES.chat.noCommandDescription });
+    }, { icon: <Icon name="search" />, title: 'No command by that name', description: 'Try another command name.' });
   }, [items]);
   // Discovery is only an aid: submit always parses the complete controlled draft.
   const hasCommands = editing === undefined && items.length > 0;
@@ -549,7 +548,7 @@ export function ChatComposer({
       onClick={() => { submit(); }}
     >Send image</button>
   ) : canQueueWhileRunning && stopShown && !sendDisabled && draft.trim() !== '' && !sendWaiting && editing === undefined ? (
-    <button type="button" className={styles.queueSend} disabled={disabled} onClick={submit}>{MESSAGES.chat.queueSend}</button>
+    <button type="button" className={styles.queueSend} disabled={disabled} onClick={submit}>Queue message</button>
   ) : undefined;
 
   return (
@@ -614,7 +613,7 @@ export function ChatComposer({
           elevation="none"
           value={draft}
           onChange={setDraft}
-          placeholder={layout === 'mobile' ? MESSAGES.chat.placeholderCompact : MESSAGES.chat.placeholder}
+          placeholder={layout === 'mobile' ? 'Write a message…' : 'Write a message, or type / for commands…'}
           isDisabled={disabled}
           isStopShown={stopShown}
           footerActions={layout === 'mobile' && footerActions !== undefined ? <details className={mobileStyles.options}>
@@ -643,7 +642,7 @@ export function ChatComposer({
               maxRows={3}
               onFiles={disabled ? undefined : onFiles}
               label="Message"
-              placeholder={layout === 'mobile' ? MESSAGES.chat.placeholderCompact : MESSAGES.chat.placeholder}
+              placeholder={layout === 'mobile' ? 'Write a message…' : 'Write a message, or type / for commands…'}
               /* No triggers where there is neither a command nor a mention: otherwise the field becomes an `aria-expanded="false"` combobox that can never expand. */
               {...(triggers.length === 0 ? {} : { triggers })}
               /* The `@` source waits out keystrokes itself (`MENTION_SEARCH_DELAY_MS` says why Astryx's own delay must be off); the `/` source is synchronous and never delayed. */

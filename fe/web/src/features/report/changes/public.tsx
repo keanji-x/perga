@@ -3,7 +3,6 @@ import { Icon } from '../../../ui/icon/public.tsx';
 // Report change evidence uses the same disclosure and document renderer as Reference.
 import type { ReactNode } from 'react';
 import type { ReportChange, ReportEditEntry } from '../../../../../core/domain/daily-planner.ts';
-import { MESSAGES } from '../../../../../core/domain/messages.ts';
 import { Button } from '@astryxdesign/core/Button';
 import { ReportDetails } from '../document/details.tsx';
 import { ReportDocument } from '../document/public.tsx';
@@ -24,7 +23,7 @@ export function ReportChangeDetails({ change, onOpenTrack, onToggleEdits, childr
         <dt>Current summary</dt><dd>{change.summaryAfter || '—'}</dd>
       </dl>}
       <ReportDetails title="Body changes" layout="grid" variant="entry">
-        {change.patch === '' ? <EmptyState variant="compact" icon={<Icon name="file" />} title={MESSAGES.report.noNetChangeTitle} description="No net body change; individual edits retain the history." />
+        {change.patch === '' ? <EmptyState variant="compact" icon={<Icon name="file" />} title="No net body change" description="No net body change; individual edits retain the history." />
           : <pre className={styles.patch}><code>{change.patch}</code></pre>}
         {change.patchTruncated && <p className={styles.note}>Patch shortened. Read individual edits for the full content.</p>}
       </ReportDetails>

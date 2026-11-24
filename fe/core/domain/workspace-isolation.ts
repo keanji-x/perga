@@ -1,7 +1,6 @@
-import { MESSAGES } from './messages.js';
 
 /** User-facing consequences of the server's `none` workspace contract (§4.2, #2666). */
-export const NO_ISOLATION_LABEL = MESSAGES.track.directFolderLabel;
+export const NO_ISOLATION_LABEL = 'Direct folder';
 export const NO_ISOLATION_EXPLANATION = 'The Planner works directly in this source folder, and Planner commits land on its current branch. Source-folder work runs without Perga locking, monitoring, evidence recording, or delivery. Perga never creates, cleans up, or deletes this folder. Task workers require an isolated worktree. Tracks created in bare-folder mode need an explicit upgrade. Other attached Git tracks may create a worktree on first worker dispatch. Exception: a deletion process already started may keep running after a server crash and can still remove a folder chosen after restart.';
 
 /** Composer labels also cover Perga's managed private folder, without implying an attached workspace. */

@@ -1,7 +1,6 @@
 import { Divider } from '@astryxdesign/core/Divider';
 import { DropdownMenu, DropdownMenuItem } from '@astryxdesign/core/DropdownMenu';
 import { Icon } from '../../../ui/icon/public.tsx';
-import { MESSAGES } from '../../../../../core/domain/messages.ts';
 import type { AgentSessionDto, SessionItemsPageDto } from '../../../../../core/api/perga-v1.ts';
 import styles from './session-header.module.css';
 
@@ -30,13 +29,13 @@ export function ConversationSessionHeader({ session, state, taskId, readonlyReas
   // Live execution phases and background task liveness belong to the bottom turn status bar.
   // Keep the header quiet unless a session-level condition or readonly lock needs attention.
   const sessionNotice: Readonly<{ label: string; tone: StatusTone }> | null = state === 'unknown'
-    ? { label: MESSAGES.chat.statusUnknown, tone: 'error' }
+    ? { label: 'Status unknown', tone: 'error' }
     : state === 'stopping'
-      ? { label: MESSAGES.chat.statusStopping, tone: 'warning' }
+      ? { label: 'Stopping…', tone: 'warning' }
       : state === 'idle' && workerPaused
-        ? { label: MESSAGES.chat.statusPaused, tone: 'warning' }
+        ? { label: 'Paused', tone: 'warning' }
         : state === 'compacting'
-          ? { label: MESSAGES.chat.statusCompacting, tone: 'live' }
+          ? { label: 'Compacting…', tone: 'live' }
           : null;
   const readonlyLabel = readonlyReason === null ? null
     : readonlyReason === 'archived' ? 'Archived'
@@ -56,8 +55,8 @@ export function ConversationSessionHeader({ session, state, taskId, readonlyReas
         </div>
         <Divider />
       </>}
-      <DropdownMenuItem label={MESSAGES.chat.compactAction} isDisabled={!compactEnabled} onClick={onCompact} />
-      <DropdownMenuItem label={MESSAGES.chat.resetAction} variant="destructive" isDisabled={!resetEnabled} onClick={onReset} />
+      <DropdownMenuItem label="Compact context /compact" isDisabled={!compactEnabled} onClick={onCompact} />
+      <DropdownMenuItem label="Reset context /reset" variant="destructive" isDisabled={!resetEnabled} onClick={onReset} />
       {onArchive !== undefined && <DropdownMenuItem label={readonlyReason === 'archived' ? 'Restore conversation' : 'Archive conversation'} onClick={onArchive} />}
     </DropdownMenu>
   </div>;

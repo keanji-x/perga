@@ -1,4 +1,3 @@
-import { formatMessage, MESSAGES } from '../../../../../core/domain/messages.ts';
 import type { SessionItemsPageDto, SessionTurnDto } from '../../../../../core/api/perga-v1.ts';
 import type { CurrentConversationOutcome } from '../../../../../core/domain/conversation-display.ts';
 import type { ConversationTurnOutcome } from '../../../../../core/domain/conversation.ts';
@@ -20,11 +19,11 @@ type RuntimeTasksProp = SessionItemsPageDto['runtimeTasks']
 function runtimePhaseLabel(runtimeStatus: SessionItemsPageDto['runtimeStatus'] | undefined): string | null {
   if (runtimeStatus?.kind !== 'running') return null;
   switch (runtimeStatus.phase) {
-    case 'thinking': return MESSAGES.chat.thinking;
-    case 'responding': return MESSAGES.chat.responding;
-    case 'waiting_model': return MESSAGES.chat.waitingModel;
-    case 'compacting': return MESSAGES.chat.statusCompacting;
-    case 'tool': return formatMessage(MESSAGES.chat.toolPrefix, { name: runtimeStatus.toolName ?? 'running' });
+    case 'thinking': return 'Thinking';
+    case 'responding': return 'Responding';
+    case 'waiting_model': return 'Waiting for model';
+    case 'compacting': return 'Compacting…';
+    case 'tool': return `Tool: ${runtimeStatus.toolName ?? 'running'}`;
     default: return null;
   }
 }
@@ -54,10 +53,10 @@ export function CurrentStatusNotice({ lastTurn, runtimeStatus, runtimeTasks, mes
   if (lastTurn === null) {
     if (phaseLabel === null && backgroundTasks === 0 && !hasIdleActivity) return null;
     const heading = phaseLabel ?? (backgroundTasks > 0
-      ? formatMessage(MESSAGES.chat.backgroundTasks, { count: backgroundTasks })
-      : MESSAGES.chat.recentBackgroundActivity);
+      ? `${backgroundTasks} background tasks`
+      : 'Recent background activity');
     const details = phaseLabel !== null && backgroundTasks > 0
-      ? [formatMessage(MESSAGES.chat.backgroundTasks, { count: backgroundTasks })]
+      ? [`${backgroundTasks} background tasks`]
       : undefined;
     const active = phaseLabel !== null || backgroundTasks > 0;
     return <ThreadStatusNotice messageActions={messageActions}
@@ -67,12 +66,12 @@ export function CurrentStatusNotice({ lastTurn, runtimeStatus, runtimeTasks, mes
   }
 
   const status = lastTurn.status;
-  const heading = status === 'running' ? (phaseLabel ?? MESSAGES.chat.turnRunning) : status === 'completed' ? MESSAGES.chat.turnDone
-    : status === 'interrupted' ? MESSAGES.chat.turnStopped : status === 'failed' ? MESSAGES.chat.turnFailed : 'Turn outcome unconfirmed';
+  const heading = status === 'running' ? (phaseLabel ?? 'Working…') : status === 'completed' ? 'Done'
+    : status === 'interrupted' ? 'Stopped' : status === 'failed' ? 'Turn failed' : 'Turn outcome unconfirmed';
   const details: string[] = [];
   if (status !== 'running' && phaseLabel !== null) details.push(phaseLabel);
-  if (backgroundTasks > 0) details.push(formatMessage(MESSAGES.chat.backgroundTasks, { count: backgroundTasks }));
-  else if (status !== 'running' && hasIdleActivity) details.push(MESSAGES.chat.recentBackgroundActivity);
+  if (backgroundTasks > 0) details.push(`${backgroundTasks} background tasks`);
+  else if (status !== 'running' && hasIdleActivity) details.push('Recent background activity');
   const terminal = status === 'completed' || status === 'interrupted' || status === 'failed' ? status : undefined;
   return <ThreadStatusNotice messageActions={messageActions} detailsExpanded={detailsExpanded} onDetailsExpandedChange={onDetailsExpandedChange}
     heading={heading} details={details.length > 0 ? details : undefined}

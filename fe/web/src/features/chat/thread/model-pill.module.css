@@ -459,12 +459,6 @@
     font-weight: var(--weight-medium);
   }
 
-  .effortPreview {
-    color: var(--accent);
-    font-weight: var(--weight-medium);
-    text-transform: capitalize;
-  }
-
   .effortUnavailable {
     color: var(--warn-text);
     font-weight: var(--weight-medium);
@@ -497,72 +491,83 @@
     }
   }
 
-  .effortMeter {
+  .radixSliderRoot {
+    position: relative;
     display: flex;
     align-items: center;
-    gap: var(--space-1);
     inline-size: 100%;
     block-size: var(--control-h-sm);
-    padding-inline: var(--space-px);
-    border-radius: var(--radius-sm);
     touch-action: none;
     user-select: none;
     cursor: pointer;
   }
 
-  .effortMeter:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
-  }
-
-  .effortMeter[data-nc-disabled] {
+  .radixSliderRoot[data-disabled] {
     opacity: 0.42;
     cursor: not-allowed;
   }
 
-  .effortSegmentSlot {
+  .radixSliderTrack {
     position: relative;
-    flex: 1 1 0%;
-    display: flex;
-    align-items: center;
-    block-size: 100%;
-  }
-
-  .effortSegment {
-    display: block;
-    inline-size: 100%;
-    block-size: var(--dot-sm);
+    flex-grow: 1;
+    block-size: 6px;
     border-radius: var(--radius-pill);
-    background: color-mix(in srgb, var(--text-3) 28%, transparent);
-    transition: background-color var(--motion-quick) var(--ease-feedback),
-      transform var(--motion-quick) var(--ease-feedback),
-      opacity var(--motion-quick) var(--ease-feedback);
+    background: color-mix(in srgb, var(--text-3) 24%, transparent);
   }
 
-  .effortSegment[data-nc-state='default'] {
-    background: color-mix(in srgb, var(--text-2) 62%, var(--surface-chip));
-  }
-
-  .effortSegment[data-nc-state='active'] {
+  .radixSliderRange {
+    position: absolute;
+    block-size: 100%;
+    border-radius: var(--radius-pill);
     background: var(--accent);
   }
 
-  .effortSegment[data-nc-state='preview'] {
-    background: color-mix(in srgb, var(--accent) 82%, var(--surface-chip));
-    transform: scaleY(1.2);
-  }
-
-  .effortDefaultDot {
+  .radixSliderTick {
     position: absolute;
-    inset-block-end: 0;
-    inset-inline-start: 50%;
-    inline-size: var(--space-half);
-    block-size: var(--space-half);
+    inset-block-start: 50%;
+    inline-size: 3px;
+    block-size: 3px;
     border-radius: var(--radius-pill);
     background: var(--text-3);
-    opacity: 0.6;
-    transform: translateX(-50%);
+    opacity: 0.65;
+    transform: translate(-50%, -50%);
     pointer-events: none;
+  }
+
+  .radixSliderTick[data-nc-filled='true'] {
+    background: var(--paper);
+    opacity: 0.85;
+  }
+
+  .radixSliderThumb {
+    display: block;
+    inline-size: 14px;
+    block-size: 14px;
+    border-radius: var(--radius-pill);
+    background: var(--paper);
+    border: 2px solid var(--accent);
+    box-shadow: var(--shadow-float);
+    cursor: grab;
+    transition: transform var(--motion-quick) var(--ease-feedback);
+  }
+
+  .radixSliderThumb:active {
+    cursor: grabbing;
+  }
+
+  @media (hover: hover) {
+    .radixSliderRoot:not([data-disabled]) .radixSliderThumb:hover {
+      transform: scale(1.1);
+    }
+  }
+
+  .radixSliderThumb:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  .radixSliderRoot[data-disabled] .radixSliderThumb {
+    cursor: not-allowed;
   }
 
   .pickerActions {

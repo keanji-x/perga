@@ -119,7 +119,7 @@ describe('ModelPill', () => {
     expect(choose).toHaveBeenLastCalledWith({ model: 'gpt-5', reasoning_effort: 'high' }, 'opencode');
 
     menu = within(openMenu(/^Model:/));
-    fireEvent.keyDown(menu.getByRole('slider'), { key: 'Backspace' });
+    fireEvent.keyDown(menu.getByRole('slider'), { key: 'Home' });
     fireEvent.click(menu.getByRole('button', { name: 'Save' }));
     expect(choose).toHaveBeenLastCalledWith({ model: 'gpt-5', reasoning_effort: null }, 'opencode');
 
@@ -137,7 +137,7 @@ describe('ModelPill', () => {
     const menu = within(openMenu(/^Model:/));
     const slider = menu.getByRole('slider', { name: 'Reasoning effort' });
     expect(slider.getAttribute('aria-valuetext')).toBe('high (Unavailable)');
-    fireEvent.click(menu.getByRole('button', { name: 'Reset effort to Default' }));
+    fireEvent.keyDown(slider, { key: 'Home' });
     expect(slider.getAttribute('aria-valuetext')).toBe('Default');
     fireEvent.click(menu.getByRole('button', { name: 'Save' }));
     expect(choose).toHaveBeenCalledWith({ model: 'gpt-5', reasoning_effort: null }, 'codex');
@@ -173,7 +173,7 @@ describe('ModelPill', () => {
     expect(onChange).toHaveBeenLastCalledWith({ model: 'gpt-5', reasoning_effort: 'low' }, 'codex');
     menu = openMenu(/^Model:/);
     fireEvent.keyDown(within(menu).getByRole('slider'), { key: 'ArrowRight' });
-    fireEvent.keyDown(within(menu).getByRole('slider'), { key: 'Backspace' });
+    fireEvent.keyDown(within(menu).getByRole('slider'), { key: 'Home' });
     expect(within(menu).getByRole('slider').getAttribute('aria-valuetext')).toBe('Default');
     fireEvent.click(within(menu).getByRole('button', { name: 'Save' }));
     expect(onChange).toHaveBeenLastCalledWith({ model: 'gpt-5', reasoning_effort: null }, 'codex');

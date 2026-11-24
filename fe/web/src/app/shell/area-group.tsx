@@ -4,7 +4,6 @@ import { DropdownMenuItem } from '@astryxdesign/core/DropdownMenu';
 
 import type { Area } from '../../../../core/domain/area.ts';
 import { areaPinnedTracks, railAreaTracks, type Track } from '../../../../core/domain/track.ts';
-import { MESSAGES } from '../../../../core/domain/messages.ts';
 import { Icon } from '../../ui/icon/public.tsx';
 import { SidebarTrackGroup, type RowProps, type GroupManagement } from './sidebar-group.tsx';
 import styles from './shell.module.css';
@@ -37,7 +36,7 @@ export function AreaGroup({
     ? `${area.name} · ${targetLabel ?? area.executionTargetId}`
     : area.name;
   return <SidebarTrackGroup
-    emptyState={readReady ? { icon: <Icon name="file" />, title: MESSAGES.sidebar.noVisibleTracksTitle, description: MESSAGES.sidebar.noVisibleTracksDescription } : null}
+    emptyState={readReady ? { icon: <Icon name="file" />, title: 'No active tracks', description: 'Open tracks in this area appear here.' } : null}
     title={areaTitle}
     label={`area ${area.name}`}
     icon="folder"

@@ -7,7 +7,6 @@ import { Text } from '@astryxdesign/core/Text';
 import { VisuallyHidden } from '@astryxdesign/core/VisuallyHidden';
 
 import type { TrackWorkspaceOptions } from '../../../../../core/domain/track.ts';
-import { MESSAGES } from '../../../../../core/domain/messages.ts';
 import { Icon } from '../../../ui/icon/public.tsx';
 import { useState } from '../../../ui/state/public.ts';
 import { FolderClearButton, folderLabelParts } from '../default-pills/public.tsx';
@@ -29,13 +28,13 @@ function repoModes() {
   return [
     {
       value: 'worktree' as const,
-      label: MESSAGES.repo.worktreeLabel,
-      description: MESSAGES.repo.worktreeDescription,
+      label: 'Git worktree',
+      description: 'Default · isolated working copy per track',
     },
     {
       value: 'none' as const,
-      label: MESSAGES.repo.directLabel,
-      description: MESSAGES.repo.directDescription,
+      label: 'Direct folder',
+      description: 'Lead uses source folder · worker tasks still require a worktree',
     },
   ] as const;
 }
@@ -72,7 +71,7 @@ export function RepoPill({
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const modeLabel = workspaceOptions?.options.find((option) => option.id === workspaceOptionId)?.label
-    ?? (workspaceOptions === undefined && isolation === 'none' ? MESSAGES.repo.directShortLabel : undefined);
+    ?? (workspaceOptions === undefined && isolation === 'none' ? 'Direct' : undefined);
   const suffixParts = [targetLabel, modeLabel].filter((part): part is string => part !== undefined && part !== '');
   const { visibleLabel, accessibleName } = folderLabelParts({
     value,
@@ -105,8 +104,8 @@ export function RepoPill({
           className: styles.trigger,
         }}
       >
-        <div role="group" aria-label={MESSAGES.repo.modeHeading}>
-          <div className={styles.groupHeading} aria-hidden="true">{MESSAGES.repo.modeHeading}</div>
+        <div role="group" aria-label="Workspace mode">
+          <div className={styles.groupHeading} aria-hidden="true">Workspace mode</div>
           {workspaceOptions === null && <DropdownMenuItem label="Workspace options unavailable" isDisabled />}
           {workspaceOptions && workspaceOptionId === undefined &&
             <DropdownMenuItem label="Choose an available workspace option" isDisabled />}
@@ -129,7 +128,7 @@ export function RepoPill({
               <DropdownMenuItem
                 key={option.value}
                 label={option.label}
-                description={disabled ? MESSAGES.repo.directRequiresFolder : option.description}
+                description={disabled ? 'Choose an external folder via Others… first' : option.description}
                 isDisabled={disabled}
                 onClick={() => {
                   if (!disabled) onIsolationChange(option.value);
@@ -146,9 +145,9 @@ export function RepoPill({
         </div>
         <Divider />
         <DropdownMenuItem
-          label={MESSAGES.repo.othersLabel}
+          label="Others…"
           hasCloseOnSelect={false}
-          description={value !== '' ? compactPathDescription(value) : MESSAGES.repo.browseFolderHint}
+          description={value !== '' ? compactPathDescription(value) : 'Browse and select a folder'}
           onClick={() => {
             flushSync(() => setOpen(false));
             // Let the menu's selection event finish before handing focus to the dialog.
@@ -161,8 +160,8 @@ export function RepoPill({
           }}
         />
         <DropdownMenuItem
-          label={MESSAGES.repo.managedWorkspaceLabel}
-          description={value === '' ? MESSAGES.repo.managedWorkspaceActive : MESSAGES.repo.managedWorkspaceSwitch}
+          label="Perga workspace"
+          description={value === '' ? 'Using managed default workspace' : 'Switch back to managed default workspace'}
           onClick={() => {
             if (value !== '') onClear();
           }}

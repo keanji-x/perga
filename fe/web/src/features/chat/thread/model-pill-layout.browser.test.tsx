@@ -60,15 +60,16 @@ it.each([390, 1280])('each Claude row is one line, its resolved id at the right 
   expect(document.documentElement.scrollWidth).toBe(width);
 });
 
-it('selects low with the pointer and returns to Default without changing null on Cancel', async () => {
+it('selects low with the pointer and returns to Default with the keyboard without changing null on Cancel', async () => {
   const onChange = vi.fn();
   render(<ModelPill provider="claude" selection={FOLLOW_INSTALLATION_DEFAULT} onChange={onChange}
     groups={[{ provider: 'claude', availability: null, catalog: CATALOG }]} />);
   await page.getByRole('button', { name: /^Model:/ }).click();
   const slider = screen.getByRole('slider', { name: 'Reasoning effort' });
   expect(slider.getAttribute('aria-valuetext')).toBe('Default');
-  const track = slider.getBoundingClientRect();
-  await userEvent.pointer({ keys: '[MouseLeft]', target: slider, coords: { clientX: track.left + track.width / 2, clientY: track.top + track.height / 2 } });
+  const root = slider.closest<HTMLElement>('[class*="radixSliderRoot"]')!;
+  const track = root.getBoundingClientRect();
+  await userEvent.pointer({ keys: '[MouseLeft]', target: root, coords: { clientX: track.right - 6, clientY: track.top + track.height / 2 } });
   expect(slider.getAttribute('aria-valuetext')).toBe('low');
   slider.focus();
   await userEvent.keyboard('{End}');
@@ -77,7 +78,7 @@ it('selects low with the pointer and returns to Default without changing null on
   expect(onChange).toHaveBeenLastCalledWith({ model: null, reasoning_effort: 'low' }, 'claude');
   await page.getByRole('button', { name: /^Model:/ }).click();
   screen.getByRole('slider').focus();
-  await userEvent.keyboard('{End}{Backspace}');
+  await userEvent.keyboard('{End}{Home}');
   expect(screen.getByRole('slider').getAttribute('aria-valuetext')).toBe('Default');
   await page.getByRole('button', { name: 'Save', exact: true }).click();
   expect(onChange).toHaveBeenLastCalledWith({ model: null, reasoning_effort: null }, 'claude');
