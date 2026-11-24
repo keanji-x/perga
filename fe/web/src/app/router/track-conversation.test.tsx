@@ -863,7 +863,8 @@ it('keeps an in-flight draft locked across a route remount', async () => {
     await openDraft();
 
     expect(screen.getByText('words still in flight')).toBeTruthy();
-    expect(screen.getAllByText('Sending…').length).toBeGreaterThan(0);
+    expect(screen.getByRole('group', { name: 'Message composer' }).getAttribute('aria-busy')).toBe('true');
+    expect(screen.queryByText('Sending…')).toBeNull();
     expect(messageField().getAttribute('contenteditable')).toBe('false');
     await write('edited while the first request is pending');
     expect(creates(requests, CONVERSATIONS)).toHaveLength(1);

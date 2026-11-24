@@ -17,9 +17,11 @@ it.each([[false, false], [true, false], [false, true], [true, true]] as const)(
       await field.fill('A readable local message.');
       await userEvent.keyboard('{Enter}');
       await expect.element(page.getByRole('paragraph').filter({ hasText: /^A readable local message\.$/ })).toBeVisible();
-      await expect.element(page.getByText('正在发送…', { exact: true })).toBeVisible();
+      const composer = page.getByRole('group', { name: 'Message composer', exact: true });
+      await expect.element(composer).toHaveAttribute('aria-busy', 'true');
+      expect(page.getByText(/^(Sending…|正在发送…)$/).query()).toBeNull();
       view.release();
-      await expect.element(page.getByText('正在发送…', { exact: true })).not.toBeInTheDocument();
+      await expect.element(composer).not.toHaveAttribute('aria-busy', 'true');
       await expect.element(page.getByRole('paragraph').filter({ hasText: /^A readable local message\.$/ })).toBeVisible();
       await expect.element(field).toHaveTextContent('');
       expect(page.getByRole('paragraph').filter({ hasText: /^A readable local message\.$/ }).elements()).toHaveLength(1);

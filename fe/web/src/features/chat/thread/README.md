@@ -96,17 +96,17 @@ still update the thread immediately.
 Outgoing messages are readable immediately, including the first draft and its
 handoff to canonical history. Their opacity and position do not depend on the
 network answer or physical DOM identity. Sending feedback uses the existing
-busy composer control, with a local status when needed. Running requires the
-existing run query or kernel activity. Stop remains available during a send to
-an already running conversation. No DOM windowing or delayed network dispatch
-is involved.
+busy composer control and `aria-busy` on the Message composer group. Running
+requires the existing run query or kernel activity. Stop remains available
+during a send to an already running conversation. No DOM windowing or delayed
+network dispatch is involved.
 
 The native Send/Stop control stays mounted through dispatch. Its public icon
 slot carries a decorative spinner for a pending Send while the control remains
-disabled through the vendor's authoritative composer context. The local status
-announces Sending; Stop keeps its own label/icon and action. No hidden vendor
-props or alternate admission policy are used. Replacement uses the existing
-Button loading contract while Edit remains displayed.
+disabled through the vendor's authoritative composer context. Stop keeps its
+own label/icon and action. No hidden vendor props or alternate admission policy
+are used. Replacement uses the existing Button loading contract while Edit
+remains displayed.
 
 The named Message composer group declares `aria-busy` for local dispatch, so a
 standalone composer exposes the pending fact even without a transcript status.

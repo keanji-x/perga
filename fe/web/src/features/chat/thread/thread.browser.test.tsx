@@ -201,7 +201,7 @@ describe('the / command menu, as the engine lays it out', () => {
       .some(animation => animation.effect?.getTiming().iterations === Infinity && animation.playState === 'running')).toBe(true);
     const box = waiting.getBoundingClientRect();
     expect([box.width, box.height, box.right]).toEqual([send.width, send.height, send.right]);
-    expect(screen.getByText('正在发送…', { exact: true }).checkVisibility()).toBe(true);
+    expect(screen.queryByText(/^(Sending…|正在发送…)$/)).toBeNull();
     expect(parseFloat(getComputedStyle(waiting).borderTopLeftRadius)).toBeGreaterThanOrEqual(box.height / 2);
     const probe = document.createElement('div');
     probe.style.backgroundColor = 'var(--surface-chip)';

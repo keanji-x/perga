@@ -610,10 +610,7 @@ export function useConversationPane(
                     claims they arrived. */}
         {draftOpen && (draft?.text == null
           ? <ChatEmpty />
-          : <>
-            {draft.text !== '' && <OutgoingMessage speaker="you" text={draft.text} mobile={compactViewport} />}
-            {creating && <p role="status">Sending…</p>}
-          </>)}
+          : (draft.text !== '' && <OutgoingMessage speaker="you" text={draft.text} mobile={compactViewport} />))}
         {open !== null && (
           <>
             {!conversationBodyVisible && (!threadPresented || !store.historyReady) && store.historyError === null && (
