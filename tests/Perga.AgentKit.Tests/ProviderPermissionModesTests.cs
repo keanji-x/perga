@@ -59,4 +59,21 @@ public sealed class ProviderPermissionModesTests
         Assert.Equal("dontAsk", ProviderPermissionModes.ResolveInheritedMode(null, null, "claude"));
         Assert.Null(ProviderPermissionModes.ResolveInheritedMode(null, null, "acp:antigravity"));
     }
+
+    [Theory]
+    [InlineData("codex", "never", false)]
+    [InlineData("codex", "full", true)]
+    [InlineData("claude", "dontAsk", false)]
+    [InlineData("claude", "plan", false)]
+    [InlineData("claude", "acceptEdits", true)]
+    [InlineData("claude", "bypassPermissions", true)]
+    [InlineData("acp:antigravity", null, false)]
+    [InlineData("acp:opencode", "custom", false)]
+    public void IsElevatedForReadOnlyReuse_FlagsOnlyNonDefaultNonPlanningStaticModes(
+        string provider,
+        string? mode,
+        bool expected)
+    {
+        Assert.Equal(expected, ProviderPermissionModes.IsElevatedForReadOnlyReuse(provider, mode));
+    }
 }

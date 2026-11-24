@@ -358,4 +358,143 @@ public sealed partial class TrackFlowTests
         var secondLaunch = ctx.AgentRuntime.OpenedSessions.Last(s => s.LaunchSpec.PermissionMode == "full").LaunchSpec;
         Assert.Equal("full", secondLaunch.PermissionMode);
     }
+
+    [Fact]
+    public async Task StaticPermissionModeFlowCommitAndDryRunSucceedDuringProviderProbeOutage()
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        var trackId = snap.Track.Id;
+
+        var probeCalls = 0;
+        ctx.AgentRuntime.ProbeScript = _ =>
+        {
+            probeCalls++;
+            throw new InvalidOperationException("probe unavailable");
+        };
+
+        var invalid = await ctx.Kernel.CommitTrackFlowAsync(trackId, dryRun: true, expectedFlowRev: 0, Human, content: """
+            {"rev":0,"nodes":[{"id":"bad","do":{"kind":"run","permissionMode":"bogus","prompt":"Run"}}]}
+            """);
+        Assert.False(invalid.Ok);
+        Assert.Contains(invalid.Diagnostics, d => d.Path == "$.nodes[0].do.permissionMode");
+        Assert.Equal(0, probeCalls);
+
+        var dryRun = await ctx.Kernel.CommitTrackFlowAsync(trackId, dryRun: true, expectedFlowRev: 0, Human, content: """
+            {"rev":0,"nodes":[{"id":"good","do":{"kind":"run","permissionMode":"full","prompt":"Run"}}]}
+            """);
+        Assert.True(dryRun.Ok, JsonSerializer.Serialize(dryRun.Diagnostics));
+        Assert.Equal(0, probeCalls);
+
+        var commit = await ctx.Kernel.CommitTrackFlowAsync(trackId, dryRun: false, expectedFlowRev: 0, Human, content: """
+            {"rev":0,"nodes":[{"id":"good","do":{"kind":"run","permissionMode":"full","prompt":"Run"}}]}
+            """);
+        Assert.True(commit.Ok, JsonSerializer.Serialize(commit.Diagnostics));
+        await WaitUntilAsync(() => Task.FromResult(ctx.AgentRuntime.OpenedSessions.Any(s => s.LaunchSpec.PermissionMode == "full")));
+        Assert.Equal(0, probeCalls);
+    }
+
+    [Fact]
+    public async Task ReadOnlyFlowReuse_RejectsImplicitElevatedSessionAtCommitAndDispatch()
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        var trackId = snap.Track.Id;
+
+        var fullSub = (await ctx.Kernel.CreateSessionAsync(trackId,
+            new CreateSessionRequest(Title: "FullSub", Provider: "codex", PermissionMode: "full"),
+            "req-ro-full-sub", Human, default)).Receipt.Session;
+
+        var implicitRejected = await ctx.Kernel.CommitTrackFlowAsync(trackId, dryRun: true, expectedFlowRev: 0, Human, content: $$$"""
+            {"rev":0,"nodes":[{"id":"ro-reuse","do":{"kind":"run","access":"read_only","session":"{{{fullSub.Id}}}","prompt":"Inspect"}}]}
+            """);
+        Assert.False(implicitRejected.Ok);
+        Assert.Contains(implicitRejected.Diagnostics, d => d.Path == "$.nodes[0].do.permissionMode");
+
+        var explicitAllowed = await ctx.Kernel.CommitTrackFlowAsync(trackId, dryRun: true, expectedFlowRev: 0, Human, content: $$$"""
+            {"rev":0,"nodes":[{"id":"ro-reuse","do":{"kind":"run","access":"read_only","session":"{{{fullSub.Id}}}","permissionMode":"full","prompt":"Inspect"}}]}
+            """);
+        Assert.True(explicitAllowed.Ok, JsonSerializer.Serialize(explicitAllowed.Diagnostics));
+
+        var safeSub = (await ctx.Kernel.CreateSessionAsync(trackId,
+            new CreateSessionRequest(Title: "SafeSub", Provider: "codex", PermissionMode: "never"),
+            "req-ro-safe-sub", Human, default)).Receipt.Session;
+
+        var commit = await ctx.Kernel.CommitTrackFlowAsync(trackId, dryRun: false, expectedFlowRev: 0, Human, content: $$$"""
+            {
+              "rev": 0,
+              "nodes": [
+                {"id": "hold", "do": {"kind": "run", "access": "read_only", "prompt": "Wait"}},
+                {"id": "ro-drift", "when": {"after": ["hold"]}, "do": {"kind": "run", "access": "read_only", "session": "{{{safeSub.Id}}}", "prompt": "Inspect"}}
+              ]
+            }
+            """);
+        Assert.True(commit.Ok, JsonSerializer.Serialize(commit.Diagnostics));
+        await WaitUntilAsync(async () => (await ctx.Kernel.ListTasksAsync(trackId)).Any(t => t.TaskKey == "hold" && t.SessionId is not null));
+        var hold = Assert.Single(await ctx.Kernel.ListTasksAsync(trackId), t => t.TaskKey == "hold");
+
+        await ctx.Kernel.UpdateSessionAsync(safeSub.Id, new UpdateSessionRequest(PermissionMode: new("full")), Human, default);
+        await ctx.Kernel.CompleteTaskDoneAsync(trackId, hold.SessionId!, outcome: FlowOutcome.Ok);
+
+        await WaitUntilAsync(async () =>
+            Assert.Single(await ctx.Kernel.ListTasksAsync(trackId), t => t.TaskKey == "ro-drift").Status == TaskRunStatus.Failed);
+        var failed = Assert.Single(await ctx.Kernel.ListTasksAsync(trackId), t => t.TaskKey == "ro-drift");
+        Assert.Contains("elevated permission mode", failed.StatusDetail ?? "", StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(ctx.AgentRuntime.OpenedSessions, s => s.LaunchSpec.PermissionMode == "full");
+    }
+
+    [Fact]
+    public async Task DispatchApprovalDrift_ReevaluatesWhenLeadPermissionModeEscalatesDuringPendingApproval()
+    {
+        await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        var trackId = snap.Track.Id;
+        var leadId = snap.Track.LeadSessionId!;
+
+        var caller = await ctx.OpenMcpCallerAsync(leadId);
+        await KernelMcpDispatcher.ExecuteGuardedAsync(
+            ctx.Kernel,
+            caller,
+            KernelMcpToolNames.TrackSet,
+            JsonSerializer.SerializeToElement(new
+            {
+                source = """
+                    export default {
+                      id: 'perm-drift-guard',
+                      title: 'Permission Drift Guard',
+                      before(action) {
+                        if (action.type !== 'task.dispatch') return Allow();
+                        if (action.permissionMode === 'full') return Deny('Full access blocked by policy');
+                        return AskHuman('Approve dispatch?', { approve: 'Approve', deny: 'Reject' });
+                      }
+                    };
+                    """
+            }));
+
+        var commit = await ctx.Kernel.CommitTrackFlowAsync(trackId, dryRun: false, expectedFlowRev: 0, Human, content: """
+            {"rev":0,"nodes":[{"id":"guarded-rw","do":{"kind":"run","access":"read_write","prompt":"Edit"}}]}
+            """);
+        Assert.True(commit.Ok, JsonSerializer.Serialize(commit.Diagnostics));
+
+        await WaitUntilAsync(async () => (await ctx.Kernel.GetTrackAggregateAsync(trackId)).PendingApprovals.Count == 1);
+        var approval = Assert.Single((await ctx.Kernel.GetTrackAggregateAsync(trackId)).PendingApprovals);
+
+        // Escalate Lead permissionMode from "never" to "full" while human approval is pending.
+        await ctx.Kernel.UpdateSessionAsync(leadId, new UpdateSessionRequest(PermissionMode: new("full")), Human, default);
+
+        // Approve the stale ask that was requested under "never".
+        await ctx.Kernel.RespondInteractionAsync(
+            approval.SessionId,
+            approval.Id,
+            new(ExecutionId: approval.ExecutionId, OptionId: approval.Options.Single(o => o.IsApproval).Id),
+            Human,
+            default);
+
+        await WaitUntilAsync(async () =>
+            Assert.Single(await ctx.Kernel.ListTasksAsync(trackId), t => t.TaskKey == "guarded-rw").Status == TaskRunStatus.Failed);
+        var failed = Assert.Single(await ctx.Kernel.ListTasksAsync(trackId), t => t.TaskKey == "guarded-rw");
+        Assert.Contains("Full access blocked by policy", failed.StatusDetail ?? "", StringComparison.Ordinal);
+        Assert.Null(failed.SessionId);
+        Assert.Single(await ctx.Kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), Human, default));
+    }
 }

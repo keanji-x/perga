@@ -55,7 +55,7 @@ const before: NonNullable<PergaTemplateSetupResult["before"]> = (action, ctx) =>
     case "report.commit":
       return action.editorRole === "lead" && action.nextMarkdown !== action.prevMarkdown ? Allow() : Deny("no change");
     case "task.dispatch":
-      return action.taskKey && action.access === "read_only" ? Allow() : Deny("requires a gate");
+      return action.taskKey && action.access === "read_only" && action.permissionMode !== "full" ? Allow() : Deny("requires a gate");
     case "turn.before":
       return action.contextUsageRatio < 1 ? Allow() : Deny("context full");
     default:

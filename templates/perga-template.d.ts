@@ -33,6 +33,7 @@ export type TemplateBeforeAction =
       access: "read_only" | "read_write";
       provider?: string | null;
       model?: string | null;
+      permissionMode?: string | null;
       gate?: unknown;
       acceptance?: string | null;
     }

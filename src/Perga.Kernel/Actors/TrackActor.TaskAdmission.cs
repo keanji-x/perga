@@ -44,6 +44,17 @@ public sealed partial class TrackActor
             route = route with { Model = SessionLaunchValidator.NormalizeRequestedModel(route.Model) };
         if (FlowConstants.IsFlowSessionReuse(task) && route.Denial is null && route.Model != model)
             throw KernelException.PolicyDenied($"Template routing requires model '{route.Model}' on the reuse session.");
+        if (reuseFlowSession && route.Denial is null)
+        {
+            var effectiveAccess = route.Access ?? FormatAccessModeForPolicy(task.Access);
+            if (string.Equals(effectiveAccess, "read_only", StringComparison.OrdinalIgnoreCase) &&
+                ReadTaskPermissionMode(task) is null &&
+                ProviderPermissionModes.IsElevatedForReadOnlyReuse(session!.Provider, session.PermissionMode))
+            {
+                throw KernelException.PolicyDenied(
+                    $"Read-only task '{task.TaskKey}' cannot implicitly reuse session '{session.Id}' with elevated permission mode '{session.PermissionMode}'.");
+            }
+        }
         if (session is null) return (route, false);
         // Reused sessions can carry a Track default that the catalog does not list.
         var usesPreparedDefault = route.Model is null && task.RunCount == 0 &&
@@ -82,8 +93,9 @@ public sealed partial class TrackActor
     private bool EnsureTaskDispatchApprovedCore(TaskDto task, PolicyTaskRoute route)
     {
         if (route.Denial is { } denial) throw KernelException.PolicyDenied(denial);
+        var dispatchFields = TaskDispatchFieldsCore(task, route);
         if (_policy is null || _taskDispatchApprovals.TryGetValue(task.TaskKey, out var approval) &&
-            approval == (task.Generation, _policyGeneration, TaskDispatchFields(task))) return true;
+            approval == (task.Generation, _policyGeneration, dispatchFields)) return true;
         if (_pendingTaskDispatchApprovals.Contains(task.Id)) return false;
         var evaluation = EvaluateTaskDispatchCore(task, route);
         if (evaluation is GuardDecision.Deny denied)
@@ -97,10 +109,10 @@ public sealed partial class TrackActor
             var suspension = ApplyGuardDecisionCore(ask, _track.LeadSessionId, new ExecutionControl(), _actorShutdownCts.Token)!;
             _pendingTaskDispatchApprovals.Add(task.Id);
             var generation = _policyGeneration;
-            _ = TrackBackgroundJob(() => ResumeTaskDispatchApprovalAsync(task, generation, suspension));
+            _ = TrackBackgroundJob(() => ResumeTaskDispatchApprovalAsync(task, generation, dispatchFields, suspension));
             return false;
         }
-        _taskDispatchApprovals[task.TaskKey] = (task.Generation, _policyGeneration, TaskDispatchFields(task));
+        _taskDispatchApprovals[task.TaskKey] = (task.Generation, _policyGeneration, dispatchFields);
         return true;
     }
 
@@ -157,11 +169,15 @@ public sealed partial class TrackActor
         }
     }
 
-    private async Task<TrackFlowValidator.WorkerCatalog?> GetFlowWorkerCatalogCoreAsync(FlowSpecDto spec, CancellationToken ct)
+    private async Task<TrackFlowValidator.WorkerCatalog?> GetFlowWorkerCatalogCoreAsync(
+        FlowSpecDto spec,
+        CompiledPolicy? policy,
+        JsonElement templateInputs,
+        CancellationToken ct)
     {
-        if (!spec.Nodes.Any(node => !node.Canceled && (node.Do.ReasoningEffort is not null || node.Do.PermissionMode is not null)))
-            return null;
         var provider = GetDefaultProviderCore();
+        if (!TrackFlowValidator.NeedsProviderProbe(spec, _sessions, provider, policy, _policyVm, templateInputs))
+            return null;
         var providers = await ProbeSessionProvidersAsync(ct).ConfigureAwait(false);
         return new(providers, provider, ResolveTaskWorkerModelCore(provider),
             (targetProvider, status, sessionId) => ResolvePermissionCatalogCore(targetProvider, status, sessionId));
@@ -202,11 +218,27 @@ public sealed partial class TrackActor
         }
     }
 
-    private static string TaskDispatchFields(TaskDto task) => JsonSerializer.Serialize(new {
-        task.Role, task.Access, task.Provider, task.Context, task.Gate, task.Acceptance
-    });
+    private string TaskDispatchFieldsCore(TaskDto task, PolicyTaskRoute route)
+    {
+        var effectiveProvider = SessionLaunchValidator.NormalizeProvider(route.Provider ?? GetDefaultProviderCore());
+        var effectiveAccess = route.Access ?? FormatAccessModeForPolicy(task.Access);
+        var effectivePermissionMode = ResolveEffectiveTaskPermissionModeCore(task, effectiveProvider, effectiveAccess);
+        return JsonSerializer.Serialize(new
+        {
+            task.Role,
+            task.Access,
+            task.Provider,
+            task.Context,
+            task.Gate,
+            task.Acceptance,
+            effectiveProvider,
+            effectiveModel = route.Model,
+            effectiveAccess,
+            effectivePermissionMode
+        });
+    }
 
-    private async Task ResumeTaskDispatchApprovalAsync(TaskDto task, string generation, PolicyApproval suspension)
+    private async Task ResumeTaskDispatchApprovalAsync(TaskDto task, string generation, string approvedDispatchFields, PolicyApproval suspension)
     {
         var pendingRemoved = false;
         try
@@ -217,10 +249,21 @@ public sealed partial class TrackActor
                 pendingRemoved = true;
                 var current = _taskCoordinator.Snapshot().FirstOrDefault(t => t.Id == task.Id);
                 if (current is null || current.Status != TaskRunStatus.Pending) return;
-                if (current.Generation == task.Generation && _policyGeneration == generation && TaskDispatchFields(current) == TaskDispatchFields(task))
+                string? currentDispatchFields = null;
+                if (current.Generation == task.Generation && _policyGeneration == generation)
+                {
+                    try
+                    {
+                        var (currentRoute, _) = RouteTaskCore(current);
+                        if (currentRoute.Denial is null)
+                            currentDispatchFields = TaskDispatchFieldsCore(current, currentRoute);
+                    }
+                    catch (KernelException) { }
+                }
+                if (currentDispatchFields == approvedDispatchFields)
                 {
                     if (choice.IsApproval)
-                        _taskDispatchApprovals[task.TaskKey] = (task.Generation, generation, TaskDispatchFields(task));
+                        _taskDispatchApprovals[task.TaskKey] = (task.Generation, generation, approvedDispatchFields);
                     else
                     {
                         var now = NowMs();

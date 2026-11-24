@@ -125,6 +125,23 @@ public static class ProviderPermissionModes
     }
 
     /// <summary>
+    /// Returns true when a static provider's permission mode grants more execution authority
+    /// than its default or read-only planning modes (for example, Codex "full" or Claude
+    /// "acceptEdits" / "bypassPermissions"). Dynamic providers with no static catalog return false.
+    /// </summary>
+    public static bool IsElevatedForReadOnlyReuse(string provider, string? mode)
+    {
+        var profile = GetProfile(provider);
+        if (profile.CatalogSource != PermissionCatalogSource.Static)
+            return false;
+        var trimmed = string.IsNullOrWhiteSpace(mode) ? null : mode.Trim();
+        if (trimmed is null)
+            return false;
+        return !string.Equals(trimmed, profile.DefaultModeId, StringComparison.Ordinal) &&
+               !string.Equals(trimmed, profile.ReadOnlyPlanningModeId, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// TEMPORARY COMPATIBILITY HACK (non-default policy — isolated here intentionally):
     /// Today, Perga runs <c>acp:antigravity</c> via OAR without a sandbox and without a reported
     /// permission catalog, so Antigravity Lead sessions persist <c>permissionMode == null</c>.
