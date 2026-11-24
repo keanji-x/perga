@@ -607,7 +607,6 @@ export function ChatComposer({
         }
       }}
     >
-      {sendWaiting && <span role="status">Sending…</span>}
       <SizeMotion motionKey={editing !== undefined}>
         <AstryxChatComposer
           className={layout === 'mobile' ? `${mobileStyles.vendorComposer} ${floatingControlMaterialClassName}` : composerLayoutStyles.vendor}
@@ -675,7 +674,7 @@ export function ChatComposer({
           )}
           /* Send's availability is Astryx's own (`canSend`). Astryx renders `aria-disabled` only with a `tooltip`, which `ChatSendButton` does not take, so this is a native `disabled` that drops focus to `<body>` — the focus effect above moves it back into the field first. */
           /* Keep the native Send/Stop control mounted. Its public icon slot gives
-             immediate decorative feedback; the local status names Sending. */
+             immediate decorative feedback while the composer group exposes aria-busy. */
           sendButton={sendDisabled
             ? <Button label="Send" variant="primary" isIconOnly icon={sendIcon} className={styles.sendOwn} isDisabled />
             : editing === undefined ? <ChatSendButton sendIcon={
