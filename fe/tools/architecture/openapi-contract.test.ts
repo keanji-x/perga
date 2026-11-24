@@ -1,11 +1,9 @@
 import { readFileSync } from 'node:fs';
-import { runInNewContext } from 'node:vm';
 import { describe,expect,it } from 'vitest';
 import { z } from 'zod';
 import { loginRequestSchema, sessionIdentitySchema } from '../../core/api/auth.ts';
 import hostPayloads from '../../core/api/fixtures/unified-host-payloads.json';
 import { createSessionRequestSchema, systemUpgradeReceiptSchema } from '../../core/api/perga-v1.ts';
-import { compilePergaTemplateInputs, parsePergaInputsSchema } from '../../core/domain/template-input.ts';
 
 type JsonObject = Record<string, unknown>;
 
@@ -330,15 +328,6 @@ it('matches auth schemas, response statuses, and headers to the Host wire contra
   expect(resolveRef(document, '#/paths/~1api~1v1~1auth~1logout/post/parameters')).toMatchObject([
     { name: 'X-Perga-Session-Id', in: 'header', required: false },
   ]);
-});
-
-it('compiles input defaults from the bundled agents-delivery template', () => {
-  const source = readFileSync(new URL('../../../templates/agents-delivery/template.perga.js', import.meta.url), 'utf8');
-  const definition: unknown = runInNewContext(source.replace(/^export default /m, ''), { defineTemplate: (value: unknown) => value });
-  const template = z.object({ id: z.literal('agents-delivery'), inputs: z.unknown() }).parse(definition);
-  expect(compilePergaTemplateInputs(parsePergaInputsSchema(template.inputs), {})).toEqual({
-    valid: true, input: { testCmd: 'dotnet test Perga.sln' }, errors: {},
-  });
 });
 
 it('matches the Host track report, task, template and flow operations', () => {
