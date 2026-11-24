@@ -7,14 +7,18 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 import { page } from 'vitest/browser';
 
-import { FOLLOW_INSTALLATION_DEFAULT } from '../../../../../core/domain/conversation.ts';
+import { FOLLOW_INSTALLATION_DEFAULT, type ModelSelection } from '../../../../../core/domain/conversation.ts';
 import { type ModelCatalog } from '../../../../../core/domain/conversation-models.ts';
+import { useState } from '../../../ui/state/public.ts';
 import { ModelPill } from './model-pill.tsx';
 
 afterEach(async () => { cleanup(); await page.viewport(1280, 720); });
 
 const LONG = 'claude-opus-5-5-with-an-unusually-long-resolved-identifier-20260928[1m]';
-const levels = [{ reasoning_effort: 'low', description: null }];
+const levels = [
+  { reasoning_effort: 'low', description: null },
+  { reasoning_effort: 'high', description: null },
+];
 
 function entry(value: string, resolved: string, name: string): ModelCatalog['models'][number] {
   return { id: value, model: value, resolved_model: resolved, display_name: name, description: '', is_default: false,
@@ -27,12 +31,28 @@ const CATALOG: ModelCatalog = {
   default_source: 'claude_cli', source: 'live', fetched_at_ms: 1,
 };
 
+function StatefulModelPill({ onChange }: Readonly<{ onChange: (next: ModelSelection, provider: 'claude') => void }>) {
+  const [selection, setSelection] = useState<ModelSelection>(FOLLOW_INSTALLATION_DEFAULT);
+  return (
+    <ModelPill
+      provider="claude"
+      selection={selection}
+      onChange={(next, provider) => {
+        setSelection(next);
+        onChange(next, provider);
+      }}
+      groups={[{ provider: 'claude', availability: null, catalog: CATALOG }]}
+    />
+  );
+}
+
 it.each([390, 1280])('each Claude row is one line, its resolved id at the right and cut before the menu overflows (%ipx)', async (width) => {
   await page.viewport(width, 844);
   render(<ModelPill provider="claude" selection={FOLLOW_INSTALLATION_DEFAULT} onChange={vi.fn()}
     groups={[{ provider: 'claude', availability: null, catalog: CATALOG }]} />);
   await userEvent.click(screen.getByRole('button', { name: /^Model:/ }));
   const menu = await screen.findByRole('dialog');
+  await userEvent.click(within(menu).getByRole('button', { name: /^Change model:/ }));
   const bounds = menu.getBoundingClientRect();
   expect(bounds.left).toBeGreaterThanOrEqual(0);
   expect(bounds.right).toBeLessThanOrEqual(width);
@@ -60,34 +80,24 @@ it.each([390, 1280])('each Claude row is one line, its resolved id at the right 
   expect(document.documentElement.scrollWidth).toBe(width);
 });
 
-it('selects low with the pointer and returns to Default with the keyboard without changing null on Cancel', async () => {
+it('adjusts reasoning effort immediately from the Level 1 slider without adding a synthetic Default tick', async () => {
   const onChange = vi.fn();
-  render(<ModelPill provider="claude" selection={FOLLOW_INSTALLATION_DEFAULT} onChange={onChange}
-    groups={[{ provider: 'claude', availability: null, catalog: CATALOG }]} />);
+  render(<StatefulModelPill onChange={onChange} />);
   await page.getByRole('button', { name: /^Model:/ }).click();
   const slider = screen.getByRole('slider', { name: 'Reasoning effort' });
+  expect(slider.getAttribute('aria-valuemax')).toBe('1');
   expect(slider.getAttribute('aria-valuetext')).toBe('Default');
-  const root = slider.closest<HTMLElement>('[class*="radixSliderRoot"]')!;
-  const track = root.getBoundingClientRect();
-  await userEvent.pointer({ keys: '[MouseLeft]', target: root, coords: { clientX: track.right - 6, clientY: track.top + track.height / 2 } });
-  expect(slider.getAttribute('aria-valuetext')).toBe('low');
-  slider.focus();
-  await userEvent.keyboard('{End}');
-  expect(slider.getAttribute('aria-valuetext')).toBe('low');
-  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  const track = slider.getBoundingClientRect();
+  await userEvent.pointer({
+    keys: '[MouseLeft]',
+    target: slider,
+    coords: { clientX: track.right - 3, clientY: track.top + track.height / 2 },
+  });
+  expect(onChange).toHaveBeenLastCalledWith({ model: null, reasoning_effort: 'high' }, 'claude');
+  await userEvent.pointer({
+    keys: '[MouseLeft]',
+    target: slider,
+    coords: { clientX: track.left + 3, clientY: track.top + track.height / 2 },
+  });
   expect(onChange).toHaveBeenLastCalledWith({ model: null, reasoning_effort: 'low' }, 'claude');
-  await page.getByRole('button', { name: /^Model:/ }).click();
-  screen.getByRole('slider').focus();
-  await userEvent.keyboard('{End}{Home}');
-  expect(screen.getByRole('slider').getAttribute('aria-valuetext')).toBe('Default');
-  await page.getByRole('button', { name: 'Save', exact: true }).click();
-  expect(onChange).toHaveBeenLastCalledWith({ model: null, reasoning_effort: null }, 'claude');
-  onChange.mockClear();
-  await page.getByRole('button', { name: /^Model:/ }).click();
-  screen.getByRole('slider').focus();
-  await userEvent.keyboard('{End}');
-  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
-  await page.getByRole('button', { name: /^Model:/ }).click();
-  expect(screen.getByRole('slider').getAttribute('aria-valuetext')).toBe('Default');
-  expect(onChange).not.toHaveBeenCalled();
 });

@@ -27,7 +27,7 @@ function catalog(models: readonly [string, string][], provider: 'codex' | 'claud
 const ready: ProviderAvailability = { provider: 'codex', status: 'ready', reason: null, authentication_method: null, authentication_notice: null, checked_at_ms: 1 };
 const claudeUnavailable: ProviderAvailability = { provider: 'claude', status: 'unavailable', reason: REASON, authentication_method: null, authentication_notice: null, checked_at_ms: 1 };
 
-it('shows why Claude cannot run, inside the viewport, and picks nothing from its group', async () => {
+it('shows why Claude cannot run inside the viewport when expanded and picks nothing from its group', async () => {
   await page.viewport(390, 844);
   const onChange = vi.fn();
   render(<ModelPill provider="codex" effortControl="in-menu" selection={FOLLOW_INSTALLATION_DEFAULT} onChange={onChange}
@@ -36,16 +36,16 @@ it('shows why Claude cannot run, inside the viewport, and picks nothing from its
       { provider: 'claude', availability: claudeUnavailable, catalog: catalog([['opus[1m]', 'Opus'], ['sonnet', 'Sonnet']], 'claude') },
     ]} />);
   await userEvent.click(screen.getByRole('button', { name: /^Model:/ }));
-  const providers = await screen.findByRole('group', { name: 'Providers' });
+  const dialog = await screen.findByRole('dialog');
+  const providers = within(dialog).getByRole('group', { name: 'Providers' });
   await userEvent.click(within(providers).getByRole('radio', { name: 'Claude' }));
-  const models = await screen.findByRole('group', { name: 'Models' });
-  const notice = within(models).getByRole('note');
+  const notice = within(dialog).getByRole('note');
   await expect.element(notice).toBeVisible();
   expect(notice.textContent).toContain(REASON);
   const bounds = notice.getBoundingClientRect();
   expect(bounds.left).toBeGreaterThanOrEqual(0);
   expect(bounds.right).toBeLessThanOrEqual(390);
-  await userEvent.click(within(models).getByRole('radio', { name: /^Opus/ }), { force: true } as never);
+  expect(within(dialog).queryByRole('radio', { name: /^Opus/ })).toBeNull();
   expect(onChange).not.toHaveBeenCalled();
   await page.screenshot({ path: '../../../../../test-results/model-pill-claude-unavailable.png' });
 });

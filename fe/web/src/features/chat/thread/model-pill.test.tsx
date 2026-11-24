@@ -96,13 +96,20 @@ function trigger(name: RegExp): HTMLElement {
   return screen.getByRole('button', { name });
 }
 
-function openMenu(name: RegExp): HTMLElement {
+function openMenu(name = /^Model:/): HTMLElement {
   fireEvent.click(trigger(name));
   return screen.getByRole('dialog');
 }
 
+function openModelsLevel(name = /^Model:/): HTMLElement {
+  const dialog = openMenu(name);
+  const drill = within(dialog).queryByRole('button', { name: /^Change model:/ });
+  if (drill !== null) fireEvent.click(drill);
+  return dialog;
+}
+
 describe('ModelPill', () => {
-  it('keeps the draft effort on same-model clicks and clears it only on Default or model change', () => {
+  it('opens Level 1 overview with instant effort controls and drills into Level 2 models without Save/Cancel', () => {
     const choose = vi.fn();
     const group = { provider: 'opencode' as const, availability: null, catalog: catalog({
       models: [
@@ -112,34 +119,44 @@ describe('ModelPill', () => {
     }) };
     render(<ModelPill provider="opencode" groups={[group]} selection={{ model: 'gpt-5', reasoning_effort: 'high' }}
       onChange={choose} />);
-    let menu = within(openMenu(/^Model:/));
+
+    // Level 1 shows inline effort slider right beside the model summary with zero Save/Cancel/Reset chrome.
+    const menu = within(openMenu());
+    expect(menu.queryByRole('button', { name: 'Save' })).toBeNull();
+    expect(menu.queryByRole('button', { name: 'Cancel' })).toBeNull();
+    expect(menu.queryByRole('button', { name: /Reset/i })).toBeNull();
+    const slider = menu.getByRole('slider', { name: 'Reasoning effort' });
+    expect(slider.getAttribute('aria-valuetext')).toBe('high');
+
+    // Sliding left changes effort immediately.
+    fireEvent.keyDown(slider, { key: 'Home' });
+    expect(choose).toHaveBeenLastCalledWith({ model: 'gpt-5', reasoning_effort: 'low' }, 'opencode');
+    choose.mockClear();
+
+    // Drilling into Level 2 and clicking already-selected model returns to Level 1 without clobbering effort.
+    fireEvent.click(menu.getByRole('button', { name: /^Change model:/ }));
     fireEvent.click(menu.getByRole('radio', { name: /^GPT-5/ }));
-    expect(menu.getByRole('slider').getAttribute('aria-valuetext')).toBe('high');
-    fireEvent.click(menu.getByRole('button', { name: 'Save' }));
-    expect(choose).toHaveBeenLastCalledWith({ model: 'gpt-5', reasoning_effort: 'high' }, 'opencode');
+    expect(choose).not.toHaveBeenCalled();
+    expect(menu.getByRole('slider', { name: 'Reasoning effort' })).toBeTruthy();
 
-    menu = within(openMenu(/^Model:/));
-    fireEvent.keyDown(menu.getByRole('slider'), { key: 'Home' });
-    fireEvent.click(menu.getByRole('button', { name: 'Save' }));
-    expect(choose).toHaveBeenLastCalledWith({ model: 'gpt-5', reasoning_effort: null }, 'opencode');
-
-    menu = within(openMenu(/^Model:/));
+    // Picking a different model in Level 2 emits immediately, transitions to Level 1 showing the new model,
+    // and sliding effort immediately targets the newly picked model even before parent props catch up.
+    fireEvent.click(menu.getByRole('button', { name: /^Change model:/ }));
     fireEvent.click(menu.getByRole('radio', { name: 'Second' }));
-    fireEvent.click(menu.getByRole('button', { name: 'Save' }));
     expect(choose).toHaveBeenLastCalledWith({ model: 'second', reasoning_effort: null }, 'opencode');
+    expect(menu.getByRole('button', { name: 'Change model: Second' })).toBeTruthy();
+    fireEvent.keyDown(menu.getByRole('slider', { name: 'Reasoning effort' }), { key: 'End' });
+    expect(choose).toHaveBeenLastCalledWith({ model: 'second', reasoning_effort: 'high' }, 'opencode');
   });
 
-  it('allows Default to clear a saved effort when the provider lists no efforts', () => {
+  it('allows clearing a saved effort when the provider lists no efforts', () => {
     const choose = vi.fn();
     render(<ModelPill provider="codex" groups={[{ provider: 'codex', availability: null,
       catalog: catalog({ models: [model({ supported_reasoning_efforts: [], default_reasoning_effort: null })] }) }]}
       selection={{ model: 'gpt-5', reasoning_effort: 'high' }} onChange={choose} />);
-    const menu = within(openMenu(/^Model:/));
-    const slider = menu.getByRole('slider', { name: 'Reasoning effort' });
-    expect(slider.getAttribute('aria-valuetext')).toBe('high (Unavailable)');
-    fireEvent.keyDown(slider, { key: 'Home' });
-    expect(slider.getAttribute('aria-valuetext')).toBe('Default');
-    fireEvent.click(menu.getByRole('button', { name: 'Save' }));
+    const menu = within(openMenu());
+    expect(menu.getByText('high')).toBeTruthy();
+    fireEvent.click(menu.getByRole('button', { name: 'Clear unavailable effort' }));
     expect(choose).toHaveBeenCalledWith({ model: 'gpt-5', reasoning_effort: null }, 'codex');
   });
 
@@ -150,83 +167,92 @@ describe('ModelPill', () => {
         default_reasoning_effort: null,
       })] }) }]}
       selection={{ model: 'gpt-5', reasoning_effort: null }} onChange={vi.fn()} />);
-    const menu = openMenu(/^Model:/);
-    expect(within(menu).getByRole('slider', { name: 'Reasoning effort' }).getAttribute('aria-valuetext')).toBe('Default');
+    const menu = within(openMenu());
+    expect(menu.getByRole('slider', { name: 'Reasoning effort' }).getAttribute('aria-valuetext')).toBe('Default');
   });
 
-  it.each([1, 2])('keeps null on Save and Cancel, selects low, and clears to Default (%s efforts)', count => {
+  it('never adds a synthetic Default tick on the slider; selects explicit effort and supports Backspace to unset', () => {
     const onChange = vi.fn();
-    render(<ModelPill provider="codex"
-      groups={[{ provider: 'codex', availability: null, catalog: catalog({ models: [model({
-        supported_reasoning_efforts: ['low', 'high'].slice(0, count).map(reasoning_effort => ({ reasoning_effort, description: null })),
-        default_reasoning_effort: null,
-      })] }) }]}
+    const group = { provider: 'codex' as const, availability: null, catalog: catalog({ models: [model({
+      supported_reasoning_efforts: [
+        { reasoning_effort: 'low', description: null },
+        { reasoning_effort: 'medium', description: null },
+        { reasoning_effort: 'high', description: null },
+      ],
+      default_reasoning_effort: null,
+    })] }) };
+    const { rerender } = render(<ModelPill provider="codex" groups={[group]}
       selection={{ model: 'gpt-5', reasoning_effort: null }} onChange={onChange} />);
-    let menu = openMenu(/^Model:/);
-    fireEvent.click(within(menu).getByRole('button', { name: 'Save' }));
-    expect(onChange).toHaveBeenLastCalledWith({ model: 'gpt-5', reasoning_effort: null }, 'codex');
-    onChange.mockClear();
-    menu = openMenu(/^Model:/);
-    fireEvent.keyDown(within(menu).getByRole('slider'), { key: 'ArrowRight' });
-    expect(within(menu).getByRole('slider').getAttribute('aria-valuetext')).toBe('low');
-    fireEvent.click(within(menu).getByRole('button', { name: 'Save' }));
+
+    let menu = within(openMenu());
+    const slider = menu.getByRole('slider', { name: 'Reasoning effort' });
+    // Exactly 3 stops (0..2), no extra synthetic Default tick, while keeping ARIA aria-valuenow valid.
+    expect(slider.getAttribute('aria-valuemax')).toBe('2');
+    expect(slider.getAttribute('aria-valuetext')).toBe('Default');
+    expect(slider.getAttribute('aria-valuenow')).toBe('0');
+
+    fireEvent.keyDown(slider, { key: 'ArrowRight' });
     expect(onChange).toHaveBeenLastCalledWith({ model: 'gpt-5', reasoning_effort: 'low' }, 'codex');
-    menu = openMenu(/^Model:/);
-    fireEvent.keyDown(within(menu).getByRole('slider'), { key: 'ArrowRight' });
-    fireEvent.keyDown(within(menu).getByRole('slider'), { key: 'Home' });
-    expect(within(menu).getByRole('slider').getAttribute('aria-valuetext')).toBe('Default');
-    fireEvent.click(within(menu).getByRole('button', { name: 'Save' }));
+
+    rerender(<ModelPill provider="codex" groups={[group]}
+      selection={{ model: 'gpt-5', reasoning_effort: 'low' }} onChange={onChange} />);
+    menu = within(screen.getByRole('dialog'));
+    fireEvent.keyDown(menu.getByRole('slider', { name: 'Reasoning effort' }), { key: 'Backspace' });
     expect(onChange).toHaveBeenLastCalledWith({ model: 'gpt-5', reasoning_effort: null }, 'codex');
-    onChange.mockClear();
-    menu = openMenu(/^Model:/);
-    fireEvent.keyDown(within(menu).getByRole('slider'), { key: 'End' });
-    fireEvent.click(within(menu).getByRole('button', { name: 'Cancel' }));
-    menu = openMenu(/^Model:/);
-    expect(within(menu).getByRole('slider').getAttribute('aria-valuetext')).toBe('Default');
-    expect(onChange).not.toHaveBeenCalled();
   });
 
-  it.each([null, 'unadvertised'])('keeps an unset unadvertised default separate from low (%s)', defaultEffort => {
+  it('uses an inline radio pair instead of a degenerate 1-tick slider when only 1 effort exists', () => {
+    const onChange = vi.fn();
+    const group = { provider: 'codex' as const, availability: null, catalog: catalog({ models: [model({
+      supported_reasoning_efforts: [{ reasoning_effort: 'low', description: null }],
+      default_reasoning_effort: null,
+    })] }) };
+    const { rerender } = render(<ModelPill provider="codex" groups={[group]}
+      selection={{ model: 'gpt-5', reasoning_effort: null }} onChange={onChange} />);
+    const menu = within(openMenu());
+    expect(menu.queryByRole('slider')).toBeNull();
+    fireEvent.click(menu.getByRole('radio', { name: 'low' }));
+    expect(onChange).toHaveBeenLastCalledWith({ model: 'gpt-5', reasoning_effort: 'low' }, 'codex');
+
+    rerender(<ModelPill provider="codex" groups={[group]}
+      selection={{ model: 'gpt-5', reasoning_effort: 'low' }} onChange={onChange} />);
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('radio', { name: 'Default' }));
+    expect(onChange).toHaveBeenLastCalledWith({ model: 'gpt-5', reasoning_effort: null }, 'codex');
+  });
+
+  it.each([null, 'unadvertised'])('keeps an unset unadvertised default separate from low (%s)', (defaultEffort) => {
     render(<ModelPill provider="codex" groups={[{ provider: 'codex', availability: null,
       catalog: catalog({ models: [model({ default_reasoning_effort: defaultEffort })] }) }]}
       selection={{ model: 'gpt-5', reasoning_effort: null }} onChange={vi.fn()} />);
-    expect(within(openMenu(/^Model:/)).getByRole('slider').getAttribute('aria-valuetext')).toBe('Default');
+    const menu = within(openMenu());
+    expect(menu.getByRole('slider', { name: 'Reasoning effort' }).getAttribute('aria-valuetext')).toBe('Default');
   });
 
-  it('preserves an unadvertised explicit effort on untouched Save and offers supported replacements', () => {
+  it('shows an unadvertised explicit effort as unavailable and offers supported replacements', () => {
     const onChange = vi.fn();
     render(<ModelPill provider="codex" groups={[{ provider: 'codex', availability: null, catalog: catalog() }]}
       selection={{ model: 'gpt-5', reasoning_effort: 'future' }} onChange={onChange} />);
-    let menu = openMenu(/^Model:/);
-    expect(within(menu).getByRole('slider').getAttribute('aria-valuetext')).toBe('future (Unavailable)');
-    fireEvent.click(within(menu).getByRole('button', { name: 'Save' }));
-    expect(onChange).toHaveBeenLastCalledWith({ model: 'gpt-5', reasoning_effort: 'future' }, 'codex');
-    menu = openMenu(/^Model:/);
-    fireEvent.keyDown(within(menu).getByRole('slider'), { key: 'End' });
-    fireEvent.click(within(menu).getByRole('button', { name: 'Save' }));
+    const menu = within(openMenu());
+    const slider = menu.getByRole('slider', { name: 'Reasoning effort' });
+    expect(slider.getAttribute('aria-valuetext')).toBe('future (Unavailable)');
+    fireEvent.keyDown(slider, { key: 'End' });
     expect(onChange).toHaveBeenLastCalledWith({ model: 'gpt-5', reasoning_effort: 'high' }, 'codex');
   });
 
   it('preserves explicit null installation metadata instead of inheriting the model default', () => {
     const declared = catalog({ models: [model({ default_reasoning_effort: 'low' })],
-      default: { model: 'gpt-5', reasoning_effort: null, supported_reasoning_efforts: [{ reasoning_effort: 'low', description: null }] } });
+      default: { model: 'gpt-5', reasoning_effort: null, supported_reasoning_efforts: [{ reasoning_effort: 'low', description: null }, { reasoning_effort: 'high', description: null }] } });
     render(<ModelPill provider="codex" groups={[{ provider: 'codex', availability: null, catalog: declared }]}
       selection={FOLLOW_INSTALLATION_DEFAULT} onChange={vi.fn()} />);
     expect(trigger(/^Model:/).textContent).not.toContain('·');
-    expect(within(openMenu(/^Model:/)).getByRole('slider').getAttribute('aria-valuetext')).toBe('Default');
+    expect(within(openMenu()).getByRole('slider', { name: 'Reasoning effort' }).getAttribute('aria-valuetext')).toBe('Default');
   });
 
-  it('names the default it is actually following, and includes effort when provided', () => {
-    render(
-      <ModelPill provider="codex" groups={[{ provider: 'codex', availability: null, catalog: catalog() }]} selection={FOLLOW_INSTALLATION_DEFAULT} onChange={vi.fn()} />,
-    );
-    expect(trigger(/^Model:/).textContent).toBe('gpt-5-codex');
-  });
-
-  it('still says, to a screen reader, that it is following the default', () => {
+  it('names the default it is actually following and includes active effort on the trigger', () => {
     const { rerender } = render(
       <ModelPill provider="codex" groups={[{ provider: 'codex', availability: null, catalog: catalog() }]} selection={FOLLOW_INSTALLATION_DEFAULT} onChange={vi.fn()} />,
     );
+    expect(trigger(/^Model:/).textContent).toBe('gpt-5-codex');
     expect(trigger(/^Model:/).getAttribute('aria-label'))
       .toBe("Model: gpt-5-codex (this installation's default)");
 
@@ -240,67 +266,56 @@ describe('ModelPill', () => {
     expect(trigger(/^Model:/).getAttribute('aria-label')).toBe('Model: GPT-5 · low');
   });
 
-  it('renders unified two-column layout with Providers on the left and Models on the right', () => {
+  it('skips Level 1 and opens models directly when the current model has no reasoning efforts', () => {
     render(
-      <ModelPill provider="codex" groups={both()} selection={FOLLOW_INSTALLATION_DEFAULT} onChange={vi.fn()} />,
+      <ModelPill
+        provider="claude"
+        groups={[{ provider: 'claude', availability: ready('claude'), catalog: claudeCatalog() }]}
+        selection={{ model: 'haiku', reasoning_effort: null }}
+        onChange={vi.fn()}
+      />,
     );
-    const menu = openMenu(/^Model:/);
-    const providers = within(menu).getByRole('group', { name: 'Providers' });
-    const models = within(menu).getByRole('group', { name: 'Models' });
-    expect(within(providers).getByRole('radio', { name: 'Codex' })).toBeTruthy();
-    expect(within(providers).getByRole('radio', { name: 'Claude' })).toBeTruthy();
-    expect(within(models).getByText('Default')).toBeTruthy();
-    expect(within(models).getByTitle('gpt-5-codex')).toBeTruthy();
+    const menu = within(openMenu());
+    expect(menu.queryByRole('slider', { name: 'Reasoning effort' })).toBeNull();
+    expect(menu.queryByRole('button', { name: 'Back to model settings' })).toBeNull();
+    expect(menu.getByRole('group', { name: 'Models' })).toBeTruthy();
   });
 
-  it('switches right-column models when clicking another provider on the left, then emits model + provider on pick', () => {
+  it('shows a left provider rail for multiple providers and picks from the selected provider in one click', () => {
     const onChange = vi.fn();
     render(
       <ModelPill provider="codex" groups={both()} selection={FOLLOW_INSTALLATION_DEFAULT} onChange={onChange} />,
     );
-    const menu = openMenu(/^Model:/);
-    const providers = within(menu).getByRole('group', { name: 'Providers' });
-    fireEvent.click(within(providers).getByRole('radio', { name: 'Claude' }));
+    const menu = within(openModelsLevel());
+    const providers = within(menu.getByRole('group', { name: 'Providers' }));
+    expect(providers.getByRole('radio', { name: 'Codex' }).getAttribute('aria-checked')).toBe('true');
+    expect(providers.getByRole('radio', { name: 'Claude' }).getAttribute('aria-checked')).toBe('false');
+    expect(within(menu.getByRole('group', { name: 'Models' })).getByTitle('gpt-5-codex')).toBeTruthy();
+    expect(within(menu.getByRole('group', { name: 'Models' })).queryByRole('radio', { name: /^Sonnet/ })).toBeNull();
+
+    fireEvent.click(providers.getByRole('radio', { name: 'Claude' }));
     expect(onChange).not.toHaveBeenCalled();
 
-    const models = within(menu).getByRole('group', { name: 'Models' });
-    fireEvent.click(within(models).getByRole('radio', { name: /^Sonnet/ }));
-    expect(onChange).not.toHaveBeenCalled();
-    fireEvent.click(within(menu).getByRole('button', { name: 'Save' }));
+    const models = within(menu.getByRole('group', { name: 'Models' }));
+    fireEvent.click(models.getByRole('radio', { name: /^Sonnet/ }));
     expect(onChange).toHaveBeenCalledWith({ model: 'sonnet', reasoning_effort: null }, 'claude');
   });
 
-  it('selects a provider default when clicking another ready provider and saving directly', () => {
+  it('selects another ready provider default after switching in the provider rail', () => {
     const onChange = vi.fn();
     render(
       <ModelPill provider="codex" groups={both()} selection={{ model: 'gpt-5', reasoning_effort: 'high' }} onChange={onChange} />,
     );
-    const menu = openMenu(/^Model:/);
-    const providers = within(menu).getByRole('group', { name: 'Providers' });
-    fireEvent.click(within(providers).getByRole('radio', { name: 'Claude' }));
-    expect(onChange).not.toHaveBeenCalled();
-
-    const models = within(menu).getByRole('group', { name: 'Models' });
-    expect(within(models).getByRole('radio', { name: /^Default/ }).getAttribute('aria-checked')).toBe('true');
-
-    fireEvent.click(within(menu).getByRole('button', { name: 'Save' }));
+    const menu = within(openModelsLevel());
+    fireEvent.click(within(menu.getByRole('group', { name: 'Providers' })).getByRole('radio', { name: 'Claude' }));
+    const models = within(menu.getByRole('group', { name: 'Models' }));
+    const claudeDefault = models.getAllByTitle('claude-opus-5-5[1m]')[0]?.closest('button') ?? null;
+    expect(claudeDefault).not.toBeNull();
+    fireEvent.click(claudeDefault!);
     expect(onChange).toHaveBeenCalledWith({ model: null, reasoning_effort: null }, 'claude');
   });
 
-  it('restores the committed selection when switching back to the initial provider before saving', () => {
-    const onChange = vi.fn();
-    render(
-      <ModelPill provider="codex" groups={both()} selection={{ model: 'gpt-5', reasoning_effort: 'high' }} onChange={onChange} />,
-    );
-    const menu = openMenu(/^Model:/);
-    const providers = within(menu).getByRole('group', { name: 'Providers' });
-    fireEvent.click(within(providers).getByRole('radio', { name: 'Claude' }));
-    fireEvent.click(within(providers).getByRole('radio', { name: 'Codex' }));
-    fireEvent.click(within(menu).getByRole('button', { name: 'Save' }));
-    expect(onChange).toHaveBeenCalledWith({ model: 'gpt-5', reasoning_effort: 'high' }, 'codex');
-  });
-
-  it('does not select null default on provider click when defaultAvailable is false', () => {
+  it('omits the Default row for a non-active provider when defaultAvailable is false', () => {
     const onChange = vi.fn();
     render(
       <ModelPill
@@ -313,124 +328,15 @@ describe('ModelPill', () => {
         onChange={onChange}
       />,
     );
-    const menu = openMenu(/^Model:/);
-    const providers = within(menu).getByRole('group', { name: 'Providers' });
-    fireEvent.click(within(providers).getByRole('radio', { name: 'Claude' }));
-    const models = within(menu).getByRole('group', { name: 'Models' });
-    expect(within(models).getByRole('radio', { name: /^Default/ }).getAttribute('aria-checked')).toBe('false');
-    fireEvent.click(within(menu).getByRole('button', { name: 'Save' }));
-    expect(onChange).toHaveBeenCalledWith({ model: 'gpt-5', reasoning_effort: 'high' }, 'codex');
+    const menu = within(openModelsLevel());
+    fireEvent.click(within(menu.getByRole('group', { name: 'Providers' })).getByRole('radio', { name: 'Claude' }));
+    const models = within(menu.getByRole('group', { name: 'Models' }));
+    expect(models.queryByRole('radio', { name: /^Default/ })).toBeNull();
+    fireEvent.click(models.getByRole('radio', { name: /^Sonnet/ }));
+    expect(onChange).toHaveBeenCalledWith({ model: 'sonnet', reasoning_effort: null }, 'claude');
   });
 
-  it('offers a distinct Default plus ordered explicit effort choices', () => {
-    const onChange = vi.fn();
-    const multiEffortCatalog = catalog({
-      models: [model({
-        supported_reasoning_efforts: [
-          { reasoning_effort: 'low', description: null },
-          { reasoning_effort: 'medium', description: null },
-          { reasoning_effort: 'high', description: null },
-        ],
-        default_reasoning_effort: 'medium',
-      })],
-    });
-    const { rerender } = render(
-      <ModelPill
-        provider="codex"
-        groups={[{ provider: 'codex', availability: null, catalog: multiEffortCatalog }]}
-        selection={{ model: 'gpt-5', reasoning_effort: null }}
-        onChange={onChange}
-      />,
-    );
-    const menu = openMenu(/^Model:/);
-    expect(within(menu).getByText('medium')).toBeTruthy();
-    const slider = within(menu).getByRole('slider', { name: 'Reasoning effort' });
-    expect(slider.getAttribute('aria-valuetext')).toBe('Default (medium)');
-
-    fireEvent.keyDown(slider, { key: 'End' });
-    expect(within(menu).getByText('high')).toBeTruthy();
-    expect(onChange).not.toHaveBeenCalled();
-    fireEvent.click(within(menu).getByRole('button', { name: 'Save' }));
-    expect(onChange).toHaveBeenLastCalledWith({ model: 'gpt-5', reasoning_effort: 'high' }, 'codex');
-
-    rerender(
-      <ModelPill
-        provider="codex"
-        groups={[{ provider: 'codex', availability: null, catalog: multiEffortCatalog }]}
-        selection={{ model: 'gpt-5', reasoning_effort: 'low' }}
-        onChange={onChange}
-      />,
-    );
-    const menu2 = openMenu(/^Model:/);
-    const slider2 = within(menu2).getByRole('slider', { name: 'Reasoning effort' });
-    expect(slider2.getAttribute('aria-valuetext')).toBe('low');
-
-    fireEvent.keyDown(slider2, { key: 'ArrowRight' });
-    fireEvent.click(within(menu2).getByRole('button', { name: 'Save' }));
-    expect(onChange).toHaveBeenLastCalledWith({ model: 'gpt-5', reasoning_effort: 'medium' }, 'codex');
-
-    rerender(
-      <ModelPill
-        provider="codex"
-        groups={[{ provider: 'codex', availability: null, catalog: multiEffortCatalog }]}
-        selection={{ model: 'gpt-5', reasoning_effort: 'medium' }}
-        onChange={onChange}
-      />,
-    );
-    const menu3 = openMenu(/^Model:/);
-    fireEvent.keyDown(within(menu3).getByRole('slider', { name: 'Reasoning effort' }), { key: 'ArrowLeft' });
-    fireEvent.click(within(menu3).getByRole('button', { name: 'Save' }));
-    expect(onChange).toHaveBeenLastCalledWith({ model: 'gpt-5', reasoning_effort: 'low' }, 'codex');
-  });
-
-  it('discards draft effort and model changes when Cancel is clicked', () => {
-    const onChange = vi.fn();
-    const multiEffortCatalog = catalog({
-      models: [model({
-        supported_reasoning_efforts: [
-          { reasoning_effort: 'low', description: null },
-          { reasoning_effort: 'medium', description: null },
-          { reasoning_effort: 'high', description: null },
-        ],
-        default_reasoning_effort: 'medium',
-      })],
-    });
-    render(
-      <ModelPill
-        provider="codex"
-        groups={[{ provider: 'codex', availability: null, catalog: multiEffortCatalog }]}
-        selection={{ model: 'gpt-5', reasoning_effort: 'low' }}
-        onChange={onChange}
-      />,
-    );
-    const menu = openMenu(/^Model:/);
-    const slider = within(menu).getByRole('slider', { name: 'Reasoning effort' });
-    fireEvent.keyDown(slider, { key: 'ArrowRight' });
-    expect(within(menu).getByText('medium')).toBeTruthy();
-
-    fireEvent.click(within(menu).getByRole('button', { name: 'Cancel' }));
-    expect(onChange).not.toHaveBeenCalled();
-
-    const reopened = openMenu(/^Model:/);
-    expect(within(reopened).getByRole('slider', { name: 'Reasoning effort' }).getAttribute('aria-valuetext')).toBe('low');
-  });
-
-  it('disables the effort slider when a model provides no supported_reasoning_efforts', () => {
-    render(
-      <ModelPill
-        provider="claude"
-        groups={[{ provider: 'claude', availability: ready('claude'), catalog: claudeCatalog() }]}
-        selection={{ model: 'haiku', reasoning_effort: null }}
-        onChange={vi.fn()}
-      />,
-    );
-    const menu = openMenu(/^Model:/);
-    expect(within(menu).getByText('N/A')).toBeTruthy();
-    const slider = within(menu).getByRole('slider', { name: 'Reasoning effort' });
-    expect(isDisabled(slider)).toBe(true);
-  });
-
-  it('hides not_configured providers from the left column while keeping the active one', () => {
+  it('hides not_configured providers while keeping the active one', () => {
     render(
       <ModelPill
         provider="codex"
@@ -442,9 +348,9 @@ describe('ModelPill', () => {
         onChange={vi.fn()}
       />,
     );
-    const menu = openMenu(/^Model:/);
-    expect(within(menu).queryByRole('group', { name: 'Providers' })).toBeNull();
-    expect(within(menu).queryByRole('radio', { name: 'Claude' })).toBeNull();
+    const menu = within(openModelsLevel());
+    expect(menu.queryByRole('group', { name: 'Providers' })).toBeNull();
+    expect(menu.queryByText('Claude')).toBeNull();
   });
 
   it('fuzzy-matches typos, punctuation-free queries, acronyms, and multi-token provider queries', () => {
@@ -455,7 +361,7 @@ describe('ModelPill', () => {
     expect(scoreModelSearch(['Sonnet', 'sonnet', 'claude-sonnet-4-6', 'Claude'], 'zzzzz')).toBe(0);
   });
 
-  it('keeps an unavailable Codex group pickable under a warning when acceptsUnavailableBlankTrack is true', () => {
+  it('keeps an unavailable Codex group with models pickable under a warning when acceptsUnavailableBlankTrack is true', () => {
     const reason = 'codex is not logged in';
     const onChange = vi.fn();
     render(
@@ -469,18 +375,40 @@ describe('ModelPill', () => {
         onChange={onChange}
       />,
     );
-    const menu = openMenu(/^Model:/);
-    fireEvent.click(within(menu).getByRole('radio', { name: 'Codex' }));
-    const models = within(menu).getByRole('group', { name: 'Models' });
-    expect(within(models).getByRole('note').textContent).toContain(reason);
-    const defaultRow = within(models).getByRole('radio', { name: /^Default/ });
-    expect(isDisabled(defaultRow)).toBe(false);
-    fireEvent.click(defaultRow);
-    fireEvent.click(within(menu).getByRole('button', { name: 'Save' }));
+    const menu = within(openModelsLevel());
+    fireEvent.click(within(menu.getByRole('group', { name: 'Providers' })).getByRole('radio', { name: 'Codex' }));
+    const models = within(menu.getByRole('group', { name: 'Models' }));
+    expect(models.getByRole('note').textContent).toContain(reason);
+    const codexDefault = models.getByTitle('gpt-5-codex').closest('button')!;
+    expect(isDisabled(codexDefault)).toBe(false);
+    fireEvent.click(codexDefault);
     expect(onChange).toHaveBeenLastCalledWith({ model: null, reasoning_effort: null }, 'codex');
   });
 
-  it('blocks an unavailable Claude group and shows its unavailable reason', () => {
+  it('does not show a fake Default row for an unavailable provider with no models', () => {
+    const reason = 'OpenCode CLI is not installed';
+    const onChange = vi.fn();
+    render(
+      <ModelPill
+        groups={[
+          { provider: 'codex', availability: ready('codex'), catalog: catalog() },
+          { provider: 'opencode', availability: unavailable('opencode', reason), catalog: catalog({ models: [], source: 'unavailable', default_source: 'unknown' }), acceptsUnavailableBlankTrack: true },
+        ]}
+        provider="codex"
+        selection={FOLLOW_INSTALLATION_DEFAULT}
+        onChange={onChange}
+      />,
+    );
+    const menu = within(openModelsLevel());
+    fireEvent.click(within(menu.getByRole('group', { name: 'Providers' })).getByRole('radio', { name: 'OpenCode' }));
+    const models = within(menu.getByRole('group', { name: 'Models' }));
+    expect(models.getByRole('note').textContent).toContain(reason);
+    expect(models.queryByRole('radio', { name: /^Default/ })).toBeNull();
+    fireEvent.click(models.getByRole('button', { name: 'Use OpenCode anyway' }));
+    expect(onChange).toHaveBeenLastCalledWith({ model: null, reasoning_effort: null }, 'opencode');
+  });
+
+  it('shows a blocked unavailable provider reason when selected in the rail and blocks picking from it', () => {
     const onChange = vi.fn();
     render(
       <ModelPill
@@ -490,17 +418,16 @@ describe('ModelPill', () => {
         onChange={onChange}
       />,
     );
-    const menu = openMenu(/^Model:/);
-    fireEvent.click(within(menu).getByRole('radio', { name: 'Claude' }));
-    const models = within(menu).getByRole('group', { name: 'Models' });
-    expect(within(models).getByRole('note').textContent).toContain(CLAUDE_UNAVAILABLE);
-    const defaultRow = within(models).getByRole('radio', { name: /^Default/ });
-    expect(isDisabled(defaultRow)).toBe(true);
-    fireEvent.click(defaultRow);
+    const menu = within(openModelsLevel());
+    expect(menu.queryByRole('note')).toBeNull();
+    fireEvent.click(within(menu.getByRole('group', { name: 'Providers' })).getByRole('radio', { name: 'Claude' }));
+    expect(menu.getByRole('note').textContent).toContain(CLAUDE_UNAVAILABLE);
+    expect(menu.queryByRole('radio', { name: /^Default/ })).toBeNull();
+    expect(menu.queryByRole('radio', { name: /^Sonnet/ })).toBeNull();
     expect(onChange).not.toHaveBeenCalled();
   });
 
-  it('emits a managed provider and model without UI registration', () => {
+  it('emits a managed provider and model without UI registration in one click', () => {
     const onChange = vi.fn();
     const group: ModelGroup<'owner-backend'> = {
       provider: 'owner-backend',
@@ -509,9 +436,8 @@ describe('ModelPill', () => {
       selectionProblem: null,
     };
     render(<ModelPill groups={[group]} provider="owner-backend" selection={FOLLOW_INSTALLATION_DEFAULT} onChange={onChange} />);
-    const menu = openMenu(/^Model: owner-backend/);
-    fireEvent.click(within(menu).getByRole('radio', { name: /^GPT-5/ }));
-    fireEvent.click(within(menu).getByRole('button', { name: 'Save' }));
+    const menu = within(openModelsLevel(/^Model: owner-backend/));
+    fireEvent.click(menu.getByRole('radio', { name: /^GPT-5/ }));
     expect(onChange).toHaveBeenCalledWith({ model: 'gpt-5', reasoning_effort: null }, 'owner-backend');
   });
 
@@ -595,16 +521,16 @@ describe('ModelPill', () => {
     );
     const live = trigger(/^Model:/);
     expect(live.hasAttribute('disabled') || live.getAttribute('aria-disabled') === 'true').toBe(false);
-    expect(within(openMenu(/^Model:/)).getByText(/No models available on this account/)).toBeTruthy();
+    expect(within(openMenu()).getByText(/No models available on this account/)).toBeTruthy();
   });
 
   it('says why an unavailable catalog is empty in the words of its provider', () => {
-    const unavailable = catalog({ models: [], source: 'unavailable', default_source: 'unknown' });
-    const { unmount } = render(<ModelPill provider="codex" groups={[{ provider: 'codex', availability: null, catalog: unavailable }]} selection={FOLLOW_INSTALLATION_DEFAULT} onChange={vi.fn()} />);
+    const unavailableCatalog = catalog({ models: [], source: 'unavailable', default_source: 'unknown' });
+    const { unmount } = render(<ModelPill provider="codex" groups={[{ provider: 'codex', availability: null, catalog: unavailableCatalog }]} selection={FOLLOW_INSTALLATION_DEFAULT} onChange={vi.fn()} />);
     /* The menu cannot open while unavailable, but its rows are rendered; the text is what a Codex reader is told. */
     expect(document.body.textContent).toContain('codex is not running');
     unmount();
-    render(<ModelPill provider="claude" groups={[{ provider: 'claude', availability: null, catalog: unavailable }]} selection={FOLLOW_INSTALLATION_DEFAULT} onChange={vi.fn()} />);
+    render(<ModelPill provider="claude" groups={[{ provider: 'claude', availability: null, catalog: unavailableCatalog }]} selection={FOLLOW_INSTALLATION_DEFAULT} onChange={vi.fn()} />);
     expect(document.body.textContent).toContain(CLAUDE_UNAVAILABLE);
     expect(document.body.textContent).not.toContain('codex is not running');
   });
@@ -613,7 +539,7 @@ describe('ModelPill', () => {
     render(
       <ModelPill provider="codex" groups={[{ provider: 'codex', availability: null, catalog: catalog() }]} selection={FOLLOW_INSTALLATION_DEFAULT} onChange={vi.fn()} />,
     );
-    expect(within(openMenu(/^Model:/)).queryByRole('note')).toBeNull();
+    expect(within(openModelsLevel()).queryByRole('note')).toBeNull();
     expect(screen.queryByRole('radio', { name: /smaller context window/ })).toBeNull();
   });
 
@@ -630,9 +556,9 @@ describe('ModelPill', () => {
 describe.each(['model', 'setting'] as const)('%s pill Escape focus', (kind) => {
   function setup() {
     const view = render(<div role="dialog" aria-label="Host dialog">
-      {kind === 'model'
-        ? <ModelPill provider="codex" groups={both()} selection={FOLLOW_INSTALLATION_DEFAULT} onChange={vi.fn()} />
-        : <PermissionModePill mode="default" options={[{ id: 'default', label: 'Default', description: 'Default approval policy', tone: 'neutral', isDefault: true }]} onChange={vi.fn()} />}
+      {kind === 'setting'
+        ? <PermissionModePill mode="default" options={[{ id: 'default', label: 'Default', description: 'Default approval policy', tone: 'neutral', isDefault: true }]} onChange={vi.fn()} />
+        : <ModelPill provider="codex" groups={both()} selection={FOLLOW_INSTALLATION_DEFAULT} onChange={vi.fn()} />}
       <input aria-label="Next control" />
     </div>);
     const button = trigger(kind === 'model' ? /^Model:/ : /^Approvals:/);
@@ -642,11 +568,11 @@ describe.each(['model', 'setting'] as const)('%s pill Escape focus', (kind) => {
       : screen.getByRole('menu');
     const frames = new Map<number, FrameRequestCallback>();
     let sequence = 0;
-    vi.spyOn(window, 'requestAnimationFrame').mockImplementation(callback => {
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
       frames.set(++sequence, callback);
       return sequence;
     });
-    const cancel = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(id => { frames.delete(id); });
+    const cancel = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((id) => { frames.delete(id); });
     const escape = () => fireEvent.keyDown(popup, { key: 'Escape' });
     const flush = () => {
       for (const [id, callback] of frames) {

@@ -32,7 +32,6 @@
     "@codemirror/state": "^6.7.2",
     "@codemirror/view": "^6.43.10",
     "@noble/hashes": "1.8.0",
-    "@radix-ui/react-slider": "^1.6.1",
     "@tanstack/react-query": "^5.100.11",
     "@tanstack/react-router": "^1.170.4",
     "@uiw/codemirror-theme-github": "^4.25.11",
@@ -62,6 +61,7 @@
     "@types/node": "^25.9.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "@typescript-eslint/parser": "^8.65.0",
     "@vitejs/plugin-react": "^6.0.1",
     "@vitest/browser": "^4.1.10",
     "@vitest/browser-playwright": "^4.1.10",
@@ -73,14 +73,13 @@
     "jsdom": "^29.1.1",
     "patch-package": "8.0.1",
     "postcss": "^8.5.25",
+    "postcss-selector-parser": "^7.1.4",
     "stylelint": "^17.12.0",
     "stylelint-config-recommended": "^18.0.0",
     "typescript": "~5.9.0",
     "typescript-eslint": "^8.59.4",
     "vite": "^8.0.4",
     "vitest": "^4.1.6",
-    "yaml": "^2.9.0",
-    "postcss-selector-parser": "^7.1.4",
-    "@typescript-eslint/parser": "^8.65.0"
+    "yaml": "^2.9.0"
   }
 }
