@@ -7,10 +7,10 @@ export function inventoryEmptyContent(key: RowModuleView['key'], title: string):
   switch (key) {
     case 'work':
     case 'tasks':
-      return { icon: <Icon name="tasks" />, title, description: '报告中声明的任务会显示在这里。' };
+      return { icon: <Icon name="tasks" />, title, description: 'Tasks declared in the report appear here.' };
     case 'temporary':
-      return { icon: <Icon name="terminal" />, title, description: '临时终端会显示在这里。' };
+      return { icon: <Icon name="terminal" />, title, description: 'Temporary terminals appear here.' };
     case 'cards':
-      return { icon: <Icon name="tools" />, title, description: '添加的工具会显示在这里。' };
+      return { icon: <Icon name="tools" />, title, description: 'Opened workspace tools appear here.' };
   }
 }

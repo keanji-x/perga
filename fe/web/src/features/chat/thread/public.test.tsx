@@ -123,14 +123,14 @@ describe('ChatThread', () => {
 
   it('renders the empty state before anything is said', () => {
     render(<ChatThread hasPendingMessages={false} canContinue={false} cards={{}} stalled={false} conversation={conversation()} turns={[]} />);
-    expect(screen.getByText('聊聊你想做什么')).toBeTruthy();
+    expect(screen.getByText('Start a conversation')).toBeTruthy();
   });
 
   it('does not call a pending conversation empty while the agent is working', () => {
     render(<ChatThread hasPendingMessages={false} canContinue={false} cards={{}} stalled={false} conversation={conversation()} turns={[]} pending />);
     expect(workingMarks()).toHaveLength(1);
-    expect(screen.getByText('本轮生成中')).toBeTruthy();
-    expect(screen.queryByText('聊聊你想做什么')).toBeNull();
+    expect(screen.getByText('Working…')).toBeTruthy();
+    expect(screen.queryByText('Start a conversation')).toBeNull();
   });
 
   it('renders an operable system disclosure, not either speaker', async () => {
@@ -1240,10 +1240,10 @@ it.each(['drop', 'paste'] as const)('accepts files from %s only while the compos
 
 it('shows mobile conversation options only when footer actions are supplied', () => {
   const { rerender } = render(<ChatComposer layout="mobile" onSend={vi.fn()} />);
-  expect(screen.queryByLabelText('对话选项')).toBeNull();
+  expect(screen.queryByLabelText('Conversation options')).toBeNull();
   rerender(<ChatComposer layout="mobile" onSend={vi.fn()} footerActions={<button>Conversation settings</button>} />);
-  expect(screen.getByLabelText('对话选项')).toBeTruthy();
+  expect(screen.getByLabelText('Conversation options')).toBeTruthy();
   rerender(<ChatComposer layout="standard" onSend={vi.fn()} footerActions={<button>Conversation settings</button>} />);
-  expect(screen.queryByLabelText('对话选项')).toBeNull();
+  expect(screen.queryByLabelText('Conversation options')).toBeNull();
   expect(screen.getByRole('button', { name: 'Conversation settings' })).toBeTruthy();
 });

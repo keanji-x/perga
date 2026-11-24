@@ -190,7 +190,7 @@ export function mentionTrigger(source: SearchSource<MentionItem>): ChatComposerT
       const data = (item as MentionItem).auxiliaryData!;
       return 'category' in data ? enterCategory(data.category) : mentionToken(data.suggestion);
     },
-  }, { icon: <Icon name="search" />, title: 'No matches', description: '换个关键词，或尝试其他引用类型。' });
+  }, { icon: <Icon name="search" />, title: 'No matches', description: 'Try another keyword or reference type.' });
 }
 
 /**

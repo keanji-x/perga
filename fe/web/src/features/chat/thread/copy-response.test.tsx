@@ -14,16 +14,16 @@ it('copies the visible response Markdown only after a deliberate click', async (
       { id: 'end', author: 'turn', elapsedMs: null, turnId: 'turn', status: 'completed', atMs: 3 },
     ]} />);
   expect(copyText).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole('button', { name: '复制回复' }));
-  await screen.findByRole('button', { name: '已复制回复' });
+  fireEvent.click(screen.getByRole('button', { name: 'Copy reply' }));
+  await screen.findByRole('button', { name: 'Copied reply' });
   expect(copyText).toHaveBeenCalledExactlyOnceWith(text);
 });
 it('reports rejected copy without fabricating success, in a fixed sentence and never the rejection text', async () => {
   render(<ThreadStatusNotice heading="Completed" clock={{ elapsedMs: null, timestamp: null }}
     copyAction={{ id: 'a', text: 'text', run: () => Promise.reject(new Error('Permission denied')) }} />);
-  fireEvent.click(screen.getByRole('button', { name: '复制回复' }));
-  await screen.findByRole('button', { name: '复制失败' });
-  expect(screen.queryByRole('button', { name: '已复制回复' })).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Copy reply' }));
+  await screen.findByRole('button', { name: 'Copy failed' });
+  expect(screen.queryByRole('button', { name: 'Copied reply' })).toBeNull();
   expect(screen.queryByRole('button', { name: /Permission denied/ })).toBeNull();
 });
 it('ignores old copy completion when the response changes', async () => {
@@ -32,10 +32,10 @@ it('ignores old copy completion when the response changes', async () => {
   const view = (id: string) => <ThreadStatusNotice heading="Completed" clock={{ elapsedMs: null, timestamp: null }}
     copyAction={{ id, text: id, run: id === 'a' ? () => pending : () => Promise.resolve() }} />;
   const { rerender } = render(view('a'));
-  fireEvent.click(screen.getByRole('button', { name: '复制回复' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Copy reply' }));
   rerender(view('b')); resolve();
-  await waitFor(() => expect(screen.getByRole('button', { name: '复制回复' })).toBeTruthy());
-  expect(screen.queryByRole('button', { name: '已复制回复' })).toBeNull();
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Copy reply' })).toBeTruthy());
+  expect(screen.queryByRole('button', { name: 'Copied reply' })).toBeNull();
 });
 
 it('does not let a hung old copy block the new response or overwrite its success', async () => {
@@ -45,13 +45,13 @@ it('does not let a hung old copy block the new response or overwrite its success
   const view = (id: string) => <ThreadStatusNotice heading="Completed" clock={{ elapsedMs: null, timestamp: null }}
     copyAction={{ id, text: id, run: () => copy(id) }} />;
   const { rerender } = render(view('a'));
-  fireEvent.click(screen.getByRole('button', { name: '复制回复' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Copy reply' }));
   rerender(view('b'));
-  fireEvent.click(screen.getByRole('button', { name: '复制回复' }));
-  await screen.findByRole('button', { name: '已复制回复' });
+  fireEvent.click(screen.getByRole('button', { name: 'Copy reply' }));
+  await screen.findByRole('button', { name: 'Copied reply' });
   resolveOld();
   await waitFor(() => expect(copy.mock.calls).toEqual([['a'], ['b']]));
-  expect(screen.getByRole('button', { name: '已复制回复' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Copied reply' })).toBeTruthy();
 });
 
 it('regenerates only the delivered prompt after an explicit click, including its images', async () => {
@@ -65,7 +65,7 @@ it('regenerates only the delivered prompt after an explicit click, including its
       { id: 'end', author: 'turn', elapsedMs: null, turnId: 'turn', status: 'completed', atMs: 3 },
     ]} />);
   expect(regenerate).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole('button', { name: '重新生成' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Regenerate' }));
   await waitFor(() => expect(regenerate).toHaveBeenCalledExactlyOnceWith(user));
   expect(screen.getByText('Answer', { exact: true })).toBeTruthy();
 });

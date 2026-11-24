@@ -88,18 +88,18 @@ describe('degraded workspace reads stay usable', () => {
       return ok([]);
     });
     const rail = await screen.findByRole('navigation', { name: 'Workspace' });
-    const indicator = await within(rail).findByRole('button', { name: '连接状态：连接异常' });
+    const indicator = await within(rail).findByRole('button', { name: 'Connection status: Connection issue' });
     expect(within(rail).queryByRole('alert')).toBeNull();
     await userEvent.click(indicator);
-    const details = screen.getByRole('dialog', { name: '连接详情' });
+    const details = screen.getByRole('dialog', { name: 'Connection details' });
     expect(details.textContent).toContain('Areas');
     expect(within(rail).queryByRole('button', { name: '创建第一个 Area' })).toBeNull();
     expect(within(rail).getByRole('button', { name: 'Go to Today' })).toBeTruthy();
     broken = false;
-    await userEvent.click(within(details).getByRole('button', { name: '重试读取' }));
+    await userEvent.click(within(details).getByRole('button', { name: 'Retry sync' }));
     await within(rail).findByRole('button', { name: 'Collapse area One' });
-    await waitFor(() => expect(within(rail).queryByRole('button', { name: '连接状态：连接异常' })).toBeNull());
-    expect(screen.queryByRole('dialog', { name: '连接详情' })).toBeNull();
+    await waitFor(() => expect(within(rail).queryByRole('button', { name: 'Connection status: Connection issue' })).toBeNull());
+    expect(screen.queryByRole('dialog', { name: 'Connection details' })).toBeNull();
   });
 
   /* A refusal is the server's answer to this read: its reason follows the fixed sentence in the indicator. */
@@ -109,8 +109,8 @@ describe('degraded workspace reads stay usable', () => {
       return ok([]);
     });
     const rail = await screen.findByRole('navigation', { name: 'Workspace' });
-    await userEvent.click(await within(rail).findByRole('button', { name: '连接状态：连接异常' }));
-    expect(screen.getByRole('dialog', { name: '连接详情' }).textContent).toContain('Areas are unavailable. owner login required');
+    await userEvent.click(await within(rail).findByRole('button', { name: 'Connection status: Connection issue' }));
+    expect(screen.getByRole('dialog', { name: 'Connection details' }).textContent).toContain('Areas are unavailable. owner login required');
   });
 
   it('keeps cached Areas while a refresh fails and recovers locally', async () => {
@@ -123,17 +123,17 @@ describe('degraded workspace reads stay usable', () => {
     await within(rail).findByRole('button', { name: 'Collapse area One' });
     broken = true;
     await act(() => client.invalidateQueries({ queryKey: ['areas'] }));
-    const indicator = await within(rail).findByRole('button', { name: '连接状态：连接异常' });
+    const indicator = await within(rail).findByRole('button', { name: 'Connection status: Connection issue' });
     expect(within(rail).queryByRole('alert')).toBeNull();
     expect(within(rail).getByRole('button', { name: 'Collapse area One' })).toBeTruthy();
     await userEvent.click(indicator);
-    const details = screen.getByRole('dialog', { name: '连接详情' });
+    const details = screen.getByRole('dialog', { name: 'Connection details' });
     expect(details.textContent).toContain('Areas could not be refreshed.');
     expect(details.textContent).not.toContain('Area refresh unavailable');
     broken = false;
-    await userEvent.click(within(details).getByRole('button', { name: '重试读取' }));
-    await waitFor(() => expect(within(rail).queryByRole('button', { name: '连接状态：连接异常' })).toBeNull());
-    expect(screen.queryByRole('dialog', { name: '连接详情' })).toBeNull();
+    await userEvent.click(within(details).getByRole('button', { name: 'Retry sync' }));
+    await waitFor(() => expect(within(rail).queryByRole('button', { name: 'Connection status: Connection issue' })).toBeNull());
+    expect(screen.queryByRole('dialog', { name: 'Connection details' })).toBeNull();
   });
 
   it('lets an offline Area draft be cancelled without creating it on reconnect', async () => {

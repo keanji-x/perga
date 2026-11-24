@@ -120,7 +120,32 @@
 
   .actions {
     display: flex;
-    justify-content: flex-end;
+    align-items: center;
+    justify-content: space-between;
     gap: var(--space-2);
+  }
+
+  .actionGroup {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    margin-inline-start: auto;
+  }
+
+  .hiddenToggle {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-sm);
+    font: var(--type-metadata);
+    color: var(--text-3);
+    cursor: pointer;
+  }
+
+  .hiddenToggle:hover,
+  .hiddenToggle:focus-visible {
+    background: var(--overlay-hover);
+    color: var(--text);
   }
 }

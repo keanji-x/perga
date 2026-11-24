@@ -487,7 +487,7 @@ describe('Unified mobile headers', () => {
     await page.getByRole('button', { name: 'Back to Report' }).click();
     await expect.poll(() => [...document.querySelectorAll('[data-nc-drawer]')].every((drawer) => !drawer.checkVisibility())).toBe(true);
     await page.getByRole('button', { name: 'Open conversation history' }).click();
-    await page.getByRole('button', { name: '设置', exact: true }).click();
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
     await record('settings', (await page.getByRole('heading', { name: 'Settings', exact: true }).findElement()).closest('header')!);
     expect(frames).toHaveLength(8);
   });
@@ -559,18 +559,17 @@ describe('shared desktop primary header', () => {
     const today = rail.querySelector<HTMLElement>('[aria-label="Go to Today"]')!;
     const collapse = rail.querySelector<HTMLElement>('[aria-label="Collapse sidebar"]')!;
     const header = document.querySelector<HTMLElement>('[data-nc-header-rows]')!;
-    const title = document.querySelector<HTMLElement>('[aria-label="Rename track"]')!;
+    const headerRow = header.firstElementChild as HTMLElement;
     const centre = (element: HTMLElement) => { const box = element.getBoundingClientRect(); return box.top + box.height / 2; };
-    expect(centre(title) - centre(today)).toBeCloseTo(0, 0);
-    expect(centre(title) - centre(collapse)).toBeCloseTo(0, 0);
+    expect(centre(headerRow) - centre(today)).toBeCloseTo(0, 0);
+    expect(centre(headerRow) - centre(collapse)).toBeCloseTo(0, 0);
     const primaryNav = rail.querySelector<HTMLElement>('[data-nc-primary-nav]')!;
     expect(today.parentElement!.getBoundingClientRect().bottom).toBeCloseTo(primaryNav.getBoundingClientRect().top, 0);
-    const dividerColor = getComputedStyle(header).borderBlockEndColor;
-    expect(dividerColor).not.toBe('rgba(0, 0, 0, 0)');
+    expect(getComputedStyle(header).borderBlockEndColor).toBe('rgba(0, 0, 0, 0)');
     expect(getComputedStyle(today.parentElement!).borderBlockEndWidth).toBe('0px');
     header.parentElement!.setAttribute('data-nc-scrolled', '');
     await settlePaint();
-    expect(getComputedStyle(header).borderBlockEndColor).toBe(dividerColor);
+    expect(getComputedStyle(header).borderBlockEndColor).not.toBe('rgba(0, 0, 0, 0)');
     const scroller = document.querySelector<HTMLElement>('[data-nc-track-page]')!;
     expect(scroller.scrollHeight).toBeGreaterThan(scroller.clientHeight);
     const folders = rail.querySelector('[aria-label^="area "]')!.parentElement!;
@@ -583,22 +582,22 @@ describe('shared desktop primary header', () => {
     expect(folders.scrollTop).toBeGreaterThan(0);
     expect(header.getBoundingClientRect().top).toBeCloseTo(initial.header, 0);
     expect(today.getBoundingClientRect().top).toBeCloseTo(initial.today, 0);
-    expect(centre(title) - centre(collapse)).toBeCloseTo(0, 0);
+    expect(centre(headerRow) - centre(collapse)).toBeCloseTo(0, 0);
   });
 
-  it('keeps Today and reading titles aligned when text scales', async () => {
+  it('keeps Today and running header aligned when text scales', async () => {
     await page.viewport(1440, 900);
     setup('/track/w1', AREA.name, () => undefined, 'Responsive mobile UI', { viewportRoot: true });
     await waitFor(() => expect(document.querySelector('[data-nc-header-rows]')).not.toBeNull());
-    const title = await page.getByRole('button', { name: 'Rename track', exact: true }).findElement() as HTMLElement;
+    const headerRow = document.querySelector<HTMLElement>('[data-nc-header-rows]')!.firstElementChild as HTMLElement;
     const today = await page.getByRole('button', { name: 'Go to Today', exact: true }).findElement() as HTMLElement;
     const centre = (element: HTMLElement) => { const box = element.getBoundingClientRect(); return box.top + box.height / 2; };
-    expect(centre(title)).toBeCloseTo(centre(today), 0);
-    // Font scaling preserves the shared title alignment.
+    expect(centre(headerRow)).toBeCloseTo(centre(today), 0);
+    // Font scaling preserves the shared top header datum alignment.
     const previousSize = document.documentElement.style.fontSize;
     try {
       document.documentElement.style.fontSize = '20px';
-      expect(centre(title)).toBeCloseTo(centre(today), 0);
+      expect(centre(headerRow)).toBeCloseTo(centre(today), 0);
     } finally { document.documentElement.style.fontSize = previousSize; }
     await page.screenshot({ path: './__screenshots__/header-alignment-fixed.png' });
   });

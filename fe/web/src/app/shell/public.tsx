@@ -464,8 +464,8 @@ export function AppShell({
         onNew={conversationScope?.onNew ?? null} now={nowMs ?? Date.now()}
         onSelect={(row) => conversationScope?.onOpen(row)}
         onOpenSettings={onOpenSettings}
-        scopeLabel={conversationScope === null ? '当前 Track' : `当前 Track · ${trackDisplayTitle(conversationScope.track.title)}`}
-        accountLabel={userLabel ?? '账号'} accountInitial={userLabel?.slice(0, 1) ?? '我'}
+        scopeLabel={conversationScope === null ? 'Current track' : `Current track · ${trackDisplayTitle(conversationScope.track.title)}`}
+        accountLabel={userLabel ?? 'Account'} accountInitial={userLabel?.slice(0, 1) ?? 'U'}
         onSignOut={onSignOut === undefined ? undefined : () => { closeMobileSection(); onSignOut(); }} />}
       {<div ref={mobileNavigationFrameRef} className={styles.navigationFrame}>
       <div
@@ -575,7 +575,7 @@ export function AppShell({
       </div>
       </div>
       }<main ref={drawerWidth.mainRef} className={styles.main} style={drawerWidth.style} inert={mobileDialogActive} aria-hidden={mobileDialogActive ? true : undefined}>
-        {<SystemUpgradeBannerHost />}
+        {narrowRail && <SystemUpgradeBannerHost variant="floating" />}
         {/* One flex item. Routes compose ErrorBox + page + Drawer as siblings;
             `:first-child` on `.main` would flex the banner, not the page. */}
         <div className={styles.stage} hidden={narrowRail && settingsOpen}>

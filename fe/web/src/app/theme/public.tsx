@@ -27,6 +27,12 @@ function readSystemPreference(): ResolvedTheme {
 }
 
 export function ThemeProvider({ children, storage }: { children: ReactNode; storage?: ThemeStorage }) {
+  const inherited = useContext(ThemeContext);
+  if (inherited !== null) return <>{children}</>;
+  return <ThemeRoot storage={storage}>{children}</ThemeRoot>;
+}
+
+function ThemeRoot({ children, storage }: { children: ReactNode; storage?: ThemeStorage }) {
   const [mode, setModeState] = useState<ThemeMode>(() => readPersistedMode(storage));
   const [systemPreference, setSystemPreference] = useState<ResolvedTheme>(readSystemPreference);
 

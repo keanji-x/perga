@@ -414,7 +414,7 @@ describe('ReportWidgetBlock', () => {
     expect(targetIdx).toBeGreaterThanOrEqual(0);
     expect(flowIdx).toBe(targetIdx + 1);
     expect(notesIdx).toBeGreaterThan(flowIdx);
-    expect(screen.getAllByRole('region', { name: '调度流程' })).toHaveLength(1);
+    expect(screen.getAllByRole('region', { name: 'Flow' })).toHaveLength(1);
 
     // When an explicit `builtin:flow` widget block exists, do NOT duplicate auto-flow
     const explicitFlowReport: TrackReport = {

@@ -40,9 +40,9 @@ it('switches between Worktree and Bare folder modes in the Repo popover and open
   await userEvent.click(screen.getByRole('button', { name: 'Repo: repo (/repo)' }));
   expect(screen.queryByRole('dialog', { name: 'Choose a directory' })).toBeNull();
 
-  await userEvent.click(await screen.findByRole('menuitem', { name: /裸文件夹模式/ }));
-  const updatedPill = screen.getByRole('button', { name: 'Repo: repo · 源文件夹 (/repo)' });
-  expect(updatedPill.textContent).toContain('Repo: repo · 源文件夹');
+  await userEvent.click(await screen.findByRole('menuitem', { name: /Direct folder/ }));
+  const updatedPill = screen.getByRole('button', { name: 'Repo: repo · Direct (/repo)' });
+  expect(updatedPill.textContent).toContain('Repo: repo · Direct');
   expect(screen.queryByRole('dialog', { name: 'Choose a directory' })).toBeNull();
 
   // Clicking Others… opens the second-level DirectoryBrowser dialog.
@@ -52,8 +52,8 @@ it('switches between Worktree and Bare folder modes in the Repo popover and open
   await within(dialog).findByDisplayValue('/repo-2/');
   await userEvent.click(within(dialog).getByRole('button', { name: 'Select this directory' }));
 
-  const movedPill = screen.getByRole('button', { name: 'Repo: repo-2 · 源文件夹 (/repo-2)' });
-  expect(movedPill.textContent).toContain('Repo: repo-2 · 源文件夹');
+  const movedPill = screen.getByRole('button', { name: 'Repo: repo-2 · Direct (/repo-2)' });
+  expect(movedPill.textContent).toContain('Repo: repo-2 · Direct');
 
   await userEvent.type(screen.getByLabelText('What this track should do'), 'Edit in source');
   await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
@@ -66,9 +66,9 @@ it('keeps Perga workspace locked to Worktree mode and does not open the file pic
     listDirectory={vi.fn()} onSubmit={vi.fn()} />);
 
   await userEvent.click(screen.getByRole('button', { name: 'Repo: Perga workspace' }));
-  const bareModeItem = await screen.findByRole('menuitem', { name: /裸文件夹模式/ });
+  const bareModeItem = await screen.findByRole('menuitem', { name: /Direct folder/ });
   expect(bareModeItem.getAttribute('aria-disabled')).toBe('true');
 
-  await userEvent.click(screen.getByRole('menuitem', { name: /Worktree 模式/ }));
+  await userEvent.click(screen.getByRole('menuitem', { name: /Git worktree/ }));
   expect(screen.queryByRole('dialog', { name: 'Choose a directory' })).toBeNull();
 });

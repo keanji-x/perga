@@ -84,14 +84,14 @@ function NavigationPage({
               onClick={() => onSelectArea(area.id)}>
               <span className={styles.trackIcon}><Icon name="folder" /></span>
               <span className={styles.trackCopy}><span className={styles.trackTitle}>{area.name}</span>
-                {tracksByArea.has(area.id) && <span className={styles.trackMeta}>{tracksByArea.get(area.id)!.length} 个 Tracks{area.id === selected?.id && <span> · {new Date(area.updatedAt).toDateString() === new Date().toDateString() ? '今天' : new Date(area.updatedAt).toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' }).replaceAll('/', '-')}更新</span>}</span>}
+                {tracksByArea.has(area.id) && <span className={styles.trackMeta}>{tracksByArea.get(area.id)!.length} {tracksByArea.get(area.id)!.length === 1 ? 'track' : 'tracks'}{area.id === selected?.id && <span> · {new Date(area.updatedAt).toDateString() === new Date().toDateString() ? 'Today' : new Date(area.updatedAt).toLocaleDateString('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit' })} {'updated'}</span>}</span>}
               </span>
               <span className={styles.trackArrow}><Icon name="chevron-right" /></span>
             </button>
           </li>)}
-          {shown.length === 0 && !readLoading && readError === null && <MobileListEmpty icon={<Icon name="folder" />} title="还没有 Area" description="项目与 Track 会按 Area 归类。" />}
+          {shown.length === 0 && !readLoading && readError === null && <MobileListEmpty icon={<Icon name="folder" />} title="No areas yet" description="Projects and tracks are organized by area." />}
         </MobileList> : <MobileTrackList tracks={tracks} currentTrackId={currentTrackId} onOpenTrack={onOpenTrack}
-          isUnread={isUnread} trackActions={trackActions} emptyState={readError === null && !readLoading ? { icon: <Icon name="file" />, title: '这个 Area 还没有 Track', description: '在此 Area 创建的 Track 会显示在这里。' } : undefined} />}
+          isUnread={isUnread} trackActions={trackActions} emptyState={readError === null && !readLoading ? { icon: <Icon name="file" />, title: 'No tracks in this area', description: 'Tracks created in this area appear here.' } : undefined} />}
       </MobileListGroup>
     </div>
   </div>;

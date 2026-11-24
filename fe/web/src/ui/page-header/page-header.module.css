@@ -192,42 +192,47 @@
   .crumbSep {
     color: var(--text-4);
   }
-  /* Desktop page chrome and the navigation rail share one height token.
+  /* Desktop page chrome, navigation rail, and drawers share one header datum:
+     12px top inset + 44px row height = 34px exact vertical centerline.
      Secondary rows extend below this primary band; mobile keeps its touch-sized header. */
   @media (width >= 60rem) {
     :where(*):has(> .header) {
-      --header-band: 0px;
-      --header-h: var(--navigation-header-height);
+      --header-band: var(--workspace-header-inset, var(--space-3));
+      --header-h: var(--workspace-header-row-height, calc(var(--control-h) + var(--space-2) * 2));
     }
     :where(*):has(> .header[data-nc-header-rows='2']) {
-      --header-h: calc(var(--navigation-header-height) + var(--row-h-sm) + var(--space-2));
+      --header-h: calc(var(--workspace-header-row-height, calc(var(--control-h) + var(--space-2) * 2)) + var(--row-h-sm) + var(--space-2));
     }
     :where(*):has(> .header[data-nc-header-rows='3']) {
-      --header-h: calc(var(--navigation-header-height) + var(--row-h-sm) * 2 + var(--space-2) * 2);
+      --header-h: calc(var(--workspace-header-row-height, calc(var(--control-h) + var(--space-2) * 2)) + var(--row-h-sm) * 2 + var(--space-2) * 2);
     }
     .header {
       flex-shrink: 0;
-      padding-block-start: 0;
+      padding-block-start: var(--header-band);
       margin-inline: calc(var(--space-5) * -1);
       padding-inline: var(--space-5);
-    }
-    .header,
-    [data-nc-scrolled] .header {
       border-block-end-color: transparent;
+    }
+    [data-nc-scrolled] .header {
+      border-block-end-color: color-mix(in srgb, var(--hairline) 60%, transparent);
     }
     .header[data-nc-align='document'] {
       padding-inline-start: calc(var(--space-5) + var(--document-start, 0px));
     }
     .titleRow {
       flex-shrink: 0;
-      block-size: calc(var(--navigation-header-height) - 1px);
-      min-block-size: calc(var(--navigation-header-height) - 1px);
+      block-size: var(--workspace-header-row-height, calc(var(--control-h) + var(--space-2) * 2));
+      min-block-size: var(--workspace-header-row-height, calc(var(--control-h) + var(--space-2) * 2));
     }
     .title {
       min-inline-size: 0;
       overflow: hidden;
       white-space: nowrap;
       text-overflow: ellipsis;
+      font: var(--type-ui);
+      font-weight: var(--weight-medium);
+      letter-spacing: var(--type-ui-tracking);
+      color: var(--text-2);
     }
   }
 

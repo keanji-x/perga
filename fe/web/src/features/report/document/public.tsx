@@ -136,7 +136,7 @@ export function ReportDocument({
 
   return (
     <article className={`calm-prose ${styles.doc} ${outlineOnly ? styles.outlineOnly : ''}`} data-nc-report={authored ? '' : undefined} tabIndex={-1}>
-      {outlineOnly && <div className={styles.mobileEmpty}><EmptyState icon={<Icon name="file" />} title="进展会整理在这里" description="说说想做的事，计划与结论会随对话整理。" /></div>}
+      {outlineOnly && <div className={styles.mobileEmpty}><EmptyState icon={<Icon name="file" />} title="Progress will be compiled here" description="Describe what you want to accomplish; the plan and findings will take shape as you converse." /></div>}
       {rail}
       {byline !== undefined && <div className={styles.byline}>{byline}</div>}
       {prepared.kind === 'legacy'

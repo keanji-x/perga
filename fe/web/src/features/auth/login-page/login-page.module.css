@@ -1,8 +1,114 @@
 @layer features {
-  .page { min-height: 100dvh; display: grid; place-items: center; padding: var(--space-2); background: var(--bg); color: var(--text); }
-  .form { width: min(100%, 22rem); display: grid; gap: var(--space-1); padding: var(--space-3); border: 1px solid var(--hairline); border-radius: var(--radius-md); background: var(--paper); }
-  .form h1 { margin-block-end: var(--space-1); }
-  .form input { font: var(--type-input); letter-spacing: var(--type-input-tracking); width: 100%; padding-block: var(--space-1); }
-  .form button { font: inherit; margin-block-start: var(--space-1); padding: var(--space-1) var(--space-2); }
-  .error { color: var(--warn-text); }
+  .page {
+    min-block-size: 100dvh;
+    display: grid;
+    place-items: center;
+    padding: var(--space-5);
+    background: var(--bg);
+    color: var(--text);
+  }
+
+  /* Subtract card chrome and shadows: the form rests directly on the parchment ground. */
+  .form {
+    inline-size: min(100%, 20rem);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+    padding-block-end: var(--space-6);
+  }
+
+  .brand {
+    margin: 0 0 var(--space-3);
+    display: inline-flex;
+    align-items: baseline;
+    gap: var(--space-2);
+    font: var(--type-chapter);
+    letter-spacing: var(--type-chapter-tracking);
+    color: var(--text);
+  }
+
+  .mark {
+    color: var(--text-3);
+    font-size: var(--font-step-3-size);
+    line-height: 1;
+  }
+
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+
+  .label {
+    font: var(--type-metadata);
+    letter-spacing: var(--type-metadata-tracking);
+    color: var(--text-2);
+  }
+
+  .input {
+    inline-size: 100%;
+    min-block-size: calc(var(--control-h-lg) + var(--space-1));
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--hairline);
+    border-block-end: 1px solid var(--hairline);
+    border-radius: var(--radius-highlight);
+    background: var(--paper);
+    color: var(--text);
+    font: var(--type-ui);
+    letter-spacing: var(--type-ui-tracking);
+    box-shadow: none;
+    transition: border-color var(--motion-quick) var(--ease-feedback),
+      box-shadow var(--motion-quick) var(--ease-feedback);
+  }
+
+  .input:focus,
+  .input:focus-visible {
+    outline: none;
+    border-color: var(--hairline-strong);
+    box-shadow: 0 0 0 3px var(--overlay-hover);
+  }
+
+  .submit {
+    inline-size: 100%;
+    min-block-size: calc(var(--control-h-lg) + var(--space-1));
+    margin-block-start: var(--space-2);
+    padding: var(--space-2) var(--space-4);
+    border: 0;
+    border-radius: var(--radius-highlight);
+    background: var(--text);
+    color: var(--bg);
+    font: var(--type-ui);
+    font-weight: var(--weight-medium);
+    cursor: pointer;
+    transition: opacity var(--motion-quick) var(--ease-feedback);
+  }
+
+  .submit:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  .submit:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+
+  .submit:hover:not(:disabled) {
+    opacity: 0.88;
+  }
+
+  .error {
+    margin: 0;
+    padding: var(--space-2) var(--space-3);
+    border-inline-start: 2px solid var(--error);
+    background: var(--error-soft);
+    color: var(--error-text);
+    font: var(--type-ui);
+  }
+
+  .retryNote {
+    margin: 0;
+    font: var(--type-metadata);
+    color: var(--text-3);
+  }
 }

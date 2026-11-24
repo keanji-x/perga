@@ -133,7 +133,7 @@ export function DailyTodayRoute({ transport, unauthorized, selectedDate, onOpenT
   if (daily.data === null) {
     const emptyNotice = isDefaultToday
       ? <p role="status">Preparing today’s Track…</p>
-      : <EmptyState variant="panel" icon={<Icon name="file" />} title="No daily Track was created for this date." description="这一天还没有日报记录。" />;
+      : <EmptyState variant="panel" icon={<Icon name="file" />} title="No daily Track was created for this date." description="No daily log recorded for this date yet." />;
     return withCalendarShell(emptyNotice);
   }
   if (detail.isError) return withCalendarShell(<ErrorBox message={readErrorText(detail.error, 'The daily Track could not be loaded.')} onRetry={() => { void detail.refetch(); }} />);
@@ -142,13 +142,13 @@ export function DailyTodayRoute({ transport, unauthorized, selectedDate, onOpenT
   return renderTrack({ ...detail.data, track: { ...detail.data.track, title: date } },
     null,
     calendarNode,
-    <header className={styles.reportIntro}><h2>{isDefaultToday ? '今天的重点' : '当天的重点'}</h2><p>让工作更轻松，也更有条理。</p></header>,
+    <header className={styles.reportIntro}><h2>{isDefaultToday ? 'Today’s focus' : 'Focus for this day'}</h2><p>Keep your work clear, calm, and well-ordered.</p></header>,
     supervisor,
     isDefaultToday ? {
       title: 'Today Assistant',
       presented: view === 'assistant',
       onOpenAssistant: () => setView('assistant'),
-      emptyIntroduction: <CenteredComposerIntroduction title="今天想推进什么？" />,
+      emptyIntroduction: <CenteredComposerIntroduction title="What would you like to move forward today?" />,
       footerPrefix: null,
       render: (assistant) => <TodayCenter view={view} backRef={backRef} onBack={() => { restoreGuide.current = true; setView('assistant'); }} assistant={assistant}
         changes={<DailyReportChanges key={date} standalone isToday date={shiftDailyDate(date, -1)} transport={transport} unauthorized={unauthorized} onOpenTrack={onOpenTrack} />}
@@ -190,13 +190,13 @@ function DailyReportChanges({ date, isToday, transport, unauthorized, onOpenTrac
   const content = <>
     {changes.isPending && open && <p role="status">Loading report changes…</p>}
     {changes.isError && <ErrorBox message={readErrorText(changes.error, 'Report changes could not be loaded.')} onRetry={() => { void changes.refetch(); }} />}
-    {!changes.isError && changes.data?.pages[0]?.changes.length === 0 && <EmptyState variant="compact" icon={<Icon name="file" />} title="No report changes recorded for visible Tracks on this day." description="这一天的报告更新会显示在这里。" />}
+    {!changes.isError && changes.data?.pages[0]?.changes.length === 0 && <EmptyState variant="compact" icon={<Icon name="file" />} title="No report changes recorded for visible Tracks on this day." description="Report updates for this date appear here." />}
     {changes.data?.pages.flatMap((page) => page.changes.map((change) => <ReportChangeItem key={change.trackId} card={standalone} change={change}
       date={date} timeZone={page.timezone} through={page.throughEventId} transport={transport} unauthorized={unauthorized} onOpenTrack={onOpenTrack} />))}
     {changes.hasNextPage && <button type="button" disabled={changes.isFetchingNextPage} onClick={() => { void changes.fetchNextPage(); }}>Load more reports</button>}
   </>;
   if (standalone) return <><h2 className={styles.subviewTitle}>Report changes · {date}</h2>{content}</>;
-  return <ReportDetails title={compactViewport ? (isToday ? '昨天的更新' : '前一天的更新') : 'Report changes'} meta={date} layout="appendix" variant="section" onToggle={setOpen}>
+  return <ReportDetails title={compactViewport ? (isToday ? 'Yesterday’s updates' : 'Previous day’s updates') : 'Report changes'} meta={date} layout="appendix" variant="section" onToggle={setOpen}>
     {(close) => <>
       {open && <div className={styles.subviewHeader}>
         <button type="button" className={styles.backToToday} onClick={close}>

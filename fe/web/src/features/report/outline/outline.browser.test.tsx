@@ -66,13 +66,12 @@ it('centres stable first-level rows beside the report edge and emphasizes only t
   const edge = document.querySelector<HTMLElement>('[data-testid="report-edge"]')!;
   const rows = [...document.querySelectorAll<HTMLElement>('nav[aria-label="Outline"] button')];
   expect(rows).toHaveLength(2);
-  expect(edge.getBoundingClientRect().left - rail.getBoundingClientRect().right).toBeCloseTo(4, 0);
-  expect(list.getBoundingClientRect().top + list.getBoundingClientRect().height / 2)
-    .toBeCloseTo(window.innerHeight / 2, 0);
+  expect(edge.getBoundingClientRect().left - rail.getBoundingClientRect().right).toBeCloseTo(16, 0);
+  expect(list.getBoundingClientRect().top).toBeGreaterThanOrEqual(40);
   expect(rows[0]?.getBoundingClientRect().height).toBeCloseTo(20, 0);
   expect(rows[1].getBoundingClientRect().top - rows[0].getBoundingClientRect().bottom).toBeCloseTo(0, 0);
   const heading = document.querySelector<HTMLElement>('h2')!;
-  expect(getComputedStyle(heading, '::before').opacity).toBe('0');
+  expect(getComputedStyle(heading, '::before').opacity).toBe('1');
 
   const first = rows[0];
   const dot = first;
@@ -85,7 +84,7 @@ it('centres stable first-level rows beside the report edge and emphasizes only t
     expect(Number.parseFloat(getComputedStyle(dot, '::before').width)).toBeCloseTo(8, 0);
   });
   const preview = document.querySelector<HTMLElement>('[data-nc-rail-preview]')!;
-  expect(getComputedStyle(heading, '::before').opacity).toBe('0');
+  expect(getComputedStyle(heading, '::before').opacity).toBe('1');
   expect(first.getBoundingClientRect().height).toBeCloseTo(20, 0);
   expect(Number.parseFloat(getComputedStyle(dot, '::before').width)).toBeCloseTo(8, 0);
   expect(rows[1].getBoundingClientRect().top + rows[1].getBoundingClientRect().height / 2
@@ -162,14 +161,14 @@ it('keeps section numbers when the desktop outline is hidden on a compact viewpo
   expect(getComputedStyle(heading, '::before').opacity).toBe('1');
 });
 
-it('stays left of the report prose when the document column fits the rail, and hides when narrowed below 40rem + 64px', async () => {
+it('stays left of the report prose when the document column fits the rail, and hides when narrowed below 45rem + 88px', async () => {
   await page.viewport(1280, 800);
   const view = render(
-    <div style={{ containerType: 'inline-size', inlineSize: 720 }}>
+    <div style={{ containerType: 'inline-size', inlineSize: 820 }}>
       <div className={documentStyles.doc} style={{
-        position: 'relative', inlineSize: 720, blockSize: 600,
-        ['--document-start' as string]: '40px',
-        ['--document-measure' as string]: '640px',
+        position: 'relative', inlineSize: 820, blockSize: 600,
+        ['--document-start' as string]: '50px',
+        ['--document-measure' as string]: '720px',
         ['--header-band' as string]: '0px', ['--header-h' as string]: '0px',
       }}>
         <ReportOutline items={ITEMS} />
@@ -187,11 +186,11 @@ it('stays left of the report prose when the document column fits the rail, and h
   expect(rail.getBoundingClientRect().right).toBeLessThanOrEqual(prose.getBoundingClientRect().left);
 
   view.rerender(
-    <div style={{ containerType: 'inline-size', inlineSize: 640 }}>
+    <div style={{ containerType: 'inline-size', inlineSize: 720 }}>
       <div className={documentStyles.doc} style={{
-        position: 'relative', inlineSize: 640, blockSize: 600,
+        position: 'relative', inlineSize: 720, blockSize: 600,
         ['--document-start' as string]: '0px',
-        ['--document-measure' as string]: '640px',
+        ['--document-measure' as string]: '720px',
         ['--header-band' as string]: '0px', ['--header-h' as string]: '0px',
       }}>
         <ReportOutline items={ITEMS} />
@@ -207,11 +206,11 @@ it('stays left of the report prose when the document column fits the rail, and h
 
   document.documentElement.style.fontSize = '12px';
   view.rerender(
-    <div style={{ containerType: 'inline-size', inlineSize: 528 }}>
+    <div style={{ containerType: 'inline-size', inlineSize: 600 }}>
       <div className={documentStyles.doc} style={{
-        position: 'relative', inlineSize: 528, blockSize: 600,
-        ['--document-start' as string]: '24px',
-        ['--document-measure' as string]: '480px',
+        position: 'relative', inlineSize: 600, blockSize: 600,
+        ['--document-start' as string]: '30px',
+        ['--document-measure' as string]: '540px',
         ['--header-band' as string]: '0px', ['--header-h' as string]: '0px',
       }}>
         <ReportOutline items={ITEMS} />

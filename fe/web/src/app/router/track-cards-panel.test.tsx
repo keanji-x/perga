@@ -50,7 +50,7 @@ it('retains the requested card when the tools read fails', async () => {
 
 it('shows the tools empty state while the aggregate still has a conversation', async () => {
   setupWorkbench();
-  expect((await screen.findByRole('region', { name: 'Workbench' })).textContent).toContain('还没有工具');
+  expect((await screen.findByRole('region', { name: 'Workbench' })).textContent).toContain('No tools yet');
   expect(await screen.findByRole('button', { name: 'Conversation Main discussion' })).toBeTruthy();
 });
 

@@ -32,7 +32,7 @@ export function MobileTrackList({ tracks, currentTrackId, onOpenTrack, isUnread,
                 aria-describedby={activity === 'unread' ? descriptionId : undefined}
                 aria-current={track.id === currentTrackId ? 'page' : undefined} onClick={() => onOpenTrack(track.id)}>
                 <span className={styles.trackIcon}><Icon name="file" /></span>
-                <span className={styles.trackCopy}><span className={styles.trackTitle}><TrackTitle track={track} /></span><time className={styles.trackMeta} dateTime={new Date(track.updatedAt).toISOString()}>{new Date(track.updatedAt).toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' }).replaceAll('/', '-')} 更新</time>{isClosed(track) && <span className={styles.trackMeta}>Closed</span>}</span>
+                <span className={styles.trackCopy}><span className={styles.trackTitle}><TrackTitle track={track} /></span><time className={styles.trackMeta} dateTime={new Date(track.updatedAt).toISOString()}>{new Date(track.updatedAt).toLocaleDateString('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit' })} {'updated'}</time>{isClosed(track) && <span className={styles.trackMeta}>Closed</span>}</span>
                 {activity !== 'quiet' && <span className={styles.trackActivity} aria-hidden="true"><ActivityIndicator state={activity} /></span>}
                 {trackActions === undefined && <span className={styles.trackArrow}><Icon name="chevron-right" /></span>}
               </button>

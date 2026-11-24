@@ -1,5 +1,5 @@
 import { providerPresentation } from '../../../../../core/domain/provider-presentation.ts';
-import { catalogReason, defaultNameOf, effortsFor, FOLLOW_DEFAULT_LABEL, providerLabel, visibleModelGroups, type CatalogEntry, type ModelGroup } from './model-selection.ts';
+import { catalogReason, defaultNameOf, effortsFor, FOLLOW_DEFAULT_LABEL, providerLabel, scoreModelSearch, shortProviderLabel, visibleModelGroups, type CatalogEntry, type ModelGroup } from './model-selection.ts';
 // The model picker in a planner conversation's composer footer, and on the new-track page. Presentational:
 // every value is a prop; the queries and the write live in `app/router`. Each provider's catalog is one
 // group; on the new-track page the pick also decides the Planner's provider (#1810), and each group
@@ -8,69 +8,26 @@ import { catalogReason, defaultNameOf, effortsFor, FOLLOW_DEFAULT_LABEL, provide
 // an existing Planner conversation, triggers of the same kind.
 
 import { Button } from '@astryxdesign/core/Button';
-import { Divider } from '@astryxdesign/core/Divider';
-import { DropdownMenu, DropdownMenuItem } from '@astryxdesign/core/DropdownMenu';
 import { HStack } from '@astryxdesign/core/HStack';
 import { Icon as AstryxIcon } from '@astryxdesign/core/Icon';
 import { Popover } from '@astryxdesign/core/Popover';
 import { Text } from '@astryxdesign/core/Text';
+import { Tooltip } from '@astryxdesign/core/Tooltip';
 import { VisuallyHidden } from '@astryxdesign/core/VisuallyHidden';
 
-import { useCallback, useEffect, useRef, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
+import { useRef, type ReactNode } from 'react';
 
 import type { AgentProvider } from '../../../../../core/domain/presentation-types.ts';
-import type { PermissionModeOptionDto } from '../../../../../core/api/perga-v1.ts';
 import { unavailableCreationNote } from '../../../../../core/domain/agent-providers.ts';
 import type { ModelSelection } from '../../../../../core/domain/conversation.ts';
+import { Icon } from '../../../ui/icon/public.tsx';
 import { useState } from '../../../ui/state/public.ts';
 import styles from './model-pill.module.css';
 // Keep the shared CSS after Astryx imports: importing the slider earlier changes layer order.
 import { EffortSlider } from './model-effort-slider.tsx';
+import { PERMISSION_NOTE, PermissionModePill, useEscapeFocus } from './setting-pill.tsx';
 
-/** Keep Escape inside a host Dialog, then restore focus only while it still belongs to this pill. */
-function useEscapeFocus(open: boolean, setOpen: (open: boolean) => void, host: RefObject<HTMLSpanElement | null>) {
-  const pendingFrame = useRef<number | null>(null);
-  const cancelRestore = useCallback(() => {
-    if (pendingFrame.current === null) return;
-    cancelAnimationFrame(pendingFrame.current);
-    pendingFrame.current = null;
-  }, []);
-
-  useEffect(() => cancelRestore, [cancelRestore]);
-  useEffect(() => {
-    if (open) cancelRestore();
-  }, [open, cancelRestore]);
-
-  const onOpenChange = (next: boolean) => {
-    // Controlled Astryx layers acknowledge a close again from onHide. Keep that
-    // acknowledgement from cancelling the restore for the same Escape.
-    if (next !== open) cancelRestore();
-    setOpen(next);
-  };
-  const onEscape = (event: KeyboardEvent<HTMLSpanElement>) => {
-    if (event.key !== 'Escape') return;
-    cancelRestore();
-    if (!open) return;
-    event.preventDefault();
-    event.stopPropagation();
-    const popup = event.target instanceof Element
-      ? event.target.closest('[role="dialog"], [role="menu"]')
-      : null;
-    // Escape can start on the trigger inside a host Dialog. That parent
-    // dialog is outside the pill and must not expand our focus boundary.
-    const closingPopup = popup?.contains(event.currentTarget) ? null : popup;
-    setOpen(false);
-    pendingFrame.current = requestAnimationFrame(() => {
-      pendingFrame.current = null;
-      const active = document.activeElement;
-      if (active === null || active === document.body || active === document.documentElement
-        || host.current?.contains(active) || closingPopup?.contains(active)) {
-        host.current?.querySelector('button')?.focus();
-      }
-    });
-  };
-  return { onEscape, onOpenChange };
-}
+export { PermissionModePill };
 
 export function ModelPill<Provider extends string = AgentProvider>({
   groups, provider, selection, onChange, isDisabled = false, placement = 'above', triggerId, effortControl = 'separate', appliesNextTurn = false,
@@ -91,12 +48,14 @@ export function ModelPill<Provider extends string = AgentProvider>({
   appliesNextTurn?: boolean;
 }>) {
   const [open, setOpen] = useState(false);
-  const [viewedProvider, setViewedProvider] = useState<Provider>(provider);
+  const [providerFilter, setProviderFilter] = useState<Provider | 'all'>('all');
+  const [searchQuery, setSearchQuery] = useState('');
   const [draft, setDraft] = useState<Readonly<{ provider: Provider; selection: ModelSelection }>>({
     provider,
     selection,
   });
   const hostRef = useRef<HTMLSpanElement | null>(null);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
   const { onEscape, onOpenChange } = useEscapeFocus(open, setOpen, hostRef);
 
   const shown = visibleModelGroups(groups, provider);
@@ -129,115 +88,264 @@ export function ModelPill<Provider extends string = AgentProvider>({
   const triggerDisabled = isDisabled
     || (unreachable && !shown.some(group => group.selectionProblem === null || group.acceptsUnavailableBlankTrack === true));
 
-  const viewedGroup = shown.find((group) => group.provider === viewedProvider)
+  const activeProviderGroup = shown.find((group) => group.provider === draft.provider)
     ?? shown.find((group) => group.provider === provider)
     ?? shown[0];
+  const filteredGroup = providerFilter === 'all'
+    ? null
+    : shown.find((group) => group.provider === providerFilter) ?? null;
 
   const handleOpenChange = (nextOpen: boolean) => {
+    setSearchQuery('');
     if (nextOpen) {
-      setViewedProvider(provider);
+      setProviderFilter(shown.length > 1 ? 'all' : (shown[0]?.provider ?? 'all'));
       setDraft({ provider, selection });
     }
     onOpenChange(nextOpen);
   };
 
-  const viewedIsDraft = viewedGroup !== undefined && viewedGroup.provider === draft.provider;
-  const viewedModelId = viewedIsDraft ? draft.selection.model : null;
-  const viewedEffortValue = viewedIsDraft ? draft.selection.reasoning_effort : null;
-  const savedEffort = viewedGroup?.provider === provider && viewedModelId === selection.model
-    ? selection.reasoning_effort : null;
-  const retainedEffort = viewedEffortValue ?? savedEffort;
-  const viewedEffortInfo = effortsFor(viewedGroup, viewedModelId);
-  const viewedReason = viewedGroup ? catalogReason(viewedGroup) : { reason: null, refused: false, blocked: null };
-  const draftGroup = shown.find((group) => group.provider === draft.provider);
-  const draftBlocked = draftGroup === undefined || catalogReason(draftGroup).blocked !== null;
+  const totalModelCount = shown.reduce((sum, group) => sum + (group.catalog?.models.length ?? 0), 0);
+  const showSearch = totalModelCount > 6;
+  const normalizedQuery = searchQuery.trim().toLowerCase();
 
-  const effortStops: { value: string | null; label: string }[] = viewedEffortInfo.efforts.map((entry) => ({
+  // Anchor the Effort band to the actual draft provider/model so browsing another
+  // provider filter chip cannot bypass `defaultAvailable: false` or mismatch Save.
+  const draftGroup = shown.find((group) => group.provider === draft.provider) ?? activeProviderGroup;
+  const draftModelId = draft.selection.model;
+  const draftEffortValue = draft.selection.reasoning_effort;
+  const savedEffort = draftGroup?.provider === provider && draftModelId === selection.model
+    ? selection.reasoning_effort : null;
+  const retainedEffort = draftEffortValue ?? savedEffort;
+  const draftEffortInfo = effortsFor(draftGroup, draftModelId);
+  const draftReason = draftGroup ? catalogReason(draftGroup) : { reason: null, refused: false, blocked: null };
+  const draftUnavailable = draftGroup === undefined
+    || draftReason.blocked !== null
+    || draftGroup.availability?.status === 'unavailable'
+    || draftGroup.catalog?.source === 'unavailable';
+  const draftBlocked = draftGroup === undefined
+    || draftReason.blocked !== null
+    || (draft.selection.model === null && draftGroup.defaultAvailable === false);
+
+  const defaultEffort = draftEffortInfo.effortDefault;
+  const supportedEffortStops = draftEffortInfo.efforts.map((entry) => ({
     value: entry.reasoning_effort,
     label: entry.reasoning_effort,
   }));
-  if (effortStops.length > 0 || retainedEffort !== null) {
-    const defaultEffort = viewedEffortInfo.effortDefault;
-    effortStops.unshift({ value: null, label: defaultEffort !== null && effortStops.some(stop => stop.value === defaultEffort)
-      ? `${FOLLOW_DEFAULT_LABEL} (${defaultEffort})` : FOLLOW_DEFAULT_LABEL });
-  }
-  // Keep an unavailable saved value visible until the user deliberately replaces it.
-  if (retainedEffort !== null && !effortStops.some(stop => stop.value === retainedEffort)) {
-    effortStops.splice(1, 0, { value: retainedEffort, label: `${retainedEffort} (Unavailable)` });
-  }
-  const sliderIndex = effortStops.findIndex(stop => stop.value === viewedEffortValue);
-  const hasEffortChoices = effortStops.length > 0;
-  const displayedEffortLabel = effortStops[sliderIndex]?.label ?? 'N/A';
+  const advertisedDefault = defaultEffort !== null
+    && supportedEffortStops.some((stop) => stop.value === defaultEffort)
+    ? defaultEffort
+    : null;
+  const defaultStopLabel = advertisedDefault !== null
+    ? `${FOLLOW_DEFAULT_LABEL} (${advertisedDefault})`
+    : FOLLOW_DEFAULT_LABEL;
+  const hasEffortChoices = supportedEffortStops.length > 0;
+  const unavailableEffort = draftEffortValue !== null
+    && !supportedEffortStops.some((stop) => stop.value === draftEffortValue)
+    ? draftEffortValue
+    : null;
+  const sliderStops: readonly { value: string | null; label: string }[] = [
+    { value: null, label: defaultStopLabel },
+    ...(retainedEffort !== null && !supportedEffortStops.some((stop) => stop.value === retainedEffort)
+      ? [{ value: retainedEffort, label: `${retainedEffort} (Unavailable)` }]
+      : []),
+    ...supportedEffortStops,
+  ];
+  const sliderIndex = draftEffortValue === null
+    ? 0
+    : Math.max(0, sliderStops.findIndex((stop) => stop.value === draftEffortValue));
+  const selectedSupportedStop = draftEffortValue === null
+    ? null
+    : supportedEffortStops.find((stop) => stop.value === draftEffortValue) ?? null;
+  const effortValueText = sliderStops.length <= 1
+    ? 'N/A'
+    : (sliderStops.at(sliderIndex)?.label ?? FOLLOW_DEFAULT_LABEL);
+  const canResetEffort = draftEffortValue !== null && draftReason.blocked === null;
+  const resetEffort = () => {
+    setDraft({
+      provider: draftGroup?.provider ?? draft.provider,
+      selection: { model: draftModelId, reasoning_effort: null },
+    });
+  };
 
-  const popoverContent = viewedGroup === undefined ? null : (
-    <div className={styles.pickerPanel}>
-      <div className={styles.pickerColumns}>
-        <div className={styles.providerColumn} role="group" aria-label="Providers">
-          {shown.map((group) => {
-            const heading = providerLabel(group, group.provider);
-            const isViewed = group.provider === viewedGroup.provider;
-            const isSelectedProvider = group.provider === draft.provider;
-            return (
+  const selectModel = (targetProvider: Provider, model: string | null) => {
+    if (draft.provider === targetProvider && draft.selection.model === model) return;
+    setDraft({ provider: targetProvider, selection: { model, reasoning_effort: null } });
+  };
+
+  const popoverContent = draftGroup === undefined ? null : (
+    <div
+      className={styles.pickerPanel}
+      role="presentation"
+      /* Stop React synthetic events from bubbling into a host ChatComposer, whose click handler yanks focus back to the message editor. */
+      onMouseDown={(event) => event.stopPropagation()}
+      onClick={(event) => event.stopPropagation()}
+    >
+      {(showSearch || shown.length > 1) && (
+        <div className={styles.filterHeader}>
+          {showSearch && (
+            <div className={styles.searchWrap}>
+              <label className={styles.searchField}>
+                <span className={styles.searchIcon} aria-hidden="true"><Icon name="search" size="sm" /></span>
+                <input
+                  ref={searchInputRef}
+                  type="search"
+                  className={styles.searchInput}
+                  value={searchQuery}
+                  aria-label="Filter models"
+                  placeholder="Search models or providers…"
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                />
+              </label>
+              {searchQuery !== '' && (
+                <button
+                  type="button"
+                  className={styles.searchClear}
+                  aria-label="Clear search"
+                  onClick={() => {
+                    setSearchQuery('');
+                    searchInputRef.current?.focus();
+                  }}
+                >
+                  <Icon name="close" size="sm" />
+                </button>
+              )}
+            </div>
+          )}
+          {shown.length > 1 && (
+            <div className={styles.providerFilterBar} role="group" aria-label="Providers">
               <button
-                key={group.provider}
                 type="button"
                 role="radio"
-                aria-checked={isViewed}
-                data-nc-active={isViewed ? 'true' : 'false'}
-                className={styles.pickerRow}
-                onClick={() => {
-                  setViewedProvider(group.provider);
-                  if (group.provider !== draft.provider && catalogReason(group).blocked === null) {
-                    if (group.provider === provider) {
-                      setDraft({ provider: group.provider, selection });
-                    } else if (group.defaultAvailable !== false) {
-                      setDraft({ provider: group.provider, selection: { model: null, reasoning_effort: null } });
-                    }
-                  }
-                }}
+                aria-checked={providerFilter === 'all'}
+                data-nc-active={providerFilter === 'all' ? 'true' : 'false'}
+                className={styles.filterChip}
+                onClick={() => setProviderFilter('all')}
               >
-                <span className={styles.pickerRowLabel}>{heading}</span>
-                {isSelectedProvider && (
-                  <AstryxIcon icon="check" size="sm" color="accent" className={styles.pickerCheck} />
-                )}
+                All
               </button>
-            );
-          })}
+              {shown.map((group) => {
+                const heading = providerLabel(group, group.provider);
+                const isActiveFilter = providerFilter === group.provider;
+                const isUnavailable = catalogReason(group).blocked !== null;
+                return (
+                  <button
+                    key={group.provider}
+                    type="button"
+                    role="radio"
+                    aria-checked={isActiveFilter}
+                    data-nc-active={isActiveFilter ? 'true' : 'false'}
+                    data-nc-unavailable={isUnavailable ? 'true' : 'false'}
+                    className={styles.filterChip}
+                    onClick={() => {
+                      setProviderFilter(group.provider);
+                      if (group.provider !== draft.provider && !isUnavailable) {
+                        if (group.provider === provider) {
+                          setDraft({ provider: group.provider, selection });
+                        } else if (group.defaultAvailable !== false) {
+                          setDraft({ provider: group.provider, selection: { model: null, reasoning_effort: null } });
+                        }
+                      }
+                    }}
+                  >
+                    {shortProviderLabel(group, group.provider, heading)}
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
-        <div className={styles.modelColumn} role="group" aria-label="Models">
+      )}
+      <div className={styles.modelList} role="group" aria-label="Models">
+        {filteredGroup !== null ? (
           <GroupChoices
-            group={viewedGroup}
-            selection={viewedIsDraft ? draft.selection : null}
-            onChange={(model) => {
-              if (viewedIsDraft && model === viewedModelId) return;
-              setDraft({ provider: viewedGroup.provider, selection: { model, reasoning_effort: null } });
-            }}
+            group={filteredGroup}
+            selection={filteredGroup.provider === draft.provider ? draft.selection : null}
+            query={normalizedQuery}
+            onClearFilter={normalizedQuery !== '' ? () => setProviderFilter('all') : undefined}
+            onChange={(model) => selectModel(filteredGroup.provider, model)}
           />
-        </div>
+        ) : shown.length === 1 ? (
+          <GroupChoices
+            group={shown[0]}
+            selection={shown[0].provider === draft.provider ? draft.selection : null}
+            query={normalizedQuery}
+            onChange={(model) => selectModel(shown[0].provider, model)}
+          />
+        ) : (
+          <UnifiedModelList
+            groups={shown}
+            activeGroup={activeProviderGroup}
+            draft={draft}
+            query={normalizedQuery}
+            onSelect={selectModel}
+          />
+        )}
       </div>
-      <Divider />
-      <div className={styles.effortSection}>
-        <div className={styles.effortHeader}>
-          <span>Effort</span>
-          <span className={styles.effortValue}>{displayedEffortLabel}</span>
+      {(!draftUnavailable || hasEffortChoices || canResetEffort) && (
+        <div className={styles.effortBand}>
+          <div className={styles.effortRow}>
+            <span className={styles.effortTitle}>Effort</span>
+            <EffortSlider
+              stops={sliderStops}
+              selectedIndex={sliderIndex}
+              valueText={effortValueText}
+              isDisabled={sliderStops.length <= 1 || draftReason.blocked !== null}
+              onChangeIndex={(idx) => {
+                const stop = sliderStops.at(idx);
+                if (!stop) return;
+                setDraft({
+                  provider: draftGroup.provider,
+                  selection: { model: draftModelId, reasoning_effort: stop.value },
+                });
+              }}
+            />
+            <span className={styles.effortReadout}>
+              {selectedSupportedStop !== null ? (
+                <>
+                  <span className={styles.effortValue}>{selectedSupportedStop.label}</span>
+                  {canResetEffort && (
+                    <Tooltip content="Reset to default" placement="above">
+                      <button
+                        type="button"
+                        className={styles.effortResetIcon}
+                        aria-label="Reset effort to Default"
+                        onClick={resetEffort}
+                      >
+                        <Icon name="reset" size="sm" />
+                      </button>
+                    </Tooltip>
+                  )}
+                </>
+              ) : unavailableEffort !== null ? (
+                <>
+                  <span className={styles.effortUnavailable}>{unavailableEffort}</span>
+                  {canResetEffort && (
+                    <Tooltip content="Reset to default" placement="above">
+                      <button
+                        type="button"
+                        className={styles.effortResetIcon}
+                        aria-label="Reset effort to Default"
+                        onClick={resetEffort}
+                      >
+                        <Icon name="reset" size="sm" />
+                      </button>
+                    </Tooltip>
+                  )}
+                </>
+              ) : advertisedDefault !== null ? (
+                <>
+                  <span className={styles.effortInherited}>{advertisedDefault}</span>
+                  <span className={styles.effortDefaultHint}>default</span>
+                </>
+              ) : (
+                <span className={styles.effortMuted}>{hasEffortChoices ? FOLLOW_DEFAULT_LABEL : 'N/A'}</span>
+              )}
+            </span>
+          </div>
         </div>
-        <EffortSlider
-          stops={hasEffortChoices ? effortStops : [{ value: null, label: 'N/A' }]}
-          selectedIndex={hasEffortChoices ? sliderIndex : 0}
-          isDisabled={!hasEffortChoices || viewedReason.blocked !== null}
-          onChangeIndex={(idx) => {
-            const stop = effortStops.at(idx);
-            if (!stop) return;
-            setDraft({
-              provider: viewedGroup.provider,
-              selection: { model: viewedModelId, reasoning_effort: stop.value },
-            });
-          }}
-        />
-      </div>
-      <Divider />
-      {appliesNextTurn && <div className={styles.settingNote} role="note"><Text type="supporting">{PERMISSION_NOTE}</Text></div>}
+      )}
       <div className={styles.pickerActions}>
+        {appliesNextTurn && <div className={styles.settingNote} role="note"><Text type="supporting">{PERMISSION_NOTE}</Text></div>}
         <Button
           label="Cancel"
           variant="ghost"
@@ -266,7 +374,7 @@ export function ModelPill<Provider extends string = AgentProvider>({
         <Popover
           placement={placement}
           alignment="start"
-          width="19rem"
+          width="min(23rem, calc(100vw - 1.5rem))"
           label="Select model and reasoning effort"
           hasCloseButton={false}
           className={styles.compactPopover}
@@ -293,21 +401,164 @@ export function ModelPill<Provider extends string = AgentProvider>({
   );
 }
 
+function modelSearchScore<Provider extends string>(
+  group: ModelGroup<Provider>,
+  model: CatalogEntry,
+  query: string,
+): number {
+  const fullProvider = providerLabel(group, group.provider);
+  const shortProvider = shortProviderLabel(group, group.provider, fullProvider);
+  return scoreModelSearch(
+    [model.display_name, model.model, model.resolved_model, shortProvider, fullProvider, String(group.provider)],
+    query,
+  );
+}
+
+function defaultRowLabel<Provider extends string>(group: ModelGroup<Provider>): ReactNode {
+  const defaultName = defaultNameOf(group.catalog);
+  if (group.catalog?.default_source === 'acp_session') {
+    return <ResolvedLabel name="Session settings" resolved={defaultName ?? 'current'} />;
+  }
+  return defaultName === null
+    ? FOLLOW_DEFAULT_LABEL
+    : <ResolvedLabel name={FOLLOW_DEFAULT_LABEL} resolved={defaultName} />;
+}
+
+function modelRowLabel(model: CatalogEntry): ReactNode {
+  return model.resolved_model === null
+    ? model.display_name
+    : <ResolvedLabel name={model.display_name} resolved={model.resolved_model} />;
+}
+
+/** All providers combined into one model-centric list with right-aligned provider badges. */
+function UnifiedModelList<Provider extends string>({
+  groups, activeGroup, draft, query, onSelect,
+}: Readonly<{
+  groups: readonly ModelGroup<Provider>[];
+  activeGroup: ModelGroup<Provider>;
+  draft: Readonly<{ provider: Provider; selection: ModelSelection }>;
+  query: string;
+  onSelect: (provider: Provider, model: string | null) => void;
+}>) {
+  const orderedGroups = [activeGroup, ...groups.filter((group) => group.provider !== activeGroup.provider)];
+  const activeDefaultName = defaultNameOf(activeGroup.catalog);
+  const activeReason = catalogReason(activeGroup);
+  const activeBadge = shortProviderLabel(activeGroup, activeGroup.provider);
+  const showDefaultRow = query === '' || scoreModelSearch([FOLLOW_DEFAULT_LABEL, activeDefaultName, activeBadge, String(activeGroup.provider)], query) > 0;
+
+  const entries: { group: ModelGroup<Provider>; model: CatalogEntry; score: number }[] = [];
+  const noticeGroups: ModelGroup<Provider>[] = [];
+  for (const group of orderedGroups) {
+    const info = catalogReason(group);
+    const blocked = info.blocked !== null;
+    const providerMatchesQuery = query !== '' && scoreModelSearch(
+      [shortProviderLabel(group, group.provider), providerLabel(group, group.provider), String(group.provider)],
+      query,
+    ) > 0;
+    const hasNotice = (group.selectionProblem !== undefined && group.availability?.authentication_notice != null)
+      || info.reason !== null;
+    if (hasNotice && (group.provider === activeGroup.provider || !blocked || providerMatchesQuery)) {
+      noticeGroups.push(group);
+    }
+    if (blocked) continue;
+    for (const model of group.catalog?.models ?? []) {
+      const score = modelSearchScore(group, model, query);
+      if (score > 0) entries.push({ group, model, score });
+    }
+  }
+  if (query !== '') {
+    entries.sort((left, right) => right.score - left.score);
+  }
+
+  // Group identical unavailable notices in `All` view so shared server issues (e.g. missing bridge) render once concisely.
+  const groupedReasons: {
+    key: string;
+    labels: string[];
+    reason: string;
+    refused: boolean;
+  }[] = [];
+  const authNotices: { key: string; text: string }[] = [];
+  for (const group of noticeGroups) {
+    if (group.selectionProblem !== undefined && group.availability?.authentication_notice != null) {
+      authNotices.push({ key: `auth:${group.provider}`, text: group.availability.authentication_notice.text });
+    }
+    const { reason, refused } = catalogReason(group);
+    if (reason === null) continue;
+    const label = providerLabel(group, group.provider);
+    const existing = groupedReasons.find((entry) => entry.reason === reason && entry.refused === refused);
+    if (existing !== undefined) {
+      existing.labels.push(label);
+    } else {
+      groupedReasons.push({ key: `reason:${group.provider}`, labels: [label], reason, refused });
+    }
+  }
+
+  return <>
+    {authNotices.map((notice) => (
+      <div key={notice.key} className={styles.reason} role="note">
+        <Text type="supporting">{notice.text}</Text>
+      </div>
+    ))}
+    {groupedReasons.map(({ key, labels, reason, refused }) => {
+      const subject = labels.length === 1
+        ? `${labels[0]} is unavailable`
+        : `${labels.join(', ')} are unavailable`;
+      const suffix = refused ? '' : ` ${unavailableCreationNote(labels.length === 1 ? labels[0] : 'the provider')}`;
+      return (
+        <div key={key} className={refused ? styles.reason : `${styles.reason} ${styles.warning}`} role="note">
+          <Text type="supporting" color={refused ? undefined : 'inherit'}>
+            {`${subject}: ${reason}${suffix}`}
+          </Text>
+        </div>
+      );
+    })}
+    {showDefaultRow && (
+      <>
+        <ModelRow
+          label={defaultRowLabel(activeGroup)}
+          providerTag={activeBadge}
+          isSelected={draft.provider === activeGroup.provider && draft.selection.model === null}
+          isDisabled={activeReason.blocked !== null || activeGroup.defaultAvailable === false}
+          onSelect={() => onSelect(activeGroup.provider, null)}
+        />
+        {entries.length > 0 && <div className={styles.defaultDivider} aria-hidden="true" />}
+      </>
+    )}
+    {entries.map(({ group, model }) => (
+      <ModelRow
+        key={`${group.provider}:${model.id}`}
+        label={modelRowLabel(model)}
+        providerTag={shortProviderLabel(group, group.provider)}
+        isSelected={draft.provider === group.provider && draft.selection.model === model.model}
+        onSelect={() => onSelect(group.provider, model.model)}
+      />
+    ))}
+    {entries.length === 0 && !showDefaultRow && noticeGroups.length === 0 && (
+      <div className={styles.pickerEmpty}>No matching models</div>
+    )}
+  </>;
+}
+
 /** One group's rows: Default, then the catalog. `selection` is `null` when the pick lies in another group. */
-function GroupChoices<Provider extends string>({ group, selection, onChange }: Readonly<{
+function GroupChoices<Provider extends string>({ group, selection, query = '', onClearFilter, onChange }: Readonly<{
   group: ModelGroup<Provider>;
   selection: ModelSelection | null;
+  query?: string;
+  onClearFilter?: () => void;
   onChange: (model: string | null) => void;
 }>) {
-  const models: readonly CatalogEntry[] = group.catalog?.models ?? [];
+  const allModels: readonly CatalogEntry[] = group.catalog?.models ?? [];
+  const models = query === ''
+    ? allModels
+    : allModels
+      .map((model) => ({ model, score: modelSearchScore(group, model, query) }))
+      .filter((entry) => entry.score > 0)
+      .sort((left, right) => right.score - left.score)
+      .map((entry) => entry.model);
   const defaultName = defaultNameOf(group.catalog);
   const unreachable = group.catalog !== null && group.catalog.source === 'unavailable';
   const { reason, refused, blocked } = catalogReason(group);
-  const defaultLabel = group.catalog?.default_source === 'acp_session'
-    ? `Session settings (${defaultName ?? 'current'})`
-    : defaultName === null ? FOLLOW_DEFAULT_LABEL
-      : group.catalog?.default_source === 'claude_cli' ? <ResolvedLabel name={FOLLOW_DEFAULT_LABEL} resolved={defaultName} />
-        : `${FOLLOW_DEFAULT_LABEL} (${defaultName})`;
+  const showDefault = query === '' || scoreModelSearch([FOLLOW_DEFAULT_LABEL, defaultName], query) > 0;
 
   return <>
     {group.selectionProblem !== undefined && group.availability?.authentication_notice != null && (
@@ -320,23 +571,35 @@ function GroupChoices<Provider extends string>({ group, selection, onChange }: R
         </Text>
       </div>
     )}
-    <ModelRow
-      label={defaultLabel}
-      isSelected={selection !== null && selection.model === null}
-      isDisabled={blocked !== null || group.defaultAvailable === false}
-      onSelect={() => onChange(null)}
-    />
+    {showDefault && (
+      <>
+        <ModelRow
+          label={defaultRowLabel(group)}
+          isSelected={selection !== null && selection.model === null}
+          isDisabled={blocked !== null || group.defaultAvailable === false}
+          onSelect={() => onChange(null)}
+        />
+        {models.length > 0 && <div className={styles.defaultDivider} aria-hidden="true" />}
+      </>
+    )}
     {models.map((model) => (
       <ModelRow
         key={model.id}
-        label={model.resolved_model === null ? model.display_name
-          : <ResolvedLabel name={model.display_name} resolved={model.resolved_model} />}
+        label={modelRowLabel(model)}
         isSelected={selection !== null && selection.model === model.model}
         isDisabled={blocked !== null}
         onSelect={() => onChange(model.model)}
       />
     ))}
-    {models.length === 0 && reason === null && (
+    {models.length === 0 && !showDefault && (
+      <div className={styles.pickerEmpty}>
+        <span>No matching models</span>
+        {onClearFilter !== undefined && (
+          <button type="button" className={styles.emptyAction} onClick={onClearFilter}>Search all providers</button>
+        )}
+      </div>
+    )}
+    {allModels.length === 0 && reason === null && (
       <div className={styles.pickerEmpty}>
         {unreachable ? (group.selectionProblem !== undefined ? `${group.provider} model catalog is unavailable`
           : providerPresentation(group.provider)?.unavailable ?? `${group.provider} is unavailable`) : 'No models available on this account'}
@@ -346,9 +609,10 @@ function GroupChoices<Provider extends string>({ group, selection, onChange }: R
 }
 
 function ModelRow({
-  label, isSelected, isDisabled = false, onSelect,
+  label, providerTag, isSelected, isDisabled = false, onSelect,
 }: Readonly<{
   label: ReactNode;
+  providerTag?: string;
   isSelected: boolean;
   isDisabled?: boolean;
   onSelect: () => void;
@@ -363,6 +627,7 @@ function ModelRow({
       onClick={onSelect}
     >
       <span className={styles.pickerRowLabel}>{label}</span>
+      {providerTag !== undefined && <span className={styles.providerBadge}>{providerTag}</span>}
       {isSelected && (
         <>
           <AstryxIcon icon="check" size="sm" color="accent" className={styles.pickerCheck} />
@@ -370,102 +635,6 @@ function ModelRow({
         </>
       )}
     </button>
-  );
-}
-
-type SettingTone = 'neutral' | 'warning' | 'danger';
-type SettingOption = Readonly<{ label: string; description: string; tone?: SettingTone }>;
-
-/** The kernel reads the mode when it starts a turn, so a change never reaches the one already running. */
-const PERMISSION_NOTE = 'Applies from the next turn.';
-
-/** A session's approval setting: renders backend-declared modes only. */
-export function PermissionModePill({ mode, options, onChange, isDisabled = false, unavailableMode, unavailableReason, placement = 'above' }: Readonly<{
-  /** What the session has stored (or selected in draft). */
-  mode: string;
-  options: readonly PermissionModeOptionDto[];
-  onChange: (mode: string) => void;
-  isDisabled?: boolean;
-  unavailableMode?: string;
-  unavailableReason?: string;
-  placement?: 'above' | 'below';
-}>) {
-  if (options.length === 0) return null;
-  const optionMap: Readonly<Record<string, SettingOption>> = Object.fromEntries(options.map((opt) => [
-      opt.id,
-      { label: opt.label, description: opt.id === unavailableMode && unavailableReason !== undefined
-        ? unavailableReason : opt.description,
-      ...(opt.tone === 'neutral' ? {} : { tone: opt.tone }) },
-    ]));
-  const effectiveMode = Object.prototype.hasOwnProperty.call(optionMap, mode)
-    ? mode
-    : (options.find((opt) => opt.isDefault) ?? options[0]).id;
-  return <SettingPill name="Approvals" options={optionMap} value={effectiveMode} onChange={onChange}
-    note={PERMISSION_NOTE} isDisabled={isDisabled} unavailableOption={unavailableMode} placement={placement} />;
-}
-
-/** A short fixed setting: the trigger names it and its value, and each row explains itself. */
-function SettingPill<Value extends string>({
-  name, options, value, onChange, note, isDisabled, unavailableOption, tooltip, placement, alignment = 'start',
-}: Readonly<{
-  name: string;
-  options: Readonly<Record<Value, SettingOption>>;
-  value: Value;
-  onChange: (value: Value) => void;
-  note?: string;
-  isDisabled: boolean;
-  unavailableOption?: Value;
-  /** With it Astryx marks a disabled trigger `aria-disabled` rather than `disabled`, so the tooltip stays reachable. */
-  tooltip?: string;
-  placement: 'above' | 'below';
-  alignment?: 'start' | 'end';
-}>) {
-  const [open, setOpen] = useState(false);
-  const hostRef = useRef<HTMLSpanElement | null>(null);
-  const { onEscape, onOpenChange } = useEscapeFocus(open, setOpen, hostRef);
-  const current = options[value];
-  const tone = current.tone ?? 'neutral';
-  const label = `${name}: ${current.label}`;
-  return (
-    <span ref={hostRef} className={styles.host} onKeyDownCapture={onEscape}>
-      <DropdownMenu
-        placement={placement}
-        alignment={alignment}
-        /* An `aria-disabled` trigger still passes ArrowDown to the menu, so a disabled one is held shut here. */
-        isMenuOpen={open && !isDisabled}
-        onOpenChange={(next) => { onOpenChange(next && !isDisabled); }}
-        hasChevron={false}
-        button={{
-          label,
-          children: <Text type="inherit" color="inherit" maxLines={1}>
-            {`${name}: `}
-            <span className={styles.settingValue} data-nc-tone={tone}>{current.label}</span>
-          </Text>,
-          'data-nc-tone': tone,
-          variant: 'ghost',
-          size: 'sm',
-          isDisabled,
-          tooltip,
-          className: styles.setting,
-        }}
-      >
-        {(Object.keys(options) as Value[]).map((option) => (
-          /* A node, not a string: Astryx cuts a string description to one line, and Full access's says what it risks. */
-          <Choice key={option} label={options[option].label}
-            variant={options[option].tone === 'danger' ? 'destructive' : 'default'}
-            description={<Text type="inherit" color="inherit">{options[option].description}</Text>}
-            isSelected={value === option} isDisabled={option === unavailableOption} onSelect={() => { if (option !== value) onChange(option); }} />
-        ))}
-        {note !== undefined && (
-          <>
-            <Divider />
-            <div className={styles.settingNote} role="note">
-              <Text type="supporting">{note}</Text>
-            </div>
-          </>
-        )}
-      </DropdownMenu>
-    </span>
   );
 }
 
@@ -479,33 +648,5 @@ function ResolvedLabel({ name, resolved }: Readonly<{ name: string; resolved: st
       <span className={styles.resolvedName}>{name}</span>
       <span className={styles.resolvedId} title={resolved}>{resolved}</span>
     </span>
-  );
-}
-
-function Choice({
-  label, description, isSelected, isDisabled = false, onSelect, variant = 'default',
-}: Readonly<{
-  label: ReactNode;
-  description?: ReactNode;
-  variant?: 'default' | 'destructive';
-  isSelected: boolean;
-  isDisabled?: boolean;
-  onSelect: () => void;
-}>) {
-  return (
-    <DropdownMenuItem
-      label={label}
-      variant={variant}
-      className={variant === 'destructive' ? styles.destructiveChoice : undefined}
-      description={description}
-      onClick={onSelect}
-      isDisabled={isDisabled}
-      endContent={isSelected ? (
-        <>
-          <AstryxIcon icon="check" size="sm" color={variant === 'destructive' ? 'error' : 'accent'} />
-          <VisuallyHidden>Selected</VisuallyHidden>
-        </>
-      ) : undefined}
-    />
   );
 }

@@ -16,7 +16,7 @@ it('uses the real Planner and opens cited reports from the daily homepage withou
   const sidebar = screen.getByRole('navigation', { name: 'Workspace' });
   expect(within(sidebar).queryByText('2026-10-04')).toBeNull();
   expect(within(sidebar).queryByText('system')).toBeNull();
-  await userEvent.click(await screen.findByRole('button', { name: '讨论这项工作' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Discuss' }));
   await screen.findByRole('complementary', { name: 'Daily Planner conversation' });
   expect(requests.some((request) => request.path.includes('limit=1'))).toBe(true);
   expect(requests.every((request) => request.method === 'GET')).toBe(true);
@@ -42,7 +42,7 @@ it('keeps a historical Perga daily Report readable without triage or Supervisor'
   const { requests } = renderDailyFixture({ initial: '/?day=2026-10-04' });
   await screen.findByText('Prioritize the release.', { exact: false }, { timeout: 5_000 });
   expect(screen.queryByRole('region', { name: 'Today triage' })).toBeNull();
-  expect(screen.queryByText('源文件夹模式 · 未隔离')).toBeNull();
+  expect(screen.queryByText('Direct folder')).toBeNull();
   expect(screen.queryByText('Daily Supervisor')).toBeNull();
   expect(requests.some(request => request.path === '/api/v1/today/daily?date=2026-10-04')).toBe(true);
   expect(requests.some(request => /\/api\/today\/(supervisor|launchpad)/.test(request.path))).toBe(false);
@@ -52,7 +52,7 @@ it('keeps a historical Perga daily Report readable without triage or Supervisor'
 it('preserves the isolation badge on regular Perga repo Tracks', async () => {
   renderDailyFixture({ initial: '/track/project' });
   await screen.findByText('Release is ready.', {}, { timeout: 5_000 });
-  expect(screen.getAllByText('源文件夹模式 · 未隔离').length).toBeGreaterThan(0);
+  expect(screen.getAllByText('Direct folder').length).toBeGreaterThan(0);
 });
 
 it.each([false, true])('shows perga Conversations only with multiple conversations (extra=%s)', async extraPlanner => {
@@ -79,7 +79,7 @@ it.each(['', '   \n  ', '# 今日计划\n\nA populated daily report.'])('shows t
     await waitFor(() => expect(document.querySelector('[data-nc-centered-footer]')).toBeTruthy());
     expect(screen.queryByRole('heading', { name: 'Daily report' })).toBeNull();
     await waitFor(() => expect(screen.queryByRole('region', { name: 'Track report' })?.getAttribute('aria-busy')).not.toBe('true'));
-    expect(screen.queryByText('进展会整理在这里')).toBeNull();
+    expect(screen.queryByText('Progress will be compiled here')).toBeNull();
     expect(screen.queryByRole('region', { name: 'Track report' })).toBeNull();
     expect(screen.queryByRole('region', { name: '空白日报' })).toBeNull();
   }

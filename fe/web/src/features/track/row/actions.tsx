@@ -30,7 +30,7 @@ export function TrackActions({ track, areaPinned, onSetPinned, onSetAreaPinned, 
     <DropdownMenuItem label={areaPinned ? 'Unpin within area' : 'Pin within area'} onClick={() => onSetAreaPinned(track.id, !areaPinned)} />
     <DropdownMenuItem label="Mark as unread" onClick={() => onMarkUnread(track.id)} />
     {onShare !== undefined && <DropdownMenuItem label="Share track" onClick={() => onShare(track.id, { kind: 'anchor', anchor: { ref: sourceRef }, unavailable: 'surface-center' })} />}
-    {onDelete !== undefined && <><DropdownMenuDivider /><DropdownMenuItem label="Delete track" onClick={() => onDelete(track.id, { kind: 'anchor', anchor: { ref: sourceRef }, unavailable: 'surface-center' })} /></>}
+    {onDelete !== undefined && <><DropdownMenuDivider /><DropdownMenuItem label="Delete track" variant="destructive" onClick={() => onDelete(track.id, { kind: 'anchor', anchor: { ref: sourceRef }, unavailable: 'surface-center' })} /></>}
     </>}
   </DropdownMenu></span>;
 }

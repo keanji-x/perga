@@ -83,16 +83,16 @@ describe('workspace read feedback', () => {
   it('keeps loading and read failures in the connection disclosure and retries the read', async () => {
     const onRetryRead = vi.fn();
     const { update } = renderSidebar({ readLoading: true, onRetryRead });
-    expect(screen.queryByRole('dialog', { name: '连接详情' })).toBeNull();
-    await userEvent.click(screen.getByRole('button', { name: /^连接状态/ }));
-    expect(within(screen.getByRole('dialog', { name: '连接详情' })).getByText('正在读取工作区…')).toBeTruthy();
+    expect(screen.queryByRole('dialog', { name: 'Connection details' })).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: /^Connection status/ }));
+    expect(within(screen.getByRole('dialog', { name: 'Connection details' })).getByText('Loading workspace…')).toBeTruthy();
     await userEvent.keyboard('{Escape}');
     update({ readLoading: false, readError: 'areas down', onRetryRead });
     expect(screen.queryByRole('alert')).toBeNull();
-    expect(screen.queryByRole('dialog', { name: '连接详情' })).toBeNull();
-    await userEvent.click(screen.getByRole('button', { name: '连接状态：连接异常' }));
-    expect(within(screen.getByRole('dialog', { name: '连接详情' })).getByText('areas down')).toBeTruthy();
-    await userEvent.click(screen.getByRole('button', { name: '重试读取' }));
+    expect(screen.queryByRole('dialog', { name: 'Connection details' })).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Connection status: Connection issue' }));
+    expect(within(screen.getByRole('dialog', { name: 'Connection details' })).getByText('areas down')).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: 'Retry sync' }));
     expect(onRetryRead).toHaveBeenCalledTimes(1);
   });
 
@@ -100,12 +100,12 @@ describe('workspace read feedback', () => {
     const onRetryRead = vi.fn();
     renderSidebar({ collapsed: true, readError: 'Areas are unavailable.', activityError: 'Track activity is unavailable.', onRetryRead });
     expect(screen.queryByRole('alert')).toBeNull();
-    expect(screen.queryByRole('dialog', { name: '连接详情' })).toBeNull();
-    expect(screen.getAllByRole('button', { name: /^连接状态/ })).toHaveLength(1);
-    await userEvent.click(screen.getByRole('button', { name: /^连接状态/ }));
-    expect(within(screen.getByRole('dialog', { name: '连接详情' })).getByText('Areas are unavailable.')).toBeTruthy();
-    expect(within(screen.getByRole('dialog', { name: '连接详情' })).getByText('Track activity is unavailable.')).toBeTruthy();
-    await userEvent.click(screen.getByRole('button', { name: '重试读取' }));
+    expect(screen.queryByRole('dialog', { name: 'Connection details' })).toBeNull();
+    expect(screen.getAllByRole('button', { name: /^Connection status/ })).toHaveLength(1);
+    await userEvent.click(screen.getByRole('button', { name: /^Connection status/ }));
+    expect(within(screen.getByRole('dialog', { name: 'Connection details' })).getByText('Areas are unavailable.')).toBeTruthy();
+    expect(within(screen.getByRole('dialog', { name: 'Connection details' })).getByText('Track activity is unavailable.')).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: 'Retry sync' }));
     expect(onRetryRead).toHaveBeenCalledTimes(1);
   });
 });
@@ -588,7 +588,7 @@ describe('shared sidebar groups', () => {
     renderSidebar({ areas: [area({ kind: 'system' })], tracks: [track({ notifiableSessions: [{ sessionId: 's1', lastNotifiableTurnAtMs: 10 }], working: true, pinnedAt: 5 })] }, createUiPreferences(), kernel);
     await waitFor(() => expect(kernel.requests).toHaveLength(1));
     expect(headings()).toEqual([]);
-    expect(screen.getByRole('heading', { name: '还没有 Area' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'No areas yet' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: /^Track / })).toBeNull();
   });
 });

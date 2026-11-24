@@ -142,9 +142,9 @@ describe('TrackPage delete confirm contract', () => {
 it('offers compact title sharing and desktop menu sharing, and places owner links before Related without anchors', async () => {
   const onShareTrack = vi.fn();
   const { container } = renderPage({ onShareTrack, shareLinks: <section aria-label="分享链接">Persisted owner links</section>, recentFiles: <div>Files</div> });
-  const trigger = screen.getByRole('button', { name: '分享' });
+  const trigger = screen.getByRole('button', { name: 'Share' });
   expect(trigger.querySelector('svg')).toBeTruthy();
-  expect(trigger.textContent).not.toContain('分享');
+  expect(trigger.textContent).not.toContain('Share');
   await userEvent.click(trigger);
   expect(onShareTrack).toHaveBeenCalledWith(expect.objectContaining({ kind: 'anchor' }));
   await userEvent.click(screen.getByRole('button', { name: /^Track actions for / }));

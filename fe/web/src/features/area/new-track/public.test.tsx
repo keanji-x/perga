@@ -78,16 +78,11 @@ describe('NewTrackForm asks only what the track starts from', () => {
     expect(submitButton().disabled).toBe(false);
   });
 
-  it('allows a locked request to replay while fresh workspace or template input is unavailable', async () => {
+  it('allows a locked request to replay while fresh workspace options are unavailable', async () => {
     const { onSubmit } = renderForm({
       locked: true,
-      initialDraft: { cwd: '/repo', message: 'Keep the original request', templateId: 'dev', workspaceOptionId: 'git' },
-      workspaceOptions: { cwd: '/repo', templateId: 'dev', result: null },
-      templates: [{
-        id: 'dev', title: 'Dev', description: '', tasks: [],
-        input_schema: { ticket: { type: 'string', label: 'Ticket' } },
-        availability: { status: 'ready' },
-      }],
+      initialDraft: { cwd: '/repo', message: 'Keep the original request', workspaceOptionId: 'git' },
+      workspaceOptions: { cwd: '/repo', result: null },
     });
     await userEvent.click(submitButton());
     expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ message: 'Keep the original request' }));

@@ -53,16 +53,20 @@
     display: grid;
     grid-template-columns:
       var(--document-start, 0px)
-      minmax(0, var(--document-measure, 40rem))
+      minmax(0, var(--document-measure, 45rem))
       minmax(0, 1fr);
-    row-gap: var(--space-4);
+    row-gap: var(--space-5);
 
     inline-size: 100%;
     max-inline-size: none;
     counter-reset: report-section;
-    /* Honor a larger user root font without changing the global prose contract. */
+    /* Editorial print voice: crisp dark ink on warm parchment, generous leading, breathable CJK tracking. */
+    color: color-mix(in srgb, var(--text) 92%, var(--bg));
     font: var(--type-reading);
-    letter-spacing: var(--type-reading-tracking);
+    line-height: 1.85;
+    letter-spacing: 0.012em;
+    font-kerning: normal;
+    text-rendering: optimizelegibility;
   }
 
   /* One block, plus its sidenote. Placed explicitly — the rail claims column 1,
@@ -291,7 +295,7 @@
 
   .appendix {
     margin-inline-start: var(--document-start, 0);
-    inline-size: min(100%, var(--document-measure, 40rem));
+    inline-size: min(100%, var(--document-measure, 45rem));
     min-inline-size: 0;
   }
 
@@ -396,60 +400,36 @@
   }
 
   /*
-   * A section. The kernel splits a report at H1. Type, numbering and the
-   * larger space above it establish the hierarchy without a trailing rule.
-   * Keep the box unclipped so the section number can live in the margin.
+   * A periodical chapter heading: subordinate to the article masthead,
+   * pairing a quiet inline tabular numeral (`01`, `02`, ...) with sculptural
+   * regular serif text and a crisp newspaper hairline rule between chapters.
    */
   .h1 {
     position: relative;
     counter-increment: report-section;
     display: flex;
+    flex-direction: row;
     align-items: baseline;
-    gap: var(--space-4);
-    margin-block-start: calc(var(--space-6) + var(--space-3));
-    margin-block-end: var(--space-3);
+    gap: var(--space-3);
+    margin-block-start: var(--space-7);
+    margin-block-end: var(--space-4);
+    padding-block-start: var(--space-5);
+    border-block-start: 1px solid color-mix(in srgb, var(--hairline) 70%, transparent);
     letter-spacing: var(--type-chapter-tracking);
     color: var(--text);
     font: var(--type-chapter);
   }
 
-  /*
-   * **The section number lives in the margin, not in the heading.**
-   *
-   * It used to sit inline, in front of the title, which made every heading two
-   * things — a label and a counter — and left the leading margin with nothing
-   * in it but air. Out here it is marginalia: it says what number this section
-   * is without taking a word of the heading's line; the outline dots now share
-   * this trailing edge rather than occupying the margin's far side.
-   *
-   * Absolute, against the trailing edge of the margin, so the numbers line up
-   * as a column of their own however wide they get.
-   */
   .h1::before {
+    flex: none;
     font: var(--type-code);
-    letter-spacing: var(--type-code-tracking);
+    font-size: var(--font-step-1-size);
+    line-height: 1;
+    letter-spacing: 0.08em;
+    font-variant-numeric: tabular-nums;
     content: counter(report-section, decimal-leading-zero);
     white-space: nowrap;
-    position: absolute;
-    inset-inline-end: calc(100% + var(--space-5));
-    color: var(--accent);
-    opacity: var(--report-section-number-opacity, 1);
-    transition: opacity var(--motion-quick) var(--ease-feedback);
-  }
-
-  /* Match the outline rail's `40rem + 64px` document-column threshold: when the
-     rail has the 32px leading gutter it needs to paint beside the 40rem reading
-     column, its dots are the section markers and the numbers yield. */
-  @container (inline-size >= calc(40rem + 64px)) {
-    .doc:has(> nav) {
-      --report-section-number-opacity: 0;
-    }
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .h1::before {
-      transition: none;
-    }
+    color: var(--text-3);
   }
 
   .headingText {
@@ -458,16 +438,23 @@
 
   .block > .h1:first-child {
     margin-block-start: 0;
+    padding-block-start: 0;
+    border-block-start: 0;
   }
 
-  /* A subsection: no number and no rule. One numbered rank, or the numbering
-     stops meaning "section". */
+  .row ~ .row > .block > .h1:first-child {
+    margin-block-start: var(--space-4);
+    padding-block-start: var(--space-5);
+    border-block-start: 1px solid color-mix(in srgb, var(--hairline) 70%, transparent);
+  }
+
+  /* A subsection: quiet serif crosshead tightly coupled to the block below it. */
   .h2 {
     margin-block-start: var(--space-6);
     margin-block-end: var(--space-3);
     color: var(--text);
     font: var(--type-subheading);
-    letter-spacing: var(--type-subheading-tracking);
+    letter-spacing: 0.005em;
   }
 
   /* Both headings own their spacing outright, so the generic sibling rule must
@@ -512,11 +499,15 @@
   }
 
   .quote {
+    margin-block: var(--space-6);
     margin-inline: 0;
-    padding-block: var(--space-1);
-    padding-inline-start: var(--space-4);
-    border-inline-start: 2px solid var(--hairline-strong);
-    color: var(--text-3);
+    padding: var(--space-1) 0 var(--space-1) var(--space-5);
+    border-inline-start: 1.5px solid var(--text-3);
+    background: transparent;
+    color: var(--text-2);
+    font-style: normal;
+    line-height: 1.85;
+    letter-spacing: 0.015em;
   }
 
   /* Its own scroll container so a long line cannot widen the page (§3.2).
@@ -534,10 +525,13 @@
   }
 
   .inlineCode {
-    padding-inline: var(--space-1);
+    padding: 0.08em 0.36em;
+    border: 1px solid color-mix(in srgb, var(--hairline) 45%, transparent);
     border-radius: var(--radius-sm);
-    background: var(--surface-code);
+    background: color-mix(in srgb, var(--surface-code) 75%, var(--paper));
+    color: var(--text);
     font: var(--type-code);
+    font-size: 0.84em;
     letter-spacing: var(--type-code-tracking);
   }
 
@@ -548,35 +542,60 @@
 
   .tableWrap {
     overflow-x: auto;
+    margin-block: var(--space-6);
   }
 
-  /* Sans, and back to interface size: a table is data, and data is scanned down
-     columns rather than read along lines. */
+  /* Periodical Booktabs table (Economist / Nature cadence): razor-thin framing rules,
+     quiet tracked column heads, crisp anchored first column. */
   .table {
     inline-size: 100%;
     border-collapse: collapse;
+    border-block-start: 1px solid var(--text);
+    border-block-end: 1px solid var(--text);
     font: var(--type-table);
     letter-spacing: var(--type-table-tracking);
+    font-variant-numeric: tabular-nums;
   }
 
   .cell {
-    padding-block: var(--space-2);
-    border-block-end: 1px solid var(--hairline);
+    padding: var(--space-3) var(--space-4) var(--space-3) 0;
+    border-block-end: 1px solid color-mix(in srgb, var(--hairline) 45%, transparent);
     text-align: start;
     vertical-align: top;
     color: var(--text-2);
+    line-height: 1.6;
+  }
+
+  .cell:last-child {
+    padding-inline-end: 0;
+  }
+
+  td.cell:first-child {
+    color: var(--text);
+    font-weight: var(--weight-medium);
+  }
+
+  .table tbody tr:last-child .cell {
+    border-block-end: 0;
   }
 
   th.cell {
-    font-weight: var(--weight-semibold);
-    color: var(--text);
+    padding-block: var(--space-2) var(--space-3);
+    border-block-end: 1px solid var(--hairline-strong);
+    font-size: var(--font-step-1-size);
+    font-weight: var(--weight-medium);
+    letter-spacing: 0.04em;
+    color: var(--text-3);
   }
 
+  /* Classic editorial double-rule section break. */
   .rule {
-    block-size: 1px;
-    margin-block: var(--space-5);
-    border: none;
-    background: var(--hairline);
+    block-size: 4px;
+    margin-block: var(--space-6);
+    border: 0;
+    border-block-start: 1px solid var(--hairline-strong);
+    border-block-end: 1px solid var(--hairline);
+    background: transparent;
   }
 
   /* A dropped image's alt text, which is the only part of it this surface
@@ -592,7 +611,7 @@
     .outlineOnly > .row { display: none; }
     .mobileEmpty { display: block; grid-column: 1; padding-block-start: var(--space-6); max-inline-size: 21rem; }
     .doc { font-family: var(--font-sans); font-size: var(--font-step-3-size); line-height: var(--font-step-3-line);
-      grid-template-columns: minmax(0, min(100%, var(--document-measure, 40rem)));
+      grid-template-columns: minmax(0, min(100%, var(--document-measure, 45rem)));
       justify-content: center;
       max-inline-size: 100%;
       overflow-wrap: anywhere;
@@ -634,9 +653,47 @@
     .h2 { font-size: var(--font-step-3-size); }
   }
 
-  /* Inline evidence keeps its intrinsic ratio within the reading column. */
-  .image { max-width: 100%; height: auto; vertical-align: middle; }
-  .imageButton { display: inline-block; max-width: 100%; padding: 0; border: 0; background: transparent; cursor: pointer; }
+  /* Publication figure frame: crisp hairline mat + subtle caption below inline images. */
+  .figure {
+    display: inline-flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    max-inline-size: 100%;
+    margin: var(--space-2) 0;
+  }
+
+  .image {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius-sm);
+    background: var(--paper);
+  }
+
+  .imageButton {
+    display: block;
+    max-width: 100%;
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    cursor: pointer;
+    transition: border-color var(--motion-quick) var(--ease-feedback),
+      box-shadow var(--motion-quick) var(--ease-feedback);
+  }
+
+  .imageButton:hover .image,
+  .imageButton:focus-visible .image {
+    border-color: var(--hairline-strong);
+  }
+
+  .figcaption {
+    font: var(--type-metadata);
+    letter-spacing: var(--type-metadata-tracking);
+    color: var(--text-3);
+    line-height: 1.45;
+  }
   .detailCard {
     padding: var(--space-3);
     border: 1px solid var(--hairline);

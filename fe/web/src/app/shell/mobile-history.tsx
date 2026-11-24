@@ -10,7 +10,6 @@ import { MobileTrackList } from './mobile-track-list.tsx';
 import type { SidebarTrackGroups } from './sidebar-track-groups.ts';
 import { MobileNav } from '@astryxdesign/core/MobileNav';
 import { Button } from '@astryxdesign/core/Button';
-import { Icon } from '@astryxdesign/core/Icon';
 import { DropdownMenu } from '@astryxdesign/core/DropdownMenu';
 import type { Conversation } from '../../../../core/domain/conversation.ts';
 import { conversationName } from '../../../../core/domain/conversation.ts';
@@ -20,7 +19,14 @@ import styles from './mobile-history.module.css';
 
 type HistoryView = 'current' | 'pinned' | 'unread' | 'waiting';
 const VIEWS: readonly HistoryView[] = Object.freeze(['current', 'pinned', 'unread', 'waiting']);
-const VIEW_LABELS: Readonly<Record<HistoryView, string>> = Object.freeze({ current: '本 Track', pinned: '已置顶', unread: '未读', waiting: '未处理' });
+function viewLabel(view: HistoryView): string {
+  switch (view) {
+    case 'current': return 'This track';
+    case 'pinned': return 'Pinned';
+    case 'unread': return 'Unread';
+    case 'waiting': return 'Attention';
+  }
+}
 
 function historyTitle(row: Conversation): string {
   const name = conversationName(row);
@@ -34,7 +40,7 @@ function historySubtitle(row: Conversation): string {
 function groupName(at: number, now: number): string {
   const today = new Date(now); today.setHours(0, 0, 0, 0);
   const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
-  return at >= today.getTime() ? '今天' : at >= yesterday.getTime() ? '昨天' : '更早';
+  return at >= today.getTime() ? 'Today' : at >= yesterday.getTime() ? 'Yesterday' : 'Earlier';
 }
 
 export function MobileHistory({ owner, open, onOpenChange, conversations, loading, failed, onRetry, onNew, onSelect, onArchive,
@@ -118,32 +124,32 @@ export function MobileHistory({ owner, open, onOpenChange, conversations, loadin
     onOpenChange(false);
   };
   return <MobileNav key={session.key} id="mobile-conversation-history" ref={captureDialog} isOpen={open} onOpenChange={onOpenChange} side="start" width={320}
-    label={view === 'current' ? '历史对话' : VIEW_LABELS[view]} header={<span className={styles.drawerHeading}>{view === 'current' ? '历史对话' : VIEW_LABELS[view]}</span>} className={`${styles.drawer} ${mobileFontClassName}`}
+    label={view === 'current' ? 'Conversations' : viewLabel(view)} header={<span className={styles.drawerHeading}>{view === 'current' ? 'Conversations' : viewLabel(view)}</span>} className={`${styles.drawer} ${mobileFontClassName}`}
     >
     <div ref={content} className={styles.layout} inert={presentation.blocked || !open}
       onClickCapture={event => {
         if (session.admitted || !session.open) { event.preventDefault(); event.stopPropagation(); }
       }}>
-      <nav className={styles.views} aria-label="侧边栏视图">
+      <nav className={styles.views} aria-label="Sidebar views">
         {VIEWS.map((candidate) => {
           const count = candidate === 'current' ? conversations.length : trackGroups[candidate].length;
-          return <button key={candidate} type="button" className={styles.view} aria-label={VIEW_LABELS[candidate]}
+          return <button key={candidate} type="button" className={styles.view} aria-label={viewLabel(candidate)}
             aria-pressed={view === candidate} onClick={() => { setView(candidate); if (list.current !== null) list.current.scrollTop = 0; }}>
-            <span>{VIEW_LABELS[candidate]}</span>{count > 0 && <span className={styles.count} aria-hidden="true">{count > 99 ? '99+' : count}</span>}
+            <span>{viewLabel(candidate)}</span>{count > 0 && <span className={styles.count} aria-hidden="true">{count > 99 ? '99+' : count}</span>}
           </button>;
         })}
       </nav>
       {view === 'current' && <div className={styles.functions}>
-        <Button className={styles.functionButton} label="发起新对话" variant="ghost" size="lg" isDisabled={onNew === null}
+        <Button className={styles.functionButton} label="New conversation" variant="ghost" size="lg" isDisabled={onNew === null}
           icon={<UiIcon name="plus" />} onClick={() => { if (onNew !== null) leave(onNew); }} />
 
       </div>}
       <div ref={captureList} className={styles.list}>
         {view === 'current' ? <>
         <p className={styles.scope}>{scopeLabel}</p>
-        {failed && <ErrorBox message="部分历史对话未能加载。" actionLabel="重试" onRetry={onRetry} />}
-        {loading && <p role="status">正在加载历史对话…</p>}
-        <ConversationGroups conversations={conversations} emptyActive={!loading && !failed ? <EmptyState variant="compact" icon={<UiIcon name="chat" />} title={conversations.length === 0 ? '当前 Track 还没有对话。' : '暂无活跃对话。'} description="这里显示当前 Track 的活跃对话。" /> : null}>
+        {failed && <ErrorBox message="Some conversations could not be loaded." actionLabel="Retry" onRetry={onRetry} />}
+        {loading && <p role="status">Loading conversations…</p>}
+        <ConversationGroups conversations={conversations} emptyActive={!loading && !failed ? <EmptyState variant="compact" icon={<UiIcon name="chat" />} title={conversations.length === 0 ? 'No conversations in this track yet.' : 'No active conversations.'} description="Active conversations for this track appear here." /> : null}>
           {rows => {
             const groups = new Map<string, Conversation[]>();
             for (const row of rows) {
@@ -156,7 +162,7 @@ export function MobileHistory({ owner, open, onOpenChange, conversations, loadin
                 {rows.map((row) => <div key={row.id} className={styles.conversationRow}><button type="button" className={styles.row} aria-current={row.id === selectedConversationId ? 'true' : undefined}
                   aria-label={`${historyTitle(row)}${historySubtitle(row) ? ` ${historySubtitle(row)}` : ''}`} onClick={() => leave(() => onSelect(row))}>
                   <span className={styles.title}>{historyTitle(row)}</span>
-                  <span className={styles.meta} title={historySubtitle(row)}>{row.isLead === true ? null : historySubtitle(row)}<span aria-hidden="true">{row.isLead === true ? '' : ' · '}{new Date(row.updatedAt).toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' }).replaceAll('/', '-')}</span></span>
+                  <span className={styles.meta} title={historySubtitle(row)}>{row.isLead === true ? null : historySubtitle(row)}<span aria-hidden="true">{row.isLead === true ? '' : ' · '}{new Date(row.updatedAt).toISOString().slice(0, 10)}</span></span>
                 </button>
                 {onArchive !== undefined && row.kind === 'agent' && row.isLead !== true && <ConversationArchiveAction
                   conversation={row} onArchive={onArchive} className={styles.conversationActions} />}
@@ -166,9 +172,9 @@ export function MobileHistory({ owner, open, onOpenChange, conversations, loadin
           }}
         </ConversationGroups>
         </> : <>
-          <p className={styles.scope}>{shareMode ? '分享范围内的 Tracks' : '全部工作区'}</p>
-          {tracksError !== null && <ErrorBox message={tracksError} actionLabel="重试" onRetry={onRetryTracks} />}
-          {tracksLoading && <p role="status">正在加载 Tracks…</p>}
+          <p className={styles.scope}>{shareMode ? 'Shared tracks' : 'All areas'}</p>
+          {tracksError !== null && <ErrorBox message={tracksError} actionLabel="Retry" onRetry={onRetryTracks} />}
+          {tracksLoading && <p role="status">Loading tracks…</p>}
           <MobileTrackList tracks={trackGroups[view]} currentTrackId={currentTrackId} isUnread={isUnread}
             onOpenTrack={(trackId) => leave(() => onOpenTrack(trackId))}
             emptyState={!tracksLoading && tracksError === null ? trackEmptyContent(view) : undefined} />
@@ -178,11 +184,11 @@ export function MobileHistory({ owner, open, onOpenChange, conversations, loadin
         {onSignOut !== undefined ? (
           <DropdownMenu placement="above" alignment="start" hasChevron={false}
             button={{ label: accountLabel, variant: 'ghost', size: 'lg', className: styles.footerButton, icon: <span className={styles.avatar}>{accountInitial}</span> }}
-            items={[{ label: '退出登录', onClick: () => leave(onSignOut) }]} />
+            items={[{ label: 'Sign out', onClick: () => leave(onSignOut) }]} />
         ) : (
           <span className={styles.footerButton}><span className={styles.avatar}>{accountInitial}</span>{accountLabel}</span>
         )}
-        <Button className={styles.footerButton} label="设置" variant="ghost" size="lg" icon={<Icon icon="wrench" />}
+        <Button className={styles.footerButton} label="Settings" variant="ghost" size="lg" icon={<UiIcon name="settings" />}
           onClick={() => leave(onOpenSettings)} />
       </div>}
     </div>

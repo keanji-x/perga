@@ -36,7 +36,7 @@ export function AreaGroup({
     ? `${area.name} · ${targetLabel ?? area.executionTargetId}`
     : area.name;
   return <SidebarTrackGroup
-    emptyState={readReady ? { icon: <Icon name="file" />, title: '没有可显示的 Track', description: '此 Area 中符合当前筛选的 Track 会显示在这里。' } : null}
+    emptyState={readReady ? { icon: <Icon name="file" />, title: 'No active tracks', description: 'Open tracks in this area appear here.' } : null}
     title={areaTitle}
     label={`area ${area.name}`}
     icon="folder"
@@ -52,7 +52,7 @@ export function AreaGroup({
         onClick={() => onShare(origin)} />}
       <DropdownMenuItem label="Edit area" onClick={() => onEdit(origin)} />
       <DropdownMenuItem label={showClosed ? 'Hide closed' : 'Show closed'} onClick={() => onSetShowClosed(!showClosed)} />
-      <DropdownMenuItem label="Delete area" onClick={() => onRequestDelete(area.id, origin)} />
+      <DropdownMenuItem label="Delete area" variant="destructive" onClick={() => onRequestDelete(area.id, origin)} />
     </>}
     actions={
       <button type="button" data-nc-role="icon" className={`${styles.areaNew} ${rowLayout('outer')}`}

@@ -35,23 +35,23 @@ export function classifyFlowNodeState(node: FlowNodeProjection): FlowVisualState
 export function flowStateLabel(node: FlowNodeProjection): string {
   const visual = classifyFlowNodeState(node);
   switch (visual) {
-    case 'ok': return '已完成';
-    case 'running': return node.status === 'verifying' ? '验证中' : '运行中';
-    case 'waiting': return node.doKind === 'watch' && node.repeat && node.status === 'done' ? '待下一轮' : '等待中';
-    case 'attention': return '需介入';
-    case 'blocked': return '阻塞';
-    case 'failed': return '失败';
-    case 'canceled': return '已取消';
-    case 'pending': return '待调度';
+    case 'ok': return 'Completed';
+    case 'running': return node.status === 'verifying' ? 'Verifying' : 'Running';
+    case 'waiting': return node.doKind === 'watch' && node.repeat && node.status === 'done' ? 'Next cycle' : 'Waiting';
+    case 'attention': return 'Attention';
+    case 'blocked': return 'Blocked';
+    case 'failed': return 'Failed';
+    case 'canceled': return 'Canceled';
+    case 'pending': return 'Scheduled';
   }
 }
 
 export function archivedOutcomeLabel(item: FlowArchivedNodeProjection): string {
-  if (item.status === 'canceled') return '已取消';
-  if (item.outcome === 'attention') return '需介入';
-  if (item.outcome === 'blocked') return '阻塞';
-  if (item.status === 'failed') return '失败';
-  return '已完成';
+  if (item.status === 'canceled') return 'Canceled';
+  if (item.outcome === 'attention') return 'Attention';
+  if (item.outcome === 'blocked') return 'Blocked';
+  if (item.status === 'failed') return 'Failed';
+  return 'Completed';
 }
 
 export function archivedOutcomeTone(item: FlowArchivedNodeProjection): 'ok' | 'warn' | 'fail' | 'muted' {
@@ -127,7 +127,7 @@ export function formatWatchSummary(watch: FlowWatchProgress, isLive = true): str
     }
   }
   if (isLive) {
-    parts.push('等待中');
+    parts.push('Waiting');
   }
   return parts.join(' · ');
 }
@@ -135,9 +135,9 @@ export function formatWatchSummary(watch: FlowWatchProgress, isLive = true): str
 export function formatEdgeCondition(on: FlowOutcomeCondition): string | null {
   switch (on) {
     case 'ok': return null;
-    case 'attention': return '需介入';
-    case 'blocked': return '阻塞';
-    case 'any': return '任意结果';
+    case 'attention': return 'attention';
+    case 'blocked': return 'blocked';
+    case 'any': return 'any';
   }
 }
 
@@ -147,21 +147,21 @@ export function formatWhenRule(
 ): string {
   switch (node.whenKind) {
     case 'immediate':
-      return '立即触发';
+      return 'Immediate';
     case 'cron':
       return node.cron != null && node.cron.trim() !== ''
-        ? `周期 ${node.cron}${node.tz != null && node.tz.trim() !== '' ? ` (${node.tz})` : ''}`
-        : '周期触发';
+        ? `Cron ${node.cron}${node.tz != null && node.tz.trim() !== '' ? ` (${node.tz})` : ''}`
+        : 'Recurring';
     case 'at':
-      return node.at != null && node.at.trim() !== '' ? `定时 ${node.at}` : '定时触发';
+      return node.at != null && node.at.trim() !== '' ? `At ${node.at}` : 'Scheduled';
     case 'after': {
-      if (node.after.length === 0) return '前置触发';
+      if (node.after.length === 0) return 'After dependencies';
       const labels = node.after.map((dep) => {
         const name = titleById.get(dep.node) ?? dep.node;
         const cond = formatEdgeCondition(dep.on);
         return cond === null ? name : `${name} (${cond})`;
       });
-      return `前置：${labels.join('、')}`;
+      return `After: ${labels.join(', ')}`;
     }
   }
 }
@@ -177,30 +177,30 @@ export function formatNodeCaption(
     }
     if (node.waitingOn.length > 0) {
       const names = node.waitingOn.map((id) => titleById.get(id) ?? id);
-      return `等待 ${names.join('、')}`;
+      return `Waiting on ${names.join(', ')}`;
     }
-    return '等待中';
+    return 'Waiting';
   }
   if (visual === 'pending') {
     if (node.waitingOn.length > 0) {
       if (node.after.length > 0) {
-        return '待前置完成';
+        return 'Waiting on dependencies';
       }
       const names = node.waitingOn.map((id) => titleById.get(id) ?? id);
-      return `等待 ${names.join('、')}`;
+      return `Waiting on ${names.join(', ')}`;
     }
     if (node.whenKind === 'at' && node.at != null && node.at.trim() !== '') {
-      return `定时 ${node.at}`;
+      return `At ${node.at}`;
     }
-    return '待调度';
+    return 'Scheduled';
   }
   return flowStateLabel(node);
 }
 
 export function formatDoKindLabel(doKind: FlowNodeProjection['doKind']): string {
   switch (doKind) {
-    case 'run': return '执行';
-    case 'wake': return '唤醒';
-    case 'watch': return '监听探针';
+    case 'run': return 'Run';
+    case 'wake': return 'Wake';
+    case 'watch': return 'Watch';
   }
 }

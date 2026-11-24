@@ -14,18 +14,30 @@ import styles from './repo-pill.module.css';
 
 export type RepoIsolationMode = 'worktree' | 'none';
 
-const REPO_MODES = Object.freeze([
-  Object.freeze({
-    value: 'worktree' as const,
-    label: 'Worktree 模式',
-    description: '默认 · 安全隔离，创建独立 worktree',
-  }),
-  Object.freeze({
-    value: 'none' as const,
-    label: '裸文件夹模式',
-    description: '对话使用源文件夹 · 任务 worker 需要 worktree',
-  }),
-] as const);
+function compactPathDescription(path: string, maxLength = 42): string {
+  if (path.length <= maxLength) return path;
+  const parts = path.split('/').filter(Boolean);
+  if (parts.length >= 2) {
+    const tail = parts.slice(-2).join('/');
+    if (tail.length + 2 <= maxLength) return `…/${tail}`;
+  }
+  return `…${path.slice(-(maxLength - 1))}`;
+}
+
+function repoModes() {
+  return [
+    {
+      value: 'worktree' as const,
+      label: 'Git worktree',
+      description: 'Default · isolated working copy per track',
+    },
+    {
+      value: 'none' as const,
+      label: 'Direct folder',
+      description: 'Lead uses source folder · worker tasks still require a worktree',
+    },
+  ] as const;
+}
 
 export type RepoPillProps = Readonly<{
   buttonId?: string;
@@ -59,7 +71,7 @@ export function RepoPill({
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const modeLabel = workspaceOptions?.options.find((option) => option.id === workspaceOptionId)?.label
-    ?? (workspaceOptions === undefined && isolation === 'none' ? '源文件夹' : undefined);
+    ?? (workspaceOptions === undefined && isolation === 'none' ? 'Direct' : undefined);
   const suffixParts = [targetLabel, modeLabel].filter((part): part is string => part !== undefined && part !== '');
   const { visibleLabel, accessibleName } = folderLabelParts({
     value,
@@ -92,8 +104,8 @@ export function RepoPill({
           className: styles.trigger,
         }}
       >
-        <div role="group" aria-label="工作模式">
-          <div className={styles.groupHeading} aria-hidden="true">工作模式</div>
+        <div role="group" aria-label="Workspace mode">
+          <div className={styles.groupHeading} aria-hidden="true">Workspace mode</div>
           {workspaceOptions === null && <DropdownMenuItem label="Workspace options unavailable" isDisabled />}
           {workspaceOptions && workspaceOptionId === undefined &&
             <DropdownMenuItem label="Choose an available workspace option" isDisabled />}
@@ -108,7 +120,7 @@ export function RepoPill({
               ) : undefined}
             />
           ))}
-          {workspaceOptions === undefined && REPO_MODES.map((option) => {
+          {workspaceOptions === undefined && repoModes().map((option) => {
             const managedOnly = value === '';
             const selected = managedOnly ? option.value === 'worktree' : isolation === option.value;
             const disabled = managedOnly && option.value === 'none';
@@ -116,7 +128,7 @@ export function RepoPill({
               <DropdownMenuItem
                 key={option.value}
                 label={option.label}
-                description={disabled ? '请先通过 Others… 选择外部文件夹' : option.description}
+                description={disabled ? 'Choose an external folder via Others… first' : option.description}
                 isDisabled={disabled}
                 onClick={() => {
                   if (!disabled) onIsolationChange(option.value);
@@ -135,7 +147,7 @@ export function RepoPill({
         <DropdownMenuItem
           label="Others…"
           hasCloseOnSelect={false}
-          description={value !== '' ? value : '浏览并选择文件夹'}
+          description={value !== '' ? compactPathDescription(value) : 'Browse and select a folder'}
           onClick={() => {
             flushSync(() => setOpen(false));
             // Let the menu's selection event finish before handing focus to the dialog.
@@ -149,7 +161,7 @@ export function RepoPill({
         />
         <DropdownMenuItem
           label="Perga workspace"
-          description={value === '' ? '当前使用托管默认工作区' : '切回托管默认工作区'}
+          description={value === '' ? 'Using managed default workspace' : 'Switch back to managed default workspace'}
           onClick={() => {
             if (value !== '') onClear();
           }}

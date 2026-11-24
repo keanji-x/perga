@@ -22,9 +22,9 @@ it.each(['light', 'dark'])('retains serif heading hierarchy and independent acti
   const second = view.container.querySelector<HTMLElement>('[data-nc-report] h3')!;
   const paragraph = view.container.querySelector<HTMLElement>('[data-nc-report] p')!;
   expect(getComputedStyle(first).fontSize).toBe('20px');
-  expect(getComputedStyle(first).fontWeight).toBe('700');
-  expect(getComputedStyle(second).fontSize).toBe('16px');
-  expect(getComputedStyle(second).fontWeight).toBe('600');
+  expect(getComputedStyle(first).fontWeight).toBe('400');
+  expect(getComputedStyle(second).fontSize).toBe('18px');
+  expect(getComputedStyle(second).fontWeight).toBe('500');
   expect(getComputedStyle(second).fontFamily).toBe(getComputedStyle(paragraph).fontFamily);
   expect(getComputedStyle(paragraph).fontSize).toBe('16px');
   const disabled = view.getByRole('button', { name: 'Disabled' });

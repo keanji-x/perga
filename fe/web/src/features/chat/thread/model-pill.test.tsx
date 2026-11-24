@@ -7,7 +7,7 @@ import type { ProviderAvailability } from '../../../../../core/domain/agent-prov
 import { FOLLOW_INSTALLATION_DEFAULT } from '../../../../../core/domain/conversation.ts';
 import { modelCatalogOperation, type ModelCatalog } from '../../../../../core/domain/conversation-models.ts';
 import { ModelPill, PermissionModePill } from './model-pill.tsx';
-import { type ModelGroup } from './model-selection.ts';
+import { scoreModelSearch, type ModelGroup } from './model-selection.ts';
 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
@@ -249,7 +249,8 @@ describe('ModelPill', () => {
     const models = within(menu).getByRole('group', { name: 'Models' });
     expect(within(providers).getByRole('radio', { name: 'Codex' })).toBeTruthy();
     expect(within(providers).getByRole('radio', { name: 'Claude' })).toBeTruthy();
-    expect(within(models).getByText('Default (gpt-5-codex)')).toBeTruthy();
+    expect(within(models).getByText('Default')).toBeTruthy();
+    expect(within(models).getByTitle('gpt-5-codex')).toBeTruthy();
   });
 
   it('switches right-column models when clicking another provider on the left, then emits model + provider on pick', () => {
@@ -342,7 +343,7 @@ describe('ModelPill', () => {
       />,
     );
     const menu = openMenu(/^Model:/);
-    expect(within(menu).getByText('Default (medium)')).toBeTruthy();
+    expect(within(menu).getByText('medium')).toBeTruthy();
     const slider = within(menu).getByRole('slider', { name: 'Reasoning effort' });
     expect(slider.getAttribute('aria-valuetext')).toBe('Default (medium)');
 
@@ -442,8 +443,16 @@ describe('ModelPill', () => {
       />,
     );
     const menu = openMenu(/^Model:/);
-    const providers = within(menu).getByRole('group', { name: 'Providers' });
-    expect(within(providers).queryByRole('radio', { name: 'Claude' })).toBeNull();
+    expect(within(menu).queryByRole('group', { name: 'Providers' })).toBeNull();
+    expect(within(menu).queryByRole('radio', { name: 'Claude' })).toBeNull();
+  });
+
+  it('fuzzy-matches typos, punctuation-free queries, acronyms, and multi-token provider queries', () => {
+    expect(scoreModelSearch(['Sonnet', 'sonnet', 'claude-sonnet-4-6', 'Claude'], 'sol')).toBeGreaterThan(0);
+    expect(scoreModelSearch(['GPT-5.4', 'gpt-5.4', null, 'Codex'], 'gpt54')).toBeGreaterThan(0);
+    expect(scoreModelSearch(['Opus (1M)', 'opus[1m]', 'claude-opus-4-6', 'Claude'], 'claude opus')).toBeGreaterThan(0);
+    expect(scoreModelSearch(['Gemini 3 Pro', 'gemini-3-pro', null, 'AGY'], 'g3p')).toBeGreaterThan(0);
+    expect(scoreModelSearch(['Sonnet', 'sonnet', 'claude-sonnet-4-6', 'Claude'], 'zzzzz')).toBe(0);
   });
 
   it('keeps an unavailable Codex group pickable under a warning when acceptsUnavailableBlankTrack is true', () => {

@@ -1,15 +1,22 @@
+import { Divider } from '@astryxdesign/core/Divider';
 import { DropdownMenu, DropdownMenuItem } from '@astryxdesign/core/DropdownMenu';
-import { Badge } from '@astryxdesign/core/Badge';
 import { Icon } from '../../../ui/icon/public.tsx';
 import type { AgentSessionDto, SessionItemsPageDto } from '../../../../../core/api/perga-v1.ts';
 import styles from './session-header.module.css';
 
-export function ConversationSessionHeader({ session, state, taskId, runtimeStatus, runtimeTasks, readonlyReason, workerPaused, compactEnabled, resetEnabled, onCompact, onReset, onArchive }: Readonly<{
+type StatusTone = 'live' | 'warning' | 'error' | 'muted';
+
+function SessionChip({ label, tone }: Readonly<{ label: string; tone: StatusTone }>) {
+  return <span className={`${styles.chip} ${styles[tone]}`}>
+    {(tone === 'live' || tone === 'warning' || tone === 'error') && <span className={styles.dot} aria-hidden="true" />}
+    <span className={styles.chipText}>{label}</span>
+  </span>;
+}
+
+export function ConversationSessionHeader({ session, state, taskId, readonlyReason, workerPaused, compactEnabled, resetEnabled, onCompact, onReset, onArchive }: Readonly<{
   session: AgentSessionDto | null;
   taskId: string | null;
   state: SessionItemsPageDto['state'] | null;
-  runtimeStatus?: SessionItemsPageDto['runtimeStatus'];
-  runtimeTasks?: SessionItemsPageDto['runtimeTasks'] | readonly NonNullable<SessionItemsPageDto['runtimeTasks']>[number][];
   readonlyReason: SessionItemsPageDto['readonlyReason'];
   workerPaused: boolean;
   compactEnabled: boolean;
@@ -18,23 +25,39 @@ export function ConversationSessionHeader({ session, state, taskId, runtimeStatu
   onReset: () => void;
   onArchive?: () => void;
 }>) {
-  const phase = runtimeStatus?.kind === 'running' ? runtimeStatus.phase : null;
-  const phaseLabel = phase === 'thinking' ? '思考中' : phase === 'responding' ? '回复中'
-    : phase === 'waiting_model' ? '等待模型' : phase === 'compacting' ? '压缩中'
-      : phase === 'tool' ? `工具：${runtimeStatus?.toolName ?? '执行中'}` : null;
-  const backgroundTasks = runtimeTasks?.filter(task => !task.ambient &&
-    (task.status === 'running' || task.status === 'pending' || task.status === 'paused')).length ?? 0;
+  const roleLabel = session === null ? null : taskId !== null ? 'Worker' : session.isLead ? 'Planner' : 'Assistant';
+  // Live execution phases and background task liveness belong to the bottom turn status bar.
+  // Keep the header quiet unless a session-level condition or readonly lock needs attention.
+  const sessionNotice: Readonly<{ label: string; tone: StatusTone }> | null = state === 'unknown'
+    ? { label: 'Status unknown', tone: 'error' }
+    : state === 'stopping'
+      ? { label: 'Stopping…', tone: 'warning' }
+      : state === 'idle' && workerPaused
+        ? { label: 'Paused', tone: 'warning' }
+        : state === 'compacting'
+          ? { label: 'Compacting…', tone: 'live' }
+          : null;
+  const readonlyLabel = readonlyReason === null ? null
+    : readonlyReason === 'archived' ? 'Archived'
+      : readonlyReason === 'track_closed' ? 'Track closed'
+        : readonlyReason === 'waiting_task' ? 'Waiting on task'
+          : readonlyReason === 'task_verifying' ? 'Verifying' : 'Ended';
+
   return <div className={styles.header} data-nc-session-header="">
-    {session !== null && <span className={styles.epoch}>{taskId !== null ? 'Worker' : session.isLead ? 'Planner' : 'Assistant'} · Epoch {session.epoch}</span>}
-    {state !== null && <Badge variant={state === 'unknown' ? 'error' : state === 'stopping' || workerPaused ? 'warning' : 'neutral'} label={state === 'idle' ? workerPaused ? '已暂停' : '空闲' : state === 'running' ? '运行中' : state === 'stopping' ? '停止中' : state === 'compacting' ? '压缩中' : '状态未知'} />}
-    {readonlyReason !== null && <Badge label={readonlyReason === 'archived' ? '已归档' : readonlyReason === 'track_closed' ? 'Track 已关闭' : readonlyReason === 'waiting_task' ? '等待任务' : readonlyReason === 'task_verifying' ? '验证中' : '已结束'} />}
-    {phaseLabel !== null && <Badge label={phaseLabel} />}
-    {runtimeStatus?.kind === 'idle' && runtimeStatus.idleActivity != null && <Badge label="近期后台活动" />}
-    {backgroundTasks > 0 && <Badge label={`运行时任务 ${backgroundTasks}`} />}
-    <DropdownMenu placement="below" alignment="end" button={{ label: '会话操作', icon: <Icon name="more" size="sm" />, isIconOnly: true, variant: 'ghost', size: 'sm' }}>
-      <DropdownMenuItem label="压缩上下文 /compact" isDisabled={!compactEnabled} onClick={onCompact} />
-      <DropdownMenuItem label="重置上下文 /reset" isDisabled={!resetEnabled} onClick={onReset} />
-      {onArchive !== undefined && <DropdownMenuItem label={readonlyReason === 'archived' ? '恢复对话' : '归档对话'} onClick={onArchive} />}
+    <div className={styles.signals}>
+      {sessionNotice !== null && <SessionChip label={sessionNotice.label} tone={sessionNotice.tone} />}
+      {readonlyLabel !== null && <SessionChip label={readonlyLabel} tone="muted" />}
+    </div>
+    <DropdownMenu placement="below" alignment="end" button={{ label: 'Session actions', icon: <Icon name="more" size="sm" />, isIconOnly: true, variant: 'ghost', size: 'sm', className: styles.menuButton }}>
+      {roleLabel !== null && <>
+        <div className={styles.menuMeta} role="note">
+          <span className={styles.menuRole}>{roleLabel}</span>
+        </div>
+        <Divider />
+      </>}
+      <DropdownMenuItem label="Compact context /compact" isDisabled={!compactEnabled} onClick={onCompact} />
+      <DropdownMenuItem label="Reset context /reset" variant="destructive" isDisabled={!resetEnabled} onClick={onReset} />
+      {onArchive !== undefined && <DropdownMenuItem label={readonlyReason === 'archived' ? 'Restore conversation' : 'Archive conversation'} onClick={onArchive} />}
     </DropdownMenu>
   </div>;
 }

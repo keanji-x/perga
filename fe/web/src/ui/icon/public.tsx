@@ -1,5 +1,5 @@
 import type { ComponentType } from 'react';
-import { Forward, Copy, Check, ChartColumn, Search, Star, ArrowLeft, ArrowRightLeft, ArrowUp, Bell, Bot, CalendarDays, ChevronLeft, ChevronRight, Circle, CircleCheck, CircleStop, CircleX, Clock3, Ellipsis, File, Folder, Link2, ListChecks, Maximize, Menu, MessageSquare, Minimize, PanelLeft, Paperclip, Pin, Plus, SquareTerminal, Settings, Wrench, Trash2, X, Icon as LucideIcon, type LucideProps } from 'lucide-react';
+import { Forward, Copy, Check, ChartColumn, Search, Star, ArrowLeft, ArrowRightLeft, ArrowUp, Bell, Bot, CalendarDays, ChevronLeft, ChevronRight, Circle, CircleCheck, CircleStop, CircleX, Clock3, Ellipsis, File, Folder, FolderOpen, Link2, ListChecks, Maximize, Menu, MessageSquare, Minimize, PanelLeft, PanelRight, Paperclip, Pin, Plus, RotateCcw, SquareTerminal, Settings, Wrench, Trash2, X, Icon as LucideIcon, type LucideProps } from 'lucide-react';
 import { PROVIDER_GLYPHS, type GlyphNode } from './provider-glyphs.ts';
 import styles from './icon.module.css';
 
@@ -11,6 +11,7 @@ const glyphs = Object.freeze({
   'chevron-left': (props: LucideProps) => <ChevronLeft {...props} />,
   'chevron-right': (props: LucideProps) => <ChevronRight {...props} />,
   'panel-left': (props: LucideProps) => <PanelLeft {...props} />,
+  'panel-right': (props: LucideProps) => <PanelRight {...props} />,
   'arrow-left': (props: LucideProps) => <ArrowLeft {...props} />,
   'arrow-up': (props: LucideProps) => <ArrowUp {...props} />,
   'plus': (props: LucideProps) => <Plus {...props} />,
@@ -20,6 +21,7 @@ const glyphs = Object.freeze({
   'chat': (props: LucideProps) => <MessageSquare {...props} />,
   'notification': (props: LucideProps) => <Bell {...props} />,
   'folder': (props: LucideProps) => <Folder {...props} />,
+  'folder-open': (props: LucideProps) => <FolderOpen {...props} />,
   'star': (props: LucideProps) => <Star {...props} />,
   'search': (props: LucideProps) => <Search {...props} />,
   'chart': (props: LucideProps) => <ChartColumn {...props} />,
@@ -44,6 +46,7 @@ const glyphs = Object.freeze({
   'fullscreen': (props: LucideProps) => <Maximize {...props} />,
   'compact': (props: LucideProps) => <Minimize {...props} />,
   'menu': (props: LucideProps) => <Menu {...props} />,
+  'reset': (props: LucideProps) => <RotateCcw {...props} />,
   'switch': (props: LucideProps) => <ArrowRightLeft {...props} />,
   'claude': (props: LucideProps) => <SvgGlyph {...props} nodes={PROVIDER_GLYPHS.claude} />,
   'codex': (props: LucideProps) => <SvgGlyph {...props} nodes={PROVIDER_GLYPHS.codex} />,

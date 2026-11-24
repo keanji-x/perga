@@ -65,6 +65,21 @@ describe('DirectoryBrowser behavior', () => {
     await screen.findByRole('option', { name: 'notes.txt' });
     expect(screen.getByRole('combobox').hasAttribute('aria-activedescendant')).toBe(false);
   });
+  it('indexes initial active option and hidden-toggle updates against the filtered visible list', async () => {
+    const withDotfiles: DirectoryListing = { path: '/work', parent: '/', entries: [
+      { name: '.git', path: '/work/.git', isDirectory: true },
+      { name: 'src', path: '/work/src', isDirectory: true },
+    ] };
+    const listDotfiles: ListDirectory = vi.fn((path?: string) => Promise.resolve(path === '/work/src' ? child : withDotfiles));
+    render(<DirectoryBrowser listDirectory={listDotfiles} initialPath="/work" onCancel={vi.fn()} onSelect={vi.fn()}/>);
+    const srcOption = await screen.findByRole('option', { name: 'src' });
+    const input = screen.getByRole('combobox');
+    expect(input.getAttribute('aria-activedescendant')).toBe(srcOption.id);
+    fireEvent.click(screen.getByRole('button', { name: 'Show hidden' }));
+    expect(input.getAttribute('aria-activedescendant')).toBe(screen.getByRole('option', { name: 'src' }).id);
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() => expect(listDotfiles).toHaveBeenLastCalledWith('/work/src'));
+  });
   it('uses distinct owned listbox and option ids for multiple instances', async () => {
     render(<><DirectoryBrowser listDirectory={listing} initialPath="/work" onCancel={vi.fn()} onSelect={vi.fn()}/>
       <DirectoryBrowser listDirectory={listing} initialPath="/work" onCancel={vi.fn()} onSelect={vi.fn()}/></>);
@@ -133,7 +148,7 @@ describe('DirectoryBrowser behavior', () => {
     expect(screen.getByText('No matches')).toBeTruthy();
     fireEvent.change(input, { target: { value: '/work/src/' } });
     fireEvent.keyDown(input, { key: 'Enter' });
-    expect(await screen.findByText('这个文件夹是空的')).toBeTruthy();
+    expect(await screen.findByText('This folder is empty.')).toBeTruthy();
   });
   it('returns focus through two animation frames after loading', async () => {
     const callbacks: FrameRequestCallback[] = [];
@@ -149,12 +164,12 @@ describe('DirectoryBrowser behavior', () => {
 it('does not claim an empty directory after navigation fails', async () => {
   render(<DirectoryBrowser initialPath="/empty" onCancel={vi.fn()} onSelect={vi.fn()}
     listDirectory={(path) => path === '/empty' ? Promise.resolve({ path: '/empty', parent: '/', entries: [] }) : Promise.reject(new Error('Directory unavailable'))} />);
-  await screen.findByRole('heading', { name: '这个文件夹是空的' });
+  await screen.findByRole('heading', { name: 'This folder is empty.' });
   const input = screen.getByRole('combobox');
   fireEvent.change(input, { target: { value: '/failed/' } });
   fireEvent.keyDown(input, { key: 'Enter' });
   await screen.findByRole('alert');
-  expect(screen.queryByRole('heading', { name: '这个文件夹是空的' })).toBeNull();
+  expect(screen.queryByRole('heading', { name: 'This folder is empty.' })).toBeNull();
   expect(screen.queryByRole('heading', { name: 'No matches' })).toBeNull();
 });
 

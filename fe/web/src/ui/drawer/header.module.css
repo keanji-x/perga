@@ -27,15 +27,17 @@
    * adjacent controls, and the full 28px hit area (§5, 2.5.8).
    */
   .header {
-    /* The host can align this header with adjacent reading surfaces. */
+    /* Shared 44px top header datum aligned with the sidebar brand row and main page header. */
     box-sizing: border-box;
+    block-size: var(--nc-card-header-height, auto);
     min-block-size: var(--nc-card-header-height, auto);
     display: flex;
     flex: none;
     align-items: center;
-    gap: var(--space-3);
-    padding: var(--nc-card-inset, var(--space-2));
-    border-block-end: 1px solid var(--hairline);
+    gap: var(--space-2);
+    padding-block: 0;
+    padding-inline: var(--space-4) var(--space-2);
+    border-block-end: var(--space-px) solid color-mix(in srgb, var(--hairline) 55%, transparent);
   }
 
   .title {
@@ -43,8 +45,9 @@
     min-inline-size: 0;
     margin: 0;
     overflow: hidden;
-    font: var(--type-reading);
-    letter-spacing: var(--type-reading-tracking);
+    font: var(--type-ui);
+    font-weight: var(--weight-medium);
+    letter-spacing: var(--type-ui-tracking);
     color: var(--text);
     text-overflow: ellipsis;
     white-space: nowrap;

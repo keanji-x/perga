@@ -83,10 +83,6 @@ function createDraftStore(submittedStorage?: () => Storage, userId?: string) {
           message: request.message ?? '', cwd: request.body.cwd ?? '', isolation: (request.body.workspaceDriver === 'direct' ? 'none' : 'worktree'),
           workspaceOptionId: request.body.workspaceOptionId ?? undefined,
           executionTargetId: request.body.executionTargetId ?? undefined,
-          templateId: request.body.templateId ?? null,
-          templateInputs: Object.fromEntries(Object.entries(request.body.templateInputs ?? {}).flatMap(([key, value]) =>
-            typeof value === 'number' ? [[key, String(value)]]
-              : typeof value === 'string' || typeof value === 'boolean' ? [[key, value]] : [])),
         },
         provider: request?.body.provider ?? 'codex',
         permissionMode: request?.body.permissionMode ?? null,

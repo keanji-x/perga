@@ -77,7 +77,7 @@ export function ConversationSurface({ embedded, centerEmptyComposer = false, mob
   // moving the one footer and retaining its caret. Only the active host paints history.
   return <>
     {embedded?.host != null && createPortal(<EmbeddedReadingHost centeredFooter={centerEmptyComposer} id={props.id} label={embedded.label} hidden={!embedded.active}
-      footer={<>{centerEmptyComposer && embedded.emptyIntroduction}<div ref={setEmbeddedNode} />{embedded.footerPrefix}</>}>{embedded.active ? <>{sessionHeader}{props.children}</> : null}</EmbeddedReadingHost>, embedded.host)}
+      footer={<>{centerEmptyComposer && embedded.emptyIntroduction}<div ref={setEmbeddedNode} />{embedded.footerPrefix}</>}>{embedded.active ? <>{sessionHeader !== undefined && <div className={styles.embeddedHeader}>{sessionHeader}</div>}{props.children}</> : null}</EmbeddedReadingHost>, embedded.host)}
     <Drawer {...props} headerActions={sessionHeader} open={!embedded?.active && !mobileSheet && props.open} companionVisible={!mobileSheet && props.companionVisible}
       footer={mobileSheet ? undefined : <div ref={setDesktopNode} />}>{mobileSheet || embedded?.active ? null : props.children}</Drawer>
     <Sheet enabled={mobileSheet} open={props.open} label={props.title || '对话'} frame={{ heightPx: sheetHeight, bottomInsetPx: visibleViewport.bottomInset }}

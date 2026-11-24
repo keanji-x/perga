@@ -27,7 +27,7 @@ export function ChatDock({ text, onChange, onSend, disabled, onBeginInput, comma
     onSend(text);
   }}>
     {commandError && <p role="alert">{commandError}</p>}
-    <textarea className={styles.input} aria-label="Chat message" name="chat-message" onFocus={onBeginInput} placeholder="说说你想做什么…" rows={1}
+    <textarea className={styles.input} aria-label="Chat message" name="chat-message" onFocus={onBeginInput} placeholder="What would you like to work on…" rows={1}
       value={text} onChange={(event) => onChange(event.target.value)} />
     <button type="submit" className={styles.send} aria-label="Send chat message" disabled={disabled || text.trim() === ''}>
       <Icon name="arrow-up" />

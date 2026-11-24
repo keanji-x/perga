@@ -59,15 +59,52 @@ export function LoginPage({ login, reload }: LoginPageProps) {
         if (pending.current === attempt) pending.current = null;
       });
     }}>
-      <h1>Sign in</h1>
+      <h1 className={styles.brand}>
+        <span className={styles.mark} aria-hidden="true">✳</span>
+        <span>Perga</span>
+      </h1>
+
       {error !== null && <p role="alert" className={styles.error}>{error}</p>}
-      {retryAt !== null && <p>{retrySeconds > 0 ? `Try again in ${retrySeconds} seconds.` : 'You can try again now.'}</p>}
-      <label htmlFor={`${prefix}-username`}>Username</label>
-      {/* eslint-disable-next-line jsx-a11y/no-autofocus -- Single-purpose login screen intentionally starts at its first field. */}
-      <input id={`${prefix}-username`} name="username" autoFocus autoComplete="username" required value={username} onChange={(event) => setUsername(event.target.value)} />
-      <label htmlFor={`${prefix}-password`}>Password</label>
-      <input id={`${prefix}-password`} name="password" type="password" autoComplete="current-password" required value={password} onChange={(event) => setPassword(event.target.value)} />
-      <button type="submit" disabled={submitting}>{submitting ? 'Signing in…' : 'Sign in'}</button>
+      {retryAt !== null && (
+        <p className={styles.retryNote}>
+          {retrySeconds > 0
+            ? (retrySeconds === 1 ? 'Try again in 1 second.' : `Try again in ${retrySeconds} seconds.`)
+            : 'You can try again now.'}
+        </p>
+      )}
+
+      <div className={styles.field}>
+        <label className={styles.label} htmlFor={`${prefix}-username`}>Username</label>
+        <input
+          id={`${prefix}-username`}
+          className={styles.input}
+          name="username"
+          /* eslint-disable-next-line jsx-a11y/no-autofocus -- Single-purpose login screen intentionally starts at its first field. */
+          autoFocus
+          autoComplete="username"
+          required
+          value={username}
+          onChange={(event) => setUsername(event.target.value)}
+        />
+      </div>
+
+      <div className={styles.field}>
+        <label className={styles.label} htmlFor={`${prefix}-password`}>Password</label>
+        <input
+          id={`${prefix}-password`}
+          className={styles.input}
+          name="password"
+          type="password"
+          autoComplete="current-password"
+          required
+          value={password}
+          onChange={(event) => setPassword(event.target.value)}
+        />
+      </div>
+
+      <button type="submit" className={styles.submit} disabled={submitting}>
+        {submitting ? 'Signing in…' : 'Sign in'}
+      </button>
     </form>
   </main>;
 }

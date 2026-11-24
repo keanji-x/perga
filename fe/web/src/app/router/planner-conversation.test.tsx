@@ -222,7 +222,7 @@ it('offers exactly the close, the resize edge, Send, the model picker, the role,
       .map((button) => button.getAttribute('aria-label') ?? button.textContent);
     /* Bootstrap declares no models, so the trigger reads `Model: Default` and no effort control appears; Cancel/Save live inside the closed popover. */
     expect([...names].sort()).toEqual([
-      'Attach an image', 'Cancel', 'Close conversation', 'Model: Default', 'Save', 'Send', '会话操作',
+      'Attach an image', 'Cancel', 'Close conversation', 'Model: Default', 'Save', 'Send', 'Session actions',
     ]);
     /* One shell contract and one shared host edge serve the conversation layout. */
     expect(screen.getAllByRole('separator').map((edge) => edge.getAttribute('aria-label'))).toEqual(['Resize conversation']);
@@ -551,7 +551,7 @@ it('ticks the meta row from the run response\'s running turn', async () => {
       const meta = () => screen.getByRole('status', { name: 'Current response status' });
       const duration = () => meta().querySelector('[data-nc-meta-duration]')?.textContent ?? null;
       await waitFor(() => expect(duration()).toBe('· 18s'));
-      expect(meta().textContent).toContain('本轮生成中');
+      expect(meta().textContent).toContain('Working…');
       act(() => { vi.advanceTimersByTime(2_000); });
       expect(duration()).toBe('· 20s');
       /* The refreshed lastTurn owns the clock, including a corrected start time. */
@@ -699,7 +699,7 @@ it('keeps a v1 tool group expanded when a result arrives for its running call', 
   expect(header.getAttribute('aria-expanded')).toBe('true');
   rows = [...rows, toolResult(3, 'call-1', 'passed'), toolResult(4, 'call-2', 'done')];
   await act(async () => { await client.invalidateQueries({ queryKey: transcriptQueryKey() }); });
-  await waitFor(() => expect(within(group).queryByText('本轮生成中')).toBeNull());
+  await waitFor(() => expect(within(group).queryByText('Working…')).toBeNull());
   expect(screen.getByRole('group', { name: '2 tool calls' })).toBe(group);
   expect(header.getAttribute('aria-expanded')).toBe('true');
 });

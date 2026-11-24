@@ -1,5 +1,5 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { toTrack, type Track } from '../../../../../core/domain/track.js';
 import { trackDtoSchema } from '../../../../../core/api/perga-v1.ts';
@@ -17,11 +17,10 @@ describe('TemplateProtocolBar', () => {
     expect(render(<TemplateProtocolBar track={track()} />).container.innerHTML).toBe('');
   });
 
-  it('shows a compact Dev header and keeps optional strips absent', () => {
+  it('shows a quiet template identity without rules toggle or inputs form', () => {
     render(<TemplateProtocolBar track={track({ templateId: 'dev', templateTitle: 'Dev' })} />);
     expect(screen.getByText('Dev')).toBeTruthy();
-    expect(screen.getByRole('button', { name: /Details/ })).toBeTruthy();
-    expect(screen.queryByRole('tab')).toBeNull();
+    expect(screen.queryByRole('button')).toBeNull();
     expect(screen.queryByRole('img')).toBeNull();
   });
 
@@ -52,51 +51,19 @@ describe('TemplateProtocolBar', () => {
     expect(screen.getByRole('img', { name: 'Flat trend' }).innerHTML).not.toMatch(/NaN|Infinity/);
   });
 
-  it('opens dynamic drawer tabs and supports keyboard tab navigation', () => {
-    render(<TemplateProtocolBar track={track({ templateId: 'dev', templateInputs: { repository: 'perga', options: { review: true } },
+  it('toggles read-only rules drawer when rules exist', () => {
+    render(<TemplateProtocolBar track={track({ templateId: 'dev',
       templateHeaderView: { rules: [{ label: 'Review', text: 'Check tests' }] },
     })} />);
-    fireEvent.click(screen.getByRole('button', { name: /Details/ }));
-    expect(screen.getAllByRole('tab').map(tab => tab.textContent)).toEqual(['Rules', 'Inputs']);
-    expect(screen.getByRole('tabpanel').textContent).toContain('Check tests');
-    fireEvent.keyDown(screen.getByRole('tab', { name: 'Rules' }), { key: 'ArrowRight' });
-    expect(document.activeElement).toBe(screen.getByRole('tab', { name: 'Inputs' }));
-    expect(screen.getByRole('tabpanel').textContent).toContain('No editable inputs.');
-    fireEvent.click(screen.getByRole('button', { name: /Details/ }));
-    expect(screen.queryByRole('tabpanel')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /Rules/ }));
+    expect(screen.getByText('Check tests')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /Rules/ }));
+    expect(screen.queryByText('Check tests')).toBeNull();
   });
 
-  it('fails soft with missing headerView and hides empty tabs', () => {
-    render(<TemplateProtocolBar track={track({ templateId: 'legacy', templateHeaderView: undefined, templateInputs: { branch: 'main' } })} />);
+  it('fails soft with missing headerView', () => {
+    render(<TemplateProtocolBar track={track({ templateId: 'legacy', templateHeaderView: undefined })} />);
     expect(screen.getByText('legacy')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: /Details/ }));
-    expect(screen.getAllByRole('tab').map(tab => tab.textContent)).toEqual(['Inputs']);
-    expect(screen.getByRole('tabpanel').textContent).toContain('No editable inputs.');
+    expect(screen.queryByRole('button')).toBeNull();
   });
-});
-
-it('submits typed input values and displays failures', async () => {
-  const onSaveInputs = vi.fn().mockRejectedValue(new Error('Invalid input'));
-  render(<TemplateProtocolBar track={track({ templateId: 'dev', templateInputs: { name: 'Perga', count: 2, enabled: true, mode: 'a' } })}
-    inputsSchema={{ name: { type: 'string' }, count: { type: 'number' }, enabled: { type: 'boolean' }, mode: { type: 'enum', values: ['a', 'b'] } }} onSaveInputs={onSaveInputs} />);
-  fireEvent.click(screen.getByRole('button', { name: /Details/ }));
-  fireEvent.click(screen.getByRole('tab', { name: 'Inputs' }));
-  fireEvent.change(screen.getByLabelText('count'), { target: { value: '3.5' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Save inputs' }));
-  await vi.waitFor(() => expect(onSaveInputs).toHaveBeenCalledWith({ name: 'Perga', count: 3.5, enabled: true, mode: 'a' }));
-  await vi.waitFor(() => expect(screen.getByRole('status').textContent).toBe('Invalid input'));
-});
-
-it('sends null for cleared existing optional fields and omits absent optional fields', async () => {
-  const onSaveInputs = vi.fn().mockResolvedValue(undefined);
-  render(<TemplateProtocolBar track={track({ templateId: 'dev', templateInputs: { note: 'old', count: 3, mode: 'a', enabled: true } })}
-    inputsSchema={{ note: { type: 'string', optional: true }, count: { type: 'number', optional: true },
-      mode: { type: 'enum', values: ['a', 'b'], optional: true }, absent: { type: 'string', optional: true },
-      enabled: { type: 'boolean', optional: true } }} onSaveInputs={onSaveInputs} />);
-  fireEvent.click(screen.getByRole('button', { name: /Details/ }));
-  fireEvent.click(screen.getByRole('tab', { name: 'Inputs' }));
-  for (const key of ['note', 'count', 'mode']) fireEvent.change(screen.getByLabelText(key), { target: { value: '' } });
-  fireEvent.click(screen.getByLabelText('enabled'));
-  fireEvent.click(screen.getByRole('button', { name: 'Save inputs' }));
-  await vi.waitFor(() => expect(onSaveInputs).toHaveBeenCalledWith({ note: null, count: null, mode: null, enabled: false }));
 });

@@ -295,7 +295,7 @@ export function ReportFlowBlock({
     setActiveGateKey(null);
   };
 
-  const headingLabel = title != null && title.trim() !== '' ? title : '调度流程';
+  const headingLabel = title != null && title.trim() !== '' ? title : 'Flow';
   const railRef = useRef<HTMLElement | null>(null);
   const isScrollableRail = layout.layers.length > 4;
 

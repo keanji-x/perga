@@ -13,8 +13,8 @@ export function usePublishConnectionState() { return useContext(StreamContext); 
 /** The event bridge publishes observations; this provider never starts a socket. */
 export function LiveConnectionProvider({ children }: Readonly<{ children: ReactNode }>) {
   const [state, setState] = useState<ConnectionState>('disconnected');
-  const status = { connected: state === 'connected', label: state === 'connected' ? '已连接' :
-    state === 'connecting' ? '正在连接' : '连接已断开', detail: '' };
+  const status = { connected: state === 'connected', label: state === 'connected' ? 'Connected' :
+    state === 'connecting' ? 'Connecting…' : 'Disconnected', detail: '' };
   return <StreamContext.Provider value={setState}><ConnectionStatusScope value={status}>{children}</ConnectionStatusScope></StreamContext.Provider>;
 }
 

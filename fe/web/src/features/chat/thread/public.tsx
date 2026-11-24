@@ -49,7 +49,7 @@ import { MessageEntry } from './message-entry.tsx';
 import styles from './thread.module.css';
 import composerLayoutStyles from './composer-layout.module.css';
 import { currentResponseMessage, lastResponseEntryIndex, latestUserMessage } from '../../../../../core/domain/conversation-actions.ts';
-import { CurrentStatusNotice, HistoricalOutcomeNotice } from './outcome-notice.tsx';
+import { activeBackgroundTaskCount, CurrentStatusNotice, HistoricalOutcomeNotice } from './outcome-notice.tsx';
 import { SizeMotion } from '../../../ui/motion/size.tsx';
 import { editedTurnMessageIds } from '../../../../../core/domain/conversation-composer.ts';
 import type { ConversationStopFeedback } from '../../../../../core/domain/conversation-stop.ts';
@@ -66,7 +66,7 @@ export function ChatEmpty({ working = false, children }: Readonly<{ working?: bo
 }
 
 function emptyConversationContent(working: boolean): EmptyStateSchema {
-  return { icon: working ? <ActivityIndicator state="working" motion="thinking" /> : <Icon name="chat" />, title: working ? '正在整理你的想法' : '聊聊你想做什么', description: working ? '回复会显示在这里。' : '从一个问题或想法开始。' };
+  return { icon: working ? <ActivityIndicator state="working" motion="thinking" /> : <Icon name="chat" />, title: working ? 'Organizing your thoughts' : 'Start a conversation', description: working ? 'Replies will appear here.' : 'Begin with a question, task, or idea.' };
 }
 
 export type ChatThreadProps = Readonly<{
@@ -116,11 +116,15 @@ export type ChatThreadProps = Readonly<{
   runningAnchor?: RunningTurnAnchor | null;
   /** Local reply images use the open conversation's workspace, never the browser's URL base. */
   imageFiles?: ReplyImageFiles | null;
+  /** Live OAR runtime phase and background task signals rendered in the bottom turn status strip. */
+  runtimeStatus?: import('../../../../../core/api/perga-v1.ts').SessionItemsPageDto['runtimeStatus'];
+  runtimeTasks?: import('../../../../../core/api/perga-v1.ts').SessionItemsPageDto['runtimeTasks']
+    | readonly NonNullable<import('../../../../../core/api/perga-v1.ts').SessionItemsPageDto['runtimeTasks']>[number][];
   /** App supplies only href/children rendering; chat owns no destination policy. */
   renderLink?: ReplyLinkRenderer;
 }>;
 
-export const ChatThread = memo(function ChatThread({ conversation, turns, pendingMessages, hasPendingMessages, submissionRequest = 0, messageActions = 'all', copyText, regenerateMessage, editing = null, replacement = null, imageFiles = null, renderLink, readingView, historyPrefetch, lastSessionTurn = null }: ChatThreadProps) {
+export const ChatThread = memo(function ChatThread({ conversation, turns, pendingMessages, hasPendingMessages, submissionRequest = 0, messageActions = 'all', copyText, regenerateMessage, editing = null, replacement = null, imageFiles = null, renderLink, readingView, historyPrefetch, lastSessionTurn = null, runtimeStatus, runtimeTasks }: ChatThreadProps) {
   const compactViewport = useCompactViewport();
   // Observe the browser timezone on render; keep formatters stable for memoized rows.
   const timeZone = new Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -299,7 +303,10 @@ export const ChatThread = memo(function ChatThread({ conversation, turns, pendin
 
   const empty = turns.length === 0 && noticeKind === null && !hasPendingMessages;
 
-  const currentMeta = <CurrentStatusNotice lastTurn={lastSessionTurn} leading={live && !tailCarriesLiveMark ? <ActivityIndicator state="working" motion="thinking" /> : undefined} detailsExpanded={reading.expanded.get('current-status') ?? false}
+  const hasLiveRuntime = runtimeStatus?.kind === 'running' || activeBackgroundTaskCount(runtimeTasks) > 0;
+  const currentMeta = <CurrentStatusNotice lastTurn={lastSessionTurn} runtimeStatus={runtimeStatus} runtimeTasks={runtimeTasks}
+    leading={(live || hasLiveRuntime) && !tailCarriesLiveMark ? <ActivityIndicator state="working" motion="thinking" /> : undefined}
+    detailsExpanded={reading.expanded.get('current-status') ?? false}
     onDetailsExpandedChange={expanded => reading.setExpanded('current-status', expanded)}
     copyAction={copyAction} regenerateAction={regenerateAction} messageActions={messageActions} />;
 
@@ -315,7 +322,7 @@ export const ChatThread = memo(function ChatThread({ conversation, turns, pendin
         {transcriptGroups.map(({ entry: turn, activities, key, body, startsResponse }) => {
           const block = body.quiet;
           return <Fragment key={key}>
-            {startsResponse && <Divider label="新一轮回复" />}
+            {startsResponse && <Divider label="New reply" />}
             {block !== null ? (
               <div data-nc-entry={key}>
                 <QuietSyncFold expanded={reading.expanded.get(`quiet-${block.id}`) ?? false}
@@ -502,7 +509,7 @@ export function ChatComposer({
         const command = items.find(command => command.id === item.id)!;
         return `/${command.name}${command.argumentShape === 'optional' ? ' ' : ''}`;
       },
-    }, { icon: <Icon name="search" />, title: 'No command by that name', description: '试试其他命令名称。' });
+    }, { icon: <Icon name="search" />, title: 'No command by that name', description: 'Try another command name.' });
   }, [items]);
   // Discovery is only an aid: submit always parses the complete controlled draft.
   const hasCommands = editing === undefined && items.length > 0;
@@ -541,7 +548,7 @@ export function ChatComposer({
       onClick={() => { submit(); }}
     >Send image</button>
   ) : canQueueWhileRunning && stopShown && !sendDisabled && draft.trim() !== '' && !sendWaiting && editing === undefined ? (
-    <button type="button" className={styles.queueSend} disabled={disabled} onClick={submit}>排队发送</button>
+    <button type="button" className={styles.queueSend} disabled={disabled} onClick={submit}>Queue message</button>
   ) : undefined;
 
   return (
@@ -598,7 +605,7 @@ export function ChatComposer({
         }
       }}
     >
-      {sendWaiting && <span role="status">正在发送…</span>}
+      {sendWaiting && <span role="status">Sending…</span>}
       <SizeMotion motionKey={editing !== undefined}>
         <AstryxChatComposer
           className={layout === 'mobile' ? `${mobileStyles.vendorComposer} ${floatingControlMaterialClassName}` : composerLayoutStyles.vendor}
@@ -606,11 +613,11 @@ export function ChatComposer({
           elevation="none"
           value={draft}
           onChange={setDraft}
-          placeholder="输入消息，或输入 / 呼出命令…"
+          placeholder={layout === 'mobile' ? 'Write a message…' : 'Write a message, or type / for commands…'}
           isDisabled={disabled}
           isStopShown={stopShown}
           footerActions={layout === 'mobile' && footerActions !== undefined ? <details className={mobileStyles.options}>
-            <summary className={floatingControlClassName} aria-label="对话选项"><Icon name="plus" /></summary>
+            <summary className={floatingControlClassName} aria-label="Conversation options"><Icon name="plus" /></summary>
             <div className={mobileStyles.optionsPanel}>{footerActions}</div>
           </details> : footerActions}
           /* Handed over whole — "one interrupt at a time" is the router's rule. */
@@ -635,7 +642,7 @@ export function ChatComposer({
               maxRows={3}
               onFiles={disabled ? undefined : onFiles}
               label="Message"
-              placeholder="输入消息，或输入 / 呼出命令…"
+              placeholder={layout === 'mobile' ? 'Write a message…' : 'Write a message, or type / for commands…'}
               /* No triggers where there is neither a command nor a mention: otherwise the field becomes an `aria-expanded="false"` combobox that can never expand. */
               {...(triggers.length === 0 ? {} : { triggers })}
               /* The `@` source waits out keystrokes itself (`MENTION_SEARCH_DELAY_MS` says why Astryx's own delay must be off); the `/` source is synchronous and never delayed. */
