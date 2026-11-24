@@ -9,11 +9,12 @@ import { visibleAreas, type Area } from '../../../../core/domain/area.ts';
 import { areaPinnedTracks, type Track } from '../../../../core/domain/track.ts';
 import { ErrorBox } from '../../ui/error-box/public.tsx';
 import { Icon } from '../../ui/icon/public.tsx';
-import { MobileList, MobileListEmpty, MobileListGroup } from '../../ui/mobile-list/public.tsx';
+import { MobileList, MobileListEmpty, MobileListGroup, MobileListItem } from '../../ui/mobile-list/public.tsx';
 import { MobileNavigationCreateAction, MobileNavigationHeader, type MobileNavigationActions } from './mobile-navigation-header.tsx';
 import styles from './mobile-navigation.module.css';
 import { type TrackActionsProps } from '../../features/track/row/actions.tsx';
 import { useUiPreferences } from '../providers/ui-preferences.tsx';
+import { MobilePrimaryPages } from './mobile-pages.tsx';
 
 type MobileTracksProps = Readonly<{
   view: 'areas' | 'tracks';
@@ -24,6 +25,9 @@ type MobileTracksProps = Readonly<{
   currentTrackId: string | undefined;
   onSelectArea: (areaId: string) => void;
   onOpenTrack: (trackId: string) => void;
+  onOpenToday?: () => void;
+  onOpenMemory?: () => void;
+  onOpenAreaMemory?: (areaId: string) => void;
   /** The reader's receipt for a track, keyed exactly as the rail's (`sidebar.tsx`): one receipt, both surfaces. */
   isUnread: (track: Track) => boolean;
   trackActions?: (track: Track) => Omit<TrackActionsProps, 'track' | 'className'>;
@@ -61,21 +65,28 @@ export function MobileTracks(props: MobileTracksProps) {
 
 function NavigationPage({
   view, tracksBackLabel = 'Areas', areas, tracksByArea, areaId, currentTrackId, onBack, onCreateArea, onSelectArea, onEditArea, onOpenTrack, onNewTrack, onOpenSettings,
-  isUnread, trackActions, readError, readLoading, onRetryRead,
+  isUnread, trackActions, readError, readLoading, onRetryRead, onOpenToday, onOpenMemory, onOpenAreaMemory,
 }: MobileTracksProps) {
   const shown = visibleAreas(areas);
   const selected = shown.find((candidate) => candidate.id === areaId);
   const preferences = useUiPreferences();
+  const showMemory = selected !== undefined && preferences.areaShowsMemory(selected.id);
   const tracks = areaPinnedTracks(selected === undefined ? [] : tracksByArea.get(selected.id) ?? [],
     (track) => preferences.areaTrackPinned(track.areaId, track.id));
   return <div className={styles.page}>
     <MobileNavigationHeader creationScope={view === 'areas' ? 'area' : 'track'} title={view === 'areas' ? 'Areas' : selected?.name ?? 'Tracks'}
       backLabel={view === 'areas' ? 'workspace' : tracksBackLabel} area={view === 'tracks' ? selected : undefined}
       showSettings={false} actionsPlacement="floating"
+      memoryVisibility={view === 'tracks' && selected !== undefined && onOpenAreaMemory !== undefined
+        ? { shown: showMemory, toggle: () => preferences.setAreaShowsMemory(selected.id, !showMemory) } : undefined}
       onBack={onBack} onNewTrack={onNewTrack} onCreateArea={onCreateArea} onEditArea={onEditArea} onOpenSettings={onOpenSettings} />
     <div className={styles.content}>
       {readError !== null && <ErrorBox message={readError} onRetry={onRetryRead} />}
       {readLoading && <p role="status">Loading workspace…</p>}
+      {view === 'areas' && <MobilePrimaryPages onOpenToday={onOpenToday} onOpenMemory={onOpenMemory} />}
+      {view === 'tracks' && showMemory && onOpenAreaMemory !== undefined && selected !== undefined && <MobileList>
+        <MobileListItem title="Memory" startContent={<Icon name="book-open" />} onSelect={() => onOpenAreaMemory(selected.id)} />
+      </MobileList>}
       <MobileListGroup appearance="plain" label={view === 'areas' ? 'Areas' : 'Tracks'}>
         {view === 'areas' ? <MobileList className={styles.navigationList}>
           {shown.map((area) => <li key={area.id} className={styles.trackRow}>

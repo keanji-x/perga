@@ -18,6 +18,7 @@ export type InvalidationPlan = Readonly<{
 }>;
 export type InvalidationContext = Readonly<{
   findTrackOwningCard(cardId: string): string | null;
+  memoryTrackIds?(): readonly string[];
 }>;
 
 type PlannedPolicy<K extends EventKind = EventKind> = Readonly<{
@@ -75,6 +76,11 @@ function policies(): PolicyMap {
   )),
 'area.deleted': plan((event) => result([eventKeys.areas(), eventKeys.overlaysByKind('track')], [],
     [{ mode: 'area-deleted', areaId: event.data.id }])),
+  'memory.updated': plan(({ data }, context) => result([
+    eventKeys.trackDetail(data.trackId), eventKeys.trackViews(data.trackId),
+    ...((data.scope === 'global' ? context.memoryTrackIds?.() ?? [] : [])
+      .filter(id => id !== data.trackId).map(eventKeys.trackDetail)),
+  ])),
 'track.updated': plan((event) => result([
     eventKeys.overlaysByKind('track'),
     eventKeys.tracksInArea(event.data.areaId), eventKeys.trackDetail(event.data.id),

@@ -82,6 +82,8 @@ export function createUiPreferences(storage?: UiPreferenceStorage) {
       return read(`area-closed:${id}`) === true;
     },
     setAreaShowsClosed: (id: string, value: boolean) => write(`area-closed:${id}`, value, true),
+    areaShowsMemory: (id: string) => read(`area-memory:${id}`) === true,
+    setAreaShowsMemory: (id: string, value: boolean) => write(`area-memory:${id}`, value, true),
     /** Sidebar groups use stable browser choices; Area disclosures retain their existing keys. */
     sidebarGroupExpanded(id: string): boolean {
       return read(`browser:sidebar-group:${id}`) !== false;

@@ -4,6 +4,7 @@
 import { z } from 'zod';
 
 import { flowOutcomeSchema } from '../domain/report-flow.js';
+import { memoryUpdatedPayloadSchema } from '../domain/memory.js';
 import type { ApiDecodeFailure } from './types.js';
 
 export const systemInfoDtoSchema = z.object({
@@ -722,6 +723,7 @@ export const pergaTransientEventKindSchema = z.enum([
   'approval.changed',
   'session.state_changed',
   'read_receipt.updated',
+  'memory.updated',
 ]);
 export type PergaTransientEventKind = z.infer<typeof pergaTransientEventKindSchema>;
 
@@ -788,6 +790,7 @@ export type PergaEventDecodeResult =
   | Readonly<{ status: 'ready'; kind: 'approvals'; trackId: string; sessionId: string }>
   | Readonly<{ status: 'ready'; kind: 'approval-audit' }>
   | Readonly<{ status: 'ready'; kind: 'upgrade-status'; payload: SystemUpgradeStatusPayload }>
+  | Readonly<{ status: 'ready'; kind: 'memory-updated'; payload: z.output<typeof memoryUpdatedPayloadSchema> }>
   | Readonly<{ status: 'ready'; kind: 'persistent'; event: PergaPersistentEvent }>
   | Readonly<{ status: 'ready'; kind: 'delta'; delta: PergaStreamDelta }>
   | Readonly<{ status: 'failed'; error: ApiDecodeFailure }>;
@@ -810,6 +813,11 @@ export function decodePergaEventEnvelope(input: unknown): PergaEventDecodeResult
     };
   }
   const { eventId, areaId, trackId, kind, payload, createdAtMs } = base.data;
+  if (kind === 'memory.updated') {
+    const parsed = memoryUpdatedPayloadSchema.safeParse(payload);
+    return parsed.success ? { status: 'ready', kind: 'memory-updated', payload: parsed.data }
+      : { status: 'failed', error: { kind: 'decode', message: 'Invalid memory.updated payload', cause: parsed.error } };
+  }
   if (kind === 'session.runtime_status') {
     const parsed = sessionRuntimeStatusPayloadSchema.safeParse(payload);
     return parsed.success ? { status: 'ready', kind: 'runtime-status', payload: parsed.data }

@@ -92,11 +92,13 @@ import { useNewTrackCard } from '../../features/track/new-card/controller.tsx';
 import type { CardRuntime } from './card-runtime.ts';
 import { useConversationPanel } from './conversation-panel.tsx';
 export function TrackRouteBody({
-  transport, unauthorized, snapshot, showWorkspaceIsolation = true, cardRuntime, recentFiles, reportEvidence, reportHeader, reportEmpty, panelContent, mobileReportIntro, prepareReport, center, workspaceWaiting = false, workspaceNotice,
+  transport, unauthorized, snapshot, memoryAreaId, trackPath, showWorkspaceIsolation = true, cardRuntime, recentFiles, reportEvidence, reportHeader, reportEmpty, panelContent, mobileReportIntro, prepareReport, center, workspaceWaiting = false, workspaceNotice,
 }: {
   transport: ApiTransportPort;
   unauthorized: UnauthorizedChannel;
   snapshot: TrackAggregateSnapshotDto;
+  memoryAreaId?: string | null | false;
+  trackPath?: string;
   cardRuntime: CardRuntime;
   recentFiles: RecentFileHistory;
   center?: DailyCenterPresentation;
@@ -112,8 +114,11 @@ export function TrackRouteBody({
 
 }) {
   const track = useMemo(() => toTrack(snapshot.track, trackActivityFromSnapshot(snapshot)), [snapshot]);
-  const canReopenTrack = snapshot.track.closedAtMs != null;
-  const canCloseTrack = !canReopenTrack;
+  const isMemoryTrack = track.areaId === 'sys_memory';
+  const canReopenTrack = !isMemoryTrack && snapshot.track.closedAtMs != null;
+  const canCloseTrack = !isMemoryTrack && !canReopenTrack;
+  const mobileAreaId = isMemoryTrack ? (typeof memoryAreaId === 'string' ? memoryAreaId : null) : track.areaId;
+  const alias = useMemo(() => trackPath === undefined ? undefined : { trackId: track.id, path: trackPath }, [track.id, trackPath]);
   const toolsQuery = useQuery(trackToolsQueryOptions(transport, snapshot.track.id, unauthorized));
   const rawCards = useMemo(() => (toolsQuery.data ?? []).map((terminal, index) => terminalPanelItem(terminal, 100 + index)), [toolsQuery.data]);
   const [centerHost, setCenterHost] = useState<HTMLDivElement | null>(null);
@@ -145,10 +150,10 @@ export function TrackRouteBody({
   const openMobileSection = useOpenMobileSection();
   const mobileHeaderActionsHost = useMobileHeaderActionsHost();
   const mobileHeaderTitleHost = useMobileHeaderTitleHost();
-  const go = useGo();
-  const goSameTrack = useGoSameTrack();
-  const fileNavigation = useTrackFileNavigation();
-  const { openPanel, closePanel } = useTrackPanelNavigation();
+  const go = useGo(alias);
+  const goSameTrack = useGoSameTrack(alias);
+  const fileNavigation = useTrackFileNavigation(alias);
+  const { openPanel, closePanel } = useTrackPanelNavigation(alias);
   const requestedCardId = useRouteCardId();
   const rawRequestedFilePath = useRouteFilePath();
   const requestedFilePath = requestedCardId === null ? rawRequestedFilePath : null;
@@ -179,6 +184,7 @@ export function TrackRouteBody({
   /* `?from=` is a property of this visit, so every same-track move hands it back
    * explicitly (`go` clears what it is not given); crossing tracks drops it. */
   const routeFrom = useRouteFrom() ?? undefined;
+  const mobileBackToArea = isMemoryTrack ? mobileAreaId !== null : routeFrom === 'area';
   const cardRegistry = cardRuntime.registry;
   const trackCardHost = useMemo(
     () => createCardHost(cardRegistry, {
@@ -278,7 +284,7 @@ export function TrackRouteBody({
       pendingApprovals,
       decideApproval: (approval, optionId) => trackMutations.decideApproval(track.id, approval, optionId),
       planner: plannerCard === undefined ? null : {
-        cardId: plannerCard.id, areaId: track.areaId, asks: openAsks,
+        cardId: plannerCard.id, areaId: track.areaId, memoryAreaId, asks: openAsks,
         answerAsk: (askId, answers) => {
           const ask = openAsks.find(item => item.askId === askId);
           return trackMutations.answerAsk(track.id, askId, answers, ask?.questions);
@@ -459,7 +465,9 @@ export function TrackRouteBody({
       mobileHeaderActionsHost={mobileHeaderActionsHost}
       mobileHeaderTitleHost={mobileHeaderTitleHost}
       mobileTitleReadView={(controls) => <TrackSelector track={track} controls={controls}
-        onOpenTracks={() => openMobileSection({ kind: 'tracks', areaId: track.areaId, returnTo: 'report' })} />}
+        onOpenTracks={() => openMobileSection(mobileAreaId === null
+          ? { kind: 'pages' }
+          : { kind: 'tracks', areaId: mobileAreaId, returnTo: 'report' })} />}
       track={track}
       canReopenTrack={canReopenTrack}
       canCloseTrack={canCloseTrack}
@@ -525,9 +533,9 @@ export function TrackRouteBody({
       onOpenPanel={(kind) => { openPanel(track.id, kind); }}
       onClosePanel={() => { closePanel(track.id); }}
       /* `?from=` is the whole memory of how the reader got here; absent means Pages. */
-      mobileBackLabel={routeFrom === 'area' ? 'Tracks' : 'Pages'}
+      mobileBackLabel={mobileBackToArea ? 'Tracks' : 'Pages'}
       onMobileBack={() => {
-        if (routeFrom === 'area') openMobileSection({ kind: 'tracks', areaId: track.areaId });
+        if (mobileBackToArea && mobileAreaId !== null) openMobileSection({ kind: 'tracks', areaId: mobileAreaId });
         else openMobileSection({ kind: 'pages' });
       }}
       report={<>
@@ -552,9 +560,9 @@ export function TrackRouteBody({
         center?.onOpenAssistant();
         chat.openConversation(destination);
       }}
-      onRenameTrack={(title) => trackMutations.patch(track.id, track.areaId, { title }).then(() => undefined)}
+      onRenameTrack={isMemoryTrack ? undefined : (title) => trackMutations.patch(track.id, track.areaId, { title }).then(() => undefined)}
       closedControl={closedControl}
-      onDeleteTrack={(signal) => trackMutations.remove(track.id, track.areaId, signal)}
+      onDeleteTrack={isMemoryTrack ? undefined : (signal) => trackMutations.remove(track.id, track.areaId, signal)}
       onTrackDeleted={() => go({ name: 'today' })}
     />
     </TrackStage>

@@ -4,6 +4,7 @@
     <ProjectReference Include="..\Perga.Kernel\Perga.Kernel.csproj" />
     <ProjectReference Include="..\Perga.Storage.Sqlite\Perga.Storage.Sqlite.csproj" />
     <ProjectReference Include="..\Perga.Contracts\Perga.Contracts.csproj" />
+    <ProjectReference Include="..\..\libs\Perga.MemoryKit\Perga.MemoryKit.csproj" />
     <ProjectReference Include="..\..\libs\Perga.ReportDoc\Perga.ReportDoc.csproj" />
     <ProjectReference Include="..\..\libs\Perga.PolicyVm\Perga.PolicyVm.csproj" />
     <ProjectReference Include="..\..\libs\Perga.AgentKit\Perga.AgentKit.csproj" />

@@ -6,6 +6,7 @@ import styles from './thread.module.css';
 
 /** Render one system observation on its own tool-call row, without changing its domain identity. */
 export function SystemDisclosure({ turn }: Readonly<{ turn: ConversationSystemEntry }>) {
+  if (turn.quiet === true) return <p className={styles.gap} data-nc-turn="system" title={turn.text}>{turn.label}</p>;
   return <div title={turn.text}><ChatToolCalls className={`${activityStyles.group} ${styles.system}`} data-nc-turn="system"
     calls={[{
       key: turn.id,

@@ -12,7 +12,7 @@ public sealed partial class TrackActor
 {
     private sealed class SessionTurnRunner(TrackActor actor)
     {
-        private sealed record TurnStart(ActiveTurnState Active, string EffectivePrompt);
+        private sealed record TurnStart(ActiveTurnState Active, string EffectivePrompt, AgentSessionDto Session);
 
         // What the provider stream established about the turn. Settlement can still mark it interrupted.
         private sealed class TurnOutcome
@@ -25,6 +25,8 @@ public sealed partial class TrackActor
             public string? BoundThreadId { get; set; }
             public bool Delivered { get; set; }
             public bool RejectedBeforePrompt { get; set; }
+            public MemoryInjection? Memory { get; set; }
+            public bool MemoryNoticePersisted { get; set; }
             public bool Conclusive { get; set; }
             public StringBuilder Text { get; } = new();
             public StringBuilder Thinking { get; } = new();
@@ -47,7 +49,7 @@ public sealed partial class TrackActor
                 if (await StartTurnAsync(work, prompt, policyAdmission, active => activated = active, ct).ConfigureAwait(false) is not { } start)
                     return work.CreateUnstartedTurn();
 
-                var outcome = await StreamTurnAsync(work, start.Active, start.EffectivePrompt, ct).ConfigureAwait(false);
+                var outcome = await StreamTurnAsync(work, start.Active, start.EffectivePrompt, start.Session, ct).ConfigureAwait(false);
                 var settled = await SettleTurnAsync(work, start.Active, prompt, outcome).ConfigureAwait(false);
                 if (settled.ShouldAutoCompact)
                 {
@@ -159,7 +161,7 @@ public sealed partial class TrackActor
                     await work.OnTurnActivatedCoreAsync(running, evt, running.UpdatedAtMs, ct).ConfigureAwait(false);
                     var effective = string.IsNullOrWhiteSpace(policyAdmission.Context) ? prompt :
                         $"<policy_context>\n{policyAdmission.Context}\n</policy_context>\n\n{prompt}";
-                    return new TurnStart(active, effective);
+                    return new TurnStart(active, effective, running);
                 }, actor._actorShutdownCts.Token).ConfigureAwait(false);
             }
             catch (Exception error)
@@ -189,12 +191,15 @@ public sealed partial class TrackActor
         }
 
         private async Task<TurnOutcome> StreamTurnAsync(ITurnWorkItem work, ActiveTurnState active, string effectivePrompt,
-            CancellationToken ct)
+            AgentSessionDto session, CancellationToken ct)
         {
             var outcome = new TurnOutcome();
             try
             {
-                var input = new TurnInput(effectivePrompt, active.TurnDto.Id, active.AgentSession.ConfigurationState?.NativeModel ?? active.Configuration.Model.ValueOrNull, active.AgentSession.ConfigurationState?.NativeEffort ?? active.Configuration.Effort.ValueOrNull,
+                var (prompt, injection) = await actor.PrepareMemoryPromptAsync(effectivePrompt, work.OwnerContent,
+                    session, active.TurnDto, active.TurnCts.Token).ConfigureAwait(false);
+                outcome.Memory = injection;
+                var input = new TurnInput(prompt, active.TurnDto.Id, active.AgentSession.ConfigurationState?.NativeModel ?? active.Configuration.Model.ValueOrNull, active.AgentSession.ConfigurationState?.NativeEffort ?? active.Configuration.Effort.ValueOrNull,
                     actor.ResolveTurnImages(work.Attachments));
                 await foreach (var evt in actor.ObserveTurnAsync(active, input, active.TurnCts.Token).ConfigureAwait(false))
                     await HandleEventAsync(work, active, outcome, evt).ConfigureAwait(false);
@@ -352,6 +357,14 @@ public sealed partial class TrackActor
             if (!confirmsDelivery)
                 return;
 
+            // Persist the notice before publishing the durable input as delivered.
+            if (outcome.Memory is { } memory && !outcome.MemoryNoticePersisted)
+            {
+                await RecordActivityAsync(actor.MemoryInjectionNotice(active.TurnDto, memory, actor.NowMs())).ConfigureAwait(false);
+                outcome.MemoryNoticePersisted = true;
+                if (actor._track.LeadSessionId == active.SessionId)
+                    actor._lastInjectedMemoryVersion = memory;
+            }
             await work.OnProviderDeliveredAsync(active.TurnDto, evt, outcome.BoundThreadId).ConfigureAwait(false);
             outcome.Delivered = true;
             if (active.ProviderAccepted)

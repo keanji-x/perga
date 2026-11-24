@@ -25,5 +25,6 @@ public static class PergaHttpEndpoints
         app.MapPergaApiV1();
         app.MapPergaSystem();
         app.MapTodayEndpoints();
+        app.MapMemoryEndpoints();
     }
 }

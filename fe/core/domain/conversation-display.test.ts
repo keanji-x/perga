@@ -73,6 +73,17 @@ const pergaPage = (items: unknown[], extra = {}) => ({
     contextUsage: null, createdAtMs: 1, updatedAtMs: 10 },
   state: 'idle', readonlyReason: null, canReopen: false, workerPaused: false, lastTurn: null, unknownDetail: null, attachmentsSupported: false, items, ...extra,
 });
+
+it.each(['loaded', 'refreshed', 'cleared'])('projects %s memory context as a quiet system observation', (mode) => {
+  const content = mode === 'cleared' ? 'Memory is now empty (previous entries were removed).' : `Memory context ${mode} (2 entries).`;
+  const page = conversationItemsOperation('session', null).responseSchema.parse(pergaPage([
+    { id: 1, sessionId: 'session', turnId: 'turn', kind: 'system', createdAtMs: 2,
+      payload: { v: 1, kind: 'memory_context', mode, entryCount: mode === 'cleared' ? 0 : 2, content } },
+  ]));
+  expect(buildConversationTranscript(page.items, null)).toMatchObject([
+    { id: 'system:1', author: 'system', label: `Memory context ${mode}`, text: content, quiet: true },
+  ]);
+});
 const item = (id: number, kind: string, payload: unknown, turnId: string | null = 'turn') =>
   ({ id, sessionId: 'session', turnId, kind, payload, createdAtMs: id });
 

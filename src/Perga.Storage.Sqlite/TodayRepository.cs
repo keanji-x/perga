@@ -61,7 +61,7 @@ internal sealed class TodayRepository
                    s.state AS State
             FROM track_schedules s
             JOIN tracks t ON t.id = s.track_id
-            WHERE t.closed_at_ms IS NULL AND s.node_key IS NOT NULL AND (
+            WHERE t.area_id != @MemorySystemAreaId AND t.closed_at_ms IS NULL AND s.node_key IS NOT NULL AND (
                 (s.state = '{TrackScheduleStates.Active}' AND s.next_fire_at_ms IS NOT NULL AND (
                     s.schedule_kind = '{TrackScheduleKinds.Cron}'
                     OR (s.next_fire_at_ms >= @StartMs AND s.next_fire_at_ms < @EndMs)
@@ -69,7 +69,8 @@ internal sealed class TodayRepository
                 OR (s.state = '{TrackScheduleStates.Done}' AND s.last_fired_at_ms IS NOT NULL
                     AND s.last_fired_at_ms >= @StartMs AND s.last_fired_at_ms < @EndMs))
             ORDER BY s.next_fire_at_ms ASC, s.track_id ASC, s.id ASC;
-            """, new { StartMs = startMs, EndMs = endMs }, cancellationToken: ct)).ConfigureAwait(false);
+            """, new { StartMs = startMs, EndMs = endMs, MemorySystemAreaId = MemoryTrackBinding.SystemAreaId },
+            cancellationToken: ct)).ConfigureAwait(false);
         return rows.Select(r => new TodayScheduleEntry(
             r.Id, r.TrackId, r.TrackTitle, r.Title, r.ScheduleKind, r.CronExpr, r.Timezone,
             r.NextFireAtMs, r.CreatedAtMs, r.LastFiredAtMs,

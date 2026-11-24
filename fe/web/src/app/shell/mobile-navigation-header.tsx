@@ -22,15 +22,18 @@ export type MobileNavigationActions = Readonly<{
 
 /** Keep navigation in the title bar and workspace actions in one stable group. */
 export function MobileNavigationHeader({
-  title, area, creationScope, backLabel, filters, showSettings = true, actionsPlacement = 'rows', onBack, onNewTrack, onEditArea, onOpenSettings, onCreateArea,
-}: Readonly<{ title: string; filters?: ReactNode; showSettings?: boolean; actionsPlacement?: 'rows' | 'header' | 'floating'; area: Area | undefined; creationScope: 'area' | 'track' | 'both'; backLabel: string }> & MobileNavigationActions) {
+  title, area, creationScope, backLabel, filters, showSettings = true, actionsPlacement = 'rows', memoryVisibility, onBack, onNewTrack, onEditArea, onOpenSettings, onCreateArea,
+}: Readonly<{ title: string; filters?: ReactNode; showSettings?: boolean; actionsPlacement?: 'rows' | 'header' | 'floating'; area: Area | undefined; creationScope: 'area' | 'track' | 'both'; backLabel: string;
+  memoryVisibility?: Readonly<{ shown: boolean; toggle: () => void }>;
+}> & MobileNavigationActions) {
   const headerRef = useRef<HTMLSpanElement | null>(null);
   const rowRef = useRef<HTMLLIElement | null>(null);
   return <>
     <MobileHeader className={actionsPlacement !== 'rows' ? styles.navigationHeader : undefined} title={title} backLabel={backLabel} onBack={onBack}
       actions={<span ref={headerRef} style={{ display: 'inline-flex' }}>{actionsPlacement === 'header' && area === undefined ? <IconButton label={creationScope === 'area' ? 'New area' : 'New track'} isDisabled={creationScope !== 'area'} icon={<Icon name="plus" />} variant="ghost" size="lg" className={`${styles.iconButton} ${floatingControlClassName}`} onClick={() => onCreateArea({ kind: 'anchor', anchor: { ref: headerRef }, unavailable: 'surface-center' })} /> : area === undefined ? undefined : <Menu wrapClassName={menuStyles.toolsMenuWrap} menuClassName={menuStyles.toolsMenu} itemClassName={menuStyles.menuItem}
         items={[...(actionsPlacement === 'header' ? [{ label: 'New track', onSelect: () => onNewTrack(area.id) }] : []), { label: area === undefined ? 'Edit area' : `Edit area ${area.name}`, disabled: area === undefined,
-          onSelect: () => { if (area !== undefined) onEditArea(area, { kind: 'anchor', anchor: { ref: headerRef }, unavailable: 'surface-center' }); } }]}
+          onSelect: () => { if (area !== undefined) onEditArea(area, { kind: 'anchor', anchor: { ref: headerRef }, unavailable: 'surface-center' }); } },
+          ...(memoryVisibility === undefined ? [] : [{ label: memoryVisibility.shown ? 'Hide memory' : 'Show memory', onSelect: memoryVisibility.toggle }])]}
         trigger={(props) => <IconButton {...props} label="Area actions" icon={actionsPlacement !== 'header' ? <AstryxIcon icon="moreHorizontal" size="md" color="inherit" /> : <Icon name="plus" />}
           variant="ghost" size="lg" className={`${styles.iconButton} ${floatingControlClassName}`} />} />}</span>} />
     {filters}

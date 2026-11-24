@@ -3,6 +3,10 @@
  * with the rest of the shell, in `shell.module.css`.
  */
 @layer features {
+  .memoryRow {
+    inline-size: 100%;
+  }
+
   /*
    * `Show N more` / `Show less` sits in the Track list's column: the rail
    * Track row's height and its leading gutter (4 + 20 + 4), so the text starts

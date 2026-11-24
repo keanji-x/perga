@@ -171,7 +171,8 @@ public sealed partial class PergaKernelService : IPergaKernel
         ISystemUpgradeReceiptSource? upgradeReceiptSource = null,
         IScheduleCronEvaluator? scheduleCronEvaluator = null,
         IExecutionEnvironmentRegistry? executionEnvironments = null,
-        IGitHubForgeService? gitHubForgeService = null)
+        IGitHubForgeService? gitHubForgeService = null,
+        IMemoryContextProvider? memoryContext = null)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _reportEngine = reportEngine ?? throw new ArgumentNullException(nameof(reportEngine));
@@ -183,6 +184,7 @@ public sealed partial class PergaKernelService : IPergaKernel
         _options = options ?? new KernelOptions();
         _systemUpgradeController = systemUpgradeController;
         _scheduleCronEvaluator = scheduleCronEvaluator;
+        _memoryContext = memoryContext ?? NoMemoryContextProvider.Instance;
         _timeProvider = timeProvider ?? TimeProvider.System;
         var resolvedCommandRunner = commandRunner ?? new ProcessShellCommandRunner();
         _eventHub = eventHub ?? new EventHub();
@@ -211,9 +213,10 @@ public sealed partial class PergaKernelService : IPergaKernel
             _eventHub,
             _options,
             _timeProvider,
-            _scheduleCronEvaluator);
+            _scheduleCronEvaluator,
+            _memoryContext);
         UpgradeReceipts = new SystemUpgrade.UpgradeReceiptConsumer(_store, upgradeReceiptSource, Actors, _eventHub, DispatchAdmission);
-        BootReconciler = new BootReconciler(_store, workspaceDrivers, Actors, UpgradeReceipts);
+        BootReconciler = new BootReconciler(_store, workspaceDrivers, Actors, UpgradeReceipts, _memoryContext);
         DispatchAdmission.Changed += PublishUpgradeStatus;
         DispatchAdmission.Resumed += ResumeSchedulers;
     }
@@ -444,7 +447,7 @@ public sealed partial class PergaKernelService : IPergaKernel
     {
         var stats = await _store.RunMaintenancePassAsync(NowMs(), ct).ConfigureAwait(false);
         if (stats.CompactedTasks > 0)
-            foreach (var track in await _store.ListTracksAsync(includeClosed: true, ct: ct).ConfigureAwait(false))
+            foreach (var track in await _store.ListTracksIncludingSystemAsync(includeClosed: true, ct: ct).ConfigureAwait(false))
                 if (Actors.TryGetActive(track.Id, out var actor))
                     await actor!.RefreshTaskDiagnosticsAsync(ct).ConfigureAwait(false);
         return stats;
@@ -511,6 +514,8 @@ public sealed partial class PergaKernelService : IPergaKernel
 
     public async Task<AreaDto> PatchAreaAsync(string areaId, PatchAreaRequest req, CancellationToken ct = default)
     {
+        if (areaId == MemoryTrackBinding.SystemAreaId)
+            throw KernelException.NotFound($"Area '{areaId}' not found.");
         var existing = await _store.GetAreaAsync(areaId, ct).ConfigureAwait(false)
                        ?? throw KernelException.NotFound($"Area '{areaId}' not found.");
 
@@ -540,7 +545,7 @@ public sealed partial class PergaKernelService : IPergaKernel
         };
 
         await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
-        var persisted = await _store.UpsertAreaAsync(updated, ct).ConfigureAwait(false);
+        var persisted = await _store.UpdateAreaAsync(updated, ct).ConfigureAwait(false);
         var evt = new EventEnvelopeDto(
             EventId: null,
             AreaId: persisted.Id,
@@ -555,18 +560,31 @@ public sealed partial class PergaKernelService : IPergaKernel
 
     public async Task DeleteAreaAsync(string areaId, CancellationToken ct = default)
     {
-        _ = await _store.GetAreaAsync(areaId, ct).ConfigureAwait(false)
-            ?? throw KernelException.NotFound($"Area '{areaId}' not found.");
+        if (areaId == MemoryTrackBinding.SystemAreaId || await _store.GetAreaAsync(areaId, ct).ConfigureAwait(false) is null)
+            throw KernelException.NotFound($"Area '{areaId}' not found.");
 
         // Cleanly tear down child tracks so workspaces, processes, terminals, sessions, and actors do not leak.
-        var childTracks = await _store.ListTracksAsync(areaId, includeClosed: true, ct).ConfigureAwait(false);
+        var childTracks = await _store.ListTracksIncludingSystemAsync(areaId, includeClosed: true, ct).ConfigureAwait(false);
         foreach (var track in childTracks)
         {
             await DeleteTrackAsync(track.Id, ct).ConfigureAwait(false);
         }
 
         await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
-        await _store.DeleteAreaAsync(areaId, ct, requireEmpty: true).ConfigureAwait(false);
+        var memoryTrackId = await _store.GetMemoryTrackIdAsync(MemoryTrackBinding.ScopeKeyFor(areaId), ct).ConfigureAwait(false);
+        async Task DeleteArea(CancellationToken token)
+        {
+            await _store.DeleteAreaWithMemoryTrackAsync(areaId, memoryTrackId, token).ConfigureAwait(false);
+            await _memoryContext.DeleteAreaDirectoryAsync(areaId, CancellationToken.None).ConfigureAwait(false);
+        }
+        if (memoryTrackId is null)
+            await DeleteArea(ct).ConfigureAwait(false);
+        else
+        {
+            var actor = Actors.GetOrActivate(memoryTrackId);
+            await actor.TeardownAndDeleteTrackAsync(ct, DeleteArea).ConfigureAwait(false);
+            await Actors.RemoveAndDisposeAsync(memoryTrackId).ConfigureAwait(false);
+        }
         var evt = new EventEnvelopeDto(null, areaId, null, KernelEventKinds.AreaDeleted,
             JsonHelpers.ToElement(new { id = areaId }), NowMs());
         await _store.AppendEventAsync(evt, CancellationToken.None).ConfigureAwait(false);
@@ -581,8 +599,11 @@ public sealed partial class PergaKernelService : IPergaKernel
     public Task<TrackAggregateSnapshot> CreateTrackAsync(CreateTrackRequest req, CancellationToken ct = default, string? requestKey = null) =>
         CreateTrackCoreAsync(req, ct, requestKey);
 
-    private async Task<TrackAggregateSnapshot> CreateTrackCoreAsync(CreateTrackRequest req, CancellationToken ct, string? requestKey, string? dailyDate = null, AreaDto? systemArea = null)
+    private async Task<TrackAggregateSnapshot> CreateTrackCoreAsync(CreateTrackRequest req, CancellationToken ct, string? requestKey, string? dailyDate = null,
+        AreaDto? systemArea = null, string? memoryScopeKey = null, string? memoryAreaId = null)
     {
+        if (req.AreaId == MemoryTrackBinding.SystemAreaId && memoryScopeKey is null)
+            throw KernelException.NotFound($"Area '{req.AreaId}' not found.");
         var key = CreateKey("track", req.AreaId, requestKey, req);
         if (key is not null && await _store.FindCreationAsync(key, ct).ConfigureAwait(false) is { } replay)
             return await ReadCreatedTrackAsync(replay, ct).ConfigureAwait(false);
@@ -600,7 +621,11 @@ public sealed partial class PergaKernelService : IPergaKernel
         var env = _executionEnvironments.GetRequired(trackTargetId);
 
         CompiledPolicy? policy = null;
-        if (!string.IsNullOrWhiteSpace(req.TemplateId))
+        if (memoryScopeKey is not null)
+        {
+            policy = MemoryTemplate.Resolve(Templates);
+        }
+        else if (!string.IsNullOrWhiteSpace(req.TemplateId))
         {
             policy = Templates.GetRequiredPolicy(req.TemplateId!);
         }
@@ -621,15 +646,22 @@ public sealed partial class PergaKernelService : IPergaKernel
             choice = choices.FirstOrDefault(candidate => candidate.Option.Id == optionId)
                 ?? throw KernelException.InvalidArgument("The selected workspace option is unavailable for this folder. Choose an available workspace option.");
         }
-        var driverId = choice?.DriverId ?? PreferredWorkspaceDriver(req.WorkspaceDriver, policy?.Manifest.WorkspaceDriver);
+        var memoryWorkspace = string.Equals(area.Id, MemoryTrackBinding.SystemAreaId, StringComparison.Ordinal);
+        var driverId = memoryWorkspace
+            ? VcsWorkspaceDriver.Id
+            : choice?.DriverId ?? PreferredWorkspaceDriver(req.WorkspaceDriver, policy?.Manifest.WorkspaceDriver);
         var blankWorkspace = source is null;
-        var sourcePath = blankWorkspace
+        // The VCS driver provisions a plain directory for an empty workspace. The
+        // source is a logical root in this mode and is never copied or removed.
+        var sourcePath = memoryWorkspace ? env.WorkspacesRoot : blankWorkspace
             ? CombineExecutionPath(env, env.WorkspacesRoot, trackId)
             : source!;
-        var targetRootDir = CombineExecutionPath(env, env.WorkspacesRoot, blankWorkspace ? "_worktrees" : trackId);
+        var targetRootDir = memoryWorkspace
+            ? env.WorkspacesRoot
+            : CombineExecutionPath(env, env.WorkspacesRoot, blankWorkspace ? "_worktrees" : trackId);
         var lowerCacheDirs = policy?.Manifest.WorkspaceLowerCacheDirs ?? [];
         var createCommand = policy?.Manifest.WorkspaceCreateCmd;
-        if (blankWorkspace && (driverId == VcsWorkspaceDriver.Id || policy?.Manifest.WorkspaceDriver == VcsWorkspaceDriver.Id))
+        if (blankWorkspace && !memoryWorkspace && (driverId == VcsWorkspaceDriver.Id || policy?.Manifest.WorkspaceDriver == VcsWorkspaceDriver.Id))
             createCommand = string.IsNullOrWhiteSpace(createCommand) ? "git init -q" : $"git init -q && (\n{createCommand}\n)";
 
         var workspaceDriver = env.WorkspaceDrivers.GetRequired(driverId);
@@ -645,11 +677,11 @@ public sealed partial class PergaKernelService : IPergaKernel
         if (policy is not null)
         {
             TemplateFlow.ValidateInputs(_policyVm, policy, templateInputs);
-            try
+            if (memoryScopeKey is null)
             {
-                templateData = _policyVm.InitData(policy, templateInputs);
+                try { templateData = _policyVm.InitData(policy, templateInputs); }
+                catch (InvalidOperationException ex) { throw KernelException.InvalidArgument(ex.Message); }
             }
-            catch (InvalidOperationException ex) { throw KernelException.InvalidArgument(ex.Message); }
         }
 
         var initialReport = TemplateReport.Create(_reportEngine, _policyVm, policy, templateInputs);
@@ -728,7 +760,10 @@ public sealed partial class PergaKernelService : IPergaKernel
         var id = await _store.CreateTrackAsync(
             new(track, initialReport, policy?.JsSource, leadSession,
                 initialFlow?.Tasks ?? [], null, preparation, events, dailyDate, systemArea)
-            { FlowClocks = initialFlow?.Clocks ?? [] },
+            {
+                FlowClocks = initialFlow?.Clocks ?? [],
+                MemoryBinding = memoryScopeKey is null ? null : new(memoryScopeKey, memoryAreaId, trackId)
+            },
             key, ct).ConfigureAwait(false);
         var snapshot = await ReadCreatedTrackAsync(id, CancellationToken.None).ConfigureAwait(false);
         if (id == track.Id)
@@ -1018,7 +1053,12 @@ public sealed partial class PergaKernelService : IPergaKernel
         string summary,
         string body,
         CancellationToken ct = default,
-        string? replyToMailId = null, InteropPrincipal.Session? authorization = null)
+        string? replyToMailId = null, InteropPrincipal.Session? authorization = null) =>
+        SendMailCoreAsync(fromTrackId, callerSessionId, toTrackId, summary, body, ct, replyToMailId, authorization);
+
+    private Task<MailDto> SendMailCoreAsync(string fromTrackId, string callerSessionId, string? toTrackId,
+        string summary, string body, CancellationToken ct, string? replyToMailId, InteropPrincipal.Session? authorization,
+        bool requireLead = false)
     {
         var senderActor = Actors.GetOrActivate(fromTrackId);
         return senderActor.SendCrossTrackMailAsync(
@@ -1031,7 +1071,7 @@ public sealed partial class PergaKernelService : IPergaKernel
                 var targetActor = Actors.GetOrActivate(mail.ToTrackId);
                 await targetActor.ReceiveMailAsync(mail, token, authorizeDelivery).ConfigureAwait(false);
             },
-            ct, replyToMailId, authorization);
+            ct, replyToMailId, authorization, requireLead);
     }
 
     public Task<IReadOnlyList<MailDto>> ListMailsAsync(

@@ -54,7 +54,8 @@ public class TemplateHost : ITemplateCatalog
             return null;
         }
 
-        return _policiesById.TryGetValue(templateId, out var policy) ? policy : null;
+        return _policiesById.TryGetValue(templateId, out var policy) ? policy
+            : templateId == MemoryTemplate.Id ? MemoryTemplate.Resolve(this) : null;
     }
 
     public CompiledPolicy GetRequiredPolicy(string templateId)

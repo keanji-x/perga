@@ -346,23 +346,26 @@
 
   /* Sibling headings share the primary navigation cadence; macro spacing separates navigation tiers. */
   .sidebarSections {
+    --sidebar-section-padding: var(--space-3);
+    --sidebar-section-gap: var(--space-4);
+    --sidebar-area-min: calc(var(--navigation-entry-height) + var(--space-2) + var(--space-px));
     flex: 1;
-    min-block-size: calc(var(--navigation-entry-height) + var(--space-half));
+    min-block-size: calc(var(--navigation-entry-height) + var(--sidebar-section-padding));
     display: flex;
     flex-direction: column;
-    gap: var(--space-4);
-    padding-block-start: var(--space-3);
+    gap: var(--sidebar-section-gap);
+    padding-block-start: var(--sidebar-section-padding);
   }
 
   .sidebarSections:has(.areaGroups) {
-    min-block-size: calc(var(--navigation-entry-height) + 2 * var(--space-2) + var(--space-px));
-    padding-block-start: var(--space-4);
+    --sidebar-section-padding: var(--space-4);
+    min-block-size: calc(var(--sidebar-area-min) + var(--sidebar-section-padding));
   }
 
-  /* Reserve a complete row per scrollport; an undersized rail can then scroll. */
+  /* Keep both scrollports clear of the account row even in a short rail. */
   .sidebarSections:has(.shortcuts):has(.areaGroups) {
-    min-block-size: calc(2 * var(--navigation-entry-height) + var(--space-half) + 2 * var(--space-2) + var(--space-px));
-    padding-block-start: var(--space-3);
+    --sidebar-section-padding: var(--space-3);
+    min-block-size: calc(var(--navigation-entry-height) + var(--sidebar-area-min) + var(--sidebar-section-gap) + var(--sidebar-section-padding));
   }
 
   /* Natural shortcut height until it needs half of the available tree space.
@@ -416,7 +419,7 @@
     /* Natural typographic header (`Areas  +`) separates shortcuts from Areas without a hard divider. */
     border-block-start: 0;
     padding-block-start: 0;
-    min-block-size: calc(var(--navigation-entry-height) + var(--space-2) + var(--space-px));
+    min-block-size: var(--sidebar-area-min);
     overflow: auto;
     overscroll-behavior: contain;
     scrollbar-width: none;

@@ -7,6 +7,7 @@ using Perga.Host.Configuration;
 using Perga.Host.Execution;
 using Perga.Host.Lifecycle;
 using Perga.Host.Mcp;
+using Perga.Host.Memory;
 using Perga.Host.Terminals;
 using Perga.Host.Workspaces;
 using Perga.Host.SystemUpgrade;
@@ -14,6 +15,7 @@ using Perga.Kernel.Templates;
 using Perga.Kernel;
 using Perga.Kernel.Ports;
 using Perga.PolicyVm;
+using Perga.MemoryKit;
 using Perga.ReportDoc;
 using Perga.Storage.Sqlite;
 using Perga.TermClient;
@@ -99,6 +101,12 @@ public static class PergaHostServiceCollectionExtensions
         services.TryAddSingleton<ITodayReadStore>(sp => sp.GetRequiredService<SqliteTrackStore>());
         services.TryAddSingleton<IScheduleCronEvaluator, Perga.Host.Lifecycle.CronosScheduleCronEvaluator>();
         services.TryAddSingleton<TodayReportService>();
+        services.TryAddSingleton<IMemoryTrackStore>(sp => sp.GetRequiredService<SqliteTrackStore>());
+        services.TryAddSingleton<MemoryEngineOptions>();
+        services.TryAddSingleton<IMemoryEngine>(sp => new MemoryEngine(
+            Path.Combine(sp.GetRequiredService<ResolvedHostStoragePaths>().DataDir, "memory"),
+            sp.GetRequiredService<MemoryEngineOptions>()));
+        services.TryAddSingleton<IMemoryContextProvider, HostMemoryContextProvider>();
         services.TryAddSingleton<ITrackReadStore>(sp => sp.GetRequiredService<ITrackStore>());
 
         services.TryAddSingleton<IReportDocEngine, ReportDocEngine>();
@@ -251,11 +259,13 @@ public static class PergaHostServiceCollectionExtensions
                 systemUpgradeController: sp.GetRequiredService<ISystemUpgradeController>(),
                 upgradeReceiptSource: sp.GetRequiredService<ISystemUpgradeReceiptSource>(),
                 scheduleCronEvaluator: sp.GetRequiredService<IScheduleCronEvaluator>(),
-                executionEnvironments: sp.GetRequiredService<IExecutionEnvironmentRegistry>());
+                executionEnvironments: sp.GetRequiredService<IExecutionEnvironmentRegistry>(),
+                memoryContext: sp.GetRequiredService<IMemoryContextProvider>());
         });
 
         services.TryAddSingleton<KernelMcpBackend>();
         services.TryAddSingleton<VcsMcpBackend>();
+        services.TryAddSingleton<MemoryMcpBackend>();
         services.TryAddSingleton<McpPluginRouter>();
         services.TryAddSingleton<McpTransportSessionManager>();
 

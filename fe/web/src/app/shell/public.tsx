@@ -105,6 +105,7 @@ const CreateAreaContext = createContext<((origin: DialogOrigin) => void) | null>
 export function useRequestCreateArea() { return useContext(CreateAreaContext); }
 
 export type AppShellProps = Readonly<{
+  shareScope?: unknown;
   transport: ApiTransportPort;
   unauthorized: UnauthorizedChannel;
   onOpenSettings: () => void;
@@ -154,7 +155,7 @@ export function useOpenMobileSection(): OpenMobileSection {
 }
 
 export function AppShell({
-  transport, unauthorized, onOpenSettings, onSignOut, nowMs, userLabel,
+  transport, unauthorized, onOpenSettings, onSignOut, nowMs, userLabel, shareScope = null,
 }: AppShellProps) {
   const router = useRouter();
   const fullWorkspace = useWorkspace(transport, unauthorized);
@@ -496,6 +497,8 @@ export function AppShell({
                 readError={readError}
                 readLoading={readLoading}
                 onRetryRead={retryRead}
+                onOpenToday={() => navigateFromRail({ name: 'today' })}
+                onOpenMemory={shareScope === null ? () => navigateFromRail({ name: 'memory' }) : undefined}
                 onOpenTrack={(trackId) => {
                   closeMobileSection();
                   // The sheets are the only writers of `?from=`: the surface the reader returns to.
@@ -516,6 +519,9 @@ export function AppShell({
                 readError={readError}
                 readLoading={readLoading}
                 onRetryRead={retryRead}
+                onOpenToday={() => navigateFromRail({ name: 'today' })}
+                onOpenMemory={shareScope === null ? () => navigateFromRail({ name: 'memory' }) : undefined}
+                onOpenAreaMemory={shareScope === null ? (areaId) => navigateFromRail({ name: 'area-memory', areaId }) : undefined}
                 areaId={navigationArea?.id}
                 onCreateArea={requestCreateArea}
                 onEditArea={requestEditArea}
@@ -542,6 +548,7 @@ export function AppShell({
             tracksByArea={workspace.tracksByArea}
             tracks={workspace.tracks}
             currentPath={currentPath}
+            shareScope={shareScope}
             readError={readError}
             readLoading={readLoading || workspace.overlaysLoading}
             activityError={workspaceActivityErrorText(workspace)}

@@ -160,8 +160,15 @@ public sealed partial class TrackActor
 
         try
         {
+            var prompt = message.Content;
+            if (message.AuthorId == SessionMessageAuthors.Owner)
+            {
+                var memory = await _memoryContext.HydrateMentionsAsync(_memoryAreaId, prompt, deadline.Token).ConfigureAwait(false);
+                if (memory.Length > 0)
+                    prompt = memory + "\n" + prompt;
+            }
             return await target.AgentSession.SteerAsync(
-                new TurnInput(message.Content, turnId, Attachments: ResolveTurnImages(message.Attachments)),
+                new TurnInput(prompt, turnId, Attachments: ResolveTurnImages(message.Attachments)),
                 deadline.Token, AuthorizeWriteAsync)
                 .WaitAsync(deadline.Token).ConfigureAwait(false);
         }

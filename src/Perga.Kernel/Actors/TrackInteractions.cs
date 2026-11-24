@@ -183,12 +183,14 @@ public sealed partial class TrackActor
             string summary,
             string body,
             Func<MailDto, Action?, CancellationToken, Task> deliverToTargetTrack,
-            CancellationToken ct, string? replyToMailId, InteropPrincipal.Session? authorization = null)
+            CancellationToken ct, string? replyToMailId, InteropPrincipal.Session? authorization = null, bool requireLead = false)
         {
             var (mail, authorizeDelivery) = await actor.EnqueueAsync<(MailDto, Action?)>(async _ =>
             {
                 await actor.EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
                 actor.RequireGovernanceSessionCore(callerSessionId, "mail_send");
+                if (requireLead && actor._track.LeadSessionId != callerSessionId)
+                    throw KernelException.Forbidden("Only the current Track Lead may propose memory.");
                 if ((toTrackId is null) == (replyToMailId is null) ||
                     string.IsNullOrWhiteSpace(toTrackId ?? replyToMailId))
                     throw KernelException.InvalidArgument("Specify exactly one of toTrackId and replyToMailId.");
@@ -212,7 +214,12 @@ public sealed partial class TrackActor
                     ReadAtMs: null,
                     CreatedAtMs: now,
                     ReplyToMailId: replyToMailId);
-                return (mail, open is null ? null : () => actor.RequireRuntimeWriteFence(authorization!, open, originatingTurn: originatingTurn));
+                return (mail, open is null ? null : () =>
+                {
+                    if (requireLead && actor._mcpBridge.ResolveToken(authorization!.Token)?.IsLead != true)
+                        throw KernelException.Forbidden("Only the current Track Lead may propose memory.");
+                    actor.RequireRuntimeWriteFence(authorization!, open, originatingTurn: originatingTurn);
+                });
             }, ct).ConfigureAwait(false);
 
             await deliverToTargetTrack(mail, authorizeDelivery, ct).ConfigureAwait(false);

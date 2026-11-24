@@ -1,3 +1,4 @@
+using Perga.Host.Memory;
 using Perga.Host.Auth;
 using System.Collections.Concurrent;
 using System.Text;
@@ -149,6 +150,12 @@ public static class McpStreamableHttpEndpoints
         mcp.MapMethods("/vcs", ["POST", "GET", "DELETE"], (
             HttpContext ctx,
             VcsMcpBackend backend,
+            McpTransportSessionManager sessions) =>
+            HandleAuthorizedMcpAsync(ctx, ctx.Features.Get<McpSessionPrincipal>()!, backend, sessions, preAuthorizeAsync: null));
+
+        mcp.MapMethods("/memory", ["POST", "GET", "DELETE"], (
+            HttpContext ctx,
+            MemoryMcpBackend backend,
             McpTransportSessionManager sessions) =>
             HandleAuthorizedMcpAsync(ctx, ctx.Features.Get<McpSessionPrincipal>()!, backend, sessions, preAuthorizeAsync: null));
 

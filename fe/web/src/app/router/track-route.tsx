@@ -29,12 +29,13 @@ import { PendingRoute } from './pending-route.tsx';
 
 import type { CardRuntime } from './card-runtime.ts';
 import { TrackRouteBody } from './track-route-body.tsx';
-export function TrackRoute({ transport, unauthorized, cardRuntime, recentFiles, prepareReport, }: {
+export function TrackRoute({ transport, unauthorized, cardRuntime, recentFiles, prepareReport, memoryEnabled = true }: {
   prepareReport: ReportPreparationPort;
   transport: ApiTransportPort;
   unauthorized: UnauthorizedChannel;
   cardRuntime: CardRuntime;
   recentFiles: RecentFileHistory;
+  memoryEnabled?: boolean;
 
 }) {
   const trackId = useRouteParam('/track/');
@@ -71,6 +72,10 @@ export function TrackRoute({ transport, unauthorized, cardRuntime, recentFiles, 
   // fetches; rendering it under this URL would show the wrong track.
   if (trackId !== undefined && detail.data.track.id !== trackId) return <TrackPending />;
 
+  const isMemoryTrack = track.areaId === 'sys_memory';
+  const projectedAreaId = detail.data.track.data.areaId;
+  const memoryAreaId = isMemoryTrack ? (typeof projectedAreaId === 'string' ? projectedAreaId : null)
+    : track.areaId === 'sys_daily' ? null : track.areaId;
   return (
     <TrackRouteBody
       key={track.id}
@@ -78,6 +83,8 @@ export function TrackRoute({ transport, unauthorized, cardRuntime, recentFiles, 
       transport={transport}
       unauthorized={unauthorized}
       snapshot={detail.data}
+      memoryAreaId={memoryEnabled ? memoryAreaId : false}
+      showWorkspaceIsolation={!isMemoryTrack}
       workspaceWaiting={detail.data.workspacePreparation != null}
       workspaceNotice={detail.data.workspacePreparation === 'failed' && detail.data.track.closedAtMs != null
         ? <Banner status="error" title="Reopen this Track to retry workspace setup." />

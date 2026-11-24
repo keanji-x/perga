@@ -28,10 +28,11 @@ public sealed partial class TrackActor
             }
 
             var kernelSnapshot = KernelFactsSnapshot.BuildKernelFactsSnapshot(TrackId, _taskCoordinator.Snapshot(), _sessions, flowProjection);
+            var track = await ProjectMemoryDataCoreAsync(ct).ConfigureAwait(false);
             return _policyVm.ProjectViews(
                 _policy,
-                _track.TemplateInputs,
-                _track.Data,
+                track.TemplateInputs,
+                track.Data,
                 kernelSnapshot) with
             {
                 DataRev = _track.DataRev,
@@ -51,6 +52,7 @@ public sealed partial class TrackActor
         {
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
             RequireMcpAuthorizationCore(authorization);
+            RequireMutableTemplateCore();
             if (expectedPolicyGeneration is not null && _policyGeneration != expectedPolicyGeneration)
                 throw KernelException.PolicyDenied("Active policy changed after data patch authorization.");
             if (_track.ClosedAtMs is not null)

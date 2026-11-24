@@ -104,7 +104,7 @@ describe('createMentionSource', () => {
     calls[0].resolve([TAG, TRACK, BLOCK, { ...TAG, id: 'tag:two', label: '#two' }, { ...TAG, id: 'tag:three' }]);
     const items = await answer;
     expect(items.map((item) => item.label).toSorted()).toEqual(
-      ['Templates', 'Plugins', 'Tags', TAG.label, '#two', 'More Tags', 'Tracks', TRACK.label, 'More Tracks', 'Blocks', BLOCK.label, 'More Blocks'].toSorted(),
+      ['Templates', 'Plugins', 'Tags', TAG.label, '#two', 'More Tags', 'Tracks', TRACK.label, 'More Tracks', 'Blocks', BLOCK.label, 'More Blocks', 'Memory'].toSorted(),
     );
     const tagExamples = items.filter((item) => {
       const data = item.auxiliaryData!;
@@ -179,7 +179,7 @@ describe('the @ menu in the real composer', () => {
     render(<MentionComposer search={search} onSend={onSend} />);
     await userEvent.type(field(), 'see @');
     await screen.findByRole('option', { name: /^Tags/ });
-    expect(screen.getAllByRole('option')).toHaveLength(7);
+    expect(screen.getAllByRole('option')).toHaveLength(8);
     const tagIndex = screen.getAllByRole('option').indexOf(screen.getByRole('option', { name: /^Tags/ }));
     await userEvent.keyboard('{ArrowDown}'.repeat(tagIndex) + '{Enter}');
     await screen.findByRole('option', { name: /部署/ });

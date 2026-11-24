@@ -18,5 +18,9 @@ export function trackLookupContext(client: Pick<QueryClient, 'getQueriesData'>):
       }
       return null;
     },
+    memoryTrackIds() {
+      return client.getQueriesData<TrackAggregateSnapshotDto | TerminalDto[]>({ queryKey: queryKeys.trackDetailPrefix() })
+        .flatMap(([, detail]) => !Array.isArray(detail) && detail?.track?.areaId === 'sys_memory' ? [detail.track.id] : []);
+    },
   };
 }

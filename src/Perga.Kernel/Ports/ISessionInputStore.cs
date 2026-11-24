@@ -2,19 +2,25 @@ using Perga.Contracts;
 
 namespace Perga.Kernel.Ports;
 
-public sealed record SessionInputRequest(string Key, string Hash, string Content, string AuthorId = "owner:installation", string? SourceExcerpt = null)
+public static class SessionMessageAuthors
+{
+    public const string Owner = "owner:installation";
+}
+
+public sealed record SessionInputRequest(string Key, string Hash, string Content, string AuthorId = SessionMessageAuthors.Owner, string? SourceExcerpt = null)
 {
     public IReadOnlyList<ImageMediaWrite> MediaWrites { get; init; } = [];
 }
 
 public sealed record PersistedSessionInput(
     SessionInputReceipt Receipt, string RequestHash, string Content, int TurnIndex, int Epoch,
-    string Provider, string? Model, string? ReasoningEffort, bool IsQueuedFollowUp = false, long? UserItemId = null, string? SourceExcerpt = null)
+    string Provider, string? Model, string? ReasoningEffort, bool IsQueuedFollowUp = false, long? UserItemId = null, string? SourceExcerpt = null,
+    string? OwnerContent = null)
 {
     public IReadOnlyList<StoredImageAttachment> Attachments { get; init; } = [];
 }
 
-public sealed record SessionCreateIntent(string TrackId, string Key, string Hash, string AuthorId = "owner:installation");
+public sealed record SessionCreateIntent(string TrackId, string Key, string Hash, string AuthorId = SessionMessageAuthors.Owner);
 
 public sealed record StoredSessionCreation(
     string RequestHash, AgentSessionDto? Session, PersistedSessionInput? FirstInput);

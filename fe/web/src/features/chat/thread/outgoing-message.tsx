@@ -1,17 +1,22 @@
 import { Badge } from '@astryxdesign/core/Badge';
+import type { ReactNode } from 'react';
+import type { MemoryMention } from '../../../../../core/domain/memory.ts';
 import { sentMentionParts } from '../../../../../core/domain/mentions.ts';
 import mobileStyles from './mobile-composer.module.css';
 import styles from './thread.module.css';
 
 /** The same readable outgoing text before and after a conversation exists.
  * Callers own delivery, grouping, attachments and identity; no row or clock is needed. */
-export function OutgoingMessage({ text, mobile, speaker, queued = false, edited = false, replacement = false }: Readonly<{
+export type MemoryMentionRenderer = (scope: MemoryMention['scope'], pill: ReactNode) => ReactNode;
+
+export function OutgoingMessage({ text, mobile, speaker, queued = false, edited = false, replacement = false, renderMemoryMention }: Readonly<{
   text: string;
   speaker: 'you' | 'human' | 'unknown';
   mobile: boolean;
   queued?: boolean;
   edited?: boolean;
   replacement?: boolean;
+  renderMemoryMention?: MemoryMentionRenderer;
 }>) {
   return (
     <p
@@ -20,11 +25,12 @@ export function OutgoingMessage({ text, mobile, speaker, queued = false, edited 
       {...(queued ? { 'data-nc-queued': '' } : {})}
       {...(edited ? { 'data-nc-editing': '' } : {})}
       {...(replacement ? { 'data-nc-replacement': '' } : {})}
-    >{sentMentionParts(text).map((part, index) => part.label === null ? part.text : (
-      <span key={index} data-nc-sent-mention="" title={part.text}>
-        <Badge className={styles.mentionPill}
-          label={<span className={styles.mentionLabel}>{part.label}</span>} />
-      </span>
-    ))}</p>
+    >{sentMentionParts(text).map((part, index) => {
+      if (part.label === null) return part.text;
+      const pill = <Badge className={styles.mentionPill} label={<span className={styles.mentionLabel}>{part.label}</span>} />;
+      return <span key={index} data-nc-sent-mention="" title={part.text}>
+        {part.memoryScope === undefined ? pill : renderMemoryMention?.(part.memoryScope, pill) ?? pill}
+      </span>;
+    })}</p>
   );
 }

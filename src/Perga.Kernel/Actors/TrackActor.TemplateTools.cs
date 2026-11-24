@@ -26,11 +26,12 @@ public sealed partial class TrackActor
     {
         await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
         RequireGovernanceSessionCore(sessionId, KernelMcpToolNames.TemplateRead);
-        var header = TemplatePresentation.Evaluate(_track, _policy, _policyVm);
+        var track = await ProjectMemoryDataCoreAsync(ct).ConfigureAwait(false);
+        var header = TemplatePresentation.Evaluate(track, _policy, _policyVm);
         return TemplateInspection.Project(JsonHelpers.ToElement(new
         {
-            manifest = _policy?.Manifest, inputs = _track.TemplateInputs, data = _track.Data,
-            headerView = TemplatePresentation.Project(_track, _policy, header.View).TemplateHeaderView,
+            manifest = _policy?.Manifest, inputs = track.TemplateInputs, data = track.Data,
+            headerView = TemplatePresentation.Project(track, _policy, header.View).TemplateHeaderView,
             headerViewError = header.Error
         }), _templateSnapshotSource, "snapshot", format, file);
     }, ct);
@@ -38,18 +39,19 @@ public sealed partial class TrackActor
     public Task<JsonElement> InspectCurrentTemplateAsync(CancellationToken ct = default) => EnqueueAsync(async _ =>
     {
         await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
-        return InspectCurrentTemplateCore();
+        var track = await ProjectMemoryDataCoreAsync(ct).ConfigureAwait(false);
+        return JsonHelpers.ToElement(new
+        {
+            snapshot = _templateSnapshotSource, manifest = _policy?.Manifest,
+            inputs = track.TemplateInputs, data = track.Data,
+            headerView = TemplatePresentation.Project(track, _policy, _policyVm).TemplateHeaderView
+        });
     }, ct);
-
-    private JsonElement InspectCurrentTemplateCore() => JsonHelpers.ToElement(new
-    {
-        snapshot = _templateSnapshotSource, manifest = _policy?.Manifest,
-        inputs = _track.TemplateInputs, data = _track.Data, headerView = PresentTrackCore().TemplateHeaderView
-    });
 
     public Task<TrackDto> ClearTemplateAsync(CancellationToken ct = default) => EnqueueAsync(async _ =>
     {
         await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
+        RequireMutableTemplateCore();
         if (_track.ClosedAtMs is not null) throw KernelException.Conflict("Cannot clear a template on a closed track.");
         return (await DetachTemplateCoreAsync(false, ct).ConfigureAwait(false)).Track;
     }, ct);
@@ -336,6 +338,7 @@ public sealed partial class TrackActor
     {
         await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
         RequireMcpAuthorizationCore(authorization);
+        RequireMutableTemplateCore();
         if (sessionId is not null) RequireTemplateLeadCore(sessionId, KernelMcpToolNames.TemplateUpdateInputs);
         if (generation is not null && _policyGeneration != generation) throw KernelException.PolicyDenied("Active policy changed after authorization.");
         if (_track.ClosedAtMs is not null) throw KernelException.Conflict("Cannot update a closed track.");
@@ -476,22 +479,28 @@ public sealed partial class TrackActor
         (await SetTemplateWithOptionsAsync(callerSessionId, templateId, source, expectedPolicyGeneration, inputs, false, false, ct, resetData).ConfigureAwait(false)).Track;
 
     private TemplateReportSeed? PrepareTemplateReportSeedCore(
-        TrackDto next, CompiledPolicy policy, bool? seedReport, string callerSessionId)
+        TrackDto next, CompiledPolicy policy, bool? seedReport, string callerSessionId, bool preserveExisting = false)
     {
         var previous = _reports.Document;
         var isBlank = TemplateReport.IsBlank(previous);
         if (seedReport == true && !isBlank)
             throw KernelException.Conflict("Cannot seed a non-empty report.");
-        if (seedReport == false || !isBlank || string.IsNullOrWhiteSpace(policy.Manifest.InitialReportMarkdown))
+        if (seedReport == false || (!isBlank && !preserveExisting) || string.IsNullOrWhiteSpace(policy.Manifest.InitialReportMarkdown))
             return null;
 
         var document = TemplateReport.Create(_reportEngine, _policyVm, policy, next.TemplateInputs,
-            rev: checked(previous.DocRev + 1), summary: previous.Summary);
+            rev: checked(previous.DocRev + 1), summary: previous.Summary,
+            existingBlocks: preserveExisting ? previous.Blocks : null);
         var changes = document.Blocks.Select((block, index) =>
             new BlockChangeRecord(block.Id, block.Kind, null, block.Rev, index, false)).ToArray();
+        if (!isBlank)
+            document = document with { LeadingComment = previous.LeadingComment, Blocks = [.. document.Blocks, .. previous.Blocks] };
         var evt = new EventEnvelopeDto(null, next.AreaId, TrackId, KernelEventKinds.ReportUpdated,
             JsonHelpers.ToElement(new { document.DocRev, document.Summary, changes }), next.UpdatedAtMs);
-        return new(document, _reportEngine.CompressZstd(document.Blocks), callerSessionId, evt);
+        return new(document, _reportEngine.CompressZstd(document.Blocks), callerSessionId, evt)
+        {
+            RequireBlankReport = !preserveExisting
+        };
     }
 
     public async Task<TemplateSetResult> SetTemplateWithOptionsAsync(string callerSessionId, string? templateId,
@@ -506,6 +515,7 @@ public sealed partial class TrackActor
             {
                 await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
                 RequireMcpAuthorizationCore(authorization);
+                RequireMutableTemplateCore();
                 RequireTemplateLeadCore(callerSessionId, KernelMcpToolNames.TrackSet);
                 if (_policyGeneration != expectedPolicyGeneration)
                     throw KernelException.PolicyDenied("Active policy changed after template application was authorized.");
@@ -530,6 +540,7 @@ public sealed partial class TrackActor
         {
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
             RequireMcpAuthorizationCore(authorization);
+            RequireMutableTemplateCore();
             RequireTemplateLeadCore(callerSessionId, KernelMcpToolNames.TrackSet);
             if (_policyGeneration != expectedPolicyGeneration)
                 throw KernelException.PolicyDenied("Active policy changed after template application was authorized.");

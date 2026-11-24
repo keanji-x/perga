@@ -41,9 +41,10 @@ internal sealed class TrackReadRepository
     }
 
     public async Task<IReadOnlyList<TrackDto>> ListTracksAsync(
-        string? areaId = null,
-        bool includeClosed = false,
-        CancellationToken ct = default)
+        string? areaId,
+        bool includeClosed,
+        bool includeSystem,
+        CancellationToken ct)
     {
         _context.EnsureInitialized();
         await using var conn = await _context.OpenReadConnectionAsync(ct).ConfigureAwait(false);
@@ -73,7 +74,7 @@ internal sealed class TrackReadRepository
                    t.updated_at_ms AS UpdatedAtMs,
                    t.execution_target_id AS ExecutionTargetId
             FROM tracks t
-            WHERE 1 = 1
+            WHERE (@IncludeSystem OR t.area_id != @MemorySystemAreaId)
             """);
 
         if (!string.IsNullOrWhiteSpace(areaId))
@@ -91,7 +92,7 @@ internal sealed class TrackReadRepository
         var rows = await conn.QueryAsync<TrackRow>(
             new CommandDefinition(
                 sql.ToString(),
-                new { AreaId = areaId },
+                new { AreaId = areaId, IncludeSystem = includeSystem, MemorySystemAreaId = MemoryTrackBinding.SystemAreaId },
                 cancellationToken: ct)).ConfigureAwait(false);
 
         return rows.Select(MapTrack).ToList();

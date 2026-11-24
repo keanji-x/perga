@@ -18,10 +18,11 @@ const GROUP_HEADING: Readonly<Record<MentionKind, string>> = Object.freeze({
   track: 'Tracks',
   block: 'Blocks',
   plugin: 'Plugins',
+  memory: 'Memory',
 });
 
 const ITEM_MARKER: Readonly<Record<MentionKind, string>> = Object.freeze({
-  template: ':', tag: '#', track: '/', block: '>', plugin: '+',
+  template: ':', tag: '#', track: '/', block: '>', plugin: '+', memory: '@',
 });
 
 /**
@@ -43,14 +44,15 @@ type MentionItem = SearchableItem<
   | Readonly<{ category: MentionCategory; more: boolean }>
 >;
 
-function categoryItems(suggestions: readonly MentionSuggestion[]): MentionItem[] {
+function categoryItems(suggestions: readonly MentionSuggestion[], memoryEnabled: boolean): MentionItem[] {
   return ([
     { kind: 'template', label: 'Templates', detail: 'Track starting point', prefix: '@:' },
     { kind: 'plugin', label: 'Plugins', detail: 'Plugin guides', prefix: '@+' },
     { kind: 'tag', label: 'Tags', detail: 'Group of tracks', prefix: '@#' },
     { kind: 'track', label: 'Tracks', detail: 'Full report', prefix: '@/' },
     { kind: 'block', label: 'Blocks', detail: 'Report section', prefix: '@>' },
-  ] satisfies MentionCategory[]).flatMap((category): MentionItem[] => {
+    { kind: 'memory', label: 'Memory', detail: 'Area and global notes', prefix: '@memory:' },
+  ] satisfies MentionCategory[]).filter(category => category.kind !== 'memory' || memoryEnabled).flatMap((category): MentionItem[] => {
     const examples = suggestions.filter((suggestion) => suggestion.kind === category.kind).slice(0, 2);
     return [
       { id: `category:${category.kind}`, label: category.label, auxiliaryData: { category, more: false } },
@@ -89,7 +91,7 @@ export function mentionToken(suggestion: MentionSuggestion): ChatComposerToken {
  * answers `[]`; bare `@` keeps its category entrances with no examples.
  * `bootstrap` is not used by the trigger menu.
  */
-export function createMentionSource(search: MentionSearch, delayMs: number): SearchSource<MentionItem> {
+export function createMentionSource(search: MentionSearch, delayMs: number, memoryEnabled = true): SearchSource<MentionItem> {
   type Attempt = { timer: ReturnType<typeof setTimeout> | null; controller: AbortController };
   let current: Attempt | null = null;
   const cancel = () => {
@@ -112,8 +114,8 @@ export function createMentionSource(search: MentionSearch, delayMs: number): Sea
         attempt.timer = setTimeout(() => {
           attempt.timer = null;
           search(query, attempt.controller.signal).then(
-            (suggestions) => { answer(query === '' ? categoryItems(suggestions) : suggestions.map((suggestion) => itemOf(suggestion))); },
-            () => { answer(query === '' ? categoryItems([]) : []); },
+            (suggestions) => { answer(query === '' ? categoryItems(suggestions, memoryEnabled) : suggestions.map((suggestion) => itemOf(suggestion))); },
+            () => { answer(query === '' ? categoryItems([], memoryEnabled) : []); },
           );
         }, delayMs);
       });
@@ -201,13 +203,13 @@ export function mentionTrigger(source: SearchSource<MentionItem>): ChatComposerT
  * would close the menu mid-query. Each search reads the latest `search`, so a change of
  * area or track applies from the next keystroke.
  */
-export function useMentionTrigger(search: MentionSearch | null): ChatComposerTrigger | undefined {
+export function useMentionTrigger(search: MentionSearch | null, memoryEnabled = true): ChatComposerTrigger | undefined {
   const searchRef = useRef(search);
   searchRef.current = search;
   const enabled = search !== null;
   return useMemo(() => {
     if (!enabled) return undefined;
     const latest: MentionSearch = (query, signal) => searchRef.current?.(query, signal) ?? Promise.resolve([]);
-    return mentionTrigger(createMentionSource(latest, MENTION_SEARCH_DELAY_MS));
-  }, [enabled]);
+    return mentionTrigger(createMentionSource(latest, MENTION_SEARCH_DELAY_MS, memoryEnabled));
+  }, [enabled, memoryEnabled]);
 }

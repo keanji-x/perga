@@ -6,7 +6,8 @@ import { useMemo } from 'react';
 
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
-import { mentionQueryOf,templateMentionSuggestions,type MentionSearch,type MentionSuggestion } from '../../../../core/domain/mentions.ts';
+import { memoryMentionsOperation } from '../../../../core/domain/memory.ts';
+import { memoryMentionSuggestion,mentionQueryOf,templateMentionSuggestions,type MentionSearch,type MentionSuggestion } from '../../../../core/domain/mentions.ts';
 import { tracksInAreaOperation,trackTemplatesOperation,type TrackTemplate } from '../../../../core/domain/track.ts';
 import { runOperation } from './query-operation.ts';
 
@@ -14,6 +15,7 @@ import { runOperation } from './query-operation.ts';
 export function mentionSearchOf(
   transport: ApiTransportPort, unauthorized: UnauthorizedChannel, areaId: string | null, trackId: string | null,
   onTemplates?: (templates: readonly TrackTemplate[]) => void,
+  memoryAreaId: string | null | false = areaId,
 ): MentionSearch {
   return async (typed, signal) => {
     const query = mentionQueryOf(typed);
@@ -49,6 +51,10 @@ export function mentionSearchOf(
             }),
         );
       }
+      if (memoryAreaId !== false && (typed === '' || query.kind === 'memory')) {
+        sources.push(runOperation(transport, { ...memoryMentionsOperation(memoryAreaId, query.text), signal }, unauthorized)
+          .then(mentions => mentions.map(memoryMentionSuggestion)));
+      }
       if (sources.length === 0) return [];
       const results = await Promise.allSettled(sources);
       return results.flatMap((result) => result.status === 'fulfilled' ? [...result.value] : []);
@@ -56,13 +62,13 @@ export function mentionSearchOf(
   };
 }
 
-/** Plugin documentation everywhere; Area report references only for that Area's Planner. */
 export function useMentionSearch(
   transport: ApiTransportPort, unauthorized: UnauthorizedChannel, areaId: string | null, trackId: string | null,
   onTemplates?: (templates: readonly TrackTemplate[]) => void,
+  memoryAreaId: string | null | false = areaId,
 ): MentionSearch {
   return useMemo(
-    () => mentionSearchOf(transport, unauthorized, areaId, trackId, onTemplates),
-    [transport, unauthorized, areaId, trackId, onTemplates],
+    () => mentionSearchOf(transport, unauthorized, areaId, trackId, onTemplates, memoryAreaId),
+    [transport, unauthorized, areaId, trackId, onTemplates, memoryAreaId],
   );
 }

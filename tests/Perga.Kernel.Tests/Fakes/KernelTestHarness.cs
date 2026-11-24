@@ -142,6 +142,27 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
         }
     }
 
+    public Task<bool> IsUserAreaAsync(string areaId, CancellationToken ct)
+    {
+        lock (_gate)
+        {
+            return Task.FromResult(areaId is not ("sys_daily" or MemoryTrackBinding.SystemAreaId) && _areas.ContainsKey(areaId));
+        }
+    }
+
+    // Memory bindings and persisted context receipts are exercised with SQLite.
+    public Task<string?> GetMemoryTrackIdAsync(string scopeKey, CancellationToken ct) =>
+        Task.FromResult<string?>(null);
+
+    public Task<MemoryTrackBinding?> FindMemoryBindingByTrackIdAsync(string trackId, CancellationToken ct) =>
+        Task.FromResult<MemoryTrackBinding?>(null);
+
+    public Task<string?> GetLatestMemoryContextModeAsync(string sessionId, int epoch, CancellationToken ct) =>
+        Task.FromResult<string?>(null);
+
+    public Task DeleteAreaWithMemoryTrackAsync(string areaId, string? expectedMemoryTrackId, CancellationToken ct) =>
+        DeleteAreaAsync(areaId, ct, requireEmpty: true);
+
     public Task<IReadOnlyDictionary<string, AreaTrackCounts>> GetAreaTrackCountsAsync(CancellationToken ct = default)
     {
         lock (_gate)
@@ -331,6 +352,17 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
     {
         lock (_gate)
         {
+            _areas[area.Id] = area;
+            return Task.FromResult(area);
+        }
+    }
+
+    public Task<AreaDto> UpdateAreaAsync(AreaDto area, CancellationToken ct)
+    {
+        lock (_gate)
+        {
+            if (!_areas.ContainsKey(area.Id))
+                throw KernelException.NotFound($"Area '{area.Id}' not found.");
             _areas[area.Id] = area;
             return Task.FromResult(area);
         }

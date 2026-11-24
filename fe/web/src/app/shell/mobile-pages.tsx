@@ -20,7 +20,17 @@ import styles from './mobile-pages.module.css';
 
 const RECENT_PAGE_LIMIT = 24;
 
-export function MobilePages({ areas, areaId, tracks, onOpenTrack, onBack, onNewTrack, onEditArea, onOpenSettings, onCreateArea, readError = null, readLoading = false, onRetryRead = () => undefined }: Readonly<{
+type MobilePrimaryActions = Readonly<{ onOpenToday?: () => void; onOpenMemory?: () => void }>;
+
+export function MobilePrimaryPages({ onOpenToday, onOpenMemory }: MobilePrimaryActions) {
+  if (onOpenToday === undefined && onOpenMemory === undefined) return null;
+  return <MobileList>
+    {onOpenToday !== undefined && <MobileListItem title="Today" startContent={<Icon name="calendar" />} onSelect={onOpenToday} />}
+    {onOpenMemory !== undefined && <MobileListItem title="Memory" startContent={<Icon name="book-open" />} onSelect={onOpenMemory} />}
+  </MobileList>;
+}
+
+export function MobilePages({ areas, areaId, tracks, onOpenTrack, onBack, onNewTrack, onEditArea, onOpenSettings, onCreateArea, onOpenToday, onOpenMemory, readError = null, readLoading = false, onRetryRead = () => undefined }: Readonly<{
   areas: readonly Area[];
   areaId: string | undefined;
   tracks: readonly Track[];
@@ -28,7 +38,7 @@ export function MobilePages({ areas, areaId, tracks, onOpenTrack, onBack, onNewT
   readError?: string | null;
   readLoading?: boolean;
   onRetryRead?: () => void;
-}> & MobileNavigationActions) {
+}> & MobileNavigationActions & MobilePrimaryActions) {
   /* Second layer of defence, as on the sidebar: filtering tracks alone lets the kernel's system area through if an unfiltered list ever reaches here. */
   const visible = userVisibleTracks(tracks, areas);
   const shownAreas = visibleAreas(areas);
@@ -50,6 +60,7 @@ export function MobilePages({ areas, areaId, tracks, onOpenTrack, onBack, onNewT
       <div className={navigationStyles.content}>
       {readError !== null && <ErrorBox message={readError} onRetry={onRetryRead} />}
       {readLoading && <p role="status">Loading workspace…</p>}
+      <MobilePrimaryPages onOpenToday={onOpenToday} onOpenMemory={onOpenMemory} />
       <AstryxSegmentedControl
         className={styles.groups}
         value={group}
