@@ -32,7 +32,7 @@ it.each([1200])('shows readable type entrances and enters each filtered list by 
   await field.click();
   await userEvent.keyboard('@');
   await expect.element(page.getByRole('option', { name: /^Tags/ })).toBeVisible();
-  expect(document.querySelectorAll('[role="option"]')).toHaveLength(11);
+  expect(document.querySelectorAll('[role="option"]')).toHaveLength(12);
   const row = document.querySelector('[data-nc-mention-category="tag"]')!;
   const label = row.children[0].getBoundingClientRect();
   const description = row.children[1].getBoundingClientRect();

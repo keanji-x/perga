@@ -14,7 +14,7 @@ TRACK_PATCH_FAILURES,TRACK_PATCH_TEXT,userVisibleTracks,type Track,
 import { SIDEBAR_SECTION_IDS,moveSidebarGroup,type SidebarGroupId,type SidebarMove,type SidebarSectionId } from '../../../../core/view/sidebar-layout.ts';
 import { DELETE_TRACK_COPY } from '../../features/track/delete-copy.ts';
 import { deleteAreaCopy } from '../../features/area/delete-copy.ts';
-import { Icon } from '../../ui/icon/public.tsx';
+import { Icon, type IconName } from '../../ui/icon/public.tsx';
 import { ListText } from '../../ui/list-typography/public.tsx';
 import { Menu } from '../../ui/menu/public.tsx';
 import { navigationRowPresentation,navigationRowClass as rowLayout } from '../../ui/navigation-row/public.ts';
@@ -27,7 +27,7 @@ import { TypedDeleteBody,useTypedConfirm } from '../../ui/typed-confirm/public.t
 import { useReadReceipts } from '../providers/read-receipts.tsx';
 import { useUiPreferences } from '../providers/ui-preferences.tsx';
 import type { NavTarget } from '../router/navigation.ts';
-import { routeParamFromPath } from '../router/navigation.ts';
+import { pathFor, routeParamFromPath } from '../router/navigation.ts';
 import { AreaGroup } from './area-group.tsx';
 import { ConnectionIndicator } from './connection-indicator.tsx';
 import styles from './shell.module.css';
@@ -42,6 +42,7 @@ export type SidebarProps = Readonly<{
   /** The shell's one membership projection, shared with mobile shortcuts. */
   trackGroups: SidebarTrackGroups;
   currentPath: string;
+  shareScope?: unknown;
   onGo: (target: NavTarget) => void;
   onShareTrack?: (track: Track, origin: DialogOrigin) => void;
   onShareArea?: (area: Area, origin: DialogOrigin) => void;
@@ -82,7 +83,7 @@ export function initialsOf(label: string): string {
  * as well as in the query layer.
  */
 export function Sidebar({
-  areas, executionTargets, tracksByArea, tracks, trackGroups: memberships, currentPath, onGo,
+  areas, executionTargets, tracksByArea, tracks, trackGroups: memberships, currentPath, shareScope = null, onGo,
   onShareTrack, onShareArea, onRequestCreateArea, onRequestEditArea, onDeleteArea, onNewTrack, onSetPinned, onDeleteTrack,
   onOpenSettings, onOpenPlugins, onSignOut, collapsed, onToggleCollapsed,
   userLabel = 'You', nowMs, readError = null, activityError = null,
@@ -156,8 +157,8 @@ export function Sidebar({
   });
 
   const activeTrackId = routeParamFromPath(currentPath, '/track/') ?? null;
-  const primaryNavPresentation = navigationRowPresentation({ kind: 'entry', depth: 0 });
   const todayActive = currentPath === '/';
+  const memoryActive = currentPath === pathFor({ name: 'memory' });
 
   const deletingArea = userAreas.find((area) => area.id === areaConfirm.target);
   const typed = useTypedConfirm(deletingArea?.name ?? '');
@@ -318,6 +319,10 @@ export function Sidebar({
           >
             <Icon name="calendar" size="md" />
           </button>
+          {shareScope === null && <button type="button" data-nc-role="row"
+            className={`${styles.stripItem} ${memoryActive ? styles.stripItemActive : ''}`}
+            aria-current={memoryActive ? 'page' : undefined} aria-label="Memory" title="Memory"
+            onClick={() => onGo({ name: 'memory' })}><Icon name="book-open" /></button>}
           <span className={styles.stripDivider} aria-hidden="true" />
           {/* The rail's colours belong only to the indicator vocabulary and the current
                         location; titles never carry a state colour. */}
@@ -349,21 +354,8 @@ export function Sidebar({
       ) : (
         <>
           <div className={styles.primaryNav} data-nc-primary-nav="">
-            <div className={`${styles.areaRowWrap} ${primaryNavPresentation.className}`}>
-              <button
-                type="button"
-                data-nc-role="row"
-                className={`${styles.areaRow} ${styles.primaryNavRow} ${todayActive ? styles.primaryNavActive : ''} ${rowLayout('content')}`}
-                aria-current={todayActive ? 'page' : undefined}
-                onClick={() => onGo({ name: 'today' })}
-              >
-                <span className={`${styles.primaryNavIcon} ${rowLayout('leading')}`} aria-hidden="true">
-                  <Icon name="calendar" size="md" />
-                </span>
-                <ListText tone={primaryNavPresentation.tone} emphasis={todayActive ? 'selected' : 'medium'} className={styles.areaName} title="Today">Today</ListText>
-              </button>
-            </div>
-
+            <PrimaryNavRow title="Today" icon="calendar" active={todayActive} onSelect={() => onGo({ name: 'today' })} />
+            {shareScope === null && <PrimaryNavRow title="Memory" icon="book-open" active={memoryActive} onSelect={() => onGo({ name: 'memory' })} />}
           </div>
           <div className={styles.sidebarSections}>
           {shownShortcuts.length > 0 && <div className={styles.shortcuts} data-nc-sidebar-scrollport="">
@@ -416,6 +408,8 @@ export function Sidebar({
                   onToggle={(nextExpanded) => preferences.setAreaExpanded(area.id, nextExpanded)}
                   showClosed={preferences.areaShowsClosed(area.id)}
                   onSetShowClosed={(next) => preferences.setAreaShowsClosed(area.id, next)}
+                  memoryEnabled={shareScope === null}
+                  memoryActive={currentPath === pathFor({ name: 'area-memory', areaId: area.id })}
                   disclosureRef={(element) => {
                     if (element === null) areaDisclosureRefs.current.delete(area.id);
                     else areaDisclosureRefs.current.set(area.id, element);
@@ -493,4 +487,15 @@ export function Sidebar({
           value={typed.value} inputRef={typed.inputRef} onChange={typed.setValue} />} />
     </nav>
   );
+}
+
+function PrimaryNavRow({ title, icon, active, onSelect }: Readonly<{ title: string; icon: IconName; active: boolean; onSelect: () => void }>) {
+  const row = navigationRowPresentation({ kind: 'entry', depth: 0 });
+  return <div className={`${styles.areaRowWrap} ${row.className}`}>
+    <button type="button" data-nc-role="row" className={`${styles.areaRow} ${styles.primaryNavRow} ${active ? styles.primaryNavActive : ''} ${rowLayout('content')}`}
+      aria-current={active ? 'page' : undefined} onClick={onSelect}>
+      <span className={`${styles.primaryNavIcon} ${rowLayout('leading')}`} aria-hidden="true"><Icon name={icon} /></span>
+      <ListText tone={row.tone} emphasis={active ? 'selected' : 'medium'} className={styles.areaName} title={title}>{title}</ListText>
+    </button>
+  </div>;
 }

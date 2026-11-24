@@ -455,7 +455,7 @@ public sealed partial class TrackActor
                 var initial = subagent is null ? null : new SessionMessage(
                     $"inp_{task.Id}_{nextRunCount}",
                     subagent.Id,
-                    InstallationAuthor,
+                    SessionMessageAuthors.Owner,
                     $"initial:{task.Id}:{nextRunCount}",
                     RequestIdentity.Hash(new { prompt }),
                     $"trn_{Guid.NewGuid():N}",

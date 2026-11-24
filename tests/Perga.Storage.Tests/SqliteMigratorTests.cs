@@ -65,6 +65,48 @@ public sealed class SqliteMigratorTests
     }
 
     [Fact]
+    public async Task V32PreservesPreviouslyMigratedSessionAttachments()
+    {
+        var directory = Directory.CreateTempSubdirectory("perga-memory-migration-");
+        try
+        {
+            var dbPath = Path.Combine(directory.FullName, "v31.db");
+            var migrator = new SqliteMigrator();
+            var v31 = migrator.Migrations.Where(migration => migration.Version <= 31).ToArray();
+            await new SqliteMigrator(v31).MigrateAsync(dbPath);
+            await using var db = new SqliteConnection(new SqliteConnectionStringBuilder
+                { DataSource = dbPath, Pooling = false, ForeignKeys = true }.ToString());
+            await db.OpenAsync();
+            const string attachment = """[{"id":"img_example","fileName":"image.png","mimeType":"image/png"}]""";
+            await db.ExecuteAsync("""
+                INSERT INTO areas (id, name, created_at_ms, updated_at_ms) VALUES ('area', 'Area', 1, 1);
+                INSERT INTO tracks (id, area_id, cwd, created_at_ms, updated_at_ms) VALUES ('track', 'area', '.', 1, 1);
+                INSERT INTO agent_sessions (id, track_id, provider, created_at_ms, updated_at_ms)
+                VALUES ('session', 'track', 'codex', 1, 1);
+                INSERT INTO session_messages (id, session_id, kind, author_id, request_key, request_hash,
+                    content, delivery, created_at_ms, attachments_json)
+                VALUES ('message', 'session', 'queue', 'owner:installation', 'key', 'hash', 'An image', 'queued', 1, @Attachment);
+                INSERT INTO track_media_refs (track_id, file_name) VALUES ('track', 'image.png');
+                """, new { Attachment = attachment });
+            await db.CloseAsync();
+
+            await migrator.MigrateAsync(dbPath);
+            await db.OpenAsync();
+            Assert.Equal(32, await db.ExecuteScalarAsync<int>("SELECT MAX(version) FROM schema_migrations;"));
+            Assert.Equal(v31[^1].ChecksumSha256, await db.ExecuteScalarAsync<string>(
+                "SELECT checksum_sha256 FROM schema_migrations WHERE version = 31;"));
+            Assert.Equal(attachment, await db.ExecuteScalarAsync<string>("SELECT attachments_json FROM session_messages WHERE id = 'message';"));
+            Assert.Equal("image.png", await db.ExecuteScalarAsync<string>("SELECT file_name FROM track_media_refs WHERE track_id = 'track';"));
+            Assert.Equal(0, await db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM memory_tracks;"));
+            Assert.Empty(await db.QueryAsync("PRAGMA foreign_key_check;"));
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task MigrateAsync_OnFreshDatabase_SetsIncrementalAutoVacuumWalAndCreatesAllFrozenTablesAndIndexes()
     {
         var tempDir = Path.Combine(Path.GetTempPath(), $"perga-migrator-{Guid.NewGuid():N}");
@@ -81,7 +123,8 @@ public sealed class SqliteMigratorTests
             Assert.Equal("0028_task_session_ownership.sql", migrator.Migrations[27].Name);
             Assert.Equal("0029_side_conversation_source.sql", migrator.Migrations[28].Name);
             Assert.Equal("0030_side_conversation_excerpt.sql", migrator.Migrations[29].Name);
-            Assert.Equal("0031_session_message_attachments.sql", migrator.Migrations[^1].Name);
+            Assert.Equal("0031_session_message_attachments.sql", migrator.Migrations[30].Name);
+            Assert.Equal("0032_memory_tracks.sql", migrator.Migrations[^1].Name);
             await migrator.MigrateAsync(dbPath);
 
             // Idempotent re-run on already-initialized v1 database must not create a spurious backup.
@@ -125,6 +168,7 @@ public sealed class SqliteMigratorTests
                 "read_receipt_meta",
                 "read_receipts",
                 "daily_tracks",
+                "memory_tracks",
                 "areas",
                 "tracks",
                 "reports",
@@ -172,6 +216,7 @@ public sealed class SqliteMigratorTests
                 "idx_track_wakes_gc",
                 "idx_track_schedules_due",
                 "idx_track_schedules_track",
+                "idx_memory_tracks_area",
                 "idx_tracks_area",
                 "idx_tracks_parent",
                 "idx_tasks_track_status",

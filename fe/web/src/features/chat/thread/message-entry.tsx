@@ -2,7 +2,7 @@ import mobileStyles from './mobile-composer.module.css';
 import { memo } from 'react';
 import { messageStatusLabel, type ConversationTurn } from '../../../../../core/domain/conversation.ts';
 import { MessageImages } from './message-images.tsx';
-import { OutgoingMessage } from './outgoing-message.tsx';
+import { OutgoingMessage, type MemoryMentionRenderer } from './outgoing-message.tsx';
 import { Reply, type ReplyImageFiles, type ReplyLinkRenderer } from './reply.tsx';
 import styles from './thread.module.css';
 
@@ -30,10 +30,11 @@ type MessageEntryProps = Readonly<{
   replacement: boolean;
   imageFiles: ReplyImageFiles | null;
   renderLink?: ReplyLinkRenderer;
+  renderMemoryMention?: MemoryMentionRenderer;
 }>;
 
 export const MessageEntry = memo(function MessageEntry({ id, entryKey, author, human, imported, text, deliveryError, messageStatus, attachments,
-  opens, gapLabel, queued, edited, replacement, imageFiles, renderLink, mobile, atMs, timestampFormatter,
+  opens, gapLabel, queued, edited, replacement, imageFiles, renderLink, renderMemoryMention, mobile, atMs, timestampFormatter,
 }: MessageEntryProps) {
   return (
     <div
@@ -47,7 +48,7 @@ export const MessageEntry = memo(function MessageEntry({ id, entryKey, author, h
       )}
       {author !== 'agent' ? (
         <>
-          {(text !== '' || !attachments?.length) && <OutgoingMessage speaker={author} text={text} mobile={mobile} queued={queued} edited={edited} replacement={replacement} />}
+          {(text !== '' || !attachments?.length) && <OutgoingMessage speaker={author} text={text} mobile={mobile} queued={queued} edited={edited} replacement={replacement} renderMemoryMention={renderMemoryMention} />}
           {/* Attribution follows the bubble so a real source handoff preserves its position. */}
           {imported && <p className={styles.queuedNote}>Imported history · Unknown author</p>}
           {!imported && author !== 'you' && <p className={styles.queuedNote}>{author === 'human' ? human?.displayName : 'Unknown author'}</p>}

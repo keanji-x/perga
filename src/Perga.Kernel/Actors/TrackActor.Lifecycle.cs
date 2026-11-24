@@ -25,6 +25,8 @@ public sealed partial class TrackActor
         return EnqueueAsync(async _ =>
         {
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
+            if (req.Closed is true)
+                RequireTrackCanClose();
             var now = NowMs();
             var nextTrack = _track;
             var changed = false;
@@ -127,6 +129,7 @@ public sealed partial class TrackActor
                 await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
                 RequireMcpAuthorizationCore(authorization);
                 RequireGovernanceSessionCore(callerSessionId, "track_close");
+                RequireTrackCanClose();
                 if (_closingTrack || _deletingTrack) throw KernelException.Conflict("Track teardown is already in progress.");
                 ct.ThrowIfCancellationRequested();
                 _closingTrack = true;
@@ -152,6 +155,12 @@ public sealed partial class TrackActor
                 return Task.CompletedTask;
             });
 
+    private void RequireTrackCanClose()
+    {
+        if (_memoryBinding is not null)
+            throw KernelException.Forbidden("Memory Planner Tracks cannot be closed.");
+    }
+
     private void CloseTrackRuntimesCore()
     {
         ScheduleWatchRearmCore(null);
@@ -159,12 +168,12 @@ public sealed partial class TrackActor
             ScheduleSessionRuntimeCloseCore(sessionId, revokeToken: true);
     }
 
-    public async Task TeardownAndDeleteTrackAsync(CancellationToken ct = default)
+    public async Task TeardownAndDeleteTrackAsync(CancellationToken ct = default, Func<CancellationToken, Task>? delete = null)
     {
         var reserved = false;
         try
         {
-            await DeleteTrackCoreAsync(reserve: () => reserved = true, committed: () => reserved = false, ct).ConfigureAwait(false);
+            await DeleteTrackCoreAsync(reserve: () => reserved = true, committed: () => reserved = false, ct, delete ?? (token => _store.DeleteTrackAsync(TrackId, token))).ConfigureAwait(false);
         }
         catch
         {
@@ -179,7 +188,7 @@ public sealed partial class TrackActor
         }
     }
 
-    private async Task DeleteTrackCoreAsync(Action reserve, Action committed, CancellationToken ct)
+    private async Task DeleteTrackCoreAsync(Action reserve, Action committed, CancellationToken ct, Func<CancellationToken, Task> delete)
     {
         await EnqueueAsync(async _ =>
         {
@@ -265,7 +274,7 @@ public sealed partial class TrackActor
             }
         }
         await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
-        await _store.DeleteTrackAsync(TrackId, ct).ConfigureAwait(false);
+        await delete(ct).ConfigureAwait(false);
         committed();
 
         if (teardownInfo.Spec is not null && teardownInfo.Driver is not null)

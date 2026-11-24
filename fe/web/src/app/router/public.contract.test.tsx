@@ -85,9 +85,9 @@ describe('route registration', () => {
     expect(await screen.findByText('Preparing today’s Track…')).toBeTruthy();
   });
 
-  function registeredPaths(): (string | undefined)[] {
+  function registeredPaths(shareScope: unknown = null): (string | undefined)[] {
     const { transport } = recordingTransport();
-    const tree = createRouteTree({ prepareReport: prepareReportDocument, transport, unauthorized, client: new QueryClient(), cards: bootTestCardRuntime() });
+    const tree = createRouteTree({ prepareReport: prepareReportDocument, transport, unauthorized, client: new QueryClient(), cards: bootTestCardRuntime(), shareScope });
     return (tree.children as { options: { path?: string } }[]).map((child) => child.options.path);
   }
 
@@ -95,7 +95,12 @@ describe('route registration', () => {
     expect(registeredPaths()).toEqual([
       '/', '/area/$areaId/new', '/track/$trackId', '/settings',
       '/settings/planners', '/settings/appearance', '/settings/about',
+      '/memory', '/area/$areaId/memory',
     ]);
+  });
+
+  it('omits both Memory destinations for a share scope', () => {
+    expect(registeredPaths({ trackId: 'shared' }).filter(path => path?.endsWith('/memory'))).toEqual([]);
   });
 
   it('matches every navigation target to a registered route, and no route is unreachable', () => {
@@ -103,6 +108,8 @@ describe('route registration', () => {
          a compile error; the union does not exist at runtime. */
     const samples: { [K in NavTarget['name']]: Extract<NavTarget, { name: K }> } = {
       'today': { name: 'today' },
+      'memory': { name: 'memory' },
+      'area-memory': { name: 'area-memory', areaId: 'c1' },
 
       'new-track': { name: 'new-track', areaId: 'c1' },
       'track': { name: 'track', trackId: 'w1' },

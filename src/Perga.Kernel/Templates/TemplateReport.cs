@@ -8,7 +8,7 @@ namespace Perga.Kernel.Templates;
 internal static class TemplateReport
 {
     internal static ReportDocument Create(IReportDocEngine engine, IPolicyVm vm, CompiledPolicy? policy,
-        JsonElement inputs, int rev = 0, string summary = "")
+        JsonElement inputs, int rev = 0, string summary = "", IReadOnlyList<ReportBlock>? existingBlocks = null)
     {
         var markdown = "";
         if (policy is not null)
@@ -19,9 +19,11 @@ internal static class TemplateReport
 
         var document = engine.Parse(markdown, docRev: rev, summary: summary);
         // Batched edits can advance block revisions faster than the document revision.
-        var reservedIds = rev > 1 && document.Blocks.Count > 0
+        var reservedIds = (rev > 1 || existingBlocks is { Count: > 0 }) && document.Blocks.Count > 0
             ? document.Blocks.Select(block => block.Id).ToHashSet(StringComparer.Ordinal)
             : null;
+        if (existingBlocks is not null)
+            reservedIds?.UnionWith(existingBlocks.Select(block => block.Id));
         var blocks = document.Blocks.Select(block =>
         {
             var id = block.Id;

@@ -22,6 +22,7 @@ import { usePlannerSwitchControl } from './planner-switch-control.ts';
 
 import { HStack } from '@astryxdesign/core/HStack';
 import { useQuery } from '@tanstack/react-query';
+import { Link } from '@tanstack/react-router';
 import { createRef,useCallback,useEffect,useMemo,useRef,type Dispatch,type SetStateAction } from 'react';
 
 import type { AgentProvider, AskAnswer } from '../../../../core/domain/presentation-types.ts';
@@ -51,7 +52,7 @@ import { ContextRing } from '../../features/chat/thread/context-ring.tsx';
 import { useMentionTrigger } from '../../features/chat/thread/mention-trigger.tsx';
 import { ModelPill,PermissionModePill } from '../../features/chat/thread/model-pill.tsx';
 import { MessageImages } from '../../features/chat/thread/message-images.tsx';
-import { OutgoingMessage } from '../../features/chat/thread/outgoing-message.tsx';
+import { OutgoingMessage, type MemoryMentionRenderer } from '../../features/chat/thread/outgoing-message.tsx';
 import {
 ChatEmpty,
 ChatFooterError,ChatFooterNotice,ChatFooterRemedy,ChatThread,
@@ -80,7 +81,7 @@ import footerStyles from './composer-footer.module.css';
 import { ConversationComposer,ConversationDock } from './conversation-composer.tsx';
 import { ConversationSurface,type EmbeddedConversationPresentation } from './mobile-conversation-surface.tsx';
 import {
-useGo,
+pathFor,useGo,
 useTrackFileNavigation
 } from './navigation.ts';
 
@@ -92,7 +93,7 @@ export function useConversationPane(
   source: ConversationPanelSource,
   target: ReturnType<typeof useConversationPaneTarget>,
   options?: { onPresent?: () => void; embedded?: EmbeddedConversationPresentation; onArchive?: (cardId: string, archived: boolean) => Promise<void>; onTerminal?: () => void; retainCompanion?: boolean; companionVisible?: boolean; reportComposer?: Readonly<{ ready: boolean; returnLabel: string; conversationId: string | null }>; showSideCommand?: boolean; stacked?: boolean; ownedCardIds?: readonly string[]; showTrack?: boolean; resizable?: boolean; inline?: boolean; slotId?: string; enabled?: boolean; presented?: boolean;
-    workspace?: ConversationPanelOptions['workspace'];
+    workspace?: ConversationPanelOptions['workspace']; mobileSheet?: boolean; allowNewConversation?: boolean; title?: string;
     companion?: (group: PaneResizeGroup) => React.ReactNode; onSide?: (source: Conversation, entries: readonly TranscriptEntry[], question: string) => void | boolean },
 ) {
   /* Existing conversation selection survives navigation; unfinished drafts
@@ -114,6 +115,8 @@ export function useConversationPane(
   const panePresented = options?.presented !== false;
   const compactViewport = useCompactViewport();
   const compactComposer = options?.reportComposer !== undefined && compactViewport && options?.enabled !== false && options?.inline !== true;
+  const mobileSheet = compactComposer || (compactViewport && options?.mobileSheet === true);
+  const allowNewConversation = options?.inline !== true && options?.allowNewConversation !== false;
   const receipts = useReadReceipts();
   // Keep the selected conversation and its draft together when its sheet closes.
   // Status priority chooses a destination only when there is no retained owner.
@@ -148,10 +151,17 @@ export function useConversationPane(
 
   const rows = source.rows;
   const store = useConversationStore(transport, unauthorized, scope, routeIntent);
-  /* `@` and the Planner's questions only in the Planner's own row; the track the drawer is on ranks its blocks first. */
+  /* The Planner's row offers Area reports and answers its durable questions. */
   const plannerRow = source.planner !== null && openRowId === source.planner.cardId ? source.planner : null;
+  const memoryAreaId = source.planner?.memoryAreaId === undefined
+    ? source.planner?.areaId ?? null : source.planner.memoryAreaId;
   const mentionTrigger = useMentionTrigger(useMentionSearch(transport, unauthorized,
-    plannerRow === null ? null : plannerRow.areaId, source.scopeId, undefined));
+    plannerRow?.areaId ?? null, source.scopeId, undefined, memoryAreaId), memoryAreaId !== false);
+  const renderMemoryMention = useCallback<MemoryMentionRenderer>((scope, pill) => {
+    if (memoryAreaId === false) return pill;
+    if (scope === 'global') return <Link to={pathFor({ name: 'memory' })}>{pill}</Link>;
+    return memoryAreaId === null ? pill : <Link to={pathFor({ name: 'area-memory', areaId: memoryAreaId })}>{pill}</Link>;
+  }, [memoryAreaId]);
   /* The open conversation's own composer: words and images live in the registry per conversation,
        so closing keeps them and switching shows the other conversation's own. */
   const composerId = scope?.cardId ?? null;
@@ -401,7 +411,7 @@ export function useConversationPane(
       store.manualCompactSupported]);
   const paneCommands = useMemo(() => composerCommands({
     ...conversationCommandBindings({
-      newConversation: options?.inline === true ? undefined : newConversation,
+      newConversation: allowNewConversation ? newConversation : undefined,
       compact: composerView.manualCompactSupported && composerView.historyReady ? composerView.compact : undefined,
       side: !hasSideConversation || !composerView.historyReady ? undefined : sideQuestion,
       sideHidden: options?.showSideCommand === false,
@@ -417,7 +427,7 @@ export function useConversationPane(
       unavailableReason: commandEnabled(command)
         ? undefined : '当前会话状态下不可用',
     }])),
-  }), [options?.inline, options?.showSideCommand, newConversation, composerView.manualCompactSupported, composerView.historyReady,
+  }), [allowNewConversation, options?.showSideCommand, newConversation, composerView.manualCompactSupported, composerView.historyReady,
     composerView.compact, hasSideConversation, sideQuestion, sideSourceReady, onTerminal, compactComposer, plannerCommands, composerStop, plannerSwitchBinding, interrupt, compact, recover, commandEnabled]);
   const draftOnly = options?.workspace?.waiting === true;
   const sessionConfigurationControls = useMemo(() => <>
@@ -441,7 +451,7 @@ export function useConversationPane(
   </>, [existingId, scopeProvider, composerView, permissionControl]);
 
   const composerNode = useMemo(() => existingId === null ? null : (
-            <ConversationComposer target={{ kind: 'card', id: existingId }} layout={compactComposer ? 'mobile' : 'standard'}
+            <ConversationComposer target={{ kind: 'card', id: existingId }} layout={mobileSheet ? 'mobile' : 'standard'}
               /* Read at mount only, which is what makes it one-shot; the flag is dropped
                                when the drawer closes. */
               focusOnMount={panePresented && composerFocusFor === existingId}
@@ -464,7 +474,7 @@ export function useConversationPane(
                 </>
               )}
               /* Renders nothing until the harness has reported a usage frame. */
-              sendAdornment={compactComposer ? undefined : <ContextRing usage={composerView.contextUsage} />}
+              sendAdornment={mobileSheet ? undefined : <ContextRing usage={composerView.contextUsage} />}
               /* `stopping` keeps Stop shown while the interrupt is in flight; `interrupt()`
                                already refuses a second one. */
               onStop={composerStop}
@@ -485,7 +495,7 @@ export function useConversationPane(
                 </HStack>
               )}
             />
-  ), [existingId, compactComposer, panePresented, composerFocusFor, composerFocusRequest, changeComposer, composerView, draftOnly,
+  ), [existingId, mobileSheet, panePresented, composerFocusFor, composerFocusRequest, changeComposer, composerView, draftOnly,
     paneCommands, composerStop, replacing, editingQueue,
     sendText, composerAttachments, mentionTrigger, sessionConfigurationControls]);
 
@@ -498,7 +508,7 @@ export function useConversationPane(
       <ConversationSurface
         embedded={options?.embedded}
         centerEmptyComposer={centeredEmpty}
-        mobileSheet={compactComposer}
+        mobileSheet={mobileSheet}
         focusInput={panePresented && (draftOpen || (open !== null && composerFocusFor === open.id))}
         contextTitle={scope?.title}
         sessionHeader={open === null ? undefined : <ConversationSessionHeader session={store.session} state={store.sessionState}
@@ -518,8 +528,8 @@ export function useConversationPane(
         open={open !== null || draftOpen}
         /* A draft has no name yet, and naming it after the words being typed
            would rename the drawer on every keystroke. */
-        title={options?.inline === true ? `Side conversation · ${providerPresentation(open?.provider ?? draft?.provider ?? scopeProvider).label}`
-          : open !== null ? conversationName(open) : draftOpen ? 'Untitled' : ''}
+        title={options?.title ?? (options?.inline === true ? `Side conversation · ${providerPresentation(open?.provider ?? draft?.provider ?? scopeProvider).label}`
+          : open !== null ? conversationName(open) : draftOpen ? 'Untitled' : '')}
         mobileBackLabel={options?.reportComposer?.returnLabel ?? 'Conversations'}
         onClose={closeDrawer}
         resize={options?.resizable === false ? undefined : drawerResize}
@@ -543,7 +553,7 @@ export function useConversationPane(
               </ChatFooterNotice>
             )}
             {/* Initial submit hands words to the held draft, including refusal; only recovery uses the takeover boolean. */}
-            <ConversationComposer commands={conversationCommands({ terminal: onTerminal, compactViewport: compactComposer, newConversation: options?.inline === true ? undefined : startAnother })} target={{ kind: 'scope', id: sourceScopeId }} layout={compactComposer ? 'mobile' : 'standard'} disabled={creating} sendWaiting={creating} onSend={text => { sendDraft(text); }}
+            <ConversationComposer commands={conversationCommands({ terminal: onTerminal, compactViewport: compactComposer, newConversation: allowNewConversation ? startAnother : undefined })} target={{ kind: 'scope', id: sourceScopeId }} layout={compactComposer ? 'mobile' : 'standard'} disabled={creating} sendWaiting={creating} onSend={text => { sendDraft(text); }}
               focusOnMount={panePresented} focusRequest={composerFocusRequest} focusHandle={draftFocus.handle}
               mentionTrigger={mentionTrigger}
               changeText={setNewConversationText}
@@ -624,7 +634,7 @@ export function useConversationPane(
                           `turnsOf` is the second arm so a reopen whose query was collected still
                           shows the remembered transcript. */}
             {!threadPresented && outgoingPreview !== undefined && <>
-              {outgoingPreview.text !== '' && <OutgoingMessage speaker={outgoingPreview.author} text={outgoingPreview.text} mobile={compactViewport} />}
+              {outgoingPreview.text !== '' && <OutgoingMessage speaker={outgoingPreview.author} text={outgoingPreview.text} mobile={compactViewport} renderMemoryMention={renderMemoryMention} />}
               {outgoingPreview.attachments?.length ? <MessageImages attachments={outgoingPreview.attachments} /> : null}
             </>}
             {!threadPresented && hasPendingMessages && pendingMessages}
@@ -634,6 +644,7 @@ export function useConversationPane(
                 conversation={open}
                 imageFiles={imageFiles}
                 renderLink={chatLinks.renderLink}
+                renderMemoryMention={renderMemoryMention}
                 turns={openTurns} lastSessionTurn={store.lastTurn} sessionTurns={store.sessionTurns}
                 runtimeStatus={store.runtimeStatus}
                 runtimeTasks={store.runtimeTasks}

@@ -2,10 +2,11 @@
 // Report addresses come from the server; plugin reference text is built from catalog metadata.
 
 import type { TrackTemplate } from './track.js';
+import { parseMemoryMentionAddress, type MemoryMention } from './memory.js';
 
 import type { ApiAbortSignal } from '../api/types.js';
 
-export type MentionKind = 'tag' | 'track' | 'block' | 'plugin' | 'template';
+export type MentionKind = 'tag' | 'track' | 'block' | 'plugin' | 'template' | 'memory';
 
 /** One row of the `@` menu and the chip it becomes. */
 export type MentionSuggestion = Readonly<{
@@ -46,12 +47,27 @@ function prefixKind(char: string): MentionKind | null {
 }
 
 export function mentionQueryOf(typed: string): MentionQuery {
+  const memory = /^(?:memory|mem)(?:[:：](.*)|$)/i.exec(typed);
+  if (memory !== null) return { kind: 'memory', text: memory[1] ?? '' };
   const kind = prefixKind(typed.charAt(0));
   return kind === null ? { kind, text: typed } : { kind, text: typed.slice(1) };
 }
 
 /** A persisted message keeps the server address, not the composer's transient chip metadata. */
-export type SentMentionPart = Readonly<{ text: string; label: string | null }>;
+export type SentMentionPart = Readonly<{ text: string; label: string | null; memoryScope?: MemoryMention['scope'] }>;
+
+function memoryLabel({ scope, key }: Pick<MemoryMention, 'scope' | 'key'>): string {
+  const title = scope === 'area' ? 'Area' : 'Global';
+  return key === null ? `${title} Memory` : `${title} · ${key}`;
+}
+
+export function memoryMentionSuggestion(mention: MemoryMention): MentionSuggestion {
+  return {
+    id: `memory:${mention.ref}`, kind: 'memory', label: mention.title,
+    detail: mention.key === null ? null : [memoryLabel(mention), mention.summary].filter(Boolean).join(' · '),
+    chip: memoryLabel(mention), insert: mention.insert,
+  };
+}
 
 function sentMentionLabel(address: string): string | null {
   if (/^template:[^\s`\p{Cc}]+$/u.test(address)) return address.slice(9);
@@ -89,13 +105,14 @@ function parseMentionParts(text: string, onMention?: (address: string) => void):
     if (closing === null) continue;
     let address = text.slice(start, closing.index);
     if (address.startsWith(' ') && address.endsWith(' ')) address = address.slice(1, -1);
-    const label = sentMentionLabel(address);
+    const memory = parseMemoryMentionAddress(address);
+    const label = memory === null ? sentMentionLabel(address) : memoryLabel(memory);
     if (label === null) continue;
     onMention?.(address);
     openings.lastIndex = fences.lastIndex;
     if (opening.index > end) parts.push({ text: text.slice(end, opening.index), label: null });
     end = fences.lastIndex;
-    parts.push({ text: text.slice(opening.index, end), label });
+    parts.push({ text: text.slice(opening.index, end), label, ...(memory === null ? {} : { memoryScope: memory.scope }) });
   }
   if (end < text.length) parts.push({ text: text.slice(end), label: null });
   return parts;

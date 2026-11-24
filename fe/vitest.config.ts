@@ -17,6 +17,10 @@ const setupFiles = [
 // Use the real repository documents in route regressions. Vite checks both the
 // plain filename and its ?raw module ID; leave all other filesystem rules intact.
 const readmeFixtureFiles = Object.freeze(['.', '../README.md', '../README.md?raw']);
+const memoryWidgetFixtureFiles = Object.freeze([
+  '../templates/memory/widgets/entries.html',
+  '../templates/memory/widgets/entries.html?raw',
+]);
 
 export default defineConfig({
   resolve: {
@@ -40,7 +44,7 @@ export default defineConfig({
       },
       {
         resolve: { alias: markdownRuntimeAliases() },
-        server: { fs: { allow: [...readmeFixtureFiles] } },
+        server: { fs: { allow: [...readmeFixtureFiles, ...memoryWidgetFixtureFiles] } },
         test: {
           name: 'web-dom',
           environment: 'jsdom',
@@ -51,7 +55,7 @@ export default defineConfig({
       },
       {
         resolve: { alias: markdownRuntimeAliases() },
-        server: { fs: { allow: [...readmeFixtureFiles] } },
+        server: { fs: { allow: [...readmeFixtureFiles, ...memoryWidgetFixtureFiles] } },
         optimizeDeps: {
           // Browser projects are isolated Vite configs and do not inherit the
           // root list, so use the complete roster rather than a partial copy.
@@ -70,6 +74,27 @@ export default defineConfig({
             instances: [{ browser: 'chromium' }],
             /* `prefers-reduced-motion` is a media feature only the driver can emulate, so it is exposed as a command. */
             commands: {
+              readMemoryWidget: async ({ iframe }, view: 'pinned' | 'topics', filter?: string) => {
+                const frame = iframe.frameLocator(`iframe[title="${view}"]`);
+                await frame.locator('.entry').first().waitFor({ state: 'attached' });
+                if (filter !== undefined) {
+                  await frame.getByRole('searchbox').fill(filter);
+                  await frame.locator('summary').filter({ hasText: filter }).click();
+                  await frame.locator('details[open] .markdown').waitFor({ state: 'attached' });
+                }
+                return frame.locator('#entries').evaluate(list => ({
+                  entries: list.querySelectorAll('.entry').length,
+                  expanded: list.querySelectorAll('article .markdown, details[open] .markdown').length,
+                  headings: Array.from(list.querySelectorAll('.entry:not([hidden]) .title'), title => title.textContent),
+                  refs: Array.from(list.querySelectorAll('.entry:not([hidden]) .ref'), ref => ref.textContent),
+                  strong: list.querySelector('strong')?.textContent,
+                  body: list.querySelector('.markdown')?.textContent,
+                  sources: list.querySelector('footer')?.textContent,
+                  links: Array.from(list.querySelectorAll('a'), link => ({ href: link.href, target: link.target, rel: link.rel })),
+                  injectedElements: list.querySelectorAll('img, script').length,
+                  scrollable: list.scrollHeight > list.clientHeight,
+                }));
+              },
               mockConversationMedia: async ({ page }, path: string, pngBase64?: string) => {
                 const url = `**${path}`;
                 await page.unroute(url);

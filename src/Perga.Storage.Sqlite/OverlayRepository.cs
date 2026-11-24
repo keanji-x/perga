@@ -47,7 +47,7 @@ internal sealed class OverlayRepository
                    COALESCE((SELECT MAX(m2.created_at_ms) FROM mails m2 WHERE m2.to_track_id = tr.id), tr.updated_at_ms)
                ) AS UpdatedAtMs
         FROM tracks tr
-        WHERE (@IncludeClosed = 1 OR tr.closed_at_ms IS NULL)
+        WHERE tr.area_id != @MemorySystemAreaId AND (@IncludeClosed = 1 OR tr.closed_at_ms IS NULL)
         ORDER BY tr.updated_at_ms DESC, tr.id ASC;
         """;
 
@@ -57,21 +57,22 @@ internal sealed class OverlayRepository
     {
         _context.EnsureInitialized();
         await using var conn = await _context.OpenReadConnectionAsync(ct).ConfigureAwait(false);
+        var filter = new { IncludeClosed = includeClosed ? 1 : 0, MemorySystemAreaId = MemoryTrackBinding.SystemAreaId };
         var rows = await conn.QueryAsync<TrackOverlayRow>(
             new CommandDefinition(
                 ListTrackOverlaysSql,
-                new { IncludeClosed = includeClosed ? 1 : 0 },
+                filter,
                 cancellationToken: ct)).ConfigureAwait(false);
 
         var watermarks = (await conn.QueryAsync<OverlayWatermarkRow>(new CommandDefinition("""
             SELECT s.track_id AS TrackId, s.id AS SessionId, MAX(t.completed_at_ms) AS LastNotifiableTurnAtMs
             FROM agent_sessions s JOIN session_turns t ON t.session_id = s.id
             JOIN tracks tr ON tr.id = s.track_id
-            WHERE s.archived_at_ms IS NULL AND NOT EXISTS (SELECT 1 FROM tasks tk WHERE tk.session_id = s.id AND tk.owns_session = 1 AND LOWER(tk.status) IN ('pending', 'running', 'verifying'))
+            WHERE tr.area_id != @MemorySystemAreaId AND s.archived_at_ms IS NULL AND NOT EXISTS (SELECT 1 FROM tasks tk WHERE tk.session_id = s.id AND tk.owns_session = 1 AND LOWER(tk.status) IN ('pending', 'running', 'verifying'))
               AND LOWER(t.status) IN ('completed', 'failed') AND t.completed_at_ms IS NOT NULL
               AND (@IncludeClosed = 1 OR tr.closed_at_ms IS NULL)
             GROUP BY s.track_id, s.id ORDER BY s.id;
-            """, new { IncludeClosed = includeClosed ? 1 : 0 }, cancellationToken: ct)).ConfigureAwait(false))
+            """, filter, cancellationToken: ct)).ConfigureAwait(false))
             .ToLookup(r => r.TrackId);
         return rows.Select(r => new TrackOverlayDto(r.TrackId, r.AreaId,
             r.ClosedAtMs is null && r.IsWorking != 0,

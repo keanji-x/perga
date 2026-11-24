@@ -11,7 +11,7 @@ import { retireFollowedThoughts,SYSTEM_PRESENTATION_LABELS,systemInputPresentati
 
 /** Authored fixtures and canonical human/system metadata use the same renderer contract. */
 type AuthoredSource = Exclude<Extract<WireDisplayItem['source'], { kind: 'human' | 'system' | 'removed' }>, { kind: 'system' }>
-  | (Extract<WireDisplayItem['source'], { kind: 'system' }> & { statusLabel?: string });
+  | (Extract<WireDisplayItem['source'], { kind: 'system' }> & { statusLabel?: string; quiet?: true });
 export type ConversationDisplayItem = Readonly<{ cursor: ConversationCursor; turnId?: string; source: AuthoredSource
   | { kind: 'entry'; entry: TranscriptEntry; observation?: LiveReplyTranscriptRow & { id: number; outcome: boolean } } }>;
 export type ConversationPage = Readonly<{
@@ -65,6 +65,14 @@ export function sessionItemsPageDtoToConversationPage(
     const interrupted = item.turnId === null && payloadObj.archived === true
       && payloadObj.status === 'interrupted' && payloadObj.reason === 'session_reset';
     const itemTurn = item.turnId === null ? {} : { turnId: item.turnId };
+    const memoryMode = payloadObj.kind === 'memory_context' || item.kind === 'memory_context' ? payloadObj.mode : null;
+    if (memoryMode === 'loaded' || memoryMode === 'refreshed' || memoryMode === 'cleared') {
+      const label = `Memory context ${memoryMode}`;
+      return [{ cursor: itemCursor, ...itemTurn, source: {
+        kind: 'system', observation_id: String(item.id), presentation: 'system', statusLabel: label, quiet: true,
+        text: typeof payloadObj.content === 'string' ? payloadObj.content : label, created_at_ms: item.createdAtMs,
+      } }];
+    }
     if (item.kind === 'system') return [{ cursor: itemCursor, ...itemTurn, source: {
       kind: 'system', observation_id: typeof payloadObj.wakeId === 'string' ? payloadObj.wakeId : String(item.id),
       presentation: 'system', text: typeof payloadObj.content === 'string' ? payloadObj.content
@@ -201,6 +209,7 @@ export function buildConversationTranscript(
     if (source.kind === 'system') return [{ id: `system:${source.observation_id}`, author: 'system',
       label: source.statusLabel ?? SYSTEM_PRESENTATION_LABELS[source.presentation], text: source.text,
       atMs: source.created_at_ms, displayPosition: cursor.position,
+      ...(source.quiet === true ? { quiet: true } : {}),
       ...(turnId === undefined ? {} : { sessionTurnId: turnId }) }];
     const authorId = source.author.user_id;
     const authoredByViewer = authorId === viewerId || (viewerIsOwner && authorId === DEPLOYMENT_OWNER_USER_ID);

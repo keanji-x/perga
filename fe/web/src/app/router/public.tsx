@@ -3,6 +3,7 @@ import { createDraftBackOwner,DraftBackLifecycle,type DraftBackContext } from '.
 // transport and QueryClient; also the composition point for route-owned surfaces.
 
 import type { QueryClient } from '@tanstack/react-query';
+import type { TrackAggregateSnapshotDto } from '../../../../core/api/perga-v1.ts';
 import {
 createRootRouteWithContext,createRoute,createRouter,
 useLocation,
@@ -25,8 +26,9 @@ import { createUiPreferences,UiPreferencesProvider,type UiPreferences } from '..
 import { prefetchAreaList } from '../providers/workspace-queries.ts';
 import { AppShell,MobileConversationProvider } from '../shell/public.tsx';
 import { DailyTodayRoute } from './daily-planner.tsx';
+import { MemoryRoute } from './memory-route.tsx';
 import {
-useGo,
+pathFor,useGo,useRouteParam,
 validateTrackSearch,type TrackSearch
 } from './navigation.ts';
 import { NewTrackDraftProvider } from './new-track-drafts.tsx';
@@ -48,17 +50,25 @@ export type AppRouterDeps = Readonly<{
   recentFiles?: RecentFileHistory;
   uiPreferences?: UiPreferences;
   submittedStorage?: () => Storage;
+  shareScope?: unknown;
 }>;
 
 function renderNothing(): null { return null; }
 
 export function createRouteTree(deps: AppRouterDeps): AnyRoute {
   const { transport, unauthorized, client, cards, prepareReport } = deps;
+  const shareScope = deps.shareScope ?? null;
   const recentFiles = deps.recentFiles ?? createRecentFileHistory();
   const preferences = deps.uiPreferences ?? createUiPreferences();
+  const renderMemoryTrack = (snapshot: TrackAggregateSnapshotDto, areaId: string | null) =>
+    <TrackRouteBody key={snapshot.track.id} snapshot={snapshot} memoryAreaId={areaId}
+      trackPath={pathFor(areaId === null ? { name: 'memory' } : { name: 'area-memory', areaId })}
+      showWorkspaceIsolation={false} workspaceWaiting={snapshot.workspacePreparation != null}
+      prepareReport={prepareReport} transport={transport} unauthorized={unauthorized}
+      cardRuntime={cards} recentFiles={recentFiles} />;
   const rootRoute = createRootRouteWithContext<DraftBackContext>()({ component: () => (
     <UiPreferencesProvider preferences={preferences}><ReadReceiptsProvider transport={transport} unauthorized={unauthorized}>
-      <TrackViewProvider><DraftBackLifecycle><MobileConversationProvider><ShellRoute submittedStorage={deps.submittedStorage} transport={transport} unauthorized={unauthorized} /></MobileConversationProvider></DraftBackLifecycle></TrackViewProvider>
+      <TrackViewProvider><DraftBackLifecycle><MobileConversationProvider><ShellRoute submittedStorage={deps.submittedStorage} transport={transport} unauthorized={unauthorized} shareScope={shareScope} /></MobileConversationProvider></DraftBackLifecycle></TrackViewProvider>
     </ReadReceiptsProvider></UiPreferencesProvider>
   ) });
 
@@ -74,15 +84,32 @@ export function createRouteTree(deps: AppRouterDeps): AnyRoute {
       return <DailyTodayRoute transport={transport} unauthorized={unauthorized} selectedDate={day}
         onOpenTrack={(trackId) => go({ name: 'track', trackId })}
         onSelectDate={(nextDay) => go({ name: 'today', day: nextDay })}
-        renderTrack={(detail, evidence, panelContent, intro, supervisor, center) => <TrackRouteBody showWorkspaceIsolation={false} center={center} reportHeader={supervisor} reportEmpty={null} mobileReportIntro={intro} panelContent={panelContent} reportEvidence={evidence} key={detail.track.id} prepareReport={prepareReport} transport={transport} unauthorized={unauthorized}
+        renderTrack={(detail, evidence, panelContent, intro, supervisor, center) => <TrackRouteBody memoryAreaId={shareScope === null ? null : false} showWorkspaceIsolation={false} center={center} reportHeader={supervisor} reportEmpty={null} mobileReportIntro={intro} panelContent={panelContent} reportEvidence={evidence} key={detail.track.id} prepareReport={prepareReport} transport={transport} unauthorized={unauthorized}
           snapshot={detail} cardRuntime={cards} recentFiles={recentFiles} />} />;
+    },
+  });
+
+  const globalMemoryRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/memory',
+    validateSearch: validateTrackSearch,
+    component: () => <MemoryRoute transport={transport} unauthorized={unauthorized} areaId={null} renderTrack={renderMemoryTrack} />,
+  });
+
+  const areaMemoryRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/area/$areaId/memory',
+    validateSearch: validateTrackSearch,
+    component: function AreaMemoryRoute() {
+      const areaId = useRouteParam('/area/');
+      return areaId === undefined ? null : <MemoryRoute key={areaId} transport={transport} unauthorized={unauthorized} areaId={areaId} renderTrack={renderMemoryTrack} />;
     },
   });
 
   const newTrackRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: '/area/$areaId/new',
-    component: () => <NewTrackRoute transport={transport} unauthorized={unauthorized} />,
+    component: () => <NewTrackRoute transport={transport} unauthorized={unauthorized} memoryEnabled={shareScope === null} />,
   });
 
   const trackRoute = createRoute({
@@ -90,6 +117,7 @@ export function createRouteTree(deps: AppRouterDeps): AnyRoute {
     path: '/track/$trackId',
     validateSearch: (search: Record<string, unknown>): TrackSearch => validateTrackSearch(search),
     component: () => <TrackRoute
+      memoryEnabled={shareScope === null}
       prepareReport={prepareReport}
       transport={transport}
       unauthorized={unauthorized}
@@ -127,6 +155,7 @@ export function createRouteTree(deps: AppRouterDeps): AnyRoute {
   return rootRoute.addChildren([
     indexRoute, newTrackRoute, trackRoute, settingsRoute,
     plannersRoute, appearanceRoute, aboutRoute,
+    ...(shareScope === null ? [globalMemoryRoute, areaMemoryRoute] : []),
   ]);
 }
 
@@ -145,13 +174,14 @@ export function createAppRouter(deps: AppRouterDeps) {
   return router;
 }
 
-function ShellRoute({ transport, unauthorized, submittedStorage }: { submittedStorage?: () => Storage; transport: ApiTransportPort; unauthorized: UnauthorizedChannel }) {
+function ShellRoute({ transport, unauthorized, submittedStorage, shareScope }: { submittedStorage?: () => Storage; transport: ApiTransportPort; unauthorized: UnauthorizedChannel; shareScope: unknown }) {
   const go = useGo();
   const currentUser = useCurrentUser();
   const signOut = useSignOut();
   return (
     <ConversationProvider submittedStorage={submittedStorage}><NewTrackDraftProvider submittedStorage={submittedStorage}>
       <AppShell
+        shareScope={shareScope}
         transport={transport}
         unauthorized={unauthorized}
         onOpenSettings={() => go({ name: 'settings' })}

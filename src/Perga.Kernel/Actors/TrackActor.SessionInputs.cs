@@ -30,7 +30,7 @@ public sealed partial class TrackActor
             receiptIdentity["Attachments"] = JsonSerializer.SerializeToNode(images.Select(image => image.Attachment.Id));
         var hash = RequestIdentity.Hash(receiptIdentity);
         var intent = new SessionCreateIntent(TrackId, key, hash,
-            principal is InteropPrincipal.Session identity ? identity.SessionId : InstallationAuthor);
+            principal is InteropPrincipal.Session identity ? identity.SessionId : SessionMessageAuthors.Owner);
         var caller = principal ?? new InteropPrincipal.Human();
         Interlocked.Increment(ref _inFlightExternalOps);
         try
@@ -250,7 +250,6 @@ public sealed partial class TrackActor
             throw KernelException.Conflict("This request key was already used with different input.");
     }
 
-    private const string InstallationAuthor = "owner:installation";
     private ISessionMessageStore Messages => _store.SessionMessages ?? throw new InvalidOperationException("Session message storage is unavailable.");
 
     private async Task<(IReadOnlyList<QueuedSessionMessageDto> Queue, IReadOnlyList<string> Handoffs)> ReadMessageQueueCoreAsync(

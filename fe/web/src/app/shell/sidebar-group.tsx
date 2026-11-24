@@ -107,7 +107,7 @@ export function SidebarGroup({ title, label, icon, expanded, onToggle, level, ma
 }
 
 /** One list implementation: retain the active row, limit/reveal, navigate, pin and delete. */
-export function SidebarTrackGroup({ emptyState, tracks, activeTrackId, areas, markCurrent = true, onGo, nowMs, onSetPinned, onDelete, isUnread, trackActions, trackRowRef, ...group }: GroupProps & RowProps & {
+export function SidebarTrackGroup({ emptyState, tracks, activeTrackId, areas, navigation, markCurrent = true, onGo, nowMs, onSetPinned, onDelete, isUnread, trackActions, trackRowRef, ...group }: GroupProps & RowProps & {
   emptyState: EmptyStateSchema | null;
   tracks: readonly Track[];
   activeTrackId: string | null;
@@ -115,6 +115,7 @@ export function SidebarTrackGroup({ emptyState, tracks, activeTrackId, areas, ma
   areas?: readonly Area[];
   /** Only the canonical Area row owns aria-current; shortcuts still retain the active Track past the limit. */
   markCurrent?: boolean;
+  navigation?: ReactNode;
 }) {
   const [showAll, setShowAll] = useState(false);
   const toggleRef = useRef<HTMLButtonElement | null>(null);
@@ -130,6 +131,7 @@ export function SidebarTrackGroup({ emptyState, tracks, activeTrackId, areas, ma
   }, [showAll]);
 
   return <SidebarGroup {...group}>
+    {navigation}
     {tracks.length === 0 && emptyState !== null && <div className={styles.emptyArea}><EmptyState {...emptyState} variant="compact" /></div>}
     {tracks.length > 0 && <div className={`${styles.trackList} ${rowLayout('guide')}`}>
       {rows.map((track) => <TrackRow

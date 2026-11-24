@@ -32,6 +32,8 @@ export const PLANNER_OPEN_STATE_KEY = 'ncOpenPlanner';
 
 export type NavTarget =
   | Readonly<{ name: 'today'; day?: string }>
+  | Readonly<{ name: 'memory' }>
+  | Readonly<{ name: 'area-memory'; areaId: string }>
   /** Starting a track is a route, not a dialog; the track row is minted on submit, not on entering the route. */
   | Readonly<{ name: 'new-track'; areaId: string }>
   /** `blockId` rides in the hash; `cardId`/`filePath`/`panel`/`from` become `?card=`/`?file=`/`?panel=`/`?from=`. */
@@ -54,10 +56,17 @@ export type NavTarget =
 
 export type GoOptions = Readonly<{ replace?: boolean }>;
 
+type TrackRouteAlias = Readonly<{ trackId: string; path: string }>;
+
+function trackPath(trackId: string, alias?: TrackRouteAlias): string {
+  return alias?.trackId === trackId ? alias.path : pathFor({ name: 'track', trackId });
+}
 
 export function pathFor(target: NavTarget): string {
   switch (target.name) {
     case 'today': return '/';
+    case 'memory': return '/memory';
+    case 'area-memory': return `/area/${encodeURIComponent(target.areaId)}/memory`;
     case 'new-track': return `/area/${encodeURIComponent(target.areaId)}/new`;
     case 'track': return `/track/${encodeURIComponent(target.trackId)}`;
     case 'settings': return '/settings';
@@ -68,13 +77,14 @@ export function pathFor(target: NavTarget): string {
 }
 
 /** Navigation is a `<button>` plus this callback, never `<a href>`: mixing the two forks Enter/Space activation semantics. */
-export function useGo(): (target: NavTarget, options?: GoOptions) => void {
+export function useGo(alias?: TrackRouteAlias): (target: NavTarget, options?: GoOptions) => void {
   const navigate = useNavigate();
   const router = useRouter();
   const views = useTrackViews();
   const owner = useDraftBackOwner();
   return useCallback((target: NavTarget, options?: GoOptions) => {
     const execute = (source: NavigationSource) => {
+      const destination = target.name === 'track' ? trackPath(target.trackId, alias) : pathFor(target);
       // The block anchor rides in the hash: the track route remounts per track, so
       // state set before `go` would be discarded by the very move it describes.
       const hash = target.name === 'track' ? target.blockId : undefined;
@@ -90,7 +100,7 @@ export function useGo(): (target: NavTarget, options?: GoOptions) => void {
       const resumeTrack = target.name === 'track' && target.blockId === undefined
         && target.cardId === undefined && target.filePath === undefined
         && target.panel === undefined && target.openPlanner !== true
-        && !source.pathname.endsWith(`/track/${encodeURIComponent(target.trackId)}`);
+        && !source.pathname.endsWith(destination);
       if (resumeTrack) {
         Object.assign(search, views?.get(target.trackId)?.search);
       }
@@ -104,7 +114,7 @@ export function useGo(): (target: NavTarget, options?: GoOptions) => void {
         ? { ncNewTrackPushed: switchingDraft ? source.state.ncNewTrackPushed === true : options?.replace !== true }
         : undefined;
       void navigate({
-        to: pathFor(target),
+        to: destination,
         hash,
         search,
         replace: switchingDraft || options?.replace,
@@ -115,7 +125,7 @@ export function useGo(): (target: NavTarget, options?: GoOptions) => void {
     };
     if (owner === null) execute(router.parseLocation((router.history as RouterHistory).location));
     else owner.go(execute);
-  }, [navigate, router, views, owner]);
+  }, [navigate, router, views, owner, alias]);
 }
 
 function isNewTrackPath(path: string): boolean {
@@ -380,8 +390,10 @@ export function sameTrackSearch(
   location: SearchCarrier & Readonly<{ pathname: string }>,
   expectedTrackId: string,
   patch: TrackSearchPatch,
+  alias?: TrackRouteAlias,
 ): TrackSearch | null {
-  if (routeParamFromPath(location.pathname, '/track/') !== expectedTrackId) return null;
+  if (routeParamFromPath(location.pathname, '/track/') !== expectedTrackId &&
+    !(alias?.trackId === expectedTrackId && location.pathname === alias.path)) return null;
   const current = trackSearchFromLocation(location);
   return buildTrackSearch({
     card: Object.hasOwn(patch, 'card') ? patch.card : current.card,
@@ -398,12 +410,12 @@ export type GoSameTrack = (
 ) => void;
 
 /** The keeping exit: edit one whitelisted field of the current track's URL and leave the others, including the hash. */
-export function useGoSameTrack(): GoSameTrack {
+export function useGoSameTrack(alias?: TrackRouteAlias): GoSameTrack {
   const navigate = useNavigate();
-  const go = useGo();
+  const go = useGo(alias);
   const location = useRouterState({ select: (state) => state.location });
   return useCallback((expectedTrackId, patch, options) => {
-    const search = sameTrackSearch(location, expectedTrackId, patch);
+    const search = sameTrackSearch(location, expectedTrackId, patch, alias);
     if (search === null) {
       go(
         {
@@ -415,14 +427,14 @@ export function useGoSameTrack(): GoSameTrack {
       return;
     }
     void navigate({
-      to: pathFor({ name: 'track', trackId: expectedTrackId }),
+      to: trackPath(expectedTrackId, alias),
       search,
       // `true` keeps the current value; `undefined` would clear it.
       hash: true,
       state: true,
       replace: options?.replace,
     });
-  }, [go, location, navigate]);
+  }, [go, location, navigate, alias]);
 }
 
 export function hasPanelPushedMarker(state: unknown): boolean {
@@ -441,47 +453,47 @@ export type TrackFileNavigation = Readonly<{
 }>;
 
 /** The first file pushes a marked entry, file-to-file replaces it, close pops the marked entry; a cold deep link has no marker, so close replaces in place. */
-export function useTrackFileNavigation(): TrackFileNavigation {
+export function useTrackFileNavigation(alias?: TrackRouteAlias): TrackFileNavigation {
   const history = useRouter().history as RouterHistory;
   const navigate = useNavigate();
-  const go = useGo();
+  const go = useGo(alias);
   const location = useRouterState({ select: (state) => state.location });
 
   const openFile = useCallback((expectedTrackId: string, path: string) => {
     const search = sameTrackSearch(location, expectedTrackId, {
       file: path, card: undefined, panel: undefined,
-    });
+    }, alias);
     if (search === null) {
       go({ name: 'track', trackId: expectedTrackId, filePath: path });
       return;
     }
     const switching = filePathFromLocation(location) !== null;
     void navigate({
-      to: pathFor({ name: 'track', trackId: expectedTrackId }),
+      to: trackPath(expectedTrackId, alias),
       search,
       hash: true,
       replace: switching,
       state: switching ? true : { ncFilePushed: true },
     });
-  }, [go, location, navigate]);
+  }, [go, location, navigate, alias]);
 
   const closeFile = useCallback((expectedTrackId: string) => {
     if (hasFilePushedMarker(location.state) && history.canGoBack()) {
       history.back();
       return;
     }
-    const search = sameTrackSearch(location, expectedTrackId, { file: undefined });
+    const search = sameTrackSearch(location, expectedTrackId, { file: undefined }, alias);
     if (search === null) {
       go({ name: 'track', trackId: expectedTrackId }, { replace: true });
       return;
     }
     void navigate({
-      to: pathFor({ name: 'track', trackId: expectedTrackId }),
+      to: trackPath(expectedTrackId, alias),
       search,
       hash: true,
       replace: true,
     });
-  }, [go, history, location, navigate]);
+  }, [go, history, location, navigate, alias]);
 
   return { openFile, closeFile };
 }
@@ -496,49 +508,49 @@ export type TrackPanelNavigation = Readonly<{
  * the marked entry; a cold `?panel=` deep link has no marker, so close replaces
  * (an unconditional `back()` would walk out of the app).
  */
-export function useTrackPanelNavigation(): TrackPanelNavigation {
+export function useTrackPanelNavigation(alias?: TrackRouteAlias): TrackPanelNavigation {
   // `useRouter()` is registered as `AnyRouter`, so its `history` widens to
   // `any`; naming the type back is what keeps `canGoBack`/`back` checked.
   const history = useRouter().history as RouterHistory;
   const navigate = useNavigate();
-  const go = useGo();
+  const go = useGo(alias);
   const location = useRouterState({ select: (state) => state.location });
 
   const openPanel = useCallback((expectedTrackId: string, panel: MobilePanel) => {
     const search = sameTrackSearch(location, expectedTrackId, {
       panel, card: undefined, file: undefined,
-    });
+    }, alias);
     if (search === null) {
       go({ name: 'track', trackId: expectedTrackId, panel });
       return;
     }
     const switching = panelFromLocation(location) !== null;
     void navigate({
-      to: pathFor({ name: 'track', trackId: expectedTrackId }),
+      to: trackPath(expectedTrackId, alias),
       search,
       hash: true,
       replace: switching,
       state: switching ? true : { ncPanelPushed: true },
     });
-  }, [go, location, navigate]);
+  }, [go, location, navigate, alias]);
 
   const closePanel = useCallback((expectedTrackId: string) => {
     if (hasPanelPushedMarker(location.state) && history.canGoBack()) {
       history.back();
       return;
     }
-    const search = sameTrackSearch(location, expectedTrackId, { panel: undefined });
+    const search = sameTrackSearch(location, expectedTrackId, { panel: undefined }, alias);
     if (search === null) {
       go({ name: 'track', trackId: expectedTrackId }, { replace: true });
       return;
     }
     void navigate({
-      to: pathFor({ name: 'track', trackId: expectedTrackId }),
+      to: trackPath(expectedTrackId, alias),
       search,
       hash: true,
       replace: true,
     });
-  }, [go, history, location, navigate]);
+  }, [go, history, location, navigate, alias]);
 
   return { openPanel, closePanel };
 }

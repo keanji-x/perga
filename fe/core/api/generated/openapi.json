@@ -2709,6 +2709,85 @@
         "required": [],
         "type": "object"
       },
+      "MemoryMentionDto": {
+        "properties": {
+          "insert": {
+            "type": "string"
+          },
+          "key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pinned": {
+            "type": "boolean"
+          },
+          "ref": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "insert",
+          "key",
+          "pinned",
+          "ref",
+          "scope",
+          "summary",
+          "title"
+        ],
+        "type": "object"
+      },
+      "MemoryPlannerTrackDto": {
+        "properties": {
+          "areaId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "leadSessionId": {
+            "type": "string"
+          },
+          "scopeKey": {
+            "type": "string"
+          },
+          "trackId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "areaId",
+          "leadSessionId",
+          "scopeKey",
+          "trackId"
+        ],
+        "type": "object"
+      },
       "MessageAttachmentDto": {
         "properties": {
           "contentType": {
@@ -6525,6 +6604,130 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HostListDirResultDto"
+                }
+              }
+            },
+            "description": "HTTP 200"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Error mapped by Host exception handling or request guards"
+          }
+        }
+      }
+    },
+    "/api/v1/memory/areas/{areaId}/track": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "areaId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryPlannerTrackDto"
+                }
+              }
+            },
+            "description": "HTTP 200"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Error mapped by Host exception handling or request guards"
+          }
+        }
+      }
+    },
+    "/api/v1/memory/global/track": {
+      "post": {
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryPlannerTrackDto"
+                }
+              }
+            },
+            "description": "HTTP 200"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Error mapped by Host exception handling or request guards"
+          }
+        }
+      }
+    },
+    "/api/v1/memory/mentions": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "areaId",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/MemoryMentionDto"
+                  },
+                  "type": "array"
                 }
               }
             },

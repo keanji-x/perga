@@ -19,7 +19,7 @@ public sealed partial class PergaKernelService
     {
         try
         {
-            foreach (var track in await _store.ListTracksAsync(includeClosed: false, ct: CancellationToken.None).ConfigureAwait(false))
+            foreach (var track in await _store.ListTracksIncludingSystemAsync(includeClosed: false, ct: CancellationToken.None).ConfigureAwait(false))
             {
                 try
                 {

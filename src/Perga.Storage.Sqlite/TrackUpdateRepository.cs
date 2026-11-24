@@ -238,7 +238,7 @@ internal sealed class TrackUpdateRepository
                 if (reportSeed is not null)
                     await _reportRepository.SaveReportInternalAsync(conn, tx, track.Id, reportSeed.Document,
                         reportSeed.CompressedBlocks, reportSeed.AuthorSessionId, "Seed template report", reportSeed.Event,
-                        innerCt, requireBlankReport: true).ConfigureAwait(false);
+                        innerCt, requireBlankReport: reportSeed.RequireBlankReport, requireNextRevision: true).ConfigureAwait(false);
                 return settled;
             },
             ct);

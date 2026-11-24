@@ -36,7 +36,9 @@ export type ConversationPanelSource = ConversationCreationSource & Readonly<{
      * Candidate inserts are server-owned and the composer sends them verbatim.
      * asks/answerAsk serve durable open asks above the composer; role supplies the Area admin state. */
     planner: Readonly<{
-      cardId: string; areaId: string; asks: readonly OpenAsk[];
+      cardId: string; areaId: string | null; asks: readonly OpenAsk[];
+      /** Use the report Area by default, null for Global, false in a share. */
+      memoryAreaId?: string | null | false;
       answerAsk: (askId: import('../../../../core/domain/activity.ts').AskId, answers: readonly AskAnswer[]) => Promise<void>;
       commands?: (stop: (() => void) | undefined) => CommandBindings;
     }> | null;

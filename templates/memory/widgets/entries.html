@@ -1,0 +1,387 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Memory entries</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f4f2ec;
+      --paper: #fdfcfa;
+      --surface: #fff;
+      --text: #1e2026;
+      --text-2: #525763;
+      --text-3: #868b98;
+      --hairline: #e4e0d8;
+      --accent: #3955b8;
+      --font-sans: system-ui, sans-serif;
+      --font-serif: Georgia, serif;
+      --font-mono: ui-monospace, monospace;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #24272e;
+        --paper: #2c3039;
+        --surface: #2c3039;
+        --text: #eef0f4;
+        --text-2: #b5bac7;
+        --text-3: #828898;
+        --hairline: #3b404d;
+        --accent: #86a0ff;
+      }
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      overflow: hidden;
+      background: transparent;
+      color: var(--text);
+      font: 14px/1.55 var(--font-sans);
+      overflow-wrap: anywhere;
+    }
+
+    #app {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      min-height: 48px;
+      padding: 4px 2px;
+    }
+
+    #entries {
+      grid-row: 2;
+      overflow: auto;
+      overscroll-behavior-y: contain;
+    }
+
+    #filter {
+      width: min(100%, 22rem);
+      margin: 2px 0 10px;
+      padding: 6px 10px;
+      border: 1px solid var(--hairline);
+      border-radius: 6px;
+      background: var(--surface);
+      color: var(--text);
+      font: inherit;
+    }
+
+    .entry { padding: 12px 2px; }
+    .entry:not([hidden]) ~ .entry:not([hidden]) { border-top: 1px solid var(--hairline); }
+
+    summary {
+      cursor: pointer;
+      color: var(--text-2);
+    }
+
+    summary:hover .title { color: var(--accent); }
+
+    :focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: -1px;
+    }
+
+    .title {
+      margin: 0;
+      color: var(--text);
+      font: 600 17px/1.35 var(--font-serif);
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      gap: 4px 8px;
+      margin-top: 5px;
+      color: var(--text-2);
+      font-size: 11px;
+    }
+
+    summary .meta, summary .dek { margin-inline-start: 1em; }
+
+    .ref, .tag {
+      padding: 1px 6px;
+      border: 1px solid var(--hairline);
+      border-radius: 4px;
+      background: var(--paper);
+    }
+
+    .ref { font-family: var(--font-mono); }
+
+    .dek {
+      display: block;
+      margin-top: 6px;
+      color: var(--text-2);
+      font-size: 13px;
+    }
+
+    .markdown { margin-top: 10px; }
+    .markdown > * { margin: 0 0 8px; }
+    .markdown > :last-child { margin-bottom: 0; }
+    .markdown :is(h1, h2, h3, h4, h5, h6) { font: 600 1.05em/1.4 var(--font-serif); }
+    .markdown :is(h1, h2) { font-size: 1.2em; }
+    .markdown :is(ul, ol) { padding-inline-start: 1.5em; }
+    .markdown a { color: var(--accent); }
+
+    .markdown code {
+      background: var(--paper);
+      font: .9em var(--font-mono);
+    }
+
+    .markdown p code, .markdown li code { padding: 1px 3px; }
+
+    .markdown pre {
+      overflow: auto;
+      padding: 8px 10px;
+      border: 1px solid var(--hairline);
+      border-radius: 5px;
+      background: var(--paper);
+    }
+
+    footer {
+      margin-top: 8px;
+      color: var(--text-2);
+      font-size: 11px;
+    }
+
+    #empty {
+      margin: 8px 0;
+      color: var(--text-2);
+      font-size: 13px;
+    }
+  </style>
+</head>
+<body>
+  <main id="app">
+    <input id="filter" type="search" aria-label="Filter notes and topics" placeholder="Filter notes and topics" hidden>
+    <div id="entries" role="region" aria-label="Memory entries">
+      <p id="empty" role="status" hidden></p>
+    </div>
+  </main>
+  <script>
+    const WIDGET_MAX_HEIGHT = 2400;
+    const app = document.getElementById("app");
+    const list = document.getElementById("entries");
+    const filter = document.getElementById("filter");
+    const empty = document.getElementById("empty");
+    const day = new Intl.DateTimeFormat("en", { dateStyle: "medium", timeZone: "UTC" });
+    const tokens = {
+      bg: "--bg", paper: "--paper", surface: "--surface", text: "--text", text2: "--text-2",
+      text3: "--text-3", hairline: "--hairline", accent: "--accent",
+      fontSans: "--font-sans", fontSerif: "--font-serif", fontMono: "--font-mono",
+    };
+    let rows = [];
+    let emptyMessage = "";
+
+    app.style.maxHeight = WIDGET_MAX_HEIGHT + "px";
+
+    function reportHeight() {
+      list.tabIndex = list.scrollHeight > list.clientHeight ? 0 : -1;
+      window.parent.postMessage({ type: "perga:resize", height: Math.ceil(app.getBoundingClientRect().height) }, "*");
+    }
+
+    function applyTheme({ scheme, tokens: values }) {
+      const style = document.documentElement.style;
+      if (scheme === "light" || scheme === "dark") style.colorScheme = scheme;
+      for (const [key, property] of Object.entries(tokens)) {
+        if (values?.[key]) style.setProperty(property, values[key]);
+      }
+    }
+
+    function element(tag, text, className) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text != null) node.textContent = text;
+      return node;
+    }
+
+    function safeLink(value) {
+      if (!/^https?:\/\//i.test(value)) return null;
+      try {
+        const url = new URL(value);
+        return url.protocol === "https:" || url.protocol === "http:" ? url.href : null;
+      } catch {
+        return null;
+      }
+    }
+
+    function appendInline(parent, text, allowLinks = true) {
+      // DOM text nodes escape all input. Only recognized Markdown creates elements.
+      const pattern = /(?<tick>\x60{1,2})(?<code>[^\x60\n]+)\k<tick>(?!\x60)|\[(?<label>[^\[\]\n]+)\]\((?<url>(?:[^()\s]|\([^()\s]*\))+)\)|\*\*\*(?<both>[^*\n]+)\*\*\*|\*\*(?<boldStar>[^*\n]+)\*\*|__(?<boldUnderscore>[^_\n]+)__|\*(?<italicStar>[^*\n]+)\*|(?<!\w)_(?<italicUnderscore>[^_\n]+)_(?!\w)/g;
+      let offset = 0;
+      for (const match of text.matchAll(pattern)) {
+        parent.append(text.slice(offset, match.index));
+        const { code, label, url, both, boldStar, boldUnderscore, italicStar, italicUnderscore } = match.groups;
+        if (code !== undefined) {
+          parent.append(element("code", code));
+        } else if (label !== undefined) {
+          const href = allowLinks ? safeLink(url) : null;
+          if (href === null) {
+            parent.append(match[0]);
+          } else {
+            const link = element("a");
+            link.href = href;
+            // The host sends Memory data to this frame, so a link must not navigate it.
+            link.target = "_blank";
+            link.rel = "noopener noreferrer";
+            appendInline(link, label, false);
+            parent.append(link);
+          }
+        } else if (both !== undefined) {
+          const strong = element("strong");
+          strong.append(element("em", both));
+          parent.append(strong);
+        } else {
+          const bold = boldStar ?? boldUnderscore;
+          parent.append(bold === undefined ? element("em", italicStar ?? italicUnderscore) : element("strong", bold));
+        }
+        offset = match.index + match[0].length;
+      }
+      parent.append(text.slice(offset));
+    }
+
+    function markdown(body) {
+      const content = element("div", null, "markdown");
+      const lines = body.split(/\r\n?|\n/);
+      const fencePattern = /^ {0,3}(\x60{3,}|~{3,}).*$/;
+      const headingPattern = /^ {0,3}(#{1,6})[ \t]+(.*)$/;
+      const listPattern = /^ {0,3}([-+*]|\d{1,9}[.)])[ \t]+(.*)$/;
+      let index = 0;
+      while (index < lines.length) {
+        const line = lines[index++];
+        if (!line.trim()) continue;
+        const fence = line.match(fencePattern)?.[1];
+        if (fence !== undefined) {
+          const closing = new RegExp("^ {0,3}" + fence[0] + "{" + fence.length + ",}[ \t]*$");
+          const code = [];
+          while (index < lines.length && !closing.test(lines[index])) code.push(lines[index++]);
+          if (index < lines.length) index++;
+          const pre = element("pre");
+          pre.append(element("code", code.join("\n")));
+          content.append(pre);
+          continue;
+        }
+        const heading = line.match(headingPattern);
+        if (heading) {
+          const node = element("h" + heading[1].length);
+          appendInline(node, heading[2].replace(/[ \t]+#+[ \t]*$/, ""));
+          content.append(node);
+          continue;
+        }
+        const item = line.match(listPattern);
+        if (item) {
+          const ordered = /^\d/.test(item[1]);
+          const items = element(ordered ? "ol" : "ul");
+          if (ordered) items.start = parseInt(item[1], 10);
+          let current = item;
+          do {
+            const li = element("li");
+            appendInline(li, current[2]);
+            items.append(li);
+            current = lines[index]?.match(listPattern);
+            if (!current || /^\d/.test(current[1]) !== ordered) break;
+            index++;
+          } while (true);
+          content.append(items);
+          continue;
+        }
+        const paragraph = [line];
+        while (index < lines.length && lines[index].trim() &&
+          !fencePattern.test(lines[index]) && !headingPattern.test(lines[index]) && !listPattern.test(lines[index])) {
+          paragraph.push(lines[index++]);
+        }
+        const node = element("p");
+        appendInline(node, paragraph.join("\n"));
+        content.append(node);
+      }
+      return content;
+    }
+
+    function header(entry, pinned) {
+      const node = element(pinned ? "header" : "summary");
+      node.append(element(pinned ? "h2" : "span", entry.title, "title"));
+      const meta = element("span", null, "meta");
+      meta.append(element("code", entry.ref, "ref"));
+      for (const tag of entry.tags) meta.append(element("span", tag, "tag"));
+      const timestamp = new Date(entry.updatedAtMs);
+      if (Number.isFinite(timestamp.valueOf())) {
+        const date = element("time", day.format(timestamp));
+        date.dateTime = timestamp.toISOString();
+        meta.append(date);
+      }
+      node.append(meta);
+      if (entry.summary && !entry.repeatedSummary) node.append(element("span", entry.summary, "dek"));
+      return node;
+    }
+
+    function renderEntry(entry, pinned, open) {
+      const node = element(pinned ? "article" : "details", null, "entry");
+      node.append(header(entry, pinned));
+      let rendered = false;
+      function showBody() {
+        if (rendered) return;
+        rendered = true;
+        node.append(markdown(entry.body));
+        if (entry.sources.length) node.append(element("footer", "Sources · " + entry.sources.join(" · ")));
+      }
+      if (pinned) {
+        showBody();
+      } else {
+        node.open = open;
+        if (open) showBody();
+        node.addEventListener("toggle", () => {
+          if (node.open) showBody();
+          reportHeight();
+        });
+      }
+      return node;
+    }
+
+    function applyFilter() {
+      const query = filter.hidden ? "" : filter.value.trim().toLowerCase();
+      let matches = 0;
+      for (const { node, searchable } of rows) {
+        node.hidden = !searchable.includes(query);
+        if (!node.hidden) matches++;
+      }
+      empty.hidden = matches > 0;
+      const message = rows.length === 0 ? emptyMessage : "No matching notes or topics.";
+      if (empty.textContent !== message) empty.textContent = message;
+      reportHeight();
+    }
+
+    function render({ kind, entries }) {
+      const pinned = kind === "pinned";
+      const open = new Set(rows.filter(({ node }) => node.open).map(({ ref }) => ref));
+      const scrollTop = list.scrollTop;
+      filter.hidden = pinned || entries.length <= 6;
+      emptyMessage = pinned ? "No pinned entries." : "No notes or topics.";
+      rows = entries.map(entry => ({
+        ref: entry.ref,
+        node: renderEntry(entry, pinned, open.has(entry.ref)),
+        searchable: [entry.title, entry.ref, entry.summary, ...entry.tags].join(" ").toLowerCase(),
+      }));
+      const cards = document.createDocumentFragment();
+      for (const { node } of rows) cards.append(node);
+      list.replaceChildren(cards, empty);
+      applyFilter();
+      list.scrollTop = scrollTop;
+    }
+
+    filter.addEventListener("input", () => {
+      list.scrollTop = 0;
+      applyFilter();
+    });
+    new ResizeObserver(reportHeight).observe(app);
+    window.addEventListener("message", event => {
+      if (event.source !== window.parent) return;
+      const message = event.data;
+      if (message?.type === "perga:theme") applyTheme(message);
+      if (message?.type === "perga:data" && Array.isArray(message.data?.entries)) render(message.data);
+    });
+    window.parent.postMessage({ type: "perga:ready" }, "*");
+  </script>
+</body>
+</html>

@@ -3,12 +3,19 @@ import { describe,expect,it } from 'vitest';
 import {
 extractTemplateMentions,
 mentionQueryOf,
+memoryMentionSuggestion,
 selectedReadyTemplateId,
 sentMentionParts,
 templateMentionSuggestions
 } from './mentions.js';
 
 describe('mentionQueryOf', () => {
+  it.each([
+    ['memory', ''], ['mem', ''], ['memory:', ''], ['memory:ci', 'ci'], ['memory：ci', 'ci'],
+  ])('searches the Memory category for %s', (typed, text) => {
+    expect(mentionQueryOf(typed)).toEqual({ kind: 'memory', text });
+  });
+
   it.each([
     ['#dep', { kind: 'tag', text: 'dep' }],
     ['/dep', { kind: 'track', text: 'dep' }],
@@ -46,6 +53,23 @@ describe('mentionQueryOf', () => {
 });
 
 describe('sentMentionParts', () => {
+  it('labels individual and whole-scope memory mentions and keeps malformed references literal', () => {
+    const valid = [
+      { text: '@`memory:area/ci`', label: 'Area · ci', memoryScope: 'area' },
+      { text: '@`memory:global/language`', label: 'Global · language', memoryScope: 'global' },
+      { text: '@`memory:area`', label: 'Area Memory', memoryScope: 'area' },
+      { text: '@`memory:global`', label: 'Global Memory', memoryScope: 'global' },
+    ];
+    for (const part of valid) expect(sentMentionParts(part.text)).toEqual([part]);
+    for (const text of ['@`memory:area/../ci`', '@`memory:global/`', '@`memory:global/CI`']) {
+      expect(sentMentionParts(text)).toEqual([{ text, label: null }]);
+    }
+    expect(memoryMentionSuggestion({ ref: 'area/ci', scope: 'area', key: 'ci', title: 'CI policy',
+      summary: 'Run lint first.', pinned: true, insert: valid[0].text })).toMatchObject({
+      kind: 'memory', label: 'CI policy', chip: 'Area · ci', insert: valid[0].text,
+    });
+  });
+
   it('recovers tags, reports and block addresses from persisted text', () => {
     expect(sentMentionParts('a @`tag:部署` @`area/reports/Deploy notes.md#b_1a2b`!')).toEqual([
       { text: 'a ', label: null }, { text: '@`tag:部署`', label: '#部署' },

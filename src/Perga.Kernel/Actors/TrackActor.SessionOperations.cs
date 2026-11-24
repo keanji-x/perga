@@ -73,7 +73,7 @@ public sealed partial class TrackActor
         if (request.Content is not null) ValidateRequestKey(request.RequestKey!);
         var hash = HashMessage(request.Content, request.Mode, request.TurnId, request.ExpectedEpoch, images);
         var attachments = images.Select(image => image.Attachment).ToArray();
-        var author = caller is InteropPrincipal.Session sessionAuthor ? sessionAuthor.SessionId : InstallationAuthor;
+        var author = caller is InteropPrincipal.Session sessionAuthor ? sessionAuthor.SessionId : SessionMessageAuthors.Owner;
         var startedAt = _timeProvider.GetTimestamp();
         var delivery = await EnqueueAsync(async actor =>
         {
@@ -458,6 +458,8 @@ public sealed partial class TrackActor
 
         var systemPrompt = overrideSystemPrompt ?? BuildDefaultSystemPromptCore(session);
         if (session.SystemPrompt is { } customPrompt) systemPrompt += "\n\n" + customPrompt;
+        if (session.IsLead && _memoryBinding is { } memoryBinding)
+            systemPrompt += "\n\n" + MemoryPlannerPrompt(memoryBinding.AreaId);
         return new HarnessLaunchSpec(
             Provider: session.Provider,
             Model: session.Model,

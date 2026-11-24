@@ -14,6 +14,15 @@ export function fixtureReport(markdown = '', docRev = 1): ReportDocumentDto {
   return { docRev, summary: '', leadingComment: '', blocks: markdown === '' ? [] : [{ id: 'prose', rev: docRev, kind: 'prose', markdown, payload: null }] };
 }
 
+export function fixtureWidgetReport(sections: ReadonlyArray<{ title: string; use: string; view: string }>): ReportDocumentDto {
+  return {
+    ...fixtureReport(),
+    blocks: sections.flatMap(({ title, use, view }) => [
+      { id: `${view}-heading`, rev: 1, kind: 'prose', markdown: `# ${title}`, payload: null },
+      { id: view, rev: 1, kind: 'widget', markdown: '', payload: { use, view } },
+    ]),
+  };
+}
 export function fixtureSnapshot(track: TrackDto, sessions: AgentSessionDto[] = [], report = fixtureReport()): TrackAggregateSnapshotDto {
   return { track, report, sessions, tasks: [], openAsks: [] };
 }

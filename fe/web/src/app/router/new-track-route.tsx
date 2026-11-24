@@ -30,9 +30,9 @@ import { useWorkspace, type Workspace } from '../providers/workspace-queries.ts'
 import { useGo,useRouteParam } from './navigation.ts';
 import { useNewTrackSession,type NewTrackSession,type TrackCreationRequest } from './new-track-drafts.tsx';
 
-type RouteProps = { transport: ApiTransportPort; unauthorized: UnauthorizedChannel;  };
+type RouteProps = { transport: ApiTransportPort; unauthorized: UnauthorizedChannel; memoryEnabled?: boolean };
 
-export function NewTrackRoute({ transport, unauthorized, }: RouteProps) {
+export function NewTrackRoute({ transport, unauthorized, memoryEnabled = true }: RouteProps) {
   const areaId = useRouteParam('/area/');
   const workspace = useWorkspace(transport, unauthorized);
   const area = workspace.areas.find((candidate) => candidate.id === areaId);
@@ -44,10 +44,11 @@ export function NewTrackRoute({ transport, unauthorized, }: RouteProps) {
     if (area !== undefined) return null; // The provider initializes the Area draft after this read.
     return <ErrorBox message="This area could not be found." onRetry={() => go({ name: 'today' })} />;
   }
-  return <NewTrackEditor key={session.area.id} transport={transport} unauthorized={unauthorized} workspace={workspace} session={session} store={store} />;
+  return <NewTrackEditor key={session.area.id} transport={transport} unauthorized={unauthorized} memoryEnabled={memoryEnabled}
+    workspace={workspace} session={session} store={store} />;
 }
 
-function NewTrackEditor({ transport, unauthorized, workspace, session, store }: RouteProps & {
+function NewTrackEditor({ transport, unauthorized, memoryEnabled, workspace, session, store }: RouteProps & {
   workspace: Workspace;
   session: NewTrackSession;
   store: ReturnType<typeof useNewTrackSession>['store'];
@@ -81,7 +82,8 @@ function NewTrackEditor({ transport, unauthorized, workspace, session, store }: 
   const go = useGo();
   const listDirectory = listDirectoryForTarget(targetId);
   /* The sentence is the new track's Planner's first message, and that Planner reads this Area's reports; there is no track yet to rank first. */
-  const mentionTrigger = useMentionTrigger(useMentionSearch(transport, unauthorized, areaId, null));
+  const mentionTrigger = useMentionTrigger(useMentionSearch(transport, unauthorized, areaId, null, undefined,
+    memoryEnabled ? areaId : false), memoryEnabled);
 
   const providerSeeded = useRef(false);
   /* Seed once; later explicit choices may select an unavailable provider. */

@@ -80,7 +80,8 @@ public sealed partial class TrackActor : IAsyncDisposable
         EventHub eventHub,
         KernelOptions options,
         TimeProvider timeProvider,
-        IScheduleCronEvaluator? scheduleCronEvaluator)
+        IScheduleCronEvaluator? scheduleCronEvaluator,
+        IMemoryContextProvider? memoryContext = null)
     {
         TrackId = trackId;
         _terminalLifecycle = new TerminalLifecycle(this);
@@ -91,6 +92,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         _turnRunner = new SessionTurnRunner(this);
         _store = store;
         _scheduleCronEvaluator = scheduleCronEvaluator;
+        _memoryContext = memoryContext ?? NoMemoryContextProvider.Instance;
         _flowFileStore = new TrackFlowFileStore(options);
         _reportEngine = reportEngine;
         _policyVm = policyVm;
@@ -185,7 +187,8 @@ public sealed partial class TrackActor : IAsyncDisposable
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
             await RefreshForeignWorkspacePreparationCoreAsync(ct).ConfigureAwait(false);
             StartWorkspacePreparationCore(retry: false);
-            return BuildSnapshotCore();
+            var track = await ProjectMemoryDataCoreAsync(ct).ConfigureAwait(false);
+            return BuildSnapshotCore(track);
         }, ct);
     }
 
@@ -210,7 +213,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
             var unreadMails = await _store.ListMailsAsync(TrackId, unreadOnly: true, ct).ConfigureAwait(false);
             return new TrackStatusDto(
-                Track: PresentTrackCore(),
+                Track: TemplatePresentation.Project(await ProjectMemoryDataCoreAsync(ct).ConfigureAwait(false), _policy, _policyVm),
                 Sessions: OrderedSessionsCore(),
                 Tasks: _taskCoordinator.Snapshot(),
                 OpenAsks: _interactions.OpenAsks(),
@@ -280,8 +283,8 @@ public sealed partial class TrackActor : IAsyncDisposable
         string summary,
         string body,
         Func<MailDto, Action?, CancellationToken, Task> deliverToTargetTrack,
-        CancellationToken ct, string? replyToMailId, InteropPrincipal.Session? authorization = null)
-        => _interactions.SendCrossTrackMailAsync(callerSessionId, toTrackId, summary, body, deliverToTargetTrack, ct, replyToMailId, authorization);
+        CancellationToken ct, string? replyToMailId, InteropPrincipal.Session? authorization = null, bool requireLead = false)
+        => _interactions.SendCrossTrackMailAsync(callerSessionId, toTrackId, summary, body, deliverToTargetTrack, ct, replyToMailId, authorization, requireLead);
 
     internal Task ReceiveMailAsync(MailDto mail, CancellationToken ct = default, Action? authorizeDelivery = null)
         => _interactions.ReceiveMailAsync(mail, ct, authorizeDelivery);
@@ -353,6 +356,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                        ?? throw KernelException.NotFound($"Track '{TrackId}' not found.");
 
         _track = snapshot.Track;
+        await HydrateMemoryScopeCoreAsync(ct).ConfigureAwait(false);
         _executionTargetId = _track.ExecutionTargetId;
         _reports.Hydrate(snapshot.Report);
         _templateSnapshotSource = snapshot.TemplateSnapshotSource;
@@ -450,10 +454,10 @@ public sealed partial class TrackActor : IAsyncDisposable
 
     private TrackDto PresentTrackCore() => TemplatePresentation.Project(_track, _policy, _policyVm);
 
-    private TrackAggregateSnapshot BuildSnapshotCore()
+    private TrackAggregateSnapshot BuildSnapshotCore(TrackDto track)
     {
         return new TrackAggregateSnapshot(
-            Track: PresentTrackCore(),
+            Track: TemplatePresentation.Project(track, _policy, _policyVm),
             Report: _reports.Document,
             Tasks: _taskCoordinator.Snapshot(),
             Sessions: OrderedSessionsCore(),

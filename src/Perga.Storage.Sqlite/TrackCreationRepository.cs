@@ -41,12 +41,24 @@ internal sealed class TrackCreationRepository
         return _context.Writer.EnqueueAsync<string>(
             async (conn, tx, innerCt) =>
             {
+                var memory = creation.MemoryBinding;
+                if (memory is not null)
+                {
+                    if (memory.AreaId is { } areaId && !await SqliteTrackStore.IsUserAreaAsync(conn, tx, areaId, innerCt).ConfigureAwait(false))
+                        throw Perga.Kernel.KernelException.NotFound($"Area '{areaId}' not found.");
+                    var existing = await SqliteTrackStore.ReadMemoryTrackIdAsync(conn, tx, memory.ScopeKey, innerCt).ConfigureAwait(false);
+                    if (existing is not null) return existing;
+                }
+
                 if (dailyDate is not null)
                 {
                     var existing = await conn.ExecuteScalarAsync<string?>(new CommandDefinition(
                         "SELECT track_id FROM daily_tracks WHERE date = @Date;", new { Date = dailyDate }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
                     if (existing is not null) return existing;
-                    ArgumentNullException.ThrowIfNull(systemArea);
+                }
+
+                if (systemArea is not null)
+                {
                     await AreaRepository.UpsertAreaInternalAsync(conn, tx, systemArea, innerCt).ConfigureAwait(false);
                     await conn.ExecuteAsync(new CommandDefinition("UPDATE areas SET is_system = 1 WHERE id = @Id;",
                         new { systemArea.Id }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
@@ -152,6 +164,10 @@ internal sealed class TrackCreationRepository
                     await conn.ExecuteAsync(new CommandDefinition(
                         "INSERT INTO daily_tracks (date, track_id, created_at_ms) VALUES (@Date, @Id, @CreatedAtMs);",
                         new { Date = dailyDate, track.Id, track.CreatedAtMs }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
+                if (memory is not null)
+                    await conn.ExecuteAsync(new CommandDefinition(
+                        "INSERT INTO memory_tracks (scope_key, area_id, track_id, created_at_ms) VALUES (@ScopeKey, @AreaId, @TrackId, @CreatedAtMs);",
+                        new { memory.ScopeKey, memory.AreaId, TrackId = track.Id, track.CreatedAtMs }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
                 await SessionRepository.UpsertSessionInternalAsync(conn, tx, initialLeadSession, innerCt).ConfigureAwait(false);
                 foreach (var task in tasks)
                     await _taskRepository.UpsertTaskInternalAsync(conn, tx, task, innerCt).ConfigureAwait(false);

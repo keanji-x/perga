@@ -49,6 +49,7 @@ function renderSidebar(props: Partial<Props> = {}, preferences = createUiPrefere
           tracksByArea={merged.tracksByArea ?? new Map([['c1', tracks]])}
           tracks={tracks}
           currentPath={merged.currentPath ?? '/'}
+          shareScope={merged.shareScope}
           onGo={merged.onGo ?? vi.fn()}
           onRequestCreateArea={merged.onRequestCreateArea ?? vi.fn()}
           onRequestEditArea={merged.onRequestEditArea ?? vi.fn()}
@@ -78,6 +79,38 @@ async function requestAreaDelete(): Promise<void> {
   await userEvent.click(screen.getByRole('button', { name: 'Area actions for Work' }));
   await userEvent.click(screen.getByRole('menuitem', { name: 'Delete area' }));
 }
+
+it('shows Global Memory next to Today and toggles the Area row from its menu', async () => {
+  const onGo = vi.fn();
+  const { update } = renderSidebar({ currentPath: '/memory', onGo });
+  const global = screen.getByRole('button', { name: 'Memory', current: 'page' });
+  expect(global.closest('[data-nc-primary-nav]')?.textContent).toBe('TodayMemory');
+  await userEvent.click(global);
+  expect(onGo).toHaveBeenLastCalledWith({ name: 'memory' });
+
+  const menu = () => userEvent.click(screen.getByRole('button', { name: 'Area actions for Work' }));
+  await menu();
+  await userEvent.click(await screen.findByRole('menuitem', { name: 'Show memory' }));
+  update({ currentPath: '/area/c1/memory' });
+  const areaMemory = screen.getByRole('button', { name: 'Memory', current: 'page' });
+  await userEvent.click(areaMemory);
+  expect(onGo).toHaveBeenLastCalledWith({ name: 'area-memory', areaId: 'c1' });
+  expect(areaMemory.querySelector('[data-nc-status-ring], [data-nc-unread]')).toBeNull();
+
+  await menu();
+  await userEvent.click(await screen.findByRole('menuitem', { name: 'Hide memory' }));
+  expect(screen.getAllByRole('button', { name: 'Memory' })).toHaveLength(1);
+});
+
+it('hides both Memory entries and the visibility action in a shared workspace', async () => {
+  const preferences = createUiPreferences();
+  preferences.setAreaShowsMemory('c1', true);
+  renderSidebar({ currentPath: '/area/c1/memory', shareScope: { areaId: 'c1' } }, preferences);
+  expect(screen.queryByRole('button', { name: 'Memory' })).toBeNull();
+  await userEvent.click(screen.getByRole('button', { name: 'Area actions for Work' }));
+  await screen.findByRole('menuitem', { name: 'Show closed' });
+  expect(screen.queryByRole('menuitem', { name: /memory/i })).toBeNull();
+});
 
 describe('workspace read feedback', () => {
   it('keeps loading and read failures in the connection disclosure and retries the read', async () => {

@@ -1,6 +1,8 @@
 using Dapper;
 using Microsoft.Data.Sqlite;
 using Perga.Contracts;
+using Perga.Kernel;
+using Perga.Kernel.Ports;
 
 namespace Perga.Storage.Sqlite;
 
@@ -100,6 +102,30 @@ internal sealed class AreaRepository
             ct);
     }
 
+    public Task<AreaDto> UpdateAreaAsync(AreaDto area, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(area);
+        _context.EnsureInitialized();
+        return _context.Writer.EnqueueAsync<AreaDto>(async (conn, tx, innerCt) =>
+        {
+            var count = await conn.ExecuteAsync(new CommandDefinition("""
+                UPDATE areas SET name = @Name, color = @Color, default_cwd = @DefaultCwd,
+                    folders_json = @FoldersJson, sort_order = @SortOrder,
+                    execution_target_id = @ExecutionTargetId, updated_at_ms = @UpdatedAtMs
+                WHERE id = @Id AND id != @MemorySystemAreaId;
+                """, new
+                {
+                    area.Id, area.Name, area.Color, area.DefaultCwd, area.SortOrder,
+                    area.ExecutionTargetId, area.UpdatedAtMs,
+                    FoldersJson = SqliteJsonUpcaster.SerializeStringList(area.Folders),
+                    MemorySystemAreaId = MemoryTrackBinding.SystemAreaId
+                }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
+            if (count == 0)
+                throw KernelException.NotFound($"Area '{area.Id}' not found.");
+            return area;
+        }, ct);
+    }
+
     internal static async Task UpsertAreaInternalAsync(SqliteConnection conn, SqliteTransaction tx, AreaDto area, CancellationToken ct)
     {
         var foldersJson = SqliteJsonUpcaster.SerializeStringList(area.Folders);
@@ -134,7 +160,8 @@ internal sealed class AreaRepository
                 cancellationToken: ct)).ConfigureAwait(false);
     }
 
-    public async Task DeleteAreaAsync(string areaId, CancellationToken ct, bool requireEmpty = false)
+    public async Task DeleteAreaAsync(string areaId, CancellationToken ct, bool requireEmpty = false,
+        bool checkMemoryTrack = false, string? expectedMemoryTrackId = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(areaId);
         _context.EnsureInitialized();
@@ -152,6 +179,19 @@ internal sealed class AreaRepository
                 if (requireEmpty && trackIds.Count != 0)
                     throw Perga.Kernel.KernelException.Conflict("This Area has Tracks that must be removed before deletion.");
 
+                var memoryTrackId = await conn.ExecuteScalarAsync<string?>(new CommandDefinition(
+                    "SELECT track_id FROM memory_tracks WHERE area_id = @AreaId;",
+                    new { AreaId = areaId }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
+                if (checkMemoryTrack && memoryTrackId != expectedMemoryTrackId)
+                    throw Perga.Kernel.KernelException.Conflict("The Area Memory Track changed during teardown. Retry deletion.");
+
+                if (memoryTrackId is not null)
+                {
+                    await conn.ExecuteAsync(new CommandDefinition("DELETE FROM tracks WHERE id = @Id;",
+                        new { Id = memoryTrackId }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
+                    trackIds.Add(memoryTrackId);
+                }
+
                 await conn.ExecuteAsync(
                     new CommandDefinition(
                         "DELETE FROM areas WHERE id = @AreaId;",
@@ -164,7 +204,16 @@ internal sealed class AreaRepository
             ct).ConfigureAwait(false);
 
         foreach (var trackId in cascadedTrackIds)
-            _context.DeleteTrackFiles(trackId);
+        {
+            try
+            {
+                _context.DeleteTrackFiles(trackId);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                System.Diagnostics.Trace.TraceWarning("Could not clean up files for deleted Track {0}: {1}", trackId, ex.Message);
+            }
+        }
     }
 
     private static AreaDto MapArea(AreaRow r) =>

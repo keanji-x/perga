@@ -6,7 +6,7 @@ using Perga.ReportDoc;
 namespace Perga.Storage.Sqlite;
 
 /// <summary>SQLite port facade. Domain repositories share one storage lifetime and writer.</summary>
-public sealed class SqliteTrackStore : ITrackStore, IAsyncDisposable, ISessionInputStore, ISessionMessageStore, ITrackScheduleStore, ITrackWakeStore, ITodayReadStore, ISystemUpgradeStore, IAuthStore
+public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable, ISessionInputStore, ISessionMessageStore, ITrackScheduleStore, ITrackWakeStore, ITodayReadStore, ISystemUpgradeStore, IAuthStore
 {
     private readonly SqliteStoreContext _context;
     private readonly AuthRepository _authRepository;
@@ -284,6 +284,9 @@ public sealed class SqliteTrackStore : ITrackStore, IAsyncDisposable, ISessionIn
     public Task<AreaDto> UpsertAreaAsync(AreaDto area, CancellationToken ct) =>
         _areaRepository.UpsertAreaAsync(area, ct);
 
+    public Task<AreaDto> UpdateAreaAsync(AreaDto area, CancellationToken ct) =>
+        _areaRepository.UpdateAreaAsync(area, ct);
+
     public Task DeleteAreaAsync(string areaId, CancellationToken ct, bool requireEmpty = false) =>
         _areaRepository.DeleteAreaAsync(areaId, ct, requireEmpty);
 
@@ -301,7 +304,11 @@ public sealed class SqliteTrackStore : ITrackStore, IAsyncDisposable, ISessionIn
         string? areaId = null,
         bool includeClosed = false,
         CancellationToken ct = default) =>
-        _trackReadRepository.ListTracksAsync(areaId, includeClosed, ct);
+        _trackReadRepository.ListTracksAsync(areaId, includeClosed, includeSystem: false, ct);
+
+    public Task<IReadOnlyList<TrackDto>> ListTracksIncludingSystemAsync(
+        string? areaId = null, bool includeClosed = false, CancellationToken ct = default) =>
+        _trackReadRepository.ListTracksAsync(areaId, includeClosed, includeSystem: true, ct);
 
     public Task<IReadOnlyDictionary<string, string>> GetReportSummariesAsync(
         IReadOnlyCollection<string> trackIds, CancellationToken ct = default) =>

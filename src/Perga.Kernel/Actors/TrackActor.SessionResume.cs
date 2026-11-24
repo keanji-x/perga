@@ -172,6 +172,7 @@ public sealed partial class TrackActor
                         success = true;
                         if (mode == "reset_context")
                         {
+                            ResetMemoryInjection(sessionId);
                             if (_taskCoordinator.TryGetActiveTaskForSessionCore(sessionId) is { Active: var activeTask })
                                 _taskCoordinator.SetPaused(activeTask, true);
                             _scheduler.Clear(sessionId);
@@ -338,6 +339,7 @@ public sealed partial class TrackActor
                         await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
                         await _store.RecordTurnAndItemsAsync(compactTurn, compactItems, compacted, ct).ConfigureAwait(false);
                         _sessions[sessionId] = compacted;
+                        ResetMemoryInjection(sessionId);
                         await PersistAndEmitSessionUpdatedCoreAsync(compacted, now, ct).ConfigureAwait(false);
 
                         return compacted;

@@ -115,19 +115,33 @@ public sealed class SessionInputBatchTests
         var first = new SessionMessage("first-images", lead.Id, "owner:installation", "first", "hash",
             null, null, "", "queued", 1000, "queue")
         { Attachments = Enumerable.Repeat(image, ImageAttachmentContract.MaxAttachmentsPerMessage).ToArray() };
-        var second = first with { Id = "second-image", RequestKey = "second", Attachments = [image] };
+        var second = first with
+        {
+            Id = "second-image", RequestKey = "second", Content = "Read @`memory:global/secret`", Attachments = [image]
+        };
         var messages = h.Store.SessionMessages!;
         await messages.InsertWithMediaAsync(track.Id, first, Enumerable.Repeat(write, first.Attachments.Count).ToArray(), default);
         await messages.InsertWithMediaAsync(track.Id, second, [write], default);
 
-        var input = (await h.Store.SessionInputs.PromoteQueuedBatchAsync(lead with { Status = "queued" }, first,
-            StorageTestHarness.CreateEvent("session.updated"), default))!;
+        var inputs = h.Store.SessionInputs;
+        var queued = lead with { Status = "queued" };
+        var evt = StorageTestHarness.CreateEvent("session.updated");
+        var input = (await inputs.PromoteQueuedBatchAsync(queued, first, evt, default))!;
         Assert.Equal("", input.Content);
+        Assert.Null(input.OwnerContent);
         Assert.Equal(first.Attachments, input.Attachments);
         var waiting = await messages.GetAsync(lead.Id, second.Id, default);
         Assert.Null(waiting!.TurnId);
         Assert.Equal(second.Attachments, waiting.Attachments);
         Assert.Equal(first.Attachments, Assert.Single(await h.Store.RecoverSessionInputsAsync(default)).Input.Attachments);
+
+        Assert.True(await inputs.ClaimAsync(input, lead with { Status = "running" }, evt, default));
+        await inputs.MarkDeliveredAsync(input, null, null, default);
+        var completed = new SessionTurnDto(input.Receipt.TurnId, lead.Id, input.TurnIndex, lead.Epoch, "user",
+            StorageTestHarness.Json("{}"), "completed", null, null, 1000, 2000);
+        await inputs.SettleAsync(input, "delivered", completed, [], lead, [evt], default);
+        var followUp = (await inputs.PromoteQueuedBatchAsync(queued, second, evt, default))!;
+        Assert.Equal(second.Content, followUp.OwnerContent);
     }
 
     [Fact]

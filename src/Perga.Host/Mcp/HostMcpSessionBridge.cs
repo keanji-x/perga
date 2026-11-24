@@ -193,14 +193,16 @@ public sealed class HostMcpSessionBridge : IMcpSessionBridge
         var servers = new Dictionary<string, McpServerConfig>(StringComparer.Ordinal)
         {
             ["perga"] = new McpServerConfig.HttpMcpServer($"{baseUri}/mcp/kernel", headers),
-            ["vcs"] = new McpServerConfig.HttpMcpServer($"{baseUri}/mcp/vcs", headers)
+            ["vcs"] = new McpServerConfig.HttpMcpServer($"{baseUri}/mcp/vcs", headers),
+            [MemoryTrackBinding.McpServerName] = new McpServerConfig.HttpMcpServer($"{baseUri}/mcp/memory", headers)
         };
 
         foreach (var pluginId in principal.EnabledPlugins)
         {
             if (string.IsNullOrWhiteSpace(pluginId) ||
                 string.Equals(pluginId, "perga", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(pluginId, "vcs", StringComparison.OrdinalIgnoreCase))
+                string.Equals(pluginId, "vcs", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(pluginId, MemoryTrackBinding.McpServerName, StringComparison.OrdinalIgnoreCase))
             {
                 continue;
             }

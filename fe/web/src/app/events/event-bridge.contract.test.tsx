@@ -5,7 +5,8 @@ import userEvent from '@testing-library/user-event';
 import { afterEach,describe,expect,it,vi } from 'vitest';
 
 import type { WireEvent } from '../../../../core/api/schemas.ts';
-import type { EventFrame,Topic } from '../../../../core/events/protocol.ts';
+import { decodeEventFrame, type EventFrame, type Topic } from '../../../../core/events/protocol.ts';
+import { trackDetail, trackViews } from '../../../../core/events/query-keys.ts';
 import type { SyncCursorPort } from '../../systems/events/cursor-port.ts';
 import type {
 ConfiguredEventStream,EventFrameHandler,EventStreamConfiguration,UnconfiguredEventStream,
@@ -80,6 +81,39 @@ function eventFrame(id: number, event: { ev: string; data: unknown }): EventFram
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 describe('EventBridge contracts', () => {
+  it('refreshes only the affected Area memory and refreshes inherited counts on a Global change', async () => {
+    const { stream, emit } = fakeStream();
+    const client = new QueryClient();
+    const scopedReads = [
+      trackDetail('global'), trackDetail('local-a'), trackDetail('local-b'), trackDetail('project'),
+      trackViews('global'), trackViews('local-a'),
+    ].map(queryKey => {
+      const [kind, trackId] = queryKey;
+      const data = kind === 'track' ? { track: { id: trackId, areaId: trackId === 'project' ? 'a' : 'sys_memory' } } : {};
+      const queryFn = vi.fn(() => Promise.resolve(data));
+      const observer = new QueryObserver(client, { queryKey, queryFn, staleTime: Infinity });
+      return { queryFn, unsubscribe: observer.subscribe(() => undefined) };
+    });
+    render(<EventBridge client={client} stream={stream} syncEventVersion={1} dbInstanceId="db" cursor={memoryCursor()} />);
+    const write = (scope: 'global' | 'area', areaId: string | null, trackId: string) => {
+      const decoded = decodeEventFrame({ kind: 'memory.updated', eventVersion: 1, areaId,
+        payload: { scope, areaId, trackId, action: 'put', key: 'release' } });
+      if (decoded.status !== 'ready') throw new Error(decoded.error.message);
+      expect(decoded.frame.type).toBe('event');
+      emit(decoded.frame);
+    };
+    const calls = () => scopedReads.map(({ queryFn }) => queryFn.mock.calls.length);
+    try {
+      await waitFor(() => expect(calls()).toEqual([1, 1, 1, 1, 1, 1]));
+      write('area', 'a', 'local-a');
+      await waitFor(() => expect(calls()).toEqual([1, 2, 1, 1, 1, 2]));
+      write('global', null, 'global');
+      await waitFor(() => expect(calls()).toEqual([2, 3, 2, 1, 2, 2]));
+    } finally {
+      for (const { unsubscribe } of scopedReads) unsubscribe();
+    }
+  });
+
   it('restores actual event-driven query refresh after retrying a failed preflight', async () => {
     const { record, stream, emit } = fakeStream();
     const client = new QueryClient({ defaultOptions: { queries: { retryDelay: 0 } } });

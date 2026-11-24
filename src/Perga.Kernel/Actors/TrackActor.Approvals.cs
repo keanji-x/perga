@@ -511,7 +511,8 @@ public sealed partial class TrackActor
             }
             if (KernelMcpCatalog.IsGovernanceOnly(toolName)) RequireGovernanceSessionCore(sessionId, toolName);
         }
-        else if ((isPlugin || !string.Equals(mcpServer, "vcs", StringComparison.OrdinalIgnoreCase)) &&
+        else if ((isPlugin || !string.Equals(mcpServer, "vcs", StringComparison.OrdinalIgnoreCase) &&
+                  !string.Equals(mcpServer, MemoryTrackBinding.McpServerName, StringComparison.OrdinalIgnoreCase)) &&
             !_track.EnabledPlugins.Contains(mcpServer, StringComparer.Ordinal))
             throw KernelException.Forbidden($"MCP plugin '{mcpServer}' is not enabled on track '{TrackId}'.");
     }

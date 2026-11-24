@@ -15,22 +15,28 @@ public sealed class BootReconciler : IBootReconciler
     private readonly ITrackStore _store;
     private readonly IWorkspaceDriverRegistry _workspaceDrivers;
     private readonly TrackActorRegistry _actorRegistry;
+    private readonly IMemoryContextProvider _memoryContext;
 
     public BootReconciler(
         ITrackStore store,
         IWorkspaceDriverRegistry workspaceDrivers,
         TrackActorRegistry actorRegistry,
-        SystemUpgrade.UpgradeReceiptConsumer? upgrades = null)
+        SystemUpgrade.UpgradeReceiptConsumer? upgrades = null,
+        IMemoryContextProvider? memoryContext = null)
     {
         _upgrades = upgrades;
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _workspaceDrivers = workspaceDrivers ?? throw new ArgumentNullException(nameof(workspaceDrivers));
         _actorRegistry = actorRegistry ?? throw new ArgumentNullException(nameof(actorRegistry));
+        _memoryContext = memoryContext ?? NoMemoryContextProvider.Instance;
     }
 
     public async Task<BootReconcileResult> ReconcileAsync(CancellationToken ct = default)
     {
         // Phase 1 converges persistence before activating any actor.
+        var userAreas = await _store.ListAreasAsync(ct).ConfigureAwait(false);
+        await _memoryContext.CleanupOrphanAreaDirectoriesAsync(
+            userAreas.Select(area => area.Id).ToHashSet(StringComparer.Ordinal), ct).ConfigureAwait(false);
         var preparingTracks = await _store.RecoverWorkspacePreparationsAsync(ct).ConfigureAwait(false);
         var affectedTrackIds = new HashSet<string>(StringComparer.Ordinal);
 
@@ -108,7 +114,7 @@ public sealed class BootReconciler : IBootReconciler
             }
         }
 
-        var flowTracks = (await _store.ListTracksAsync(ct: ct).ConfigureAwait(false))
+        var flowTracks = (await _store.ListTracksIncludingSystemAsync(ct: ct).ConfigureAwait(false))
             .Where(track => track.FlowRev > 0).Select(track => track.Id);
         foreach (var trackId in flowTracks)
         {

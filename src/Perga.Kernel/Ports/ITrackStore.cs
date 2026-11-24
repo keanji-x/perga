@@ -18,7 +18,10 @@ public sealed record TrackAggregateSnapshot(
 }
 
 public sealed record TemplateReportSeed(
-    ReportDocument Document, byte[] CompressedBlocks, string AuthorSessionId, EventEnvelopeDto Event);
+    ReportDocument Document, byte[] CompressedBlocks, string AuthorSessionId, EventEnvelopeDto Event)
+{
+    public bool RequireBlankReport { get; init; } = true;
+}
 
 public sealed record ResourceCreationKey(string Operation, string ScopeId, string Key, string Hash);
 
@@ -43,6 +46,7 @@ public sealed record TrackCreation(TrackDto Track, ReportDocument Report, string
     AgentSessionDto Lead, IReadOnlyList<TaskDto> Tasks, SessionInputRequest? FirstInput,
     WorkspacePreparation? Preparation, IReadOnlyList<EventEnvelopeDto> Events, string? DailyDate = null, AreaDto? SystemArea = null)
 {
+    public MemoryTrackBinding? MemoryBinding { get; init; }
     public IReadOnlyList<TrackScheduleDto> FlowClocks { get; init; } = [];
 }
 
@@ -68,6 +72,8 @@ public interface ITrackReadStore
     Task<AreaDto?> GetAreaAsync(string areaId, CancellationToken ct);
     Task<IReadOnlyDictionary<string, AreaTrackCounts>> GetAreaTrackCountsAsync(CancellationToken ct = default);
     Task<IReadOnlyList<TrackDto>> ListTracksAsync(string? areaId = null, bool includeClosed = false, CancellationToken ct = default);
+    Task<IReadOnlyList<TrackDto>> ListTracksIncludingSystemAsync(string? areaId = null, bool includeClosed = false, CancellationToken ct = default) =>
+        ListTracksAsync(areaId, includeClosed, ct);
     Task<IReadOnlyDictionary<string, string>> GetReportSummariesAsync(IReadOnlyCollection<string> trackIds, CancellationToken ct = default);
     Task<TrackDto?> GetTrackAsync(string trackId, CancellationToken ct);
     Task<TrackAggregateSnapshot?> LoadTrackAggregateAsync(string trackId, CancellationToken ct);
@@ -104,7 +110,7 @@ public interface ITrackReadStore
         => Task.FromResult<IReadOnlyList<StoredExecutionTarget>>([]);
 }
 
-public interface ITrackStore : ITrackReadStore
+public interface ITrackStore : ITrackReadStore, IMemoryTrackStore
 {
     Task<StoredExecutionTarget> UpsertExecutionTargetAsync(StoredExecutionTarget target, CancellationToken ct = default)
         => throw new NotSupportedException("Execution target persistence is not supported by this store.");
@@ -115,6 +121,7 @@ public interface ITrackStore : ITrackReadStore
     Task<ReadReceiptDto> MarkUnreadAsync(string kind, string targetId, CancellationToken ct = default);
 
     Task<AreaDto> UpsertAreaAsync(AreaDto area, CancellationToken ct);
+    Task<AreaDto> UpdateAreaAsync(AreaDto area, CancellationToken ct);
     Task<string?> FindCreationAsync(ResourceCreationKey key, CancellationToken ct);
     Task<string> CreateAreaAsync(AreaDto area, ResourceCreationKey? key, CancellationToken ct, EventEnvelopeDto? evt = null);
     Task DeleteAreaAsync(string areaId, CancellationToken ct, bool requireEmpty = false);

@@ -125,9 +125,10 @@ export type ChatThreadProps = Readonly<{
     | readonly NonNullable<import('../../../../../core/api/perga-v1.ts').SessionItemsPageDto['runtimeTasks']>[number][];
   /** App supplies only href/children rendering; chat owns no destination policy. */
   renderLink?: ReplyLinkRenderer;
+  renderMemoryMention?: import('./outgoing-message.tsx').MemoryMentionRenderer;
 }>;
 
-export const ChatThread = memo(function ChatThread({ conversation, turns, pendingMessages, hasPendingMessages, submissionRequest = 0, messageActions = 'all', copyText, regenerateMessage, editing = null, replacement = null, imageFiles = null, renderLink, readingView, historyPrefetch, lastSessionTurn = null, sessionTurns, runtimeStatus, runtimeTasks }: ChatThreadProps) {
+export const ChatThread = memo(function ChatThread({ conversation, turns, pendingMessages, hasPendingMessages, submissionRequest = 0, messageActions = 'all', copyText, regenerateMessage, editing = null, replacement = null, imageFiles = null, renderLink, renderMemoryMention, readingView, historyPrefetch, lastSessionTurn = null, sessionTurns, runtimeStatus, runtimeTasks }: ChatThreadProps) {
   const compactViewport = useCompactViewport();
   // Observe the browser timezone on render; keep formatters stable for memoized rows.
   const timeZone = new Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -322,7 +323,7 @@ export const ChatThread = memo(function ChatThread({ conversation, turns, pendin
         attachments={turn.attachments} deliveryError={turn.deliveryError} messageStatus={turn.messageStatus} opens={opensExchange(turns, index)}
         gapLabel={opensAfterGap(turns, index) && index > 0 ? clockTime(gapClock, turn.atMs) : null}
         queued={isQueuedConversationTurn(turn)} edited={edited.has(turn.id)} replacement={turn.id === replacement}
-        imageFiles={imageFiles} renderLink={renderLink} />
+        imageFiles={imageFiles} renderLink={renderLink} renderMemoryMention={renderMemoryMention} />
       {turn.deliveryError !== undefined && copyText !== undefined && <InputCopy id={turn.id} text={turn.text} copyText={copyText} />}
       </Fragment>
     );

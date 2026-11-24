@@ -21,12 +21,12 @@ internal sealed class SessionInputsRepository
         _trackReadRepository = trackReadRepository;
     }
 
-    internal const string OwnerAuthor = "owner:installation";
+    internal const string OwnerAuthor = SessionMessageAuthors.Owner;
 
     private const string InputSelect = """
         SELECT i.id AS InputId, i.turn_id AS TurnId, i.session_id AS SessionId,
                CASE WHEN i.delivery = 'queued' THEN 'accepted' ELSE i.delivery END AS DeliveryState, i.resolved_at_ms AS ResolvedAtMs, t.status AS TurnStatus,
-               i.request_hash AS RequestHash, i.content AS Content, i.attachments_json AS AttachmentsJson, t.turn_index AS TurnIndex, t.source_excerpt AS SourceExcerpt,
+               i.request_hash AS RequestHash, i.content AS Content, i.attachments_json AS AttachmentsJson, i.author_id AS AuthorId, t.turn_index AS TurnIndex, t.source_excerpt AS SourceExcerpt,
                i.kind IN ('queue', 'steer') AS IsQueuedFollowUp,
                t.epoch AS Epoch, t.provider AS Provider, t.model AS Model, t.reasoning_effort AS ReasoningEffort, s.track_id AS TrackId,
                track.area_id AS AreaId, t.started_at_ms AS StartedAtMs,
@@ -138,7 +138,7 @@ internal sealed class SessionInputsRepository
         _context.Writer.EnqueueAsync<PersistedSessionInput?>(async (conn, tx, innerCt) =>
         {
             var messages = (await conn.QueryAsync<QueuedInputRow>(new CommandDefinition("""
-                SELECT ordinal AS Ordinal, id AS Id, content AS Content, attachments_json AS AttachmentsJson FROM session_messages WHERE session_id=@SessionId
+                SELECT ordinal AS Ordinal, id AS Id, content AS Content, attachments_json AS AttachmentsJson, author_id AS AuthorId FROM session_messages WHERE session_id=@SessionId
                     AND delivery='queued' AND turn_id IS NULL AND kind IN ('queue', 'steer') ORDER BY ordinal;
                 """, new { SessionId = session.Id }, tx, cancellationToken: innerCt)).ConfigureAwait(false)).AsList();
             if (messages.Count == 0 || messages[0].Id != message.Id ||
@@ -148,12 +148,14 @@ internal sealed class SessionInputsRepository
             long primaryItemId = 0;
             var attachments = new List<StoredImageAttachment>();
             var prompts = new List<string>();
+            var ownerPrompts = new List<string>();
             foreach (var next in messages)
             {
                 var images = TrackMediaStore.Deserialize(next.AttachmentsJson);
                 if (prompts.Count > 0 && (attachments.Count > 0 || images.Count > 0)) break;
                 attachments.AddRange(images);
                 prompts.Add(next.Content);
+                if (next.AuthorId == OwnerAuthor) ownerPrompts.Add(next.Content);
                 SessionMessageSql.RequireOne(await conn.ExecuteAsync(new CommandDefinition("""
                     UPDATE session_messages SET turn_id=@TurnId WHERE ordinal=@Ordinal AND session_id=@SessionId
                         AND turn_id IS NULL AND delivery='queued';
@@ -168,7 +170,8 @@ internal sealed class SessionInputsRepository
             }
             var input = new PersistedSessionInput(new(message.Id, turnId, session.Id, "accepted", "queued", null),
                 message.RequestHash, CombineContent(prompts), turnIndex, session.Epoch,
-                session.Provider, session.Model, session.ReasoningEffort, true, primaryItemId)
+                session.Provider, session.Model, session.ReasoningEffort, true, primaryItemId,
+                OwnerContent: JoinOwnerContent(ownerPrompts))
             { Attachments = attachments.Count == 0 ? [] : attachments.ToArray() };
             await EventRepository.InsertEventInternalAsync(conn, tx, sessionEvent, innerCt).ConfigureAwait(false);
             return input;
@@ -231,7 +234,8 @@ internal sealed class SessionInputsRepository
             tx, cancellationToken: ct)).ConfigureAwait(false);
 
         return new PersistedSessionInput(new(message.Id, turnId, session.Id, "accepted", "queued", null),
-            message.RequestHash, message.Content, turnIndex, session.Epoch, session.Provider, session.Model, session.ReasoningEffort, false, userItemId, request.SourceExcerpt)
+            message.RequestHash, message.Content, turnIndex, session.Epoch, session.Provider, session.Model, session.ReasoningEffort, false, userItemId, request.SourceExcerpt,
+            request.AuthorId == OwnerAuthor ? request.Content : null)
         { Attachments = message.Attachments };
     }
 
@@ -403,6 +407,7 @@ internal sealed class SessionInputsRepository
         return batch[0].ToInput() with
         {
             Content = CombineContent(batch.Select(row => row.Content)),
+            OwnerContent = JoinOwnerContent(batch.Where(r => r.AuthorId == OwnerAuthor).Select(r => r.Content)),
             Attachments = batch.SelectMany(row => TrackMediaStore.Deserialize(row.AttachmentsJson)).ToArray()
         };
     }
@@ -410,7 +415,13 @@ internal sealed class SessionInputsRepository
     private static string CombineContent(IEnumerable<string> prompts) =>
         string.Join("\n\n", prompts.Where(prompt => prompt.Length > 0));
 
-    private sealed record QueuedInputRow(long Ordinal, string Id, string Content, string? AttachmentsJson);
+    private static string? JoinOwnerContent(IEnumerable<string> contents)
+    {
+        var result = string.Join("\n\n", contents.Where(content => content.Length > 0));
+        return result.Length == 0 ? null : result;
+    }
+
+    private sealed record QueuedInputRow(long Ordinal, string Id, string Content, string? AttachmentsJson, string AuthorId);
 
     private static void RequireSome(int updated)
     {
@@ -433,6 +444,7 @@ internal sealed class SessionInputsRepository
         public long? ResolvedAtMs { get; init; }
         public string RequestHash { get; init; } = "";
         public string Content { get; init; } = "";
+        public string AuthorId { get; init; } = "";
         public string? SourceExcerpt { get; init; }
         public string? AttachmentsJson { get; init; }
         public bool IsQueuedFollowUp { get; init; }
@@ -444,7 +456,8 @@ internal sealed class SessionInputsRepository
 
         public PersistedSessionInput ToInput() => new(
             new(InputId, TurnId, SessionId, DeliveryState, TurnStatus, ResolvedAtMs),
-            RequestHash, Content, TurnIndex, Epoch, Provider, Model, ReasoningEffort, IsQueuedFollowUp, UserItemId, SourceExcerpt)
+            RequestHash, Content, TurnIndex, Epoch, Provider, Model, ReasoningEffort, IsQueuedFollowUp, UserItemId, SourceExcerpt,
+            AuthorId == OwnerAuthor ? Content : null)
         { Attachments = TrackMediaStore.Deserialize(AttachmentsJson) };
     }
 }
