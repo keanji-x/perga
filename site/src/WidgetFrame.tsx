@@ -10,20 +10,23 @@ type WidgetFrameProps = Readonly<{
 
 function readPergaTheme() {
   const styles = getComputedStyle(document.documentElement);
-  const dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
   const pick = (prop: string, fallback: string) => styles.getPropertyValue(prop).trim() || fallback;
+  // The landing page always renders in Perga's light warm-paper scheme.
+  // Keep widget iframes in the matching light color-scheme so browsers never
+  // paint an opaque dark canvas behind transparent iframe content when the OS
+  // prefers dark mode.
   return {
     type: 'perga:theme',
-    scheme: dark ? 'dark' : 'light',
+    scheme: 'light',
     tokens: {
-      bg: pick('--paper', dark ? '#181b21' : '#fdfcfa'),
-      paper: pick('--paper', dark ? '#181b21' : '#fdfcfa'),
-      surface: pick('--bg', dark ? '#20242c' : '#f6f4ee'),
-      text: pick('--text', dark ? '#eef0f4' : '#1e2026'),
-      text2: pick('--text-2', dark ? '#b5bac7' : '#525763'),
-      text3: pick('--text-3', dark ? '#828898' : '#868b98'),
-      hairline: pick('--hairline', dark ? '#363c49' : '#d8d4cb'),
-      accent: pick('--accent', dark ? '#8ca8ff' : '#3955b8'),
+      bg: pick('--paper', '#fdfcfa'),
+      paper: pick('--paper', '#fdfcfa'),
+      surface: pick('--bg', '#f6f4ee'),
+      text: pick('--text', '#1e2026'),
+      text2: pick('--text-2', '#525763'),
+      text3: pick('--text-3', '#868b98'),
+      hairline: pick('--hairline', '#d8d4cb'),
+      accent: pick('--accent', '#3955b8'),
       fontSans: pick('--font-sans', 'Inter, -apple-system, sans-serif'),
       fontSerif: pick('--font-serif', 'Newsreader, Georgia, serif'),
       fontMono: pick('--font-mono', '"JetBrains Mono", ui-monospace, monospace'),
@@ -62,18 +65,11 @@ export function WidgetFrame({
       }
     };
 
-    const media = window.matchMedia('(prefers-color-scheme: dark)');
-    const onSchemeChange = () => {
-      iframeRef.current?.contentWindow?.postMessage(readPergaTheme(), '*');
-    };
-
     window.addEventListener('message', onMessage);
-    media.addEventListener('change', onSchemeChange);
     // Also push immediately in case the iframe loaded before this effect attached.
     pushData();
     return () => {
       window.removeEventListener('message', onMessage);
-      media.removeEventListener('change', onSchemeChange);
     };
   }, [pushData, onIntent]);
 

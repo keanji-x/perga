@@ -127,14 +127,14 @@ export const DEV_DELIVERY_FLOW: FlowProjection = {
     },
     {
       id: 'ci-watch',
-      title: 'Watch PR #180 checks (0-token)',
+      title: 'Wait for PR #180 CI checks',
       source: 'agent',
       whenKind: 'after',
       after: [{ node: 'review', on: 'ok' }],
       doKind: 'watch',
       status: 'running',
       outcome: 'none',
-      outcomeSummary: 'Polling GitHub checks from Host without spending model tokens.',
+      outcomeSummary: 'Waiting on GitHub Actions from the local Host before waking the Lead.',
       runCount: 1,
       startedAtMs: NOW - 9 * MIN,
       firedCount: 1,
@@ -147,7 +147,7 @@ export const DEV_DELIVERY_FLOW: FlowProjection = {
         totalChecks: 6,
         lastCheckedAtMs: NOW - MIN,
         startedAtMs: NOW - 9 * MIN,
-        detail: 'Waiting on Package macOS Apple Silicon (0 tokens spent)',
+        detail: 'Waiting on Package macOS Apple Silicon',
       },
       canceled: false,
       repeat: false,
@@ -431,26 +431,45 @@ export const OKR_FLOW: FlowProjection = {
   archived: [],
 };
 
+export const DEV_DELIVERY_FLOW_JSON = `{
+  "nodes": [
+    {
+      "id": "impl-backend",
+      "when": { "after": ["spec"] },
+      "do": {
+        "kind": "run",
+        "provider": "claude",
+        "gate": "dotnet test Perga.sln"
+      }
+    },
+    {
+      "id": "review",
+      "when": { "after": ["impl-backend", "impl-fe"] },
+      "do": {
+        "kind": "run",
+        "provider": "codex",
+        "access": "read_only"
+      }
+    },
+    {
+      "id": "ci-watch",
+      "when": { "after": ["review"] },
+      "do": { "kind": "watch", "prChecks": 180 }
+    }
+  ]
+}`;
+
 export const MEMORY_PINNED_DATA = {
   kind: 'pinned',
   entries: [
     {
       ref: 'area/auth-boundaries',
       title: 'Cleartext HTTP stays loopback-only',
-      summary: 'Non-loopback HTTP requires explicit AuthAllowInsecureHttp opt-in.',
-      body: 'Keep `TransportSecurityMiddleware` fail-closed on LAN or proxied requests unless `PERGA_AUTH_ALLOW_INSECURE_HTTP=true` is set. Owner login and origin guards remain mandatory.',
+      summary: 'Non-loopback HTTP requires explicit opt-in; owner login remains mandatory.',
+      body: 'Keep `TransportSecurityMiddleware` fail-closed on LAN or proxied requests unless `PERGA_AUTH_ALLOW_INSECURE_HTTP=true` is set.',
       tags: ['security', 'host'],
       sources: ['trk_auth_0168'],
       updatedAtMs: NOW - 16 * HOUR,
-    },
-    {
-      ref: 'area/migration-freeze',
-      title: 'Released SQLite migrations are byte-frozen',
-      summary: 'Never edit released SQL files; ship forward migrations only.',
-      body: 'Every migration shipped in a release is guarded by hash checks. Schema corrections must append a new forward `.sql` file and preserve existing user databases on restart.',
-      tags: ['sqlite', 'invariant'],
-      sources: ['trk_storage_0139'],
-      updatedAtMs: NOW - 72 * HOUR,
     },
   ],
 };
@@ -463,7 +482,7 @@ export const MEMORY_TOPICS_DATA = {
       title: 'Queued multimodal turns bind to originating epoch',
       summary: 'Prevent attachment preview URLs from leaking across canceled turns.',
       body: 'Bind media attachment tokens to `(sessionId, epoch)` at enqueue time in `TrackActor.SessionInputs`. Verify with a fresh-host restart integration test.',
-      tags: ['chat', 'multimodal', 'race'],
+      tags: ['chat', 'race'],
       sources: ['trk_img_0180'],
       updatedAtMs: NOW - 3 * HOUR,
     },
@@ -471,19 +490,10 @@ export const MEMORY_TOPICS_DATA = {
       ref: 'global/review-discipline',
       title: 'Enforce second-provider review on non-trivial diffs',
       summary: 'Never let the implementing session grade its own patch.',
-      body: 'Route `review` role tasks to a distinct model with `access: "read_only"` and `enforce: true`, backed by a host test gate.',
-      tags: ['governance', 'workflow'],
+      body: 'Route `review` tasks to a distinct model with `access: "read_only"` backed by a local test gate.',
+      tags: ['workflow'],
       sources: ['trk_core_0155'],
       updatedAtMs: NOW - 96 * HOUR,
-    },
-    {
-      ref: 'area/macos-ssh-chmod',
-      title: 'macOS SSH target chmod argument ordering',
-      summary: 'BSD chmod rejects GNU flag placement after path arguments.',
-      body: 'When a Mac acts as an SSH target, keep flags strictly before file operands and configure `WorkspacesRoot` under the remote user home.',
-      tags: ['macos', 'ssh'],
-      sources: ['trk_ssh_0133'],
-      updatedAtMs: NOW - 120 * HOUR,
     },
   ],
 };

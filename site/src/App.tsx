@@ -1,24 +1,24 @@
 import { useCallback, useState } from 'react';
 import { ReportFlowBlock } from '../../fe/web/src/features/report/flow/public.tsx';
-import { EditorialTable } from '../../fe/web/src/features/report/editorial/table.tsx';
 import { EditorialChronicle } from '../../fe/web/src/features/report/editorial/chronicle.tsx';
 import { WidgetFrame } from './WidgetFrame.tsx';
 import {
   DEV_DELIVERY_FLOW,
+  DEV_DELIVERY_FLOW_JSON,
   EQUITY_CHRONICLE_ITEMS,
   EQUITY_VALUATION_AXIS,
   MEMORY_PINNED_DATA,
   MEMORY_TOPICS_DATA,
-  OKR_LEDGER_TABLE,
 } from './showcaseData.ts';
 
-type TrackTab = 'delivery' | 'research' | 'okr';
+type TrackTab = 'delivery' | 'research';
 
 const INSTALL_COMMAND = 'curl -fsSL https://keanji-x.github.io/perga/install.sh | sh';
 
 const TRACK_TABS: ReadonlyArray<Readonly<{
   id: TrackTab;
   label: string;
+  capability: string;
   trackName: string;
   meta: string;
   sourceUrl: string;
@@ -26,32 +26,27 @@ const TRACK_TABS: ReadonlyArray<Readonly<{
 }>> = [
   {
     id: 'delivery',
-    label: 'Delivery',
+    label: 'Engineering',
+    capability: 'MULTI-AGENT FLOW',
     trackName: 'auth-session-hardening',
-    meta: 'Claude impl · Codex read-only review · 0-token CI watch',
+    meta: 'Claude implements · Codex reviews read-only · Waits for CI',
     sourceUrl: 'https://github.com/keanji-x/perga/tree/main/templates/agents-delivery',
     sourceLabel: 'agents-delivery',
   },
   {
     id: 'research',
     label: 'Research',
+    capability: 'LIVING REPORT',
     trackName: 'NVDA · long-horizon thesis',
-    meta: 'Valuation range · Pre-committed expectations · Weekly cron',
+    meta: 'Valuation axis · Pre-committed expectations · Weekly updates',
     sourceUrl: 'https://github.com/keanji-x/perga/tree/main/templates/equity-research',
     sourceLabel: 'equity-research',
-  },
-  {
-    id: 'okr',
-    label: 'OKR',
-    trackName: 'q4-latency-and-reliability',
-    meta: 'Kernel-stamped KR ledger · Daily 0-token probe',
-    sourceUrl: 'https://github.com/keanji-x/perga/tree/main/templates/okr-loop',
-    sourceLabel: 'okr-loop',
   },
 ];
 
 export function App() {
   const [trackTab, setTrackTab] = useState<TrackTab>('delivery');
+  const [showFlowJson, setShowFlowJson] = useState(false);
   const [copied, setCopied] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -91,7 +86,7 @@ export function App() {
             <span className="site-wordmark-text">Perga</span>
           </a>
           <nav className="site-nav" aria-label="Primary">
-            <a href="#tracks">Tracks</a>
+            <a href="#reports">Reports</a>
             <a href="#memory">Memory</a>
             <a href="https://github.com/keanji-x/perga/blob/main/docs/product/vision.en.md" target="_blank" rel="noreferrer">Vision</a>
             <a className="site-nav-repo" href="https://github.com/keanji-x/perga" target="_blank" rel="noreferrer">GitHub ↗</a>
@@ -110,14 +105,14 @@ export function App() {
       )}
 
       <main>
-        {/* 1. HERO + IMMEDIATE PRODUCT */}
+        {/* 1. REPORT-CENTRIC HERO + TWO LIVE REPORT EXAMPLES */}
         <section className="site-hero">
           <div className="site-hero-top">
             <h1 className="site-display">
               Chat drifts. <em>Reports stay.</em>
             </h1>
             <p className="site-tagline">
-              A local workspace for multi-day <strong>Claude Code</strong> &amp; <strong>Codex</strong> work.
+              A report-centric local workspace for multi-day <strong>Claude Code</strong> &amp; <strong>Codex</strong> work.
             </p>
 
             <div className="site-install-row" id="install">
@@ -135,10 +130,9 @@ export function App() {
             </p>
           </div>
 
-          {/* LIVE TRACK SHOWCASE RIGHT IN THE FIRST FOLD */}
-          <div className="site-showcase" id="tracks">
+          <div className="site-showcase" id="reports">
             <div className="site-showcase-head">
-              <div className="site-tabs" role="tablist" aria-label="Track examples">
+              <div className="site-tabs" role="tablist" aria-label="Report examples">
                 {TRACK_TABS.map((tab) => (
                   <button
                     key={tab.id}
@@ -164,15 +158,35 @@ export function App() {
             <div className="site-sheet">
               <div className="site-sheet-bar">
                 <span className="site-sheet-title">{currentTrack.trackName}</span>
-                <span className="site-sheet-badge">LIVING REPORT</span>
+                <div className="site-sheet-right">
+                  {trackTab === 'delivery' && (
+                    <button
+                      type="button"
+                      className={`site-code-toggle${showFlowJson ? ' is-open' : ''}`}
+                      onClick={() => setShowFlowJson((v) => !v)}
+                    >
+                      {showFlowJson ? 'Hide flow.json' : 'View flow.json'}
+                    </button>
+                  )}
+                  <span className="site-sheet-badge">{currentTrack.capability}</span>
+                </div>
               </div>
 
               {trackTab === 'delivery' && (
                 <div data-panel="delivery">
+                  {showFlowJson && (
+                    <div className="site-flow-drawer">
+                      <div className="site-flow-drawer-head">
+                        <span>flow.json</span>
+                        <span>Declarative task graph · Claude impl → Codex review → CI wait</span>
+                      </div>
+                      <pre className="site-flow-code"><code>{DEV_DELIVERY_FLOW_JSON}</code></pre>
+                    </div>
+                  )}
                   <ReportFlowBlock
                     flow={DEV_DELIVERY_FLOW}
                     title="Delivery Flow"
-                    onOpenWorker={(sid) => showNotice(`Focuses live Worker ${sid} for mid-turn Steer.`)}
+                    onOpenWorker={(sid) => showNotice(`Focuses live Worker ${sid} for mid-turn steering.`)}
                   />
                 </div>
               )}
@@ -191,62 +205,57 @@ export function App() {
                   <EditorialChronicle payload={{ items: EQUITY_CHRONICLE_ITEMS }} />
                 </div>
               )}
-
-              {trackTab === 'okr' && (
-                <div data-panel="okr">
-                  <EditorialTable payload={OKR_LEDGER_TABLE} />
-                </div>
-              )}
             </div>
           </div>
         </section>
 
-        {/* 2. THREE CRISP DIFFERENCES (ZERO LECTURING) */}
+        {/* 2. THREE CRISP DIFFERENCES */}
         <section className="site-pillars">
           <div className="site-pillar">
             <span className="site-pillar-num">01</span>
-            <h2>State lives in the report</h2>
-            <p>Chat stays in the margin. Progress, model bindings, and test exit codes are stamped by the kernel — surviving context resets.</p>
+            <h2>One living report per task</h2>
+            <p>Chat stays in the margin. Plans, test results, and decisions stay in one readable document that survives context resets and days away.</p>
           </div>
           <div className="site-pillar">
             <span className="site-pillar-num">02</span>
             <h2>Models check each other</h2>
-            <p>Claude implements behind a host test gate; Codex audits in enforced read-only mode. You can steer any live worker mid-turn.</p>
+            <p>Let Claude Code implement behind a local test gate, then hand the diff to Codex in read-only mode. Step in and steer any live worker mid-turn.</p>
           </div>
           <div className="site-pillar">
             <span className="site-pillar-num">03</span>
-            <h2>Zero tokens while idle</h2>
-            <p>Declarative watches probe CI or shell checks locally at zero cost, waking the Lead only when state actually changes.</p>
+            <h2>Background flows that wait</h2>
+            <p>Declare dependencies, schedules, and CI checks in <code>flow.json</code>. Perga waits locally in the background and wakes a session only when state changes.</p>
           </div>
         </section>
 
-        {/* 3. SHARED MEMORY */}
+        {/* 3. ONE MORE THING: SHARED MEMORY ACROSS CLIs */}
         <section className="site-memory" id="memory">
           <div className="site-memory-head">
-            <h2>Shared memory, without the bloat.</h2>
+            <span className="site-kicker">ONE MORE THING</span>
+            <h2>One memory, shared across CLIs.</h2>
             <p>
-              Readable Markdown scoped by <strong>Area</strong> and <strong>Global</strong>, shared across Claude Code, Codex, and ACP. Task sessions can only propose; a Memory Planner governs writes under hard byte budgets.
+              Project rules shouldn&apos;t stay trapped in separate <code>CLAUDE.md</code> files or forgotten chats. Perga keeps them as plain Markdown notes shared across <strong>Claude Code</strong>, <strong>Codex</strong>, and every new task — so you never repeat the same constraints twice.
             </p>
           </div>
 
           <div className="site-sheet site-sheet-memory">
             <div className="site-sheet-bar">
-              <span className="site-sheet-title">Area Memory</span>
-              <span className="site-sheet-badge">742 / 1,228 B AREA PINNED · ETAG LOCKED</span>
+              <span className="site-sheet-title">Project Memory</span>
+              <span className="site-sheet-badge">PLAIN MARKDOWN · SHARED BY CLAUDE CODE &amp; CODEX</span>
             </div>
             <WidgetFrame
               src="./widgets/entries.html"
-              title="Perga pinned memory entries"
+              title="Perga pinned project rule"
               data={MEMORY_PINNED_DATA}
-              initialHeight={240}
+              initialHeight={180}
               onIntent={handleWidgetIntent}
             />
             <div className="site-memory-divider" />
             <WidgetFrame
               src="./widgets/entries.html"
-              title="Perga topic memory entries"
+              title="Perga expandable project notes"
               data={MEMORY_TOPICS_DATA}
-              initialHeight={200}
+              initialHeight={148}
               onIntent={handleWidgetIntent}
             />
           </div>
@@ -256,19 +265,19 @@ export function App() {
         <section className="site-facts">
           <div>
             <span>WORKSPACES</span>
-            <strong>Worktree · Jujutsu <code>jj</code> · Linux OverlayFS · SSH</strong>
+            <strong>Git worktree · Jujutsu <code>jj</code> · Linux OverlayFS · SSH</strong>
           </div>
           <div>
             <span>TERMINALS</span>
-            <strong>Persistent Rust PTY (<code>#![forbid(unsafe_code)]</code>)</strong>
+            <strong>Persistent Rust PTY</strong>
           </div>
           <div>
             <span>STORAGE</span>
-            <strong>Local SQLite WAL + UTF-8 Markdown</strong>
+            <strong>Local SQLite + plain Markdown</strong>
           </div>
           <div>
-            <span>PROTOCOLS</span>
-            <strong>Zero-template start · 27–40 line <code>.perga.js</code></strong>
+            <span>EXTENSIBLE</span>
+            <strong>Start blank or drop in a <code>.perga.js</code> template</strong>
           </div>
         </section>
 

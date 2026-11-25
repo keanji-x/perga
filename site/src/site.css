@@ -1,6 +1,7 @@
 /* Restrained, intuitive editorial landing page harmonized with fe/web/src/styles/entry.css */
 @layer overrides {
   :root {
+    color-scheme: light;
     --font-serif: "Newsreader", "Iowan Old Style", Charter, Georgia, "Source Han Serif SC", serif;
     --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", sans-serif;
     --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
@@ -9,14 +10,6 @@
     --site-dark-rule: #2d323d;
     --site-dark-text: #f3f1eb;
     --site-dark-text-2: #a9afb9;
-  }
-
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --site-dark: #0b0d10;
-      --site-dark-2: #13161b;
-      --site-dark-rule: #262b35;
-    }
   }
 
   html {
@@ -356,6 +349,78 @@
     font-size: 1.25rem;
     font-weight: 500;
     color: var(--text);
+  }
+
+  .site-sheet-right {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .site-code-toggle {
+    appearance: none;
+    border: 1px solid var(--hairline-strong);
+    background: var(--bg);
+    color: var(--text-2);
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    padding: 3px 9px;
+    border-radius: 3px;
+    cursor: pointer;
+  }
+
+  .site-code-toggle:hover,
+  .site-code-toggle.is-open {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: var(--paper);
+  }
+
+  .site-flow-drawer {
+    margin-bottom: 18px;
+    border: 1px solid var(--hairline);
+    border-radius: 5px;
+    background: var(--bg);
+    overflow: hidden;
+  }
+
+  .site-flow-drawer-head {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 7px 14px;
+    border-bottom: 1px solid var(--hairline);
+    font-family: var(--font-mono);
+    font-size: 0.71rem;
+    color: var(--text-3);
+  }
+
+  .site-flow-code {
+    margin: 0;
+    padding: 12px 14px;
+    overflow-x: auto;
+    font-family: var(--font-mono);
+    font-size: 0.77rem;
+    line-height: 1.55;
+    color: var(--text);
+    background: transparent;
+  }
+
+  .site-flow-code code {
+    background: transparent;
+    padding: 0;
+    font-family: inherit;
+  }
+
+  .site-kicker {
+    display: inline-block;
+    margin-bottom: 8px;
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.1em;
+    color: var(--accent);
   }
 
   .site-sheet-badge {
