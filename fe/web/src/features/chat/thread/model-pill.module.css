@@ -3,6 +3,12 @@
     display: contents;
   }
 
+  /* Constrain Astryx Popover's internal inline-flex anchor wrapper so the trigger shrinks inside narrow composers. */
+  .host > * {
+    max-inline-size: 100%;
+    min-inline-size: 0;
+  }
+
   /*
    * Composer footer triggers, smaller and quieter than the field above them.
    *
@@ -23,12 +29,12 @@
 
   .trigger {
     border-radius: var(--radius-pill);
-    max-inline-size: min(14.5rem, 240px);
+    max-inline-size: min(14.5rem, 240px, 100%);
     min-inline-size: 0;
   }
 
   .trigger[data-nc-compact='true'] {
-    max-inline-size: min(9rem, 220px);
+    max-inline-size: min(9rem, 220px, 100%);
   }
 
   @media (hover: hover) {
@@ -51,6 +57,10 @@
     gap: var(--space-1);
     min-inline-size: 0;
     max-inline-size: 100%;
+  }
+
+  .triggerInner > :first-child {
+    min-inline-size: 0;
   }
 
   .triggerChevron {

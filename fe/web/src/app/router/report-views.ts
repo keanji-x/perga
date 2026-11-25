@@ -26,7 +26,7 @@ export function useTrackTemplateViews(
   if (query.isError) {
     return {
       status: 'error',
-      message: readFailureText(readFailureOf(query.error), '无法加载模板视图，请稍后重试。'),
+      message: readFailureText(readFailureOf(query.error), 'Could not load template views. Please try again.'),
     };
   }
   return { status: 'loading' };

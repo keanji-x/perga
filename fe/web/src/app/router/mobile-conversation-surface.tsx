@@ -80,7 +80,7 @@ export function ConversationSurface({ embedded, centerEmptyComposer = false, mob
       footer={<>{centerEmptyComposer && embedded.emptyIntroduction}<div ref={setEmbeddedNode} />{embedded.footerPrefix}</>}>{embedded.active ? <>{(titleActions !== undefined || sessionHeader !== undefined) && <div className={styles.embeddedHeader}>{titleActions}{sessionHeader}</div>}{props.children}</> : null}</EmbeddedReadingHost>, embedded.host)}
     <Drawer {...props} titleActions={titleActions} headerActions={sessionHeader} open={!embedded?.active && !mobileSheet && props.open} companionVisible={!mobileSheet && props.companionVisible}
       footer={mobileSheet ? undefined : <div ref={setDesktopNode} />}>{mobileSheet || embedded?.active ? null : props.children}</Drawer>
-    <Sheet enabled={mobileSheet} open={props.open} label={props.title || '对话'} frame={{ heightPx: sheetHeight, bottomInsetPx: visibleViewport.bottomInset }}
+    <Sheet enabled={mobileSheet} open={props.open} label={props.title || 'Conversation'} frame={{ heightPx: sheetHeight, bottomInsetPx: visibleViewport.bottomInset }}
       desktopFooterRef={desktopSlot} dialogRef={dialog} panelRef={capturePanel} finalFocusRef={finalFocus}
       focusInput={focusInput} resolveInitialFocus={resolveInitialFocus} onCloseRequest={props.onClose} onFooterHeight={setFooterHeight}
       footer={<div className={mobileSheet ? `${styles.footerContent} ${mobileFontClassName}` : undefined} data-nc-chat-footer={mobileSheet ? '' : undefined} data-nc-conversation-region={props.id}

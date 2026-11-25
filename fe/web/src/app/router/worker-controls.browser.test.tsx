@@ -100,9 +100,9 @@ it('keeps uncertain steering visible and withdraws through the unified message r
     });
   } });
   await page.getByRole('button', { name: /Conversation Other conversation/ }).click();
-  await page.getByRole('button', { name: '立即插队', exact: true }).click();
+  await page.getByRole('button', { name: 'Send now', exact: true }).click();
   await expect.element(page.getByText('Still queued — not confirmed', { exact: true })).toBeVisible();
-  await page.getByRole('button', { name: '撤回', exact: true }).click();
+  await page.getByRole('button', { name: 'Withdraw', exact: true }).click();
   await expect.element(page.getByText('Inspect the appendix', { exact: true })).not.toBeInTheDocument();
   expect(withdrawn).toBe(true);
 });
@@ -152,7 +152,7 @@ it('allows configuration before a pending task starts while keeping message inpu
     });
   } });
   await page.getByRole('button', { name: /Conversation Other conversation/ }).click();
-  await expect.element(page.getByText('等待任务', { exact: true })).toBeVisible();
+  await expect.element(page.getByText('Waiting on task', { exact: true })).toBeVisible();
   await expect.element(page.getByRole('combobox', { name: 'Message' })).not.toBeInTheDocument();
   await page.getByRole('button', { name: 'Approvals: Restricted', exact: true }).click();
   await page.getByText('Full', { exact: true }).first().click();
@@ -176,7 +176,7 @@ it('freezes the composer and configuration while the task gate verifies', async 
   } });
   await page.getByRole('button', { name: /Conversation Other conversation/ }).click();
   await expect.element(page.getByRole('combobox', { name: 'Message' })).not.toBeInTheDocument();
-  await expect.element(page.getByText('对话已结束', { exact: true })).toBeVisible();
+  await expect.element(page.getByText('Ended', { exact: true })).toBeVisible();
   await expect.element(page.getByRole('button', { name: 'Approvals: Restricted', exact: true })).not.toBeInTheDocument();
   expect(view.requests.some(request => request.method !== 'GET')).toBe(false);
 });

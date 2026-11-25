@@ -95,7 +95,7 @@ it('previews files and screenshot items, restores a refused image, then retries 
   await expect.poll(() => transcriptImages().length).toBe(0);
 
   await send();
-  const retry = page.getByRole('button', { name: '重试', exact: true });
+  const retry = page.getByRole('button', { name: 'Retry', exact: true });
   await expect.element(retry).toBeVisible();
   await expect.poll(() => transcriptImages()[0]?.naturalWidth).toBe(320);
   await retry.click();

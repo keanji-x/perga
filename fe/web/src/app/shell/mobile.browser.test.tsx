@@ -39,7 +39,7 @@ async function openSettings(): Promise<void> {
   const history = page.getByRole('button', { name: 'Open conversation history', exact: true });
   if (history.query() !== null) {
     await history.click();
-    await page.getByRole('button', { name: '设置', exact: true }).click();
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
     return;
   }
   // A new-track composer owns its Back header; enter the same Settings visit
@@ -163,7 +163,7 @@ describe('Track mobile presentation', () => {
     expect(history.closest('[data-nc-workspace-header]')).not.toBeNull();
     expect(page.getByRole('button', { name: 'Track actions', exact: true }).query()).toBeNull();
     await page.elementLocator(history).click();
-    const oldHistory = await page.getByRole('dialog', { name: '历史对话', exact: true }).findElement();
+    const oldHistory = await page.getByRole('dialog', { name: 'Conversations', exact: true }).findElement();
     await page.viewport(1400, 900);
     await expect.poll(() => document.querySelector('[data-nc-workspace-header]')).toBeNull();
     expect(history.isConnected).toBe(false);
@@ -172,7 +172,7 @@ describe('Track mobile presentation', () => {
     await page.viewport(390, 844);
     await expect.poll(() => document.querySelector('[data-nc-workspace-header]')).not.toBeNull();
     expect(document.querySelectorAll('[data-nc-workspace-header] button[aria-label="Open conversation history"]')).toHaveLength(1);
-    const freshHistory = await page.getByRole('dialog', { name: '历史对话', exact: true }).findElement();
+    const freshHistory = await page.getByRole('dialog', { name: 'Conversations', exact: true }).findElement();
     expect(freshHistory).not.toBe(oldHistory);
     await userEvent.keyboard('{Escape}');
     await expect.poll(() => (freshHistory as HTMLDialogElement).open).toBe(false);
@@ -375,7 +375,7 @@ describe('Track mobile presentation', () => {
     expect(document.activeElement).not.toBe(document.body);
     expect(router.state.location.pathname).toBe('/track/w1');
     expect(page.getByRole('button', { name: 'Responsive mobile UI', exact: true }).query()).toBeNull();
-    await page.getByText('这个 Area 还没有 Track').findElement();
+    await page.getByText('No tracks in this area').findElement();
     await page.getByRole('button', { name: 'Area actions' }).click();
     await page.getByRole('menuitem', { name: 'Edit area Frontend' }).click();
     await page.getByRole('dialog', { name: 'Edit Frontend', exact: true }).findElement();
@@ -435,7 +435,7 @@ describe('Track mobile presentation', () => {
     const unsubscribe = router.subscribe('onResolved', () => { trace.record('route'); });
     try {
       await page.getByRole('button', { name: 'Open conversation history' }).click();
-      const settingsControl = page.getByRole('button', { name: '设置', exact: true });
+      const settingsControl = page.getByRole('button', { name: 'Settings', exact: true });
       const openingControl = await settingsControl.findElement();
       // Native drawer entrance animation must settle before measuring its edge hit target.
       await Promise.allSettled(openingControl.closest('dialog')!.getAnimations({ subtree: true })
@@ -520,8 +520,8 @@ describe('Track mobile presentation', () => {
     await userEvent.keyboard('[/Space]');
     await expect.poll(() => hamburger.getAnimations().length).toBe(0);
     expect(getComputedStyle(hamburger).transform).toBe('none');
-    await page.getByRole('dialog', { name: '历史对话' }).findElement();
-    const settings = await page.getByRole('button', { name: '设置', exact: true }).findElement();
+    await page.getByRole('dialog', { name: 'Conversations' }).findElement();
+    const settings = await page.getByRole('button', { name: 'Settings', exact: true }).findElement();
     expect(settings.getBoundingClientRect().height).toBeGreaterThanOrEqual(44);
     await page.screenshot({ path: '../../../../test-results/mobile-contour-feedback.png' });
   });
@@ -637,7 +637,7 @@ describe('workspace exit interaction lifetime', () => {
     expect(prevented).toBe(false);
     expect(host.contains(document.activeElement)).toBe(false);
     await page.getByRole('button', { name: 'Open conversation history' }).click();
-    const history = await page.getByRole('dialog', { name: '历史对话' }).findElement();
+    const history = await page.getByRole('dialog', { name: 'Conversations' }).findElement();
     exit.finish();
     await expect.poll(() => getComputedStyle(host).visibility).toBe('hidden');
     expect((history as HTMLDialogElement).open).toBe(true);

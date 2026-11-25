@@ -27,7 +27,7 @@ function setup() {
     setOpen(value: boolean) { open = value; view.rerender(<MobileHistory {...props()} />); },
     setOwner(value: string) { currentTrackId = value; owner = {}; view.rerender(<MobileHistory {...props()} />); },
     dialog: () => view.container.querySelector('dialog')!,
-    admit() { view.getByRole('button', { name: '发起新对话' }).click(); },
+    admit() { view.getByRole('button', { name: 'New conversation' }).click(); },
   };
 }
 
@@ -70,13 +70,13 @@ it('new contract, lifecycle-only: first intent wins and revokes app interactions
   await page.viewport(390, 844);
   const history = setup();
   await expect.poll(() => history.dialog().open).toBe(true);
-  const settings = history.view.getByRole('button', { name: '设置' });
-  const view = history.view.getByRole('button', { name: '已置顶' });
+  const settings = history.view.getByRole('button', { name: 'Settings' });
+  const view = history.view.getByRole('button', { name: 'Pinned' });
   history.admit();
   expect(settings.closest('[inert]')).not.toBeNull();
   settings.click(); // Even a stale programmatic dispatch cannot replace New.
   view.click();
-  expect(history.view.getByRole('button', { name: '本 Track' }).getAttribute('aria-pressed')).toBe('true');
+  expect(history.view.getByRole('button', { name: 'This track' }).getAttribute('aria-pressed')).toBe('true');
   expect(history.onOpenChange).toHaveBeenCalledTimes(1);
   expect(history.onNew).not.toHaveBeenCalled();
   history.setOpen(false);
@@ -163,7 +163,7 @@ it('natural input: retains current list scroll and selected row through native p
   history.onOpenChange.mockImplementation((open: boolean) => history.setOpen(open));
   await expect.poll(() => history.dialog().open).toBe(true);
   const old = history.dialog();
-  const list = history.view.getByRole('region', { name: 'Active conversations' }).parentElement!;
+  const list = history.view.getByRole('region', { name: 'Today' }).parentElement!;
   list.scrollTop = 120;
   expect(list.scrollTop).toBe(120);
   expect(history.view.getByRole('button', { name: 'Conversation 0' }).getAttribute('aria-current')).toBe('true');
@@ -171,13 +171,13 @@ it('natural input: retains current list scroll and selected row through native p
   await expect.poll(() => old.open).toBe(false);
   history.setOpen(true);
   expect(history.dialog()).not.toBe(old);
-  expect(history.view.getByRole('region', { name: 'Active conversations' }).parentElement!.scrollTop).toBe(120);
+  expect(history.view.getByRole('region', { name: 'Today' }).parentElement!.scrollTop).toBe(120);
   expect(history.view.getByRole('button', { name: 'Conversation 0' }).getAttribute('aria-current')).toBe('true');
-  await page.getByRole('button', { name: '已置顶', exact: true }).click();
+  await page.getByRole('button', { name: 'Pinned', exact: true }).click();
   await userEvent.keyboard('{Escape}');
   await expect.poll(() => history.dialog().open).toBe(false);
   history.setOpen(true);
-  expect(history.view.getByRole('button', { name: '本 Track' }).getAttribute('aria-pressed')).toBe('true');
+  expect(history.view.getByRole('button', { name: 'This track' }).getAttribute('aria-pressed')).toBe('true');
 });
 
 it('natural input: New runs after native release and later close never steals newer outside focus', async () => {
@@ -191,7 +191,7 @@ it('natural input: New runs after native release and later close never steals ne
       expect(history.dialog().open).toBe(false);
       editor.focus();
     });
-    await page.getByRole('button', { name: '发起新对话', exact: true }).click();
+    await page.getByRole('button', { name: 'New conversation', exact: true }).click();
     await expect.poll(() => history.onNew.mock.calls.length).toBe(1);
     expect(document.activeElement).toBe(editor);
     history.dialog().dispatchEvent(new Event('close'));

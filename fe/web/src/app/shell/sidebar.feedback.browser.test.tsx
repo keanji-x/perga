@@ -162,7 +162,7 @@ it.each([false, true])('uses the actual Sidebar creation source with the Area fo
   await page.viewport(1200, 800);
   render(<AreaEntry empty={empty} />);
   if (empty) {
-    expect(screen.getByRole('heading', { name: '还没有 Area' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'No areas yet' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Create your first area' })).toBeNull();
   }
   const action = screen.getByRole('button', { name: 'New area' });

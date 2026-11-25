@@ -91,7 +91,7 @@ export function ReportSourcePanel({ target, resolution, onRetry, scrollToQuote =
       : resolution.status === 'loading'
         ? <p className={styles.state} role="status">{SOURCE_PANEL_COPY.loading}</p>
         : resolution.status === 'error'
-          ? <ErrorBox message={readFailureText(resolution.failure, '无法读取来源。')} onRetry={onRetry} />
+          ? <ErrorBox message={readFailureText(resolution.failure, 'Could not load source.')} onRetry={onRetry} />
           : <Source key={`${resolution.source.source_id}:${target.quoteId ?? ''}:${initialView ?? ''}`} source={resolution.source} target={target}
             scrollToQuote={scrollToQuote} scrollRoot={inline ? scrollRoot : undefined}
             initialView={initialView ?? (target.quoteId === null ? 'reading' : 'original')} />;

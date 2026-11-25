@@ -47,7 +47,7 @@ describe('ReportSourcePanel', () => {
     expect(badge?.getAttribute('data-nc-report-source-provenance')).toBe(provenance);
     expect(badge?.textContent).toBe(SOURCE_PROVENANCE_COPY[provenance]);
     expect(SOURCE_PROVENANCE_COPY[provenance]).toBe({
-      full_text: '智堡全文', summary: '智堡摘要，非机构原文', web_page: '网页', manual: '手工录入，未经内核核验',
+      full_text: 'Full text', summary: 'Summary (not original source)', web_page: 'Web page', manual: 'Manual entry (unverified)',
     }[provenance]);
   });
 
@@ -63,7 +63,7 @@ describe('ReportSourcePanel', () => {
     expect(container.textContent).toContain('mcp-wisburg');
     expect(container.textContent).toContain('get_article_detail');
     expect(container.textContent).toContain('752972');
-    fireEvent.click(screen.getByRole('button', { name: '原文' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Original' }));
     const body = container.querySelector('pre[data-nc-report-source-body]');
     expect(body?.textContent).toBe('看 [链接](https://example.com/x) 和 ![图](https://example.com/x.png) **不渲染**');
     expect(container.querySelectorAll('a, img, strong').length).toBe(0);
@@ -88,7 +88,7 @@ describe('ReportSourcePanel', () => {
   it('keeps the source but shows the missing state with the destination when the anchor is not on the row', () => {
     const missingAnchor = target('perga://source/src_2c9e0a1b#q7', 'src_2c9e0a1b', 'q7');
     const { container } = render(<ReportSourcePanel target={missingAnchor} resolution={{ status: 'ok', source: row() }} onRetry={() => undefined} />);
-    expect(container.querySelector('[data-nc-report-source-provenance="full_text"]')?.textContent).toBe('智堡全文');
+    expect(container.querySelector('[data-nc-report-source-provenance="full_text"]')?.textContent).toBe('Full text');
     expect(screen.getByRole('heading', { level: 2 }).textContent).toBe('Mikko 全球市场日志 9-13');
     expect(container.querySelector('mark')).toBeNull();
     expect(container.querySelector('pre[data-nc-report-source-body]')?.textContent).toBe(BODY);
@@ -96,10 +96,10 @@ describe('ReportSourcePanel', () => {
     const notice = container.querySelector('[data-nc-report-source-missing="anchor"]');
     expect(notice).not.toBeNull();
     expect(screen.getByRole('heading', { level: 3 }).textContent).toBe(SOURCE_PANEL_COPY.anchorMissingTitle);
-    expect(SOURCE_PANEL_COPY.anchorMissingTitle).toBe('引用锚点缺失');
+    expect(SOURCE_PANEL_COPY.anchorMissingTitle).toBe('Citation anchor missing');
     expect(notice?.textContent).toContain(SOURCE_PANEL_COPY.anchorMissingDetail);
     expect(notice?.querySelector('code')?.textContent).toBe('perga://source/src_2c9e0a1b#q7');
-    expect(container.querySelector('pre')?.textContent).not.toContain('引用锚点缺失');
+    expect(container.querySelector('pre')?.textContent).not.toContain('Citation anchor missing');
   });
 
   it('treats a quote whose text is not in the body the same way', () => {
@@ -143,10 +143,10 @@ describe('ReportSourcePanel', () => {
     expect(screen.getByRole('status').textContent).toBe(SOURCE_PANEL_COPY.loading);
     rerender(<ReportSourcePanel target={WELL_FORMED} resolution={{ status: 'error', failure: { kind: 'http', status: 500, code: 'internal', message: 'boom' } }} onRetry={onRetry} />);
     /* A server fault shows only the fixed sentence, with no raw-text disclosure. */
-    expect(screen.getByRole('alert').textContent).toBe('无法读取来源。Retry');
+    expect(screen.getByRole('alert').textContent).toBe('Could not load source.Retry');
     expect(screen.getByRole('alert').querySelector('details')).toBeNull();
     rerender(<ReportSourcePanel target={WELL_FORMED} resolution={{ status: 'error', failure: { kind: 'http', status: 404, code: 'not_found', message: 'source src_1' } }} onRetry={onRetry} />);
-    expect(screen.getByRole('alert').textContent).toBe('无法读取来源。 source src_1Retry');
+    expect(screen.getByRole('alert').textContent).toBe('Could not load source. source src_1Retry');
     screen.getByRole('button', { name: 'Retry' }).click();
     expect(onRetry).toHaveBeenCalledTimes(1);
   });
@@ -156,7 +156,7 @@ describe('ReportSourcePanel', () => {
     const { container } = render(<ReportSourcePanel target={NO_ANCHOR} resolution={{ status: 'ok', source }} onRetry={() => undefined} />);
     expect(container.textContent).toContain('https://example.com/page');
     expect(container.querySelectorAll('a').length).toBe(0);
-    expect(container.querySelector('[data-nc-report-source-provenance="manual"]')?.textContent).toBe('手工录入，未经内核核验');
+    expect(container.querySelector('[data-nc-report-source-provenance="manual"]')?.textContent).toBe('Manual entry (unverified)');
   });
 
   it('names the drawer after the row once it is known, and generically until then', () => {
@@ -174,9 +174,9 @@ it('reads captured Markdown as formatted text and preserves the exact original v
   expect(screen.getByRole('heading', { name: '2026年三季度美股盈利前瞻' })).toBeTruthy();
   expect(container.querySelector('strong')?.textContent).toBe('增长未见减速迹象');
   expect(container.querySelectorAll('ol > li')).toHaveLength(2);
-  fireEvent.click(screen.getByRole('button', { name: '原文' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Original' }));
   expect(container.querySelector('pre[data-nc-report-source-body]')?.textContent).toBe(body);
-  fireEvent.click(screen.getByRole('button', { name: '阅读' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Reading' }));
   expect(container.querySelector('strong')?.textContent).toBe('增长未见减速迹象');
 });
 
@@ -191,20 +191,20 @@ it('formats untrusted evidence without author-controlled navigation, HTML or res
   expect(reading.querySelectorAll('a, img, iframe, script')).toHaveLength(0);
   expect(Array.from(reading.querySelectorAll('button'), button => button.textContent)).toEqual(['Copy code']);
   expect(reading.textContent).not.toContain('bad()');
-  fireEvent.click(screen.getByRole('button', { name: '原文' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Original' }));
   expect(container.querySelector('pre[data-nc-report-source-body]')?.textContent).toBe(body);
 });
 
 it('resets the view for a new source or quote arrival and keeps exact quote placement in original text', () => {
   const { container, rerender } = render(<ReportSourcePanel target={NO_ANCHOR} resolution={{ status: 'ok', source: row() }} onRetry={() => undefined} />);
-  expect(screen.getByRole('button', { name: '阅读' }).getAttribute('aria-pressed')).toBe('true');
+  expect(screen.getByRole('button', { name: 'Reading' }).getAttribute('aria-pressed')).toBe('true');
   rerender(<ReportSourcePanel target={WELL_FORMED} resolution={{ status: 'ok', source: row() }} onRetry={() => undefined} />);
-  expect(screen.getByRole('button', { name: '原文' }).getAttribute('aria-pressed')).toBe('true');
+  expect(screen.getByRole('button', { name: 'Original' }).getAttribute('aria-pressed')).toBe('true');
   expect(container.querySelector('mark')?.textContent).toBe('9月加息概率接近九成');
-  fireEvent.click(screen.getByRole('button', { name: '阅读' }));
-  fireEvent.click(screen.getByRole('button', { name: '原文' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Reading' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Original' }));
   expect(container.querySelector('pre')?.textContent).toBe(BODY);
   expect(scrollIntoView).toHaveBeenCalledTimes(2);
   rerender(<ReportSourcePanel target={NO_ANCHOR} resolution={{ status: 'ok', source: row({ source_id: 'src_0971fbde' }) }} onRetry={() => undefined} />);
-  expect(screen.getByRole('button', { name: '阅读' }).getAttribute('aria-pressed')).toBe('true');
+  expect(screen.getByRole('button', { name: 'Reading' }).getAttribute('aria-pressed')).toBe('true');
 });

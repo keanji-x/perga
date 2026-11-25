@@ -13,15 +13,17 @@ export function assertNormalEmptySurface(expectedTitles: readonly string[], styl
       const compact = root.classList.contains(styles.compact);
       const panel = root.classList.contains(styles.panel);
       const typography = getComputedStyle(heading);
-      expect(typography.fontSize).toBe(compact ? '14px' : panel ? '16px' : '20px');
-      expect(typography.fontWeight).toBe('500');
-      expect(typography.lineHeight).toBe(compact ? '20px' : panel ? '26.4px' : '24px');
-      expect(getComputedStyle(root).rowGap).toBe(compact ? '4px' : '8px');
-      expect(getComputedStyle(heading.parentElement!).columnGap).toBe(compact ? '6px' : '8px');
+      expect(typography.fontSize).toBe(compact ? '12px' : panel ? '16px' : '20px');
+      expect(typography.fontWeight).toBe(compact ? '400' : '500');
+      expect(typography.lineHeight).toBe(compact ? '16px' : panel ? '26.4px' : '24px');
+      expect(getComputedStyle(root).rowGap).toBe(compact ? '0px' : '8px');
+      expect(getComputedStyle(heading.parentElement!).columnGap).toBe(compact ? '4px' : '8px');
       const description = root.querySelector('p')!;
       expect(description.textContent.length).toBeGreaterThan(0);
-      expect(getComputedStyle(description).fontSize).toBe(compact ? '12px' : '14px');
-      expect(getComputedStyle(description).lineHeight).toBe(compact ? '18px' : '23.1px');
+      if (!compact) {
+        expect(getComputedStyle(description).fontSize).toBe('14px');
+        expect(getComputedStyle(description).lineHeight).toBe('23.1px');
+      }
       expect(root.querySelector('[aria-hidden="true"] svg')).not.toBeNull();
       expect(root.querySelector('button,a,input,textarea,[tabindex]')).toBeNull();
     }

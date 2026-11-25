@@ -558,12 +558,16 @@
   }
 
   .cell {
-    padding: var(--space-3) var(--space-4) var(--space-3) 0;
+    padding: var(--space-3) var(--space-2);
     border-block-end: 1px solid color-mix(in srgb, var(--hairline) 45%, transparent);
     text-align: start;
     vertical-align: top;
     color: var(--text-2);
     line-height: 1.6;
+  }
+
+  .cell:first-child {
+    padding-inline-start: 0;
   }
 
   .cell:last-child {

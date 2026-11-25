@@ -69,11 +69,11 @@ it.each([
   const slider = await page.getByRole('slider', { name: 'Reasoning effort' }).findElement();
   (slider as HTMLElement).focus();
   await userEvent.keyboard('{End}');
-  await page.getByRole('button', { name: 'Save', exact: true }).click();
-  await expect.poll(() => fixture.requests.filter(request => request.method === 'PATCH' && request.method === 'PATCH' && /\/api\/v1\/sessions\/[^/]+$/.test(request.path)).length).toBe(1);
+  await expect.poll(() => fixture.requests.filter(request => request.method === 'PATCH' && /\/api\/v1\/sessions\/[^/]+$/.test(request.path)).length).toBe(1);
   expect(fixture.sessions[0]).toMatchObject({ model, reasoningEffort: 'high' });
   await act(async () => { await fixture.client.invalidateQueries({ queryKey: queryKeys.plannerRun('daily-planner') }); });
   await expect.element(page.getByRole('button', { name: /^Model:.*high/ })).toBeVisible();
+  await userEvent.keyboard('{Escape}');
   await page.getByRole('button', { name: /^Model:.*high/ }).click();
   await expect.element(page.getByRole('slider', { name: 'Reasoning effort' })).toHaveAttribute('aria-valuetext', 'high');
 });

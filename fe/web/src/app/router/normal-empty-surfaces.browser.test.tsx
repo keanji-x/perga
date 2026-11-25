@@ -22,7 +22,7 @@ it('catalog historical day without Track', async () => {
 it('catalog missing report reference block', async () => {
   await page.viewport(800,400);
   mountEmptyReportReference(true);
-  await expect.element(page.getByText('报告中没有这条引用指向的内容。')).toBeVisible();
+  await expect.element(page.getByText('The referenced section could not be found in this report.')).toBeVisible();
   await shot('30-reference-missing-block', []);
 });
 
@@ -37,13 +37,13 @@ async function shot(name: string, expectedTitles: readonly string[]) {
 it.each([1440, 390])('catalog main report and sidebar %i', async width => {
   await page.viewport(width, 900);
   renderDailyFixture({ initial: '/track/project', reply: request => request.path === '/api/v1/tracks/project' ? ok(fixtureSnapshot(fixtureTrack('project', { areaId: 'project-area', title: '新项目' }))) : undefined });
-  await expect.element(page.getByRole('heading', { name: '进展会整理在这里' })).toBeVisible();
-  await shot('01-report-' + width, ["进展会整理在这里"]);
+  await expect.element(page.getByRole('heading', { name: 'Progress lives here' })).toBeVisible();
+  await shot('01-report-' + width, []);
   if (width === 390) {
     await page.getByRole('button', { name: 'Open conversation history', exact: true }).click();
-    await expect.element(page.getByText('当前 Track 还没有对话。')).toBeVisible();
-    await shot('12-history-current', ["当前 Track 还没有对话。"]);
-    for (const [label, name, message] of [['已置顶','13-history-pinned','还没有已置顶的 Track。'], ['未读','14-history-unread','没有未读的 Track。'], ['未处理','15-history-waiting','没有需要处理的 Track。']]) {
+    await expect.element(page.getByText('No conversations in this track yet.')).toBeVisible();
+    await shot('12-history-current', ["No conversations in this track yet."]);
+    for (const [label, name, message] of [['Pinned','13-history-pinned','No pinned tracks yet.'], ['Unread','14-history-unread','No unread tracks.'], ['Attention','15-history-waiting','No tracks need attention.']]) {
       await page.getByRole('button', { name: label, exact: true }).click();
       await expect.element(page.getByText(message)).toBeVisible();
       await shot(name, [message]);
@@ -55,42 +55,42 @@ it.each([1440, 390])('catalog Today and conversation %i', async width => {
   renderDailyFixture({ reportBody: '', emptyWorkspace: true });
   if (width >= 960) {
     await expect.element(page.getByRole('combobox', { name: 'Message', exact: true })).toBeVisible();
-    expect(page.getByRole('heading', { name: '聊聊你想做什么' }).query()).toBeNull();
-  } else await expect.element(page.getByRole('heading', { name: '今天的重点' })).toBeVisible();
+    expect(page.getByRole('heading', { name: 'Start a conversation' }).query()).toBeNull();
+  } else await expect.element(page.getByRole('heading', { name: 'Today’s focus' })).toBeVisible();
   await shot('02-today-' + width, []);
   if (width !== 1440) {
     await page.getByRole('button', { name: 'Open conversation history', exact: true }).click();
     await page.getByRole('button', { name: '2026-10-04 Daily Planner conversation', exact: true }).click();
   }
   if (width === 1440) await expect.element(page.getByRole('region', { name: 'Today Assistant', exact: true }).getByRole('combobox', { name: 'Message', exact: true })).toBeVisible();
-  else await expect.element(page.getByRole('heading', { name: '聊聊你想做什么' })).toBeVisible();
-  await shot('03-conversation-' + width, width === 1440 ? [] : ['聊聊你想做什么']);
+  else await expect.element(page.getByRole('heading', { name: 'Start a conversation' })).toBeVisible();
+  await shot('03-conversation-' + width, width === 1440 ? [] : ['Start a conversation']);
 });
 it('catalog heading-only report mobile', async () => {
   await page.viewport(390,844);
   mount(<ReportDocument report={{ summary:'', body:'# 概要\n\n# 今日计划', blocks:null }} empty={null} />, true);
-  await expect.element(page.getByRole('heading',{name:'进展会整理在这里'})).toBeVisible();
-  await shot('06-heading-only-report', ["进展会整理在这里"]);
+  await expect.element(page.getByRole('heading',{name:'Progress will be compiled here'})).toBeVisible();
+  await shot('06-heading-only-report', ["Progress will be compiled here"]);
 });
 it.each(['areas','tracks'] as const)('catalog mobile navigation %s', async view => {
   await page.viewport(390,844);
   mount(<MobileTracks {...navigationActions()} view={view} areas={view === 'areas' ? [] : [area]} tracksByArea={new Map()} areaId={view === 'areas' ? undefined : area.id} currentTrackId={undefined} onSelectArea={noop} onOpenTrack={noop} isUnread={() => false} readError={null} readLoading={false} onRetryRead={noop} />);
-  await expect.element(page.getByText(view === 'areas' ? '还没有 Area' : '这个 Area 还没有 Track')).toBeVisible();
-  await shot(view === 'areas' ? '07-mobile-no-areas' : '08-mobile-no-tracks', [view === 'areas' ? '还没有 Area' : '这个 Area 还没有 Track']);
+  await expect.element(page.getByText(view === 'areas' ? 'No areas yet' : 'No tracks in this area')).toBeVisible();
+  await shot(view === 'areas' ? '07-mobile-no-areas' : '08-mobile-no-tracks', [view === 'areas' ? 'No areas yet' : 'No tracks in this area']);
 });
 it('catalog mobile Pages groups', async () => {
   await page.viewport(390,844);
   mount(<MobilePages {...navigationActions()} areas={[area]} areaId={area.id} tracks={[]} onOpenTrack={noop} />);
-  await expect.element(page.getByText('还没有最近浏览的 Page')).toBeVisible(); await shot('09-pages-recent', ["还没有最近浏览的 Page"]);
+  await expect.element(page.getByText('No recent pages yet')).toBeVisible(); await shot('09-pages-recent', ["No recent pages yet"]);
   await page.getByRole('radio',{name:'Pinned',exact:true}).click();
-  await expect.element(page.getByText('还没有置顶的 Page')).toBeVisible(); await shot('10-pages-pinned', ["还没有置顶的 Page"]);
+  await expect.element(page.getByText('No pinned pages yet')).toBeVisible(); await shot('10-pages-pinned', ["No pinned pages yet"]);
 });
 it.each(['code','diff'] as const)('catalog file viewer %s', async tab => {
   await page.viewport(1000,650);
   mountEmptyFileViewer(tab);
-  await expect.element(page.getByText(tab === 'code' ? '选择一个文件以查看内容' : '工作区没有未提交的更改')).toBeVisible();
-  await expect.element(page.getByRole('heading', { name: '这个文件夹是空的', exact: true })).toBeVisible();
-  await shot(tab === 'code' ? '17-files-empty-folder-and-unselected' : '18-files-no-changes', tab === 'code' ? ['这个文件夹是空的','选择一个文件以查看内容'] : ['工作区没有未提交的更改','Select a changed file']);
+  await expect.element(page.getByText(tab === 'code' ? 'Select a file to view' : 'No uncommitted changes')).toBeVisible();
+  await expect.element(page.getByRole('heading', { name: 'This folder is empty', exact: true })).toBeVisible();
+  await shot(tab === 'code' ? '17-files-empty-folder-and-unselected' : '18-files-no-changes', tab === 'code' ? ['This folder is empty','Select a file to view'] : ['No uncommitted changes','Select a changed file']);
 });
 it.each([false,true])('catalog directory browser filtered %s', async filtered => {
   await page.viewport(900,650);
@@ -99,8 +99,8 @@ it.each([false,true])('catalog directory browser filtered %s', async filtered =>
     await expect.element(page.getByRole('option',{name:'src'})).toBeVisible();
     await page.getByRole('combobox').fill('/work/nonexistent');
   }
-  await expect.element(page.getByText(filtered ? 'No matches' : '这个文件夹是空的')).toBeVisible();
-  await shot(filtered ? '20-folder-search-no-matches' : '19-folder-picker-empty', [filtered ? 'No matches' : '这个文件夹是空的']);
+  await expect.element(page.getByText(filtered ? 'No matches' : 'This folder is empty.')).toBeVisible();
+  await shot(filtered ? '20-folder-search-no-matches' : '19-folder-picker-empty', [filtered ? 'No matches' : 'This folder is empty.']);
 });
 it.each(['mention','command'])('catalog composer search %s', async type => {
   await page.viewport(1000,700);
@@ -123,7 +123,7 @@ it('catalog report data and history component states', async () => {
 it('catalog waiting conversation', async () => {
   await page.viewport(650,500);
   mount(<div style={{display:'flex',height:420,background:'var(--paper)',borderRadius:12}}><ChatEmpty working /></div>,true);
-  await expect.element(page.getByRole('heading',{name:'正在整理你的想法'})).toBeVisible();
+  await expect.element(page.getByRole('heading',{name:'Organizing your thoughts'})).toBeVisible();
   await shot('24-conversation-working', []);
 });
 it('catalog report reference without document', async () => {
@@ -137,7 +137,7 @@ it('catalog report reference without document', async () => {
 it('catalog missing report sources', async () => {
   await page.viewport(1100,1100);
   mountMissingReportSources();
-  await expect.element(page.getByRole('heading',{name:'引用锚点缺失',exact:true})).toBeVisible();
+  await expect.element(page.getByRole('heading',{name:'Citation anchor missing',exact:true})).toBeVisible();
   await shot('31-source-missing-states', []);
 });
 
@@ -150,7 +150,7 @@ it('catalog confirmed empty desktop shortcut groups', async () => {
   }
   renderDailyFixture({emptyWorkspace:true,reportBody:'',uiPreferences:preferences});
   await expect.element(page.getByRole('combobox', { name: 'Message', exact: true })).toBeVisible();
-  expect(page.getByRole('heading', { name: '聊聊你想做什么', exact: true }).query()).toBeNull();
+  expect(page.getByRole('heading', { name: 'Start a conversation', exact: true }).query()).toBeNull();
   expect(page.getByRole('group',{name:'Focus',exact:true}).query()).toBeNull();
   expect(page.getByRole('group',{name:'Pinned',exact:true}).query()).toBeNull();
   await shot('34-desktop-empty-shortcuts', []);

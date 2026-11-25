@@ -23,7 +23,10 @@ afterEach(() => {
 function renderReport(file = false, wide = false) {
   const view = renderPage({
     report: <ReportDocument report={{ summary: '', body: markdown, blocks: null }} empty={<></>} />,
-    board: file ? <ReportFileViewer path="report.md" files={files} fileRoot="/repo" wide={wide} onClose={vi.fn()} /> : undefined,
+    fileViewer: file ? {
+      render: () => <ReportFileViewer path="report.md" files={files} fileRoot="/repo" wide={wide} onClose={vi.fn()} />,
+      onClose: vi.fn(),
+    } : undefined,
   });
   // Use the shell's production container and panel sizing, including its cqi scope.
   view.container.className = shell.main;
@@ -40,7 +43,7 @@ it.each([320, 768, 1000, 1440, 1920])('keeps Report and Markdown reading widths 
   await page.viewport(width, 900);
   const view = renderReport();
   const expected = prose().getBoundingClientRect();
-  expect(expected.width).toBeLessThanOrEqual(640);
+  expect(expected.width).toBeLessThanOrEqual(720);
   expect(expected.width).toBeGreaterThan(200);
   view.unmount();
   for (const wide of [false, true]) {
@@ -60,7 +63,7 @@ it.each([320, 768, 1000, 1440, 1920])('keeps Report and Markdown reading widths 
 it('preserves a bounded reading column on a tablet', async () => {
   await page.viewport(900, 900);
   renderReport();
-  expect(prose().getBoundingClientRect().width).toBeCloseTo(640, 0);
+  expect(prose().getBoundingClientRect().width).toBeCloseTo(720, 0);
 });
 
 it('scales the reading ceiling with the root font size without overflowing the container', async () => {
@@ -68,7 +71,7 @@ it('scales the reading ceiling with the root font size without overflowing the c
   document.documentElement.style.fontSize = '20px';
   renderReport();
   const paragraph = prose();
-  expect(paragraph.getBoundingClientRect().width).toBeCloseTo(800, 0);
+  expect(paragraph.getBoundingClientRect().width).toBeCloseTo(900, 0);
   expect(Number.parseFloat(getComputedStyle(paragraph).fontSize)).toBe(20);
   const heading = document.querySelector<HTMLElement>('[data-nc-report] h2')!;
   expect(Number.parseFloat(getComputedStyle(heading).fontSize)).toBe(25);

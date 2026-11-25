@@ -174,7 +174,8 @@ export function TrackPage({ fillReading = false, articleMasthead = !fillReading,
     mobileTitleEditRef.current = begin;
     setCanEditMobileTitle(begin !== null);
   }, []);
-  const titleInHeader = compactViewport && mobileHeaderTitleHost !== null;
+  const closeSurface = fileViewer?.onClose ?? onCloseBoard;
+  const titleInHeader = compactViewport && mobileHeaderTitleHost !== null && closeSurface === undefined;
   useLayoutEffect(() => {
     const slot = titleSlotRef.current;
     if (slot === null || !titleInHeader || mobileHeaderTitleHost === null) return;
@@ -215,7 +216,6 @@ export function TrackPage({ fillReading = false, articleMasthead = !fillReading,
     return active !== null && (headerBackRef.current === active || mobileBackRef.current === active);
   };
   const boardOpen = onCloseBoard !== undefined;
-  const closeSurface = fileViewer?.onClose ?? onCloseBoard;
   const mobilePanelOpen = panel !== null;
   const mobilePanelKind: MobilePanelKind = panel ?? 'cards';
   const trackWorkActions = [
@@ -316,8 +316,8 @@ export function TrackPage({ fillReading = false, articleMasthead = !fillReading,
     </span>
   ) : undefined;
 
-  // Keep the EditableTitle host viewport-invariant so resizing across compact/desktop never unmounts an active rename draft.
-  const usesMastheadHost = articleMasthead && closeSurface === undefined;
+  // Keep the EditableTitle host viewport- and overlay-invariant so resizing or opening a file viewer never unmounts an active rename draft or shifts report scrollTop.
+  const usesMastheadHost = articleMasthead;
   const showArticleMasthead = !compactViewport && usesMastheadHost;
   const isDirectFolder = showWorkspaceIsolation && track.isolation === 'none';
   const folioDate = formatFolioDate(track.updatedAt);
@@ -345,11 +345,11 @@ export function TrackPage({ fillReading = false, articleMasthead = !fillReading,
       >
         <h1 className={showArticleMasthead ? styles.mastheadHeading : styles.titleHeading}>
           {onRenameTrack === undefined
-            ? <span className={showArticleMasthead ? styles.mastheadTitle : styles.title} data-nc-page-title=""><TrackTitle track={track} /></span>
+            ? <span className={showArticleMasthead ? styles.mastheadTitle : styles.title} data-nc-page-title={!usesMastheadHost || closeSurface === undefined ? '' : undefined}><TrackTitle track={track} /></span>
             : <EditableTitle value={track.title} placeholder={UNTITLED_TRACK_LABEL}
                 displayContent={<TrackTitle track={track} />} emptyCommit="clear" onCommit={onRenameTrack}
                 readCommitFailure={writeFailureText(TRACK_PATCH_FAILURES, TRACK_PATCH_TEXT.rename)} editLabel="Rename track" inputLabel="Track title"
-                className={showArticleMasthead ? styles.mastheadTitle : styles.title} isPageTitle titleRef={titleReadControlRef}
+                className={showArticleMasthead ? styles.mastheadTitle : styles.title} isPageTitle={!usesMastheadHost || closeSurface === undefined} titleRef={titleReadControlRef}
                 readView={hasMobileTitleReadView ? (controls) => <MobileTitleReadView
                   controls={controls} host={mobileHeaderTitleHost} register={registerMobileTitleEdit}
                   view={(readControls) => (
@@ -400,22 +400,26 @@ export function TrackPage({ fillReading = false, articleMasthead = !fillReading,
             )}
             {/* The raw title, with the fallback as the placeholder. `emptyCommit="clear"`: the planner's `track_rename` succeeds only while the title is empty, so clearing the name is a real request here, not a cancel. */}
             {usesMastheadHost ? (
-              <div className={styles.runningHeadCluster}>
-                {isDirectFolder && <ExplanationBadge label={NO_ISOLATION_LABEL}>{NO_ISOLATION_EXPLANATION}</ExplanationBadge>}
-                <div className={styles.runningHeadSwap}>
-                  <span className={styles.runningHeadFolio}>
-                    {folioParts.length > 0
-                      ? folioParts.map((part, index) => (
-                        <span key={part} className={styles.folioPart}>
-                          {index > 0 && <span className={styles.folioDot} aria-hidden="true">·</span>}
-                          <span>{part}</span>
-                        </span>
-                      ))
-                      : <span>Report</span>}
-                  </span>
-                  <span className={styles.runningHeadTitle} aria-hidden={!pageScrolled}><TrackTitle track={track} /></span>
+              closeSurface !== undefined ? (
+                <h1 className={styles.titleHeading}><span className={styles.title} tabIndex={-1} data-nc-page-title=""><TrackTitle track={track} /></span></h1>
+              ) : (
+                <div className={styles.runningHeadCluster}>
+                  {isDirectFolder && <ExplanationBadge label={NO_ISOLATION_LABEL}>{NO_ISOLATION_EXPLANATION}</ExplanationBadge>}
+                  <div className={styles.runningHeadSwap}>
+                    <span className={styles.runningHeadFolio}>
+                      {folioParts.length > 0
+                        ? folioParts.map((part, index) => (
+                          <span key={part} className={styles.folioPart}>
+                            {index > 0 && <span className={styles.folioDot} aria-hidden="true">·</span>}
+                            <span>{part}</span>
+                          </span>
+                        ))
+                        : <span>Report</span>}
+                    </span>
+                    <span className={styles.runningHeadTitle} aria-hidden={!pageScrolled}><TrackTitle track={track} /></span>
+                  </div>
                 </div>
-              </div>
+              )
             ) : titleBlock}
           </>
         }
@@ -477,7 +481,7 @@ export function TrackPage({ fillReading = false, articleMasthead = !fillReading,
         aria-hidden={boardOpen ? true : undefined}
         inert={boardOpen}
       >
-        <div className={styles.doc} inert={fileViewer !== undefined}>
+        <div className={styles.doc} inert={fileViewer !== undefined} aria-hidden={fileViewer !== undefined ? true : undefined}>
           {usesMastheadHost && (
             <header ref={mastheadRef} className={`${styles.articleMasthead} ${titleInHeader ? styles.articleMastheadInShell : ''}`}>
               {titleBlock}

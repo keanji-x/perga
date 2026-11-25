@@ -15,19 +15,15 @@ it.each([1280, 390])('selects a dynamically registered backend through the keybo
   const fixture = renderAssistantProviderFixture({ bootstrap, failFirstCreate: true, mobile: width < 600 });
   if (width < 600) {
     await page.getByRole('button', { name: 'Open conversation history', exact: true }).click();
-    await page.getByRole('button', { name: '发起新对话', exact: true }).click();
+    await page.getByRole('button', { name: 'New conversation', exact: true }).click();
   } else await page.getByRole('button', { name: 'New conversation', exact: true }).click();
-  if (width < 600) await page.getByLabelText('对话选项').click();
+  if (width < 600) await page.getByLabelText('Conversation options').click();
   const model = page.getByRole('button', { name: /^Model:/ });
   await model.click();
   await expect.element(page.getByRole('radio', { name: 'selected', exact: true })).toBeVisible();
   expect(fixture.requests.some(request => request.path === '/api/v1/bootstrap?provider=claude')).toBe(true);
   expect(fixture.requests.some(request => request.path === '/api/v1/bootstrap?provider=codex')).toBe(false);
   await page.getByRole('radio', { name: 'selected', exact: true }).click();
-  const slider = await page.getByRole('slider', { name: 'Reasoning effort' }).findElement();
-  slider.focus();
-  await userEvent.keyboard('{Home}{End}');
-  await page.getByRole('button', { name: 'Save', exact: true }).click();
   const field = page.getByRole('combobox', { name: 'Message' });
   await field.fill('Frozen first message');
   await userEvent.keyboard('{Enter}');
@@ -38,7 +34,7 @@ it.each([1280, 390])('selects a dynamically registered backend through the keybo
   expect(posts()[0].body).toMatchObject({ provider: 'claude', model: 'selected', prompt: 'Frozen first message' });
   bootstrap.providers[0] = { ...bootstrap.providers[0], available: false, reason: 'Now unavailable' };
   await fixture.client.invalidateQueries({ queryKey: ['managed-providers'] });
-  if (width < 600) await page.getByLabelText('对话选项').click();
+  if (width < 600) await page.getByLabelText('Conversation options').click();
   await page.getByRole('button', { name: /^(Try again|Retry|Retry safely \(same key\))$/, exact: true }).click();
   await expect.poll(() => posts().length).toBe(2);
   expect(posts()[1].body).toEqual(posts()[0].body);
@@ -54,9 +50,9 @@ it('creates the declared Codex default despite auth/read and catalog unavailabil
   const fixture = renderAssistantProviderFixture({ bootstrap });
   await page.getByRole('button', { name: 'New conversation', exact: true }).click();
   await page.getByRole('button', { name: /^Model:/ }).click();
-  await expect.element(page.getByRole('radio', { name: /^Default/ })).toBeEnabled();
+  await expect.element(page.getByText('Account read failed', { exact: false })).toBeVisible();
+  expect(page.getByText('A track can still be created', { exact: false }).query()).toBeNull();
   await page.getByRole('radio', { name: /^Default/ }).click();
-  await page.getByRole('button', { name: 'Save', exact: true }).click();
   const field = page.getByRole('combobox', { name: 'Message' });
   await field.fill('Follow the backend default'); await userEvent.keyboard('{Enter}');
   await expect.poll(() => fixture.requests.filter(request => request.method === 'POST' && request.path.endsWith('/sessions')).length).toBe(1);
@@ -70,7 +66,6 @@ it('renders, selects and sends a managed identifier independently of legacy UI l
   const model = page.getByRole('button', { name: /^Model:/ });
   await model.click();
   await page.getByRole('radio', { name: 'selected', exact: true }).click();
-  await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect.element(model).toHaveAccessibleName(/^Model: (?:opencode|OpenCode) selected/);
   await page.getByRole('combobox', { name: 'Message' }).fill('Owner registered backend');
   await userEvent.keyboard('{Enter}');

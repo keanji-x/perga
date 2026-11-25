@@ -53,10 +53,11 @@ export function catalogReason<Provider extends string>(group: ModelGroup<Provide
   refused: boolean;
   blocked: string | null;
 } {
-  const reason = group.selectionProblem === undefined
-    ? (group.availability?.status === 'unavailable' ? group.availability.reason : null)
-    : group.selectionProblem;
-  const refused = group.selectionProblem !== undefined || group.acceptsUnavailableBlankTrack !== true;
+  const availabilityReason = group.availability?.status === 'unavailable' ? group.availability.reason : null;
+  const reason = group.selectionProblem ?? availabilityReason;
+  const refused = group.selectionProblem !== undefined
+    ? group.selectionProblem !== null
+    : group.acceptsUnavailableBlankTrack !== true;
   const blocked = refused ? reason : null;
   return { reason, refused, blocked };
 }

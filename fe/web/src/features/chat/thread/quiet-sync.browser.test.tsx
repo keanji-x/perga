@@ -70,9 +70,9 @@ describe('the quiet-sync fold in a real engine', () => {
     summary.focus();
     await userEvent.keyboard('{Enter}');
     expect(fold.open).toBe(true);
-    const usageButton = [...fold.querySelectorAll<HTMLElement>('[role="button"]')].find(node => node.textContent?.includes('Planner context usage'))!;
-    await userEvent.click(usageButton);
-    expect(fold.textContent).toContain(usage.text);
+    const usageNote = [...fold.querySelectorAll<HTMLElement>('[data-nc-turn="system"]')].find(node => node.textContent?.includes('Planner context usage'))!;
+    expect(usageNote.checkVisibility()).toBe(true);
+    expect(usageNote.getAttribute('title')).toBe(usage.text);
     expect(folded.checkVisibility()).toBe(true);
     expect(folded.getBoundingClientRect().height).toBeGreaterThan(0);
     const disclosure = summary.querySelector<HTMLElement>('[aria-hidden="true"]')!;

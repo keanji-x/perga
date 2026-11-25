@@ -14,12 +14,12 @@ async function settle() {
 it.each([1440, 390, 320])('keeps the empty daily report and conversation reachable at %i', async (width) => {
   await page.viewport(width, 900);
   renderDailyFixture({ reportBody: '' });
-  await expect.element(page.getByRole('heading', { name: width >= 960 ? '今天想推进什么？' : '今天的重点' })).toBeVisible();
+  await expect.element(page.getByRole('heading', { name: width >= 960 ? 'What would you like to move forward today?' : 'Today’s focus' })).toBeVisible();
   await settle();
   await page.screenshot({ path: `./__screenshots__/empty-audit/daily-${width}.png` });
   if (width >= 960) {
     const assistant = page.getByRole('region', { name: 'Today Assistant', exact: true });
-    await expect.element(assistant.getByRole('heading', { name: '今天想推进什么？' })).toBeVisible();
+    await expect.element(assistant.getByRole('heading', { name: 'What would you like to move forward today?' })).toBeVisible();
     await expect.element(assistant.getByRole('combobox', { name: 'Message' })).toBeVisible();
     expect(assistant.element().querySelector('[data-nc-thread-empty]')).toBeNull();
     return;
@@ -29,8 +29,8 @@ it.each([1440, 390, 320])('keeps the empty daily report and conversation reachab
     await page.getByRole('button', { name: '2026-10-04 Daily Planner conversation', exact: true }).click();
   }
   await expect.poll(() => document.querySelector('[data-nc-thread-empty]') !== null).toBe(true);
-  await expect.element(page.getByText('聊聊你想做什么', { exact: true })).toBeVisible();
-  const title = page.getByRole('heading', { name: '聊聊你想做什么', exact: true }).element();
+  await expect.element(page.getByText('Start a conversation', { exact: true })).toBeVisible();
+  const title = page.getByRole('heading', { name: 'Start a conversation', exact: true }).element();
   await settle();
   const transcript = document.querySelector('[data-nc-thread-empty]')!;
   const scroll = transcript.closest('[data-nc-drawer-scroll]')!;
@@ -54,13 +54,13 @@ it.each([1440, 390])('renders the airy blank report guide and interactive Flow s
   await page.viewport(width, 900);
   const { requests } = renderDailyFixture({ initial: '/track/project', reply: request => request.path === '/api/v1/tracks/project' ? { status: 200, statusText: 'OK', body: fixtureSnapshot(fixtureTrack('project', { areaId: 'project-area', title: '新项目' })) } : undefined });
   await expect.poll(() => document.querySelector('[data-nc-report-empty]') !== null).toBe(true);
-  await expect.element(page.getByRole('heading', { name: '进展会整理在这里' })).toBeVisible();
-  await expect.element(page.getByRole('heading', { name: 'Flow 示例：多步工作如何自动流转' })).toBeVisible();
-  await expect.element(page.getByRole('region', { name: '流程示例' })).toBeVisible();
+  await expect.element(page.getByRole('heading', { name: 'Progress lives here' })).toBeVisible();
+  await expect.element(page.getByRole('heading', { name: 'Sample Flow: how multi-step work runs' })).toBeVisible();
+  await expect.element(page.getByRole('region', { name: 'Sample Flow' })).toBeVisible();
   expect(document.querySelector('[data-nc-report]')).toBeNull();
   expect(document.querySelector('[aria-label="Template protocol"]')).toBeNull();
-  await page.getByRole('button', { name: /^汇总沉淀进 Report/ }).click();
-  await expect.element(page.getByText(/上游步骤完成后自动唤醒 Lead/)).toBeVisible();
+  await page.getByRole('button', { name: /^Synthesize into Report/ }).click();
+  await expect.element(page.getByText(/Wakes Lead once upstream steps settle/)).toBeVisible();
   await settle();
   await page.screenshot({ path: `./__screenshots__/empty-audit/track-${width}.png` });
   expect(requests.every(request => request.method === 'GET')).toBe(true);

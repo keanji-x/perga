@@ -56,7 +56,7 @@ export function ReportLinkPreview({ destination, resources, label, trigger, rend
     {destination.kind === 'reference' && <ReferenceContent destination={destination} resources={resources} renderMarkdown={renderMarkdown} />}
     {destination.kind === 'source' && (resources?.renderSource !== undefined
       ? resources.renderSource(destination.target)
-      : <div className={styles.content}><p className={styles.destination}>{destination.destination}</p><p>此页面未提供来源预览，请打开来源详情。</p></div>)}
+      : <div className={styles.content}><p className={styles.destination}>{destination.destination}</p><p>Source preview is not available on this page. Open source details instead.</p></div>)}
     {onOpen !== undefined && <button type="button" className={styles.action} onClick={() => { dismiss(); onOpen(); }}>Open in workspace</button>}
     </>}
   </HoverPreview>;

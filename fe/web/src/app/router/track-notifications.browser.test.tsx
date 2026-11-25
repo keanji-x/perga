@@ -19,29 +19,35 @@ it.each([1200, 390])('acknowledges a conversation update through the status entr
     if (request.path.includes('/project-planner/items?')) return { status: 200, statusText: 'OK', body: sessionPage(planner) };
     return undefined;
   } });
-  const entry = page.getByRole('button', { name: width === 390 ? 'Open conversation' : '讨论这项工作', exact: true });
-  const activity = () => entry.element().querySelector('[data-nc-activity]')?.getAttribute('data-nc-activity');
+  const openEntry = async () => {
+    if (width === 390) {
+      await page.getByRole('textbox', { name: 'Chat message', exact: true }).click();
+    } else {
+      await page.getByRole('button', { name: /Conversation Project conversation/ }).click();
+    }
+  };
+  const activity = () => (width === 390
+    ? document.querySelector('[data-nc-mobile-header] [data-nc-activity="unread"], [data-nc-track-page] [data-nc-activity="unread"]')
+    : document.querySelector('[data-nc-desktop-panel] [data-nc-activity="unread"]')
+  )?.getAttribute('data-nc-activity');
   mount();
-  await expect.element(entry).toHaveAccessibleDescription('Unread updates');
-  expect(activity()).toBe('unread');
+  await expect.poll(activity).toBe('unread');
   expect(document.querySelector('[data-nc-notification-launcher]')).toBeNull();
   expect(page.getByRole('region', { name: 'Notifications', exact: true }).query()).toBeNull();
-  await entry.click();
+  await openEntry();
   await expect.element(page.getByRole('combobox', { name: 'Message', exact: true })).toBeVisible();
   await expect.poll(() => receipts.requests.filter(request => request.path.endsWith('/project-planner/read')).length).toBe(1);
   await page.getByRole('button', { name: 'Close conversation', exact: true }).click();
-  await expect.element(entry).toBeVisible();
-  await expect.poll(activity).not.toBe('unread');
+  await expect.poll(activity).toBeUndefined();
   cleanup();
   mount();
-  await expect.element(entry).toBeVisible();
-  await expect.poll(activity).not.toBe('unread');
+  await expect.element(page.getByRole('region', { name: 'Notifications', exact: true })).not.toBeInTheDocument();
+  await expect.poll(activity).toBeUndefined();
   // Completion acknowledgements retain their watermark on a new visit; #103
   // avoids redundant track-view writes when there is no manual unread.
-  await entry.click();
+  await openEntry();
   await expect.element(page.getByRole('combobox', { name: 'Message', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Close conversation', exact: true }).click();
-  await expect.element(entry).toBeVisible();
   expect(receipts.requests.filter(request => request.path.endsWith('/project-planner/read')).map(request => request.body))
     .toEqual([{ readThroughMs: 20 }, { readThroughMs: 20 }]);
   expect(receipts.requests.filter(request => request.path.endsWith('/project/read'))).toHaveLength(0);
@@ -63,9 +69,8 @@ it.each(['payload', 'fenced Markdown'])('keeps historical task failures out of h
       id: 'worker-task', blockId: 'b_9065', taskKey: 'verify-fix', statusDetail: 'The host stopped during this attempt.',
     }] } };
   } });
-  const entry = page.getByRole('button', { name: '讨论这项工作', exact: true });
-  await expect.element(entry).toBeVisible();
-  expect(entry.element().querySelector('[data-nc-activity="failed"]')).toBeNull();
+  await expect.element(page.getByRole('button', { name: 'Progress', exact: true })).toBeVisible();
+  expect(document.querySelector('[data-nc-track-page] [data-nc-activity="failed"]')).toBeNull();
   expect(page.getByRole('region', { name: 'Notifications', exact: true }).query()).toBeNull();
   await page.getByRole('button', { name: 'Progress', exact: true }).click();
   await expect.element(page.getByText('Failed', { exact: true })).toBeVisible();

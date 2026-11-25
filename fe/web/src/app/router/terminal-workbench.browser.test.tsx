@@ -99,7 +99,7 @@ it('keeps the final conversation frame through exit, removes its DOM, and transf
   await waitFor(() => expect(drawer.getAnimations()).toHaveLength(0));
   fireEvent.click(screen.getByRole('button', { name: /^Close conversation$/u }));
   expect(drawer.hasAttribute('data-nc-drawer')).toBe(true);
-  expect(drawer.textContent).toContain('聊聊你想做什么');
+  expect(drawer.textContent).toContain('Start a conversation');
   expect(drawer.querySelector('h2')?.textContent).toBe('Untitled');
   await waitFor(() => expect(drawer.isConnected).toBe(false));
   expect(document.querySelector('[data-nc-drawer]')).toBeNull();
@@ -124,7 +124,7 @@ it.each([['light', false], ['dark', true]] as const)('keeps the empty Workbench 
   const fixture = setupWorkbench();
   const region = page.getByRole('region', { name: 'Workbench', exact: true });
   await expect.element(region).toBeVisible();
-  await expect.element(region.getByText('还没有工具')).toBeVisible();
+  await expect.element(region.getByText('No tools yet')).toBeVisible();
   const entry = region.getByRole('button', { name: 'Tools' });
   expect(page.getByRole('region', { name: 'Conversations', exact: true }).element().contains(entry.element())).toBe(false);
   act(() => (entry.element() as HTMLButtonElement).focus());
@@ -135,7 +135,7 @@ it.each([['light', false], ['dark', true]] as const)('keeps the empty Workbench 
   const hide = page.getByRole('button', { name: 'Hide terminal' });
   await expect.element(hide).toBeVisible();
   expect(hide.element().textContent).toBe('');
-  expect(hide.element().querySelector('svg')?.classList.contains('lucide-chevron-right')).toBe(true);
+  expect(hide.element().querySelector('svg')?.classList.contains('lucide-panel-right')).toBe(true);
   expect(hide.element().getAttribute('title')).toBe('Hide terminal');
   const header = hide.element().closest('header')!;
   expect(header.lastElementChild).toBe(hide.element());
@@ -225,12 +225,12 @@ it.each(['light', 'dark'] as const)('shares the Chat header geometry and exposes
   expect(recipe(header)).toEqual(recipe(chatHeader));
   expect(recipe(header.querySelector('h2')!)).toEqual(recipe(chatHeader.querySelector('h2')!));
   expect(header.getBoundingClientRect().height).toBe(chatHeader.getBoundingClientRect().height);
-  expect(header.querySelector('h2')!.getBoundingClientRect().left - header.getBoundingClientRect().left)
-    .toBe(chatHeader.querySelector('h2')!.getBoundingClientRect().left - chatHeader.getBoundingClientRect().left);
   const hide = page.getByRole('button', { name: 'Hide terminal' });
   const remove = page.getByRole('button', { name: 'Delete card shell', exact: true });
   const chatHide = chatHeader.querySelector('button[aria-label="Close conversation"]')!;
   expect(recipe(hide.element())).toEqual(recipe(chatHide));
+  expect(header.querySelector('h2')!.getBoundingClientRect().left - header.getBoundingClientRect().left)
+    .toBe(chatHeader.firstElementChild!.getBoundingClientRect().left - chatHeader.getBoundingClientRect().left);
   expect(header.getBoundingClientRect().right - hide.element().getBoundingClientRect().right)
     .toBe(chatHeader.getBoundingClientRect().right - chatHide.getBoundingClientRect().right);
   await field.click();

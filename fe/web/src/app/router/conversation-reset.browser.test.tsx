@@ -63,16 +63,16 @@ it.each([390, 1280])('reads and copies interrupted inputs above the epoch bounda
   ]);
   await page.getByRole('button', { name: /Conversation Daily Planner conversation/ }).click();
   await expect.element(page.getByText('Interrupted · Unsent', { exact: true }).first()).toBeVisible();
-  await page.getByRole('button', { name: '复制原文', exact: true }).first().click();
+  await page.getByRole('button', { name: 'Copy message', exact: true }).first().click();
   await expect.poll(() => copy.mock.calls.at(-1)?.[0]).toBe(userText);
   await page.getByText('Interrupted · Unsent', { exact: true }).last().click();
   await expect.element(page.getByText(wakeText, { exact: true })).toBeVisible();
-  await page.getByRole('button', { name: '复制原文', exact: true }).click();
+  await page.getByRole('button', { name: 'Copy message', exact: true }).click();
   await expect.poll(() => copy.mock.calls.at(-1)?.[0]).toBe(wakeText);
   const entries = [...document.querySelectorAll('[data-nc-entry]')];
   const user = entries.find(el => el.getAttribute('data-nc-entry') === 'human:input');
   const wake = entries.find(el => el.getAttribute('data-nc-entry') === 'system:wake');
-  const boundary = page.getByText('已重置上下文 · Epoch 2', { exact: true }).element();
+  const boundary = page.getByText('Context reset · Epoch 2', { exact: true }).element();
   expect(user).toBeTruthy(); expect(wake).toBeTruthy();
   expect(user!.compareDocumentPosition(wake!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(wake!.compareDocumentPosition(boundary) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -94,7 +94,7 @@ it('withdraws an unknown queue entry while the session is unknown', async () => 
   } });
   await page.getByRole('button', { name: /Conversation Daily Planner conversation/ }).click();
   await expect.element(page.getByText('Paused original', { exact: true })).toBeVisible();
-  await page.getByRole('button', { name: '撤回', exact: true }).click();
+  await page.getByRole('button', { name: 'Withdraw', exact: true }).click();
   await expect.poll(() => withdrawn).toBe(true);
   await expect.element(page.getByText('Paused original', { exact: true })).not.toBeInTheDocument();
 });

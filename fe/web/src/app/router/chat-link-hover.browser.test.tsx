@@ -62,7 +62,7 @@ async function setup({ streaming = false, historySuffix = '', narrow = false, fi
   const root = document.createElement('div'); root.id = 'root'; document.body.append(root);
   render(<Profiler id="source-isolation" onRender={() => {
     if (observing && document.getElementById('conversation-chat-card') === null
-      && page.getByRole('complementary', { name: '来源', exact: true }).query() !== null) stale.push('source survived switch');
+      && page.getByRole('complementary', { name: 'Source', exact: true }).query() !== null) stale.push('source survived switch');
   }}><QueryClientProvider client={client}><ThemeProvider><RouterProvider router={router} /></ThemeProvider></QueryClientProvider></Profiler>, { container: root });
   await page.getByRole('button', { name: /^Conversation Link chat/ }).click();
   return { requests, router, client, stale, switchTo: (id: string) => {
@@ -77,7 +77,7 @@ async function setup({ streaming = false, historySuffix = '', narrow = false, fi
 it('shows missing captured sources without ghost requests and previews real Track files', async () => {
   const { requests } = await setup();
   await page.getByRole('button', { name: 'Chat source', exact: true }).hover();
-  await expect.element(page.getByRole('heading', { name: '来源缺失', exact: true })).toBeVisible();
+  await expect.element(page.getByRole('heading', { name: 'Source not found', exact: true })).toBeVisible();
   expect(requests.some(request => request.path.includes('/sources/'))).toBe(false);
   await page.getByRole('button', { name: 'Chat file', exact: true }).hover();
   await expect.element(page.getByRole('heading', { name: 'Chat file contents', exact: true })).toBeVisible();
@@ -85,7 +85,7 @@ it('shows missing captured sources without ghost requests and previews real Trac
   await userEvent.keyboard('{Escape}');
   await expect.poll(() => page.getByRole('dialog', { name: 'Preview: Chat file' }).query()).toBeNull();
   await page.getByRole('button', { name: 'Chat source', exact: true }).click();
-  await expect.element(page.getByRole('complementary', { name: '来源', exact: true })).toBeVisible();
+  await expect.element(page.getByRole('complementary', { name: 'Source', exact: true })).toBeVisible();
   expect(requests.some(request => request.path.includes('/sources/'))).toBe(false);
 });
 
@@ -162,13 +162,13 @@ it.each([['Today', '/']])('preserves application navigation without admitting re
 it('clears source selection synchronously across same-Track A to B to A', async () => {
   const { switchTo, stale } = await setup();
   await page.getByRole('button', { name: 'Chat source', exact: true }).click();
-  await expect.element(page.getByRole('complementary', { name: '来源', exact: true })).toBeVisible();
+  await expect.element(page.getByRole('complementary', { name: 'Source', exact: true })).toBeVisible();
   switchTo('chat-b');
   await expect.poll(() => document.getElementById('conversation-chat-b')?.querySelector('[data-nc-thread]') ?? null).not.toBeNull();
-  expect(page.getByRole('complementary', { name: '来源', exact: true }).query()).toBeNull();
+  expect(page.getByRole('complementary', { name: 'Source', exact: true }).query()).toBeNull();
   switchTo('chat-card');
   await expect.poll(() => document.getElementById('conversation-chat-card')?.querySelector('[data-nc-thread]') ?? null).not.toBeNull();
-  expect(page.getByRole('complementary', { name: '来源', exact: true }).query()).toBeNull();
+  expect(page.getByRole('complementary', { name: 'Source', exact: true }).query()).toBeNull();
   expect(stale).toEqual([]);
 });
 
@@ -193,7 +193,7 @@ it.each(['native initial', 'desktop to narrow'])('keeps file body above the nati
   expect(body.textContent).toContain('Reading paragraph 0');
   await content.getByText('Reading paragraph 0', { exact: true }).wheel({ delta: { y: 120 } });
   await expect.poll(() => body.scrollTop).toBeGreaterThan(0);
-  await content.wheel({ delta: { y: -240 } });
+  await content.wheel({ delta: { y: -480 } });
   await expect.poll(() => body.scrollTop).toBe(0);
   await content.getByRole('button', { name: 'Read nested', exact: true }).click();
   await expect.poll(() => requests.some(request => request.path.includes('/files?path=nested.md'))).toBe(true);
