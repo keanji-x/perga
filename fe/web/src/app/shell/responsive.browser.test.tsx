@@ -3,6 +3,7 @@ import { page } from 'vitest/browser';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import '../../styles/entry.css';
+import mobileStyles from './mobile-shell.module.css';
 import styles from './shell.module.css';
 import { setup } from './mobile-browser-fixture.tsx';
 import { playSpring, playTrajectory, type Playback } from '../../ui/motion/spring.ts';
@@ -16,8 +17,8 @@ function ShellProbe({ state }: { state: 'auto' | 'expanded' | 'collapsed' }) {
 
 function MobileNavigationProbe() {
   return <div className={styles.shell}>
-    <div className={`${styles.navigation} ${styles.navigationOpen}`}>
-      <div data-testid="mobile-panel" className={styles.navigationPanel}>
+    <div className={`${mobileStyles.navigation} ${mobileStyles.navigationOpen}`}>
+      <div data-testid="mobile-panel" className={mobileStyles.navigationPanel}>
         <section data-testid="areas-list" style={{ inlineSize: '100%' }}>Areas</section>
       </div>
     </div>
@@ -119,4 +120,34 @@ it.each(['Shell', 'Tracks'] as const)('preserves %s paint contribution and veloc
   const reverse = vi.mocked(playTrajectory).mock.calls.at(-1)![1].sample(0);
   expect(reverse.value).toBeCloseTo(reversal!.value as number, 6);
   expect(reverse.velocity).toBeCloseTo(reversal!.velocity as number, 6);
+});
+
+it('publishes --mobile-keyboard-inset on initial compact mount, updates on viewport resize, and cleans up on desktop', async () => {
+  await page.viewport(390, 844);
+  const viewport = window.visualViewport!;
+  const descriptors = ['height', 'offsetTop'].map((key) => Object.getOwnPropertyDescriptor(viewport, key));
+  try {
+    Object.defineProperty(viewport, 'height', { configurable: true, value: 544 });
+    Object.defineProperty(viewport, 'offsetTop', { configurable: true, value: 0 });
+    setup('/track/w1');
+    const opener = await page.getByRole('button', { name: 'Open workspace', exact: true }).findElement() as HTMLElement;
+    const shell = opener.parentElement as HTMLElement;
+    expect(shell.style.getPropertyValue('--mobile-keyboard-inset')).toBe('300px');
+    expect(opener.getBoundingClientRect().bottom).toBeLessThanOrEqual(544);
+
+    Object.defineProperty(viewport, 'height', { configurable: true, value: 644 });
+    viewport.dispatchEvent(new Event('resize'));
+    await expect.poll(() => shell.style.getPropertyValue('--mobile-keyboard-inset')).toBe('200px');
+    expect(opener.getBoundingClientRect().bottom).toBeLessThanOrEqual(644);
+
+    await page.viewport(1400, 900);
+    await expect.poll(() => shell.style.getPropertyValue('--mobile-keyboard-inset')).toBe('');
+  } finally {
+    ['height', 'offsetTop'].forEach((key, index) => {
+      const descriptor = descriptors[index];
+      if (descriptor === undefined) Reflect.deleteProperty(viewport, key);
+      else Object.defineProperty(viewport, key, descriptor);
+    });
+    viewport.dispatchEvent(new Event('resize'));
+  }
 });

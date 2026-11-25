@@ -40,10 +40,13 @@
     flex: 1;
     min-inline-size: 0;
     block-size: var(--rail-w-collapsed);
-    padding: var(--space-3) var(--space-3);
+    padding: calc((var(--rail-w-collapsed) - var(--font-step-3-line)) / 2) var(--space-3);
     border: 0;
     box-shadow: none;
     resize: none;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
     background: transparent;
     color: var(--text);
   }

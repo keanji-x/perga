@@ -30,6 +30,6 @@ export function AreaSelector({ areas, activeArea, draftArea, onSelectArea, onCre
     trigger={(props) => <span ref={sourceRef} style={{ display: 'inline-flex' }}><Button {...props} label={current?.name ?? 'Choose area'}
       variant="ghost" size="lg" className={styles.button}
       aria-label={`Switch area, ${current?.name ?? 'Choose area'}`}
-      endContent={<Icon name="switch" />} /></span>}
+      endContent={<Icon name="chevron-down" />} /></span>}
   />;
 }

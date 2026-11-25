@@ -9,6 +9,7 @@ import { visibleAreas, type Area } from '../../../../core/domain/area.ts';
 import { areaPinnedTracks, type Track } from '../../../../core/domain/track.ts';
 import { ErrorBox } from '../../ui/error-box/public.tsx';
 import { Icon } from '../../ui/icon/public.tsx';
+import { LoadingStatus } from '../../ui/loading-status/public.tsx';
 import { MobileList, MobileListEmpty, MobileListGroup, MobileListItem } from '../../ui/mobile-list/public.tsx';
 import { MobileNavigationCreateAction, MobileNavigationHeader, type MobileNavigationActions } from './mobile-navigation-header.tsx';
 import styles from './mobile-navigation.module.css';
@@ -82,7 +83,7 @@ function NavigationPage({
       onBack={onBack} onNewTrack={onNewTrack} onCreateArea={onCreateArea} onEditArea={onEditArea} onOpenSettings={onOpenSettings} />
     <div className={styles.content}>
       {readError !== null && <ErrorBox message={readError} onRetry={onRetryRead} />}
-      {readLoading && <p role="status">Loading workspace…</p>}
+      {readLoading && <LoadingStatus>Loading workspace…</LoadingStatus>}
       {view === 'areas' && <MobilePrimaryPages onOpenToday={onOpenToday} onOpenMemory={onOpenMemory} />}
       {view === 'tracks' && showMemory && onOpenAreaMemory !== undefined && selected !== undefined && <MobileList>
         <MobileListItem title="Memory" startContent={<Icon name="book-open" />} onSelect={() => onOpenAreaMemory(selected.id)} />

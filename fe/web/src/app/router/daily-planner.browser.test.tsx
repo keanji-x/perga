@@ -410,3 +410,26 @@ it.each(['Today', '2026-10-04', '2026-10-03'])('escapes an invalid day query by 
   await expect.poll(() => (router.state.location.search as Readonly<{ day?: string }>).day)
     .toBe(selection === '2026-10-03' ? selection : undefined);
 });
+
+it.each([
+  [390, 844, 44],
+  [320, 640, 40],
+] as const)('gives mobile calendar controls touch-sized targets without horizontal overflow at %ix%i', async (width, height, minDateWidth) => {
+  await page.viewport(width, height);
+  renderDailyFixture({ initial: '/?day=2026-10-03' });
+  const calendar = page.getByRole('region', { name: 'Calendar', exact: true });
+  await expect.element(calendar).toBeVisible();
+  const prev = calendar.getByRole('button', { name: 'Previous week' }).element().getBoundingClientRect();
+  const next = calendar.getByRole('button', { name: 'Next week' }).element().getBoundingClientRect();
+  const todayBtn = calendar.getByRole('button', { name: 'Today', exact: true }).element().getBoundingClientRect();
+  const dateBtn = calendar.getByRole('button', { name: '2026-10-03', exact: true }).element().getBoundingClientRect();
+
+  expect(prev.width).toBeGreaterThanOrEqual(44);
+  expect(prev.height).toBeGreaterThanOrEqual(44);
+  expect(next.width).toBeGreaterThanOrEqual(44);
+  expect(next.height).toBeGreaterThanOrEqual(44);
+  expect(todayBtn.height).toBeGreaterThanOrEqual(44);
+  expect(dateBtn.height).toBeGreaterThanOrEqual(44);
+  expect(dateBtn.width).toBeGreaterThanOrEqual(minDateWidth);
+  expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(width);
+});

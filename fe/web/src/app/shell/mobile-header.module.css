@@ -13,9 +13,9 @@
     margin-inline-start: auto;
     inline-size: fit-content;
     justify-content: flex-start;
-    border: 0 !important;
-    border-radius: var(--radius-md) !important;
-    background-color: transparent !important;
+    border: 0;
+    border-radius: var(--radius-md);
+    background-color: transparent;
     box-shadow: none;
     color: var(--text);
     min-block-size: var(--control-h-touch);

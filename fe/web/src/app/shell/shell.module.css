@@ -13,10 +13,6 @@
  * same position as the features they compose.
  */
 @layer features {
-  .workspaceOpener { position: fixed; inset-inline-start: var(--space-4); display: grid; place-items: center; box-sizing: border-box; inline-size: var(--control-h-touch); block-size: var(--control-h-touch); z-index: var(--z-sticky); cursor: pointer; }
-  .workspaceOpener[hidden] { display: none; }
-  .workspaceOpener svg { inline-size: var(--glyph-xl); block-size: var(--glyph-xl); }
-
   /*
    * A used `block-size`, not a minimum alone. A minimum-only shell grows with
    * content and the whole app becomes one scrolling document: the rail scrolls
@@ -52,15 +48,6 @@
 
   .shellExpanded {
     grid-template-columns: var(--desktop-rail-w) minmax(0, 1fr);
-  }
-
-  /* Desktop keeps the existing rail as a direct grid child. The wrappers only
-     become real boxes in the compact/mobile presentation below. */
-  .navigationFrame,
-  .navigation,
-  .navigationPanel,
-  .navigationContent {
-    display: contents;
   }
 
   .main {
@@ -175,45 +162,9 @@
     .shellCollapsed,
     .shellExpanded {
       --mobile-dock-h: 0px;
+      --mobile-keyboard-inset: 0px;
       grid-template-rows: auto minmax(0, 1fr);
       grid-template-columns: minmax(0, 1fr);
-    }
-
-    .navigationFrame {
-      z-index: var(--z-modal);
-      position: fixed;
-      inset: 0;
-      display: block;
-      pointer-events: none;
-    }
-
-    .navigation {
-      position: fixed;
-      inset: 0;
-      z-index: var(--z-modal);
-      display: grid;
-      grid-template-columns: minmax(0, 1fr);
-      visibility: hidden;
-      pointer-events: none;
-    }
-
-    .navigationOpen {
-      visibility: visible;
-    }
-
-    .navigationOpen:not([inert]) {
-      pointer-events: auto;
-    }
-
-    .navigationPanel {
-      position: relative;
-      grid-column: 1;
-      grid-row: 1;
-      display: flex;
-      flex-direction: column;
-      min-block-size: 0;
-      box-sizing: border-box;
-      background: var(--bg);
     }
 
     .main {
@@ -237,13 +188,6 @@
 
     .settingsPageShell {
       grid-template-rows: minmax(0, 1fr);
-    }
-
-    .navigationContent {
-      display: block;
-      flex: 1 1 auto;
-      min-block-size: 0;
-      overflow: clip;
     }
   }
 

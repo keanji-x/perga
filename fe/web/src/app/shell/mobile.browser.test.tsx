@@ -702,8 +702,8 @@ describe('workspace exit interaction lifetime', () => {
     const exit = held();
     await page.viewport(1400, 900);
     await expect.element(page.getByRole('navigation', { name: 'Workspace', exact: true })).toBeVisible();
-    expect(host.inert).toBe(false);
-    expect(host.hasAttribute('data-nc-escape-layer')).toBe(false);
+    expect(host.isConnected).toBe(false);
+    expect(document.querySelector('#mobile-workspace-navigation')).toBeNull();
     expect(host.getAnimations()).toHaveLength(0);
     expect(exit.playState).toBe('idle');
     await page.viewport(390, 844);
@@ -711,8 +711,9 @@ describe('workspace exit interaction lifetime', () => {
     await page.getByRole('button', { name: 'Open workspace' }).click();
     exit.finish();
     await settlePaint();
-    expect(host.inert).toBe(false);
-    expect(host.getAttribute('aria-modal')).toBe('true');
+    const reopened = await page.getByRole('dialog', { name: 'Tracks and settings' }).findElement() as HTMLElement;
+    expect(reopened.inert).toBe(false);
+    expect(reopened.getAttribute('aria-modal')).toBe('true');
   });
 
   it('settles reduced motion without waiting for a native completion', async () => {

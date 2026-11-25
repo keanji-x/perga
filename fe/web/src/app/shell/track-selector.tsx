@@ -14,7 +14,7 @@ export function TrackSelector({ track, onOpenTracks, controls }: Readonly<{
     <button type="button" ref={controls.titleRef} className={styles.trackButton} data-nc-page-title=""
       aria-label={`Switch track, ${trackDisplayTitle(track.title)}`} onClick={onOpenTracks}
       onKeyDown={(event) => { if (event.key === 'F2') { event.preventDefault(); controls.beginEditing(); } }}>
-      <span className={styles.trackLabel}><TrackTitle track={track} /></span><Icon name="switch" />
+      <span className={styles.trackLabel}><TrackTitle track={track} /></span><Icon name="chevron-down" />
     </button>
   </h1></div>;
 }

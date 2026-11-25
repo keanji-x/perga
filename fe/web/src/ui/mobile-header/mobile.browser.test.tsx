@@ -43,6 +43,9 @@ describe('MobileHeader scroll surface', () => {
     const back = await page.getByRole('button', { name: 'Back to workspace' }).findElement();
     expect(getComputedStyle(back).borderRadius).toBe('999px');
     expect(back.getBoundingClientRect().height).toBeGreaterThanOrEqual(44);
+    const backIcon = back.querySelector('svg')!;
+    expect(backIcon.getBoundingClientRect().width).toBe(24);
+    expect(backIcon.getBoundingClientRect().height).toBe(24);
     expect(Math.abs(header.getBoundingClientRect().top - top)).toBeLessThan(1);
   });
 });

@@ -82,7 +82,7 @@ describe('route registration', () => {
     );
 
     expect(screen.queryByRole('navigation', { name: 'Daily Planner dates' })).toBeNull();
-    expect(await screen.findByText('Preparing today’s Track…')).toBeTruthy();
+    expect(await screen.findByText("Preparing today's Track…")).toBeTruthy();
   });
 
   function registeredPaths(shareScope: unknown = null): (string | undefined)[] {

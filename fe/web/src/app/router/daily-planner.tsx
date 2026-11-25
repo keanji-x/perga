@@ -133,7 +133,7 @@ export function DailyTodayRoute({ transport, unauthorized, selectedDate, onOpenT
   if (daily.isPending) return withCalendarShell(<LoadingStatus padded>Loading daily Planner…</LoadingStatus>);
   if (daily.data === null) {
     const emptyNotice = isDefaultToday
-      ? <LoadingStatus padded>Preparing today’s Track…</LoadingStatus>
+      ? <LoadingStatus padded>Preparing today's Track…</LoadingStatus>
       : <EmptyState variant="panel" icon={<Icon name="file" />} title="No daily Track was created for this date." description="No daily log recorded for this date yet." />;
     return withCalendarShell(emptyNotice);
   }
@@ -143,7 +143,7 @@ export function DailyTodayRoute({ transport, unauthorized, selectedDate, onOpenT
   return renderTrack({ ...detail.data, track: { ...detail.data.track, title: date } },
     null,
     calendarNode,
-    <header className={styles.reportIntro}><h2>{isDefaultToday ? 'Today’s focus' : 'Focus for this day'}</h2><p>Keep your work clear, calm, and well-ordered.</p></header>,
+    <header className={styles.reportIntro}><h2>{isDefaultToday ? "Today's focus" : 'Focus for this day'}</h2><p>Keep your work clear, calm, and well-ordered.</p></header>,
     supervisor,
     isDefaultToday ? {
       title: 'Today Assistant',
@@ -197,7 +197,7 @@ function DailyReportChanges({ date, isToday, transport, unauthorized, onOpenTrac
     {changes.hasNextPage && <button type="button" disabled={changes.isFetchingNextPage} onClick={() => { void changes.fetchNextPage(); }}>Load more reports</button>}
   </>;
   if (standalone) return <><h2 className={styles.subviewTitle}>Report changes · {date}</h2>{content}</>;
-  return <ReportDetails title={compactViewport ? (isToday ? 'Yesterday’s updates' : 'Previous day’s updates') : 'Report changes'} meta={date} layout="appendix" variant="section" onToggle={setOpen}>
+  return <ReportDetails title={compactViewport ? (isToday ? "Yesterday's updates" : "Previous day's updates") : 'Report changes'} meta={date} layout="appendix" variant="section" onToggle={setOpen}>
     {(close) => <>
       {open && <div className={styles.subviewHeader}>
         <button type="button" className={styles.backToToday} onClick={close}>
