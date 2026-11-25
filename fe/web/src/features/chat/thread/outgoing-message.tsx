@@ -27,7 +27,9 @@ export function OutgoingMessage({ text, mobile, speaker, queued = false, edited 
       {...(replacement ? { 'data-nc-replacement': '' } : {})}
     >{sentMentionParts(text).map((part, index) => {
       if (part.label === null) return part.text;
-      const pill = <Badge label={part.label} />;
+      // Fragment keeps Astryx's own label truncation without Badge setting a nearer
+      // `title` to the abbreviated string that would shadow the outer full reference.
+      const pill = <Badge label={<>{part.label}</>} />;
       return <span key={index} className={styles.mentionToken} data-nc-sent-mention="" title={part.text}>
         {part.memoryScope === undefined ? pill : renderMemoryMention?.(part.memoryScope, pill) ?? pill}
       </span>;

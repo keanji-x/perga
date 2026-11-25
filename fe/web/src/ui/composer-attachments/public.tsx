@@ -4,6 +4,7 @@ import { ChatComposerInput, type ChatComposerInputHandle, type ChatComposerTrigg
 import { HStack } from '@astryxdesign/core/HStack';
 import { Thumbnail } from '@astryxdesign/core/Thumbnail';
 
+import { withEmptyTriggerMarker } from '../empty-state/astryx-trigger.tsx';
 import { usePortalLightbox } from '../lightbox/public.tsx';
 import styles from './composer-attachments.module.css';
 
@@ -104,6 +105,10 @@ export function ComposerInputField({
   }, [handleRef]);
 
   const wrapperClassName = className ? `${styles.field} ${className}` : styles.field;
+  const markedTriggers = useMemo(
+    () => triggers === undefined || triggers.length === 0 ? undefined : triggers.map(withEmptyTriggerMarker),
+    [triggers],
+  );
 
   return (
     <div
@@ -140,7 +145,7 @@ export function ComposerInputField({
         }}
         label={label}
         placeholder={placeholder}
-        {...(triggers === undefined || triggers.length === 0 ? {} : { triggers })}
+        {...(markedTriggers === undefined ? {} : { triggers: markedTriggers })}
         {...(debounceMs === undefined ? {} : { debounceMs })}
       />
     </div>

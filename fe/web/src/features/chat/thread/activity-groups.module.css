@@ -1,6 +1,6 @@
 @layer features {
   /*
-   * Host presentation for Astryx 0.6.3's `ChatToolCalls`, each keyed on an
+   * Host presentation for Astryx's `ChatToolCalls`, each keyed on an
    * attribute the vendor or this component sets rather than on a generated
    * StyleX class name, so a vendor rebuild cannot silently detach them.
    *
@@ -19,12 +19,9 @@
     overflow-wrap: anywhere;
   }
 
-  /* Astryx collapses the list to zero height and hides its overflow, but the
-     rows that carry a detail are still `tabIndex=0` buttons, so Tab walked
-     through every failed call of a closed group. Visibility takes them out of
-     the tab order and the accessibility tree together; the open state is
-     `ChatThread`'s, handed to the vendor as `isExpanded`, and the header still
-     carries it as `aria-expanded`. */
+  /* Astryx 0.7 sets `inert` on the collapsed grid container; `visibility: hidden`
+     additionally keeps collapsed descendants out of paint and visibility checks
+     immediately without waiting for the grid transition. */
   .group > [aria-expanded='false'] + div {
     visibility: hidden;
   }
@@ -33,13 +30,12 @@
      failed — or has moved on past it never reported an end, and Astryx has no
      status for that: both of its unfinished states draw a spinner. The line
      rendering drops its pulse in that state; the group drops the vendor's
-     spinner, which Astryx marks `role="progressbar"` (or `role="status"` in older
-     releases). `data-nc-live` is
+     spinner (`role="progressbar"`). `data-nc-live` is
      set only on the group at the tail of a live transcript (`live && last`,
      as for a lone line), so neither a dead conversation nor a run the next
      turn has left behind claims to be working — whether the group is open or
      closed, since the rule does not care which. */
-  .group:not([data-nc-live]) :is([role='progressbar'], [role='status']) {
+  .group:not([data-nc-live]) [role='progressbar'] {
     display: none;
   }
 
@@ -57,7 +53,7 @@
 
   /* Preserve the vendor's spinner slot and dimensions; hide its internal track/rotor
      nodes while keeping our portalled execution mark painted. */
-  .group :is([role='progressbar'], [role='status']) > :not([data-nc-motion]) { display: none; }
+  .group [role='progressbar'] > :not([data-nc-motion]) { display: none; }
 
   /* Summary and detail disclosures share the column's trailing edge. The
      vendor's expanded summary label otherwise wraps beside its fixed icons. */

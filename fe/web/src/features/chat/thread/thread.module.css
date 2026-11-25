@@ -604,26 +604,6 @@
   }
 
   /*
-   * Send's fill, keyed on an English string — stated plainly because it cannot
-   * be avoided from out here.
-   *
-   * `aria-label='Send'` is Astryx's own hardcoded `label` on `ChatSendButton`;
-   * the component exposes no class, no data attribute and no theme hook for its
-   * button, so there is nothing else in the tree to select. Localise Astryx, or
-   * let it reword the button, and this rule stops matching and Send goes back
-   * to Astryx's primary fill — with nothing broken, nothing logged, and the
-   * button still sending.
-   *
-   * Made non-silent rather than merely admitted: `thread.browser.test.tsx`
-   * ("fills Send with the chip surface") compares the computed background
-   * against a probe carrying `--surface-chip`, and goes red on a relabelled
-   * button. Mutation-checked by renaming the label in this selector.
-   *
-   * The five `:not(#\#)` are a specificity ladder, not a match: `#\#` is an id
-   * that cannot exist. They are what lets this out-rank Astryx's compiled
-   * StyleX without `!important`.
-   */
-  /*
    * ── The queue control, beside Stop ───────────────────────────────────────
    *
    * On screen only while `sendButton` is showing Stop, which is the whole of
@@ -661,7 +641,10 @@
     cursor: default;
   }
 
-  .composer :is(button[aria-label='Send'], .sendOwn):not(#\#):not(#\#):not(#\#):not(#\#):not(#\#) {
+  /* Send's quiet chip fill (applied via `className` on `ChatSendButton` in Send
+     state and on Perga's own Send buttons, leaving Stop on Astryx's secondary fill).
+     The five `:not(#\#)` raise specificity over Astryx's StyleX primary fill without `!important`. */
+  .composer :is(.sendFill, .sendOwn):not(#\#):not(#\#):not(#\#):not(#\#):not(#\#) {
     background: var(--surface-chip);
     color: var(--text);
     box-shadow: none;

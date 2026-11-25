@@ -20,14 +20,35 @@ it('opens the real slash menu and closes the Track through its command', async (
 });
 
 
-it('submits prose containing /close with real Enter without changing approvals', async () => {
+it('keeps the slash menu open when clicking within its query and completes on Enter', async () => {
+  await page.viewport(1280, 800);
+  const fixture = renderCommandFixture();
+  await page.getByRole('button', { name: /Conversation Daily Planner conversation/ }).click();
+  const input = page.getByRole('combobox', { name: 'Message' });
+  await input.fill('Explain /cl');
+  await expect.element(page.getByRole('option', { name: /^close / })).toBeVisible();
+  // Astryx 0.7 disables light-dismiss on trigger popovers: clicking within the
+  // active `/cl` query keeps the menu open so Enter completes `/close`.
+  await input.click();
+  await expect.element(page.getByRole('option', { name: /^close / })).toBeVisible();
+  await userEvent.keyboard('{Enter}');
+  await expect.element(page.getByRole('option', { name: /^close / })).not.toBeInTheDocument();
+  await expect.element(input).toHaveTextContent('Explain /close');
+  expect(fixture.requests.filter(request => request.path.endsWith('/messages'))).toHaveLength(0);
+  expect(fixture.requests.filter(request => request.method === 'PATCH' || request.method === 'PUT')).toHaveLength(0);
+});
+
+it('submits prose containing /close with real Enter after dismissing the menu without changing approvals', async () => {
   await page.viewport(1280, 800);
   const fixture = renderCommandFixture();
   await page.getByRole('button', { name: /Conversation Daily Planner conversation/ }).click();
   const input = page.getByRole('combobox', { name: 'Message' });
   await input.fill('Explain /close');
+  await expect.element(page.getByRole('option', { name: /^close / })).toBeVisible();
   await input.click();
+  // Dismissing the menu returns Enter to ordinary prose submission.
   await userEvent.keyboard('{Escape}');
+  await expect.element(page.getByRole('option', { name: /^close / })).not.toBeInTheDocument();
   await userEvent.keyboard('{End}');
   await userEvent.keyboard('{Enter}');
   await expect.poll(() => fixture.requests.filter(request => request.path.endsWith('/messages')).map(request => request.body))

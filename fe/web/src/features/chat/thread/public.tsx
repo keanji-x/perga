@@ -489,7 +489,7 @@ export function ChatComposer({
     return active === message || (active === rootRef.current && wantsFieldFocus.current && parkedFocus.current === active);
   } }), []);
 
-  /* Put the caret back after a send, as a standing request: `disabled` goes true inside the very click that sends, Astryx turns the field `contenteditable="false"`, and Chromium hands the focus to `<body>`. While the field refuses focus it is parked on the composer's own box, and the restore continues only while focus is exactly where it was parked. */
+  /* Put the caret back after a send, as a standing request: `disabled` goes true inside the very click that sends, Astryx turns the field `contenteditable="false"` (still focusable in 0.7 with `tabIndex={0}`) and disables Send (`aria-disabled="true"`). While the field cannot accept typing, focus is parked on the composer's own box, and the restore continues only while focus stays where it was parked. */
   useEffect(() => {
     if (answeredFocusRequest.current !== focusRequest) {
       answeredFocusRequest.current = focusRequest;
@@ -630,15 +630,11 @@ export function ChatComposer({
           event.stopPropagation();
           return;
         }
-        /* A send over an open menu with nothing to pick: Astryx's submit empties the field but leaves the
-           menu armed at the old offset, so the next pick throws. Its own Escape resets it first. Cancelable,
-           so Astryx's `preventDefault` marks it handled and the drawer's Escape does not close the drawer;
-           the router's Escape listener leaves an expanded combobox alone. */
-        if (field.getAttribute('aria-expanded') === 'true') {
-          field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
-        }
-        /* Astryx's own `handleSubmit` refuses an empty draft (`if (!value.trim()) return;`), so an image-only send has to go through here. */
+        /* Astryx's own `handleSubmit` refuses an empty draft (`if (!value.trim()) return;`), so an image-only send bypasses Astryx's Enter handler and must close any open trigger menu first. */
         if (allowEmptyText && draft.trim() === '') {
+          if (field.getAttribute('aria-expanded') === 'true') {
+            field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+          }
           event.preventDefault();
           event.stopPropagation();
           submit();
@@ -692,12 +688,12 @@ export function ChatComposer({
               debounceMs={0}
             />
           )}
-          /* Send's availability is Astryx's own (`canSend`). Astryx renders `aria-disabled` only with a `tooltip`, which `ChatSendButton` does not take, so this is a native `disabled` that drops focus to `<body>` — the focus effect above moves it back into the field first. */
+          /* Send's availability is Astryx's own (`canSend`). In 0.7 Astryx keeps disabled Send focusable with `aria-disabled="true"`; the focus effect above parks focus on the composer box and returns typing to the field once re-enabled. */
           /* Keep the native Send/Stop control mounted. Its public icon slot gives
              immediate decorative feedback while the composer group exposes aria-busy. */
           sendButton={sendDisabled
             ? <Button label="Send" variant="primary" isIconOnly icon={sendIcon} className={styles.sendOwn} isDisabled />
-            : editing === undefined ? <ChatSendButton sendIcon={
+            : editing === undefined ? <ChatSendButton className={stopShown ? undefined : styles.sendFill} sendIcon={
             <span className={styles.sendGlyph} data-nc-waiting={sendWaiting && !stopShown} aria-hidden="true">
               <span className={styles.sendArrow}>{layout === 'mobile' ? <Icon name="arrow-up" /> : sendIcon}</span>
               <span className={styles.sendWait}><LoadingIndicator active={sendWaiting && !stopShown} /></span>

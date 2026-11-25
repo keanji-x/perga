@@ -71,8 +71,8 @@ export function ComposerPreferences({ folder, browsing }: Props) {
 
   useLayoutEffect(() => {
     const host = hostRef.current;
-    // Closed popovers unmount their content in Astryx 0.6.3. Keep observing
-    // the footer and reuse its last measured control width until it opens.
+    // Closed popovers hide their content (zero measurable width even though Astryx 0.7
+    // retains closed DOM). Keep observing the footer and reuse its last measured control width.
     const items = itemsRef.current;
     // ChatComposer exposes footer slots, but not a ref for their shared row.
     const row = host?.parentElement?.parentElement;

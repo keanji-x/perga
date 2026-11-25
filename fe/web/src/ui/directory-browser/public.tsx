@@ -140,7 +140,7 @@ export function DirectoryBrowser({ listDirectory, initialPath, onCancel, onSelec
         />
       </div>
 
-      {/* A status beside the list, not replacing it: a reload must not blank the rows under the pointer. No spinner — astryx's paints on a canvas jsdom lacks. */}
+      {/* A status beside the list, not replacing it: a reload must not blank the rows under the pointer. */}
       {loading && <p className={styles.status} role="status">Loading…</p>}
       {error !== null && <Banner status="error" role="alert" title={error} />}
 

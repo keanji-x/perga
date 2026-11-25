@@ -176,6 +176,6 @@ export function PendingQueue({ entries, pendingInputCount, queueDisplayAccountin
 export function QueueWriteNotice({ outcome }: Readonly<{ outcome: PlannerQueueWriteOutcome }>) {
   const status = noticeStatus(outcome);
   return noticeText(outcome) === null ? null : <div className={styles.notice} data-nc-pending-entry-notice="">
-    <Banner status={status} role={status === 'error' ? 'alert' : 'status'} title={noticeHeading(outcome)} description={noticeText(outcome)} />
+    <Banner status={status} role={status === 'info' ? 'status' : 'alert'} title={noticeHeading(outcome)} description={noticeText(outcome)} />
   </div>;
 }

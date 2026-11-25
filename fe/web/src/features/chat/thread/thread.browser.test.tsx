@@ -164,7 +164,7 @@ describe('the / command menu, as the engine lays it out', () => {
     probe.remove();
   });
 
-  /* The Send override is keyed on Astryx's hardcoded English `aria-label='Send'`. */
+  /* Send uses a Perga-owned class for its chip fill while Stop stays on Astryx's secondary fill. */
   it('fills Send with the chip surface rather than Astryx\'s accent', async () => {
     await page.viewport(1400, 900);
     render(<Card />);

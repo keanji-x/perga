@@ -14,8 +14,8 @@ export type TriggerMenuKeyRoute =
 
 /**
  * In this order: composing; a rendered highlighted option; the menu's loading
- * state (legacy `role="status"` row or Astryx 0.7's live-announced "Searching…"
- * row); anything else.
+ * state (no options and no `[data-nc-empty-state]` marker from `withEmptyTrigger`,
+ * with non-empty loading copy); anything else.
  */
 export function triggerMenuKeyRoute(event: Pick<KeyboardEvent, 'isComposing' | 'keyCode'>, field: Element): TriggerMenuKeyRoute {
   if (isImeKeyEvent(event)) return 'composing';
@@ -25,10 +25,6 @@ export function triggerMenuKeyRoute(event: Pick<KeyboardEvent, 'isComposing' | '
   if (active !== null && document.getElementById(active)?.getAttribute('role') === 'option') return 'menu';
   const menu = document.getElementById(field.getAttribute('aria-controls') ?? '');
   if (menu === null) return 'composer';
-  if (menu.querySelector('[role="status"]') !== null) return 'swallow';
   if (menu.querySelector('[data-nc-empty-state], [role="option"]') !== null) return 'composer';
-  const menuText = menu.textContent?.trim() ?? '';
-  if (menuText === 'Searching…') return 'swallow';
-  const liveText = document.querySelector('[data-astryx-live-region="polite"]')?.textContent?.trim() ?? '';
-  return liveText !== '' && menuText === liveText ? 'swallow' : 'composer';
+  return (menu.textContent?.trim() ?? '') !== '' ? 'swallow' : 'composer';
 }

@@ -45,12 +45,6 @@
     box-shadow: none;
   }
 
-  /* ChatSendButton publishes this hook; its default full fallback loses to
-     the composer's inherited concentric button radius. Send/Stop stay circles. */
-  .astryx-chat-send-button {
-    border-radius: var(--radius-full);
-  }
-
   /* Published Button theme hook. UI DepthFeedback owns the only press
      transform; neutralize vendor resting/active transforms in the theme layer.
      Caller layout transforms (inline or component-layer) still win the cascade,

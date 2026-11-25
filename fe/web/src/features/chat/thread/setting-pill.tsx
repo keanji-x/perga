@@ -97,7 +97,7 @@ function SettingPill<Value extends string>({
   note?: string;
   isDisabled: boolean;
   unavailableOption?: Value;
-  /** With it Astryx marks a disabled trigger `aria-disabled` rather than `disabled`, so the tooltip stays reachable. */
+  /** Optional explanation shown on hover/focus; Astryx 0.7 keeps disabled buttons focusable via `aria-disabled`. */
   tooltip?: string;
   placement: 'above' | 'below';
   alignment?: 'start' | 'end';
@@ -113,9 +113,9 @@ function SettingPill<Value extends string>({
       <DropdownMenu
         placement={placement}
         alignment={alignment}
-        /* An `aria-disabled` trigger still passes ArrowDown to the menu, so a disabled one is held shut here. */
+        /* Close immediately if the control becomes disabled while its menu is already open. */
         isMenuOpen={open && !isDisabled}
-        onOpenChange={(next) => { onOpenChange(next && !isDisabled); }}
+        onOpenChange={onOpenChange}
         hasChevron={false}
         button={{
           label,

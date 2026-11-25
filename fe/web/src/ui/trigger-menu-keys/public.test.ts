@@ -28,13 +28,13 @@ describe('triggerMenuKeyRoute', () => {
 
   it('drops the key while the menu is searching, even with a stale highlight', () => {
     expect(triggerMenuKeyRoute(typing, field({ ...open, 'aria-activedescendant': 'gone' },
-      '<div role="status">Searching…</div>'))).toBe('swallow');
+      '<div>Searching…</div>'))).toBe('swallow');
   });
 
   it('leaves the key to the composer when the menu is closed or has nothing to pick', () => {
     expect(triggerMenuKeyRoute(typing, field({ 'aria-expanded': 'false' }))).toBe('composer');
     expect(triggerMenuKeyRoute(typing, field({}))).toBe('composer');
-    expect(triggerMenuKeyRoute(typing, field(open, '<div>No results</div>'))).toBe('composer');
+    expect(triggerMenuKeyRoute(typing, field(open, '<div data-nc-empty-state="">No results</div>'))).toBe('composer');
   });
 });
 
