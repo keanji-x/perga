@@ -3,6 +3,7 @@ import { page } from 'vitest/browser';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import '../../styles/entry.css';
+import mobileStyles from './mobile-shell.module.css';
 import styles from './shell.module.css';
 import { setup } from './mobile-browser-fixture.tsx';
 import { playSpring, playTrajectory, type Playback } from '../../ui/motion/spring.ts';
@@ -16,8 +17,8 @@ function ShellProbe({ state }: { state: 'auto' | 'expanded' | 'collapsed' }) {
 
 function MobileNavigationProbe() {
   return <div className={styles.shell}>
-    <div className={`${styles.navigation} ${styles.navigationOpen}`}>
-      <div data-testid="mobile-panel" className={styles.navigationPanel}>
+    <div className={`${mobileStyles.navigation} ${mobileStyles.navigationOpen}`}>
+      <div data-testid="mobile-panel" className={mobileStyles.navigationPanel}>
         <section data-testid="areas-list" style={{ inlineSize: '100%' }}>Areas</section>
       </div>
     </div>

@@ -31,6 +31,8 @@ export interface DialogProps {
   purpose: DialogPurpose;
   origin: DialogOrigin;
   open: boolean; onClose: () => void; title?: string; hideTitleRow?: boolean; children?: ReactNode; wide?: boolean | 'medium';
+  /** Present the dialog as a full-viewport surface (e.g. mobile full-screen settings) without modal chrome or lift motion. */
+  fullscreen?: boolean;
   /** Drop the `×` while keeping the title; `hideTitleRow` can only remove both. */
   hideClose?: boolean;
   initialFocusRef?: RefObject<HTMLElement | null>;
@@ -64,7 +66,7 @@ function isVisibleWithin(element: HTMLElement, panel: HTMLElement): boolean {
   return true;
 }
 
-export function Dialog({ purpose, origin, open, onClose, title, hideTitleRow, hideClose, children, wide, initialFocusRef }: DialogProps) {
+export function Dialog({ purpose, origin, open, onClose, title, hideTitleRow, hideClose, children, wide, fullscreen = false, initialFocusRef }: DialogProps) {
   const viewport = useVisibleViewport(open);
   const [views, setViews] = useState<readonly (DialogChildView & { id: number })[]>([]);
   const nextViewId = useRef(0);
@@ -80,7 +82,7 @@ export function Dialog({ purpose, origin, open, onClose, title, hideTitleRow, hi
     ? { kind: 'anchor', anchor: { ref: origin.anchor.ref }, unavailable: origin.unavailable }
     : { kind: 'surface-center' });
   if (!open && presentation !== null) setPresentation(null);
-  useSurfacePresence({ open, present: open, enabled: true, onExited: () => {},
+  useSurfacePresence({ open, present: open, enabled: !fullscreen, onExited: () => {},
     parts: { kind: 'single', primary: { element: panelRef, readFrame: () => readSurfaceFrame(frameRef.current) } },
     geometry: { kind: 'lift', origin: presentation ?? origin },
   });
@@ -214,13 +216,13 @@ export function Dialog({ purpose, origin, open, onClose, title, hideTitleRow, hi
     }
   };
   return createPortal(<>{dismissalLayer}<LayerDepthProvider><DialogViewContext.Provider value={controller}><div
-    className={showingView || wide ? 'dialog-overlay dialog-overlay-wide' : 'dialog-overlay'} role="presentation"
+    className={fullscreen ? `dialog-overlay ${styles.fullscreenOverlay}` : showingView || wide ? 'dialog-overlay dialog-overlay-wide' : 'dialog-overlay'} role="presentation"
     style={{ insetBlockStart: viewport.bottomEdge - viewport.height, insetBlockEnd: viewport.bottomInset }}
     onMouseDown={(event) => { if (purpose === 'info' && !showingView && event.target === event.currentTarget) onClose(); }}>
-    <div ref={frameRef} className={`${styles.frame} ${showingView || wide === true ? styles.wide : wide === 'medium' ? styles.medium : ''}`}
-      style={{ maxBlockSize: `calc(${viewport.height}px - var(--space-6))` }}>
-    <CardFrame ref={panelRef} className={`${styles.panel} ${showingView || wide === true ? 'dialog-panel dialog-panel-wide' : 'dialog-panel'}`} data-nc-escape-layer=""
-      style={{ maxBlockSize: `calc(${viewport.height}px - var(--space-6))` }}
+    <div ref={frameRef} className={`${styles.frame} ${fullscreen ? styles.fullscreenFrame : showingView || wide === true ? styles.wide : wide === 'medium' ? styles.medium : ''}`}
+      style={fullscreen ? undefined : { maxBlockSize: `calc(${viewport.height}px - var(--space-6))` }}>
+    <CardFrame ref={panelRef} className={`${styles.panel} ${fullscreen ? `dialog-panel ${styles.fullscreenPanel}` : showingView || wide === true ? 'dialog-panel dialog-panel-wide' : 'dialog-panel'}`} data-nc-escape-layer=""
+      style={fullscreen ? undefined : { maxBlockSize: `calc(${viewport.height}px - var(--space-6))` }}
       role="dialog" aria-modal="true" aria-label={typeof headerTitle === 'string' ? headerTitle : undefined}
       aria-labelledby={headerTitle && typeof headerTitle !== 'string' ? titleId : undefined}
       tabIndex={-1} onMouseDown={(event) => event.stopPropagation()} onKeyDown={onPanelKeyDown}>
@@ -228,7 +230,7 @@ export function Dialog({ purpose, origin, open, onClose, title, hideTitleRow, hi
         if (view) { if (view.onEscape) view.onEscape(); else popView(); }
         else onClose();
       }}><Icon name="close" /></button>}</header>}
-      <div className="dialog-body" style={showingView ? { display: 'none' } : undefined}>{children}</div>
+      <div className={fullscreen ? `dialog-body ${styles.fullscreenBody}` : 'dialog-body'} style={showingView ? { display: 'none' } : undefined}>{children}</div>
       {showingView && (
         <div className="dialog-body dialog-child-view" data-nc-dialog-child-view="">{view.body}</div>
       )}
