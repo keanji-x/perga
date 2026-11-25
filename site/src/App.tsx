@@ -28,9 +28,9 @@ const TRACK_TABS: ReadonlyArray<Readonly<{
   {
     id: 'delivery',
     label: 'Engineering',
-    capability: 'MULTI-AGENT FLOW',
+    capability: 'MULTI-WORKER FLOW',
     trackName: 'auth-session-hardening',
-    meta: 'Claude implements · Codex reviews read-only · Waits for CI',
+    meta: 'Parallel Claude & Gemini workers · Codex read-only review · Waits for CI',
     sourceUrl: 'https://github.com/keanji-x/perga/tree/main/templates/agents-delivery',
     sourceLabel: 'agents-delivery',
   },
@@ -113,7 +113,7 @@ export function App() {
               Chat drifts. <em>Reports stay.</em>
             </h1>
             <p className="site-tagline">
-              A report-centric local workspace for multi-day <strong>Claude Code</strong> &amp; <strong>Codex</strong> work.
+              A report-centric local workspace for multi-worker <strong>Claude Code</strong>, <strong>Codex</strong>, <strong>Gemini</strong>, <strong>OpenCode</strong> &amp; ACP sessions.
             </p>
 
             <div className="site-install-row" id="install">
@@ -179,7 +179,7 @@ export function App() {
                     <div className="site-flow-drawer">
                       <div className="site-flow-drawer-head">
                         <span>flow.json (excerpt)</span>
-                        <span>Condensed from 5-node graph · Claude impl → Codex review → CI wait</span>
+                        <span>Condensed from 5-node graph · Parallel Claude + Gemini workers → Codex review → CI wait</span>
                       </div>
                       <pre className="site-flow-code"><code>{DEV_DELIVERY_FLOW_JSON_EXCERPT}</code></pre>
                     </div>
@@ -219,8 +219,8 @@ export function App() {
           </div>
           <div className="site-pillar">
             <span className="site-pillar-num">02</span>
-            <h2>Models check each other</h2>
-            <p>Let Claude Code implement behind a local test gate, then hand the diff to Codex in read-only mode. Step in and steer any live worker mid-turn.</p>
+            <h2>Multi-worker across backends</h2>
+            <p>Run parallel workers across Claude Code, Codex, Gemini, OpenCode, or any ACP CLI inside one track — with local test gates, read-only cross-model audits, and live mid-turn steering.</p>
           </div>
           <div className="site-pillar">
             <span className="site-pillar-num">03</span>
@@ -235,14 +235,14 @@ export function App() {
             <span className="site-kicker">ONE MORE THING</span>
             <h2>One memory, shared across CLIs.</h2>
             <p>
-              Project rules shouldn&apos;t stay trapped in separate <code>CLAUDE.md</code> files or forgotten chats. Perga keeps them as plain Markdown notes shared across <strong>Claude Code</strong>, <strong>Codex</strong>, and every new task — so you never repeat the same constraints twice.
+              Project rules shouldn&apos;t stay trapped in separate <code>CLAUDE.md</code> files or forgotten chats. Perga keeps them as plain Markdown notes shared across <strong>Claude Code</strong>, <strong>Codex</strong>, <strong>Gemini</strong>, <strong>OpenCode</strong>, and every new task — so you never repeat the same constraints twice.
             </p>
           </div>
 
           <div className="site-sheet site-sheet-memory">
             <div className="site-sheet-bar">
               <span className="site-sheet-title">Project Memory</span>
-              <span className="site-sheet-badge">PLAIN MARKDOWN · SHARED BY CLAUDE CODE &amp; CODEX</span>
+              <span className="site-sheet-badge">PLAIN MARKDOWN · SHARED ACROSS CLAUDE, CODEX, GEMINI &amp; OPENCODE</span>
             </div>
             <WidgetFrame
               src="./widgets/entries.html"

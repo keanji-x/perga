@@ -74,8 +74,8 @@ export const DEV_DELIVERY_FLOW: FlowProjection = {
       doKind: 'run',
       role: 'impl',
       access: 'read_write',
-      provider: 'claude',
-      model: 'claude-sonnet-5-5',
+      provider: 'acp:antigravity',
+      model: 'gemini-4-neon',
       status: 'done',
       outcome: 'ok',
       outcomeSummary: 'Updated generated TypeScript contracts and composer attachment tests.',
@@ -169,11 +169,11 @@ export const DEV_DELIVERY_FLOW: FlowProjection = {
   ],
 };
 
-/** Condensed excerpt of flow.json showing the key cross-model & background-wait nodes. */
+/** Condensed excerpt of flow.json showing parallel multi-backend workers & background wait. */
 export const DEV_DELIVERY_FLOW_JSON_EXCERPT = `{
   "rev": 14,
   "nodes": [
-    // ... spec + impl-fe omitted for brevity
+    // ... spec node omitted for brevity
     {
       "id": "impl-backend",
       "when": { "after": ["spec"] },
@@ -182,6 +182,16 @@ export const DEV_DELIVERY_FLOW_JSON_EXCERPT = `{
         "provider": "claude",
         "model": "claude-sonnet-5-5",
         "gate": "dotnet test Perga.sln"
+      }
+    },
+    {
+      "id": "impl-fe",
+      "when": { "after": ["spec"] },
+      "do": {
+        "kind": "run",
+        "provider": "acp:antigravity",
+        "model": "gemini-4-neon",
+        "gate": "cd fe && npm run lint && npm test"
       }
     },
     {

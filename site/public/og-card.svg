@@ -21,7 +21,7 @@
   <!-- Left display typography -->
   <text x="96" y="232" font-family="Georgia, serif" font-size="78" font-weight="500" fill="#14161a">Chat drifts.</text>
   <text x="96" y="318" font-family="Georgia, serif" font-style="italic" font-size="78" font-weight="400" fill="#3955b8">Reports stay.</text>
-  <text x="96" y="384" font-family="-apple-system, sans-serif" font-size="23" fill="#444954">A report-centric local workspace for Claude Code &amp; Codex.</text>
+  <text x="96" y="384" font-family="-apple-system, sans-serif" font-size="22" fill="#444954">Multi-worker local workspace for Claude, Codex, Gemini &amp; OpenCode.</text>
 
   <!-- Right colophon -->
   <rect x="801" y="111" width="334" height="398" fill="#fdfcfa"/>
@@ -29,8 +29,8 @@
   <text x="832" y="192" font-family="-apple-system, sans-serif" font-size="19" fill="#14161a">Living Reports &amp; Flows</text>
   <line x1="801" y1="224" x2="1135" y2="224" stroke="#d6d1c6" stroke-width="1"/>
 
-  <text x="832" y="266" font-family="monospace" font-size="13" fill="#6e7482">02 · CROSS-MODEL</text>
-  <text x="832" y="294" font-family="-apple-system, sans-serif" font-size="19" fill="#14161a">Claude Impl · Codex Audit</text>
+  <text x="832" y="266" font-family="monospace" font-size="13" fill="#6e7482">02 · MULTI-WORKER</text>
+  <text x="832" y="294" font-family="-apple-system, sans-serif" font-size="19" fill="#14161a">Claude · Codex · Gemini · ACP</text>
   <line x1="801" y1="326" x2="1135" y2="326" stroke="#d6d1c6" stroke-width="1"/>
 
   <text x="832" y="368" font-family="monospace" font-size="13" fill="#6e7482">03 · SHARED MEMORY</text>
