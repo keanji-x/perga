@@ -229,9 +229,13 @@ it('aligns persisted outgoing mention pills and memory links with adjacent text'
   expect(pills).toHaveLength(2);
 
   const textMid = textNodeMidpoint(paragraph, '前面中文Abc');
-  for (const wrapper of pills) {
+  const expectedRefs = ['@`tag:release`', '@`memory:area/guide`'];
+  pills.forEach((wrapper, index) => {
     const badge = wrapper.querySelector<HTMLElement>('[data-variant]')!;
     expect(badge).not.toBeNull();
+    // Preserve full reference tooltip without the inner Badge shadowing it with the short label.
+    expect(wrapper.getAttribute('title')).toBe(expectedRefs[index]);
+    expect(wrapper.querySelector('[title]')).toBeNull();
     expect(Math.abs(verticalMidpoint(badge.getBoundingClientRect()) - textMid)).toBeLessThanOrEqual(0.5);
-  }
+  });
 });

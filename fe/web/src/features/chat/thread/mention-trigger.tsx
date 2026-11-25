@@ -88,10 +88,9 @@ export function mentionToken(suggestion: MentionSuggestion): ChatComposerToken {
 /**
  * An async `SearchSource` whose answers are only ever the latest search's.
  *
- * Astryx sets whatever a search resolves to, with no check of its own that the search is still
- * the current one, so the guard lives here: a search superseded by a newer one or ended by
- * `cancel()` aborts its request and its promise never settles. A failed name search
- * answers `[]`; bare `@` keeps its category entrances with no examples.
+ * Astryx 0.7 fences stale results internally, while Perga still owns the debounce delay,
+ * aborting superseded backend requests, and avoiding a real fetch on Astryx's empty probe.
+ * A failed name search answers `[]`; bare `@` keeps its category entrances with no examples.
  * `bootstrap` is not used by the trigger menu.
  */
 export function createMentionSource(search: MentionSearch, delayMs: number, memoryEnabled = true): SearchSource<MentionItem> {
@@ -150,19 +149,11 @@ function enterCategory(category: MentionCategory): string {
         const selection = window.getSelection();
         if (selection === null || !selection.isCollapsed || selection.rangeCount === 0) return;
         const range = selection.getRangeAt(0);
-        // Astryx 0.7.12+ places the caret inside the inserted text node; earlier
-        // versions left it after the node on the parent element. Accept both.
-        if (range.startContainer.nodeType === Node.TEXT_NODE) {
-          const text = range.startContainer.textContent ?? '';
-          if (!text.slice(0, range.startOffset).endsWith(category.prefix)) return;
-        } else {
-          const inserted = range.startContainer.childNodes[range.startOffset - 1];
-          if (inserted?.nodeType !== Node.TEXT_NODE || inserted.textContent !== category.prefix) return;
-          range.setStart(inserted, category.prefix.length);
-          range.collapse(true);
-          selection.removeAllRanges();
-          selection.addRange(range);
-        }
+        // Astryx inserts a text node and places the caret inside it; verify the caret is
+        // still at the inserted prefix before triggering a fresh query.
+        if (range.startContainer.nodeType !== Node.TEXT_NODE) return;
+        const text = range.startContainer.textContent ?? '';
+        if (!text.slice(0, range.startOffset).endsWith(category.prefix)) return;
         editable.dispatchEvent(new Event('input', { bubbles: true }));
       }
     });

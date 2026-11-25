@@ -10,6 +10,7 @@ import {
   type Conversation, type ConversationActivity, type ConversationSystemEntry,
   type ConversationTurn, type ConversationTurnOutcome,
 } from '../../../../../core/domain/conversation.ts';
+import { QueueWriteNotice } from './pending-queue.tsx';
 import { ChatComposer, ChatThread as SessionThread } from './public.tsx';
 
 function ChatThread(props: import('react').ComponentProps<typeof SessionThread>) {
@@ -118,7 +119,9 @@ describe('ChatThread', () => {
       .toEqual(['#部署', 'Deploy notes', 'Deploy notes › b_1a2b']);
     expect(message.textContent).toBe('see #部署 and Deploy notes then Deploy notes › b_1a2b **literal** @bob');
     expect(message.querySelector('strong')).toBeNull();
-    expect(message.querySelector('[data-nc-sent-mention]')?.getAttribute('title')).toBe('@`tag:部署`');
+    const firstPill = message.querySelector('[data-nc-sent-mention]')!;
+    expect(firstPill.getAttribute('title')).toBe('@`tag:部署`');
+    expect(firstPill.querySelector('[title]')).toBeNull();
   });
 
   it('renders the empty state before anything is said', () => {
@@ -1246,4 +1249,19 @@ it('shows mobile conversation options only when footer actions are supplied', ()
   rerender(<ChatComposer layout="standard" onSend={vi.fn()} footerActions={<button>Conversation settings</button>} />);
   expect(screen.queryByLabelText('Conversation options')).toBeNull();
   expect(screen.getByRole('button', { name: 'Conversation settings' })).toBeTruthy();
+});
+
+it('announces queue warnings and errors as alerts and informational outcomes as status', () => {
+  const { rerender } = render(<QueueWriteNotice outcome={{ kind: 'unanswered' }} />);
+  expect(screen.getByRole('alert').textContent).toContain('Still queued — not confirmed');
+  rerender(<QueueWriteNotice outcome={{ kind: 'stale', entryId: 'e1', text: 'Updated', rev: 2 }} />);
+  expect(screen.getByRole('alert').textContent).toContain('Nothing happened');
+  rerender(<QueueWriteNotice outcome={{ kind: 'failed', message: 'Rejected.' }} />);
+  expect(screen.getByRole('alert').textContent).toContain('Rejected.');
+  rerender(<QueueWriteNotice outcome={{ kind: 'gone' }} />);
+  expect(screen.getByRole('status').textContent).toContain('No longer in the queue');
+  expect(screen.queryByRole('alert')).toBeNull();
+  rerender(<QueueWriteNotice outcome={{ kind: 'not_running' }} />);
+  expect(screen.getByRole('status').textContent).toContain('Still queued');
+  expect(screen.queryByRole('alert')).toBeNull();
 });

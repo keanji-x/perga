@@ -41,7 +41,8 @@ describe('compact card creation controller', () => {
     await pickTerminal();
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toContain('Creating the terminal card is unconfirmed.');
-    await userEvent.click(within(alert).getByRole('button', { name: 'Try again' }));
+    const feedback = document.querySelector<HTMLElement>('[data-nc-operation-feedback]')!;
+    await userEvent.click(within(feedback).getByRole('button', { name: 'Try again' }));
     await waitFor(() => { expect(onCreated).toHaveBeenCalledExactlyOnceWith(CARD.id); });
     expect(create).toHaveBeenCalledTimes(2);
     expect(create.mock.calls[1]).toEqual(create.mock.calls[0]);

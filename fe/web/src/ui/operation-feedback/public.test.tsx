@@ -95,10 +95,13 @@ it('offers the caller’s action and a Dismiss that clears the failure', async (
   render(<ActionHarness />);
   await userEvent.click(screen.getByRole('button', { name: 'Create' }));
   const alert = await screen.findByRole('alert');
-  expect(document.querySelectorAll('[data-nc-operation-feedback]')).toHaveLength(1);
-  await userEvent.click(within(alert).getByRole('button', { name: 'Try again' }));
+  expect(within(alert).getByText('Not created.')).toBeTruthy();
+  const banners = document.querySelectorAll<HTMLElement>('[data-nc-operation-feedback]');
+  expect(banners).toHaveLength(1);
+  const banner = banners[0];
+  await userEvent.click(within(banner).getByRole('button', { name: 'Try again' }));
   expect(onTryAgain).toHaveBeenCalledOnce();
-  await userEvent.click(within(alert).getByRole('button', { name: /^Dismiss/ }));
+  await userEvent.click(within(banner).getByRole('button', { name: /^Dismiss/ }));
   expect(screen.queryByRole('alert')).toBeNull();
   /* Cleared, not hidden: the next failure shows again. */
   await userEvent.click(screen.getByRole('button', { name: 'Create' }));

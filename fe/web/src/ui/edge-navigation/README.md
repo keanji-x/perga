@@ -32,7 +32,7 @@ can further bound it with `--nc-rail-preview-max-inline-size`. `previewSide`
 chooses the adjacent side: reports use the document side and conversations use
 the space before the rail. State and observers belong to each mounted instance.
 
-Astryx 0.6.3 exposes its underlying layer's `hide()`, which does not cancel the
+Astryx 0.7.17 exposes its underlying layer's `hide()`, which does not cancel the
 hook's pending hover timer. Explicit selection requests one controlled closed
 commit through the public `isOpen: false` option; the hook cancels its timers,
 then the rail releases control in the following effect. The immediate public

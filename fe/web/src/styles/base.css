@@ -277,6 +277,9 @@
     *,
     *::before,
     *::after {
+      /* 1ms completes nearly instantaneously while keeping CSS animation/transition
+         promises observable for Astryx's useLayer/BottomSheetPanel (0.01ms serializes
+         to 1e-05s and breaks simple decimal duration parsers). */
       animation-duration: 1ms !important;
       animation-iteration-count: 1 !important;
       /* Static elements stay static; component declarations still own their transitions. */
