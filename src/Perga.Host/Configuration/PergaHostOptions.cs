@@ -115,8 +115,9 @@ public sealed class PergaHostOptions
 
     public bool CleanupEphemeralDataOnShutdown { get; set; } = true;
 
-    public static PergaHostOptions BindFrom(IConfiguration configuration, string contentRootPath)
+    public static PergaHostOptions BindFrom(IConfiguration configuration, string contentRootPath, string? baseDirectory = null)
     {
+        var resolvedBaseDir = string.IsNullOrWhiteSpace(baseDirectory) ? AppContext.BaseDirectory : baseDirectory;
         var opts = new PergaHostOptions();
         var section = configuration.GetSection(SectionName);
         section.Bind(opts);
@@ -148,15 +149,16 @@ public sealed class PergaHostOptions
         {
             opts.TemplatesDirectory = Environment.GetEnvironmentVariable("PERGA_TEMPLATES_DIR")
                                       ?? DiscoverDirectoryUpwards(contentRootPath, "templates")
-                                      ?? DiscoverDirectoryUpwards(AppContext.BaseDirectory, "templates");
+                                      ?? DiscoverDirectoryUpwards(resolvedBaseDir, "templates");
         }
 
         if (string.IsNullOrWhiteSpace(opts.StaticWebRootDirectory))
         {
             opts.StaticWebRootDirectory = section["FrontendDistDirectory"]
                                           ?? Environment.GetEnvironmentVariable("PERGA_STATIC_WEB_DIR")
+                                          ?? DiscoverBundledStaticWebRoot(resolvedBaseDir)
                                           ?? DiscoverDirectoryUpwards(contentRootPath, Path.Combine("fe", "web", "dist"))
-                                          ?? DiscoverDirectoryUpwards(AppContext.BaseDirectory, Path.Combine("fe", "web", "dist"));
+                                          ?? DiscoverDirectoryUpwards(resolvedBaseDir, Path.Combine("fe", "web", "dist"));
         }
 
         if (string.IsNullOrWhiteSpace(opts.McpPluginsConfigPath))
@@ -188,11 +190,11 @@ public sealed class PergaHostOptions
 
         if (string.IsNullOrWhiteSpace(opts.OarBridgeScriptPath))
         {
-            var bundled = Path.Combine(AppContext.BaseDirectory, "oar-bridge", "perga-oar-bridge.mjs");
+            var bundled = Path.Combine(resolvedBaseDir, "oar-bridge", "perga-oar-bridge.mjs");
             opts.OarBridgeScriptPath = Environment.GetEnvironmentVariable("PERGA_OAR_BRIDGE_SCRIPT")
                 ?? (File.Exists(bundled) ? bundled : null)
                 ?? DiscoverFileUpwards(contentRootPath, Path.Combine("tools", "perga-oar-bridge", "dist", "perga-oar-bridge.mjs"))
-                ?? DiscoverFileUpwards(AppContext.BaseDirectory, Path.Combine("tools", "perga-oar-bridge", "dist", "perga-oar-bridge.mjs"));
+                ?? DiscoverFileUpwards(resolvedBaseDir, Path.Combine("tools", "perga-oar-bridge", "dist", "perga-oar-bridge.mjs"));
         }
 
         opts.InstallationRoot ??= Environment.GetEnvironmentVariable("PERGA_INSTALL_ROOT");
@@ -233,6 +235,17 @@ public sealed class PergaHostOptions
             : Path.Combine(resolvedDataDir, "workspaces");
 
         return (resolvedDataDir, resolvedDbPath, resolvedWorkspaces, isEphemeral);
+    }
+
+    private static string? DiscoverBundledStaticWebRoot(string? baseDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(baseDirectory))
+        {
+            return null;
+        }
+
+        var candidate = Path.Combine(Path.GetFullPath(baseDirectory), "web");
+        return File.Exists(Path.Combine(candidate, "index.html")) ? candidate : null;
     }
 
     private static string? DiscoverDirectoryUpwards(string? startDirectory, string relativeSubpath)
