@@ -51,7 +51,7 @@ export type ScalarToken =
 /** Box scale is its own top-level family, not part of ScalarToken: the managed-property table takes its allowed
  * values per family, and folding these in would make `font-size: var(--rail-w)` a legal declaration. */
 export type BoxScaleToken =
-  '--row-h-sm' | '--row-h' | '--row-h-lg' | '--control-h-sm' | '--control-h' | '--control-h-lg' | '--rail-w' | '--rail-w-collapsed' | '--panel-w' | '--drawer-w' | '--header-baseline' | '--header-primary-h' | '--measure-prose' | '--measure-form' | '--measure-page' | '--measure-board' | '--measure-list' | '--measure-doc' | '--slot-h' | '--rule-h' | '--dot-sm' | '--dot-md' | '--glyph-meta' | '--glyph-sm' | '--glyph' | '--glyph-lg' | '--glyph-xl' | '--glyph-display' | '--control-h-touch' | '--menu-w-min' | '--menu-w-max';
+  '--row-h-sm' | '--row-h' | '--row-h-lg' | '--control-h-sm' | '--control-h' | '--control-h-lg' | '--rail-w' | '--rail-w-collapsed' | '--panel-w' | '--drawer-w' | '--header-baseline' | '--header-primary-h' | '--measure-prose' | '--measure-form' | '--measure-dialog-medium' | '--measure-page' | '--measure-board' | '--measure-list' | '--measure-doc' | '--slot-h' | '--rule-h' | '--dot-sm' | '--dot-md' | '--glyph-meta' | '--glyph-sm' | '--glyph' | '--glyph-lg' | '--glyph-xl' | '--glyph-display' | '--control-h-touch' | '--menu-w-min' | '--menu-w-max';
 
 /** A composite box-shadow: neither a colour nor a scalar. */
 export type ShadowToken = '--shadow-float';

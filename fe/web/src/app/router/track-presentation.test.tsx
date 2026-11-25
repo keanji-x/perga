@@ -44,7 +44,7 @@ it('commits the Track shell before report preparation and content', async () => 
   expect(fixture.requests.some(request => request.path === '/api/v1/tracks/daily')).toBe(true);
   expect(parse.mock.calls.filter(([source]) => source === SOURCE)).toHaveLength(0);
   expect(document.querySelector('[data-nc-report]')).toBeNull();
-  expect(screen.getByRole('button', { name: 'Discuss' })).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Discuss' })).toBeNull();
   await frame.next(); await frame.next();
   await screen.findByRole('heading', { name: 'Staged report' });
 });

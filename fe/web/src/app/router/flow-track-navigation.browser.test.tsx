@@ -48,7 +48,7 @@ it.each([
   await originLink.click();
   await expect.poll(() => router.state.location.pathname).toBe('/track/project');
 
-  await page.getByRole('button', { name: /已归档 1 项/ }).click();
+  await page.getByRole('button', { name: /Archived \(1\)/ }).click();
   await page.getByRole('button', { name: 'Open child track from Spawn storage investigation' }).click();
   await expect.poll(() => router.state.location.pathname).toBe('/track/trk_storage');
   await originLink.click();

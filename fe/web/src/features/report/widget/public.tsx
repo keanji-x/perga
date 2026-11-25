@@ -31,8 +31,8 @@ function WidgetContractError({
 }>) {
   return (
     <div className={styles.diagnostic} role="alert">
-      <div className={styles.diagnosticTitle}>视图契约校验失败：{payload.use} ({payload.view})</div>
-      <div>{issues.map((issue) => `${issue.path.map(String).join('.') || '$'}: ${issue.message}`).join('；')}</div>
+      <div className={styles.diagnosticTitle}>Widget contract validation failed: {payload.use} ({payload.view})</div>
+      <div>{issues.map((issue) => `${issue.path.map(String).join('.') || '$'}: ${issue.message}`).join('; ')}</div>
     </div>
   );
 }
@@ -60,14 +60,14 @@ export function ReportWidgetBlock({
     if (rawProjection.status === 'loading') {
       return (
         <div className={styles.diagnostic} role="status">
-          正在加载视图 {payload.view}…
+          Loading view {payload.view}…
         </div>
       );
     }
     if (rawProjection.status === 'error') {
       return (
         <div className={styles.diagnostic} role="alert">
-          <div className={styles.diagnosticTitle}>视图加载失败：{payload.view}</div>
+          <div className={styles.diagnosticTitle}>Failed to load view: {payload.view}</div>
           <div>{rawProjection.message}</div>
         </div>
       );
@@ -81,8 +81,8 @@ export function ReportWidgetBlock({
   if (projection === undefined) {
     return (
       <div className={styles.diagnostic} role="note">
-        <div className={styles.diagnosticTitle}>实时视图：{payload.title ?? payload.view}</div>
-        <div>请在 Track 页面查看完整视图投影。</div>
+        <div className={styles.diagnosticTitle}>Live view: {payload.title ?? payload.view}</div>
+        <div>Open the Track page to see the full view projection.</div>
       </div>
     );
   }
@@ -94,8 +94,8 @@ export function ReportWidgetBlock({
     if (flow == null || (flow.nodes.length === 0 && flow.archived.length === 0)) {
       return (
         <div className={styles.diagnostic} role="note">
-          <div className={styles.diagnosticTitle}>{payload.title ?? '调度流程'}</div>
-          <div>当前暂无活跃或已归档的流程步骤。</div>
+          <div className={styles.diagnosticTitle}>{payload.title ?? 'Flow'}</div>
+          <div>No active or archived flow steps yet.</div>
         </div>
       );
     }
@@ -115,7 +115,7 @@ export function ReportWidgetBlock({
   if (diag !== undefined) {
     return (
       <div className={styles.diagnostic} role="alert">
-        <div className={styles.diagnosticTitle}>视图投影失败：{payload.view}</div>
+        <div className={styles.diagnosticTitle}>View projection failed: {payload.view}</div>
         <div>{diag.message}</div>
       </div>
     );
@@ -125,8 +125,8 @@ export function ReportWidgetBlock({
   if (viewData === undefined) {
     return (
       <div className={styles.diagnostic} role="note">
-        <div className={styles.diagnosticTitle}>未找到视图：{payload.view}</div>
-        <div>模板未声明该视图或数据尚未就绪。</div>
+        <div className={styles.diagnosticTitle}>View not found: {payload.view}</div>
+        <div>This view is not declared by the template or data is not ready yet.</div>
       </div>
     );
   }
@@ -140,7 +140,7 @@ export function ReportWidgetBlock({
       return (
         <div className={styles.diagnostic} role="note">
           <div className={styles.diagnosticTitle}>{payload.title ?? payload.view}</div>
-          <div>当前暂无记录。</div>
+          <div>No items yet.</div>
         </div>
       );
     }
@@ -186,7 +186,7 @@ export function ReportWidgetBlock({
   if (payload.use.startsWith('builtin:')) {
     return (
       <div className={styles.diagnostic} role="note">
-        <div className={styles.diagnosticTitle}>不支持的内置视图：{payload.use}</div>
+        <div className={styles.diagnosticTitle}>Unsupported built-in view: {payload.use}</div>
       </div>
     );
   }
@@ -196,8 +196,8 @@ export function ReportWidgetBlock({
   if (html === undefined) {
     return (
       <div className={styles.diagnostic} role="alert">
-        <div className={styles.diagnosticTitle}>未找到 HTML Widget：{payload.use}</div>
-        <div>请确认该文件存在于模板包目录中。</div>
+        <div className={styles.diagnosticTitle}>HTML widget not found: {payload.use}</div>
+        <div>Ensure the file exists in the template package directory.</div>
       </div>
     );
   }

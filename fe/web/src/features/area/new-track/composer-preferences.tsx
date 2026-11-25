@@ -31,6 +31,7 @@ export function ComposerPreferences({ folder, browsing }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const itemsRef = useRef<HTMLDivElement>(null);
   const folderRef = useRef<HTMLSpanElement>(null);
+  const repoButtonRef = useRef<HTMLButtonElement>(null);
   const moreRef = useRef<HTMLButtonElement>(null);
   const requiredWidth = useRef(0);
   const measuredLabels = useRef('');
@@ -60,7 +61,7 @@ export function ComposerPreferences({ folder, browsing }: Props) {
       release();
       const active = document.activeElement;
       if (active !== document.body && (active !== opener || !hostRef.current?.contains(active))) return;
-      (moreRef.current ?? folderRef.current?.querySelector('button'))?.focus();
+      (moreRef.current ?? repoButtonRef.current)?.focus();
     });
     document.addEventListener('pointerdown', yieldFocus, true);
     document.addEventListener('keydown', yieldFocus, true);
@@ -78,17 +79,14 @@ export function ComposerPreferences({ folder, browsing }: Props) {
     const actions = row?.lastElementChild;
     if (host === null || !(row instanceof HTMLElement) || !(actions instanceof HTMLElement)) return;
     const measure = () => {
-      const folders = [...(folderRef.current?.querySelectorAll<HTMLButtonElement>(':scope > button') ?? [])];
-      const buttons = folders;
-      const labels = buttons.map((button) => button.getAttribute('aria-label') ?? button.textContent).join('\n');
-      if (items !== null && items.getBoundingClientRect().width > 0) {
-        const gap = parseFloat(getComputedStyle(host).columnGap) || 0;
-        requiredWidth.current = buttons.reduce((sum, button) => sum + fullButtonWidth(button), 0)
-          + gap * Math.max(0, buttons.length - 1);
-        measuredLabels.current = labels;
-      } else if (items !== null && labels !== measuredLabels.current) {
+      const button = repoButtonRef.current;
+      const label = button === null ? '' : (button.getAttribute('aria-label') ?? button.textContent ?? '');
+      if (items !== null && items.getBoundingClientRect().width > 0 && button !== null) {
+        requiredWidth.current = fullButtonWidth(button);
+        measuredLabels.current = label;
+      } else if (items !== null && label !== measuredLabels.current) {
         // A selection may change while its directory dialog hides the popover.
-        // Measure the single live pair inline before the next paint, then fold
+        // Measure the single live trigger inline before the next paint, then fold
         // it again if necessary. Width never depends on the overflow trigger.
         // A workspace-option read can change the label after focus returned.
         // Carry that ownership through the temporary inline measurement.
@@ -115,7 +113,7 @@ export function ComposerPreferences({ folder, browsing }: Props) {
     };
     if (restoreFocus.current) {
       restoreFocus.current = false;
-      (collapsed ? moreRef.current : folderRef.current?.querySelector('button'))?.focus();
+      (collapsed ? moreRef.current : repoButtonRef.current)?.focus();
     }
     measure();
     const observer = new ResizeObserver(measure);
@@ -127,7 +125,7 @@ export function ComposerPreferences({ folder, browsing }: Props) {
   });
 
   const preferences = <div ref={itemsRef} className={styles.items}>
-    <span ref={folderRef} className={styles.folder}><RepoPill {...folder} onBrowse={() => {
+    <span ref={folderRef} className={styles.folder}><RepoPill {...folder} buttonRef={repoButtonRef} onBrowse={() => {
       // A native top-layer popup must relinquish hits and its focus trap before
       // the body-portal modal opens. The nested Repo trigger disappears with
       // the overflow panel, so give the dialog its reachable focus return.

@@ -13,6 +13,7 @@ import { readReportDocument,type ReportLinkTarget,type TrackReport } from '../..
 import { toTrack,} from '../../../../core/domain/track.ts';
 import { ReportDocument } from '../../features/report/document/public.tsx';
 import { ErrorBox } from '../../ui/error-box/public.tsx';
+import { LoadingStatus } from '../../ui/loading-status/public.tsx';
 import { createTrackWorkspaceFilesPort } from '../providers/directory.ts';
 import { trackDetailQueryOptions } from '../providers/track-queries.ts';
 import { ReportSourcePreview } from './report-source.tsx';
@@ -37,14 +38,14 @@ export function ReportReferencePreview({ transport, unauthorized, target, ...nav
     const allowAutoFlow = target.blockId === null;
     if (!allowAutoFlow && report === null) return <EmptyReportReference />;
     const block = report?.blocks?.find(candidate => candidate.id === target.blockId);
-    if (!allowAutoFlow && block === undefined) return <p>报告中没有这条引用指向的内容。</p>;
+    if (!allowAutoFlow && block === undefined) return <p>The referenced section could not be found in this report.</p>;
     return <ReferenceDocument transport={transport} unauthorized={unauthorized} target={target}
       detail={query.data} report={block === undefined ? report
         : { summary: '', body: '', blocks: [block] }} allowAutoFlow={allowAutoFlow} {...navigation} />;
   }
-  if (query.isError) return <ErrorBox message={readFailureText(readFailureOf(query.error), '无法读取报告。')}
+  if (query.isError) return <ErrorBox message={readFailureText(readFailureOf(query.error), 'Could not load report.')}
     onRetry={() => { void query.refetch(); }} />;
-  return <p role="status">正在读取报告…</p>;
+  return <LoadingStatus>Loading report…</LoadingStatus>;
 }
 
 function ReferenceDocument({ transport, unauthorized, target, detail, report: referencedReport, allowAutoFlow, onOpenLink, onOpenSource, onOpenFile }: Navigation & Readonly<{
@@ -77,5 +78,5 @@ function ReferenceDocument({ transport, unauthorized, target, detail, report: re
 }
 
 function EmptyReportReference() {
-  return <EmptyState variant="compact" icon={<Icon name="file" />} title="这份报告暂无内容。" description="报告有内容后，可以在这里预览。" />;
+  return <EmptyState variant="compact" icon={<Icon name="file" />} title="This report has no content yet." description="A preview will appear here once content is added." />;
 }

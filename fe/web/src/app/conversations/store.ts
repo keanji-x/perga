@@ -323,7 +323,7 @@ export function useConversationStore(
         registry.observeEpoch(id, session.epoch);
       }).catch((error: unknown) => {
         if (shownCardId.current === id) setActionError({ cardId: id,
-          message: error instanceof Error ? error.message : '恢复失败，请重试。' });
+          message: error instanceof Error ? error.message : 'Recovery failed. Please try again.' });
       }).finally(() => {
         recoveryLeases.current.delete(id);
         setRecoveryPending(current => new Set([...current].filter(value => value !== id)));
@@ -351,8 +351,8 @@ export function useConversationStore(
     hasEarlier: history.earlier.cursor !== null,
     earlierCursor: history.earlier.cursor,
     loadingEarlier: history.earlier.pending,
-    historyError: history.error === null ? null : readErrorText(history.error, '无法加载对话记录。'),
-    runError: runReadError === null ? null : readErrorText(runReadError, '无法同步对话状态。'),
+    historyError: history.error === null ? null : readErrorText(history.error, 'Unable to load conversation history.'),
+    runError: runReadError === null ? null : readErrorText(runReadError, 'Unable to sync conversation state.'),
     runLoading: run.isFetching,
     runReady: run.data !== undefined,
     actionError: actionError?.cardId === cardId ? actionError.message : stopFeedback?.kind === 'failed' ? stopFeedback.message : null,

@@ -156,8 +156,8 @@ it('clips scrolling folder rows and their action buttons above the account row',
   expect(getComputedStyle(userRow).backgroundColor).toBe(getComputedStyle(rail).backgroundColor);
 });
 
-it.each([false, true])('opens the account menu clear of the avatar and above the main region (collapsed: %s)', async (collapsed) => {
-  const { rail, avatar } = await renderRail({ collapsed, mainLayer: true });
+it('opens the account menu clear of the avatar and above the main region when expanded and hides footer chrome when collapsed', async () => {
+  const { rail, avatar } = await renderRail({ collapsed: false, mainLayer: true });
   const main = document.querySelector<HTMLElement>('[data-testid="main-layer"]')!;
   expect(main.getBoundingClientRect().left).toBeCloseTo(rail.getBoundingClientRect().right, 0);
 
@@ -173,13 +173,29 @@ it.each([false, true])('opens the account menu clear of the avatar and above the
   for (const item of items) {
     expectUncovered(item);
     const box = item.getBoundingClientRect();
-    // The narrow strip is narrower than the menu: the item reaches over `.main`,
-    // and that overhang is neither clipped by the rail nor covered by `.main`.
-    if (collapsed) expect(box.right).toBeGreaterThan(railRight + 8);
     if (box.right > railRight + 8) {
       expect(item.contains(document.elementFromPoint(box.right - 4, box.top + box.height / 2))).toBe(true);
     }
   }
+
+  cleanup();
+  document.body.replaceChildren();
+  render(receipts.wrap(<Rail theme="light" collapsed mainLayer currentPath="/area/a0" areaCount={AREAS.length} />));
+  await new Promise(requestAnimationFrame);
+  expect(document.querySelector('[aria-label="Account menu for Kenji Xie"]')).toBeNull();
+  const expand = document.querySelector<HTMLElement>('[aria-label="Expand sidebar"]')!;
+  const expandBox = expand.getBoundingClientRect();
+  expect(expandBox.right).toBeLessThanOrEqual(44);
+  expect(getComputedStyle(expand.parentElement!).backgroundColor).toBe('rgba(0, 0, 0, 0)');
+  expectUncovered(expand);
+});
+
+it('keeps expanded Area rows compact at rest instead of reserving two-action padding', async () => {
+  await renderRail({ areaCount: 2 });
+  const areaButton = document.querySelector<HTMLButtonElement>('[aria-label="Collapse area Area 0"]')!;
+  expect(areaButton.getAttribute('aria-expanded')).toBe('true');
+  const restPadding = parseFloat(getComputedStyle(areaButton).paddingInlineEnd);
+  expect(restPadding).toBeLessThan(24);
 });
 
 it('leaves the Areas list where it is when focus lands on the pinned avatar', async () => {
@@ -233,14 +249,15 @@ it('keeps every control reached by Tab clear of the account row', async () => {
   expect(checked).toBeGreaterThan(AREAS.length);
 });
 
-it('restores focus from a collapsed-strip initial onto a disclosure the account row does not cover', async () => {
-  await renderRail({ collapsed: true });
-  await userEvent.click(page.getByRole('button', { name: `Show area ${AREAS.at(-1)!.name}` }));
+it('collapses down to the single expand icon without rendering the account row', async () => {
+  await page.viewport(1400, VIEWPORT_H);
+  render(receipts.wrap(<Rail theme="light" collapsed mainLayer={false} currentPath="/" areaCount={AREAS.length} />));
   await new Promise(requestAnimationFrame);
-  const focused = document.activeElement as HTMLElement;
-  expect(focused.getAttribute('aria-label') ?? '').toContain(AREAS.at(-1)!.name);
-  expectUncovered(focused);
-  expectAboveAccountRow(focused);
+  expect(document.querySelector('[aria-label="Account menu for Kenji Xie"]')).toBeNull();
+  await userEvent.click(page.getByRole('button', { name: 'Expand sidebar' }));
+  await new Promise(requestAnimationFrame);
+  const { avatar } = railParts();
+  expect(avatar).toBeTruthy();
 });
 
 it.each(['light', 'dark'] as const)('paints the avatar with the card fill, not the rail fill (%s)', async (theme) => {

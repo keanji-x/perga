@@ -43,7 +43,7 @@ function groupVisibleItems(items: readonly EditorialListItem[], groups: readonly
   }
   const byName = new Map<string, EditorialListItem[]>(groups.map((name) => [name.trim(), []]));
   for (const item of items) {
-    const name = item.group != null && item.group.trim() !== '' ? item.group.trim() : '其他';
+    const name = item.group != null && item.group.trim() !== '' ? item.group.trim() : 'Other';
     let list = byName.get(name);
     if (list === undefined) {
       list = [];
@@ -86,7 +86,7 @@ export function EditorialChronicle({
   const buckets = groupVisibleItems(visibleItems, payload.groups ?? []);
 
   return (
-    <section className={styles.root} aria-label={payload.title ?? '记录列表'}>
+    <section className={styles.root} aria-label={payload.title ?? 'Chronicle'}>
       {payload.summary != null && payload.summary !== '' && (
         renderMarkdown?.(payload.summary, 'chronicle-summary') ?? <p>{text(payload.summary)}</p>
       )}
@@ -194,7 +194,7 @@ export function EditorialChronicle({
             className={styles.chronicleMore}
             onClick={() => { setShowAll((prev) => !prev); }}
           >
-            {hiddenCount > 0 ? `展开更早 ${hiddenCount} 条记录` : '收起更早记录'}
+            {hiddenCount > 0 ? `Show ${hiddenCount} earlier entries` : 'Collapse earlier entries'}
           </button>
         </div>
       )}

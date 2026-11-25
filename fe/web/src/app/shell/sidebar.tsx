@@ -95,7 +95,6 @@ export function Sidebar({
   const areaDisclosureRefs = useRef(new Map<string, HTMLButtonElement>());
   const shortcutDisclosureRefs = useRef(new Map<Exclude<SidebarSectionId, 'areas'>, HTMLButtonElement>());
   const groupTrackRefs = useRef(new Map<string, HTMLButtonElement>());
-  const pendingAreaFocusRef = useRef<string | null>(null);
   const pendingOptionsFocusRef = useRef(false);
   const pendingPinFocusRef = useRef<Readonly<{
     from: Exclude<SidebarSectionId, 'areas'>;
@@ -110,7 +109,6 @@ export function Sidebar({
   const userTracks = userVisibleTracks(tracks, areas);
   const receipts = useReadReceipts();
   const isUnread = (track: Track) => receipts.isTrackUnread(track.id, track.notifiableSessions);
-  const waiting = memberships.waiting;
   const groups: ReadonlyArray<{ id: Exclude<SidebarSectionId, 'areas'>; title: string; icon: 'star' | 'pin'; tracks: readonly Track[] }> = [
     { id: 'focus', title: 'Focus', icon: 'star', tracks: memberships.focus },
     { id: 'pinned', title: 'Pinned', icon: 'pin', tracks: memberships.pinned },
@@ -175,19 +173,6 @@ export function Sidebar({
     if (collapsed || activeTrackId === null) return;
     revealSidebarRow(railRef.current?.querySelector('[aria-current="page"]'));
   }, [activeTrackId, collapsed, activeAreaExpanded, areasVisible]);
-
-  /* A collapsed Area initial is an entrance into the expanded tree: restore focus
-       to the disclosure it reveals, or activating the unmounted initial drops focus
-       onto <body>. Runs after the current-Track scroll above on purpose. */
-  useEffect(() => {
-    if (collapsed) return;
-    const areaId = pendingAreaFocusRef.current;
-    if (areaId === null) return;
-    pendingAreaFocusRef.current = null;
-    const disclosure = areaDisclosureRefs.current.get(areaId);
-    disclosure?.focus({ preventScroll: true });
-    revealSidebarRow(disclosure);
-  }, [collapsed]);
 
   /* Pinning from Focus or unpinning from Pinned removes that shortcut row (and its
      group when empty); transfer dropped focus to the Track's surviving row or group. */
@@ -272,15 +257,18 @@ export function Sidebar({
         {collapsed && (
           <button
             type="button"
+            data-nc-role="icon"
             className={styles.iconButton}
             aria-label="Expand sidebar"
             aria-expanded="false"
+            title="Expand sidebar"
             onClick={onToggleCollapsed}
           >
-            <span className={styles.brandMark} aria-hidden="true" />
+            <Icon name="panel-left" />
           </button>
         )}
         <ConnectionIndicator readError={readError} activityError={activityError} loading={readLoading} onRetry={onRetryRead} />
+        {collapsed && <SystemUpgradeBannerHost variant="collapsed" />}
         {!collapsed && (
           <div className={`${styles.brandActions} ${rowLayout('inlineActions')}`}>
             <DropdownMenu placement="below" button={{
@@ -304,54 +292,9 @@ export function Sidebar({
           </div>
         )}
       </div>
-      <OperationFeedback feedback={writeFeedback} />
+      {!collapsed && <OperationFeedback feedback={writeFeedback} />}
 
-      {collapsed ? (
-        <div className={styles.collapsedFolders}>
-          <button
-            type="button"
-            data-nc-role="row"
-            className={`${styles.stripItem} ${todayActive ? styles.stripItemActive : ''}`}
-            aria-label="Today"
-            aria-current={todayActive ? 'page' : undefined}
-            title="Today"
-            onClick={() => onGo({ name: 'today' })}
-          >
-            <Icon name="calendar" size="md" />
-          </button>
-          {shareScope === null && <button type="button" data-nc-role="row"
-            className={`${styles.stripItem} ${memoryActive ? styles.stripItemActive : ''}`}
-            aria-current={memoryActive ? 'page' : undefined} aria-label="Memory" title="Memory"
-            onClick={() => onGo({ name: 'memory' })}><Icon name="book-open" /></button>}
-          <span className={styles.stripDivider} aria-hidden="true" />
-          {/* The rail's colours belong only to the indicator vocabulary and the current
-                        location; titles never carry a state colour. */}
-          {preferences.sidebarGroupVisible('focus') && waiting.length > 0 && (
-            <div className={styles.stripWaiting} aria-label={`${waiting.length} waiting on you`}>
-              {waiting.length}
-            </div>
-          )}
-          {/* An initial, not a colour chip: a letter says which area without spending the
-                        channel the indicator vocabulary reserves for state. */}
-          {(preferences.sidebarGroupVisible('areas') ? shownAreas : []).map((area) => (
-            <button
-              key={area.id}
-              type="button"
-              data-nc-role="row"
-              className={styles.stripItem}
-              aria-label={`Show area ${area.name}`}
-              title={area.name}
-              onClick={() => {
-                pendingAreaFocusRef.current = area.id;
-                preferences.setAreaExpanded(area.id, true);
-                onToggleCollapsed();
-              }}
-            >
-              <span className={styles.stripInitial} aria-hidden="true">{initialsOf(area.name)[0]}</span>
-            </button>
-          ))}
-        </div>
-      ) : (
+      {!collapsed && (
         <>
           <div className={styles.primaryNav} data-nc-primary-nav="">
             <PrimaryNavRow title="Today" icon="calendar" active={todayActive} onSelect={() => onGo({ name: 'today' })} />
@@ -427,20 +370,8 @@ export function Sidebar({
         </>
       )}
 
-      <div className={styles.railFooter}>
-        <SystemUpgradeBannerHost variant={collapsed ? 'collapsed' : 'sidebar'} />
-        {collapsed && (
-          <button
-            type="button"
-            data-nc-role="icon"
-            className={styles.iconButton}
-            aria-label="Open settings"
-            title="Settings"
-            onClick={onOpenSettings}
-          >
-            <Icon name="settings" size="sm" />
-          </button>
-        )}
+      {!collapsed && <div className={styles.railFooter}>
+        <SystemUpgradeBannerHost variant="sidebar" />
         <div className={styles.userRow}>
             <Menu
               items={[
@@ -463,21 +394,19 @@ export function Sidebar({
                 </button>
               )}
             />
-            {!collapsed && <span className={styles.userName} aria-hidden="true">{userLabel}</span>}
-            {!collapsed && (
-              <button
-                type="button"
-                data-nc-role="icon"
-                className={`${styles.iconButton} ${styles.userSettingsButton}`}
-                aria-label="Open settings"
-                title="Settings"
-                onClick={onOpenSettings}
-              >
-                <Icon name="settings" size="sm" />
-              </button>
-            )}
+            <span className={styles.userName} aria-hidden="true">{userLabel}</span>
+            <button
+              type="button"
+              data-nc-role="icon"
+              className={`${styles.iconButton} ${styles.userSettingsButton}`}
+              aria-label="Open settings"
+              title="Settings"
+              onClick={onOpenSettings}
+            >
+              <Icon name="settings" size="sm" />
+            </button>
         </div>
-      </div>
+      </div>}
 
       <DeleteConfirmDialog confirm={trackConfirm} copy={DELETE_TRACK_COPY} />
       {/* Deleting an area cascades to every track inside it: the one operation that

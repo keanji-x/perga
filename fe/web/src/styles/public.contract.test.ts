@@ -75,6 +75,7 @@ const TOKEN_INVENTORY = [
   '--header-baseline',
   '--header-primary-h',
   '--measure-board',
+  '--measure-dialog-medium',
   '--measure-doc',
   '--measure-form',
   '--measure-list',

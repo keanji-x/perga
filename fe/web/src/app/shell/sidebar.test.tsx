@@ -426,84 +426,42 @@ describe('collapse toggle', () => {
     expect(screen.getByRole('button', { name: 'Collapse area Work' })).toBeTruthy();
   });
 
-  it('drops to an icon strip when told it is collapsed, and stays navigable', () => {
-    const { update } = renderSidebar({ tracks: [track({ title: 'Inside' })] });
+  it('hides the rail contents when collapsed and keeps only the expand icon toggle', async () => {
+    const onToggleCollapsed = vi.fn();
+    const onGo = vi.fn();
+    const { update } = renderSidebar({ tracks: [track({ title: 'Inside' })], onToggleCollapsed, onGo });
     update({ collapsed: true });
 
-    // No section labels: 11px uppercase does not fit in 44px.
     expect(screen.queryAllByRole('heading')).toHaveLength(0);
     expect(screen.queryByRole('button', { name: /^Track Inside/ })).toBeNull();
-    // The area is still reachable, named for assistive tech and initialled for
-    // sighted users; this surface stays greyscale.
-    const item = screen.getByRole('button', { name: 'Show area Work' });
-    expect(item.textContent).toBe('W');
-    expect(screen.getByRole('button', { name: 'Account menu for You' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Show area Work' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Today' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Account menu for You' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Open settings' })).toBeNull();
     const expand = screen.getByRole('button', { name: 'Expand sidebar' });
     expect(expand.getAttribute('aria-expanded')).toBe('false');
-    expect(expand.querySelector('[aria-hidden="true"]')).toBeTruthy();
+    expect(expand.querySelector('svg')).toBeTruthy();
+
+    await userEvent.click(expand);
+    expect(onToggleCollapsed).toHaveBeenCalledTimes(1);
+    expect(onGo).not.toHaveBeenCalled();
 
     update({ collapsed: false });
     expect(screen.getByRole('button', { name: 'Collapse area Work' })).toBeTruthy();
   });
 
-  it('uses a collapsed Area initial to reveal its group, never to navigate', async () => {
-    const onToggleCollapsed = vi.fn();
+  it('keeps hidden Area preferences intact across collapse and expand', async () => {
+    const preferences = createUiPreferences();
     const onGo = vi.fn();
-    renderSidebar({ collapsed: true, onToggleCollapsed, onGo });
-    await userEvent.click(screen.getByRole('button', { name: 'Show area Work' }));
-    expect(onToggleCollapsed).toHaveBeenCalledTimes(1);
+    const props = { tracks: [track({ title: 'Current', working: true })], currentPath: '/track/w1', onGo };
+    const { update } = renderSidebar(props, preferences);
+    await userEvent.click(screen.getByRole('button', { name: 'Area actions for Work' }));
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Hide group' }));
     expect(onGo).not.toHaveBeenCalled();
-  });
-
-  it('leaves focus and the final scroll on the chosen Area, not the active Track elsewhere', async () => {
-    const scrolled: HTMLElement[] = [];
-    const scrollIntoView = vi.fn(function recordScroll(this: HTMLElement) {
-      scrolled.push(this);
-    });
-    const originalScrollIntoView = Object.getOwnPropertyDescriptor(
-      HTMLElement.prototype, 'scrollIntoView',
-    );
-    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
-      configurable: true,
-      value: scrollIntoView,
-    });
-    const active = track({ id: 'w1', areaId: 'c1', title: 'Active' });
-    const reading = area({ id: 'c2', name: 'Reading', sort: 2 });
-    const { update } = renderSidebar({
-      collapsed: true,
-      currentPath: '/track/w1',
-      areas: [area(), reading],
-      tracks: [active],
-      tracksByArea: new Map([['c1', [active]], ['c2', []]]),
-    });
-    await userEvent.click(screen.getByRole('button', { name: 'Show area Reading' }));
-    update({ collapsed: false });
-
-    const disclosure = screen.getByRole('button', { name: 'Collapse area Reading' });
-    await waitFor(() => expect(document.activeElement).toBe(disclosure));
-    await waitFor(() => expect(scrolled.at(-1)).toBe(disclosure));
-    expect(scrolled.some((element) => element.getAttribute('aria-current') === 'page')).toBe(true);
-    expect(scrollIntoView).toHaveBeenLastCalledWith({ block: 'nearest', container: 'nearest' });
-    if (originalScrollIntoView === undefined) {
-      Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView');
-    } else {
-      Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', originalScrollIntoView);
-    }
-  });
-
-  it('shows the waiting count as the strip\'s only figure, with no dot beside it', () => {
-    const { update } = renderSidebar({
-      // The count is the kernel's verdict (input or failed), not the open/closed state:
-      // a closed track the kernel has said nothing about is not waiting on anyone.
-      tracks: [
-        track({ id: 'a', closedAt: 5 }),
-        track({ id: 'b', attention: 'input' }),
-        track({ id: 'c', closedAt: 5, attention: 'failed' }),
-      ],
-    });
-    update({ collapsed: true });
-    const count = screen.getByLabelText('2 waiting on you');
-    expect(count.textContent).toBe('2');
+    update({ ...props, collapsed: true });
+    expect(screen.queryByRole('button', { name: 'Collapse area Work' })).toBeNull();
+    update({ ...props, collapsed: false });
+    expect(screen.queryByRole('button', { name: 'Collapse area Work' })).toBeNull();
   });
 });
 
@@ -697,7 +655,8 @@ describe('sidebar group management', () => {
     await action('Area actions for Work', 'Move down');
     expect(screen.getAllByRole('button', { name: /^Collapse area / }).map((node) => node.textContent)).toEqual(['Reading', 'Work']);
     expect(areas.map((row) => [row.id, row.sort])).toEqual([['c1', 1], ['c2', 2]]);
-    await action('Area actions for Work', 'Hide group');
+    await userEvent.click(screen.getByRole('button', { name: 'Area actions for Work' }));
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Hide group' }));
     expect(screen.queryByRole('button', { name: 'Collapse area Work' })).toBeNull();
     preferences.setSidebarGroupVisible('areas', false);
     await restore('Work', true);
@@ -720,15 +679,18 @@ describe('sidebar group management', () => {
     expect(screen.queryByRole('button', { name: 'Area actions for System' })).toBeNull();
   });
 
-  it('hiding the current Area changes only sidebar display and applies to the collapsed strip', async () => {
+  it('hiding the current Area changes only sidebar display and stays hidden across collapse', async () => {
     const preferences = createUiPreferences();
     const onGo = vi.fn();
     const props = { tracks: [track({ title: 'Current', working: true })], currentPath: '/track/w1', onGo };
     const { update } = renderSidebar(props, preferences);
-    await action('Area actions for Work', 'Hide group');
+    await userEvent.click(screen.getByRole('button', { name: 'Area actions for Work' }));
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Hide group' }));
     expect(onGo).not.toHaveBeenCalled();
     update({ ...props, collapsed: true });
     expect(screen.queryByRole('button', { name: 'Show area Work' })).toBeNull();
+    update({ ...props, collapsed: false });
+    expect(screen.queryByRole('button', { name: 'Collapse area Work' })).toBeNull();
   });
 });
 

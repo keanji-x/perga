@@ -34,7 +34,7 @@
   }
   /* Black is the opaque alpha-mask stop; it does not supply a text colour. */
   .fade {
-    mask-image: linear-gradient(to right, black calc(100% - var(--space-4)), transparent);
+    mask-image: linear-gradient(to right, black calc(100% - var(--space-2)), transparent);
   }
 
   .medium {

@@ -49,6 +49,11 @@ describe('context ring', () => {
     expect(ring()).toBeNull();
   });
 
+  it('draws nothing at 0% so a fresh conversation does not show an empty grey dot', () => {
+    render(<ContextRing usage={usage({ used_tokens: 0, percent: 0 })} />);
+    expect(ring()).toBeNull();
+  });
+
   it('draws nothing when the window is at or below the floor', () => {
     render(<ContextRing usage={usage({ context_window: 8_000, used_tokens: 4_000, percent: null })} />);
     expect(ring()).toBeNull();

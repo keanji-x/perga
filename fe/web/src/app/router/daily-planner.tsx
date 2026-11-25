@@ -17,6 +17,7 @@ import { readErrorText } from '../../../../core/domain/read-failure.ts';
 import { ReportChangeDetails,ReportEditDetails } from '../../features/report/changes/public.tsx';
 import { ReportDetails } from '../../features/report/document/details.tsx';
 import { ErrorBox } from '../../ui/error-box/public.tsx';
+import { LoadingStatus } from '../../ui/loading-status/public.tsx';
 import { PanelCard } from '../../ui/panel-card/public.tsx';
 import { useState } from '../../ui/state/public.ts';
 import { runOperation } from '../providers/query-operation.ts';
@@ -129,15 +130,15 @@ export function DailyTodayRoute({ transport, unauthorized, selectedDate, onOpenT
   );
   if (isInvalidDate) return withCalendarShell(<ErrorBox message={`Invalid date "${selectedDate}". Expected YYYY-MM-DD.`} onRetry={() => onSelectDate?.(undefined)} />);
   if (daily.isError) return withCalendarShell(<ErrorBox message={readErrorText(daily.error, 'The daily Planner is unavailable.')} onRetry={() => { void daily.refetch(); }} />);
-  if (daily.isPending) return withCalendarShell(<p role="status">Loading daily Planner…</p>);
+  if (daily.isPending) return withCalendarShell(<LoadingStatus padded>Loading daily Planner…</LoadingStatus>);
   if (daily.data === null) {
     const emptyNotice = isDefaultToday
-      ? <p role="status">Preparing today’s Track…</p>
+      ? <LoadingStatus padded>Preparing today’s Track…</LoadingStatus>
       : <EmptyState variant="panel" icon={<Icon name="file" />} title="No daily Track was created for this date." description="No daily log recorded for this date yet." />;
     return withCalendarShell(emptyNotice);
   }
   if (detail.isError) return withCalendarShell(<ErrorBox message={readErrorText(detail.error, 'The daily Track could not be loaded.')} onRetry={() => { void detail.refetch(); }} />);
-  if (detail.data === undefined || detail.data.track.id !== trackId) return withCalendarShell(<p role="status">Loading daily Track…</p>);
+  if (detail.data === undefined || detail.data.track.id !== trackId) return withCalendarShell(<LoadingStatus padded>Loading daily Track…</LoadingStatus>);
   const date = daily.data.date;
   return renderTrack({ ...detail.data, track: { ...detail.data.track, title: date } },
     null,
@@ -188,7 +189,7 @@ function DailyReportChanges({ date, isToday, transport, unauthorized, onOpenTrac
     getNextPageParam: (last) => last.nextCursor === null ? undefined : { cursor: last.nextCursor, through: last.throughEventId },
   });
   const content = <>
-    {changes.isPending && open && <p role="status">Loading report changes…</p>}
+    {changes.isPending && open && <LoadingStatus>Loading report changes…</LoadingStatus>}
     {changes.isError && <ErrorBox message={readErrorText(changes.error, 'Report changes could not be loaded.')} onRetry={() => { void changes.refetch(); }} />}
     {!changes.isError && changes.data?.pages[0]?.changes.length === 0 && <EmptyState variant="compact" icon={<Icon name="file" />} title="No report changes recorded for visible Tracks on this day." description="Report updates for this date appear here." />}
     {changes.data?.pages.flatMap((page) => page.changes.map((change) => <ReportChangeItem key={change.trackId} card={standalone} change={change}
@@ -220,7 +221,7 @@ function ReportChangeItem({ card, change, date, timeZone, through, transport, un
     getNextPageParam: (last) => last.nextCursor ?? undefined,
   });
   return <ReportChangeDetails card={card} change={change} onOpenTrack={onOpenTrack} onToggleEdits={setOpen}>
-    {edits.isPending && open && <p role="status">Loading edits…</p>}
+    {edits.isPending && open && <LoadingStatus>Loading edits…</LoadingStatus>}
     {edits.isError && <ErrorBox message={readErrorText(edits.error, 'Edits could not be loaded.')} onRetry={() => { void edits.refetch(); }} />}
     {edits.data?.pages.flatMap((page) => page.edits.map((entry) => <ReportEditDetails key={entry.eventId}
       entry={entry} timeZone={timeZone} onOpenTrack={onOpenTrack} />))}

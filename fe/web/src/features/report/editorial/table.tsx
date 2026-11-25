@@ -24,7 +24,7 @@ export function EditorialTable({
       {payload.rows.length === 0 ? (
         <div className={styles.emptyTable} role="note">
           {label && <div>{label}</div>}
-          <div>当前暂无可展示的行。</div>
+          <div>No rows to display.</div>
         </div>
       ) : (
         <div className={styles.tableWrap}>
@@ -46,7 +46,7 @@ export function EditorialTable({
                         {cell == null ? '—' : typeof cell === 'string' ? text(cell) : (
                           <div className={`${styles.cellContent} ${styles.tone}`} data-nc-tone={cell.tone}>
                             {cell.check && (
-                              <span className={styles.cellCheck} role="img" aria-label="已通过">
+                              <span className={styles.cellCheck} role="img" aria-label="Passed">
                                 <Icon name="check" size="sm" />
                               </span>
                             )}

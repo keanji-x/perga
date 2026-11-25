@@ -3,4 +3,21 @@
     border-radius: var(--radius-pill);
     max-inline-size: 16rem;
   }
+
+  .pillGroup {
+    display: inline-flex;
+    align-items: center;
+    max-inline-size: 100%;
+    border-radius: var(--radius-pill);
+    background: var(--surface-chip);
+  }
+
+  .pillGroup > :first-child {
+    background-color: transparent;
+  }
+
+  .pillGroup .clearButton {
+    border-radius: var(--radius-pill);
+    margin-inline-end: var(--space-half);
+  }
 }

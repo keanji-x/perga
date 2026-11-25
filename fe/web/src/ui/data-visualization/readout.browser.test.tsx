@@ -41,11 +41,11 @@ it.each([
   const slider = page.getByRole('slider');
   const closedHeight = container.getBoundingClientRect().height;
   await slider.hover();
-  const disclosure = page.getByRole('button', { name: 'Measurement 观察值' });
+  const disclosure = page.getByRole('button', { name: 'Measurement observations' });
   (disclosure.element() as HTMLButtonElement).focus();
   await userEvent.keyboard('{Enter}');
   const initialHeight = container.getBoundingClientRect().height;
-  const readout = page.getByRole('region', { name: 'Measurement 观察值' }).element() as HTMLElement;
+  const readout = page.getByRole('region', { name: 'Measurement observations' }).element() as HTMLElement;
   expect(readout.getBoundingClientRect().height).toBe(144);
   expect(disclosure.element().getAttribute('aria-expanded')).toBe('true');
   const values = readout.querySelectorAll('dd');
@@ -69,7 +69,7 @@ it.each([
   input.focus();
   await userEvent.keyboard('{Home}');
   expect(values[0].textContent).toBe('0 GB');
-  expect(values[1].textContent).toBe('未知 GB');
+  expect(values[1].textContent).toBe('Unknown GB');
   await userEvent.keyboard('{ArrowRight}');
   expect(values[0].textContent).toBe('123,456,789.12345678 GB');
   const bounds = input.getBoundingClientRect();
@@ -84,7 +84,7 @@ it.each([
   readout.scrollTop = 0;
   await page.screenshot({ path: `__screenshots__/readout-${width}-${columns}.png` });
   await disclosure.click();
-  await expect.element(page.getByRole('region', { name: 'Measurement 观察值' })).not.toBeInTheDocument();
+  await expect.element(page.getByRole('region', { name: 'Measurement observations' })).not.toBeInTheDocument();
   expect(container.getBoundingClientRect().height).toBe(closedHeight);
 });
 

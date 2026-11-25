@@ -26,7 +26,7 @@ it.each(['reconnect', 'reset_context'] as const)('recovers an unknown Worker wit
   await page.getByRole('button', { name: /Conversation Other conversation/ }).click();
   const message = page.getByRole('combobox', { name: 'Message' });
   await expect.element(message).toHaveAttribute('contenteditable', 'false');
-  await page.getByRole('button', { name: action === 'reconnect' ? '重连原会话' : '重置上下文并继续', exact: true }).click();
+  await page.getByRole('button', { name: action === 'reconnect' ? 'Reconnect session' : 'Reset context and continue', exact: true }).click();
   await expect.element(message).toHaveAttribute('contenteditable', 'true');
   expect(view.requests.filter(request => request.method === 'POST').map(request => request.path)).toEqual(['/api/v1/sessions/second-planner/control']);
 });

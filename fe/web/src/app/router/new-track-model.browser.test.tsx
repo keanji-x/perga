@@ -136,7 +136,7 @@ it('keeps a retained phone draft at the same text size and height while submitti
   }
 });
 
-it('keeps long custom preferences readable inside overflow and preserves the folder clear action', async () => {
+it('keeps long custom preferences readable inside overflow and switches back via the Repo menu', async () => {
   const modelName = 'A long custom model for careful reasoning';
   const cwd = '/srv/projects/a-long-custom-folder-for-the-mobile-layout';
   const view = render(<ModelForm initialCwd={cwd} modelName={modelName} />);
@@ -146,17 +146,16 @@ it('keeps long custom preferences readable inside overflow and preserves the fol
     await userEvent.click(screen.getByRole('radio', { name: modelName }));
     await userEvent.click(await screen.findByRole('button', { name: 'Track options' }));
     const options = await screen.findByRole('dialog', { name: 'Track options' });
+    expect(within(options).queryByRole('button', { name: 'Use a Perga workspace instead' })).toBeNull();
     for (const width of [320, 390]) {
       await page.viewport(width, 740);
       const folder = within(options).getByRole('button', { name: `Repo: a-long-custom-folder-for-the-mobile-layout (${cwd})` }).getBoundingClientRect();
-      const clear = within(options).getByRole('button', { name: 'Use a Perga workspace instead' }).getBoundingClientRect();
-      expect(folder.right).toBeLessThanOrEqual(clear.left);
-      expect(clear.right).toBeLessThanOrEqual(width);
+      expect(folder.right).toBeLessThanOrEqual(width);
       expect(document.documentElement.scrollWidth).toBe(width);
     }
-    await userEvent.click(within(options).getByRole('button', { name: 'Use a Perga workspace instead' }));
+    await userEvent.click(within(options).getByRole('button', { name: `Repo: a-long-custom-folder-for-the-mobile-layout (${cwd})` }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: /Perga workspace/ }));
     expect(screen.getByRole('button', { name: 'Repo: Perga workspace' })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Use a Perga workspace instead' })).toBeNull();
   } finally {
     view.unmount();
     await page.viewport(1280, 720);
@@ -217,7 +216,8 @@ it('keeps directory selection and cancellation usable through overflow', async (
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Track options' }));
     await page.viewport(600, 844);
     await waitFor(() => { expect(screen.queryByRole('button', { name: 'Track options' })).toBeNull(); });
-    await user.click(await screen.findByRole('button', { name: 'Use a Perga workspace instead' }));
+    await user.click(await screen.findByRole('button', { name: `Repo: a-long-directory-selected-through-the-real-browser (${cwd})` }));
+    await user.click(await screen.findByRole('menuitem', { name: /Perga workspace/ }));
     await waitFor(() => { expect(screen.queryByRole('button', { name: 'Track options' })).toBeNull(); });
     expect(screen.getByRole('button', { name: 'Repo: Perga workspace' })).toBeTruthy();
     expectFullLabel('Repo: Perga workspace');

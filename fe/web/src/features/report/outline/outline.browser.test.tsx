@@ -28,7 +28,10 @@ it.each([40, 130])('keeps long chapter previews within the report with a %ipx ma
     ['--conversation-span' as string]: '480px' }}>
     <div data-testid="report-boundary" style={{ position: 'relative', inlineSize: 900, blockSize: 600,
       ['--document-start' as string]: `${margin}px`, ['--header-band' as string]: '0px', ['--header-h' as string]: '0px' }}>
-      <ReportOutline items={[{ blockId: 'long-section', label, excerpt: 'A readable supporting paragraph.', number: 1, children: [] }]} />
+      <ReportOutline items={[
+        { blockId: 'long-section', label, excerpt: 'A readable supporting paragraph.', number: 1, children: [] },
+        { blockId: 'second-section', label: 'Methodology', excerpt: '', number: 2, children: [] },
+      ]} />
     </div>
   </div>);
   await page.getByRole('button', { name: label }).hover();

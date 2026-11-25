@@ -39,10 +39,6 @@
     max-inline-size: 100%;
   }
 
-  .panel .folder > button:last-child:not(:first-child) {
-    flex: none;
-  }
-
   @media (width < 60rem) {
     .host,
     .items,

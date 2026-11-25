@@ -31,6 +31,11 @@ it('keeps draft text through draining, restart, and build changes and displays t
     <SystemUpgradeBannerHost /><textarea aria-label="Unsent message" /><VersionCard />
   </LiveConnectionProvider></SystemUpgradeProvider></QueryClientProvider>);
   await waitFor(() => expect(screen.getByText('w1')).toBeTruthy());
+  const details = screen.getByText('Diagnostics').closest('details')!;
+  expect(details.open).toBe(false);
+  await userEvent.click(screen.getByText('Diagnostics'));
+  expect(details.open).toBe(true);
+  expect(screen.getByText('w1').getBoundingClientRect().height).toBeGreaterThan(0);
   await userEvent.fill(screen.getByRole('textbox'), 'Keep my unsent draft');
   act(() => sink.frame({ type: 'event', meta: { id: 0, eventVersion: 1 }, event: { ev: 'system.upgrade_status', data: { draining: true, activeDispatches: 2 } } }));
   expect(screen.getByRole('status').textContent).toContain('2 active dispatches');
@@ -39,7 +44,7 @@ it('keeps draft text through draining, restart, and build changes and displays t
   act(() => sink.connectionState('disconnected'));
   expect(screen.getByRole('status').textContent).toContain('Reconnecting during upgrade');
   act(() => sink.connectionState('connected'));
-  await waitFor(() => expect(screen.getByText('r2')).toBeTruthy());
+  await waitFor(() => expect(screen.getAllByText('r2').length).toBeGreaterThanOrEqual(1));
   expect(screen.queryByRole('button', { name: 'Refresh' })).toBeNull();
   info = { ...info, webBuildId: 'w2', draining: false, activeDispatches: 0 };
   const reads = send.mock.calls.length;

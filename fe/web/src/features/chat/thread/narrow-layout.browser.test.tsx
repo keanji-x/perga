@@ -60,9 +60,13 @@ it.each([[192, 20], [232, 32], [288, 16]])('separates status text and actions at
     expect(overlapX <= 1 || overlapY <= 1).toBe(true);
     const bounds = meta.getBoundingClientRect();
     for (const button of screen.getByRole('group', { name: 'Response actions' }).querySelectorAll('button')) {
-      expect(button.getBoundingClientRect().left).toBeGreaterThanOrEqual(bounds.left - 1);
-      expect(button.getBoundingClientRect().right).toBeLessThanOrEqual(bounds.right + 1);
-      expect(button.getBoundingClientRect().height).toBeGreaterThanOrEqual(28);
+      const box = button.getBoundingClientRect();
+      expect(box.left).toBeGreaterThanOrEqual(bounds.left - 1);
+      expect(box.right).toBeLessThanOrEqual(bounds.right + 1);
+      expect(box.height).toBeGreaterThanOrEqual(28);
+      const svg = button.querySelector('svg')!.getBoundingClientRect();
+      expect(Math.abs((svg.left + svg.right) / 2 - (box.left + box.right) / 2)).toBeLessThanOrEqual(1);
+      expect(Math.abs((svg.top + svg.bottom) / 2 - (box.top + box.bottom) / 2)).toBeLessThanOrEqual(1);
     }
   };
   check(); await userEvent.hover(label); expect(meta.querySelector('time')).not.toBeNull(); check();

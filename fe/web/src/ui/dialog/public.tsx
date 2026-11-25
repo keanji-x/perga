@@ -30,7 +30,7 @@ export type DialogPurpose = 'info' | 'form';
 export interface DialogProps {
   purpose: DialogPurpose;
   origin: DialogOrigin;
-  open: boolean; onClose: () => void; title?: string; hideTitleRow?: boolean; children?: ReactNode; wide?: boolean;
+  open: boolean; onClose: () => void; title?: string; hideTitleRow?: boolean; children?: ReactNode; wide?: boolean | 'medium';
   /** Drop the `×` while keeping the title; `hideTitleRow` can only remove both. */
   hideClose?: boolean;
   initialFocusRef?: RefObject<HTMLElement | null>;
@@ -217,9 +217,9 @@ export function Dialog({ purpose, origin, open, onClose, title, hideTitleRow, hi
     className={showingView || wide ? 'dialog-overlay dialog-overlay-wide' : 'dialog-overlay'} role="presentation"
     style={{ insetBlockStart: viewport.bottomEdge - viewport.height, insetBlockEnd: viewport.bottomInset }}
     onMouseDown={(event) => { if (purpose === 'info' && !showingView && event.target === event.currentTarget) onClose(); }}>
-    <div ref={frameRef} className={`${styles.frame} ${showingView || wide ? styles.wide : ''}`}
+    <div ref={frameRef} className={`${styles.frame} ${showingView || wide === true ? styles.wide : wide === 'medium' ? styles.medium : ''}`}
       style={{ maxBlockSize: `calc(${viewport.height}px - var(--space-6))` }}>
-    <CardFrame ref={panelRef} className={`${styles.panel} ${showingView || wide ? 'dialog-panel dialog-panel-wide' : 'dialog-panel'}`} data-nc-escape-layer=""
+    <CardFrame ref={panelRef} className={`${styles.panel} ${showingView || wide === true ? 'dialog-panel dialog-panel-wide' : 'dialog-panel'}`} data-nc-escape-layer=""
       style={{ maxBlockSize: `calc(${viewport.height}px - var(--space-6))` }}
       role="dialog" aria-modal="true" aria-label={typeof headerTitle === 'string' ? headerTitle : undefined}
       aria-labelledby={headerTitle && typeof headerTitle !== 'string' ? titleId : undefined}

@@ -10,10 +10,10 @@ import styles from './editorial.module.css';
 
 export function defaultStatusLabel(status: EditorialListStatus): string {
   switch (status) {
-    case 'done': return '已完成';
-    case 'running': return '进行中';
-    case 'blocked': return '已拦截';
-    case 'pending': return '未开始';
+    case 'done': return 'Done';
+    case 'running': return 'Running';
+    case 'blocked': return 'Blocked';
+    case 'pending': return 'Pending';
   }
 }
 
@@ -110,7 +110,7 @@ export function EditorialGateStrip({
   const activeGate = checks.find((_, idx) => `${itemId}-${idx}` === activeGateKey) ?? null;
 
   return (
-    <footer className={styles.gateStrip} aria-label="Gate 验证引用">
+    <footer className={styles.gateStrip} aria-label="Gate verification citations">
       <div className={styles.gateCitationList}>
         <span className={styles.gatePrefix}>Gate</span>
         {checks.map((check, idx) => {
@@ -144,7 +144,7 @@ export function EditorialGateStrip({
       </div>
 
       {activeGate !== null && (
-        <div className={styles.gateFootnote} role="region" aria-label={`${activeGate.label} 输出`}>
+        <div className={styles.gateFootnote} role="region" aria-label={`${activeGate.label} output`}>
           {activeGate.command != null && activeGate.command.trim() !== '' && (
             <p className={styles.gateFootnoteCmd}>$ {activeGate.command}</p>
           )}

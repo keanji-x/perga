@@ -90,8 +90,6 @@ export type TrackPageProps = Readonly<{
   mobilePanelObscured: boolean;
   /** Starts Chat from the desktop header or the mobile Report action. */
   onStartConversation?: () => void;
-  /** Hide the redundant header action when the conversation is already in the reading column. */
-  showConversationAction?: boolean;
   shareLinks?: ReactNode;
   onShareTrack?: (origin: DialogOrigin) => void;
   /** The Cards module head's `+`, composed by `app/router`. */
@@ -159,7 +157,7 @@ function rowModule(view: TrackPageView, key: RowModuleView['key']): RowModuleVie
 
 export function TrackPage({ fillReading = false, articleMasthead = !fillReading, showWorkspaceIsolation = true, mobileReportIntro, mobileChatComposer,
   panelHeader, panelContent, progressDisclosure, track, cards, existingCardIds, tasks, openableCards, outlineItems = [], report, conversationList, conversationContextList,
-  shareLinks, onShareTrack, onStartConversation, showConversationAction = true, conversationOpen = false, mobilePanelObscured, unread = false, onReply,
+  shareLinks, onShareTrack, onStartConversation, conversationOpen = false, mobilePanelObscured, unread = false, onReply,
   cardsAction, recentFiles, onOpenCard, onDeleteCard, onSetWorkbench, onOpenTask, onOpenOutline, board, onCloseBoard, fileViewer,
   panel = null, onOpenPanel, onClosePanel,
   mobileBackLabel = 'Pages', onMobileBack, mobileHeaderActionsHost = null, mobileHeaderTitleHost = null, mobileTitleReadView,
@@ -354,15 +352,19 @@ export function TrackPage({ fillReading = false, articleMasthead = !fillReading,
                 className={showArticleMasthead ? styles.mastheadTitle : styles.title} isPageTitle titleRef={titleReadControlRef}
                 readView={hasMobileTitleReadView ? (controls) => <MobileTitleReadView
                   controls={controls} host={mobileHeaderTitleHost} register={registerMobileTitleEdit}
-                  view={originLink === null ? mobileTitleReadView : (readControls) => (
-                    <div className={styles.mobileOriginTitle}>{mobileTitleReadView(readControls)}{originLink}</div>
+                  view={(readControls) => (
+                    <div className={styles.mobileOriginTitle}>
+                      {mobileTitleReadView(readControls)}
+                      {originLink}
+                      <ActivityIndicator state={activity} spoken={activityLabel} />
+                    </div>
                   )} /> : undefined} />}
         </h1>
         {(!compactViewport || (titleInHeader && !hasMobileTitleReadView)) && originLink}
         {!titleInHeader && !showArticleMasthead && isDirectFolder && <ExplanationBadge label={NO_ISOLATION_LABEL}>{NO_ISOLATION_EXPLANATION}</ExplanationBadge>}
         {!titleInHeader && <TrackClosedBadge closedAt={track.closedAt} />}
         {/* Shared track activity and conversation unread state. */}
-        {!titleInHeader && <ActivityIndicator state={activity} />}
+        {(!titleInHeader || !hasMobileTitleReadView) && <ActivityIndicator state={activity} spoken={compactViewport ? activityLabel : null} />}
       </div>
     </div>
   );
@@ -422,17 +424,6 @@ export function TrackPage({ fillReading = false, articleMasthead = !fillReading,
           onClick={() => onShareTrack({ kind: 'anchor', anchor: { ref: shareTriggerRef }, unavailable: 'surface-center' })} />}
         actions={(
           <span className={styles.headerActions}>
-            {showConversationAction && !boardOpen && !conversationOpen && (onReply !== undefined || onStartConversation !== undefined) && (
-              <AstryxButton
-                className={styles.desktopChatAction}
-                label="Discuss"
-                tooltip={activityLabel ?? (onReply === undefined ? 'Open conversation' : 'Open Planner conversation')}
-                variant="ghost"
-                size="sm"
-                icon={<><Icon name="chat" /><ActivityIndicator state={activity} /></>}
-                onClick={onReply === undefined ? onStartConversation : () => { onReply(); }}
-              />
-            )}
             {trackMutationActions.length > 0 && <span ref={desktopSourceRef} className={styles.trackActions}>
               <AstryxDropdownMenu
                 alignment="end"
@@ -595,8 +586,6 @@ export function TrackPage({ fillReading = false, articleMasthead = !fillReading,
       {compactViewport && !conversationOpen && !mobilePanelObscured
         && closeSurface === undefined && !mobilePanelOpen && (mobileChatComposer !== undefined || onStartConversation !== undefined) && (
         mobileChatComposer !== undefined ? <div className={styles.mobileReportChatDock} data-nc-mobile-report-chat="">
-          <AstryxButton label="Open conversation" aria-description={activityLabel ?? undefined} isIconOnly variant="ghost" onClick={onReply ?? onStartConversation}
-            icon={<><Icon name="chat" /><ActivityIndicator state={activity} /></>} />
           <div className={styles.mobileChatInput}>{mobileChatComposer}</div>
         </div> : (
         <AstryxButton

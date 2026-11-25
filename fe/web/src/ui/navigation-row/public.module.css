@@ -82,7 +82,7 @@
   .revealActions > .content.oneAction { padding-inline-end: calc(var(--navigation-inset) + var(--space-4) + var(--space-half)); }
   .revealActions:hover > .content,
   .revealActions:focus-within > .content,
-  .revealActions:has([aria-expanded='true']) > .content {
+  .revealActions:has(:not([data-nc-role='row'])[aria-expanded='true']) > .content {
     padding-inline-end: var(--navigation-two-actions);
   }
   @media (hover: none) {

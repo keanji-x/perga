@@ -11,7 +11,7 @@ const revealOutlineAnchor = (anchorId: string) => revealReportAnchor(anchorId, d
 
 /** The report owns chapter IDs and placement; navigation behavior is shared with chat. */
 export function ReportOutline({ items, onSelect = revealOutlineAnchor }: ReportOutlineProps) {
-  if (items.length === 0) return null;
+  if (items.length < 2) return null;
   return <nav className={styles.rail} aria-label="Outline" data-nc-report-outline="">
     <div className={styles.viewport}><div className={styles.navigator}>
       <EdgeNavigator label="Jump to a section" activeId={null} onSelect={onSelect} previewSide="after"

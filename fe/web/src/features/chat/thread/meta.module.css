@@ -39,8 +39,10 @@
     inline-size: var(--glyph-meta);
     block-size: var(--glyph-meta);
     color: var(--text-3);
-    /* Align ink inside the hit target instead of overflowing the conversation. */
-    translate: calc((var(--control-h) - var(--glyph-meta)) / 2) 0;
+  }
+  .action:hover .icon,
+  .action:focus-visible .icon {
+    color: var(--text);
   }
   .reason { margin-block-start: var(--space-2); color: var(--text-2); overflow-wrap: anywhere; white-space: pre-wrap; }
 }

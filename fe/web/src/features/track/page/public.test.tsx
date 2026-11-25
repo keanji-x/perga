@@ -747,17 +747,8 @@ describe('TrackPage delete', () => {
 });
 
 describe('the desktop Planner entry', () => {
-  it('opens the existing Planner through its supplied callback', async () => {
-    const onReply = vi.fn();
-    const onStartConversation = vi.fn();
-    renderPage({ onReply, onStartConversation });
-    await userEvent.click(screen.getByRole('button', { name: 'Discuss' }));
-    expect(onReply).toHaveBeenCalledOnce();
-    expect(onStartConversation).not.toHaveBeenCalled();
-  });
-
-  it('offers the entry only when a Planner callback is supplied', () => {
-    renderPage();
+  it('omits the redundant header Discuss button even when conversation callbacks are supplied', () => {
+    renderPage({ onReply: vi.fn(), onStartConversation: vi.fn() });
     expect(screen.queryByRole('button', { name: 'Discuss' })).toBeNull();
   });
 

@@ -69,7 +69,7 @@ it.each(['missing', 'wrong-session'] as const)('keeps the draft recoverable when
   await submit();
   await waitFor(() => expect(fixture.creates()).toHaveLength(1));
   act(() => { fixture.answer(); });
-  await screen.findByRole('button', { name: /^(Try again|重试|安全重试（同幂等键）)$/ });
+  await screen.findByRole('button', { name: /^(Try again|Retry|Retry safely \(same key\))$/ });
   expect(fixture.creates()).toHaveLength(1);
   expect(fixture.requests.filter((request: ApiRequest) => request.path.endsWith('/messages'))).toHaveLength(0);
 });

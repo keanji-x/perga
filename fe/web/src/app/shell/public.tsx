@@ -604,7 +604,6 @@ export function AppShell({
         open={areaEditorTarget !== null}
         title={areaEditorTarget?.kind === 'edit' ? `Edit ${areaEditorTarget.area.name}` : 'New area'}
         onClose={closeAreaEditor}
-        hideTitleRow
         hideClose={areaEditorPending}
         initialFocusRef={areaEditorNameRef}
       >

@@ -119,6 +119,7 @@ function Page({ onClose, motion = false }: { onClose?: () => void; motion?: bool
 
 const OUTLINE_ITEMS: ReportOutlineItem[] = [
   { blockId: 'section', label: 'Section', excerpt: '', number: 1, children: [] },
+  { blockId: 'details', label: 'Details', excerpt: '', number: 2, children: [] },
 ];
 
 const STATIC_RESIZE = { onPreview: () => undefined, onCommit: () => undefined };

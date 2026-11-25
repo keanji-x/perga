@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useRef, type Ref } from 'react';
 import { flushSync } from 'react-dom';
 import { Divider } from '@astryxdesign/core/Divider';
 import { DropdownMenu, DropdownMenuItem } from '@astryxdesign/core/DropdownMenu';
@@ -9,7 +9,7 @@ import { VisuallyHidden } from '@astryxdesign/core/VisuallyHidden';
 import type { TrackWorkspaceOptions } from '../../../../../core/domain/track.ts';
 import { Icon } from '../../../ui/icon/public.tsx';
 import { useState } from '../../../ui/state/public.ts';
-import { FolderClearButton, folderLabelParts } from '../default-pills/public.tsx';
+import { folderLabelParts } from '../default-pills/public.tsx';
 import styles from './repo-pill.module.css';
 
 export type RepoIsolationMode = 'worktree' | 'none';
@@ -41,10 +41,10 @@ function repoModes() {
 
 export type RepoPillProps = Readonly<{
   buttonId?: string;
+  buttonRef?: Ref<HTMLButtonElement>;
   value: string;
   targetLabel?: string;
   isolation: RepoIsolationMode;
-  clearLabel: string;
   workspaceOptions?: TrackWorkspaceOptions | null;
   workspaceOptionId?: string;
   onWorkspaceOptionChange?: (id: string) => void;
@@ -56,10 +56,10 @@ export type RepoPillProps = Readonly<{
 
 export function RepoPill({
   buttonId,
+  buttonRef,
   value,
   targetLabel,
   isolation,
-  clearLabel,
   workspaceOptions,
   workspaceOptionId,
   onWorkspaceOptionChange,
@@ -82,15 +82,18 @@ export function RepoPill({
   });
 
   return (
-    <>
-      <DropdownMenu
+    <DropdownMenu
         placement="above"
         isMenuOpen={open && !isDisabled}
         onOpenChange={(next) => setOpen(next && !isDisabled)}
         hasChevron={false}
         button={{
           id: buttonId,
-          ref: triggerRef,
+          ref: (node: HTMLButtonElement | null) => {
+            triggerRef.current = node;
+            if (typeof buttonRef === 'function') buttonRef(node);
+            else if (buttonRef !== undefined && buttonRef !== null) buttonRef.current = node;
+          },
           label: accessibleName,
           children: (
             <Text key={visibleLabel} type="inherit" color="inherit" maxLines={1} hasTruncateTooltip={!open}>
@@ -173,7 +176,5 @@ export function RepoPill({
           ) : undefined}
         />
       </DropdownMenu>
-      {value !== '' && <FolderClearButton label={clearLabel} isDisabled={isDisabled} onClear={onClear} />}
-    </>
   );
 }

@@ -35,7 +35,7 @@ export function useConversationActionArea({ open, options, store, shownComposer,
     archiveLease.current.add(id);
     setArchiveFailure(null);
     void options.onArchive(id, archived).catch((error: unknown) => {
-      if (shownComposer.current === id) setArchiveFailure({ id, message: error instanceof Error ? error.message : '无法更新归档状态，请重试。' });
+      if (shownComposer.current === id) setArchiveFailure({ id, message: error instanceof Error ? error.message : 'Unable to update archive status. Please try again.' });
     }).finally(() => { archiveLease.current.delete(id); });
   };
   const action = deriveConversationAction({
@@ -50,35 +50,35 @@ export function useConversationActionArea({ open, options, store, shownComposer,
   const [pausedDismissedFor, setPausedDismissedFor] = useState<string | null>(null);
   useEffect(() => { if (!store.workerPaused) setPausedDismissedFor(null); }, [store.workerPaused]);
   const actionArea = action === null || (action.kind === 'workerPaused' && pausedDismissedFor === existingId)
-    ? options?.workspace?.notice == null ? null : <section data-nc-conversation-action="workspace" aria-label="工作区状态">{options.workspace.notice}</section> :
-    <section data-nc-conversation-action={action.kind} aria-label="待处理操作">
+    ? options?.workspace?.notice == null ? null : <section data-nc-conversation-action="workspace" aria-label="Workspace status">{options.workspace.notice}</section> :
+    <section data-nc-conversation-action={action.kind} aria-label="Pending actions">
       {action.kind === 'ask' ? <><ApprovalDrawer approvals={conversationApprovals} onDecide={decideApproval} />
         <PlannerAskDrawer asks={conversationAsks} onAnswer={answerAsk} /></> :
       <ChatFooterNotice tone={action.kind === 'readonly' || action.kind === 'workerPaused' ? 'neutral' : 'error'}>
         {action.kind === 'readError' ? <>
-          <span>无法同步最新对话状态</span><span>{action.message}</span><span>刷新仅重新读取数据。</span>
-          <ChatFooterRemedy pending={store.historyLoading || store.runLoading} onClick={() => { if (store.historyError !== null) store.retryHistory(); if (store.runError !== null) store.retryRun(); }}>刷新</ChatFooterRemedy>
+          <span>Unable to sync latest conversation state</span><span>{action.message}</span><span>Refreshing only re-reads stored data.</span>
+          <ChatFooterRemedy pending={store.historyLoading || store.runLoading} onClick={() => { if (store.historyError !== null) store.retryHistory(); if (store.runError !== null) store.retryRun(); }}>Refresh</ChatFooterRemedy>
         </> : action.kind === 'readonly' ? <>
-          <span>{action.reason === 'archived' ? '对话已归档' : action.reason === 'track_closed' ? 'Track 已关闭' : action.reason === 'task_verifying' ? '任务验证中' : '对话已结束'}</span>
+          <span>{action.reason === 'archived' ? 'Conversation archived' : action.reason === 'track_closed' ? 'Track closed' : action.reason === 'task_verifying' ? 'Task verifying' : 'Conversation ended'}</span>
           {archiveError !== null && <ChatFooterError message={archiveError} />}
-          {action.canReopen && options?.onArchive !== undefined && <ChatFooterRemedy onClick={() => changeArchive(false)}>恢复对话</ChatFooterRemedy>}
+          {action.canReopen && options?.onArchive !== undefined && <ChatFooterRemedy onClick={() => changeArchive(false)}>Restore conversation</ChatFooterRemedy>}
         </> : action.kind === 'unknown' ? <>
-          <span>会话状态未知</span><span>{action.detail?.detail}</span>
+          <span>Session state unknown</span><span>{action.detail?.detail}</span>
           {action.detail?.lastError && <ChatFooterError message={action.detail.lastError} />}
           {store.actionError !== null && <ChatFooterError message={store.actionError} />}
-          {action.detail?.canReconnect && <ChatFooterRemedy disabled={store.recovering} onClick={() => store.recover('reconnect')}>重连原会话</ChatFooterRemedy>}
-          {action.detail?.canResetContext && <ChatFooterRemedy disabled={store.recovering} onClick={() => store.recover('reset_context')}>重置上下文并继续</ChatFooterRemedy>}
-          {store.recovering && <span>正在恢复会话…</span>}
+          {action.detail?.canReconnect && <ChatFooterRemedy disabled={store.recovering} onClick={() => store.recover('reconnect')}>Reconnect session</ChatFooterRemedy>}
+          {action.detail?.canResetContext && <ChatFooterRemedy disabled={store.recovering} onClick={() => store.recover('reset_context')}>Reset context and continue</ChatFooterRemedy>}
+          {store.recovering && <span>Recovering session…</span>}
         </> : action.kind === 'sendFailed' ? <>
-          <span>{action.unconfirmed ? '发送结果未确认。' : `消息未发送。${store.failedSend?.code === 'session_recovery_required' ? '会话需要恢复，请先恢复会话后再发送。' : store.failedSend?.message ?? ''}`}</span>
-          <ChatFooterRemedy disabled={store.sending} onClick={retrySend}>{action.unconfirmed ? '安全重试（同幂等键）' : '重试'}</ChatFooterRemedy>
+          <span>{action.unconfirmed ? 'Send result unconfirmed.' : `Message not sent. ${store.failedSend?.code === 'session_recovery_required' ? 'Session recovery is required before sending.' : store.failedSend?.message ?? ''}`}</span>
+          <ChatFooterRemedy disabled={store.sending} onClick={retrySend}>{action.unconfirmed ? 'Retry safely (same key)' : 'Retry'}</ChatFooterRemedy>
           <ChatFooterRemedy onClick={() => { if (store.failedSend !== null) {
             if (action.unconfirmed) store.dismissFailedSend(store.failedSend.key);
             else { store.discardFailedSend(store.failedSend.key); if (existingId !== null) focusComposer(existingId); }
-          } }}>{action.unconfirmed ? '忽略' : '放回输入框'}</ChatFooterRemedy>
+          } }}>{action.unconfirmed ? 'Dismiss' : 'Restore to input'}</ChatFooterRemedy>
         </> : <>
-          <span>{action.kind === 'actionError' ? action.message : '已暂停，发送消息即可继续。'}</span>
-          <ChatFooterRemedy onClick={() => { if (action.kind === 'workerPaused') setPausedDismissedFor(existingId); else { store.dismissActionError(); setArchiveFailure(null); } }}>关闭</ChatFooterRemedy>
+          <span>{action.kind === 'actionError' ? action.message : 'Paused. Send a message to continue.'}</span>
+          <ChatFooterRemedy onClick={() => { if (action.kind === 'workerPaused') setPausedDismissedFor(existingId); else { store.dismissActionError(); setArchiveFailure(null); } }}>Dismiss</ChatFooterRemedy>
         </>}
       </ChatFooterNotice>}
     </section>;

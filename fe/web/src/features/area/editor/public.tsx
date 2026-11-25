@@ -84,6 +84,8 @@ export function AreaEditorForm(props: AreaEditorFormProps) {
         {...NATIVE_REQUIRED_INPUT_PROPS}
         ref={nameInputRef}
         label="Name"
+        isLabelHidden
+        placeholder="Area name"
         value={name}
         onChange={setName}
         width="100%"

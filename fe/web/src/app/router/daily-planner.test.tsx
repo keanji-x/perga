@@ -16,7 +16,7 @@ it('uses the real Planner and opens cited reports from the daily homepage withou
   const sidebar = screen.getByRole('navigation', { name: 'Workspace' });
   expect(within(sidebar).queryByText('2026-10-04')).toBeNull();
   expect(within(sidebar).queryByText('system')).toBeNull();
-  await userEvent.click(await screen.findByRole('button', { name: 'Discuss' }));
+  await userEvent.click(await screen.findByRole('button', { name: /Conversation Daily Planner conversation/ }));
   await screen.findByRole('complementary', { name: 'Daily Planner conversation' });
   expect(requests.some((request) => request.path.includes('limit=1'))).toBe(true);
   expect(requests.every((request) => request.method === 'GET')).toBe(true);
@@ -35,7 +35,7 @@ it('shows the existing history retry in Today when conversation history cannot l
   renderDailyFixture({ reply: request => (request.path.includes('/items') && !request.path.includes('limit=1'))
     ? { status: 500, statusText: 'Error', body: { error: 'unavailable' } } : undefined });
   const assistant = await screen.findByRole('region', { name: 'Today Assistant' });
-  await within(assistant).findByRole('button', { name: '刷新' });
+  await within(assistant).findByRole('button', { name: 'Refresh' });
 });
 
 it('keeps a historical Perga daily Report readable without triage or Supervisor', async () => {

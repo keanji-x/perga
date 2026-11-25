@@ -1,7 +1,6 @@
-import { activityLabelOf } from '../../../../../core/domain/activity.ts';
 import { useTrackClosedControl } from './closed-control.ts';
 import { page as browserPage, userEvent } from 'vitest/browser';
-import { cleanup, render, waitFor } from '@testing-library/react';
+import { cleanup, render } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import '../../../styles/entry.css';
@@ -269,20 +268,11 @@ describe('the track closed status in the page header', () => {
 });
 
 describe('the report-to-Planner entry', () => {
-  it('stays visible beside a long title and focuses the supplied Planner', async () => {
+  it('omits the redundant Discuss button from the desktop header even beside a long title', async () => {
     await browserPage.viewport(1200, 800);
-    const onReply = vi.fn();
-    const start = vi.fn();
-    renderPage({ track: track({ title: 'A long-running report '.repeat(20) }), onReply, onStartConversation: start });
-    const button = browserPage.getByRole('button', { name: 'Discuss', exact: true }).element();
-    const box = button.getBoundingClientRect();
-    expect(box.width).toBeGreaterThan(60);
-    expect(button.querySelector('svg')).not.toBeNull();
+    renderPage({ track: track({ title: 'A long-running report '.repeat(20) }), onReply: vi.fn(), onStartConversation: vi.fn() });
+    expect(browserPage.getByRole('button', { name: 'Discuss', exact: true }).query()).toBeNull();
     expect(browserPage.getByRole('button', { name: 'Chat', exact: true }).query()).toBeNull();
-    expect(box.right).toBeLessThanOrEqual(window.innerWidth);
-    await userEvent.click(button);
-    expect(onReply).toHaveBeenCalledOnce();
-    expect(start).not.toHaveBeenCalled();
   });
 
   it('keeps failed-task details reachable while the list remains compact', async () => {
@@ -307,32 +297,17 @@ describe('the report-to-Planner entry', () => {
 });
 
 describe('the Track conversation entry', () => {
-  it('offers one visible Chat action on desktop and phone using the same callback', async () => {
+  it('omits the redundant desktop Discuss header action while offering mobile Chat fallback when no dock is supplied', async () => {
     const start = vi.fn();
     await browserPage.viewport(1200, 800);
     renderPage({ onStartConversation: start });
-    const chat = browserPage.getByRole('button', { name: 'Discuss', exact: true });
-    await expect.element(chat).toBeVisible();
-    await userEvent.hover(document.querySelector<HTMLElement>('[data-nc-page-title]')!);
-    for (const theme of ['light', 'dark']) {
-      document.documentElement.dataset.theme = theme;
-      const button = [...document.querySelectorAll('button')].find((element) =>
-        element.textContent?.includes('Discuss') && element.getBoundingClientRect().width > 0);
-      if (button === undefined) throw new Error('the desktop Chat action is missing');
-      await waitFor(() => {
-        const style = getComputedStyle(button);
-        const bg = getComputedStyle(document.documentElement).getPropertyValue('--bg');
-        expect(contrast(paintedRgb(style.color), paintedRgb(bg))).toBeGreaterThanOrEqual(4.5);
-      });
-    }
-    await userEvent.click(chat);
-    expect(start).toHaveBeenCalledTimes(1);
+    expect(browserPage.getByRole('button', { name: 'Discuss', exact: true }).query()).toBeNull();
 
     await browserPage.viewport(390, 844);
     const mobileChat = browserPage.getByRole('button', { name: 'Chat', exact: true });
     await expect.element(mobileChat).toBeVisible();
     await userEvent.click(mobileChat);
-    expect(start).toHaveBeenCalledTimes(2);
+    expect(start).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -381,18 +356,12 @@ it('keeps owner sharing controls and the share-link group off the mobile surface
   expect(document.querySelector('[role="menu"]')?.textContent).not.toContain('Share track');
 });
 
-it.each(['failed', 'input', 'working', 'unread'] as const)('shows %s at the closed desktop chat entry without a floating panel', async state => {
+it.each(['failed', 'input', 'working', 'unread'] as const)('does not render floating notification chrome or desktop Discuss chrome for %s state', async state => {
   await browserPage.viewport(1200, 800);
   const onReply = vi.fn();
   renderPage({ track: track({ attention: state === 'failed' ? 'failed' : state === 'input' ? 'input' : 'none',
     working: state === 'working' }), unread: state === 'unread', onReply });
-  const trigger = browserPage.getByRole('button', { name: 'Discuss' });
-  await expect.element(trigger).toBeVisible();
-  expect(trigger.element().querySelector('[data-nc-activity]')?.getAttribute('data-nc-activity'))
-    .toBe(state === 'input' ? 'attention' : state);
-  await expect.element(trigger).toHaveAccessibleDescription(activityLabelOf(state === 'input' ? 'attention' : state)!);
+  expect(browserPage.getByRole('button', { name: 'Discuss' }).query()).toBeNull();
   expect(document.querySelector('[data-nc-notification-launcher]')).toBeNull();
   expect(document.querySelector('aside[aria-label="Notifications"]')).toBeNull();
-  await trigger.click();
-  expect(onReply).toHaveBeenCalledOnce();
 });

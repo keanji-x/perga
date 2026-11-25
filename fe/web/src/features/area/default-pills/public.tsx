@@ -1,4 +1,5 @@
 // Shared directory control; callers own the path and directory browsing.
+import type { ReactNode } from 'react';
 import { Button } from '@astryxdesign/core/Button';
 import { Icon as AstryxIcon } from '@astryxdesign/core/Icon';
 import { Icon } from '../../../ui/icon/public.tsx';
@@ -45,11 +46,33 @@ export function FolderClearButton({
       variant="ghost"
       size="sm"
       isIconOnly
+      className={styles.clearButton}
       icon={<AstryxIcon icon="close" size="sm" />}
       label={label}
       isDisabled={isDisabled}
       onClick={onClear}
     />
+  );
+}
+
+export function FolderPillGroup({
+  clearLabel,
+  isDisabled = false,
+  onClear,
+  showClear,
+  children,
+}: Readonly<{
+  clearLabel: string;
+  isDisabled?: boolean;
+  onClear: () => void;
+  showClear: boolean;
+  children: ReactNode;
+}>) {
+  return (
+    <span className={showClear ? styles.pillGroup : undefined} data-nc-folder-pill-group={showClear ? '' : undefined}>
+      {children}
+      {showClear && <FolderClearButton label={clearLabel} isDisabled={isDisabled} onClear={onClear} />}
+    </span>
   );
 }
 
@@ -72,7 +95,7 @@ export function FolderPill({
     value, emptyLabel, controlLabel, modeSuffix, showLabel,
   });
   return (
-    <>
+    <FolderPillGroup clearLabel={clearLabel} isDisabled={isDisabled} onClear={onClear} showClear={value !== ''}>
       <Button
         type="button"
         id={buttonId}
@@ -87,7 +110,6 @@ export function FolderPill({
         onClick={onBrowse}
         {...{ title: accessibleName }}
       />
-      {value !== '' && <FolderClearButton label={clearLabel} isDisabled={isDisabled} onClear={onClear} />}
-    </>
+    </FolderPillGroup>
   );
 }

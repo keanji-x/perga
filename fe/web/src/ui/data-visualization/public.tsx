@@ -56,7 +56,7 @@ export function DistributionChart({ label, unit, slices, emptyText, selected, on
 }) {
   const total = slices.reduce((sum, slice) => sum + slice.value, 0);
   const current = slices.find(slice => slice.id === selected);
-  if (slices.length === 0) return <EmptyState variant="compact" icon={<Icon name="chart" />} title="暂无数据" description={emptyText} />;
+  if (slices.length === 0) return <EmptyState variant="compact" icon={<Icon name="chart" />} title="No data yet" description={emptyText} />;
   const percentage = (value: number) => total === 0 ? '—' : `${number(value / total * 100, 1)}%`;
   let cumulative = 0;
   const circumference = 2 * Math.PI * 50;
@@ -72,7 +72,7 @@ export function DistributionChart({ label, unit, slices, emptyText, selected, on
           strokeDashoffset={-start * circumference} opacity={current && current.id !== slice.id ? 0.25 : 1} />;
       })}
       <text x="75" y="73" textAnchor="middle" className={styles.donutValue}>{current ? percentage(current.value) : donutNumber(total)}</text>
-      <text x="75" y="94" textAnchor="middle" className={styles.donutLabel}>{current ? '占比' : '总量'}</text>
+      <text x="75" y="94" textAnchor="middle" className={styles.donutLabel}>{current ? 'Share' : 'Total'}</text>
     </svg>
     <div className={`${styles.legend} ${styles.distributionLegend}`}>{slices.map(slice => <button key={slice.id} type="button"
       aria-pressed={selected === slice.id} onClick={() => onSelect(selected === slice.id ? null : slice.id)}>
@@ -112,10 +112,10 @@ export function TimeSeriesChart({ label, datasets, emptyText, selection, onSelec
   const readoutId = useId();
   const { datasetId, selected, sample, readoutOpen } = selection;
   const data = datasets.find(d => d.id === datasetId) ?? datasets[0];
-  if (!data) return <EmptyState variant="compact" icon={<Icon name="chart" />} title="暂无数据" description={emptyText} />;
+  if (!data) return <EmptyState variant="compact" icon={<Icon name="chart" />} title="No data yet" description={emptyText} />;
   const points = data.points;
   const incompleteStack = data.style === 'stacked' && points.some(point => point.values.some(v => v === null || v < 0));
-  if (incompleteStack) return <p className={styles.empty}>无法绘制不完整的堆叠数据。</p>;
+  if (incompleteStack) return <p className={styles.empty}>Incomplete stacked data cannot be plotted.</p>;
   const hasData = points.some(point => point.values.some(v => v !== null));
   const stamps = points.map(p => p.timestampMs ?? Date.parse(`${p.date}T00:00:00Z`));
   const start = stamps[0] ?? 0, end = stamps.at(-1) ?? start;
@@ -131,7 +131,7 @@ export function TimeSeriesChart({ label, datasets, emptyText, selection, onSelec
   const y = (value: number) => HEIGHT - PAD - (value - minimum) / (maximum - minimum || 1) * (HEIGHT - 2 * PAD);
   const sampleIndex = Math.max(0, Math.min(sample ?? points.length - 1, points.length - 1));
   const focused = points[sampleIndex];
-  const describeSample = focused ? `${focused.date}; ${data.series.map((series, i) => `${series.label}: ${focused.values[i] === null ? '未知' : observationNumber(focused.values[i])} ${data.unit}`).join('; ')}` : '';
+  const describeSample = focused ? `${focused.date}; ${data.series.map((series, i) => `${series.label}: ${focused.values[i] === null ? 'Unknown' : observationNumber(focused.values[i])} ${data.unit}`).join('; ')}` : '';
   const selectAt = (element: HTMLInputElement, clientX: number) => {
     const box = element.getBoundingClientRect();
     if (box.width === 0) return;
@@ -140,14 +140,14 @@ export function TimeSeriesChart({ label, datasets, emptyText, selection, onSelec
   };
   return <div className={styles.root}>
     <div className={styles.toolbar}><h4>{label}</h4><div className={styles.toolbarControls}><span className={styles.unit}>{data.unit}</span>
-      {datasets.length === 2 && <div className={styles.tabs} aria-label={`${label} 数据视图`}>{datasets.map(d =>
+      {datasets.length === 2 && <div className={styles.tabs} aria-label={`${label} data view`}>{datasets.map(d =>
         <button type="button" key={d.id} aria-pressed={data.id === d.id} onClick={() => onSelection({ ...selection, datasetId: d.id, sample: null, selected: null })}>{d.label}</button>)}</div>}
-      {datasets.length > 2 && <select aria-label={`${label} 数据视图`} value={data.id}
+      {datasets.length > 2 && <select aria-label={`${label} data view`} value={data.id}
         onChange={event => onSelection({ ...selection, datasetId: event.target.value, sample: null, selected: null })}>
         {datasets.map(d => <option key={d.id} value={d.id}>{d.label}</option>)}
       </select>}
     </div></div>
-    {!hasData ? <EmptyState variant="compact" icon={<Icon name="chart" />} title="暂无数据" description={emptyText} /> : <>
+    {!hasData ? <EmptyState variant="compact" icon={<Icon name="chart" />} title="No data yet" description={emptyText} /> : <>
       <div className={styles.plot}>
         <div className={styles.yAxis} aria-hidden="true">{[maximum, (maximum + minimum) / 2, minimum].map((v, i) => <span key={i}>{axisNumber(v)}</span>)}</div>
         <div className={styles.plotFrame}>
@@ -180,7 +180,7 @@ export function TimeSeriesChart({ label, datasets, emptyText, selection, onSelec
           {focused && <line className={styles.cursor} x1={x(stamps[sampleIndex])} x2={x(stamps[sampleIndex])}
             y1={PAD} y2={HEIGHT - PAD} vectorEffect="non-scaling-stroke" />}
         </svg>
-        <input className={styles.dateCursor} type="range" aria-label={`${label} 观察日期`} aria-valuetext={describeSample}
+        <input className={styles.dateCursor} type="range" aria-label={`${label} observation date`} aria-valuetext={describeSample}
           min={0} max={Math.max(0, points.length - 1)} value={sampleIndex}
           onPointerDown={event => { event.preventDefault(); event.currentTarget.focus(); selectAt(event.currentTarget, event.clientX); }}
           onPointerMove={event => selectAt(event.currentTarget, event.clientX)}
@@ -191,18 +191,18 @@ export function TimeSeriesChart({ label, datasets, emptyText, selection, onSelec
         </div>
         <div className={styles.xAxis}><span>{points[0]?.date}</span><span>{points.at(-1)?.date}</span></div>
       </div>
-      <button type="button" className={styles.readoutToggle} aria-label={`${label} 观察值`}
+      <button type="button" className={styles.readoutToggle} aria-label={`${label} observations`}
         aria-expanded={readoutOpen} aria-controls={readoutId} onClick={() => onSelection({ ...selection, readoutOpen: !readoutOpen })}>
-        <span>{focused?.date}</span><span className={styles.readoutCommand}>观察值 <Icon name="chevron-right" size="sm" /></span>
+        <span>{focused?.date}</span><span className={styles.readoutCommand}>Observations <Icon name="chevron-right" size="sm" /></span>
       </button>
-      {focused && <section id={readoutId} hidden={!readoutOpen} className={styles.readout} aria-label={`${label} 观察值`}>
+      {focused && <section id={readoutId} hidden={!readoutOpen} className={styles.readout} aria-label={`${label} observations`}>
         <dl>{data.series.map((series, i) => <div key={series.id}>
           <dt><button type="button" aria-pressed={selected === series.id} aria-describedby={`${readoutId}-${i}`}
             onClick={() => onSelection({ ...selection, selected: selected === series.id ? null : series.id })}>
             <span className={`${styles.swatch} ${palette(series.palette)}`} aria-hidden="true" />
             <span className={styles.legendLabel}>{series.label}</span>
           </button></dt>
-          <dd id={`${readoutId}-${i}`}><span>{focused.values[i] === null ? '未知' : observationNumber(focused.values[i])}</span> {data.unit}</dd>
+          <dd id={`${readoutId}-${i}`}><span>{focused.values[i] === null ? 'Unknown' : observationNumber(focused.values[i])}</span> {data.unit}</dd>
         </div>)}</dl>
       </section>}
       {!readoutOpen && <div className={`${styles.legend} ${styles.plotLegend}`}>{data.series.map(series => <button key={series.id} type="button"
@@ -231,8 +231,8 @@ export function BarChart({ label, unit, points, emptyText }: {
   const layout = signedBarLayout(points.map(point => point.value));
   return <figure className={styles.chart}>
     <figcaption className={styles.chartTitle}>{label}</figcaption>
-    {points.length === 0 ? <EmptyState variant="compact" icon={<Icon name="chart" />} title="暂无数据" description={emptyText} /> : <div className={styles.bars} role="img"
-      aria-label={`${label}：${points.map(point => `${point.label} ${observationNumber(point.value)}`).join('；')} ${unit}`}>
+    {points.length === 0 ? <EmptyState variant="compact" icon={<Icon name="chart" />} title="No data yet" description={emptyText} /> : <div className={styles.bars} role="img"
+      aria-label={`${label}: ${points.map(point => `${point.label} ${observationNumber(point.value)}`).join('; ')} ${unit}`}>
       {points.map((point, index) => <div key={index} className={styles.barRow}>
         <div className={styles.barLabels}><span>{point.label}</span><strong className={styles[point.tone]}>
           {point.value > 0 ? '+' : ''}{observationNumber(point.value)}
@@ -259,7 +259,7 @@ export function MeterChart({ label, unit, used, limit, usedLabel, limitLabel, de
       <meter className={styles.meter} aria-label={label} min={0} max={limit} value={Math.max(0, Math.min(used, limit))}
         aria-valuetext={`${observationNumber(used)} / ${observationNumber(limit)} ${unit}`} />
       <div className={styles.meterLabels}><span>{usedLabel} {observationNumber(used)}</span><span>{limitLabel} {observationNumber(limit)} {unit}</span></div>
-    </> : <EmptyState variant="compact" icon={<Icon name="chart" />} title="暂无数据" description={emptyText} />}
+    </> : <EmptyState variant="compact" icon={<Icon name="chart" />} title="No data yet" description={emptyText} />}
     <p className={styles.detail}>{detail}</p>
   </figure>;
 }

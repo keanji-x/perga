@@ -19,17 +19,14 @@ it.each([320, 390])('aligns the left circular controls and keeps chat usable at 
   const { requests } = renderDailyFixture({ emptyWorkspace: true });
   const field = await page.getByRole('textbox', { name: 'Chat message', exact: true }).findElement();
   const bar = field.closest('form')!;
-  // The compact row includes a status entry before its input (#102). The
-  // expanded editor uses that whole row so typing retains the available width.
-  const statusEntry = page.getByRole('button', { name: 'Open conversation', exact: true }).element();
-  const closedRowLeft = statusEntry.getBoundingClientRect().left;
-  expect(bar.getBoundingClientRect().left).toBeGreaterThan(statusEntry.getBoundingClientRect().right);
+  const workspace = page.getByRole('button', { name: 'Open workspace', exact: true }).element().getBoundingClientRect();
+  const closedRowLeft = bar.getBoundingClientRect().left;
+  expect(bar.getBoundingClientRect().left).toBeGreaterThan(workspace.right);
   expect(bar.getBoundingClientRect().left).toBeGreaterThan(0);
   expect(bar.getBoundingClientRect().right).toBeLessThan(width);
   expect(getComputedStyle(bar).borderRadius).toBe('999px');
   const leading = page.getByRole('button', { name: 'Open conversation history', exact: true }).element().getBoundingClientRect();
   const title = page.getByRole('button', { name: 'Switch track, 2026-10-04', exact: true }).element().getBoundingClientRect();
-  const workspace = page.getByRole('button', { name: 'Open workspace', exact: true }).element().getBoundingClientRect();
   expect(new Set([leading.height, title.height, workspace.height, bar.getBoundingClientRect().height].map(Math.round)).size).toBe(1);
   expect(workspace.left).toBe(leading.left);
   expect(bar.getBoundingClientRect().right).toBe(width - leading.left);

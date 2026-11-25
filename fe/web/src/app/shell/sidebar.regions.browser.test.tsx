@@ -142,22 +142,15 @@ it.each([900, 400])('keeps long shortcuts and folders independently reachable at
   expect(document.scrollingElement!.scrollTop).toBe(0);
 });
 
-it('scrolls the collapsed folder strip and restores the expanded disclosure focus', async () => {
+it('hides the folder tree and leaves only the single expand icon when collapsed', async () => {
   await scene(400, false, true);
   const expand = button('Expand sidebar').element();
-  const account = page.getByRole('button', { name: /^Account menu for/ }).element();
-  const before = [top(expand), top(account)];
-  const first = button('Show area Folder 0').element();
-  const firstTop = top(first);
-  await commands.wheelScroll('[aria-label="Show area Folder 0"]', 600);
-  await expect.poll(() => top(first)).toBeLessThan(firstTop - 100);
-  expect([top(expand), top(account)]).toEqual(before);
-  const last = button('Show area Folder 39');
-  last.element().focus();
-  reachable(last.element());
-  await userEvent.keyboard('{Enter}');
-  await expect.element(button('Collapse area Folder 39')).toHaveFocus();
-  reachable(button('Collapse area Folder 39').element());
+  reachable(expand);
+  expect(document.querySelector('[data-nc-sidebar-scrollport]')).toBeNull();
+  expect(document.querySelector('[aria-label^="Show area "]')).toBeNull();
+  expect(document.querySelector('[aria-label^="Account menu for"]')).toBeNull();
+  await button('Expand sidebar').click();
+  await expect.element(button('Collapse area Folder 0')).toBeVisible();
   reachable(button('Today').element());
   reachable(button('Open settings').element());
 });
@@ -247,14 +240,13 @@ it.each([200, 250])('keeps folders reachable without shortcuts and after collaps
   const restoredFolders = button('New area').element().closest('[data-nc-sidebar-scrollport]')!;
   await button('Collapse sidebar').click();
   expect(restoredFolders.isConnected).toBe(false);
-  const last = button('Show area Folder 39');
-  last.element().focus();
-  reachable(last.element());
-  await userEvent.keyboard('{Enter}');
-  const disclosure = button('Collapse area Folder 39');
-  await expect.element(disclosure).toHaveFocus();
+  const expand = button('Expand sidebar');
+  expand.element().focus();
+  reachable(expand.element());
+  await expand.click();
+  const disclosure = button('Collapse area Folder 0');
+  await expect.element(disclosure).toBeVisible();
   reachable(disclosure.element());
-  await disclosure.click();
 });
 
 it.each([200, 250])('keeps long shortcuts actionable with Areas hidden at height %i', async height => {
