@@ -148,22 +148,24 @@ public sealed class McpReportErgonomicsIntegrationTests
             .EnumerateArray()
             .ToDictionary(t => t.GetProperty("name").GetString()!, StringComparer.Ordinal);
 
-        Assert.Equal(
-            4,
-            toolsByName[KernelMcpToolNames.ReportCommit]
-                .GetProperty("inputSchema").GetProperty("properties")
-                .GetProperty("ops").GetProperty("items").GetProperty("oneOf")
-                .GetArrayLength());
+        var commitTool = toolsByName[KernelMcpToolNames.ReportCommit];
+        var commitSchema = commitTool.GetProperty("inputSchema");
+        Assert.Equal(["anchor", "ops"], commitSchema.GetProperty("required").EnumerateArray().Select(key => key.GetString()));
+        var commitProperties = commitSchema.GetProperty("properties");
+        Assert.Equal(4, commitProperties.GetProperty("ops").GetProperty("items").GetProperty("oneOf").GetArrayLength());
+        Assert.Equal(["docRev", "knownBlockRevs", "wholeDocumentRead"],
+            commitProperties.GetProperty("anchor").GetProperty("required").EnumerateArray().Select(key => key.GetString()));
+        var commitDescription = commitTool.GetProperty("description").GetString();
+        Assert.Contains("Cheatsheet:", commitDescription, StringComparison.Ordinal);
+        foreach (var op in new[] { "replace_section", "upsert", "delete", "move" })
+            Assert.Contains($"op: \"{op}\"", commitDescription, StringComparison.Ordinal);
         Assert.True(
             toolsByName[KernelMcpToolNames.ReportRead]
                 .GetProperty("inputSchema").GetProperty("properties")
                 .TryGetProperty("includeContract", out _));
 
-        // 2. Read initial report, then commit two sections and verify compact commit receipt by default
-        var (read0Text, read0Err) = await McpKernelAndVcsIntegrationTests.CallToolAsync(
-            cluster, "/mcp/kernel", leadToken, KernelMcpToolNames.ReportRead, new { }, ct);
-        Assert.False(read0Err, read0Text);
-        using var read0Doc = JsonDocument.Parse(read0Text);
+        // 2. Commit two sections directly with the initial anchor and verify the compact receipt
+        var anchor = new { docRev = 0, knownBlockRevs = new Dictionary<string, int>(), wholeDocumentRead = true };
 
         var (commitText, commitErr) = await McpKernelAndVcsIntegrationTests.CallToolAsync(
             cluster,
@@ -172,7 +174,7 @@ public sealed class McpReportErgonomicsIntegrationTests
             KernelMcpToolNames.ReportCommit,
             new
             {
-                anchor = read0Doc.RootElement.GetProperty("anchor"),
+                anchor,
                 summary = "Two sections",
                 ops = new object[]
                 {
@@ -187,6 +189,13 @@ public sealed class McpReportErgonomicsIntegrationTests
         Assert.True(commitDoc.RootElement.GetProperty("changes").GetArrayLength() >= 2);
         Assert.False(commitDoc.RootElement.TryGetProperty("renderedMarkdown", out _));
         Assert.False(commitDoc.RootElement.TryGetProperty("blocks", out _));
+
+        var (staleText, staleErr) = await McpKernelAndVcsIntegrationTests.CallToolAsync(
+            cluster, "/mcp/kernel", leadToken, KernelMcpToolNames.ReportCommit,
+            new { anchor, ops = new[] { new { op = "replace_section", sectionH1 = "Notes", markdown = "Stale edit." } } }, ct);
+        Assert.True(staleErr, staleText);
+        using var staleDoc = JsonDocument.Parse(staleText);
+        Assert.Equal("stale_doc_rev", staleDoc.RootElement.GetProperty("code").GetString());
 
         // 3. Scoped read with outline + includeContract over MCP
         var (outlineText, outlineErr) = await McpKernelAndVcsIntegrationTests.CallToolAsync(

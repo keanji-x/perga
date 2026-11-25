@@ -20,7 +20,9 @@ public sealed class KernelMcpReportTests
     {
         var tools = KernelMcpCatalog.GetAllTools().ToDictionary(t => t.Name, StringComparer.Ordinal);
 
-        var commitProps = tools[KernelMcpToolNames.ReportCommit].InputSchema.GetProperty("properties");
+        var commitTool = tools[KernelMcpToolNames.ReportCommit];
+        Assert.Equal(["anchor", "ops"], commitTool.InputSchema.GetProperty("required").EnumerateArray().Select(key => key.GetString()));
+        var commitProps = commitTool.InputSchema.GetProperty("properties");
         var anchorProps = commitProps.GetProperty("anchor").GetProperty("properties");
         Assert.True(anchorProps.TryGetProperty("docRev", out _));
         Assert.True(anchorProps.TryGetProperty("knownBlockRevs", out _));
@@ -55,6 +57,47 @@ public sealed class KernelMcpReportTests
             .GetProperty("properties").GetProperty("kind").GetProperty("enum")
             .EnumerateArray().Select(e => e.GetString()!).ToArray();
         Assert.Equal(["text", "keys", "paste", "submit"], inputKinds);
+    }
+
+    [Fact]
+    public void ReportCommitDescription_DocumentsAnchorAndOperationFields()
+    {
+        var tool = Assert.Single(KernelMcpCatalog.GetAllTools(), tool => tool.Name == KernelMcpToolNames.ReportCommit);
+
+        Assert.Contains("Cheatsheet:", tool.Description, StringComparison.Ordinal);
+        Assert.Contains("anchor: { docRev, knownBlockRevs, wholeDocumentRead }", tool.Description, StringComparison.Ordinal);
+        Assert.Contains("""{ op: "replace_section", sectionH1, markdown }""", tool.Description, StringComparison.Ordinal);
+        Assert.Contains("""{ op: "upsert", id?, blockKind?: "prose"|"widget", markdown?, payload?, position? }""", tool.Description, StringComparison.Ordinal);
+        Assert.Contains("""{ op: "delete", id }""", tool.Description, StringComparison.Ordinal);
+        Assert.Contains("""{ op: "move", id, toIndex }""", tool.Description, StringComparison.Ordinal);
+        Assert.Contains("summary, commitMessage, includeDocument", tool.Description, StringComparison.Ordinal);
+        Assert.Contains("report_read(includeContract: true)", tool.Description, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ReportCommit_AcceptsInitialAnchorWithoutReadAndRejectsStaleReplacement()
+    {
+        await using var ctx = new KernelTestContext(reportEngine: new ReportDocEngine());
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        var caller = await ctx.OpenMcpCallerAsync(snap.Track.LeadSessionId!);
+        var anchor = TestJson.Parse("""{"docRev":0,"knownBlockRevs":{},"wholeDocumentRead":true}""");
+
+        var commit = await Call(ctx, caller, KernelMcpToolNames.ReportCommit, new
+        {
+            anchor,
+            ops = new[] { new { op = "replace_section", sectionH1 = "Overview", markdown = "Initial plan." } }
+        });
+        Assert.Equal(1, commit.GetProperty("docRev").GetInt32());
+
+        var conflict = await Assert.ThrowsAsync<ReportConflictException>(() => Call(ctx, caller, KernelMcpToolNames.ReportCommit, new
+        {
+            anchor,
+            ops = new[] { new { op = "replace_section", sectionH1 = "Overview", markdown = "Stale plan." } }
+        }));
+        Assert.Equal("stale_doc_rev", conflict.Code);
+        var report = await Call(ctx, caller, KernelMcpToolNames.ReportRead, new { });
+        Assert.Equal(1, report.GetProperty("docRev").GetInt32());
+        Assert.Contains("Initial plan.", report.GetProperty("renderedMarkdown").GetString(), StringComparison.Ordinal);
     }
 
     [Fact]

@@ -66,6 +66,7 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
 
     public bool FailTemplateUpdate { get; set; }
     public Action? AfterTemplateCommit { get; set; }
+    public MemoryTrackBinding? MemoryBinding { get; set; }
 
     public int MarkInterruptedCalls { get; private set; }
     public int ListTracksCalls { get; private set; }
@@ -150,13 +151,13 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
         }
     }
 
-    // Memory bindings and persisted context receipts are exercised with SQLite.
     public Task<string?> GetMemoryTrackIdAsync(string scopeKey, CancellationToken ct) =>
-        Task.FromResult<string?>(null);
+        Task.FromResult(MemoryBinding is { } binding && binding.ScopeKey == scopeKey ? binding.TrackId : null);
 
     public Task<MemoryTrackBinding?> FindMemoryBindingByTrackIdAsync(string trackId, CancellationToken ct) =>
-        Task.FromResult<MemoryTrackBinding?>(null);
+        Task.FromResult(MemoryBinding is { } binding && binding.TrackId == trackId ? binding : null);
 
+    // Persisted context receipts are exercised with SQLite.
     public Task<string?> GetLatestMemoryContextModeAsync(string sessionId, int epoch, CancellationToken ct) =>
         Task.FromResult<string?>(null);
 
@@ -2019,7 +2020,8 @@ internal sealed partial class KernelTestContext : IAsyncDisposable
         IAgentRuntime? agentRuntime = null,
         TimeProvider? timeProvider = null,
         IGitHubForgeService? gitHubForgeService = null,
-        IMcpSessionBridge? mcpSessionBridge = null)
+        IMcpSessionBridge? mcpSessionBridge = null,
+        IReportDocEngine? reportEngine = null)
     {
         DriverRegistry = new FakeWorkspaceDriverRegistry(DirectDriver, CowOverlayDriver);
         DataDir = Path.Combine(Path.GetTempPath(), $"perga-kernel-test-{Guid.NewGuid():N}");
@@ -2033,7 +2035,7 @@ internal sealed partial class KernelTestContext : IAsyncDisposable
 
         Kernel = new PergaKernelService(
             Store,
-            ReportEngine,
+            reportEngine ?? ReportEngine,
             policyVm ?? PolicyVm,
             agentRuntime ?? AgentRuntime,
             DriverRegistry,

@@ -106,12 +106,16 @@ public sealed partial class TrackActor
     }
     private string BuildDefaultSystemPromptCore(AgentSessionDto session)
     {
-        var reportMd = _reportEngine.RenderMarkdown(_reports.Document, withMarkers: true);
+        var report = _reports.Document;
+        var reportMd = _reportEngine.RenderMarkdown(report, withMarkers: true);
         var templateDataSection = BuildActiveTemplateDataSectionCore();
         const string unboundGovernanceNote =
             "Use session_list/create/read/update/send/withdraw/control/respond to manage child conversations. Use session_create for collaborators and reuse requestKey for retries. Declare formal tasks in Flow and have Workers submit task_done with an outcome. Use provider_list to discover available providers, models, reasoning efforts, and permission modes. Only control your direct children; the Lead can also manage other sessions. Never stop, reset or archive yourself. Answer delegated asks and approvals with session_respond; the human can always take over.";
         if (session.IsLead)
         {
+            if (_memoryBinding is null && report.Blocks.Count == 0 && string.IsNullOrWhiteSpace(reportMd))
+                reportMd = BuildEmptyReportPrompt(report.DocRev);
+
             var templateScoping = _policy is null
                 ? " When no template is active yet, once you understand the scope of substantive work—before doing deep work or writing the Report—check `template_list` (and `template_read` for any plausible match), resolve task-specific `inputs`, preview with `track_set(..., dryRun: true)` when helpful, and apply a fitting template up front so its Report layout and `data` seed cleanly."
                 : string.Empty;
@@ -150,6 +154,19 @@ public sealed partial class TrackActor
             ? unboundGovernanceNote + " If blocked by missing permissions or sandbox restrictions (such as EPERM, blocked local ports/network, or denied actions), do not loop or silently skip checks: report the exact permission gap in your reply so your parent/Lead can adjust permissionMode via session_update (takes effect on the next turn) or run the restricted step; only call user_ask when pausing for explicit human/parent input (it does not auto-wake an idle parent)."
             : "Use session_list/read to observe conversations. Submit your task with task_done (optional outcome: ok|attention|blocked, summary) or task_fail; bound Workers cannot spawn or control sessions. If blocked by missing permissions or sandbox restrictions (such as EPERM, blocked local ports/network, or denied actions), do not loop or silently skip required checks: call task_fail (which settles the task) with the exact permission gap so Flow wake rules or the Lead can re-dispatch with higher permissionMode or run the restricted check via Host do.gate (note: borrowed sessions with notifyParent=\"none\" or Flows with explicit join wakes may not auto-wake an idle Lead on settlement), or end the turn without calling task_done/task_fail only when an active operator/Lead is observing via session_read to adjust permissionMode via session_update (ending a turn without settling does not auto-wake an idle Lead); call user_ask only when waiting for explicit human/parent input (it does not auto-wake an idle parent).";
         return $"You are operating in Perga Track '{_track.Title}' ({TrackId}) as {role}.\n\n{sessionNote}\n\n## Current Report\n{reportMd}{templateDataSection}";
+    }
+
+    private static string BuildEmptyReportPrompt(int docRev)
+    {
+        var anchor = JsonSerializer.Serialize(
+            new ReadAnchor(docRev, new Dictionary<string, int>(), WholeDocumentRead: true), JsonHelpers.SerializerOptions);
+        return $"""
+                The Report is empty. Use this ReadAnchor to call `report_commit` directly without calling `report_read` first: `{anchor}`. If you apply a template with `track_set` first, call `report_read` to get the seeded Report's anchor.
+
+                The user sees the Report alongside your reply. On the first turn:
+                - If you establish a clear goal, plan, analysis, or deliverable, commit an initial structured Report with `report_commit` before ending the turn. Use `track_rename` if the title is still untitled or a placeholder. Keep your reply concise and point to the Report.
+                - If you're answering a quick one-off question or asking for clarification before starting work, you can leave the Report empty for now. Briefly say you'll fill it in once the direction is confirmed.
+                """;
     }
 
     private string BuildEpochSeedSystemPrompt(
