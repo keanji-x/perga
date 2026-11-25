@@ -34,12 +34,12 @@ it('renders flow in a whole-Report reference with no prose', async () => {
 
 it('renders archived flow in a whole-Report reference with no prose or active nodes', async () => {
   preview(null, { archived: [{ id: 'check-release', title: 'Check release', archivedAtMs: 1 }] });
-  expect(await screen.findByRole('button', { name: '已归档 1 项历史步骤' })).toBeTruthy();
+  expect(await screen.findByRole('button', { name: 'Archived (1)' })).toBeTruthy();
 });
 
 it('keeps a whole-Report reference empty when it has no prose or flow', async () => {
   const send = preview(null, { nodes: [], archived: [] });
-  expect(await screen.findByText('这份报告暂无内容。')).toBeTruthy();
+  expect(await screen.findByText('This report has no content yet.')).toBeTruthy();
   await waitFor(() => expect(send).toHaveBeenCalledWith(expect.objectContaining({
     path: '/api/v1/tracks/flow-only/views',
   })));
@@ -47,6 +47,6 @@ it('keeps a whole-Report reference empty when it has no prose or flow', async ()
 
 it('keeps a missing block reference empty on a flow-only Report', async () => {
   const send = preview('missing', { nodes: [{ id: 'check-release', title: 'Check release' }] });
-  expect(await screen.findByText('这份报告暂无内容。')).toBeTruthy();
+  expect(await screen.findByText('This report has no content yet.')).toBeTruthy();
   expect(send.mock.calls.some(([request]) => request.path.endsWith('/views'))).toBe(false);
 });

@@ -187,7 +187,7 @@ function FlowDagNodeCard({
         <span className={styles.nodeScheduleLine}>
           <span className={styles.cronExpr}>{node.cron}</span>
           <span className={styles.metaSep} aria-hidden="true">·</span>
-          <span>已执行 {node.runCount} 次</span>
+          <span>{node.runCount === 1 ? '1 run' : `${node.runCount} runs`}</span>
         </span>
       )}
 
@@ -237,11 +237,11 @@ function FlowPeriodicNodeCard({
             <span className={styles.metaSep} aria-hidden="true">·</span>
           </>
         )}
-        <span>已执行 {node.runCount} 次</span>
+        <span>{node.runCount === 1 ? '1 run' : `${node.runCount} runs`}</span>
         {!(node.canceled || node.status === 'canceled') && nextFire !== null && (
           <>
             <span className={styles.metaSep} aria-hidden="true">·</span>
-            <span>下次 {nextFire}</span>
+            <span>Next {nextFire}</span>
           </>
         )}
       </span>
@@ -311,12 +311,12 @@ export function ReportFlowBlock({
         <h2 className={styles.heading}>{headingLabel}</h2>
         <div className={styles.headerMeta}>
           {isScrollableRail && (
-            <div className={styles.railControls} aria-label="流程列导航">
-              <span className={styles.layerCountHint}>共 {layout.layers.length} 层</span>
+            <div className={styles.railControls} aria-label="Flow layer navigation">
+              <span className={styles.layerCountHint}>{layout.layers.length} layers</span>
               <button
                 type="button"
                 className={styles.railStepButton}
-                aria-label="向左滚动流程"
+                aria-label="Scroll flow left"
                 onClick={() => { scrollRailBy(-260); }}
               >
                 ‹
@@ -324,7 +324,7 @@ export function ReportFlowBlock({
               <button
                 type="button"
                 className={styles.railStepButton}
-                aria-label="向右滚动流程"
+                aria-label="Scroll flow right"
                 onClick={() => { scrollRailBy(260); }}
               >
                 ›
@@ -333,7 +333,7 @@ export function ReportFlowBlock({
           )}
           {layout.hasCycle && (
             <span className={styles.cycleNotice} role="status">
-              检测到依赖环，已按降级层展示
+              Dependency cycle detected; shown in fallback layers
             </span>
           )}
         </div>
@@ -344,11 +344,11 @@ export function ReportFlowBlock({
         <nav
           ref={railRef}
           className={`${styles.graphRail} ${isScrollableRail ? styles.graphRailScrollable : ''}`}
-          aria-label="调度步骤图"
+          aria-label="Flow graph"
         >
           <div
             className={`${styles.layers} ${isScrollableRail ? styles.layersScrollable : ''}`}
-            aria-label="流程节点"
+            aria-label="Flow nodes"
           >
             {layout.layers.map((layer) => (
               <div
@@ -357,7 +357,7 @@ export function ReportFlowBlock({
                 data-nc-flow-layer={layer.index}
               >
                 <div className={styles.layerIndex}>
-                  {layer.isCycleFallback ? '环依赖' : formatLayerNumber(layer.index)}
+                  {layer.isCycleFallback ? 'Cycle' : formatLayerNumber(layer.index)}
                 </div>
                 <div className={styles.layerNodes}>
                   {layer.nodes.map((layered) => (
@@ -378,12 +378,12 @@ export function ReportFlowBlock({
 
       {/* 2. Balanced multi-row grid for standalone periodic rules (zero lonely orphans) */}
       {periodicRows.length > 0 && (
-        <section className={styles.cronSection} aria-label="周期巡检规则">
+        <section className={styles.cronSection} aria-label="Periodic schedules">
           <div className={styles.cronHeaderRow}>
-            <h3 className={styles.footnoteHeading}>周期巡检</h3>
-            <span className={styles.layerCountHint}>{layout.standaloneCronNodes.length} 项常驻</span>
+            <h3 className={styles.footnoteHeading}>Periodic</h3>
+            <span className={styles.layerCountHint}>{layout.standaloneCronNodes.length} recurring</span>
           </div>
-          <div className={styles.periodicRows} aria-label="周期巡检节点">
+          <div className={styles.periodicRows} aria-label="Periodic nodes">
             {periodicRows.map((row, rowIndex) => (
               <div key={`periodic-row-${rowIndex}`} className={styles.periodicRow}>
                 {row.map((cronNode) => (
@@ -460,13 +460,13 @@ export function ReportFlowBlock({
                 {activeNode.runCount > 0 && (
                   <>
                     <span className={styles.metaSep} aria-hidden="true">·</span>
-                    <span>第 {activeNode.runCount} 轮</span>
+                    <span>Run {activeNode.runCount}</span>
                   </>
                 )}
                 {reusesSession && (
                   <>
                     <span className={styles.metaSep} aria-hidden="true">·</span>
-                    <span className={styles.contextReuseHint}>复用上下文</span>
+                    <span className={styles.contextReuseHint}>Reuses context</span>
                   </>
                 )}
                 {childTrackId != null && onOpenTrack !== undefined && (
@@ -506,18 +506,18 @@ export function ReportFlowBlock({
             )}
 
             {activeNode.watchProgress != null && (
-              <div className={styles.watchPanel} role="region" aria-label="探针等待进度">
+              <div className={styles.watchPanel} role="region" aria-label="Watch probe progress">
                 <div className={styles.watchHeadline}>
-                  <span>{activeNode.watchProgress.probeKind === 'prChecks' ? 'PR Checks' : 'CMD 探针'}</span>
+                  <span>{activeNode.watchProgress.probeKind === 'prChecks' ? 'PR Checks' : 'CMD probe'}</span>
                   <span>{formatWatchSummary(activeNode.watchProgress, visual === 'waiting')}</span>
                 </div>
                 <div className={styles.watchMeta}>
-                  {activeNode.repeat && <span>常青监听</span>}
+                  {activeNode.repeat && <span>Evergreen watch</span>}
                   {formatFlowTimestamp(activeNode.watchProgress.lastCheckedAtMs) !== null && (
-                    <span>上次检查 {formatFlowTimestamp(activeNode.watchProgress.lastCheckedAtMs)}</span>
+                    <span>Last checked {formatFlowTimestamp(activeNode.watchProgress.lastCheckedAtMs)}</span>
                   )}
                   {formatFlowTimestamp(activeNode.watchProgress.timeoutAtMs) !== null && (
-                    <span>超时截止 {formatFlowTimestamp(activeNode.watchProgress.timeoutAtMs)}</span>
+                    <span>Timeout {formatFlowTimestamp(activeNode.watchProgress.timeoutAtMs)}</span>
                   )}
                 </div>
                 {activeNode.watchProgress.detail != null && activeNode.watchProgress.detail.trim() !== '' && (
@@ -549,18 +549,18 @@ export function ReportFlowBlock({
             onClick={() => { setArchivedOpen((prev) => !prev); }}
           >
             <span aria-hidden="true">{archivedOpen ? '▾' : '▸'}</span>
-            <span>已归档 {flow.archived.length} 项历史步骤</span>
+            <span>Archived ({flow.archived.length})</span>
           </button>
 
           {archivedOpen && (
             <div className={styles.archiveWrap}>
-              <table className={styles.archiveTable} aria-label="已归档历史步骤">
+              <table className={styles.archiveTable} aria-label="Archived flow steps">
                 <thead>
                   <tr>
-                    <th>步骤</th>
-                    <th>结论</th>
-                    <th>模型</th>
-                    <th>归档时间</th>
+                    <th>Step</th>
+                    <th>Outcome</th>
+                    <th>Model</th>
+                    <th>Archived</th>
                   </tr>
                 </thead>
                 <tbody>

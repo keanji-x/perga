@@ -7,6 +7,7 @@ import { useState } from '../../../ui/state/public.ts';
 import { cardCreateEnded, cardCreateFailureText } from '../new-card/create.ts';
 import styles from './workbench.module.css';
 import { DrawerHeader } from '../../../ui/drawer/header.tsx';
+import { LoadingStatus } from '../../../ui/loading-status/public.tsx';
 import { useCompactViewport } from '../../../ui/viewport/public.ts';
 
 type TerminalRequest = Readonly<{ key: string; body: NewTerminalBody }>;
@@ -145,7 +146,7 @@ export function TerminalWorkbenchView({ workbench, items, host, visible, onRemov
     {items.filter(item => workbench.visited.includes(item.card.id)).map(item => <CardDockHost
       key={item.card.id} host={host} item={item} visible={visible && item.card.id === workbench.selectedId}
       focused={workbench.focus} onRemove={() => onRemove(item.card.id)} header={{ onHide: workbench.hide, hideLabel: 'Hide terminal' }} />)}
-    {workbench.pending && <p role="status">Creating terminal…</p>}
+    {workbench.pending && <LoadingStatus padded>Creating terminal…</LoadingStatus>}
     {workbench.error !== null && <p role="alert">{workbench.error} {workbench.canRetry && <button type="button" data-nc-action="tertiary" disabled={workbench.pending} onClick={workbench.retry}>Try again</button>}</p>}
   </div>;
 }

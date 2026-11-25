@@ -135,12 +135,13 @@ export function SettingEditor({ value, readRevision, loaded, loadError, onRetryL
       input.setAttribute('aria-describedby', [describedById, ...existing].join(' '));
     }
   }, [describedById, inputError, loaded, saved]);
+  const compactNumeric = inline || inputMode === 'numeric';
   return <div className={styles.durationControl}>
     {loadError !== null && <ErrorBox message={loadError} onRetry={onRetryLoad} />}
-    {!loaded ? loadError === null && <span role="status">Loading {name}…</span> : <>
-      <div className={inline ? styles.actions : styles.durationControl}>
+    {!loaded ? loadError === null && <span className={styles.inlineSettingStatus} role="status">Loading {name}…</span> : <>
+      <div className={inline ? styles.actions : compactNumeric ? styles.compactNumericActions : styles.durationControl}>
         {inline && <AstryxVisuallyHidden role="status">{saved ? 'Saved.' : ''}</AstryxVisuallyHidden>}
-        <AstryxTextInput label={label} isLabelHidden={inline || hideLabel} value={draft} width={inline ? '5.5rem' : CONTROL_WIDTH}
+        <AstryxTextInput label={label} isLabelHidden={inline || hideLabel} value={draft} width={compactNumeric ? '6rem' : CONTROL_WIDTH}
           ref={(input) => { inputRef.current = input; if (input !== null) input.inputMode = inputMode; }}
           description={description}
           status={inputError !== null ? { type: 'error', message: inputError }
@@ -150,7 +151,7 @@ export function SettingEditor({ value, readRevision, loaded, loadError, onRetryL
           onBlur={() => commit(false, false)}
           onEnter={() => commit(false, true)} />
         {inline && <span className={styles.rowTitleSuffix} aria-hidden="true">{unit}</span>}
-        <AstryxButton label={resetLabel} variant={inline ? 'ghost' : 'secondary'} isDisabled={save.phase === 'pending'}
+        <AstryxButton label={resetLabel} variant={compactNumeric ? 'ghost' : 'secondary'} size={inline ? 'sm' : undefined} isDisabled={save.phase === 'pending'}
           onPointerDown={(event) => event.preventDefault()} onClick={() => commit(true, true)}>
           {inline ? 'Reset' : 'Restore default'}
         </AstryxButton>

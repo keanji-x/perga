@@ -118,7 +118,7 @@ it.each(['mention','command'])('catalog composer search %s', async type => {
 it('catalog report data and history component states', async () => {
   await page.viewport(1100,950);
   mountReportComponentStates();
-  await shot('23-report-component-states', ["暂无数据"]);
+  await shot('23-report-component-states', ["No data yet"]);
 });
 it('catalog waiting conversation', async () => {
   await page.viewport(650,500);
@@ -129,8 +129,8 @@ it('catalog waiting conversation', async () => {
 it('catalog report reference without document', async () => {
   await page.viewport(800,400);
   mountEmptyReportReference(false);
-  await expect.element(page.getByText('这份报告暂无内容。')).toBeVisible();
-  await shot('25-reference-empty', ["这份报告暂无内容。"]);
+  await expect.element(page.getByText('This report has no content yet.')).toBeVisible();
+  await shot('25-reference-empty', ["This report has no content yet."]);
 });
 
 

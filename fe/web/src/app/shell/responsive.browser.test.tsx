@@ -55,7 +55,7 @@ describe('responsive shell layout', () => {
     await page.viewport(1400, 900);
     expect(getComputedStyle(document.querySelector('[data-testid="auto"]')!).gridTemplateColumns).toBe('240px 1160px');
     expect(getComputedStyle(document.querySelector('[data-testid="expanded"]')!).gridTemplateColumns).toBe('240px 1160px');
-    expect(getComputedStyle(document.querySelector('[data-testid="collapsed"]')!).gridTemplateColumns).toBe('44px 1356px');
+    expect(getComputedStyle(document.querySelector('[data-testid="collapsed"]')!).gridTemplateColumns).toBe('1400px');
   });
 
   it('gives the workspace navigation the full viewport without reserving a dock', async () => {

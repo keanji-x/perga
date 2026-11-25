@@ -79,8 +79,8 @@ it('restores a refused browser send and keeps another conversation independent',
     await expect.element(page.getByText('Permission denied', { exact: false })).not.toBeInTheDocument();
     await page.getByRole('button', { name: 'Close conversation', exact: true }).click();
     await page.getByRole('button', { name: 'Conversation Daily Planner conversation', exact: true }).click();
-    await expect.element(page.getByText('消息未发送。', { exact: false })).toBeVisible();
-    await page.getByRole('button', { name: '放回输入框', exact: true }).click();
+    await expect.element(page.getByText('Message not sent.', { exact: false })).toBeVisible();
+    await page.getByRole('button', { name: 'Restore to input', exact: true }).click();
     await expect.element(field).toHaveTextContent('Keep this draft');
     expect(view.requests.filter(request => request.method === 'POST').map(request => request.path)).toEqual(['/api/v1/sessions/second-planner/messages']);
   } finally { view.client.clear(); }
@@ -131,11 +131,11 @@ it('preserves the unknown browser retry key after a permission failure', async (
     const key = 'unknown-original-key';
     act(() => { registry.editOutbox('daily-planner', () => [{ key, phase: 'failed', delivery: 'unknown', message: '', fromComposer: true,
       echo: { id: 'echo', text: 'Possibly persisted', author: 'you', atMs: 1, localSend: true, queued: true } }]); });
-    await page.getByRole('button', { name: '安全重试（同幂等键）', exact: true }).click();
+    await page.getByRole('button', { name: 'Retry safely (same key)', exact: true }).click();
     await act(async () => { answer(permissionFailure()); await put; });
-    await expect.element(page.getByRole('button', { name: '安全重试（同幂等键）', exact: true })).toBeVisible();
+    await expect.element(page.getByRole('button', { name: 'Retry safely (same key)', exact: true })).toBeVisible();
     await expect.element(field).toHaveTextContent('');
-    await page.getByRole('button', { name: '安全重试（同幂等键）', exact: true }).click();
+    await page.getByRole('button', { name: 'Retry safely (same key)', exact: true }).click();
     await expect.poll(() => view.requests.filter(request => request.method === 'POST').length).toBe(1);
     expect(view.requests.filter(request => request.method === 'POST').map(request => request.headers?.['Idempotency-Key'])).toEqual([key]);
   } finally { view.client.clear(); }

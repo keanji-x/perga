@@ -977,7 +977,8 @@ describe('the new-track page is a route reached from Area groups', () => {
     });
     await userEvent.click(await screen.findByRole('button', { name: 'New track in Work' }));
     expect(await findComposer()).toBeTruthy();
-    await userEvent.click(screen.getByRole('button', { name: 'Use a Perga workspace instead' }));
+    await userEvent.click(screen.getByRole('button', { name: /^Repo: area-default/ }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: /Perga workspace/ }));
     await userEvent.type(screen.getByLabelText(TASK_LABEL), 'Read it');
     await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
     await waitFor(() => expect(createdTrackBodies(sent)).toHaveLength(1));

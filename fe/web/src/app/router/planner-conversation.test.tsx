@@ -398,14 +398,14 @@ it('pauses on failure and explicitly retries only the failed page', async () => 
     });
     await openConversation();
     await readEarlierWithInput();
-    await screen.findByRole('button', { name: '刷新' });
+    await screen.findByRole('button', { name: 'Refresh' });
     const reads = () => requests.filter(request => (request.path.includes('/items?') && !request.path.includes('limit=1')));
     expect(reads()).toHaveLength(2);
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 80)); });
     expect(reads()).toHaveLength(2);
     fail = false;
-    fireEvent.click(screen.getByRole('button', { name: '刷新' }));
-    await waitFor(() => expect(screen.queryByRole('button', { name: '刷新' })).toBeNull());
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Refresh' })).toBeNull());
     expect(reads()).toHaveLength(3);
   });
 
@@ -480,7 +480,7 @@ it('surfaces send failures and prevents a second send while the first is pending
     await sendWithEnter(field);
     expect(requests.filter((request) => request.path.endsWith('/messages'))).toHaveLength(1);
     reject(new Error('send exploded'));
-    expect(within(await screen.findByRole('alert')).getByText('发送结果未确认。')).toBeTruthy();
+    expect(within(await screen.findByRole('alert')).getByText('Send result unconfirmed.')).toBeTruthy();
   });
 
 it('does not mark a message sent from an idle conversation as queued', async () => {

@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { HoverPreview, PreviewSummary, PreviewTextLink } from '../../ui/hover-preview/public.tsx';
+import { LoadingStatus } from '../../ui/loading-status/public.tsx';
 import { parseGitHubReferenceUrl, type GitHubReference } from '../../../../core/domain/issue-url.ts';
 import type { GitHubPreviewPort } from '../../../../core/domain/github-preview.ts';
 import { useState } from '../../ui/state/public.ts';
@@ -72,12 +73,12 @@ function Preview({ target, port }: { target: GitHubReference; port: GitHubPrevie
         onClick={() => { void query.refetch(); }}>{query.isFetching ? 'Retrying…' : 'Retry'}</button>}
       <a href={target.url} target="_blank" rel="noopener noreferrer">Open in GitHub ↗</a>
     </>}>
-    {preview === undefined ? <p role="status">{query.isError
+    {preview === undefined ? <LoadingStatus>{query.isError
       ? 'Preview unavailable. Check GitHub sign-in, repository access, or rate limits.'
-      : 'Loading GitHub preview…'}</p> : <>
+      : 'Loading GitHub preview…'}</LoadingStatus> : <>
       {preview.excerpt && <p>{preview.excerpt}</p>}
       {preview.changes !== null && <p>{preview.changes.changed_files} files · +{preview.changes.additions} / −{preview.changes.deletions}</p>}
-      {query.isError && <p role="status">Could not refresh preview.</p>}
+      {query.isError && <LoadingStatus>Could not refresh preview.</LoadingStatus>}
     </>}
   </PreviewSummary>;
 }

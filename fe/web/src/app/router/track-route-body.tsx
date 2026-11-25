@@ -553,7 +553,6 @@ export function TrackRouteBody({
       conversationContextList={!centerActive || rows.length > 1 ? chat.contextList : undefined}
       conversationList={!centerActive || rows.length > 1 ? chat.list : undefined}
       onStartConversation={!centerActive || rows.length > 1 ? chat.startConversation : undefined}
-      showConversationAction={!centerActive}
       conversationOpen={!centerActive && chat.isOpen}
       unread={trackReceipts.isTrackUnread(track.id, track.notifiableSessions)}
       onReply={() => {

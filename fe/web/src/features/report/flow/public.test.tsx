@@ -99,7 +99,7 @@ describe('ReportFlowBlock (builtin:flow)', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /Cache/ }));
     fireEvent.click(within(screen.getByRole('article', { name: 'Cache' })).getByRole('button', { name: 'Open child track' }));
-    fireEvent.click(screen.getByRole('button', { name: /已归档 1 项/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Archived \(1\)/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Open child track from Storage' }));
     expect(onOpenTrack.mock.calls).toEqual([['trk_cache'], ['trk_storage']]);
   });
@@ -221,13 +221,13 @@ describe('ReportFlowBlock (builtin:flow)', () => {
     // 3. Clicking wait-ci shows watch progress details without any report mutation button
     fireEvent.click(screen.getByRole('button', { name: /^等待 PR #115 CI/ }));
     const watchPanel = screen.getByRole('article', { name: '等待 PR #115 CI' });
-    expect(within(watchPanel).getByRole('region', { name: '探针等待进度' }).textContent).toContain('2 checks still queued');
+    expect(within(watchPanel).getByRole('region', { name: 'Watch probe progress' }).textContent).toContain('2 checks still queued');
     expect(within(watchPanel).queryByRole('button', { name: '取消节点' })).toBeNull();
 
-    // 4. Clicking recheck-a shows `复用上下文` hint and clicking model jumps to targetSession
+    // 4. Clicking recheck-a shows `Reuses context` hint and clicking model jumps to targetSession
     fireEvent.click(screen.getByRole('button', { name: /^复审 A（复用原上下文）/ }));
     const recheckPanel = screen.getByRole('article', { name: '复审 A（复用原上下文）' });
-    expect(recheckPanel.textContent).toContain('复用上下文');
+    expect(recheckPanel.textContent).toContain('Reuses context');
     fireEvent.click(within(recheckPanel).getByRole('button', { name: 'gpt-5.3-codex' }));
     expect(onOpenWorker).toHaveBeenCalledWith('ses_reviewer_a');
 
@@ -238,19 +238,19 @@ describe('ReportFlowBlock (builtin:flow)', () => {
     expect(within(fixPanel).getByRole('region', { name: 'dotnet test 输出' }).textContent).toContain('All 42 tests passed.');
 
     // 6. Periodic cron cards show schedule & actual run count
-    const cronFooter = screen.getByRole('region', { name: '周期巡检规则' });
+    const cronFooter = screen.getByRole('region', { name: 'Periodic schedules' });
     expect(cronFooter.textContent).toContain('每日 CI 指标采集');
     expect(cronFooter.textContent).toContain('0 9 * * *');
-    expect(cronFooter.textContent).toContain('已执行 12 次');
+    expect(cronFooter.textContent).toContain('12 runs');
 
     // 7. Collapsible archived history drawer expands on click and links worker session
-    const archiveToggle = screen.getByRole('button', { name: /已归档 1 项历史步骤/ });
+    const archiveToggle = screen.getByRole('button', { name: /Archived \(1\)/ });
     expect(archiveToggle.getAttribute('aria-expanded')).toBe('false');
-    expect(screen.queryByRole('table', { name: '已归档历史步骤' })).toBeNull();
+    expect(screen.queryByRole('table', { name: 'Archived flow steps' })).toBeNull();
 
     fireEvent.click(archiveToggle);
     expect(archiveToggle.getAttribute('aria-expanded')).toBe('true');
-    const archiveTable = screen.getByRole('table', { name: '已归档历史步骤' });
+    const archiveTable = screen.getByRole('table', { name: 'Archived flow steps' });
     expect(archiveTable.textContent).toContain('架构初审');
     fireEvent.click(within(archiveTable).getByRole('button', { name: 'claude-opus-4-6' }));
     expect(onOpenWorker).toHaveBeenCalledWith('ses_arch_1');
@@ -280,7 +280,7 @@ describe('ReportFlowBlock (builtin:flow)', () => {
     };
     render(<ReportFlowBlock flow={flow} />);
     const panel = screen.getByRole('article', { name: '等待 PR #122 CI' });
-    const watchRegion = within(panel).getByRole('region', { name: '探针等待进度' });
+    const watchRegion = within(panel).getByRole('region', { name: 'Watch probe progress' });
     expect(watchRegion.textContent).toContain('PR #122 · 3/3 checks');
     expect(watchRegion.textContent).not.toContain('Waiting');
   });
@@ -303,10 +303,10 @@ describe('ReportFlowBlock (builtin:flow)', () => {
         },
       })],
     }} />);
-    const progress = screen.getByRole('region', { name: '探针等待进度' });
-    expect(within(progress).getByText('常青监听')).toBeTruthy();
-    expect(within(progress).getByText(/^上次检查/)).toBeTruthy();
-    expect(within(progress).queryByText(/^超时截止/)).toBeNull();
+    const progress = screen.getByRole('region', { name: 'Watch probe progress' });
+    expect(within(progress).getByText('Evergreen watch')).toBeTruthy();
+    expect(within(progress).getByText(/^Last checked/)).toBeTruthy();
+    expect(within(progress).queryByText(/^Timeout/)).toBeNull();
   });
 
   it('shows continuing state instead of terminal done between waves of a repeating watch', () => {

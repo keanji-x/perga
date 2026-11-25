@@ -39,7 +39,7 @@ it('keeps draft text through draining, restart, and build changes and displays t
   act(() => sink.connectionState('disconnected'));
   expect(screen.getByRole('status').textContent).toContain('Reconnecting during upgrade');
   act(() => sink.connectionState('connected'));
-  await waitFor(() => expect(screen.getByText('r2')).toBeTruthy());
+  await waitFor(() => expect(screen.getAllByText('r2').length).toBeGreaterThanOrEqual(1));
   expect(screen.queryByRole('button', { name: 'Refresh' })).toBeNull();
   info = { ...info, webBuildId: 'w2', draining: false, activeDispatches: 0 };
   const reads = send.mock.calls.length;

@@ -43,7 +43,7 @@ it.each([
   invalidations.mockRestore();
   await expect.element(field).toHaveAttribute('contenteditable', 'false');
   expect(document.querySelectorAll('[data-nc-conversation-action]')).toHaveLength(1);
-  await page.getByRole('button', { name: '重置上下文并继续', exact: true }).click();
+  await page.getByRole('button', { name: 'Reset context and continue', exact: true }).click();
   await expect.element(field).toHaveAttribute('contenteditable', 'true');
   await expect.element(field).toHaveTextContent('保留草稿');
   await expect.element(page.getByText('保留这条回复', { exact: true })).toBeVisible();
@@ -110,7 +110,7 @@ it.each([390, 1280])('shows a localized recovery refusal after one send (%ipx)',
   await page.getByRole('button', { name: /Conversation Daily Planner conversation/ }).click();
   await page.getByRole('combobox', { name: 'Message' }).fill('保留这条消息');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
-  await expect.element(page.getByText('消息未发送。会话需要恢复，请先恢复会话后再发送。', { exact: true })).toBeVisible();
+  await expect.element(page.getByText('Message not sent. Session recovery is required before sending.', { exact: true })).toBeVisible();
   expect(view.requests.filter(request => request.method === 'POST' && request.path.endsWith('/messages'))).toHaveLength(1);
   expect(document.body.textContent).not.toContain('Recover the provider session');
   expect(document.body.textContent).not.toContain('Not sent.');

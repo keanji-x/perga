@@ -9,7 +9,7 @@ import { VisuallyHidden } from '@astryxdesign/core/VisuallyHidden';
 import type { TrackWorkspaceOptions } from '../../../../../core/domain/track.ts';
 import { Icon } from '../../../ui/icon/public.tsx';
 import { useState } from '../../../ui/state/public.ts';
-import { FolderClearButton, folderLabelParts } from '../default-pills/public.tsx';
+import { folderLabelParts } from '../default-pills/public.tsx';
 import styles from './repo-pill.module.css';
 
 export type RepoIsolationMode = 'worktree' | 'none';
@@ -44,7 +44,6 @@ export type RepoPillProps = Readonly<{
   value: string;
   targetLabel?: string;
   isolation: RepoIsolationMode;
-  clearLabel: string;
   workspaceOptions?: TrackWorkspaceOptions | null;
   workspaceOptionId?: string;
   onWorkspaceOptionChange?: (id: string) => void;
@@ -59,7 +58,6 @@ export function RepoPill({
   value,
   targetLabel,
   isolation,
-  clearLabel,
   workspaceOptions,
   workspaceOptionId,
   onWorkspaceOptionChange,
@@ -82,8 +80,7 @@ export function RepoPill({
   });
 
   return (
-    <>
-      <DropdownMenu
+    <DropdownMenu
         placement="above"
         isMenuOpen={open && !isDisabled}
         onOpenChange={(next) => setOpen(next && !isDisabled)}
@@ -173,7 +170,5 @@ export function RepoPill({
           ) : undefined}
         />
       </DropdownMenu>
-      {value !== '' && <FolderClearButton label={clearLabel} isDisabled={isDisabled} onClear={onClear} />}
-    </>
   );
 }

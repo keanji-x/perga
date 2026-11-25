@@ -1,6 +1,7 @@
 import { useRef, type ReactNode } from 'react';
 import { logoutOperation } from '../../../../core/api/auth.ts';
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
+import { LoadingStatus } from '../../ui/loading-status/public.tsx';
 import { useState } from '../../ui/state/public.ts';
 import { runOperation } from '../providers/query-operation.ts';
 import { SignOutScope } from './current-user.tsx';
@@ -28,7 +29,7 @@ export function LogoutGate({ transport, onComplete, children }: Readonly<{
   return <main className={styles.page}>
     <section className={styles.panel} aria-label="Sign out">
       {state.status === 'pending'
-        ? <p role="status">Signing out…</p>
+        ? <LoadingStatus>Signing out…</LoadingStatus>
         : <>
           <p role="alert">Could not confirm sign-out.</p>
           <button type="button" onClick={() => signOut(state.sessionId)}>Retry sign out</button>

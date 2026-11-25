@@ -145,21 +145,28 @@ function asThemeMode(value: string): ThemeMode {
 }
 
 export function AboutPane({ system }: Readonly<{ system?: SystemUpgradeState | null }> = {}) {
+  const versionLabel = system?.info?.releaseId ?? __NC_VERSION__;
   return (
-    <SettingsPane category="about" title="About" lede="What this build is. Read-only.">
+    <SettingsPane category="about" title="About" lede="Application release and build information.">
       <SettingsList>
-        <SettingRow title="Version" control={<span className={styles.aboutValue}>{__NC_VERSION__}</span>} />
-        <SettingRow title="Build" control={<span className={styles.aboutValue}>{__NC_BUILD__}</span>} />
-        {system && <>
-          <SettingRow title="Release" control={<span className={styles.aboutValue}>{system.info?.releaseId ?? 'Loading…'}</span>} />
-          <SettingRow title="Web build" control={<span className={styles.aboutValue}>{system.info?.webBuildId ?? 'Loading…'}</span>} />
-          <SettingRow title="Host build" control={<span className={styles.aboutValue}>{system.info?.hostBuildId ?? 'Loading…'}</span>} />
-          <SettingRow title="Schema version" control={<span className={styles.aboutValue}>{system.info ? String(system.info.schemaVersion) : 'Loading…'}</span>} />
-          <SettingRow title="Draining" control={<span className={styles.aboutValue}>{String(system.draining)}</span>} />
-          <SettingRow title="Active dispatches" control={<span className={styles.aboutValue}>{String(system.activeDispatches)}</span>} />
-          {system.receipt && <SettingRow title="Latest upgrade receipt" control={<span className={styles.aboutValue}>{upgradeReceiptSummary(system.receipt)}</span>} />}
-        </>}
+        <SettingRow title="Version" control={<span className={styles.aboutValue}>{versionLabel}</span>} />
+        {system?.receipt && <SettingRow title="Latest upgrade receipt" control={<span className={styles.aboutValue}>{upgradeReceiptSummary(system.receipt)}</span>} />}
       </SettingsList>
+      <details className={styles.diagnostics}>
+        <summary className={styles.diagnosticsToggle}>Diagnostics</summary>
+        <SettingsList>
+          <SettingRow title="App version" control={<span className={styles.aboutValue}>{__NC_VERSION__}</span>} />
+          <SettingRow title="Build" control={<span className={styles.aboutValue}>{__NC_BUILD__}</span>} />
+          {system && <>
+            <SettingRow title="Release" control={<span className={styles.aboutValue}>{system.info?.releaseId ?? 'Loading…'}</span>} />
+            <SettingRow title="Web build" control={<span className={styles.aboutValue}>{system.info?.webBuildId ?? 'Loading…'}</span>} />
+            <SettingRow title="Host build" control={<span className={styles.aboutValue}>{system.info?.hostBuildId ?? 'Loading…'}</span>} />
+            <SettingRow title="Schema version" control={<span className={styles.aboutValue}>{system.info ? String(system.info.schemaVersion) : 'Loading…'}</span>} />
+            <SettingRow title="Draining" control={<span className={styles.aboutValue}>{String(system.draining)}</span>} />
+            <SettingRow title="Active dispatches" control={<span className={styles.aboutValue}>{String(system.activeDispatches)}</span>} />
+          </>}
+        </SettingsList>
+      </details>
     </SettingsPane>
   );
 }

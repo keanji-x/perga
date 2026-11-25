@@ -52,6 +52,7 @@ export function ContextRing({ usage }: { usage: PlannerRunTokenUsage | null }) {
   const over = state.kind === 'over';
   /* The over-window state draws no arc: the frontend leaves `percent` null rather than clamping, and a full ring here would undo that. */
   const percent = over ? 0 : Math.min(100, Math.max(0, state.percent));
+  if (!over && percent <= 0) return null;
   const label = ringLabel(state);
 
   return (

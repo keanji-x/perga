@@ -27,6 +27,11 @@ it('renders the creation folder and both actions as one compact borderless row',
     </Dialog>,
   );
   expect(screen.queryByRole('button', { name: /template|isolation/i })).toBeNull();
+  const input = screen.getByRole<HTMLInputElement>('textbox', { name: 'Name' });
+  expect(input.placeholder).toBe('Area name');
+  const titleRect = screen.getByText('New area').getBoundingClientRect();
+  const inputRect = input.getBoundingClientRect();
+  expect(inputRect.top - titleRect.bottom).toBeLessThan(24);
   const folder = screen.getByRole('button', { name: 'Default folder: Perga workspace' });
   for (const pill of [folder]) {
     const style = getComputedStyle(pill);

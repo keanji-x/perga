@@ -6,6 +6,7 @@ import { ReportDocument,type ReportDocumentProps } from '../../features/report/d
 import { useReportPreparation } from '../../features/report/document/resource.ts';
 import { useContentAdmission } from '../../ui/content-presentation/public.ts';
 import { ErrorBox } from '../../ui/error-box/public.tsx';
+import { LoadingStatus } from '../../ui/loading-status/public.tsx';
 import { useState } from '../../ui/state/public.ts';
 import { useViewReadReceipt } from '../providers/read-receipts.tsx';
 import { useTrackReportCache } from './track-view-state.tsx';
@@ -53,7 +54,7 @@ export function TrackReportRegion({ presentation, trackId, openedAt, children, .
     {resource.status === 'failed'
       ? <ErrorBox message="The report could not be loaded." onRetry={resource.retry}
         description={presentable ? 'The last available report is still shown.' : undefined} />
-      : !current && resource.status !== 'ready' && <p role="status">{presentable ? 'Updating report…' : 'Loading report…'}</p>}
+      : !current && resource.status !== 'ready' && <LoadingStatus>{presentable ? 'Updating report…' : 'Loading report…'}</LoadingStatus>}
     {presentable && visible !== null && <ReportRead trackId={trackId}
       openedAt={openedAt} enabled={current}>
       <ReportDocument {...documentProps} report={visible.preparation.report} preparation={visible.preparation} />

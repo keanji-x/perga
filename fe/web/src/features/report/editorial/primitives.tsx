@@ -10,10 +10,10 @@ import styles from './editorial.module.css';
 
 export function defaultStatusLabel(status: EditorialListStatus): string {
   switch (status) {
-    case 'done': return '已完成';
-    case 'running': return '进行中';
-    case 'blocked': return '已拦截';
-    case 'pending': return '未开始';
+    case 'done': return 'Done';
+    case 'running': return 'Running';
+    case 'blocked': return 'Blocked';
+    case 'pending': return 'Pending';
   }
 }
 

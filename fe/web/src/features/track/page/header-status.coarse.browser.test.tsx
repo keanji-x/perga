@@ -17,9 +17,8 @@ it('shows blocked activity at the mobile chat entry without floating notificatio
   expect(onReply).toHaveBeenCalledTimes(1);
 });
 
-it('describes activity on the mobile report composer entry', async () => {
+it('omits the redundant mobile chat icon button beside the report composer dock', async () => {
   await browserPage.viewport(390, 844);
   renderPage({ track: track({ attention: 'input' }), mobileChatComposer: <div>Composer</div>, onReply: vi.fn() });
-  await expect.element(browserPage.getByRole('button', { name: 'Open conversation', exact: true }))
-    .toHaveAccessibleDescription('Needs input');
+  expect(browserPage.getByRole('button', { name: 'Open conversation', exact: true }).query()).toBeNull();
 });

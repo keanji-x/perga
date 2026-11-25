@@ -84,7 +84,7 @@ describe('ReportWidgetBlock', () => {
     expect(table.getByText('CI')).toBeTruthy();
     expect(table.getByText('**P95 latency**').hasAttribute('data-markdown')).toBe(true);
     expect(table.getByText('11-21 09:00')).toBeTruthy();
-    expect(table.getByRole('img', { name: '已通过' })).toBeTruthy();
+    expect(table.getByRole('img', { name: 'Passed' })).toBeTruthy();
     expect(table.getByText('7.2 min').closest('td')?.dataset.ncAlign).toBe('right');
     expect(table.getByRole('cell', { name: '—' }).dataset.ncAlign).toBe('center');
   });
@@ -293,7 +293,7 @@ describe('ReportWidgetBlock', () => {
         renderText={(text) => <span>{text}</span>}
       />,
     );
-    expect(screen.getByText('当前暂无记录。')).toBeTruthy();
+    expect(screen.getByText('No items yet.')).toBeTruthy();
 
     rerender(
       <ReportWidgetBlock
@@ -302,7 +302,7 @@ describe('ReportWidgetBlock', () => {
         renderText={(text) => <span>{text}</span>}
       />,
     );
-    expect(screen.getByText('当前暂无可展示的行。')).toBeTruthy();
+    expect(screen.getByText('No rows to display.')).toBeTruthy();
 
     rerender(
       <ReportWidgetBlock
@@ -311,7 +311,7 @@ describe('ReportWidgetBlock', () => {
         renderText={(text) => <span>{text}</span>}
       />,
     );
-    expect(screen.getByRole('alert').textContent).toContain('视图契约校验失败：builtin:table');
+    expect(screen.getByRole('alert').textContent).toContain('Widget contract validation failed: builtin:table');
     expect(screen.getByRole('alert').textContent).toContain('columns.0.label');
 
     rerender(
@@ -321,7 +321,7 @@ describe('ReportWidgetBlock', () => {
         renderText={(text) => <span>{text}</span>}
       />,
     );
-    expect(screen.getByRole('alert').textContent).toContain('视图契约校验失败：builtin:list');
+    expect(screen.getByRole('alert').textContent).toContain('Widget contract validation failed: builtin:list');
     expect(screen.getByRole('alert').textContent).toContain('items.0.status');
 
     rerender(
@@ -393,7 +393,7 @@ describe('ReportWidgetBlock', () => {
         renderText={(text) => <span>{text}</span>}
       />,
     );
-    expect(screen.getByRole('note').textContent).toContain('当前暂无活跃或已归档的流程步骤。');
+    expect(screen.getByRole('note').textContent).toContain('No active or archived flow steps yet.');
   });
 
   it('auto-renders flow in ReportDocument for template-less tracks without duplicating explicit builtin:flow', () => {

@@ -20,19 +20,19 @@ it.each([true, false])('does not claim Running after a failed run read (initial 
     fixture.failRun(true);
     await act(async () => { await fixture.client.invalidateQueries({ queryKey: queryKeys.plannerRun('daily-planner') }); });
   }
-  await screen.findByText('无法同步最新对话状态', { exact: true });
+  await screen.findByText('Unable to sync latest conversation state', { exact: true });
   expect(screen.queryByText('Working…', { exact: true }) !== null).toBe(!initialFailure);
   const alert = await screen.findByRole('alert');
-  expect(alert.textContent).toContain('无法同步对话状态。');
+  expect(alert.textContent).toContain('Unable to sync conversation state.');
   expect(alert.textContent).not.toContain('private transport diagnostic');
-  expect(within(alert).getByRole('button', { name: '刷新' })).toBeTruthy();
+  expect(within(alert).getByRole('button', { name: 'Refresh' })).toBeTruthy();
   expect(field.textContent).toBe('Keep this draft.');
   const before = fixture.requests.length;
   fixture.failRun(false);
-  fireEvent.click(within(alert).getByRole('button', { name: '刷新' }));
+  fireEvent.click(within(alert).getByRole('button', { name: 'Refresh' }));
   await screen.findByText('Working…', { exact: true });
   await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
-  expect(screen.queryByText('无法同步最新对话状态', { exact: true })).toBeNull();
+  expect(screen.queryByText('Unable to sync latest conversation state', { exact: true })).toBeNull();
   expect(screen.getByText('Retained reply.')).toBeTruthy();
   expect(field.textContent).toBe('Keep this draft.');
   const after = fixture.requests.slice(before);
@@ -47,11 +47,11 @@ it('retries history independently and retains the last readable transcript', asy
   fixture.failHistory(true);
   await act(async () => { await fixture.client.invalidateQueries({ type: 'active' }); });
   const alert = await screen.findByRole('alert');
-  expect(alert.textContent).toContain('无法加载对话记录。');
+  expect(alert.textContent).toContain('Unable to load conversation history.');
   expect(screen.getByText('Retained reply.')).toBeTruthy();
   const before = fixture.requests.length;
   fixture.failHistory(false);
-  fireEvent.click(within(alert).getByRole('button', { name: '刷新' }));
+  fireEvent.click(within(alert).getByRole('button', { name: 'Refresh' }));
   await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
   const after = fixture.requests.slice(before);
   expect(after.every(request => request.method === 'GET')).toBe(true);
@@ -63,14 +63,14 @@ it('retries history independently and retains the last readable transcript', asy
 it('keeps execution status unconfirmed throughout a cold retry', async () => {
   const fixture = renderConversationReadFixture(true);
   await openConversation();
-  const retry = await screen.findByRole('button', { name: '刷新' });
+  const retry = await screen.findByRole('button', { name: 'Refresh' });
   fixture.failRun(false);
   const release = fixture.pauseRun();
   try {
     fireEvent.click(retry);
     await waitFor(() => expect(fixture.client.isFetching({ queryKey: queryKeys.plannerRun('daily-planner') })).toBe(1));
-    expect(screen.getByRole('button', { name: '刷新' }).getAttribute('aria-busy')).toBe('true');
-    await screen.findByText('无法同步最新对话状态', { exact: true });
+    expect(screen.getByRole('button', { name: 'Refresh' }).getAttribute('aria-busy')).toBe('true');
+    await screen.findByText('Unable to sync latest conversation state', { exact: true });
     expect(screen.queryByText('Working…', { exact: true })).toBeNull();
   } finally { act(() => { release(); }); }
   await screen.findByText('Working…', { exact: true });

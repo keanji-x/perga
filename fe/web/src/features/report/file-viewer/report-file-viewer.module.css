@@ -15,6 +15,7 @@
       var(--document-start, 0px)
       minmax(0, var(--document-measure, 45rem))
       minmax(0, 1fr);
+    align-content: start;
     row-gap: var(--space-3);
     inline-size: 100%;
     min-block-size: 100%;

@@ -322,12 +322,14 @@ describe('The folder is optional, and its absence is the managed default', () =>
     expect(onSubmit).toHaveBeenCalledWith({ message: 'Ship the thing', cwd: '/srv/app', isolation: 'worktree' });
   });
 
-  /* Create time is the only entry into the attached choice, so the way back has to exist here too. */
-  it('drops back to the managed default when the chosen folder is cleared', async () => {
+  /* Create time is the only entry into the attached choice, so the way back lives in the Repo menu. */
+  it('drops back to the managed default when Perga workspace is selected from the Repo menu', async () => {
     const { onSubmit } = renderForm();
     await fillMessage();
     await pickTheListedFolder();
-    await userEvent.click(screen.getByRole('button', { name: 'Use a Perga workspace instead' }));
+    expect(screen.queryByRole('button', { name: 'Use a Perga workspace instead' })).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Repo: app (/srv/app)' }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: /Perga workspace/ }));
     await userEvent.click(submitButton());
     const [draft] = onSubmit.mock.calls[0] as [Record<string, unknown>];
     expect(draft).toEqual({ message: 'Ship the thing' });

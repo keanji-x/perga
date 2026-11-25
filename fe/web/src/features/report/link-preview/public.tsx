@@ -8,6 +8,7 @@ import type { ReportSourceLinkTarget } from '../../../../../core/domain/report-s
 import { ReportSourceCitation } from '../source/citation.tsx';
 import { FileReadError, useReportFileResource } from '../../../systems/fs-viewers/public.tsx';
 import { HoverPreview } from '../../../ui/hover-preview/public.tsx';
+import { LoadingStatus } from '../../../ui/loading-status/public.tsx';
 import { useState } from '../../../ui/state/public.ts';
 import styles from './content.module.css';
 
@@ -97,7 +98,7 @@ function FileContent({ path, files, renderMarkdown }: Readonly<{
   const basePath = path.slice(0, Math.max(0, path.lastIndexOf('/')));
   return <div className={styles.content}>
     <p className={styles.destination}>{path}</p>
-    {resource.kind === 'loading' && <p role="status">Loading file…</p>}
+    {resource.kind === 'loading' && <LoadingStatus>Loading file…</LoadingStatus>}
     {resource.kind === 'error' && <FileReadError failure={resource.failure} onRetry={resource.retry} />}
     {resource.kind === 'image' && <img className={styles.image} src={resource.url} alt={path} onLoad={resource.onLoad} onError={resource.onError} />}
     {/* A hover card shows a page's source; the page itself opens in the file viewer. */}
@@ -143,7 +144,7 @@ function WebContent({ url, image, label }: Readonly<{ url: string; image: boolea
       <p>{image ? 'Load this image to preview it.' : 'Load this webpage to browse it here. Some sites only allow opening in a new tab.'}</p>
       <button type="button" className={styles.action} onClick={() => setLoaded(true)}>{image ? 'Load image' : 'Load webpage'}</button>
     </>}
-    {loaded && !ready && !failed && <p role="status">Loading preview…</p>}
+    {loaded && !ready && !failed && <LoadingStatus>Loading preview…</LoadingStatus>}
     {loaded && image && !failed && <img className={styles.image} src={url} alt={label} referrerPolicy="no-referrer"
       onLoad={() => setReady(true)} onError={() => setFailed(true)} />}
     {loaded && !image && <>

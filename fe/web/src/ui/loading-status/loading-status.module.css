@@ -1,0 +1,13 @@
+@layer ui {
+  .status {
+    margin: 0;
+    font: var(--type-metadata);
+    letter-spacing: var(--type-metadata-tracking);
+    color: var(--text-3);
+  }
+
+  .padded {
+    padding-block: var(--space-4);
+    padding-inline: var(--space-5);
+  }
+}

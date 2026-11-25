@@ -13,6 +13,7 @@ retryTrackWorkspaceOperation,
 toTrack,trackActivityFromSnapshot
 } from '../../../../core/domain/track.ts';
 import { ErrorBox } from '../../ui/error-box/public.tsx';
+import { LoadingStatus } from '../../ui/loading-status/public.tsx';
 import {
 useConversationCommands,
 useConversationOpenRequest
@@ -97,7 +98,7 @@ export function TrackRoute({ transport, unauthorized, cardRuntime, recentFiles, 
         : detail.data.workspacePreparation === 'unknown'
         ? <Banner status="error" title="The last workspace setup result could not be confirmed. Work that needs the workspace is waiting." />
         : detail.data.workspacePreparation === 'pending'
-        ? <p role="status">Preparing the workspace.</p>
+        ? <LoadingStatus>Preparing the workspace.</LoadingStatus>
         : undefined}
       cardRuntime={cardRuntime}
       recentFiles={recentFiles}

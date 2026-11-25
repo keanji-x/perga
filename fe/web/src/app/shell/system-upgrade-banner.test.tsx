@@ -43,5 +43,10 @@ it('shows current system identity, drain counts, and latest receipt in About', (
   render(<AboutPane system={store.read()} />);
   expect(screen.getByText('Latest upgrade receipt')).toBeTruthy();
   expect(screen.getByText(/Upgrade completed: old-release/)).toBeTruthy();
-  for (const value of ['Release', 'release-current', 'Web build', 'web-current', 'Host build', 'host-resident', 'Schema version', '11', 'Draining', 'true', 'Active dispatches', '4']) expect(screen.getByText(value)).toBeTruthy();
+  const diagnostics = screen.getByText('Diagnostics').closest('details')!;
+  expect(diagnostics.open).toBe(false);
+  expect(screen.getAllByText('release-current').length).toBeGreaterThanOrEqual(2);
+  for (const value of ['Release', 'Web build', 'web-current', 'Host build', 'host-resident', 'Schema version', '11', 'Draining', 'true', 'Active dispatches', '4']) {
+    expect(screen.getByText(value)).toBeTruthy();
+  }
 });

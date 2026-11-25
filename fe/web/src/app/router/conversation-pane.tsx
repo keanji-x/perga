@@ -7,6 +7,7 @@ import { PendingQueue } from '../../features/chat/thread/pending-queue.tsx';
 import { useThreadReadingView } from '../../features/chat/thread/reading-view.tsx';
 import { ConversationSessionHeader } from '../../features/chat/thread/session-header.tsx';
 import { useContentAdmission } from '../../ui/content-presentation/public.ts';
+import { LoadingStatus } from '../../ui/loading-status/public.tsx';
 import type { PaneResizeGroup } from '../../ui/drawer/resize-group.ts';
 import { writeClipboardText } from '../../ui/operation-feedback/clipboard.ts';
 import { ConversationApprovalControl } from '../conversations/approval-control.tsx';
@@ -621,7 +622,7 @@ export function useConversationPane(
         {open !== null && (
           <>
             {!conversationBodyVisible && (!threadPresented || !store.historyReady) && store.historyError === null && (
-              <p role="status">Loading conversation…</p>
+              <LoadingStatus>Loading conversation…</LoadingStatus>
             )}
             {/* Keyed on the conversation: the drawer stays mounted across a switch, and
                           without the key `ChatThread`'s follow-the-newest refs and rail state

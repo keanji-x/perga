@@ -85,7 +85,7 @@ export function SidebarGroup({ title, label, icon, expanded, onToggle, level, ma
     </span>
   </button>;
   return <div role="group" aria-label={label} className={level === 'section' ? styles.section : styles.areaGroup}>
-    <div className={`${styles.areaRowWrap} ${presentation.className}`}>
+    <div className={`${styles.areaRowWrap} ${presentation.className} ${level === 'area' ? rowLayout('revealActions') : ''}`}>
       {level === 'section' ? <h2 className={styles.groupHeading}>{button}</h2> : button}
       <span ref={actionRef} className={`${styles.areaActions} ${rowLayout('inner')}`}>
         <DropdownMenu isMenuOpen={menuOpen} onOpenChange={setMenuOpen} placement="below" button={{

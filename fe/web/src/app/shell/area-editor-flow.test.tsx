@@ -274,7 +274,7 @@ describe('AppShell Area editor flow', () => {
     renderShell();
     await userEvent.click(screen.getByRole('button', { name: 'New area' }));
     const dialog = screen.getByRole('dialog', { name: 'New area' });
-    expect(within(dialog).queryByText('New area')).toBeNull();
+    expect(within(dialog).getByText('New area')).toBeTruthy();
     expect(within(dialog).queryByText('Required')).toBeNull();
     const name = within(dialog).getByRole<HTMLInputElement>('textbox', { name: 'Name' });
     expect(name.required).toBe(true);

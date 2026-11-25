@@ -25,6 +25,11 @@ describe('ReportOutline', () => {
     expect(container.innerHTML).toBe('');
   });
 
+  it('renders nothing when there is only one section so a solitary dot is not shown', () => {
+    const { container } = render(<ReportOutline items={ITEMS.slice(0, 1)} />);
+    expect(container.innerHTML).toBe('');
+  });
+
   it('renders only first-level sections, in document order', () => {
     render(<ReportOutline items={ITEMS} />);
     expect(screen.getAllByRole('button').map((row) => row.getAttribute('aria-label'))).toEqual([

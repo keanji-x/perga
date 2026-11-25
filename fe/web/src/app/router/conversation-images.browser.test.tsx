@@ -90,7 +90,7 @@ it('previews files and screenshot items, restores a refused image, then retries 
   expect(previews()).toHaveLength(0);
   await expect.poll(() => transcriptImages()[0]?.naturalWidth).toBe(320);
   decline({ status: 409, statusText: 'Conflict', body: { code: 'attachments_unsupported', error: 'Image refused.' } });
-  await page.getByRole('button', { name: '放回输入框', exact: true }).click();
+  await page.getByRole('button', { name: 'Restore to input', exact: true }).click();
   await expect.poll(() => previews().map(image => image.src)).toEqual([blobUrl]);
   await expect.poll(() => transcriptImages().length).toBe(0);
 

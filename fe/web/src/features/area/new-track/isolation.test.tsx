@@ -16,7 +16,8 @@ it.each(['/repo', null])('defaults to worktree isolation for folder %s', async (
   expect(onSubmit).toHaveBeenLastCalledWith(cwd === null ? { message: 'Plan' }
     : { message: 'Plan', cwd, isolation: 'worktree' });
   if (cwd !== null) {
-    await userEvent.click(screen.getByRole('button', { name: 'Use a Perga workspace instead' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Repo: repo (/repo)' }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: /Perga workspace/ }));
     await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
     expect(onSubmit).toHaveBeenLastCalledWith({ message: 'Plan' });
   }

@@ -78,13 +78,14 @@ export function ComposerPreferences({ folder, browsing }: Props) {
     const actions = row?.lastElementChild;
     if (host === null || !(row instanceof HTMLElement) || !(actions instanceof HTMLElement)) return;
     const measure = () => {
-      const folders = [...(folderRef.current?.querySelectorAll<HTMLButtonElement>(':scope > button') ?? [])];
+      const folders = [...(folderRef.current?.querySelectorAll<HTMLButtonElement>('button') ?? [])];
       const buttons = folders;
       const labels = buttons.map((button) => button.getAttribute('aria-label') ?? button.textContent).join('\n');
       if (items !== null && items.getBoundingClientRect().width > 0) {
         const gap = parseFloat(getComputedStyle(host).columnGap) || 0;
+        const folderItems = [...(folderRef.current?.children ?? [])].filter((el) => el.matches('button'));
         requiredWidth.current = buttons.reduce((sum, button) => sum + fullButtonWidth(button), 0)
-          + gap * Math.max(0, buttons.length - 1);
+          + gap * Math.max(0, folderItems.length - 1);
         measuredLabels.current = labels;
       } else if (items !== null && labels !== measuredLabels.current) {
         // A selection may change while its directory dialog hides the popover.

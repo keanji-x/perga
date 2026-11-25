@@ -70,7 +70,7 @@ export function SystemUpgradeBanner({ state, connected, onRefresh, onDismiss, va
           isOpen={popoverOpen}
           onOpenChange={setOpen}
           width="min(18rem, calc(100vw - 2rem))"
-          placement="above"
+          placement="below"
           alignment="start"
           content={<div className={styles.popoverCard}>{content}</div>}
         >

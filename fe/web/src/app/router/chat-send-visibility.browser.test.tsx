@@ -77,7 +77,7 @@ it.each([
     expect(pane().scrollTop).toBe(parked);
   } finally {
     finish({ status: 409, statusText: 'Conflict', body: { code: 'planner_harness_runtime_superseded', error: 'Send refused for the visibility test.' } });
-    await page.getByRole('button', { name: '放回输入框', exact: true }).click();
+    await page.getByRole('button', { name: 'Restore to input', exact: true }).click();
     await expect.poll(() => document.querySelectorAll('[data-nc-turn="you"]').length).toBe(8);
     const field = page.getByRole('combobox', { name: 'Message', exact: true }).element();
     await expect.poll(() => field.textContent).toBe('My fresh local message.');
@@ -102,14 +102,14 @@ it('keeps the reading place when an existing send is retried under its same key'
   await page.getByRole('combobox', { name: 'Message', exact: true }).click();
   await userEvent.keyboard('Retry these same words.');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
-  await expect.element(page.getByRole('button', { name: /^(Try again|重试|安全重试（同幂等键）)$/, exact: true })).toBeVisible();
+  await expect.element(page.getByRole('button', { name: /^(Try again|Retry|Retry safely \(same key\))$/, exact: true })).toBeVisible();
   await frames();
   const before = pane().scrollTop;
   await commands.wheelScroll('[data-nc-drawer-scroll]', -300);
   await expect.poll(() => pane().scrollTop).toBe(before - 300);
   const parked = pane().scrollTop;
   try {
-    await page.getByRole('button', { name: /^(Try again|重试|安全重试（同幂等键）)$/, exact: true }).click();
+    await page.getByRole('button', { name: /^(Try again|Retry|Retry safely \(same key\))$/, exact: true }).click();
     await expect.poll(() => attempts).toBe(2);
     await frames();
     const posts = requests.filter((request) => request.path.endsWith('/messages'));
@@ -119,6 +119,6 @@ it('keeps the reading place when an existing send is retried under its same key'
     expect(pane().scrollTop).toBe(parked);
   } finally {
     finish(rejected);
-    await expect.element(page.getByRole('button', { name: /^(Try again|重试|安全重试（同幂等键）)$/, exact: true })).toBeVisible();
+    await expect.element(page.getByRole('button', { name: /^(Try again|Retry|Retry safely \(same key\))$/, exact: true })).toBeVisible();
   }
 });

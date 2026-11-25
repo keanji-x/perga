@@ -340,14 +340,14 @@ it('keeps history failures out of the send channel and offers a retry', async ()
     });
 
     fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
-    expect((await screen.findByRole('alert')).textContent).toContain('无法加载对话记录。');
+    expect((await screen.findByRole('alert')).textContent).toContain('Unable to load conversation history.');
     /* A 503's text is the server's: only the fixed sentence shows. */
     expect(screen.getByRole('alert').textContent).not.toContain('history unavailable');
     expect(screen.queryByText(/Start a conversation/)).toBeNull();
     expect(messageField().getAttribute('contenteditable')).toBe('false');
     expect(requests.some((request) => request.path.endsWith('/messages'))).toBe(false);
 
-    fireEvent.click(screen.getByRole('button', { name: '刷新' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
     await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
     expect(reads).toBe(2);
   });
@@ -371,11 +371,11 @@ it('hands a send failure to the same conversation after its drawer remounts', as
     expect(messageField().getAttribute('contenteditable')).toBe('false');
     await act(async () => { release(); await held; });
     /* A 503 may follow a stored message: unconfirmed, and in no words of the answer's. */
-    expect(within(await screen.findByRole('alert')).getByText('发送结果未确认。')).toBeTruthy();
+    expect(within(await screen.findByRole('alert')).getByText('Send result unconfirmed.')).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: 'Close conversation' }));
     fireEvent.click(screen.getByRole('button', { name: 'Conversation Planner chat' }));
-    expect(screen.queryByText('发送结果未确认。')).toBeNull();
+    expect(screen.queryByText('Send result unconfirmed.')).toBeNull();
   });
 
 it('keeps the message in the composer when the runtime was superseded, and re-sends it', async () => {
@@ -401,7 +401,7 @@ it('keeps the message in the composer when the runtime was superseded, and re-se
     await write('reconcile the ledger');
 
     await waitFor(() => expect(screen.queryByRole('alert')).not.toBeNull());
-    fireEvent.click(await screen.findByRole('button', { name: '放回输入框' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Restore to input' }));
     await waitFor(() => expect(messageField().textContent).toBe('reconcile the ledger'));
 
     const before = requests.filter((request) => request.path.endsWith('/messages')).length;
@@ -432,7 +432,7 @@ it('keeps the message in the composer when the harness is dormant', async () => 
     await write('the sentence a dormant harness must not eat');
 
     await waitFor(() => expect(screen.queryByRole('alert')).not.toBeNull());
-    fireEvent.click(await screen.findByRole('button', { name: '放回输入框' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Restore to input' }));
     await waitFor(() =>
       expect(messageField().textContent).toBe('the sentence a dormant harness must not eat'));
   });
@@ -496,13 +496,13 @@ it('[F4] keeps a typed refusal in the composer alone, across reopening and a new
     fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
     await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
     await write('Original typed refusal');
-    fireEvent.click(await screen.findByRole('button', { name: '放回输入框' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Restore to input' }));
     await waitFor(() => expect(messageField().textContent).toBe('Original typed refusal'));
     /* Once, in the composer: no copy of it is drawn in the thread. */
     expect(within(drawerElement()).getAllByText('Original typed refusal', TRANSCRIPT_TEXT)).toHaveLength(1);
     expect(drawerElement().querySelector('[data-nc-turn="you"]')).toBeNull();
-    expect(screen.queryByRole('button', { name: /^(Try again|重试|安全重试（同幂等键）)$/ })).toBeNull();
-    expect(screen.queryByRole('button', { name: '放回输入框' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^(Try again|Retry|Retry safely \(same key\))$/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Restore to input' })).toBeNull();
     await typeInto(messageField(), 'A newer unsent draft');
     fireEvent.click(screen.getByRole('button', { name: 'Close conversation' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
@@ -523,7 +523,7 @@ it('[F4] edits a rejected message without replaying it before an explicit send',
     await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
     await write('Original rejected message');
     await screen.findByRole('alert');
-    fireEvent.click(screen.getByRole('button', { name: '放回输入框' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Restore to input' }));
     expect(messageField().textContent).toBe('Original rejected message');
     expect(messageField().getAttribute('contenteditable')).toBe('true');
     expect(screen.queryByRole('alert')).toBeNull();
@@ -550,14 +550,14 @@ it.each([
     await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
     await write(text);
     /* The first attempt may have been stored; an answer to the second does not say otherwise. */
-    expect((await screen.findByRole('alert')).textContent).toContain('发送结果未确认');
-    expect(screen.queryByRole('button', { name: '放回输入框' })).toBeNull();
+    expect((await screen.findByRole('alert')).textContent).toContain('Send result unconfirmed');
+    expect(screen.queryByRole('button', { name: 'Restore to input' })).toBeNull();
     expect(inputs()).toHaveLength(2);
     const key = inputs()[0]?.headers?.['Idempotency-Key'];
     expect(key).toBeTruthy();
     expect(inputs()[1]?.headers?.['Idempotency-Key']).toBe(key);
 
-    fireEvent.click(screen.getByRole('button', { name: /^(Try again|重试|安全重试（同幂等键）)$/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^(Try again|Retry|Retry safely \(same key\))$/ }));
     await waitFor(() => expect(inputs()).toHaveLength(3));
     expect(inputs()[2]?.headers?.['Idempotency-Key']).toBe(key);
     await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
@@ -577,20 +577,20 @@ it.each([
     fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
     await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
     await write(text);
-    expect((await screen.findByRole('alert')).textContent).toContain('发送结果未确认');
+    expect((await screen.findByRole('alert')).textContent).toContain('Send result unconfirmed');
     expect(inputs()).toHaveLength(SEND_RETRIES + 1);
     const key = inputs()[0]?.headers?.['Idempotency-Key'];
 
     /* Try again resumes the op: whatever this answer says, an earlier attempt may have been stored. */
     answer = 'refuse';
-    fireEvent.click(screen.getByRole('button', { name: /^(Try again|重试|安全重试（同幂等键）)$/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^(Try again|Retry|Retry safely \(same key\))$/ }));
     await waitFor(() => expect(inputs()).toHaveLength(SEND_RETRIES + 2));
-    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('发送结果未确认'));
-    expect(screen.queryByRole('button', { name: '放回输入框' })).toBeNull();
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Send result unconfirmed'));
+    expect(screen.queryByRole('button', { name: 'Restore to input' })).toBeNull();
     expect(inputs().every((request) => request.headers?.['Idempotency-Key'] === key)).toBe(true);
 
     answer = 'accept';
-    fireEvent.click(screen.getByRole('button', { name: /^(Try again|重试|安全重试（同幂等键）)$/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^(Try again|Retry|Retry safely \(same key\))$/ }));
     await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
     expect(inputs().at(-1)?.headers?.['Idempotency-Key']).toBe(key);
   });
@@ -620,7 +620,7 @@ it('[F5] reconciles a resumed send whose first attempt was stored and drained, a
     await screen.findByText('Reply to it');
 
     accept = true;
-    fireEvent.click(screen.getByRole('button', { name: /^(Try again|重试|安全重试（同幂等键）)$/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^(Try again|Retry|Retry safely \(same key\))$/ }));
     await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
     await waitFor(() => expect(within(drawerElement()).getAllByText(text, TRANSCRIPT_TEXT)).toHaveLength(1));
     await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
@@ -643,9 +643,9 @@ it('[#2068] keeps a composer draft when Try again resends a rejected message', a
     fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
     await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
     await write('Rejected the first time');
-    expect(within(await screen.findByRole('alert')).getByText('消息未发送。Too many requests.')).toBeTruthy();
+    expect(within(await screen.findByRole('alert')).getByText('Message not sent. Too many requests.')).toBeTruthy();
     await typeInto(messageField(), 'A draft in progress');
-    fireEvent.click(screen.getByRole('button', { name: /^(Try again|重试|安全重试（同幂等键）)$/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^(Try again|Retry|Retry safely \(same key\))$/ }));
     await waitFor(() => expect(requests.filter((request) => request.path.endsWith('/messages'))).toHaveLength(2));
     await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
     expect(messageField().textContent).toBe('A draft in progress');
@@ -660,16 +660,16 @@ it('[F5] leaves the footer as it was when Try again is pressed offline', async (
     await sendUntilSpent('Spent online, retried offline');
     expect(inputs()).toHaveLength(SEND_RETRIES + 1);
     act(() => { onlineManager.setOnline(false); });
-    fireEvent.click(screen.getByRole('button', { name: /^(Try again|重试|安全重试（同幂等键）)$/ }));
-    expect(within(screen.getByRole('alert')).getByText('发送结果未确认。')).toBeTruthy();
-    expect(screen.queryByRole('button', { name: '放回输入框' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /^(Try again|Retry|Retry safely \(same key\))$/ }));
+    expect(within(screen.getByRole('alert')).getByText('Send result unconfirmed.')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Restore to input' })).toBeNull();
     expect(inputs()).toHaveLength(SEND_RETRIES + 1);
   });
 
 it('send: says only that delivery is unconfirmed', async () => {
       setup((request) => request.path.endsWith('/messages') ? timedOut() : undefined);
       await sendUntilSpent('Lost on the way');
-      expect(within(screen.getByRole('alert')).getByText('发送结果未确认。')).toBeTruthy();
+      expect(within(screen.getByRole('alert')).getByText('Send result unconfirmed.')).toBeTruthy();
       expect(chatText()).not.toMatch(CONNECTIVITY);
     });
 
@@ -747,10 +747,10 @@ it('[#2068] gives a refused send its words back in its own conversation when the
     expect(messageField().textContent).toBe('');
     expect(screen.queryByRole('alert')).toBeNull();
     await pickAssistant();
-    expect((await screen.findByRole('alert')).textContent).toContain('消息未发送。Your message was not stored; send it again.');
-    fireEvent.click(screen.getByRole('button', { name: '放回输入框' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('Message not sent. Your message was not stored; send it again.');
+    fireEvent.click(screen.getByRole('button', { name: 'Restore to input' }));
     await waitFor(() => expect(messageField().textContent).toBe('Words the server refused'));
-    expect(screen.queryByRole('button', { name: /^(Try again|重试|安全重试（同幂等键）)$/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^(Try again|Retry|Retry safely \(same key\))$/ })).toBeNull();
     /* The next press sends the words again as a new message, and nothing of the refused one is left to drop. */
     await submit();
     await waitFor(() => expect(inputBodies(requests)).toHaveLength(2));
@@ -802,19 +802,19 @@ it('keeps each failed draft key across track route remounts', async () => {
     await screen.findByRole('button', { name: 'Conversation Planner chat' });
     await openDraft();
     await write('words for track one');
-    await screen.findByRole('button', { name: /^(Try again|重试|安全重试（同幂等键）)$/ });
+    await screen.findByRole('button', { name: /^(Try again|Retry|Retry safely \(same key\))$/ });
 
     await act(async () => { await router.navigate({ to: '/track/w2' }); });
       await waitFor(() => expect(screen.queryAllByRole('button', { name: /^Conversation / })).toHaveLength(0));
     await openDraft();
     await write('words for track two');
-    await screen.findByRole('button', { name: /^(Try again|重试|安全重试（同幂等键）)$/ });
+    await screen.findByRole('button', { name: /^(Try again|Retry|Retry safely \(same key\))$/ });
 
     await act(async () => { await router.navigate({ to: '/track/w1' }); });
     await screen.findByRole('button', { name: 'Conversation Planner chat' });
     await openDraft();
     expect(screen.getByText('words for track one')).toBeTruthy();
-    fireEvent.click(await screen.findByRole('button', { name: /^(Try again|重试|安全重试（同幂等键）)$/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /^(Try again|Retry|Retry safely \(same key\))$/ }));
 
     await waitFor(() => expect(creates(requests, CONVERSATIONS)).toHaveLength(2));
     const [first, retry] = creates(requests, CONVERSATIONS);
@@ -829,7 +829,7 @@ it('keeps each failed draft key across track route remounts', async () => {
       await waitFor(() => expect(screen.queryAllByRole('button', { name: /^Conversation / })).toHaveLength(0));
     await openDraft();
     expect(screen.getByText('words for track two')).toBeTruthy();
-    fireEvent.click(await screen.findByRole('button', { name: /^(Try again|重试|安全重试（同幂等键）)$/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /^(Try again|Retry|Retry safely \(same key\))$/ }));
 
     await waitFor(() => expect(creates(requests, BARE_CONVERSATIONS)).toHaveLength(2));
     const [bareFirst, bareRetry] = creates(requests, BARE_CONVERSATIONS);
@@ -890,7 +890,7 @@ it('unlocks the fresh key after an exhausted attempt is rekeyed', async () => {
     await screen.findByRole('button', { name: 'Conversation Planner chat' });
     await openDraft();
     await write('retry after exhaustion');
-    const retry = await screen.findByRole('button', { name: /^(Try again|重试|安全重试（同幂等键）)$/ });
+    const retry = await screen.findByRole('button', { name: /^(Try again|Retry|Retry safely \(same key\))$/ });
     expect(retry.hasAttribute('disabled')).toBe(false);
     fireEvent.click(retry);
 
@@ -912,7 +912,7 @@ it('offers no retry after a key-reused answer, only a new conversation', async (
     await openDraft();
     await write('a key that is spent');
     await screen.findByText('this key was already used for another first message');
-    expect(screen.queryByRole('button', { name: /^(Try again|重试|安全重试（同幂等键）)$/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^(Try again|Retry|Retry safely \(same key\))$/ })).toBeNull();
     fireEvent.click(await screen.findByRole('button', { name: 'Send as a new conversation' }));
 
     await waitFor(() => expect(creates(requests, CONVERSATIONS)).toHaveLength(2));
@@ -944,7 +944,7 @@ it('[#2175] says a new conversation was not started when its create is refused b
     }
     expect(creates(requests, CONVERSATIONS)).toHaveLength(1);
     expect(screen.queryByRole('button', { name: 'Send as a new conversation' })).toBeNull();
-    fireEvent.click(await screen.findByRole('button', { name: /^(Try again|重试|安全重试（同幂等键）)$/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /^(Try again|Retry|Retry safely \(same key\))$/ }));
     await waitFor(() => expect(creates(requests, CONVERSATIONS)).toHaveLength(2));
     const [reused, fresh] = creates(requests, CONVERSATIONS);
     expect(fresh?.headers?.['Idempotency-Key']).not.toBe(reused?.headers?.['Idempotency-Key']);
@@ -1015,7 +1015,7 @@ it('a lost answer: says the create is unconfirmed and keeps the words and Try ag
       await screen.findByRole('button', { name: 'Conversation Planner chat' });
       await openDraft();
       await write('words whose answer is lost');
-      await screen.findByRole('button', { name: /^(Try again|重试|安全重试（同幂等键）)$/ });
+      await screen.findByRole('button', { name: /^(Try again|Retry|Retry safely \(same key\))$/ });
       await says(CONVERSATION_CREATE_TEXT.unknown);
       expect(screen.getByText('words whose answer is lost')).toBeTruthy();
     });
@@ -1029,7 +1029,7 @@ it('offline at the press: says the conversation was not started, and sends nothi
         await write('words typed offline');
         await says(CONVERSATION_CREATE_TEXT.refused);
         expect(creates(requests, CONVERSATIONS)).toHaveLength(0);
-        expect(screen.getByRole('button', { name: /^(Try again|重试|安全重试（同幂等键）)$/ })).toBeTruthy();
+        expect(screen.getByRole('button', { name: /^(Try again|Retry|Retry safely \(same key\))$/ })).toBeTruthy();
       } finally { onlineManager.setOnline(true); }
     });
 
@@ -1038,7 +1038,7 @@ it('offline after a lost answer: stays unconfirmed, since the first attempt may 
       await screen.findByRole('button', { name: 'Conversation Planner chat' });
       await openDraft();
       await write('words sent once');
-      const retry = await screen.findByRole('button', { name: /^(Try again|重试|安全重试（同幂等键）)$/ });
+      const retry = await screen.findByRole('button', { name: /^(Try again|Retry|Retry safely \(same key\))$/ });
       onlineManager.setOnline(false);
       try {
         fireEvent.click(retry);
@@ -1063,7 +1063,7 @@ it.each(['429', 'transport'])('[F5] keeps a %s failure and its distinct echo whe
   fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
   await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
   await write(text);
-  expect((await screen.findByRole('alert')).textContent).toContain(mode === '429' ? '消息未发送' : '发送结果未确认');
+  expect((await screen.findByRole('alert')).textContent).toContain(mode === '429' ? 'Message not sent' : 'Send result unconfirmed');
   // The original read was stale; a refresh reveals a pre-existing equal row.
   // Its server timestamp is 2, earlier than this request's Date.now().
   rows = [first, oldEqual, sessionItem(ASSISTANT_CARD.id, 3, 'Previously completed response')];
@@ -1071,8 +1071,8 @@ it.each(['429', 'transport'])('[F5] keeps a %s failure and its distinct echo whe
   const sent = mode === '429' ? 1 : SEND_RETRIES + 1;
   expect(requests.filter((request) => request.path.endsWith('/messages'))).toHaveLength(sent);
   await screen.findByText('Previously completed response');
-  expect(screen.getByRole('alert').textContent).toContain(mode === '429' ? '消息未发送' : '发送结果未确认');
-  expect(screen.getByRole('button', { name: /^(Try again|重试|安全重试（同幂等键）)$/ })).toBeTruthy();
+  expect(screen.getByRole('alert').textContent).toContain(mode === '429' ? 'Message not sent' : 'Send result unconfirmed');
+  expect(screen.getByRole('button', { name: /^(Try again|Retry|Retry safely \(same key\))$/ })).toBeTruthy();
   /* Neither failure has an acknowledged entry ID. An old equal Unknown message cannot identify it.
      Keep both and retain Try again under the original key. */
   expect(within(drawerElement()).getAllByText(text, TRANSCRIPT_TEXT)).toHaveLength(2);
@@ -1336,7 +1336,7 @@ async function openAssistant() {
 async function sendUntilSpent(text: string) {
   await openAssistant();
   await write(text);
-  expect((await screen.findByRole('alert')).textContent).toContain('发送结果未确认');
+  expect((await screen.findByRole('alert')).textContent).toContain('Send result unconfirmed');
 }
 const CONNECTIVITY = /Transport request failed|timed out|back online|连接恢复/;
 const timedOut = (): never => { throw new DOMException('Request timed out.', 'TimeoutError'); };

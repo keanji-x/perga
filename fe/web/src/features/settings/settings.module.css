@@ -47,7 +47,7 @@
        so the space above and below it reads as the dialog's own margin rather
        than as a panel that slid up. It is not centring, and it is not pretending
        to be. */
-    min-block-size: min(30rem, 68dvh);
+    min-block-size: min(21rem, 56dvh);
   }
 
   .sectionNav {
@@ -124,6 +124,13 @@
     gap: var(--space-2);
   }
 
+  .compactNumericActions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: var(--space-2);
+  }
+
   /* The only green in the app. */
   .saved {
     font-size: var(--font-step-1-size);
@@ -150,6 +157,25 @@
     font-family: var(--font-mono);
     font-size: var(--font-step-1-size);
     color: var(--text-3);
+  }
+
+  .diagnostics {
+    margin-block-start: var(--space-2);
+    max-inline-size: var(--measure-list);
+  }
+
+  .diagnosticsToggle {
+    padding-block: var(--space-1);
+    font: var(--type-metadata);
+    letter-spacing: var(--type-metadata-tracking);
+    color: var(--text-3);
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .diagnosticsToggle:hover,
+  .diagnosticsToggle:focus-visible {
+    color: var(--text-2);
   }
 
   .mobileSurface {

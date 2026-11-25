@@ -776,28 +776,6 @@
       letter-spacing: var(--type-ui-tracking);
       color: var(--text-2);
     }
-
-    .desktopChatAction {
-      min-block-size: var(--control-h);
-      padding-inline: var(--space-2);
-      border: 1px solid transparent;
-      border-radius: var(--radius-highlight);
-      background: transparent;
-      color: var(--text-2);
-    }
-
-    .desktopChatAction:hover,
-    .desktopChatAction:focus-visible {
-      background: var(--overlay-hover);
-      border-color: transparent;
-      color: var(--text);
-    }
-  }
-
-  @media (width < 60rem) {
-    .desktopChatAction {
-      display: none !important;
-    }
   }
 
   .fillReading { overflow-x: hidden; overflow-y: auto; scrollbar-gutter: stable; }

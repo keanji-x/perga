@@ -45,10 +45,9 @@
 
   .shellTrackOnly { grid-template-columns: minmax(0, 1fr); }
 
-  /* The manual collapse. Without this rule the toggle only swapped the rail's
-     contents and left a 200px column of empty ground beside them. */
+  /* The manual collapse: hide the sidebar rail completely and float only the single expand icon. */
   .shellCollapsed {
-    grid-template-columns: var(--rail-w-collapsed) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .shellExpanded {
@@ -248,15 +247,36 @@
     }
   }
 
-  /* 44 − 2×10 = 24px cannot hold a 28px control, so the collapsed strip drops
-     the inline padding entirely and each child centres itself in the full 44. */
-  .railCollapsed { padding-inline: var(--space-0); align-items: center; }
+  .railCollapsed {
+    position: fixed;
+    inset-block-start: calc(var(--workspace-header-inset, var(--space-3)) + (var(--workspace-header-row-height, var(--control-h)) - var(--control-h)) / 2);
+    inset-inline-start: var(--space-3);
+    z-index: var(--z-overlay);
+    inline-size: auto;
+    block-size: auto;
+    min-block-size: 0;
+    padding: 0;
+    align-items: flex-start;
+    background: transparent;
+    overflow: visible;
+  }
 
   .brandRow {
     display: flex;
     align-items: center;
     gap: var(--space-1);
     block-size: var(--navigation-header-height);
+  }
+
+  .railCollapsed .brandRow {
+    position: static;
+    block-size: auto;
+    margin-inline: 0;
+    padding: 0;
+    background: transparent;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-1);
   }
 
   .brand {
@@ -383,21 +403,8 @@
   }
 
   .shortcuts > *,
-  .areaGroups > *,
-  .collapsedFolders > * {
+  .areaGroups > * {
     flex-shrink: 0;
-  }
-
-  .collapsedFolders {
-    flex: 1;
-    min-block-size: var(--navigation-entry-height);
-    inline-size: 100%;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    overflow: auto;
-    overscroll-behavior: contain;
-    scrollbar-width: none;
   }
 
   .section,
@@ -612,10 +619,6 @@
     gap: var(--space-2);
   }
 
-  .railCollapsed .railFooter {
-    align-items: center;
-  }
-
   .userRow {
     z-index: var(--z-overlay);
     display: flex;
@@ -624,12 +627,6 @@
     padding-block: var(--space-2) var(--account-bottom-gutter);
     padding-inline-start: var(--navigation-label-inset);
     background: var(--surface-rail);
-  }
-
-  .railCollapsed .userRow {
-    inline-size: 100%;
-    justify-content: center;
-    padding-inline-start: 0;
   }
 
   .userName {
@@ -666,12 +663,6 @@
       0 1px 2px oklch(0% 0 0 / 0.04);
     color: var(--text);
     cursor: pointer;
-  }
-
-  .railCollapsed .avatar {
-    font-size: var(--font-step-1-size);
-    inline-size: var(--control-h);
-    block-size: var(--control-h);
   }
 
   .avatar:hover,
@@ -713,69 +704,6 @@
   .menuItem:hover,
   .menuItem:focus-visible {
     background: var(--overlay-hover);
-  }
-
-  /* Collapsed strip: compact landmark icons and framed editorial monograms. */
-  .stripItem {
-    display: grid;
-    place-items: center;
-    inline-size: var(--control-h);
-    block-size: var(--row-h);
-    border-radius: var(--radius-highlight);
-    color: var(--text-3);
-    cursor: pointer;
-    transition: background-color var(--motion-quick) var(--ease-feedback), color var(--motion-quick) var(--ease-feedback);
-  }
-
-  .stripItem:hover,
-  .stripItem:focus-visible {
-    background: var(--overlay-hover);
-    color: var(--text);
-  }
-
-  .stripItemActive {
-    background: var(--navigation-active-bg);
-    box-shadow: var(--navigation-active-shadow);
-    color: var(--text);
-  }
-
-  .stripDivider {
-    inline-size: var(--space-4);
-    block-size: 1px;
-    margin-block: var(--space-1);
-    background: var(--hairline);
-  }
-
-  .stripInitial {
-    display: grid;
-    place-items: center;
-    inline-size: 1.5rem;
-    block-size: 1.5rem;
-    border: 1px solid var(--hairline);
-    border-radius: var(--radius-sm);
-    background: var(--paper);
-    font-size: var(--font-step-1-size);
-    font-weight: var(--weight-medium);
-    line-height: 1;
-    color: var(--text-2);
-    transition: border-color var(--motion-quick) var(--ease-feedback), color var(--motion-quick) var(--ease-feedback);
-  }
-
-  .stripItem:hover .stripInitial,
-  .stripItem:focus-visible .stripInitial {
-    border-color: var(--hairline-strong);
-    color: var(--text);
-  }
-
-  /* The single figure. Tone is the whole signal — see the note in sidebar.tsx. */
-  .stripWaiting {
-    font: var(--type-compact-metadata);
-    letter-spacing: var(--type-compact-metadata-tracking);
-    display: grid;
-    place-items: center;
-    block-size: var(--row-h);
-    color: var(--warn-text);
-    font-variant-numeric: tabular-nums;
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -824,11 +752,24 @@
       border-block-end: 0;
     }
 
+    .railCollapsed,
     .railCollapsed .brandRow {
-      inline-size: 100%;
+      position: static;
+      background: transparent;
+      inline-size: auto;
+      block-size: auto;
       margin-inline: 0;
-      padding-inline: 0;
-      justify-content: center;
+      padding: 0;
+      flex-direction: column;
+      align-items: flex-start;
+    }
+
+    .railCollapsed {
+      position: fixed;
+    }
+
+    .shellCollapsed .main [data-nc-header-rows] {
+      padding-inline-start: max(calc(var(--space-5) + var(--document-start, 0px)), calc(var(--space-3) + var(--control-h) + var(--space-3)));
     }
 
     .brand {
