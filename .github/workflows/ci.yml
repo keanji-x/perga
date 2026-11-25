@@ -84,7 +84,7 @@ jobs:
         run: dotnet test Perga.sln --configuration Release --no-build --maxcpucount:1
       - name: Publish Host and bundle terminal bridge and templates
         run: |
-          bash tools/publish-host.sh perga "$PERGA_TERM_BRIDGE_BIN"
+          bash tools/publish-host.sh perga "$PERGA_TERM_BRIDGE_BIN" linux-x64
           tar -czf host.tar.gz perga
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
@@ -173,6 +173,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        if: runner.os == 'macOS'
         with:
           dotnet-version: '11.0.x'
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
@@ -193,7 +194,7 @@ jobs:
           (cd tools/perga-term-bridge && cargo test --locked --release && cargo build --locked --release)
           bridge="$PWD/tools/perga-term-bridge/target/release/perga-term-bridge"
           PERGA_TERM_BRIDGE_BIN="$bridge" dotnet test tests/Perga.TermClient.Tests --configuration Release
-          bash tools/publish-host.sh perga "$bridge"
+          bash tools/publish-host.sh perga "$bridge" osx-arm64
           lipo perga/Perga.Host -verify_arch arm64
           lipo perga/perga-term-bridge -verify_arch arm64
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Exercise an extracted release, including the assets requested by a browser.
+# Exercise an extracted self-contained release, including the assets requested by a browser.
 set -euo pipefail
 cd "${1:?usage: bash tools/smoke-package.sh EXTRACTED_PACKAGE_DIR}"
+test -x Perga.Host
 test -x perga-term-bridge
 test -s templates/agents-delivery/template.perga.js
 echo '{"jsonrpc":"2.0","id":1,"method":"session/close"}' |
@@ -10,7 +11,9 @@ echo '{"jsonrpc":"2.0","id":1,"method":"session/close"}' |
 tmp=$(mktemp -d)
 export PERGA_DATA_DIR="$tmp/data" PERGA_STATIC_WEB_DIR="$PWD/web"
 export Perga__EagerStartTerminalBridge=true
-dotnet Perga.Host.dll --urls http://127.0.0.1:0 > "$tmp/host.log" 2>&1 &
+# Unset DOTNET_ROOT to verify the self-contained Host launches without an external .NET runtime.
+env -u DOTNET_ROOT -u DOTNET_MULTILEVEL_LOOKUP -u ASPNETCORE_URLS -u Kestrel__Endpoints__Http__Url \
+  ./Perga.Host --urls http://127.0.0.1:0 > "$tmp/host.log" 2>&1 &
 host_pid=$!
 cleanup() {
   result=$?
