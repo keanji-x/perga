@@ -136,7 +136,9 @@ function buildVisionPageHtml(markdown, markSvg) {
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Vision — Perga</title>
   <meta name="description" content="Perga Vision and Fundamental Tensions: organizing multiple AIs for long-horizon work." />
-  <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+  <link rel="icon" type="image/svg+xml" href="./favicon.svg?v=2" />
+  <link rel="icon" type="image/png" sizes="192x192" href="./icon-192.png" />
+  <link rel="apple-touch-icon" href="./icon-192.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&display=swap" rel="stylesheet" />
@@ -280,6 +282,7 @@ function copyCanonicalAssetsAndBuildVision() {
     ['templates/equity-research/widgets/range-axis.html', 'widgets/range-axis.html'],
     ['src/Perga.Kernel/Templates/Memory/widgets/entries.html', 'widgets/entries.html'],
     ['fe/web/src/ui/brand/perga-app.svg', 'favicon.svg'],
+    ['fe/web/public/icons/perga-192.png', 'icon-192.png'],
   ];
 
   return {

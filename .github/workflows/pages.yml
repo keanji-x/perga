@@ -10,6 +10,7 @@ on:
       - 'templates/equity-research/widgets/range-axis.html'
       - 'src/Perga.Kernel/Templates/Memory/widgets/entries.html'
       - 'fe/web/src/ui/brand/**'
+      - 'fe/web/public/icons/**'
       - 'fe/web/src/styles/**'
       - 'fe/web/src/features/report/flow/**'
       - 'fe/web/src/features/report/editorial/**'
@@ -47,6 +48,7 @@ jobs:
           test -s site/dist/index.html
           test -s site/dist/vision.html
           test -s site/dist/favicon.svg
+          test -s site/dist/icon-192.png
           test -s site/dist/install.sh
           test -s site/dist/widgets/range-axis.html
           test -s site/dist/widgets/entries.html
