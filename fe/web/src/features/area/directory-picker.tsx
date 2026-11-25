@@ -130,7 +130,7 @@ function DirectoryPickerContent({
         data-nc-add-ssh-target-form
       >
         <p className={styles.sshTitle}>Add SSH machine</p>
-        {addError !== null && <Banner status="error" title={addError} data-nc-add-ssh-target-error />}
+        {addError !== null && <Banner status="error" role="alert" title={addError} data-nc-add-ssh-target-error />}
         <TextInput
           ref={sshTargetInputRef}
           label="SSH target"

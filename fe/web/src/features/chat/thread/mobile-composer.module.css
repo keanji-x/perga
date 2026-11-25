@@ -10,10 +10,10 @@
   .vendorComposer > div:has(.input) > div:has(.options) > div:first-child { display: contents; }
   .vendorComposer > div:has(.input) > div:has(.options) > div:last-child { grid-column: 2; grid-row: var(--nc-mobile-input-row); }
   .vendorComposer > div:has(.input) > div:has(.options) > div:last-child button { inline-size: var(--rail-w-collapsed); block-size: var(--rail-w-collapsed); box-sizing: border-box; padding: var(--space-half); background-clip: content-box; border-radius: var(--radius-pill); }
-  .vendorComposer > div:has(.input) > div:has(.options) > div:last-child button:disabled { opacity: 1 !important; background-color: var(--surface-chip) !important; color: var(--text-2) !important; }
+  .vendorComposer > div:has(.input) > div:has(.options) > div:last-child button:is(:disabled, [aria-disabled='true']) { opacity: 1 !important; background-color: var(--surface-chip) !important; color: var(--text-2) !important; }
   .vendorComposer > div:has(.input) > div:has(.options) > div:last-child button span:has(> svg) { inline-size: var(--glyph-xl) !important; block-size: var(--glyph-xl) !important; }
   .input { min-inline-size: 0; padding-inline: var(--space-3); }
-  .input [contenteditable] { font-size: var(--font-step-3-size); line-height: var(--font-step-3-line); min-block-size: var(--space-5); max-block-size: calc(var(--space-6) * 4); padding: 0; overflow: auto; }
+  .input [contenteditable]:not([data-astryx-token]) { font-size: var(--font-step-3-size); line-height: var(--font-step-3-line); min-block-size: var(--space-5); max-block-size: calc(var(--space-6) * 4); padding: 0; overflow: auto; }
   .options { position: absolute; inset-inline-start: calc(-1 * (var(--rail-w-collapsed) + var(--space-3) + var(--space-px))); inset-block-end: calc(-1 * var(--space-px)); }
   .options summary { display: grid; place-items: center; inline-size: var(--control-h-touch); block-size: var(--control-h-touch); list-style: none; border-radius: var(--radius-pill); cursor: pointer; }
   .options summary::-webkit-details-marker { display: none; }

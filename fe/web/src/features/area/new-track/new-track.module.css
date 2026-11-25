@@ -32,6 +32,8 @@
     position-anchor: --nc-new-track-menu !important;
     position-area: none !important;
     position-try-fallbacks: flip-block !important;
+    justify-self: stretch !important;
+    margin-inline: 0;
     inset-block-start: anchor(bottom);
     inset-block-end: auto;
     inline-size: auto;

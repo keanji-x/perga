@@ -222,7 +222,7 @@ describe('AppShell Area editor flow', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Create area' }));
     expect((await screen.findByRole('alert')).textContent).toContain('Payload Too Large');
     expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
-    expect(input.disabled).toBe(false);
+    expect(input.getAttribute('aria-disabled')).toBeNull();
     await userEvent.clear(input);
     await userEvent.type(input, 'Corrected');
     await userEvent.click(screen.getByRole('button', { name: 'Create area' }));
@@ -242,11 +242,11 @@ describe('AppShell Area editor flow', () => {
     await userEvent.type(input, 'Keep original');
     await userEvent.click(screen.getByRole('button', { name: 'Create area' }));
     expect((await screen.findByRole('alert')).textContent).toContain('Creation could not be confirmed');
-    expect(input.disabled).toBe(true);
+    expect(input.getAttribute('aria-disabled')).toBe('true');
     await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
     await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Payload Too Large'));
     expect(screen.getByRole('alert').textContent).toContain('Creation could not be confirmed');
-    expect(input.disabled).toBe(true);
+    expect(input.getAttribute('aria-disabled')).toBe('true');
     await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'New area' })).toBeNull());
     expect(writes).toHaveLength(3);
@@ -267,7 +267,7 @@ describe('AppShell Area editor flow', () => {
     expect((await screen.findByRole('alert')).textContent).toContain(text);
     expect(writes).toHaveLength(1);
     expect(writes[0]).toMatchObject({ method: 'PATCH', path: '/api/v1/areas/c1', body: { name: 'Changed' } });
-    expect(input.disabled).toBe(false);
+    expect(input.getAttribute('aria-disabled')).toBeNull();
   });
 
   it('creates from the shared Dialog with no template default', async () => {
@@ -302,7 +302,7 @@ describe('AppShell Area editor flow', () => {
     const [body, key] = harness.create.mock.calls[0] as [unknown, string];
     expect(key).toEqual(expect.any(String));
     expect(key.length).toBeGreaterThan(0);
-    expect(screen.getByRole<HTMLInputElement>('textbox', { name: /^Name/ }).disabled).toBe(true);
+    expect(screen.getByRole<HTMLInputElement>('textbox', { name: /^Name/ }).getAttribute('aria-disabled')).toBe('true');
     await userEvent.keyboard('{Escape}');
     expect(screen.queryByRole('dialog', { name: 'New area' })).toBeNull();
     await userEvent.click(screen.getByRole('button', { name: 'New area' }));
@@ -311,7 +311,7 @@ describe('AppShell Area editor flow', () => {
     await waitFor(() => expect(harness.create).toHaveBeenCalledTimes(2));
     expect(harness.create.mock.calls[1]).toEqual([body, key]);
     expect((await screen.findByRole('alert')).textContent).toContain('Version read failed.');
-    expect(screen.getByRole<HTMLInputElement>('textbox', { name: /^Name/ }).disabled).toBe(true);
+    expect(screen.getByRole<HTMLInputElement>('textbox', { name: /^Name/ }).getAttribute('aria-disabled')).toBe('true');
     await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
     await waitFor(() => expect(harness.create).toHaveBeenCalledTimes(3));
     expect(harness.create.mock.calls[2]).toEqual([body, key]);
@@ -337,7 +337,7 @@ describe('AppShell Area editor flow', () => {
     expect(alert.textContent).toContain('belongs to a different request');
     expect(alert.textContent).not.toContain('Try again');
     expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
-    expect(screen.getByRole<HTMLInputElement>('textbox', { name: /^Name/ }).disabled).toBe(false);
+    expect(screen.getByRole<HTMLInputElement>('textbox', { name: /^Name/ }).getAttribute('aria-disabled')).toBeNull();
     const reusedKey: unknown = harness.create.mock.calls[0]?.[1];
     await userEvent.click(screen.getByRole('button', { name: 'Create area' }));
     await waitFor(() => expect(harness.create).toHaveBeenCalledTimes(2));
@@ -373,7 +373,7 @@ describe('AppShell Area editor flow', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Create area' }));
     await screen.findByRole('alert');
     const input = screen.getByRole<HTMLInputElement>('textbox', { name: /^Name/ });
-    expect(input.disabled).toBe(false);
+    expect(input.getAttribute('aria-disabled')).toBeNull();
     await userEvent.clear(input);
     await userEvent.type(input, 'Corrected');
     harness.create.mockRejectedValueOnce(new Error('Response lost'));
@@ -433,7 +433,7 @@ describe('AppShell Area editor flow', () => {
     expect(busy.disabled).toBe(false);
     expect(document.activeElement).toBe(busy);
     expect(screen.queryByRole('button', { name: 'Close' })).toBeNull();
-    expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Cancel' }).disabled).toBe(true);
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Cancel' }).getAttribute('aria-disabled')).toBe('true');
     await userEvent.keyboard('{Escape}');
     expect(screen.getByRole('dialog', { name: 'New area' })).toBeTruthy();
 

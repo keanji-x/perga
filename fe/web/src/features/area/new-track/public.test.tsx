@@ -69,13 +69,13 @@ describe('NewTrackForm asks only what the track starts from', () => {
   /* Create is gated on the sentence and on nothing else, in both directions. */
   it('keeps submit disabled while the composer is empty', () => {
     renderForm();
-    expect(submitButton().disabled).toBe(true);
+    expect(submitButton().getAttribute('aria-disabled')).toBe('true');
   });
 
   it('enables submit on the sentence alone', async () => {
     renderForm();
     await fillMessage();
-    expect(submitButton().disabled).toBe(false);
+    expect(submitButton().getAttribute('aria-disabled')).toBeNull();
   });
 
   it('allows a locked request to replay while fresh workspace options are unavailable', async () => {
@@ -108,7 +108,7 @@ describe('NewTrackForm asks only what the track starts from', () => {
   it.each(BLANK_TO_THE_KERNEL)('refuses a draft of nothing but %s', async (_name, blank) => {
     const { props } = renderForm();
     await fillMessage(blank);
-    expect(submitButton().disabled).toBe(true);
+    expect(submitButton().getAttribute('aria-disabled')).toBe('true');
     await userEvent.type(screen.getByLabelText(TASK_LABEL), '{Enter}');
     expect(props.onSubmit).not.toHaveBeenCalled();
   });
@@ -135,7 +135,7 @@ describe('NewTrackForm asks only what the track starts from', () => {
 
   it('flips the label and blocks submit while submitting', () => {
     renderForm({ submitting: true });
-    expect(screen.getByRole('button', { name: 'Creating…' })).toHaveProperty('disabled', true);
+    expect(screen.getByRole('button', { name: 'Creating…' }).getAttribute('aria-disabled')).toBe('true');
   });
 
   it('surfaces the caller error in an alert region', () => {
@@ -159,7 +159,7 @@ describe('NewTrackForm asks only what the track starts from', () => {
   it('keeps the draft when Enter is pressed on a submit the form refuses', async () => {
     const { onSubmit } = renderForm({ submitBlocked: true });
     await fillMessage('Ship the thing');
-    expect(submitButton().disabled).toBe(true);
+    expect(submitButton().getAttribute('aria-disabled')).toBe('true');
 
     await userEvent.click(screen.getByLabelText(TASK_LABEL));
     await userEvent.keyboard('{Enter}');
@@ -266,10 +266,10 @@ describe('NewTrackForm asks only what the track starts from', () => {
 describe('The folder is optional, and its absence is the managed default', () => {
   it('never requires a folder to submit', async () => {
     const { onSubmit } = renderForm();
-    expect(submitButton().disabled).toBe(true);
+    expect(submitButton().getAttribute('aria-disabled')).toBe('true');
     await fillMessage();
     // Nothing about the folder gates the submit, before or after the picker has opened.
-    expect(submitButton().disabled).toBe(false);
+    expect(submitButton().getAttribute('aria-disabled')).toBeNull();
     await userEvent.click(folderChip());
     await userEvent.click(await screen.findByRole('menuitem', { name: /^Others…/ }));
     await screen.findByDisplayValue('/srv/app/');

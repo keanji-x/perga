@@ -49,8 +49,7 @@ export function OperationFeedback({ feedback, action }: {
   action?: ReactNode;
 }) {
   if (feedback.error === null) return null;
-  return <Banner status="error" title={feedback.error} endContent={action} isDismissable onDismiss={feedback.clear}
-    data-nc-operation-feedback="" />;
+  return <div role="alert" data-nc-operation-feedback=""><Banner status="error" title={feedback.error} endContent={action} isDismissable onDismiss={feedback.clear} /></div>;
 }
 
 export type DeleteConfirmState = Readonly<{

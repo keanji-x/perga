@@ -88,7 +88,7 @@ export function TrackRoute({ transport, unauthorized, cardRuntime, recentFiles, 
       showWorkspaceIsolation={!isMemoryTrack}
       workspaceWaiting={detail.data.workspacePreparation != null}
       workspaceNotice={detail.data.workspacePreparation === 'failed' && detail.data.track.closedAtMs != null
-        ? <Banner status="error" title="Reopen this Track to retry workspace setup." />
+        ? <Banner status="error" role="alert" title="Reopen this Track to retry workspace setup." />
         : detail.data.workspacePreparation === 'failed'
         ? <ErrorBox message={retry.isError
           ? readErrorText(retry.error, 'Workspace setup could not be restarted.')
@@ -96,7 +96,7 @@ export function TrackRoute({ transport, unauthorized, cardRuntime, recentFiles, 
           actionLabel="Retry workspace setup" pending={retry.isPending}
           onRetry={() => retry.mutate(track.id)} />
         : detail.data.workspacePreparation === 'unknown'
-        ? <Banner status="error" title="The last workspace setup result could not be confirmed. Work that needs the workspace is waiting." />
+        ? <Banner status="error" role="alert" title="The last workspace setup result could not be confirmed. Work that needs the workspace is waiting." />
         : detail.data.workspacePreparation === 'pending'
         ? <LoadingStatus>Preparing the workspace.</LoadingStatus>
         : undefined}

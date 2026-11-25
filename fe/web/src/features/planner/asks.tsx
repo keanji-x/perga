@@ -121,7 +121,7 @@ function AskForm({ ask, state, onChange, onAnswer, onBusy, onSettled }: {
       </button>}
       {showOwnInput && <div className={styles.own} role="group" aria-label="Your answer">
         <TextInput ref={ownInput} label={question.title} isLabelHidden
-          className={styles.answerInput} placeholder={question.options.length > 0 ? 'Or your own answer…' : 'Your answer…'} size="sm"
+          controlClassName={styles.answerInput} placeholder={question.options.length > 0 ? 'Or your own answer…' : 'Your answer…'} size="sm"
           value={draft.own} isDisabled={busy}
           onEnter={() => { void ownAnswer(); }}
           onChange={own => onChange({ drafts: drafts.map((item, index) => index === page

@@ -233,15 +233,15 @@ it('opens user message attachments in the Lightbox gallery, preserves unclipped 
 
     const dialog = await screen.findByRole('dialog', { name: 'Media viewer' });
     expect(within(dialog).getByText('2 / 2')).toBeTruthy();
-    expect(dialog.querySelector('img')?.getAttribute('src')).toBe(secondUrl);
+    expect(dialog.querySelector('img:not([aria-hidden="true"])')?.getAttribute('src')).toBe(secondUrl);
 
     fireEvent.click(within(dialog).getByRole('button', { name: 'Previous' }));
     expect(within(dialog).getByText('1 / 2')).toBeTruthy();
-    expect(dialog.querySelector('img')?.getAttribute('src')).toBe(firstUrl);
+    expect(dialog.querySelector('img:not([aria-hidden="true"])')?.getAttribute('src')).toBe(firstUrl);
 
     fireEvent.keyDown(dialog, { key: 'ArrowRight' });
     expect(within(dialog).getByText('2 / 2')).toBeTruthy();
-    expect(dialog.querySelector('img')?.getAttribute('src')).toBe(secondUrl);
+    expect(dialog.querySelector('img:not([aria-hidden="true"])')?.getAttribute('src')).toBe(secondUrl);
 
     fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Media viewer' })).toBeNull());

@@ -97,8 +97,8 @@ export function NewCardForm({
         onSubmit(values);
       }}
     >
-      {error !== null && <Banner status="error" title={error} data-nc-new-card-error
-        endContent={onRetry === null ? undefined : <Button label="Try again" variant="ghost" onClick={onRetry} />} />}
+      {error !== null && <div role="alert" data-nc-new-card-error=""><Banner status="error" title={error}
+        endContent={onRetry === null ? undefined : <Button label="Try again" variant="ghost" onClick={onRetry} />} /></div>}
 
       {entry.fields.map((field, index) => {
         const id = `${fieldId}-${field.key}`;

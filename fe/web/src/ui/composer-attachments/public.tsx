@@ -55,6 +55,7 @@ export function ComposerAttachmentStrip({
       {error !== null && error !== undefined && (
         <Banner
           status="error"
+          role="alert"
           title="That image was not attached"
           description={error}
         />

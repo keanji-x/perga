@@ -57,14 +57,12 @@ missing permissions and pending synchronization keep their owning state UI.
 
 ## Pinned dependency integration
 
-Astryx 0.6.3 declares ChatComposerTrigger.emptySearchResultsText as a string,
-but its useTriggerMenu renders that value directly as a React child (lines
-642–653 of the installed source). `astryx-trigger.tsx` is the single explicit
-adapter for that declaration mismatch. It passes the shared component directly;
-it does not insert a fake option, replace keyboard handling or mutate the DOM.
-The expected TypeScript error makes a future widened declaration require this
-adapter to be revisited. Real browser checks cover both @ and / empty menus,
-including zero options and unchanged input. No dependency files are patched.
+Astryx 0.7.x declares `ChatComposerTrigger.emptySearchText` as a `ReactNode`.
+`astryx-trigger.tsx` is the single explicit adapter that supplies our shared
+compact `EmptyState` to that slot without inserting a fake option, replacing
+keyboard handling, or mutating the DOM. Real browser checks cover both `@` and
+`/` empty menus, including zero options and unchanged input. No dependency
+files are patched for this integration.
 
 The consistency work uses one neutral UI primitive shared by independent features.
 

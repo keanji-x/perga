@@ -79,7 +79,7 @@ export function AreaEditorForm(props: AreaEditorFormProps) {
 
   return (
     <VStack as="form" gap={3} className={styles.form} onSubmit={submit}>
-      {error !== null && <Banner status="error" title={error} data-nc-area-editor-error />}
+      {error !== null && <Banner status="error" role="alert" title={error} data-nc-area-editor-error />}
       <TextInput
         {...NATIVE_REQUIRED_INPUT_PROPS}
         ref={nameInputRef}

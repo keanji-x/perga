@@ -264,7 +264,7 @@ describe('New track model selection', () => {
     const original = createdTrackRequests(sent)[0];
     expect(original?.body).toMatchObject({ model: 'gpt-5' });
     expect(original?.body).not.toHaveProperty('first_message');
-    expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Model: gpt-5' }).disabled).toBe(true);
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Model: gpt-5' }).getAttribute('aria-disabled')).toBe('true');
     await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
     await waitFor(() => expect(createdTrackRequests(sent)).toHaveLength(2));
     expect(createdTrackRequests(sent)[1]?.body).toEqual(original?.body);
@@ -433,7 +433,7 @@ describe('New track model selection', () => {
     await waitFor(() => expect(window.location.pathname).toBe(`/track/w-new`));
     const drawer = await screen.findByRole('complementary', { name: 'Planner' });
     const trigger = await within(drawer).findByRole('button', { name: 'Model: Default' });
-    await waitFor(() => expect((trigger as HTMLButtonElement).disabled).toBe(false));
+    await waitFor(() => expect(trigger.getAttribute('aria-disabled')).toBeNull());
     await userEvent.click(trigger);
     const dialog = await screen.findByRole('dialog');
     const models = within(dialog).getByRole('group', { name: 'Models' });
@@ -565,7 +565,7 @@ describe('Track creation drafts survive navigation', () => {
     await userEvent.type(screen.getByLabelText(TASK_LABEL), 'Keep this after Area deletion');
     await act(async () => { client.setQueryData(['areas'], []); await new Promise((resolve) => setTimeout(resolve, 0)); });
     expect(screen.getByLabelText(TASK_LABEL).textContent).toBe('Keep this after Area deletion');
-    expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Create track' }).disabled).toBe(true);
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Create track' }).getAttribute('aria-disabled')).toBe('true');
     await userEvent.keyboard('{Enter}');
     expect(createdTrackRequests(sent)).toEqual([]);
     expect(screen.getByRole('main').textContent).toContain('draft');
@@ -911,9 +911,9 @@ describe('the new-track page is a route reached from Area groups', () => {
     expect(screen.queryByLabelText(/title/i)).toBeNull();
 
     const create = await screen.findByRole('button', { name: 'Create track' });
-    expect(create.hasAttribute('disabled')).toBe(true);
+    expect(create.getAttribute('aria-disabled')).toBe('true');
     await userEvent.type(screen.getByLabelText(TASK_LABEL), 'Read it');
-    expect(create.hasAttribute('disabled')).toBe(false);
+    expect(create.getAttribute('aria-disabled')).toBeNull();
     await userEvent.click(create);
     await waitFor(() => expect(createdTrackBodies(sent)).toHaveLength(1));
     const body = createdTrackBodies(sent)[0] as Record<string, unknown>;
@@ -1453,7 +1453,7 @@ it('keeps an unconfirmed image-only creation retryable after reload without stor
   await findComposer();
   await waitFor(() => expect(screen.getByLabelText(TASK_LABEL).getAttribute('contenteditable')).toBe('false'));
   const submit = screen.getByRole('button', { name: 'Create track' });
-  expect(submit.hasAttribute('disabled')).toBe(false);
+  expect(submit.getAttribute('aria-disabled')).toBeNull();
   await userEvent.click(submit);
   await waitFor(() => expect(createdTrackRequests(sent)).toHaveLength(1));
   expect(createdTrackRequests(sent)[0]?.headers?.['Idempotency-Key']).toBe('image-only-unconfirmed-key');

@@ -34,9 +34,9 @@ function groupButton(container: HTMLElement): HTMLElement {
 }
 
 const thread = (container: HTMLElement) => container.querySelector<HTMLElement>('[data-nc-thread]')!;
-/* Vendor spinners are decorative in 0.6.3; status is announced separately.
+/* Vendor spinners are decorative (`role="progressbar"` in 0.7.17); status is announced separately.
  * Count visible paint rather than asking for an aria-hidden live region. */
-const spinners = () => [...document.querySelectorAll('[data-nc-thread] [role="status"]')]
+const spinners = () => [...document.querySelectorAll('[data-nc-thread] [role="progressbar"]')]
   .filter((node) => node.closest('[data-nc-current-meta]') === null && node.checkVisibility({ visibilityProperty: true }));
 /* The thread's working marks are decorative by contract; counted by the marker, not by a label. */
 const workingMarks = () => document.querySelectorAll('[data-nc-activity="working"]');
@@ -157,7 +157,7 @@ describe('tool activity groups', () => {
     expect(button.textContent).toContain('Running');
     expect(button.textContent).toContain('cargo build');
     expect(spinners()).toHaveLength(0);
-    expect(container.querySelector('[data-nc-thread] [role="status"]')!.checkVisibility()).toBe(false);
+    expect(container.querySelector('[data-nc-thread] [role="progressbar"]')!.checkVisibility()).toBe(false);
     expect(workingMarks()).toHaveLength(0);
     act(() => { fireEvent.click(button); });
     expect(spinners()).toHaveLength(0);
@@ -182,7 +182,7 @@ describe('tool activity groups', () => {
       expect(workingMarks()).toHaveLength(0);
     };
     onlyFreshSpins();
-    expect(container.querySelector('[data-nc-thread] [role="status"]')!.checkVisibility()).toBe(false);
+    expect(container.querySelector('[data-nc-thread] [role="progressbar"]')!.checkVisibility()).toBe(false);
     const button = groupButton(container);
     act(() => { fireEvent.click(button); });
     expect(button.getAttribute('aria-expanded')).toBe('true');

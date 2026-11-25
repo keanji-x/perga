@@ -88,7 +88,7 @@ describe('Enter in the new-track sentence while the @ menu is open', () => {
     const onSubmit = vi.fn();
     render(<Form search={() => new Promise(() => undefined)} onSubmit={onSubmit} />);
     await userEvent.type(field(), 'fix @zz');
-    await screen.findByText('Searching…');
+    await waitFor(() => { expect(screen.getByRole('listbox', { name: 'Mention' }).textContent).toContain('Searching…'); });
     imeEnter();
     await waitFor(() => { expect(field().textContent).toBe('fix @zz'); });
     expect(onSubmit).not.toHaveBeenCalled();
@@ -98,7 +98,7 @@ describe('Enter in the new-track sentence while the @ menu is open', () => {
     const onSubmit = vi.fn();
     render(<Form search={() => new Promise(() => undefined)} onSubmit={onSubmit} />);
     await userEvent.type(field(), 'fix @roll');
-    await screen.findByText('Searching…');
+    await waitFor(() => { expect(screen.getByRole('listbox', { name: 'Mention' }).textContent).toContain('Searching…'); });
     await userEvent.keyboard('{Enter}');
     expect(onSubmit).not.toHaveBeenCalled();
     expect(field().textContent).toBe('fix @roll');

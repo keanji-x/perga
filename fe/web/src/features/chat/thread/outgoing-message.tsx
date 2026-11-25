@@ -27,8 +27,8 @@ export function OutgoingMessage({ text, mobile, speaker, queued = false, edited 
       {...(replacement ? { 'data-nc-replacement': '' } : {})}
     >{sentMentionParts(text).map((part, index) => {
       if (part.label === null) return part.text;
-      const pill = <Badge className={styles.mentionPill} label={<span className={styles.mentionLabel}>{part.label}</span>} />;
-      return <span key={index} data-nc-sent-mention="" title={part.text}>
+      const pill = <Badge label={part.label} />;
+      return <span key={index} className={styles.mentionToken} data-nc-sent-mention="" title={part.text}>
         {part.memoryScope === undefined ? pill : renderMemoryMention?.(part.memoryScope, pill) ?? pill}
       </span>;
     })}</p>

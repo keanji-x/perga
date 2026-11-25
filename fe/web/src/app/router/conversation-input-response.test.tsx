@@ -106,7 +106,7 @@ it('shows the local sending state before a held request answers', async () => {
     expect(buildConversationTranscript).not.toHaveBeenCalled();
     // Local dispatch is not a confirmed queued entry.
     expect(screen.queryByText('Queued · sends when this turn ends')).toBeNull();
-    expect(screen.getByRole('button', { name: 'Send' }).hasAttribute('disabled')).toBe(true);
+    expect(screen.getByRole('button', { name: 'Send' }).getAttribute('aria-disabled')).toBe('true');
     expect(screen.queryByText('Running', { exact: true })).toBeNull();
     fireEvent.keyDown(field(), { key: 'Enter' });
     expect(view.requests.filter(request => request.path.endsWith('/messages'))).toHaveLength(1);
@@ -126,7 +126,7 @@ it('shows first-message sending feedback while conversation creation is held', a
     expect(document.querySelector('[data-nc-turn="you"]')?.textContent).toBe('The first local message');
     expect(screen.getByRole('group', { name: 'Message composer' }).getAttribute('aria-busy')).toBe('true');
     expect(screen.queryByText('Sending…')).toBeNull();
-    expect(screen.getByRole('button', { name: 'Send' }).hasAttribute('disabled')).toBe(true);
+    expect(screen.getByRole('button', { name: 'Send' }).getAttribute('aria-disabled')).toBe('true');
   } finally { await response.release(fixtureCreation(fixtureSession('created', 'daily'))); cleanup(); view.client.clear(); }
 });
 

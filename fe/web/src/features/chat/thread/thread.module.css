@@ -256,16 +256,21 @@
     outline-offset: 2px;
   }
 
-  .mentionPill {
+  /* Match Astryx ChatTokenizedText / ChatComposerInput token alignment (1lh + top)
+     so persisted mention pills center cleanly on the line box beside CJK and Latin text. */
+  .mentionToken {
+    display: inline-flex;
+    align-items: center;
+    block-size: 1lh;
     max-inline-size: 100%;
-    vertical-align: middle;
+    vertical-align: top;
   }
 
-  .mentionLabel {
+  .mentionToken > a {
+    display: inline-flex;
+    align-items: center;
+    max-inline-size: 100%;
     min-inline-size: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
 
   /*
@@ -505,11 +510,11 @@
    */
   /* An empty disabled editor loses its line box. Reserve the same line and
      vertical padding while a send is out so the pinned composer cannot shrink. */
-  .composer:not(:where([data-nc-centered-footer] *)) .input [contenteditable] {
+  .composer:not(:where([data-nc-centered-footer] *)) .input [contenteditable]:not([data-astryx-token]) {
     min-block-size: calc(1lh + var(--space-2) * 2);
   }
 
-  [data-nc-embedded-reading]:not([data-nc-centered-footer]) .input [contenteditable] {
+  [data-nc-embedded-reading]:not([data-nc-centered-footer]) .input [contenteditable]:not([data-astryx-token]) {
     min-block-size: calc(1.5lh + var(--space-2) * 2);
   }
 
@@ -939,6 +944,8 @@
     position-anchor: --nc-composer-menu !important;
     position-area: none !important;
     position-try-fallbacks: none !important;
+    justify-self: stretch !important;
+    margin-inline: 0;
     inset-block-start: auto;
     /* The UA stylesheet gives `[popover]` `width: fit-content`, which would
        out-rank the end inset (an over-constrained box drops it) and leave the
