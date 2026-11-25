@@ -106,11 +106,13 @@ public sealed class FlowTrackIntegrationTests
                 parent = await CreateParentAsync(host, kernel, ct);
 
                 // Hold provider dispatch so shutdown leaves the real creation transaction committed
-                // with its first input still unclaimed.
+                // with its first input still unclaimed, while letting non-repeatable workspace
+                // preparation finish before disposing the first host.
                 kernel.DispatchAdmission.SetDraining(true);
                 var parentLead = Assert.Single(parent.Sessions);
                 child = await ((IFlowTrackSpawner)kernel).SpawnAsync(parent.Track, parentLead,
                     taskId, 1, action, ct);
+                await kernel.Actors.GetOrActivate(child.Id).EnsureMountedAsync(ct);
                 var runKey = $"{parent.Track.Id}:{taskId}:r1";
                 var creationKey = $"flow_track:{runKey}";
                 inputKey = $"flow_track_prompt:{runKey}";
