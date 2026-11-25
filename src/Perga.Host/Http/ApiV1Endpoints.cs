@@ -108,7 +108,7 @@ public static class ApiV1Endpoints
         v1.MapPost("/areas", async (HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
         {
             var req = await ReadRequiredJsonBodyAsync<CreateAreaRequest>(ctx, ct).ConfigureAwait(false);
-            var created = await kernel.CreateAreaAsync(req, ct, OptionalCreationKey(ctx)).ConfigureAwait(false);
+            var created = await kernel.CreateAreaAsync(req, ct, HttpIdempotency.OptionalKey(ctx)).ConfigureAwait(false);
             return TypedResults.Json(created, PergaJsonDefaults.ApiOptions, statusCode: StatusCodes.Status201Created);
         }).WithMetadata(new JsonRequestContract(typeof(CreateAreaRequest), IsOptional: false)).WithMetadata(new SuccessStatus(201)).WithMetadata(new RequestHeader("Idempotency-Key", false));
 
@@ -143,7 +143,7 @@ public static class ApiV1Endpoints
         v1.MapPost("/tracks", async (HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
         {
             var req = await ReadRequiredJsonBodyAsync<CreateTrackRequest>(ctx, ct).ConfigureAwait(false);
-            var snapshot = await kernel.CreateTrackAsync(req, ct, OptionalCreationKey(ctx)).ConfigureAwait(false);
+            var snapshot = await kernel.CreateTrackAsync(req, ct, HttpIdempotency.OptionalKey(ctx)).ConfigureAwait(false);
             return TypedResults.Json(snapshot, PergaJsonDefaults.ApiOptions, statusCode: StatusCodes.Status201Created);
         }).Produces<TrackAggregateSnapshot>(StatusCodes.Status201Created).WithMetadata(new JsonRequestContract(typeof(CreateTrackRequest), IsOptional: false)).WithMetadata(new SuccessStatus(201)).WithMetadata(new RequestHeader("Idempotency-Key", false));
 
@@ -430,15 +430,6 @@ public static class ApiV1Endpoints
         return endpoints;
     }
 
-    private static string? OptionalCreationKey(HttpContext ctx)
-    {
-        if (!ctx.Request.Headers.TryGetValue("Idempotency-Key", out var values))
-            return null;
-        if (values.Count != 1)
-            throw KernelException.InvalidArgument("Exactly one Idempotency-Key is allowed.");
-        return values[0] ?? string.Empty;
-    }
-
     private static async Task<T> ReadRequiredJsonBodyAsync<T>(HttpContext ctx, CancellationToken ct, JsonSerializerOptions? options = null)
     {
         var value = await JsonSerializer.DeserializeAsync<T>(ctx.Request.Body, options ?? PergaJsonDefaults.ApiOptions, ct)
@@ -489,7 +480,7 @@ public static class ApiV1Endpoints
 
     private static string RequiredMessageKey(HttpContext ctx)
     {
-        var key = OptionalCreationKey(ctx);
+        var key = HttpIdempotency.OptionalKey(ctx);
         if (string.IsNullOrWhiteSpace(key))
             throw KernelException.InvalidArgument("Idempotency-Key HTTP header is required.");
         return key.Trim();

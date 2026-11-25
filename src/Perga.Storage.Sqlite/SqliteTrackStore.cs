@@ -420,8 +420,8 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable, IS
     public Task<AskDto?> GetAskAsync(string askId, CancellationToken ct = default) =>
         _correspondenceRepository.GetAskAsync(askId, ct);
 
-    public Task UpsertMailAsync(MailDto mail, EventEnvelopeDto evt, CancellationToken ct, bool requestWake = true, Action? beforeWrite = null) =>
-        _correspondenceRepository.UpsertMailAsync(mail, evt, ct, requestWake, beforeWrite);
+    public Task<MailDto> UpsertMailAsync(MailDto mail, EventEnvelopeDto evt, CancellationToken ct, bool requestWake = true, Action? beforeWrite = null, ResourceCreationKey? creationKey = null) =>
+        _correspondenceRepository.UpsertMailAsync(mail, evt, ct, requestWake, beforeWrite, creationKey);
 
     public Task MarkMailReadAsync(string mailId, long readAtMs, CancellationToken ct = default) =>
         _correspondenceRepository.MarkMailReadAsync(mailId, readAtMs, ct);

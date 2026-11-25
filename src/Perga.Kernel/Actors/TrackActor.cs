@@ -289,11 +289,8 @@ public sealed partial class TrackActor : IAsyncDisposable
         CancellationToken ct, string? replyToMailId, InteropPrincipal.Session? authorization = null, bool requireLead = false)
         => _interactions.SendCrossTrackMailAsync(callerSessionId, toTrackId, summary, body, deliverToTargetTrack, ct, replyToMailId, authorization, requireLead);
 
-    internal Task ReceiveMailAsync(MailDto mail, CancellationToken ct = default, Action? authorizeDelivery = null)
-        => _interactions.ReceiveMailAsync(mail, ct, authorizeDelivery);
-
-    internal Task<MailDto> ReceiveDistillMailAsync(MailDto mail, bool idempotent, CancellationToken ct = default)
-        => _interactions.ReceiveDistillMailAsync(mail, idempotent, ct);
+    internal Task<MailDto> ReceiveMailAsync(MailDto mail, CancellationToken ct = default, Action? authorizeDelivery = null, ResourceCreationKey? creationKey = null)
+        => _interactions.ReceiveMailAsync(mail, ct, authorizeDelivery, creationKey);
 
     public Task<IReadOnlyList<MailDto>> ListMailsAsync(bool unreadOnly = false, CancellationToken ct = default)
         => _interactions.ListMailsAsync(unreadOnly, ct);

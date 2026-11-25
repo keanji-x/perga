@@ -2,7 +2,14 @@ import { expect, it } from 'vitest';
 
 import { invalidationPlanFor } from '../events/invalidation-plan.js';
 import { buildMemoryDistillPrompt, memoryDistillOperation, memoryMentionsOperation, memoryPlannerTrackOperation,
-  memoryUpdatedPayloadSchema, parseMemoryMentionAddress } from './memory.js';
+  memoryUpdatedPayloadSchema, parseMemoryDistillCommand, parseMemoryMentionAddress } from './memory.js';
+
+it('parses /mem scope and focus arguments consistently', () => {
+  expect(parseMemoryDistillCommand('')).toEqual({});
+  expect(parseMemoryDistillCommand('area release checklist')).toEqual({ scope: 'area', focus: 'release checklist' });
+  expect(parseMemoryDistillCommand('GLOBAL   focus here  ')).toEqual({ scope: 'global', focus: 'focus here' });
+  expect(parseMemoryDistillCommand('areas should not match')).toEqual({ focus: 'areas should not match' });
+});
 
 it('proposes durable takeaways to the chosen scope and keeps Today global', () => {
   expect(buildMemoryDistillPrompt({ hasUserArea: true })).toContain('scope: "area" for project-specific takeaways and scope: "global" for cross-project preferences');

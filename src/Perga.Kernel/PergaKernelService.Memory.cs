@@ -1,5 +1,3 @@
-using System.Security.Cryptography;
-using System.Text;
 using Perga.Contracts;
 using Perga.Kernel.Ports;
 
@@ -21,6 +19,7 @@ public partial interface IPergaKernel
 
 public sealed partial class PergaKernelService
 {
+    private const int MaxDistillFocusLength = 2_000;
     private readonly IMemoryContextProvider _memoryContext;
 
     public async Task<MemoryPlannerTrackDto> GetOrEnsureMemoryTrackAsync(string? areaId, CancellationToken ct = default)
@@ -58,16 +57,21 @@ public sealed partial class PergaKernelService
     public async Task<MemoryDistillResultDto> DistillTrackToMemoryAsync(string trackId, string? scope = "auto", string? focus = null,
         string? requestKey = null, CancellationToken ct = default)
     {
-        if (requestKey is not null && string.IsNullOrWhiteSpace(requestKey))
-            throw KernelException.InvalidArgument("Idempotency-Key cannot be empty.");
+        var normalizedScope = scope ?? "auto";
+        if (normalizedScope is not ("auto" or "area" or "global"))
+            throw KernelException.InvalidArgument("Memory distillation scope must be 'auto', 'area', or 'global'.");
+        var normalizedFocus = string.IsNullOrWhiteSpace(focus) ? null : focus.Trim();
+        if (normalizedFocus is { Length: > MaxDistillFocusLength })
+            throw KernelException.InvalidArgument($"Memory distillation focus must be at most {MaxDistillFocusLength} characters.");
+
+        var creationKey = CreateKey("memory-distill", "", requestKey,
+            new { TrackId = trackId, Scope = normalizedScope, Focus = normalizedFocus });
         var source = await _store.GetTrackAsync(trackId, ct).ConfigureAwait(false)
             ?? throw KernelException.NotFound($"Track '{trackId}' not found.");
         if (await _store.FindMemoryBindingByTrackIdAsync(trackId, ct).ConfigureAwait(false) is not null)
             throw KernelException.Forbidden("Memory Planner Tracks cannot be distilled into memory.");
-        if (scope is not (null or "auto" or "area" or "global"))
-            throw KernelException.InvalidArgument("Memory distillation scope must be 'auto', 'area', or 'global'.");
-        var hasUserArea = scope != "global" && await _store.IsUserAreaAsync(source.AreaId, ct).ConfigureAwait(false);
-        if (scope == "area" && !hasUserArea)
+        var hasUserArea = normalizedScope != "global" && await _store.IsUserAreaAsync(source.AreaId, ct).ConfigureAwait(false);
+        if (normalizedScope == "area" && !hasUserArea)
             throw KernelException.InvalidArgument("Only Tracks inside a user Area can distill to Area memory.");
 
         var target = await GetOrEnsureMemoryTrackAsync(hasUserArea ? source.AreaId : null, ct).ConfigureAwait(false);
@@ -79,24 +83,14 @@ public sealed partial class PergaKernelService
             Check existing entries with perga_memory list or recall, then curate the takeaways into Markdown with perga_memory put.
             Ask the human via user_ask if a takeaway conflicts with a pinned rule.
             """;
-        if (!string.IsNullOrWhiteSpace(focus))
-            body += $"\n\nFocus: {focus.Trim()}";
-        var normalizedKey = requestKey?.Trim();
-        var mailId = normalizedKey is null
-            ? $"mail_{Guid.NewGuid():N}"
-            : DeriveDistillMailId(target.TrackId, normalizedKey);
-        var mail = new MailDto(mailId, source.Id, target.TrackId,
+        if (normalizedFocus is not null)
+            body += $"\n\nFocus: {normalizedFocus}";
+        var mail = new MailDto($"mail_{Guid.NewGuid():N}", source.Id, target.TrackId,
             $"Distill track to memory: {title}", body, ReadAtMs: null, CreatedAtMs: NowMs());
         var stored = await Actors.GetOrActivate(target.TrackId)
-            .ReceiveDistillMailAsync(mail, idempotent: normalizedKey is not null, ct)
+            .ReceiveMailAsync(mail, ct, creationKey: creationKey)
             .ConfigureAwait(false);
         return new(target.ScopeKey, target.AreaId, target.TrackId, target.LeadSessionId, stored.Id);
-    }
-
-    private static string DeriveDistillMailId(string targetTrackId, string requestKey)
-    {
-        var hash = SHA256.HashData(Encoding.UTF8.GetBytes($"{targetTrackId}:{requestKey}"));
-        return $"mail_distill_{Convert.ToHexStringLower(hash)[..24]}";
     }
 
     public Task<MailDto> DeliverMemoryProposalAsync(string fromTrackId, string? callerSessionId, string scope,

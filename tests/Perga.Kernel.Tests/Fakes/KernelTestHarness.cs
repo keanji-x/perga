@@ -981,10 +981,17 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
             return Task.FromResult(_mailsByToTrack.GetValueOrDefault(trackId)?.Find(mail => mail.Id == mailId));
     }
 
-    public Task UpsertMailAsync(MailDto mail, EventEnvelopeDto evt, CancellationToken ct, bool requestWake = true, Action? beforeWrite = null)
+    public Task<MailDto> UpsertMailAsync(MailDto mail, EventEnvelopeDto evt, CancellationToken ct, bool requestWake = true, Action? beforeWrite = null, ResourceCreationKey? creationKey = null)
     {
         lock (_gate)
         {
+            if (creationKey is not null && FindCreationAsync(creationKey, ct).Result is { } replay)
+            {
+                var existing = _mailsByToTrack.Values.SelectMany(items => items).FirstOrDefault(item => item.Id == replay)
+                    ?? throw new KernelException(KernelErrorCode.IdempotencyKeyExhausted, "The created mail was deleted.");
+                return Task.FromResult(existing);
+            }
+
             beforeWrite?.Invoke();
             if (!_mailsByToTrack.TryGetValue(mail.ToTrackId, out var list))
             {
@@ -1004,8 +1011,9 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
                     EnqueueWakeLocked(TrackWakeRequests.Mail(mail), once: true);
             }
 
+            SaveReceipt(creationKey, mail.Id);
             AppendEventLocked(evt);
-            return Task.CompletedTask;
+            return Task.FromResult(mail);
         }
     }
 

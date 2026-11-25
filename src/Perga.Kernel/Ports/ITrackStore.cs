@@ -186,7 +186,7 @@ public interface ITrackStore : ITrackReadStore, IMemoryTrackStore
         IReadOnlyList<SessionItemDto> newItems,
         CancellationToken ct = default, EventEnvelopeDto? evt = null);
     Task UpsertAskAsync(AskDto ask, EventEnvelopeDto evt, CancellationToken ct);
-    Task UpsertMailAsync(MailDto mail, EventEnvelopeDto evt, CancellationToken ct, bool requestWake = true, Action? beforeWrite = null);
+    Task<MailDto> UpsertMailAsync(MailDto mail, EventEnvelopeDto evt, CancellationToken ct, bool requestWake = true, Action? beforeWrite = null, ResourceCreationKey? creationKey = null);
     Task UpsertTerminalAsync(TerminalDto terminal, EventEnvelopeDto? evt, CancellationToken ct);
     Task DeleteTerminalAsync(string trackId, string terminalId, EventEnvelopeDto? evt, CancellationToken ct);
     Task AppendEventAsync(EventEnvelopeDto evt, CancellationToken ct);

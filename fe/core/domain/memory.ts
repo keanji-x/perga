@@ -34,6 +34,20 @@ export function memoryDistillOperation(trackId: string, scope?: MemoryDistillSco
   };
 }
 
+export function parseMemoryDistillCommand(argument: string): Readonly<{
+  scope?: MemoryDistillScope;
+  focus?: string;
+}> {
+  const match = /^(area|global)(?:\s+|$)/i.exec(argument);
+  const scopeToken = match?.[1]?.toLowerCase();
+  const rawFocus = match === null ? argument : argument.slice(match[0].length);
+  const focus = rawFocus.trim();
+  return {
+    ...(scopeToken === 'area' || scopeToken === 'global' ? { scope: scopeToken } : {}),
+    ...(focus === '' ? {} : { focus }),
+  };
+}
+
 export function buildMemoryDistillPrompt({ scope, focus, hasUserArea }: {
   scope?: MemoryDistillScope;
   focus?: string;
