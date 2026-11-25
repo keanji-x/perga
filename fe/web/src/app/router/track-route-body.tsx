@@ -285,6 +285,7 @@ export function TrackRouteBody({
       decideApproval: (approval, optionId) => trackMutations.decideApproval(track.id, approval, optionId),
       planner: plannerCard === undefined ? null : {
         cardId: plannerCard.id, areaId: track.areaId, memoryAreaId, asks: openAsks,
+        hideMemoryCommand: isMemoryTrack, trackClosed: track.closedAt != null,
         answerAsk: (askId, answers) => {
           const ask = openAsks.find(item => item.askId === askId);
           return trackMutations.answerAsk(track.id, askId, answers, ask?.questions);

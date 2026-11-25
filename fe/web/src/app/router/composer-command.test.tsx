@@ -73,9 +73,43 @@ it('shows registry order and filters by command-name prefix', async () => {
   renderCommandFixture(); const input = await open();
   await type(input, '/');
   await waitFor(() => expect(screen.getAllByRole('option').map(option => option.querySelectorAll('span')[1]?.textContent))
-    .toEqual(['reset', 'new', 'side', 'compact', 'terminal', 'close']));
+    .toEqual(['reset', 'new', 'side', 'compact', 'mem', 'terminal', 'close']));
   await type(input, '/cl');
   await waitFor(() => expect(screen.getAllByRole('option').map(option => option.textContent)).toEqual(['closeClose this Track']));
+});
+
+it.each([
+  ['/mem', 'auto', undefined, undefined],
+  ['/mem global release checklist', 'global', 'release checklist', undefined],
+  ['/mem release checklist', 'auto', 'release checklist', undefined],
+  ['/mem area release checklist', 'area', 'release checklist', undefined],
+  ['/mem area release checklist', 'global', 'release checklist', 'sys_daily'],
+] as const)('sends %s as a memory request to the Lead for %s scope', async (command, scope, focus, areaId) => {
+  const { requests } = renderCommandFixture({ areaId });
+  await submit(await open(), command);
+  await waitFor(() => expect(requests.filter(request => request.path.endsWith('/messages'))).toHaveLength(1));
+  const message = requests.find(request => request.path === '/api/v1/sessions/daily-planner/messages');
+  const content = (message?.body as { content: string }).content;
+  expect(content).toContain(`perga_memory propose with scope: "${scope === 'auto' ? 'area' : scope}"`);
+  if (scope === 'auto') expect(content).toContain('scope: "global" for cross-project preferences');
+  expect(content).toContain('perga_memory list or recall');
+  if (focus !== undefined) expect(content).toContain(`Focus: ${focus}`);
+  else expect(content).not.toContain('Focus:');
+});
+
+it.each([{ areaId: 'sys_memory' }, { shareScope: { trackId: 'daily' } }])(
+  'keeps /mem out of an ineligible Lead composer (%j)', async options => {
+    renderCommandFixture(options);
+    await type(await open(), '/');
+    await screen.findByRole('option', { name: /^compact/ });
+    expect(screen.queryByRole('option', { name: /^mem/ })).toBeNull();
+  });
+
+it('directs a closed Track Lead to the conversation header memory button', async () => {
+  const { requests } = renderCommandFixture({ closed: true });
+  await submit(await open(), '/mem');
+  expect((await screen.findByRole('alert')).textContent).toBe('Use Save to memory in the conversation header on closed Tracks.');
+  expect(requests.filter(request => request.path.endsWith('/messages'))).toHaveLength(0);
 });
 
 it('keeps the v1 running composer read-only and interrupts once through Stop', async () => {
@@ -117,11 +151,13 @@ it('keeps Track commands out of ordinary conversations and new drafts', async ()
   let input = await screen.findByRole('combobox', { name: 'Message' }); await type(input, '/');
   await waitFor(() => expect(screen.getAllByRole('option').length).toBeGreaterThan(0));
   expect(screen.queryByRole('option', { name: /^close/ })).toBeNull();
+  expect(screen.queryByRole('option', { name: /^mem/ })).toBeNull();
   await userEvent.click(screen.getByRole('button', { name: 'Close conversation' }));
   await userEvent.click(screen.getByRole('button', { name: /^New conversation$/ }));
   input = await screen.findByRole('combobox', { name: 'Message' }); await type(input, '/');
   await waitFor(() => expect(screen.getAllByRole('option').length).toBeGreaterThan(0));
   expect(screen.queryByRole('option', { name: /^close/ })).toBeNull();
+  expect(screen.queryByRole('option', { name: /^mem/ })).toBeNull();
 });
 
 

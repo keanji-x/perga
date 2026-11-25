@@ -461,6 +461,191 @@ public sealed partial class MemoryIntegrationTests
     }
 
     [Fact]
+    public async Task TodayCanProposeOnlyToGlobalMemory()
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var ct = timeout.Token;
+        await using var host = new PergaHostTestCluster();
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        var daily = (await kernel.GetDailyTrackAsync(null, ct))!;
+        var track = (await kernel.GetTrackAggregateAsync(daily.TrackId, ct)).Track;
+        var lead = await kernel.OpenMcpCallerAsync(track.LeadSessionId!, ct);
+
+        var (text, isError) = await CallToolAsync(host, McpPath, lead.Token, "propose",
+            new { scope = "area", summary = "Daily decision", details = "Keep the review checklist." }, ct);
+        Assert.True(isError, text);
+        Assert.Equal("Today does not belong to a user Area; propose to 'global' instead.", text);
+        var error = await Assert.ThrowsAsync<KernelException>(() => kernel.DeliverMemoryProposalAsync(
+            track.Id, lead.SessionId, "area", "Daily decision", "Keep the review checklist.", false, ct));
+        Assert.Equal(KernelErrorCode.InvalidArgument, error.Code);
+
+        var proposal = await SuccessfulCallAsync(host, lead, "propose",
+            new { scope = "global", summary = "Daily decision", details = "Keep the review checklist." }, ct);
+        var target = await kernel.GetOrEnsureMemoryTrackAsync(null, ct);
+        Assert.Equal(target.TrackId, proposal.GetProperty("trackId").GetString());
+    }
+
+    [Theory]
+    [InlineData("area", false, true)]
+    [InlineData("global", false, false)]
+    [InlineData("global", true, false)]
+    [InlineData("auto", false, true)]
+    [InlineData(null, false, true)]
+    [InlineData(null, true, false)]
+    public async Task DistillDeliversDurableMailAndWakesPlanner(string? scope, bool today, bool toArea)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var ct = timeout.Token;
+        await using var host = new PergaHostTestCluster();
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        string trackId;
+        if (today)
+        {
+            trackId = (await kernel.GetDailyTrackAsync(null, ct))!.TrackId;
+        }
+        else
+        {
+            (trackId, var leadId) = await host.CreateTrackAsync();
+            Assert.NotNull((await kernel.CloseTrackAsync(trackId, leadId, ct)).ClosedAtMs);
+        }
+        var source = (await kernel.GetTrackAggregateAsync(trackId, ct)).Track;
+        const string focus = "Review the release checklist.";
+
+        object request = scope is null ? new { trackId, focus } : new { trackId, scope, focus };
+        using var response = await host.AuthenticatedClient.PostAsJsonAsync(MemoryPath + "/distill", request, ct);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var result = (await response.Content.ReadFromJsonAsync<MemoryDistillResultDto>(PergaJsonDefaults.ApiOptions, ct))!;
+        var areaId = toArea ? source.AreaId : null;
+        var target = await kernel.GetOrEnsureMemoryTrackAsync(areaId, ct);
+        Assert.Equal(new MemoryDistillResultDto(target.ScopeKey, areaId, target.TrackId, target.LeadSessionId, result.MailId), result);
+
+        var store = host.Services.GetRequiredService<ITrackStore>();
+        var mail = Assert.Single(await store.ListMailsAsync(target.TrackId, ct: ct));
+        Assert.Equal(result.MailId, mail.Id);
+        Assert.Equal(trackId, mail.FromTrackId);
+        Assert.Equal(target.TrackId, mail.ToTrackId);
+        Assert.Equal($"Distill track to memory: {source.Title}", mail.Summary);
+        Assert.Contains(target.ScopeKey, mail.Body);
+        Assert.Contains(trackId, mail.Body);
+        Assert.Contains(focus, mail.Body);
+        await kernel.WaitForTrackIdleAsync(target.TrackId, ct);
+        var turn = Assert.Single(host.AgentRuntime.ExecutedTurns, item => item.Input.Prompt.Contains(focus, StringComparison.Ordinal));
+        Assert.Contains("You are the Memory Planner", turn.Spec.SystemPrompt);
+    }
+
+    [Fact]
+    public async Task DistillRejectsInvalidSourcesAndScopes()
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var ct = timeout.Token;
+        await using var host = new PergaHostTestCluster();
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        var today = (await kernel.GetDailyTrackAsync(null, ct))!;
+        var memory = await kernel.GetOrEnsureMemoryTrackAsync(null, ct);
+
+        foreach (var (trackId, scope, status) in new[]
+        {
+            (today.TrackId, "area", HttpStatusCode.BadRequest),
+            (today.TrackId, "other", HttpStatusCode.BadRequest),
+            (memory.TrackId, "global", HttpStatusCode.Forbidden),
+            ("trk_missing", "global", HttpStatusCode.NotFound),
+        })
+        {
+            using var response = await host.AuthenticatedClient.PostAsJsonAsync(MemoryPath + "/distill", new { trackId, scope }, ct);
+            Assert.Equal(status, response.StatusCode);
+        }
+        using (var emptyKey = new HttpRequestMessage(HttpMethod.Post, MemoryPath + "/distill")
+        {
+            Content = JsonContent.Create(new { trackId = today.TrackId, scope = "global" }),
+        })
+        {
+            emptyKey.Headers.TryAddWithoutValidation("Idempotency-Key", "   ");
+            using var response = await host.AuthenticatedClient.SendAsync(emptyKey, ct);
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        }
+        Assert.Empty(await kernel.ListMailsAsync(memory.TrackId, ct: ct));
+    }
+
+    [Fact]
+    public async Task DistillReplaysIdempotencyKeyWithoutDuplicateWakeAndRejectsMismatch()
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var ct = timeout.Token;
+        await using var host = new PergaHostTestCluster();
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        var (trackId, leadId) = await host.CreateTrackAsync();
+        Assert.NotNull((await kernel.CloseTrackAsync(trackId, leadId, ct)).ClosedAtMs);
+        var source = (await kernel.GetTrackAggregateAsync(trackId, ct)).Track;
+        var target = await kernel.GetOrEnsureMemoryTrackAsync(source.AreaId, ct);
+
+        async Task<(HttpStatusCode Status, MemoryDistillResultDto? Body)> PostWithKeyAsync(string key, string focus)
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Post, MemoryPath + "/distill")
+            {
+                Content = JsonContent.Create(new { trackId, focus }),
+            };
+            req.Headers.Add("Idempotency-Key", key);
+            using var res = await host.AuthenticatedClient.SendAsync(req, ct);
+            var body = res.IsSuccessStatusCode
+                ? await res.Content.ReadFromJsonAsync<MemoryDistillResultDto>(PergaJsonDefaults.ApiOptions, ct)
+                : null;
+            return (res.StatusCode, body);
+        }
+
+        var (status1, first) = await PostWithKeyAsync("distill-key-1", "Keep review checklist");
+        Assert.Equal(HttpStatusCode.OK, status1);
+        Assert.NotNull(first);
+        await kernel.WaitForTrackIdleAsync(target.TrackId, ct);
+
+        var (status2, replay) = await PostWithKeyAsync("distill-key-1", "Keep review checklist");
+        Assert.Equal(HttpStatusCode.OK, status2);
+        Assert.Equal(first, replay);
+
+        var (status3, _) = await PostWithKeyAsync("distill-key-1", "Different focus");
+        Assert.Equal(HttpStatusCode.Conflict, status3);
+
+        var store = host.Services.GetRequiredService<ITrackStore>();
+        var mail = Assert.Single(await store.ListMailsAsync(target.TrackId, ct: ct));
+        Assert.Equal(first.MailId, mail.Id);
+        Assert.Single(host.AgentRuntime.ExecutedTurns, item => item.Input.Prompt.Contains("Keep review checklist", StringComparison.Ordinal));
+
+        var concurrentSame = await Task.WhenAll(
+            PostWithKeyAsync("distill-key-concurrent", "Same focus"),
+            PostWithKeyAsync("distill-key-concurrent", "Same focus"));
+        Assert.All(concurrentSame, item => Assert.Equal(HttpStatusCode.OK, item.Status));
+        Assert.Equal(concurrentSame[0].Body, concurrentSame[1].Body);
+        await kernel.WaitForTrackIdleAsync(target.TrackId, ct);
+        Assert.Single(host.AgentRuntime.ExecutedTurns, item => item.Input.Prompt.Contains("Same focus", StringComparison.Ordinal));
+
+        var concurrentMismatch = await Task.WhenAll(
+            PostWithKeyAsync("distill-key-mismatch", "Focus A"),
+            PostWithKeyAsync("distill-key-mismatch", "Focus B"));
+        var winner = Assert.Single(concurrentMismatch, item => item.Status == HttpStatusCode.OK);
+        var conflict = Assert.Single(concurrentMismatch, item => item.Status == HttpStatusCode.Conflict);
+        Assert.NotNull(winner.Body);
+        Assert.Null(conflict.Body);
+        await kernel.WaitForTrackIdleAsync(target.TrackId, ct);
+        var winnerMail = Assert.Single(await store.ListMailsAsync(target.TrackId, ct: ct), m => m.Id == winner.Body!.MailId);
+        var winnerFocus = Assert.Single(new[] { "Focus A", "Focus B" }, f => winnerMail.Body.Contains(f, StringComparison.Ordinal));
+        Assert.Single(host.AgentRuntime.ExecutedTurns, item => item.Input.Prompt.Contains(winnerFocus, StringComparison.Ordinal));
+        Assert.DoesNotContain(host.AgentRuntime.ExecutedTurns, item => item.Input.Prompt.Contains(winnerFocus == "Focus A" ? "Focus B" : "Focus A", StringComparison.Ordinal));
+
+        kernel.DispatchAdmission.SetDraining(true);
+        var (drainedStatus, drained) = await PostWithKeyAsync("distill-key-drained", "Delayed poke");
+        Assert.Equal(HttpStatusCode.OK, drainedStatus);
+        Assert.NotNull(drained);
+        Assert.DoesNotContain(host.AgentRuntime.ExecutedTurns, item => item.Input.Prompt.Contains("Delayed poke", StringComparison.Ordinal));
+
+        kernel.DispatchAdmission.SetDraining(false);
+        var (replayStatus, replayed) = await PostWithKeyAsync("distill-key-drained", "Delayed poke");
+        Assert.Equal(HttpStatusCode.OK, replayStatus);
+        Assert.Equal(drained, replayed);
+        await kernel.WaitForTrackIdleAsync(target.TrackId, ct);
+        Assert.Single(host.AgentRuntime.ExecutedTurns, item => item.Input.Prompt.Contains("Delayed poke", StringComparison.Ordinal));
+        Assert.Single(await store.ListMailsAsync(target.TrackId, ct: ct), m => m.Id == drained.MailId);
+    }
+
+    [Fact]
     public async Task ProposalWakesTheMemoryPlannerThroughDurableMail()
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));

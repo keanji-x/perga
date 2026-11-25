@@ -1,3 +1,4 @@
+import { Button } from '@astryxdesign/core/Button';
 import { Divider } from '@astryxdesign/core/Divider';
 import { DropdownMenu, DropdownMenuItem } from '@astryxdesign/core/DropdownMenu';
 import { Icon } from '../../../ui/icon/public.tsx';
@@ -11,6 +12,17 @@ function SessionChip({ label, tone }: Readonly<{ label: string; tone: StatusTone
     {(tone === 'live' || tone === 'warning' || tone === 'error') && <span className={styles.dot} aria-hidden="true" />}
     <span className={styles.chipText}>{label}</span>
   </span>;
+}
+
+export function MemorySaveButton({ pending = false, disabled = false, tooltip = 'Save to memory (/mem)', onSave }: Readonly<{
+  pending?: boolean;
+  disabled?: boolean;
+  tooltip?: string;
+  onSave: () => void;
+}>) {
+  return <Button isIconOnly label="Save to memory" tooltip={tooltip}
+    icon={<Icon name="notebook-pen" size="sm" />} variant="ghost" size="sm" className={styles.menuButton}
+    isDisabled={pending || disabled} onClick={onSave} />;
 }
 
 export function ConversationSessionHeader({ session, state, taskId, readonlyReason, workerPaused, compactEnabled, resetEnabled, onCompact, onReset, onArchive }: Readonly<{

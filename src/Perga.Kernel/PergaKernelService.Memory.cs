@@ -1,13 +1,18 @@
+using System.Security.Cryptography;
+using System.Text;
 using Perga.Contracts;
 using Perga.Kernel.Ports;
 
 namespace Perga.Kernel;
 
 public sealed record MemoryPlannerTrackDto(string ScopeKey, string? AreaId, string TrackId, string LeadSessionId);
+public sealed record MemoryDistillResultDto(string ScopeKey, string? AreaId, string MemoryTrackId, string LeadSessionId, string MailId);
 
 public partial interface IPergaKernel
 {
     Task<MemoryPlannerTrackDto> GetOrEnsureMemoryTrackAsync(string? areaId, CancellationToken ct = default);
+    Task<MemoryDistillResultDto> DistillTrackToMemoryAsync(string trackId, string? scope = "auto", string? focus = null,
+        string? requestKey = null, CancellationToken ct = default);
     Task<MailDto> DeliverMemoryProposalAsync(string fromTrackId, string? callerSessionId, string scope,
         string summary, string details, bool suggestedPinned, CancellationToken ct = default);
     Task<MailDto> DeliverMemoryProposalAsync(McpSessionPrincipal caller, string generation, string scope,
@@ -50,6 +55,50 @@ public sealed partial class PergaKernelService
             ?? throw KernelException.PreconditionFailed("The Memory Planner Track needs a Lead conversation."));
     }
 
+    public async Task<MemoryDistillResultDto> DistillTrackToMemoryAsync(string trackId, string? scope = "auto", string? focus = null,
+        string? requestKey = null, CancellationToken ct = default)
+    {
+        if (requestKey is not null && string.IsNullOrWhiteSpace(requestKey))
+            throw KernelException.InvalidArgument("Idempotency-Key cannot be empty.");
+        var source = await _store.GetTrackAsync(trackId, ct).ConfigureAwait(false)
+            ?? throw KernelException.NotFound($"Track '{trackId}' not found.");
+        if (await _store.FindMemoryBindingByTrackIdAsync(trackId, ct).ConfigureAwait(false) is not null)
+            throw KernelException.Forbidden("Memory Planner Tracks cannot be distilled into memory.");
+        if (scope is not (null or "auto" or "area" or "global"))
+            throw KernelException.InvalidArgument("Memory distillation scope must be 'auto', 'area', or 'global'.");
+        var hasUserArea = scope != "global" && await _store.IsUserAreaAsync(source.AreaId, ct).ConfigureAwait(false);
+        if (scope == "area" && !hasUserArea)
+            throw KernelException.InvalidArgument("Only Tracks inside a user Area can distill to Area memory.");
+
+        var target = await GetOrEnsureMemoryTrackAsync(hasUserArea ? source.AreaId : null, ct).ConfigureAwait(false);
+        var title = source.Title.Length <= 100 ? source.Title : source.Title[..100];
+        var body = $"""
+            Distill durable takeaways from Track "{source.Title}" (`{source.Id}`) into memory scope `{target.ScopeKey}`.
+            Inspect the source with report_read using its Track ID. Use track_list with its Area ID (`{source.AreaId}`)
+            and includeClosed: true if you need related Track context.
+            Check existing entries with perga_memory list or recall, then curate the takeaways into Markdown with perga_memory put.
+            Ask the human via user_ask if a takeaway conflicts with a pinned rule.
+            """;
+        if (!string.IsNullOrWhiteSpace(focus))
+            body += $"\n\nFocus: {focus.Trim()}";
+        var normalizedKey = requestKey?.Trim();
+        var mailId = normalizedKey is null
+            ? $"mail_{Guid.NewGuid():N}"
+            : DeriveDistillMailId(target.TrackId, normalizedKey);
+        var mail = new MailDto(mailId, source.Id, target.TrackId,
+            $"Distill track to memory: {title}", body, ReadAtMs: null, CreatedAtMs: NowMs());
+        var stored = await Actors.GetOrActivate(target.TrackId)
+            .ReceiveDistillMailAsync(mail, idempotent: normalizedKey is not null, ct)
+            .ConfigureAwait(false);
+        return new(target.ScopeKey, target.AreaId, target.TrackId, target.LeadSessionId, stored.Id);
+    }
+
+    private static string DeriveDistillMailId(string targetTrackId, string requestKey)
+    {
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes($"{targetTrackId}:{requestKey}"));
+        return $"mail_distill_{Convert.ToHexStringLower(hash)[..24]}";
+    }
+
     public Task<MailDto> DeliverMemoryProposalAsync(string fromTrackId, string? callerSessionId, string scope,
         string summary, string details, bool suggestedPinned, CancellationToken ct = default) =>
         DeliverMemoryProposalCoreAsync(fromTrackId, callerSessionId, scope, summary, details, suggestedPinned, null, ct);
@@ -84,6 +133,8 @@ public sealed partial class PergaKernelService
             "area" => source.AreaId,
             _ => throw KernelException.InvalidArgument("Memory proposal scope must be 'area' or 'global'.")
         };
+        if (areaId is not null && !await _store.IsUserAreaAsync(areaId, ct).ConfigureAwait(false))
+            throw KernelException.InvalidArgument("Today does not belong to a user Area; propose to 'global' instead.");
         var target = await GetOrEnsureMemoryTrackAsync(areaId, ct).ConfigureAwait(false);
         return await SendMailCoreAsync(fromTrackId, lead, target.TrackId, $"Memory proposal: {summary}",
             $"Suggested scope: {target.ScopeKey}\nSuggested pinned: {suggestedPinned.ToString().ToLowerInvariant()}\n\n{details}",

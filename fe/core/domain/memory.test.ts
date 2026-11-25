@@ -1,7 +1,31 @@
 import { expect, it } from 'vitest';
 
 import { invalidationPlanFor } from '../events/invalidation-plan.js';
-import { memoryMentionsOperation, memoryPlannerTrackOperation, memoryUpdatedPayloadSchema, parseMemoryMentionAddress } from './memory.js';
+import { buildMemoryDistillPrompt, memoryDistillOperation, memoryMentionsOperation, memoryPlannerTrackOperation,
+  memoryUpdatedPayloadSchema, parseMemoryMentionAddress } from './memory.js';
+
+it('proposes durable takeaways to the chosen scope and keeps Today global', () => {
+  expect(buildMemoryDistillPrompt({ hasUserArea: true })).toContain('scope: "area" for project-specific takeaways and scope: "global" for cross-project preferences');
+  expect(buildMemoryDistillPrompt({ hasUserArea: false, scope: 'area' })).toContain('scope: "global"');
+  expect(buildMemoryDistillPrompt({ hasUserArea: true, scope: 'global', focus: ' review cadence ' }))
+    .toMatch(/perga_memory propose with scope: "global".*\nFocus: review cadence$/);
+});
+
+it('posts a distillation request and decodes the selected Memory Planner and durable mail', () => {
+  const operation = memoryDistillOperation('trk_source', 'area', 'Review cadence');
+  const result = { scopeKey: 'area:a', areaId: 'a', memoryTrackId: 'trk_memory', leadSessionId: 'mem_lead', mailId: 'mail_1' };
+  expect(operation).toMatchObject({
+    method: 'POST', path: '/api/v1/memory/distill', body: { trackId: 'trk_source', scope: 'area', focus: 'Review cadence' },
+  });
+  expect(operation.responseSchema.parse(result)).toEqual(result);
+  expect(operation.responseSchema.safeParse({ ...result, scopeKey: 'global', areaId: null }).success).toBe(false);
+  expect(operation.responseSchema.safeParse({ ...result, scopeKey: 'area:other' }).success).toBe(false);
+  const auto = memoryDistillOperation('trk_source', undefined, undefined, 'distill-key');
+  expect(auto.body).toEqual({ trackId: 'trk_source' });
+  expect(auto.headers).toEqual({ 'Idempotency-Key': 'distill-key' });
+  expect(auto.responseSchema.parse(result)).toEqual(result);
+  expect(auto.responseSchema.parse({ ...result, scopeKey: 'global', areaId: null }).areaId).toBeNull();
+});
 
 it('invalidates native Track queries and refreshes inherited counts on Global updates', () => {
   expect(memoryUpdatedPayloadSchema.safeParse({ scope: 'global', areaId: null }).success).toBe(false);

@@ -7,6 +7,7 @@ import { invalidationPlanFor } from '../../../../core/events/invalidation-plan.t
 import { applyEventEffects } from '../events/query-invalidation-adapter.ts';
 import { sessionItem, sessionPage, sessionReply } from './conversation-session-data.ts';
 import { renderDailyFixture } from './daily-planner-fixture.tsx';
+import { renderMemoryShortcutFixture } from './memory-shortcut-fixture.ts';
 import { fixtureReport, fixtureSession, fixtureSnapshot, fixtureTrack, fixtureWidgetReport } from './session-contract-fixture.ts';
 
 afterEach(cleanup);
@@ -109,9 +110,58 @@ it.each([
   expect(report.queryByRole('textbox')).toBeNull();
   expect(report.queryByRole('button', { name: /edit|delete/i })).toBeNull();
   expect(screen.queryByRole('button', { name: /track actions for/i })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Save to memory' })).toBeNull();
   expect(requests.filter(request => request.path.startsWith('/api/v1/memory/')).map(request => [request.method, request.path]))
     .toEqual([['POST', ensurePath]]);
   expect(screen.getByRole('button', { name: /Conversation Lead/ })).toBeTruthy();
+});
+
+it('sends the open Track conversation header button to the Lead without wiping a draft', async () => {
+  const { requests } = renderMemoryShortcutFixture();
+  await userEvent.click(await screen.findByRole('button', { name: /Conversation Lead/ }));
+  const input = await screen.findByRole('combobox', { name: 'Message' });
+  await userEvent.type(input, 'Draft note');
+  await userEvent.click(screen.getByRole('button', { name: 'Save to memory' }));
+  await vi.waitFor(() => expect(requests.find(request => request.path === '/api/v1/sessions/project-lead/messages')).toBeTruthy());
+  const message = requests.find(request => request.path === '/api/v1/sessions/project-lead/messages');
+  expect(message?.method).toBe('POST');
+  expect(message?.body).toHaveProperty('mode', 'default');
+  expect(message?.body).toHaveProperty('content', expect.stringContaining('scope: "area" for project-specific takeaways and scope: "global" for cross-project preferences'));
+  expect(input.textContent).toBe('Draft note');
+  expect(requests.some(request => request.path === '/api/v1/memory/distill')).toBe(false);
+});
+
+it('asks the Today Lead to propose only to Global memory', async () => {
+  const { requests } = renderMemoryShortcutFixture({ today: true });
+  await userEvent.click(await screen.findByRole('button', { name: 'Save to memory' }));
+  await vi.waitFor(() => expect(requests.find(request => request.path === '/api/v1/sessions/daily-planner/messages')?.body)
+    .toHaveProperty('content', expect.stringContaining('perga_memory propose with scope: "global"')));
+  expect(requests.find(request => request.path === '/api/v1/sessions/daily-planner/messages')?.body)
+    .not.toHaveProperty('content', expect.stringContaining('scope: "area"'));
+});
+
+it('hides Save to memory in a shared Track conversation', async () => {
+  renderMemoryShortcutFixture({ shared: true });
+  await userEvent.click(await screen.findByRole('button', { name: /Conversation Lead/ }));
+  await screen.findByRole('button', { name: 'Session actions' });
+  expect(screen.queryByRole('button', { name: 'Save to memory' })).toBeNull();
+});
+
+it('retries a rejected closed-Track request with the same Idempotency-Key and links to Area Memory', async () => {
+  const { requests, router } = renderMemoryShortcutFixture({ closed: true, failFirstDistill: true });
+  await userEvent.click(await screen.findByRole('button', { name: /Conversation Lead/ }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Save to memory' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Retry' }));
+  expect(await screen.findByText('Sent to Area Memory Planner')).toBeTruthy();
+  const distills = requests.filter(request => request.path === '/api/v1/memory/distill');
+  expect(distills.map(({ method, body }) => ({ method, body }))).toEqual([
+    { method: 'POST', body: { trackId: 'project' } },
+    { method: 'POST', body: { trackId: 'project' } },
+  ]);
+  expect(distills[0]?.headers?.['Idempotency-Key']).toBeTruthy();
+  expect(distills[1]?.headers?.['Idempotency-Key']).toBe(distills[0]?.headers?.['Idempotency-Key']);
+  await userEvent.click(screen.getByRole('button', { name: 'Open memory' }));
+  await vi.waitFor(() => expect(router.state.location.pathname).toBe('/area/project-area/memory'));
 });
 
 it('opens the native Planner and retains scoped mention pills', async () => {

@@ -19,7 +19,7 @@ import { ThemeProvider } from '../theme/public.tsx';
 import { createAppRouter } from './public.tsx';
 import { bootTestCardRuntime } from './test-card-runtime.ts';
 
-export function renderDailyFixture({ history, identity, routeProbe, withTransport, strict = false, initial = '/', plannerProvider = 'codex', failChanges = false, emptyWorkspace = false, extraPlanner = false, projectTitle = 'Project evidence', reportBody, reply, onCommit, uiPreferences, receipts, prepareReport = prepareReportDocument, }: Readonly<{ history?: RouterHistory; identity?: SessionIdentity; routeProbe?: ReactNode; withTransport?: (transport: ApiTransportPort) => ApiTransportPort; strict?: boolean; prepareReport?: ReportPreparationPort; plannerProvider?: AgentProvider; uiPreferences?: UiPreferences; receipts?: ReadReceiptsKernel; initial?: string; failChanges?: boolean; emptyWorkspace?: boolean; extraPlanner?: boolean; projectTitle?: string; reportBody?: string; reply?: (request: ApiRequest) => ApiTransportResponse | undefined | Promise<ApiTransportResponse | undefined>; onCommit?: () => void;  }> = {}) {
+export function renderDailyFixture({ history, identity, shareScope, routeProbe, withTransport, strict = false, initial = '/', plannerProvider = 'codex', failChanges = false, emptyWorkspace = false, extraPlanner = false, projectTitle = 'Project evidence', reportBody, reply, onCommit, uiPreferences, receipts, prepareReport = prepareReportDocument, }: Readonly<{ history?: RouterHistory; identity?: SessionIdentity; shareScope?: unknown; routeProbe?: ReactNode; withTransport?: (transport: ApiTransportPort) => ApiTransportPort; strict?: boolean; prepareReport?: ReportPreparationPort; plannerProvider?: AgentProvider; uiPreferences?: UiPreferences; receipts?: ReadReceiptsKernel; initial?: string; failChanges?: boolean; emptyWorkspace?: boolean; extraPlanner?: boolean; projectTitle?: string; reportBody?: string; reply?: (request: ApiRequest) => ApiTransportResponse | undefined | Promise<ApiTransportResponse | undefined>; onCommit?: () => void;  }> = {}) {
   const requests: ApiRequest[] = [];
   const area = { id: 'daily-area', name: 'system', color: '#6574cd', sortOrder: 0, kind: 'system', createdAtMs: 1, updatedAtMs: 1 };
   const projectArea = { ...area, id: 'project-area', name: 'Project', kind: 'user' };
@@ -79,7 +79,7 @@ export function renderDailyFixture({ history, identity, routeProbe, withTranspor
   const unauthorized = createUnauthorizedChannel({ enqueue: (task) => task() });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const fixtureTransport = withReadReceipts(transport, receipts);
-  const router = createAppRouter({ prepareReport, transport: withTransport?.(fixtureTransport) ?? fixtureTransport, unauthorized, client, cards: bootTestCardRuntime(), uiPreferences });
+  const router = createAppRouter({ prepareReport, transport: withTransport?.(fixtureTransport) ?? fixtureTransport, unauthorized, client, cards: bootTestCardRuntime(), uiPreferences, shareScope });
   // Observe commits inside the existing provider via declared child routes. Each
   // wrapper delegates the original component and adds only a nonvisual test probe.
   if (routeProbe !== undefined) for (const route of (router.routeTree.children ?? []) as readonly AnyRoute[]) {

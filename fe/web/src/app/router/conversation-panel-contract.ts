@@ -39,6 +39,8 @@ export type ConversationPanelSource = ConversationCreationSource & Readonly<{
       cardId: string; areaId: string | null; asks: readonly OpenAsk[];
       /** Use the report Area by default, null for Global, false in a share. */
       memoryAreaId?: string | null | false;
+      hideMemoryCommand?: boolean;
+      trackClosed?: boolean;
       answerAsk: (askId: import('../../../../core/domain/activity.ts').AskId, answers: readonly AskAnswer[]) => Promise<void>;
       commands?: (stop: (() => void) | undefined) => CommandBindings;
     }> | null;

@@ -223,7 +223,7 @@ it('offers exactly the close, the resize edge, Send, the model picker, the role,
       .map((button) => button.getAttribute('aria-label') ?? button.textContent);
     /* Bootstrap declares no models, so the trigger reads `Model: Default` and no effort control or Save/Cancel chrome appears. */
     expect([...names].sort()).toEqual([
-      'Attach an image', 'Close conversation', 'Model: Default', 'Send', 'Session actions',
+      'Attach an image', 'Close conversation', 'Model: Default', 'Save to memory', 'Send', 'Session actions',
     ]);
     /* One shell contract and one shared host edge serve the conversation layout. */
     expect(screen.getAllByRole('separator').map((edge) => edge.getAttribute('aria-label'))).toEqual(['Resize conversation']);
@@ -279,7 +279,7 @@ it('never posts to the planner reset endpoint, however the drawer is driven', as
     await screen.findByRole('button', { name: 'Conversation Planner chat' });
     expect(requests.filter((request) => request.path.endsWith('/planner/reset'))).toHaveLength(0);
     /* The pressing above actually did something, so an inert sweep cannot pass. */
-    expect(requests.filter((request) => request.path.endsWith('/messages'))).toHaveLength(1);
+    expect(requests.filter((request) => request.path.endsWith('/messages'))).toHaveLength(2);
   });
 
 it('offers /new in the track composer, now that a track can hold a second conversation', async () => {

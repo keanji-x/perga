@@ -28,13 +28,14 @@ function commandDefinitions(): readonly Omit<ComposerCommand, 'execute'>[] {
     { id: 'side-conversation', name: 'side', icon: 'chat', hint: 'Discuss a snapshot in a side conversation', arguments: 'optional' },
     { id: 'planner-switch', name: 'planner', icon: 'chat', hint: 'Promote this Assistant to Planner', arguments: 'none', argumentError: PLANNER_SWITCH_ARGUMENTS },
     { id: 'compact-conversation', name: 'compact', icon: 'compact', hint: 'Compact conversation context', arguments: 'none' },
+    { id: 'save-to-memory', name: 'mem', icon: 'book-open', hint: 'Save takeaways to memory', arguments: 'optional' },
     { id: 'terminal-workbench', name: 'terminal', icon: 'terminal', hint: 'Open the track terminal workbench', arguments: 'none', argumentError: TERMINAL_ARGUMENTS_MESSAGE },
     { id: 'track-close', name: 'close', icon: 'status-done', hint: 'Close this Track', arguments: 'none' },
     { id: 'track-open', name: 'open', icon: 'status-running', hint: 'Reopen this track', arguments: 'none' },
   ];
 }
 
-export type CommandName = 'stop' | 'reconnect' | 'reset' | 'new' | 'side' | 'planner' | 'compact' | 'terminal' | 'close' | 'open';
+export type CommandName = 'stop' | 'reconnect' | 'reset' | 'new' | 'side' | 'planner' | 'compact' | 'mem' | 'terminal' | 'close' | 'open';
 export type CommandBindings = Readonly<Partial<Record<CommandName, CommandBinding>>>;
 
 export function composerCommands(bindings: CommandBindings): readonly ComposerCommand[] {

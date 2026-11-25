@@ -1,5 +1,5 @@
 import type { ComponentType } from 'react';
-import { Forward, Copy, Check, ChartColumn, Search, Star, ArrowLeft, ArrowRightLeft, ArrowUp, Bell, BookOpen, Bot, CalendarDays, ChevronLeft, ChevronRight, Circle, CircleCheck, CircleStop, CircleX, Clock3, Ellipsis, File, Folder, FolderOpen, Link2, ListChecks, Maximize, Menu, MessageSquare, Minimize, PanelLeft, PanelRight, Paperclip, Pin, Plus, RotateCcw, SquareTerminal, Settings, Wrench, Trash2, X, Icon as LucideIcon, type LucideProps } from 'lucide-react';
+import { Forward, Copy, Check, ChartColumn, Search, Star, ArrowLeft, ArrowRightLeft, ArrowUp, Bell, BookOpen, Bot, CalendarDays, ChevronLeft, ChevronRight, Circle, CircleCheck, CircleStop, CircleX, Clock3, Ellipsis, File, Folder, FolderOpen, Link2, ListChecks, Maximize, Menu, MessageSquare, Minimize, NotebookPen, PanelLeft, PanelRight, Paperclip, Pin, Plus, RotateCcw, SquareTerminal, Settings, Wrench, Trash2, X, Icon as LucideIcon, type LucideProps } from 'lucide-react';
 import { PROVIDER_GLYPHS, type GlyphNode } from './provider-glyphs.ts';
 import styles from './icon.module.css';
 
@@ -26,6 +26,7 @@ const glyphs = Object.freeze({
   'search': (props: LucideProps) => <Search {...props} />,
   'chart': (props: LucideProps) => <ChartColumn {...props} />,
   'book-open': (props: LucideProps) => <BookOpen {...props} />,
+  'notebook-pen': (props: LucideProps) => <NotebookPen {...props} />,
   'file': (props: LucideProps) => <File {...props} />,
   'calendar': (props: LucideProps) => <CalendarDays {...props} />,
   'share': (props: LucideProps) => <Forward {...props} />,

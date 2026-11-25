@@ -1,11 +1,12 @@
 import { permissionModesForProvider } from '../../../../core/domain/agent-providers.ts';
 import { providerPresentation } from '../../../../core/domain/provider-presentation.ts';
 import { conversationCommandEnabled } from '../../../../core/domain/conversation-action.ts';
+import { buildMemoryDistillPrompt, memoryDistillOperation } from '../../../../core/domain/memory.ts';
 import { permissionModeAfterProviderChange,resolvePermissionControl } from '../../../../core/domain/planner-permission-mode.ts';
 import { composerCommands,conversationCommandBindings,conversationCommands } from '../../features/chat/thread/composer-command.ts';
 import { PendingQueue } from '../../features/chat/thread/pending-queue.tsx';
 import { useThreadReadingView } from '../../features/chat/thread/reading-view.tsx';
-import { ConversationSessionHeader } from '../../features/chat/thread/session-header.tsx';
+import { ConversationSessionHeader, MemorySaveButton } from '../../features/chat/thread/session-header.tsx';
 import { useContentAdmission } from '../../ui/content-presentation/public.ts';
 import type { PaneResizeGroup } from '../../ui/drawer/resize-group.ts';
 import { writeClipboardText } from '../../ui/operation-feedback/clipboard.ts';
@@ -74,7 +75,9 @@ useConversationAttachmentError,
 type ConversationDraftId
 } from '../conversations/public.tsx';
 import { createTrackWorkspaceFilesPort } from '../providers/directory.ts';
+import { mintIdempotencyKey } from '../providers/idempotency-key.ts';
 import { useMentionSearch } from '../providers/mentions.ts';
+import { runOperation } from '../providers/query-operation.ts';
 import { useReadReceipt,useReadReceipts,useViewReadReceipt } from '../providers/read-receipts.tsx';
 import { trackDetailQueryOptions } from '../providers/track-queries.ts';
 import { useConversationDrawerResize } from '../shell/public.tsx';
@@ -88,6 +91,10 @@ useTrackFileNavigation
 
 import type { ConversationPanelOptions,ConversationPanelSource } from './conversation-panel-contract.ts';
 const NO_ASKS: readonly OpenAsk[] = Object.freeze([]);
+type MemoryDistillSave =
+  | { trackId: string; kind: 'pending' }
+  | { trackId: string; kind: 'sent'; areaId: string | null }
+  | { trackId: string; kind: 'failed'; key: string };
 export function useConversationPane(
   transport: ApiTransportPort,
   unauthorized: UnauthorizedChannel,
@@ -400,6 +407,62 @@ export function useConversationPane(
   const changeComposer = setComposerText;
   const composerStop = store.canStop ? composerView.interrupt : undefined;
   const plannerCommands = plannerRow?.commands;
+  const draftOnly = options?.workspace?.waiting === true;
+  const hasUserArea = typeof memoryAreaId === 'string';
+  const canShowMemoryCommand = plannerRow !== null && !plannerRow.hideMemoryCommand && memoryAreaId !== false;
+  const isTrackClosed = plannerRow?.trackClosed === true || store.readonlyReason === 'track_closed';
+  const memoryCommandUnavailable = isTrackClosed
+    ? 'Use Save to memory in the conversation header on closed Tracks.'
+    : store.sendBlocked || draftOnly ? 'Sending is unavailable in this conversation.' : undefined;
+  const sendMemoryPrompt = (argument: string, fromComposer: boolean) => {
+    const match = /^(area|global)(?:\s+|$)/i.exec(argument);
+    const hint = match?.[1]?.toLowerCase();
+    const prompt = buildMemoryDistillPrompt({
+      scope: hint === 'area' || hint === 'global' ? hint : undefined,
+      focus: match === null ? argument : argument.slice(match[0].length),
+      hasUserArea,
+    });
+    return open !== null && submitMessage(open.id, prompt, [], fromComposer) !== null;
+  };
+  const saveToMemory = useCommittedCallback(existingId, (argument: string) => sendMemoryPrompt(argument, true));
+  const [distillSave, setDistillSave] = useState<MemoryDistillSave | null>(null);
+  const distillTrackId = scope?.id ?? source.rememberOn;
+  const activeDistill = distillSave?.trackId === distillTrackId ? distillSave : null;
+  const saveClosedToMemory = async (key = mintIdempotencyKey()) => {
+    if (activeDistill?.kind === 'pending') return;
+    setDistillSave({ trackId: distillTrackId, kind: 'pending' });
+    try {
+      const { areaId } = await runOperation(transport, memoryDistillOperation(distillTrackId, undefined, undefined, key), unauthorized);
+      setDistillSave({ trackId: distillTrackId, kind: 'sent', areaId });
+    } catch {
+      setDistillSave({ trackId: distillTrackId, kind: 'failed', key });
+    }
+  };
+  const headerMemoryAction = open === null || !canShowMemoryCommand ? undefined : {
+    pending: isTrackClosed && activeDistill?.kind === 'pending',
+    disabled: !isTrackClosed && (store.sendBlocked || draftOnly),
+    tooltip: isTrackClosed ? 'Save to memory' : 'Save to memory (/mem)',
+    onSave: () => {
+      if (isTrackClosed) void saveClosedToMemory();
+      else sendMemoryPrompt('', false);
+    },
+  };
+  const memoryDistillNotice = activeDistill?.kind === 'sent' ? (
+    <ChatFooterNotice tone="neutral">
+      <span>{activeDistill.areaId === null ? 'Sent to Global Memory Planner' : 'Sent to Area Memory Planner'}</span>
+      <ChatFooterRemedy onClick={() => go(activeDistill.areaId === null
+        ? { name: 'memory' } : { name: 'area-memory', areaId: activeDistill.areaId })}>
+        Open memory
+      </ChatFooterRemedy>
+      <ChatFooterRemedy onClick={() => setDistillSave(null)}>Dismiss</ChatFooterRemedy>
+    </ChatFooterNotice>
+  ) : activeDistill?.kind === 'failed' ? (
+    <ChatFooterNotice tone="error">
+      <span>Could not confirm the memory request</span>
+      <ChatFooterRemedy onClick={() => { void saveClosedToMemory(activeDistill.key); }}>Retry</ChatFooterRemedy>
+      <ChatFooterRemedy onClick={() => setDistillSave(null)}>Dismiss</ChatFooterRemedy>
+    </ChatFooterNotice>
+  ) : null;
   const switchPlanner = usePlannerSwitchControl(transport, unauthorized, scope);
   const plannerSwitchBinding = useMemo(() => scope !== null && scope.isLead !== true
     ? { execute: switchPlanner } : undefined, [scope, switchPlanner]);
@@ -420,6 +483,7 @@ export function useConversationPane(
       terminal: onTerminal, compactViewport: compactComposer,
     }),
     ...plannerCommands?.(composerStop),
+    mem: canShowMemoryCommand ? { execute: saveToMemory, unavailableReason: memoryCommandUnavailable } : undefined,
     planner: plannerSwitchBinding,
     ...Object.fromEntries((['stop', 'compact', 'reconnect', 'reset'] as const).map(command => [command, {
       execute: () => { if (!commandEnabled(command)) return;
@@ -429,8 +493,8 @@ export function useConversationPane(
         ? undefined : '当前会话状态下不可用',
     }])),
   }), [allowNewConversation, options?.showSideCommand, newConversation, composerView.manualCompactSupported, composerView.historyReady,
-    composerView.compact, hasSideConversation, sideQuestion, sideSourceReady, onTerminal, compactComposer, plannerCommands, composerStop, plannerSwitchBinding, interrupt, compact, recover, commandEnabled]);
-  const draftOnly = options?.workspace?.waiting === true;
+    composerView.compact, hasSideConversation, sideQuestion, sideSourceReady, onTerminal, compactComposer, plannerCommands, composerStop,
+    canShowMemoryCommand, saveToMemory, memoryCommandUnavailable, plannerSwitchBinding, interrupt, compact, recover, commandEnabled]);
   const sessionConfigurationControls = useMemo(() => <>
     <ModelPill key={`model-${existingId}`}
       groups={[{ provider: scopeProvider, catalog: composerView.modelCatalog, availability: null,
@@ -508,6 +572,7 @@ export function useConversationPane(
         mobileSheet={mobileSheet}
         focusInput={panePresented && (draftOpen || (open !== null && composerFocusFor === open.id))}
         contextTitle={scope?.title}
+        titleAction={headerMemoryAction === undefined ? undefined : <MemorySaveButton {...headerMemoryAction} />}
         sessionHeader={open === null ? undefined : <ConversationSessionHeader session={store.session} state={store.sessionState}
           taskId={store.taskId} readonlyReason={store.readonlyReason} workerPaused={store.workerPaused}
           compactEnabled={commandEnabled('compact') && store.manualCompactSupported}
@@ -600,6 +665,7 @@ export function useConversationPane(
           </>
         ) : open === null ? undefined : (
           <>
+            {memoryDistillNotice}
             {actionArea}
             {store.readonlyReason === null && composerNode}
             {store.readonlyReason === 'waiting_task' && <HStack gap={1} align="center" wrap="wrap" className={footerStyles.group}>
