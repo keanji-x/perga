@@ -136,9 +136,10 @@ export function App() {
               </div>
               <a className="site-btn-primary" href="https://github.com/keanji-x/perga/releases" target="_blank" rel="noreferrer">Releases</a>
             </div>
-            <p className="site-install-note">
-              macOS Apple Silicon &amp; Linux x64 · Self-contained binary (no .NET runtime) · Requires Node.js 24+
-            </p>
+            <div className="site-install-tags" aria-label="Supported platforms">
+              <span className="site-install-tag">macOS Apple Silicon</span>
+              <span className="site-install-tag">Linux x64</span>
+            </div>
           </div>
 
           <div className="site-showcase" id="reports">

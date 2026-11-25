@@ -283,11 +283,24 @@
     opacity: 0.88;
   }
 
-  .site-install-note {
-    margin: 10px 0 0;
-    font-family: var(--font-mono);
-    font-size: 0.72rem;
+  .site-install-tags {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-top: 10px;
+  }
+
+  .site-install-tag {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 9px;
+    border-radius: 4px;
+    background: color-mix(in srgb, var(--text) 6%, transparent);
     color: var(--text-3);
+    font-family: var(--font-mono);
+    font-size: 0.71rem;
+    line-height: 1.45;
   }
 
   /* Live Showcase */
