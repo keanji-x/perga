@@ -12,6 +12,7 @@ import { createSessionKernel, sealSession } from "@botiverse/oar/kernel";
 import { antigravityRuntime } from "@botiverse/oar/runtimes/antigravity";
 import { claudeRuntime } from "@botiverse/oar/runtimes/claude";
 import { codexRuntime } from "@botiverse/oar/runtimes/codex";
+import { opencodeRuntime } from "@botiverse/oar/runtimes/opencode";
 import { scriptedRuntime } from "@botiverse/oar/testing";
 import { OarBridgeServer, type BridgeTransport } from "../src/bridge.ts";
 import { prepareMcpServers } from "../src/mcp-proxy.ts";
@@ -826,6 +827,156 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on("line
 
     // None of the three refused attempts may reach native session/resume.
     assert.equal(readResumes().length, 2);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test("OarBridgeServer probe surfaces OpenCode v2 per-model display names and effortLevels", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "perga-opencode-probe-"));
+  const shQuote = (value: string): string => `'${value.replace(/'/gu, "'\\''")}'`;
+
+  try {
+    const workspaceDir = path.join(tmpDir, "workspace");
+    fs.mkdirSync(workspaceDir);
+
+    const stubJsPath = path.join(tmpDir, "opencode-v2-stub.mjs");
+    const stubBinPath = path.join(tmpDir, "opencode-v2-stub.sh");
+
+    fs.writeFileSync(
+      stubJsPath,
+      `import http from "node:http";
+
+const args = process.argv.slice(2);
+if (args[0] === "--version") {
+  process.stdout.write("opencode v2.1.4\\n");
+  process.exit(0);
+}
+if (args[0] === "--help") {
+  process.stdout.write("OpenCode command line interface\\n");
+  process.exit(0);
+}
+if (args[0] === "models" && args[1] === "--standalone") {
+  process.stdout.write("opencode/plain\\nzhipuai-coding-plan/glm-5.4\\n");
+  process.exit(0);
+}
+if (args[0] === "serve" && args.includes("--stdio")) {
+  const password = process.env.OPENCODE_PASSWORD ?? "";
+  const expectedAuth = "Basic " + Buffer.from("opencode:" + password).toString("base64");
+  const expectedDir = encodeURIComponent(${JSON.stringify(workspaceDir)});
+  const server = http.createServer((req, res) => {
+    if (req.headers.authorization !== expectedAuth || req.headers["x-opencode-directory"] !== expectedDir) {
+      res.writeHead(401, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "unauthorized" }));
+      return;
+    }
+    const pathname = new URL(req.url ?? "/", "http://127.0.0.1").pathname;
+    if (pathname === "/api/plugin") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ data: [{ id: "builtin", state: { status: "active" } }] }));
+      return;
+    }
+    if (pathname === "/api/model") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({
+        data: [
+          {
+            providerID: "zhipuai-coding-plan",
+            id: "glm-5.4",
+            name: "GLM-5.4",
+            variants: [{ id: "low" }, { id: "default" }, { id: "high" }, { id: "max" }],
+          },
+          {
+            providerID: "opencode",
+            id: "plain",
+            name: "Plain",
+            variants: [{ id: "default" }],
+          },
+        ],
+      }));
+      return;
+    }
+    res.writeHead(404);
+    res.end();
+  });
+  server.listen(0, "127.0.0.1", () => {
+    const addr = server.address();
+    const port = typeof addr === "object" && addr ? addr.port : 0;
+    process.stdout.write(JSON.stringify({ url: "http://127.0.0.1:" + port }) + "\\n");
+  });
+  process.stdin.resume();
+  process.stdin.on("end", () => {
+    server.closeAllConnections?.();
+    server.close(() => process.exit(0));
+  });
+} else {
+  process.stderr.write("unexpected args: " + JSON.stringify(args) + "\\n");
+  process.exit(1);
+}
+`,
+    );
+
+    fs.writeFileSync(
+      stubBinPath,
+      `#!/bin/sh\nexec ${shQuote(process.execPath)} ${shQuote(stubJsPath)} "$@"\n`,
+      { mode: 0o755 },
+    );
+
+    const transport = new MemoryTransport();
+    const bridge = new OarBridgeServer(transport, async () => opencodeRuntime);
+    try {
+      await bridge.handleMessage({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "probe",
+        params: {
+          runtime: "opencode",
+          executable: stubBinPath,
+          cwd: workspaceDir,
+          timeoutMs: 10_000,
+        },
+      });
+      const res = transport.responseFor(1);
+      assert.equal(res.error, undefined, `Expected probe to succeed, got: ${JSON.stringify(res.error)}`);
+      const result = res.result as {
+        available: boolean;
+        version: string | null;
+        reason: string | null;
+        models: Array<{
+          id: string;
+          displayName: string;
+          defaultEffort: string | null;
+          effortLevels: string[];
+        }>;
+      };
+      assert.equal(result.available, true, `Expected probe available=true, got reason=${result.reason}`);
+      assert.equal(result.version, "opencode v2.1.4");
+      assert.equal(result.reason, null);
+      assert.deepEqual(
+        result.models.map((m) => ({
+          id: m.id,
+          displayName: m.displayName,
+          defaultEffort: m.defaultEffort,
+          effortLevels: m.effortLevels,
+        })),
+        [
+          {
+            id: "opencode/plain",
+            displayName: "Plain",
+            defaultEffort: null,
+            effortLevels: [],
+          },
+          {
+            id: "zhipuai-coding-plan/glm-5.4",
+            displayName: "GLM-5.4",
+            defaultEffort: null,
+            effortLevels: ["low", "high", "max"],
+          },
+        ],
+      );
+    } finally {
+      await bridge.dispose();
+    }
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
