@@ -14,6 +14,7 @@ import {
 import { useState } from '../../ui/state/public.ts';
 import { Icon } from '../../ui/icon/public.tsx';
 import { ErrorBox } from '../../ui/error-box/public.tsx';
+import { LoadingStatus } from '../../ui/loading-status/public.tsx';
 import { MobileNavigationHeader, type MobileNavigationActions } from './mobile-navigation-header.tsx';
 import navigationStyles from './mobile-navigation.module.css';
 import styles from './mobile-pages.module.css';
@@ -59,7 +60,7 @@ export function MobilePages({ areas, areaId, tracks, onOpenTrack, onBack, onNewT
         onBack={onBack} onCreateArea={onCreateArea} onNewTrack={onNewTrack} onEditArea={onEditArea} onOpenSettings={onOpenSettings} />
       <div className={navigationStyles.content}>
       {readError !== null && <ErrorBox message={readError} onRetry={onRetryRead} />}
-      {readLoading && <p role="status">Loading workspace…</p>}
+      {readLoading && <LoadingStatus>Loading workspace…</LoadingStatus>}
       <MobilePrimaryPages onOpenToday={onOpenToday} onOpenMemory={onOpenMemory} />
       <AstryxSegmentedControl
         className={styles.groups}

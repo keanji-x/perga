@@ -247,4 +247,27 @@
     font: var(--type-metadata);
     letter-spacing: var(--type-metadata-tracking);
   }
+
+  @media (width < 60rem) {
+    .monthTitle {
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+
+    .todayButton {
+      min-block-size: var(--rail-w-collapsed);
+      padding-inline: var(--space-3);
+    }
+
+    .navigationButton {
+      width: var(--rail-w-collapsed);
+      min-width: var(--rail-w-collapsed);
+      height: var(--rail-w-collapsed);
+    }
+
+    .dateBadge {
+      height: var(--rail-w-collapsed);
+    }
+  }
 }

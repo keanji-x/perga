@@ -3,6 +3,7 @@
   .workspaceOpener {
     position: fixed;
     inset-inline-start: var(--space-4);
+    inset-block-end: calc(var(--mobile-keyboard-inset, 0px) + var(--space-4) + env(safe-area-inset-bottom));
     display: grid;
     place-items: center;
     box-sizing: border-box;

@@ -21,7 +21,7 @@
   .vendorComposer > div:has(.input) > div:has(.options) > div:last-child button svg { inline-size: var(--glyph-xl) !important; block-size: var(--glyph-xl) !important; flex: none; }
   .optionsPanel { position: absolute; inset-block-end: calc(100% + var(--space-2)); inset-inline-start: 0; inline-size: min(18rem, calc(100vw - var(--space-6))); padding: var(--space-3); border: 1px solid transparent; border-radius: var(--radius-lg); background: var(--paper); box-shadow: var(--shadow-float); z-index: var(--z-overlay); }
   @media (width < 60rem) {
-    .said.said { font-family: var(--font-sans); font-size: var(--font-step-3-size); line-height: var(--font-step-3-line); min-inline-size: min(14rem, 72%); min-block-size: calc(var(--space-6) + var(--space-5) - var(--space-1)); padding: var(--space-3); border-radius: var(--radius-md); }
+    .said.said { font-family: var(--font-sans); font-size: var(--font-step-3-size); line-height: var(--font-step-3-line); min-block-size: calc(var(--space-6) + var(--space-5) - var(--space-1)); padding: var(--space-3); border-radius: var(--radius-md); }
     .userTurn { min-block-size: calc(var(--space-6) * 2); }
     .transcript > .userTurn + [data-nc-entry] { margin-block-start: var(--space-5); }
     .reply.reply { font-family: var(--font-serif); font-size: var(--font-step-3-size); line-height: var(--font-step-3-line); --font-family-body: var(--type-reading-family); --font-family-heading: var(--type-reading-family); --text-body-size: var(--type-reading-size); --text-body-leading: var(--type-reading-leading); }

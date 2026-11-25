@@ -1,5 +1,5 @@
 import type { ComponentType } from 'react';
-import { Forward, Copy, Check, ChartColumn, Search, Star, ArrowLeft, ArrowRightLeft, ArrowUp, Bell, BookOpen, Bot, CalendarDays, ChevronLeft, ChevronRight, Circle, CircleCheck, CircleStop, CircleX, Clock3, Ellipsis, File, Folder, FolderOpen, Link2, ListChecks, Maximize, Menu, MessageSquare, Minimize, NotebookPen, PanelLeft, PanelRight, Paperclip, Pin, Plus, RotateCcw, SquareTerminal, Settings, Wrench, Trash2, X, Icon as LucideIcon, type LucideProps } from 'lucide-react';
+import { Forward, Copy, Check, ChartColumn, Search, Star, ArrowLeft, ArrowRightLeft, ArrowUp, Bell, BookOpen, Bot, CalendarDays, ChevronDown, ChevronLeft, ChevronRight, Circle, CircleCheck, CircleStop, CircleX, Clock3, Ellipsis, File, Folder, FolderOpen, Link2, ListChecks, Maximize, Menu, MessageSquare, Minimize, NotebookPen, PanelLeft, PanelRight, Paperclip, Pin, Plus, RotateCcw, SquareTerminal, Settings, Wrench, Trash2, X, Icon as LucideIcon, type LucideProps } from 'lucide-react';
 import { PROVIDER_GLYPHS, type GlyphNode } from './provider-glyphs.ts';
 import styles from './icon.module.css';
 
@@ -8,6 +8,7 @@ function SvgGlyph({ nodes, ...props }: LucideProps & { nodes: readonly GlyphNode
 }
 
 const glyphs = Object.freeze({
+  'chevron-down': (props: LucideProps) => <ChevronDown {...props} />,
   'chevron-left': (props: LucideProps) => <ChevronLeft {...props} />,
   'chevron-right': (props: LucideProps) => <ChevronRight {...props} />,
   'panel-left': (props: LucideProps) => <PanelLeft {...props} />,

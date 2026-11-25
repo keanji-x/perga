@@ -1,5 +1,5 @@
 import { LayerDepthProvider } from '@astryxdesign/core/Layer';
-import { useLayoutEffect, useMemo, useRef, type RefCallback } from 'react';
+import { useLayoutEffect, useMemo, useRef, type RefCallback, type RefObject } from 'react';
 
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
@@ -9,7 +9,6 @@ import { EdgeSwipe } from '../../ui/edge-swipe/public.tsx';
 import { floatingControlClassName } from '../../ui/floating-control/public.ts';
 import { Icon } from '../../ui/icon/public.tsx';
 import { OperationFeedback } from '../../ui/operation-feedback/public.tsx';
-import { useState } from '../../ui/state/public.ts';
 import { useVisibleViewport } from '../../ui/viewport/public.ts';
 import { MobileWorkspaceHeader } from './mobile-header.tsx';
 import { useMobileHistoryData } from './mobile-history-data.ts';
@@ -45,10 +44,13 @@ export type MobileConversationScopeSnapshot = Readonly<{
 }>;
 
 export type MobileShellChromeProps = Readonly<{
+  shellRef: RefObject<HTMLDivElement | null>;
   transport: ApiTransportPort;
   unauthorized: UnauthorizedChannel;
   controller: ShellController;
   conversationScope: MobileConversationScopeSnapshot | null;
+  historyOpen: boolean;
+  onHistoryOpenChange: (open: boolean) => void;
   mobileSection: MobileSection | null;
   workspaceInteractive: boolean;
   mobileDialogActive: boolean;
@@ -68,18 +70,23 @@ export type MobileShellChromeProps = Readonly<{
 
 /** Mobile shell chrome: owns the mobile workspace header, floating opener, edge swipe, history drawer, and modal navigation stack. */
 export function MobileShellChrome({
-  transport, unauthorized, controller, conversationScope, mobileSection, workspaceInteractive,
+  shellRef, transport, unauthorized, controller, conversationScope, historyOpen, onHistoryOpenChange, mobileSection, workspaceInteractive,
   mobileDialogActive, mobileReturnIntent, onOpenMobileSection, onSelectMobileSection,
   onCloseMobileSection, onFinishMobileClose, onActionsHostRef, onTitleHostRef,
   onOpenSettings, onSignOut, shareScope = null, nowMs, userLabel,
 }: MobileShellChromeProps) {
   const { workspace, areas, activeArea, liveActiveArea, newTrackArea, currentPath, settingsOpen, mobileOverlayRoute } = controller;
-  const [historyOpen, setHistoryOpen] = useState(false);
   const scopeOwner = conversationScope?.owner ?? null;
   const historyOwner = useMemo(() => ({ path: currentPath, scopeOwner, token: {} }), [currentPath, scopeOwner]);
   const historyTracks = conversationScope === null ? [] : [conversationScope.track];
   const history = useMobileHistoryData(transport, unauthorized, historyTracks, historyOpen);
   const visibleViewport = useVisibleViewport(true);
+  useLayoutEffect(() => {
+    const shell = shellRef.current;
+    if (shell === null) return;
+    shell.style.setProperty('--mobile-keyboard-inset', `${visibleViewport.bottomInset}px`);
+    return () => { shell.style.removeProperty('--mobile-keyboard-inset'); };
+  }, [shellRef, visibleViewport.bottomInset]);
   const mobileNavOpen = mobileSection !== null;
   const mobileSectionKind = mobileSection?.kind;
 
@@ -192,7 +199,7 @@ export function MobileShellChrome({
             controller.newTrackBack?.();
             onOpenMobileSection({ kind: 'tracks', areaId: controller.routeAreaId }, 'workspace');
           }}
-          onOpenNavigation={() => setHistoryOpen(true)}
+          onOpenNavigation={() => onHistoryOpenChange(true)}
           onSelectArea={controller.requestNewTrack}
           onCreateArea={controller.requestCreateArea}
           actionsHostRef={onActionsHostRef}
@@ -205,7 +212,6 @@ export function MobileShellChrome({
           className={`${mobileStyles.workspaceOpener} ${floatingControlClassName}`}
           aria-label="Open workspace"
           hidden={workspaceInteractive || historyOpen || conversationScope?.conversationOpen === true}
-          style={{ bottom: `calc(${visibleViewport.bottomInset}px + var(--space-4) + env(safe-area-inset-bottom))` }}
           onClick={() => onOpenMobileSection({ kind: 'areas', areaId: activeArea?.id })}
         >
           <Icon name="folder" />
@@ -213,12 +219,12 @@ export function MobileShellChrome({
       )}
       <EdgeSwipe
         enabled={!settingsOpen && !mobileOverlayRoute && !mobileNavOpen && !historyOpen}
-        onSwipe={() => setHistoryOpen(true)}
+        onSwipe={() => onHistoryOpenChange(true)}
       />
       <MobileHistory
         owner={historyOwner.token}
         open={historyOpen}
-        onOpenChange={setHistoryOpen}
+        onOpenChange={onHistoryOpenChange}
         selectedConversationId={conversationScope?.selectedConversationId ?? null}
         trackGroups={controller.trackGroups}
         currentTrackId={conversationScope?.track.id}

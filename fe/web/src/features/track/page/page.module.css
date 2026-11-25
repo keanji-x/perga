@@ -532,6 +532,10 @@
       background: var(--bg);
     }
 
+    .panel:focus {
+      outline: none;
+    }
+
     .mobilePanelOpen {
       visibility: visible;
     }
@@ -595,14 +599,14 @@
     }
 
     .page:has(.mobileReportChatDock) .doc {
-      padding-block-end: calc(var(--rail-w-collapsed) + var(--space-6));
+      padding-block-end: calc(var(--control-h-touch) + var(--space-6) + env(safe-area-inset-bottom));
     }
 
     .mobileChatInput { flex: 1; min-inline-size: 0; }
     .mobileReportChatDock {
       position: fixed;
       inset-inline: calc(var(--space-4) + var(--rail-w-collapsed) + var(--space-1) + var(--space-2)) var(--space-4);
-      inset-block-end: calc(env(safe-area-inset-bottom) + var(--space-4));
+      inset-block-end: calc(var(--mobile-keyboard-inset, 0px) + env(safe-area-inset-bottom) + var(--space-4));
       z-index: var(--z-sticky);
       display: flex;
       align-items: center;

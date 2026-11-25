@@ -41,27 +41,31 @@
 
   .leading svg,
   .trailing button:not([role='menuitem']) svg {
-    inline-size: var(--glyph-xl) !important;
-    block-size: var(--glyph-xl) !important;
+    inline-size: var(--glyph-xl);
+    block-size: var(--glyph-xl);
   }
 
-  .leading button span:has(> svg), .trailing button:not([role='menuitem']) span:has(> svg) { inline-size: var(--glyph-xl) !important; block-size: var(--glyph-xl) !important; }
+  .leading button span:has(> svg),
+  .trailing button:not([role='menuitem']) span:has(> svg) {
+    inline-size: var(--glyph-xl);
+    block-size: var(--glyph-xl);
+  }
 
   .trailing button {
-    color: var(--text-2) !important;
+    color: var(--text-2);
   }
 
   .leading button,
   .trailing button:not([role='menuitem']) {
     border: 1px solid var(--hairline);
-    border-radius: var(--radius-pill) !important;
+    border-radius: var(--radius-pill);
     background-color: var(--paper);
     box-shadow: var(--shadow-float);
   }
 
   .leading button:active,
   .trailing button:not([role='menuitem']):active {
-    background-image: linear-gradient(var(--overlay-active), var(--overlay-active)) !important;
+    background-image: linear-gradient(var(--overlay-active), var(--overlay-active));
   }
 
   .title {
@@ -76,12 +80,14 @@
   }
 
   .back {
-    inline-size: var(--control-h-touch) !important;
-    min-inline-size: var(--control-h-touch) !important;
-    block-size: var(--control-h-touch) !important;
-    min-block-size: var(--control-h-touch) !important;
-    border-radius: var(--radius-pill) !important;
-    color: var(--text-2) !important;
+    display: grid;
+    place-items: center;
+    inline-size: var(--control-h-touch);
+    min-inline-size: var(--control-h-touch);
+    block-size: var(--control-h-touch);
+    min-block-size: var(--control-h-touch);
+    border-radius: var(--radius-pill);
+    color: var(--text-2);
+    cursor: pointer;
   }
-
 }

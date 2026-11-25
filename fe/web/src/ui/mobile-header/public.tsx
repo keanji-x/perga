@@ -1,7 +1,6 @@
 import { floatingControlClassName } from '../floating-control/public.ts';
 import { Heading as AstryxHeading } from '@astryxdesign/core/Heading';
 import { Icon } from '../icon/public.tsx';
-import { IconButton as AstryxIconButton } from '@astryxdesign/core/IconButton';
 import type { ReactNode, Ref } from 'react';
 
 import styles from './mobile-header.module.css';
@@ -36,15 +35,16 @@ export function MobileHeader({
     >
       <span className={styles.leading}>
         {leading ?? (onBack !== undefined && (
-          <AstryxIconButton
+          <button
+            key="back"
             ref={backRef}
+            type="button"
             className={`${styles.back} ${floatingControlClassName}`}
-            label={`Back to ${backLabel ?? 'previous page'}`}
-            variant="ghost"
-            size="lg"
-            icon={<Icon name="chevron-left" />}
+            aria-label={`Back to ${backLabel ?? 'previous page'}`}
             onClick={onBack}
-          />
+          >
+            <Icon name="chevron-left" />
+          </button>
         ))}
       </span>
       <div className={styles.titleGroup}>

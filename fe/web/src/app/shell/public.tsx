@@ -3,7 +3,7 @@
 
 import { Outlet } from '@tanstack/react-router';
 import {
-  createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, type ReactNode,
+  createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, type ReactNode,
 } from 'react';
 
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
@@ -115,28 +115,32 @@ export function useOpenMobileSection(): OpenMobileSection {
 export function AppShell({
   transport, unauthorized, onOpenSettings, onSignOut, nowMs, userLabel, shareScope = null,
 }: AppShellProps) {
+  const shellRef = useRef<HTMLDivElement | null>(null);
   const narrowRail = useCompactViewport();
   const [mobileSection, setMobileSection] = useState<MobileSection | null>(null);
   const [mobileClosing, setMobileClosing] = useState(false);
   if (mobileSection === null && mobileClosing) setMobileClosing(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [mobileReturnIntent, setMobileReturnIntent] = useState<MobileReturnIntent>(null);
   const [mobileHeaderActionsHost, setMobileHeaderActionsHost] = useState<HTMLDivElement | null>(null);
   const [mobileHeaderTitleHost, setMobileHeaderTitleHost] = useState<HTMLDivElement | null>(null);
   const conversationScope = useMobileConversationScope();
 
   const closeMobileSection = useCallback(() => {
-    setMobileClosing((closing) => (mobileSection === null ? false : closing || true));
+    setMobileClosing(mobileSection !== null);
   }, [mobileSection]);
 
   const finishMobileClose = useCallback(() => {
     setMobileSection(null);
     setMobileClosing(false);
+    setMobileReturnIntent(null);
   }, []);
 
   const handleCloseMobileNavigation = useCallback((immediate = false) => {
     if (immediate) {
       setMobileSection(null);
       setMobileClosing(false);
+      setMobileReturnIntent(null);
       return;
     }
     closeMobileSection();
@@ -153,6 +157,7 @@ export function AppShell({
     if (!narrowRail && mobileSection !== null) {
       setMobileSection(null);
       setMobileClosing(false);
+      setMobileReturnIntent(null);
     }
   }, [mobileSection, narrowRail]);
 
@@ -183,14 +188,18 @@ export function AppShell({
 
   return (
     <div
+      ref={shellRef}
       className={`${styles.shell} ${narrowRail ? mobileFontClassName : ''} ${narrowRail && (controller.settingsOpen || controller.mobileOverlayRoute) ? styles.settingsPageShell : ''} ${railCollapsed ? styles.shellCollapsed : styles.shellExpanded}`}
     >
       {narrowRail ? (
         <MobileShellChrome
+          shellRef={shellRef}
           transport={transport}
           unauthorized={unauthorized}
           controller={controller}
           conversationScope={conversationScope}
+          historyOpen={historyOpen}
+          onHistoryOpenChange={setHistoryOpen}
           mobileSection={mobileSection}
           workspaceInteractive={workspaceInteractive}
           mobileDialogActive={mobileDialogActive}

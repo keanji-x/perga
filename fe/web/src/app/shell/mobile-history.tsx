@@ -13,8 +13,10 @@ import { Button } from '@astryxdesign/core/Button';
 import { DropdownMenu } from '@astryxdesign/core/DropdownMenu';
 import type { Conversation } from '../../../../core/domain/conversation.ts';
 import { conversationName } from '../../../../core/domain/conversation.ts';
+import { localDailyDate } from '../../../../core/domain/daily-planner.ts';
 import { Icon as UiIcon } from '../../ui/icon/public.tsx';
 import { ErrorBox } from '../../ui/error-box/public.tsx';
+import { LoadingStatus } from '../../ui/loading-status/public.tsx';
 import styles from './mobile-history.module.css';
 
 type HistoryView = 'current' | 'pinned' | 'unread' | 'waiting';
@@ -35,6 +37,23 @@ function historyTitle(row: Conversation): string {
 
 function historySubtitle(row: Conversation): string {
   return historyTitle(row) === row.trackTitle ? conversationName(row) : row.trackTitle ?? '';
+}
+
+function historyTimeLabel(at: number): string {
+  return new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(at);
+}
+
+function historyDateLabel(at: number): string {
+  return localDailyDate(new Date(at));
+}
+
+function historyMetaText(row: Conversation): string {
+  const date = historyDateLabel(row.updatedAt);
+  // Daily tracks use local YYYY-MM-DD as their title; show local time instead of repeating the date.
+  const stamp = historyTitle(row) === date ? historyTimeLabel(row.updatedAt) : date;
+  if (row.isLead === true) return `Lead · ${stamp}`;
+  const subtitle = historySubtitle(row);
+  return subtitle ? `${subtitle} · ${stamp}` : stamp;
 }
 
 function groupName(at: number, now: number): string {
@@ -148,7 +167,7 @@ export function MobileHistory({ owner, open, onOpenChange, conversations, loadin
         {view === 'current' ? <>
         <p className={styles.scope}>{scopeLabel}</p>
         {failed && <ErrorBox message="Some conversations could not be loaded." actionLabel="Retry" onRetry={onRetry} />}
-        {loading && <p role="status">Loading conversations…</p>}
+        {loading && <LoadingStatus>Loading conversations…</LoadingStatus>}
         <ConversationGroups conversations={conversations} emptyActive={!loading && !failed ? <EmptyState variant="compact" icon={<UiIcon name="chat" />} title={conversations.length === 0 ? 'No conversations in this track yet.' : 'No active conversations.'} description="Active conversations for this track appear here." /> : null}>
           {rows => {
             const groups = new Map<string, Conversation[]>();
@@ -162,7 +181,7 @@ export function MobileHistory({ owner, open, onOpenChange, conversations, loadin
                 {rows.map((row) => <div key={row.id} className={styles.conversationRow}><button type="button" className={styles.row} aria-current={row.id === selectedConversationId ? 'true' : undefined}
                   aria-label={`${historyTitle(row)}${historySubtitle(row) ? ` ${historySubtitle(row)}` : ''}`} onClick={() => leave(() => onSelect(row))}>
                   <span className={styles.title}>{historyTitle(row)}</span>
-                  <span className={styles.meta} title={historySubtitle(row)}>{row.isLead === true ? null : historySubtitle(row)}<span aria-hidden="true">{row.isLead === true ? '' : ' · '}{new Date(row.updatedAt).toISOString().slice(0, 10)}</span></span>
+                  <span className={styles.meta} title={historySubtitle(row)}>{historyMetaText(row)}</span>
                 </button>
                 {onArchive !== undefined && row.kind === 'agent' && row.isLead !== true && <ConversationArchiveAction
                   conversation={row} onArchive={onArchive} className={styles.conversationActions} />}
@@ -174,7 +193,7 @@ export function MobileHistory({ owner, open, onOpenChange, conversations, loadin
         </> : <>
           <p className={styles.scope}>{shareMode ? 'Shared tracks' : 'All areas'}</p>
           {tracksError !== null && <ErrorBox message={tracksError} actionLabel="Retry" onRetry={onRetryTracks} />}
-          {tracksLoading && <p role="status">Loading tracks…</p>}
+          {tracksLoading && <LoadingStatus>Loading tracks…</LoadingStatus>}
           <MobileTrackList tracks={trackGroups[view]} currentTrackId={currentTrackId} isUnread={isUnread}
             onOpenTrack={(trackId) => leave(() => onOpenTrack(trackId))}
             emptyState={!tracksLoading && tracksError === null ? trackEmptyContent(view) : undefined} />

@@ -232,7 +232,7 @@ export function Dialog({ purpose, origin, open, onClose, title, hideTitleRow, hi
       }}><Icon name="close" /></button>}</header>}
       <div className={fullscreen ? `dialog-body ${styles.fullscreenBody}` : 'dialog-body'} style={showingView ? { display: 'none' } : undefined}>{children}</div>
       {showingView && (
-        <div className="dialog-body dialog-child-view" data-nc-dialog-child-view="">{view.body}</div>
+        <div className={fullscreen ? `dialog-body dialog-child-view ${styles.fullscreenBody}` : 'dialog-body dialog-child-view'} data-nc-dialog-child-view="">{view.body}</div>
       )}
     </CardFrame>
     </div>

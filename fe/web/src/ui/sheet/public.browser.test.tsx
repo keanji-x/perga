@@ -783,3 +783,11 @@ it.each(['enable', 'remount', 'hidden', 'reduced'] as const)('prepares an unavai
     expect(calls.mock.lastCall!.slice(1, 4)).toEqual([panel.getBoundingClientRect().height, 0, 0]);
   }
 });
+
+it('suppresses programmatic container focus outline on the sheet panel', async () => {
+  const { panel, settle } = await mount();
+  await settle();
+  panel.focus();
+  expect(document.activeElement).toBe(panel);
+  expect(getComputedStyle(panel).outlineStyle).toBe('none');
+});
