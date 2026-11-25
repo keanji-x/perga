@@ -17,275 +17,509 @@
   <meta name="twitter:description" content="Move multi-day Claude Code & Codex work out of scrolling chat tabs. Living reports, cross-model review, 0-token watches, governed local memory." />
   <meta name="twitter:image" content="https://keanji-x.github.io/perga/og-card.png" />
   <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400;1,6..72,500&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
-  <header class="site-header">
-    <div class="container header-inner">
-      <a class="brand" href="./" aria-label="Perga home">
-        <span class="brand-mark" aria-hidden="true">P</span>
-        <span class="brand-name">Perga</span>
-      </a>
-      <nav class="nav" aria-label="Primary">
-        <a href="#why">Why Perga</a>
-        <a href="#install">Install</a>
-        <a href="#architecture">Architecture</a>
-        <a href="https://github.com/keanji-x/perga/blob/main/docs/product/vision.md" target="_blank" rel="noreferrer">Vision</a>
-        <a class="nav-cta" href="https://github.com/keanji-x/perga" target="_blank" rel="noreferrer">GitHub</a>
-        <!-- DISCORD SLOT: Once your 4-channel Discord invite link is ready, uncomment:
-        <a class="nav-cta" href="https://discord.gg/YOUR_INVITE" target="_blank" rel="noreferrer">Discord</a>
-        -->
-      </nav>
-    </div>
-  </header>
+  <div class="page-frame">
+    <header class="masthead">
+      <div class="masthead-inner">
+        <a class="wordmark" href="./" aria-label="Perga home">
+          <span class="wordmark-seal" aria-hidden="true">P</span>
+          <span class="wordmark-text">Perga</span>
+          <span class="wordmark-sub">LOCAL AGENT WORKSPACE</span>
+        </a>
+        <nav class="nav" aria-label="Primary">
+          <a href="#specimen">Workspace</a>
+          <a href="#thesis">Principles</a>
+          <a href="#specs">Specs</a>
+          <a href="https://github.com/keanji-x/perga/blob/main/docs/product/vision.md" target="_blank" rel="noreferrer">Vision</a>
+          <a class="nav-repo" href="https://github.com/keanji-x/perga" target="_blank" rel="noreferrer">GitHub ↗</a>
+          <!-- DISCORD SLOT: Uncomment when ready
+          <a class="nav-repo" href="https://discord.gg/YOUR_INVITE" target="_blank" rel="noreferrer">Discord ↗</a>
+          -->
+        </nav>
+      </div>
+    </header>
 
-  <main>
-    <section class="hero">
-      <div class="container">
-        <p class="eyebrow">Apache 2.0 · macOS Apple Silicon &amp; Linux x64 · 100% Local</p>
-        <h1 class="hero-title">Chat drifts. Reports stay.</h1>
-        <p class="hero-subtitle">
-          Move multi-day <strong>Claude Code</strong> &amp; <strong>Codex</strong> work out of scrolling chat tabs —
-          anchored in read-only living reports, enforced cross-model review, 0-token watches, and governed local Markdown memory.
-        </p>
+    <main>
+      <!-- HERO: Asymmetric editorial header + Swiss colophon -->
+      <section class="hero">
+        <div class="hero-grid">
+          <div class="hero-lead">
+            <div class="kicker">
+              <span class="kicker-dot" aria-hidden="true"></span>
+              <span>OPEN SOURCE · APACHE 2.0 · MACOS ARM64 &amp; LINUX X64</span>
+            </div>
+            <h1 class="display">
+              Chat drifts.<br />
+              <em>Reports stay.</em>
+            </h1>
+            <p class="deck">
+              A local workspace that moves multi-day <strong>Claude Code</strong> and <strong>Codex</strong> work out of scrolling chat tabs — anchoring every task in a read-only living report, enforced cross-model review, 0-token watches, and governed Markdown memory.
+            </p>
 
-        <div class="install-card" id="install">
-          <div class="install-bar">
-            <code class="install-cmd" id="install-cmd">curl -fsSL https://keanji-x.github.io/perga/install.sh | sh</code>
-            <button type="button" class="copy-btn" id="copy-btn" aria-label="Copy install command">Copy</button>
-          </div>
-          <div class="install-meta">
-            <span>Self-contained binary — <strong>no .NET runtime required</strong>.</span>
-            <span>Requires Node.js 24+ and your existing CLI (<code>claude</code> / <code>codex</code>).</span>
-          </div>
-          <div class="install-steps">
-            <span>Then once: <code>perga auth init-owner --username owner --allow-migrate</code></span>
-            <span>Start: <code>perga</code> → <a href="http://127.0.0.1:4041/">localhost:4041</a></span>
-          </div>
-        </div>
-
-        <div class="hero-actions">
-          <a class="btn btn-primary" href="https://github.com/keanji-x/perga/releases" target="_blank" rel="noreferrer">Download Release</a>
-          <a class="btn btn-secondary" href="https://github.com/keanji-x/perga" target="_blank" rel="noreferrer">View on GitHub</a>
-          <a class="btn btn-ghost" href="https://github.com/keanji-x/perga/blob/main/docs/product/design.md" target="_blank" rel="noreferrer">Read Product Design →</a>
-        </div>
-
-        <!--
-          MEDIA SLOT: Replace the editorial workspace preview below with your real screenshot or 60s OBS clip when ready:
-          <figure class="media-frame">
-            <img src="./assets/hero.png" alt="Perga workspace showing living report, flow, shared memory, and side-pane steering" />
-          </figure>
-        -->
-        <figure class="workspace-frame" aria-label="Perga two-pane workspace preview">
-          <div class="frame-chrome">
-            <span class="chrome-dots" aria-hidden="true"><i></i><i></i><i></i></span>
-            <span class="chrome-title">perga · track/auth-session-hardening · main + overlayfs</span>
-            <span class="chrome-pill">Lead: Claude · Reviewer: Codex (enforced read-only)</span>
-          </div>
-          <div class="workspace-grid">
-            <div class="pane-report">
-              <div class="datum-row">
-                <span class="datum-tag">LIVING REPORT · REV 14</span>
-                <span class="datum-fact">Gate: <code>dotnet test</code> exit 0 · 2m ago</span>
+            <div class="terminal-install" id="install">
+              <div class="terminal-top">
+                <span class="terminal-label">ONE-LINE INSTALL · NO .NET RUNTIME REQUIRED</span>
+                <button type="button" class="copy-btn" id="copy-btn" aria-label="Copy install command">Copy</button>
               </div>
-              <h2 class="doc-h1">Delivery Flow</h2>
-              <div class="flow-list">
-                <div class="flow-row">
-                  <span class="badge badge-done">Done</span>
-                  <span class="flow-name">impl · isolate queued image turns</span>
-                  <span class="flow-meta">claude · read_write · gate passed</span>
-                </div>
-                <div class="flow-row">
-                  <span class="badge badge-done">Done</span>
-                  <span class="flow-name">review · independent cross-model audit</span>
-                  <span class="flow-meta">codex · read_only · 2 issues caught</span>
-                </div>
-                <div class="flow-row">
-                  <span class="badge badge-watch">Watching</span>
-                  <span class="flow-name">ci · prChecks #180 (0-token probe)</span>
-                  <span class="flow-meta">interval 60s · 0 tokens spent</span>
-                </div>
+              <div class="terminal-body">
+                <span class="prompt" aria-hidden="true">$</span>
+                <code id="install-cmd">curl -fsSL https://keanji-x.github.io/perga/install.sh | sh</code>
               </div>
-
-              <h2 class="doc-h1">Governed Shared Memory</h2>
-              <div class="mem-list">
-                <div class="mem-row">
-                  <span class="mem-ref">area/auth-boundaries</span>
-                  <span class="mem-desc">Loopback-only cleartext HTTP unless opt-in; ETag locked · 312 B</span>
-                </div>
-                <div class="mem-row">
-                  <span class="mem-ref">global/review-discipline</span>
-                  <span class="mem-desc">Never grade own patch; route review to second provider · 198 B</span>
-                </div>
+              <div class="terminal-foot">
+                <span>Then once: <code>perga auth init-owner --username owner --allow-migrate</code></span>
+                <span>Run: <code>perga</code></span>
               </div>
             </div>
 
-            <aside class="pane-margin" aria-label="Side-pane conversation and live steering">
-              <div class="margin-head">
-                <span>WORKER STREAM · SHARED CONTROL</span>
-                <span class="live-dot">LIVE</span>
+            <div class="hero-links">
+              <a class="action-primary" href="https://github.com/keanji-x/perga/releases" target="_blank" rel="noreferrer">Download Release</a>
+              <a class="action-secondary" href="https://github.com/keanji-x/perga" target="_blank" rel="noreferrer">Inspect Source</a>
+              <a class="action-text" href="https://github.com/keanji-x/perga/blob/main/docs/product/design.md" target="_blank" rel="noreferrer">Product Design Notes →</a>
+            </div>
+          </div>
+
+          <aside class="colophon" aria-label="Technical colophon">
+            <div class="colophon-row">
+              <span class="col-k">PARADIGM</span>
+              <span class="col-v">Conversation in the margin.<br />Kernel-verified report at center.</span>
+            </div>
+            <div class="colophon-row">
+              <span class="col-k">CLIs</span>
+              <span class="col-v">Claude Code · Codex · ACP<br /><small>Bring your own subscriptions</small></span>
+            </div>
+            <div class="colophon-row">
+              <span class="col-k">ISOLATION</span>
+              <span class="col-v">Worktree · Jujutsu <code>jj</code><br />Linux OverlayFS · Remote SSH</span>
+            </div>
+            <div class="colophon-row">
+              <span class="col-k">FOOTPRINT</span>
+              <span class="col-v">Self-contained binary + Rust PTY<br />Single SQLite WAL · Zero cloud</span>
+            </div>
+            <div class="colophon-row">
+              <span class="col-k">PREREQ</span>
+              <span class="col-v">Node.js 24+ (OAR bridge)<br />No .NET runtime needed</span>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <!-- INTERACTIVE SPECIMEN -->
+      <section class="specimen-section" id="specimen">
+        <div class="section-bar">
+          <div class="section-bar-left">
+            <span class="index-tag">FIG. 01</span>
+            <span class="section-bar-title">THE TWO-PANE WORKSPACE</span>
+          </div>
+          <div class="specimen-tabs" role="tablist" aria-label="Workspace views">
+            <button type="button" class="tab-btn is-active" role="tab" aria-selected="true" data-tab="report">01 Living Report &amp; Flow</button>
+            <button type="button" class="tab-btn" role="tab" aria-selected="false" data-tab="memory">02 Governed Memory</button>
+            <button type="button" class="tab-btn" role="tab" aria-selected="false" data-tab="control">03 Cross-Model Steer</button>
+          </div>
+        </div>
+
+        <!--
+          MEDIA SLOT: When you record a real screenshot or 60s OBS clip, place it under site/assets/ and embed it here.
+        -->
+        <div class="window-shell">
+          <div class="window-bar">
+            <div class="window-left">
+              <span class="win-dot"></span><span class="win-dot"></span><span class="win-dot"></span>
+              <span class="win-path" id="win-path">perga / core / track · auth-session-hardening</span>
+            </div>
+            <div class="window-right">
+              <span class="win-chip" id="win-chip">OVERLAYFS · REV 14 · GATE EXIT 0</span>
+            </div>
+          </div>
+
+          <!-- TAB 1: LIVING REPORT & FLOW -->
+          <div class="window-body" data-panel="report">
+            <article class="sheet">
+              <div class="sheet-datum">
+                <span>READ-ONLY LIVING REPORT</span>
+                <span>KERNEL-VERIFIED · UPDATED 2M AGO</span>
               </div>
-              <div class="msg msg-agent">
-                <span class="msg-who">Codex · review (read_only)</span>
-                <p>Found a race when an image turn queues behind a cancelling turn — preview URLs can leak across epochs.</p>
+
+              <h2 class="sheet-h1">Auth Session &amp; Queue Isolation</h2>
+              <p class="sheet-prose">
+                Queued multimodal turns now bind to their originating epoch before dispatch. On cancellation or host restart, unstarted previews cannot leak across epochs or reuse stale transport URLs.
+              </p>
+
+              <div class="sheet-block">
+                <div class="block-cap">
+                  <span>BUILTIN:FLOW · DECLARATIVE ORCHESTRATION</span>
+                  <span>0 TOKENS WHILE WATCHING</span>
+                </div>
+                <div class="ledger">
+                  <div class="ledger-row">
+                    <span class="state state-ok">OK</span>
+                    <span class="ledger-title">impl · isolate queued turns</span>
+                    <span class="ledger-spec">claude · read_write</span>
+                    <span class="ledger-gate">dotnet test · 0</span>
+                  </div>
+                  <div class="ledger-row">
+                    <span class="state state-ok">OK</span>
+                    <span class="ledger-title">review · cross-model audit</span>
+                    <span class="ledger-spec">codex · read_only (enforced)</span>
+                    <span class="ledger-gate">2 findings fixed</span>
+                  </div>
+                  <div class="ledger-row is-active">
+                    <span class="state state-watch">WATCH</span>
+                    <span class="ledger-title">ci · prChecks #180</span>
+                    <span class="ledger-spec">host probe · every 60s</span>
+                    <span class="ledger-gate">0 tokens</span>
+                  </div>
+                </div>
               </div>
-              <div class="msg msg-human">
-                <span class="msg-who">You · Steer (injected mid-turn)</span>
-                <p>Keep the fix scoped to <code>TrackActor.SessionInputs</code> and add a restart test. Cite <code>@area/auth-boundaries</code>.</p>
+            </article>
+
+            <aside class="margin">
+              <div class="margin-cap">
+                <span>SIDE-PANE CONVERSATION</span>
+                <span class="live-tag">● LIVE STREAM</span>
               </div>
-              <div class="msg msg-system">
-                <span class="msg-who">Memory Proposal → Memory Planner</span>
-                <p>Proposed durable rule <code>area/queued-turn-isolation</code> (awaiting planner budget check).</p>
+              <div class="turn">
+                <div class="turn-meta"><strong>Codex</strong> · review (read_only) · 14s</div>
+                <p>Edge case in <code>TrackActor.SessionInputs</code>: if a cancel lands while an attachment preview is still resolving, the queued turn keeps the previous epoch's URL.</p>
               </div>
-              <div class="steer-bar">
+              <div class="turn turn-human">
+                <div class="turn-meta"><strong>You</strong> · Steer (mid-turn)</div>
+                <p>Fix inside <code>TrackActor.SessionInputs</code> and add a fresh-host restart test. Keep <code>@area/auth-boundaries</code> intact.</p>
+              </div>
+              <div class="turn turn-ok">
+                <div class="turn-meta"><strong>Host Gate</strong> · deterministic verification</div>
+                <p><code>dotnet test Perga.sln</code> — 412 passed, 0 failed (18.4s). Report block <code>b_7f2a</code> updated.</p>
+              </div>
+              <div class="composer-mock">
                 <span>Steer active worker, switch model, or @mention memory…</span>
-                <kbd>Enter</kbd>
+                <kbd>↵</kbd>
               </div>
             </aside>
           </div>
-        </figure>
-      </div>
-    </section>
 
-    <section class="section" id="why">
-      <div class="container">
-        <div class="section-head">
-          <p class="eyebrow">Four real friction points</p>
-          <h2 class="section-title">Built for the problems that hit on day three, not minute one.</h2>
+          <!-- TAB 2: GOVERNED SHARED MEMORY -->
+          <div class="window-body is-hidden" data-panel="memory">
+            <article class="sheet">
+              <div class="sheet-datum">
+                <span>MEMORY PLANNER TRACK · AREA / PERGA-CORE</span>
+                <span>PLAIN UTF-8 MARKDOWN · ETAG LOCKED</span>
+              </div>
+
+              <h2 class="sheet-h1">Pinned Rules</h2>
+              <div class="budget-strip">
+                <div class="budget-meta">
+                  <span>HARD CONTEXT BUDGET (NO PROMPT BLOAT)</span>
+                  <span><strong>742 B</strong> / 2,048 B</span>
+                </div>
+                <div class="budget-bar"><span style="width: 36%"></span></div>
+              </div>
+
+              <div class="ledger">
+                <div class="ledger-row">
+                  <span class="state state-pin">AREA</span>
+                  <span class="ledger-title">area/auth-boundaries</span>
+                  <span class="ledger-spec">cleartext HTTP loopback-only unless opt-in</span>
+                  <span class="ledger-gate">312 B</span>
+                </div>
+                <div class="ledger-row">
+                  <span class="state state-pin">AREA</span>
+                  <span class="ledger-title">area/migration-freeze</span>
+                  <span class="ledger-spec">released SQLite migrations are byte-frozen</span>
+                  <span class="ledger-gate">232 B</span>
+                </div>
+                <div class="ledger-row">
+                  <span class="state state-global">GLOBAL</span>
+                  <span class="ledger-title">global/review-discipline</span>
+                  <span class="ledger-spec">never grade own patch; enforce second model</span>
+                  <span class="ledger-gate">198 B</span>
+                </div>
+              </div>
+
+              <h2 class="sheet-h1" style="margin-top: 24px">Topic Index</h2>
+              <p class="sheet-prose">
+                Non-pinned notes stay compact in a 1,024 B index — recalled on demand via keyword search or explicit <code>@area/key</code> mentions across Claude Code, Codex, and ACP.
+              </p>
+            </article>
+
+            <aside class="margin">
+              <div class="margin-cap">
+                <span>SEPARATION OF DUTIES</span>
+                <span class="live-tag">GOVERNED</span>
+              </div>
+              <div class="turn">
+                <div class="turn-meta"><strong>Task Lead (Claude)</strong> · memory_propose</div>
+                <p>Task sessions cannot mutate durable memory directly. Proposed <code>area/queued-turn-isolation</code> after PR #180.</p>
+              </div>
+              <div class="turn turn-human">
+                <div class="turn-meta"><strong>Memory Planner</strong> · budget &amp; conflict check</div>
+                <p>Checked against existing pinned rules (no duplicate). Placed under Topic Index instead of Pinned to keep base prompt lean.</p>
+              </div>
+              <div class="turn turn-ok">
+                <div class="turn-meta"><strong>Shared across CLIs</strong></div>
+                <p>Version hash updated — next Claude, Codex, or ACP turn receives the delta automatically without re-injecting unchanged memory.</p>
+              </div>
+              <div class="composer-mock">
+                <span>One-click "Save to Memory" from any message…</span>
+                <kbd>Save</kbd>
+              </div>
+            </aside>
+          </div>
+
+          <!-- TAB 3: CROSS-MODEL STEER -->
+          <div class="window-body is-hidden" data-panel="control">
+            <article class="sheet">
+              <div class="sheet-datum">
+                <span>HETEROGENEOUS ROUTING · SHARED WORKER CONTROL</span>
+                <span>ZERO VENDOR LOCK-IN</span>
+              </div>
+
+              <h2 class="sheet-h1">Enforced Separation of Execution &amp; Review</h2>
+              <p class="sheet-prose">
+                A single Lead coordinates workers across providers inside one isolated workspace. A 27-line <code>.perga.js</code> protocol enforces that implementation runs read-write behind a host gate, while review runs read-only on a different model.
+              </p>
+
+              <pre class="code-specimen"><code>tasks: {
+  routing: [
+    { when: { role: "impl" },   access: "read_write", requireGate: true },
+    { when: { role: "review" }, provider: "codex", access: "read_only", enforce: true }
+  ]
+}</code></pre>
+            </article>
+
+            <aside class="margin">
+              <div class="margin-cap">
+                <span>WORKER CONTROLS</span>
+                <span class="live-tag">HUMAN = LEAD</span>
+              </div>
+              <div class="turn">
+                <div class="turn-meta"><strong>Same live stream</strong></div>
+                <p>Humans and the Lead observe the exact same active Worker turn, tool calls, and persistent Rust PTY terminal.</p>
+              </div>
+              <div class="turn turn-human">
+                <div class="turn-meta"><strong>Mid-flight Steer &amp; Model Swap</strong></div>
+                <p>Inject a course-correction mid-turn, interrupt cleanly without losing workspace state, or switch provider/reasoning effort on the next turn via epoch handover.</p>
+              </div>
+              <div class="turn turn-ok">
+                <div class="turn-meta"><strong>Physical boundary</strong></div>
+                <p>Contract workers cannot call <code>flow_commit</code> or approve their own work — governance lives in the kernel, not polite prompt text.</p>
+              </div>
+              <div class="composer-mock">
+                <span>Model: Claude Opus 4.6 · Effort: High · Mode: Ask</span>
+                <kbd>Steer</kbd>
+              </div>
+            </aside>
+          </div>
+        </div>
+      </section>
+
+      <!-- EDITORIAL CONTRAST LEDGER (NO CARD SOUP) -->
+      <section class="thesis-section" id="thesis">
+        <div class="section-bar">
+          <div class="section-bar-left">
+            <span class="index-tag">SEC. 02</span>
+            <span class="section-bar-title">WHY NOT FIVE CLI TABS?</span>
+          </div>
+          <span class="section-bar-note">Designed for day three of a real task, not minute one.</span>
         </div>
 
-        <div class="contrast-grid">
-          <article class="contrast-card">
-            <span class="card-num">01</span>
-            <h3>Drifting chat → Living reports &amp; kernel-verified facts</h3>
-            <p class="contrast-before"><strong>Before:</strong> Decisions, scope changes, and test results vanish inside 400-line scrolling terminal logs.</p>
-            <p class="contrast-after"><strong>With Perga:</strong> Conversation stays in the margin. The main pane is a read-only editorial report backed by kernel-stamped facts (actual model, gate exit codes, timestamps) that agents cannot forge.</p>
+        <div class="thesis-list">
+          <article class="thesis-row">
+            <div class="thesis-index">01</div>
+            <div class="thesis-head">
+              <h3>Living reports over drifting chat</h3>
+              <p class="thesis-old"><s>Scroll through 400 lines of terminal output to remember what changed.</s></p>
+            </div>
+            <div class="thesis-body">
+              <p>Conversation stays in the side pane. The main view is a read-only editorial report combining schema-validated ledgers with kernel-stamped facts (actual model, gate exit codes, timestamps) that agents cannot forge. Context limits trigger native compaction or report-anchored epoch handover.</p>
+              <span class="proof-chip">ReportDoc · Optimistic block locks · Epoch handover</span>
+            </div>
           </article>
 
-          <article class="contrast-card">
-            <span class="card-num">02</span>
-            <h3>Goldfish amnesia &amp; auto-memory bloat → Governed shared memory</h3>
-            <p class="contrast-before"><strong>Before:</strong> Fresh sessions forget yesterday's architecture, while unchecked <code>CLAUDE.md</code> or auto-memory piles up conflicting rules and wastes context.</p>
-            <p class="contrast-after"><strong>With Perga:</strong> Readable UTF-8 Markdown memory scoped by Area and Global, shared across Claude Code, Codex, and ACP. Task leads can only <code>memory_propose</code>; a dedicated Memory Planner enforces ETags and strict byte budgets.</p>
+          <article class="thesis-row">
+            <div class="thesis-index">02</div>
+            <div class="thesis-head">
+              <h3>Governed local memory over auto-memory bloat</h3>
+              <p class="thesis-old"><s>Choose between goldfish amnesia and a 600-line polluted CLAUDE.md.</s></p>
+            </div>
+            <div class="thesis-body">
+              <p>Durable knowledge lives as readable UTF-8 Markdown scoped by Area and Global, shared across Claude Code, Codex, and ACP. Task leads can only propose updates; a dedicated Memory Planner enforces ETags, hard byte budgets, and hash-deduplicated injection — plus <code>@mention</code> recall and one-click Save.</p>
+              <span class="proof-chip">Area 1228 B · Global 820 B · Index 1024 B · ETag</span>
+            </div>
           </article>
 
-          <article class="contrast-card">
-            <span class="card-num">03</span>
-            <h3>One model grading its own homework → Cross-model separation &amp; live Steer</h3>
-            <p class="contrast-before"><strong>Before:</strong> The same session writes code and declares victory, or background subagents run in a black box until they go off the rails.</p>
-            <p class="contrast-after"><strong>With Perga:</strong> Enforce read-only review on a different provider (e.g., Claude implements, Codex audits), block completion on host test gates, and steer or swap models on the live worker stream at any time.</p>
+          <article class="thesis-row">
+            <div class="thesis-index">03</div>
+            <div class="thesis-head">
+              <h3>Enforced cross-model review &amp; live Steer</h3>
+              <p class="thesis-old"><s>Let the same model write the code, weaken the test, and declare victory.</s></p>
+            </div>
+            <div class="thesis-body">
+              <p>Orchestrate Claude Code, Codex, and ACP inside the same track. Execution is structurally separated from acceptance, reviews can be enforced read-only on a second provider, write tasks pass through host verification gates, and you can steer or swap models on the live worker stream anytime.</p>
+              <span class="proof-chip">routing.enforce · Host Gate · Shared human/Lead Steer</span>
+            </div>
           </article>
 
-          <article class="contrast-card">
-            <span class="card-num">04</span>
-            <h3>Token-burning loops &amp; slow worktrees → 0-token watches &amp; real local isolation</h3>
-            <p class="contrast-before"><strong>Before:</strong> Fragile bash scripts poll CI, Electron wrappers lag across 5 sessions, and every Git worktree cold-rebuilds your repo from scratch.</p>
-            <p class="contrast-after"><strong>With Perga:</strong> Declarative <code>flow.json</code> probes CI or shell checks at zero token cost until state changes. Isolate tracks with Git worktrees, native Jujutsu (<code>jj</code>), Linux OverlayFS prewarmed caches, or remote SSH.</p>
+          <article class="thesis-row">
+            <div class="thesis-index">04</div>
+            <div class="thesis-head">
+              <h3>0-token watches &amp; real local isolation</h3>
+              <p class="thesis-old"><s>Burn tokens polling CI or wait ten minutes per Git worktree rebuild.</s></p>
+            </div>
+            <div class="thesis-body">
+              <p>Declarative <code>flow.json</code> runs zero-token probes (<code>prChecks</code> or shell commands) and wakes the Lead only when state changes. Isolate tracks via Git worktrees, native Jujutsu (<code>jj</code>), Linux OverlayFS prewarmed build snapshots, or remote SSH targets — with a persistent Rust PTY bridge.</p>
+              <span class="proof-chip">0-token watch · Linux OverlayFS · Native jj · Remote SSH</span>
+            </div>
           </article>
         </div>
-      </div>
-    </section>
+      </section>
 
-    <section class="section section-tinted" id="architecture">
-      <div class="container">
-        <div class="section-head">
-          <p class="eyebrow">Local sovereignty</p>
-          <h2 class="section-title">No cloud lock-in. Runs on your machine, with your CLIs.</h2>
+      <!-- HARDWARE-STYLE SPECIFICATION SHEET -->
+      <section class="specs-section" id="specs">
+        <div class="section-bar">
+          <div class="section-bar-left">
+            <span class="index-tag">SEC. 03</span>
+            <span class="section-bar-title">SYSTEM SPECIFICATIONS</span>
+          </div>
+          <span class="section-bar-note">100% local sovereignty. Zero cloud lock-in.</span>
         </div>
 
-        <dl class="spec-grid">
-          <div class="spec-item">
-            <dt>Runtime</dt>
-            <dd>Self-contained .NET 11 Host (macOS arm64 &amp; Linux x64) + lightweight Web/PWA (no Electron)</dd>
+        <div class="spec-table">
+          <div class="spec-row">
+            <div class="spec-k">Host Binary</div>
+            <div class="spec-v">Self-contained .NET 11 native packages for <strong>macOS Apple Silicon (arm64)</strong> and <strong>Linux x64</strong> (WSL2 supported). No .NET runtime required.</div>
           </div>
-          <div class="spec-item">
-            <dt>Terminals</dt>
-            <dd>Native Rust PTY bridge (<code>perga-term-bridge</code>, <code>#![forbid(unsafe_code)]</code>) — survives host restarts</dd>
+          <div class="spec-row">
+            <div class="spec-k">Frontend</div>
+            <div class="spec-v">Lightweight React + TypeScript web app &amp; installable PWA — no Electron overhead across parallel sessions.</div>
           </div>
-          <div class="spec-item">
-            <dt>Providers</dt>
-            <dd>Claude Code, Codex, and ACP-compatible CLIs via bundled OAR bridge — bring your existing subscriptions</dd>
+          <div class="spec-row">
+            <div class="spec-k">Terminal Bridge</div>
+            <div class="spec-v">Independent Rust daemon (<code>perga-term-bridge</code>, <code>#![forbid(unsafe_code)]</code>) — persistent PTY sessions survive host restarts and hot upgrades.</div>
           </div>
-          <div class="spec-item">
-            <dt>Workspaces</dt>
-            <dd>Git worktrees, Jujutsu (<code>jj</code>), Linux OverlayFS prewarmed build snapshots, and remote SSH targets</dd>
+          <div class="spec-row">
+            <div class="spec-k">Agent Providers</div>
+            <div class="spec-v">Claude Code, Codex, and ACP-compatible CLIs via bundled OAR bridge (requires Node.js 24+). Use your existing provider subscriptions.</div>
           </div>
-          <div class="spec-item">
-            <dt>State &amp; Memory</dt>
-            <dd>Single local SQLite WAL database + plain UTF-8 Markdown memory files with ETag optimistic locking</dd>
+          <div class="spec-row">
+            <div class="spec-k">Workspaces</div>
+            <div class="spec-v">Git worktrees, Jujutsu (<code>jj</code>), Linux OverlayFS with shared prewarmed build caches, and remote SSH execution with reverse MCP tunnel.</div>
           </div>
-          <div class="spec-item">
-            <dt>Protocols</dt>
-            <dd>Start with zero templates; attach 27–40 line <code>.perga.js</code> protocols only when recurring rules emerge</dd>
+          <div class="spec-row">
+            <div class="spec-k">Storage &amp; Memory</div>
+            <div class="spec-v">Single local SQLite WAL database + readable UTF-8 Markdown memory files with frontmatter and ETag concurrency control.</div>
           </div>
-        </dl>
-      </div>
-    </section>
+          <div class="spec-row">
+            <div class="spec-k">Protocols</div>
+            <div class="spec-v">Zero-template start by default. Attach 27–40 line <code>.perga.js</code> protocols (<code>agents-delivery</code>, <code>okr-loop</code>, <code>equity-research</code>, <code>memory</code>) only when rules recur.</div>
+          </div>
+          <div class="spec-row">
+            <div class="spec-k">License</div>
+            <div class="spec-v">Apache License 2.0.</div>
+          </div>
+        </div>
+      </section>
 
-    <section class="section" id="community">
-      <div class="container">
-        <div class="community-box">
-          <div>
-            <p class="eyebrow">Built in the open · Dogfooded daily</p>
-            <h2 class="section-title">Developed with Perga itself.</h2>
-            <p class="community-text">
-              Perga is Apache 2.0 open source and in active early release. If you already run multiple Claude Code or Codex sessions on macOS or Linux and want to shape the workflow, try a release, open an issue, or read how the architecture works.
+      <!-- HIGH-CONTRAST DARK MONOLITH CLOSING -->
+      <section class="closing">
+        <div class="closing-inner">
+          <div class="closing-copy">
+            <p class="closing-kicker">BUILT IN THE OPEN · DOGFOODED DAILY</p>
+            <h2 class="closing-title">Built with Perga <em>itself.</em></h2>
+            <p class="closing-desc">
+              Every release of Perga is developed, cross-reviewed, and verified inside Perga tracks. If you already run multiple Claude Code or Codex sessions on macOS or Linux, try the self-contained release in two minutes.
             </p>
+            <div class="closing-cmd">
+              <code>curl -fsSL https://keanji-x.github.io/perga/install.sh | sh</code>
+            </div>
           </div>
-          <div class="community-actions">
-            <a class="btn btn-primary" href="https://github.com/keanji-x/perga/releases" target="_blank" rel="noreferrer">Get Latest Release</a>
-            <a class="btn btn-secondary" href="https://github.com/keanji-x/perga/issues" target="_blank" rel="noreferrer">Issues &amp; Feedback</a>
-            <!-- DISCORD SLOT: Uncomment once your invite link is created:
-            <a class="btn btn-primary" href="https://discord.gg/YOUR_INVITE" target="_blank" rel="noreferrer">Join Early Discord</a>
+          <div class="closing-actions">
+            <a class="closing-btn-light" href="https://github.com/keanji-x/perga/releases" target="_blank" rel="noreferrer">Download Release</a>
+            <a class="closing-btn-outline" href="https://github.com/keanji-x/perga" target="_blank" rel="noreferrer">GitHub Repository</a>
+            <a class="closing-btn-outline" href="https://github.com/keanji-x/perga/blob/main/docs/product/vision.md" target="_blank" rel="noreferrer">Read Vision</a>
+            <!-- DISCORD SLOT: Uncomment when ready
+            <a class="closing-btn-light" href="https://discord.gg/YOUR_INVITE" target="_blank" rel="noreferrer">Join Early Discord</a>
             -->
           </div>
         </div>
 
         <!--
-          EARLY USER QUOTES SLOT: Add 3-5 real, specific quotes from friends / early users once collected:
-          <div class="quotes-grid">
-            <blockquote class="quote-card">
+          EARLY USER QUOTES SLOT: Uncomment when 3-5 real quotes from friends/early users are ready:
+          <div class="quotes-strip">
+            <blockquote class="quote-item">
               <p>"..."</p>
               <footer>— Name (@handle), Role</footer>
             </blockquote>
           </div>
         -->
-      </div>
-    </section>
-  </main>
+      </section>
+    </main>
 
-  <footer class="site-footer">
-    <div class="container footer-inner">
-      <span>Perga · Apache License 2.0</span>
-      <div class="footer-links">
-        <a href="https://github.com/keanji-x/perga" target="_blank" rel="noreferrer">GitHub</a>
-        <a href="https://github.com/keanji-x/perga/blob/main/docs/product/vision.md" target="_blank" rel="noreferrer">Vision</a>
-        <a href="https://github.com/keanji-x/perga/blob/main/docs/product/design.md" target="_blank" rel="noreferrer">Product Design</a>
-        <a href="https://github.com/keanji-x/perga/blob/main/DESIGN.md" target="_blank" rel="noreferrer">Architecture</a>
-        <a href="./install.sh">install.sh</a>
+    <footer class="footer">
+      <div class="footer-inner">
+        <span>PERGA · APACHE 2.0 · LOCAL-FIRST MULTI-AGENT WORKSPACE</span>
+        <div class="footer-links">
+          <a href="https://github.com/keanji-x/perga" target="_blank" rel="noreferrer">GitHub</a>
+          <a href="https://github.com/keanji-x/perga/blob/main/docs/product/vision.md" target="_blank" rel="noreferrer">Vision</a>
+          <a href="https://github.com/keanji-x/perga/blob/main/docs/product/design.md" target="_blank" rel="noreferrer">Design</a>
+          <a href="https://github.com/keanji-x/perga/blob/main/DESIGN.md" target="_blank" rel="noreferrer">Architecture</a>
+          <a href="./install.sh">install.sh</a>
+        </div>
       </div>
-    </div>
-  </footer>
+    </footer>
+  </div>
 
   <script>
     (function () {
       const btn = document.getElementById("copy-btn");
       const cmd = document.getElementById("install-cmd");
-      if (!btn || !cmd) return;
-      btn.addEventListener("click", async () => {
-        try {
-          await navigator.clipboard.writeText(cmd.textContent.trim());
-          btn.textContent = "Copied";
-          setTimeout(() => { btn.textContent = "Copy"; }, 1800);
-        } catch {
-          const range = document.createRange();
-          range.selectNodeContents(cmd);
-          const sel = window.getSelection();
-          sel.removeAllRanges();
-          sel.addRange(range);
-          btn.textContent = "Selected";
-          setTimeout(() => { btn.textContent = "Copy"; }, 1800);
-        }
+      if (btn && cmd) {
+        btn.addEventListener("click", async () => {
+          try {
+            await navigator.clipboard.writeText(cmd.textContent.trim());
+            btn.textContent = "Copied";
+            setTimeout(() => { btn.textContent = "Copy"; }, 1600);
+          } catch {
+            const range = document.createRange();
+            range.selectNodeContents(cmd);
+            const sel = window.getSelection();
+            sel.removeAllRanges();
+            sel.addRange(range);
+            btn.textContent = "Selected";
+            setTimeout(() => { btn.textContent = "Copy"; }, 1600);
+          }
+        });
+      }
+
+      const tabMeta = {
+        report:  { path: "perga / core / track · auth-session-hardening", chip: "OVERLAYFS · REV 14 · GATE EXIT 0" },
+        memory:  { path: "perga / core / memory · area-planner",          chip: "742 / 2,048 B · ETAG LOCKED" },
+        control: { path: "perga / core / worker · claude + codex",        chip: "ROUTING ENFORCED · LIVE STEER" }
+      };
+      const tabs = document.querySelectorAll(".tab-btn");
+      const panels = document.querySelectorAll("[data-panel]");
+      const pathEl = document.getElementById("win-path");
+      const chipEl = document.getElementById("win-chip");
+
+      tabs.forEach((tab) => {
+        tab.addEventListener("click", () => {
+          const key = tab.getAttribute("data-tab");
+          tabs.forEach((t) => {
+            const active = t === tab;
+            t.classList.toggle("is-active", active);
+            t.setAttribute("aria-selected", String(active));
+          });
+          panels.forEach((p) => {
+            p.classList.toggle("is-hidden", p.getAttribute("data-panel") !== key);
+          });
+          if (tabMeta[key]) {
+            if (pathEl) pathEl.textContent = tabMeta[key].path;
+            if (chipEl) chipEl.textContent = tabMeta[key].chip;
+          }
+        });
       });
     })();
   </script>

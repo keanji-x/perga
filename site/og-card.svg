@@ -1,28 +1,42 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
-  <rect width="1200" height="630" fill="#f4f2ec"/>
-  <rect x="44" y="44" width="1112" height="542" rx="18" fill="#fdfcfa" stroke="#d8d4cb" stroke-width="2"/>
-  <rect x="88" y="88" width="44" height="44" rx="10" fill="#1e2026"/>
-  <text x="110" y="120" text-anchor="middle" font-family="Georgia, serif" font-size="28" font-weight="700" fill="#fdfcfa">P</text>
-  <text x="148" y="119" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="26" font-weight="600" fill="#1e2026">Perga</text>
-  <text x="1112" y="117" text-anchor="end" font-family="monospace" font-size="18" fill="#6c7280">APACHE 2.0 · MACOS ARM64 &amp; LINUX X64 · 100% LOCAL</text>
+  <rect width="1200" height="630" fill="#f6f4ee"/>
+  <!-- Swiss outer architectural frame -->
+  <line x1="64" y1="0" x2="64" y2="630" stroke="#d6d1c6" stroke-width="1.5"/>
+  <line x1="1136" y1="0" x2="1136" y2="630" stroke="#d6d1c6" stroke-width="1.5"/>
+  <line x1="64" y1="110" x2="1136" y2="110" stroke="#d6d1c6" stroke-width="1.5"/>
+  <line x1="64" y1="510" x2="1136" y2="510" stroke="#d6d1c6" stroke-width="1.5"/>
+  <line x1="800" y1="110" x2="800" y2="510" stroke="#d6d1c6" stroke-width="1.5"/>
 
-  <line x1="88" y1="158" x2="1112" y2="158" stroke="#d8d4cb" stroke-width="1.5"/>
+  <!-- Top masthead -->
+  <rect x="96" y="42" width="32" height="32" rx="4" fill="#14161a"/>
+  <text x="112" y="66" text-anchor="middle" font-family="Georgia, serif" font-size="22" font-weight="700" fill="#fcfbf8">P</text>
+  <text x="142" y="66" font-family="Georgia, serif" font-size="26" font-weight="600" fill="#14161a">Perga</text>
+  <text x="1104" y="64" text-anchor="end" font-family="monospace" font-size="15" fill="#6e7482">APACHE 2.0 · MACOS ARM64 &amp; LINUX X64</text>
 
-  <text x="88" y="254" font-family="Georgia, serif" font-size="68" font-weight="600" fill="#1e2026">Chat drifts. Reports stay.</text>
-  <text x="88" y="318" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="28" fill="#4b505c">Move multi-day Claude Code &amp; Codex work out of scrolling chat tabs.</text>
+  <!-- Left display typography -->
+  <text x="96" y="230" font-family="Georgia, serif" font-size="78" font-weight="500" fill="#14161a">Chat drifts.</text>
+  <text x="96" y="316" font-family="Georgia, serif" font-style="italic" font-size="78" font-weight="400" fill="#2d4ba6">Reports stay.</text>
+  <text x="96" y="382" font-family="-apple-system, sans-serif" font-size="24" fill="#444954">Local workspace for multi-day Claude Code &amp; Codex work.</text>
 
-  <rect x="88" y="366" width="320" height="106" rx="12" fill="#f4f2ec" stroke="#d8d4cb" stroke-width="1.5"/>
-  <text x="112" y="404" font-family="monospace" font-size="16" font-weight="700" fill="#3955b8">01 · LIVING REPORTS</text>
-  <text x="112" y="438" font-family="-apple-system, sans-serif" font-size="20" fill="#1e2026">Kernel-verified facts &amp; ledgers</text>
+  <!-- Right colophon -->
+  <rect x="801" y="111" width="334" height="398" fill="#fcfbf8"/>
+  <text x="832" y="164" font-family="monospace" font-size="13" fill="#6e7482">01 · STATE</text>
+  <text x="832" y="192" font-family="-apple-system, sans-serif" font-size="19" fill="#14161a">Living Reports &amp; Facts</text>
+  <line x1="801" y1="224" x2="1135" y2="224" stroke="#d6d1c6" stroke-width="1"/>
 
-  <rect x="440" y="366" width="320" height="106" rx="12" fill="#f4f2ec" stroke="#d8d4cb" stroke-width="1.5"/>
-  <text x="464" y="404" font-family="monospace" font-size="16" font-weight="700" fill="#3955b8">02 · CROSS-MODEL REVIEW</text>
-  <text x="464" y="438" font-family="-apple-system, sans-serif" font-size="20" fill="#1e2026">Claude + Codex + live Steer</text>
+  <text x="832" y="266" font-family="monospace" font-size="13" fill="#6e7482">02 · MEMORY</text>
+  <text x="832" y="294" font-family="-apple-system, sans-serif" font-size="19" fill="#14161a">Governed Shared MD</text>
+  <line x1="801" y1="326" x2="1135" y2="326" stroke="#d6d1c6" stroke-width="1"/>
 
-  <rect x="792" y="366" width="320" height="106" rx="12" fill="#f4f2ec" stroke="#d8d4cb" stroke-width="1.5"/>
-  <text x="816" y="404" font-family="monospace" font-size="16" font-weight="700" fill="#3955b8">03 · GOVERNED MEMORY</text>
-  <text x="816" y="438" font-family="-apple-system, sans-serif" font-size="19" fill="#1e2026">Shared Markdown &amp; budgets</text>
+  <text x="832" y="368" font-family="monospace" font-size="13" fill="#6e7482">03 · CONTROL</text>
+  <text x="832" y="396" font-family="-apple-system, sans-serif" font-size="19" fill="#14161a">Cross-Model &amp; Steer</text>
+  <line x1="801" y1="428" x2="1135" y2="428" stroke="#d6d1c6" stroke-width="1"/>
 
-  <text x="88" y="538" font-family="monospace" font-size="20" fill="#3955b8">curl -fsSL https://keanji-x.github.io/perga/install.sh | sh</text>
-  <text x="1112" y="538" text-anchor="end" font-family="monospace" font-size="18" fill="#6c7280">github.com/keanji-x/perga</text>
+  <text x="832" y="472" font-family="monospace" font-size="13" fill="#1f6b48">0-TOKEN WATCH · NO .NET REQ</text>
+
+  <!-- Dark bottom install strip -->
+  <rect x="64" y="510" width="1072" height="120" fill="#15171c"/>
+  <text x="96" y="577" font-family="monospace" font-size="20" fill="#7ea3ff">$</text>
+  <text x="122" y="577" font-family="monospace" font-size="20" fill="#f3f1eb">curl -fsSL https://keanji-x.github.io/perga/install.sh | sh</text>
+  <text x="1104" y="577" text-anchor="end" font-family="monospace" font-size="16" fill="#a9afb9">github.com/keanji-x/perga</text>
 </svg>
