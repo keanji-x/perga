@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 type WidgetFrameProps = Readonly<{
   src: string;
@@ -41,14 +41,14 @@ export function WidgetFrame({
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [height, setHeight] = useState(initialHeight);
 
-  useEffect(() => {
-    const pushData = () => {
-      const target = iframeRef.current?.contentWindow;
-      if (!target) return;
-      target.postMessage(readPergaTheme(), '*');
-      target.postMessage({ type: 'perga:data', data }, '*');
-    };
+  const pushData = useCallback(() => {
+    const target = iframeRef.current?.contentWindow;
+    if (!target) return;
+    target.postMessage(readPergaTheme(), '*');
+    target.postMessage({ type: 'perga:data', data }, '*');
+  }, [data]);
 
+  useEffect(() => {
     const onMessage = (ev: MessageEvent) => {
       if (ev.source !== iframeRef.current?.contentWindow) return;
       const msg = ev.data;
@@ -69,11 +69,13 @@ export function WidgetFrame({
 
     window.addEventListener('message', onMessage);
     media.addEventListener('change', onSchemeChange);
+    // Also push immediately in case the iframe loaded before this effect attached.
+    pushData();
     return () => {
       window.removeEventListener('message', onMessage);
       media.removeEventListener('change', onSchemeChange);
     };
-  }, [data, onIntent]);
+  }, [pushData, onIntent]);
 
   return (
     <iframe
@@ -84,6 +86,7 @@ export function WidgetFrame({
       style={{ height: `${height}px` }}
       sandbox="allow-scripts"
       scrolling="no"
+      onLoad={pushData}
     />
   );
 }
