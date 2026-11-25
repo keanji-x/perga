@@ -34,17 +34,26 @@ public sealed class HostSmokeTests
         var directory = Directory.CreateTempSubdirectory("perga-oar-provider-paths-");
         try
         {
-            var commands = new[] { "agy", "codex", "opencode", "claude" };
-            var arguments = new string[commands.Length];
-            for (var index = 0; index < commands.Length; index++)
+            var providersToProbe = new (string Command, string Provider, string VersionOutput, string ExpectedVersion, string HelpArgs, string HelpOutput)[]
             {
-                var name = commands[index];
-                var executable = Path.Combine(directory.FullName, name);
+                ("agy", "acp:antigravity", "90.0.0", "90.0.0", "--help", "Usage of agy: Start the Agent Client Protocol (ACP) stdio server"),
+                ("codex", "codex", "codex-cli 90.0.1", "codex-cli 90.0.1", "app-server --help", "Usage: codex app-server"),
+                ("opencode", "acp:opencode", "opencode v2.90.2", "opencode v2.90.2", "--help", "OpenCode command line interface"),
+                ("claude", "claude", "90.0.3 (Claude Code)", "90.0.3 (Claude Code)", "--help", "Usage: claude")
+            };
+            var arguments = new string[providersToProbe.Length];
+            for (var index = 0; index < providersToProbe.Length; index++)
+            {
+                var spec = providersToProbe[index];
+                var executable = Path.Combine(directory.FullName, spec.Command);
+                var helpCheck = spec.HelpArgs == "app-server --help"
+                    ? $"if [ \"$1\" = app-server ] && [ \"$2\" = --help ]; then echo '{spec.HelpOutput}'; exit 0; fi"
+                    : $"if [ \"$1\" = --help ]; then echo '{spec.HelpOutput}'; exit 0; fi";
                 File.WriteAllText(
                     executable,
-                    $"#!/bin/sh\nif [ \"$1\" = --version ]; then echo '90.0.{index}'; exit 0; fi\nif [ \"$1\" = app-server ] && [ \"$2\" = --help ]; then echo 'usage: codex app-server'; exit 0; fi\nexit 1\n");
+                    $"#!/bin/sh\nif [ \"$1\" = --version ]; then echo '{spec.VersionOutput}'; exit 0; fi\n{helpCheck}\nexit 1\n");
                 File.SetUnixFileMode(executable, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-                arguments[index] = $"--Perga:ProviderExecutables:{name}={executable}";
+                arguments[index] = $"--Perga:ProviderExecutables:{spec.Command}={executable}";
             }
 
             await using var factory = new IsolatedPergaHostFactory(
@@ -56,12 +65,11 @@ public sealed class HostSmokeTests
             using var payload = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
             var providers = payload.RootElement.GetProperty("providers").EnumerateArray()
                 .ToDictionary(provider => provider.GetProperty("provider").GetString()!);
-            var providerNames = new[] { "acp:antigravity", "codex", "acp:opencode", "claude" };
-            for (var index = 0; index < providerNames.Length; index++)
+            foreach (var spec in providersToProbe)
             {
-                var provider = providers[providerNames[index]];
-                Assert.True(provider.GetProperty("available").GetBoolean(), $"Expected provider '{providerNames[index]}' to be available. Raw: {provider.GetRawText()}");
-                Assert.Equal($"90.0.{index}", provider.GetProperty("version").GetString());
+                var provider = providers[spec.Provider];
+                Assert.True(provider.GetProperty("available").GetBoolean(), $"Expected provider '{spec.Provider}' to be available. Raw: {provider.GetRawText()}");
+                Assert.Equal(spec.ExpectedVersion, provider.GetProperty("version").GetString());
             }
         }
         finally
