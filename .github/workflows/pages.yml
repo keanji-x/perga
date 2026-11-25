@@ -6,8 +6,10 @@ on:
     paths:
       - 'site/**'
       - 'install.sh'
+      - 'docs/product/vision.en.md'
       - 'templates/equity-research/widgets/range-axis.html'
       - 'src/Perga.Kernel/Templates/Memory/widgets/entries.html'
+      - 'fe/web/src/ui/brand/**'
       - 'fe/web/src/styles/**'
       - 'fe/web/src/features/report/flow/**'
       - 'fe/web/src/features/report/editorial/**'
@@ -43,10 +45,12 @@ jobs:
           (cd fe && npx vite build --config ../site/vite.config.mjs)
           install -m 644 install.sh site/dist/install.sh
           test -s site/dist/index.html
+          test -s site/dist/vision.html
+          test -s site/dist/favicon.svg
           test -s site/dist/install.sh
           test -s site/dist/widgets/range-axis.html
           test -s site/dist/widgets/entries.html
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
         with:
           path: site/dist
 
@@ -59,4 +63,4 @@ jobs:
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4

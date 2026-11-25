@@ -27,7 +27,7 @@ MEDIA SLOT: Once you capture your real desktop screenshot / 60s demo clip, place
 - [`agents-delivery`](templates/agents-delivery) — Zero-schema delivery protocol: `builtin:flow` orchestration, enforced read-write verification gates, and enforced read-only cross-model review routing.
 - [`okr-loop`](templates/okr-loop) — Stable Objective, four-column KR ledger (`builtin:table`) with kernel-stamped updates, daily `cron` metric collection, enforced triage routing, and `builtin:flow` tracking.
 - [`equity-research`](templates/equity-research) — Frameless valuation range axis, event expectation timeline (`builtin:list`), evergreen thesis notes, weekly `cron` valuation refresh, on-demand `at` event checks, and enforced cross-model review routing.
-- [`memory`](templates/memory) — Dedicated Memory Planner track layout for managing pinned rules, topic index entries, and maintenance flows across an Area or Global scope.
+- [`memory`](src/Perga.Kernel/Templates/Memory) — Dedicated Memory Planner track layout for managing pinned rules, topic index entries, and maintenance flows across an Area or Global scope.
 
 ## Quickstart
 
@@ -42,6 +42,8 @@ MEDIA SLOT: Once you capture your real desktop screenshot / 60s demo clip, place
 ```sh
 curl -fsSL https://keanji-x.github.io/perga/install.sh | sh
 ```
+
+> **Note:** Prebuilt release archives are published on version tags (`vX.Y.Z`). Before the first release is published, grab the `perga-linux-x64` / `perga-darwin-arm64` artifact from a [CI run](https://github.com/keanji-x/perga/actions/workflows/ci.yml) or [build from source](#build-from-source) below.
 
 Then create your local owner account once and start Perga:
 
@@ -74,7 +76,7 @@ Enter the extracted directory, create the owner account on first use, and launch
 cd perga
 export PERGA_DATA_DIR="${PERGA_DATA_DIR:-$HOME/.local/share/perga}"
 ./Perga.Host auth init-owner --username owner --allow-migrate
-PERGA_STATIC_WEB_DIR="$PWD/web" ./Perga.Host --urls http://127.0.0.1:4041
+./Perga.Host --urls http://127.0.0.1:4041
 ```
 
 Use the same `PERGA_DATA_DIR` on subsequent starts and upgrades to preserve your owner account, tracks, and memory.
@@ -138,7 +140,7 @@ Actions uploads `perga-linux-x64` and `perga-darwin-arm64`. Pushing a `vX.Y.Z` t
 ### Architecture & Operations
 - [Architecture Reference](DESIGN.md) — 18-project .NET topology, dependency matrix, core modules, and contracts
 - [Unified Track Flow Architecture](docs/design/unified-track-flow-architecture.md) — Declarative `flow.json` engine and read-only `builtin:flow` projection
-- [Template Taste & Information Design](docs/design/template-taste.md) — Editorial read-only report principles
+- [Template Architecture](docs/design/template-architecture.md) — Composable template layers, report widgets, and schema-validated data
 - [Linux OverlayFS Workspaces](docs/track-overlayfs.md) — Prewarmed build cache sharing and namespace mount setup
 - [Self-Hosted Installation & Hot Upgrades](docs/design/install-and-upgrade.md) — Dual systemd user services and zero-downtime upgrades
 

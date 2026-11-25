@@ -1,17 +1,18 @@
 import { useCallback, useState } from 'react';
 import { ReportFlowBlock } from '../../fe/web/src/features/report/flow/public.tsx';
 import { EditorialChronicle } from '../../fe/web/src/features/report/editorial/chronicle.tsx';
+import pergaMarkUrl from '../../fe/web/src/ui/brand/perga-mark.svg';
 import { WidgetFrame } from './WidgetFrame.tsx';
 import {
   DEV_DELIVERY_FLOW,
-  DEV_DELIVERY_FLOW_JSON,
+  DEV_DELIVERY_FLOW_JSON_EXCERPT,
   EQUITY_CHRONICLE_ITEMS,
   EQUITY_VALUATION_AXIS,
   MEMORY_PINNED_DATA,
   MEMORY_TOPICS_DATA,
 } from './showcaseData.ts';
 
-type TrackTab = 'delivery' | 'research';
+type TrackTab = 'delivery' | 'invest';
 
 const INSTALL_COMMAND = 'curl -fsSL https://keanji-x.github.io/perga/install.sh | sh';
 
@@ -34,8 +35,8 @@ const TRACK_TABS: ReadonlyArray<Readonly<{
     sourceLabel: 'agents-delivery',
   },
   {
-    id: 'research',
-    label: 'Research',
+    id: 'invest',
+    label: 'Invest',
     capability: 'LIVING REPORT',
     trackName: 'NVDA · long-horizon thesis',
     meta: 'Valuation axis · Pre-committed expectations · Weekly updates',
@@ -82,13 +83,13 @@ export function App() {
       <header className="site-masthead">
         <div className="site-masthead-inner">
           <a className="site-wordmark" href="./" aria-label="Perga home">
-            <span className="site-seal" aria-hidden="true">P</span>
+            <img className="site-mark" src={pergaMarkUrl} alt="" width="24" height="24" />
             <span className="site-wordmark-text">Perga</span>
           </a>
           <nav className="site-nav" aria-label="Primary">
             <a href="#reports">Reports</a>
             <a href="#memory">Memory</a>
-            <a href="https://github.com/keanji-x/perga/blob/main/docs/product/vision.en.md" target="_blank" rel="noreferrer">Vision</a>
+            <a href="./vision.html">Vision</a>
             <a className="site-nav-repo" href="https://github.com/keanji-x/perga" target="_blank" rel="noreferrer">GitHub ↗</a>
             {/* DISCORD SLOT: Uncomment when ready
             <a className="site-nav-repo" href="https://discord.gg/YOUR_INVITE" target="_blank" rel="noreferrer">Discord ↗</a>
@@ -177,10 +178,10 @@ export function App() {
                   {showFlowJson && (
                     <div className="site-flow-drawer">
                       <div className="site-flow-drawer-head">
-                        <span>flow.json</span>
-                        <span>Declarative task graph · Claude impl → Codex review → CI wait</span>
+                        <span>flow.json (excerpt)</span>
+                        <span>Condensed from 5-node graph · Claude impl → Codex review → CI wait</span>
                       </div>
-                      <pre className="site-flow-code"><code>{DEV_DELIVERY_FLOW_JSON}</code></pre>
+                      <pre className="site-flow-code"><code>{DEV_DELIVERY_FLOW_JSON_EXCERPT}</code></pre>
                     </div>
                   )}
                   <ReportFlowBlock
@@ -191,8 +192,8 @@ export function App() {
                 </div>
               )}
 
-              {trackTab === 'research' && (
-                <div data-panel="research">
+              {trackTab === 'invest' && (
+                <div data-panel="invest">
                   <div className="site-subhead">NVDA · Valuation Range</div>
                   <WidgetFrame
                     src="./widgets/range-axis.html"
@@ -290,7 +291,7 @@ export function App() {
             <div className="site-closing-actions">
               <a className="site-closing-btn-light" href="https://github.com/keanji-x/perga/releases" target="_blank" rel="noreferrer">Download Release</a>
               <a className="site-closing-btn-outline" href="https://github.com/keanji-x/perga" target="_blank" rel="noreferrer">GitHub</a>
-              <a className="site-closing-btn-outline" href="https://github.com/keanji-x/perga/blob/main/docs/product/vision.en.md" target="_blank" rel="noreferrer">Vision</a>
+              <a className="site-closing-btn-outline" href="./vision.html">Vision</a>
             </div>
           </div>
         </section>
@@ -301,7 +302,7 @@ export function App() {
           <span>PERGA · APACHE 2.0</span>
           <div className="site-footer-links">
             <a href="https://github.com/keanji-x/perga" target="_blank" rel="noreferrer">GitHub</a>
-            <a href="https://github.com/keanji-x/perga/blob/main/docs/product/vision.en.md" target="_blank" rel="noreferrer">Vision</a>
+            <a href="./vision.html">Vision</a>
             <a href="https://github.com/keanji-x/perga/blob/main/DESIGN.md" target="_blank" rel="noreferrer">Architecture</a>
             <a href="./install.sh">install.sh</a>
           </div>

@@ -62,21 +62,14 @@
   .site-wordmark {
     display: inline-flex;
     align-items: center;
-    gap: 10px;
+    gap: 9px;
   }
 
-  .site-seal {
-    width: 24px;
-    height: 24px;
-    background: var(--text);
-    color: var(--paper);
-    font-family: var(--font-serif);
-    font-size: 15px;
-    font-weight: 600;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 3px;
+  .site-mark {
+    width: 22px;
+    height: 22px;
+    display: block;
+    flex: 0 0 auto;
   }
 
   .site-wordmark-text {

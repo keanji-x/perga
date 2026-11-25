@@ -1,5 +1,5 @@
 import type { FlowProjection } from '../../fe/core/domain/report-flow.ts';
-import type { BuiltinTableView, EditorialListItem } from '../../fe/core/domain/report-editorial.ts';
+import type { EditorialListItem } from '../../fe/core/domain/report-editorial.ts';
 
 const NOW = Date.now();
 const MIN = 60_000;
@@ -19,7 +19,7 @@ export const DEV_DELIVERY_FLOW: FlowProjection = {
       role: 'lead',
       access: 'read_only',
       provider: 'claude',
-      model: 'claude-opus-4-6',
+      model: 'claude-opus-5-5',
       status: 'done',
       outcome: 'ok',
       outcomeSummary: 'Locked epoch isolation invariants and restart recovery test plan.',
@@ -43,7 +43,7 @@ export const DEV_DELIVERY_FLOW: FlowProjection = {
       role: 'impl',
       access: 'read_write',
       provider: 'claude',
-      model: 'claude-sonnet-4-6',
+      model: 'claude-sonnet-5-5',
       status: 'done',
       outcome: 'ok',
       outcomeSummary: 'Scoped attachment previews to originating epoch; added restart test.',
@@ -75,7 +75,7 @@ export const DEV_DELIVERY_FLOW: FlowProjection = {
       role: 'impl',
       access: 'read_write',
       provider: 'claude',
-      model: 'claude-sonnet-4-6',
+      model: 'claude-sonnet-5-5',
       status: 'done',
       outcome: 'ok',
       outcomeSummary: 'Updated generated TypeScript contracts and composer attachment tests.',
@@ -110,7 +110,7 @@ export const DEV_DELIVERY_FLOW: FlowProjection = {
       role: 'review',
       access: 'read_only',
       provider: 'codex',
-      model: 'gpt-5.4-codex',
+      model: 'gpt-6.2-astra',
       reasoningEffort: 'high',
       status: 'done',
       outcome: 'ok',
@@ -162,12 +162,45 @@ export const DEV_DELIVERY_FLOW: FlowProjection = {
       outcome: 'ok',
       outcomeSummary: 'Mapped 4 call paths across TrackActor, Storage, and Host endpoints.',
       runCount: 1,
-      model: 'claude-opus-4-6',
+      model: 'claude-opus-5-5',
       finishedAtMs: NOW - 2 * HOUR,
       archivedAtMs: NOW - HOUR,
     },
   ],
 };
+
+/** Condensed excerpt of flow.json showing the key cross-model & background-wait nodes. */
+export const DEV_DELIVERY_FLOW_JSON_EXCERPT = `{
+  "rev": 14,
+  "nodes": [
+    // ... spec + impl-fe omitted for brevity
+    {
+      "id": "impl-backend",
+      "when": { "after": ["spec"] },
+      "do": {
+        "kind": "run",
+        "provider": "claude",
+        "model": "claude-sonnet-5-5",
+        "gate": "dotnet test Perga.sln"
+      }
+    },
+    {
+      "id": "review",
+      "when": { "after": ["impl-backend", "impl-fe"] },
+      "do": {
+        "kind": "run",
+        "provider": "codex",
+        "model": "gpt-6.2-astra",
+        "access": "read_only"
+      }
+    },
+    {
+      "id": "ci-watch",
+      "when": { "after": ["review"] },
+      "do": { "kind": "watch", "prChecks": 180 }
+    }
+  ]
+}`;
 
 export const EQUITY_VALUATION_AXIS = {
   ticker: 'NVDA',
@@ -207,7 +240,7 @@ export const EQUITY_CHRONICLE_ITEMS: readonly EditorialListItem[] = [
     status: 'done',
     badge: 'Beat',
     tone: 'good',
-    meta: 'codex · independent review',
+    meta: 'codex · gpt-6.2-astra · read-only review',
     summary: 'Data-center revenue beat pre-committed expectations; gross margin landed inline, keeping base thesis intact while tightening falsification threshold at 72.0%.',
     table: {
       columns: [
@@ -263,201 +296,6 @@ export const EQUITY_CHRONICLE_ITEMS: readonly EditorialListItem[] = [
     },
   },
 ];
-
-export const EQUITY_FLOW: FlowProjection = {
-  rev: 9,
-  filePath: 'flow.json',
-  nodes: [
-    {
-      id: 'weekly-price-refresh',
-      title: 'Weekly valuation & peer refresh',
-      source: 'template',
-      whenKind: 'cron',
-      cron: '30 8 * * 1',
-      tz: 'America/New_York',
-      after: [],
-      doKind: 'wake',
-      targetSession: 'lead',
-      status: 'waiting',
-      outcome: 'ok',
-      outcomeSummary: 'Updated spot ($138.40) and peer multiples via data_patch; no drawdown alert.',
-      runCount: 8,
-      firedCount: 8,
-      lastFiredAtMs: NOW - 48 * HOUR,
-      nextFireAtMs: NOW + 120 * HOUR,
-      waitingOn: [],
-      gates: [],
-      canceled: false,
-      repeat: true,
-    },
-    {
-      id: 'event-review',
-      title: 'Independent bear-case review',
-      source: 'template',
-      whenKind: 'at',
-      at: '2026-12-08T14:00:00Z',
-      after: [],
-      doKind: 'run',
-      role: 'event_review',
-      access: 'read_only',
-      provider: 'codex',
-      model: 'gpt-5.4-codex',
-      status: 'pending',
-      outcome: 'none',
-      outcomeSummary: 'Enforced second-model read-only check on supply-chain catalyst.',
-      runCount: 0,
-      firedCount: 0,
-      waitingOn: [],
-      gates: [],
-      canceled: false,
-      repeat: false,
-    },
-  ],
-  archived: [],
-};
-
-export const OKR_LEDGER_TABLE: BuiltinTableView = {
-  title: 'Q4 Engineering Key Results',
-  columns: [
-    { key: 'result', label: 'Key Result' },
-    { key: 'current', label: 'Current' },
-    { key: 'target', label: 'Target' },
-    { key: 'updatedAt', label: 'Updated', align: 'right' },
-  ],
-  rows: [
-    {
-      result: { text: 'Warm OverlayFS Track checkout latency (p95)', code: 'KR1', tag: 'perf' },
-      current: { text: '1.4 s', tone: 'good', check: true },
-      target: '≤ 2.0 s',
-      updatedAt: '11-25 08:02',
-    },
-    {
-      result: { text: 'Self-contained Host cold startup to /healthz', code: 'KR2', tag: 'release' },
-      current: { text: '0.78 s', tone: 'good', check: true },
-      target: '≤ 1.0 s',
-      updatedAt: '11-25 08:02',
-    },
-    {
-      result: { text: 'Playwright browser suite flake rate (14d)', code: 'KR3', tag: 'quality' },
-      current: { text: '1.8%', tone: 'accent' },
-      target: '≤ 1.0%',
-      updatedAt: '11-25 08:02',
-    },
-    {
-      result: { text: 'Memory pinned context budget utilization', code: 'KR4', tag: 'memory' },
-      current: { text: '60% (742 / 1,228 B)', tone: 'good', check: true },
-      target: '≤ 80%',
-      updatedAt: '11-25 08:02',
-    },
-  ],
-};
-
-export const OKR_FLOW: FlowProjection = {
-  rev: 6,
-  filePath: 'flow.json',
-  nodes: [
-    {
-      id: 'daily-metrics',
-      title: 'Daily metric probe (0-token cmd)',
-      source: 'template',
-      whenKind: 'cron',
-      cron: '0 8 * * *',
-      tz: 'UTC',
-      after: [],
-      doKind: 'run',
-      cmd: 'bash scripts/collect-kr-metrics.sh',
-      status: 'done',
-      outcome: 'ok',
-      outcomeSummary: 'KR1/KR2/KR4 met; KR3 flake rate at 1.8% triggered triage.',
-      runCount: 24,
-      firedCount: 24,
-      lastFiredAtMs: NOW - 4 * HOUR,
-      waitingOn: [],
-      gates: [],
-      canceled: false,
-      repeat: true,
-    },
-    {
-      id: 'triage',
-      title: 'Triage KR3 browser flake',
-      source: 'template',
-      whenKind: 'after',
-      after: [{ node: 'daily-metrics', on: 'any' }],
-      doKind: 'run',
-      role: 'triage',
-      access: 'read_only',
-      provider: 'codex',
-      model: 'gpt-5.4-codex',
-      status: 'done',
-      outcome: 'ok',
-      outcomeSummary: 'Isolated focus-restoration race on Escape key; dispatched fix task.',
-      runCount: 1,
-      firedCount: 1,
-      finishedAtMs: NOW - 3 * HOUR,
-      waitingOn: [],
-      gates: [],
-      canceled: false,
-      repeat: false,
-    },
-    {
-      id: 'optimize',
-      title: 'Fix focus race & verify 10x repeat',
-      source: 'agent',
-      whenKind: 'after',
-      after: [{ node: 'triage', on: 'ok' }],
-      doKind: 'run',
-      role: 'optimize',
-      access: 'read_write',
-      provider: 'claude',
-      model: 'claude-sonnet-4-6',
-      status: 'running',
-      outcome: 'none',
-      outcomeSummary: 'Running 10x headless Playwright repetition gate.',
-      runCount: 1,
-      firedCount: 1,
-      startedAtMs: NOW - 18 * MIN,
-      waitingOn: [],
-      gates: [
-        {
-          label: 'playwright --repeat-each=10',
-          status: 'running',
-          detail: '7 / 10 runs passed',
-        },
-      ],
-      canceled: false,
-      repeat: false,
-    },
-  ],
-  archived: [],
-};
-
-export const DEV_DELIVERY_FLOW_JSON = `{
-  "nodes": [
-    {
-      "id": "impl-backend",
-      "when": { "after": ["spec"] },
-      "do": {
-        "kind": "run",
-        "provider": "claude",
-        "gate": "dotnet test Perga.sln"
-      }
-    },
-    {
-      "id": "review",
-      "when": { "after": ["impl-backend", "impl-fe"] },
-      "do": {
-        "kind": "run",
-        "provider": "codex",
-        "access": "read_only"
-      }
-    },
-    {
-      "id": "ci-watch",
-      "when": { "after": ["review"] },
-      "do": { "kind": "watch", "prChecks": 180 }
-    }
-  ]
-}`;
 
 export const MEMORY_PINNED_DATA = {
   kind: 'pinned',

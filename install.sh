@@ -15,8 +15,39 @@ need_cmd() {
   fi
 }
 
+normalize_dir() {
+  local p="$1"
+  local name="$2"
+  if [[ -z "$p" ]]; then
+    echo "error: ${name} cannot be empty." >&2
+    exit 1
+  fi
+  while [[ "$p" != "/" && "$p" == */ ]]; do
+    p="${p%/}"
+  done
+  if [[ "$p" == "/" ]]; then
+    echo "error: refusing to use '/' for ${name}." >&2
+    exit 1
+  fi
+  printf '%s' "$p"
+}
+
+quote_sh() {
+  local s="$1"
+  printf "'%s'" "${s//\'/\'\\\'\'}"
+}
+
 need_cmd curl
 need_cmd tar
+
+INSTALL_DIR=$(normalize_dir "$INSTALL_DIR" "PERGA_INSTALL_DIR")
+BIN_DIR=$(normalize_dir "$BIN_DIR" "PERGA_BIN_DIR")
+DATA_DIR=$(normalize_dir "$DATA_DIR" "PERGA_DATA_DIR")
+
+if [[ "$DATA_DIR" == "$INSTALL_DIR" || "$DATA_DIR" == "${INSTALL_DIR}/"* ]]; then
+  echo "error: PERGA_DATA_DIR (${DATA_DIR}) must not be inside PERGA_INSTALL_DIR (${INSTALL_DIR}), or upgrades would overwrite your data." >&2
+  exit 1
+fi
 
 case "$(uname -sm)" in
   "Linux x86_64")  PACKAGE="perga-linux-x64" ;;
@@ -40,41 +71,96 @@ ARCHIVE="${PACKAGE}.tar.gz"
 CHECKSUM="${ARCHIVE}.sha256"
 
 tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
+stage_dir=""
+backup_dir=""
+cleanup() {
+  rm -rf "$tmp"
+  if [[ -n "$stage_dir" && -e "$stage_dir" ]]; then
+    rm -rf "$stage_dir"
+  fi
+}
+trap cleanup EXIT
+
+download_asset() {
+  local url="$1"
+  local dest="$2"
+  local max_time="$3"
+  local http_code
+  http_code=$(curl --silent --show-error --location --retry 3 --max-time "$max_time" \
+    --output "$dest" --write-out '%{http_code}' "$url") || return 1
+  if [[ "$http_code" != "200" ]]; then
+    rm -f "$dest"
+    if [[ "$http_code" == "404" && -z "${PERGA_BASE_URL:-}" ]]; then
+      echo "error: release asset not found (HTTP 404): ${url}" >&2
+      echo "No published GitHub Release matching '${VERSION}' was found for ${PACKAGE}." >&2
+      echo "Check https://github.com/${REPO}/releases or build from source via README.md." >&2
+    else
+      echo "error: failed to download ${url} (HTTP ${http_code})." >&2
+    fi
+    return 1
+  fi
+}
 
 echo "Downloading ${ARCHIVE} (${VERSION})..."
-curl --fail --silent --show-error --location --retry 3 --max-time 300 \
-  --output "${tmp}/${ARCHIVE}" "${BASE_URL}/${ARCHIVE}"
-curl --fail --silent --show-error --location --retry 3 --max-time 60 \
-  --output "${tmp}/${CHECKSUM}" "${BASE_URL}/${CHECKSUM}"
+download_asset "${BASE_URL}/${ARCHIVE}" "${tmp}/${ARCHIVE}" 300
+download_asset "${BASE_URL}/${CHECKSUM}" "${tmp}/${CHECKSUM}" 60
 
 echo "Verifying SHA-256 checksum..."
-(
-  cd "$tmp"
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum -c "$CHECKSUM"
-  elif command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 -c "$CHECKSUM"
-  else
-    echo "error: neither sha256sum nor shasum is installed." >&2
-    exit 1
-  fi
-)
+expected_hash=$(awk -v target="$ARCHIVE" '
+  NF >= 2 {
+    file = $2
+    sub(/^\*/, "", file)
+    sub(/^\.\//, "", file)
+    if (file == target) {
+      print tolower($1)
+      count++
+    }
+  }
+  END { if (count != 1) exit 1 }
+' "${tmp}/${CHECKSUM}") || {
+  echo "error: checksum file ${CHECKSUM} did not contain a unique entry for ${ARCHIVE}." >&2
+  exit 1
+}
 
-echo "Extracting into ${INSTALL_DIR}..."
-mkdir -p "${tmp}/extract"
-tar -xzf "${tmp}/${ARCHIVE}" -C "${tmp}/extract"
-if [[ ! -x "${tmp}/extract/perga/Perga.Host" ]]; then
-  echo "error: archive did not contain an executable perga/Perga.Host binary." >&2
+if [[ ! "$expected_hash" =~ ^[0-9a-f]{64}$ ]]; then
+  echo "error: invalid SHA-256 digest in ${CHECKSUM}." >&2
   exit 1
 fi
 
+if command -v sha256sum >/dev/null 2>&1; then
+  actual_hash=$(sha256sum "${tmp}/${ARCHIVE}" | awk '{print tolower($1)}')
+elif command -v shasum >/dev/null 2>&1; then
+  actual_hash=$(shasum -a 256 "${tmp}/${ARCHIVE}" | awk '{print tolower($1)}')
+else
+  echo "error: neither sha256sum nor shasum is installed." >&2
+  exit 1
+fi
+
+if [[ "$actual_hash" != "$expected_hash" ]]; then
+  echo "error: SHA-256 mismatch for ${ARCHIVE}." >&2
+  echo "  expected: ${expected_hash}" >&2
+  echo "  actual:   ${actual_hash}" >&2
+  exit 1
+fi
+
+echo "Extracting into ${INSTALL_DIR}..."
 parent_dir=$(dirname "$INSTALL_DIR")
 mkdir -p "$parent_dir" "$BIN_DIR" "$DATA_DIR"
-stage_dir="${parent_dir}/.perga-stage-$$"
+stage_dir=$(mktemp -d "${parent_dir}/.perga-stage.XXXXXX")
+tar -xzf "${tmp}/${ARCHIVE}" -C "${tmp}"
+if [[ ! -x "${tmp}/perga/Perga.Host" ]]; then
+  echo "error: archive did not contain an executable perga/Perga.Host binary." >&2
+  exit 1
+fi
+rmdir "$stage_dir"
+mv "${tmp}/perga" "$stage_dir"
+
+if [[ "$(uname -s)" == "Darwin" ]] && command -v xattr >/dev/null 2>&1; then
+  xattr -dr com.apple.quarantine "$stage_dir" 2>/dev/null || true
+fi
+
 backup_dir="${parent_dir}/.perga-prev-$$"
-rm -rf "$stage_dir" "$backup_dir"
-mv "${tmp}/extract/perga" "$stage_dir"
+rm -rf "$backup_dir"
 if [[ -e "$INSTALL_DIR" ]]; then
   mv "$INSTALL_DIR" "$backup_dir"
 fi
@@ -84,20 +170,46 @@ if ! mv "$stage_dir" "$INSTALL_DIR"; then
   fi
   exit 1
 fi
+stage_dir=""
 rm -rf "$backup_dir"
+
+q_install_dir=$(quote_sh "$INSTALL_DIR")
+q_data_dir=$(quote_sh "$DATA_DIR")
 
 cat > "${BIN_DIR}/perga" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
-INSTALL_DIR="\${PERGA_INSTALL_DIR:-${INSTALL_DIR}}"
-export PERGA_DATA_DIR="\${PERGA_DATA_DIR:-${DATA_DIR}}"
+DEFAULT_INSTALL_DIR=${q_install_dir}
+DEFAULT_DATA_DIR=${q_data_dir}
+INSTALL_DIR="\${PERGA_INSTALL_DIR:-\$DEFAULT_INSTALL_DIR}"
+export PERGA_DATA_DIR="\${PERGA_DATA_DIR:-\$DEFAULT_DATA_DIR}"
 export PERGA_STATIC_WEB_DIR="\${PERGA_STATIC_WEB_DIR:-\$INSTALL_DIR/web}"
+
+has_urls_override() {
+  if [[ -n "\${ASPNETCORE_URLS:-}" || -n "\${Kestrel__Endpoints__Http__Url:-}" ]]; then
+    return 0
+  fi
+  for arg in "\$@"; do
+    case "\$arg" in
+      --urls|--urls=*) return 0 ;;
+    esac
+  done
+  return 1
+}
+
+run_host() {
+  if has_urls_override "\$@"; then
+    exec "\$INSTALL_DIR/Perga.Host" "\$@"
+  else
+    exec "\$INSTALL_DIR/Perga.Host" --urls "\${PERGA_URLS:-http://127.0.0.1:4041}" "\$@"
+  fi
+}
 
 case "\${1:-}" in
   -h|--help|help)
     cat <<'USAGE'
 Usage:
-  perga [host args...]               Start Perga on http://127.0.0.1:4041 (override with PERGA_URLS)
+  perga [host args...]               Start Perga on http://127.0.0.1:4041 (override with --urls or PERGA_URLS)
   perga start [host args...]         Same as 'perga'
   perga auth <subcommand> [args...]  Manage owner auth (e.g. perga auth init-owner --username owner --allow-migrate)
 USAGE
@@ -108,10 +220,10 @@ USAGE
     ;;
   start)
     shift
-    exec "\$INSTALL_DIR/Perga.Host" --urls "\${PERGA_URLS:-http://127.0.0.1:4041}" "\$@"
+    run_host "\$@"
     ;;
   *)
-    exec "\$INSTALL_DIR/Perga.Host" --urls "\${PERGA_URLS:-http://127.0.0.1:4041}" "\$@"
+    run_host "\$@"
     ;;
 esac
 EOF
