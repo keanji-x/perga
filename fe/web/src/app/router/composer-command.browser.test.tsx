@@ -25,13 +25,15 @@ it('keeps the slash menu open when clicking within its query and completes on En
   const fixture = renderCommandFixture();
   await page.getByRole('button', { name: /Conversation Daily Planner conversation/ }).click();
   const input = page.getByRole('combobox', { name: 'Message' });
-  await input.fill('Explain /close');
+  await input.fill('Explain /cl');
   await expect.element(page.getByRole('option', { name: /^close / })).toBeVisible();
   // Astryx 0.7 disables light-dismiss on trigger popovers: clicking within the
-  // active `/close` query keeps the menu open so Enter picks the highlighted option.
+  // active `/cl` query keeps the menu open so Enter completes `/close`.
   await input.click();
   await expect.element(page.getByRole('option', { name: /^close / })).toBeVisible();
   await userEvent.keyboard('{Enter}');
+  await expect.element(page.getByRole('option', { name: /^close / })).not.toBeInTheDocument();
+  await expect.element(input).toHaveTextContent('Explain /close');
   expect(fixture.requests.filter(request => request.path.endsWith('/messages'))).toHaveLength(0);
   expect(fixture.requests.filter(request => request.method === 'PATCH' || request.method === 'PUT')).toHaveLength(0);
 });

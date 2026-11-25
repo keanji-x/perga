@@ -1265,3 +1265,30 @@ it('announces queue warnings and errors as alerts and informational outcomes as 
   expect(screen.getByRole('status').textContent).toContain('Still queued');
   expect(screen.queryByRole('alert')).toBeNull();
 });
+
+it('closes an open empty trigger menu on image-only Enter submission', async () => {
+  const onSend = vi.fn();
+  const emptyTrigger = {
+    character: '@',
+    searchSource: { search: () => [], bootstrap: () => [] },
+    onSelect: () => '',
+  };
+  let draftText = '';
+  const onChange: import('react').Dispatch<import('react').SetStateAction<string>> = (next) => {
+    draftText = typeof next === 'function' ? next(draftText) : next;
+  };
+  const { rerender } = render(
+    <ChatComposer draft={{ text: draftText, onChange }} allowEmptyText mentionTrigger={emptyTrigger} onSend={onSend} />,
+  );
+  const field = screen.getByRole('combobox', { name: 'Message' });
+  await userEvent.type(field, '@missing');
+  expect(field.getAttribute('aria-expanded')).toBe('true');
+  // External draft clear while the empty trigger menu is still open, followed by image-only Enter.
+  draftText = '';
+  rerender(
+    <ChatComposer draft={{ text: '', onChange }} allowEmptyText mentionTrigger={emptyTrigger} onSend={onSend} />,
+  );
+  await userEvent.keyboard('{Enter}');
+  expect(onSend).toHaveBeenCalledExactlyOnceWith('');
+  expect(field.getAttribute('aria-expanded')).toBe('false');
+});

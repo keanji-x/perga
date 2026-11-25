@@ -133,6 +133,19 @@ describe('NewTrackForm asks only what the track starts from', () => {
     expect(screen.getByRole('textbox', { name: TASK_LABEL }).getAttribute('aria-multiline')).toBe('true');
   });
 
+  it('does not swallow Enter or trap Tab when an unmarked static trigger settles empty', async () => {
+    const trigger = { character: '@', searchSource: createStaticSource([]), onSelect: () => '' };
+    const { onSubmit } = renderForm({ mentionTrigger: trigger });
+    const field = screen.getByRole('combobox', { name: TASK_LABEL });
+    await userEvent.type(field, 'Fix @unmatched');
+    expect(field.getAttribute('aria-expanded')).toBe('true');
+    await userEvent.tab();
+    expect(document.activeElement).not.toBe(field);
+    await userEvent.click(field);
+    await userEvent.keyboard('{Enter}');
+    expect(onSubmit).toHaveBeenCalledExactlyOnceWith({ message: 'Fix @unmatched' });
+  });
+
   it('flips the label and blocks submit while submitting', () => {
     renderForm({ submitting: true });
     expect(screen.getByRole('button', { name: 'Creating…' }).getAttribute('aria-disabled')).toBe('true');

@@ -630,8 +630,11 @@ export function ChatComposer({
           event.stopPropagation();
           return;
         }
-        /* Astryx's own `handleSubmit` refuses an empty draft (`if (!value.trim()) return;`), so an image-only send has to go through here. */
+        /* Astryx's own `handleSubmit` refuses an empty draft (`if (!value.trim()) return;`), so an image-only send bypasses Astryx's Enter handler and must close any open trigger menu first. */
         if (allowEmptyText && draft.trim() === '') {
+          if (field.getAttribute('aria-expanded') === 'true') {
+            field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+          }
           event.preventDefault();
           event.stopPropagation();
           submit();
