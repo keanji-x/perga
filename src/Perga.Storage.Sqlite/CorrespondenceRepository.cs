@@ -1,5 +1,6 @@
 using Dapper;
 using Perga.Contracts;
+using Perga.Kernel;
 using Perga.Kernel.Ports;
 
 namespace Perga.Storage.Sqlite;
@@ -87,7 +88,7 @@ internal sealed class CorrespondenceRepository
         return row is null ? null : MapAsk(row);
     }
 
-    public Task UpsertMailAsync(MailDto mail, EventEnvelopeDto evt, CancellationToken ct, bool requestWake = true, Action? beforeWrite = null)
+    public Task<MailDto> UpsertMailAsync(MailDto mail, EventEnvelopeDto evt, CancellationToken ct, bool requestWake = true, Action? beforeWrite = null, ResourceCreationKey? creationKey = null)
     {
         ArgumentNullException.ThrowIfNull(mail);
         ArgumentNullException.ThrowIfNull(evt);
@@ -96,6 +97,16 @@ internal sealed class CorrespondenceRepository
         return _context.Writer.EnqueueAsync(
             async (conn, tx, innerCt) =>
             {
+                if (creationKey is not null &&
+                    await CreationRepository.FindCreationInternalAsync(conn, tx, creationKey, innerCt).ConfigureAwait(false) is { } replayId)
+                {
+                    var row = await conn.QuerySingleOrDefaultAsync<MailRow>(new CommandDefinition(
+                        MailSelect + " WHERE id = @Id;", new { Id = replayId }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
+                    return row is not null
+                        ? MapMail(row)
+                        : throw new KernelException(KernelErrorCode.IdempotencyKeyExhausted, "The created mail was deleted.");
+                }
+
                 var isNew = !await conn.ExecuteScalarAsync<bool>(new CommandDefinition(
                     "SELECT EXISTS(SELECT 1 FROM mails WHERE id=@Id);", new { mail.Id }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
                 beforeWrite?.Invoke();
@@ -127,7 +138,9 @@ internal sealed class CorrespondenceRepository
 
                 if (requestWake && isNew)
                     await TrackWakesRepository.EnqueueWakeOnceInternalAsync(conn, tx, TrackWakeRequests.Mail(mail), mail.CreatedAtMs, innerCt).ConfigureAwait(false);
+                await CreationRepository.InsertResourceReceiptAsync(conn, tx, creationKey, mail.Id, mail.CreatedAtMs, null, innerCt).ConfigureAwait(false);
                 await EventRepository.InsertEventInternalAsync(conn, tx, evt, innerCt).ConfigureAwait(false);
+                return mail;
             },
             ct);
     }

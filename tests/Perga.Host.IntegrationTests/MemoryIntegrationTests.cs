@@ -554,14 +554,21 @@ public sealed partial class MemoryIntegrationTests
             using var response = await host.AuthenticatedClient.PostAsJsonAsync(MemoryPath + "/distill", new { trackId, scope }, ct);
             Assert.Equal(status, response.StatusCode);
         }
-        using (var emptyKey = new HttpRequestMessage(HttpMethod.Post, MemoryPath + "/distill")
+        foreach (var (content, headerKey, expectedCode) in new[]
         {
-            Content = JsonContent.Create(new { trackId = today.TrackId, scope = "global" }),
+            ((object)new { trackId = today.TrackId, scope = "global" }, "   ", HttpStatusCode.BadRequest),
+            (new { trackId = today.TrackId, scope = "global" }, new string('k', 257), HttpStatusCode.BadRequest),
+            (new { trackId = today.TrackId, scope = "global", focus = new string('x', 2_001) }, null, HttpStatusCode.BadRequest),
         })
         {
-            emptyKey.Headers.TryAddWithoutValidation("Idempotency-Key", "   ");
-            using var response = await host.AuthenticatedClient.SendAsync(emptyKey, ct);
-            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            using var req = new HttpRequestMessage(HttpMethod.Post, MemoryPath + "/distill")
+            {
+                Content = JsonContent.Create(content),
+            };
+            if (headerKey is not null)
+                req.Headers.TryAddWithoutValidation("Idempotency-Key", headerKey);
+            using var response = await host.AuthenticatedClient.SendAsync(req, ct);
+            Assert.Equal(expectedCode, response.StatusCode);
         }
         Assert.Empty(await kernel.ListMailsAsync(memory.TrackId, ct: ct));
     }
@@ -578,11 +585,12 @@ public sealed partial class MemoryIntegrationTests
         var source = (await kernel.GetTrackAggregateAsync(trackId, ct)).Track;
         var target = await kernel.GetOrEnsureMemoryTrackAsync(source.AreaId, ct);
 
-        async Task<(HttpStatusCode Status, MemoryDistillResultDto? Body)> PostWithKeyAsync(string key, string focus)
+        async Task<(HttpStatusCode Status, MemoryDistillResultDto? Body)> PostWithKeyAsync(string key, string focus, string? scope = null)
         {
+            object payload = scope is null ? new { trackId, focus } : new { trackId, scope, focus };
             using var req = new HttpRequestMessage(HttpMethod.Post, MemoryPath + "/distill")
             {
-                Content = JsonContent.Create(new { trackId, focus }),
+                Content = JsonContent.Create(payload),
             };
             req.Headers.Add("Idempotency-Key", key);
             using var res = await host.AuthenticatedClient.SendAsync(req, ct);
@@ -597,12 +605,18 @@ public sealed partial class MemoryIntegrationTests
         Assert.NotNull(first);
         await kernel.WaitForTrackIdleAsync(target.TrackId, ct);
 
+        // Renaming the source Track must not break an identical-input idempotent retry.
+        await kernel.PatchTrackAsync(trackId, new(Title: "Renamed Review Track"), ct);
         var (status2, replay) = await PostWithKeyAsync("distill-key-1", "Keep review checklist");
         Assert.Equal(HttpStatusCode.OK, status2);
         Assert.Equal(first, replay);
 
         var (status3, _) = await PostWithKeyAsync("distill-key-1", "Different focus");
         Assert.Equal(HttpStatusCode.Conflict, status3);
+
+        // Changing scope from implicit "auto" to explicit "area" must conflict even though both target the same Area Memory Track.
+        var (status4, _) = await PostWithKeyAsync("distill-key-1", "Keep review checklist", "area");
+        Assert.Equal(HttpStatusCode.Conflict, status4);
 
         var store = host.Services.GetRequiredService<ITrackStore>();
         var mail = Assert.Single(await store.ListMailsAsync(target.TrackId, ct: ct));
