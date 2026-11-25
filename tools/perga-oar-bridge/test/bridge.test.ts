@@ -5,9 +5,11 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
+import { pathToFileURL } from "node:url";
 import type { AddressInfo } from "node:net";
 import { defineRuntime, type AdapterSession } from "@botiverse/oar/browser";
 import { createSessionKernel, sealSession } from "@botiverse/oar/kernel";
+import { antigravityRuntime } from "@botiverse/oar/runtimes/antigravity";
 import { claudeRuntime } from "@botiverse/oar/runtimes/claude";
 import { codexRuntime } from "@botiverse/oar/runtimes/codex";
 import { scriptedRuntime } from "@botiverse/oar/testing";
@@ -677,5 +679,154 @@ test("preparePromptImages removes its directory after a later image fails", asyn
     if (previous === undefined) delete process.env[tempVariable];
     else process.env[tempVariable] = previous;
     fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("OarBridgeServer resumes Antigravity percent-encoded Unicode cwd while isolating sibling literal %XX and different directories", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "perga-agy-resume-"));
+  const shQuote = (value: string): string => `'${value.replace(/'/gu, "'\\''")}'`;
+
+  try {
+    const unicodeDir = path.join(tmpDir, "小米");
+    const literalPctDir = path.join(tmpDir, "%E5%B0%8F%E7%B1%B3");
+    const otherDir = path.join(tmpDir, "other");
+    fs.mkdirSync(unicodeDir);
+    fs.mkdirSync(literalPctDir);
+    fs.mkdirSync(otherDir);
+
+    const resumeLogPath = path.join(tmpDir, "resumes.jsonl");
+    const stubJsPath = path.join(tmpDir, "agy-acp-stub.mjs");
+    const stubBinPath = path.join(tmpDir, "agy-acp-stub.sh");
+    const sessions = [
+      { sessionId: "sess-unicode", cwd: pathToFileURL(unicodeDir).pathname },
+      { sessionId: "sess-literal", cwd: pathToFileURL(literalPctDir).pathname },
+    ];
+
+    fs.writeFileSync(
+      stubJsPath,
+      `import fs from "node:fs";
+import readline from "node:readline";
+
+const sessions = ${JSON.stringify(sessions)};
+const resumeLogPath = ${JSON.stringify(resumeLogPath)};
+const send = (msg) => process.stdout.write(JSON.stringify(msg) + "\\n");
+
+readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on("line", (line) => {
+  const trimmed = line.trim();
+  if (!trimmed) return;
+  const req = JSON.parse(trimmed);
+  if (req.id === undefined) return;
+  if (req.method === "initialize") {
+    send({
+      jsonrpc: "2.0",
+      id: req.id,
+      result: {
+        protocolVersion: req.params?.protocolVersion ?? 1,
+        agentCapabilities: {
+          loadSession: true,
+          sessionCapabilities: { list: {}, resume: {}, close: {} },
+        },
+      },
+    });
+    return;
+  }
+  if (req.method === "session/list") {
+    send({ jsonrpc: "2.0", id: req.id, result: { sessions } });
+    return;
+  }
+  if (req.method === "session/resume" || req.method === "session/load") {
+    fs.appendFileSync(resumeLogPath, JSON.stringify({ method: req.method, params: req.params }) + "\\n");
+    send({ jsonrpc: "2.0", id: req.id, result: {} });
+    return;
+  }
+  if (req.method === "session/close") {
+    send({ jsonrpc: "2.0", id: req.id, result: {} });
+    return;
+  }
+  send({ jsonrpc: "2.0", id: req.id, error: { code: -32601, message: "Method not found: " + req.method } });
+});
+`,
+    );
+
+    fs.writeFileSync(
+      stubBinPath,
+      `#!/bin/sh\nexec ${shQuote(process.execPath)} ${shQuote(stubJsPath)} "$@"\n`,
+      { mode: 0o755 },
+    );
+
+    const controlledAgy = {
+      ...antigravityRuntime,
+      listModels: undefined,
+      installation: async () => ({
+        kind: "available" as const,
+        via: "executable" as const,
+        command: stubBinPath,
+        version: "1.5.16",
+      }),
+    };
+
+    const readResumes = (): Array<{ method: string; params: Record<string, unknown> }> => {
+      if (!fs.existsSync(resumeLogPath)) return [];
+      const content = fs.readFileSync(resumeLogPath, "utf8").trim();
+      return content ? content.split(/\r?\n/u).map((line) => JSON.parse(line) as { method: string; params: Record<string, unknown> }) : [];
+    };
+
+    const openResume = async (cwd: string, resume: string): Promise<Record<string, unknown>> => {
+      const transport = new MemoryTransport();
+      const bridge = new OarBridgeServer(transport, async () => controlledAgy);
+      try {
+        await bridge.handleMessage({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "session/open",
+          params: { runtime: "antigravity", cwd, resume },
+        });
+        return transport.responseFor(1);
+      } finally {
+        await bridge.dispose();
+      }
+    };
+
+    // 1. Percent-encoded Unicode listing resumes cleanly in its unencoded directory.
+    const unicodeRes = await openResume(unicodeDir, "sess-unicode");
+    assert.equal(unicodeRes.error, undefined, `Expected Unicode resume to succeed, got: ${JSON.stringify(unicodeRes.error)}`);
+    assert.equal((unicodeRes.result as Record<string, unknown>).sessionId, "sess-unicode");
+
+    // 2. Sibling literal %E5%B0%8F%E7%B1%B3 listing (encoded as %25...) resumes cleanly in its own directory.
+    const literalRes = await openResume(literalPctDir, "sess-literal");
+    assert.equal(literalRes.error, undefined, `Expected literal %XX resume to succeed, got: ${JSON.stringify(literalRes.error)}`);
+    assert.equal((literalRes.result as Record<string, unknown>).sessionId, "sess-literal");
+
+    const acceptedResumes = readResumes();
+    assert.equal(acceptedResumes.length, 2);
+    assert.equal(acceptedResumes[0]!.method, "session/resume");
+    assert.equal(acceptedResumes[0]!.params.sessionId, "sess-unicode");
+    assert.equal(acceptedResumes[0]!.params.cwd, unicodeDir);
+    assert.equal(acceptedResumes[1]!.method, "session/resume");
+    assert.equal(acceptedResumes[1]!.params.sessionId, "sess-literal");
+    assert.equal(acceptedResumes[1]!.params.cwd, literalPctDir);
+
+    // 3. Unicode session must not resume in sibling literal %E5%B0%8F%E7%B1%B3 directory.
+    const crossToLiteral = await openResume(literalPctDir, "sess-unicode");
+    const crossToLiteralErr = crossToLiteral.error as Record<string, unknown> | undefined;
+    assert.ok(crossToLiteralErr, "Expected cross-directory resume to literal %XX sibling to be refused");
+    assert.deepEqual(crossToLiteralErr.data, { errorName: "UnsupportedOptionError", option: "cwd" });
+
+    // 4. Literal %E5%B0%8F%E7%B1%B3 session must not double-decode and resume in Unicode directory.
+    const crossToUnicode = await openResume(unicodeDir, "sess-literal");
+    const crossToUnicodeErr = crossToUnicode.error as Record<string, unknown> | undefined;
+    assert.ok(crossToUnicodeErr, "Expected literal %XX session resume in Unicode sibling to be refused");
+    assert.deepEqual(crossToUnicodeErr.data, { errorName: "UnsupportedOptionError", option: "cwd" });
+
+    // 5. Genuinely different directory must continue to be rejected before session/resume.
+    const diffDirRes = await openResume(otherDir, "sess-unicode");
+    const diffDirErr = diffDirRes.error as Record<string, unknown> | undefined;
+    assert.ok(diffDirErr, "Expected different directory resume to be refused");
+    assert.deepEqual(diffDirErr.data, { errorName: "UnsupportedOptionError", option: "cwd" });
+
+    // None of the three refused attempts may reach native session/resume.
+    assert.equal(readResumes().length, 2);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 });
