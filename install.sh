@@ -4,9 +4,9 @@ set -euo pipefail
 
 REPO="${PERGA_REPO:-keanji-x/perga}"
 VERSION="${PERGA_VERSION:-latest}"
-INSTALL_DIR="${PERGA_INSTALL_DIR:-$HOME/.local/share/perga-app}"
-BIN_DIR="${PERGA_BIN_DIR:-$HOME/.local/bin}"
-DATA_DIR="${PERGA_DATA_DIR:-$HOME/.local/share/perga}"
+RAW_INSTALL_DIR="${PERGA_INSTALL_DIR:-$HOME/.local/share/perga-app}"
+RAW_BIN_DIR="${PERGA_BIN_DIR:-$HOME/.local/bin}"
+RAW_DATA_DIR="${PERGA_DATA_DIR:-$HOME/.local/share/perga}"
 
 need_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -15,21 +15,72 @@ need_cmd() {
   fi
 }
 
-normalize_dir() {
-  local p="$1"
+# Resolve a path (existing or not) to an absolute, canonical physical path so
+# relative paths, "..", and symlinked ancestors cannot fool containment checks
+# or break the persistent launcher across working directories.
+resolve_physical_path() {
+  local raw="$1"
   local name="$2"
-  if [[ -z "$p" ]]; then
+  if [[ -z "$raw" ]]; then
     echo "error: ${name} cannot be empty." >&2
     exit 1
   fi
-  while [[ "$p" != "/" && "$p" == */ ]]; do
-    p="${p%/}"
+
+  local path="$raw"
+  if [[ "$path" != /* ]]; then
+    path="$(pwd -P)/${path}"
+  fi
+
+  local resolved="/"
+  local missing_tail=0
+  local IFS='/'
+  local -a segments=()
+  read -r -a segments <<< "$path"
+
+  local seg candidate parent_phys
+  for seg in "${segments[@]}"; do
+    if [[ -z "$seg" || "$seg" == "." ]]; then
+      continue
+    fi
+    if [[ "$seg" == ".." ]]; then
+      if [[ "$resolved" != "/" ]]; then
+        resolved="${resolved%/*}"
+        [[ -z "$resolved" ]] && resolved="/"
+      fi
+      if [[ -d "$resolved" ]]; then
+        resolved=$(cd -P -- "$resolved" && pwd -P)
+        missing_tail=0
+      fi
+      continue
+    fi
+
+    if [[ "$resolved" == "/" ]]; then
+      candidate="/${seg}"
+    else
+      candidate="${resolved}/${seg}"
+    fi
+
+    if (( missing_tail == 0 )) && [[ -d "$candidate" ]]; then
+      resolved=$(cd -P -- "$candidate" && pwd -P)
+    elif (( missing_tail == 0 )) && [[ -L "$candidate" ]]; then
+      parent_phys=$(cd -P -- "$resolved" && pwd -P)
+      if [[ "$parent_phys" == "/" ]]; then
+        resolved="/${seg}"
+      else
+        resolved="${parent_phys}/${seg}"
+      fi
+      missing_tail=1
+    else
+      resolved="$candidate"
+      missing_tail=1
+    fi
   done
-  if [[ "$p" == "/" ]]; then
+
+  if [[ "$resolved" == "/" ]]; then
     echo "error: refusing to use '/' for ${name}." >&2
     exit 1
   fi
-  printf '%s' "$p"
+  printf '%s' "$resolved"
 }
 
 quote_sh() {
@@ -40,13 +91,31 @@ quote_sh() {
 need_cmd curl
 need_cmd tar
 
-INSTALL_DIR=$(normalize_dir "$INSTALL_DIR" "PERGA_INSTALL_DIR")
-BIN_DIR=$(normalize_dir "$BIN_DIR" "PERGA_BIN_DIR")
-DATA_DIR=$(normalize_dir "$DATA_DIR" "PERGA_DATA_DIR")
+if [[ -L "${RAW_INSTALL_DIR%/}" ]]; then
+  echo "error: PERGA_INSTALL_DIR (${RAW_INSTALL_DIR}) must be a real directory, not a symlink." >&2
+  exit 1
+fi
+
+INSTALL_DIR=$(resolve_physical_path "$RAW_INSTALL_DIR" "PERGA_INSTALL_DIR")
+BIN_DIR=$(resolve_physical_path "$RAW_BIN_DIR" "PERGA_BIN_DIR")
+DATA_DIR=$(resolve_physical_path "$RAW_DATA_DIR" "PERGA_DATA_DIR")
 
 if [[ "$DATA_DIR" == "$INSTALL_DIR" || "$DATA_DIR" == "${INSTALL_DIR}/"* ]]; then
   echo "error: PERGA_DATA_DIR (${DATA_DIR}) must not be inside PERGA_INSTALL_DIR (${INSTALL_DIR}), or upgrades would overwrite your data." >&2
   exit 1
+fi
+
+if [[ -e "$INSTALL_DIR" && ! -d "$INSTALL_DIR" ]]; then
+  echo "error: PERGA_INSTALL_DIR (${INSTALL_DIR}) exists and is not a directory." >&2
+  exit 1
+fi
+
+if [[ -d "$INSTALL_DIR" ]] && [[ -n "$(ls -A "$INSTALL_DIR")" ]]; then
+  if [[ ! -f "${INSTALL_DIR}/.perga-install-marker" && ! -x "${INSTALL_DIR}/Perga.Host" ]]; then
+    echo "error: PERGA_INSTALL_DIR (${INSTALL_DIR}) is a non-empty directory that does not look like an existing Perga installation." >&2
+    echo "Refusing to replace it. Choose a dedicated directory such as \$HOME/.local/share/perga-app." >&2
+    exit 1
+  fi
 fi
 
 case "$(uname -sm)" in
@@ -154,6 +223,7 @@ if [[ ! -x "${tmp}/perga/Perga.Host" ]]; then
 fi
 rmdir "$stage_dir"
 mv "${tmp}/perga" "$stage_dir"
+printf 'perga-install-v1\n' > "${stage_dir}/.perga-install-marker"
 
 if [[ "$(uname -s)" == "Darwin" ]] && command -v xattr >/dev/null 2>&1; then
   xattr -dr com.apple.quarantine "$stage_dir" 2>/dev/null || true
@@ -184,6 +254,7 @@ DEFAULT_DATA_DIR=${q_data_dir}
 INSTALL_DIR="\${PERGA_INSTALL_DIR:-\$DEFAULT_INSTALL_DIR}"
 export PERGA_DATA_DIR="\${PERGA_DATA_DIR:-\$DEFAULT_DATA_DIR}"
 export PERGA_STATIC_WEB_DIR="\${PERGA_STATIC_WEB_DIR:-\$INSTALL_DIR/web}"
+export PERGA_TEMPLATES_DIR="\${PERGA_TEMPLATES_DIR:-\$INSTALL_DIR/templates}"
 
 has_urls_override() {
   if [[ -n "\${ASPNETCORE_URLS:-}" || -n "\${Kestrel__Endpoints__Http__Url:-}" ]]; then
@@ -197,12 +268,30 @@ has_urls_override() {
   return 1
 }
 
-run_host() {
-  if has_urls_override "\$@"; then
-    exec "\$INSTALL_DIR/Perga.Host" "\$@"
-  else
-    exec "\$INSTALL_DIR/Perga.Host" --urls "\${PERGA_URLS:-http://127.0.0.1:4041}" "\$@"
+has_content_root_override() {
+  if [[ -n "\${ASPNETCORE_CONTENTROOT:-}" || -n "\${DOTNET_CONTENTROOT:-}" ]]; then
+    return 0
   fi
+  for arg in "\$@"; do
+    case "\$arg" in
+      --contentRoot|--contentRoot=*) return 0 ;;
+    esac
+  done
+  return 1
+}
+
+run_host() {
+  local -a extra_args=()
+  if ! has_content_root_override "\$@"; then
+    extra_args+=(--contentRoot "\$INSTALL_DIR")
+  fi
+  if ! has_urls_override "\$@"; then
+    extra_args+=(--urls "\${PERGA_URLS:-http://127.0.0.1:4041}")
+  fi
+  # Anchor working directory and content root to the installed package so a
+  # caller's project appsettings.json or templates/ cannot hijack Host startup.
+  cd "\$INSTALL_DIR"
+  exec "\$INSTALL_DIR/Perga.Host" "\${extra_args[@]}" "\$@"
 }
 
 case "\${1:-}" in

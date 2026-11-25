@@ -19,8 +19,9 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
+
+env:
+  NPM_CONFIG_AUDIT: 'false'
 
 concurrency:
   group: pages
@@ -57,6 +58,9 @@ jobs:
           path: site/dist
 
   deploy:
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

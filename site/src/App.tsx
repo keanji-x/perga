@@ -14,7 +14,7 @@ import {
 
 type TrackTab = 'delivery' | 'invest';
 
-const INSTALL_COMMAND = 'curl -fsSL https://keanji-x.github.io/perga/install.sh | sh';
+const INSTALL_COMMAND = 'curl -fsSL https://keanji-x.github.io/perga/install.sh | bash';
 
 const TRACK_TABS: ReadonlyArray<Readonly<{
   id: TrackTab;

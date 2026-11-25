@@ -40,7 +40,7 @@ MEDIA SLOT: Once you capture your real desktop screenshot / 60s demo clip, place
 ### One-line install (macOS Apple Silicon & Linux x64)
 
 ```sh
-curl -fsSL https://keanji-x.github.io/perga/install.sh | sh
+curl -fsSL https://keanji-x.github.io/perga/install.sh | bash
 ```
 
 > **Note:** Prebuilt release archives are published on version tags (`vX.Y.Z`). Before the first release is published, grab the `perga-linux-x64` / `perga-darwin-arm64` artifact from a [CI run](https://github.com/keanji-x/perga/actions/workflows/ci.yml) or [build from source](#build-from-source) below.
@@ -103,7 +103,13 @@ cp -R fe/web/dist "$out/perga/web"
 cd "$out/perga"
 ```
 
-You are now in the self-contained package directory. Run `./Perga.Host auth init-owner --username owner --allow-migrate` on first use, then start `./Perga.Host` as shown above.
+You are now in the self-contained package directory. Set `PERGA_DATA_DIR`, create the owner account on first use, and start the Host:
+
+```sh
+export PERGA_DATA_DIR="${PERGA_DATA_DIR:-$HOME/.local/share/perga}"
+./Perga.Host auth init-owner --username owner --allow-migrate
+./Perga.Host --urls http://127.0.0.1:4041
+```
 
 ### Runtime differences
 

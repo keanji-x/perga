@@ -156,7 +156,7 @@ public sealed class PergaHostOptions
         {
             opts.StaticWebRootDirectory = section["FrontendDistDirectory"]
                                           ?? Environment.GetEnvironmentVariable("PERGA_STATIC_WEB_DIR")
-                                          ?? DiscoverBundledStaticWebRoot(resolvedBaseDir, contentRootPath)
+                                          ?? DiscoverBundledStaticWebRoot(resolvedBaseDir)
                                           ?? DiscoverDirectoryUpwards(contentRootPath, Path.Combine("fe", "web", "dist"))
                                           ?? DiscoverDirectoryUpwards(resolvedBaseDir, Path.Combine("fe", "web", "dist"));
         }
@@ -237,23 +237,15 @@ public sealed class PergaHostOptions
         return (resolvedDataDir, resolvedDbPath, resolvedWorkspaces, isEphemeral);
     }
 
-    private static string? DiscoverBundledStaticWebRoot(string? baseDirectory, string? contentRootPath)
+    private static string? DiscoverBundledStaticWebRoot(string? baseDirectory)
     {
-        foreach (var root in new[] { baseDirectory, contentRootPath })
+        if (string.IsNullOrWhiteSpace(baseDirectory))
         {
-            if (string.IsNullOrWhiteSpace(root))
-            {
-                continue;
-            }
-
-            var candidate = Path.Combine(Path.GetFullPath(root), "web");
-            if (File.Exists(Path.Combine(candidate, "index.html")))
-            {
-                return candidate;
-            }
+            return null;
         }
 
-        return null;
+        var candidate = Path.Combine(Path.GetFullPath(baseDirectory), "web");
+        return File.Exists(Path.Combine(candidate, "index.html")) ? candidate : null;
     }
 
     private static string? DiscoverDirectoryUpwards(string? startDirectory, string relativeSubpath)

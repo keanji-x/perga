@@ -42,6 +42,6 @@
   <!-- Dark bottom install strip -->
   <rect x="64" y="510" width="1072" height="120" fill="#15171c"/>
   <text x="96" y="577" font-family="monospace" font-size="20" fill="#7ea3ff">$</text>
-  <text x="122" y="577" font-family="monospace" font-size="20" fill="#f3f1eb">curl -fsSL https://keanji-x.github.io/perga/install.sh | sh</text>
+  <text x="122" y="577" font-family="monospace" font-size="20" fill="#f3f1eb">curl -fsSL https://keanji-x.github.io/perga/install.sh | bash</text>
   <text x="1104" y="577" text-anchor="end" font-family="monospace" font-size="16" fill="#a9afb9">github.com/keanji-x/perga</text>
 </svg>

@@ -68,13 +68,10 @@ function renderVisionMarkdown(markdown) {
       i++;
       continue;
     }
-    if (line.startsWith('# ')) {
-      blocks.push(`<h1>${renderInlineMarkdown(line.slice(2))}</h1>`);
-      i++;
-      continue;
-    }
-    if (line.startsWith('## ')) {
-      blocks.push(`<h2>${renderInlineMarkdown(line.slice(3))}</h2>`);
+    const headingMatch = line.match(/^(#{1,6})\s+(.*)$/);
+    if (headingMatch) {
+      const level = headingMatch[1].length;
+      blocks.push(`<h${level}>${renderInlineMarkdown(headingMatch[2])}</h${level}>`);
       i++;
       continue;
     }
@@ -116,7 +113,7 @@ function renderVisionMarkdown(markdown) {
       continue;
     }
     const para = [];
-    while (i < lines.length && lines[i].trim() && !/^(#{1,3}\s|> |- |\d+\.\s|---$)/.test(lines[i].trim())) {
+    while (i < lines.length && lines[i].trim() && !/^(#{1,6}\s|> |- |\d+\.\s|---$)/.test(lines[i].trim())) {
       para.push(lines[i].trim());
       i++;
     }
