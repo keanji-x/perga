@@ -181,7 +181,19 @@ public static class KernelMcpCatalog
                 """), readOnlyLocal),
             new(KernelMcpToolNames.ReportRead, "Read a Track report. Omit trackId for the current Track and its read anchor, or pass another Track ID for a read-only snapshot. Supports format ('full'|'blocks'|'markdown'|'outline'), sectionH1/blockIds scoping, and includeContract for perga-block authoring specs.",
                 Schema(KernelMcpReportSupport.ReportReadSchemaJson), readOnlyLocal),
-            new(KernelMcpToolNames.ReportCommit, "Atomically apply block operations (replace_section, upsert, delete, move) to the track report using a ReadAnchor. Returns a compact commit receipt by default; set includeDocument=true for full renderedMarkdown and blocks.",
+            new(KernelMcpToolNames.ReportCommit,
+                """
+                Atomically apply block operations to the Track Report. Returns a compact commit receipt by default.
+                Cheatsheet:
+                - anchor: { docRev, knownBlockRevs, wholeDocumentRead } from report_read, the previous report_commit receipt, or the initial anchor in the empty Report prompt.
+                - ops (non-empty array):
+                  - { op: "replace_section", sectionH1, markdown } creates or replaces an H1 section.
+                  - { op: "upsert", id?, blockKind?: "prose"|"widget", markdown?, payload?, position? }
+                  - { op: "delete", id }
+                  - { op: "move", id, toIndex }
+                - Optional: summary, commitMessage, includeDocument. Set includeDocument=true to add renderedMarkdown and blocks to the receipt.
+                - For widget schemas, call report_read(includeContract: true).
+                """,
                 Schema(KernelMcpReportSupport.ReportCommitSchemaJson), localWrite),
             new(KernelMcpToolNames.DataPatch, "Patch the track's structured template data (validated Fail-Closed against template data.schema and stamped with _meta.updatedAt/source).",
                 Schema("""{"type":"object","required":["patch"],"properties":{"patch":{"type":"object","description":"Partial JSON object; array fields accept {$upsert: [{id|code, ...}], $delete: [key]}."},"expectedDataRev":{"type":"integer","minimum":0}}}"""), localWrite),
