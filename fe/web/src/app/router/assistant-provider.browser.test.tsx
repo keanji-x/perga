@@ -51,7 +51,8 @@ it('creates the declared Codex default despite auth/read and catalog unavailabil
   await page.getByRole('button', { name: 'New conversation', exact: true }).click();
   await page.getByRole('button', { name: /^Model:/ }).click();
   await expect.element(page.getByText('Account read failed', { exact: false })).toBeVisible();
-  await userEvent.keyboard('{Escape}');
+  expect(page.getByText('A track can still be created', { exact: false }).query()).toBeNull();
+  await page.getByRole('radio', { name: /^Default/ }).click();
   const field = page.getByRole('combobox', { name: 'Message' });
   await field.fill('Follow the backend default'); await userEvent.keyboard('{Enter}');
   await expect.poll(() => fixture.requests.filter(request => request.method === 'POST' && request.path.endsWith('/sessions')).length).toBe(1);

@@ -192,13 +192,13 @@ it('opens a blocked conversation before Lead and keeps its red indicator after v
   view.sessions[1] = { ...view.sessions[1], status: 'unknown' };
   const trigger = page.getByRole('button', { name: /Conversation Other conversation/ });
   await expect.element(trigger).toBeVisible();
-  await expect.poll(() => document.querySelector('[data-nc-track-page] [data-nc-activity="failed"]') !== null).toBe(true);
+  await expect.element(trigger).toHaveAccessibleDescription(/Needs repair/);
   await trigger.click();
   await expect.poll(() => view.requests.some(request => request.path.includes('/second-planner/items?'))).toBe(true);
   await expect.element(page.getByRole('button', { name: 'Close conversation', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Close conversation', exact: true }).click();
   await expect.element(trigger).toBeVisible();
-  expect(document.querySelector('[data-nc-track-page] [data-nc-activity="failed"]')).not.toBeNull();
+  await expect.element(trigger).toHaveAccessibleDescription(/Needs repair/);
   view.client.clear();
 });
 

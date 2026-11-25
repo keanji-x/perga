@@ -699,7 +699,8 @@ function SingleGroupPane<Provider extends string>({
     return <UnavailableNoticeList groups={[group]} />;
   }
   const section = buildGroupSection(group, activeProvider, selection, '');
-  const unavailableEmpty = group.availability?.status === 'unavailable' && section.models.length === 0;
+  const unavailableEmpty = group.availability?.status === 'unavailable' && section.models.length === 0
+    && group.selectionProblem === undefined;
   const fullProvider = providerLabel(group, group.provider);
 
   return (
@@ -860,7 +861,9 @@ function buildGroupSection<Provider extends string>(
     : null;
   const { reason, refused } = catalogReason(group);
   const warningNotice = reason !== null && !refused
-    ? `${fullProvider} is unavailable: ${reason} ${unavailableCreationNote(fullProvider)}`
+    ? (group.acceptsUnavailableBlankTrack === true
+      ? `${fullProvider} is unavailable: ${reason} ${unavailableCreationNote(fullProvider)}`
+      : `${fullProvider} is unavailable: ${reason}`)
     : null;
 
   const unreachable = group.catalog !== null && group.catalog.source === 'unavailable';

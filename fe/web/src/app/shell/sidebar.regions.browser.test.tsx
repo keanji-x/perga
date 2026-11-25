@@ -215,6 +215,8 @@ it.each([200, 250])('reveals complete operation rows through nested scrollports 
   await userEvent.keyboard('{Escape}');
 });
 
+// Fixed chrome (brand row + Today + Memory + Areas header + account footer ≈ 200px) requires >=280px
+// to expose a full 30px folder row inside the scrollport while still overflowing the 40-folder list (~1,520px).
 it.each([280, 320])('keeps folders reachable without shortcuts and after collapse at height %i', async height => {
   const { preferences } = await scene(height, false, false, true);
   const folders = button('New area').element().closest<HTMLElement>('[data-nc-sidebar-scrollport]')!;

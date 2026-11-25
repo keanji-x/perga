@@ -345,11 +345,11 @@ export function TrackPage({ fillReading = false, articleMasthead = !fillReading,
       >
         <h1 className={showArticleMasthead ? styles.mastheadHeading : styles.titleHeading}>
           {onRenameTrack === undefined
-            ? <span className={showArticleMasthead ? styles.mastheadTitle : styles.title} data-nc-page-title=""><TrackTitle track={track} /></span>
+            ? <span className={showArticleMasthead ? styles.mastheadTitle : styles.title} data-nc-page-title={!usesMastheadHost || closeSurface === undefined ? '' : undefined}><TrackTitle track={track} /></span>
             : <EditableTitle value={track.title} placeholder={UNTITLED_TRACK_LABEL}
                 displayContent={<TrackTitle track={track} />} emptyCommit="clear" onCommit={onRenameTrack}
                 readCommitFailure={writeFailureText(TRACK_PATCH_FAILURES, TRACK_PATCH_TEXT.rename)} editLabel="Rename track" inputLabel="Track title"
-                className={showArticleMasthead ? styles.mastheadTitle : styles.title} isPageTitle titleRef={titleReadControlRef}
+                className={showArticleMasthead ? styles.mastheadTitle : styles.title} isPageTitle={!usesMastheadHost || closeSurface === undefined} titleRef={titleReadControlRef}
                 readView={hasMobileTitleReadView ? (controls) => <MobileTitleReadView
                   controls={controls} host={mobileHeaderTitleHost} register={registerMobileTitleEdit}
                   view={(readControls) => (
@@ -401,7 +401,7 @@ export function TrackPage({ fillReading = false, articleMasthead = !fillReading,
             {/* The raw title, with the fallback as the placeholder. `emptyCommit="clear"`: the planner's `track_rename` succeeds only while the title is empty, so clearing the name is a real request here, not a cancel. */}
             {usesMastheadHost ? (
               closeSurface !== undefined ? (
-                <span className={styles.title}><TrackTitle track={track} /></span>
+                <h1 className={styles.titleHeading}><span className={styles.title} tabIndex={-1} data-nc-page-title=""><TrackTitle track={track} /></span></h1>
               ) : (
                 <div className={styles.runningHeadCluster}>
                   {isDirectFolder && <ExplanationBadge label={NO_ISOLATION_LABEL}>{NO_ISOLATION_EXPLANATION}</ExplanationBadge>}
@@ -481,7 +481,7 @@ export function TrackPage({ fillReading = false, articleMasthead = !fillReading,
         aria-hidden={boardOpen ? true : undefined}
         inert={boardOpen}
       >
-        <div className={styles.doc} inert={fileViewer !== undefined}>
+        <div className={styles.doc} inert={fileViewer !== undefined} aria-hidden={fileViewer !== undefined ? true : undefined}>
           {usesMastheadHost && (
             <header ref={mastheadRef} className={`${styles.articleMasthead} ${titleInHeader ? styles.articleMastheadInShell : ''}`}>
               {titleBlock}

@@ -26,7 +26,10 @@ it.each([1200, 390])('acknowledges a conversation update through the status entr
       await page.getByRole('button', { name: /Conversation Project conversation/ }).click();
     }
   };
-  const activity = () => document.querySelector('[data-nc-activity="unread"]')?.getAttribute('data-nc-activity');
+  const activity = () => (width === 390
+    ? document.querySelector('[data-nc-mobile-header] [data-nc-activity="unread"], [data-nc-track-page] [data-nc-activity="unread"]')
+    : document.querySelector('[data-nc-desktop-panel] [data-nc-activity="unread"]')
+  )?.getAttribute('data-nc-activity');
   mount();
   await expect.poll(activity).toBe('unread');
   expect(document.querySelector('[data-nc-notification-launcher]')).toBeNull();
