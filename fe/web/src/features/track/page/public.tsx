@@ -352,7 +352,7 @@ export function TrackPage({ fillReading = false, articleMasthead = !fillReading,
                 className={showArticleMasthead ? styles.mastheadTitle : styles.title} isPageTitle titleRef={titleReadControlRef}
                 readView={hasMobileTitleReadView ? (controls) => <MobileTitleReadView
                   controls={controls} host={mobileHeaderTitleHost} register={registerMobileTitleEdit}
-                  view={originLink === null && activity === 'quiet' ? mobileTitleReadView : (readControls) => (
+                  view={(readControls) => (
                     <div className={styles.mobileOriginTitle}>
                       {mobileTitleReadView(readControls)}
                       {originLink}
