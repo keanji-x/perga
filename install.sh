@@ -111,7 +111,13 @@ if [[ -e "$INSTALL_DIR" && ! -d "$INSTALL_DIR" ]]; then
 fi
 
 if [[ -d "$INSTALL_DIR" ]] && [[ -n "$(ls -A "$INSTALL_DIR")" ]]; then
-  if [[ ! -f "${INSTALL_DIR}/.perga-install-marker" && ! -x "${INSTALL_DIR}/Perga.Host" ]]; then
+  is_existing_perga=0
+  if [[ -f "${INSTALL_DIR}/.perga-install-marker" ]]; then
+    is_existing_perga=1
+  elif [[ -f "${INSTALL_DIR}/Perga.Host" && -x "${INSTALL_DIR}/Perga.Host" && -f "${INSTALL_DIR}/web/index.html" && -f "${INSTALL_DIR}/oar-bridge/perga-oar-bridge.mjs" ]]; then
+    is_existing_perga=1
+  fi
+  if (( is_existing_perga == 0 )); then
     echo "error: PERGA_INSTALL_DIR (${INSTALL_DIR}) is a non-empty directory that does not look like an existing Perga installation." >&2
     echo "Refusing to replace it. Choose a dedicated directory such as \$HOME/.local/share/perga-app." >&2
     exit 1
@@ -217,7 +223,7 @@ parent_dir=$(dirname "$INSTALL_DIR")
 mkdir -p "$parent_dir" "$BIN_DIR" "$DATA_DIR"
 stage_dir=$(mktemp -d "${parent_dir}/.perga-stage.XXXXXX")
 tar -xzf "${tmp}/${ARCHIVE}" -C "${tmp}"
-if [[ ! -x "${tmp}/perga/Perga.Host" ]]; then
+if [[ ! -f "${tmp}/perga/Perga.Host" || ! -x "${tmp}/perga/Perga.Host" ]]; then
   echo "error: archive did not contain an executable perga/Perga.Host binary." >&2
   exit 1
 fi
@@ -249,12 +255,22 @@ q_data_dir=$(quote_sh "$DATA_DIR")
 cat > "${BIN_DIR}/perga" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
+CALLER_PWD="\$(pwd -P)"
+abs_from_caller() {
+  case "\$1" in
+    /*) printf '%s' "\$1" ;;
+    *)  printf '%s/%s' "\$CALLER_PWD" "\$1" ;;
+  esac
+}
 DEFAULT_INSTALL_DIR=${q_install_dir}
 DEFAULT_DATA_DIR=${q_data_dir}
-INSTALL_DIR="\${PERGA_INSTALL_DIR:-\$DEFAULT_INSTALL_DIR}"
-export PERGA_DATA_DIR="\${PERGA_DATA_DIR:-\$DEFAULT_DATA_DIR}"
-export PERGA_STATIC_WEB_DIR="\${PERGA_STATIC_WEB_DIR:-\$INSTALL_DIR/web}"
-export PERGA_TEMPLATES_DIR="\${PERGA_TEMPLATES_DIR:-\$INSTALL_DIR/templates}"
+INSTALL_DIR="\$(abs_from_caller "\${PERGA_INSTALL_DIR:-\$DEFAULT_INSTALL_DIR}")"
+export PERGA_DATA_DIR="\$(abs_from_caller "\${PERGA_DATA_DIR:-\$DEFAULT_DATA_DIR}")"
+export PERGA_STATIC_WEB_DIR="\$(abs_from_caller "\${PERGA_STATIC_WEB_DIR:-\$INSTALL_DIR/web}")"
+export PERGA_TEMPLATES_DIR="\$(abs_from_caller "\${PERGA_TEMPLATES_DIR:-\$INSTALL_DIR/templates}")"
+if [[ -n "\${PERGA_DB_PATH:-}" ]]; then
+  export PERGA_DB_PATH="\$(abs_from_caller "\$PERGA_DB_PATH")"
+fi
 
 has_urls_override() {
   if [[ -n "\${ASPNETCORE_URLS:-}" || -n "\${Kestrel__Endpoints__Http__Url:-}" ]]; then

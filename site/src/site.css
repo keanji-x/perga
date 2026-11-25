@@ -162,7 +162,7 @@
   }
 
   .site-tagline {
-    margin: 16px 0 28px;
+    margin: 14px 0 18px;
     font-family: var(--font-serif);
     font-size: clamp(1.15rem, 2vw, 1.38rem);
     line-height: 1.45;
@@ -172,6 +172,36 @@
   .site-tagline strong {
     color: var(--text);
     font-weight: 500;
+  }
+
+  .site-providers {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin: 0 0 24px;
+  }
+
+  .site-providers-label {
+    font-family: var(--font-mono);
+    font-size: 0.69rem;
+    letter-spacing: 0.08em;
+    color: var(--text-3);
+    margin-right: 4px;
+  }
+
+  .site-provider-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 10px;
+    border: 1px solid var(--hairline-strong);
+    border-radius: 999px;
+    background: var(--paper);
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 0.74rem;
+    line-height: 1.4;
+    white-space: nowrap;
   }
 
   .site-install-row {

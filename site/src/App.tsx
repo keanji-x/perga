@@ -113,8 +113,16 @@ export function App() {
               Chat drifts. <em>Reports stay.</em>
             </h1>
             <p className="site-tagline">
-              A report-centric local workspace for multi-worker <strong>Claude Code</strong>, <strong>Codex</strong>, <strong>Gemini</strong>, <strong>OpenCode</strong> &amp; ACP sessions.
+              A report-centric local workspace for multi-worker AI sessions.
             </p>
+            <div className="site-providers" aria-label="Supported CLI backends">
+              <span className="site-providers-label">WORKS WITH</span>
+              <span className="site-provider-chip">Claude Code</span>
+              <span className="site-provider-chip">Codex</span>
+              <span className="site-provider-chip">Gemini</span>
+              <span className="site-provider-chip">OpenCode</span>
+              <span className="site-provider-chip">ACP / OAR</span>
+            </div>
 
             <div className="site-install-row" id="install">
               <div className="site-terminal">
