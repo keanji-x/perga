@@ -119,9 +119,11 @@ export function App() {
               <span className="site-providers-label">WORKS WITH</span>
               <span className="site-provider-chip">Claude Code</span>
               <span className="site-provider-chip">Codex</span>
-              <span className="site-provider-chip">Gemini</span>
+              <span className="site-provider-chip">Antigravity</span>
               <span className="site-provider-chip">OpenCode</span>
-              <span className="site-provider-chip">ACP / OAR</span>
+              <span className="site-provider-chip">Kimi</span>
+              <span className="site-provider-chip">Qwen</span>
+              <span className="site-provider-chip site-provider-chip-muted" title="Also supports Devin, Factory, Grok, CodeBuddy, Qoder, and dsh">+6 more</span>
             </div>
 
             <div className="site-install-row" id="install">
@@ -228,7 +230,7 @@ export function App() {
           <div className="site-pillar">
             <span className="site-pillar-num">02</span>
             <h2>Multi-worker across backends</h2>
-            <p>Run parallel workers across Claude Code, Codex, Gemini, OpenCode, or any ACP CLI inside one track — with local test gates, read-only cross-model audits, and live mid-turn steering.</p>
+            <p>Run parallel workers across Claude Code, Codex, Antigravity, OpenCode, Kimi, Qwen, Devin, Grok, and more inside one track — with local test gates, read-only cross-model audits, and live mid-turn steering.</p>
           </div>
           <div className="site-pillar">
             <span className="site-pillar-num">03</span>
@@ -243,14 +245,14 @@ export function App() {
             <span className="site-kicker">ONE MORE THING</span>
             <h2>One memory, shared across CLIs.</h2>
             <p>
-              Project rules shouldn&apos;t stay trapped in separate <code>CLAUDE.md</code> files or forgotten chats. Perga keeps them as plain Markdown notes shared across <strong>Claude Code</strong>, <strong>Codex</strong>, <strong>Gemini</strong>, <strong>OpenCode</strong>, and every new task — so you never repeat the same constraints twice.
+              Project rules shouldn&apos;t stay trapped in separate <code>CLAUDE.md</code> files or forgotten chats. Perga keeps them as plain Markdown notes shared across <strong>Claude Code</strong>, <strong>Codex</strong>, <strong>Antigravity</strong>, <strong>OpenCode</strong>, and every other worker — so you never repeat the same constraints twice.
             </p>
           </div>
 
           <div className="site-sheet site-sheet-memory">
             <div className="site-sheet-bar">
               <span className="site-sheet-title">Project Memory</span>
-              <span className="site-sheet-badge">PLAIN MARKDOWN · SHARED ACROSS CLAUDE, CODEX, GEMINI &amp; OPENCODE</span>
+              <span className="site-sheet-badge">PLAIN MARKDOWN · SHARED ACROSS ALL CLI WORKERS</span>
             </div>
             <WidgetFrame
               src="./widgets/entries.html"

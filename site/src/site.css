@@ -204,6 +204,12 @@
     white-space: nowrap;
   }
 
+  .site-provider-chip-muted {
+    background: transparent;
+    border-style: dashed;
+    color: var(--text-2);
+  }
+
   .site-install-row {
     display: flex;
     flex-wrap: wrap;

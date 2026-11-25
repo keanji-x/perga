@@ -1,12 +1,12 @@
 # Perga
 
-**Move multi-day AI work across Claude Code, Codex, Gemini, OpenCode & ACP out of scrolling chat tabs — living reports, multi-worker flows, enforced cross-model review, and governed local memory.**
+**Move multi-day AI work across Claude Code, Codex, Antigravity, OpenCode, Kimi, Qwen & more out of scrolling chat tabs — living reports, multi-worker flows, enforced cross-model review, and governed local memory.**
 
 [Homepage](https://keanji-x.github.io/perga/) · [Quickstart](#quickstart) · [Built-in Protocols](#built-in-protocols) · [Documentation](#documentation) · [Releases](https://github.com/keanji-x/perga/releases)
 
-Self-contained native packages for **macOS on Apple Silicon (`arm64`)** and **Linux `x64`** — no .NET runtime installation required. Both packages bundle the Host, native Rust terminal bridge, OAR multi-backend agent bridge, and web interface.
+Self-contained native packages for **macOS on Apple Silicon (`arm64`)** and **Linux `x64`** — no .NET runtime installation required. Both packages bundle the Host, native Rust terminal bridge, multi-backend agent bridge, and web interface.
 
-Perga moves multi-day and multi-week work — maintaining a repository, driving engineering OKRs, or running ongoing investment research — out of drifting chat sessions. Each goal gets its own isolated **Track**: conversation stays in the side pane while the main view continuously distills a read-only living report backed by kernel-verified facts. Through the bundled **OAR bridge**, orchestrate parallel workers across the CLIs you already use (**Claude Code, Codex, Gemini / Antigravity, OpenCode, and any ACP agent**) with lightweight protocols, enforced cross-model review, background external watches, and shared human-AI Markdown memory.
+Perga moves multi-day and multi-week work — maintaining a repository, driving engineering OKRs, or running ongoing investment research — out of drifting chat sessions. Each goal gets its own isolated **Track**: conversation stays in the side pane while the main view continuously distills a read-only living report backed by kernel-verified facts. Orchestrate parallel workers across the CLIs you already use (**Claude Code, Codex, Antigravity, OpenCode, Kimi, Qwen, Devin, Factory, Grok, CodeBuddy, Qoder**, and more) with lightweight protocols, enforced cross-model review, background external watches, and shared human-AI Markdown memory.
 
 <!--
 MEDIA SLOT: Once you capture your real desktop screenshot / 60s demo clip, place them in docs/assets/ and uncomment:
@@ -17,7 +17,7 @@ MEDIA SLOT: Once you capture your real desktop screenshot / 60s demo clip, place
 
 - **Living reports over drifting chat.** Keep conversation in the margin and anchor long-running state in a read-only editorial report combining schema-validated ledgers with non-forgeable kernel facts (task status, actual model, gate exit codes, timestamps). Context limits trigger native compaction or report-anchored epoch handover.
 - **Governed shared human-AI memory.** Stop choosing between goldfish amnesia and bloated `CLAUDE.md` / auto-memory drift. Store durable knowledge as readable UTF-8 Markdown scoped by **Area** and **Global**, shared across Claude Code, Codex, and ACP. Task sessions can only read, recall, or `memory_propose` — a dedicated **Memory Planner** governs writes with ETag locking and hard byte budgets, plus one-click *Save to Memory* and `@mention` recall in chat.
-- **Multi-worker across backends with shared control.** A single Lead coordinates parallel workers across Claude Code, Codex, Gemini (Antigravity), OpenCode, and other ACP/OAR runtimes inside the same track. Execution is structurally separated from acceptance, reviews can be enforced on a different model, and humans share the exact same live stream, steering, interrupt, and model controls as the Lead.
+- **Multi-worker across backends with shared control.** A single Lead coordinates parallel workers across Claude Code, Codex, Antigravity, OpenCode, Kimi, Qwen, Devin, Factory, Grok, CodeBuddy, Qoder, and more inside the same track. Execution is structurally separated from acceptance, reviews can be enforced on a different model, and humans share the exact same live stream, steering, interrupt, and model controls as the Lead.
 - **Unified flows and zero-token watches.** A lightweight declarative `flow.json` unifies parallel dependencies, `cron`/`at` schedules, declarative child Track spawning (`do.kind: "track"`), and zero-token external probes (`prChecks` or shell commands). Nothing spends tokens while idle; state changes and exceptions wake the Lead to decide next steps.
 - **Real isolated workspaces, local sovereignty.** Isolate tracks via Git worktrees, Jujutsu (`jj`), Linux OverlayFS (shared prewarmed build caches), or remote SSH targets. Terminals run in a native Rust bridge (`perga-term-bridge`), and all state stays in a local SQLite database you own.
 - **Zero-template start, progressive structure.** Start any track with a single sentence. Attach a lightweight built-in protocol (27–40 lines) or ask the Lead to author one only when recurring rules and guardrails emerge.
@@ -35,7 +35,7 @@ MEDIA SLOT: Once you capture your real desktop screenshot / 60s demo clip, place
 
 - **No .NET runtime required** — release archives are self-contained native binaries for macOS Apple Silicon (`arm64`) and Linux `x64` (including Windows WSL2).
 - **Node.js 24 or later** for the bundled OAR agent bridge.
-- At least one configured provider CLI you already use, such as `claude`, `codex`, `gemini` / Antigravity, `opencode`, or another ACP agent.
+- At least one configured provider CLI you already use, such as `claude`, `codex`, Antigravity, `opencode`, `kimi`, `qwen`, `devin`, or `grok`.
 
 ### One-line install (macOS Apple Silicon & Linux x64)
 
