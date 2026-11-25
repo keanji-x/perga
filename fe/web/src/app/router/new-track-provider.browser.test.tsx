@@ -53,8 +53,7 @@ it.each([['claude', 'Claude', 1280], ['claude', 'Claude', 390], ['opencode', 'Op
   await openModelMenu('Model: Codex Default');
   await page.getByRole('group', { name: 'Providers' }).getByRole('radio', { name: label }).click();
   await page.getByRole('radio', { name: `${provider}-model`, exact: true }).click();
-  await page.getByRole('button', { name: 'Save', exact: true }).click();
-  await expect.element(page.getByRole('button', { name: `Model: ${label} ${provider}-model` })).toBeVisible();
+  await expect.element(page.getByRole('button', { name: `Model: ${provider}-model` })).toBeVisible();
   await page.getByRole('combobox', { name: 'What this track should do' }).fill('Plan the release');
   await page.getByRole('button', { name: 'Create track' }).click();
   await expect.poll(() => creates.length).toBe(1);
@@ -78,7 +77,7 @@ it('loads newly registered providers after the managed list refreshes', async ()
   const { client, requests } = mount(providers);
   await openModelMenu('Model: Default');
   await expect.element(page.getByRole('radio', { name: 'codex-model' })).toBeVisible();
-  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await userEvent.keyboard('{Escape}');
   providers.push('grok');
   await Promise.all([
     client.invalidateQueries({ queryKey: queryKeys.managedProviders() }),
@@ -113,7 +112,7 @@ function mountRichCatalog() {
           modelCatalog: [
             {
               model: 'gpt-6.1-sol',
-              displayName: 'GPT-6.1-Sol',
+              displayName: 'GPT-6.1-Sol-Long-Preview-Model-Name',
               description: '',
               isDefault: true,
               defaultReasoningEffort: 'low',
@@ -146,9 +145,9 @@ function mountRichCatalog() {
           provider: 'acp:opencode',
           available: true,
           version: 'opencode v2.1.4',
-          models: ['deepseek/deepseek-flash', 'zhipuai/glm-5.3'],
+          models: ['deepseek/deepseek-flash-extended-preview', 'zhipuai/glm-5.3'],
           modelCatalog: [
-            { model: 'deepseek/deepseek-flash', displayName: 'deepseek/deepseek-flash', description: '', isDefault: false, defaultReasoningEffort: null, supportedReasoningEfforts: [] },
+            { model: 'deepseek/deepseek-flash-extended-preview', displayName: 'deepseek/deepseek-flash-extended-preview', description: '', isDefault: false, defaultReasoningEffort: null, supportedReasoningEfforts: [] },
             { model: 'zhipuai/glm-5.3', displayName: 'zhipuai/glm-5.3', description: '', isDefault: false, defaultReasoningEffort: null, supportedReasoningEfforts: [] },
           ],
         },
@@ -167,23 +166,32 @@ function mountRichCatalog() {
 it('selects OpenCode directly from the Providers column and updates the truncated hover tooltip', async () => {
   await page.viewport(1280, 844);
   const { creates } = mountRichCatalog();
-  const initialTrigger = page.getByRole('button', { name: /^Model: Codex gpt-6\.1-sol · low/ });
+  const initialTrigger = page.getByRole('button', { name: /^Model: Codex GPT-6\.1-Sol-Long-Preview-Model-Name · low/ });
   await expect.element(initialTrigger).toBeVisible();
 
-  // Hover the truncated initial trigger to populate the truncate tooltip with Codex gpt-6.1-sol · low.
-  await initialTrigger.hover();
-  await expect.element(page.getByRole('tooltip')).toHaveTextContent('Codex gpt-6.1-sol · low');
+  // Hover the truncated initial trigger label once truncation and Astryx's lazy tooltip chunk (200ms delay) have settled.
+  const initialLabel = initialTrigger.getByText('Codex GPT-6.1-Sol-Long-Preview-Model-Name · low');
+  await expect.poll(() => initialLabel.element().scrollWidth > initialLabel.element().clientWidth).toBe(true);
+  await expect.poll(async () => {
+    const existing = page.getByRole('tooltip').query()?.textContent ?? null;
+    if (existing !== null) return existing;
+    await userEvent.hover(document.body);
+    await initialLabel.hover();
+    await new Promise((resolve) => setTimeout(resolve, 260));
+    return page.getByRole('tooltip').query()?.textContent ?? null;
+  }, { interval: 100 }).toBe('Codex GPT-6.1-Sol-Long-Preview-Model-Name · low');
 
-  // Switch provider by clicking OpenCode in the left column and saving immediately (follow OpenCode default).
+  // Open overview -> switch to Models view -> pick OpenCode Default (applies immediately).
   await initialTrigger.click();
+  await page.getByRole('button', { name: /^Change model:/ }).click();
   const openCodeProvider = page.getByRole('group', { name: 'Providers' }).getByRole('radio', { name: 'OpenCode', exact: true });
   await openCodeProvider.click();
-  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await page.getByRole('group', { name: 'Models' }).getByRole('radio', { name: /^Default/ }).click();
 
   const updatedTrigger = page.getByRole('button', { name: 'Model: OpenCode Default', exact: true });
   await expect.element(updatedTrigger).toBeVisible();
 
-  // Hovering the updated non-truncated trigger must not keep the stale Codex gpt-6.1-sol · low tooltip.
+  // Hovering the updated non-truncated trigger must not keep the stale tooltip.
   await userEvent.hover(document.body);
   await updatedTrigger.hover();
   await expect.element(page.getByRole('tooltip')).not.toBeInTheDocument();
@@ -198,21 +206,21 @@ it('selects OpenCode directly from the Providers column and updates the truncate
 it('updates the truncated hover tooltip when switching from Codex to an explicit OpenCode model', async () => {
   await page.viewport(1280, 844);
   mountRichCatalog();
-  const initialTrigger = page.getByRole('button', { name: /^Model: Codex gpt-6\.1-sol · low/ });
+  const initialTrigger = page.getByRole('button', { name: /^Model: Codex GPT-6\.1-Sol-Long-Preview-Model-Name · low/ });
   await expect.element(initialTrigger).toBeVisible();
 
   await initialTrigger.hover();
-  await expect.element(page.getByRole('tooltip')).toHaveTextContent('Codex gpt-6.1-sol · low');
+  await expect.element(page.getByRole('tooltip')).toHaveTextContent('Codex GPT-6.1-Sol-Long-Preview-Model-Name · low');
 
   await initialTrigger.click();
+  await page.getByRole('button', { name: /^Change model:/ }).click();
   await page.getByRole('group', { name: 'Providers' }).getByRole('radio', { name: 'OpenCode', exact: true }).click();
-  await page.getByRole('group', { name: 'Models' }).getByRole('radio', { name: 'deepseek/deepseek-flash', exact: true }).click();
-  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await page.getByRole('group', { name: 'Models' }).getByRole('radio', { name: 'deepseek/deepseek-flash-extended-preview', exact: true }).click();
 
-  const updatedTrigger = page.getByRole('button', { name: /^Model: OpenCode deepseek\/deepseek-flash/ });
+  const updatedTrigger = page.getByRole('button', { name: /^Model: OpenCode deepseek\/deepseek-flash-extended-preview/ });
   await expect.element(updatedTrigger).toBeVisible();
 
   await userEvent.hover(document.body);
   await updatedTrigger.hover();
-  await expect.element(page.getByRole('tooltip')).toHaveTextContent('OpenCode deepseek/deepseek-flash');
+  await expect.element(page.getByRole('tooltip')).toHaveTextContent('OpenCode deepseek/deepseek-flash-extended-preview');
 });

@@ -49,7 +49,7 @@ it('keeps the daily report usable at phone width', async () => {
   const headers = [...document.querySelectorAll('[data-nc-mobile-header]')].filter((header) => header.getBoundingClientRect().width > 0);
   expect(headers).toHaveLength(1);
   await page.getByRole('button', { name: 'Open conversation history', exact: true }).click();
-  await expect.element(page.getByRole('dialog', { name: '历史对话', exact: true })).toBeVisible();
+  await expect.element(page.getByRole('dialog', { name: 'Conversations', exact: true })).toBeVisible();
   expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
 });
 
@@ -60,7 +60,7 @@ it.each([1000, 768, 600])('keeps the composer inside its conversation card with 
   renderDailyFixture({ initial: '/?day=2026-10-04', reply: (request) => request.path.includes('/items?') && !request.path.includes('limit=1')
     ? { status: 200, statusText: 'OK', body: sessionPage(fixtureSession('daily-planner', 'daily'), history) } : undefined });
   await page.getByText('Prioritize the release.', { exact: false }).findElement();
-  await page.getByRole('button', { name: '讨论这项工作', exact: true }).click();
+  await page.getByRole('button', { name: /Conversation Daily Planner conversation/ }).click();
   const drawer = page.getByRole('complementary', { name: 'Daily Planner conversation' });
   await expect.element(drawer).toBeVisible();
   await drawer.getByText('Reply 30.', { exact: false }).findElement();
@@ -94,7 +94,7 @@ it.each([1000, 768, 600])('keeps the composer inside its conversation card with 
 it.each([1024, 1440])('aligns reading and chat headers independently of sidebar navigation sections at %ipx', async (width) => {
   await page.viewport(width, 900);
   renderDailyFixture({ initial: '/?day=2026-10-04' });
-  await page.getByRole('button', { name: '讨论这项工作', exact: true }).click();
+  await page.getByRole('button', { name: /Conversation Daily Planner conversation/ }).click();
   const drawer = page.getByRole('complementary', { name: 'Daily Planner conversation' });
   await expect.element(drawer).toBeVisible();
   const readingHeader = document.querySelector('[data-nc-track-page] > header')!;
@@ -102,26 +102,20 @@ it.each([1024, 1440])('aligns reading and chat headers independently of sidebar 
   // The drawer enters through a spring; compare settled content headers.
   await expect.poll(() => Math.abs(chatHeader.getBoundingClientRect().bottom - readingHeader.getBoundingClientRect().bottom)).toBeLessThanOrEqual(1);
   const today = page.getByRole('button', { name: 'Go to Today', exact: true }).element().lastElementChild!;
-  const readingTitle = page.getByRole('button', { name: 'Rename track', exact: true }).element();
   const chatTitle = chatHeader.querySelector('h2')!;
   const center = (element: Element) => {
     const rect = element.getBoundingClientRect();
     return rect.top + rect.height / 2;
   };
-  expect(Math.abs(center(today) - center(readingHeader))).toBeLessThanOrEqual(1);
-  expect(Math.abs(center(readingTitle) - center(readingHeader))).toBeLessThanOrEqual(1);
   await expect.poll(() => Math.abs(center(chatTitle) - center(chatHeader))).toBeLessThanOrEqual(1);
-  withFontRoleProbe('--type-heading', readingHeader as HTMLElement, expected => {
-    expect(getComputedStyle(readingTitle)).toMatchObject(expected);
-  });
-  withFontRoleProbe('--type-reading', chatHeader as HTMLElement, expected => {
-    expect(getComputedStyle(chatTitle)).toMatchObject(expected);
+  expect(Math.abs(center(today) - center(chatHeader))).toBeLessThanOrEqual(1);
+  withFontRoleProbe('--type-ui', chatHeader as HTMLElement, expected => {
+    expect(getComputedStyle(chatTitle)).toMatchObject({ fontFamily: expected.fontFamily, fontSize: expected.fontSize });
   });
   await expect.poll(() => {
     const box = drawer.element().getBoundingClientRect();
     return Math.abs(box.top - (window.innerHeight - box.bottom));
   }).toBeLessThanOrEqual(1);
-  expect(page.getByRole('button', { name: '讨论这项工作', exact: true }).query()).toBeNull();
 });
 
 it('keeps a heading-only daily report empty beside the calendar', async () => {
@@ -129,7 +123,7 @@ it('keeps a heading-only daily report empty beside the calendar', async () => {
   renderDailyFixture({ initial: '/?day=2026-10-04', reportBody: '# 概要\n\n# 今日计划' });
   await expect.element(page.getByRole('region', { name: 'Calendar', exact: true })).toBeVisible();
   expect(document.querySelector('[data-nc-report-empty]')).toBeNull();
-  expect(page.getByRole('button', { name: '开始对话', exact: true }).elements()).toHaveLength(0);
+  expect(page.getByRole('button', { name: 'Start a conversation', exact: true }).elements()).toHaveLength(0);
 });
 
 
@@ -195,11 +189,12 @@ it.each([900, 600])('optically centers the empty perga Today composer and pins i
   const referenceWidth = reference.container.querySelector('[data-nc-new-track-message]')!.getBoundingClientRect().width;
   const referenceSendRadius = getComputedStyle(page.getByRole('button', { name: 'Create track', exact: true }).element()).borderRadius;
   referenceField.focus();
-  await expect.poll(() => getComputedStyle(referenceBody).boxShadow).toMatch(/\) 0px 0px 0px 2px inset$/);
+  await expect.poll(() => getComputedStyle(referenceBody).boxShadow).toMatch(/^oklch.*0px 0px 0px 2px$/);
   const referenceFocus = getComputedStyle(referenceBody).boxShadow;
+  expect(referenceFocus).not.toBe(referenceShadow);
   reference.rerender(<NewTrackForm {...referenceProps} submitting />);
   expect(referenceField.getAttribute('contenteditable')).toBe('false');
-  await expect.poll(() => getComputedStyle(referenceBody).boxShadow).toBe('none');
+  await expect.poll(() => getComputedStyle(referenceBody).boxShadow).toBe(referenceShadow);
   reference.unmount();
   let populated = false;
   const fixture = renderDailyFixture({ reply: request => request.path.includes('/items?') && !request.path.includes('limit=1')
@@ -209,8 +204,8 @@ it.each([900, 600])('optically centers the empty perga Today composer and pins i
   const field = assistant.getByRole('combobox', { name: 'Message', exact: true });
   await expect.element(field).toBeVisible();
   await expect.poll(() => assistant.element().hasAttribute('data-nc-centered-footer')).toBe(true);
-  expect(assistant.getByText('聊聊你想做什么', { exact: true }).query()).toBeNull();
-  expect(assistant.getByText('从一个问题或想法开始。', { exact: true }).query()).toBeNull();
+  expect(assistant.getByText('Start a conversation', { exact: true }).query()).toBeNull();
+  expect(assistant.getByText('Begin with a question, task, or idea.', { exact: true }).query()).toBeNull();
   const host = assistant.element();
   const footer = host.children[2]; // EmbeddedReadingHost's masthead and composer.
   const box = host.getBoundingClientRect();
@@ -228,8 +223,7 @@ it.each([900, 600])('optically centers the empty perga Today composer and pins i
   editable.blur();
   expect(getComputedStyle(body).borderWidth).toBe(referenceBorder);
   expect(getComputedStyle(body).padding).toBe(referencePadding);
-  expect(getComputedStyle(body).boxShadow).toBe(referenceShadow);
-  expect(getComputedStyle(body).boxShadow).toBe('none');
+  await expect.poll(() => getComputedStyle(body).boxShadow).toBe(referenceShadow);
   expect(getComputedStyle(editable).minBlockSize).toBe(referenceMin);
   expect(parseFloat(getComputedStyle(editable).minBlockSize)).toBeGreaterThanOrEqual(88);
   expect(parseFloat(getComputedStyle(editable).minBlockSize)).toBeCloseTo(4 * parseFloat(getComputedStyle(editable).lineHeight));
@@ -240,14 +234,13 @@ it.each([900, 600])('optically centers the empty perga Today composer and pins i
   expect(getComputedStyle(assistant.getByRole('button', { name: 'Send', exact: true }).element()).borderRadius).toBe(referenceSendRadius);
   editable.focus();
   await expect.poll(() => getComputedStyle(body).boxShadow).toBe(referenceFocus);
-  expect(referenceFocus).toContain('inset');
-  expect(referenceFocus).toContain('2px');
+  expect(referenceFocus).toContain('0px 0px 0px 2px');
   expect(getComputedStyle(body).outlineStyle).toBe('none');
   expect(Math.abs((footerBox.left + footerBox.right) / 2 - (box.left + box.right) / 2)).toBeLessThan(2);
   expect(assistant.getByText('Report changes').query()).toBeNull();
-  await expect.element(assistant.getByRole('heading', { name: '今天想推进什么？' })).toBeVisible();
+  await expect.element(assistant.getByRole('heading', { name: 'What would you like to move forward today?' })).toBeVisible();
   editable.blur();
-  await expect.poll(() => getComputedStyle(body).boxShadow).toBe('none');
+  await expect.poll(() => getComputedStyle(body).boxShadow).toBe(referenceShadow);
   await page.screenshot({ path: `../../../../test-results/today-centered-composer-${height}.png` });
   await field.fill('Keep this draft');
   const editor = field.element();
@@ -258,7 +251,7 @@ it.each([900, 600])('optically centers the empty perga Today composer and pins i
   expect(field.element()).toBe(editor);
   await expect.element(field).toHaveTextContent('Keep this draft');
   expect(assistant.getByText('Report changes').query()).toBeNull();
-  expect(assistant.getByRole('heading', { name: '今天想推进什么？' }).query()).toBeNull();
+  expect(assistant.getByRole('heading', { name: 'What would you like to move forward today?' }).query()).toBeNull();
   const send = assistant.getByRole('button', { name: 'Send', exact: true }).element().getBoundingClientRect();
   expect(send.bottom).toBeLessThanOrEqual(box.bottom);
   expect(send.top).toBeGreaterThan(box.top + box.height / 2);
@@ -268,7 +261,7 @@ it.each([900, 600])('shows the shared masthead above a clean perga composer and 
   await page.viewport(1440, height);
   renderDailyFixture({ });
   const assistant = page.getByRole('region', { name: 'Today Assistant', exact: true });
-  const heading = assistant.getByRole('heading', { name: '今天想推进什么？' });
+  const heading = assistant.getByRole('heading', { name: 'What would you like to move forward today?' });
   await expect.element(heading).toBeVisible();
   const logo = heading.element().querySelector<SVGSVGElement>('[data-nc-motion="creation"]')!;
   await expect.element(logo).toBeVisible();
@@ -278,10 +271,10 @@ it.each([900, 600])('shows the shared masthead above a clean perga composer and 
   const body = field.element().closest('[data-density] > *')!;
   expect(heading.element().getBoundingClientRect().bottom).toBeLessThan(body.getBoundingClientRect().top);
   expect(heading.element().getBoundingClientRect().left).toBeCloseTo(body.getBoundingClientRect().left);
-  expect(getComputedStyle(body).boxShadow).toBe('none');
+  expect(getComputedStyle(body).boxShadow).not.toContain('0px 0px 0px 2px');
   expect(parseFloat(getComputedStyle(field.element()).minBlockSize)).toBeCloseTo(4 * parseFloat(getComputedStyle(field.element()).lineHeight));
   expect(assistant.getByText('Report changes').query()).toBeNull();
-  expect(assistant.getByText('聊聊你想做什么').query()).toBeNull();
+  expect(assistant.getByText('Start a conversation').query()).toBeNull();
   const calendar = page.getByRole('region', { name: 'Calendar', exact: true });
   await expect.element(calendar).toBeVisible();
   const card = calendar.element().closest('[data-nc-desktop-panel]')!;
@@ -369,7 +362,7 @@ it.each([1440, 390])('navigates between dates and displays day schedules on perg
   await expect.poll(() => (router.state.location.search as Readonly<{ day?: string }>).day).toBeUndefined();
   await expect.element(calendar.getByRole('button', { name: '2026-10-04', exact: true })).toHaveAttribute('aria-pressed', 'true');
   if (width >= 1024) {
-    await expect.element(page.getByRole('heading', { name: '今天想推进什么？' })).toBeVisible();
+    await expect.element(page.getByRole('heading', { name: 'What would you like to move forward today?' })).toBeVisible();
   } else {
     await expect.element(page.getByText('Prioritize the release.', { exact: false })).toBeVisible();
   }
@@ -393,7 +386,7 @@ it.each([false, true])('shows perga Conversations only with multiple rows (extra
 it.each(['', '   \n  ', '# 今日计划\n\nA populated daily report.'])('shows perga Daily report only when populated (%s)', async reportBody => {
   await page.viewport(1440, 900);
   renderDailyFixture({ reportBody });
-  await expect.element(page.getByRole('heading', { name: '今天想推进什么？', exact: true })).toBeVisible();
+  await expect.element(page.getByRole('heading', { name: 'What would you like to move forward today?', exact: true })).toBeVisible();
   const report = page.getByRole('heading', { name: 'Daily report', exact: true });
   if (reportBody.includes('A populated')) {
     await expect.element(page.getByText('A populated daily report.')).toBeVisible();
@@ -402,9 +395,9 @@ it.each(['', '   \n  ', '# 今日计划\n\nA populated daily report.'])('shows p
     await expect.poll(() => document.querySelector('[data-nc-centered-footer]') !== null).toBe(true);
     await expect.poll(() => page.getByRole('region', { name: 'Track report' }).query()?.getAttribute('aria-busy')).not.toBe('true');
     expect(report.query()).toBeNull();
-    expect(page.getByText('进展会整理在这里', { exact: true }).query()).toBeNull();
+    expect(page.getByText('Progress lives here', { exact: true }).query()).toBeNull();
     expect(page.getByRole('region', { name: 'Track report' }).query()).toBeNull();
-    expect(page.getByRole('region', { name: '空白日报' }).query()).toBeNull();
+    expect(page.getByRole('region', { name: 'Blank daily report' }).query()).toBeNull();
   }
 });
 

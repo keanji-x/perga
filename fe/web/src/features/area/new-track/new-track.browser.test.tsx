@@ -34,10 +34,16 @@ function renderForm() {
  * visibility. `:has(… :focus)` rather than `:focus-within`, so a focused chip does
  * not also ring the composer. */
 describe('the composer focus ring', () => {
-  /* `--accent` is supplied because this project loads CSS Modules but not
-   * `styles/tokens.css`, and an undefined `var()` makes the whole declaration invalid. */
-  beforeEach(() => { document.documentElement.style.setProperty('--accent', 'rgb(0, 0, 255)'); });
-  afterEach(() => { document.documentElement.style.removeProperty('--accent'); });
+  /* `--shadow-float` and `--accent-soft` are supplied because this project loads CSS Modules
+   * without `styles/tokens.css`, and an undefined `var()` makes the whole declaration invalid. */
+  beforeEach(() => {
+    document.documentElement.style.setProperty('--shadow-float', '0px 2px 8px rgba(0, 0, 0, 0.08)');
+    document.documentElement.style.setProperty('--accent-soft', 'rgba(0, 0, 255, 0.25)');
+  });
+  afterEach(() => {
+    document.documentElement.style.removeProperty('--shadow-float');
+    document.documentElement.style.removeProperty('--accent-soft');
+  });
 
   function composerBody(): HTMLElement {
     const editable = screen.getByLabelText('What this track should do');
@@ -51,18 +57,21 @@ describe('the composer focus ring', () => {
     const field = screen.getByLabelText('What this track should do');
     /* The page focuses the field on arrival, so "at rest" has to be reached by blurring. */
     await waitFor(() => { expect(document.activeElement).toBe(field); });
-    expect(getComputedStyle(composerBody()).boxShadow).not.toBe('none');
+    const focusedShadow = getComputedStyle(composerBody()).boxShadow;
+    expect(focusedShadow).toContain('0px 0px 0px 2px');
 
     field.blur();
     await waitFor(() => { expect(document.activeElement).not.toBe(field); });
-    expect(getComputedStyle(composerBody()).boxShadow).toBe('none');
+    const restingShadow = getComputedStyle(composerBody()).boxShadow;
+    expect(restingShadow).not.toContain('0px 0px 0px 2px');
+    expect(focusedShadow).not.toBe(restingShadow);
   });
 
   it('does not ring the whole composer when a chip takes focus', async () => {
     renderForm();
     trigger().focus();
     await waitFor(() => { expect(document.activeElement).toBe(trigger()); });
-    expect(getComputedStyle(composerBody()).boxShadow).toBe('none');
+    expect(getComputedStyle(composerBody()).boxShadow).not.toContain('0px 0px 0px 2px');
   });
 });
 

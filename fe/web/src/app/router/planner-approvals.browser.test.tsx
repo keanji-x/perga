@@ -132,9 +132,9 @@ it('isolates subagent approvals to their owning session and routes the status en
   await page.getByRole('button', { name: /Conversation Daily Planner conversation/ }).click();
   expect(page.getByRole('group', { name: 'Approval required' }).query()).toBeNull();
 
-  // The header status entry chooses the session that needs input.
+  // Switching to the subagent conversation reveals its pending approval.
   await page.getByRole('button', { name: 'Close conversation', exact: true }).click();
-  await page.getByRole('button', { name: '讨论这项工作', exact: true }).click();
+  await page.getByRole('button', { name: /Conversation Other conversation/ }).click();
   await expect.element(page.getByRole('complementary', { name: 'Other conversation', exact: true })).toBeVisible();
   const drawer = page.getByRole('group', { name: 'Approval required' });
   await expect.element(drawer.getByRole('heading', { name: 'Approve subagent shell command?' })).toBeVisible();

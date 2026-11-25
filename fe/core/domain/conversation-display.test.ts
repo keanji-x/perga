@@ -34,7 +34,7 @@ it('preserves a nullable epoch boundary as a visible memory divider', () => {
       payload: { epoch: 2, reason: 'reset_context' }, createdAtMs: 2 }],
   });
   expect(buildConversationTranscript(page.items, null)).toMatchObject([
-    { id: 'system:epoch-2', author: 'system', text: '已重置上下文 · Epoch 2' },
+    { id: 'system:epoch-2', author: 'system', text: 'Context reset · Epoch 2' },
   ]);
 });
 
@@ -52,7 +52,7 @@ it('retains archived interrupted inputs in order before the reset boundary', () 
   expect(buildConversationTranscript(page.items, null)).toMatchObject([
     { author: 'human', text: content, deliveryError: 'Interrupted · Unsent' },
     { author: 'system', text: wake, label: 'Interrupted · Unsent' },
-    { id: 'system:epoch-3', text: '已重置上下文 · Epoch 2' },
+    { id: 'system:epoch-3', text: 'Context reset · Epoch 2' },
   ]);
 });
 

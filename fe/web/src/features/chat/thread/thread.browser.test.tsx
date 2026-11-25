@@ -659,8 +659,8 @@ describe('a failed turn in a real engine', () => {
     expect(outcomes).toHaveLength(1);
     const outcome = outcomes[0];
     expect(outcome.dataset['ncTurnOutcome']).toBe('failed');
-    expect(screen.getByText('本轮执行失败', { exact: true }).checkVisibility()).toBe(true);
-    const disclosure = screen.getByRole('button', { name: /^本轮执行失败(?: ·|$)/, expanded: false });
+    expect(screen.getByText('Turn failed', { exact: true }).checkVisibility()).toBe(true);
+    const disclosure = screen.getByRole('button', { name: /^Turn failed(?: ·|$)/, expanded: false });
     disclosure.focus();
     await userEvent.keyboard('{Enter}');
     expect(disclosure.getAttribute('aria-expanded')).toBe('true');
@@ -674,7 +674,7 @@ describe('a failed turn in a real engine', () => {
     expect(messageBox.height).toBeGreaterThan(Number.parseFloat(getComputedStyle(message).lineHeight) * 1.5);
     rerender(<RailPane turns={[you, failed, { ...you, id: 'you-2' }, completed]} lastSessionTurn={{ id: 'turn-2', sessionId: 'chat', turnIndex: 2, epoch: 1, triggerKind: 'user', status: 'completed', startedAtMs: null }} />);
     expect(document.querySelectorAll('[data-nc-current-meta]')).toHaveLength(1);
-    expect(screen.getByText('完成', { exact: true }).checkVisibility()).toBe(true);
+    expect(screen.getByText('Done', { exact: true }).checkVisibility()).toBe(true);
     expect(screen.queryByText(failed.text!)).toBeNull();
   });
 });

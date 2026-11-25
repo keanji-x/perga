@@ -83,9 +83,15 @@ for (const theme of ['light', 'dark'] as const) {
     expectFrame(screen.getByRole('dialog', { name: 'Files' }), expected);
   });
 
-  it(`uses the same frame without elevation for context panels (${theme})`, () => {
+  it(`uses the shared card frame with floating elevation for context panels (${theme})`, () => {
     const expected = reference(theme);
     render(<section aria-label="Context panel"><PanelCard>Context</PanelCard></section>);
-    expectFrame(screen.getByRole('region', { name: 'Context panel' }).firstElementChild!, expected, true);
+    const panel = screen.getByRole('region', { name: 'Context panel' }).firstElementChild!;
+    const actual = getComputedStyle(panel);
+    expect(actual.borderRadius).toBe(expected.borderRadius);
+    expect(actual.boxShadow).not.toBe('none');
+    expect(actual.borderWidth).toBe(expected.borderWidth);
+    expect(actual.backgroundColor).toBe(expected.backgroundColor);
+    expect(actual.overflow).toBe('hidden');
   });
 }

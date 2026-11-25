@@ -58,7 +58,7 @@ export function sessionItemsPageDtoToConversationPage(
 
     if (item.kind === 'epoch_boundary') return [{ cursor: itemCursor, source: {
       kind: 'system', observation_id: `epoch-${item.id}`, presentation: 'system',
-      text: `${payloadObj.reason === 'compacted' || payloadObj.reason === 'compact' ? '已压缩上下文' : '已重置上下文'} · Epoch ${String(payloadObj.epoch)}`,
+      text: `${payloadObj.reason === 'compacted' || payloadObj.reason === 'compact' ? 'Context compacted' : 'Context reset'} · Epoch ${String(payloadObj.epoch)}`,
       created_at_ms: item.createdAtMs,
     } }];
 

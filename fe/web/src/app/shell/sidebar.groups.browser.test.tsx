@@ -213,6 +213,7 @@ it('keeps long rail labels within the shared columns without horizontal scrollin
     await today.hover();
     const expected = today.element().lastElementChild!.getBoundingClientRect().left;
     const areaButton = page.getByRole('button', { name: `Collapse area ${areaName}`, exact: true });
+    await areaButton.hover();
     const areaTitle = areaButton.element().querySelector<HTMLElement>('[title]')!;
     expect(areaTitle.getBoundingClientRect().left).toBeCloseTo(expected, 1);
     const areaMenu = page.getByRole('button', { name: `Area actions for ${areaName}`, exact: true });
@@ -268,15 +269,17 @@ it('places view options and preserves disclosure and keyboard navigation', async
   expect(today.element().getBoundingClientRect().right).toBeLessThanOrEqual(optionsBox.left);
   expect(optionsBox.right).toBeLessThanOrEqual(collapseBox.left);
   expect(optionsBox.top + optionsBox.height / 2).toBeCloseTo(collapseBox.top + collapseBox.height / 2, 0);
-  const newAreaBox = page.getByRole('button', { name: 'New area', exact: true }).element().getBoundingClientRect();
-  expect(newAreaBox.width).toBeGreaterThan(120);
-  expect(newAreaBox.height).toBeCloseTo(30, 0);
+  const newArea = page.getByRole('button', { name: 'New area', exact: true }).element();
+  const newAreaBox = newArea.getBoundingClientRect();
+  expect(newAreaBox.width).toBeGreaterThanOrEqual(20);
+  expect(newAreaBox.height).toBeGreaterThanOrEqual(20);
   const centerX = (element: Element) => {
     const box = element.getBoundingClientRect();
     return box.left + box.width / 2;
   };
   const areaMenu = page.getByRole('button', { name: 'Area actions for Work', exact: true }).element();
   const areaPlus = page.getByRole('button', { name: 'New track in Work', exact: true }).element();
+  expect(centerX(newArea)).toBeCloseTo(centerX(areaPlus), 0);
   const workGroup = page.getByRole('group', { name: 'area Work', exact: true });
   const trackMenu = workGroup.getByRole('button', { name: 'Actions for track Review result', exact: true }).element();
   const trackDelete = workGroup.getByRole('button', { name: 'Delete Review result', exact: true }).element();

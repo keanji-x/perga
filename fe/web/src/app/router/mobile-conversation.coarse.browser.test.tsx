@@ -50,8 +50,8 @@ it('keeps the real composer drawer queue controls tappable above a floating inpu
   await expect.element(page.getByRole('dialog', { name: 'Conversation', exact: true })).toBeVisible();
   const panel = document.querySelector<HTMLElement>('[data-nc-mobile-chat-panel]')!;
   await expect.poll(() => panel.getAnimations().every(animation => animation.playState !== 'running')).toBe(true);
-  const control = await page.getByRole('button', { name: '撤回', exact: true }).findElement();
+  const control = await page.getByRole('button', { name: 'Withdraw', exact: true }).findElement();
   expect(getComputedStyle(control).pointerEvents).toBe('auto');
-  await commands.tap('button[aria-label="撤回"]');
+  await commands.tap('button[aria-label="Withdraw"]');
   await expect.poll(() => onDelete.mock.calls.length).toBe(1);
 });

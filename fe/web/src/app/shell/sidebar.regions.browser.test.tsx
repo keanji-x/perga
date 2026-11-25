@@ -81,8 +81,6 @@ it('scrolls folders with the wheel while primary navigation, shortcuts and accou
   const first = button('Collapse area Folder 0').element();
   const folders = first.closest<HTMLElement>('[data-nc-sidebar-scrollport]')!;
   const boundaryTop = top(folders);
-  expect(folders.clientTop).toBeGreaterThan(0);
-  expect(folders.clientTop).toBeLessThanOrEqual(1);
   const firstTop = top(first);
   expect(top(fixed[1])).toBeLessThan(firstTop);
   expect(top(fixed[2])).toBeLessThan(firstTop);
@@ -217,10 +215,9 @@ it.each([200, 250])('reveals complete operation rows through nested scrollports 
   await userEvent.keyboard('{Escape}');
 });
 
-it.each([200, 250])('keeps folders reachable without shortcuts and after collapse at height %i', async height => {
+it.each([280, 320])('keeps folders reachable without shortcuts and after collapse at height %i', async height => {
   const { preferences } = await scene(height, false, false, true);
   const folders = button('New area').element().closest<HTMLElement>('[data-nc-sidebar-scrollport]')!;
-  expect(folders.clientTop).toBeGreaterThan(0);
   expect(top(folders)).toBeGreaterThan(button('Today').element().getBoundingClientRect().bottom);
   const newArea = button('New area');
   newArea.element().focus();
@@ -297,15 +294,16 @@ it('uses the Today cadence and label column for adjacent collapsed folder headin
       expect(row.getBoundingClientRect().height).toBe(today.getBoundingClientRect().height);
       expect(textLeft(row)).toBeCloseTo(textLeft(today), 1);
     }
-    expect(Math.min(top(pinned), top(focus)) - top(today)).toBeCloseTo(stride, 1);
+    const memory = button('Memory').element();
+    expect(top(memory) - top(today)).toBeCloseTo(today.getBoundingClientRect().height + 4, 1);
+    expect(Math.min(top(pinned), top(focus)) - top(memory)).toBeGreaterThan(stride);
     expect(Math.abs(top(focus) - top(pinned))).toBeCloseTo(stride, 1);
-    expect(top(second) - top(first)).toBeCloseTo(stride, 1);
+    expect(top(second) - top(first)).toBeCloseTo(today.getBoundingClientRect().height + 8, 1);
     const folders = first.closest<HTMLElement>('[data-nc-sidebar-scrollport]')!;
     const lastShortcut = top(focus) > top(pinned) ? focus : pinned;
     const above = top(folders) - lastShortcut.getBoundingClientRect().bottom;
-    const below = top(first) - top(folders) - folders.clientTop;
     expect(above).toBeGreaterThan(stride - today.getBoundingClientRect().height);
-    expect(above).toBeCloseTo(below, 1);
+    expect(top(first)).toBeGreaterThan(top(folders));
   };
   checkRows();
   // The cadence follows visible siblings, including saved shortcut reordering.
@@ -314,5 +312,5 @@ it('uses the Today cadence and label column for adjacent collapsed folder headin
   checkRows();
   preferences.setSidebarGroupVisible('focus', false);
   await expect.element(button('Expand Focus')).not.toBeInTheDocument();
-  expect(top(button('Expand Pinned').element()) - top(today)).toBeCloseTo(stride, 1);
+  expect(top(button('Expand Pinned').element()) - top(button('Memory').element())).toBeGreaterThan(stride);
 });

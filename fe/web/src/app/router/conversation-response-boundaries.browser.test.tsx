@@ -20,7 +20,7 @@ it.each([390, 1280])('preserves v1 turn boundaries through refresh and a fresh r
   let view = mount();
   const check = async () => {
     await expect.element(page.getByText('Conclusion B.', { exact: true })).toBeVisible();
-    const separators = screen.getAllByRole('separator', { name: '新一轮回复' });
+    const separators = screen.getAllByRole('separator', { name: 'New reply' });
     expect(separators).toHaveLength(1);
     const a = page.getByText('Conclusion A.', { exact: true }).element().getBoundingClientRect();
     const b = page.getByText('Conclusion B.', { exact: true }).element().getBoundingClientRect();

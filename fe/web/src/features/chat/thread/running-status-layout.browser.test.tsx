@@ -22,7 +22,7 @@ function indicatorBesideStatus(container: HTMLElement) {
   const marker = container.querySelector<HTMLElement>('[data-nc-activity="working"]')!;
   expect(marker).not.toBeNull();
   expect(marker.closest('[data-nc-current-meta]')).toBe(meta);
-  const label = within(meta).getByText('本轮生成中', { exact: true });
+  const label = within(meta).getByText('Working…', { exact: true });
   const iconBox = marker.getBoundingClientRect(), labelBox = label.getBoundingClientRect();
   expect(Math.abs(iconBox.top + iconBox.height / 2 - labelBox.top - labelBox.height / 2)).toBeLessThanOrEqual(1);
   expect(iconBox.right).toBeLessThanOrEqual(labelBox.left);
@@ -41,7 +41,7 @@ it.each([[192, 16, false], [192, 16, true], [320, 16, false], [320, 16, true], [
   const active = marker.getBoundingClientRect();
   expect(Math.abs(complete.left + complete.width / 2 - active.left - active.width / 2)).toBeLessThanOrEqual(1);
   const thoughtLabel = within(header).getByText('Thought', { exact: true }).getBoundingClientRect();
-  const runningLabel = within(screen.getByRole('status', { name: 'Current response status' })).getByText('本轮生成中', { exact: true }).getBoundingClientRect();
+  const runningLabel = within(screen.getByRole('status', { name: 'Current response status' })).getByText('Working…', { exact: true }).getBoundingClientRect();
   expect(Math.abs(thoughtLabel.left - runningLabel.left)).toBeLessThanOrEqual(1);
   expect(container.querySelectorAll('[data-nc-activity="working"]')).toHaveLength(1);
 });
@@ -90,5 +90,5 @@ it.each([false, true])('shows a static, truthful status for unfinished calls aft
   expect(icon).toBeDefined();
   for (const label of within(entry).queryAllByText('Running', { exact: true })) expect(label.checkVisibility()).toBe(false);
   expect(container.querySelector('[data-nc-motion]')).toBeNull();
-  expect(within(screen.getByRole('status', { name: 'Current response status' })).getByText('本轮已中断')).toBeTruthy();
+  expect(within(screen.getByRole('status', { name: 'Current response status' })).getByText('Stopped')).toBeTruthy();
 });

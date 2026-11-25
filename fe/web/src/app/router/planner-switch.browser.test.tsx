@@ -142,21 +142,24 @@ it('saves and reads back null effort on an existing session without materializin
   await open();
   const trigger = page.getByRole('button', { name: /^Model:/ });
   await trigger.click();
-  await expect.element(page.getByRole('slider', { name: 'Reasoning effort' })).toHaveAttribute('aria-valuetext', 'Default');
-  await page.getByRole('button', { name: 'Save', exact: true }).click();
-  await expect.poll(() => fixture.requests.filter(request => request.method === 'PATCH').map(request => request.body))
-    .toEqual([{ model: 'test-model', reasoningEffort: null }]);
-  await expect.poll(() => readbacks).toEqual([null]);
-  await expect.poll(() => fixture.client.getQueryData<{ session: { reasoningEffort: string | null } }>(['planner-run', 'second-planner', 'conversation_v1'])?.session.reasoningEffort).toBeNull();
-  await trigger.click();
-  await expect.element(page.getByRole('slider')).toHaveAttribute('aria-valuetext', 'Default');
-  await page.getByRole('slider').click();
+  const slider = page.getByRole('slider', { name: 'Reasoning effort' });
+  await expect.element(slider).toHaveAttribute('aria-valuetext', 'Default');
+  (slider.element() as HTMLElement).focus();
   await userEvent.keyboard('{End}');
-  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect.poll(() => fixture.requests.filter(request => request.method === 'PATCH').map(request => request.body))
+    .toEqual([{ model: 'test-model', reasoningEffort: 'high' }]);
+  await userEvent.keyboard('{Backspace}');
+  await expect.poll(() => fixture.requests.filter(request => request.method === 'PATCH').map(request => request.body))
+    .toEqual([
+      { model: 'test-model', reasoningEffort: 'high' },
+      { model: 'test-model', reasoningEffort: null },
+    ]);
+  await expect.poll(() => readbacks.at(-1)).toBeNull();
+  await expect.poll(() => fixture.client.getQueryData<{ session: { reasoningEffort: string | null } }>(['planner-run', 'second-planner', 'conversation_v1'])?.session.reasoningEffort).toBeNull();
+  await userEvent.keyboard('{Escape}');
   await trigger.click();
-  await expect.element(page.getByRole('slider')).toHaveAttribute('aria-valuetext', 'Default');
+  await expect.element(page.getByRole('slider', { name: 'Reasoning effort' })).toHaveAttribute('aria-valuetext', 'Default');
   expect(saved.reasoning_effort).toBeNull();
-  expect(fixture.requests.filter(request => request.method === 'PATCH')).toHaveLength(1);
 });
 
 

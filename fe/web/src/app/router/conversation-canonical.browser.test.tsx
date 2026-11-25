@@ -21,12 +21,12 @@ it.each([390, 1280])('reads saved v1 messages without a native thread and fences
   view.activeTurns.set('daily-planner', sessionTurn('daily-planner'));
   await view.client.invalidateQueries();
   await expect.element(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible();
-  await expect.element(page.getByRole('button', { name: /^(Send|排队发送)$/, exact: true })).toBeVisible();
+  await expect.element(page.getByRole('button', { name: /^(Send|Queue message)$/, exact: true })).toBeVisible();
   await expect.element(field).toHaveTextContent('Words for the next turn.');
   view.activeTurns.clear();
   view.sessions[0].status = 'idle';
   await view.client.invalidateQueries();
-  await expect.element(page.getByRole('button', { name: /^(Send|排队发送)$/, exact: true })).toBeVisible();
+  await expect.element(page.getByRole('button', { name: /^(Send|Queue message)$/, exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Close conversation', exact: true }).click();
   await page.getByRole('button', { name: /Conversation Daily Planner conversation/ }).click();
   await expect.element(page.getByText('Saved human words.', { exact: true })).toBeVisible();

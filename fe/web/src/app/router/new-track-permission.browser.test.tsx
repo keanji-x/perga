@@ -63,7 +63,6 @@ it('unlocks the picker and shows the reason after a first discovery refusal', as
   await page.getByRole('button', { name: /^Model:/ }).click();
   await page.getByRole('group', { name: 'Providers' }).getByRole('radio', { name: 'OpenCode', exact: true }).click();
   await page.getByRole('group', { name: 'Models' }).getByRole('radio', { name: 'gpt-test', exact: true }).click();
-  await page.getByRole('button', { name: 'Save', exact: true }).click();
   await page.getByRole('button', { name: 'Approvals: Inspect live' }).click();
   await page.getByRole('menuitem', { name: /^Act live/ }).click();
   await page.getByRole('combobox', { name: 'What this track should do' }).fill('Discover modes');
@@ -84,7 +83,6 @@ it('clears the mode on a provider switch and hides an empty provider list', asyn
   await page.getByRole('button', { name: /^Model:/ }).click();
   await page.getByRole('group', { name: 'Providers' }).getByRole('radio', { name: 'Claude' }).click();
   await page.getByRole('group', { name: 'Models' }).getByRole('radio', { name: 'haiku', exact: true }).click();
-  await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect.element(page.getByRole('button', { name: /^Approvals:/ })).not.toBeInTheDocument();
   await page.getByRole('combobox', { name: 'What this track should do' }).fill('Switch provider');
   await page.getByRole('button', { name: 'Create track' }).click();

@@ -38,23 +38,23 @@ it('paints live connection changes without restarting the stream and reveals det
     <EventBridge client={client} stream={stream} cursor={cursor} syncEventVersion={3} dbInstanceId="test" />
     {sidebar()}
   </LiveConnectionProvider>));
-  const connecting = screen.getByRole('button', { name: '连接状态：正在连接' });
+  const connecting = screen.getByRole('button', { name: 'Connection status: Connecting…' });
   const dot = connecting.firstElementChild!;
   const red = getComputedStyle(dot).backgroundColor;
   act(() => sink.connectionState('connected'));
-  const connected = screen.getByRole('button', { name: '连接状态：已连接' });
+  const connected = screen.getByRole('button', { name: 'Connection status: Connected' });
   expect(getComputedStyle(connected.firstElementChild!).backgroundColor).not.toBe(red);
   const today = screen.getByRole('button', { name: 'Go to Today' }).getBoundingClientRect();
   expect(connected.getBoundingClientRect().left).toBeGreaterThanOrEqual(today.right);
   await userEvent.hover(connected);
-  await waitFor(() => expect(screen.getByRole('tooltip').textContent).toBe('已连接'));
+  await waitFor(() => expect(screen.getByRole('tooltip').textContent).toBe('Connected'));
   await page.screenshot({ path: '../../../../test-results/perga-connection-connected.png' });
   act(() => sink.connectionState('disconnected'));
-  const disconnected = screen.getByRole('button', { name: '连接状态：连接已断开' });
+  const disconnected = screen.getByRole('button', { name: 'Connection status: Disconnected' });
   expect(getComputedStyle(disconnected.firstElementChild!).backgroundColor).toBe(red);
-  await waitFor(() => expect(screen.getByRole('tooltip').textContent).toBe('连接已断开'));
+  await waitFor(() => expect(screen.getByRole('tooltip').textContent).toBe('Disconnected'));
   await userEvent.click(disconnected);
-  expect(screen.queryByRole('button', { name: '立即重试' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Retry now' })).toBeNull();
   expect(start).toHaveBeenCalledTimes(1);
   mounted.unmount();
   expect(stop).toHaveBeenCalledTimes(1);
@@ -65,29 +65,29 @@ it('hides raw sidebar errors until disclosure, keeps them accessible when collap
   const retry = vi.fn();
   const retryConnection = vi.fn();
   const build = (collapsed: boolean) => frame(<ConnectionStatusScope value={{ connected: false,
-    label: '连接已断开', detail: 'WebSocket connection lost', retry: retryConnection }}>
+    label: 'Disconnected', detail: 'WebSocket connection lost', retry: retryConnection }}>
     {sidebar({ collapsed, readError: 'HTTP 503: lost', activityError: 'service unavailable', onRetryRead: retry })}
   </ConnectionStatusScope>, collapsed ? 44 : 280);
   const view = render(build(false));
   expect(screen.queryByRole('alert')).toBeNull();
-  expect(screen.queryByRole('dialog', { name: '连接详情' })).toBeNull();
-  const indicator = screen.getByRole('button', { name: '连接状态：连接异常' });
+  expect(screen.queryByRole('dialog', { name: 'Connection details' })).toBeNull();
+  const indicator = screen.getByRole('button', { name: 'Connection status: Connection issue' });
   await userEvent.hover(indicator);
   await waitFor(() => expect(screen.getByRole('tooltip').textContent).toContain('HTTP 503: lost'));
   await page.screenshot({ path: '../../../../test-results/perga-connection-offline.png' });
   await userEvent.click(indicator);
-  expect(within(screen.getByRole('dialog', { name: '连接详情' })).getByText('HTTP 503: lost')).toBeTruthy();
-  const errorLine = within(screen.getByRole('dialog', { name: '连接详情' })).getByText('HTTP 503: lost');
+  expect(within(screen.getByRole('dialog', { name: 'Connection details' })).getByText('HTTP 503: lost')).toBeTruthy();
+  const errorLine = within(screen.getByRole('dialog', { name: 'Connection details' })).getByText('HTTP 503: lost');
   await waitFor(() => {
     const rect = errorLine.getBoundingClientRect();
     expect(errorLine.contains(document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2))).toBe(true);
   });
   await page.screenshot({ path: '../../../../test-results/perga-connection-menu.png' });
-  await userEvent.click(screen.getByRole('button', { name: '立即重试' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Retry now' }));
   expect(retry).toHaveBeenCalledTimes(1);
   expect(retryConnection).toHaveBeenCalledTimes(1);
   view.rerender(build(true));
-  const collapsed = screen.getByRole('button', { name: '连接状态：连接异常' });
+  const collapsed = screen.getByRole('button', { name: 'Connection status: Connection issue' });
   const bounds = collapsed.getBoundingClientRect();
   expect(bounds.width).toBeGreaterThan(0);
   expect(bounds.left).toBeGreaterThanOrEqual(0);

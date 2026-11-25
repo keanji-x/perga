@@ -54,9 +54,9 @@ it.each([390, 1280])('keeps preflight recovery compact and navigation usable at 
     expect(header.width).toBeLessThanOrEqual(width);
     expect(header.height).toBe(80);
     await navigation.click();
-    await expect.element(page.getByRole('dialog', { name: '历史对话' })).toBeVisible();
+    await expect.element(page.getByRole('dialog', { name: 'Conversations' })).toBeVisible();
     await userEvent.keyboard('{Escape}');
-    await expect.element(page.getByRole('dialog', { name: '历史对话' })).not.toBeInTheDocument();
+    await expect.element(page.getByRole('dialog', { name: 'Conversations' })).not.toBeInTheDocument();
   }
   await page.screenshot({ path: `../../../../test-results/preflight-recovery-${width}.png` });
   await retry.click();

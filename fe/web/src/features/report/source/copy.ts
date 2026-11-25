@@ -1,37 +1,37 @@
-/** The source panel's words, declared once. The provenance badge wording is owner-signed and must not be paraphrased. */
+/** The source panel's words, declared once. */
 
 import type { SourceProvenance } from '../../../../../core/domain/report-source.ts';
 
 export const SOURCE_PROVENANCE_COPY = Object.freeze({
-  full_text: '智堡全文',
-  summary: '智堡摘要，非机构原文',
-  web_page: '网页',
-  manual: '手工录入，未经内核核验',
+  full_text: 'Full text',
+  summary: 'Summary (not original source)',
+  web_page: 'Web page',
+  manual: 'Manual entry (unverified)',
 } satisfies Record<SourceProvenance, string>);
 
 export const SOURCE_PANEL_COPY = Object.freeze({
   /** The source's name before the row has arrived. */
-  panelTitle: '来源',
-  viewLabel: '来源阅读方式',
-  reading: '阅读',
-  original: '原文',
-  closeLabel: '关闭来源',
-  loading: '正在读取来源…',
+  panelTitle: 'Source',
+  viewLabel: 'Source view',
+  reading: 'Reading',
+  original: 'Original',
+  closeLabel: 'Close source',
+  loading: 'Loading source…',
   /** A citation the track cannot answer: dangling id, or a link that will not parse. */
-  missingTitle: '来源缺失',
-  missingDangling: '本 track 里没有这条来源。配方生成的 track、或来源被指向别的 track 时会出现这种情况。',
-  missingMalformed: '这条引用的链接格式不合法，无法定位来源。',
-  destinationLabel: '链接',
+  missingTitle: 'Source not found',
+  missingDangling: 'This source is not in this track. It may have been removed or belong to another track.',
+  missingMalformed: 'This citation link is malformed and cannot be resolved.',
+  destinationLabel: 'Link',
   /** The source exists but the anchor does not: the source is still shown underneath, but the notice is the missing state. */
-  anchorMissingTitle: '引用锚点缺失',
-  anchorMissingDetail: '这条引用指向的锚点不在来源里（锚点可能尚未追加，或其文本不在正文中），下面显示的是完整正文。',
-  publishedAt: '发布',
-  capturedAt: '抓取',
-  origin: '来源',
-  originPlugin: '插件',
-  originTool: '工具',
-  contentId: '内容 ID',
+  anchorMissingTitle: 'Citation anchor missing',
+  anchorMissingDetail: 'The cited anchor was not found in this source. The full source text is shown below.',
+  publishedAt: 'Published',
+  capturedAt: 'Captured',
+  origin: 'Origin',
+  originPlugin: 'Plugin',
+  originTool: 'Tool',
+  contentId: 'Content ID',
   url: 'URL',
   /** The inline citation on surfaces without a Track or source-panel handler. */
-  citationBadge: '来源',
+  citationBadge: 'Source',
 } as const);

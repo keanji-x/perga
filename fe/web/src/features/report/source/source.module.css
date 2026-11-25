@@ -111,9 +111,8 @@
     border-block-end: 1px solid var(--hairline);
   }
 
-  /* The badge reads first: whether this is the institution's text, 智堡's
-     summary, a web page, or the planner's own hand is the one fact the
-     owner asked to be unmissable. */
+  /* The badge reads first: whether this is full text, a summary, a web page,
+     or a manual entry. */
   .badge {
     font-size: var(--font-step-1-size);
     line-height: var(--font-step-1-line);

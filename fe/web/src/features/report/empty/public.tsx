@@ -36,7 +36,7 @@ function sampleFlowNode(input: SampleFlowNodeInput): FlowNodeProjection {
 
 function createBlankGuideReport(): TrackReport {
   return {
-    summary: 'Perga 空白工作区引导',
+    summary: 'Perga empty workspace guide',
     body: '',
     blocks: [
       {
@@ -44,13 +44,13 @@ function createBlankGuideReport(): TrackReport {
         kind: 'prose',
         payload: {
           markdown: [
-            '# 进展会整理在这里',
+            '# Progress lives here',
             '',
-            '在对话里向 **Lead** 说出想做的事即可开始。明确目标后，它会自动拟定标题、按需匹配模板，并将成果持续整理进本页。',
+            'Tell **Lead** what you want to work on in Conversation to get started. Once the goal is clear, it will title the track, attach a template if helpful, and keep outcomes organized on this page.',
             '',
-            '- **Report（本页）** — 持续演进的活文档，计划、研究、判断、实时视图与工作区文件引用都沉淀在纸面上，而非埋在长对话里。',
-            '- **Conversation** — 与 Lead 及子会话的协作流，用于提出目标、澄清需求、同步本页发生了什么变化。',
-            '- **Template & Flow** — 可选的结构与编排；任务适合固定结构或周期巡检时按需挂载，也可通过 `@:` 指定模板，或随时让 Lead 调整、卸载模板与取消 Flow 节点。',
+            '- **Report (this page)** — A living document where plans, research, decisions, live views, and workspace file references stay readable instead of buried in chat.',
+            '- **Conversation** — Your working thread with Lead and child sessions for framing goals, clarifying requirements, and tracking updates to this page.',
+            '- **Template & Flow** — Optional structure and orchestration; attach a template when a workflow fits (or mention one with `@:`), and ask Lead anytime to adjust or cancel Flow steps.',
           ].join('\n'),
         },
       },
@@ -59,9 +59,9 @@ function createBlankGuideReport(): TrackReport {
         kind: 'prose',
         payload: {
           markdown: [
-            '# Flow 示例：多步工作如何自动流转',
+            '# Sample Flow: how multi-step work runs',
             '',
-            '当任务需要拆步推进、独立复核或周期巡检时，Lead 会用 **Flow** 声明依赖与触发条件。下面是一份静态示例，点选节点即可查看详情；正式动工后，本页会自动替换为你的真实 Report 与 Flow。',
+            'When a task benefits from staged execution, independent review, or scheduled checks, Lead declares dependencies in **Flow**. Click any sample node below to inspect its details; once real work begins, this guide is replaced automatically.',
           ].join('\n'),
         },
       },
@@ -71,7 +71,7 @@ function createBlankGuideReport(): TrackReport {
         payload: {
           use: 'builtin:flow',
           view: 'flow',
-          title: '流程示例',
+          title: 'Sample Flow',
         },
       },
     ],
@@ -91,35 +91,35 @@ function createSampleFlowViews(): TemplateViewsProjection {
       nodes: [
         sampleFlowNode({
           id: 'sample-scope',
-          title: '明确目标与范围',
+          title: 'Scope goal and plan',
           whenKind: 'immediate',
           doKind: 'wake',
           role: 'Lead',
           status: 'done',
           outcome: 'ok',
-          outcomeSummary: '示例：Lead 梳理目标并拟定标题；若任务适合固定结构，会在动工前自动套用合适模板铺好视图与日程。',
+          outcomeSummary: 'Example: Lead clarifies the goal, sets the title, and attaches a matching template if structured views or schedules fit.',
           runCount: 1,
         }),
         sampleFlowNode({
           id: 'sample-execute',
-          title: '拆分调研与独立复核',
+          title: 'Run research and review',
           whenKind: 'after',
           after: [{ node: 'sample-scope', on: 'ok' }],
           doKind: 'run',
           role: 'Worker',
           status: 'running',
-          prompt: '示例：按前置依赖自动派发子会话执行调研、编码或独立审查，并可附加自动化测试与门禁校验。',
+          prompt: 'Example: Dispatches child sessions in dependency order for research, implementation, or independent review with automated checks.',
           runCount: 1,
         }),
         sampleFlowNode({
           id: 'sample-publish',
-          title: '汇总沉淀进 Report',
+          title: 'Synthesize into Report',
           whenKind: 'after',
           after: [{ node: 'sample-execute', on: 'ok' }],
           doKind: 'wake',
           role: 'Lead',
           status: 'pending',
-          prompt: '示例：上游步骤完成后自动唤醒 Lead，将最新结论、数据与后续定时复核整理进本页 Report。',
+          prompt: 'Example: Wakes Lead once upstream steps settle to record findings, data, and follow-ups in this Report.',
           waitingOn: ['sample-execute'],
         }),
       ],

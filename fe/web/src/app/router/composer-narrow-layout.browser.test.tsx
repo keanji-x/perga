@@ -47,7 +47,10 @@ it.each([[224, 16], [280, 16], [280, 20], [280, 32]])('keeps real Planner compos
   };
   check();
   expect(controls[0].element().getBoundingClientRect().width).toBeGreaterThan(40);
-  await controls[0].click(); await expect.element(page.getByRole('group', { name: 'Models' })).toBeVisible(); await userEvent.keyboard('{Escape}');
+  await controls[0].click();
+  await page.getByRole('button', { name: /^Change model:/ }).click();
+  await expect.element(page.getByRole('group', { name: 'Models' })).toBeVisible();
+  await userEvent.keyboard('{Escape}');
   await expect.element(controls[0]).toHaveFocus();
   root.style.inlineSize = restingWidth; check();
   expect(input.element().textContent).toContain('https://example.invalid/');

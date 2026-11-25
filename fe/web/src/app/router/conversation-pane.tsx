@@ -316,11 +316,11 @@ export function useConversationPane(
   const [submission, setSubmission] = useState<Readonly<{ conversationId: string; request: number }> | null>(null);
   /* Only a new admitted op asks the shown thread to follow. Retries retain their
      key and reading place; pending work on mount is not a fresh local press. */
-  const submitMessage: typeof store.send = (...args) => {
+  const submitMessage = useCommittedCallback(existingId, (...args: Parameters<typeof store.send>) => {
     const sent = store.send(...args);
     if (sent !== null) setSubmission((previous) => ({ conversationId: args[0], request: (previous?.request ?? 0) + 1 }));
     return sent;
-  };
+  });
   const sendText = useCommittedCallback(existingId, (text: string) => open !== null
     && (submitMessage(open.id, text, attachments.items, true) !== null));
   const regenerateMessage = useCommittedCallback(existingId, async (message: ConversationTurn) => {
@@ -416,8 +416,9 @@ export function useConversationPane(
     submitMessage,
   });
   const switchPlanner = usePlannerSwitchControl(transport, unauthorized, scope);
-  const plannerSwitchBinding = useMemo(() => scope !== null && scope.isLead !== true
-    ? { execute: switchPlanner } : undefined, [scope, switchPlanner]);
+  const canSwitchPlanner = scope !== null && scope.isLead !== true;
+  const plannerSwitchBinding = useMemo(() => canSwitchPlanner
+    ? { execute: switchPlanner } : undefined, [canSwitchPlanner, switchPlanner]);
   const recover = useCommittedCallback(existingId, (mode: 'reconnect' | 'reset_context') => store.recover(mode));
   const commandEnabled = useCallback((command: 'stop' | 'compact' | 'reconnect' | 'reset') =>
     conversationCommandEnabled(command, store.sessionState, store.readonlyReason, store.unknownDetail, store.recovering, {
@@ -442,7 +443,7 @@ export function useConversationPane(
         if (command === 'stop') interrupt(); else if (command === 'compact') compact();
         else recover(command === 'reset' ? 'reset_context' : 'reconnect'); },
       unavailableReason: commandEnabled(command)
-        ? undefined : '当前会话状态下不可用',
+        ? undefined : 'Unavailable in the current conversation state',
     }])),
   }), [allowNewConversation, options?.showSideCommand, newConversation, composerView.manualCompactSupported, composerView.historyReady,
     composerView.compact, hasSideConversation, sideQuestion, sideSourceReady, onTerminal, compactComposer, plannerCommands, composerStop,

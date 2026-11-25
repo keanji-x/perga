@@ -18,7 +18,7 @@ it.each([{ width: 1280, reduce: false }, { width: 390, reduce: false }, { width:
     try {
       if (width === 390) {
         await page.getByRole('button', { name: 'Open conversation history', exact: true }).click();
-        await page.getByRole('button', { name: '发起新对话', exact: true }).click();
+        await page.getByRole('button', { name: 'New conversation', exact: true }).click();
       } else await page.getByRole('button', { name: 'New conversation', exact: true }).click();
       await page.getByRole('combobox', { name: 'Message' }).fill(FIRST_MESSAGE);
       await userEvent.keyboard('{Enter}');

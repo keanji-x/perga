@@ -82,8 +82,8 @@ it.each([['permission', false], ['retry', false], ['permission', true], ['retry'
   if (defer === 'retry') await expect.poll(() => view.requests.filter(request => request.path.endsWith('/messages')).length).toBeGreaterThanOrEqual(1);
   if (external) { view.sessions[0].epoch += 1; await view.client.invalidateQueries(); }
   else {
-    await page.getByRole('button', { name: '会话操作', exact: true }).click();
-    await page.getByRole('menuitem', { name: '重置上下文 /reset', exact: true }).click();
+    await page.getByRole('button', { name: 'Session actions', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Reset context /reset', exact: true }).click();
     await expect.poll(() => view.requests.some(request => request.path.endsWith('/control'))).toBe(true);
   }
   const attemptsBeforeRelease = messageEpochs.length;
@@ -103,9 +103,9 @@ it('allows Worker reset and follows the runtime compact capability', async () =>
     return sessionReply({ ...result, taskBinding: { task: { id: 'task', trackId: 'daily', blockId: 'block', taskKey: 'inspect', kind: 'agent', status: 'running', sessionId: view.sessions[0].id, runCount: 1, createdAtMs: 1, updatedAtMs: 1 }, phase: 'running', waitingReason: null }, capabilities: { ...result.capabilities!, supportsCompact: false } });
   } });
   await page.getByRole('button', { name: /Conversation Daily Planner conversation/ }).click();
-  await page.getByRole('button', { name: '会话操作', exact: true }).click();
-  await expect.element(page.getByRole('menuitem', { name: '压缩上下文 /compact' })).toHaveAttribute('aria-disabled', 'true');
-  await expect.element(page.getByRole('menuitem', { name: '重置上下文 /reset' })).not.toHaveAttribute('aria-disabled', 'true');
+  await page.getByRole('button', { name: 'Session actions', exact: true }).click();
+  await expect.element(page.getByRole('menuitem', { name: 'Compact context /compact' })).toHaveAttribute('aria-disabled', 'true');
+  await expect.element(page.getByRole('menuitem', { name: 'Reset context /reset' })).not.toHaveAttribute('aria-disabled', 'true');
   await userEvent.keyboard('{Escape}');
   await page.getByRole('combobox', { name: 'Message' }).fill('/');
   await expect.element(page.getByRole('option', { name: /^compact/ })).not.toBeInTheDocument();
@@ -137,8 +137,8 @@ it('keeps a fresh post-reset send across a stale skipped-turn read and hung post
   } });
   try {
     await page.getByRole('button', { name: /Conversation Daily Planner conversation/ }).click();
-    await page.getByRole('button', { name: '会话操作', exact: true }).click();
-    await page.getByRole('menuitem', { name: '重置上下文 /reset', exact: true }).click();
+    await page.getByRole('button', { name: 'Session actions', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Reset context /reset', exact: true }).click();
     const field = page.getByRole('combobox', { name: 'Message' });
     await expect.element(field).toHaveAttribute('contenteditable', 'true');
     await field.fill('Fresh epoch intent'); await userEvent.keyboard('{Enter}');
@@ -190,15 +190,15 @@ it('opens a blocked conversation before Lead and keeps its red indicator after v
     return undefined;
   } });
   view.sessions[1] = { ...view.sessions[1], status: 'unknown' };
-  const trigger = page.getByRole('button', { name: '讨论这项工作' });
+  const trigger = page.getByRole('button', { name: /Conversation Other conversation/ });
   await expect.element(trigger).toBeVisible();
-  await expect.poll(() => trigger.element().querySelector('[data-nc-activity="failed"]') !== null).toBe(true);
+  await expect.poll(() => document.querySelector('[data-nc-track-page] [data-nc-activity="failed"]') !== null).toBe(true);
   await trigger.click();
   await expect.poll(() => view.requests.some(request => request.path.includes('/second-planner/items?'))).toBe(true);
   await expect.element(page.getByRole('button', { name: 'Close conversation', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Close conversation', exact: true }).click();
   await expect.element(trigger).toBeVisible();
-  expect(trigger.element().querySelector('[data-nc-activity="failed"]')).not.toBeNull();
+  expect(document.querySelector('[data-nc-track-page] [data-nc-activity="failed"]')).not.toBeNull();
   view.client.clear();
 });
 
@@ -246,15 +246,15 @@ it('displays OAR runtime phase, active background tasks, and idle activity in th
     return undefined;
   } });
   await page.getByRole('button', { name: /Conversation Daily Planner conversation/ }).click();
-  await expect.element(page.getByText('工具：shell', { exact: true })).toBeVisible();
-  await expect.element(page.getByText('运行时任务 1', { exact: true })).toBeVisible();
+  await expect.element(page.getByText('Tool: shell', { exact: true })).toBeVisible();
+  await expect.element(page.getByText('1 background tasks', { exact: true })).toBeVisible();
   await expect.element(page.getByRole('combobox', { name: 'Message' })).toBeEnabled();
 
   runtimeStatus = { kind: 'idle', idleActivity: { since: 10, lastEventAt: 20 } };
   runtimeTasks = [{ taskId: 'bg-1', taskType: 'shell', background: true, ambient: false, status: 'completed' }];
   await view.client.invalidateQueries();
-  await expect.element(page.getByText('近期后台活动', { exact: true })).toBeVisible();
-  await expect.element(page.getByText('工具：shell', { exact: true })).not.toBeInTheDocument();
-  await expect.element(page.getByText('运行时任务 1', { exact: true })).not.toBeInTheDocument();
+  await expect.element(page.getByText('Recent background activity', { exact: true })).toBeVisible();
+  await expect.element(page.getByText('Tool: shell', { exact: true })).not.toBeInTheDocument();
+  await expect.element(page.getByText('1 background tasks', { exact: true })).not.toBeInTheDocument();
   view.client.clear();
 });
