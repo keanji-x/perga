@@ -1,0 +1,132 @@
+diff --git a/node_modules/@astryxdesign/core/dist/Chat/ChatComposerInput.js b/node_modules/@astryxdesign/core/dist/Chat/ChatComposerInput.js
+index 407dd32..2f7405f 100644
+--- a/node_modules/@astryxdesign/core/dist/Chat/ChatComposerInput.js
++++ b/node_modules/@astryxdesign/core/dist/Chat/ChatComposerInput.js
+@@ -648,16 +648,14 @@ export function ChatComposerInput(props) {
+       id,
+       span,
+       token
+-    }) => /*#__PURE__*/createPortal(isCustomToken(token) ? /*#__PURE__*/_jsx("span", {
+-      children: token.render()
+-    }, id) : token.value.length > (pasteAsToken === null ? Infinity : 200) ? /*#__PURE__*/_jsx(ChatPastedTextToken, {
++    }) => /*#__PURE__*/createPortal(isCustomToken(token) ? token.render() : token.value.length > (pasteAsToken === null ? Infinity : 200) ? /*#__PURE__*/_jsx(ChatPastedTextToken, {
+       text: token.value,
+       onExpand: () => expandTokenRef.current(id)
+     }, id) : /*#__PURE__*/_jsx(Badge, {
+       label: token.label,
+       variant: token.variant,
+       icon: token.icon
+-    }, id), span))]
++    }, id), span, id))]
+   });
+ }
+ ChatComposerInput.displayName = 'ChatComposerInput';
+diff --git a/node_modules/@astryxdesign/core/dist/DropdownMenu/DropdownMenu.js b/node_modules/@astryxdesign/core/dist/DropdownMenu/DropdownMenu.js
+index 129de9a..d3544c8 100644
+--- a/node_modules/@astryxdesign/core/dist/DropdownMenu/DropdownMenu.js
++++ b/node_modules/@astryxdesign/core/dist/DropdownMenu/DropdownMenu.js
+@@ -914,21 +914,26 @@ function DropdownMenuPopover({
+     if (!popover.isOpen || !shouldFocusOnOpenRef.current) {
+       return;
+     }
+-    shouldFocusOnOpenRef.current = false;
+-    requestAnimationFrame(() => {
+-      const focusEnd = focusLastOnOpenRef.current ? focusLast : focusFirst;
+-      focusLastOnOpenRef.current = false;
+-      const isPointerOpen = openModalityRef.current === 'pointer';
+-      // A pointer that lit a row before this frame keeps that row's
+-      // highlight: the row under the pointer stays the focused row.
++    const openModality = openModalityRef.current;
++    const focusLastOnOpen = focusLastOnOpenRef.current;
++    openModalityRef.current = 'keyboard';
++    focusLastOnOpenRef.current = false;
++    const frame = requestAnimationFrame(() => {
++      shouldFocusOnOpenRef.current = false;
++      const focusEnd = focusLastOnOpen ? focusLast : focusFirst;
++      const isPointerOpen = openModality === 'pointer';
++      // Navigation or hover may already have moved into a row or its flyout.
++      // Initial focus must not replace the user's newer focus choice.
+       const list = listRef.current;
+       const active = list?.ownerDocument.activeElement;
+-      const isRowLit = isPointerOpen && active != null && active !== list && list?.contains(active) === true;
+-      if (!isRowLit && (isPointerOpen || !focusEnd())) {
+-        list?.focus();
++      if (!list || active !== list && list.contains(active ?? null)) {
++        return;
++      }
++      if (isPointerOpen || !focusEnd()) {
++        list.focus();
+       }
+-      openModalityRef.current = 'keyboard';
+     });
++    return () => cancelAnimationFrame(frame);
+   }, [popover.isOpen, focusFirst, focusLast, listRef]);
+ 
+   // Under a finger, where the primary pointer is coarse, a tap or a drag during
+diff --git a/node_modules/@astryxdesign/core/src/Chat/ChatComposerInput.tsx b/node_modules/@astryxdesign/core/src/Chat/ChatComposerInput.tsx
+index 3c26d5b..4bd9638 100644
+--- a/node_modules/@astryxdesign/core/src/Chat/ChatComposerInput.tsx
++++ b/node_modules/@astryxdesign/core/src/Chat/ChatComposerInput.tsx
+@@ -955,7 +955,7 @@ export function ChatComposerInput(props: ChatComposerInputProps) {
+         .map(({id, span, token}) =>
+           createPortal(
+             isCustomToken(token) ? (
+-              <span key={id}>{token.render()}</span>
++              token.render()
+             ) : token.value.length >
+               (pasteAsToken === null ? Infinity : 200) ? (
+               <ChatPastedTextToken
+@@ -972,6 +972,7 @@ export function ChatComposerInput(props: ChatComposerInputProps) {
+               />
+             ),
+             span,
++            id,
+           ),
+         )}
+     </div>
+diff --git a/node_modules/@astryxdesign/core/src/DropdownMenu/DropdownMenu.tsx b/node_modules/@astryxdesign/core/src/DropdownMenu/DropdownMenu.tsx
+index 3cbc2a8..bf737a9 100644
+--- a/node_modules/@astryxdesign/core/src/DropdownMenu/DropdownMenu.tsx
++++ b/node_modules/@astryxdesign/core/src/DropdownMenu/DropdownMenu.tsx
+@@ -1271,25 +1271,26 @@ function DropdownMenuPopover({
+     if (!popover.isOpen || !shouldFocusOnOpenRef.current) {
+       return;
+     }
+-    shouldFocusOnOpenRef.current = false;
+-    requestAnimationFrame(() => {
+-      const focusEnd = focusLastOnOpenRef.current ? focusLast : focusFirst;
+-      focusLastOnOpenRef.current = false;
+-      const isPointerOpen = openModalityRef.current === 'pointer';
+-      // A pointer that lit a row before this frame keeps that row's
+-      // highlight: the row under the pointer stays the focused row.
++    const openModality = openModalityRef.current;
++    const focusLastOnOpen = focusLastOnOpenRef.current;
++    openModalityRef.current = 'keyboard';
++    focusLastOnOpenRef.current = false;
++    const frame = requestAnimationFrame(() => {
++      shouldFocusOnOpenRef.current = false;
++      const focusEnd = focusLastOnOpen ? focusLast : focusFirst;
++      const isPointerOpen = openModality === 'pointer';
++      // Navigation or hover may already have moved into a row or its flyout.
++      // Initial focus must not replace the user's newer focus choice.
+       const list = listRef.current;
+       const active = list?.ownerDocument.activeElement;
+-      const isRowLit =
+-        isPointerOpen &&
+-        active != null &&
+-        active !== list &&
+-        list?.contains(active) === true;
+-      if (!isRowLit && (isPointerOpen || !focusEnd())) {
+-        list?.focus();
++      if (!list || (active !== list && list.contains(active ?? null))) {
++        return;
++      }
++      if (isPointerOpen || !focusEnd()) {
++        list.focus();
+       }
+-      openModalityRef.current = 'keyboard';
+     });
++    return () => cancelAnimationFrame(frame);
+   }, [popover.isOpen, focusFirst, focusLast, listRef]);
+ 
+   // Under a finger, where the primary pointer is coarse, a tap or a drag during

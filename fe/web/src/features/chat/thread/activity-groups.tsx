@@ -65,7 +65,7 @@ export function ToolCallGroup({ calls, entry, ui, onExpandedChange, onDetailOpen
     /* A lone call has no header: its one row is always the visible one. */
     const header = root === null ? null : headerOf(root);
     const hosts = (!live || showMotion) && root !== null
-      ? [...root.querySelectorAll<HTMLElement>('[role="status"]')]
+      ? [...root.querySelectorAll<HTMLElement>('[role="progressbar"], [role="status"]')]
         .filter(host => !live || ui.expanded || header === null || header.contains(host)) : [];
     setStatusHosts(previous => previous.length === hosts.length && previous.every((host, index) => host === hosts[index])
       ? previous : hosts);

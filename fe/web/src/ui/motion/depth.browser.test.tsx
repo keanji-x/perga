@@ -38,7 +38,8 @@ it('presses the complete native, Astryx and portal control without replacing lay
       expect(getComputedStyle(button).translate).toBe('3px');
     }
     up(button);
-    expect(button.getAnimations()).toHaveLength(1);
+    // Astryx Button also runs a CSS press-alpha fade animation on release; DepthFeedback owns only the WAAPI transform spring.
+    expect(button.getAnimations().filter((animation) => !(animation instanceof CSSAnimation))).toHaveLength(1);
   }
 });
 

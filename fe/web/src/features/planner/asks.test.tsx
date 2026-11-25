@@ -122,7 +122,7 @@ describe('PlannerAskDrawer', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Other…' }));
     const input = screen.getByRole<HTMLInputElement>('textbox', { name: 'Merge PR #12?' });
     fireEvent.change(input, { target: { value: '   ' } });
-    expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Answer' }).disabled).toBe(true);
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Answer' }).getAttribute('aria-disabled')).toBe('true');
     fireEvent.change(input, { target: { value: 'x'.repeat(2001) } });
     expect(input.value).toHaveLength(2000);
   });

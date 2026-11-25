@@ -5,6 +5,7 @@ import { page,userEvent } from 'vitest/browser';
 
 import { mentionQueryOf,type MentionSearch } from '../../../../../core/domain/mentions.ts';
 import { useMentionTrigger } from './mention-trigger.tsx';
+import { OutgoingMessage } from './outgoing-message.tsx';
 import { ChatComposer } from './public.tsx';
 
 afterEach(cleanup);
@@ -143,4 +144,94 @@ it('opens Templates by mouse, shows its marker and sends the badge reference', a
   await page.screenshot({ path: './__screenshots__/template-mention-chip.png' });
   await userEvent.keyboard('{Enter}');
   expect(onSend).toHaveBeenLastCalledWith('@`template:deploy`');
+});
+
+function verticalMidpoint(rect: DOMRect): number {
+  return rect.top + rect.height / 2;
+}
+
+function textNodeMidpoint(container: Node, snippet: string): number {
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+    const content = node.textContent ?? '';
+    const start = content.indexOf(snippet);
+    if (start === -1) continue;
+    const range = document.createRange();
+    range.setStart(node, start);
+    range.setEnd(node, start + snippet.length);
+    return verticalMidpoint(range.getBoundingClientRect());
+  }
+  throw new Error(`Text snippet not found: ${snippet}`);
+}
+
+it.each(['standard', 'mobile'] as const)('aligns pasted text pills, structured mentions, and long custom mentions in %s composer', async (layout) => {
+  await page.viewport(1200, 900);
+  const longInsert = `@\`plugin:very-long-payload-${'x'.repeat(220)}\``;
+  const search = vi.fn<MentionSearch>((query) => Promise.resolve([
+    { id: 'tag:release', kind: 'tag' as const, label: '#release', chip: '#release', detail: '2 tracks', insert: '@`tag:release`' },
+    { id: 'plugin:long', kind: 'plugin' as const, label: 'Long plugin', chip: 'Long plugin', detail: 'Custom render', insert: longInsert },
+  ].filter(item => query === '' || item.label.toLowerCase().includes(query.toLowerCase()))));
+  function WideComposer() {
+    const trigger = useMentionTrigger(search);
+    return <div style={{ position: 'fixed', top: '400px', left: '32px', width: '760px' }}>
+      <ChatComposer layout={layout} mentionTrigger={trigger} onSend={vi.fn()} />
+    </div>;
+  }
+  render(<WideComposer />);
+  const field = page.getByRole('combobox', { name: 'Message' });
+  const editable = field.element();
+  await field.click();
+
+  await userEvent.keyboard('中文Abc @#release');
+  await page.getByRole('option', { name: /#release/ }).click();
+
+  await userEvent.keyboard(' 黏贴 ');
+  const pastedPayload = '这是一段很长的黏贴文本用于验证药丸对齐，'.repeat(18);
+  const clipboardData = new DataTransfer();
+  clipboardData.setData('text/plain', pastedPayload);
+  editable.dispatchEvent(new ClipboardEvent('paste', { clipboardData, bubbles: true, cancelable: true }));
+
+  await userEvent.keyboard(' 插件 @Long');
+  await page.getByRole('option', { name: /Long plugin/ }).click();
+  await userEvent.keyboard(' 结束');
+
+  const tokens = [...editable.querySelectorAll<HTMLElement>('[data-astryx-token]')];
+  expect(tokens).toHaveLength(3);
+  const [structuredToken, pastedToken, customToken] = tokens;
+  expect(structuredToken.textContent).toBe('#release');
+  expect(pastedToken.textContent).toBe('360 chars');
+  expect(customToken.textContent).toBe('Long plugin');
+  // Custom tokens must portal directly into [data-astryx-token] with no extra wrapper <span>.
+  expect(customToken.firstElementChild?.getAttribute('data-variant')).toBe('neutral');
+
+  const textMid = textNodeMidpoint(editable, '中文Abc');
+  for (const token of tokens) {
+    const visual = token.querySelector<HTMLElement>('[data-variant]') ?? token.firstElementChild as HTMLElement;
+    expect(visual).not.toBeNull();
+    expect(Math.abs(verticalMidpoint(visual.getBoundingClientRect()) - textMid)).toBeLessThanOrEqual(0.5);
+  }
+});
+
+it('aligns persisted outgoing mention pills and memory links with adjacent text', async () => {
+  await page.viewport(1200, 900);
+  render(
+    <div style={{ width: '720px', padding: '16px' }}>
+      <OutgoingMessage
+        speaker="you"
+        mobile={false}
+        text="前面中文Abc @`tag:release` 中间 @`memory:area/guide` 后面文字"
+        renderMemoryMention={(_scope, pill) => <a href="#memory">{pill}</a>}
+      />
+    </div>,
+  );
+  const paragraph = document.querySelector<HTMLElement>('[data-nc-turn="you"]')!;
+  const pills = [...paragraph.querySelectorAll<HTMLElement>('[data-nc-sent-mention]')];
+  expect(pills).toHaveLength(2);
+
+  const textMid = textNodeMidpoint(paragraph, '前面中文Abc');
+  for (const wrapper of pills) {
+    const badge = wrapper.querySelector<HTMLElement>('[data-variant]')!;
+    expect(badge).not.toBeNull();
+    expect(Math.abs(verticalMidpoint(badge.getBoundingClientRect()) - textMid)).toBeLessThanOrEqual(0.5);
+  }
 });

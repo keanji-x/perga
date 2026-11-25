@@ -155,7 +155,7 @@ it('retains Checking, first-read retry and pending Recheck states through the ro
   await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
   await screen.findByText(`${LOGGED_OUT} ${unavailableCreationNote('Claude')}`);
   await userEvent.click(screen.getByRole('button', { name: 'Recheck planners' }));
-  expect(screen.getByRole('button', { name: 'Recheck planners' }).hasAttribute('disabled')).toBe(true);
+  expect(screen.getByRole('button', { name: 'Recheck planners' }).getAttribute('aria-disabled')).toBe('true');
   expect(screen.getByText(`${LOGGED_OUT} ${unavailableCreationNote('Claude')}`)).toBeTruthy();
   release({ status: 200, statusText: 'OK', body: answer({ status: 'ready', reason: null }) });
   await waitFor(() => expect(screen.queryByText(`${LOGGED_OUT} ${unavailableCreationNote('Claude')}`)).toBeNull());

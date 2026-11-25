@@ -215,7 +215,7 @@ function NewTrackEditor({ transport, unauthorized, memoryEnabled, workspace, ses
   return <NewTrackForm
     workspaceOptions={{ cwd: optionCwd, targetId,
       result: !workspaceOptionsQuery.isError ? workspaceOptionsQuery.data ?? null : null }}
-    readNotice={workspace.areasLoading ? <Banner status="info" title="Loading Area…"
+    readNotice={workspace.areasLoading ? <Banner status="info" role="status" title="Loading Area…"
       description="You can keep writing. Create track will be available when loading finishes." />
       : workspaceOptionsQuery.isError && session.request === null
         ? <ErrorBox message={readErrorText(workspaceOptionsQuery.error, 'Workspace options could not be loaded.')}

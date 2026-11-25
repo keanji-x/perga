@@ -125,7 +125,7 @@ it('keeps a retained phone draft at the same text size and height while submitti
     for (const [submitting, locked] of [[true, false], [false, true], [false, false]]) {
       view.rerender(<ModelForm submitting={submitting} locked={locked} />);
       expect(input.textContent).toBe(originalText);
-      expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Track options' }).disabled).toBe(submitting || locked);
+      expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Track options' }).getAttribute('aria-disabled') === 'true').toBe(submitting || locked);
       expect(getComputedStyle(input).fontSize).toBe(fontSize);
       expect(getComputedStyle(input).lineHeight).toBe(lineHeight);
       expect(input.getBoundingClientRect().height).toBe(height);
@@ -184,40 +184,38 @@ it('keeps Model beside Create and moves preferences into overflow before they st
 });
 
 it('keeps directory selection and cancellation usable through overflow', async () => {
-  // Astryx ignores repeat trigger clicks for 50 ms after a layer closes.
-  const user = userEvent.setup({ delay: 60 });
   await page.viewport(320, 740);
   const cwd = '/srv/a-long-directory-selected-through-the-real-browser';
   const view = render(<ModelForm listDirectory={() => Promise.resolve({ path: cwd, parent: null, entries: [] })} />);
   try {
     const more = await screen.findByRole('button', { name: 'Track options' });
     more.focus();
-    await user.keyboard('{Enter}');
+    await userEvent.keyboard('{Enter}');
     const options = await screen.findByRole('dialog', { name: 'Track options' });
-    await user.click(within(options).getByRole('button', { name: 'Repo: Perga workspace' }));
-    await user.click(await screen.findByRole('menuitem', { name: /^Others…/ }));
+    await page.elementLocator(within(options).getByRole('button', { name: 'Repo: Perga workspace' })).click();
+    await page.getByRole('menuitem', { name: /^Others…/ }).click();
     const cancelledDirectory = await screen.findByRole('dialog', { name: 'Choose a directory' });
-    await user.click(within(cancelledDirectory).getByRole('button', { name: 'Cancel' }));
+    await page.elementLocator(within(cancelledDirectory).getByRole('button', { name: 'Cancel' })).click();
     await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Choose a directory' })).toBeNull(); });
     expect(screen.queryByRole('dialog', { name: 'Track options' })).toBeNull();
     await waitFor(() => { expect(document.activeElement).toBe(more); });
-    await user.click(more);
-    await user.click(screen.getByRole('button', { name: 'Repo: Perga workspace' }));
-    await user.click(await screen.findByRole('menuitem', { name: /^Others…/ }));
+    await page.getByRole('button', { name: 'Track options' }).click();
+    await page.getByRole('button', { name: 'Repo: Perga workspace' }).click();
+    await page.getByRole('menuitem', { name: /^Others…/ }).click();
     const directory = await screen.findByRole('dialog', { name: 'Choose a directory' });
-    await user.click(await within(directory).findByRole('button', { name: 'Select this directory' }));
+    await page.elementLocator(await within(directory).findByRole('button', { name: 'Select this directory' })).click();
     await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Choose a directory' })).toBeNull(); });
     expect(screen.queryByRole('dialog', { name: 'Track options' })).toBeNull();
     await waitFor(() => { expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Track options' })); });
-    await user.click(screen.getByRole('button', { name: 'Track options' }));
+    await page.getByRole('button', { name: 'Track options' }).click();
     expect(await screen.findByRole('button', { name: `Repo: a-long-directory-selected-through-the-real-browser (${cwd})` })).toBeTruthy();
-    await user.keyboard('{Escape}');
+    await userEvent.keyboard('{Escape}');
     await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Track options' })).toBeNull(); });
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Track options' }));
     await page.viewport(600, 844);
     await waitFor(() => { expect(screen.queryByRole('button', { name: 'Track options' })).toBeNull(); });
-    await user.click(await screen.findByRole('button', { name: `Repo: a-long-directory-selected-through-the-real-browser (${cwd})` }));
-    await user.click(await screen.findByRole('menuitem', { name: /Perga workspace/ }));
+    await page.getByRole('button', { name: `Repo: a-long-directory-selected-through-the-real-browser (${cwd})` }).click();
+    await page.getByRole('menuitem', { name: /Perga workspace/ }).click();
     await waitFor(() => { expect(screen.queryByRole('button', { name: 'Track options' })).toBeNull(); });
     expect(screen.getByRole('button', { name: 'Repo: Perga workspace' })).toBeTruthy();
     expectFullLabel('Repo: Perga workspace');

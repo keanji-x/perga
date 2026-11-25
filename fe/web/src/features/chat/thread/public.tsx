@@ -512,7 +512,9 @@ export function ChatComposer({
       parkedFocus.current = null;
       return;
     }
-    if (!root.contains(document.activeElement)) root.focus({ preventScroll: true });
+    const active = document.activeElement;
+    const activeDisabled = active instanceof Element && active.matches('[contenteditable="false"], [aria-disabled="true"], :disabled');
+    if (!root.contains(active) || activeDisabled) root.focus({ preventScroll: true });
     parkedFocus.current = document.activeElement;
   }, [sendCount, disabled, focusRequest]);
 
@@ -606,7 +608,7 @@ export function ChatComposer({
            let IME Enter accept its candidate without submitting. */
         if (event.key !== 'Enter' && event.key !== 'Tab' && event.key !== 'Escape') return;
         /* The drawer owns its inputs and keys; only the message input gets composer shortcuts. */
-        const field = event.target instanceof Element ? event.target.closest('[contenteditable], textarea, input') : null;
+        const field = event.target instanceof Element ? event.target.closest('[contenteditable="true"], textarea, input') : null;
         if (field === null || !messageInputRef.current?.contains(field)) return;
         if (event.key === 'Escape') {
           /* Esc leaves edit mode, unless it is closing an open `/` or `@` menu; handled, so the drawer stays open. */

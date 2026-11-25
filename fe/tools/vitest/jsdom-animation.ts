@@ -24,6 +24,8 @@ if (typeof Element !== 'undefined' && typeof Element.prototype.animate !== 'func
     private reject!: (reason: DOMException) => void;
     constructor(readonly timeline: AnimationTimeline) {
       this.finished = new Promise<Animation>((yes, no) => { this.resolve = yes; this.reject = no; });
+      // Web Animations only surface AbortError to callers that observe `.finished`.
+      this.finished.catch(() => undefined);
     }
     get currentTime() { return this.time; }
     set currentTime(value: number | null) { this.time = value; }

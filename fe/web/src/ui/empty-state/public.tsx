@@ -14,7 +14,7 @@ export function EmptyState({ title, description, icon, variant = 'page', align =
   align?: 'start' | 'center';
 }>) {
   const Heading = variant === 'page' ? 'h2' : 'h3';
-  return <div className={`${styles.empty} ${variant === 'panel' ? styles.panel : variant === 'compact' ? styles.compact : ''} ${align === 'center' ? styles.center : ''}`}>
+  return <div className={`${styles.empty} ${variant === 'panel' ? styles.panel : variant === 'compact' ? styles.compact : ''} ${align === 'center' ? styles.center : ''}`} data-nc-empty-state="">
     <div className={styles.heading}>
       <div className={styles.visual} aria-hidden="true">{icon}</div>
       <Heading className={styles.title} {...(titleFieldMarker === undefined ? {} : { 'data-nc-field': titleFieldMarker })}>{title}</Heading>

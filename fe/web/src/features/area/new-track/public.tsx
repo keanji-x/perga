@@ -270,6 +270,7 @@ export function NewTrackForm({
         {error !== null && (
           <Banner
             status="error"
+            role="alert"
             title={error}
             endContent={shownErrorAction === undefined
               ? submitBlocked && message !== ''

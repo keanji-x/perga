@@ -27,6 +27,7 @@ it('submits prose containing /close with real Enter without changing approvals',
   const input = page.getByRole('combobox', { name: 'Message' });
   await input.fill('Explain /close');
   await input.click();
+  await userEvent.keyboard('{Escape}');
   await userEvent.keyboard('{End}');
   await userEvent.keyboard('{Enter}');
   await expect.poll(() => fixture.requests.filter(request => request.path.endsWith('/messages')).map(request => request.body))

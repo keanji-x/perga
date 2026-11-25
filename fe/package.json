@@ -23,7 +23,7 @@
     "theme:check": "node tools/styles/generate-theme.mjs --check"
   },
   "dependencies": {
-    "@astryxdesign/core": "0.6.3",
+    "@astryxdesign/core": "0.7.17",
     "@codemirror/commands": "^6.11.1",
     "@codemirror/language": "^6.13.1",
     "@codemirror/language-data": "^6.5.2",

@@ -194,7 +194,7 @@ describe('the / command menu, as the engine lays it out', () => {
     const waitingNodes = [...waiting.querySelectorAll('*')];
     expect(waitingNodes).toHaveLength(glyphNodes.length);
     waitingNodes.forEach((node, index) => expect(node).toBe(glyphNodes[index]));
-    expect(waiting.hasAttribute('disabled')).toBe(true);
+    expect(waiting.getAttribute('aria-disabled')).toBe('true');
     expect(screen.getByRole('group', { name: 'Message composer' }).getAttribute('aria-busy')).toBe('true');
     expect(document.querySelector('[data-nc-send-attachment]')).toBeNull();
     await expect.poll(() => waiting.getAnimations({ subtree: true })

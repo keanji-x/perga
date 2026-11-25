@@ -138,7 +138,7 @@ describe('DirectoryBrowser behavior', () => {
     const filesystemRoot: DirectoryListing = { path: '/', parent: null, entries: [{ name: 'work', path: '/work', isDirectory: true }] };
     render(<DirectoryBrowser listDirectory={() => Promise.resolve(filesystemRoot)} initialPath="/" onCancel={vi.fn()} onSelect={vi.fn()}/>);
     await screen.findByRole('option', { name: 'work' });
-    expect(screen.getByRole('button', { name: 'Parent directory' }).hasAttribute('disabled')).toBe(true);
+    expect(screen.getByRole('button', { name: 'Parent directory' }).getAttribute('aria-disabled')).toBe('true');
   });
   /* Two different facts, and the difference decides what the reader does next:
      back up a character, or navigate somewhere else entirely. */

@@ -127,7 +127,7 @@ export function DirectoryBrowser({ listDirectory, initialPath, onCancel, onSelec
           ref={inputRef}
           label="Directory path"
           isLabelHidden
-          className={styles.path}
+          controlClassName={styles.path}
           width="100%"
           role="combobox"
           aria-controls={optionsId}
@@ -142,7 +142,7 @@ export function DirectoryBrowser({ listDirectory, initialPath, onCancel, onSelec
 
       {/* A status beside the list, not replacing it: a reload must not blank the rows under the pointer. No spinner — astryx's paints on a canvas jsdom lacks. */}
       {loading && <p className={styles.status} role="status">Loading…</p>}
-      {error !== null && <Banner status="error" title={error} />}
+      {error !== null && <Banner status="error" role="alert" title={error} />}
 
       <ul id={optionsId} className={styles.list} role="listbox" aria-label="Directory entries">
         {visible.map((entry, index) => (

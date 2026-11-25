@@ -77,8 +77,11 @@ function itemOf(suggestion: MentionSuggestion, preview = false): MentionItem {
  * the source's `insert` exactly; the reader sees the short `chip` form instead.
  */
 export function mentionToken(suggestion: MentionSuggestion): ChatComposerToken {
-  // Named references stay named even when their serialized documentation is long.
-  // The custom renderer avoids Astryx's automatic long-paste token presentation.
+  // Prefer Astryx's structured Badge token. Only fall back to custom render when a
+  // serialized reference exceeds Astryx's 200-char pasted-text heuristic (e.g. plugin docs).
+  if (suggestion.insert.length <= 200) {
+    return { value: suggestion.insert, label: suggestion.chip, variant: 'neutral' };
+  }
   return { value: suggestion.insert, render: () => <Badge label={suggestion.chip} variant="neutral" /> };
 }
 
@@ -147,14 +150,19 @@ function enterCategory(category: MentionCategory): string {
         const selection = window.getSelection();
         if (selection === null || !selection.isCollapsed || selection.rangeCount === 0) return;
         const range = selection.getRangeAt(0);
-        // Astryx inserts plain text with the caret after its node, but its trigger
-        // parser only reads a caret inside a text node. Enter the inserted prefix.
-        const inserted = range.startContainer.childNodes[range.startOffset - 1];
-        if (inserted?.nodeType !== Node.TEXT_NODE || inserted.textContent !== category.prefix) return;
-        range.setStart(inserted, category.prefix.length);
-        range.collapse(true);
-        selection.removeAllRanges();
-        selection.addRange(range);
+        // Astryx 0.7.12+ places the caret inside the inserted text node; earlier
+        // versions left it after the node on the parent element. Accept both.
+        if (range.startContainer.nodeType === Node.TEXT_NODE) {
+          const text = range.startContainer.textContent ?? '';
+          if (!text.slice(0, range.startOffset).endsWith(category.prefix)) return;
+        } else {
+          const inserted = range.startContainer.childNodes[range.startOffset - 1];
+          if (inserted?.nodeType !== Node.TEXT_NODE || inserted.textContent !== category.prefix) return;
+          range.setStart(inserted, category.prefix.length);
+          range.collapse(true);
+          selection.removeAllRanges();
+          selection.addRange(range);
+        }
         editable.dispatchEvent(new Event('input', { bubbles: true }));
       }
     });

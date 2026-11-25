@@ -57,6 +57,8 @@ it('keeps Hidden groups keyboard navigation when pointer-open focus is delayed t
   const { options } = await scene();
   await page.getByRole('button', { name: 'Group actions for Focus' }).click();
   await page.getByRole('menuitem', { name: 'Hide group' }).click();
+  // Hiding Focus unmounts its menu during pointerup, leaving Astryx's clickGuard armed until the next pointerdown.
+  fireEvent.pointerDown(document.body);
   vi.useFakeTimers({ toFake: ['requestAnimationFrame', 'cancelAnimationFrame'] });
   const trigger = options.element() as HTMLButtonElement;
   trigger.focus();

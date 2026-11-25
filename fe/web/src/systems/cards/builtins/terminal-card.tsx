@@ -92,7 +92,7 @@ export function TerminalCardView({
         <PathLabel label="Gate working directory" path={card.gateCwd} />
       )}
       {notice !== null && (
-        <Banner status="info" container="section" title={notice} data-nc-terminal-notice="" />
+        <Banner status="info" role="status" container="section" title={notice} data-nc-terminal-notice="" />
       )}
       <div className="term-body">
         {attached
