@@ -115,16 +115,6 @@ export function App() {
             <p className="site-tagline">
               A report-centric local workspace for multi-worker AI sessions.
             </p>
-            <div className="site-providers" aria-label="Supported CLI backends">
-              <span className="site-providers-label">WORKS WITH</span>
-              <span className="site-provider-chip">Claude Code</span>
-              <span className="site-provider-chip">Codex</span>
-              <span className="site-provider-chip">Antigravity</span>
-              <span className="site-provider-chip">OpenCode</span>
-              <span className="site-provider-chip">Kimi</span>
-              <span className="site-provider-chip">Qwen</span>
-              <span className="site-provider-chip site-provider-chip-muted" title="Also supports Devin, Factory, Grok, CodeBuddy, Qoder, and dsh">+6 more</span>
-            </div>
 
             <div className="site-install-row" id="install">
               <div className="site-terminal">
@@ -136,10 +126,35 @@ export function App() {
               </div>
               <a className="site-btn-primary" href="https://github.com/keanji-x/perga/releases" target="_blank" rel="noreferrer">Releases</a>
             </div>
-            <div className="site-install-tags" aria-label="Supported platforms">
-              <span className="site-install-tag">macOS Apple Silicon</span>
-              <span className="site-install-tag">Linux x64</span>
-            </div>
+
+            <dl className="site-hero-meta" aria-label="Supported backends and platforms">
+              <div className="site-hero-meta-row">
+                <dt>WORKS WITH</dt>
+                <dd>
+                  <span>Claude Code</span>
+                  <span className="site-meta-sep" aria-hidden="true">·</span>
+                  <span>Codex</span>
+                  <span className="site-meta-sep" aria-hidden="true">·</span>
+                  <span>Antigravity</span>
+                  <span className="site-meta-sep" aria-hidden="true">·</span>
+                  <span>OpenCode</span>
+                  <span className="site-meta-sep" aria-hidden="true">·</span>
+                  <span>Kimi</span>
+                  <span className="site-meta-sep" aria-hidden="true">·</span>
+                  <span>Qwen</span>
+                  <span className="site-meta-sep" aria-hidden="true">·</span>
+                  <span className="site-meta-more" title="Also supports Devin, Factory, Grok, CodeBuddy, Qoder, and dsh">+6 more</span>
+                </dd>
+              </div>
+              <div className="site-hero-meta-row">
+                <dt>PLATFORMS</dt>
+                <dd className="site-hero-meta-muted">
+                  <span>macOS Apple Silicon</span>
+                  <span className="site-meta-sep" aria-hidden="true">·</span>
+                  <span>Linux x64</span>
+                </dd>
+              </div>
+            </dl>
           </div>
 
           <div className="site-showcase" id="reports">

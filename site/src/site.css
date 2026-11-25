@@ -162,7 +162,7 @@
   }
 
   .site-tagline {
-    margin: 14px 0 18px;
+    margin: 14px 0 26px;
     font-family: var(--font-serif);
     font-size: clamp(1.15rem, 2vw, 1.38rem);
     line-height: 1.45;
@@ -172,42 +172,6 @@
   .site-tagline strong {
     color: var(--text);
     font-weight: 500;
-  }
-
-  .site-providers {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 8px;
-    margin: 0 0 24px;
-  }
-
-  .site-providers-label {
-    font-family: var(--font-mono);
-    font-size: 0.69rem;
-    letter-spacing: 0.08em;
-    color: var(--text-3);
-    margin-right: 4px;
-  }
-
-  .site-provider-chip {
-    display: inline-flex;
-    align-items: center;
-    padding: 3px 10px;
-    border: 1px solid var(--hairline-strong);
-    border-radius: 999px;
-    background: var(--paper);
-    color: var(--text);
-    font-family: var(--font-mono);
-    font-size: 0.74rem;
-    line-height: 1.4;
-    white-space: nowrap;
-  }
-
-  .site-provider-chip-muted {
-    background: transparent;
-    border-style: dashed;
-    color: var(--text-2);
   }
 
   .site-install-row {
@@ -283,24 +247,57 @@
     opacity: 0.88;
   }
 
-  .site-install-tags {
+  .site-hero-meta {
+    margin: 18px 0 0;
+    padding-top: 14px;
+    border-top: 1px solid var(--hairline);
     display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 8px;
-    margin-top: 10px;
+    flex-direction: column;
+    gap: 6px;
   }
 
-  .site-install-tag {
-    display: inline-flex;
-    align-items: center;
-    padding: 2px 9px;
-    border-radius: 4px;
-    background: color-mix(in srgb, var(--text) 6%, transparent);
-    color: var(--text-3);
+  .site-hero-meta-row {
+    display: grid;
+    grid-template-columns: 92px minmax(0, 1fr);
+    align-items: baseline;
+    gap: 12px;
+  }
+
+  .site-hero-meta dt {
     font-family: var(--font-mono);
-    font-size: 0.71rem;
-    line-height: 1.45;
+    font-size: 0.68rem;
+    letter-spacing: 0.08em;
+    color: var(--text-3);
+  }
+
+  .site-hero-meta dd {
+    margin: 0;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px 8px;
+    font-size: 0.84rem;
+    font-weight: 500;
+    color: var(--text);
+    line-height: 1.5;
+  }
+
+  .site-hero-meta-muted {
+    font-weight: 400;
+    color: var(--text-2);
+  }
+
+  .site-meta-sep {
+    color: var(--hairline-strong);
+    user-select: none;
+  }
+
+  .site-meta-more {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    font-weight: 400;
+    color: var(--text-3);
+    cursor: default;
   }
 
   /* Live Showcase */
@@ -715,6 +712,11 @@
 
     .site-sheet {
       padding: 18px;
+    }
+
+    .site-hero-meta-row {
+      grid-template-columns: 1fr;
+      gap: 2px;
     }
 
     .site-pillars,
