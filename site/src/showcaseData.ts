@@ -183,21 +183,18 @@ export const EQUITY_VALUATION_AXIS = {
       display: '$105',
       emphasis: false,
       note: 'Bear case · 22x FY27 EPS if hyperscaler CapEx normalizes and custom ASIC share rises.',
-      docRef: 'models/nvda-bear-dcf.md',
     },
     {
       value: 155,
       display: '$155',
       emphasis: true,
       note: 'Base case · 30x FY27 EPS assuming Blackwell rack ramp holds >73% gross margin.',
-      docRef: 'models/nvda-base-valuation.md',
     },
     {
       value: 192,
       display: '$192',
       emphasis: false,
       note: 'Bull case · 35x FY27 EPS on sovereign AI demand + networking attach expansion.',
-      docRef: 'models/nvda-bull-case.md',
     },
   ],
 };
@@ -348,7 +345,7 @@ export const OKR_LEDGER_TABLE: BuiltinTableView = {
     },
     {
       result: { text: 'Memory pinned context budget utilization', code: 'KR4', tag: 'memory' },
-      current: { text: '36% (742 B)', tone: 'good', check: true },
+      current: { text: '60% (742 / 1,228 B)', tone: 'good', check: true },
       target: '≤ 80%',
       updatedAt: '11-25 08:02',
     },
