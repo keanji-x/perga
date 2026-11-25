@@ -110,7 +110,7 @@ export function EditorialGateStrip({
   const activeGate = checks.find((_, idx) => `${itemId}-${idx}` === activeGateKey) ?? null;
 
   return (
-    <footer className={styles.gateStrip} aria-label="Gate 验证引用">
+    <footer className={styles.gateStrip} aria-label="Gate verification citations">
       <div className={styles.gateCitationList}>
         <span className={styles.gatePrefix}>Gate</span>
         {checks.map((check, idx) => {
@@ -144,7 +144,7 @@ export function EditorialGateStrip({
       </div>
 
       {activeGate !== null && (
-        <div className={styles.gateFootnote} role="region" aria-label={`${activeGate.label} 输出`}>
+        <div className={styles.gateFootnote} role="region" aria-label={`${activeGate.label} output`}>
           {activeGate.command != null && activeGate.command.trim() !== '' && (
             <p className={styles.gateFootnoteCmd}>$ {activeGate.command}</p>
           )}

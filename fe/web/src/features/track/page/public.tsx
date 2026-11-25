@@ -352,15 +352,19 @@ export function TrackPage({ fillReading = false, articleMasthead = !fillReading,
                 className={showArticleMasthead ? styles.mastheadTitle : styles.title} isPageTitle titleRef={titleReadControlRef}
                 readView={hasMobileTitleReadView ? (controls) => <MobileTitleReadView
                   controls={controls} host={mobileHeaderTitleHost} register={registerMobileTitleEdit}
-                  view={originLink === null ? mobileTitleReadView : (readControls) => (
-                    <div className={styles.mobileOriginTitle}>{mobileTitleReadView(readControls)}{originLink}</div>
+                  view={originLink === null && activity === 'quiet' ? mobileTitleReadView : (readControls) => (
+                    <div className={styles.mobileOriginTitle}>
+                      {mobileTitleReadView(readControls)}
+                      {originLink}
+                      <ActivityIndicator state={activity} spoken={activityLabel} />
+                    </div>
                   )} /> : undefined} />}
         </h1>
         {(!compactViewport || (titleInHeader && !hasMobileTitleReadView)) && originLink}
         {!titleInHeader && !showArticleMasthead && isDirectFolder && <ExplanationBadge label={NO_ISOLATION_LABEL}>{NO_ISOLATION_EXPLANATION}</ExplanationBadge>}
         {!titleInHeader && <TrackClosedBadge closedAt={track.closedAt} />}
         {/* Shared track activity and conversation unread state. */}
-        {!titleInHeader && <ActivityIndicator state={activity} />}
+        {(!titleInHeader || !hasMobileTitleReadView) && <ActivityIndicator state={activity} spoken={compactViewport ? activityLabel : null} />}
       </div>
     </div>
   );

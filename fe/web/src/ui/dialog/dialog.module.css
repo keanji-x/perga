@@ -6,7 +6,7 @@
   }
 
   .medium {
-    inline-size: min(52rem, calc(100vw - var(--space-6)));
+    inline-size: min(var(--measure-dialog-medium), calc(100vw - var(--space-6)));
   }
 
   .wide {

@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useRef, type Ref } from 'react';
 import { flushSync } from 'react-dom';
 import { Divider } from '@astryxdesign/core/Divider';
 import { DropdownMenu, DropdownMenuItem } from '@astryxdesign/core/DropdownMenu';
@@ -41,6 +41,7 @@ function repoModes() {
 
 export type RepoPillProps = Readonly<{
   buttonId?: string;
+  buttonRef?: Ref<HTMLButtonElement>;
   value: string;
   targetLabel?: string;
   isolation: RepoIsolationMode;
@@ -55,6 +56,7 @@ export type RepoPillProps = Readonly<{
 
 export function RepoPill({
   buttonId,
+  buttonRef,
   value,
   targetLabel,
   isolation,
@@ -87,7 +89,11 @@ export function RepoPill({
         hasChevron={false}
         button={{
           id: buttonId,
-          ref: triggerRef,
+          ref: (node: HTMLButtonElement | null) => {
+            triggerRef.current = node;
+            if (typeof buttonRef === 'function') buttonRef(node);
+            else if (buttonRef !== undefined && buttonRef !== null) buttonRef.current = node;
+          },
           label: accessibleName,
           children: (
             <Text key={visibleLabel} type="inherit" color="inherit" maxLines={1} hasTruncateTooltip={!open}>

@@ -13,7 +13,7 @@ export function PendingRoute({ label, owner, missing = false }: {
   const path = useCurrentPath();
   const go = useGo();
   return (
-    <section className={styles.panel} aria-label={missing ? `${label} not found` : `${label} not rewritten yet`}>
+    <section className={styles.panel} data-nc-headerless-route="" aria-label={missing ? `${label} not found` : `${label} not rewritten yet`}>
       <h1 className={styles.title} data-nc-page-title="" tabIndex={-1}>{missing ? `That ${label.toLowerCase()} isn't here anymore.` : label}</h1>
       <p className={styles.body}>
         {missing

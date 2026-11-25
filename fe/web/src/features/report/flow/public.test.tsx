@@ -235,7 +235,7 @@ describe('ReportFlowBlock (builtin:flow)', () => {
     fireEvent.click(screen.getByRole('button', { name: /^修复 R1 拦截项并推送/ }));
     const fixPanel = screen.getByRole('article', { name: '修复 R1 拦截项并推送' });
     fireEvent.click(within(fixPanel).getByRole('button', { name: /dotnet test/ }));
-    expect(within(fixPanel).getByRole('region', { name: 'dotnet test 输出' }).textContent).toContain('All 42 tests passed.');
+    expect(within(fixPanel).getByRole('region', { name: 'dotnet test output' }).textContent).toContain('All 42 tests passed.');
 
     // 6. Periodic cron cards show schedule & actual run count
     const cronFooter = screen.getByRole('region', { name: 'Periodic schedules' });

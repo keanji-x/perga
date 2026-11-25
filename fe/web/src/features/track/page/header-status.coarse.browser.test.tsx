@@ -17,8 +17,11 @@ it('shows blocked activity at the mobile chat entry without floating notificatio
   expect(onReply).toHaveBeenCalledTimes(1);
 });
 
-it('omits the redundant mobile chat icon button beside the report composer dock', async () => {
+it('omits the redundant mobile chat icon button beside the report composer dock while keeping track activity visible', async () => {
   await browserPage.viewport(390, 844);
   renderPage({ track: track({ attention: 'input' }), mobileChatComposer: <div>Composer</div>, onReply: vi.fn() });
   expect(browserPage.getByRole('button', { name: 'Open conversation', exact: true }).query()).toBeNull();
+  const indicator = document.querySelector('[data-nc-activity="attention"]');
+  expect(indicator).not.toBeNull();
+  expect(document.body.textContent).toContain('Needs input');
 });

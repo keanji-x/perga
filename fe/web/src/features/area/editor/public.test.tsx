@@ -50,8 +50,11 @@ describe('AreaEditorForm', () => {
       </Dialog>,
     );
     expect(screen.queryByRole('button', { name: /template|isolation/i })).toBeNull();
-    await userEvent.click(screen.getByRole('button', { name: 'Default folder: Perga workspace' }));
+    const opener = screen.getByRole('button', { name: 'Default folder: Perga workspace' });
+    await userEvent.click(opener);
     await userEvent.click(await screen.findByRole('button', { name: 'Select this directory' }));
+    await waitFor(() => expect(document.activeElement).toBe(opener));
+    expect(opener.isConnected).toBe(true);
     await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     expect(onSubmit).toHaveBeenCalledWith({
       name: 'Work', defaultCwd: '/srv/ legal-space ',

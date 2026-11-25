@@ -617,6 +617,7 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-2);
+    background: var(--surface-rail);
   }
 
   .userRow {
@@ -726,6 +727,7 @@
     }
 
     .rail,
+    .railFooter,
     .userRow,
     .brandRow {
       background: color-mix(in srgb, var(--surface-rail) 52%, var(--bg));
@@ -768,7 +770,7 @@
       position: fixed;
     }
 
-    .shellCollapsed .main [data-nc-header-rows] {
+    .shellCollapsed .main :is([data-nc-header-rows], [data-nc-headerless-route]) {
       padding-inline-start: max(calc(var(--space-5) + var(--document-start, 0px)), calc(var(--space-3) + var(--control-h) + var(--space-3)));
     }
 

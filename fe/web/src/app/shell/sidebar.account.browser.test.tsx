@@ -190,6 +190,14 @@ it('opens the account menu clear of the avatar and above the main region when ex
   expectUncovered(expand);
 });
 
+it('keeps expanded Area rows compact at rest instead of reserving two-action padding', async () => {
+  await renderRail({ areaCount: 2 });
+  const areaButton = document.querySelector<HTMLButtonElement>('[aria-label="Collapse area Area 0"]')!;
+  expect(areaButton.getAttribute('aria-expanded')).toBe('true');
+  const restPadding = parseFloat(getComputedStyle(areaButton).paddingInlineEnd);
+  expect(restPadding).toBeLessThan(24);
+});
+
 it('leaves the Areas list where it is when focus lands on the pinned avatar', async () => {
   const { folders, avatar } = await renderRail();
   const middle = Math.round((folders.scrollHeight - folders.clientHeight) / 2);

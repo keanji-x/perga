@@ -68,11 +68,10 @@ export function FolderPillGroup({
   showClear: boolean;
   children: ReactNode;
 }>) {
-  if (!showClear) return <>{children}</>;
   return (
-    <span className={styles.pillGroup} data-nc-folder-pill-group="">
+    <span className={showClear ? styles.pillGroup : undefined} data-nc-folder-pill-group={showClear ? '' : undefined}>
       {children}
-      <FolderClearButton label={clearLabel} isDisabled={isDisabled} onClear={onClear} />
+      {showClear && <FolderClearButton label={clearLabel} isDisabled={isDisabled} onClear={onClear} />}
     </span>
   );
 }
