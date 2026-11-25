@@ -3,7 +3,7 @@ import { ConversationArchiveAction } from '../../features/chat/list/public.tsx';
 import { trackEmptyContent } from './track-empty-content.tsx';
 import { EmptyState } from '../../ui/empty-state/public.tsx';
 import { mobileFontClassName } from '../../ui/mobile-font/public.ts';
-import { useCallback, useLayoutEffect, useMemo, useRef } from 'react';
+import { useCallback, useId, useLayoutEffect, useMemo, useRef } from 'react';
 import { useState } from '../../ui/state/public.ts';
 import type { Track } from '../../../../core/domain/track.ts';
 import { MobileTrackList } from './mobile-track-list.tsx';
@@ -13,7 +13,6 @@ import { Button } from '@astryxdesign/core/Button';
 import { DropdownMenu } from '@astryxdesign/core/DropdownMenu';
 import type { Conversation } from '../../../../core/domain/conversation.ts';
 import { conversationName } from '../../../../core/domain/conversation.ts';
-import { localDailyDate } from '../../../../core/domain/daily-planner.ts';
 import { Icon as UiIcon } from '../../ui/icon/public.tsx';
 import { ErrorBox } from '../../ui/error-box/public.tsx';
 import { LoadingStatus } from '../../ui/loading-status/public.tsx';
@@ -39,18 +38,22 @@ function historySubtitle(row: Conversation): string {
   return historyTitle(row) === row.trackTitle ? conversationName(row) : row.trackTitle ?? '';
 }
 
-function historyTimeLabel(at: number): string {
-  return new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(at);
+function historyTimeLabel(at: number, timeZone: string): string {
+  return new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone }).format(at);
 }
 
-function historyDateLabel(at: number): string {
-  return localDailyDate(new Date(at));
+function historyDateLabel(at: number, timeZone: string): string {
+  const parts = new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit', timeZone }).formatToParts(at);
+  const year = parts.find((part) => part.type === 'year')?.value ?? '';
+  const month = parts.find((part) => part.type === 'month')?.value ?? '';
+  const day = parts.find((part) => part.type === 'day')?.value ?? '';
+  return `${year}-${month}-${day}`;
 }
 
-function historyMetaText(row: Conversation): string {
-  const date = historyDateLabel(row.updatedAt);
+function historyMetaText(row: Conversation, timeZone: string): string {
+  const date = historyDateLabel(row.updatedAt, timeZone);
   // Daily tracks use local YYYY-MM-DD as their title; show local time instead of repeating the date.
-  const stamp = historyTitle(row) === date ? historyTimeLabel(row.updatedAt) : date;
+  const stamp = historyTitle(row) === date ? historyTimeLabel(row.updatedAt, timeZone) : date;
   if (row.isLead === true) return `Lead · ${stamp}`;
   const subtitle = historySubtitle(row);
   return subtitle ? `${subtitle} · ${stamp}` : stamp;
@@ -91,6 +94,8 @@ export function MobileHistory({ owner, open, onOpenChange, conversations, loadin
   onSignOut?: (() => void) | undefined;
   now: number;
 }>) {
+  const idPrefix = useId();
+  const timeZone = new Intl.DateTimeFormat().resolvedOptions().timeZone;
   const [view, setView] = useState<HistoryView>('current');
   const wasOpen = useRef(open);
   useLayoutEffect(() => {
@@ -178,14 +183,18 @@ export function MobileHistory({ owner, open, onOpenChange, conversations, loadin
             return <>
               {[...groups].map(([name, rows]) => <section key={name} className={styles.dateGroup} aria-label={name}>
                 <h2 className={styles.group}>{name}</h2>
-                {rows.map((row) => <div key={row.id} className={styles.conversationRow}><button type="button" className={styles.row} aria-current={row.id === selectedConversationId ? 'true' : undefined}
-                  aria-label={`${historyTitle(row)}${historySubtitle(row) ? ` ${historySubtitle(row)}` : ''}`} onClick={() => leave(() => onSelect(row))}>
-                  <span className={styles.title}>{historyTitle(row)}</span>
-                  <span className={styles.meta} title={historySubtitle(row)}>{historyMetaText(row)}</span>
-                </button>
-                {onArchive !== undefined && row.kind === 'agent' && row.isLead !== true && <ConversationArchiveAction
-                  conversation={row} onArchive={onArchive} className={styles.conversationActions} />}
-                </div>)}
+                {rows.map((row) => {
+                  const metaId = `${idPrefix}-meta-${row.id}`;
+                  return <div key={row.id} className={styles.conversationRow}><button type="button" className={styles.row} aria-current={row.id === selectedConversationId ? 'true' : undefined}
+                    aria-label={`${historyTitle(row)}${historySubtitle(row) ? ` ${historySubtitle(row)}` : ''}`}
+                    aria-describedby={metaId} onClick={() => leave(() => onSelect(row))}>
+                    <span className={styles.title}>{historyTitle(row)}</span>
+                    <span id={metaId} className={styles.meta} title={historySubtitle(row)}>{historyMetaText(row, timeZone)}</span>
+                  </button>
+                  {onArchive !== undefined && row.kind === 'agent' && row.isLead !== true && <ConversationArchiveAction
+                    conversation={row} onArchive={onArchive} className={styles.conversationActions} />}
+                  </div>;
+                })}
               </section>)}
             </>;
           }}

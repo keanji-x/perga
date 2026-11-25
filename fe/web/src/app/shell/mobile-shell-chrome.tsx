@@ -1,15 +1,20 @@
 import { LayerDepthProvider } from '@astryxdesign/core/Layer';
-import { useLayoutEffect, useMemo, useRef, type RefCallback, type RefObject } from 'react';
+import { useLayoutEffect, useMemo, useRef, type RefCallback } from 'react';
 
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
+import type { Area } from '../../../../core/domain/area.ts';
+import type { Conversation } from '../../../../core/domain/conversation.ts';
+import type { Track } from '../../../../core/domain/track.ts';
 import { trackDisplayTitle } from '../../../../core/domain/track.ts';
-import { LayerDismissal } from '../../ui/dialog/public.tsx';
+import { type TrackActionsProps } from '../../features/track/row/actions.tsx';
+import { LayerDismissal, type DialogOrigin } from '../../ui/dialog/public.tsx';
 import { EdgeSwipe } from '../../ui/edge-swipe/public.tsx';
 import { floatingControlClassName } from '../../ui/floating-control/public.ts';
 import { Icon } from '../../ui/icon/public.tsx';
-import { OperationFeedback } from '../../ui/operation-feedback/public.tsx';
-import { useVisibleViewport } from '../../ui/viewport/public.ts';
+import { OperationFeedback, type OperationFeedbackState } from '../../ui/operation-feedback/public.tsx';
+import type { NavTarget } from '../router/navigation.ts';
+import type { NewTrackDraftArea } from '../router/new-track-drafts.tsx';
 import { MobileWorkspaceHeader } from './mobile-header.tsx';
 import { useMobileHistoryData } from './mobile-history-data.ts';
 import { MobileHistory } from './mobile-history.tsx';
@@ -17,20 +22,8 @@ import { useMobileNavigationPresence } from './mobile-navigation-presence.ts';
 import { MobilePages } from './mobile-pages.tsx';
 import mobileStyles from './mobile-shell.module.css';
 import { MobileTracks } from './mobile-tracks.tsx';
-import type { ShellController } from './use-shell-controller.ts';
-
-/** Routes can reopen an Area's Tracks or recent Pages; the primary entry starts at Areas. */
-export type MobileSection =
-  | Readonly<{ kind: 'areas'; areaId: string | undefined }>
-  | Readonly<{ kind: 'pages' }>
-  | Readonly<{ kind: 'tracks'; areaId: string | undefined; returnTo?: 'areas' | 'report' }>;
-
-export type OpenMobileSection = (section: MobileSection, returnFocus?: 'opener' | 'workspace') => void;
-
-export type MobileReturnIntent =
-  | Readonly<{ kind: 'opener'; path: string; element: HTMLElement | null }>
-  | Readonly<{ kind: 'workspace'; path: string }>
-  | null;
+import type { SidebarTrackGroups } from './sidebar-track-groups.ts';
+import type { MobileNavigationController, MobileReturnIntent } from './use-mobile-navigation.ts';
 
 export type MobileConversationScopeSnapshot = Readonly<{
   owner: object;
@@ -39,30 +32,60 @@ export type MobileConversationScopeSnapshot = Readonly<{
   conversationOpen: boolean;
   onNew: () => void;
   onClose: () => void;
-  onOpen: (conversation: Parameters<Parameters<typeof MobileHistory>[0]['onSelect']>[0]) => void;
+  onOpen: (conversation: Conversation) => void;
   onArchive?: (cardId: string, archived: boolean) => Promise<void>;
 }>;
 
+export type MobileShellWorkspace = Readonly<{
+  areas: readonly Area[];
+  visibleAreas: readonly Area[];
+  tracks: readonly Track[];
+  tracksByArea: ReadonlyMap<string, readonly Track[]>;
+  trackGroups: Pick<SidebarTrackGroups, 'pinned' | 'unread' | 'waiting'>;
+  activeArea: Area | NewTrackDraftArea | undefined;
+  liveActiveArea: Area | undefined;
+  newTrackArea: NewTrackDraftArea | undefined;
+  readError: string | null;
+  activityError: string | null;
+  readLoading: boolean;
+  overlaysLoading: boolean;
+  retryRead: () => void;
+  isUnread: (track: Track) => boolean;
+  areaIdOf: (trackId: string) => string | undefined;
+}>;
+
+export type MobileShellRoute = Readonly<{
+  currentPath: string;
+  settingsOpen: boolean;
+  mobileOverlayRoute: boolean;
+  routeTrackId: string | undefined;
+  routeAreaId: string | undefined;
+  newTrackBack: (() => void) | null;
+  go: (target: NavTarget) => void;
+}>;
+
+export type MobileShellActions = Readonly<{
+  areaEditorOpen: boolean;
+  pinFeedback: OperationFeedbackState;
+  mobileTrackActions: (track: Track) => Omit<TrackActionsProps, 'track' | 'className'>;
+  onRequestCreateArea: (origin: DialogOrigin) => void;
+  onRequestEditArea: (area: Area, origin: DialogOrigin) => void;
+  onOpenSettings: () => void;
+  onSignOut?: (() => void) | undefined;
+}>;
+
 export type MobileShellChromeProps = Readonly<{
-  shellRef: RefObject<HTMLDivElement | null>;
   transport: ApiTransportPort;
   unauthorized: UnauthorizedChannel;
-  controller: ShellController;
+  workspace: MobileShellWorkspace;
+  route: MobileShellRoute;
+  actions: MobileShellActions;
+  navigation: MobileNavigationController;
   conversationScope: MobileConversationScopeSnapshot | null;
   historyOpen: boolean;
   onHistoryOpenChange: (open: boolean) => void;
-  mobileSection: MobileSection | null;
-  workspaceInteractive: boolean;
-  mobileDialogActive: boolean;
-  mobileReturnIntent: MobileReturnIntent;
-  onOpenMobileSection: OpenMobileSection;
-  onSelectMobileSection: (section: MobileSection) => void;
-  onCloseMobileSection: () => void;
-  onFinishMobileClose: () => void;
   onActionsHostRef: RefCallback<HTMLDivElement>;
   onTitleHostRef: RefCallback<HTMLDivElement>;
-  onOpenSettings: () => void;
-  onSignOut?: (() => void) | undefined;
   shareScope?: unknown;
   nowMs?: number;
   userLabel?: string;
@@ -70,25 +93,16 @@ export type MobileShellChromeProps = Readonly<{
 
 /** Mobile shell chrome: owns the mobile workspace header, floating opener, edge swipe, history drawer, and modal navigation stack. */
 export function MobileShellChrome({
-  shellRef, transport, unauthorized, controller, conversationScope, historyOpen, onHistoryOpenChange, mobileSection, workspaceInteractive,
-  mobileDialogActive, mobileReturnIntent, onOpenMobileSection, onSelectMobileSection,
-  onCloseMobileSection, onFinishMobileClose, onActionsHostRef, onTitleHostRef,
-  onOpenSettings, onSignOut, shareScope = null, nowMs, userLabel,
+  transport, unauthorized, workspace, route, actions, navigation, conversationScope,
+  historyOpen, onHistoryOpenChange, onActionsHostRef, onTitleHostRef,
+  shareScope = null, nowMs, userLabel,
 }: MobileShellChromeProps) {
-  const { workspace, areas, activeArea, liveActiveArea, newTrackArea, currentPath, settingsOpen, mobileOverlayRoute } = controller;
+  const { currentPath, settingsOpen, mobileOverlayRoute } = route;
   const scopeOwner = conversationScope?.owner ?? null;
   const historyOwner = useMemo(() => ({ path: currentPath, scopeOwner, token: {} }), [currentPath, scopeOwner]);
   const historyTracks = conversationScope === null ? [] : [conversationScope.track];
   const history = useMobileHistoryData(transport, unauthorized, historyTracks, historyOpen);
-  const visibleViewport = useVisibleViewport(true);
-  useLayoutEffect(() => {
-    const shell = shellRef.current;
-    if (shell === null) return;
-    shell.style.setProperty('--mobile-keyboard-inset', `${visibleViewport.bottomInset}px`);
-    return () => { shell.style.removeProperty('--mobile-keyboard-inset'); };
-  }, [shellRef, visibleViewport.bottomInset]);
-  const mobileNavOpen = mobileSection !== null;
-  const mobileSectionKind = mobileSection?.kind;
+  const mobileSectionKind = navigation.section?.kind;
 
   const workspaceReturnRef = useRef<HTMLButtonElement | null>(null);
   const mobileNavigationFrameRef = useRef<HTMLDivElement | null>(null);
@@ -98,21 +112,30 @@ export function MobileShellChrome({
   useMobileNavigationPresence(
     mobileNavigationRef,
     mobileNavigationFrameRef,
-    onFinishMobileClose,
-    workspaceInteractive,
-    mobileNavOpen,
+    navigation.finishClose,
+    navigation.interactive,
+    navigation.isOpen,
   );
+
+  const navigateAndClose = (target: NavTarget, immediate = false) => {
+    navigation.close(immediate);
+    route.go(target);
+  };
+
+  const openNewTrack = (areaId: string) => {
+    navigateAndClose({ name: 'new-track', areaId }, actions.areaEditorOpen);
+  };
 
   const dismissalLayer = (
     <LayerDismissal {...{
-      isActive: mobileDialogActive,
-      onDismiss: onCloseMobileSection,
+      isActive: navigation.dialogActive,
+      onDismiss: () => navigation.close(),
       getContainer: () => mobileNavigationRef.current,
     }} />
   );
 
   useLayoutEffect(() => {
-    if (!workspaceInteractive) {
+    if (!navigation.interactive) {
       const scope = mobileFocusScope.current;
       mobileFocusScope.current = null;
       // DOM permissions have committed before focus returns. A new route or a
@@ -130,18 +153,18 @@ export function MobileShellChrome({
       return;
     }
     const scope = mobileFocusScope.current;
-    if (scope === null || scope.intent !== mobileReturnIntent) {
+    if (scope === null || scope.intent !== navigation.returnIntent) {
       mobileFocusScope.current = {
-        path: mobileReturnIntent?.path ?? currentPath,
+        path: navigation.returnIntent?.path ?? currentPath,
         host: mobileNavigationRef.current,
-        intent: mobileReturnIntent,
+        intent: navigation.returnIntent,
       };
       if (scope === null) mobileNavigationRef.current?.focus({ preventScroll: true });
     }
     // Back requests navigation and workspace together. Either may commit first;
     // bind that return intent to its first destination, never later selections.
-    if (mobileReturnIntent?.kind === 'workspace' && mobileFocusScope.current?.path === mobileReturnIntent.path
-      && currentPath !== mobileReturnIntent.path) {
+    if (navigation.returnIntent?.kind === 'workspace' && mobileFocusScope.current?.path === navigation.returnIntent.path
+      && currentPath !== navigation.returnIntent.path) {
       mobileFocusScope.current = { ...mobileFocusScope.current, path: currentPath };
     }
     const onKeyDown = (event: KeyboardEvent) => {
@@ -167,41 +190,41 @@ export function MobileShellChrome({
     };
     document.addEventListener('keydown', onKeyDown);
     return () => { document.removeEventListener('keydown', onKeyDown); };
-  }, [workspaceInteractive, currentPath, mobileReturnIntent]);
+  }, [navigation.interactive, currentPath, navigation.returnIntent]);
 
   useLayoutEffect(() => {
-    if (workspaceInteractive && mobileSectionKind !== undefined) {
+    if (navigation.interactive && mobileSectionKind !== undefined) {
       const activeBack = mobileNavigationRef.current?.querySelector<HTMLElement>(
         '[data-nc-workspace-page]:not([aria-hidden="true"]) header button',
       );
       (activeBack ?? mobileNavigationRef.current)?.focus({ preventScroll: true });
     }
-  }, [mobileSectionKind, workspaceInteractive]);
+  }, [mobileSectionKind, navigation.interactive]);
 
   // Opening while Areas is loading has no id yet. Follow the current Area
   // when the read recovers; an explicitly requested Area still stays exact.
-  const navigationAreaId = mobileSection?.kind === 'tracks' || mobileSection?.kind === 'areas'
-    ? mobileSection.areaId ?? activeArea?.id : activeArea?.id;
-  const navigationArea = areas.find((area) => area.id === navigationAreaId);
-  const mobileNavigationLabel = mobileSection?.kind === 'pages' ? 'Pages' : 'Tracks and settings';
+  const navigationAreaId = navigation.section?.kind === 'tracks' || navigation.section?.kind === 'areas'
+    ? navigation.section.areaId ?? workspace.activeArea?.id : workspace.activeArea?.id;
+  const navigationArea = workspace.visibleAreas.find((area) => area.id === navigationAreaId);
+  const mobileNavigationLabel = navigation.section?.kind === 'pages' ? 'Pages' : 'Tracks and settings';
 
   return (
     <>
       {dismissalLayer}
       {!settingsOpen && !mobileOverlayRoute && (
         <MobileWorkspaceHeader
-          areas={areas}
-          activeArea={liveActiveArea ?? (newTrackArea === undefined ? areas[0] : undefined)}
-          draftArea={newTrackArea}
-          navigationOpen={workspaceInteractive || historyOpen}
+          areas={workspace.visibleAreas}
+          activeArea={workspace.liveActiveArea ?? (workspace.newTrackArea === undefined ? workspace.visibleAreas[0] : undefined)}
+          draftArea={workspace.newTrackArea}
+          navigationOpen={navigation.interactive || historyOpen}
           historyTriggerRef={workspaceReturnRef}
-          onBack={controller.newTrackBack === null || controller.routeAreaId === undefined ? undefined : () => {
-            controller.newTrackBack?.();
-            onOpenMobileSection({ kind: 'tracks', areaId: controller.routeAreaId }, 'workspace');
+          onBack={route.newTrackBack === null || route.routeAreaId === undefined ? undefined : () => {
+            route.newTrackBack?.();
+            navigation.open({ kind: 'tracks', areaId: route.routeAreaId }, 'workspace');
           }}
           onOpenNavigation={() => onHistoryOpenChange(true)}
-          onSelectArea={controller.requestNewTrack}
-          onCreateArea={controller.requestCreateArea}
+          onSelectArea={openNewTrack}
+          onCreateArea={actions.onRequestCreateArea}
           actionsHostRef={onActionsHostRef}
           titleHostRef={onTitleHostRef}
         />
@@ -211,14 +234,14 @@ export function MobileShellChrome({
           type="button"
           className={`${mobileStyles.workspaceOpener} ${floatingControlClassName}`}
           aria-label="Open workspace"
-          hidden={workspaceInteractive || historyOpen || conversationScope?.conversationOpen === true}
-          onClick={() => onOpenMobileSection({ kind: 'areas', areaId: activeArea?.id })}
+          hidden={navigation.interactive || historyOpen || conversationScope?.conversationOpen === true}
+          onClick={() => navigation.open({ kind: 'areas', areaId: workspace.activeArea?.id })}
         >
           <Icon name="folder" />
         </button>
       )}
       <EdgeSwipe
-        enabled={!settingsOpen && !mobileOverlayRoute && !mobileNavOpen && !historyOpen}
+        enabled={!settingsOpen && !mobileOverlayRoute && !navigation.isOpen && !historyOpen}
         onSwipe={() => onHistoryOpenChange(true)}
       />
       <MobileHistory
@@ -226,13 +249,13 @@ export function MobileShellChrome({
         open={historyOpen}
         onOpenChange={onHistoryOpenChange}
         selectedConversationId={conversationScope?.selectedConversationId ?? null}
-        trackGroups={controller.trackGroups}
+        trackGroups={workspace.trackGroups}
         currentTrackId={conversationScope?.track.id}
-        isUnread={controller.isUnread}
-        tracksLoading={controller.readLoading || workspace.overlaysLoading}
-        tracksError={controller.readError ?? controller.activityError}
-        onRetryTracks={controller.retryRead}
-        onOpenTrack={(trackId) => { conversationScope?.onClose(); controller.go({ name: 'track', trackId }); }}
+        isUnread={workspace.isUnread}
+        tracksLoading={workspace.readLoading || workspace.overlaysLoading}
+        tracksError={workspace.readError ?? workspace.activityError}
+        onRetryTracks={workspace.retryRead}
+        onOpenTrack={(trackId) => { conversationScope?.onClose(); route.go({ name: 'track', trackId }); }}
         onArchive={conversationScope?.onArchive}
         conversations={history.conversations}
         loading={history.loading}
@@ -241,86 +264,86 @@ export function MobileShellChrome({
         onNew={conversationScope?.onNew ?? null}
         now={nowMs ?? Date.now()}
         onSelect={(row) => conversationScope?.onOpen(row)}
-        onOpenSettings={onOpenSettings}
+        onOpenSettings={actions.onOpenSettings}
         scopeLabel={conversationScope === null ? 'Current track' : `Current track · ${trackDisplayTitle(conversationScope.track.title)}`}
         accountLabel={userLabel ?? 'Account'}
         accountInitial={userLabel?.slice(0, 1) ?? 'U'}
-        onSignOut={onSignOut === undefined ? undefined : () => { onCloseMobileSection(); onSignOut(); }}
+        onSignOut={actions.onSignOut === undefined ? undefined : () => { navigation.close(); actions.onSignOut?.(); }}
       />
       <div ref={mobileNavigationFrameRef} className={mobileStyles.navigationFrame}>
         <div
           ref={mobileNavigationRef}
           id="mobile-workspace-navigation"
-          className={`${mobileStyles.navigation} ${mobileNavOpen && !controller.areaEditorOpen ? mobileStyles.navigationOpen : ''}`}
-          role={mobileDialogActive ? 'dialog' : undefined}
-          aria-modal={mobileDialogActive ? true : undefined}
+          className={`${mobileStyles.navigation} ${navigation.isOpen && !actions.areaEditorOpen ? mobileStyles.navigationOpen : ''}`}
+          role={navigation.dialogActive ? 'dialog' : undefined}
+          aria-modal={navigation.dialogActive ? true : undefined}
           aria-label={mobileNavigationLabel}
-          inert={!mobileDialogActive}
-          aria-hidden={!mobileDialogActive ? true : undefined}
-          data-nc-escape-layer={mobileDialogActive ? '' : undefined}
+          inert={!navigation.dialogActive}
+          aria-hidden={!navigation.dialogActive ? true : undefined}
+          data-nc-escape-layer={navigation.dialogActive ? '' : undefined}
           tabIndex={-1}
         >
           <div className={mobileStyles.navigationPanel}>
             <div className={mobileStyles.navigationContent}>
               <LayerDepthProvider>
-                {mobileSection?.kind === 'pages' ? (
+                {navigation.section?.kind === 'pages' ? (
                   <MobilePages
                     areaId={navigationArea?.id}
-                    onEditArea={controller.requestEditArea}
-                    onBack={onCloseMobileSection}
-                    onNewTrack={controller.requestNewTrack}
-                    onCreateArea={controller.requestCreateArea}
-                    onOpenSettings={() => { onCloseMobileSection(); onOpenSettings(); }}
+                    onEditArea={actions.onRequestEditArea}
+                    onBack={() => navigation.close()}
+                    onNewTrack={openNewTrack}
+                    onCreateArea={actions.onRequestCreateArea}
+                    onOpenSettings={() => { navigation.close(); actions.onOpenSettings(); }}
                     areas={workspace.areas}
                     tracks={workspace.tracks}
-                    readError={controller.readError}
-                    readLoading={controller.readLoading}
-                    onRetryRead={controller.retryRead}
-                    onOpenToday={() => controller.navigateFromRail({ name: 'today' })}
-                    onOpenMemory={shareScope === null ? () => controller.navigateFromRail({ name: 'memory' }) : undefined}
+                    readError={workspace.readError}
+                    readLoading={workspace.readLoading}
+                    onRetryRead={workspace.retryRead}
+                    onOpenToday={() => navigateAndClose({ name: 'today' })}
+                    onOpenMemory={shareScope === null ? () => navigateAndClose({ name: 'memory' }) : undefined}
                     onOpenTrack={(trackId) => {
-                      onCloseMobileSection();
+                      navigation.close();
                       // The sheets are the only writers of `?from=`: the surface the reader returns to.
-                      controller.go({ name: 'track', trackId, from: 'pages' });
+                      route.go({ name: 'track', trackId, from: 'pages' });
                     }}
                   />
-                ) : mobileSection !== null ? (
+                ) : navigation.section !== null ? (
                   <MobileTracks
-                    view={mobileSection.kind === 'tracks' ? 'tracks' : 'areas'}
-                    onSelectArea={(areaId) => { onSelectMobileSection({ kind: 'tracks', areaId }); }}
-                    onBack={mobileSection.kind === 'tracks' && mobileSection.returnTo !== 'report'
-                      ? () => onSelectMobileSection({ kind: 'areas', areaId: navigationArea?.id })
-                      : onCloseMobileSection}
-                    tracksBackLabel={mobileSection.kind === 'tracks' && mobileSection.returnTo === 'report' ? 'Report' : 'Areas'}
-                    onNewTrack={controller.requestNewTrack}
-                    onOpenSettings={() => { onCloseMobileSection(); onOpenSettings(); }}
-                    currentTrackId={controller.routeTrackId}
+                    view={navigation.section.kind === 'tracks' ? 'tracks' : 'areas'}
+                    onSelectArea={(areaId) => { navigation.select({ kind: 'tracks', areaId }); }}
+                    onBack={navigation.section.kind === 'tracks' && navigation.section.returnTo !== 'report'
+                      ? () => navigation.select({ kind: 'areas', areaId: navigationArea?.id })
+                      : () => navigation.close()}
+                    tracksBackLabel={navigation.section.kind === 'tracks' && navigation.section.returnTo === 'report' ? 'Report' : 'Areas'}
+                    onNewTrack={openNewTrack}
+                    onOpenSettings={() => { navigation.close(); actions.onOpenSettings(); }}
+                    currentTrackId={route.routeTrackId}
                     areas={workspace.areas}
                     tracksByArea={workspace.tracksByArea}
-                    readError={controller.readError}
-                    readLoading={controller.readLoading}
-                    onRetryRead={controller.retryRead}
-                    onOpenToday={() => controller.navigateFromRail({ name: 'today' })}
-                    onOpenMemory={shareScope === null ? () => controller.navigateFromRail({ name: 'memory' }) : undefined}
-                    onOpenAreaMemory={shareScope === null ? (areaId) => controller.navigateFromRail({ name: 'area-memory', areaId }) : undefined}
+                    readError={workspace.readError}
+                    readLoading={workspace.readLoading}
+                    onRetryRead={workspace.retryRead}
+                    onOpenToday={() => navigateAndClose({ name: 'today' })}
+                    onOpenMemory={shareScope === null ? () => navigateAndClose({ name: 'memory' }) : undefined}
+                    onOpenAreaMemory={shareScope === null ? (areaId) => navigateAndClose({ name: 'area-memory', areaId }) : undefined}
                     areaId={navigationArea?.id}
-                    onCreateArea={controller.requestCreateArea}
-                    onEditArea={controller.requestEditArea}
-                    trackActions={controller.mobileTrackActions}
-                    isUnread={controller.isUnread}
+                    onCreateArea={actions.onRequestCreateArea}
+                    onEditArea={actions.onRequestEditArea}
+                    trackActions={actions.mobileTrackActions}
+                    isUnread={workspace.isUnread}
                     onOpenTrack={(trackId) => {
-                      onCloseMobileSection();
-                      controller.go({
+                      navigation.close();
+                      route.go({
                         name: 'track',
                         trackId,
-                        from: controller.areaIdOf(trackId) === undefined ? 'pages' : 'area',
+                        from: workspace.areaIdOf(trackId) === undefined ? 'pages' : 'area',
                       });
                     }}
                   />
                 ) : null}
               </LayerDepthProvider>
             </div>
-            <OperationFeedback feedback={controller.pinFeedback} />
+            <OperationFeedback feedback={actions.pinFeedback} />
           </div>
         </div>
       </div>

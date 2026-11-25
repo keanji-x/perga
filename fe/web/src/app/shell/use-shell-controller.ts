@@ -49,12 +49,12 @@ export type ShellControllerOptions = Readonly<{
   transport: ApiTransportPort;
   unauthorized: UnauthorizedChannel;
   nowMs?: number;
-  onCloseMobileNavigation?: (immediate?: boolean) => void;
+  onAreaCreated?: (area: Area) => void;
 }>;
 
 /** Shared headless shell kernel: workspace reads, mutations, read receipts, Area editor state, and routing actions. */
 export function useShellController({
-  transport, unauthorized, nowMs, onCloseMobileNavigation,
+  transport, unauthorized, nowMs, onAreaCreated,
 }: ShellControllerOptions) {
   const router = useRouter();
   const workspace = useWorkspace(transport, unauthorized);
@@ -130,10 +130,7 @@ export function useShellController({
   const areaIdOf = (trackId: string): string | undefined =>
     workspace.tracks.find((track) => track.id === trackId)?.areaId;
 
-  /* A navigation, and nothing else; it closes any open mobile sheet, which is an
-     overlay on the surface being left. */
-  const requestNewTrack = (areaId: string) => {
-    onCloseMobileNavigation?.(areaEditorOpen);
+  const openNewTrack = (areaId: string) => {
     go({ name: 'new-track', areaId });
   };
 
@@ -142,11 +139,6 @@ export function useShellController({
    * entry before it. Only track routes have a report panel to close. */
   const clearReportPanel = () => {
     if (routeTrackId !== undefined) closePanel(routeTrackId);
-  };
-
-  const navigateFromRail = (target: Parameters<typeof go>[0]) => {
-    onCloseMobileNavigation?.(false);
-    go(target);
   };
 
   const requestCreateArea = (origin: DialogOrigin) => {
@@ -216,7 +208,8 @@ export function useShellController({
       if (target.kind === 'create' && originEntryKey !== undefined
         && (router.history as RouterHistory).location.state.__TSR_key === originEntryKey) {
         prepareNewTrack(saved);
-        requestNewTrack(saved.id);
+        onAreaCreated?.(saved);
+        openNewTrack(saved.id);
       }
     }).catch((failure: unknown) => {
       if (target.kind === 'edit') {
@@ -297,8 +290,7 @@ export function useShellController({
     go,
     areaIdOf,
     clearReportPanel,
-    requestNewTrack,
-    navigateFromRail,
+    openNewTrack,
     deleteArea,
     setTrackPinned,
     deleteTrack,

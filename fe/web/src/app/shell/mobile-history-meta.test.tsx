@@ -5,16 +5,50 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Conversation } from '../../../../core/domain/conversation.ts';
 import { MobileHistory } from './mobile-history.tsx';
 
+let originalShowModal: PropertyDescriptor | undefined;
+let originalClose: PropertyDescriptor | undefined;
+
 beforeEach(() => {
   if (typeof HTMLDialogElement !== 'undefined') {
-    HTMLDialogElement.prototype.showModal = function showModal() { this.setAttribute('open', ''); };
-    HTMLDialogElement.prototype.close = function close() { this.removeAttribute('open'); };
+    originalShowModal = Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, 'showModal');
+    originalClose = Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, 'close');
+    Object.defineProperty(HTMLDialogElement.prototype, 'showModal', {
+      configurable: true,
+      writable: true,
+      value(this: HTMLDialogElement) { this.setAttribute('open', ''); },
+    });
+    Object.defineProperty(HTMLDialogElement.prototype, 'close', {
+      configurable: true,
+      writable: true,
+      value(this: HTMLDialogElement) { this.removeAttribute('open'); },
+    });
   }
 });
 
-afterEach(() => { cleanup(); });
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+  if (typeof HTMLDialogElement !== 'undefined') {
+    if (originalShowModal === undefined) Reflect.deleteProperty(HTMLDialogElement.prototype, 'showModal');
+    else Object.defineProperty(HTMLDialogElement.prototype, 'showModal', originalShowModal);
+    if (originalClose === undefined) Reflect.deleteProperty(HTMLDialogElement.prototype, 'close');
+    else Object.defineProperty(HTMLDialogElement.prototype, 'close', originalClose);
+  }
+});
 
 const EMPTY_GROUPS = { pinned: [], unread: [], waiting: [] } as const;
+
+function stubResolvedTimeZone(timeZone: string) {
+  const NativeFormatter = Intl.DateTimeFormat;
+  vi.spyOn(Intl, 'DateTimeFormat').mockImplementation(function (locales, options) {
+    const formatter = new NativeFormatter(locales, options);
+    if (locales === undefined && options === undefined) {
+      const resolved = formatter.resolvedOptions();
+      Object.defineProperty(formatter, 'resolvedOptions', { value: () => ({ ...resolved, timeZone }) });
+    }
+    return formatter;
+  });
+}
 
 function renderHistory(conversations: readonly Conversation[], now: number, loading = false) {
   return render(
@@ -46,10 +80,12 @@ function renderHistory(conversations: readonly Conversation[], now: number, load
 }
 
 describe('MobileHistory row subtitles', () => {
-  it('shows local time instead of duplicating the local date on Today rows across midnight UTC boundaries', () => {
-    const earlyLocal = new Date(2026, 10, 25, 0, 30).getTime();
-    const lateLocal = new Date(2026, 10, 25, 23, 30).getTime();
-    const prevLocal = new Date(2026, 10, 24, 10, 15).getTime();
+  it('formats local dates and times deterministically across UTC midnight boundaries and exposes metadata accessibly', () => {
+    // Pin Asia/Shanghai (UTC+8) so 2026-11-24T16:30:00Z is 2026-11-25 00:30 local (crosses UTC date boundary).
+    stubResolvedTimeZone('Asia/Shanghai');
+    const earlyLocalAcrossUtcMidnight = Date.UTC(2026, 10, 24, 16, 30);
+    const lateLocal = Date.UTC(2026, 10, 25, 15, 30);
+    const prevLocal = Date.UTC(2026, 10, 24, 2, 15);
 
     const todayLeadEarly: Conversation = {
       id: 'c-today-early',
@@ -60,7 +96,7 @@ describe('MobileHistory row subtitles', () => {
       isLead: true,
       provider: 'claude',
       state: 'idle',
-      updatedAt: earlyLocal,
+      updatedAt: earlyLocalAcrossUtcMidnight,
       archivedAt: null,
     };
     const todaySubLate: Conversation = {
@@ -82,8 +118,15 @@ describe('MobileHistory row subtitles', () => {
     expect(rows).toHaveLength(2);
     expect(rows[0]?.textContent).toContain('Lead · 00:30');
     expect(rows[0]?.textContent?.match(/2026-11-25/g)).toHaveLength(1);
+    const firstDescId = rows[0]?.getAttribute('aria-describedby');
+    expect(firstDescId).toBeTruthy();
+    expect(document.getElementById(firstDescId!)?.textContent).toBe('Lead · 00:30');
+
     expect(rows[1]?.textContent).toContain('23:30');
     expect(rows[1]?.textContent?.match(/2026-11-25/g)).toHaveLength(1);
+    const secondDescId = rows[1]?.getAttribute('aria-describedby');
+    expect(secondDescId).toBeTruthy();
+    expect(document.getElementById(secondDescId!)?.textContent).toContain('23:30');
 
     const namedRow = screen.getByRole('button', { name: /Mobile Polish/ });
     expect(namedRow.textContent).toContain('Lead · 2026-11-24');
