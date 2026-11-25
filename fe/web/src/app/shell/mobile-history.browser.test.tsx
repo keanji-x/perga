@@ -4,7 +4,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import { MobileConversationProvider, useMobileConversationOwner, useMobileConversationScope } from './public.tsx';
 import type { Conversation } from '../../../../core/domain/conversation.ts';
-import { MobileHistory } from './mobile-history.tsx';
+import { MobileHistory } from './mobile/history.tsx';
 
 afterEach(() => cleanup());
 

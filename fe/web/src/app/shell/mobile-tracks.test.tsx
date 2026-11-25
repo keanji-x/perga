@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Area } from '../../../../core/domain/area.ts';
 import { NEUTRAL_ACTIVITY, type Track } from '../../../../core/domain/track.ts';
-import { MobileTracks } from './mobile-tracks.tsx';
+import { MobileTracks } from './mobile/tracks.tsx';
 
 afterEach(cleanup);
 

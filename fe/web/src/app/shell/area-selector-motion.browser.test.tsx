@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { commands, page, userEvent } from 'vitest/browser';
-import { AreaSelector } from './area-selector.tsx';
+import { AreaSelector } from './mobile/area-selector.tsx';
 import { DepthFeedback } from '../../ui/motion/depth-feedback.tsx';
 import type { Area } from '../../../../core/domain/area.ts';
 import '../../styles/entry.css';

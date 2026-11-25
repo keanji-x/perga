@@ -1,16 +1,16 @@
-import type { DialogOrigin } from '../../ui/dialog/public.tsx';
-import { floatingControlClassName } from '../../ui/floating-control/public.ts';
+import type { DialogOrigin } from '../../../ui/dialog/public.tsx';
+import { floatingControlClassName } from '../../../ui/floating-control/public.ts';
 import { useRef, type ReactNode } from 'react';
-import { MobileHeader } from '../../ui/mobile-header/public.tsx';
+import { MobileHeader } from '../../../ui/mobile-header/public.tsx';
 import { List, ListItem } from '@astryxdesign/core/List';
-import { MobileListGroup } from '../../ui/mobile-list/public.tsx';
+import { MobileListGroup } from '../../../ui/mobile-list/public.tsx';
 import { Icon as AstryxIcon } from '@astryxdesign/core/Icon';
 import { IconButton } from '@astryxdesign/core/IconButton';
-import { Menu } from '../../ui/menu/public.tsx';
-import menuStyles from './mobile-header.module.css';
-import type { Area } from '../../../../core/domain/area.ts';
-import { Icon } from '../../ui/icon/public.tsx';
-import styles from './mobile-navigation.module.css';
+import { Menu } from '../../../ui/menu/public.tsx';
+import menuStyles from './header.module.css';
+import type { Area } from '../../../../../core/domain/area.ts';
+import { Icon } from '../../../ui/icon/public.tsx';
+import styles from './navigation.module.css';
 
 export type MobileNavigationActions = Readonly<{
   onBack: () => void;

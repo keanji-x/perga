@@ -1,38 +1,38 @@
-import type { DialogOrigin } from '../../ui/dialog/public.tsx';
-import { EmptyState } from '../../ui/empty-state/public.tsx';
-import type { SidebarTrackGroups } from './sidebar-track-groups.ts';
+import type { DialogOrigin } from '../../../ui/dialog/public.tsx';
+import { EmptyState } from '../../../ui/empty-state/public.tsx';
+import type { SidebarTrackGroups } from '../sidebar-track-groups.ts';
 // The workspace rail: shared groups with owner-defined membership and actions.
 import { DropdownMenu,DropdownMenuItem,DropdownMenuSubMenu } from '@astryxdesign/core/DropdownMenu';
 import { useEffect,useRef } from 'react';
 
-import { visibleAreas,type Area,type ExecutionTargetDto } from '../../../../core/domain/area.ts';
-import { DELETE_FAILURES,DELETE_TEXT,writeFailureText } from '../../../../core/domain/failure-class.ts';
-import { MARK_UNREAD_TEXT,READ_RECEIPT_FAILURES } from '../../../../core/domain/read-receipts.ts';
+import { visibleAreas,type Area,type ExecutionTargetDto } from '../../../../../core/domain/area.ts';
+import { DELETE_FAILURES,DELETE_TEXT,writeFailureText } from '../../../../../core/domain/failure-class.ts';
+import { MARK_UNREAD_TEXT,READ_RECEIPT_FAILURES } from '../../../../../core/domain/read-receipts.ts';
 import {
 TRACK_PATCH_FAILURES,TRACK_PATCH_TEXT,userVisibleTracks,type Track,
-} from '../../../../core/domain/track.ts';
-import { SIDEBAR_SECTION_IDS,moveSidebarGroup,type SidebarGroupId,type SidebarMove,type SidebarSectionId } from '../../../../core/view/sidebar-layout.ts';
-import { DELETE_TRACK_COPY } from '../../features/track/delete-copy.ts';
-import { deleteAreaCopy } from '../../features/area/delete-copy.ts';
-import { Icon, type IconName } from '../../ui/icon/public.tsx';
-import { ListText } from '../../ui/list-typography/public.tsx';
-import { Menu } from '../../ui/menu/public.tsx';
-import { navigationRowPresentation,navigationRowClass as rowLayout } from '../../ui/navigation-row/public.ts';
+} from '../../../../../core/domain/track.ts';
+import { SIDEBAR_SECTION_IDS,moveSidebarGroup,type SidebarGroupId,type SidebarMove,type SidebarSectionId } from '../../../../../core/view/sidebar-layout.ts';
+import { DELETE_TRACK_COPY } from '../../../features/track/delete-copy.ts';
+import { deleteAreaCopy } from '../../../features/area/delete-copy.ts';
+import { Icon, type IconName } from '../../../ui/icon/public.tsx';
+import { ListText } from '../../../ui/list-typography/public.tsx';
+import { Menu } from '../../../ui/menu/public.tsx';
+import { navigationRowPresentation,navigationRowClass as rowLayout } from '../../../ui/navigation-row/public.ts';
 import {
 DeleteConfirmDialog,
 OperationFeedback,
 useDeleteConfirm,useOperationFeedback,
-} from '../../ui/operation-feedback/public.tsx';
-import { TypedDeleteBody,useTypedConfirm } from '../../ui/typed-confirm/public.tsx';
-import { useReadReceipts } from '../providers/read-receipts.tsx';
-import { useUiPreferences } from '../providers/ui-preferences.tsx';
-import type { NavTarget } from '../router/navigation.ts';
-import { pathFor, routeParamFromPath } from '../router/navigation.ts';
+} from '../../../ui/operation-feedback/public.tsx';
+import { TypedDeleteBody,useTypedConfirm } from '../../../ui/typed-confirm/public.tsx';
+import { useReadReceipts } from '../../providers/read-receipts.tsx';
+import { useUiPreferences } from '../../providers/ui-preferences.tsx';
+import type { NavTarget } from '../../router/navigation.ts';
+import { pathFor, routeParamFromPath } from '../../router/navigation.ts';
 import { AreaGroup } from './area-group.tsx';
 import { ConnectionIndicator } from './connection-indicator.tsx';
-import styles from './shell.module.css';
+import styles from './sidebar.module.css';
 import { SidebarTrackGroup,revealSidebarRow,type GroupManagement } from './sidebar-group.tsx';
-import { SystemUpgradeBannerHost } from './system-upgrade-banner.tsx';
+import { SystemUpgradeBannerHost } from '../system-upgrade-banner.tsx';
 
 export type SidebarProps = Readonly<{
   areas: readonly Area[];

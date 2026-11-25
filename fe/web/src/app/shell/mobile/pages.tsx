@@ -1,23 +1,23 @@
-import { TrackTitle } from '../../features/track/title/public.tsx';
+import { TrackTitle } from '../../../features/track/title/public.tsx';
 import {
   SegmentedControl as AstryxSegmentedControl,
   SegmentedControlItem as AstryxSegmentedControlItem,
 } from '@astryxdesign/core/SegmentedControl';
 
-import { areaOf, visibleAreas, type Area } from '../../../../core/domain/area.ts';
+import { areaOf, visibleAreas, type Area } from '../../../../../core/domain/area.ts';
 import {
   userVisibleTracks, trackDisplayTitle, type Track,
-} from '../../../../core/domain/track.ts';
+} from '../../../../../core/domain/track.ts';
 import {
   MobileList, MobileListEmpty, MobileListItem,
-} from '../../ui/mobile-list/public.tsx';
-import { useState } from '../../ui/state/public.ts';
-import { Icon } from '../../ui/icon/public.tsx';
-import { ErrorBox } from '../../ui/error-box/public.tsx';
-import { LoadingStatus } from '../../ui/loading-status/public.tsx';
-import { MobileNavigationHeader, type MobileNavigationActions } from './mobile-navigation-header.tsx';
-import navigationStyles from './mobile-navigation.module.css';
-import styles from './mobile-pages.module.css';
+} from '../../../ui/mobile-list/public.tsx';
+import { useState } from '../../../ui/state/public.ts';
+import { Icon } from '../../../ui/icon/public.tsx';
+import { ErrorBox } from '../../../ui/error-box/public.tsx';
+import { LoadingStatus } from '../../../ui/loading-status/public.tsx';
+import { MobileNavigationHeader, type MobileNavigationActions } from './navigation-header.tsx';
+import navigationStyles from './navigation.module.css';
+import styles from './pages.module.css';
 
 const RECENT_PAGE_LIMIT = 24;
 

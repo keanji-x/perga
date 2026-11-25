@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 // The account control is an initial, not an icon: it renders the person's own
 // first letter, which no icon set can supply.
 const TEXT_IN_ICON_BOX_EXEMPTIONS = new Map<string, (node: ts.JsxElement, source: ts.SourceFile) => boolean>([
-  ['fe/web/src/app/shell/sidebar.tsx', (node, source) => {
+  ['fe/web/src/app/shell/desktop/sidebar.tsx', (node, source) => {
     // Deliberately brittle: renaming the avatar class or its accessible name must update this predicate.
     const attributes = node.openingElement.attributes.properties;
     const hasAvatarClass = attributes.some((attribute) => ts.isJsxAttribute(attribute)

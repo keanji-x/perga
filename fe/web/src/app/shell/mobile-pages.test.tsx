@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { Area } from '../../../../core/domain/area.ts';
 import { NEUTRAL_ACTIVITY, type Track } from '../../../../core/domain/track.ts';
-import { MobilePages } from './mobile-pages.tsx';
+import { MobilePages } from './mobile/pages.tsx';
 
 afterEach(cleanup);
 

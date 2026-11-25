@@ -1,22 +1,22 @@
-import { ConversationGroups } from '../../features/chat/list/groups.tsx';
-import { ConversationArchiveAction } from '../../features/chat/list/public.tsx';
-import { trackEmptyContent } from './track-empty-content.tsx';
-import { EmptyState } from '../../ui/empty-state/public.tsx';
-import { mobileFontClassName } from '../../ui/mobile-font/public.ts';
+import { ConversationGroups } from '../../../features/chat/list/groups.tsx';
+import { ConversationArchiveAction } from '../../../features/chat/list/public.tsx';
+import { trackEmptyContent } from '../track-empty-content.tsx';
+import { EmptyState } from '../../../ui/empty-state/public.tsx';
+import { mobileFontClassName } from '../../../ui/mobile-font/public.ts';
 import { useCallback, useId, useLayoutEffect, useMemo, useRef } from 'react';
-import { useState } from '../../ui/state/public.ts';
-import type { Track } from '../../../../core/domain/track.ts';
-import { MobileTrackList } from './mobile-track-list.tsx';
-import type { SidebarTrackGroups } from './sidebar-track-groups.ts';
+import { useState } from '../../../ui/state/public.ts';
+import type { Track } from '../../../../../core/domain/track.ts';
+import { MobileTrackList } from './track-list.tsx';
+import type { SidebarTrackGroups } from '../sidebar-track-groups.ts';
 import { MobileNav } from '@astryxdesign/core/MobileNav';
 import { Button } from '@astryxdesign/core/Button';
 import { DropdownMenu } from '@astryxdesign/core/DropdownMenu';
-import type { Conversation } from '../../../../core/domain/conversation.ts';
-import { conversationName } from '../../../../core/domain/conversation.ts';
-import { Icon as UiIcon } from '../../ui/icon/public.tsx';
-import { ErrorBox } from '../../ui/error-box/public.tsx';
-import { LoadingStatus } from '../../ui/loading-status/public.tsx';
-import styles from './mobile-history.module.css';
+import type { Conversation } from '../../../../../core/domain/conversation.ts';
+import { conversationName } from '../../../../../core/domain/conversation.ts';
+import { Icon as UiIcon } from '../../../ui/icon/public.tsx';
+import { ErrorBox } from '../../../ui/error-box/public.tsx';
+import { LoadingStatus } from '../../../ui/loading-status/public.tsx';
+import styles from './history.module.css';
 
 type HistoryView = 'current' | 'pinned' | 'unread' | 'waiting';
 const VIEWS: readonly HistoryView[] = Object.freeze(['current', 'pinned', 'unread', 'waiting']);
@@ -38,22 +38,23 @@ function historySubtitle(row: Conversation): string {
   return historyTitle(row) === row.trackTitle ? conversationName(row) : row.trackTitle ?? '';
 }
 
-function historyTimeLabel(at: number, timeZone: string): string {
-  return new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone }).format(at);
-}
+type HistoryFormatters = Readonly<{
+  date: Intl.DateTimeFormat;
+  time: Intl.DateTimeFormat;
+}>;
 
-function historyDateLabel(at: number, timeZone: string): string {
-  const parts = new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit', timeZone }).formatToParts(at);
+function historyDateLabel(at: number, dateFormatter: Intl.DateTimeFormat): string {
+  const parts = dateFormatter.formatToParts(at);
   const year = parts.find((part) => part.type === 'year')?.value ?? '';
   const month = parts.find((part) => part.type === 'month')?.value ?? '';
   const day = parts.find((part) => part.type === 'day')?.value ?? '';
   return `${year}-${month}-${day}`;
 }
 
-function historyMetaText(row: Conversation, timeZone: string): string {
-  const date = historyDateLabel(row.updatedAt, timeZone);
+function historyMetaText(row: Conversation, formatters: HistoryFormatters): string {
+  const date = historyDateLabel(row.updatedAt, formatters.date);
   // Daily tracks use local YYYY-MM-DD as their title; show local time instead of repeating the date.
-  const stamp = historyTitle(row) === date ? historyTimeLabel(row.updatedAt, timeZone) : date;
+  const stamp = historyTitle(row) === date ? formatters.time.format(row.updatedAt) : date;
   if (row.isLead === true) return `Lead · ${stamp}`;
   const subtitle = historySubtitle(row);
   return subtitle ? `${subtitle} · ${stamp}` : stamp;
@@ -96,6 +97,10 @@ export function MobileHistory({ owner, open, onOpenChange, conversations, loadin
 }>) {
   const idPrefix = useId();
   const timeZone = new Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const formatters = useMemo<HistoryFormatters>(() => ({
+    date: new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit', timeZone }),
+    time: new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone }),
+  }), [timeZone]);
   const [view, setView] = useState<HistoryView>('current');
   const wasOpen = useRef(open);
   useLayoutEffect(() => {
@@ -189,7 +194,7 @@ export function MobileHistory({ owner, open, onOpenChange, conversations, loadin
                     aria-label={`${historyTitle(row)}${historySubtitle(row) ? ` ${historySubtitle(row)}` : ''}`}
                     aria-describedby={metaId} onClick={() => leave(() => onSelect(row))}>
                     <span className={styles.title}>{historyTitle(row)}</span>
-                    <span id={metaId} className={styles.meta} title={historySubtitle(row)}>{historyMetaText(row, timeZone)}</span>
+                    <span id={metaId} className={styles.meta} title={historySubtitle(row)}>{historyMetaText(row, formatters)}</span>
                   </button>
                   {onArchive !== undefined && row.kind === 'agent' && row.isLead !== true && <ConversationArchiveAction
                     conversation={row} onArchive={onArchive} className={styles.conversationActions} />}

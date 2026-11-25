@@ -1,11 +1,11 @@
-import type { DialogOrigin } from '../../ui/dialog/public.tsx';
-import { floatingControlClassName } from '../../ui/floating-control/public.ts';
-import { Icon } from '../../ui/icon/public.tsx';
+import type { DialogOrigin } from '../../../ui/dialog/public.tsx';
+import { floatingControlClassName } from '../../../ui/floating-control/public.ts';
+import { Icon } from '../../../ui/icon/public.tsx';
 import { type Ref, type RefCallback } from 'react';
-import type { Area } from '../../../../core/domain/area.ts';
-import { MobileHeader } from '../../ui/mobile-header/public.tsx';
+import type { Area } from '../../../../../core/domain/area.ts';
+import { MobileHeader } from '../../../ui/mobile-header/public.tsx';
 import { AreaSelector } from './area-selector.tsx';
-import styles from './mobile-header.module.css';
+import styles from './header.module.css';
 
 export function MobileWorkspaceHeader({
   areas, activeArea, draftArea, navigationOpen, onOpenNavigation, onSelectArea, onCreateArea,

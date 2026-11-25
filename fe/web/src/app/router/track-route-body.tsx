@@ -71,7 +71,7 @@ import { useTrackMutations } from '../providers/track-mutations.ts';
 import { trackToolsQueryOptions } from '../providers/track-queries.ts';
 import { useUiPreferences } from '../providers/ui-preferences.tsx';
 import { useMobileConversationOwner,useMobileHeaderActionsHost,useMobileHeaderTitleHost,useOpenMobileSection } from '../shell/public.tsx';
-import { TrackSelector } from '../shell/track-selector.tsx';
+import { TrackSelector } from '../shell/mobile/track-selector.tsx';
 import dailyStyles from './daily-planner.module.css';
 import { type DailyCenterPresentation } from './daily-planner.tsx';
 import mobileChatStyles from './mobile-chat.module.css';

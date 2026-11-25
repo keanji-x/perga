@@ -1,5 +1,5 @@
 import type { ComponentType } from 'react';
-import { Forward, Copy, Check, ChartColumn, Search, Star, ArrowLeft, ArrowRightLeft, ArrowUp, Bell, BookOpen, Bot, CalendarDays, ChevronDown, ChevronLeft, ChevronRight, Circle, CircleCheck, CircleStop, CircleX, Clock3, Ellipsis, File, Folder, FolderOpen, Link2, ListChecks, Maximize, Menu, MessageSquare, Minimize, NotebookPen, PanelLeft, PanelRight, Paperclip, Pin, Plus, RotateCcw, SquareTerminal, Settings, Wrench, Trash2, X, Icon as LucideIcon, type LucideProps } from 'lucide-react';
+import { Forward, Copy, Check, ChartColumn, Search, Star, ArrowLeft, ArrowUp, Bell, BookOpen, Bot, CalendarDays, ChevronDown, ChevronLeft, ChevronRight, Circle, CircleCheck, CircleStop, CircleX, Clock3, Ellipsis, File, Folder, FolderOpen, Link2, ListChecks, Maximize, Menu, MessageSquare, Minimize, NotebookPen, PanelLeft, PanelRight, Paperclip, Pin, Plus, RotateCcw, SquareTerminal, Settings, Wrench, Trash2, X, Icon as LucideIcon, type LucideProps } from 'lucide-react';
 import { PROVIDER_GLYPHS, type GlyphNode } from './provider-glyphs.ts';
 import styles from './icon.module.css';
 
@@ -50,7 +50,6 @@ const glyphs = Object.freeze({
   'compact': (props: LucideProps) => <Minimize {...props} />,
   'menu': (props: LucideProps) => <Menu {...props} />,
   'reset': (props: LucideProps) => <RotateCcw {...props} />,
-  'switch': (props: LucideProps) => <ArrowRightLeft {...props} />,
   'claude': (props: LucideProps) => <SvgGlyph {...props} nodes={PROVIDER_GLYPHS.claude} />,
   'codex': (props: LucideProps) => <SvgGlyph {...props} nodes={PROVIDER_GLYPHS.codex} />,
 } satisfies Readonly<Record<string, ComponentType<LucideProps>>>);

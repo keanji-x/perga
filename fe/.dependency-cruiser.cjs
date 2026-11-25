@@ -25,6 +25,9 @@ module.exports = {
     // Today reads the viewport bit only in `viewport-dispatch.tsx`, which is generic in both
     // prop packs and cannot render a prop the compact ledger says the phone does not draw.
     { name: 'today-viewport-bit-in-dispatcher-only', severity: 'error', from: { path: '^web/src/features/today/', pathNot: '^web/src/features/today/viewport-dispatch\\.tsx$' }, to: { path: '^web/src/ui/viewport/' } },
+    // Desktop and mobile shell chromes share only the shell root kernel; they never import each other.
+    { name: 'shell-desktop-no-mobile', severity: 'error', from: { path: '^web/src/app/shell/desktop/' }, to: { path: '^web/src/app/shell/mobile/' } },
+    { name: 'shell-mobile-no-desktop', severity: 'error', from: { path: '^web/src/app/shell/mobile/' }, to: { path: '^web/src/app/shell/desktop/' } },
     { name: 'not-to-unresolvable', severity: 'error', from: {}, to: { couldNotResolve: true } },
     { name: 'no-circular', severity: 'error', from: {}, to: { circular: true } },
   ],

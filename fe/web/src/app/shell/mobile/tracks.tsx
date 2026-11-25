@@ -1,21 +1,21 @@
-import { MobileTrackList } from './mobile-track-list.tsx';
+import { MobileTrackList } from './track-list.tsx';
 // Both navigation levels share their header and actions. Choosing an Area
 // scopes the Track list; only opening a Track changes the page underneath.
 import { useLayoutEffect, useRef } from 'react';
-import { useState } from '../../ui/state/public.ts';
-import { useEdgePresence } from '../../ui/motion/edge-presence.ts';
-import { readSurfaceFrame } from '../../ui/motion/geometry.ts';
-import { visibleAreas, type Area } from '../../../../core/domain/area.ts';
-import { areaPinnedTracks, type Track } from '../../../../core/domain/track.ts';
-import { ErrorBox } from '../../ui/error-box/public.tsx';
-import { Icon } from '../../ui/icon/public.tsx';
-import { LoadingStatus } from '../../ui/loading-status/public.tsx';
-import { MobileList, MobileListEmpty, MobileListGroup, MobileListItem } from '../../ui/mobile-list/public.tsx';
-import { MobileNavigationCreateAction, MobileNavigationHeader, type MobileNavigationActions } from './mobile-navigation-header.tsx';
-import styles from './mobile-navigation.module.css';
-import { type TrackActionsProps } from '../../features/track/row/actions.tsx';
-import { useUiPreferences } from '../providers/ui-preferences.tsx';
-import { MobilePrimaryPages } from './mobile-pages.tsx';
+import { useState } from '../../../ui/state/public.ts';
+import { useEdgePresence } from '../../../ui/motion/edge-presence.ts';
+import { readSurfaceFrame } from '../../../ui/motion/geometry.ts';
+import { visibleAreas, type Area } from '../../../../../core/domain/area.ts';
+import { areaPinnedTracks, type Track } from '../../../../../core/domain/track.ts';
+import { ErrorBox } from '../../../ui/error-box/public.tsx';
+import { Icon } from '../../../ui/icon/public.tsx';
+import { LoadingStatus } from '../../../ui/loading-status/public.tsx';
+import { MobileList, MobileListEmpty, MobileListGroup, MobileListItem } from '../../../ui/mobile-list/public.tsx';
+import { MobileNavigationCreateAction, MobileNavigationHeader, type MobileNavigationActions } from './navigation-header.tsx';
+import styles from './navigation.module.css';
+import { type TrackActionsProps } from '../../../features/track/row/actions.tsx';
+import { useUiPreferences } from '../../providers/ui-preferences.tsx';
+import { MobilePrimaryPages } from './pages.tsx';
 
 type MobileTracksProps = Readonly<{
   view: 'areas' | 'tracks';

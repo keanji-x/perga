@@ -1,6 +1,6 @@
 import { useReadReceipts } from '../providers/read-receipts.tsx';
 import { sidebarTrackGroups } from './sidebar-track-groups.ts';
-import { Sidebar as SidebarView, type SidebarProps as ViewProps } from './sidebar.tsx';
+import { Sidebar as SidebarView, type SidebarProps as ViewProps } from './desktop/sidebar.tsx';
 
 export type SidebarFixtureProps = Omit<ViewProps, 'trackGroups'>;
 

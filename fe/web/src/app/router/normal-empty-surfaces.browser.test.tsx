@@ -9,8 +9,8 @@ import { afterEach, expect, it } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import { createUiPreferences } from '../providers/ui-preferences.tsx';
 import { renderDailyFixture } from './daily-planner-fixture.tsx';
-import { MobilePages } from '../shell/mobile-pages.tsx';
-import { MobileTracks } from '../shell/mobile-tracks.tsx';
+import { MobilePages } from '../shell/mobile/pages.tsx';
+import { MobileTracks } from '../shell/mobile/tracks.tsx';
 import { ChatEmpty } from '../../features/chat/thread/public.tsx';
 import { ReportDocument } from '../../features/report/document/public.tsx';
 it('catalog historical day without Track', async () => {
