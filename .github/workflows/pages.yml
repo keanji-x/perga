@@ -6,6 +6,11 @@ on:
     paths:
       - 'site/**'
       - 'install.sh'
+      - 'templates/equity-research/widgets/range-axis.html'
+      - 'src/Perga.Kernel/Templates/Memory/widgets/entries.html'
+      - 'fe/web/src/styles/**'
+      - 'fe/web/src/features/report/flow/**'
+      - 'fe/web/src/features/report/editorial/**'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 
@@ -25,16 +30,25 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
-      - name: Assemble static site with canonical install.sh
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: fe/package-lock.json
+      - name: Install frontend dependencies
+        working-directory: fe
+        run: npm ci
+      - name: Build GitHub Pages site with real Perga UI components
         run: |
-          mkdir -p _site
-          cp -R site/. _site/
-          install -m 644 install.sh _site/install.sh
-          test -s _site/index.html
-          test -s _site/install.sh
+          (cd fe && npx vite build --config ../site/vite.config.mjs)
+          install -m 644 install.sh site/dist/install.sh
+          test -s site/dist/index.html
+          test -s site/dist/install.sh
+          test -s site/dist/widgets/range-axis.html
+          test -s site/dist/widgets/entries.html
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: _site
+          path: site/dist
 
   deploy:
     environment:
