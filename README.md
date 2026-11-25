@@ -8,10 +8,9 @@ Self-contained native packages for **macOS on Apple Silicon (`arm64`)** and **Li
 
 Perga moves multi-day and multi-week work — maintaining a repository, driving engineering OKRs, or running ongoing investment research — out of drifting chat sessions. Each goal gets its own isolated **Track**: conversation stays in the side pane while the main view continuously distills a read-only living report backed by kernel-verified facts. Orchestrate parallel workers across the CLIs you already use (**Claude Code, Codex, Antigravity, OpenCode, Kimi, Qwen, Devin, Factory, Grok, CodeBuddy, Qoder**, and more) with lightweight protocols, enforced cross-model review, background external watches, and shared human-AI Markdown memory.
 
-<!--
-MEDIA SLOT: Once you capture your real desktop screenshot / 60s demo clip, place them in docs/assets/ and uncomment:
-![Perga workspace: living report, flow graph, shared memory, and side-pane worker steering](docs/assets/hero.png)
--->
+![Perga workspace: living report, parallel multi-model flow, PR CI watch, and side-pane Lead steering](docs/assets/hero.png)
+
+*A multi-worker delivery Track: living report and 4-stage flow (`Claude Sonnet 5.5` + `Gemini 4 Neon` workers, read-only `GPT-6.2 Astra` audit, PR CI watch) in the main pane, with `Lead` steering (`Claude Opus 5.5`) in the margin.*
 
 ## Key Capabilities
 
@@ -28,6 +27,15 @@ MEDIA SLOT: Once you capture your real desktop screenshot / 60s demo clip, place
 - [`okr-loop`](templates/okr-loop) — Stable Objective, four-column KR ledger (`builtin:table`) with kernel-stamped updates, daily `cron` metric collection, enforced triage routing, and `builtin:flow` tracking.
 - [`equity-research`](templates/equity-research) — Frameless valuation range axis, event expectation timeline (`builtin:list`), evergreen thesis notes, weekly `cron` valuation refresh, on-demand `at` event checks, and enforced cross-model review routing.
 - [`memory`](src/Perga.Kernel/Templates/Memory) — Dedicated Memory Planner track layout for managing pinned rules, topic index entries, and maintenance flows across an Area or Global scope.
+
+<details>
+<summary>Preview: <code>equity-research</code> Track (custom valuation range widget &amp; expectation chronicle)</summary>
+
+<br>
+
+![Perga Equity Research Track: custom valuation range axis and expectation chronicle](docs/assets/equity-research.png)
+
+</details>
 
 ## Quickstart
 
