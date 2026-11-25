@@ -5,9 +5,9 @@ import { page, userEvent } from 'vitest/browser';
 import '../../styles/entry.css';
 import { TrackRow } from '../../features/track/row/public.tsx';
 import { renderPage, track } from '../../features/track/page/test-fixtures.tsx';
-import { TrackSelector } from './track-selector.tsx';
-import { MobilePages } from './mobile-pages.tsx';
-import { MobileTracks } from './mobile-tracks.tsx';
+import { TrackSelector } from './mobile/track-selector.tsx';
+import { MobilePages } from './mobile/pages.tsx';
+import { MobileTracks } from './mobile/tracks.tsx';
 import type { Area } from '../../../../core/domain/area.ts';
 import { TrackTitle } from '../../features/track/title/public.tsx';
 

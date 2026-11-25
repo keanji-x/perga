@@ -66,7 +66,7 @@ vi.mock('../router/navigation.ts', async (importOriginal) => ({
   useGoSameTrack: () => vi.fn(),
   routeParamFromPath: () => undefined,
 }));
-vi.mock('./sidebar.tsx', () => ({ Sidebar: ({ collapsed, onToggleCollapsed }: {
+vi.mock('./desktop/sidebar.tsx', () => ({ Sidebar: ({ collapsed, onToggleCollapsed }: {
   collapsed: boolean; onToggleCollapsed: () => void;
 }) => <button type="button" aria-expanded={!collapsed} onClick={onToggleCollapsed}>{collapsed ? 'Expand' : 'Collapse'}</button> }));
 

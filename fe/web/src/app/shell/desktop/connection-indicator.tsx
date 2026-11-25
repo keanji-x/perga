@@ -1,7 +1,7 @@
 import { Tooltip } from '@astryxdesign/core/Tooltip';
 import { Popover } from '@astryxdesign/core/Popover';
-import { useState } from '../../ui/state/public.ts';
-import { useConnectionStatus } from '../providers/connection-status.tsx';
+import { useState } from '../../../ui/state/public.ts';
+import { useConnectionStatus } from '../../providers/connection-status.tsx';
 import styles from './connection-indicator.module.css';
 
 /** Connection health and workspace read failures share one quiet disclosure; each error is the read rule's sentence. */

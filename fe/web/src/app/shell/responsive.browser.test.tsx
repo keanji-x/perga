@@ -3,7 +3,8 @@ import { page } from 'vitest/browser';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import '../../styles/entry.css';
-import mobileStyles from './mobile-shell.module.css';
+import sidebarStyles from './desktop/sidebar.module.css';
+import mobileStyles from './mobile/shell.module.css';
 import styles from './shell.module.css';
 import { setup } from './mobile-browser-fixture.tsx';
 import { playSpring, playTrajectory, type Playback } from '../../ui/motion/spring.ts';
@@ -31,7 +32,7 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.clearAllMocks(); document.
 
 describe('responsive shell layout', () => {
   it('renders the brand mark as a crisp theme-owned square mask', () => {
-    render(<span data-testid="brand-mark" className={styles.brandMark} />);
+    render(<span data-testid="brand-mark" className={sidebarStyles.brandMark} />);
     const mark = document.querySelector('[data-testid="brand-mark"]')!;
     const box = mark.getBoundingClientRect();
     const style = getComputedStyle(mark);

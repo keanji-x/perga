@@ -4,7 +4,7 @@ import { page } from 'vitest/browser';
 import { afterEach, expect, it, vi } from 'vitest';
 import '../../styles/entry.css';
 import { NEUTRAL_ACTIVITY, type Track } from '../../../../core/domain/track.ts';
-import { SidebarTrackGroup } from './sidebar-group.tsx';
+import { SidebarTrackGroup } from './desktop/sidebar-group.tsx';
 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 

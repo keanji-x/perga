@@ -1,7 +1,7 @@
 import { useCallback, useEffect } from 'react';
 
-import type { Area } from '../../../../core/domain/area.ts';
-import { useState } from '../../ui/state/public.ts';
+import type { Area } from '../../../../../core/domain/area.ts';
+import { useState } from '../../../ui/state/public.ts';
 
 /** Routes can reopen an Area's Tracks or recent Pages; the primary entry starts at Areas. */
 export type MobileSection =

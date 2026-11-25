@@ -1,6 +1,6 @@
 import type { RefObject } from 'react';
-import { useEdgePresence } from '../../ui/motion/edge-presence.ts';
-import { readSurfaceFrame } from '../../ui/motion/geometry.ts';
+import { useEdgePresence } from '../../../ui/motion/edge-presence.ts';
+import { readSurfaceFrame } from '../../../ui/motion/geometry.ts';
 
 /** Retain exit paint through Motion; interaction ends at the close commit. */
 export function useMobileNavigationPresence(

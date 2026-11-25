@@ -1,15 +1,15 @@
-import type { DialogOrigin } from '../../ui/dialog/public.tsx';
+import type { DialogOrigin } from '../../../ui/dialog/public.tsx';
 // Area-owned membership and actions, composed into the shared sidebar group.
 import { DropdownMenuItem } from '@astryxdesign/core/DropdownMenu';
 
-import type { Area } from '../../../../core/domain/area.ts';
-import { areaPinnedTracks, railAreaTracks, type Track } from '../../../../core/domain/track.ts';
-import { Icon } from '../../ui/icon/public.tsx';
-import { ListText } from '../../ui/list-typography/public.tsx';
+import type { Area } from '../../../../../core/domain/area.ts';
+import { areaPinnedTracks, railAreaTracks, type Track } from '../../../../../core/domain/track.ts';
+import { Icon } from '../../../ui/icon/public.tsx';
+import { ListText } from '../../../ui/list-typography/public.tsx';
 import { SidebarTrackGroup, type RowProps, type GroupManagement } from './sidebar-group.tsx';
-import styles from './shell.module.css';
-import { navigationRowPresentation, navigationRowClass as rowLayout } from '../../ui/navigation-row/public.ts';
-import { useUiPreferences } from '../providers/ui-preferences.tsx';
+import styles from './sidebar.module.css';
+import { navigationRowPresentation, navigationRowClass as rowLayout } from '../../../ui/navigation-row/public.ts';
+import { useUiPreferences } from '../../providers/ui-preferences.tsx';
 import ownStyles from './area-group.module.css';
 
 export function AreaGroup({

@@ -3,9 +3,9 @@ import { cleanup, render } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { NEUTRAL_ACTIVITY } from '../../../../core/domain/track.ts';
-import { MobileTrackList } from './mobile-track-list.tsx';
-import { MobileHistory } from './mobile-history.tsx';
-import { AreaSelector } from './area-selector.tsx';
+import { MobileTrackList } from './mobile/track-list.tsx';
+import { MobileHistory } from './mobile/history.tsx';
+import { AreaSelector } from './mobile/area-selector.tsx';
 
 afterEach(() => { cleanup(); delete document.documentElement.dataset.theme; });
 

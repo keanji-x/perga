@@ -1,14 +1,14 @@
-import type { EmptyStateSchema } from '../../ui/empty-state/public.tsx';
+import type { EmptyStateSchema } from '../../../ui/empty-state/public.tsx';
 import { useId } from 'react';
-import type { Track } from '../../../../core/domain/track.ts';
-import { isClosed, trackActivityState, trackDisplayTitle } from '../../../../core/domain/track.ts';
-import { activityLabelOf, activityNameBit } from '../../../../core/domain/activity.ts';
-import { TrackTitle } from '../../features/track/title/public.tsx';
-import { TrackActions, type TrackActionsProps } from '../../features/track/row/actions.tsx';
-import { ActivityIndicator } from '../../ui/activity-indicator/public.tsx';
-import { Icon } from '../../ui/icon/public.tsx';
-import { MobileList, MobileListEmpty } from '../../ui/mobile-list/public.tsx';
-import styles from './mobile-navigation.module.css';
+import type { Track } from '../../../../../core/domain/track.ts';
+import { isClosed, trackActivityState, trackDisplayTitle } from '../../../../../core/domain/track.ts';
+import { activityLabelOf, activityNameBit } from '../../../../../core/domain/activity.ts';
+import { TrackTitle } from '../../../features/track/title/public.tsx';
+import { TrackActions, type TrackActionsProps } from '../../../features/track/row/actions.tsx';
+import { ActivityIndicator } from '../../../ui/activity-indicator/public.tsx';
+import { Icon } from '../../../ui/icon/public.tsx';
+import { MobileList, MobileListEmpty } from '../../../ui/mobile-list/public.tsx';
+import styles from './navigation.module.css';
 
 /** The same Track row, actions and activity semantics in workspace navigation and sidebar shortcuts. */
 export function MobileTrackList({ tracks, currentTrackId, onOpenTrack, isUnread, trackActions, emptyState }: Readonly<{

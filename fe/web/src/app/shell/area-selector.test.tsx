@@ -4,7 +4,7 @@ import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { Area } from '../../../../core/domain/area.ts';
-import { AreaSelector } from './area-selector.tsx';
+import { AreaSelector } from './mobile/area-selector.tsx';
 
 const area: Area = {
   id: 'live', name: 'Live area', color: 'blue', sort: 0, kind: 'user',

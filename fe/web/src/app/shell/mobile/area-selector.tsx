@@ -1,9 +1,9 @@
 import { useRef } from 'react';
-import type { DialogOrigin } from '../../ui/dialog/public.tsx';
+import type { DialogOrigin } from '../../../ui/dialog/public.tsx';
 import { Button } from '@astryxdesign/core/Button';
-import { Icon } from '../../ui/icon/public.tsx';
-import { visibleAreas, type Area } from '../../../../core/domain/area.ts';
-import { Menu } from '../../ui/menu/public.tsx';
+import { Icon } from '../../../ui/icon/public.tsx';
+import { visibleAreas, type Area } from '../../../../../core/domain/area.ts';
+import { Menu } from '../../../ui/menu/public.tsx';
 import styles from './area-selector.module.css';
 
 /** The caller owns whether selection navigates or just changes a list's scope. */

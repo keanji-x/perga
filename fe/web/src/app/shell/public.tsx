@@ -17,12 +17,12 @@ import { useCommittedCallback } from '../../ui/state/committed-callback.ts';
 import { useState } from '../../ui/state/public.ts';
 import { useCompactViewport, useVisibleViewport } from '../../ui/viewport/public.ts';
 import { AreaEditorDialog } from './area-editor-dialog.tsx';
-import { DesktopShellChrome } from './desktop-shell-chrome.tsx';
-import { MobileShellChrome } from './mobile-shell-chrome.tsx';
+import { DesktopShellChrome } from './desktop/public.tsx';
+import { MobileShellChrome } from './mobile/public.tsx';
 import { SettingsOverlay } from './settings-overlay.tsx';
 import styles from './shell.module.css';
 import { SystemUpgradeBannerHost } from './system-upgrade-banner.tsx';
-import { useMobileNavigation, type OpenMobileSection } from './use-mobile-navigation.ts';
+import { useMobileNavigation, type OpenMobileSection } from './mobile/use-navigation.ts';
 import { useShellController } from './use-shell-controller.ts';
 
 type Scope = Readonly<{

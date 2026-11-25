@@ -1,7 +1,7 @@
-import { TrackTitle } from '../../features/track/title/public.tsx';
-import { trackDisplayTitle, type Track } from '../../../../core/domain/track.ts';
-import { Icon } from '../../ui/icon/public.tsx';
-import type { EditableTitleProps } from '../../ui/editable-title/public.tsx';
+import { TrackTitle } from '../../../features/track/title/public.tsx';
+import { trackDisplayTitle, type Track } from '../../../../../core/domain/track.ts';
+import { Icon } from '../../../ui/icon/public.tsx';
+import type { EditableTitleProps } from '../../../ui/editable-title/public.tsx';
 import styles from './area-selector.module.css';
 
 /** The title opens the existing workspace page; title editing stays with its owner. */

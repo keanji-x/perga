@@ -3,7 +3,7 @@ import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Conversation } from '../../../../core/domain/conversation.ts';
-import { MobileHistory } from './mobile-history.tsx';
+import { MobileHistory } from './mobile/history.tsx';
 
 let originalShowModal: PropertyDescriptor | undefined;
 let originalClose: PropertyDescriptor | undefined;

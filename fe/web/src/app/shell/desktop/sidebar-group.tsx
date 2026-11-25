@@ -1,21 +1,21 @@
-import { EmptyState, type EmptyStateSchema } from '../../ui/empty-state/public.tsx';
-import type { DialogOrigin } from '../../ui/dialog/public.tsx';
+import { EmptyState, type EmptyStateSchema } from '../../../ui/empty-state/public.tsx';
+import type { DialogOrigin } from '../../../ui/dialog/public.tsx';
 // Shared disclosure and Track list for every desktop sidebar group.
 import { useEffect, useRef, type ReactNode } from 'react';
 import { DropdownMenu, DropdownMenuItem, DropdownMenuDivider } from '@astryxdesign/core/DropdownMenu';
-import type { SidebarMove } from '../../../../core/view/sidebar-layout.ts';
+import type { SidebarMove } from '../../../../../core/view/sidebar-layout.ts';
 import { useCollapsible } from '@astryxdesign/core/Collapsible';
 
-import { areaOf, type Area } from '../../../../core/domain/area.ts';
-import { AREA_TRACK_LIMIT, limitAreaTracks, type Track } from '../../../../core/domain/track.ts';
-import { TrackRow } from '../../features/track/row/public.tsx';
-import { SpringRotation } from '../../ui/motion/rotation.tsx';
-import { Icon, type IconName } from '../../ui/icon/public.tsx';
-import { ListText } from '../../ui/list-typography/public.tsx';
-import { useState } from '../../ui/state/public.ts';
-import type { NavTarget } from '../router/navigation.ts';
-import styles from './shell.module.css';
-import { navigationRowClass as rowLayout, navigationRowPresentation, type NavigationEntrySpec } from '../../ui/navigation-row/public.ts';
+import { areaOf, type Area } from '../../../../../core/domain/area.ts';
+import { AREA_TRACK_LIMIT, limitAreaTracks, type Track } from '../../../../../core/domain/track.ts';
+import { TrackRow } from '../../../features/track/row/public.tsx';
+import { SpringRotation } from '../../../ui/motion/rotation.tsx';
+import { Icon, type IconName } from '../../../ui/icon/public.tsx';
+import { ListText } from '../../../ui/list-typography/public.tsx';
+import { useState } from '../../../ui/state/public.ts';
+import type { NavTarget } from '../../router/navigation.ts';
+import styles from './sidebar.module.css';
+import { navigationRowClass as rowLayout, navigationRowPresentation, type NavigationEntrySpec } from '../../../ui/navigation-row/public.ts';
 import ownStyles from './area-group.module.css';
 
 /** Reveal both shell-owned scrollports without moving an embedding host. */
