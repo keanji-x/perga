@@ -15,9 +15,9 @@ export function withEmptyTrigger(trigger: Omit<ChatComposerTrigger, 'emptySearch
 export function withEmptyTriggerMarker(trigger: ChatComposerTrigger): ChatComposerTrigger {
   const empty = trigger.emptySearchText;
   if (empty === '') return trigger;
-  if (isValidElement(empty) && (empty.type === EmptyState || (typeof empty.props === 'object' && empty.props !== null && 'data-nc-empty-state' in empty.props))) {
-    return trigger;
-  }
+  // Astryx hides unmatched multi-word menus when `emptySearchText` is nullish; preserve that behavior.
+  if (empty == null && trigger.hasMultiWordQuery === true) return trigger;
+  if (isValidElement(empty) && empty.type === EmptyState) return trigger;
   return {
     ...trigger,
     emptySearchText: <span data-nc-empty-state="">{empty ?? 'No results'}</span>,
