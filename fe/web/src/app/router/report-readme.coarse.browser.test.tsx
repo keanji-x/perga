@@ -26,11 +26,15 @@ it('opens a Track conversation from a mobile Report file and returns to the same
   expect(bounds.height).toBeGreaterThanOrEqual(44);
   await page.screenshot({ path: './__screenshots__/report-readme-mobile-chat-entry.png' });
 
-  const documentView = file.element();
+  const documentView = file.element() as HTMLElement;
   documentView.scrollTop = 240;
   const scrollTop = documentView.scrollTop;
   expect(scrollTop).toBeGreaterThan(0);
   const historyLength = router.history.length;
+  // Some browsers activate a tapped button without first transferring focus.
+  documentView.focus({ preventScroll: true });
+  await expect.element(file).toHaveFocus();
+  button.addEventListener('mousedown', event => event.preventDefault(), { once: true });
   await commands.tap('button[aria-label="Open conversation"]');
   const chat = page.getByRole('dialog', { name: 'Existing conversation', exact: true });
   await expect.element(chat.getByText('Conversation remains available while reading documentation.')).toBeVisible();

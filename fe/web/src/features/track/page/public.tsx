@@ -502,7 +502,11 @@ export function TrackPage({ fillReading = false, articleMasthead = !fillReading,
           backRef={mobileBackRef}
           actions={compactViewport && fileOpen && onReply !== undefined ? (
             <button type="button" className={styles.mobileFileChatAction}
-              aria-label="Open conversation" aria-haspopup="dialog" onClick={onReply}>
+              aria-label="Open conversation" aria-haspopup="dialog"
+              onClick={event => {
+                event.currentTarget.focus({ preventScroll: true });
+                onReply();
+              }}>
               <Icon name="chat" />
             </button>
           ) : headerActionsHost === null ? mobileActions : undefined}
