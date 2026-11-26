@@ -278,24 +278,26 @@ jobs:
             perga-darwin-arm64.tar.gz.sha256
             install.sh
           )
+          expected_prerelease=false
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+            expected_prerelease=true
+          fi
           if is_draft=$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft' 2>/dev/null); then
             gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber "${assets[@]}"
             if [[ "$is_draft" == "true" ]]; then
-              edit_flags=(--draft=false)
-              if [[ "$GITHUB_REF_NAME" == *-* ]]; then
-                edit_flags+=(--prerelease)
-              fi
-              gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" "${edit_flags[@]}"
+              gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+                --draft=false --prerelease="$expected_prerelease"
             fi
           else
             flags=(--verify-tag --generate-notes --notes-file release-notes.md)
-            if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+            if [[ "$expected_prerelease" == "true" ]]; then
               flags+=(--prerelease)
             fi
             gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" "${flags[@]}" "${assets[@]}"
           fi
-          published_draft=$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')
-          if [[ "$published_draft" != "false" ]]; then
-            echo "error: release ${GITHUB_REF_NAME} is still in draft state after publish." >&2
+          published_state=$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --json isDraft,isPrerelease --jq '"\(.isDraft):\(.isPrerelease)"')
+          if [[ "$published_state" != "false:${expected_prerelease}" ]]; then
+            echo "error: release ${GITHUB_REF_NAME} ended in unexpected state '${published_state}' (expected 'false:${expected_prerelease}')." >&2
             exit 1
           fi
