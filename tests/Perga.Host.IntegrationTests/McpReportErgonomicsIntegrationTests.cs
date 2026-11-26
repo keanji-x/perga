@@ -266,6 +266,25 @@ public sealed class McpReportErgonomicsIntegrationTests
             new { op = "upsert", id = "tail", sectionH1 = "Tail", markdown = "Tail body." }
         ]);
         var originalAnchor = initial.GetProperty("anchor");
+        (object Op, string Message)[] invalidEdits =
+        [
+            (new { op = "replace_section", sectionH1 = "Progress", newSectionH1 = "First\nSecond" },
+                "'newSectionH1' must be a single line."),
+            (new { op = "edit_block", id = "notes", target = "Missing text", replacement = "" },
+                "Target text was not found in block 'notes'.")
+        ];
+        foreach (var (op, message) in invalidEdits)
+        {
+            var (errorText, isValidationError) = await McpKernelAndVcsIntegrationTests.CallToolAsync(
+                cluster, "/mcp/kernel", token, KernelMcpToolNames.ReportCommit,
+                new { anchor = originalAnchor, ops = new[] { op } }, ct);
+            Assert.True(isValidationError, errorText);
+            using var errorDoc = JsonDocument.Parse(errorText);
+            Assert.Equal("invalid_argument", errorDoc.RootElement.GetProperty("code").GetString());
+            Assert.Equal(400, errorDoc.RootElement.GetProperty("status").GetInt32());
+            Assert.Equal(message, errorDoc.RootElement.GetProperty("error").GetString());
+        }
+
         var updated = await Commit(originalAnchor,
         [
             new { op = "edit_block", id = "notes", target = "typo", replacement = "ready" },

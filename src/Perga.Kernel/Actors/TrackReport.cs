@@ -127,11 +127,36 @@ public sealed partial class TrackActor
             PreviewReportCommitCore(string callerSessionId, ReportCommitRequest request)
         {
             var editorRole = actor.RequireSessionCore(callerSessionId).IsLead ? "lead" : "subagent";
-            var preview = actor._reportEngine.ApplyCommit(_report, request.Anchor, request.Ops, request.Summary);
+            ReportCommitResult preview;
+            try
+            {
+                preview = actor._reportEngine.ApplyCommit(_report, request.Anchor, request.Ops, request.Summary);
+            }
+            catch (ArgumentException ex)
+            {
+                throw KernelException.InvalidArgument(CleanArgumentMessage(ex));
+            }
+            catch (KeyNotFoundException ex)
+            {
+                throw KernelException.InvalidArgument(ex.Message);
+            }
+
             ReportAuthoring.Validate(preview.NextDocument, _report);
             var diagnostics = ReportWidgetValidator.Diagnose(
                 preview.NextDocument, actor._policy, actor._policyVm, actor._track.TemplateInputs, _report, rejectInvalidChanges: true);
             return (preview, editorRole, diagnostics);
+        }
+
+        private static string CleanArgumentMessage(ArgumentException ex)
+        {
+            var message = ex.Message;
+            if (ex.ParamName is not { Length: > 0 } paramName)
+            {
+                return message;
+            }
+
+            var suffix = $" (Parameter '{paramName}')";
+            return message.EndsWith(suffix, StringComparison.Ordinal) ? message[..^suffix.Length] : message;
         }
 
         private async Task<ReportReadResult> FinalizeReportCommitCoreAsync(
