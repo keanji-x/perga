@@ -444,10 +444,12 @@
     .mobileOriginTitle {
       display: flex;
       align-items: center;
+      justify-content: center;
+      inline-size: 100%;
     }
 
     .mobileOriginTitle > :first-child {
-      flex: 1;
+      flex: 0 1 auto;
       min-inline-size: 0;
     }
 
@@ -629,12 +631,61 @@
     .mobileChatInput { flex: 1; min-inline-size: 0; }
     .mobileReportChatDock {
       position: fixed;
-      inset-inline: calc(var(--space-4) + var(--rail-w-collapsed) + var(--space-1) + var(--space-2)) var(--space-4);
+      inset-inline: var(--space-4) var(--space-4);
       inset-block-end: calc(var(--mobile-keyboard-inset, 0px) + env(safe-area-inset-bottom) + var(--space-4));
       z-index: var(--z-sticky);
       display: flex;
       align-items: center;
       gap: var(--space-2);
+    }
+
+    .mobileDocHeader {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-2);
+      padding-block: var(--space-1) var(--space-3);
+    }
+
+    .mobileDocMeta {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: var(--space-2);
+    }
+
+    .mobileDocAreaChip {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--space-1);
+      padding: var(--space-half) var(--space-2);
+      border-radius: var(--radius-pill);
+      background: var(--surface-card);
+      border: 1px solid color-mix(in srgb, var(--hairline) 75%, transparent);
+      font: var(--type-metadata);
+      font-weight: var(--weight-medium);
+      color: var(--text-2);
+    }
+
+    .mobileDocAreaDot {
+      inline-size: var(--dot-sm);
+      block-size: var(--dot-sm);
+      border-radius: var(--radius-pill);
+      background: var(--accent);
+    }
+
+    .mobileDocDate {
+      font: var(--type-metadata);
+      color: var(--text-3);
+    }
+
+    .mobileDocTitle {
+      margin: 0;
+      font-family: var(--font-sans);
+      font-size: var(--font-step-5-size);
+      font-weight: var(--weight-bold);
+      line-height: 1.25;
+      letter-spacing: -0.015em;
+      color: var(--text);
     }
 
     .mobileReportChatFab {

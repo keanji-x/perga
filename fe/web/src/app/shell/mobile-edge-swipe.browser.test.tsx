@@ -16,12 +16,12 @@ function edgeNode() {
   edge.setAttribute('data-test-native-edge', '');
   return edge;
 }
-const historyOpen = () => document.querySelector<HTMLDialogElement>('dialog#mobile-conversation-history')?.open ?? false;
+const workspaceOpen = () => document.querySelector<HTMLElement>('#mobile-workspace-navigation')?.getAttribute('role') === 'dialog';
 
 it('invalidates native touch origin across Settings disabled and enabled commits', async () => {
   await page.viewport(390, 844);
   const router = setup('/track/w1');
-  await page.getByRole('button', { name: 'Open conversation history' }).findElement();
+  await page.getByRole('button', { name: 'Back to Focus' }).findElement();
   const edge = edgeNode();
   const events: string[] = [];
   for (const type of ['pointerdown', 'pointerup', 'pointercancel']) edge.addEventListener(type, event => events.push(event.type));
@@ -36,23 +36,23 @@ it('invalidates native touch origin across Settings disabled and enabled commits
   await commands.nativeEdgeTouch('touchEnd', 100);
   expect(events).toEqual(['pointerdown', 'pointerup']);
   await new Promise(requestAnimationFrame);
-  expect(historyOpen()).toBe(false);
+  expect(workspaceOpen()).toBe(false);
   await commands.nativeEdgeTouch('touchStart', 4);
   await commands.nativeEdgeTouch('touchMove', 100);
   await commands.nativeEdgeTouch('touchEnd', 100);
-  await expect.poll(historyOpen).toBe(true);
+  await expect.poll(workspaceOpen).toBe(true);
 });
 
 it('native cancel consumes origin and a new native down remains admitted', async () => {
   await page.viewport(390, 844);
   setup('/track/w1');
-  await page.getByRole('button', { name: 'Open conversation history' }).findElement();
+  await page.getByRole('button', { name: 'Back to Focus' }).findElement();
   edgeNode();
   await commands.nativeEdgeTouch('touchStart', 4);
   await commands.nativeEdgeTouch('touchCancel', 4);
-  expect(historyOpen()).toBe(false);
+  expect(workspaceOpen()).toBe(false);
   await commands.nativeEdgeTouch('touchStart', 4);
   await commands.nativeEdgeTouch('touchMove', 100);
   await commands.nativeEdgeTouch('touchEnd', 100);
-  await expect.poll(historyOpen).toBe(true);
+  await expect.poll(workspaceOpen).toBe(true);
 });

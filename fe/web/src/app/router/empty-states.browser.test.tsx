@@ -13,8 +13,8 @@ async function settle() {
 
 it.each([1440, 390, 320])('keeps the empty daily report and conversation reachable at %i', async (width) => {
   await page.viewport(width, 900);
-  renderDailyFixture({ reportBody: '' });
-  await expect.element(page.getByRole('heading', { name: width >= 960 ? 'What would you like to move forward today?' : 'Today’s focus' })).toBeVisible();
+  renderDailyFixture({ initial: width >= 960 ? '/' : '/?day=2026-10-04', reportBody: '' });
+  await expect.element(page.getByRole('heading', { name: width >= 960 ? 'What would you like to move forward today?' : 'Focus for this day' })).toBeVisible();
   await settle();
   await page.screenshot({ path: `./__screenshots__/empty-audit/daily-${width}.png` });
   if (width >= 960) {
@@ -25,8 +25,7 @@ it.each([1440, 390, 320])('keeps the empty daily report and conversation reachab
     return;
   }
   else {
-    await page.getByRole('button', { name: 'Open conversation history', exact: true }).click();
-    await page.getByRole('button', { name: '2026-10-04 Daily Planner conversation', exact: true }).click();
+    await page.getByRole('textbox', { name: 'Chat message', exact: true }).click();
   }
   await expect.poll(() => document.querySelector('[data-nc-thread-empty]') !== null).toBe(true);
   await expect.element(page.getByText('Start a conversation', { exact: true })).toBeVisible();

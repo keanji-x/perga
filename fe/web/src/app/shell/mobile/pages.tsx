@@ -31,7 +31,7 @@ export function MobilePrimaryPages({ onOpenToday, onOpenMemory }: MobilePrimaryA
   </MobileList>;
 }
 
-export function MobilePages({ areas, areaId, tracks, onOpenTrack, onBack, onNewTrack, onEditArea, onOpenSettings, onCreateArea, onOpenToday, onOpenMemory, readError = null, readLoading = false, onRetryRead = () => undefined }: Readonly<{
+export function MobilePages({ areas, areaId, tracks, onOpenTrack, onBack, onNewTrack, onEditArea, onOpenSettings, onCreateArea, onOpenToday, onOpenMemory, readError = null, readLoading = false, onRetryRead = () => undefined, shareMode = false }: Readonly<{
   areas: readonly Area[];
   areaId: string | undefined;
   tracks: readonly Track[];
@@ -39,6 +39,7 @@ export function MobilePages({ areas, areaId, tracks, onOpenTrack, onBack, onNewT
   readError?: string | null;
   readLoading?: boolean;
   onRetryRead?: () => void;
+  shareMode?: boolean;
 }> & MobileNavigationActions & MobilePrimaryActions) {
   /* Second layer of defence, as on the sidebar: filtering tracks alone lets the kernel's system area through if an unfiltered list ever reaches here. */
   const visible = userVisibleTracks(tracks, areas);
@@ -57,6 +58,7 @@ export function MobilePages({ areas, areaId, tracks, onOpenTrack, onBack, onNewT
   return (
     <div className={`${navigationStyles.page} ${navigationStyles.standalonePage}`}>
       <MobileNavigationHeader creationScope="both" title="Pages" backLabel="workspace" area={shownAreas.find((area) => area.id === areaId)}
+        shareMode={shareMode}
         onBack={onBack} onCreateArea={onCreateArea} onNewTrack={onNewTrack} onEditArea={onEditArea} onOpenSettings={onOpenSettings} />
       <div className={navigationStyles.content}>
       {readError !== null && <ErrorBox message={readError} onRetry={onRetryRead} />}

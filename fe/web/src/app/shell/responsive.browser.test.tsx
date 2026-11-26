@@ -78,7 +78,7 @@ describe('responsive shell layout', () => {
 // separate from the natural route screenshots in mobile.browser.test.tsx.
 it.each(['Shell', 'Tracks'] as const)('preserves %s paint contribution and velocity across resize and reversal', async layer => {
   await page.viewport(390, 844);
-  setup('/track/w1');
+  setup('/');
   await page.getByRole('button', { name: 'Open workspace' }).click();
   const host = await page.getByRole('dialog', { name: 'Tracks and settings' }).findElement() as HTMLElement;
   if (layer === 'Tracks') {
@@ -117,7 +117,7 @@ it.each(['Shell', 'Tracks'] as const)('preserves %s paint contribution and veloc
     reversal = forward.sample(Number(this.currentTime));
     Animation.prototype.cancel.call(this);
   });
-  await page.getByRole('button', { name: layer === 'Shell' ? 'Back to workspace' : 'Back to Areas', exact: true }).click();
+  await page.getByRole('button', { name: layer === 'Shell' ? 'Back to workspace' : 'Back to Workspace', exact: true }).click();
   const reverse = vi.mocked(playTrajectory).mock.calls.at(-1)![1].sample(0);
   expect(reverse.value).toBeCloseTo(reversal!.value as number, 6);
   expect(reverse.velocity).toBeCloseTo(reversal!.velocity as number, 6);
@@ -131,15 +131,15 @@ it('publishes --mobile-keyboard-inset on initial compact mount, updates on viewp
     Object.defineProperty(viewport, 'height', { configurable: true, value: 544 });
     Object.defineProperty(viewport, 'offsetTop', { configurable: true, value: 0 });
     setup('/track/w1');
-    const opener = await page.getByRole('button', { name: 'Open workspace', exact: true }).findElement() as HTMLElement;
-    const shell = opener.parentElement as HTMLElement;
+    const dock = await page.getByRole('textbox', { name: 'Chat message', exact: true }).findElement() as HTMLElement;
+    const shell = dock.closest<HTMLElement>('[style*="--mobile-keyboard-inset"]')!;
     expect(shell.style.getPropertyValue('--mobile-keyboard-inset')).toBe('300px');
-    expect(opener.getBoundingClientRect().bottom).toBeLessThanOrEqual(544);
+    expect(dock.getBoundingClientRect().bottom).toBeLessThanOrEqual(544);
 
     Object.defineProperty(viewport, 'height', { configurable: true, value: 644 });
     viewport.dispatchEvent(new Event('resize'));
     await expect.poll(() => shell.style.getPropertyValue('--mobile-keyboard-inset')).toBe('200px');
-    expect(opener.getBoundingClientRect().bottom).toBeLessThanOrEqual(644);
+    expect(dock.getBoundingClientRect().bottom).toBeLessThanOrEqual(644);
 
     await page.viewport(1400, 900);
     await expect.poll(() => shell.style.getPropertyValue('--mobile-keyboard-inset')).toBe('');

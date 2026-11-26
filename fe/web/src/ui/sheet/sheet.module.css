@@ -1,11 +1,92 @@
 @layer ui {
-  .dialog { position: fixed; z-index: var(--z-modal); inset: 0; margin: 0; padding: 0; border: 0; inline-size: 100%; block-size: 100%; max-inline-size: none; max-block-size: none; overflow: visible; background: transparent; color: inherit; pointer-events: none; }
-  .frame { position: fixed; inset-inline: 0; pointer-events: none; }
-  .panel { position: relative; block-size: calc(100% + 48px); box-sizing: border-box; border-radius: calc(var(--radius-md) * 2) calc(var(--radius-md) * 2) 0 0; background: var(--paper); box-shadow: var(--shadow-float); pointer-events: auto; }
-  .panel:focus { outline: none; }
-  .handle { position: absolute; z-index: var(--z-raised); inset-block-start: max(0px, calc(env(safe-area-inset-top) - var(--sheet-open-top))); inset-inline: calc(50% - var(--space-6) * 2); block-size: var(--space-6); display: flex; align-items: center; justify-content: center; touch-action: none; cursor: grab; }
-  .handle > div { inline-size: var(--space-6); block-size: var(--space-1); border-radius: var(--radius-pill); background: var(--hairline); }
-  .content { block-size: calc(100% - 48px); overflow: hidden; }
-  .footer { position: fixed; inset-inline: 0; z-index: var(--z-raised); pointer-events: none; }
-  .footer > * { pointer-events: auto; }
+  .dialog {
+    position: fixed;
+    z-index: var(--z-modal);
+    inset: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    inline-size: 100%;
+    block-size: 100%;
+    max-inline-size: none;
+    max-block-size: none;
+    overflow: visible;
+    background: transparent;
+    color: inherit;
+    pointer-events: none;
+    transition: background var(--motion-snappy) var(--ease-feedback);
+  }
+
+  .dialog[data-nc-sheet-open] {
+    background: color-mix(in srgb, var(--overlay-scrim) 32%, transparent);
+  }
+
+  .dialog:has([data-nc-fullscreen='true']) {
+    background: transparent;
+  }
+
+  .frame {
+    position: fixed;
+    inset-inline: 0;
+    pointer-events: none;
+  }
+
+  .panel {
+    position: relative;
+    block-size: calc(100% + 48px);
+    box-sizing: border-box;
+    border-top: 1px solid color-mix(in srgb, var(--hairline) 90%, transparent);
+    border-inline: 1px solid color-mix(in srgb, var(--hairline) 65%, transparent);
+    border-radius: calc(var(--radius-md) * 2) calc(var(--radius-md) * 2) 0 0;
+    background: var(--paper);
+    box-shadow: 0 -10px 32px oklch(0% 0 0 / 16%), 0 -1px 0 color-mix(in srgb, var(--hairline) 80%, transparent);
+    overflow: hidden;
+    pointer-events: auto;
+  }
+
+  .panel:has([data-nc-fullscreen='true']) {
+    border-radius: 0;
+    border-color: transparent;
+    box-shadow: none;
+  }
+
+  .panel:focus {
+    outline: none;
+  }
+
+  .handle {
+    position: absolute;
+    z-index: var(--z-raised);
+    inset-block-start: max(0px, calc(env(safe-area-inset-top) - var(--sheet-open-top)));
+    inset-inline: calc(50% - var(--space-6) * 2);
+    block-size: var(--space-6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    touch-action: none;
+    cursor: grab;
+  }
+
+  .handle > div {
+    inline-size: calc(var(--space-6) + var(--space-3));
+    block-size: var(--space-1);
+    border-radius: var(--radius-pill);
+    background: var(--hairline-strong);
+  }
+
+  .content {
+    block-size: calc(100% - 48px);
+    overflow: hidden;
+  }
+
+  .footer {
+    position: fixed;
+    inset-inline: 0;
+    z-index: var(--z-raised);
+    pointer-events: none;
+  }
+
+  .footer > * {
+    pointer-events: auto;
+  }
 }

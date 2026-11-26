@@ -25,8 +25,10 @@ createRecentFileHistory,type RecentFileHistory,
 import { createUiPreferences,UiPreferencesProvider,type UiPreferences } from '../providers/ui-preferences.tsx';
 import { prefetchAreaList } from '../providers/workspace-queries.ts';
 import { AppShell,MobileConversationProvider } from '../shell/public.tsx';
+import { useCompactViewport } from '../../ui/viewport/public.ts';
 import { DailyTodayRoute } from './daily-planner.tsx';
 import { MemoryRoute } from './memory-route.tsx';
+import { MobileFocusRoute } from './mobile-focus-route.tsx';
 import {
 pathFor,useGo,useRouteParam,
 validateTrackSearch,type TrackSearch
@@ -77,13 +79,22 @@ export function createRouteTree(deps: AppRouterDeps): AnyRoute {
     path: '/',
     /** The index loader primes only the areas list; awaiting the area → tracks fan-out here would let one slow area block the route commit. */
     loader: () => prefetchAreaList(client, transport, unauthorized),
-    validateSearch: (search: Record<string, unknown>) => ({ day: typeof search.day === 'string' ? search.day : undefined }),
+    validateSearch: (search: Record<string, unknown>) => ({
+      day: typeof search.day === 'string' ? search.day : undefined,
+      view: search.view === 'today' ? 'today' as const : undefined,
+    }),
     component: function DailyRoute() {
-      const day = new URLSearchParams(useLocation({ select: (location) => location.searchStr })).get('day') ?? undefined;
+      const compact = useCompactViewport();
+      const params = new URLSearchParams(useLocation({ select: (location) => location.searchStr }));
+      const day = params.get('day') ?? undefined;
+      const view = params.get('view') === 'today' ? 'today' : undefined;
       const go = useGo();
+      if (compact && day === undefined && view !== 'today') {
+        return <MobileFocusRoute transport={transport} unauthorized={unauthorized} shareScope={shareScope} />;
+      }
       return <DailyTodayRoute transport={transport} unauthorized={unauthorized} selectedDate={day}
         onOpenTrack={(trackId) => go({ name: 'track', trackId })}
-        onSelectDate={(nextDay) => go({ name: 'today', day: nextDay })}
+        onSelectDate={(nextDay) => go(nextDay === undefined && compact ? { name: 'today', view: 'today' } : { name: 'today', day: nextDay })}
         renderTrack={(detail, evidence, panelContent, intro, supervisor, center) => <TrackRouteBody memoryAreaId={shareScope === null ? null : false} showWorkspaceIsolation={false} center={center} reportHeader={supervisor} reportEmpty={null} mobileReportIntro={intro} panelContent={panelContent} reportEvidence={evidence} key={detail.track.id} prepareReport={prepareReport} transport={transport} unauthorized={unauthorized}
           snapshot={detail} cardRuntime={cards} recentFiles={recentFiles} />} />;
     },

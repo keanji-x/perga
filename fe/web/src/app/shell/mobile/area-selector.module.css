@@ -13,8 +13,8 @@
     margin: 0;
   }
 
-  .trackButton { font: inherit; display: flex; align-items: center; gap: var(--space-2); min-inline-size: 0; max-inline-size: 100%; inline-size: fit-content; margin-inline-start: auto; min-block-size: var(--control-h-touch); padding-inline: var(--space-2); border: 0; border-radius: var(--radius-md); background: transparent; cursor: pointer; }
-  .trackButton svg { flex: none; inline-size: var(--glyph-xl); block-size: var(--glyph-xl); }
+  .trackButton { font: var(--type-page-title); display: inline-flex; align-items: center; justify-content: center; gap: var(--space-1); min-inline-size: 0; max-inline-size: 100%; inline-size: fit-content; margin-inline: auto; min-block-size: var(--rail-w-collapsed); padding-inline: var(--space-2); border: 0; border-radius: var(--radius-md); background: transparent; color: var(--text); cursor: pointer; }
+  .trackButton svg { flex: none; inline-size: var(--glyph-sm); block-size: var(--glyph-sm); color: var(--text-3); }
   .trackLabel { font-weight: var(--weight-medium); min-inline-size: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 
   .area {

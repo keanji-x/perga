@@ -19,7 +19,7 @@ export type EmbeddedConversationPresentation = Readonly<{
   label: string;
 }>;
 
-export function ConversationSurface({ embedded, centerEmptyComposer = false, mobileSheet, contextTitle, titleActions, sessionHeader, focusInput = false, ...props }: ComponentProps<typeof Drawer> & Readonly<{ embedded?: EmbeddedConversationPresentation; centerEmptyComposer?: boolean; mobileSheet: boolean; contextTitle?: string; sessionHeader?: ReactNode; focusInput?: boolean }>) {
+export function ConversationSurface({ embedded, centerEmptyComposer = false, mobileSheet, contextTitle, mobileSubtitle, titleActions, sessionHeader, focusInput = false, ...props }: ComponentProps<typeof Drawer> & Readonly<{ embedded?: EmbeddedConversationPresentation; centerEmptyComposer?: boolean; mobileSheet: boolean; contextTitle?: string; mobileSubtitle?: string; sessionHeader?: ReactNode; focusInput?: boolean }>) {
   const [editing, setEditing] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const previousOpen = useRef(props.open);
@@ -87,11 +87,22 @@ export function ConversationSurface({ embedded, centerEmptyComposer = false, mob
         onFocusCapture={event => { if (event.target instanceof HTMLElement && event.target.matches('[contenteditable="true"], textarea')) setEditing(true); }}>{props.footer}</div>}>
       <section ref={mobileReadingHost} className={`${styles.content} ${mobileFontClassName}`} data-nc-fullscreen={fullscreen} id={props.id}>
       <header className={styles.conversationHeader}>
-        {titleActions !== undefined && <span className={styles.conversationTitleActions}>{titleActions}</span>}
-        <h2 className={styles.conversationHeading}>{frame.contextTitle ?? frame.title}</h2>
-        {sessionHeader}
-        <button type="button" className={styles.close} aria-label={fullscreen ? 'Collapse conversation' : 'Expand conversation'} aria-pressed={fullscreen} onClick={() => setFullscreen(value => !value)}><Icon name={fullscreen ? 'compact' : 'fullscreen'} /></button>
-        <button type="button" className={styles.close} aria-label={props.closeLabel ?? 'Close conversation'} onClick={props.onClose}><Icon name="close" /></button>
+        <div className={styles.headerLeading}>
+          <button type="button" className={styles.close} aria-label={fullscreen ? 'Collapse conversation' : 'Expand conversation'} aria-pressed={fullscreen} onClick={() => setFullscreen(value => !value)}>
+            <Icon name={fullscreen ? 'compact' : 'fullscreen'} size="sm" />
+          </button>
+          {titleActions}
+        </div>
+        <div className={styles.headerTitleStack}>
+          <h2 className={styles.conversationHeading}>{frame.title || frame.contextTitle}</h2>
+          {mobileSubtitle !== undefined && <span className={styles.conversationSubtitle}>{mobileSubtitle}</span>}
+        </div>
+        <div className={styles.headerTrailing}>
+          {sessionHeader}
+          <button type="button" className={styles.close} aria-label={props.closeLabel ?? 'Close conversation'} onClick={props.onClose}>
+            <Icon name="close" size="sm" />
+          </button>
+        </div>
       </header>
       <div className={styles.messageViewport}>
         <div className={styles.messages} style={{ paddingBottom: `calc(${footerHeight}px + var(--space-4))`, scrollPaddingBottom: footerHeight }} data-nc-drawer-scroll="">{frame.children}</div>

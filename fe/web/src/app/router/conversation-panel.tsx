@@ -45,7 +45,7 @@ export function useConversationPanel(
     row => receipts.isUnread('conversation', row.id, row.lastTurnCompletedAt ?? null));
   const dockOwnerId = compact && options.reportComposer !== undefined
     ? selectedRowId ?? source.rows.find(row => row.id === lastMainRow.current)?.id
-      ?? preferredConversation?.id ?? source.planner?.cardId ?? source.rows[0]?.id ?? null
+      ?? source.planner?.cardId ?? preferredConversation?.id ?? source.rows[0]?.id ?? null
     : parentId;
   const mainReportComposer = options.reportComposer === undefined ? undefined : { ...options.reportComposer, conversationId: dockOwnerId };
   const capabilities = useQuery({ queryKey: queryKeys.serverVersion(),

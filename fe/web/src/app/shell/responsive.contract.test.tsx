@@ -96,7 +96,7 @@ describe('compact navigation interaction contracts', () => {
     const opener = screen.getByRole('button', { name: 'Open workspace' });
     fireEvent.click(opener);
     expect(screen.getByRole('dialog', { name: 'Tracks and settings' })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Settings' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Settings' })).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Areas' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: /^Responsive mobile UI/ })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Product' }));

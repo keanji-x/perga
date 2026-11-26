@@ -36,7 +36,7 @@ describe('creating an Area after navigation changes', () => {
         if (request.path === '/api/v1/areas' && request.method === 'GET') areaReads++;
       }, receipts, history);
       try {
-        await page.getByRole('button', { name: 'Switch track, Responsive mobile UI', exact: true }).click();
+        await page.getByRole('button', { name: 'Switch track, Product', exact: true }).click();
         await page.getByRole('button', { name: 'New track', exact: true }).click();
         await expect.poll(() => router.state.location.pathname, { timeout: 5000 }).toBe('/area/c1/new');
         await page.getByRole('button', { name: 'Switch area, Product', exact: true }).click();
@@ -57,7 +57,13 @@ describe('creating an Area after navigation changes', () => {
         await expect.poll(() => areaReads).toBeGreaterThan(readsBeforeSuccess);
         expect(router.state.location.pathname).toBe(destination);
         expect(history.location.state.__TSR_key).toBe(entry);
-        await page.getByRole('button', { name: 'Open workspace' }).click();
+        if (destination === '/track/w1') {
+          await page.getByRole('button', { name: 'Back to Focus', exact: true }).click();
+          await page.getByRole('button', { name: 'Open workspace', exact: true }).click();
+        } else {
+          await page.getByRole('button', { name: 'Back to Tracks', exact: true }).click();
+          await page.getByRole('button', { name: 'Back to Workspace', exact: true }).click();
+        }
         await expect.element(page.getByRole('button', { name: 'Research', exact: true })).toBeVisible();
       } finally { releaseCreate(); cleanup(); history.destroy(); }
     } finally { releaseCreate(); host.close(); }
@@ -84,7 +90,7 @@ describe('creating an Area before its list is available', () => {
       }
       return reply(request);
     };
-    const router = setup('/track/w1', AREA.name, () => undefined, receipts);
+    const router = setup('/', AREA.name, () => undefined, receipts);
     try {
       await page.getByRole('button', { name: 'Open workspace' }).click();
       await page.getByRole('button', { name: 'New area', exact: true }).click();
@@ -124,7 +130,7 @@ describe('creating an Area before its list is available', () => {
       }
       return reply(request);
     };
-    const router = setup('/track/w1', AREA.name, (request) => requests.push(request), receipts);
+    const router = setup('/', AREA.name, (request) => requests.push(request), receipts);
     try {
       await page.getByRole('button', { name: 'Open workspace' }).click();
       await page.getByRole('button', { name: 'New area', exact: true }).click();
@@ -141,9 +147,7 @@ describe('creating an Area before its list is available', () => {
       await expect.element(page.getByRole('button', { name: 'Create track', exact: true })).toBeDisabled();
       expect(requests.some(request => request.path === '/api/v1/tracks' && request.method === 'POST')).toBe(false);
       failList = false;
-      await page.getByRole('button', { name: 'Open workspace' }).click();
-      await page.getByRole('button', { name: 'Retry', exact: true }).click();
-      await page.getByRole('button', { name: 'Back to workspace', exact: true }).click();
+      await page.getByRole('main').getByRole('button', { name: 'Retry', exact: true }).click();
       await expect.element(page.getByRole('button', { name: 'Create track', exact: true })).toBeEnabled();
       await expect.element(composer).toHaveTextContent('Keep my research plan after retry');
       expect(page.getByRole('main').getByRole('alert').query()).toBeNull();

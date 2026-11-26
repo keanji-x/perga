@@ -1,21 +1,156 @@
 @layer features {
-  .conversationHeader { position: relative; display: flex; align-items: center; flex: none; gap: var(--space-1); padding: var(--space-4) var(--space-4) var(--space-3); border-block-end: 1px solid var(--hairline); }
-  .conversationHeading { font-size: var(--font-step-3-size); font-weight: var(--weight-semibold); line-height: var(--font-step-3-line); flex: 1; min-inline-size: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .conversationTitleActions { flex: none; display: inline-flex; align-items: center; gap: var(--space-1); }
-  .close { display: grid; place-items: center; flex: none; inline-size: var(--rail-w-collapsed); block-size: var(--rail-w-collapsed); border-radius: var(--radius-pill); cursor: pointer; }
-  .close svg { inline-size: var(--glyph-xl); block-size: var(--glyph-xl); }
-  .close:hover { background: var(--overlay-hover); }
-  .history { display: contents; }
-  .content[data-nc-fullscreen='true'] .conversationHeader { padding-block-start: calc(var(--space-5) + env(safe-area-inset-top)); }
-  .footerContent { pointer-events: none; }
-  .footerContent > * { pointer-events: auto; }
-  .content { display: flex; flex-direction: column; block-size: 100%; min-block-size: 0; background: var(--paper); box-sizing: border-box; }
-  .messageViewport { position: relative; flex: 1; min-block-size: 0; }
-  .messages { display: flex; flex-direction: column; block-size: 100%; overflow: auto; overscroll-behavior: contain; padding: var(--space-4); box-sizing: border-box; }
+  .conversationHeader {
+    position: relative;
+    display: grid;
+    grid-template-columns: minmax(var(--rail-w-collapsed), auto) minmax(0, 1fr) minmax(var(--rail-w-collapsed), auto);
+    align-items: center;
+    flex: none;
+    gap: var(--space-1);
+    padding: var(--space-6) var(--space-3) var(--space-3);
+    border-block-end: 1px solid color-mix(in srgb, var(--hairline) 70%, transparent);
+  }
+
+  .headerLeading {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: var(--space-1);
+    min-inline-size: 0;
+  }
+
+  .headerTrailing {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--space-1);
+    min-inline-size: 0;
+    max-inline-size: 46vw;
+  }
+
+  .headerTrailing > :not(.close) {
+    min-inline-size: 0;
+    overflow: hidden;
+  }
+
+  .headerTitleStack {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-inline-size: 0;
+    text-align: center;
+    gap: var(--space-half);
+  }
+
+  .conversationHeading {
+    margin: 0;
+    font: var(--type-page-title);
+    letter-spacing: var(--type-page-title-tracking);
+    color: var(--text);
+    max-inline-size: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .conversationSubtitle {
+    font: var(--type-metadata);
+    color: var(--text-3);
+    max-inline-size: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .close {
+    display: grid;
+    place-items: center;
+    flex: none;
+    inline-size: var(--rail-w-collapsed);
+    block-size: var(--rail-w-collapsed);
+    border: 0;
+    border-radius: var(--radius-pill);
+    background: transparent;
+    color: var(--text-2);
+    cursor: pointer;
+  }
+
+  .close:hover,
+  .close:focus-visible {
+    background: var(--overlay-hover);
+    color: var(--text);
+  }
+
+  .history {
+    display: contents;
+  }
+
+  .content[data-nc-fullscreen='true'] .conversationHeader {
+    padding-block-start: calc(var(--space-4) + env(safe-area-inset-top));
+  }
+
+  .footerContent {
+    pointer-events: none;
+  }
+
+  .footerContent > * {
+    pointer-events: auto;
+  }
+
+  .content {
+    display: flex;
+    flex-direction: column;
+    block-size: 100%;
+    min-block-size: 0;
+    background: var(--paper);
+    box-sizing: border-box;
+  }
+
+  .messageViewport {
+    position: relative;
+    flex: 1;
+    min-block-size: 0;
+  }
+
+  .messages {
+    display: flex;
+    flex-direction: column;
+    block-size: 100%;
+    overflow: auto;
+    overscroll-behavior: contain;
+    padding: var(--space-4);
+    box-sizing: border-box;
+  }
+
   /* Leading history controls keep their intrinsic width in the flex host. */
-  .messages > button { align-self: flex-start; }
-  .scrollOverlay { position: absolute; inset-inline: 0; inset-block-end: 0; pointer-events: none; z-index: var(--z-raised); }
-  .embeddedSlot { display: flex; flex: 1; min-block-size: 0; min-inline-size: 0; }
-  .embeddedSlot[hidden] { display: none; }
-  .embeddedHeader { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-1); padding-block-start: var(--space-1); }
+  .messages > button {
+    align-self: flex-start;
+  }
+
+  .scrollOverlay {
+    position: absolute;
+    inset-inline: 0;
+    inset-block-end: 0;
+    pointer-events: none;
+    z-index: var(--z-raised);
+  }
+
+  .embeddedSlot {
+    display: flex;
+    flex: 1;
+    min-block-size: 0;
+    min-inline-size: 0;
+  }
+
+  .embeddedSlot[hidden] {
+    display: none;
+  }
+
+  .embeddedHeader {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--space-1);
+    padding-block-start: var(--space-1);
+  }
 }

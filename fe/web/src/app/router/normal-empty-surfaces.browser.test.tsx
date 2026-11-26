@@ -40,27 +40,22 @@ it.each([1440, 390])('catalog main report and sidebar %i', async width => {
   await expect.element(page.getByRole('heading', { name: 'Progress lives here' })).toBeVisible();
   await shot('01-report-' + width, []);
   if (width === 390) {
-    await page.getByRole('button', { name: 'Open conversation history', exact: true }).click();
-    await expect.element(page.getByText('No conversations in this track yet.')).toBeVisible();
-    await shot('12-history-current', ["No conversations in this track yet."]);
-    for (const [label, name, message] of [['Pinned','13-history-pinned','No pinned tracks yet.'], ['Unread','14-history-unread','No unread tracks.'], ['Attention','15-history-waiting','No tracks need attention.']]) {
-      await page.getByRole('button', { name: label, exact: true }).click();
-      await expect.element(page.getByText(message)).toBeVisible();
-      await shot(name, [message]);
-    }
+    await page.getByRole('button', { name: 'Track actions', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Conversations', exact: true }).click();
+    await expect.element(page.getByText('No conversations yet')).toBeVisible();
+    await shot('12-history-current', ["No conversations yet"]);
   }
 });
 it.each([1440, 390])('catalog Today and conversation %i', async width => {
   await page.viewport(width, 900);
-  renderDailyFixture({ reportBody: '', emptyWorkspace: true });
+  renderDailyFixture({ initial: width >= 960 ? '/' : '/?day=2026-10-04', reportBody: '', emptyWorkspace: true });
   if (width >= 960) {
     await expect.element(page.getByRole('combobox', { name: 'Message', exact: true })).toBeVisible();
     expect(page.getByRole('heading', { name: 'Start a conversation' }).query()).toBeNull();
-  } else await expect.element(page.getByRole('heading', { name: 'Today’s focus' })).toBeVisible();
+  } else await expect.element(page.getByRole('heading', { name: 'Focus for this day' })).toBeVisible();
   await shot('02-today-' + width, []);
   if (width !== 1440) {
-    await page.getByRole('button', { name: 'Open conversation history', exact: true }).click();
-    await page.getByRole('button', { name: '2026-10-04 Daily Planner conversation', exact: true }).click();
+    await page.getByRole('textbox', { name: 'Chat message', exact: true }).click();
   }
   if (width === 1440) await expect.element(page.getByRole('region', { name: 'Today Assistant', exact: true }).getByRole('combobox', { name: 'Message', exact: true })).toBeVisible();
   else await expect.element(page.getByRole('heading', { name: 'Start a conversation' })).toBeVisible();

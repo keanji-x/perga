@@ -1,110 +1,57 @@
-import { MobileTrackList } from './track-list.tsx';
-// Both navigation levels share their header and actions. Choosing an Area
-// scopes the Track list; only opening a Track changes the page underneath.
+// Native 2-level mobile Workspace transition shell:
+// Level 1 (`areas`): WorkspaceLevelOne (AREAS + LIBRARY + sticky Account bar).
+// Level 2 (`tracks`): AreaLevelTwo (full-screen Area detail with OPEN TRACKS and collapsible CLOSED).
+
 import { useLayoutEffect, useRef } from 'react';
-import { useState } from '../../../ui/state/public.ts';
 import { useEdgePresence } from '../../../ui/motion/edge-presence.ts';
 import { readSurfaceFrame } from '../../../ui/motion/geometry.ts';
-import { visibleAreas, type Area } from '../../../../../core/domain/area.ts';
-import { areaPinnedTracks, type Track } from '../../../../../core/domain/track.ts';
-import { ErrorBox } from '../../../ui/error-box/public.tsx';
-import { Icon } from '../../../ui/icon/public.tsx';
-import { LoadingStatus } from '../../../ui/loading-status/public.tsx';
-import { MobileList, MobileListEmpty, MobileListGroup, MobileListItem } from '../../../ui/mobile-list/public.tsx';
-import { MobileNavigationCreateAction, MobileNavigationHeader, type MobileNavigationActions } from './navigation-header.tsx';
+import { useState } from '../../../ui/state/public.ts';
+import { AreaLevelTwo } from './area-level-two.tsx';
 import styles from './navigation.module.css';
-import { type TrackActionsProps } from '../../../features/track/row/actions.tsx';
-import { useUiPreferences } from '../../providers/ui-preferences.tsx';
-import { MobilePrimaryPages } from './pages.tsx';
+import type { MobileTracksProps } from './tracks-types.ts';
+import { WorkspaceLevelOne } from './workspace-level-one.tsx';
 
-type MobileTracksProps = Readonly<{
-  view: 'areas' | 'tracks';
-  tracksBackLabel?: string;
-  areas: readonly Area[];
-  tracksByArea: ReadonlyMap<string, readonly Track[]>;
-  areaId: string | undefined;
-  currentTrackId: string | undefined;
-  onSelectArea: (areaId: string) => void;
-  onOpenTrack: (trackId: string) => void;
-  onOpenToday?: () => void;
-  onOpenMemory?: () => void;
-  onOpenAreaMemory?: (areaId: string) => void;
-  /** The reader's receipt for a track, keyed exactly as the rail's (`sidebar.tsx`): one receipt, both surfaces. */
-  isUnread: (track: Track) => boolean;
-  trackActions?: (track: Track) => Omit<TrackActionsProps, 'track' | 'className'>;
-  readError: string | null;
-  readLoading: boolean;
-  onRetryRead: () => void;
-}> & MobileNavigationActions;
+export type { MobileTracksProps };
 
-/** Stable page shells preserve the Areas scroll position through direct page changes. */
+/** Stable page shells preserve the Workspace Level 1 scroll position across Level 2 push/pop transitions. */
 export function MobileTracks(props: MobileTracksProps) {
   const tracksFrameRef = useRef<HTMLDivElement | null>(null);
   const tracksPageRef = useRef<HTMLDivElement | null>(null);
   const { view, areaId } = props;
   const [tracksPresented, setTracksPresented] = useState(view === 'tracks');
   if (view === 'tracks' && !tracksPresented) setTracksPresented(true);
-  useEdgePresence({ frame: { ref: tracksFrameRef }, part: { element: tracksPageRef, readFrame: () => readSurfaceFrame(tracksFrameRef.current) },
-    edge: 'inline-end', open: view === 'tracks', present: tracksPresented, enabled: true,
-    onExited: () => { setTracksPresented(false); } });
+  useEdgePresence({
+    frame: { ref: tracksFrameRef },
+    part: { element: tracksPageRef, readFrame: () => readSurfaceFrame(tracksFrameRef.current) },
+    edge: 'inline-end',
+    open: view === 'tracks',
+    present: tracksPresented,
+    enabled: true,
+    onExited: () => { setTracksPresented(false); },
+  });
   useLayoutEffect(() => {
     if (view === 'tracks' && tracksPageRef.current !== null) tracksPageRef.current.scrollTop = 0;
   }, [areaId, view]);
-  return <div ref={tracksFrameRef} className={styles.pages}>
-    <div data-nc-workspace-page="areas" className={`${styles.pageFrame} ${view === 'tracks' ? styles.coveredPage : ''}`}
-      inert={view !== 'areas'} aria-hidden={view !== 'areas' || undefined}>
-      <NavigationPage {...props} view="areas" />
-    </div>
-    <div ref={tracksPageRef} data-nc-workspace-page="tracks" className={`${styles.pageFrame} ${view === 'tracks' ? '' : tracksPresented ? styles.coveredPage : styles.inactivePage}`}
-      inert={view !== 'tracks'} aria-hidden={view !== 'tracks' || undefined}>
-      <NavigationPage {...props} view="tracks" />
-    </div>
-    <MobileNavigationCreateAction creationScope={view === 'areas' ? 'area' : 'track'}
-      area={visibleAreas(props.areas).find((area) => area.id === areaId)} onCreateArea={props.onCreateArea} onNewTrack={props.onNewTrack} />
-  </div>;
-}
 
-function NavigationPage({
-  view, tracksBackLabel = 'Areas', areas, tracksByArea, areaId, currentTrackId, onBack, onCreateArea, onSelectArea, onEditArea, onOpenTrack, onNewTrack, onOpenSettings,
-  isUnread, trackActions, readError, readLoading, onRetryRead, onOpenToday, onOpenMemory, onOpenAreaMemory,
-}: MobileTracksProps) {
-  const shown = visibleAreas(areas);
-  const selected = shown.find((candidate) => candidate.id === areaId);
-  const preferences = useUiPreferences();
-  const showMemory = selected !== undefined && preferences.areaShowsMemory(selected.id);
-  const tracks = areaPinnedTracks(selected === undefined ? [] : tracksByArea.get(selected.id) ?? [],
-    (track) => preferences.areaTrackPinned(track.areaId, track.id));
-  return <div className={styles.page}>
-    <MobileNavigationHeader creationScope={view === 'areas' ? 'area' : 'track'} title={view === 'areas' ? 'Areas' : selected?.name ?? 'Tracks'}
-      backLabel={view === 'areas' ? 'workspace' : tracksBackLabel} area={view === 'tracks' ? selected : undefined}
-      showSettings={false} actionsPlacement="floating"
-      memoryVisibility={view === 'tracks' && selected !== undefined && onOpenAreaMemory !== undefined
-        ? { shown: showMemory, toggle: () => preferences.setAreaShowsMemory(selected.id, !showMemory) } : undefined}
-      onBack={onBack} onNewTrack={onNewTrack} onCreateArea={onCreateArea} onEditArea={onEditArea} onOpenSettings={onOpenSettings} />
-    <div className={styles.content}>
-      {readError !== null && <ErrorBox message={readError} onRetry={onRetryRead} />}
-      {readLoading && <LoadingStatus>Loading workspace…</LoadingStatus>}
-      {view === 'areas' && <MobilePrimaryPages onOpenToday={onOpenToday} onOpenMemory={onOpenMemory} />}
-      {view === 'tracks' && showMemory && onOpenAreaMemory !== undefined && selected !== undefined && <MobileList>
-        <MobileListItem title="Memory" startContent={<Icon name="book-open" />} onSelect={() => onOpenAreaMemory(selected.id)} />
-      </MobileList>}
-      <MobileListGroup appearance="plain" label={view === 'areas' ? 'Areas' : 'Tracks'}>
-        {view === 'areas' ? <MobileList className={styles.navigationList}>
-          {shown.map((area) => <li key={area.id} className={styles.trackRow}>
-            <button type="button" className={styles.track} aria-label={area.name}
-              aria-current={area.id === selected?.id ? 'location' : undefined}
-              onClick={() => onSelectArea(area.id)}>
-              <span className={styles.trackIcon}><Icon name="folder" /></span>
-              <span className={styles.trackCopy}><span className={styles.trackTitle}>{area.name}</span>
-                {tracksByArea.has(area.id) && <span className={styles.trackMeta}>{tracksByArea.get(area.id)!.length} {tracksByArea.get(area.id)!.length === 1 ? 'track' : 'tracks'}{area.id === selected?.id && <span> · {new Date(area.updatedAt).toDateString() === new Date().toDateString() ? 'Today' : new Date(area.updatedAt).toLocaleDateString('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit' })} {'updated'}</span>}</span>}
-              </span>
-              <span className={styles.trackArrow}><Icon name="chevron-right" /></span>
-            </button>
-          </li>)}
-          {shown.length === 0 && !readLoading && readError === null && <MobileListEmpty icon={<Icon name="folder" />} title="No areas yet" description="Projects and tracks are organized by area." />}
-        </MobileList> : <MobileTrackList tracks={tracks} currentTrackId={currentTrackId} onOpenTrack={onOpenTrack}
-          isUnread={isUnread} trackActions={trackActions} emptyState={readError === null && !readLoading ? { icon: <Icon name="file" />, title: 'No tracks in this area', description: 'Tracks created in this area appear here.' } : undefined} />}
-      </MobileListGroup>
+  return (
+    <div ref={tracksFrameRef} className={styles.pages}>
+      <div
+        data-nc-workspace-page="areas"
+        className={`${styles.pageFrame} ${view === 'tracks' ? styles.coveredPage : ''}`}
+        inert={view !== 'areas'}
+        aria-hidden={view !== 'areas' || undefined}
+      >
+        <WorkspaceLevelOne {...props} />
+      </div>
+      <div
+        ref={tracksPageRef}
+        data-nc-workspace-page="tracks"
+        className={`${styles.pageFrame} ${view === 'tracks' ? '' : tracksPresented ? styles.coveredPage : styles.inactivePage}`}
+        inert={view !== 'tracks'}
+        aria-hidden={view !== 'tracks' || undefined}
+      >
+        <AreaLevelTwo {...props} />
+      </div>
     </div>
-  </div>;
+  );
 }

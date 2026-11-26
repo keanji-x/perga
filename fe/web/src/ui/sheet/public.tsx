@@ -205,7 +205,7 @@ export function Sheet(props: SheetProps) {
     focus(); return stop;
   }, [enabled, open, props.focusInput, attached, dialog, panel, host]);
 
-  return <>{dismissalLayer}<LayerDepthProvider><dialog ref={captureDialog} className={styles.dialog} aria-label={visible.label}
+  return <>{dismissalLayer}<LayerDepthProvider><dialog ref={captureDialog} className={styles.dialog} data-nc-sheet-open={active ? '' : undefined} aria-label={visible.label}
     onCancel={event => { event.preventDefault(); if (dismissal.current?.shouldDismissOnCloseRequest()) props.onCloseRequest('platform'); }}>
     {enabled && <div className={styles.frame} data-nc-sheet-frame="" style={{ height: visible.frame.heightPx, bottom: visible.frame.bottomInsetPx, '--sheet-open-top': `calc(100vh - ${visible.frame.heightPx}px - ${visible.frame.bottomInsetPx}px)` } as CSSProperties}>
       <div ref={capturePanel} className={styles.panel} data-nc-sheet-panel="" tabIndex={-1} inert={!active} aria-hidden={!active ? true : undefined}>

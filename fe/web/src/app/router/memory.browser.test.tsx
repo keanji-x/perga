@@ -22,7 +22,7 @@ it.each([
   else await page.getByRole('button', { name: /Conversation Lead/ }).click();
   await expect.element(page.getByRole('button', { name: 'Close conversation' })).toBeVisible();
   const saveButton = page.getByRole('button', { name: 'Save to memory' });
-  const heading = page.getByRole('heading', { name: width < 900 ? 'Review Track' : 'Lead', level: 2 });
+  const heading = page.getByRole('heading', { name: 'Lead', level: 2 });
   const actionsButton = page.getByRole('button', { name: 'Session actions' });
   expect(saveButton.element().querySelector('svg')?.classList.contains('lucide-notebook-pen')).toBe(true);
   expect(saveButton.element().getBoundingClientRect().right).toBeLessThanOrEqual(heading.element().getBoundingClientRect().left);

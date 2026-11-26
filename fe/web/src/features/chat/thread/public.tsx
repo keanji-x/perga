@@ -403,6 +403,7 @@ export function ChatComposer({
   editing, focusOnMount = false, focusRequest = 0,
   draft: controlledDraft, commandScope, footerActions, sendAdornment,
   drawer, headerActions, allowEmptyText = false, mentionTrigger, onFiles, layout = 'standard', focusHandle,
+  mobileMetaBar, mobileRoleSlot,
 }: {
   /** Hand over the words, or return `false` when they were not taken and stay in the field. Words of a send taken
    * and later given back return through the caller's `draft`; the composer has no second way to restore them. */
@@ -431,6 +432,10 @@ export function ChatComposer({
   footerActions?: ReactNode;
   /** Compact pill layout uses the same editor and send callbacks. */
   layout?: 'standard' | 'mobile';
+  /** Whisper-quiet single row rendered directly above the mobile composer pill (Model · Effort + Attach). */
+  mobileMetaBar?: ReactNode;
+  /** Fixed-width left role switcher slot rendered inside the mobile composer pill. */
+  mobileRoleSlot?: Readonly<{ label: string; ariaLabel?: string; onOpen: () => void }>;
   /** Something to stand immediately before Send, in the `sendActions` slot; rendered before the send-door button, not instead of it. */
   sendAdornment?: ReactNode;
   /** The composer's two vendor slots, passed as nodes: `features-no-cross-domain` forbids importing `features/planner`. */
@@ -641,9 +646,14 @@ export function ChatComposer({
         }
       }}
     >
+      {layout === 'mobile' && mobileMetaBar !== undefined && (
+        <div className={mobileStyles.metaBar} data-nc-mobile-composer-meta="">
+          {mobileMetaBar}
+        </div>
+      )}
       <SizeMotion motionKey={editing !== undefined}>
         <AstryxChatComposer
-          className={layout === 'mobile' ? `${mobileStyles.vendorComposer} ${floatingControlMaterialClassName}` : composerLayoutStyles.vendor}
+          className={layout === 'mobile' ? `${mobileStyles.vendorComposer} ${mobileRoleSlot !== undefined ? mobileStyles.vendorComposerWithRole : ''} ${floatingControlMaterialClassName}` : composerLayoutStyles.vendor}
           density="compact"
           elevation="none"
           value={draft}
@@ -651,10 +661,27 @@ export function ChatComposer({
           placeholder={layout === 'mobile' ? 'Write a message…' : 'Write a message, or type / for commands…'}
           isDisabled={disabled}
           isStopShown={stopShown}
-          footerActions={layout === 'mobile' && footerActions !== undefined ? <details className={mobileStyles.options}>
-            <summary className={floatingControlClassName} aria-label="Conversation options"><Icon name="plus" /></summary>
-            <div className={mobileStyles.optionsPanel}>{footerActions}</div>
-          </details> : footerActions}
+          footerActions={layout === 'mobile'
+            ? (mobileRoleSlot !== undefined ? (
+              <button
+                type="button"
+                className={mobileStyles.roleSlot}
+                aria-label={mobileRoleSlot.ariaLabel ?? `Switch conversation, current: ${mobileRoleSlot.label}`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  mobileRoleSlot.onOpen();
+                }}
+              >
+                <span className={mobileStyles.roleLabel}>{mobileRoleSlot.label}</span>
+                <span className={mobileStyles.roleChevron} aria-hidden="true">
+                  <Icon name="chevron-down" size="sm" />
+                </span>
+              </button>
+            ) : mobileMetaBar === undefined && footerActions !== undefined ? <details className={mobileStyles.options}>
+              <summary className={floatingControlClassName} aria-label="Conversation options"><Icon name="plus" /></summary>
+              <div className={mobileStyles.optionsPanel}>{footerActions}</div>
+            </details> : undefined)
+            : footerActions}
           /* Handed over whole — "one interrupt at a time" is the router's rule. */
           onStop={onStop}
           /* Astryx's own `handleSubmit` refuses only an empty draft and `isDisabled`, never `isStopShown`. */

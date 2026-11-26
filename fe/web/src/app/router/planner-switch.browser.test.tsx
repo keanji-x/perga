@@ -163,28 +163,185 @@ it('saves and reads back null effort on an existing session without materializin
 });
 
 
-it('uses status priority initially and keeps an explicitly selected mobile draft with its session', async () => {
+it('defaults the mobile dock to Lead and keeps an explicitly switched conversation draft with its session', async () => {
   await page.viewport(390, 844);
   const lead = fixtureSession('daily-planner', 'daily', { isLead: true, title: 'Daily Planner conversation' });
-  const blocked = fixtureSession('second-planner', 'daily', { title: 'Other conversation', status: 'unknown' });
+  const sibling = fixtureSession('second-planner', 'daily', { title: 'Other conversation' });
   renderPlannerSwitchFixture({ initial: '/track/daily', reply: request => {
     const ok = (body: unknown) => ({ status: 200, statusText: 'OK', body });
     if (request.path === '/api/v1/tracks/daily') return ok(fixtureSnapshot(
-      fixtureTrack('daily', { leadSessionId: lead.id }), [lead, blocked]));
-    if (request.path === '/api/v1/tracks/daily/sessions') return ok([lead, blocked]);
-    if (request.path.includes('/second-planner/items?')) return ok(sessionPage(blocked, [], null, 'unknown'));
+      fixtureTrack('daily', { leadSessionId: lead.id }), [lead, sibling]));
+    if (request.path === '/api/v1/tracks/daily/sessions') return ok([lead, sibling]);
+    if (request.path.includes('/second-planner/items?')) return ok(sessionPage(sibling));
     return undefined;
   } });
   const dock = page.getByRole('textbox', { name: 'Chat message', exact: true });
   await dock.click();
+  await expect.element(page.getByRole('dialog', { name: 'Daily Planner conversation', exact: true })).toBeVisible();
+  const settingsTrigger = page.getByRole('button', { name: /^Session model and mode/ });
+  await expect.element(settingsTrigger).toBeVisible();
+  await settingsTrigger.click();
+  const card = page.getByRole('dialog', { name: 'Session model and mode', exact: true });
+  await expect.element(card).toBeVisible();
+  expect(card.element().tagName).not.toBe('DIALOG');
+  await userEvent.keyboard('{Escape}');
+  await expect.element(card).not.toBeInTheDocument();
+  await expect.element(page.getByRole('dialog', { name: 'Daily Planner conversation', exact: true })).toBeVisible();
+  // Opening ConversationSwitcherSheet from inside Chat Sheet and pressing Escape closes only the switcher.
+  const inSheetRoleSlot = page.getByRole('button', { name: /^Switch conversation,/ });
+  await inSheetRoleSlot.click();
+  await expect.element(page.getByRole('dialog', { name: 'Switch conversation', exact: true })).toBeVisible();
+  await userEvent.keyboard('{Escape}');
+  await expect.element(page.getByRole('dialog', { name: 'Switch conversation', exact: true })).not.toBeInTheDocument();
+  await expect.element(page.getByRole('dialog', { name: 'Daily Planner conversation', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Close conversation', exact: true }).click();
+  await page.getByRole('button', { name: /^Switch conversation,/ }).click();
+  await page.getByRole('button', { name: /Other conversation/ }).click();
   await expect.element(page.getByRole('dialog', { name: 'Other conversation', exact: true })).toBeVisible();
+  await page.getByRole('combobox', { name: 'Message', exact: true }).fill('Retain the switched conversation draft');
   await page.getByRole('button', { name: 'Close conversation', exact: true }).click();
-  await page.getByRole('button', { name: 'Open conversation history', exact: true }).click();
-  await page.getByRole('button', { name: /Daily Planner conversation$/ }).click();
-  await page.getByRole('combobox', { name: 'Message', exact: true }).fill('Retain the selected Lead draft');
-  await page.getByRole('button', { name: 'Close conversation', exact: true }).click();
-  await expect.element(dock).toHaveValue('Retain the selected Lead draft');
+  await expect.element(dock).toHaveValue('Retain the switched conversation draft');
   await expect.element(page.getByRole('button', { name: 'Send chat message', exact: true })).toBeEnabled();
   await dock.click();
+  await expect.element(page.getByRole('dialog', { name: 'Other conversation', exact: true })).toBeVisible();
+});
+
+it('supports mobile default model/effort reset, full permission descriptions with radio keys, and closes switcher across desktop resize', async () => {
+  await page.viewport(390, 844);
+  let savedModel: string | null = null;
+  let savedEffort: string | null = null;
+  let savedPermission = 'never';
+  const session = () => fixtureSession('daily-planner', 'daily', {
+    isLead: true,
+    title: 'Daily Planner conversation',
+    model: savedModel,
+    reasoningEffort: savedEffort,
+    permissionMode: savedPermission,
+  });
+  const extras = Array.from({ length: 10 }, (_, index) =>
+    fixtureSession(`extra-${index}`, 'daily', { title: `Collaborator ${index + 1}`, updatedAtMs: 1000 + index }));
+  const ok = (body: unknown) => ({ status: 200, statusText: 'OK', body });
+  const fixture = renderPlannerSwitchFixture({
+    initial: '/track/daily',
+    reply: (request) => {
+      if (request.path.startsWith('/api/v1/bootstrap')) {
+        const bootstrap = fixtureBootstrap(['codex'], ['test-model']);
+        bootstrap.providers[0].modelCatalog = [
+          {
+            model: 'test-model',
+            displayName: 'Test model',
+            description: '',
+            isDefault: true,
+            defaultReasoningEffort: 'low',
+            supportedReasoningEfforts: [
+              { reasoningEffort: 'low', description: '' },
+              { reasoningEffort: 'high', description: '' },
+            ],
+          },
+          {
+            model: 'no-effort-model',
+            displayName: 'No effort model',
+            description: '',
+            isDefault: false,
+            defaultReasoningEffort: null,
+            supportedReasoningEfforts: [],
+          },
+        ];
+        bootstrap.providers[0].permissionModes = [
+          { id: 'never', label: 'Never', description: 'Sandbox only; never asks.', tone: 'neutral', isDefault: true },
+          { id: 'full', label: 'Full access', description: 'No sandbox; never asks. Runs with your account\'s access.', tone: 'danger', isDefault: false },
+        ];
+        return ok(bootstrap);
+      }
+      if (request.path === '/api/v1/tracks/daily') {
+        return ok(fixtureSnapshot(fixtureTrack('daily', { leadSessionId: 'daily-planner' }), [session(), ...extras]));
+      }
+      if (request.path === '/api/v1/tracks/daily/sessions') {
+        return ok([session(), ...extras]);
+      }
+      if (request.method === 'PATCH' && request.path === '/api/v1/sessions/daily-planner') {
+        const body = request.body as { model?: string | null; reasoningEffort?: string | null; permissionMode?: string };
+        if (Object.hasOwn(body, 'model')) savedModel = body.model ?? null;
+        if (Object.hasOwn(body, 'reasoningEffort')) savedEffort = body.reasoningEffort ?? null;
+        if (typeof body.permissionMode === 'string') savedPermission = body.permissionMode;
+        return ok(session());
+      }
+      if (request.path.includes('/daily-planner/items?')) {
+        return ok(sessionPage(session(), [sessionItem('daily-planner', 1, 'Ready')]));
+      }
+      return undefined;
+    },
+  });
+
+  await page.getByRole('textbox', { name: 'Chat message', exact: true }).click();
   await expect.element(page.getByRole('dialog', { name: 'Daily Planner conversation', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: /^Session model and mode/ }).click();
+  await expect.element(page.getByRole('dialog', { name: 'Session model and mode', exact: true })).toBeVisible();
+
+  // Pick explicit model -> return to Default (null), and pick explicit effort -> return to Default (null).
+  const modelsGroup = page.getByRole('radiogroup', { name: 'Models', exact: true });
+  await modelsGroup.getByRole('radio', { name: /^Test model/ }).click();
+  await expect.poll(() => savedModel).toBe('test-model');
+  const effortGroup = page.getByRole('radiogroup', { name: 'Reasoning effort', exact: true });
+  await effortGroup.getByRole('radio', { name: 'High', exact: true }).click();
+  await expect.poll(() => savedEffort).toBe('high');
+  await effortGroup.getByRole('radio', { name: 'Default', exact: true }).click();
+  await expect.poll(() => savedEffort).toBeNull();
+
+  // Stored effort can still be cleared back to Default even when the model advertises zero effort options.
+  savedModel = 'no-effort-model';
+  savedEffort = 'high';
+  await fixture.client.invalidateQueries({ queryKey: ['planner-run', 'daily-planner'] });
+  await expect.element(effortGroup.getByRole('radio', { name: 'High', exact: true })).toBeDisabled();
+  await effortGroup.getByRole('radio', { name: 'Default', exact: true }).click();
+  await expect.poll(() => savedEffort).toBeNull();
+  await modelsGroup.getByRole('radio', { name: /^Default/ }).click();
+  await expect.poll(() => savedModel).toBeNull();
+
+  // Full permission label & risk description are preserved and keyboard arrow navigation selects Full access.
+  const permissionGroup = page.getByRole('radiogroup', { name: 'Permission mode', exact: true });
+  const neverRadio = permissionGroup.getByRole('radio', { name: /Never/ });
+  const fullRadio = permissionGroup.getByRole('radio', { name: /Full access/ });
+  await expect.element(fullRadio).toHaveTextContent("No sandbox; never asks. Runs with your account's access.");
+  (neverRadio.element() as HTMLElement).focus();
+  await userEvent.keyboard('{ArrowDown}');
+  await expect.poll(() => savedPermission).toBe('full');
+  await expect.element(fullRadio).toHaveAttribute('aria-checked', 'true');
+  await userEvent.keyboard('{Escape}');
+  await expect.element(page.getByRole('dialog', { name: 'Session model and mode', exact: true })).not.toBeInTheDocument();
+
+  // Switcher closes across a desktop viewport round-trip and never reopens on returning to mobile.
+  await page.getByRole('button', { name: /^Switch conversation,/ }).click();
+  await expect.element(page.getByRole('dialog', { name: 'Switch conversation', exact: true })).toBeVisible();
+  await page.viewport(1280, 800);
+  await expect.element(page.getByRole('dialog', { name: 'Switch conversation', exact: true })).not.toBeInTheDocument();
+  await page.viewport(320, 640);
+  await expect.element(page.getByRole('dialog', { name: 'Switch conversation', exact: true })).not.toBeInTheDocument();
+
+  // Long list under a keyboard-reduced visualViewport (320x360 inside 320x640) stays bounded and returns focus on Escape.
+  const roleSlot = page.getByRole('button', { name: /^Switch conversation,/ });
+  await roleSlot.click();
+  const switcher = page.getByRole('dialog', { name: 'Switch conversation', exact: true });
+  await expect.element(switcher).toBeVisible();
+  const vv = window.visualViewport;
+  const originalVvHeight = vv ? Object.getOwnPropertyDescriptor(vv, 'height') : undefined;
+  try {
+    if (vv !== null) {
+      Object.defineProperty(vv, 'height', { configurable: true, value: 360 });
+      vv.dispatchEvent(new Event('resize'));
+    }
+    await expect.poll(() => switcher.element().getBoundingClientRect().height).toBeLessThanOrEqual(360);
+    expect(switcher.element().getBoundingClientRect().bottom).toBeLessThanOrEqual(361);
+    await expect.element(switcher.getByRole('button', { name: 'Close switcher', exact: true })).toBeVisible();
+    await userEvent.keyboard('{Escape}');
+    await expect.element(switcher).not.toBeInTheDocument();
+    await expect.poll(() => document.activeElement).toBe(roleSlot.element());
+  } finally {
+    if (vv !== null) {
+      if (originalVvHeight !== undefined) Object.defineProperty(vv, 'height', originalVvHeight);
+      else delete (vv as unknown as Record<string, unknown>).height;
+      vv.dispatchEvent(new Event('resize'));
+    }
+  }
+  expect(fixture.requests.some((r) => r.method === 'PATCH')).toBe(true);
 });

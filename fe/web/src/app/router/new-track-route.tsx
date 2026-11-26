@@ -258,7 +258,9 @@ function NewTrackEditor({ transport, unauthorized, memoryEnabled, workspace, ses
     error={areaFailure ?? session.error ?? (createdTrackId !== null ? 'Your track was created while you were away.' : null)}
     errorAction={createdTrackId !== null && session.request !== null
       ? { label: 'Open track', onClick: () => { openCreated(createdTrackId); } }
-      : session.canRetryAsNewTrack ? { label: 'Start as a new track', onClick: retryAsNewTrack } : undefined}
+      : workspace.areasError !== null
+        ? { label: 'Retry', onClick: workspace.retryAreas }
+        : session.canRetryAsNewTrack ? { label: 'Start as a new track', onClick: retryAsNewTrack } : undefined}
     initialCwd={session.area.defaultCwd}
     initialExecutionTargetId={session.area.executionTargetId}
     executionTargets={executionTargetsQuery.data}
