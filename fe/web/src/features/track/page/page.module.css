@@ -477,6 +477,15 @@
       margin-inline: calc(var(--space-4) * -1);
     }
 
+    .mobileFileChatAction {
+      display: grid;
+      place-items: center;
+      inline-size: var(--rail-w-collapsed);
+      block-size: var(--rail-w-collapsed);
+      padding: 0;
+      cursor: pointer;
+    }
+
     .title {
       white-space: normal;
       text-overflow: clip;
