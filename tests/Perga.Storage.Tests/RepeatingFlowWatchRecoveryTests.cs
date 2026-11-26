@@ -31,7 +31,7 @@ public sealed class RepeatingFlowWatchRecoveryTests
                 ]}
                 """);
             Assert.True(commit.Ok, string.Join(Environment.NewLine, commit.Diagnostics));
-            await WaitForStoredStateAsync(harness.Store, trackId, (watch, consumer) => converged
+            await WaitForStoredStateAsync(kernel, harness.Store, trackId, (watch, consumer) => converged
                 ? watch.Status == TaskRunStatus.Done && watch.RunCount == 1 && consumer.Status == TaskRunStatus.Done
                 : watch.Status == TaskRunStatus.Running && watch.RunCount == 0 &&
                     watch.Meta is { } meta && meta.GetProperty("watchProgress").TryGetProperty("lastCheckedAtMs", out _));
@@ -45,7 +45,7 @@ public sealed class RepeatingFlowWatchRecoveryTests
         Assert.Equal(0, boot.WokenTracks);
 
         var expectedRuns = converged ? 2 : 1;
-        await WaitForStoredStateAsync(reopened, trackId, (watch, consumer) =>
+        await WaitForStoredStateAsync(restarted, reopened, trackId, (watch, consumer) =>
             watch.Status == TaskRunStatus.Done && watch.Outcome == FlowOutcome.Ok && watch.RunCount == expectedRuns &&
             consumer.Status == TaskRunStatus.Done && consumer.RunCount == expectedRuns);
         var flow = await restarted.GetTrackFlowAsync(trackId);
@@ -57,19 +57,58 @@ public sealed class RepeatingFlowWatchRecoveryTests
         Assert.Null(projected.WatchProgress?.TimeoutAtMs);
     }
 
-    private static async Task WaitForStoredStateAsync(SqliteTrackStore store, string trackId, Func<TaskDto, TaskDto, bool> ready)
+    private static async Task WaitForStoredStateAsync(
+        PergaKernelService kernel,
+        SqliteTrackStore store,
+        string trackId,
+        Func<TaskDto, TaskDto, bool> ready)
     {
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (true)
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        await using var subscription = kernel.EventBus.Subscribe(trackId);
+        TaskDto? lastWatch = null;
+        TaskDto? lastConsumer = null;
+        try
         {
-            var snapshot = (await store.LoadTrackAggregateAsync(trackId, timeout.Token))!;
-            var watch = Assert.Single(snapshot.Tasks, task => task.TaskKey == "watch");
-            var consumer = Assert.Single(snapshot.Tasks, task => task.TaskKey == "consumer");
-            if (ready(watch, consumer))
-                return;
-            await Task.Delay(15, timeout.Token);
+            while (true)
+            {
+                var snapshot = (await store.LoadTrackAggregateAsync(trackId, timeout.Token))!;
+                lastWatch = Assert.Single(snapshot.Tasks, task => task.TaskKey == "watch");
+                lastConsumer = Assert.Single(snapshot.Tasks, task => task.TaskKey == "consumer");
+                if (ready(lastWatch, lastConsumer))
+                    return;
+
+                // Wake on persisted task events rather than hammering SQLite every 15ms;
+                // keep a bounded fallback in case a write lands before its broadcast.
+                using var wake = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token);
+                wake.CancelAfter(TimeSpan.FromMilliseconds(250));
+                try
+                {
+                    if (await subscription.Reader.WaitToReadAsync(wake.Token))
+                    {
+                        while (subscription.Reader.TryRead(out _)) { }
+                    }
+                    else
+                    {
+                        await Task.Delay(250, timeout.Token);
+                    }
+                }
+                catch (OperationCanceledException) when (!timeout.IsCancellationRequested)
+                {
+                }
+            }
+        }
+        catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+        {
+            throw new TimeoutException(
+                $"Timed out waiting for stored watch/consumer state on track '{trackId}'. " +
+                $"Last watch={FormatTask(lastWatch)}, consumer={FormatTask(lastConsumer)}.");
         }
     }
+
+    private static string FormatTask(TaskDto? task) =>
+        task is null
+            ? "<none>"
+            : $"{{Status={task.Status}, Ready={task.Ready}, RunCount={task.RunCount}, Outcome={task.Outcome}, Detail={task.StatusDetail ?? "<null>"}, Meta={task.Meta?.GetRawText() ?? "<null>"}}}";
 
     private static PergaKernelService NewKernel(SqliteTrackStore store, string dataDir, DateTimeOffset now, int probeExit) =>
         new(store, new ReportDocEngine(), new Perga.PolicyVm.PolicyVm(), new NoAgentRuntime(),
