@@ -164,7 +164,6 @@ export function AppShell({
           workspace={{
             areas: controller.workspace.areas,
             visibleAreas: controller.areas,
-            tracks: controller.workspace.tracks,
             tracksByArea: controller.workspace.tracksByArea,
             activeArea: controller.activeArea,
             liveActiveArea: controller.liveActiveArea,

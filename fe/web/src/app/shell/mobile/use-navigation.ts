@@ -3,10 +3,9 @@ import { useCallback, useEffect } from 'react';
 import type { Area } from '../../../../../core/domain/area.ts';
 import { useState } from '../../../ui/state/public.ts';
 
-/** Routes can reopen an Area's Tracks or recent Pages; the primary entry starts at Areas. */
-export type MobileSection =
+/** Routes can reopen an Area's Tracks or the main Workspace view. */
+type MobileSection =
   | Readonly<{ kind: 'areas'; areaId: string | undefined }>
-  | Readonly<{ kind: 'pages' }>
   | Readonly<{ kind: 'tracks'; areaId: string | undefined; returnTo?: 'areas' | 'report' }>;
 
 export type OpenMobileSection = (section: MobileSection, returnFocus?: 'opener' | 'workspace') => void;
@@ -28,7 +27,7 @@ const CLOSED_NAVIGATION: MobileNavigationState = Object.freeze({
   returnIntent: null,
 });
 
-export type UseMobileNavigationOptions = Readonly<{
+type UseMobileNavigationOptions = Readonly<{
   compact: boolean;
   suppressed: boolean;
   currentPath: string;

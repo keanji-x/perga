@@ -1,27 +1,5 @@
 /* Mobile shell chrome layout: mounted exclusively below the compact breakpoint. */
 @layer features {
-  .workspaceOpener {
-    position: fixed;
-    inset-inline-start: var(--space-4);
-    inset-block-end: calc(var(--mobile-keyboard-inset, 0px) + var(--space-4) + env(safe-area-inset-bottom));
-    display: grid;
-    place-items: center;
-    box-sizing: border-box;
-    inline-size: var(--control-h-touch);
-    block-size: var(--control-h-touch);
-    z-index: var(--z-sticky);
-    cursor: pointer;
-  }
-
-  .workspaceOpener[hidden] {
-    display: none;
-  }
-
-  .workspaceOpener svg {
-    inline-size: var(--glyph-xl);
-    block-size: var(--glyph-xl);
-  }
-
   .navigationFrame {
     z-index: var(--z-modal);
     position: fixed;

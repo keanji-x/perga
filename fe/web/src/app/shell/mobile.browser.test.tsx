@@ -5,7 +5,7 @@ import { withFontRoleProbe } from '../../../../tools/styles/font-role-fixture.ts
  * The mobile presentation, rendered on the real `AppShell` over a memory history;
  * this is the file that measures painted boxes.
  */
-import { cleanup } from '@testing-library/react';
+import { cleanup, fireEvent } from '@testing-library/react';
 import { commands, page, userEvent } from 'vitest/browser';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -14,6 +14,30 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 afterEach(async () => { cleanup(); vi.restoreAllMocks(); await commands.emulateReducedMotion(false); });
 
 const settlePaint = () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+
+it('slides Workspace in and out on the left and pushes its Area in from the right', async () => {
+  await page.viewport(390, 844);
+  setup('/');
+  const opener = await page.getByRole('button', { name: 'Open workspace' }).findElement();
+  const host = document.getElementById('mobile-workspace-navigation')!;
+  const animationFrames = (element: Element) => (element.getAnimations()[0].effect as KeyframeEffect).getKeyframes();
+  const offset = (frame: ComputedKeyframe) => new DOMMatrix(String(frame.transform)).m41;
+
+  fireEvent.click(opener);
+  expect(offset(animationFrames(host)[0])).toBeCloseTo(-390);
+  await host.getAnimations()[0].finished;
+
+  const product = await page.getByRole('button', { name: 'Product', exact: true }).findElement();
+  fireEvent.click(product);
+  const area = host.querySelector('[data-nc-workspace-page="tracks"]')!;
+  expect(offset(animationFrames(area)[0])).toBeCloseTo(390);
+  await area.getAnimations()[0].finished;
+
+  await page.getByRole('button', { name: 'Back to Workspace', exact: true }).click();
+  const close = await page.getByRole('button', { name: 'Back to workspace', exact: true }).findElement();
+  fireEvent.click(close);
+  expect(offset(animationFrames(host).at(-1)!)).toBeCloseTo(-390);
+});
 
 
 async function openTrackNavigation(): Promise<void> {
@@ -90,6 +114,8 @@ describe('Track mobile presentation', () => {
     expect(header.getBoundingClientRect().height).toBeGreaterThanOrEqual(52);
     await settlePaint();
     await page.screenshot({ path: '../../../../test-results/mobile-report.png' });
+    const reportChatDock = document.querySelector('[data-nc-mobile-report-chat]')!;
+    expect(getComputedStyle(reportChatDock).display).not.toBe('none');
 
     await openTrackNavigation();
     await expect.element(page.getByRole('dialog', { name: 'Tracks and settings' })).toBeVisible();
@@ -108,7 +134,10 @@ describe('Track mobile presentation', () => {
     expect(navHeading.getBoundingClientRect().bottom).toBeLessThanOrEqual(64);
     await page.screenshot({ path: '../../../../test-results/mobile-navigation-polished.png' });
 
-    expect(document.querySelector('main')?.hasAttribute('inert')).toBe(true);
+    const main = document.querySelector('main')!;
+    expect(main.inert).toBe(true);
+    expect(main.getAttribute('aria-hidden')).toBe('true');
+    expect(getComputedStyle(reportChatDock).display).toBe('none');
     openerElement.focus();
     expect(document.activeElement).not.toBe(openerElement);
     await page.getByRole('button', { name: 'Responsive mobile UI', exact: true }).click();
@@ -159,6 +188,9 @@ describe('Track mobile presentation', () => {
     await Promise.all(panel.getAnimations().map((animation) => animation.finished));
     expect(page.getByRole('heading', { name: 'Conversations' })).toBeTruthy();
     expect(document.querySelector('[data-nc-mobile-report-chat]')).toBeNull();
+    const conversation = await page.getByRole('button', { name: /^Conversation Design review/ }).findElement();
+    expect(conversation.getBoundingClientRect().height).toBeGreaterThanOrEqual(44);
+    expect(getComputedStyle(conversation.closest('ul')!).maxBlockSize).toBe('none');
     await settlePaint();
     await page.screenshot({ path: '../../../../test-results/mobile-conversations.png' });
   });

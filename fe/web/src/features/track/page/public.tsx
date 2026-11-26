@@ -161,7 +161,7 @@ export function TrackPage({ fillReading = false, articleMasthead = !fillReading,
   shareLinks, onShareTrack, onStartConversation, conversationOpen = false, mobilePanelObscured, unread = false, onReply,
   cardsAction, recentFiles, onOpenCard, onDeleteCard, onSetWorkbench, onOpenTask, onOpenOutline, board, onCloseBoard, fileViewer,
   panel = null, onOpenPanel, onClosePanel,
-  mobileBackLabel = 'Pages', onMobileBack, mobileHeaderActionsHost = null, mobileHeaderTitleHost = null, mobileAreaName, mobileTitleReadView,
+  mobileBackLabel = 'Workspace', onMobileBack, mobileHeaderActionsHost = null, mobileHeaderTitleHost = null, mobileAreaName, mobileTitleReadView,
   canReopenTrack, canCloseTrack, onRenameTrack, onOpenOriginTrack, closedControl, onDeleteTrack, onTrackDeleted,
 }: TrackPageProps) {
   const compactViewport = useCompactViewport();
@@ -591,9 +591,7 @@ export function TrackPage({ fillReading = false, articleMasthead = !fillReading,
                 backLabel="Report"
                 onBack={closeMobilePanel}
               >
-                <div className={styles.mobileConversationList}>
-                  {conversationList ?? <EmptyState variant="compact" icon={<Icon name="chat" />} title="No conversations yet" description="Conversations started here appear in this list." />}
-                </div>
+                {conversationList ?? <EmptyState variant="compact" icon={<Icon name="chat" />} title="No conversations yet" description="Conversations started here appear in this list." />}
               </MobileListPage>
             ) : (
               /* Every row module goes through `core/view`, in one branch: what is left of `MobilePanelKind` is exactly `RowModuleView['key']`. The four declaration words are deliberately not quoted anywhere in this file. */

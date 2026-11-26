@@ -9,7 +9,6 @@ import { afterEach, expect, it } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import { createUiPreferences } from '../providers/ui-preferences.tsx';
 import { renderDailyFixture } from './daily-planner-fixture.tsx';
-import { MobilePages } from '../shell/mobile/pages.tsx';
 import { MobileTracks } from '../shell/mobile/tracks.tsx';
 import { ChatEmpty } from '../../features/chat/thread/public.tsx';
 import { ReportDocument } from '../../features/report/document/public.tsx';
@@ -72,13 +71,6 @@ it.each(['areas','tracks'] as const)('catalog mobile navigation %s', async view 
   mount(<MobileTracks {...navigationActions()} view={view} areas={view === 'areas' ? [] : [area]} tracksByArea={new Map()} areaId={view === 'areas' ? undefined : area.id} currentTrackId={undefined} onSelectArea={noop} onOpenTrack={noop} isUnread={() => false} readError={null} readLoading={false} onRetryRead={noop} />);
   await expect.element(page.getByText(view === 'areas' ? 'No areas yet' : 'No tracks in this area')).toBeVisible();
   await shot(view === 'areas' ? '07-mobile-no-areas' : '08-mobile-no-tracks', [view === 'areas' ? 'No areas yet' : 'No tracks in this area']);
-});
-it('catalog mobile Pages groups', async () => {
-  await page.viewport(390,844);
-  mount(<MobilePages {...navigationActions()} areas={[area]} areaId={area.id} tracks={[]} onOpenTrack={noop} />);
-  await expect.element(page.getByText('No recent pages yet')).toBeVisible(); await shot('09-pages-recent', ["No recent pages yet"]);
-  await page.getByRole('radio',{name:'Pinned',exact:true}).click();
-  await expect.element(page.getByText('No pinned pages yet')).toBeVisible(); await shot('10-pages-pinned', ["No pinned pages yet"]);
 });
 it.each(['code','diff'] as const)('catalog file viewer %s', async tab => {
   await page.viewport(1000,650);

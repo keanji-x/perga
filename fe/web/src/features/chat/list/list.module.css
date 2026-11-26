@@ -193,6 +193,24 @@
     margin-inline-end: var(--space-half);
   }
 
+  @media (width < 60rem) {
+    .mobilePageList {
+      max-block-size: none;
+      margin-inline: 0;
+      overflow: visible;
+      overscroll-behavior: auto;
+    }
+
+    .mobilePageList .row {
+      min-block-size: var(--rail-w-collapsed);
+      padding-inline-start: var(--space-2);
+    }
+
+    .mobilePageList .actions {
+      min-block-size: var(--rail-w-collapsed);
+    }
+  }
+
   @media (prefers-reduced-motion: reduce) {
 
     .row {

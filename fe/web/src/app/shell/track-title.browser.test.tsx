@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 
@@ -6,7 +6,6 @@ import '../../styles/entry.css';
 import { TrackRow } from '../../features/track/row/public.tsx';
 import { renderPage, track } from '../../features/track/page/test-fixtures.tsx';
 import { TrackSelector } from './mobile/track-selector.tsx';
-import { MobilePages } from './mobile/pages.tsx';
 import { MobileTracks } from './mobile/tracks.tsx';
 import type { Area } from '../../../../core/domain/area.ts';
 import { TrackTitle } from '../../features/track/title/public.tsx';
@@ -80,15 +79,21 @@ describe('shared Track title in production hosts', () => {
     await page.viewport(414, 896);
     const closed = track({ closedAt: 5 });
     const onOpenTrack = vi.fn();
-    const pages = render(<MobilePages {...navigation} areas={[area]} areaId="c1" tracks={[closed]} onOpenTrack={onOpenTrack} />);
-    const title = screen.getByText('Alpha');
-    expect(getComputedStyle(title).textDecorationLine).toBe('line-through');
-    await userEvent.click(title);
+    const props = {
+      ...navigation, areas: [area], areaId: area.id, currentTrackId: undefined, isUnread: () => false,
+      readError: null, readLoading: false, onRetryRead: vi.fn(), tracksByArea: new Map([[area.id, [closed]]]),
+      onOpenTrack, onSelectArea: vi.fn(),
+    };
+    const view = render(<div style={{ height: '100dvh' }}><MobileTracks {...props} view="areas" /></div>);
+    const library = within(screen.getByRole('region', { name: 'Library' }));
+    await userEvent.click(library.getByRole('button', { name: /Closed tracks/ }));
+    const title = library.getByText('Alpha');
+    const entry = title.closest('button')!;
+    expect(decoration(entry)).toBe('line-through');
+    await userEvent.click(entry);
     expect(onOpenTrack).toHaveBeenCalledWith('w1');
-    pages.unmount();
-    render(<MobileTracks {...navigation} view="tracks" areas={[area]} areaId="c1"
-      currentTrackId={undefined} isUnread={() => false} readError={null} readLoading={false} onRetryRead={vi.fn()}
-      tracksByArea={new Map([['c1', [closed]]])} onOpenTrack={onOpenTrack} onSelectArea={vi.fn()} />);
+    view.unmount();
+    render(<div style={{ height: '100dvh' }}><MobileTracks {...props} view="tracks" /></div>);
     expect(decoration(screen.getByRole('button', { name: 'Alpha, closed' }))).toBe('line-through');
   });
 });

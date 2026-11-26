@@ -13,7 +13,7 @@ export function useMobileNavigationPresence(
   useEdgePresence({
     frame: { ref: frame },
     part: { element: host, readFrame: () => readSurfaceFrame(frame.current) },
-    edge: 'inline-end',
+    edge: 'inline-start',
     open,
     present,
     enabled: true,

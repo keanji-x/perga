@@ -11,8 +11,6 @@ import styles from './navigation.module.css';
 import type { MobileTracksProps } from './tracks-types.ts';
 import { WorkspaceLevelOne } from './workspace-level-one.tsx';
 
-export type { MobileTracksProps };
-
 /** Stable page shells preserve the Workspace Level 1 scroll position across Level 2 push/pop transitions. */
 export function MobileTracks(props: MobileTracksProps) {
   const tracksFrameRef = useRef<HTMLDivElement | null>(null);
