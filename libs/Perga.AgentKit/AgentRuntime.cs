@@ -138,7 +138,8 @@ public sealed class AgentRuntime : IAgentRuntime
         var bridgeScript = _transport.ResolveBridgeScriptPath(_options.BridgeScriptPath);
         var (exeOverride, extraEnv) = ResolveOverride(provider, oarRuntimeId);
         var env = BuildProcessEnvironment(extraEnv);
-        var nodeExe = _transport.ResolveNodeExecutable(_options.NodeExecutablePath, env);
+        var nodeExe = _transport.ResolveNodeExecutable(
+            _options.NodeExecutablePath, env, includeSystemLocations: _options.BaseEnvironment is null);
 
         var invocation = new CommandInvocation(nodeExe, [bridgeScript], fullCwd, env);
         lock (_sessionSync)
@@ -186,7 +187,8 @@ public sealed class AgentRuntime : IAgentRuntime
             var bridgeScript = _transport.ResolveBridgeScriptPath(_options.BridgeScriptPath);
             var (exeOverride, extraEnv) = ResolveOverride(provider, oarRuntimeId);
             var env = BuildProcessEnvironment(extraEnv);
-            var nodeExe = _transport.ResolveNodeExecutable(_options.NodeExecutablePath, env);
+            var nodeExe = _transport.ResolveNodeExecutable(
+                _options.NodeExecutablePath, env, includeSystemLocations: _options.BaseEnvironment is null);
             var cwd = _transport.TempDirectory;
             var timeout = _options.ProbeTimeout > TimeSpan.Zero ? _options.ProbeTimeout : TimeSpan.FromSeconds(30);
 
@@ -263,7 +265,9 @@ public sealed class AgentRuntime : IAgentRuntime
             return remoteEnv;
         }
 
-        var env = ChildProcessEnvironment.Capture();
+        var env = _options.BaseEnvironment is { } source
+            ? ChildProcessEnvironment.Capture(source)
+            : ChildProcessEnvironment.Capture();
         var comparer = env.Comparer;
 
         var pathOverridden = false;
@@ -278,7 +282,9 @@ public sealed class AgentRuntime : IAgentRuntime
 
         if (!pathOverridden)
         {
-            var home = env.GetValueOrDefault("HOME") ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            var home = env.GetValueOrDefault("HOME");
+            if (home is null && _options.BaseEnvironment is null)
+                home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
             if (!string.IsNullOrWhiteSpace(home))
             {
                 var segments = (env.GetValueOrDefault("PATH") ?? string.Empty)
@@ -314,7 +320,7 @@ public sealed class AgentRuntime : IAgentRuntime
             return File.Exists(full) ? full : null;
         }
 
-        var pathVar = env?.GetValueOrDefault("PATH") ?? Environment.GetEnvironmentVariable("PATH");
+        var pathVar = env is null ? Environment.GetEnvironmentVariable("PATH") : env.GetValueOrDefault("PATH");
         if (string.IsNullOrWhiteSpace(pathVar)) return null;
         foreach (var dir in pathVar.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
         {

@@ -67,6 +67,7 @@ Open [http://127.0.0.1:4041/](http://127.0.0.1:4041/) and sign in. The web app i
 ```sh
 perga version            # installed version, install and data directories
 perga doctor             # package files, Node.js 24+, database, and provider CLIs
+perga doctor --deep      # probe provider CLI versions, sign-in status, and models
 perga upgrade            # latest release; or `perga upgrade v0.1.0`
 perga uninstall          # remove the package and launcher; data in PERGA_DATA_DIR is kept
 ```

@@ -112,6 +112,62 @@ public sealed class InstallAndReleaseScriptsTests : IDisposable
         Assert.Equal(Path.Combine(Root, "rel-data"), uninstall["PERGA_DATA_DIR"]);
     }
 
+    [Theory]
+    [InlineData("/bin/zsh", ">> ~/.zshrc && source ~/.zshrc")]
+    [InlineData("/bin/bash", ">> ~/.bashrc && source ~/.bashrc")]
+    [InlineData("/usr/local/bin/fish", "fish_add_path")]
+    [InlineData("/bin/sh", "export PATH=")]
+    public async Task InstallerPrintsShellAwarePathHintWhenBinDirIsNotOnPath(string shell, string expectedHint)
+    {
+        var package = CreatePackage("v0.1.0");
+        var customBin = Path.Combine(Root, "bin-" + Path.GetFileName(shell));
+        var install = await InstallAsync(package, new()
+        {
+            ["PERGA_BIN_DIR"] = customBin,
+            ["SHELL"] = shell
+        });
+
+        Assert.True(install.Code == 0, install.Error);
+        Assert.Contains($"Add {customBin} to your PATH:", install.Output);
+        Assert.Contains(expectedHint, install.Output);
+        Assert.Contains(customBin, install.Output);
+    }
+
+    [Fact]
+    public async Task InstallerPathHintsPreserveShellCharacters()
+    {
+        var package = CreatePackage("v0.1.0");
+        var bin = Path.Combine(Root, "it's \"$TESTVAR\" \\bin");
+        foreach (var (shell, rc) in new[] { ("bash", ".bashrc"), ("zsh", ".zshrc"), ("sh", "") })
+        {
+            var env = BaseEnvironment();
+            env["SHELL"] = shell;
+            env["PERGA_BIN_DIR"] = bin;
+            env["TESTVAR"] = "expanded";
+            env["PATH"] = "/usr/bin:/bin";
+
+            var install = await InstallAsync(package, env);
+            Assert.True(install.Code == 0, install.Error);
+            var hint = Assert.Single(install.Output.Split('\n'), line => line.StartsWith("  ") && line.Contains("export PATH="));
+            var syntax = await RunAsync("bash", ["-n", "-c", hint], env);
+            Assert.True(syntax.Code == 0, syntax.Error);
+
+            var apply = await RunAsync(shell == "sh" ? "sh" : "bash", ["-e", "-c", hint + "\nprintf '%s' \"$PATH\""], env);
+            Assert.True(apply.Code == 0, apply.Error);
+            Assert.Equal($"{bin}:/usr/bin:/bin", apply.Output);
+            if (rc.Length > 0)
+            {
+                var reload = await RunAsync("bash", ["-e", "-c", ". \"$1\"; printf '%s' \"$PATH\"", "test", Path.Combine(Home, rc)], env);
+                Assert.True(reload.Code == 0, reload.Error);
+                Assert.Equal(apply.Output, reload.Output);
+            }
+        }
+
+        var fish = await InstallAsync(package, new() { ["SHELL"] = "fish", ["PERGA_BIN_DIR"] = bin });
+        Assert.True(fish.Code == 0, fish.Error);
+        Assert.Contains($"  fish_add_path '{Root}/it\\'s \"$TESTVAR\" \\\\bin'\n", fish.Output);
+    }
+
     [Fact]
     public async Task ChecksumMismatchInstallsNothing()
     {

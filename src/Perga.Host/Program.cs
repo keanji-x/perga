@@ -1,6 +1,7 @@
 using System.Net;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.StaticFiles;
 using Microsoft.Extensions.FileProviders;
@@ -12,6 +13,7 @@ using Perga.Host.Http;
 using Perga.Host.Mcp;
 using Perga.Host.Serialization;
 using Perga.Host.SystemUpgrade;
+using Perga.Kernel.Ports;
 
 if (args is ["auth", ..])
     return await AuthCliCommand.RunAsync(args, Console.In, Console.Out, Console.Error);
@@ -40,9 +42,22 @@ if (exportPath is not null)
     return 0;
 }
 
+var isTestHost = app.Environment.IsEnvironment("Testing") ||
+                 string.Equals(app.Services.GetService<IServer>()?.GetType().FullName,
+                     "Microsoft.AspNetCore.TestHost.TestServer", StringComparison.Ordinal);
 
-var options = app.Services.GetRequiredService<PergaHostOptions>();
-options.ValidateAuth();
+PergaHostOptions options;
+try
+{
+    options = app.Services.GetRequiredService<PergaHostOptions>();
+    options.ValidateAuth();
+}
+catch (Exception ex) when (!isTestHost && HostStartupOnboarding.FormatConfigurationError(ex) is { } message)
+{
+    await Console.Error.WriteLineAsync(message);
+    await app.DisposeAsync();
+    return 1;
+}
 if (options.AuthAllowInsecureHttp)
 {
     app.Logger.LogWarning(
@@ -102,43 +117,68 @@ app.Use(async (context, next) =>
 });
 app.Use(RequestOriginGuard.EnforceWriteSourceAsync);
 
-_ = app.Services.GetRequiredService<IAuthPasswordHasher>();
-_ = app.Services.GetRequiredService<SystemManagementAuthorization>();
-var releases = app.Services.GetRequiredService<ReleaseSnapshotManager>();
-var contentTypeProvider = new FileExtensionContentTypeProvider();
-contentTypeProvider.Mappings[".webmanifest"] = "application/manifest+json";
-app.UseDefaultFiles(new DefaultFilesOptions { FileProvider = releases, RequestPath = string.Empty });
-app.UseStaticFiles(new StaticFileOptions
+try
 {
-    FileProvider = releases, RequestPath = string.Empty, ContentTypeProvider = contentTypeProvider,
-    OnPrepareResponse = ctx =>
+    _ = app.Services.GetRequiredService<IAuthPasswordHasher>();
+    _ = app.Services.GetRequiredService<SystemManagementAuthorization>();
+    var releases = app.Services.GetRequiredService<ReleaseSnapshotManager>();
+    var contentTypeProvider = new FileExtensionContentTypeProvider();
+    contentTypeProvider.Mappings[".webmanifest"] = "application/manifest+json";
+    app.UseDefaultFiles(new DefaultFilesOptions { FileProvider = releases, RequestPath = string.Empty });
+    app.UseStaticFiles(new StaticFileOptions
     {
-        if (ctx.File.Name.EndsWith(".html", StringComparison.OrdinalIgnoreCase)) ctx.Context.Response.Headers.CacheControl = "no-cache";
+        FileProvider = releases, RequestPath = string.Empty, ContentTypeProvider = contentTypeProvider,
+        OnPrepareResponse = ctx =>
+        {
+            if (ctx.File.Name.EndsWith(".html", StringComparison.OrdinalIgnoreCase)) ctx.Context.Response.Headers.CacheControl = "no-cache";
+        }
+    });
+
+    app.MapPublishedHttpEndpoints();
+    app.MapPergaMcpEndpoints();
+
+    app.MapFallback("/api/{**path}", (HttpContext ctx) => HttpErrorHandling.NotFound($"Route '{ctx.Request.Path}' was not found."))
+        .RequireAuthorization(PergaAuthPolicies.UserSession);
+    app.MapFallback("/mcp/{**path}", (HttpContext ctx) => HttpErrorHandling.NotFound($"Route '{ctx.Request.Path}' was not found."))
+        .RequireAuthorization(PergaAuthPolicies.McpSessionOnly);
+
+    app.MapFallback(async (HttpContext ctx) =>
+    {
+        if (releases.GetFileInfo("index.html") is { Exists: true, PhysicalPath: not null } index &&
+            (HttpMethods.IsGet(ctx.Request.Method) || HttpMethods.IsHead(ctx.Request.Method)))
+        {
+            ctx.Response.Headers.CacheControl = "no-cache";
+            await Results.File(index.PhysicalPath, "text/html; charset=utf-8").ExecuteAsync(ctx).ConfigureAwait(false);
+            return;
+        }
+
+        await HttpErrorHandling.NotFound($"Route '{ctx.Request.Path}' was not found.").ExecuteAsync(ctx).ConfigureAwait(false);
+    });
+
+    var storagePaths = app.Services.GetRequiredService<ResolvedHostStoragePaths>();
+    var onboardingCode = await HostStartupOnboarding.EnsureInteractiveOwnerIfNeededAsync(
+        app.Services.GetRequiredService<IAuthStore>(),
+        storagePaths.DbPath,
+        storagePaths.IsEphemeral,
+        isTestHost,
+        isInteractive: HostStartupOnboarding.IsForegroundInteractiveTerminal(),
+        Console.In,
+        Console.Out,
+        Console.Error);
+    if (onboardingCode != 0)
+    {
+        await app.DisposeAsync();
+        return onboardingCode;
     }
-});
 
-app.MapPublishedHttpEndpoints();
-app.MapPergaMcpEndpoints();
-
-app.MapFallback("/api/{**path}", (HttpContext ctx) => HttpErrorHandling.NotFound($"Route '{ctx.Request.Path}' was not found."))
-    .RequireAuthorization(PergaAuthPolicies.UserSession);
-app.MapFallback("/mcp/{**path}", (HttpContext ctx) => HttpErrorHandling.NotFound($"Route '{ctx.Request.Path}' was not found."))
-    .RequireAuthorization(PergaAuthPolicies.McpSessionOnly);
-
-app.MapFallback(async (HttpContext ctx) =>
+    app.Run();
+}
+catch (Exception ex) when (!isTestHost && HostStartupOnboarding.FormatStartupError(ex) is { } message)
 {
-    if (releases.GetFileInfo("index.html") is { Exists: true, PhysicalPath: not null } index &&
-        (HttpMethods.IsGet(ctx.Request.Method) || HttpMethods.IsHead(ctx.Request.Method)))
-    {
-        ctx.Response.Headers.CacheControl = "no-cache";
-        await Results.File(index.PhysicalPath, "text/html; charset=utf-8").ExecuteAsync(ctx).ConfigureAwait(false);
-        return;
-    }
-
-    await HttpErrorHandling.NotFound($"Route '{ctx.Request.Path}' was not found.").ExecuteAsync(ctx).ConfigureAwait(false);
-});
-
-app.Run();
+    await Console.Error.WriteLineAsync(message);
+    await app.DisposeAsync();
+    return 1;
+}
 return 0;
 
 public partial class Program;

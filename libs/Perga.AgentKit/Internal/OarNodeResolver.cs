@@ -8,6 +8,12 @@ internal static class OarNodeResolver
 {
     internal const int MinimumNodeMajorVersion = 24;
     private static readonly Encoding Utf8NoBom = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
+    private static readonly string[] MacOsHomebrewCandidates =
+    [
+        "/opt/homebrew/opt/node@24/bin/node",
+        "/opt/homebrew/bin/node",
+        "/usr/local/opt/node@24/bin/node"
+    ];
 
     public static string? TryMapProviderToOarRuntime(string provider)
     {
@@ -29,26 +35,39 @@ internal static class OarNodeResolver
     }
 
     public static string ResolveNode24Executable(
-        string? configuredExecutable, IReadOnlyDictionary<string, string>? environment)
+        string? configuredExecutable, IReadOnlyDictionary<string, string>? environment, bool includeSystemLocations = true)
     {
-        var status = Probe(configuredExecutable, environment);
+        var status = Probe(configuredExecutable, environment, includeSystemLocations);
         if (status.MeetsMinimum) return status.ExecutablePath!;
         if (!string.IsNullOrWhiteSpace(configuredExecutable))
         {
             if (!status.Found)
-                throw new FileNotFoundException($"Configured Node 24 executable was not found: '{configuredExecutable}'.", status.ExecutablePath);
+                throw new FileNotFoundException($"Configured Node.js {MinimumNodeMajorVersion}+ executable was not found: '{configuredExecutable}'.", status.ExecutablePath);
             // A configured executable whose version cannot be read is trusted, as the caller chose it explicitly.
             if (status.Version is null) return status.ExecutablePath!;
             throw new InvalidOperationException(
-                $"perga-oar-bridge requires Node.js >= {MinimumNodeMajorVersion}.0.0, but '{status.ExecutablePath}' is v{status.Version}.");
+                $"Perga requires Node.js >= {MinimumNodeMajorVersion}.0.0 to run agent CLIs, but '{status.ExecutablePath}' is v{status.Version}. " +
+                $"Install Node.js {MinimumNodeMajorVersion}+ (e.g. 'nvm install {MinimumNodeMajorVersion}' or 'brew install node@{MinimumNodeMajorVersion}') or set PERGA_OAR_NODE_BIN.");
+        }
+
+        if (status.Found && status.Version is not null)
+        {
+            throw new InvalidOperationException(
+                $"Perga requires Node.js >= {MinimumNodeMajorVersion}.0.0 to run agent CLIs, but '{status.ExecutablePath}' is v{status.Version}. " +
+                $"Install Node.js {MinimumNodeMajorVersion}+ (e.g. 'nvm install {MinimumNodeMajorVersion}' or 'brew install node@{MinimumNodeMajorVersion}') or set PERGA_OAR_NODE_BIN (or Perga:OarNodeExecutablePath).");
         }
 
         throw new InvalidOperationException(
-            $"perga-oar-bridge requires Node.js >= {MinimumNodeMajorVersion}.0.0. Configure Perga:OarNodeExecutablePath or PERGA_OAR_NODE_BIN.");
+            $"Perga requires Node.js >= {MinimumNodeMajorVersion}.0.0 to run agent CLIs. " +
+            $"Install Node.js {MinimumNodeMajorVersion}+ (e.g. 'nvm install {MinimumNodeMajorVersion}' or 'brew install node@{MinimumNodeMajorVersion}') or set PERGA_OAR_NODE_BIN (or Perga:OarNodeExecutablePath).");
     }
 
-    /// <summary>Checks the configured executable, else <c>node</c> on PATH, else the newest qualifying nvm install.</summary>
-    public static OarNodeRuntimeStatus Probe(string? configuredExecutable, IReadOnlyDictionary<string, string>? environment)
+    /// <summary>Checks the configured executable, else <c>node</c> on PATH, else nvm/Volta/fnm/Homebrew Node 24+ installs.</summary>
+    internal static OarNodeRuntimeStatus Probe(
+        string? configuredExecutable,
+        IReadOnlyDictionary<string, string>? environment,
+        bool includeSystemLocations,
+        IEnumerable<string>? extraCandidatePaths = null)
     {
         if (!string.IsNullOrWhiteSpace(configuredExecutable))
         {
@@ -64,21 +83,30 @@ internal static class OarNodeResolver
         if (pathVersion is { Major: >= MinimumNodeMajorVersion })
             return new(true, true, pathVersion, pathNode, null);
 
-        if (FindNvmNode24(environment) is { } nvm)
+        var home = environment is null
+            ? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
+            : environment.GetValueOrDefault("HOME");
+        if (FindNvmNode24(home, environment) is { } nvm)
             return new(true, true, nvm.Version, nvm.Exe, null);
+
+        if (FindWellKnownNode24(home, environment, includeSystemLocations, extraCandidatePaths) is { } wellKnown)
+            return new(true, true, wellKnown.Version, wellKnown.Exe, null);
 
         return pathNode is not null
             ? Classify(pathNode, pathVersion)
             : new(false, false, null, null,
-                $"Node.js >= {MinimumNodeMajorVersion} was not found on PATH or in ~/.nvm/versions/node. Install it or set PERGA_OAR_NODE_BIN.");
+                $"Perga requires Node.js >= {MinimumNodeMajorVersion}.0.0 to run agent CLIs. " +
+                $"Install Node.js {MinimumNodeMajorVersion}+ (e.g. 'nvm install {MinimumNodeMajorVersion}' or 'brew install node@{MinimumNodeMajorVersion}') or set PERGA_OAR_NODE_BIN (or Perga:OarNodeExecutablePath).");
     }
 
     private static OarNodeRuntimeStatus Classify(string executable, Version? version) => version switch
     {
-        null => new(true, false, null, executable, $"Could not read the Node.js version from '{executable}'."),
+        null => new(true, false, null, executable,
+            $"Could not read the Node.js version from '{executable}'. Install Node.js {MinimumNodeMajorVersion}+ (e.g. 'nvm install {MinimumNodeMajorVersion}' or 'brew install node@{MinimumNodeMajorVersion}') or set PERGA_OAR_NODE_BIN."),
         { Major: >= MinimumNodeMajorVersion } => new(true, true, version, executable, null),
         _ => new(true, false, version, executable,
-            $"Node.js >= {MinimumNodeMajorVersion}.0.0 is required, but '{executable}' is v{version}.")
+            $"Perga requires Node.js >= {MinimumNodeMajorVersion}.0.0 to run agent CLIs, but '{executable}' is v{version}. " +
+            $"Install Node.js {MinimumNodeMajorVersion}+ (e.g. 'nvm install {MinimumNodeMajorVersion}' or 'brew install node@{MinimumNodeMajorVersion}') or set PERGA_OAR_NODE_BIN.")
     };
 
     public static Version? ParseNodeVersion(string? output)
@@ -90,9 +118,8 @@ internal static class OarNodeResolver
         return Version.TryParse(s, out var parsed) ? parsed : null;
     }
 
-    private static (Version Version, string Exe)? FindNvmNode24(IReadOnlyDictionary<string, string>? environment)
+    private static (Version Version, string Exe)? FindNvmNode24(string? home, IReadOnlyDictionary<string, string>? environment)
     {
-        var home = environment?.GetValueOrDefault("HOME") ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         if (string.IsNullOrWhiteSpace(home)) return null;
         var nvmRoot = Path.Combine(home, ".nvm", "versions", "node");
         if (!Directory.Exists(nvmRoot)) return null;
@@ -105,6 +132,35 @@ internal static class OarNodeResolver
         {
             if (ProbeNodeVersion(candidate.Exe, environment) is { Major: >= MinimumNodeMajorVersion } probed)
                 return (probed, candidate.Exe);
+        }
+
+        return null;
+    }
+
+    private static (Version Version, string Exe)? FindWellKnownNode24(
+        string? home,
+        IReadOnlyDictionary<string, string>? environment,
+        bool includeSystemLocations,
+        IEnumerable<string>? extraCandidatePaths)
+    {
+        var binName = OperatingSystem.IsWindows() ? "node.exe" : "node";
+        var candidates = new List<string>();
+        if (!string.IsNullOrWhiteSpace(home))
+        {
+            candidates.Add(Path.Combine(home, ".volta", "bin", binName));
+            candidates.Add(Path.Combine(home, ".local", "share", "fnm", "aliases", "default", "bin", binName));
+            candidates.Add(Path.Combine(home, ".fnm", "aliases", "default", "bin", binName));
+        }
+
+        if (includeSystemLocations)
+            candidates.AddRange(extraCandidatePaths ?? (OperatingSystem.IsMacOS() ? MacOsHomebrewCandidates : []));
+
+        foreach (var candidate in candidates)
+        {
+            if (string.IsNullOrWhiteSpace(candidate) || !File.Exists(candidate))
+                continue;
+            if (ProbeNodeVersion(candidate, environment) is { Major: >= MinimumNodeMajorVersion } probed)
+                return (probed, candidate);
         }
 
         return null;

@@ -40,7 +40,7 @@ describe('production login assembly', () => {
     const transport = { send: vi.fn().mockResolvedValue({
       status: 403, statusText: 'Forbidden', body: {
         code: 'auth_not_configured', error: 'Perga has no owner account.',
-        nextStep: 'Run perga-ctl auth init-owner on the Perga host.',
+        nextStep: "Run 'perga auth init-owner --username owner --allow-migrate' on the Perga host.",
       },
     }) };
     render(<LoginPage login={(username, password, signal) => loginWithTransport(transport, username, password, signal)} reload={vi.fn()} />);
@@ -48,7 +48,7 @@ describe('production login assembly', () => {
     await userEvent.type(screen.getByLabelText('Password'), 'secret');
     await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
     expect((await screen.findByRole('alert')).textContent)
-      .toBe('Perga has no owner account. Run perga-ctl auth init-owner on the Perga host.');
+      .toBe("Perga has no owner account. Run 'perga auth init-owner --username owner --allow-migrate' on the Perga host.");
   });
 
   it('shows a Retry-After countdown when throttled with Retry-After header', async () => {

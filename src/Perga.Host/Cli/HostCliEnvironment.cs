@@ -2,6 +2,7 @@ using System.Collections;
 using System.ComponentModel;
 using System.Diagnostics;
 using Perga.AgentKit;
+using Perga.Host.Configuration;
 
 namespace Perga.Host.Cli;
 
@@ -33,6 +34,9 @@ public sealed record HostCliEnvironment
     public Func<IReadOnlyDictionary<string, string>, string?, IReadOnlyList<DetectedProviderCli>> DiscoverProviders { get; init; } =
         ProviderCliProbe.Discover;
 
+    public Func<string, string, IReadOnlyDictionary<string, string>, CancellationToken, Task<IReadOnlyList<ProviderStatus>>> ProbeProvidersDeepAsync { get; init; } =
+        DefaultProbeProvidersDeepAsync;
+
     public string? Get(string name) => Variables.TryGetValue(name, out var value) && value.Length > 0 ? value : null;
 
     public static HostCliEnvironment FromProcess() => new()
@@ -44,7 +48,8 @@ public sealed record HostCliEnvironment
         Input = Console.In,
         Output = Console.Out,
         Error = Console.Error,
-        IsInteractive = !Console.IsInputRedirected
+        IsInteractive = !Console.IsInputRedirected,
+        ProbeNode = (configured, environment) => OarNodeRuntimeProbe.Probe(configured, environment, includeSystemLocations: true)
     };
 
     private static async Task<int> RunInheritedAsync(
@@ -66,5 +71,37 @@ public sealed record HostCliEnvironment
         {
             throw new IOException($"Could not start '{fileName}': {ex.Message}", ex);
         }
+    }
+
+    private static async Task<IReadOnlyList<ProviderStatus>> DefaultProbeProvidersDeepAsync(
+        string installDir, string nodeExecutablePath, IReadOnlyDictionary<string, string> environment, CancellationToken ct)
+    {
+        await using var runtime = new AgentRuntime(BuildDeepProbeRuntimeOptions(installDir, nodeExecutablePath, environment));
+        return await runtime.ProbeProvidersAsync(forceRefresh: true, ct).ConfigureAwait(false);
+    }
+
+    private static AgentRuntimeOptions BuildDeepProbeRuntimeOptions(
+        string installDir, string nodeExecutablePath, IReadOnlyDictionary<string, string> environment)
+    {
+        var environmentName = new[]
+        {
+            environment.GetValueOrDefault("DOTNET_ENVIRONMENT"),
+            environment.GetValueOrDefault("ASPNETCORE_ENVIRONMENT")
+        }.FirstOrDefault(static value => !string.IsNullOrWhiteSpace(value)) ?? "Production";
+        using var config = new ConfigurationManager();
+        config.AddJsonFile(Path.Combine(installDir, "appsettings.json"), optional: true)
+            .AddJsonFile(Path.Combine(installDir, $"appsettings.{environmentName}.json"), optional: true)
+            .AddInMemoryCollection(environment.Select(entry =>
+                KeyValuePair.Create(entry.Key.Replace("__", ":", StringComparison.Ordinal), (string?)entry.Value)));
+        var providerExecutables = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        config.GetSection($"{PergaHostOptions.SectionName}:{nameof(PergaHostOptions.ProviderExecutables)}").Bind(providerExecutables);
+        return new AgentRuntimeOptions
+        {
+            BridgeScriptPath = Path.Combine(installDir, "oar-bridge", "perga-oar-bridge.mjs"),
+            NodeExecutablePath = nodeExecutablePath,
+            ProviderOverrides = PergaHostOptions.ToProviderOverrides(providerExecutables),
+            BaseEnvironment = environment,
+            ProbeTimeout = TimeSpan.FromSeconds(15)
+        };
     }
 }

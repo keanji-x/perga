@@ -37,17 +37,17 @@ resolve_safe_path() {
   printf '%s' "$path"
 }
 
-quote_sh() { local s="$1"; printf "'%s'" "${s//\'/\'\\\'\'}"; }
+quote_sh() { local s="$1" escaped="'\\''"; printf "'%s'" "${s//\'/$escaped}"; }
 
 # Read a value pinned by an existing launcher (as written by quote_sh) without executing it.
 launcher_default() {
-  local line value re="^'([^']|'[\\]'')*'\$"
+  local line value apostrophe="'" re="^'([^']|'[\\]'')*'\$"
   [[ -f "$LAUNCHER" && ! -L "$LAUNCHER" ]] || return 0
   line=$(grep -m1 "^$1='" "$LAUNCHER" 2>/dev/null) || return 0
   value="${line#"$1"=}"
   [[ "$value" =~ $re ]] || return 0
   value="${value:1:${#value}-2}"
-  printf '%s' "${value//\'\\\'\'/\'}"
+  printf '%s' "${value//\'\\\'\'/$apostrophe}"
 }
 
 CASE_INSENSITIVE=0
@@ -250,17 +250,23 @@ echo "Install directory: ${INSTALL_DIR}"
 echo "Launcher:          ${LAUNCHER}"
 echo "Data directory:    ${DATA_DIR}"
 if [[ -n "$DB_PATH" ]]; then echo "Database:          ${DB_PATH}"; fi
-
 case ":${PATH}:" in
   *":${BIN_DIR}:"*) cmd="perga" ;;
   *)
-    echo ""
-    echo "Add ${BIN_DIR} to your PATH:"
-    echo "  export PATH=\"${BIN_DIR}:\$PATH\""
-    cmd="${LAUNCHER}"
-    ;;
+    echo ""; echo "Add ${BIN_DIR} to your PATH:"
+    shell=$(basename "${SHELL:-sh}")
+    export_line="export PATH=\"$BIN_DIR:\$PATH\""
+    [[ "$BIN_DIR" =~ ^[A-Za-z0-9_./+:@-]+$ ]] || export_line="export PATH=$(quote_sh "$BIN_DIR"):\"\$PATH\""
+    case "$shell" in
+      zsh|bash)
+        rc="~/.${shell}rc"
+        [[ "$shell" == bash && "$(uname -s)" == Darwin && -f "$HOME/.bash_profile" && ! -f "$HOME/.bashrc" ]] && rc="~/.bash_profile"
+        printf '  printf %s %s >> %s && source %s\n' "'%s\n'" "$(quote_sh "$export_line")" "$rc" "$rc" ;;
+      fish) fish_q="${BIN_DIR//\\/\\\\}"; escaped="\\'"; printf "  fish_add_path '%s'\n" "${fish_q//\'/$escaped}" ;;
+      *) printf '  %s\n' "$export_line" ;;
+    esac
+    cmd="${LAUNCHER}" ;;
 esac
-
 echo ""
 if [[ ! -f "${DB_PATH:-${DATA_DIR}/perga.db}" ]]; then
   echo "Next steps (first run):"

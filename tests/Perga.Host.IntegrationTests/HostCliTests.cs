@@ -1,8 +1,12 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Net.Sockets;
 using System.Runtime.Versioning;
+using Microsoft.AspNetCore.Connections;
 using Perga.AgentKit;
+using Perga.Contracts;
 using Perga.Host.Cli;
+using Perga.Kernel.Ports;
 
 namespace Perga.Host.IntegrationTests;
 
@@ -74,6 +78,16 @@ public sealed class HostCliTests : IDisposable
         var start = await RunHostProcessAsync("start", "--export-openapi", openApi);
         Assert.True(start.Code == 0, start.Error);
         Assert.True(new FileInfo(openApi).Length > 0);
+    }
+
+    [Fact]
+    public async Task ProgramReportsOptionsBindingFailureAsConfigurationError()
+    {
+        var result = await RunHostProcessAsync("--PERGA_AUTH_SESSION_DAYS=invalid");
+
+        Assert.Equal(1, result.Code);
+        Assert.Contains("error: Invalid Perga configuration:", result.Error);
+        Assert.Contains("invalid", result.Error);
     }
 
     [Theory]
@@ -679,6 +693,318 @@ public sealed class HostCliTests : IDisposable
         Assert.Contains("error: missing binary", win32.Error);
     }
 
+    [Fact]
+    public async Task DoctorDeepReportsAvailableAndUnavailableProvidersWithActionableFixHints()
+    {
+        CreatePackage();
+        UseLauncherEnvironment();
+        var called = false;
+        string? probedInstall = null;
+        string? probedNode = null;
+
+        var result = await RunAsync(env => env with
+        {
+            ProbeProvidersDeepAsync = (installDir, nodePath, _, _) =>
+            {
+                called = true;
+                probedInstall = installDir;
+                probedNode = nodePath;
+                return Task.FromResult<IReadOnlyList<ProviderStatus>>(
+                [
+                    new ProviderStatus("claude", true, "2.1.0", null, ["claude-sonnet-4", "claude-opus-4"]),
+                    new ProviderStatus("codex", false, null, "Not logged in", []),
+                    new ProviderStatus("acp:antigravity", false, null, "agy binary not found", []),
+                    new ProviderStatus("acp:opencode", false, null, "opencode binary not found", [])
+                ]);
+            }
+        }, "doctor", "--deep");
+
+        Assert.Equal(0, result.Code);
+        Assert.True(called);
+        Assert.Equal(Install, probedInstall);
+        Assert.Equal(_node.ExecutablePath, probedNode);
+        Assert.Contains("[ok]   provider:claude  2.1.0 (2 models)", result.Output);
+        Assert.Contains("[warn] provider:codex  unavailable — Not logged in", result.Output);
+        Assert.Contains("fix: npm install -g @openai/codex && codex login", result.Output);
+        Assert.Contains("[warn] provider:acp:antigravity  unavailable — agy binary not found", result.Output);
+        Assert.Contains("Install standalone agy >= 1.5.0: curl -fsSL https://antigravity.google/cli/install.sh | bash (not just the IDE app)", result.Output);
+        Assert.Contains("[warn] provider:acp:opencode  unavailable — opencode binary not found", result.Output);
+        Assert.Contains("fix: Install OpenCode and sign in with 'opencode'", result.Output);
+        Assert.DoesNotContain("No provider is ready yet.", result.Output);
+    }
+
+    [Theory]
+    [InlineData(false, null, "not found", "unavailable")]
+    [InlineData(true, "2.1.0", "unauthenticated", "2.1.0")]
+    [InlineData(true, null, "model list failed", "unknown version")]
+    public async Task DoctorDeepPrintsNoProviderReadyTipWhenProvidersHaveErrors(
+        bool available, string? version, string reason, string expectedVersion)
+    {
+        CreatePackage();
+        UseLauncherEnvironment();
+
+        var result = await RunAsync(env => env with
+        {
+            ProbeProvidersDeepAsync = (_, _, _, _) => Task.FromResult<IReadOnlyList<ProviderStatus>>(
+            [
+                new ProviderStatus("claude", available, version, reason, [])
+            ])
+        }, "doctor", "--deep");
+
+        Assert.Equal(0, result.Code);
+        Assert.Contains($"[warn] provider:claude  {expectedVersion} — {reason}", result.Output);
+        Assert.Contains("fix: Install Claude Code and run 'claude auth login'", result.Output);
+        Assert.DoesNotContain("[ok]   provider:claude", result.Output);
+        Assert.Contains("No provider is ready yet. Install and sign in to at least one CLI above, then re-run 'perga doctor --deep'.", result.Output);
+    }
+
+    [Theory]
+    [InlineData(null, null, "Production", false)]
+    [InlineData("Staging", "Development", "Development", false)]
+    [InlineData("Staging", null, "Staging", false)]
+    [InlineData(null, "Development", "Development", false)]
+    [InlineData(null, null, "Production", true)]
+    public async Task DoctorDeepUsesHostProviderOverridesAndTheFilteredCallerEnvironment(
+        string? aspnetEnvironment, string? dotnetEnvironment, string expectedEnvironment, bool invalidAuthSetting)
+    {
+        CreatePackage();
+        UseLauncherEnvironment();
+        Write(Path.Combine(Install, "appsettings.json"), """
+            { "Perga": { "ProviderExecutables": { "codex": "json-codex", "agy": "json-agy" } } }
+            """);
+        foreach (var environmentName in new[] { "Production", "Staging", "Development" })
+        {
+            Write(Path.Combine(Install, $"appsettings.{environmentName}.json"), $$"""
+                { "Perga": { "ProviderExecutables": { "codex": "profile-codex", "claude": "{{environmentName}}-claude" } } }
+                """);
+        }
+        if (aspnetEnvironment is not null)
+            _variables["ASPNETCORE_ENVIRONMENT"] = aspnetEnvironment;
+        if (dotnetEnvironment is not null)
+            _variables["DOTNET_ENVIRONMENT"] = dotnetEnvironment;
+        if (invalidAuthSetting)
+            _variables["PERGA_AUTH_SESSION_DAYS"] = "abc";
+        _variables["Perga__ProviderExecutables__codex"] = "env-codex";
+        _variables["PERGA_DB_PATH"] = Path.Combine(Data, "perga.db");
+        _variables["PROBE_TEST"] = "caller";
+        _variables["PROBE_EXPECTED_PROFILE"] = expectedEnvironment;
+        _variables["HOME"] = Home;
+        _variables["PATH"] = "/usr/bin:/bin";
+        Directory.CreateDirectory(Path.Combine(Home, ".local", "bin"));
+
+        var fakeNode = Path.Combine(Root, "node");
+        WriteExecutable(fakeNode, """
+            #!/bin/sh
+            if [ "$1" = --version ]; then echo v24.4.1; exit 0; fi
+            [ "$PROBE_TEST" = caller ] && [ -z "${PERGA_DB_PATH+x}" ] || exit 1
+            case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) exit 1 ;; esac
+            IFS= read -r request
+            case "$request" in
+              *'"runtime":"codex"'*'"executable":"env-codex"'*|*'"runtime":"antigravity"'*'"executable":"json-agy"'*) available=true ;;
+              *'"runtime":"claude"'*'"executable":"'"$PROBE_EXPECTED_PROFILE"'-claude"'*) available=true ;;
+              *) available=false ;;
+            esac
+            printf '{"jsonrpc":"2.0","id":1,"result":{"available":%s,"version":"test","models":[]}}\n' "$available"
+            """);
+        _node = _node with { ExecutablePath = fakeNode };
+
+        var result = await RunAsync("doctor", "--deep");
+
+        Assert.Equal(0, result.Code);
+        Assert.Contains("[ok]   provider:codex  test (0 models)", result.Output);
+        Assert.Contains("[ok]   provider:acp:antigravity  test (0 models)", result.Output);
+        Assert.Contains("[ok]   provider:claude  test (0 models)", result.Output);
+    }
+
+    [Theory]
+    [InlineData("appsettings.json")]
+    [InlineData("appsettings.Production.json")]
+    public async Task DoctorDeepReportsMalformedSettingsAsCliError(string settingsFile)
+    {
+        CreatePackage();
+        UseLauncherEnvironment();
+        Write(Path.Combine(Install, settingsFile), "{");
+
+        var result = await RunAsync("doctor", "--deep");
+
+        Assert.Equal(1, result.Code);
+        Assert.StartsWith("error: ", result.Error);
+        Assert.Contains(settingsFile, result.Error);
+    }
+
+    [Fact]
+    public async Task DoctorDeepSkipsProbeWhenNodeFailsOrBridgeIsMissingAndRejectsUnknownFlags()
+    {
+        CreatePackage();
+        UseLauncherEnvironment();
+        var called = false;
+        _node = new OarNodeRuntimeStatus(true, false, new Version(20, 0, 0), "/usr/bin/node", "Node 20 is too old.");
+
+        var oldNode = await RunAsync(env => env with
+        {
+            ProbeProvidersDeepAsync = (_, _, _, _) => { called = true; return Task.FromResult<IReadOnlyList<ProviderStatus>>([]); }
+        }, "doctor", "--deep");
+
+        Assert.Equal(1, oldNode.Code);
+        Assert.False(called);
+        Assert.Contains("[warn] deep-probe skipped (fix package/node checks above first)", oldNode.Output);
+
+        _node = new OarNodeRuntimeStatus(true, true, new Version(24, 4, 1), "/opt/node/bin/node", null);
+        File.Delete(Path.Combine(Install, "oar-bridge", "perga-oar-bridge.mjs"));
+        var missingBridge = await RunAsync(env => env with
+        {
+            ProbeProvidersDeepAsync = (_, _, _, _) => { called = true; return Task.FromResult<IReadOnlyList<ProviderStatus>>([]); }
+        }, "doctor", "--deep");
+
+        Assert.Equal(1, missingBridge.Code);
+        Assert.False(called);
+        Assert.Contains("[warn] deep-probe skipped (fix package/node checks above first)", missingBridge.Output);
+
+        var unknownFlag = await RunAsync("doctor", "--bogus");
+        Assert.Equal(2, unknownFlag.Code);
+        Assert.Contains("unexpected argument '--bogus'", unknownFlag.Error);
+        Assert.Contains("Usage: perga doctor [--deep]", unknownFlag.Error);
+    }
+
+    [Fact]
+    public async Task StartupOnboardingSkipsNonInteractiveTestingEphemeralAndExistingOwner()
+    {
+        var authStore = new FakeAuthStore(owner: null);
+        var called = false;
+        Task<int> Runner(string[] _, TextReader __, TextWriter ___, TextWriter ____, CancellationToken _____)
+        {
+            called = true;
+            return Task.FromResult(0);
+        }
+
+        Assert.Equal(0, await HostStartupOnboarding.EnsureInteractiveOwnerIfNeededAsync(
+            authStore, "/tmp/perga.db", isEphemeral: false, isTestingEnvironment: false, isInteractive: false,
+            TextReader.Null, TextWriter.Null, TextWriter.Null, Runner));
+        Assert.Equal(0, await HostStartupOnboarding.EnsureInteractiveOwnerIfNeededAsync(
+            authStore, "/tmp/perga.db", isEphemeral: false, isTestingEnvironment: true, isInteractive: true,
+            TextReader.Null, TextWriter.Null, TextWriter.Null, Runner));
+        Assert.Equal(0, await HostStartupOnboarding.EnsureInteractiveOwnerIfNeededAsync(
+            authStore, "/tmp/perga.db", isEphemeral: true, isTestingEnvironment: false, isInteractive: true,
+            TextReader.Null, TextWriter.Null, TextWriter.Null, Runner));
+        Assert.Equal(0, authStore.GetOwnerCalls);
+
+        var withOwner = new FakeAuthStore(new AuthUserRecord("usr_1", "owner", "Owner", "owner", "hash", 1, 1, null));
+        Assert.Equal(0, await HostStartupOnboarding.EnsureInteractiveOwnerIfNeededAsync(
+            withOwner, "/tmp/perga.db", isEphemeral: false, isTestingEnvironment: false, isInteractive: true,
+            TextReader.Null, TextWriter.Null, TextWriter.Null, Runner));
+        Assert.Equal(1, withOwner.GetOwnerCalls);
+        Assert.False(called);
+    }
+
+    [Fact]
+    public async Task StartupOnboardingPromptsInteractivelyAndDelegatesToAuthCli()
+    {
+        var dbPath = Path.Combine(Data, "owner's $active.db");
+        var authStore = new FakeAuthStore(owner: null);
+
+        // Declining prints hint and continues startup with exit 0.
+        var declineOut = new StringWriter();
+        var declineCalled = false;
+        var declineCode = await HostStartupOnboarding.EnsureInteractiveOwnerIfNeededAsync(
+            authStore, dbPath, isEphemeral: false, isTestingEnvironment: false, isInteractive: true,
+            new StringReader("n\n"), declineOut, TextWriter.Null,
+            (_, _, _, _, _) => { declineCalled = true; return Task.FromResult(0); });
+        Assert.Equal(0, declineCode);
+        Assert.False(declineCalled);
+        Assert.Contains($"No owner account is configured yet for {dbPath}.", declineOut.ToString());
+        Assert.Contains($"perga auth init-owner --username owner --allow-migrate --db-path '{Data}/owner'\\''s $active.db'", declineOut.ToString());
+
+        // Accepting with Enter + empty username defaults to 'owner' and delegates to AuthCliCommand.
+        string[]? capturedArgs = null;
+        var acceptOut = new StringWriter();
+        var acceptCode = await HostStartupOnboarding.EnsureInteractiveOwnerIfNeededAsync(
+            authStore, dbPath, isEphemeral: false, isTestingEnvironment: false, isInteractive: true,
+            new StringReader("\n\n"), acceptOut, TextWriter.Null,
+            (args, _, _, _, _) => { capturedArgs = args; return Task.FromResult(0); });
+        Assert.Equal(0, acceptCode);
+        Assert.NotNull(capturedArgs);
+        Assert.Equal(["auth", "init-owner", "--username", "owner", "--allow-migrate", "--db-path", dbPath], capturedArgs);
+
+        // Custom username + non-zero exit code propagates cleanly.
+        var failCode = await HostStartupOnboarding.EnsureInteractiveOwnerIfNeededAsync(
+            authStore, dbPath, isEphemeral: false, isTestingEnvironment: false, isInteractive: true,
+            new StringReader("yes\nalice\n"), new StringWriter(), TextWriter.Null,
+            (args, _, _, _, _) => { capturedArgs = args; return Task.FromResult(1); });
+        Assert.Equal(1, failCode);
+        Assert.NotNull(capturedArgs);
+        Assert.Equal(["auth", "init-owner", "--username", "alice", "--allow-migrate", "--db-path", dbPath], capturedArgs);
+    }
+
+    [Fact]
+    public void FormatStartupErrorHandlesPortInUseAndPermissionDenied()
+    {
+        var addressInUse = HostStartupOnboarding.FormatStartupError(
+            new IOException("Failed to bind", new AddressInUseException("port busy")));
+        Assert.NotNull(addressInUse);
+        Assert.Contains("error: Could not start Perga because the address/port is already in use.", addressInUse);
+        Assert.Contains("perga --urls http://127.0.0.1:4042", addressInUse);
+
+        var socketInUse = HostStartupOnboarding.FormatStartupError(
+            new IOException("Failed to bind", new SocketException((int)SocketError.AddressAlreadyInUse)));
+        Assert.Equal(addressInUse, socketInUse);
+
+        var permission = HostStartupOnboarding.FormatStartupError(new UnauthorizedAccessException("Access denied"));
+        Assert.NotNull(permission);
+        Assert.Contains("insufficient permissions", permission);
+        Assert.Contains("perga --urls http://127.0.0.1:4041", permission);
+
+        var socketAccess = HostStartupOnboarding.FormatStartupError(
+            new SocketException((int)SocketError.AccessDenied));
+        Assert.NotNull(socketAccess);
+        Assert.Contains("insufficient permissions", socketAccess);
+
+        Assert.Null(HostStartupOnboarding.FormatStartupError(new InvalidOperationException("foreign_key_check failed")));
+        Assert.Null(HostStartupOnboarding.FormatStartupError(new ArgumentOutOfRangeException("unrelated")));
+    }
+
+    [Fact]
+    public void FormatConfigurationErrorHandlesBindingAndValidationFailures()
+    {
+        foreach (var exception in new Exception[]
+                 {
+                     new FormatException("Invalid integer value"),
+                     new InvalidOperationException("Invalid auth policy"),
+                     new ArgumentException("Invalid auth enum"),
+                     new OverflowException("Integer value out of range")
+                 })
+        {
+            var message = HostStartupOnboarding.FormatConfigurationError(exception);
+            Assert.StartsWith("error: Invalid Perga configuration:", message);
+            Assert.Contains(exception.Message, message);
+        }
+    }
+
+    private sealed class FakeAuthStore(AuthUserRecord? owner) : IAuthStore
+    {
+        public int GetOwnerCalls { get; private set; }
+
+        public Task<AuthUserRecord?> GetOwnerAsync(CancellationToken ct)
+        {
+            GetOwnerCalls++;
+            return Task.FromResult(owner);
+        }
+
+        public Task<SessionIdentityDto?> TryCreateSessionIfVersionMatchesAsync(AuthUserRecord ownerRecord, NewAuthSession session, CancellationToken ct) =>
+            throw new NotSupportedException();
+        public Task<bool> UpgradePasswordHashIfVersionMatchesAsync(AuthUserRecord ownerRecord, string passwordHash, long nowMs, CancellationToken ct) =>
+            throw new NotSupportedException();
+        public Task<SessionIdentityDto?> GetValidOwnerSessionByTokenHashAsync(string tokenHash, long nowMs, CancellationToken ct) =>
+            throw new NotSupportedException();
+        public Task<bool> IsOwnerSessionValidAsync(string sessionId, long nowMs, CancellationToken ct) =>
+            throw new NotSupportedException();
+        public Task TouchSessionLastSeenIfStaleAsync(string sessionId, long nowMs, CancellationToken ct) =>
+            throw new NotSupportedException();
+        public Task RevokeSessionByTokenHashAsync(string tokenHash, long nowMs, CancellationToken ct) =>
+            throw new NotSupportedException();
+        public Task<SystemAuthStatusDto> GetAuthStatusAsync(long nowMs, CancellationToken ct) =>
+            throw new NotSupportedException();
+    }
+
     private async Task AssertUninstallRefusedAsync(string message)
     {
         var result = await RunAsync("uninstall", "--yes");
@@ -728,9 +1054,9 @@ public sealed class HostCliTests : IDisposable
         File.WriteAllText(path, content);
     }
 
-    private static void WriteExecutable(string path)
+    private static void WriteExecutable(string path, string content = "#!/bin/sh\n")
     {
-        Write(path, "#!/bin/sh\n");
+        Write(path, content);
         File.SetUnixFileMode(path, (UnixFileMode)0b111_101_101);
     }
 

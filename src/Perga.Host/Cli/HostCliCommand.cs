@@ -22,7 +22,7 @@ public static partial class HostCliCommand
           perga start [host args...]    Same as 'perga'
           perga auth <subcommand>       Manage the owner account (see 'perga auth --help')
           perga version                 Print the installed version and paths
-          perga doctor                  Check the package, Node.js 24+, and provider CLIs
+          perga doctor [--deep]         Check the package, Node.js 24+, and provider CLIs (--deep probes auth/models)
           perga upgrade [version]       Install the latest release, or a tag such as v0.1.0
           perga uninstall [--yes]       Remove the installed package and launcher; keep user data
         """;
@@ -38,7 +38,7 @@ public static partial class HostCliCommand
             {
                 ["help" or "-h" or "--help", ..] => Help(env),
                 ["version" or "-v" or "--version", .. var rest] => Version(env, rest),
-                ["doctor", .. var rest] => Doctor(env, rest),
+                ["doctor", .. var rest] => await DoctorAsync(env, rest, ct).ConfigureAwait(false),
                 ["upgrade", .. var rest] => await UpgradeAsync(env, rest, ct).ConfigureAwait(false),
                 ["uninstall", .. var rest] => Uninstall(env, rest),
                 _ => throw new UsageException($"unknown command '{string.Join(' ', args)}'.", Usage)
@@ -50,7 +50,8 @@ public static partial class HostCliCommand
             await env.Error.WriteLineAsync(ex.Usage).ConfigureAwait(false);
             return 2;
         }
-        catch (Exception ex) when (ex is CliException or IOException or UnauthorizedAccessException or Win32Exception)
+        catch (Exception ex) when (ex is CliException or IOException or InvalidDataException or FormatException or
+                                   UnauthorizedAccessException or Win32Exception)
         {
             await env.Error.WriteLineAsync($"error: {ex.Message}").ConfigureAwait(false);
             return 1;
@@ -75,9 +76,24 @@ public static partial class HostCliCommand
         return 0;
     }
 
-    private static int Doctor(HostCliEnvironment env, string[] args)
+    private static async Task<int> DoctorAsync(HostCliEnvironment env, string[] args, CancellationToken ct)
     {
-        if (NoArguments(env, args, "Usage: perga doctor")) return 0;
+        const string usage = "Usage: perga doctor [--deep]";
+        if (args.Any(a => a is "-h" or "--help"))
+        {
+            env.Output.WriteLine(usage);
+            return 0;
+        }
+
+        var deep = false;
+        foreach (var arg in args)
+        {
+            if (arg == "--deep" && !deep)
+                deep = true;
+            else
+                throw new UsageException($"unexpected argument '{arg}'.", usage);
+        }
+
         var paths = InstallationPaths.From(env);
         var healthy = true;
         void Report(string status, string name, string detail) => env.Output.WriteLine($"[{status}] {name,-10} {detail}");
@@ -114,9 +130,55 @@ public static partial class HostCliCommand
             ? string.Join(", ", providers.Select(p => $"{p.Name} ({p.ExecutablePath})"))
             : $"no provider CLI found; install one of {string.Join(", ", ProviderCliProbe.KnownCommands)}");
 
+        if (deep)
+        {
+            var bridgePath = Path.Combine(paths.InstallDir, "oar-bridge", "perga-oar-bridge.mjs");
+            if (!node.MeetsMinimum || string.IsNullOrWhiteSpace(node.ExecutablePath) || !File.Exists(bridgePath))
+            {
+                env.Output.WriteLine("[warn] deep-probe skipped (fix package/node checks above first)");
+            }
+            else
+            {
+                var statuses = await env.ProbeProvidersDeepAsync(paths.InstallDir, node.ExecutablePath, env.Variables, ct).ConfigureAwait(false);
+                var availableCount = 0;
+                foreach (var status in statuses)
+                {
+                    var ready = status.Available && string.IsNullOrWhiteSpace(status.Reason);
+                    var ver = string.IsNullOrWhiteSpace(status.Version) ? (ready ? "ready" : "unknown version") : status.Version;
+                    if (ready)
+                    {
+                        availableCount++;
+                        var modelCount = status.ModelCatalog?.Count ?? status.Models.Count;
+                        var modelWord = modelCount == 1 ? "model" : "models";
+                        env.Output.WriteLine($"[ok]   provider:{status.Provider}  {ver} ({modelCount} {modelWord})");
+                    }
+                    else
+                    {
+                        var reason = string.IsNullOrWhiteSpace(status.Reason) ? "not ready" : status.Reason;
+                        env.Output.WriteLine($"[warn] provider:{status.Provider}  {(status.Available ? ver : "unavailable")} — {reason}");
+                        if (DeepProbeFixHint(status.Provider) is { } fix)
+                            env.Output.WriteLine($"       fix: {fix}");
+                    }
+                }
+
+                if (availableCount == 0)
+                    env.Output.WriteLine("No provider is ready yet. Install and sign in to at least one CLI above, then re-run 'perga doctor --deep'.");
+            }
+        }
+
         env.Output.WriteLine(healthy ? "All required checks passed." : "Required checks failed.");
         return healthy ? 0 : 1;
     }
+
+    private static string? DeepProbeFixHint(string provider) => provider.ToLowerInvariant() switch
+    {
+        "claude" => "Install Claude Code and run 'claude auth login'",
+        "codex" => "npm install -g @openai/codex && codex login",
+        "acp:antigravity" or "antigravity" or "agy" =>
+            "Install standalone agy >= 1.5.0: curl -fsSL https://antigravity.google/cli/install.sh | bash (not just the IDE app), then sign in with 'agy'",
+        "acp:opencode" or "opencode" => "Install OpenCode and sign in with 'opencode'",
+        _ => null
+    };
 
     private static async Task<int> UpgradeAsync(HostCliEnvironment env, string[] args, CancellationToken ct)
     {

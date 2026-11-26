@@ -9,6 +9,8 @@ public sealed record AgentRuntimeOptions
     public IReadOnlyDictionary<string, ProviderCommandOverride> ProviderOverrides { get; init; } =
         new Dictionary<string, ProviderCommandOverride>(StringComparer.OrdinalIgnoreCase);
 
+    public IReadOnlyDictionary<string, string>? BaseEnvironment { get; init; }
+
     public string? NodeExecutablePath { get; init; }
 
     public string? BridgeScriptPath { get; init; }
