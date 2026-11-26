@@ -151,4 +151,10 @@
   .lineHint kbd {
     text-transform: lowercase;
   }
+
+  @media (width < 60rem) {
+    .footer {
+      display: none;
+    }
+  }
 }

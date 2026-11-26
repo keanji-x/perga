@@ -325,7 +325,8 @@ for (const width of [390, 1000, 1440]) for (const conversation of [false, true])
     }
     const layer = fileLayer();
     const alert = within(layer).getByRole('alert');
-    const name = page.getByText('docs/README.md', { exact: true }).all()
+    const headerText = width === 390 ? 'README.md' : 'docs/README.md';
+    const name = page.getByText(headerText, { exact: true }).all()
       .map(locator => locator.element()).find(element => element.closest('header') !== null)!;
     const message = within(alert).getByText('Could not load this file.');
     const retry = within(alert).getByRole('button', { name: 'Retry' });

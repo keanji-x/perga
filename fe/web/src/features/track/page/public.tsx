@@ -107,7 +107,7 @@ export type TrackPageProps = Readonly<{
   /** The card grid covers the workspace. A file covers only the reading column. */
   board?: ReactNode;
   onCloseBoard?: () => void;
-  fileViewer?: Readonly<{ label: string; fullPath: string; render: (hasBackFocus: () => boolean) => ReactNode; onClose: () => void }>;
+  fileViewer?: Readonly<{ label: string; fullPath: string; title?: ReactNode; render: (hasBackFocus: () => boolean) => ReactNode; onClose: () => void }>;
   /** Which secondary panel the mobile report is showing, or `null`. The panel is a navigation destination, so its identity lives in the URL and `app/router` reads it. */
   panel?: MobilePanelKind | null;
   onOpenPanel?: (panel: MobilePanelKind) => void;
@@ -212,9 +212,15 @@ export function TrackPage({ fillReading = false, articleMasthead = !fillReading,
   const activityLabel = activityLabelOf(activity);
   const headerBackRef = useRef<HTMLButtonElement>(null);
   const mobileBackRef = useRef<HTMLButtonElement>(null);
+  const mobileHeaderRef = useRef<HTMLDivElement>(null);
   const hasBackFocus = () => {
     const active = document.activeElement;
-    return active !== null && (headerBackRef.current === active || mobileBackRef.current === active);
+    return active !== null && (
+      headerBackRef.current === active
+      || mobileBackRef.current === active
+      || headerBackRef.current?.parentElement?.contains(active) === true
+      || mobileHeaderRef.current?.contains(active) === true
+    );
   };
   const boardOpen = onCloseBoard !== undefined;
   const mobilePanelOpen = panel !== null;
@@ -387,7 +393,7 @@ export function TrackPage({ fillReading = false, articleMasthead = !fillReading,
   );
 
   const fileTitle = fileViewer === undefined ? undefined
-    : <span className={styles.headerFilePath} title={fileViewer.fullPath}>{fileViewer.label}</span>;
+    : (fileViewer.title ?? <span className={styles.headerFilePath} title={fileViewer.fullPath}>{fileViewer.label}</span>);
 
   return (
     <section
@@ -479,10 +485,12 @@ export function TrackPage({ fillReading = false, articleMasthead = !fillReading,
 
       {titleInHeader && createPortal(<span aria-hidden="true" style={{ position: 'absolute' }} />, mobileHeaderTitleHost)}
       {headerActionsHost !== null && mobileActions !== undefined && createPortal(mobileActions, headerActionsHost)}
-      {titleInHeader && closeSurface === undefined ? null : <div className={styles.mobileTrackHeader}>
+      {titleInHeader && closeSurface === undefined ? null : <div className={styles.mobileTrackHeader} ref={mobileHeaderRef}>
         <MobileHeader
           title={trackDisplayTitle(track.title)}
-          titleText={compactViewport && fileTitle !== undefined ? fileTitle : <TrackTitle track={track} />}
+          {...(compactViewport && fileTitle !== undefined
+            ? { titleContent: fileTitle }
+            : { titleText: <TrackTitle track={track} /> })}
           meta={fileViewer === undefined ? <>
             {isDirectFolder && <ExplanationBadge label={NO_ISOLATION_LABEL}>{NO_ISOLATION_EXPLANATION}</ExplanationBadge>}
             <TrackClosedBadge closedAt={track.closedAt} />

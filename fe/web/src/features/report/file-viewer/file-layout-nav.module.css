@@ -1,0 +1,143 @@
+@layer features {
+  .staticPath {
+    display: block;
+    min-inline-size: 0;
+    overflow: hidden;
+    color: var(--text-2);
+    font: var(--type-code);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .breadcrumb {
+    display: inline-flex;
+    flex: 0 1 auto;
+    align-items: center;
+    flex-wrap: nowrap;
+    gap: var(--space-px);
+    min-inline-size: 0;
+    max-inline-size: 100%;
+    font: var(--type-code);
+    color: var(--text-3);
+  }
+
+  .separator {
+    flex: none;
+    color: var(--text-3);
+    opacity: 0.6;
+    user-select: none;
+  }
+
+  .segmentButton,
+  .fileButton {
+    display: inline-flex;
+    align-items: center;
+    min-inline-size: 0;
+    padding: var(--space-px) var(--space-1);
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    line-height: inherit;
+    cursor: pointer;
+    transition: background-color var(--motion-quick) var(--ease-feedback),
+      color var(--motion-quick) var(--ease-feedback);
+  }
+
+  .segmentButton {
+    flex: 0 1 auto;
+    max-inline-size: 12rem;
+  }
+
+  .fileButton {
+    flex: 0 1 auto;
+    color: var(--text-2);
+  }
+
+  .segmentText {
+    min-inline-size: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .lineSuffix {
+    flex: none;
+    color: var(--text-3);
+    white-space: nowrap;
+  }
+
+  .chevron {
+    display: inline-flex;
+    align-items: center;
+    flex: none;
+    margin-inline-start: var(--space-half);
+    opacity: 0.7;
+  }
+
+  @media (hover: hover) {
+    .segmentButton:hover,
+    .fileButton:hover {
+      background: var(--overlay-hover);
+      color: var(--text);
+    }
+  }
+
+  .segmentButton:focus-visible,
+  .fileButton:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+
+  /* Compact/mobile (< 60rem): single generous tap target inside MobileHeader, no per-segment micro-buttons or horizontal drag. */
+  .mobileTrigger {
+    display: inline-flex;
+    align-items: center;
+    min-inline-size: 0;
+    max-inline-size: 100%;
+    min-block-size: var(--control-h-touch);
+    padding: var(--space-half) var(--space-1);
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-2);
+    font: var(--type-code);
+    text-align: start;
+    cursor: pointer;
+  }
+
+  .mobileTrigger:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+
+  .mobileTriggerText {
+    display: inline-flex;
+    align-items: baseline;
+    min-inline-size: 0;
+    flex: 1 1 auto;
+  }
+
+  .mobileFileName {
+    display: inline-flex;
+    align-items: baseline;
+    flex: 0 1 auto;
+    min-inline-size: 0;
+    max-inline-size: 100%;
+    overflow: hidden;
+  }
+
+  .mobileFileStem {
+    flex: 0 1 auto;
+    min-inline-size: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mobileFileTail {
+    flex: none;
+    white-space: nowrap;
+  }
+}
