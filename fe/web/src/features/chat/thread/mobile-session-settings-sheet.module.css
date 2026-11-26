@@ -1,0 +1,286 @@
+@layer features {
+  .trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    min-inline-size: 0;
+    max-inline-size: 100%;
+    min-block-size: var(--control-h-lg);
+    padding: 0 var(--space-2) 0 var(--space-1);
+    border: 0;
+    border-radius: var(--radius-highlight);
+    background: transparent;
+    color: var(--text-2);
+    font: var(--type-metadata);
+    font-weight: var(--weight-medium);
+    letter-spacing: var(--type-metadata-tracking);
+    cursor: pointer;
+  }
+
+  .trigger:hover,
+  .trigger:focus-visible,
+  .triggerOpen {
+    background: var(--overlay-hover);
+    color: var(--text);
+  }
+
+  .trigger:disabled {
+    color: var(--text-3);
+    cursor: default;
+  }
+
+  .triggerText {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .triggerChevron {
+    display: inline-flex;
+    flex-shrink: 0;
+    color: var(--text-3);
+    transition: transform var(--motion-quick) var(--ease-feedback);
+  }
+
+  .triggerOpen .triggerChevron {
+    transform: rotate(180deg);
+  }
+
+  /* Floating in-sheet card anchored directly above the composer meta bar — zero 3rd fullscreen scrim. */
+  .floatingCard {
+    position: absolute;
+    inset-inline: calc(var(--space-1) * -1);
+    inset-block-end: calc(100% + var(--space-2));
+    z-index: var(--z-overlay);
+    max-block-size: min(58dvh, 26rem);
+    display: flex;
+    flex-direction: column;
+    border: 1px solid color-mix(in srgb, var(--hairline) 90%, transparent);
+    border-radius: calc(var(--radius-lg) + var(--space-1));
+    background: var(--bg);
+    color: var(--text);
+    box-shadow: var(--shadow-float);
+    overflow: hidden;
+  }
+
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-3) var(--space-2) var(--space-4);
+    flex-shrink: 0;
+  }
+
+  .title {
+    margin: 0;
+    font: var(--type-ui);
+    font-weight: var(--weight-semibold);
+    color: var(--text);
+  }
+
+  .closeButton {
+    display: grid;
+    place-items: center;
+    inline-size: var(--control-h-lg);
+    block-size: var(--control-h-lg);
+    border: 0;
+    border-radius: var(--radius-pill);
+    background: transparent;
+    color: var(--text-2);
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  .closeButton:hover,
+  .closeButton:focus-visible {
+    background: var(--overlay-hover);
+    color: var(--text);
+  }
+
+  .body {
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    padding: 0 var(--space-3) var(--space-3);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+
+  .section {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+
+  .sectionTitle {
+    margin: 0;
+    padding: 0 var(--space-1);
+    font: var(--type-label);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--text-3);
+  }
+
+  .groupCard {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    border: 1px solid color-mix(in srgb, var(--hairline) 65%, transparent);
+    border-radius: var(--radius-lg);
+    background: var(--surface-card);
+    overflow: hidden;
+  }
+
+  .groupItem {
+    position: relative;
+  }
+
+  .groupItem + .groupItem::before {
+    content: '';
+    position: absolute;
+    inset-block-start: 0;
+    inset-inline-start: calc(var(--space-6) + var(--space-3));
+    inset-inline-end: var(--space-4);
+    block-size: var(--space-px);
+    background: color-mix(in srgb, var(--hairline) 65%, transparent);
+  }
+
+  .groupItemSelected {
+    background: var(--selection-bg);
+  }
+
+  .modelRow {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    inline-size: 100%;
+    min-block-size: var(--row-h-lg);
+    padding: var(--space-2) var(--space-3);
+    border: 0;
+    background: transparent;
+    color: var(--text);
+    text-align: start;
+    cursor: pointer;
+  }
+
+  .modelRow:hover,
+  .modelRow:focus-visible {
+    background: var(--overlay-hover);
+  }
+
+  .modelIcon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    inline-size: var(--space-5);
+    color: var(--text-3);
+    flex-shrink: 0;
+  }
+
+  .modelCopy {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-inline-size: 0;
+    gap: var(--space-half);
+  }
+
+  .modelName {
+    font: var(--type-ui);
+    font-weight: var(--weight-semibold);
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .modelMeta {
+    font: var(--type-metadata);
+    color: var(--text-3);
+  }
+
+  .modelTrailing {
+    display: inline-flex;
+    color: var(--text-3);
+    flex-shrink: 0;
+  }
+
+  .groupItemSelected .modelTrailing {
+    color: var(--accent);
+  }
+
+  .settingRow {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    min-block-size: var(--row-h-lg);
+    padding: var(--space-2) var(--space-3);
+  }
+
+  .settingRowDivided {
+    border-block-start: 1px solid color-mix(in srgb, var(--hairline) 65%, transparent);
+  }
+
+  .settingLabel {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    font: var(--type-ui);
+    font-weight: var(--weight-medium);
+    color: var(--text);
+    flex-shrink: 0;
+  }
+
+  .settingIcon {
+    display: inline-flex;
+    color: var(--text-3);
+  }
+
+  .segmented {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-half);
+    padding: var(--space-half);
+    border-radius: var(--radius-md);
+    background: var(--bg);
+    max-inline-size: 100%;
+    min-inline-size: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .segment {
+    min-block-size: var(--control-h-lg);
+    padding: 0 var(--space-2);
+    border: 0;
+    border-radius: var(--radius-highlight);
+    background: transparent;
+    color: var(--text-2);
+    font: var(--type-metadata);
+    font-weight: var(--weight-medium);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .segment:hover,
+  .segment:focus-visible {
+    color: var(--text);
+  }
+
+  .segmentActive {
+    background: var(--surface-card);
+    color: var(--text);
+    font-weight: var(--weight-semibold);
+    box-shadow: 0 1px 2px oklch(0% 0 0 / 12%);
+  }
+
+  .note {
+    margin: 0;
+    padding: 0 var(--space-1);
+    font: var(--type-metadata);
+    color: var(--text-3);
+  }
+}

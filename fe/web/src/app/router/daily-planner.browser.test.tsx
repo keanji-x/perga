@@ -11,22 +11,23 @@ import { fixtureBootstrap,fixtureSession,fixtureSnapshot,fixtureTrack } from './
 
 afterEach(async () => { cleanup(); await page.viewport(1280, 800); });
 
-it('gives the daily mobile page one header and opens its scoped history', async () => {
+it('gives the daily mobile page one header and opens its scoped conversation switcher', async () => {
   await page.viewport(390, 844);
-  renderDailyFixture({ emptyWorkspace: true });
+  renderDailyFixture({ initial: '/?day=2026-10-04', emptyWorkspace: true });
   await page.getByText('Prioritize the release.', { exact: false }).findElement();
   expect(page.getByRole('button', { name: 'Track actions', exact: true }).query()).toBeNull();
   const headers = [...document.querySelectorAll('[data-nc-mobile-header]')].filter(header => header.getBoundingClientRect().width > 0);
   expect(headers).toHaveLength(1);
-  await page.getByRole('button', { name: 'Open conversation history', exact: true }).click();
-  await page.getByRole('button', { name: '2026-10-04 Daily Planner conversation', exact: true }).click();
+  await page.getByRole('button', { name: /^Switch conversation,/ }).click();
+  await expect.element(page.getByRole('heading', { name: 'Switch conversation', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: /^Lead/ }).click();
   await expect.element(page.getByRole('dialog', { name: 'Daily Planner conversation', exact: true })).toBeVisible();
 });
 
 it.each([320, 390])('keeps mobile navigation labels and pointer targets usable at %ipx', async (width) => {
   await page.viewport(width, 844);
   renderDailyFixture({ initial: '/track/project' });
-  await page.getByRole('button', { name: 'Switch track, Project evidence', exact: true }).click();
+  await page.getByRole('button', { name: 'Switch track, Project', exact: true }).click();
   const layer = page.getByRole('dialog', { name: 'Tracks and settings', exact: true }).element();
   await expect.poll(() => layer.getAnimations({ subtree: true }).filter(animation => animation.effect?.getTiming().iterations !== Infinity).every(animation => animation.playState !== 'running')).toBe(true);
   const bounds = layer.getBoundingClientRect();
@@ -37,7 +38,7 @@ it.each([320, 390])('keeps mobile navigation labels and pointer targets usable a
   const box = text.getBoundingClientRect();
   expect(item.contains(document.elementFromPoint((box.left + box.right) / 2, (box.top + box.bottom) / 2))).toBe(true);
   await page.getByRole('button', { name: 'Back to Report', exact: true }).click();
-  await expect.element(page.getByRole('button', { name: 'Open workspace', exact: true })).toBeVisible();
+  await expect.element(page.getByRole('button', { name: 'Back to Focus', exact: true })).toBeVisible();
 });
 
 
@@ -48,8 +49,8 @@ it('keeps the daily report usable at phone width', async () => {
   expect(page.getByRole('button', { name: 'Track actions', exact: true }).query()).toBeNull();
   const headers = [...document.querySelectorAll('[data-nc-mobile-header]')].filter((header) => header.getBoundingClientRect().width > 0);
   expect(headers).toHaveLength(1);
-  await page.getByRole('button', { name: 'Open conversation history', exact: true }).click();
-  await expect.element(page.getByRole('dialog', { name: 'Conversations', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Open workspace', exact: true }).click();
+  await expect.element(page.getByRole('heading', { name: 'Workspace', exact: true })).toBeVisible();
   expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
 });
 
@@ -291,8 +292,9 @@ it.each([900, 600])('shows the shared masthead above a clean perga composer and 
 
 it.each([1440, 390])('navigates between dates and displays day schedules on perga calendar at width %s', async width => {
   await page.viewport(width, 844);
+  const initial = width >= 960 ? '/' : '/?day=2026-10-04';
   const { router, requests } = renderDailyFixture({
-    initial: '/',
+    initial,
     reply: (request) => {
       if (request.path.startsWith('/api/v1/today/calendar')) {
         const params = new URL(request.path, 'http://fixture').searchParams;
@@ -338,7 +340,7 @@ it.each([1440, 390])('navigates between dates and displays day schedules on perg
   await expect.element(page.getByRole('radio', { name: 'Month', exact: true })).toBeChecked();
   await calendar.getByRole('button', { name: 'Next month' }).click();
   await expect.poll(() => requests.some(r => r.path === '/api/v1/today/calendar?start=2026-11-01&end=2026-11-30')).toBe(true);
-  expect(router.state.location.search).toEqual({ day: undefined });
+  expect(router.state.location.search).toEqual({ day: width >= 960 ? undefined : '2026-10-04' });
 
   // Return to October while staying in Month mode and click 2026-10-03 (no daily track, has 1 schedule).
   await calendar.getByRole('button', { name: 'Previous month' }).click();
@@ -349,17 +351,17 @@ it.each([1440, 390])('navigates between dates and displays day schedules on perg
   await expect.element(calendar.getByRole('button', { name: '2026-10-03', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect.element(calendar.getByText('Check release pipeline', { exact: true })).toBeVisible();
 
-  // Browser Back returns to '/', Forward returns to ?day=2026-10-03, and Today returns cleanly to '/'.
+  // Browser Back returns to initial day entry, Forward returns to ?day=2026-10-03, and Today returns cleanly to '/'.
   router.history.back();
-  await expect.poll(() => (router.state.location.search as Readonly<{ day?: string }>).day).toBeUndefined();
+  await expect.poll(() => (router.state.location.search as Readonly<{ day?: string }>).day).toBe(width >= 960 ? undefined : '2026-10-04');
   await expect.element(calendar.getByRole('button', { name: '2026-10-04', exact: true })).toHaveAttribute('aria-pressed', 'true');
   router.history.forward();
   await expect.poll(() => (router.state.location.search as Readonly<{ day?: string }>).day).toBe('2026-10-03');
   await expect.element(page.getByText('No daily Track was created for this date.')).toBeVisible();
 
-  // Click Today to return to '/' and load today's Track.
+  // Click Today to return to today's Daily Planner on both desktop ('/') and mobile ('/?day=2026-10-04').
   await calendar.getByRole('button', { name: 'Today', exact: true }).click();
-  await expect.poll(() => (router.state.location.search as Readonly<{ day?: string }>).day).toBeUndefined();
+  await expect.poll(() => (router.state.location.search as Readonly<{ day?: string }>).day).toBe(width >= 960 ? undefined : '2026-10-04');
   await expect.element(calendar.getByRole('button', { name: '2026-10-04', exact: true })).toHaveAttribute('aria-pressed', 'true');
   if (width >= 1024) {
     await expect.element(page.getByRole('heading', { name: 'What would you like to move forward today?' })).toBeVisible();

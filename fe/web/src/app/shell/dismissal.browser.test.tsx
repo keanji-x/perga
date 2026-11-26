@@ -10,7 +10,7 @@ afterEach(cleanup);
 
 it('claims composing navigation Escape and dismisses its native menu first', async () => {
   await page.viewport(390, 844);
-  setup('/track/w1');
+  setup('/');
   await page.getByRole('button', { name: 'Open workspace' }).click();
   const navigation = await page.getByRole('dialog', { name: 'Tracks and settings' }).findElement();
   for (const ime of [{ isComposing: true }, { keyCode: 229 }]) {

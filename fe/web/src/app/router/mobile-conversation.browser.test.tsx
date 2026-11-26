@@ -28,7 +28,7 @@ it('uses a single compact heading and grows to full screen without losing the dr
   surface();
   await expect.element(page.getByRole('dialog', { name: 'Current conversation' })).toBeVisible();
   expect(page.getByRole('heading', { name: '对话', exact: true }).query()).toBeNull();
-  await expect.element(page.getByRole('heading', { name: 'Perga', exact: true })).toBeVisible();
+  await expect.element(page.getByRole('heading', { name: 'Current conversation', exact: true })).toBeVisible();
   const panel = document.querySelector<HTMLElement>('[data-nc-mobile-chat-panel]')!;
   await expect.poll(() => panel.getBoundingClientRect().height).toBeGreaterThan(844 * 0.75);
   await page.getByRole('textbox', { name: 'Draft' }).fill('保留草稿');
@@ -103,7 +103,7 @@ it('keeps the header fixed when scrolling over the header and messages', async (
   const panel = document.querySelector<HTMLElement>('[data-nc-mobile-chat-panel]')!;
   await expect.poll(() => panel.getAnimations().every(animation => animation.playState !== 'running')).toBe(true);
   expect(getComputedStyle(panel.lastElementChild!).overflowY).toBe('hidden');
-  const heading = page.getByRole('heading', { name: 'Perga', exact: true }).element();
+  const heading = page.getByRole('heading', { name: 'Current conversation', exact: true }).element();
   await expect.poll(() => scroller().scrollTop).toBeGreaterThan(1000);
   const top = heading.getBoundingClientRect().top;
   const position = scroller().scrollTop;

@@ -3,7 +3,7 @@
 
 import { Outlet } from '@tanstack/react-router';
 import {
-  createContext, useCallback, useContext, useLayoutEffect, useMemo, useRef, type CSSProperties, type ReactNode,
+  createContext, useCallback, useContext, useLayoutEffect, useMemo, useRef, type CSSProperties, type ReactNode, type RefCallback,
 } from 'react';
 
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
@@ -104,6 +104,23 @@ export function useMobileHeaderTitleHost(): HTMLElement | null {
   return useContext(MobileHeaderTitleContext);
 }
 
+const MobileWorkspaceTriggerRefContext = createContext<RefCallback<HTMLButtonElement> | undefined>(undefined);
+export function useMobileWorkspaceTriggerRef(): RefCallback<HTMLButtonElement> | undefined {
+  return useContext(MobileWorkspaceTriggerRefContext);
+}
+
+const MobileRouteChromeOwnerContext = createContext<((token: object | null, previous?: object) => void) | null>(null);
+/** Declares that the active mobile route renders its own top header and workspace opener. */
+export function useMobileRouteChromeOwner(owned = true) {
+  const register = useContext(MobileRouteChromeOwnerContext);
+  const [token] = useState(() => ({}));
+  useLayoutEffect(() => {
+    if (!owned) return;
+    register?.(token);
+    return () => { register?.(null, token); };
+  }, [owned, register, token]);
+}
+
 function noOpenMobileSection(): void { /* no shell above this consumer */ }
 
 /** Opens one of the shell's mobile workspace sheets. */
@@ -119,6 +136,18 @@ export function AppShell({
   const [historyOpen, setHistoryOpen] = useState(false);
   const [mobileHeaderActionsHost, setMobileHeaderActionsHost] = useState<HTMLDivElement | null>(null);
   const [mobileHeaderTitleHost, setMobileHeaderTitleHost] = useState<HTMLDivElement | null>(null);
+  const [mobileChromeOwner, setMobileChromeOwner] = useState<object | null>(null);
+  const registerMobileChromeOwner = useCallback((next: object | null, previous?: object) => {
+    setMobileChromeOwner((current) => {
+      if (next !== null) return next;
+      return previous === undefined || current === previous ? null : current;
+    });
+  }, []);
+  const routeOwnsMobileChrome = mobileChromeOwner !== null;
+  const mobileWorkspaceTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const setMobileWorkspaceTriggerRef = useCallback((node: HTMLButtonElement | null) => {
+    mobileWorkspaceTriggerRef.current = node;
+  }, []);
   const conversationScope = useMobileConversationScope();
 
   const resetMobileNavigationRef = useRef<() => void>(() => {});
@@ -153,7 +182,7 @@ export function AppShell({
 
   return (
     <div
-      className={`${styles.shell} ${narrowRail ? mobileFontClassName : ''} ${narrowRail && (controller.settingsOpen || controller.mobileOverlayRoute) ? styles.settingsPageShell : ''} ${railCollapsed ? styles.shellCollapsed : styles.shellExpanded}`}
+      className={`${styles.shell} ${narrowRail ? mobileFontClassName : ''} ${narrowRail && (controller.settingsOpen || controller.mobileOverlayRoute || routeOwnsMobileChrome) ? styles.settingsPageShell : ''} ${railCollapsed ? styles.shellCollapsed : styles.shellExpanded}`}
       style={shellStyle}
     >
       {narrowRail ? (
@@ -179,6 +208,7 @@ export function AppShell({
           }}
           route={{
             currentPath: controller.currentPath,
+            routeOwnsMobileChrome,
             settingsOpen: controller.settingsOpen,
             mobileOverlayRoute: controller.mobileOverlayRoute,
             routeTrackId: controller.routeTrackId,
@@ -201,6 +231,7 @@ export function AppShell({
           onHistoryOpenChange={setHistoryOpen}
           onActionsHostRef={setMobileHeaderActionsHost}
           onTitleHostRef={setMobileHeaderTitleHost}
+          workspaceReturnRef={mobileWorkspaceTriggerRef}
           shareScope={shareScope}
           nowMs={nowMs}
           userLabel={userLabel}
@@ -248,7 +279,11 @@ export function AppShell({
             <MobileSectionContext.Provider value={mobileNavigation.open}>
               <MobileHeaderActionsContext.Provider value={narrowRail ? mobileHeaderActionsHost : null}>
                 <MobileHeaderTitleContext.Provider value={narrowRail ? mobileHeaderTitleHost : null}>
-                  <DrawerResizeProvider value={controller.drawerWidth.resize}><Outlet /></DrawerResizeProvider>
+                  <MobileWorkspaceTriggerRefContext.Provider value={narrowRail ? setMobileWorkspaceTriggerRef : undefined}>
+                    <MobileRouteChromeOwnerContext.Provider value={narrowRail ? registerMobileChromeOwner : null}>
+                      <DrawerResizeProvider value={controller.drawerWidth.resize}><Outlet /></DrawerResizeProvider>
+                    </MobileRouteChromeOwnerContext.Provider>
+                  </MobileWorkspaceTriggerRefContext.Provider>
                 </MobileHeaderTitleContext.Provider>
               </MobileHeaderActionsContext.Provider>
             </MobileSectionContext.Provider>

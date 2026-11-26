@@ -41,31 +41,39 @@
 
   .leading svg,
   .trailing button:not([role='menuitem']) svg {
-    inline-size: var(--glyph-xl);
-    block-size: var(--glyph-xl);
+    inline-size: var(--glyph-lg);
+    block-size: var(--glyph-lg);
   }
 
   .leading button span:has(> svg),
   .trailing button:not([role='menuitem']) span:has(> svg) {
-    inline-size: var(--glyph-xl);
-    block-size: var(--glyph-xl);
+    inline-size: var(--glyph-lg);
+    block-size: var(--glyph-lg);
   }
 
   .trailing button {
     color: var(--text-2);
   }
 
-  .leading button,
+  .leading button:not([role='menuitem']),
   .trailing button:not([role='menuitem']) {
-    border: 1px solid var(--hairline);
-    border-radius: var(--radius-pill);
-    background-color: var(--paper);
-    box-shadow: var(--shadow-float);
+    border: 0;
+    border-radius: var(--radius-md);
+    background-color: transparent;
+    box-shadow: none;
   }
 
-  .leading button:active,
+  .leading button:not([role='menuitem']):hover,
+  .leading button:not([role='menuitem']):focus-visible,
+  .trailing button:not([role='menuitem']):hover,
+  .trailing button:not([role='menuitem']):focus-visible {
+    background-color: var(--overlay-hover);
+    color: var(--text);
+  }
+
+  .leading button:not([role='menuitem']):active,
   .trailing button:not([role='menuitem']):active {
-    background-image: linear-gradient(var(--overlay-active), var(--overlay-active));
+    background-color: var(--overlay-active);
   }
 
   .title {
@@ -82,11 +90,14 @@
   .back {
     display: grid;
     place-items: center;
-    inline-size: var(--control-h-touch);
-    min-inline-size: var(--control-h-touch);
-    block-size: var(--control-h-touch);
-    min-block-size: var(--control-h-touch);
-    border-radius: var(--radius-pill);
+    inline-size: var(--rail-w-collapsed);
+    min-inline-size: var(--rail-w-collapsed);
+    block-size: var(--rail-w-collapsed);
+    min-block-size: var(--rail-w-collapsed);
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius-md);
+    background: transparent;
     color: var(--text-2);
     cursor: pointer;
   }

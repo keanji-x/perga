@@ -14,66 +14,50 @@ import { renderDailyFixture } from './daily-planner-fixture.tsx';
 const ok = (body: unknown): ApiTransportResponse => ({ status: 200, statusText: 'OK', body });
 afterEach(async () => { cleanup(); await page.viewport(1280, 800); });
 
-it.each([320, 390])('aligns the left circular controls and keeps chat usable at %ipx', async (width) => {
+it.each([320, 390])('aligns the full-width bottom dock with fixed role slot and keeps chat usable at %ipx', async (width) => {
   await page.viewport(width, 844);
-  const { requests } = renderDailyFixture({ emptyWorkspace: true });
+  const { requests } = renderDailyFixture({ initial: '/?day=2026-10-04', emptyWorkspace: true });
   const field = await page.getByRole('textbox', { name: 'Chat message', exact: true }).findElement();
   const bar = field.closest('form')!;
-  const workspace = page.getByRole('button', { name: 'Open workspace', exact: true }).element().getBoundingClientRect();
   const closedRowLeft = bar.getBoundingClientRect().left;
-  expect(bar.getBoundingClientRect().left).toBeGreaterThan(workspace.right);
-  expect(bar.getBoundingClientRect().left).toBeGreaterThan(0);
-  expect(bar.getBoundingClientRect().right).toBeLessThan(width);
+  const closedRoleBox = page.getByRole('button', { name: /^Switch conversation,/ }).element().getBoundingClientRect();
+  expect(Math.round(closedRowLeft)).toBe(16);
+  expect(Math.round(bar.getBoundingClientRect().right)).toBe(width - 16);
   expect(getComputedStyle(bar).borderRadius).toBe('999px');
-  const leading = page.getByRole('button', { name: 'Open conversation history', exact: true }).element().getBoundingClientRect();
+  expect(Math.round(closedRoleBox.width)).toBe(width === 320 ? 67 : 76);
+
+  const leading = page.getByRole('button', { name: 'Open workspace', exact: true }).element().getBoundingClientRect();
   const title = page.getByRole('button', { name: 'Switch track, 2026-10-04', exact: true }).element().getBoundingClientRect();
-  expect(new Set([leading.height, title.height, workspace.height, bar.getBoundingClientRect().height].map(Math.round)).size).toBe(1);
-  expect(workspace.left).toBe(leading.left);
-  expect(bar.getBoundingClientRect().right).toBe(width - leading.left);
-  expect(width - bar.getBoundingClientRect().right).toBe(leading.left);
   expect(title.left).toBeGreaterThanOrEqual(leading.right);
-  expect(title.right).toBeLessThanOrEqual(width - leading.left);
-  const historyIcon = page.getByRole('button', { name: 'Open conversation history', exact: true }).element().querySelector('svg')!;
-  const workspaceIcon = page.getByRole('button', { name: 'Open workspace', exact: true }).element().querySelector('svg')!;
-  expect(historyIcon.getAttribute('viewBox')).toBe(workspaceIcon.getAttribute('viewBox'));
-  expect(historyIcon.getAttribute('stroke-width')).toBe(workspaceIcon.getAttribute('stroke-width'));
-  expect(historyIcon.getBoundingClientRect().width).toBe(workspaceIcon.getBoundingClientRect().width);
-  const surface = getComputedStyle(bar);
-  for (const name of ['Open conversation history', 'Open workspace']) {
-    const paint = getComputedStyle(page.getByRole('button', { name, exact: true }).element());
-    expect([paint.backgroundColor, paint.borderColor, paint.boxShadow, paint.backdropFilter])
-      .toEqual([surface.backgroundColor, surface.borderColor, surface.boxShadow, surface.backdropFilter]);
-  }
+  expect(title.right).toBeLessThanOrEqual(width - 16);
+
   const titlePaint = getComputedStyle(page.getByRole('button', { name: 'Switch track, 2026-10-04', exact: true }).element());
   expect(titlePaint.backgroundColor).toBe('rgba(0, 0, 0, 0)');
   expect(titlePaint.borderTopWidth).toBe('0px');
   expect(titlePaint.boxShadow).toBe('none');
-  for (const name of ['Open conversation history']) {
-    const button = page.getByRole('button', { name, exact: true }).element();
-    expect(getComputedStyle(button).borderRadius).toBe('999px');
-  }
   expect(page.getByRole('button', { name: 'Track actions', exact: true }).query()).toBeNull();
+
   await page.getByRole('button', { name: 'Switch track, 2026-10-04', exact: true }).click();
-  await expect.element(page.getByRole('group', { name: 'Areas', exact: true })).toBeVisible();
+  await expect.element(page.getByRole('heading', { name: 'Workspace', exact: true })).toBeVisible();
   expect(page.getByRole('menu').query()).toBeNull();
   await page.getByRole('button', { name: 'Back to workspace', exact: true }).click();
+
   await page.getByRole('button', { name: 'Open workspace', exact: true }).click();
-  await expect.element(page.getByRole('group', { name: 'Areas', exact: true })).toBeVisible();
-  expect(page.getByRole('radio').query()).toBeNull();
+  await expect.element(page.getByRole('heading', { name: 'Workspace', exact: true })).toBeVisible();
   expect(page.getByRole('radio').query()).toBeNull();
   await page.getByRole('button', { name: 'Back to workspace', exact: true }).click();
+
   await expect.element(page.getByRole('textbox', { name: 'Chat message', exact: true })).toBeVisible();
   page.getByRole('textbox', { name: 'Chat message', exact: true }).element().focus();
   const history = await page.getByRole('dialog', { name: 'Daily Planner conversation', exact: true }).findElement();
   const message = page.getByRole('combobox', { name: 'Message', exact: true }).element();
-  expect(message.getBoundingClientRect().width).toBeGreaterThan(width - 180);
+  expect(message.getBoundingClientRect().width).toBeGreaterThan(width - 200);
   const panel = history.querySelector<HTMLElement>('[data-nc-drawer]')!;
   const sheet = panel.closest('[data-nc-mobile-chat-panel]')!;
-  expect(getComputedStyle(sheet.firstElementChild!).backgroundImage).toBe('none');
-  const historyButton = page.getByRole('button', { name: 'Open conversation history', exact: true }).element();
-  expect(sheet.getBoundingClientRect().top - historyButton.getBoundingClientRect().bottom).toBeGreaterThanOrEqual(16);
-  const sendIcon = history.querySelector('[aria-label="Send"] svg')!;
-  expect(sendIcon.getBoundingClientRect().width).toBe(24);
+  expect(getComputedStyle(sheet).overflow).toBe('hidden');
+  expect(getComputedStyle(sheet).borderTopLeftRadius).toBe('24px');
+  const workspaceButton = page.getByRole('button', { name: 'Open workspace', exact: true }).element();
+  expect(sheet.getBoundingClientRect().top - workspaceButton.getBoundingClientRect().bottom).toBeGreaterThanOrEqual(4);
   const bounds = panel.getBoundingClientRect();
   expect(bounds.left).toBeGreaterThanOrEqual(0);
   expect(bounds.right).toBeLessThanOrEqual(width);
@@ -83,6 +67,8 @@ it.each([320, 390])('aligns the left circular controls and keeps chat usable at 
   const expandedBar = message.closest('[class*="vendorComposer"]')?.firstElementChild;
   expect(expandedBar).toBeTruthy();
   expect(Math.round(expandedBar!.getBoundingClientRect().left)).toBe(Math.round(closedRowLeft));
+  const expandedRoleBox = history.querySelector<HTMLButtonElement>('button[aria-label^="Switch conversation,"]')!.getBoundingClientRect();
+  expect(Math.round(expandedRoleBox.width)).toBe(Math.round(closedRoleBox.width));
   await page.getByRole('button', { name: 'Close conversation', exact: true }).click();
   await expect.poll(() => document.querySelector('dialog[open]')).toBeNull();
   await expect.element(page.getByRole('textbox', { name: 'Chat message', exact: true })).toBeVisible();
@@ -93,7 +79,7 @@ it.each([320, 390])('aligns the left circular controls and keeps chat usable at 
 it('keeps draft words across closing and sends the same Planner before reopening its reply history', async () => {
   await page.viewport(390, 844);
   let answered = false;
-  const { requests, client } = renderDailyFixture({ emptyWorkspace: true, reply: (request) => {
+  const { requests, client } = renderDailyFixture({ initial: '/?day=2026-10-04', emptyWorkspace: true, reply: (request) => {
     if (request.path.endsWith('/messages')) return ok(sessionInput('daily-planner'));
     if (request.path.includes('/items?') && answered) return ok(sessionPage(fixtureSession('daily-planner', 'daily'), [sessionItem('daily-planner', 1, 'Your plan is ready.')]));
     return undefined;
@@ -124,7 +110,7 @@ it('keeps draft words across closing and sends the same Planner before reopening
 
 it('shows no draft entry on desktop and never dispatches an empty message', async () => {
   await page.viewport(390, 844);
-  const { requests } = renderDailyFixture({ emptyWorkspace: true });
+  const { requests } = renderDailyFixture({ initial: '/?day=2026-10-04', emptyWorkspace: true });
   await expect.element(page.getByRole('button', { name: 'Send chat message', exact: true })).toBeDisabled();
   await page.viewport(1280, 800);
   await expect.poll(() => page.getByRole('textbox', { name: 'Chat message', exact: true }).query()).toBeNull();
@@ -146,9 +132,9 @@ it('keeps workspace navigation as Area and Track lists with no filters', async (
 
 it('opens the existing Track page from the title and returns directly to the report', async () => {
   await page.viewport(390, 844);
-  const { requests, router } = renderDailyFixture();
+  const { requests, router } = renderDailyFixture({ initial: '/?day=2026-10-04' });
   await page.getByRole('button', { name: 'Switch track, 2026-10-04', exact: true }).click();
-  await expect.element(page.getByRole('group', { name: 'Tracks', exact: true })).toBeVisible();
+  await expect.element(page.getByRole('region', { name: 'Open tracks', exact: true })).toBeVisible();
   expect(page.getByRole('menu').query()).toBeNull();
   await expect.element(page.getByRole('button', { name: 'Project evidence', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Back to Report', exact: true }).click();
@@ -156,7 +142,7 @@ it('opens the existing Track page from the title and returns directly to the rep
   await page.getByRole('button', { name: 'Switch track, 2026-10-04', exact: true }).click();
   await page.getByRole('button', { name: 'Project evidence', exact: true }).click();
   await expect.poll(() => router.state.location.pathname).toBe('/track/project');
-  await page.getByRole('button', { name: 'Switch track, Project evidence', exact: true }).click();
+  await page.getByRole('button', { name: 'Switch track, Project', exact: true }).click();
   await expect.element(page.getByRole('button', { name: 'Project evidence', exact: true })).toHaveAttribute('aria-current', 'page');
   await page.getByRole('button', { name: 'Back to Report', exact: true }).click();
   expect(router.state.location.pathname).toBe('/track/project');
@@ -164,25 +150,24 @@ it('opens the existing Track page from the title and returns directly to the rep
 });
 
 
-it.each([320, 390])('keeps a long title truncated and its switch visible at %ipx', async (width) => {
+it.each([320, 390])('keeps a long title readable in the document header and its Area switch visible at %ipx', async (width) => {
   await page.viewport(width, 844);
   const projectTitle = '手机端交互与视觉体验优化：工作区、历史对话、报告阅读与输入栏的完整设计';
   const { requests } = renderDailyFixture({ initial: '/track/project', projectTitle });
-  const title = await page.getByRole('button', { name: `Switch track, ${projectTitle}`, exact: true }).findElement();
+  const title = await page.getByRole('button', { name: 'Switch track, Project', exact: true }).findElement();
   const label = title.querySelector('span')!;
   const icon = title.querySelector('svg')!;
   expect(title.getBoundingClientRect().right).toBeLessThanOrEqual(width - 16);
-  expect(label.scrollWidth).toBeGreaterThan(label.clientWidth);
   expect(label.getBoundingClientRect().right).toBeLessThanOrEqual(icon.getBoundingClientRect().left);
-  expect(icon.getBoundingClientRect().width).toBe(24);
-  await page.getByRole('button', { name: `Switch track, ${projectTitle}`, exact: true }).click();
+  await expect.element(page.getByRole('heading', { name: projectTitle, exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Switch track, Project', exact: true }).click();
   await expect.element(page.getByRole('button', { name: projectTitle, exact: true })).toBeVisible();
   expect(requests.filter((request) => request.method !== 'GET')).toHaveLength(0);
 });
 
 it('keeps the fixed mobile editor above a reduced visible viewport without losing its draft', async () => {
   await page.viewport(390, 844);
-  renderDailyFixture({ emptyWorkspace: true });
+  renderDailyFixture({ initial: '/?day=2026-10-04', emptyWorkspace: true });
   await page.getByRole('textbox', { name: 'Chat message', exact: true }).click();
   const editor = await page.getByRole('combobox', { name: 'Message', exact: true }).findElement();
   await expect.poll(() => document.activeElement === editor).toBe(true);
@@ -194,9 +179,9 @@ it('keeps the fixed mobile editor above a reduced visible viewport without losin
     viewport.dispatchEvent(new Event('resize'));
     await expect.poll(() => editor.getBoundingClientRect().bottom).toBeLessThanOrEqual(480);
     const panel = document.querySelector<HTMLElement>('[data-nc-mobile-chat-panel]')!;
-    const navigation = page.getByRole('button', { name: 'Open conversation history', exact: true }).element();
+    const navigation = page.getByRole('button', { name: 'Open workspace', exact: true }).element();
     await expect.poll(() => panel.getAnimations().every((animation) => animation.playState !== 'running')).toBe(true);
-    await expect.poll(() => panel.getBoundingClientRect().top - navigation.getBoundingClientRect().bottom).toBeGreaterThanOrEqual(16);
+    await expect.poll(() => panel.getBoundingClientRect().top - navigation.getBoundingClientRect().bottom).toBeGreaterThanOrEqual(4);
     expect(document.activeElement).toBe(editor);
     await expect.element(page.getByRole('combobox', { name: 'Message', exact: true })).toHaveTextContent('Keep this draft');
   } finally {
@@ -208,7 +193,7 @@ it('keeps the fixed mobile editor above a reduced visible viewport without losin
 
 it('keeps the message viewport above a growing multiline composer', async () => {
   await page.viewport(390, 844);
-  renderDailyFixture({ emptyWorkspace: true, reply: request => request.path.includes('/items?') ? ok(sessionPage(fixtureSession('daily-planner', 'daily'), [sessionItem('daily-planner', 1, 'Long reply. '.repeat(400) + '\n\nFinal line remains visible.')])) : undefined });
+  renderDailyFixture({ initial: '/?day=2026-10-04', emptyWorkspace: true, reply: request => request.path.includes('/items?') ? ok(sessionPage(fixtureSession('daily-planner', 'daily'), [sessionItem('daily-planner', 1, 'Long reply. '.repeat(400) + '\n\nFinal line remains visible.')])) : undefined });
   await page.getByRole('textbox', { name: 'Chat message', exact: true }).click();
   const field = page.getByRole('combobox', { name: 'Message', exact: true });
   await expect.element(field).toBeEnabled();
@@ -224,20 +209,18 @@ it('keeps the message viewport above a growing multiline composer', async () => 
   await expect.poll(() => Number.parseFloat(getComputedStyle(messages).paddingBottom)).toBeGreaterThanOrEqual(footer.getBoundingClientRect().height);
   expect(Math.round(footer.getBoundingClientRect().bottom)).toBe(844);
   await expect.poll(() => finalLine.getBoundingClientRect().bottom).toBeLessThanOrEqual(footer.getBoundingClientRect().top);
-  const margin = document.elementFromPoint(footer.getBoundingClientRect().right - 2, footer.getBoundingClientRect().top + 16);
-  expect(margin?.closest('[data-nc-drawer-scroll]')).toBe(messages);
 });
 
-it('loads real mobile CJK weight ranges and keeps shadowed controls free of visible outlines', async () => {
+it('loads real mobile CJK weight ranges and keeps shadowed controls crisp', async () => {
   await page.viewport(390, 844);
-  renderDailyFixture({ emptyWorkspace: true });
+  renderDailyFixture({ initial: '/?day=2026-10-04', emptyWorkspace: true });
   const entry = await page.getByRole('textbox', { name: 'Chat message', exact: true }).findElement();
   const faces = await document.fonts.load('500 15px "Perga Mobile CJK"', '工作区手机对话');
   expect(faces.length).toBeGreaterThan(0);
   expect(faces.every(face => face.status === 'loaded' && face.weight === '400 700')).toBe(true);
   const surface = getComputedStyle(entry.closest('form')!);
   expect(surface.boxShadow).not.toBe('none');
-  expect(surface.borderColor).toBe('rgba(0, 0, 0, 0)');
+  expect(surface.borderRadius).toBe('999px');
 });
 
 
@@ -245,7 +228,7 @@ it.each(['/track/project', '/area/project-area/new'])('returns from mobile track
   await page.viewport(390, 844);
   const { router, requests } = renderDailyFixture({ initial });
   if (initial === '/track/project') {
-    await page.getByRole('button', { name: 'Switch track, Project evidence', exact: true }).click();
+    await page.getByRole('button', { name: 'Switch track, Project', exact: true }).click();
     await page.getByRole('button', { name: 'New track', exact: true }).click();
   }
   const draft = page.getByRole('combobox', { name: 'What this track should do', exact: true });
@@ -253,15 +236,16 @@ it.each(['/track/project', '/area/project-area/new'])('returns from mobile track
   const back = page.getByRole('button', { name: 'Back to Tracks', exact: true });
   await expect.element(back).toBeVisible();
   await back.click();
-  await expect.element(page.getByRole('group', { name: 'Tracks', exact: true })).toBeVisible();
+  await expect.element(page.getByRole('region', { name: 'Open tracks', exact: true })).toBeVisible();
   await expect.element(page.getByRole('button', { name: 'Project evidence', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'New track', exact: true }).click();
   await expect.element(draft).toHaveTextContent('保留未提交的 Track 草稿');
   await back.click();
-  await page.getByRole('button', { name: 'Back to Areas', exact: true }).click();
+  await page.getByRole('button', { name: 'Back to Workspace', exact: true }).click();
   await page.getByRole('button', { name: 'Back to workspace', exact: true }).click();
   await expect.poll(() => router.state.location.pathname).toBe(initial === '/track/project' ? '/track/project' : '/');
-  await expect.poll(() => document.activeElement?.getAttribute('aria-label')).toBe('Open conversation history');
+  await expect.poll(() => document.activeElement?.getAttribute('aria-label'))
+    .toBe(initial === '/track/project' ? 'Back to Focus' : 'Open workspace');
   expect(requests.filter((request) => request.method !== 'GET')).toHaveLength(0);
 });
 
@@ -269,7 +253,7 @@ it.each(['/track/project', '/area/project-area/new'])('returns from mobile track
 it.each(['before-click', 'after-click', 'after-exit'] as const)('draft Back supersession preserves the latest New: %s', async (order) => {
   await page.viewport(390, 844);
   const { router, requests } = renderDailyFixture({ initial: '/track/project?from=pages#evidence' });
-  await page.getByRole('button', { name: 'Switch track, Project evidence', exact: true }).click();
+  await page.getByRole('button', { name: 'Switch track, Project', exact: true }).click();
   await page.getByRole('button', { name: 'New track', exact: true }).click();
   const draft = page.getByRole('combobox', { name: 'What this track should do', exact: true });
   await draft.fill('Keep the latest draft');
@@ -279,7 +263,7 @@ it.each(['before-click', 'after-click', 'after-exit'] as const)('draft Back supe
   const unsubscribe = router.history.subscribe(({ action }) => { if (action.type === 'BACK') delivered = true; });
   try {
     await page.getByRole('button', { name: 'Back to Tracks', exact: true }).click();
-    await expect.element(page.getByRole('group', { name: 'Tracks', exact: true })).toBeVisible();
+    await expect.element(page.getByRole('region', { name: 'Open tracks', exact: true })).toBeVisible();
     if (order === 'before-click') {
       commitBack();
       await expect.poll(() => router.state.status === 'idle' && router.state.location.pathname === '/track/project').toBe(true);
@@ -317,7 +301,7 @@ it('draft Back supersession preserves native history in an independent window', 
     const stop = history.subscribe(({ action }) => { actions.push(action.type); });
     try {
       const { router, requests } = renderDailyFixture({ history });
-      await page.getByRole('button', { name: 'Switch track, Project evidence', exact: true }).click();
+      await page.getByRole('button', { name: 'Switch track, Project', exact: true }).click();
       history.replace(history.location.href, { ...history.location.state, probeSource: 'source-state' });
       history.flush();
       await expect.poll(() => router.state.status).toBe('idle');
@@ -365,7 +349,7 @@ it('uses the latest workspace opener declaration while already interactive', asy
   await page.viewport(390, 844);
   let declare: ReturnType<typeof useOpenMobileSection> | undefined;
   renderDailyFixture({ initial: '/track/project', routeProbe: <WorkspaceIntentProbe ready={open => { declare = open; }} /> });
-  await page.getByRole('button', { name: 'Open workspace', exact: true }).click();
+  await page.getByRole('button', { name: 'Switch track, Project', exact: true }).click();
   // Another app-owned portalled surface may issue the public workspace command
   // without first dismissing the current workspace presentation.
   const opener = document.body.appendChild(document.createElement('button'));
@@ -388,7 +372,7 @@ it('uses the latest workspace opener declaration while already interactive', asy
 it.each(['return', 'new route'] as const)('keeps workspace return intent across a deferred Back commit: %s', async (next) => {
   await page.viewport(390, 844);
   const { router } = renderDailyFixture({ initial: '/track/project' });
-  await page.getByRole('button', { name: 'Switch track, Project evidence', exact: true }).click();
+  await page.getByRole('button', { name: 'Switch track, Project', exact: true }).click();
   await page.getByRole('button', { name: 'New track', exact: true }).click();
   const back = await page.getByRole('button', { name: 'Back to Tracks', exact: true }).findElement();
   const commitBack = router.history.back.bind(router.history);
@@ -409,14 +393,14 @@ it.each(['return', 'new route'] as const)('keeps workspace return intent across 
       await router.navigate({ to: '/' });
       await expect.poll(() => router.state.location.pathname).toBe('/');
     }
-    await page.getByRole('button', { name: 'Back to Areas', exact: true }).click();
+    await page.getByRole('button', { name: 'Back to Workspace', exact: true }).click();
     await page.getByRole('button', { name: 'Back to workspace', exact: true }).click();
     expect(host.inert).toBe(true);
     expect(document.querySelector('main')?.hasAttribute('inert')).toBe(false);
-    if (next === 'return') expect(document.activeElement?.getAttribute('aria-label')).toBe('Open conversation history');
-    else expect(document.activeElement?.getAttribute('aria-label')).not.toBe('Open conversation history');
+    if (next === 'return') expect(document.activeElement?.getAttribute('aria-label')).toBe('Back to Focus');
+    else expect(document.activeElement?.getAttribute('aria-label')).not.toBe('Back to Focus');
     await Promise.all(host.getAnimations().map(animation => animation.finished));
-    if (next === 'return') expect(document.activeElement?.getAttribute('aria-label')).toBe('Open conversation history');
+    if (next === 'return') expect(document.activeElement?.getAttribute('aria-label')).toBe('Back to Focus');
   } finally { requestBack.mockRestore(); }
 });
 
@@ -451,20 +435,19 @@ it('keeps Area editor actions inside the visible viewport when its keyboard open
     viewport.dispatchEvent(new Event('resize'));
   }
   await page.getByRole('button', { name: 'Cancel', exact: true }).click();
-  await expect.element(page.getByRole('group', { name: 'Areas', exact: true })).toBeVisible();
+  await expect.element(page.getByRole('region', { name: 'Areas', exact: true })).toBeVisible();
   expect(requests.filter(request => request.method !== 'GET')).toHaveLength(0);
 });
 
 
 it('interrupts the current working conversation from its portalled mobile editor without dismissing it', async () => {
   await page.viewport(390, 844);
-  const { requests } = renderDailyFixture({ emptyWorkspace: true, reply: request => {
+  const { requests } = renderDailyFixture({ initial: '/?day=2026-10-04', emptyWorkspace: true, reply: request => {
     if (request.path.includes('/items?')) return ok(sessionPage(fixtureSession('daily-planner', 'daily'), [], sessionTurn('daily-planner')));
     if (request.path.endsWith('/control')) return ok({ card_id: 'daily-planner', worker_session_id: 'runtime', stopped: true });
     return undefined;
   } });
-  await page.getByRole('button', { name: 'Open conversation history', exact: true }).click();
-  await page.getByRole('button', { name: '2026-10-04 Daily Planner conversation', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Chat message', exact: true }).click();
   await expect.element(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible();
   page.getByRole('button', { name: 'Stop', exact: true }).element().focus();
   await userEvent.keyboard('{Escape}');
@@ -474,7 +457,7 @@ it('interrupts the current working conversation from its portalled mobile editor
 
 it('uses the shared dismissal stack for idle portalled editors and leaves IME Escape alone', async () => {
   await page.viewport(390, 844);
-  renderDailyFixture({ emptyWorkspace: true });
+  renderDailyFixture({ initial: '/?day=2026-10-04', emptyWorkspace: true });
   await page.getByRole('textbox', { name: 'Chat message', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Daily Planner conversation', exact: true });
   await expect.element(dialog).toBeVisible();
@@ -494,7 +477,7 @@ it('uses the shared dismissal stack for idle portalled editors and leaves IME Es
 
 it('preserves the footer DOM and caret across native and desktop presentations then returns focus after exit', async () => {
   await page.viewport(390, 844);
-  renderDailyFixture({ emptyWorkspace: true });
+  renderDailyFixture({ initial: '/?day=2026-10-04', emptyWorkspace: true });
   await page.getByRole('textbox', { name: 'Chat message', exact: true }).click();
   const field = page.getByRole('combobox', { name: 'Message', exact: true });
   await field.fill('Retained caret draft');

@@ -41,11 +41,11 @@ describe('MobileHeader scroll surface', () => {
     host.appendChild(tone);
     expect(getComputedStyle(title).color).toBe(getComputedStyle(tone).color);
     const back = await page.getByRole('button', { name: 'Back to workspace' }).findElement();
-    expect(getComputedStyle(back).borderRadius).toBe('999px');
+    expect(getComputedStyle(back).borderRadius).toBe('12px');
     expect(back.getBoundingClientRect().height).toBeGreaterThanOrEqual(44);
     const backIcon = back.querySelector('svg')!;
-    expect(backIcon.getBoundingClientRect().width).toBe(24);
-    expect(backIcon.getBoundingClientRect().height).toBe(24);
+    expect(backIcon.getBoundingClientRect().width).toBe(20);
+    expect(backIcon.getBoundingClientRect().height).toBe(20);
     expect(Math.abs(header.getBoundingClientRect().top - top)).toBeLessThan(1);
   });
 });

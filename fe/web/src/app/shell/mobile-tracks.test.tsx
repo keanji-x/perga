@@ -25,7 +25,7 @@ describe('MobileTracks', () => {
       isUnread={() => false} readError={null} readLoading={false} onRetryRead={vi.fn()} />);
     const header = screen.getByRole('heading', { name: 'Product' }).closest('header');
 
-    expect(screen.getByRole('button', { name: 'Back to Areas' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Back to Workspace' })).toBeTruthy();
     expect(screen.queryByRole('radio')).toBeNull();
     expect(screen.queryByRole('radio', { name: 'Areas' })).toBeNull();
     const more = screen.getByRole('button', { name: 'Area actions' });
@@ -34,7 +34,7 @@ describe('MobileTracks', () => {
     expect(more.closest('header')).toBe(header);
     expect(more.querySelector('svg')).not.toBeNull();
     expect(screen.queryByRole('group', { name: 'Workspace actions' })).toBeNull();
-    expect(screen.getByRole('button', { name: 'New track' }).closest('header')).toBeNull();
+    expect(screen.getByRole('button', { name: 'New track' }).closest('header')).toBe(header);
     await userEvent.click(edit);
     expect(onEditArea).toHaveBeenCalledWith(area, expect.objectContaining({ kind: 'anchor' }));
     await userEvent.click(screen.getByRole('button', { name: 'New track' }));
@@ -43,7 +43,7 @@ describe('MobileTracks', () => {
     expect(selected.getAttribute('aria-current')).toBe('page');
     await userEvent.click(selected);
     expect(onOpenTrack).toHaveBeenCalledWith('w1');
-    await userEvent.click(screen.getByRole('button', { name: 'Back to Areas' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Back to Workspace' }));
     expect(onBack).toHaveBeenCalledOnce();
   });
 
@@ -61,7 +61,7 @@ describe('MobileTracks', () => {
     await userEvent.click(screen.getByRole('button', { name: 'New track' }));
     expect(onNewTrack).not.toHaveBeenCalled();
     expect(onEditArea).not.toHaveBeenCalled();
-    await userEvent.click(screen.getByRole('button', { name: 'Back to Areas' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Back to Workspace' }));
     expect(onBack).toHaveBeenCalledOnce();
     expect(onOpenSettings).not.toHaveBeenCalled();
   });

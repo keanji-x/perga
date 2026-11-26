@@ -163,28 +163,45 @@ it('saves and reads back null effort on an existing session without materializin
 });
 
 
-it('uses status priority initially and keeps an explicitly selected mobile draft with its session', async () => {
+it('defaults the mobile dock to Lead and keeps an explicitly switched conversation draft with its session', async () => {
   await page.viewport(390, 844);
   const lead = fixtureSession('daily-planner', 'daily', { isLead: true, title: 'Daily Planner conversation' });
-  const blocked = fixtureSession('second-planner', 'daily', { title: 'Other conversation', status: 'unknown' });
+  const sibling = fixtureSession('second-planner', 'daily', { title: 'Other conversation' });
   renderPlannerSwitchFixture({ initial: '/track/daily', reply: request => {
     const ok = (body: unknown) => ({ status: 200, statusText: 'OK', body });
     if (request.path === '/api/v1/tracks/daily') return ok(fixtureSnapshot(
-      fixtureTrack('daily', { leadSessionId: lead.id }), [lead, blocked]));
-    if (request.path === '/api/v1/tracks/daily/sessions') return ok([lead, blocked]);
-    if (request.path.includes('/second-planner/items?')) return ok(sessionPage(blocked, [], null, 'unknown'));
+      fixtureTrack('daily', { leadSessionId: lead.id }), [lead, sibling]));
+    if (request.path === '/api/v1/tracks/daily/sessions') return ok([lead, sibling]);
+    if (request.path.includes('/second-planner/items?')) return ok(sessionPage(sibling));
     return undefined;
   } });
   const dock = page.getByRole('textbox', { name: 'Chat message', exact: true });
   await dock.click();
+  await expect.element(page.getByRole('dialog', { name: 'Daily Planner conversation', exact: true })).toBeVisible();
+  const settingsTrigger = page.getByRole('button', { name: /^Session model and mode/ });
+  await expect.element(settingsTrigger).toBeVisible();
+  await settingsTrigger.click();
+  const card = page.getByRole('dialog', { name: 'Session model and mode', exact: true });
+  await expect.element(card).toBeVisible();
+  expect(card.element().tagName).not.toBe('DIALOG');
+  await userEvent.keyboard('{Escape}');
+  await expect.element(card).not.toBeInTheDocument();
+  await expect.element(page.getByRole('dialog', { name: 'Daily Planner conversation', exact: true })).toBeVisible();
+  // Opening ConversationSwitcherSheet from inside Chat Sheet and pressing Escape closes only the switcher.
+  const inSheetRoleSlot = page.getByRole('button', { name: /^Switch conversation,/ });
+  await inSheetRoleSlot.click();
+  await expect.element(page.getByRole('dialog', { name: 'Switch conversation', exact: true })).toBeVisible();
+  await userEvent.keyboard('{Escape}');
+  await expect.element(page.getByRole('dialog', { name: 'Switch conversation', exact: true })).not.toBeInTheDocument();
+  await expect.element(page.getByRole('dialog', { name: 'Daily Planner conversation', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Close conversation', exact: true }).click();
+  await page.getByRole('button', { name: /^Switch conversation,/ }).click();
+  await page.getByRole('button', { name: /Other conversation/ }).click();
   await expect.element(page.getByRole('dialog', { name: 'Other conversation', exact: true })).toBeVisible();
+  await page.getByRole('combobox', { name: 'Message', exact: true }).fill('Retain the switched conversation draft');
   await page.getByRole('button', { name: 'Close conversation', exact: true }).click();
-  await page.getByRole('button', { name: 'Open conversation history', exact: true }).click();
-  await page.getByRole('button', { name: /Daily Planner conversation$/ }).click();
-  await page.getByRole('combobox', { name: 'Message', exact: true }).fill('Retain the selected Lead draft');
-  await page.getByRole('button', { name: 'Close conversation', exact: true }).click();
-  await expect.element(dock).toHaveValue('Retain the selected Lead draft');
+  await expect.element(dock).toHaveValue('Retain the switched conversation draft');
   await expect.element(page.getByRole('button', { name: 'Send chat message', exact: true })).toBeEnabled();
   await dock.click();
-  await expect.element(page.getByRole('dialog', { name: 'Daily Planner conversation', exact: true })).toBeVisible();
+  await expect.element(page.getByRole('dialog', { name: 'Other conversation', exact: true })).toBeVisible();
 });

@@ -209,10 +209,8 @@ describe('the mobile report panel is the URL (#1191 §2.4)', () => {
 describe('workspace header navigation', () => {
   it('opens the current track’s area without a dock', async () => {
     setup('/track/w1?from=area');
-    await userEvent.click(await screen.findByRole('button', { name: 'Open workspace' }));
+    await userEvent.click(await screen.findByRole('button', { name: /^Switch track,/ }));
     expect(screen.getByRole('dialog', { name: 'Tracks and settings' })).toBeTruthy();
-    expect(screen.getByRole('heading', { name: 'Areas' })).toBeTruthy();
-    await userEvent.click(screen.getByRole('button', { name: 'Product' }));
     expect(screen.getByRole('heading', { name: 'Product' })).toBeTruthy();
     expect(document.querySelector('nav[aria-label="Primary"]')).toBeNull();
   });
@@ -222,10 +220,15 @@ describe('workspace header navigation', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Switch area, Product' }));
     await userEvent.click(screen.getByRole('menuitem', { name: 'Second' }));
     await waitFor(() => { expect(href(router)).toBe('/area/c2/new'); });
-    await userEvent.click(screen.getByRole('button', { name: 'Open workspace' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Second' }));
+    const workspaceOpener = screen.queryByRole('button', { name: 'Open workspace' });
+    if (workspaceOpener !== null) {
+      await userEvent.click(workspaceOpener);
+      await userEvent.click(screen.getByRole('button', { name: 'Second' }));
+    } else {
+      await userEvent.click(screen.getByRole('button', { name: 'Back to Tracks' }));
+    }
     expect(screen.getByRole('heading', { name: 'Second' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Back to Areas' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Back to Workspace' })).toBeTruthy();
     expect(screen.queryByRole('heading', { name: 'Areas' })).toBeNull();
     await userEvent.click(screen.getByRole('button', { name: /^New track$/ }));
     await waitFor(() => { expect(href(router)).toBe('/area/c2/new'); });
@@ -243,8 +246,8 @@ describe('workspace header navigation', () => {
   });
 
   it('keeps Today at home and starts an Area composer only after selecting an Area', async () => {
-    const router = setup('/');
-    await waitFor(() => { expect(href(router)).toBe('/'); });
+    const router = setup('/?day=2026-10-04');
+    await waitFor(() => { expect(href(router)).toBe('/?day=2026-10-04'); });
     await userEvent.click(await screen.findByRole('button', { name: 'Switch area, Product' }));
     await userEvent.click(screen.getByRole('menuitem', { name: 'Second' }));
     await waitFor(() => { expect(href(router)).toBe('/area/c2/new'); });

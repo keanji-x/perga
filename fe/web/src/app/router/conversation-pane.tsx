@@ -51,9 +51,11 @@ type ReportLinkTarget
 import {
 toTrack
 } from '../../../../core/domain/track.ts';
+import { ConversationSwitcherSheet } from '../../features/chat/dock/conversation-switcher-sheet.tsx';
 import { ChatList } from '../../features/chat/list/public.tsx';
 import { ContextRing } from '../../features/chat/thread/context-ring.tsx';
 import { useMentionTrigger } from '../../features/chat/thread/mention-trigger.tsx';
+import { MobileSessionSettingsControl } from '../../features/chat/thread/mobile-session-settings-sheet.tsx';
 import { ModelPill,PermissionModePill } from '../../features/chat/thread/model-pill.tsx';
 import type { ModelGroup } from '../../features/chat/thread/model-selection.ts';
 import { MessageImages } from '../../features/chat/thread/message-images.tsx';
@@ -514,6 +516,51 @@ export function useConversationPane(
     )}
   </>, [existingId, sessionModelGroups, activeProvider, canSwitchProvider, composerView, permissionControl]);
 
+  const [switcherOpen, setSwitcherOpen] = useState(false);
+  const activeDockRow = dockRowId === null ? null : rows.find((row) => row.id === dockRowId) ?? null;
+  const activeOpenRow = open ?? activeDockRow;
+  const roleSlotLabel = activeOpenRow === null
+    ? 'Lead'
+    : activeOpenRow.isLead === true
+      ? 'Lead'
+      : conversationName(activeOpenRow);
+  const mobileRoleSlot = useMemo(() => (
+    mobileSheet || compactComposer
+      ? {
+        label: roleSlotLabel,
+        ariaLabel: `Switch conversation, current: ${roleSlotLabel}`,
+        onOpen: () => setSwitcherOpen(true),
+      }
+      : undefined
+  ), [mobileSheet, compactComposer, roleSlotLabel]);
+
+  const mobileMetaBar = useMemo(() => (
+    !mobileSheet ? undefined : (
+      <>
+        <MobileSessionSettingsControl
+          key={`mobile-model-${existingId}`}
+          groups={sessionModelGroups}
+          provider={activeProvider}
+          selection={composerView.model}
+          onChangeModel={(next, nextProvider) => composerView.setModel(next, canSwitchProvider ? nextProvider : undefined)}
+          modelDisabled={!composerView.historyReady || composerView.modelChangeDisabled}
+          appliesNextTurn={composerView.working}
+          permission={permissionControl.visible ? {
+            mode: permissionControl.mode,
+            options: permissionControl.options,
+            onChange: (mode) => { void composerView.setPermissionMode(mode); },
+            disabled: permissionControl.isDisabled,
+          } : undefined}
+        />
+        <PlannerAttachButton
+          attachments={composerAttachments}
+          available={composerView.attachmentsSupported}
+          disabled={editingQueue || composerView.sendBlocked || !composerView.historyReady || replacing}
+        />
+      </>
+    )
+  ), [mobileSheet, existingId, sessionModelGroups, activeProvider, canSwitchProvider, composerView, permissionControl, composerAttachments, editingQueue, replacing]);
+
   const composerNode = useMemo(() => existingId === null ? null : (
             <ConversationComposer target={{ kind: 'card', id: existingId }} layout={mobileSheet ? 'mobile' : 'standard'}
               /* Read at mount only, which is what makes it one-shot; the flag is dropped
@@ -539,6 +586,8 @@ export function useConversationPane(
                                already refuses a second one. */
               onStop={composerStop}
               mentionTrigger={mentionTrigger}
+              mobileMetaBar={mobileMetaBar}
+              mobileRoleSlot={mobileRoleSlot}
               /* The kernel reads the selection when it hands a batch to codex, so a change
                                lands on the next turn not yet issued; a REFUSED turn is re-issued and
                                reads it again. */
@@ -557,20 +606,30 @@ export function useConversationPane(
             />
   ), [existingId, mobileSheet, panePresented, composerFocusFor, composerFocusRequest, changeComposer, composerView, draftOnly,
     paneCommands, composerStop, replacing, editingQueue,
-    sendText, composerAttachments, mentionTrigger, sessionConfigurationControls]);
+    sendText, composerAttachments, mentionTrigger, sessionConfigurationControls, mobileMetaBar, mobileRoleSlot]);
 
   const { actionArea, changeArchive } = useConversationActionArea({ open, options, store, shownComposer, existingId,
     conversationAsks, conversationApprovals, decideApproval, answerAsk, retrySend, focusComposer });
 
   const centeredEmpty = options?.embedded?.active === true && open !== null && store.historyReady && openTurns.length === 0 && !hasPendingMessages && !(pendingPresentation?.conversationId === existingId && pendingPresentation.visible) && !store.sending && !store.working && store.failedSend === null;
 
+  const mobileSubtitle = open === null
+    ? (draftOpen ? 'New conversation' : undefined)
+    : open.isLead === true
+      ? 'Lead'
+      : scope?.title !== undefined
+        ? `Collaborator · ${scope.title}`
+        : 'Collaborator';
+
   const renderDrawer = (resizeGroup: PaneResizeGroup | null = null) => (
+      <>
       <ConversationSurface
         embedded={options?.embedded}
         centerEmptyComposer={centeredEmpty}
         mobileSheet={mobileSheet}
         focusInput={panePresented && (draftOpen || (open !== null && composerFocusFor === open.id))}
         contextTitle={scope?.title}
+        mobileSubtitle={mobileSubtitle}
         titleActions={memorySave.headerButton}
         sessionHeader={open === null ? undefined : <ConversationSessionHeader session={store.session} state={store.sessionState}
           taskId={store.taskId} readonlyReason={store.readonlyReason} workerPaused={store.workerPaused}
@@ -728,6 +787,20 @@ export function useConversationPane(
         )}
         {chatLinks.sourceDrawer}
       </ConversationSurface>
+      {(mobileSheet || compactComposer) && (
+        <ConversationSwitcherSheet
+          open={switcherOpen}
+          onClose={() => setSwitcherOpen(false)}
+          conversations={store.conversations}
+          selectedId={open?.id ?? dockRowId}
+          trackTitle={scope?.title}
+          onSelect={(conversation) => {
+            openConversation(conversation);
+          }}
+          onNew={allowNewConversation ? start : undefined}
+        />
+      )}
+      </>
   );
 
   const openConversation = useCommittedCallback(sourceScopeId, (conversation: Conversation) => {
@@ -766,6 +839,7 @@ export function useConversationPane(
   return {
     dock: compactComposer ? <ConversationDock target={dockRowId === null ? { kind: 'scope', id: sourceScopeId } : { kind: 'card', id: dockRowId }}
       commands={dockRowId === null ? conversationCommands({ compactViewport: true, openFile: source.openFileCommand }) : paneCommands}
+      roleSlot={mobileRoleSlot}
       onChange={setDockText} onSend={sendFromDock} onBeginInput={openDockHistory}
       disabled={archived || options?.reportComposer?.ready === false || (dockRowId !== null && (store.sendBlocked || !store.historyReady || !store.runReady))} /> : undefined,
     selectedConversationId: draftOpen ? null : open?.id ?? dockRowId,

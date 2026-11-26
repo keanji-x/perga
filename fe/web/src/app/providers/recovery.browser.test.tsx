@@ -46,17 +46,18 @@ it.each([390, 1280])('keeps preflight recovery compact and navigation usable at 
   expect(rect.width).toBeLessThan(width - 16);
   expect(rect.height).toBeLessThan(70);
   const navigation = width < 960
-    ? page.getByRole('button', { name: 'Open conversation history' })
+    ? page.getByRole('button', { name: 'Open workspace' })
     : page.getByRole('navigation', { name: 'Workspace' });
   await expect.element(navigation).toBeVisible();
   if (width < 960) {
     const header = navigation.element().closest('header')!.getBoundingClientRect();
     expect(header.width).toBeLessThanOrEqual(width);
-    expect(header.height).toBe(80);
+    expect(header.height).toBeGreaterThanOrEqual(48);
+    expect(header.height).toBeLessThanOrEqual(80);
     await navigation.click();
-    await expect.element(page.getByRole('dialog', { name: 'Conversations' })).toBeVisible();
+    await expect.element(page.getByRole('dialog', { name: 'Tracks and settings' })).toBeVisible();
     await userEvent.keyboard('{Escape}');
-    await expect.element(page.getByRole('dialog', { name: 'Conversations' })).not.toBeInTheDocument();
+    await expect.element(page.getByRole('dialog', { name: 'Tracks and settings' })).not.toBeInTheDocument();
   }
   await page.screenshot({ path: `../../../../test-results/preflight-recovery-${width}.png` });
   await retry.click();

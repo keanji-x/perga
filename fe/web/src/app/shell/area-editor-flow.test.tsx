@@ -458,7 +458,7 @@ describe('AppShell Area editor flow', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Open workspace' }));
     const navigation = screen.getByRole('dialog', { name: 'Tracks and settings' });
     await userEvent.click(within(navigation).getByRole('button', { name: 'Work' }));
-    expect(within(navigation).getByRole('button', { name: 'Back to Areas' })).toBeTruthy();
+    expect(within(navigation).getByRole('button', { name: 'Back to Workspace' })).toBeTruthy();
     await userEvent.click(within(navigation).getByRole('button', { name: 'Area actions' }));
     await userEvent.click(within(navigation).getByRole('menuitem', { name: 'Edit area Work' }));
     expect(screen.getByRole('dialog', { name: 'Edit Work' })).toBeTruthy();

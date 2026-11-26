@@ -5,42 +5,57 @@
     gap: var(--space-1);
     box-sizing: border-box;
     block-size: var(--control-h-touch);
-    padding: var(--space-px);
-    background: var(--paper);
-    border: 1px solid var(--hairline);
+    padding: var(--space-1);
+    background: var(--surface-card);
+    border: 1px solid color-mix(in srgb, var(--hairline) 85%, transparent);
     border-radius: var(--radius-pill);
-    box-shadow: var(--shadow-float);
+    box-shadow: 0 4px 16px oklch(0% 0 0 / 8%);
   }
 
-  .send {
-    background: var(--accent);
-    color: var(--text-on-accent);
-    display: grid;
-    place-items: center;
-    flex: none;
-    inline-size: var(--rail-w-collapsed);
-    block-size: var(--rail-w-collapsed);
-    border-radius: var(--radius-pill);
-    box-sizing: border-box;
-    padding: var(--space-half);
-    background-clip: content-box;
+  /* Fixed-width left role slot: locked at 76px (390px) / 66px (320px) so the divider never jitters. */
+  .roleSlot {
+    display: inline-flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-half);
+    flex: 0 0 clamp(4.125rem, 21vw, 4.75rem);
+    inline-size: clamp(4.125rem, 21vw, 4.75rem);
+    min-block-size: calc(var(--control-h-touch) - var(--space-2));
+    padding: 0 var(--space-2) 0 var(--space-3);
+    border: 0;
+    border-inline-end: 1px solid color-mix(in srgb, var(--hairline) 80%, transparent);
+    border-radius: var(--radius-pill) 0 0 var(--radius-pill);
+    background: transparent;
+    color: var(--text);
+    font: var(--type-metadata);
+    font-weight: var(--weight-semibold);
     cursor: pointer;
   }
 
-  .send svg {
-    inline-size: var(--glyph-xl);
-    block-size: var(--glyph-xl);
+  .roleSlot:hover,
+  .roleSlot:focus-visible {
+    background: var(--overlay-hover);
   }
 
-  .send:disabled { background-color: var(--surface-chip); color: var(--text-2); cursor: default; }
+  .roleLabel {
+    min-inline-size: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .roleChevron {
+    display: inline-flex;
+    flex-shrink: 0;
+    color: var(--text-3);
+  }
 
   .input {
-    font-size: var(--font-step-3-size);
-    line-height: var(--font-step-3-line);
-    flex: 1;
+    font: var(--type-ui);
+    flex: 1 1 auto;
     min-inline-size: 0;
-    block-size: var(--rail-w-collapsed);
-    padding: calc((var(--rail-w-collapsed) - var(--font-step-3-line)) / 2) var(--space-3);
+    block-size: calc(var(--control-h-touch) - var(--space-2));
+    padding: calc((var(--control-h-touch) - var(--space-2) - var(--type-ui-line)) / 2) var(--space-2);
     border: 0;
     box-shadow: none;
     resize: none;
@@ -51,5 +66,33 @@
     color: var(--text);
   }
 
-  .input::placeholder { color: var(--text-3); }
+  .input:focus-visible {
+    outline: none;
+    box-shadow: none;
+    border-color: transparent;
+  }
+
+  .input::placeholder {
+    color: var(--text-3);
+  }
+
+  .send {
+    background: var(--accent);
+    color: var(--text-on-accent);
+    display: grid;
+    place-items: center;
+    flex: none;
+    inline-size: calc(var(--control-h-lg) + var(--space-1) + var(--space-half));
+    block-size: calc(var(--control-h-lg) + var(--space-1) + var(--space-half));
+    border: 0;
+    border-radius: var(--radius-pill);
+    box-sizing: border-box;
+    cursor: pointer;
+  }
+
+  .send:disabled {
+    background: var(--surface-chip);
+    color: var(--text-3);
+    cursor: default;
+  }
 }

@@ -68,6 +68,7 @@ type RecentFileHistory
 import { useTrackConversationMutations } from '../providers/track-conversation-mutations.ts';
 import { useTrackMutations } from '../providers/track-mutations.ts';
 import { trackToolsQueryOptions } from '../providers/track-queries.ts';
+import { useWorkspace } from '../providers/workspace-queries.ts';
 import { useUiPreferences } from '../providers/ui-preferences.tsx';
 import { useMobileConversationOwner,useMobileHeaderActionsHost,useMobileHeaderTitleHost,useOpenMobileSection } from '../shell/public.tsx';
 import { TrackSelector } from '../shell/mobile/track-selector.tsx';
@@ -117,6 +118,8 @@ export function TrackRouteBody({
   const canReopenTrack = !isMemoryTrack && snapshot.track.closedAtMs != null;
   const canCloseTrack = !isMemoryTrack && !canReopenTrack;
   const mobileAreaId = isMemoryTrack ? (typeof memoryAreaId === 'string' ? memoryAreaId : null) : track.areaId;
+  const workspace = useWorkspace(transport, unauthorized);
+  const mobileAreaName = mobileAreaId === null ? undefined : workspace.areas.find((area) => area.id === mobileAreaId)?.name;
   const alias = useMemo(() => trackPath === undefined ? undefined : { trackId: track.id, path: trackPath }, [track.id, trackPath]);
   const toolsQuery = useQuery(trackToolsQueryOptions(transport, snapshot.track.id, unauthorized));
   const rawCards = useMemo(() => (toolsQuery.data ?? []).map((terminal, index) => terminalPanelItem(terminal, 100 + index)), [toolsQuery.data]);
@@ -505,7 +508,8 @@ export function TrackRouteBody({
       mobilePanelObscured={!centerActive && chat.isOpen}
       mobileHeaderActionsHost={mobileHeaderActionsHost}
       mobileHeaderTitleHost={mobileHeaderTitleHost}
-      mobileTitleReadView={(controls) => <TrackSelector track={track} controls={controls}
+      mobileAreaName={mobileAreaName}
+      mobileTitleReadView={(controls) => <TrackSelector track={track} areaName={mobileAreaName} controls={controls}
         onOpenTracks={() => openMobileSection(mobileAreaId === null
           ? { kind: 'pages' }
           : { kind: 'tracks', areaId: mobileAreaId, returnTo: 'report' })} />}

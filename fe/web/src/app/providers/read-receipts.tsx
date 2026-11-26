@@ -138,6 +138,12 @@ export type ReadReceipts = Readonly<{
   markUnread(kind: ReadReceiptKind, id: string): Promise<void>;
   /** The receipts have been read at least once. */
   ready: boolean;
+  /** True while the initial receipts query is still pending. */
+  loading: boolean;
+  /** True when the initial receipts query failed with no cached state. */
+  failed: boolean;
+  /** Re-runs the read-receipts query after a failure. */
+  retry: () => void;
 }>;
 
 function useReceiptChannel(): ReceiptChannel {
@@ -148,13 +154,17 @@ function useReceiptChannel(): ReceiptChannel {
 
 export function useReadReceipts(): ReadReceipts {
   const channel = useReceiptChannel();
-  const { data } = useQuery(readReceiptsQueryOptions(channel.transport, channel.unauthorized));
+  const { data, isPending, isError, refetch } = useQuery(readReceiptsQueryOptions(channel.transport, channel.unauthorized));
   return useMemo<ReadReceipts>(() => ({
-    markRead: channel.markRead, markUnread: channel.markUnread, ready: data !== undefined,
+    markRead: channel.markRead, markUnread: channel.markUnread,
+    ready: data !== undefined,
+    loading: isPending && data === undefined,
+    failed: isError && data === undefined,
+    retry: () => { void refetch(); },
     isTrackUnread: (id, sessions) => data !== undefined && isTrackUnread(data, id, sessions),
     hasManualUnread: (kind, id) => data?.receipts[receiptKey(kind, id)]?.manualUnread === true,
     isUnread: (kind, id, activityAt) => data !== undefined && isUnread(data, kind, id, activityAt),
-  }), [data, channel]);
+  }), [data, isPending, isError, refetch, channel]);
 }
 
 /**

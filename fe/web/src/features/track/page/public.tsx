@@ -117,6 +117,7 @@ export type TrackPageProps = Readonly<{
   /** Optional app-owned phone header slot; this feature keeps ownership of actions and focus. */
   mobileHeaderActionsHost?: HTMLElement | null;
   mobileHeaderTitleHost?: HTMLElement | null;
+  mobileAreaName?: string;
   mobileTitleReadView?: EditableTitleProps['readView'];
   /** The server's capabilities; at most one is true, so the menu offers Close or Reopen, never both. */
   canReopenTrack: boolean;
@@ -160,7 +161,7 @@ export function TrackPage({ fillReading = false, articleMasthead = !fillReading,
   shareLinks, onShareTrack, onStartConversation, conversationOpen = false, mobilePanelObscured, unread = false, onReply,
   cardsAction, recentFiles, onOpenCard, onDeleteCard, onSetWorkbench, onOpenTask, onOpenOutline, board, onCloseBoard, fileViewer,
   panel = null, onOpenPanel, onClosePanel,
-  mobileBackLabel = 'Pages', onMobileBack, mobileHeaderActionsHost = null, mobileHeaderTitleHost = null, mobileTitleReadView,
+  mobileBackLabel = 'Pages', onMobileBack, mobileHeaderActionsHost = null, mobileHeaderTitleHost = null, mobileAreaName, mobileTitleReadView,
   canReopenTrack, canCloseTrack, onRenameTrack, onOpenOriginTrack, closedControl, onDeleteTrack, onTrackDeleted,
 }: TrackPageProps) {
   const compactViewport = useCompactViewport();
@@ -305,7 +306,7 @@ export function TrackPage({ fillReading = false, articleMasthead = !fillReading,
     onBack: closeMobilePanel,
   });
 
-  const mobileActions = closeSurface === undefined ? (
+  const mobileActions = closeSurface === undefined && showWorkspaceIsolation ? (
     <span className={styles.mobilePanelButton} ref={mobileActionsRef}>
       <AstryxMoreMenu
         label="Track actions"
@@ -372,7 +373,7 @@ export function TrackPage({ fillReading = false, articleMasthead = !fillReading,
                     <div className={styles.mobileOriginTitle}>
                       {mobileTitleReadView(readControls)}
                       {originLink}
-                      <ActivityIndicator state={activity} spoken={activityLabel} />
+                      {mobileAreaName === undefined && <ActivityIndicator state={activity} spoken={activityLabel} />}
                     </div>
                   )} /> : undefined} />}
         </h1>
@@ -505,6 +506,22 @@ export function TrackPage({ fillReading = false, articleMasthead = !fillReading,
           {usesMastheadHost && (
             <header ref={mastheadRef} className={`${styles.articleMasthead} ${titleInHeader ? styles.articleMastheadInShell : ''}`}>
               {titleBlock}
+            </header>
+          )}
+          {compactViewport && titleInHeader && (
+            <header className={styles.mobileDocHeader}>
+              {(mobileAreaName !== undefined || folioDate !== null) && (
+                <div className={styles.mobileDocMeta}>
+                  {mobileAreaName !== undefined && (
+                    <span className={styles.mobileDocAreaChip}>
+                      <span className={styles.mobileDocAreaDot} aria-hidden="true" />
+                      <span>{mobileAreaName}</span>
+                    </span>
+                  )}
+                  {folioDate !== null && <span className={styles.mobileDocDate}>{folioDate}</span>}
+                </div>
+              )}
+              <h2 className={styles.mobileDocTitle}><TrackTitle track={track} /></h2>
             </header>
           )}
           {compactViewport && mobileReportIntro}

@@ -93,12 +93,14 @@ export function DailyTodayRoute({ transport, unauthorized, selectedDate, onOpenT
     setKnownServerToday(discoveredToday);
   }
   const serverToday = discoveredToday ?? knownServerToday;
+  const compactViewport = useCompactViewport();
   const handleSelectDate = useCallback((day: string) => {
     if (onSelectDate === undefined) return;
-    const nextDay = serverToday !== undefined && day === serverToday ? undefined : day;
+    // On mobile, '/' hosts Focus home; keep explicit ?day= so Calendar navigation stays inside Daily Planner.
+    const nextDay = !compactViewport && serverToday !== undefined && day === serverToday ? undefined : day;
     if (nextDay === validSelectedDate && !isInvalidDate) return;
     onSelectDate(nextDay);
-  }, [isInvalidDate, onSelectDate, serverToday, validSelectedDate]);
+  }, [compactViewport, isInvalidDate, onSelectDate, serverToday, validSelectedDate]);
   const calendarErrorNotice = calendar.isError
     ? readErrorText(calendar.error, 'Calendar data could not be loaded.')
     : undefined;
