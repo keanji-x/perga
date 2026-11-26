@@ -156,9 +156,11 @@ export type ConversationRegistry = Readonly<{
   editOutbox: (conversationId: string, next: (current: readonly ConversationOutboxOp[]) => readonly ConversationOutboxOp[]) => readonly ConversationOutboxOp[];
   /** The next number in the tab's one read order: a read numbered later started later, whichever view started it. */
   nextRead: () => number;
-  /** Pending permission writes live with the conversation, across pane remounts. */
+  /** Pending permission and provider writes live with the conversation, across pane remounts. */
   holdPermissionWrite: <T>(id: string, write: Promise<T>) => Promise<T>;
   permissionWriteOf: (id: string) => Promise<unknown> | undefined;
+  holdProviderWrite: <T>(id: string, write: Promise<T>) => Promise<T>;
+  providerWriteOf: (id: string) => Promise<unknown> | undefined;
   /** Each existing conversation's unsent words and images, kept across closing, switching and remounts. */
   composerOf: (conversationId: string) => ComposerContent;
   /** Change one conversation's composer, whichever conversation is shown; returns it as written. */

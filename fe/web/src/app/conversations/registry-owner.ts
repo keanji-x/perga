@@ -151,6 +151,19 @@ export function createConversationOwner(submittedStorage?: () => Storage) {
   const draftTracks = new Map<string, string>();
   const retiredTracks = new Set<string>();
   const permissionWrites = new Map<string, Promise<unknown>>();
+  const providerWrites = new Map<string, Promise<unknown>>();
+  const holdWrite = <T>(writes: Map<string, Promise<unknown>>, id: string, write: Promise<T>): Promise<T> => {
+    const previous = writes.get(id);
+    // A rejected ancestor must not settle a later barrier while another real write is still out.
+    const pending = previous === undefined ? write : Promise.allSettled([previous, write]).then(results => {
+      for (const result of results) if (result.status === 'rejected') throw result.reason;
+      return write;
+    });
+    writes.set(id, pending);
+    const settled = () => { if (writes.get(id) === pending) writes.delete(id); };
+    void pending.then(settled, settled);
+    return pending;
+  };
   let read = 0;
   const listeners = new Set<() => void>();
   const commit = (next: ConversationSnapshot) => {
@@ -207,18 +220,9 @@ export function createConversationOwner(submittedStorage?: () => Storage) {
   };
   const commands: ConversationRegistry = {
     permissionWriteOf: id => permissionWrites.get(id),
-    holdPermissionWrite: (id, write) => {
-      const previous = permissionWrites.get(id);
-      // A rejected ancestor must not settle a later barrier while another real PUT is still out.
-      const pending = previous === undefined ? write : Promise.allSettled([previous, write]).then(results => {
-        for (const result of results) if (result.status === 'rejected') throw result.reason;
-        return write;
-      });
-      permissionWrites.set(id, pending);
-      const settled = () => { if (permissionWrites.get(id) === pending) permissionWrites.delete(id); };
-      void Promise.allSettled([previous, write]).then(settled);
-      return pending;
-    },
+    holdPermissionWrite: (id, write) => holdWrite(permissionWrites, id, write),
+    providerWriteOf: id => providerWrites.get(id),
+    holdProviderWrite: (id, write) => holdWrite(providerWrites, id, write),
     beginResolution: (id, decision, args, key) => {
       const slot = `${id}\u0000${args.attempt_id}`;
       const previous = state.resolutions[slot];
@@ -257,6 +261,7 @@ export function createConversationOwner(submittedStorage?: () => Storage) {
         sendGenerations.delete(id);
         epochs.delete(id);
         permissionWrites.delete(id);
+        providerWrites.delete(id);
       }
       const entries = withoutIds(state.entries, ids);
       const pendingTrackInitialSends = put(state.pendingTrackInitialSends, trackId, undefined);

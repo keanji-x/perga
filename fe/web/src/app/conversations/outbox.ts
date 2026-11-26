@@ -90,8 +90,12 @@ export function useConversationOutbox({
           ? 'refused' : classifyFailure(failure, SEND_FAILURES),
       );
     };
-    const prerequisite = registry.permissionWriteOf(sentTo);
-    const delivery = prerequisite === undefined ? deliver() : prerequisite.then(deliver,
+    const prerequisites = [registry.providerWriteOf(sentTo), registry.permissionWriteOf(sentTo)]
+      .filter((pending): pending is Promise<unknown> => pending !== undefined);
+    const waitForPrerequisites = prerequisites.length === 0 ? null : Promise.allSettled(prerequisites).then(results => {
+      for (const result of results) if (result.status === 'rejected') throw result.reason;
+    });
+    const delivery = waitForPrerequisites === null ? deliver() : waitForPrerequisites.then(deliver,
       (error: unknown) => { throw new KeyedSendFailure(error, op.unknown ? 'unknown' : 'refused'); });
     return delivery.then(answer => {
       if (!current()) return;

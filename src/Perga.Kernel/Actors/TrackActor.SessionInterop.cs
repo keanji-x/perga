@@ -169,7 +169,7 @@ public sealed partial class TrackActor
             throw KernelException.InvalidArgument("expectedConfigVersion is required for configuration updates.");
         if (request.Provider is { } provider && SessionLaunchValidator.NormalizeProvider(provider) !=
             SessionLaunchValidator.NormalizeProvider(session.Provider) && _scheduler.IsOccupied(session))
-            throw KernelException.Conflict("Provider changes require an idle session.");
+            throw KernelException.PreconditionFailed("Provider changes require an idle session.");
         return session;
     }
 
