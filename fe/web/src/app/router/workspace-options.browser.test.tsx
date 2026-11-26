@@ -96,16 +96,13 @@ it('selects Use source folder by default for plain directories and allows switch
 
   await repo.click();
   const modeGroup = page.getByRole('group', { name: 'Workspace mode' });
-  const directItem = modeGroup.getByRole('menuitem', { name: /Use source folder/ });
-  const copyItem = modeGroup.getByRole('menuitem', { name: /Copy into a workspace/ });
-  await expect.element(directItem).toBeVisible();
-  await expect.element(copyItem).toBeVisible();
-  const items = Array.from(document.querySelectorAll('[role="group"][aria-label="Workspace mode"] [role="menuitem"]'))
-    .map((node) => node.textContent ?? '');
-  expect(items[0]).toContain('Use source folder');
-  expect(items[0]).toContain('Selected');
-  expect(items[1]).toContain('Copy into a workspace');
-  expect(items[1]).not.toContain('Selected');
+  const items = modeGroup.getByRole('menuitem');
+  const directItem = items.nth(0);
+  const copyItem = items.nth(1);
+  await expect.element(directItem).toHaveTextContent('Use source folder');
+  await expect.element(directItem).toHaveTextContent('Selected');
+  await expect.element(copyItem).toHaveTextContent('Copy into a workspace');
+  await expect.element(copyItem).not.toHaveTextContent('Selected');
   await userEvent.keyboard('{Escape}');
   await expect.element(modeGroup).not.toBeInTheDocument();
 

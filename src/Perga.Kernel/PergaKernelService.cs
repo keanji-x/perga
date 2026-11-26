@@ -647,8 +647,8 @@ public sealed partial class PergaKernelService : IPergaKernel, IFlowTrackSpawner
         {
             if (!string.IsNullOrWhiteSpace(req.WorkspaceDriver))
                 throw KernelException.InvalidArgument("Choose a workspace option or specify a workspace driver.");
-            var choices = await WorkspaceChoicesAsync(env, source, policy?.Manifest.WorkspaceDriver, ct).ConfigureAwait(false);
-            choice = choices.FirstOrDefault(candidate => candidate.Option.Id == optionId)
+            var resolved = await ResolveWorkspaceChoicesAsync(env, source, policy?.Manifest.WorkspaceDriver, ct).ConfigureAwait(false);
+            choice = resolved.Choices.FirstOrDefault(candidate => candidate.Option.Id == optionId)
                 ?? throw KernelException.InvalidArgument("The selected workspace option is unavailable for this folder. Choose an available workspace option.");
         }
         var memoryWorkspace = string.Equals(area.Id, MemoryTrackBinding.SystemAreaId, StringComparison.Ordinal);
@@ -657,31 +657,13 @@ public sealed partial class PergaKernelService : IPergaKernel, IFlowTrackSpawner
         var driverId = memoryWorkspace
             ? VcsWorkspaceDriver.Id
             : choice?.DriverId ?? PreferredWorkspaceDriver(explicitDriver, templateDriver);
-        VcsBackendKind? resolvedVcsBackend = null;
         if (!memoryWorkspace && choice is null && source is not null &&
             explicitDriver is null && templateDriver is null &&
             driverId == VcsWorkspaceDriver.Id)
         {
-            if (!await env.Files.DirectoryExistsAsync(source, ct).ConfigureAwait(false))
-                throw KernelException.InvalidArgument("The source folder is unavailable. Choose an existing folder.");
-
-            var backends = await env.Vcs.ListWorkspaceBackendsAsync(source, ct).ConfigureAwait(false);
-            if (backends.Contains(VcsBackendKind.PlainDirectory))
-            {
-                if (!env.WorkspaceDrivers.RegisteredDrivers.Contains(DirectWorkspaceDriver.Id))
-                    throw KernelException.PreconditionFailed(
-                        $"Workspace driver '{DirectWorkspaceDriver.Id}' is unavailable for this source on target '{env.Descriptor.Id}'.");
-                driverId = DirectWorkspaceDriver.Id;
-            }
-            else if (backends.Count > 0)
-            {
-                resolvedVcsBackend = backends[0];
-            }
-            else
-            {
-                throw KernelException.PreconditionFailed(
-                    $"Workspace driver '{VcsWorkspaceDriver.Id}' has no available VCS backend for this source on target '{env.Descriptor.Id}'.");
-            }
+            choice = (await ResolveWorkspaceChoicesAsync(env, source, null, ct).ConfigureAwait(false)).Recommended
+                ?? throw KernelException.PreconditionFailed($"No default workspace option is available for this source on target '{env.Descriptor.Id}'.");
+            driverId = choice.DriverId;
         }
         var blankWorkspace = source is null;
         // The VCS driver provisions a plain directory for an empty workspace. The
@@ -702,7 +684,7 @@ public sealed partial class PergaKernelService : IPergaKernel, IFlowTrackSpawner
             throw KernelException.PreconditionFailed($"Workspace driver '{driverId}' is unavailable for this source on target '{env.Descriptor.Id}'.");
         var preparation = new WorkspacePreparation(
             new WorkspaceProvisionRequest(trackId, NormalizeExecutionPath(env, sourcePath), NormalizeExecutionPath(env, targetRootDir),
-                lowerCacheDirs, req.BaseRevision, NewEmptyWorkspace: blankWorkspace, VcsBackend: choice?.Backend ?? resolvedVcsBackend),
+                lowerCacheDirs, req.BaseRevision, NewEmptyWorkspace: blankWorkspace, VcsBackend: choice?.Backend),
             createCommand, RepeatableProvision: workspaceDriver.ProvisionIsRepeatable);
 
         var templateInputs = JsonHelpers.EnsureClonedObject(req.TemplateInputs);

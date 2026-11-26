@@ -16,19 +16,12 @@ public sealed partial class PergaKernelService
             : ExecutionTargetIds.Normalize(targetId);
         var env = _executionEnvironments.GetRequired(effectiveTargetId);
         var templateDriver = string.IsNullOrWhiteSpace(templateId)
-            ? null : NormalizeWorkspaceDriver(Templates.GetRequiredPolicy(templateId).Manifest.WorkspaceDriver);
+            ? null : Templates.GetRequiredPolicy(templateId).Manifest.WorkspaceDriver;
         var source = string.Equals(effectiveTargetId, area.ExecutionTargetId, StringComparison.Ordinal)
             ? WorkspaceSource(area, cwd)
             : (string.IsNullOrWhiteSpace(cwd) ? null : cwd);
-        var options = await WorkspaceChoicesAsync(env, source, templateDriver, ct).ConfigureAwait(false);
-        var recommended = options.FirstOrDefault(choice =>
-            choice.DriverId == templateDriver ||
-            choice.Option.Id == "managed" ||
-            (choice.RecommendForPlainDirectory && templateDriver is null) ||
-            (choice.DriverId != DirectWorkspaceDriver.Id &&
-             choice.DriverId != OverlayWorkspaceDriver.Id &&
-             choice.Backend != VcsBackendKind.PlainDirectory));
-        return new(recommended?.Option.Id, options.Select(choice => choice.Option).ToArray());
+        var resolved = await ResolveWorkspaceChoicesAsync(env, source, templateDriver, ct).ConfigureAwait(false);
+        return new(resolved.Recommended?.Option.Id, resolved.Choices.Select(choice => choice.Option).ToArray());
     }
 
     private static string? NormalizeWorkspaceDriver(string? driver) =>
@@ -47,7 +40,7 @@ public sealed partial class PergaKernelService
             ?? NormalizeWorkspaceDriver(templateDriver)
             ?? _options.DefaultWorkspaceDriver;
 
-    private async Task<IReadOnlyList<WorkspaceChoice>> WorkspaceChoicesAsync(
+    private async Task<ResolvedWorkspaceChoices> ResolveWorkspaceChoicesAsync(
         IExecutionEnvironment env, string? source, string? templateDriver, CancellationToken ct)
     {
         var normalizedTemplateDriver = NormalizeWorkspaceDriver(templateDriver);
@@ -56,7 +49,8 @@ public sealed partial class PergaKernelService
             var driver = PreferredWorkspaceDriver(null, normalizedTemplateDriver);
             if (!await env.WorkspaceDrivers.GetRequired(driver).IsAvailableAsync(null, ct).ConfigureAwait(false))
                 throw KernelException.PreconditionFailed($"Workspace driver '{driver}' is unavailable on target '{env.Descriptor.Id}'.");
-            return [new(new("managed", "Managed workspace", "Create a fresh workspace for this Track."), driver)];
+            var managed = new WorkspaceChoice(new("managed", "Managed workspace", "Create a fresh workspace for this Track."), driver);
+            return new([managed], managed);
         }
 
         if (!await env.Files.DirectoryExistsAsync(source, ct).ConfigureAwait(false))
@@ -87,8 +81,7 @@ public sealed partial class PergaKernelService
         }
 
         if (registered.Contains(DirectWorkspaceDriver.Id))
-            choices.Add(new(new("direct", "Use source folder", "Work directly in the selected directory."), DirectWorkspaceDriver.Id,
-                RecommendForPlainDirectory: isPlainDirectory));
+            choices.Add(new(new("direct", "Use source folder", "Work directly in the selected directory."), DirectWorkspaceDriver.Id));
         if (plainCopyChoice is not null)
             choices.Add(plainCopyChoice);
         if (registered.Contains(OverlayWorkspaceDriver.Id) &&
@@ -100,12 +93,18 @@ public sealed partial class PergaKernelService
 
         // Prefer template-specified drivers first; otherwise keep isolation first for VCS repos
         // and direct-folder first for plain directories (with copy as an explicit opt-in).
-        return choices.OrderByDescending(choice => choice.DriverId == normalizedTemplateDriver).ToArray();
+        var ordered = choices.OrderByDescending(choice => choice.DriverId == normalizedTemplateDriver).ToArray();
+        var recommended = ordered.FirstOrDefault(choice => choice.DriverId == normalizedTemplateDriver)
+            ?? (isPlainDirectory
+                ? ordered.FirstOrDefault(choice => choice.DriverId == DirectWorkspaceDriver.Id)
+                : ordered.FirstOrDefault(choice => choice.Backend is VcsBackendKind.JjColocated or VcsBackendKind.GitWorktree));
+        return new(ordered, recommended);
     }
+
+    private sealed record ResolvedWorkspaceChoices(IReadOnlyList<WorkspaceChoice> Choices, WorkspaceChoice? Recommended);
 
     private sealed record WorkspaceChoice(
         TrackWorkspaceOptionDto Option,
         string DriverId,
-        VcsBackendKind? Backend = null,
-        bool RecommendForPlainDirectory = false);
+        VcsBackendKind? Backend = null);
 }
