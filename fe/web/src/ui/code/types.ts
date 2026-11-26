@@ -7,4 +7,5 @@ export type ReadOnlyCodeProps = Readonly<{
   theme?: CodeTheme;
   highlightLines?: Readonly<{ start: number; end: number }>;
   highlightRequest?: number;
+  wrapLines?: boolean;
 }>;

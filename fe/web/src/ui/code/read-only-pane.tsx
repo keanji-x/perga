@@ -11,7 +11,7 @@ import styles from './code.module.css';
 
 const noHighlights = Object.freeze([] as const);
 
-export function ReadOnlyPane({ text, source, theme, highlightLines, highlightRequest }: ReadOnlyCodeProps) {
+export function ReadOnlyPane({ text, source, theme, highlightLines, highlightRequest, wrapLines = false }: ReadOnlyCodeProps) {
   const parent = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   const [configuration] = useState(() => new Compartment());
@@ -36,8 +36,9 @@ export function ReadOnlyPane({ text, source, theme, highlightLines, highlightReq
       '.cm-content': { padding: 'var(--space-3) 0' },
       '&.cm-focused': { outline: '2px solid var(--accent)', outlineOffset: '-2px' },
     })),
+    ...(wrapLines ? [EditorView.lineWrapping] : []),
     ...(support === null ? [] : [support]),
-  ], [support, theme]);
+  ], [support, theme, wrapLines]);
   useEffect(() => {
     if (parent.current === null) return;
     const view = new EditorView({ parent: parent.current, state: EditorState.create({ extensions: [configuration.of([]), highlights.of(noHighlights)] }) });

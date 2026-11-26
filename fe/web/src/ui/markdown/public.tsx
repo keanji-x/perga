@@ -71,7 +71,11 @@ function tableColumnMinWidths(table: Extract<SafeBlock, { type: 'table' }>): rea
   });
 }
 
-function renderBlock(block: SafeBlock, presentation: MarkdownPresentation): ReactNode {
+function renderBlock(
+  block: SafeBlock,
+  presentation: MarkdownPresentation,
+  decorateListItem?: (content: ReactNode, itemIndex: number) => ReactNode,
+): ReactNode {
   const classes = presentation.classes;
   switch (block.type) {
     case 'heading': {
@@ -86,12 +90,15 @@ function renderBlock(block: SafeBlock, presentation: MarkdownPresentation): Reac
     case 'list': {
       const Tag = block.ordered ? 'ol' : 'ul';
       return <Tag className={classes?.list} start={block.ordered ? block.start ?? undefined : undefined}>
-        {block.children.map((item, index) => <li key={index} className={classes?.item}>
-          {item.checked !== null && <input type="checkbox" className={classes?.check} checked={item.checked} disabled readOnly />}
-          {item.children.map((child, childIndex) => !block.spread && child.type === 'paragraph'
-            ? <Inlines key={childIndex} nodes={child.children} presentation={presentation} />
-            : <Fragment key={childIndex}>{renderBlock(child, presentation)}</Fragment>)}
-        </li>)}
+        {block.children.map((item, index) => {
+          const li = <li key={index} className={classes?.item}>
+            {item.checked !== null && <input type="checkbox" className={classes?.check} checked={item.checked} disabled readOnly />}
+            {item.children.map((child, childIndex) => !block.spread && child.type === 'paragraph'
+              ? <Inlines key={childIndex} nodes={child.children} presentation={presentation} />
+              : <Fragment key={childIndex}>{renderBlock(child, presentation)}</Fragment>)}
+          </li>;
+          return decorateListItem === undefined ? li : <Fragment key={index}>{decorateListItem(li, index)}</Fragment>;
+        })}
       </Tag>;
     }
     case 'table': {
@@ -110,13 +117,18 @@ function renderBlock(block: SafeBlock, presentation: MarkdownPresentation): Reac
 }
 
 /** Render sanitized syntax; navigation, images and heading identity remain caller-owned. */
-export function MarkdownBlocks({ blocks, presentation, decorateBlock }: {
+export function MarkdownBlocks({ blocks, presentation, decorateBlock, decorateListItem }: {
   blocks: readonly SafeBlock[];
   presentation: MarkdownPresentation;
   decorateBlock?: (content: ReactNode, index: number) => ReactNode;
+  decorateListItem?: (content: ReactNode, blockIndex: number, itemIndex: number) => ReactNode;
 }) {
   return <>{blocks.map((block, index) => {
-    const content = renderBlock(block, presentation);
+    const content = renderBlock(
+      block,
+      presentation,
+      decorateListItem === undefined ? undefined : (li, itemIndex) => decorateListItem(li, index, itemIndex),
+    );
     return <Fragment key={index}>{decorateBlock === undefined ? content : decorateBlock(content, index)}</Fragment>;
   })}</>;
 }

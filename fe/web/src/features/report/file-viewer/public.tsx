@@ -1,7 +1,7 @@
 import { LayerDepthProvider, useLayerDismissal } from '@astryxdesign/core/Layer';
 import { ReadOnlyCode } from '../../../ui/code/public.tsx';
 import { usePortalLightbox } from '../../../ui/lightbox/public.tsx';
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 
 import type { WorkspaceFilePort } from '../../../../../core/domain/fs.ts';
 import type { TrackReport } from '../../../../../core/domain/report.ts';
@@ -49,8 +49,15 @@ export function ReportFileViewer({
 }>) {
   const layerRef = useRef<HTMLDivElement | null>(null);
   const resource = useReportFileResource(path, files, { onOpened: onFileOpened, resolveImagePath: true });
-  const highlightLines = line === undefined ? undefined : { start: line, end: endLine ?? line };
-  const markdown = resource.kind === 'loaded' && resource.format === 'markdown' && highlightLines === undefined;
+  const highlightLines = useMemo(
+    () => (line === undefined ? undefined : { start: line, end: endLine ?? line }),
+    [line, endLine],
+  );
+  const isMarkdownFile = resource.kind === 'loaded' && resource.format === 'markdown';
+  const markdownJumpKey = JSON.stringify([path, line, endLine, openRequest]);
+  const [markdownSourceKey, setMarkdownSourceKey] = useState<string | null>(null);
+  const showMarkdownSource = isMarkdownFile && highlightLines !== undefined && markdownSourceKey === markdownJumpKey;
+  const markdown = isMarkdownFile && !showMarkdownSource;
   const markdownText = markdown ? resource.text : null;
   const report = useMemo<TrackReport | null>(() => markdownText === null ? null
     : { summary: '', body: markdownText, blocks: null }, [markdownText]);
@@ -63,6 +70,21 @@ export function ReportFileViewer({
     if (!silent) layerRef.current?.focus({ preventScroll: true });
   }, [path, line, endLine, silent, openRequest]);
 
+  useLayoutEffect(() => {
+    if (!markdown || highlightLines === undefined) return;
+    const container = layerRef.current;
+    if (container === null) return;
+    const target = container.querySelector<HTMLElement>('[data-nc-markdown-highlight]');
+    if (target === null) return;
+    const containerRect = container.getBoundingClientRect();
+    const targetRect = target.getBoundingClientRect();
+    const offset = targetRect.height < container.clientHeight
+      ? (container.clientHeight - targetRect.height) / 2
+      : 24;
+    const nextTop = container.scrollTop + (targetRect.top - containerRect.top) - offset;
+    container.scrollTop = Math.max(0, nextTop);
+  }, [markdown, highlightLines, openRequest, markdownText]);
+
   useLayerDismissal({
     isActive: true,
     onDismiss: () => onClose(),
@@ -72,10 +94,35 @@ export function ReportFileViewer({
       || hasBackFocus?.() === true,
   });
 
+  const markdownViewToggle = isMarkdownFile && highlightLines !== undefined ? (
+    <div
+      className={markdown ? `${styles.views} ${styles.markdownViews}` : styles.views}
+      role="group"
+      aria-label="Markdown view"
+    >
+      <button
+        type="button"
+        className={styles.view}
+        aria-pressed={markdown}
+        onClick={() => { setMarkdownSourceKey(null); }}
+      >
+        Preview
+      </button>
+      <button
+        type="button"
+        className={styles.view}
+        aria-pressed={showMarkdownSource}
+        onClick={() => { setMarkdownSourceKey(markdownJumpKey); }}
+      >
+        Source
+      </button>
+    </div>
+  ) : null;
+
   return (
     <LayerDepthProvider><div
       ref={layerRef}
-      className={highlightLines === undefined ? styles.layer : `${styles.layer} ${styles.lineJump}`}
+      className={highlightLines === undefined || markdown ? styles.layer : `${styles.layer} ${styles.lineJump}`}
       data-nc-report-file-viewer=""
       data-nc-report-file-wide={wide ? '' : undefined}
       data-nc-escape-layer=""
@@ -120,6 +167,7 @@ export function ReportFileViewer({
         />}
         {resource.kind === 'loaded' && markdown && (
           <div className={styles.markdown}>
+            {markdownViewToggle}
             {resource.truncated && <p className={styles.notice}>Showing the first 2 MiB of this file.</p>}
             <ReportDocument
               report={report}
@@ -127,6 +175,7 @@ export function ReportFileViewer({
               sourceInsertion={sourceInsertion}
               fileRoot={fileRoot}
               fileBasePath={fileParentDirectory(resource.path) ?? ''}
+              highlightLines={highlightLines}
               onOpenFileLink={onOpenFileLink}
               onOpenSourceLink={onOpenSourceLink}
               linkPreview={linkPreview}
@@ -135,9 +184,10 @@ export function ReportFileViewer({
         )}
         {resource.kind === 'loaded' && !markdown && (
           <div className={styles.sourceWrap}>
+            {markdownViewToggle}
             {resource.truncated && <p className={styles.notice}>Showing the first 2 MiB of this file.</p>}
             <div data-nc-report-file-source=""><ReadOnlyCode text={resource.text} source={{ kind: 'filename', value: resource.path }}
-              highlightLines={highlightLines} highlightRequest={openRequest} /></div>
+              highlightLines={highlightLines} highlightRequest={openRequest} wrapLines={showMarkdownSource} /></div>
           </div>
         )}
       </div>

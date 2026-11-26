@@ -59,8 +59,13 @@
     min-inline-size: 0;
   }
 
-  .markdown > .notice {
+  .markdown > .notice,
+  .markdownViews {
     margin-inline-start: var(--document-start, 0);
+  }
+
+  .markdownViews {
+    margin-block-end: var(--space-3);
   }
 
   .sourceWrap {
@@ -172,11 +177,13 @@
       grid-column: 1 / -1;
     }
 
-    .markdown > .notice {
+    .markdown > .notice,
+    .markdownViews {
       margin-inline-start: 0;
     }
 
-    .bodyProse .markdown > .notice {
+    .bodyProse .markdown > .notice,
+    .bodyProse .markdownViews {
       margin-inline-start: max(0px, calc((100% - var(--document-measure, 45rem)) / 2));
     }
   }
