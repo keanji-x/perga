@@ -2,6 +2,7 @@ using Perga.Contracts;
 using Perga.Kernel.Events;
 using Perga.Kernel.Templates;
 using Perga.Kernel.Tests.Fakes;
+using Perga.PolicyVm;
 
 namespace Perga.Kernel.Tests;
 
@@ -94,5 +95,78 @@ public sealed class EventHubAndTemplateTests
                 Directory.Delete(tempDir, recursive: true);
             }
         }
+    }
+
+    [Fact]
+    public async Task ConcurrentSnapshotLookupsCompileOnce()
+    {
+        const string source = """export default defineTemplate({ id: "snapshot", title: "Snapshot" });""";
+        var timeout = TimeSpan.FromSeconds(10);
+        var manifest = new ConfigurableFakePolicyVm().Compile(source).Manifest;
+        var release = new ManualResetEventSlim();
+        var compiling = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var competingCompile = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var vm = new ConfigurableFakePolicyVm();
+        vm.CustomManifestFactory = _ =>
+        {
+            if (!compiling.TrySetResult())
+                competingCompile.TrySetResult();
+            release.Wait();
+            return manifest;
+        };
+        var host = new TemplateHost(vm);
+        var first = Task.Run(() => host.GetOrCompileSnapshot(source));
+        var competingLookup = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var second = new TaskCompletionSource<CompiledPolicy>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondThread = new Thread(() =>
+        {
+            competingLookup.SetResult();
+            try { second.SetResult(host.GetOrCompileSnapshot(source)); }
+            catch (Exception error) { second.SetException(error); }
+        }) { IsBackground = true };
+        var started = false;
+        try
+        {
+            await compiling.Task.WaitAsync(timeout);
+            secondThread.Start();
+            started = true;
+            await competingLookup.Task.WaitAsync(timeout);
+            // While the first compile is held, the second lookup either waits on the cache or reenters Compile.
+            Assert.True(SpinWait.SpinUntil(() => competingCompile.Task.IsCompleted ||
+                (secondThread.ThreadState & ThreadState.WaitSleepJoin) != 0, timeout));
+            Assert.False(competingCompile.Task.IsCompleted);
+        }
+        finally
+        {
+            release.Set();
+            var workers = started ? (Task)Task.WhenAll(first, second.Task) : first;
+            await workers.WaitAsync(timeout).ConfigureAwait(
+                ConfigureAwaitOptions.ContinueOnCapturedContext | ConfigureAwaitOptions.SuppressThrowing);
+            if (workers.IsCompleted)
+                release.Dispose();
+            if (started)
+                Assert.True(secondThread.Join(timeout));
+        }
+
+        var policies = await Task.WhenAll(first, second.Task).WaitAsync(timeout);
+        Assert.Same(policies[0], policies[1]);
+        Assert.Equal(1, vm.CompileCallCount);
+    }
+
+    [Fact]
+    public void FailedSnapshotCompilationCanBeRetried()
+    {
+        const string source = """export default defineTemplate({ id: "snapshot", title: "Snapshot" });""";
+        var failure = new InvalidOperationException("Snapshot compilation failed.");
+        var vm = new ConfigurableFakePolicyVm { CustomManifestFactory = _ => throw failure };
+        var host = new TemplateHost(vm);
+
+        Assert.Same(failure, Assert.Throws<InvalidOperationException>(() => host.GetOrCompileSnapshot(source)));
+        vm.CustomManifestFactory = null;
+        var policy = host.GetOrCompileSnapshot(source);
+
+        Assert.Equal("snapshot", policy.TemplateId);
+        Assert.Same(policy, host.GetOrCompileSnapshot(source));
+        Assert.Equal(2, vm.CompileCallCount);
     }
 }

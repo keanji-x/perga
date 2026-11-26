@@ -50,6 +50,7 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
     private readonly object _gate = new();
     private readonly Dictionary<string, AreaDto> _areas = new(StringComparer.Ordinal);
     private readonly Dictionary<string, TrackDto> _tracks = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, MemoryTrackBinding> _memoryBindings = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ReportDocument> _reports = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string?> _templateSnapshots = new(StringComparer.Ordinal);
     private readonly Dictionary<(string TrackId, int DocRev), byte[]> _revisions = new();
@@ -67,9 +68,11 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
     public bool FailTemplateUpdate { get; set; }
     public Action? AfterTemplateCommit { get; set; }
     public MemoryTrackBinding? MemoryBinding { get; set; }
+    public Func<CancellationToken, Task>? BeforeMemoryTrackCreateAsync { get; set; }
 
     public int MarkInterruptedCalls { get; private set; }
     public int ListTracksCalls { get; private set; }
+    public int MemoryTrackLookupCalls { get; private set; }
 
     public IReadOnlyList<EventEnvelopeDto> PersistedEvents
     {
@@ -151,11 +154,26 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
         }
     }
 
-    public Task<string?> GetMemoryTrackIdAsync(string scopeKey, CancellationToken ct) =>
-        Task.FromResult(MemoryBinding is { } binding && binding.ScopeKey == scopeKey ? binding.TrackId : null);
+    public Task<string?> GetMemoryTrackIdAsync(string scopeKey, CancellationToken ct)
+    {
+        lock (_gate)
+        {
+            MemoryTrackLookupCalls++;
+            if (_memoryBindings.TryGetValue(scopeKey, out var stored))
+                return Task.FromResult<string?>(stored.TrackId);
+            return Task.FromResult(MemoryBinding is { } binding && binding.ScopeKey == scopeKey ? binding.TrackId : null);
+        }
+    }
 
-    public Task<MemoryTrackBinding?> FindMemoryBindingByTrackIdAsync(string trackId, CancellationToken ct) =>
-        Task.FromResult(MemoryBinding is { } binding && binding.TrackId == trackId ? binding : null);
+    public Task<MemoryTrackBinding?> FindMemoryBindingByTrackIdAsync(string trackId, CancellationToken ct)
+    {
+        lock (_gate)
+        {
+            if (_memoryBindings.Values.FirstOrDefault(binding => binding.TrackId == trackId) is { } stored)
+                return Task.FromResult<MemoryTrackBinding?>(stored);
+            return Task.FromResult(MemoryBinding is { } binding && binding.TrackId == trackId ? binding : null);
+        }
+    }
 
     // Persisted context receipts are exercised with SQLite.
     public Task<string?> GetLatestMemoryContextModeAsync(string sessionId, int epoch, CancellationToken ct) =>
@@ -412,14 +430,21 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
         }
     }
 
-    public Task<string> CreateTrackAsync(TrackCreation creation, ResourceCreationKey? key, CancellationToken ct)
+    public async Task<string> CreateTrackAsync(TrackCreation creation, ResourceCreationKey? key, CancellationToken ct)
     {
         var (track, report, templateSnapshot, lead, tasks, firstInput, preparation, events, _, _) = creation;
+        var memory = creation.MemoryBinding;
+        if (memory is not null && BeforeMemoryTrackCreateAsync is { } before)
+            await before(ct);
         lock (_gate)
         {
             if (key is not null && FindCreationAsync(key, ct).Result is { } replay)
-                return Task.FromResult(replay);
+                return replay;
+            if (memory is not null && _memoryBindings.TryGetValue(memory.ScopeKey, out var existing))
+                return existing.TrackId;
             _tracks.Add(track.Id, track);
+            if (memory is not null)
+                _memoryBindings.Add(memory.ScopeKey, memory);
             _trackSchedules.AddRange(creation.FlowClocks);
             _reports[track.Id] = report;
             _revisions[(track.Id, report.DocRev)] = new InMemoryReportDocEngine().CompressZstd(report.Blocks);
@@ -433,7 +458,7 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
             foreach (var evt in events)
                 AppendEventLocked(evt);
             SaveReceipt(key, track.Id);
-            return Task.FromResult(track.Id);
+            return track.Id;
         }
     }
 
@@ -1761,7 +1786,8 @@ internal sealed partial class KernelTestContext : IAsyncDisposable
         TimeProvider? timeProvider = null,
         IGitHubForgeService? gitHubForgeService = null,
         IMcpSessionBridge? mcpSessionBridge = null,
-        IReportDocEngine? reportEngine = null)
+        IReportDocEngine? reportEngine = null,
+        IMemoryContextProvider? memoryContext = null)
     {
         DriverRegistry = new FakeWorkspaceDriverRegistry(DirectDriver, CowOverlayDriver);
         DataDir = Path.Combine(Path.GetTempPath(), $"perga-kernel-test-{Guid.NewGuid():N}");
@@ -1787,7 +1813,8 @@ internal sealed partial class KernelTestContext : IAsyncDisposable
             timeProvider: timeProvider ?? Time,
             scheduleCronEvaluator: new TestScheduleCronEvaluator(),
             gitHubForgeService: gitHubForgeService,
-            mcpSessionBridge: mcpSessionBridge);
+            mcpSessionBridge: mcpSessionBridge,
+            memoryContext: memoryContext);
     }
 
     public async Task<(AreaDto Area, TrackAggregateSnapshot TrackSnap)> CreateDefaultTrackAsync(

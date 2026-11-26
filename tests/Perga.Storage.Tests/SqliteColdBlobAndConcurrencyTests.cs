@@ -141,6 +141,9 @@ public sealed class SqliteColdBlobAndConcurrencyTests
                     readerExceptions.Add(ex);
                     break;
                 }
+
+                // SQLite reads complete synchronously. Let queued writers run between iterations.
+                await Task.Yield();
             }
         })).ToArray();
 

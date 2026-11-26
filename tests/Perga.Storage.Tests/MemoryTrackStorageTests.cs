@@ -62,6 +62,40 @@ public sealed class MemoryTrackStorageTests
     }
 
     [Fact]
+    public async Task ConcurrentMemoryTrackWritesDeduplicateAndRejectNonUserAreas()
+    {
+        await using var harness = await StorageTestHarness.CreateAsync();
+        var area = StorageTestHarness.CreateArea();
+        var systemArea = StorageTestHarness.CreateArea(MemoryTrackBinding.SystemAreaId, "Memory");
+        await harness.Store.UpsertAreaAsync(area, default);
+
+        var trackIds = await Task.WhenAll(Enumerable.Range(0, 8)
+            .Select(i => CreatePlannerAsync(i, area.Id)));
+        var trackId = Assert.Single(trackIds.Distinct());
+
+        foreach (var invalidAreaId in new[] { "area_missing", systemArea.Id })
+        {
+            var error = await Assert.ThrowsAsync<KernelException>(() => CreatePlannerAsync(8, invalidAreaId));
+            Assert.Equal(KernelErrorCode.NotFound, error.Code);
+        }
+
+        Assert.Equal(trackId, Assert.Single(await harness.Store.ListTracksIncludingSystemAsync(systemArea.Id)).Id);
+        Assert.Equal(new MemoryTrackBinding(MemoryTrackBinding.ScopeKeyFor(area.Id), area.Id, trackId),
+            await harness.Store.FindMemoryBindingByTrackIdAsync(trackId, default));
+        using var db = harness.OpenRawInspectConnection();
+        Assert.Equal(1, await db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM memory_tracks;"));
+
+        Task<string> CreatePlannerAsync(int i, string areaId)
+        {
+            var (track, report, lead) = StorageTestHarness.CreateSeedTrack($"trk_memory_{i}", systemArea.Id, $"sess_memory_{i}");
+            return harness.Store.CreateTrackAsync(new(track, report, null, lead, [], null, null, [], SystemArea: systemArea)
+            {
+                MemoryBinding = new(MemoryTrackBinding.ScopeKeyFor(areaId), areaId, track.Id)
+            }, null, default);
+        }
+    }
+
+    [Fact]
     public async Task TodayCalendarKeepsUserAndDailyFlowSchedulesAndHidesMemorySchedules()
     {
         await using var harness = await StorageTestHarness.CreateAsync();
