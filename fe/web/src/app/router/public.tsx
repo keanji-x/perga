@@ -94,7 +94,7 @@ export function createRouteTree(deps: AppRouterDeps): AnyRoute {
       }
       return <DailyTodayRoute transport={transport} unauthorized={unauthorized} selectedDate={day}
         onOpenTrack={(trackId) => go({ name: 'track', trackId })}
-        onSelectDate={(nextDay) => go({ name: 'today', day: nextDay })}
+        onSelectDate={(nextDay) => go(nextDay === undefined && compact ? { name: 'today', view: 'today' } : { name: 'today', day: nextDay })}
         renderTrack={(detail, evidence, panelContent, intro, supervisor, center) => <TrackRouteBody memoryAreaId={shareScope === null ? null : false} showWorkspaceIsolation={false} center={center} reportHeader={supervisor} reportEmpty={null} mobileReportIntro={intro} panelContent={panelContent} reportEvidence={evidence} key={detail.track.id} prepareReport={prepareReport} transport={transport} unauthorized={unauthorized}
           snapshot={detail} cardRuntime={cards} recentFiles={recentFiles} />} />;
     },

@@ -146,24 +146,40 @@ export function MobileSessionSettingsControl<Provider extends string = AgentProv
     }
   }
 
+  const unavailableEffort = activeBlockedReason === null
+    && selection.reasoning_effort !== null
+    && !visibleEfforts.some((entry) => entry.reasoning_effort === selection.reasoning_effort)
+    ? selection.reasoning_effort
+    : null;
+
   const effortChoices: Array<Readonly<{
     key: string;
     value: string | null;
     label: string;
     selected: boolean;
-  }>> = visibleEfforts.length === 0 ? [] : [
+    disabled: boolean;
+  }>> = visibleEfforts.length === 0 && unavailableEffort === null ? [] : [
     {
       key: 'default',
       value: null,
       label: 'Default',
       selected: selection.reasoning_effort === null,
+      disabled: false,
     },
     ...visibleEfforts.map((entry) => ({
       key: entry.reasoning_effort,
       value: entry.reasoning_effort,
       label: shortEffortLabel(entry.reasoning_effort),
       selected: selection.reasoning_effort === entry.reasoning_effort,
+      disabled: false,
     })),
+    ...(unavailableEffort === null ? [] : [{
+      key: `unavailable:${unavailableEffort}`,
+      value: unavailableEffort,
+      label: shortEffortLabel(unavailableEffort),
+      selected: true,
+      disabled: true,
+    }]),
   ];
 
   const effectivePermissionMode = permission !== undefined && permission.options.length > 0
@@ -179,7 +195,7 @@ export function MobileSessionSettingsControl<Provider extends string = AgentProv
   const selectedModelIndex = modelChoices.findIndex((choice) => choice.selected);
   const activeModelTabIndex = selectedModelIndex >= 0 ? selectedModelIndex : firstEnabledModelIndex;
 
-  const selectedEffortIndex = effortChoices.findIndex((choice) => choice.selected);
+  const selectedEffortIndex = effortChoices.findIndex((choice) => choice.selected && !choice.disabled);
   const activeEffortTabIndex = selectedEffortIndex >= 0 ? selectedEffortIndex : 0;
 
   const selectedPermissionIndex = hasPermissionOptions
@@ -272,7 +288,7 @@ export function MobileSessionSettingsControl<Provider extends string = AgentProv
                       role="radio"
                       aria-checked={choice.selected}
                       tabIndex={index === activeEffortTabIndex ? 0 : -1}
-                      disabled={modelDisabled}
+                      disabled={modelDisabled || choice.disabled}
                       className={`${styles.segment} ${choice.selected ? styles.segmentActive : ''}`}
                       onKeyDown={handleRadioKeyDown}
                       onClick={() => {

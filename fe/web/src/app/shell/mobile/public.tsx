@@ -243,6 +243,7 @@ export function MobileShellChrome({
                     onRetryRead={workspace.retryRead}
                     onOpenToday={() => navigateAndClose({ name: 'today', view: 'today' })}
                     onOpenMemory={shareScope === null ? () => navigateAndClose({ name: 'memory' }) : undefined}
+                    shareMode={shareScope !== null}
                     onOpenTrack={(trackId) => {
                       navigation.close();
                       // The sheets are the only writers of `?from=`: the surface the reader returns to.

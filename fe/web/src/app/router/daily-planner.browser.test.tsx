@@ -292,7 +292,7 @@ it.each([900, 600])('shows the shared masthead above a clean perga composer and 
 
 it.each([1440, 390])('navigates between dates and displays day schedules on perga calendar at width %s', async width => {
   await page.viewport(width, 844);
-  const initial = width >= 960 ? '/' : '/?day=2026-10-04';
+  const initial = width >= 960 ? '/' : '/?view=today';
   const { router, requests } = renderDailyFixture({
     initial,
     reply: (request) => {
@@ -340,7 +340,7 @@ it.each([1440, 390])('navigates between dates and displays day schedules on perg
   await expect.element(page.getByRole('radio', { name: 'Month', exact: true })).toBeChecked();
   await calendar.getByRole('button', { name: 'Next month' }).click();
   await expect.poll(() => requests.some(r => r.path === '/api/v1/today/calendar?start=2026-11-01&end=2026-11-30')).toBe(true);
-  expect(router.state.location.search).toEqual({ day: width >= 960 ? undefined : '2026-10-04' });
+  expect(router.state.location.search).toEqual(width >= 960 ? { day: undefined, view: undefined } : { day: undefined, view: 'today' });
 
   // Return to October while staying in Month mode and click 2026-10-03 (no daily track, has 1 schedule).
   await calendar.getByRole('button', { name: 'Previous month' }).click();
@@ -351,17 +351,17 @@ it.each([1440, 390])('navigates between dates and displays day schedules on perg
   await expect.element(calendar.getByRole('button', { name: '2026-10-03', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect.element(calendar.getByText('Check release pipeline', { exact: true })).toBeVisible();
 
-  // Browser Back returns to initial day entry, Forward returns to ?day=2026-10-03, and Today returns cleanly to '/'.
+  // Browser Back returns to initial server-resolved Today entry, Forward returns to ?day=2026-10-03, and Today returns cleanly without pinning ?day=.
   router.history.back();
-  await expect.poll(() => (router.state.location.search as Readonly<{ day?: string }>).day).toBe(width >= 960 ? undefined : '2026-10-04');
+  await expect.poll(() => router.state.location.searchStr).toBe(width >= 960 ? '' : '?view=today');
   await expect.element(calendar.getByRole('button', { name: '2026-10-04', exact: true })).toHaveAttribute('aria-pressed', 'true');
   router.history.forward();
   await expect.poll(() => (router.state.location.search as Readonly<{ day?: string }>).day).toBe('2026-10-03');
   await expect.element(page.getByText('No daily Track was created for this date.')).toBeVisible();
 
-  // Click Today to return to today's Daily Planner on both desktop ('/') and mobile ('/?day=2026-10-04').
+  // Click Today to return to server-resolved Today on both desktop ('/') and mobile ('/?view=today').
   await calendar.getByRole('button', { name: 'Today', exact: true }).click();
-  await expect.poll(() => (router.state.location.search as Readonly<{ day?: string }>).day).toBe(width >= 960 ? undefined : '2026-10-04');
+  await expect.poll(() => router.state.location.searchStr).toBe(width >= 960 ? '' : '?view=today');
   await expect.element(calendar.getByRole('button', { name: '2026-10-04', exact: true })).toHaveAttribute('aria-pressed', 'true');
   if (width >= 1024) {
     await expect.element(page.getByRole('heading', { name: 'What would you like to move forward today?' })).toBeVisible();

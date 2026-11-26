@@ -56,4 +56,25 @@ describe('MobilePages', () => {
     expect(onOpenSettings).toHaveBeenCalledOnce();
     expect(onBack).toHaveBeenCalledOnce();
   });
+
+  it('hides owner-only workspace actions in share mode', () => {
+    render(<MobilePages
+      shareMode
+      onBack={vi.fn()}
+      onNewTrack={vi.fn()}
+      onCreateArea={vi.fn()}
+      onEditArea={vi.fn()}
+      onOpenSettings={vi.fn()}
+      areaId="c1"
+      areas={[area]}
+      tracks={[track({ id: 'recent', title: 'Shared report', updatedAt: 20 })]}
+      onOpenTrack={vi.fn()}
+    />);
+
+    expect(screen.queryByRole('button', { name: 'Settings' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'New area' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'New track' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Area actions' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Shared report' })).toBeTruthy();
+  });
 });

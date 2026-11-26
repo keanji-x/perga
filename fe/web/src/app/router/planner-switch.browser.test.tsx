@@ -226,17 +226,27 @@ it('supports mobile default model/effort reset, full permission descriptions wit
     reply: (request) => {
       if (request.path.startsWith('/api/v1/bootstrap')) {
         const bootstrap = fixtureBootstrap(['codex'], ['test-model']);
-        bootstrap.providers[0].modelCatalog = [{
-          model: 'test-model',
-          displayName: 'Test model',
-          description: '',
-          isDefault: true,
-          defaultReasoningEffort: 'low',
-          supportedReasoningEfforts: [
-            { reasoningEffort: 'low', description: '' },
-            { reasoningEffort: 'high', description: '' },
-          ],
-        }];
+        bootstrap.providers[0].modelCatalog = [
+          {
+            model: 'test-model',
+            displayName: 'Test model',
+            description: '',
+            isDefault: true,
+            defaultReasoningEffort: 'low',
+            supportedReasoningEfforts: [
+              { reasoningEffort: 'low', description: '' },
+              { reasoningEffort: 'high', description: '' },
+            ],
+          },
+          {
+            model: 'no-effort-model',
+            displayName: 'No effort model',
+            description: '',
+            isDefault: false,
+            defaultReasoningEffort: null,
+            supportedReasoningEfforts: [],
+          },
+        ];
         bootstrap.providers[0].permissionModes = [
           { id: 'never', label: 'Never', description: 'Sandbox only; never asks.', tone: 'neutral', isDefault: true },
           { id: 'full', label: 'Full access', description: 'No sandbox; never asks. Runs with your account\'s access.', tone: 'danger', isDefault: false },
@@ -277,6 +287,14 @@ it('supports mobile default model/effort reset, full permission descriptions wit
   await expect.poll(() => savedEffort).toBe('high');
   await effortGroup.getByRole('radio', { name: 'Default', exact: true }).click();
   await expect.poll(() => savedEffort).toBeNull();
+
+  // Stored effort can still be cleared back to Default even when the model advertises zero effort options.
+  savedModel = 'no-effort-model';
+  savedEffort = 'high';
+  await fixture.client.invalidateQueries({ queryKey: ['planner-run', 'daily-planner'] });
+  await expect.element(effortGroup.getByRole('radio', { name: 'High', exact: true })).toBeDisabled();
+  await effortGroup.getByRole('radio', { name: 'Default', exact: true }).click();
+  await expect.poll(() => savedEffort).toBeNull();
   await modelsGroup.getByRole('radio', { name: /^Default/ }).click();
   await expect.poll(() => savedModel).toBeNull();
 
@@ -297,19 +315,33 @@ it('supports mobile default model/effort reset, full permission descriptions wit
   await expect.element(page.getByRole('dialog', { name: 'Switch conversation', exact: true })).toBeVisible();
   await page.viewport(1280, 800);
   await expect.element(page.getByRole('dialog', { name: 'Switch conversation', exact: true })).not.toBeInTheDocument();
-  await page.viewport(320, 420);
+  await page.viewport(320, 640);
   await expect.element(page.getByRole('dialog', { name: 'Switch conversation', exact: true })).not.toBeInTheDocument();
 
-  // Long list in a reduced 320x420 viewport stays bounded inside the viewport and restores focus on Escape.
+  // Long list under a keyboard-reduced visualViewport (320x360 inside 320x640) stays bounded and returns focus on Escape.
   const roleSlot = page.getByRole('button', { name: /^Switch conversation,/ });
   await roleSlot.click();
   const switcher = page.getByRole('dialog', { name: 'Switch conversation', exact: true });
   await expect.element(switcher).toBeVisible();
-  const switcherRect = switcher.element().getBoundingClientRect();
-  expect(switcherRect.height).toBeLessThanOrEqual(420);
-  expect(switcherRect.bottom).toBeLessThanOrEqual(421);
-  await expect.element(switcher.getByRole('button', { name: 'Close switcher', exact: true })).toBeVisible();
-  await userEvent.keyboard('{Escape}');
-  await expect.element(switcher).not.toBeInTheDocument();
+  const vv = window.visualViewport;
+  const originalVvHeight = vv ? Object.getOwnPropertyDescriptor(vv, 'height') : undefined;
+  try {
+    if (vv !== null) {
+      Object.defineProperty(vv, 'height', { configurable: true, value: 360 });
+      vv.dispatchEvent(new Event('resize'));
+    }
+    await expect.poll(() => switcher.element().getBoundingClientRect().height).toBeLessThanOrEqual(360);
+    expect(switcher.element().getBoundingClientRect().bottom).toBeLessThanOrEqual(361);
+    await expect.element(switcher.getByRole('button', { name: 'Close switcher', exact: true })).toBeVisible();
+    await userEvent.keyboard('{Escape}');
+    await expect.element(switcher).not.toBeInTheDocument();
+    await expect.poll(() => document.activeElement).toBe(roleSlot.element());
+  } finally {
+    if (vv !== null) {
+      if (originalVvHeight !== undefined) Object.defineProperty(vv, 'height', originalVvHeight);
+      else delete (vv as unknown as Record<string, unknown>).height;
+      vv.dispatchEvent(new Event('resize'));
+    }
+  }
   expect(fixture.requests.some((r) => r.method === 'PATCH')).toBe(true);
 });
