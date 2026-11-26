@@ -423,7 +423,7 @@ describe('MobileFocusHome', () => {
     await expect.element(page.getByRole('button', { name: /Pending receipt track/ })).toBeVisible();
   });
 
-  it('supports Workspace focus return, mobile Today navigation, dark theme, shareScope read-only mode, and desktop resize round-trip', async () => {
+  it('supports Workspace focus return, server-resolved Today navigation, dark theme, shareScope boundaries, and desktop resize round-trip', async () => {
     await page.viewport(390, 844);
     document.documentElement.setAttribute('data-theme', 'dark');
     const fixture = renderFocusFixture();
@@ -463,13 +463,21 @@ describe('MobileFocusHome', () => {
     await page.getByRole('button', { name: 'Back to Workspace', exact: true }).click();
     await page.getByRole('button', { name: 'Today', exact: true }).click();
     await expect.poll(() => page.getByRole('dialog', { name: 'Tracks and settings', exact: true }).query()).toBeNull();
-    await expect.poll(() => (fixture.router.state.location.search as { day?: string }).day).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    await expect.poll(() => fixture.router.state.location.searchStr).toBe('?view=today');
+    await expect.poll(() => document.querySelector('[data-nc-track-page]')).not.toBeNull();
+    expect(fixture.requests.some((request) => request.path === '/api/v1/today/daily')).toBe(true);
+    expect(fixture.requests.some((request) => request.path.startsWith('/api/v1/today/daily?date='))).toBe(false);
     expect(document.querySelector('[data-nc-mobile-focus]')).toBeNull();
 
-    // Share-scoped read-only sessions hide the New track action.
+    // Share-scoped sessions hide owner-only workspace creation/settings/Memory actions while permitting navigation into shared tracks.
     cleanup();
     renderFocusFixture({ shareScope: { trackId: 't-ask', token: 'share-token' } });
     await expect.element(page.getByRole('heading', { name: 'Focus', exact: true })).toBeVisible();
     expect(page.getByRole('button', { name: 'New track', exact: true }).query()).toBeNull();
+    expect(page.getByRole('button', { name: 'Mark all read', exact: true }).query()).toBeNull();
+    await page.getByRole('button', { name: 'Open workspace', exact: true }).click();
+    expect(page.getByRole('button', { name: 'Settings', exact: true }).query()).toBeNull();
+    expect(page.getByRole('button', { name: 'Memory', exact: true }).query()).toBeNull();
+    expect(page.getByRole('button', { name: 'New area', exact: true }).query()).toBeNull();
   });
 });

@@ -441,20 +441,6 @@
     color: var(--text-3);
   }
 
-  .unreadDot {
-    inline-size: var(--dot-md);
-    block-size: var(--dot-md);
-    border-radius: var(--radius-pill);
-    background: var(--accent);
-  }
-
-  .workingDot {
-    inline-size: var(--dot-md);
-    block-size: var(--dot-md);
-    border-radius: var(--radius-pill);
-    background: var(--success);
-  }
-
   .quietDot {
     inline-size: var(--dot-sm);
     block-size: var(--dot-sm);
@@ -613,8 +599,5 @@
   .actionRows { padding-inline: var(--space-4); }
   .actionList { inline-size: 100%; }
   .actionRow { font-size: var(--font-step-3-size); min-block-size: calc(var(--rail-w-collapsed) + var(--space-6)); border-block-end: 1px solid color-mix(in oklab, var(--hairline) 35%, transparent); border-radius: 0; }
-  .floatingAction { position: fixed; inset-inline-end: var(--space-4); inset-block-end: calc(var(--space-4) + env(safe-area-inset-bottom)); display: grid; place-items: center; inline-size: var(--control-h-touch); block-size: var(--control-h-touch); z-index: var(--z-sticky); cursor: pointer; }
-  .floatingAction > button { inline-size: 100%; block-size: 100%; display: grid; place-items: center; }
-  .navigationHeader { padding-block-end: 0; }
   .content { padding-inline: var(--space-4); display: flex; flex-direction: column; gap: var(--space-4); }
 }

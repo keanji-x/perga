@@ -2,7 +2,6 @@ import { LayerDepthProvider } from '@astryxdesign/core/Layer';
 import { useLayoutEffect, useRef, type RefCallback, type RefObject } from 'react';
 
 import type { Area } from '../../../../../core/domain/area.ts';
-import { localDailyDate } from '../../../../../core/domain/daily-planner.ts';
 import type { Track } from '../../../../../core/domain/track.ts';
 import { type TrackActionsProps } from '../../../features/track/row/actions.tsx';
 import { LayerDismissal, type DialogOrigin } from '../../../ui/dialog/public.tsx';
@@ -242,7 +241,7 @@ export function MobileShellChrome({
                     readError={workspace.readError}
                     readLoading={workspace.readLoading}
                     onRetryRead={workspace.retryRead}
-                    onOpenToday={() => navigateAndClose({ name: 'today', day: localDailyDate() })}
+                    onOpenToday={() => navigateAndClose({ name: 'today', view: 'today' })}
                     onOpenMemory={shareScope === null ? () => navigateAndClose({ name: 'memory' }) : undefined}
                     onOpenTrack={(trackId) => {
                       navigation.close();
@@ -266,7 +265,7 @@ export function MobileShellChrome({
                     readError={workspace.readError}
                     readLoading={workspace.readLoading}
                     onRetryRead={workspace.retryRead}
-                    onOpenToday={() => navigateAndClose({ name: 'today', day: localDailyDate() })}
+                    onOpenToday={() => navigateAndClose({ name: 'today', view: 'today' })}
                     onOpenMemory={shareScope === null ? () => navigateAndClose({ name: 'memory' }) : undefined}
                     onOpenAreaMemory={shareScope === null ? (areaId) => navigateAndClose({ name: 'area-memory', areaId }) : undefined}
                     areaId={navigationArea?.id}

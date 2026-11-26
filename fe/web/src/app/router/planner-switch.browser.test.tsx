@@ -205,3 +205,111 @@ it('defaults the mobile dock to Lead and keeps an explicitly switched conversati
   await dock.click();
   await expect.element(page.getByRole('dialog', { name: 'Other conversation', exact: true })).toBeVisible();
 });
+
+it('supports mobile default model/effort reset, full permission descriptions with radio keys, and closes switcher across desktop resize', async () => {
+  await page.viewport(390, 844);
+  let savedModel: string | null = null;
+  let savedEffort: string | null = null;
+  let savedPermission = 'never';
+  const session = () => fixtureSession('daily-planner', 'daily', {
+    isLead: true,
+    title: 'Daily Planner conversation',
+    model: savedModel,
+    reasoningEffort: savedEffort,
+    permissionMode: savedPermission,
+  });
+  const extras = Array.from({ length: 10 }, (_, index) =>
+    fixtureSession(`extra-${index}`, 'daily', { title: `Collaborator ${index + 1}`, updatedAtMs: 1000 + index }));
+  const ok = (body: unknown) => ({ status: 200, statusText: 'OK', body });
+  const fixture = renderPlannerSwitchFixture({
+    initial: '/track/daily',
+    reply: (request) => {
+      if (request.path.startsWith('/api/v1/bootstrap')) {
+        const bootstrap = fixtureBootstrap(['codex'], ['test-model']);
+        bootstrap.providers[0].modelCatalog = [{
+          model: 'test-model',
+          displayName: 'Test model',
+          description: '',
+          isDefault: true,
+          defaultReasoningEffort: 'low',
+          supportedReasoningEfforts: [
+            { reasoningEffort: 'low', description: '' },
+            { reasoningEffort: 'high', description: '' },
+          ],
+        }];
+        bootstrap.providers[0].permissionModes = [
+          { id: 'never', label: 'Never', description: 'Sandbox only; never asks.', tone: 'neutral', isDefault: true },
+          { id: 'full', label: 'Full access', description: 'No sandbox; never asks. Runs with your account\'s access.', tone: 'danger', isDefault: false },
+        ];
+        return ok(bootstrap);
+      }
+      if (request.path === '/api/v1/tracks/daily') {
+        return ok(fixtureSnapshot(fixtureTrack('daily', { leadSessionId: 'daily-planner' }), [session(), ...extras]));
+      }
+      if (request.path === '/api/v1/tracks/daily/sessions') {
+        return ok([session(), ...extras]);
+      }
+      if (request.method === 'PATCH' && request.path === '/api/v1/sessions/daily-planner') {
+        const body = request.body as { model?: string | null; reasoningEffort?: string | null; permissionMode?: string };
+        if (Object.hasOwn(body, 'model')) savedModel = body.model ?? null;
+        if (Object.hasOwn(body, 'reasoningEffort')) savedEffort = body.reasoningEffort ?? null;
+        if (typeof body.permissionMode === 'string') savedPermission = body.permissionMode;
+        return ok(session());
+      }
+      if (request.path.includes('/daily-planner/items?')) {
+        return ok(sessionPage(session(), [sessionItem('daily-planner', 1, 'Ready')]));
+      }
+      return undefined;
+    },
+  });
+
+  await page.getByRole('textbox', { name: 'Chat message', exact: true }).click();
+  await expect.element(page.getByRole('dialog', { name: 'Daily Planner conversation', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: /^Session model and mode/ }).click();
+  await expect.element(page.getByRole('dialog', { name: 'Session model and mode', exact: true })).toBeVisible();
+
+  // Pick explicit model -> return to Default (null), and pick explicit effort -> return to Default (null).
+  const modelsGroup = page.getByRole('radiogroup', { name: 'Models', exact: true });
+  await modelsGroup.getByRole('radio', { name: /^Test model/ }).click();
+  await expect.poll(() => savedModel).toBe('test-model');
+  const effortGroup = page.getByRole('radiogroup', { name: 'Reasoning effort', exact: true });
+  await effortGroup.getByRole('radio', { name: 'High', exact: true }).click();
+  await expect.poll(() => savedEffort).toBe('high');
+  await effortGroup.getByRole('radio', { name: 'Default', exact: true }).click();
+  await expect.poll(() => savedEffort).toBeNull();
+  await modelsGroup.getByRole('radio', { name: /^Default/ }).click();
+  await expect.poll(() => savedModel).toBeNull();
+
+  // Full permission label & risk description are preserved and keyboard arrow navigation selects Full access.
+  const permissionGroup = page.getByRole('radiogroup', { name: 'Permission mode', exact: true });
+  const neverRadio = permissionGroup.getByRole('radio', { name: /Never/ });
+  const fullRadio = permissionGroup.getByRole('radio', { name: /Full access/ });
+  await expect.element(fullRadio).toHaveTextContent("No sandbox; never asks. Runs with your account's access.");
+  (neverRadio.element() as HTMLElement).focus();
+  await userEvent.keyboard('{ArrowDown}');
+  await expect.poll(() => savedPermission).toBe('full');
+  await expect.element(fullRadio).toHaveAttribute('aria-checked', 'true');
+  await userEvent.keyboard('{Escape}');
+  await expect.element(page.getByRole('dialog', { name: 'Session model and mode', exact: true })).not.toBeInTheDocument();
+
+  // Switcher closes across a desktop viewport round-trip and never reopens on returning to mobile.
+  await page.getByRole('button', { name: /^Switch conversation,/ }).click();
+  await expect.element(page.getByRole('dialog', { name: 'Switch conversation', exact: true })).toBeVisible();
+  await page.viewport(1280, 800);
+  await expect.element(page.getByRole('dialog', { name: 'Switch conversation', exact: true })).not.toBeInTheDocument();
+  await page.viewport(320, 420);
+  await expect.element(page.getByRole('dialog', { name: 'Switch conversation', exact: true })).not.toBeInTheDocument();
+
+  // Long list in a reduced 320x420 viewport stays bounded inside the viewport and restores focus on Escape.
+  const roleSlot = page.getByRole('button', { name: /^Switch conversation,/ });
+  await roleSlot.click();
+  const switcher = page.getByRole('dialog', { name: 'Switch conversation', exact: true });
+  await expect.element(switcher).toBeVisible();
+  const switcherRect = switcher.element().getBoundingClientRect();
+  expect(switcherRect.height).toBeLessThanOrEqual(420);
+  expect(switcherRect.bottom).toBeLessThanOrEqual(421);
+  await expect.element(switcher.getByRole('button', { name: 'Close switcher', exact: true })).toBeVisible();
+  await userEvent.keyboard('{Escape}');
+  await expect.element(switcher).not.toBeInTheDocument();
+  expect(fixture.requests.some((r) => r.method === 'PATCH')).toBe(true);
+});

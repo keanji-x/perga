@@ -215,7 +215,9 @@ export function Dialog({ purpose, origin, open, onClose, title, hideTitleRow, hi
     : top ? styles.topOverlay
       : bottom ? styles.bottomOverlay
         : placement === undefined && (showingView || wide) ? 'dialog-overlay-wide' : '';
-  const maxBlockSize = fullscreen || top ? undefined : { maxBlockSize: bottom ? '78dvh' : `calc(${viewport.height}px - var(--space-6))` };
+  const maxBlockSize = fullscreen || top
+    ? undefined
+    : { maxBlockSize: bottom ? `min(78dvh, calc(${viewport.height}px - var(--space-6)))` : `calc(${viewport.height}px - var(--space-6))` };
   const onPanelKeyDown: KeyboardEventHandler<HTMLDivElement> = (event) => {
     if (event.defaultPrevented || event.key !== 'Tab' || !panelRef.current) return;
     const panel = panelRef.current;

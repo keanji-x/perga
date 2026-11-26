@@ -79,12 +79,17 @@ export function createRouteTree(deps: AppRouterDeps): AnyRoute {
     path: '/',
     /** The index loader primes only the areas list; awaiting the area → tracks fan-out here would let one slow area block the route commit. */
     loader: () => prefetchAreaList(client, transport, unauthorized),
-    validateSearch: (search: Record<string, unknown>) => ({ day: typeof search.day === 'string' ? search.day : undefined }),
+    validateSearch: (search: Record<string, unknown>) => ({
+      day: typeof search.day === 'string' ? search.day : undefined,
+      view: search.view === 'today' ? 'today' as const : undefined,
+    }),
     component: function DailyRoute() {
       const compact = useCompactViewport();
-      const day = new URLSearchParams(useLocation({ select: (location) => location.searchStr })).get('day') ?? undefined;
+      const params = new URLSearchParams(useLocation({ select: (location) => location.searchStr }));
+      const day = params.get('day') ?? undefined;
+      const view = params.get('view') === 'today' ? 'today' : undefined;
       const go = useGo();
-      if (compact && day === undefined) {
+      if (compact && day === undefined && view !== 'today') {
         return <MobileFocusRoute transport={transport} unauthorized={unauthorized} shareScope={shareScope} />;
       }
       return <DailyTodayRoute transport={transport} unauthorized={unauthorized} selectedDate={day}

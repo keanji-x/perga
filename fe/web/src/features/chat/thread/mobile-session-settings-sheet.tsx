@@ -3,6 +3,7 @@
 // Escape dismissal, outside light-dismiss, and focus restoration share one runtime contract.
 
 import { Popover } from '@astryxdesign/core/Popover';
+import type { KeyboardEvent } from 'react';
 import type { PermissionModeOptionDto } from '../../../../../core/api/perga-v1.ts';
 import type { ModelSelection } from '../../../../../core/domain/conversation.ts';
 import type { AgentProvider } from '../../../../../core/domain/presentation-types.ts';
@@ -27,11 +28,26 @@ function shortEffortLabel(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
-function shortPermissionLabel(option: PermissionModeOptionDto): string {
-  const trimmed = option.label.trim();
-  if (trimmed.length <= 8) return trimmed;
-  const firstWord = trimmed.split(/\s+/)[0];
-  return firstWord || trimmed;
+/** Standard WAI-ARIA radiogroup keyboard navigation (Arrow keys + Home/End move focus and select). */
+function handleRadioKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
+  const { key } = event;
+  if (key !== 'ArrowDown' && key !== 'ArrowRight' && key !== 'ArrowUp' && key !== 'ArrowLeft' && key !== 'Home' && key !== 'End') {
+    return;
+  }
+  const group = event.currentTarget.closest<HTMLElement>('[role="radiogroup"]');
+  if (group === null) return;
+  const radios = Array.from(group.querySelectorAll<HTMLButtonElement>('[role="radio"]:not(:disabled)'));
+  if (radios.length === 0) return;
+  const currentIndex = radios.indexOf(event.currentTarget);
+  let nextIndex = currentIndex === -1 ? 0 : currentIndex;
+  if (key === 'Home') nextIndex = 0;
+  else if (key === 'End') nextIndex = radios.length - 1;
+  else if (key === 'ArrowDown' || key === 'ArrowRight') nextIndex = (nextIndex + 1) % radios.length;
+  else nextIndex = (nextIndex - 1 + radios.length) % radios.length;
+  event.preventDefault();
+  const target = radios[nextIndex];
+  target.focus();
+  target.click();
 }
 
 export type MobileSessionSettingsControlProps<Provider extends string = AgentProvider> = Readonly<{
@@ -87,47 +103,68 @@ export function MobileSessionSettingsControl<Provider extends string = AgentProv
   const modelChoices: Array<Readonly<{
     key: string;
     provider: Provider;
-    providerName: string;
     model: string | null;
     label: string;
+    meta: string;
     selected: boolean;
     disabled: boolean;
   }>> = [];
 
   for (const group of shown) {
-    const blocked = catalogReason(group).blocked !== null;
-    if (blocked) continue;
+    if (catalogReason(group).blocked !== null) continue;
     const pName = providerLabel(group, group.provider);
     const groupModels = group.catalog?.models ?? [];
-    if (groupModels.length === 0) {
-      const def = defaultNameOf(group.catalog);
+    const groupDefaultName = defaultNameOf(group.catalog);
+    const groupDefaultEntry = groupDefaultName === null
+      ? undefined
+      : groupModels.find((entry) => entry.model === groupDefaultName || entry.resolved_model === groupDefaultName);
+    const resolvedDefaultLabel = groupDefaultEntry?.display_name ?? groupDefaultName;
+
+    if (group.defaultAvailable !== false || groupModels.length === 0) {
+      const selected = group.provider === provider && selection.model === null;
       modelChoices.push({
         key: `${group.provider}:default`,
         provider: group.provider,
-        providerName: pName,
         model: null,
-        label: def ?? FOLLOW_DEFAULT_LABEL,
-        selected: group.provider === provider && selection.model === null,
+        label: FOLLOW_DEFAULT_LABEL,
+        meta: resolvedDefaultLabel !== null ? `${pName} · ${resolvedDefaultLabel}` : pName,
+        selected,
         disabled: group.defaultAvailable === false,
       });
-      continue;
     }
+
     for (const entry of groupModels) {
-      const isSelected = group.provider === provider && (
-        selection.model === entry.model
-        || (selection.model === null && (entry.model === defaultName || entry.resolved_model === defaultName))
-      );
       modelChoices.push({
         key: `${group.provider}:${entry.id}`,
         provider: group.provider,
-        providerName: pName,
         model: entry.model,
         label: entry.display_name || entry.model,
-        selected: isSelected,
+        meta: pName,
+        selected: group.provider === provider && selection.model === entry.model,
         disabled: false,
       });
     }
   }
+
+  const effortChoices: Array<Readonly<{
+    key: string;
+    value: string | null;
+    label: string;
+    selected: boolean;
+  }>> = visibleEfforts.length === 0 ? [] : [
+    {
+      key: 'default',
+      value: null,
+      label: 'Default',
+      selected: selection.reasoning_effort === null,
+    },
+    ...visibleEfforts.map((entry) => ({
+      key: entry.reasoning_effort,
+      value: entry.reasoning_effort,
+      label: shortEffortLabel(entry.reasoning_effort),
+      selected: selection.reasoning_effort === entry.reasoning_effort,
+    })),
+  ];
 
   const effectivePermissionMode = permission !== undefined && permission.options.length > 0
     ? (permission.options.some((opt) => opt.id === permission.mode)
@@ -135,8 +172,20 @@ export function MobileSessionSettingsControl<Provider extends string = AgentProv
       : (permission.options.find((opt) => opt.isDefault) ?? permission.options[0]).id)
     : null;
   const hasPermissionOptions = permission !== undefined && permission.options.length > 0;
-  const hasControls = modelChoices.length > 0 || visibleEfforts.length > 0 || hasPermissionOptions || activeBlockedReason !== null;
+  const hasControls = modelChoices.length > 0 || effortChoices.length > 0 || hasPermissionOptions || activeBlockedReason !== null;
   const triggerDisabled = !hasControls || (modelDisabled && (permission === undefined || permission.disabled === true));
+
+  const firstEnabledModelIndex = modelChoices.findIndex((choice) => !(modelDisabled || choice.disabled));
+  const selectedModelIndex = modelChoices.findIndex((choice) => choice.selected);
+  const activeModelTabIndex = selectedModelIndex >= 0 ? selectedModelIndex : firstEnabledModelIndex;
+
+  const selectedEffortIndex = effortChoices.findIndex((choice) => choice.selected);
+  const activeEffortTabIndex = selectedEffortIndex >= 0 ? selectedEffortIndex : 0;
+
+  const selectedPermissionIndex = hasPermissionOptions
+    ? permission.options.findIndex((opt) => opt.id === effectivePermissionMode)
+    : -1;
+  const activePermissionTabIndex = selectedPermissionIndex >= 0 ? selectedPermissionIndex : 0;
 
   const cardContent = (
     <div className={styles.floatingCard}>
@@ -156,8 +205,12 @@ export function MobileSessionSettingsControl<Provider extends string = AgentProv
         {modelChoices.length > 0 ? (
           <section className={styles.section} aria-label="Provider and model">
             <h3 className={styles.sectionTitle}>Provider &amp; model</h3>
-            <ul className={styles.groupCard} role="radiogroup" aria-label="Models">
-              {modelChoices.map((choice) => (
+            <ul
+              className={styles.groupCard}
+              role="radiogroup"
+              aria-label="Models"
+            >
+              {modelChoices.map((choice, index) => (
                 <li
                   key={choice.key}
                   className={`${styles.groupItem} ${choice.selected ? styles.groupItemSelected : ''}`}
@@ -166,8 +219,10 @@ export function MobileSessionSettingsControl<Provider extends string = AgentProv
                     type="button"
                     role="radio"
                     aria-checked={choice.selected}
+                    tabIndex={index === activeModelTabIndex ? 0 : -1}
                     disabled={modelDisabled || choice.disabled}
                     className={styles.modelRow}
+                    onKeyDown={handleRadioKeyDown}
                     onClick={() => {
                       if (choice.selected) return;
                       onChangeModel({ model: choice.model, reasoning_effort: null }, choice.provider);
@@ -179,7 +234,7 @@ export function MobileSessionSettingsControl<Provider extends string = AgentProv
                     <span className={styles.modelCopy}>
                       <span className={styles.modelName}>{choice.label}</span>
                       <span className={styles.modelMeta}>
-                        {choice.providerName}{choice.selected ? ' · Selected' : ''}
+                        {choice.meta}{choice.selected ? ' · Selected' : ''}
                       </span>
                     </span>
                     <span className={styles.modelTrailing} aria-hidden="true">
@@ -194,73 +249,89 @@ export function MobileSessionSettingsControl<Provider extends string = AgentProv
           <p className={styles.note} role="note">{activeBlockedReason}</p>
         )}
 
-        {(visibleEfforts.length > 0 || hasPermissionOptions) && (
-          <section className={styles.section} aria-label="Reasoning and permission">
-            <h3 className={styles.sectionTitle}>Reasoning &amp; permission</h3>
+        {effortChoices.length > 0 && (
+          <section className={styles.section} aria-label="Reasoning effort">
+            <h3 className={styles.sectionTitle}>Reasoning</h3>
             <div className={styles.groupCard}>
-              {visibleEfforts.length > 0 && (
-                <div className={styles.settingRow}>
-                  <span className={styles.settingLabel}>
-                    <span className={styles.settingIcon} aria-hidden="true">
-                      <Icon name="sliders" size="sm" />
-                    </span>
-                    <span>Effort</span>
+              <div className={styles.settingRow}>
+                <span className={styles.settingLabel}>
+                  <span className={styles.settingIcon} aria-hidden="true">
+                    <Icon name="sliders" size="sm" />
                   </span>
-                  <div className={styles.segmented} role="radiogroup" aria-label="Reasoning effort">
-                    {visibleEfforts.map((entry) => {
-                      const active = effectiveEffort === entry.reasoning_effort;
-                      return (
-                        <button
-                          key={entry.reasoning_effort}
-                          type="button"
-                          role="radio"
-                          aria-checked={active}
-                          disabled={modelDisabled}
-                          className={`${styles.segment} ${active ? styles.segmentActive : ''}`}
-                          onClick={() => onChangeModel(
-                            { model: selection.model, reasoning_effort: entry.reasoning_effort },
-                            provider,
-                          )}
-                        >
-                          {shortEffortLabel(entry.reasoning_effort)}
-                        </button>
-                      );
-                    })}
-                  </div>
+                  <span>Effort</span>
+                </span>
+                <div
+                  className={styles.segmented}
+                  role="radiogroup"
+                  aria-label="Reasoning effort"
+                >
+                  {effortChoices.map((choice, index) => (
+                    <button
+                      key={choice.key}
+                      type="button"
+                      role="radio"
+                      aria-checked={choice.selected}
+                      tabIndex={index === activeEffortTabIndex ? 0 : -1}
+                      disabled={modelDisabled}
+                      className={`${styles.segment} ${choice.selected ? styles.segmentActive : ''}`}
+                      onKeyDown={handleRadioKeyDown}
+                      onClick={() => {
+                        if (choice.selected) return;
+                        onChangeModel({ model: selection.model, reasoning_effort: choice.value }, provider);
+                      }}
+                    >
+                      {choice.label}
+                    </button>
+                  ))}
                 </div>
-              )}
-
-              {hasPermissionOptions && (
-                <div className={`${styles.settingRow} ${visibleEfforts.length > 0 ? styles.settingRowDivided : ''}`}>
-                  <span className={styles.settingLabel}>
-                    <span className={styles.settingIcon} aria-hidden="true">
-                      <Icon name="shield" size="sm" />
-                    </span>
-                    <span>Permission</span>
-                  </span>
-                  <div className={styles.segmented} role="radiogroup" aria-label="Permission mode">
-                    {permission.options.map((opt) => {
-                      const active = effectivePermissionMode === opt.id;
-                      return (
-                        <button
-                          key={opt.id}
-                          type="button"
-                          role="radio"
-                          aria-checked={active}
-                          aria-label={opt.label}
-                          title={opt.label}
-                          disabled={permission.disabled === true}
-                          className={`${styles.segment} ${active ? styles.segmentActive : ''}`}
-                          onClick={() => { if (opt.id !== effectivePermissionMode) permission.onChange(opt.id); }}
-                        >
-                          {shortPermissionLabel(opt)}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
+              </div>
             </div>
+          </section>
+        )}
+
+        {hasPermissionOptions && (
+          <section className={styles.section} aria-label="Permission mode">
+            <h3 className={styles.sectionTitle}>Permission</h3>
+            <ul
+              className={styles.groupCard}
+              role="radiogroup"
+              aria-label="Permission mode"
+            >
+              {permission.options.map((opt, index) => {
+                const active = effectivePermissionMode === opt.id;
+                const danger = opt.tone === 'danger';
+                return (
+                  <li
+                    key={opt.id}
+                    className={`${styles.groupItem} ${active ? styles.groupItemSelected : ''} ${danger ? styles.permissionDanger : ''}`}
+                  >
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={active}
+                      tabIndex={index === activePermissionTabIndex ? 0 : -1}
+                      disabled={permission.disabled === true}
+                      className={styles.permissionRow}
+                      onKeyDown={handleRadioKeyDown}
+                      onClick={() => { if (opt.id !== effectivePermissionMode) permission.onChange(opt.id); }}
+                    >
+                      <span className={styles.modelIcon} aria-hidden="true">
+                        <Icon name="shield" size="sm" />
+                      </span>
+                      <span className={styles.modelCopy}>
+                        <span className={styles.permissionName}>{opt.label}</span>
+                        {opt.description !== '' && (
+                          <span className={styles.permissionDescription}>{opt.description}</span>
+                        )}
+                      </span>
+                      <span className={styles.modelTrailing} aria-hidden="true">
+                        <Icon name={active ? 'check' : 'chevron-right'} size="sm" />
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
           </section>
         )}
 

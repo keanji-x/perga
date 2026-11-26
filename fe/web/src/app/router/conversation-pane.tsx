@@ -521,10 +521,12 @@ export function useConversationPane(
   </>, [existingId, sessionModelGroups, activeProvider, canSwitchProvider, composerView, permissionControl]);
 
   const [switcherOpen, setSwitcherOpen] = useState(false);
+  const mobileRoleSlotEnabled = mobileSheet || compactComposer;
+  if (!mobileRoleSlotEnabled && switcherOpen) setSwitcherOpen(false);
   const activeDockRow = dockRowId === null ? null : rows.find((row) => row.id === dockRowId) ?? null;
   const mobileRoleSlot = useMemo(
-    () => mobileConversationRoleSlot(mobileSheet || compactComposer, open ?? activeDockRow, () => setSwitcherOpen(true)),
-    [mobileSheet, compactComposer, open, activeDockRow],
+    () => mobileConversationRoleSlot(mobileRoleSlotEnabled, open ?? activeDockRow, () => setSwitcherOpen(true)),
+    [mobileRoleSlotEnabled, open, activeDockRow],
   );
   const mobileMetaBar = useMemo(() => (
     !mobileSheet ? undefined : (
