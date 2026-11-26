@@ -147,11 +147,11 @@ export function QuickOpen({ input, onInputChange, mode, entries, busy, staleDire
     </CommandPaletteList>
     {!busy && entries.length === 0 && <CommandPaletteEmpty role="status">{emptyMessage}</CommandPaletteEmpty>}
     <CommandPaletteFooter className={styles.footer}>
-      <span><Kbd keys="up" /><Kbd keys="down" /> Navigate</span>
+      <span><span className={styles.keyGroup}><Kbd keys="up" /><Kbd keys="down" /></span> Navigate</span>
       <span><Kbd keys="enter" /> Open</span>
       <span><Kbd keys="tab" /> Complete</span>
       <span><Kbd className={styles.lineHint} keys=":line" /> Go to line</span>
-      <span><Kbd keys="escape" /> Close</span>
+      <span className={styles.footerDismiss}><Kbd keys="escape" /> Close</span>
     </CommandPaletteFooter>
   </Dialog>;
 }

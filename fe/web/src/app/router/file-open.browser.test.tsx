@@ -115,6 +115,42 @@ function luminance(context: CanvasRenderingContext2D, ...colors: string[]) {
   return r * 0.2126 + g * 0.7152 + b * 0.0722;
 }
 
+it('keeps the keyboard-focused Quick Open field flat and its keycaps legible in both themes', async () => {
+  await page.viewport(390, 800);
+  fileFixture();
+  await expect.element(page.getByRole('button', { name: 'Read report file' })).toBeVisible();
+  await userEvent.keyboard('{Control>}p{/Control}');
+  await expect.element(query()).toHaveFocus();
+  const field = getComputedStyle(query().element());
+  expect(field.outlineStyle).toBe('none');
+  expect(field.boxShadow).toBe('none');
+  expect(field.borderBottomWidth).toBe('0px');
+
+  const panel = dialog().element();
+  const keycaps = panel.querySelectorAll('kbd');
+  expect(keycaps).toHaveLength(6);
+  const context = document.createElement('canvas').getContext('2d')!;
+  const previous = document.documentElement.dataset.theme;
+  try {
+    for (const theme of ['light', 'dark']) {
+      document.documentElement.dataset.theme = theme;
+      const surface = getComputedStyle(panel).backgroundColor;
+      for (const keycap of keycaps) {
+        const style = getComputedStyle(keycap);
+        expect(style.borderTopWidth).toBe('1px');
+        expect(style.borderBottomWidth).toBe('1px');
+        expect(style.borderBottomColor).toBe(style.borderTopColor);
+        const background = luminance(context, surface, style.backgroundColor);
+        const foreground = luminance(context, surface, style.backgroundColor, style.color);
+        expect((Math.max(background, foreground) + 0.05) / (Math.min(background, foreground) + 0.05)).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+  } finally {
+    if (previous === undefined) delete document.documentElement.dataset.theme;
+    else document.documentElement.dataset.theme = previous;
+  }
+});
+
 it('keeps filenames legible beside long directories and gives matches 4.5:1 contrast in both themes', async () => {
   await page.viewport(390, 800);
   const filename = 'public-config.ts';
