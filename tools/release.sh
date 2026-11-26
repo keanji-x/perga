@@ -53,8 +53,9 @@ while (( $# > 0 )); do
   shift
 done
 
-if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
-  echo "error: tag '$TAG' must match vX.Y.Z or vX.Y.Z-prerelease (for example v0.1.0 or v0.1.0-rc.1)." >&2
+SEMVER_RE='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?$'
+if [[ ! "$TAG" =~ $SEMVER_RE ]] || ! git check-ref-format "refs/tags/${TAG}" >/dev/null 2>&1; then
+  echo "error: tag '$TAG' must be a valid SemVer Git tag (for example v0.1.0 or v0.1.0-rc.1)." >&2
   exit 1
 fi
 
@@ -81,7 +82,11 @@ if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
   exit 1
 fi
 
-if [[ -n "$(git ls-remote --tags origin "refs/tags/${TAG}")" ]]; then
+remote_tag=$(git ls-remote --tags origin "refs/tags/${TAG}") || {
+  echo "error: failed to query remote tags on origin." >&2
+  exit 1
+}
+if [[ -n "$remote_tag" ]]; then
   echo "error: tag '${TAG}' already exists on origin." >&2
   exit 1
 fi
@@ -91,11 +96,12 @@ if (( SKIP_CI_CHECK == 0 )); then
     echo "error: 'gh' CLI is required to verify CI status (or pass --skip-ci-check)." >&2
     exit 1
   fi
-  ci_conclusion=$(gh run list --workflow=ci.yml --commit "$HEAD_SHA" --limit 10 \
-    --json conclusion --jq 'map(.conclusion) | if any(. == "success") then "success" else (.[0] // "none") end')
-  if [[ "$ci_conclusion" != "success" ]]; then
-    echo "error: CI and release workflow has not passed for ${HEAD_SHA:0:8} (latest conclusion: ${ci_conclusion})." >&2
-    echo "Wait for CI on main to finish or pass --skip-ci-check if you have verified it manually." >&2
+  ci_latest=$(gh run list --workflow=ci.yml --branch main --event push --commit "$HEAD_SHA" --limit 20 \
+    --json status,conclusion,createdAt \
+    --jq 'sort_by(.createdAt) | reverse | if length == 0 then "none:none" else "\(.[0].status):\(.[0].conclusion // "none")" end')
+  if [[ "$ci_latest" != "completed:success" ]]; then
+    echo "error: latest push CI and release run on main for ${HEAD_SHA:0:8} has not succeeded (latest: ${ci_latest})." >&2
+    echo "Wait for CI on main to pass or pass --skip-ci-check if you have verified it manually." >&2
     exit 1
   fi
 fi

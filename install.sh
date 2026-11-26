@@ -88,10 +88,24 @@ quote_sh() {
   printf "'%s'" "${s//\'/\'\\\'\'}"
 }
 
+normalize_link_target() {
+  local p="$1"
+  while [[ "$p" != "/" ]]; do
+    if [[ "$p" == */ ]]; then
+      p="${p%/}"
+    elif [[ "$p" == */. ]]; then
+      p="${p%/.}"
+    else
+      break
+    fi
+  done
+  printf '%s' "${p:-/}"
+}
+
 need_cmd curl
 need_cmd tar
 
-if [[ -L "${RAW_INSTALL_DIR%/}" ]]; then
+if [[ -L "$(normalize_link_target "$RAW_INSTALL_DIR")" ]]; then
   echo "error: PERGA_INSTALL_DIR (${RAW_INSTALL_DIR}) must be a real directory, not a symlink." >&2
   exit 1
 fi
@@ -99,9 +113,18 @@ fi
 INSTALL_DIR=$(resolve_physical_path "$RAW_INSTALL_DIR" "PERGA_INSTALL_DIR")
 BIN_DIR=$(resolve_physical_path "$RAW_BIN_DIR" "PERGA_BIN_DIR")
 DATA_DIR=$(resolve_physical_path "$RAW_DATA_DIR" "PERGA_DATA_DIR")
+DB_PATH=""
+if [[ -n "${PERGA_DB_PATH:-}" ]]; then
+  DB_PATH=$(resolve_physical_path "$PERGA_DB_PATH" "PERGA_DB_PATH")
+fi
 
 if [[ "$DATA_DIR" == "$INSTALL_DIR" || "$DATA_DIR" == "${INSTALL_DIR}/"* ]]; then
   echo "error: PERGA_DATA_DIR (${DATA_DIR}) must not be inside PERGA_INSTALL_DIR (${INSTALL_DIR}), or upgrades would overwrite your data." >&2
+  exit 1
+fi
+
+if [[ -n "$DB_PATH" ]] && [[ "$DB_PATH" == "$INSTALL_DIR" || "$DB_PATH" == "${INSTALL_DIR}/"* ]]; then
+  echo "error: PERGA_DB_PATH (${DB_PATH}) must not be inside PERGA_INSTALL_DIR (${INSTALL_DIR}), or upgrades would overwrite your database." >&2
   exit 1
 fi
 
@@ -279,11 +302,76 @@ abs_from_caller() {
     *)  printf '%s/%s' "\$CALLER_PWD" "\$1" ;;
   esac
 }
+normalize_link_target() {
+  local p="\$1"
+  while [[ "\$p" != "/" ]]; do
+    if [[ "\$p" == */ ]]; then
+      p="\${p%/}"
+    elif [[ "\$p" == */. ]]; then
+      p="\${p%/.}"
+    else
+      break
+    fi
+  done
+  printf '%s' "\${p:-/}"
+}
+resolve_physical_path() {
+  local raw="\$1"
+  local name="\$2"
+  if [[ -z "\$raw" ]]; then
+    echo "error: \${name} cannot be empty." >&2
+    exit 1
+  fi
+  local path="\$(abs_from_caller "\$raw")"
+  local resolved="/"
+  local missing_tail=0
+  local IFS='/'
+  local -a segments=()
+  read -r -a segments <<< "\$path"
+  local seg candidate parent_phys
+  for seg in "\${segments[@]}"; do
+    if [[ -z "\$seg" || "\$seg" == "." ]]; then
+      continue
+    fi
+    if [[ "\$seg" == ".." ]]; then
+      if [[ "\$resolved" != "/" ]]; then
+        resolved="\${resolved%/*}"
+        [[ -z "\$resolved" ]] && resolved="/"
+      fi
+      if [[ -d "\$resolved" ]]; then
+        resolved=\$(cd -P -- "\$resolved" && pwd -P)
+        missing_tail=0
+      fi
+      continue
+    fi
+    if [[ "\$resolved" == "/" ]]; then
+      candidate="/\${seg}"
+    else
+      candidate="\${resolved}/\${seg}"
+    fi
+    if (( missing_tail == 0 )) && [[ -d "\$candidate" ]]; then
+      resolved=\$(cd -P -- "\$candidate" && pwd -P)
+    elif (( missing_tail == 0 )) && [[ -L "\$candidate" ]]; then
+      parent_phys=\$(cd -P -- "\$resolved" && pwd -P)
+      if [[ "\$parent_phys" == "/" ]]; then
+        resolved="/\${seg}"
+      else
+        resolved="\${parent_phys}/\${seg}"
+      fi
+      missing_tail=1
+    else
+      resolved="\$candidate"
+      missing_tail=1
+    fi
+  done
+  printf '%s' "\$resolved"
+}
 DEFAULT_INSTALL_DIR=${q_install_dir}
 DEFAULT_BIN_DIR=${q_bin_dir}
 DEFAULT_DATA_DIR=${q_data_dir}
 DEFAULT_REPO=${q_repo}
-INSTALL_DIR="\$(abs_from_caller "\${PERGA_INSTALL_DIR:-\$DEFAULT_INSTALL_DIR}")"
+RAW_INSTALL_DIR="\${PERGA_INSTALL_DIR:-\$DEFAULT_INSTALL_DIR}"
+INSTALL_DIR="\$(abs_from_caller "\$RAW_INSTALL_DIR")"
 BIN_DIR="\$(abs_from_caller "\${PERGA_BIN_DIR:-\$DEFAULT_BIN_DIR}")"
 REPO="\${PERGA_REPO:-\$DEFAULT_REPO}"
 export PERGA_DATA_DIR="\$(abs_from_caller "\${PERGA_DATA_DIR:-\$DEFAULT_DATA_DIR}")"
@@ -292,6 +380,7 @@ export PERGA_TEMPLATES_DIR="\$(abs_from_caller "\${PERGA_TEMPLATES_DIR:-\$INSTAL
 if [[ -n "\${PERGA_DB_PATH:-}" ]]; then
   export PERGA_DB_PATH="\$(abs_from_caller "\$PERGA_DB_PATH")"
 fi
+EFFECTIVE_DB_PATH="\${PERGA_DB_PATH:-\$PERGA_DATA_DIR/perga.db}"
 
 read_installed_version() {
   if [[ -f "\$INSTALL_DIR/VERSION" ]]; then
@@ -399,10 +488,10 @@ run_doctor() {
   echo "Install directory: \$INSTALL_DIR"
   echo "Launcher:          \$BIN_DIR/perga"
   echo "Data directory:    \$PERGA_DATA_DIR"
-  if [[ -f "\$PERGA_DATA_DIR/perga.db" ]]; then
-    echo "Database:          initialized (\$PERGA_DATA_DIR/perga.db)"
+  if [[ -f "\$EFFECTIVE_DB_PATH" ]]; then
+    echo "Database:          initialized (\$EFFECTIVE_DB_PATH)"
   else
-    echo "Database:          not initialized yet (run: perga auth init-owner --username owner --allow-migrate)"
+    echo "Database:          not initialized yet (\$EFFECTIVE_DB_PATH; run: perga auth init-owner --username owner --allow-migrate)"
   fi
 
   local missing=()
@@ -434,7 +523,7 @@ run_doctor() {
 
   local -a found_clis=()
   local cli
-  for cli in claude codex antigravity opencode kimi qwen devin factory grok codebuddy qoder dsh; do
+  for cli in claude codex agy antigravity opencode kimi qwen devin factory grok codebuddy qoder dsh; do
     if command -v "\$cli" >/dev/null 2>&1; then
       found_clis+=("\$cli")
     fi
@@ -471,27 +560,49 @@ UNINSTALL_USAGE
     shift
   done
 
-  if [[ "\$INSTALL_DIR" == "/" || -z "\$INSTALL_DIR" || -L "\${INSTALL_DIR%/}" ]]; then
-    echo "error: refusing to uninstall invalid install directory '\$INSTALL_DIR'." >&2
+  local normalized_install_target
+  normalized_install_target=\$(normalize_link_target "\$INSTALL_DIR")
+  if [[ "\$normalized_install_target" == "/" || -z "\$INSTALL_DIR" || -L "\$normalized_install_target" ]]; then
+    echo "error: refusing to uninstall invalid install directory '\$RAW_INSTALL_DIR'." >&2
     exit 1
   fi
-  if [[ ! -d "\$INSTALL_DIR" || ! -f "\$INSTALL_DIR/.perga-install-marker" ]]; then
-    echo "error: '\$INSTALL_DIR' does not contain a Perga installation marker; refusing to delete it." >&2
+  if [[ ! -d "\$normalized_install_target" || ! -f "\$normalized_install_target/.perga-install-marker" ]]; then
+    echo "error: '\$RAW_INSTALL_DIR' does not contain a Perga installation marker; refusing to delete it." >&2
     exit 1
   fi
   local real_install_dir
-  real_install_dir=\$(cd -P -- "\$INSTALL_DIR" && pwd -P)
+  real_install_dir=\$(resolve_physical_path "\$normalized_install_target" "PERGA_INSTALL_DIR")
   if [[ "\$real_install_dir" == "/" ]]; then
     echo "error: refusing to uninstall '/'." >&2
     exit 1
   fi
-  local real_data_dir="\$PERGA_DATA_DIR"
-  if [[ -d "\$PERGA_DATA_DIR" ]]; then
-    real_data_dir=\$(cd -P -- "\$PERGA_DATA_DIR" && pwd -P)
+  local real_default_install_dir
+  real_default_install_dir=\$(resolve_physical_path "\$DEFAULT_INSTALL_DIR" "DEFAULT_INSTALL_DIR")
+  if [[ "\$real_install_dir" != "\$real_default_install_dir" ]]; then
+    echo "error: this launcher manages '\$real_default_install_dir', not '\$real_install_dir'. Unset PERGA_INSTALL_DIR or run the launcher for '\$real_install_dir'." >&2
+    exit 1
   fi
+  local real_data_dir real_db_path
+  real_data_dir=\$(resolve_physical_path "\$PERGA_DATA_DIR" "PERGA_DATA_DIR")
+  real_db_path=\$(resolve_physical_path "\$EFFECTIVE_DB_PATH" "PERGA_DB_PATH")
   if [[ "\$real_data_dir" == "\$real_install_dir" || "\$real_data_dir" == "\${real_install_dir}/"* ]]; then
     echo "error: refusing to remove '\$real_install_dir' because PERGA_DATA_DIR ('\$real_data_dir') is inside it." >&2
     exit 1
+  fi
+  if [[ "\$real_db_path" == "\$real_install_dir" || "\$real_db_path" == "\${real_install_dir}/"* ]]; then
+    echo "error: refusing to remove '\$real_install_dir' because PERGA_DB_PATH ('\$real_db_path') is inside it." >&2
+    exit 1
+  fi
+  local launcher_path="\$BIN_DIR/perga"
+  local remove_launcher=0
+  if [[ -e "\$launcher_path" ]]; then
+    local expected_owner="DEFAULT_INSTALL_DIR='\${real_install_dir//\'/\'\\\\\'\'}'"
+    if [[ -f "\$launcher_path" && ! -L "\$launcher_path" ]] && grep -Fqx "\$expected_owner" "\$launcher_path" 2>/dev/null; then
+      remove_launcher=1
+    else
+      echo "error: '\$launcher_path' does not belong to '\$real_install_dir'; refusing to uninstall." >&2
+      exit 1
+    fi
   fi
 
   if (( yes == 0 )); then
@@ -499,7 +610,7 @@ UNINSTALL_USAGE
       echo "error: refusing to uninstall non-interactively without --yes." >&2
       exit 1
     fi
-    printf 'Remove %s and %s/perga? User data in %s will be kept. [y/N] ' "\$real_install_dir" "\$BIN_DIR" "\$PERGA_DATA_DIR"
+    printf 'Remove %s and %s? User data in %s will be kept. [y/N] ' "\$real_install_dir" "\$launcher_path" "\$PERGA_DATA_DIR"
     local reply
     read -r reply || true
     case "\$reply" in
@@ -509,8 +620,8 @@ UNINSTALL_USAGE
   fi
 
   rm -rf "\$real_install_dir"
-  if [[ -f "\$BIN_DIR/perga" && ! -L "\$BIN_DIR/perga" ]] && grep -q 'DEFAULT_INSTALL_DIR=' "\$BIN_DIR/perga" 2>/dev/null; then
-    rm -f "\$BIN_DIR/perga"
+  if (( remove_launcher == 1 )); then
+    rm -f "\$launcher_path"
   fi
   echo "Removed Perga from \$real_install_dir."
   echo "User data preserved at \$PERGA_DATA_DIR (remove it manually if you want a full wipe)."
@@ -595,7 +706,8 @@ case ":${PATH}:" in
 esac
 
 echo ""
-if [[ ! -f "${DATA_DIR}/perga.db" ]]; then
+effective_db="${DB_PATH:-${DATA_DIR}/perga.db}"
+if [[ ! -f "$effective_db" ]]; then
   echo "Next steps (first run):"
   echo "  1. Create your owner account:"
   echo "     ${cmd} auth init-owner --username owner --allow-migrate"
@@ -603,7 +715,7 @@ if [[ ! -f "${DATA_DIR}/perga.db" ]]; then
   echo "     ${cmd}"
   echo "  3. Open http://127.0.0.1:4041/ in your browser."
 else
-  echo "Existing data preserved at ${DATA_DIR}."
+  echo "Existing data preserved at ${effective_db}."
   if (( was_upgrade == 1 )); then
     echo "If Perga is currently running, restart it to load ${installed_version}."
   fi
