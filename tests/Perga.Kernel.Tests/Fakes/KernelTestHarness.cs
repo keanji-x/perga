@@ -72,7 +72,6 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
 
     public int MarkInterruptedCalls { get; private set; }
     public int ListTracksCalls { get; private set; }
-    public int MemoryTrackLookupCalls { get; private set; }
 
     public IReadOnlyList<EventEnvelopeDto> PersistedEvents
     {
@@ -158,7 +157,6 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
     {
         lock (_gate)
         {
-            MemoryTrackLookupCalls++;
             if (_memoryBindings.TryGetValue(scopeKey, out var stored))
                 return Task.FromResult<string?>(stored.TrackId);
             return Task.FromResult(MemoryBinding is { } binding && binding.ScopeKey == scopeKey ? binding.TrackId : null);
@@ -1786,8 +1784,7 @@ internal sealed partial class KernelTestContext : IAsyncDisposable
         TimeProvider? timeProvider = null,
         IGitHubForgeService? gitHubForgeService = null,
         IMcpSessionBridge? mcpSessionBridge = null,
-        IReportDocEngine? reportEngine = null,
-        IMemoryContextProvider? memoryContext = null)
+        IReportDocEngine? reportEngine = null)
     {
         DriverRegistry = new FakeWorkspaceDriverRegistry(DirectDriver, CowOverlayDriver);
         DataDir = Path.Combine(Path.GetTempPath(), $"perga-kernel-test-{Guid.NewGuid():N}");
@@ -1813,8 +1810,7 @@ internal sealed partial class KernelTestContext : IAsyncDisposable
             timeProvider: timeProvider ?? Time,
             scheduleCronEvaluator: new TestScheduleCronEvaluator(),
             gitHubForgeService: gitHubForgeService,
-            mcpSessionBridge: mcpSessionBridge,
-            memoryContext: memoryContext);
+            mcpSessionBridge: mcpSessionBridge);
     }
 
     public async Task<(AreaDto Area, TrackAggregateSnapshot TrackSnap)> CreateDefaultTrackAsync(

@@ -144,11 +144,6 @@ public sealed partial class TrackActor : IAsyncDisposable
         Interlocked.Increment(ref _queuedMailboxOps);
 
         var tcs = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
-        if (ct.CanBeCanceled)
-        {
-            _ = tcs.Task.ContinueWith(static task => { _ = task.Exception; }, CancellationToken.None,
-                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
-        }
         var written = _mailbox.Writer.TryWrite(async actor =>
         {
             try
@@ -156,10 +151,6 @@ public sealed partial class TrackActor : IAsyncDisposable
                 if (touchActivity) TouchActivity();
                 var result = await work(actor).ConfigureAwait(false);
                 tcs.TrySetResult(result);
-            }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
-            {
-                tcs.TrySetCanceled(ct);
             }
             catch (Exception ex)
             {
