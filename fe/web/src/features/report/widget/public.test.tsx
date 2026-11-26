@@ -200,7 +200,7 @@ describe('ReportWidgetBlock', () => {
     const iframe = screen.getByTitle<HTMLIFrameElement>('valuationAxis');
     expect(iframe.getAttribute('sandbox')).toBe('allow-scripts');
 
-    // Simulate resize + valid open_file + blocked traversal + valid open_session from iframe window
+    // Simulate resize + valid open_file + valid open_session from iframe window
     fireEvent(window, new MessageEvent('message', {
       source: iframe.contentWindow,
       data: { type: 'perga:resize', height: 186 },
@@ -211,11 +211,10 @@ describe('ReportWidgetBlock', () => {
       source: iframe.contentWindow,
       data: { type: 'perga:intent', kind: 'open_file', path: 'research-notes.md' },
     }));
-    // All path traversal, backslash, scheme, query, fragment, and spoofed-source payloads must be dropped
-    for (const badPath of ['../escape.md', '..\\escape.md', '/etc/passwd', 'https://evil.example/x', 'javascript:alert(1)', 'a.md?x=1', 'a.md#top']) {
+    for (const path of ['../notes.md', '/tmp/notes.md', 'draft:notes.txt', 'draft\\notes.txt', 'bad\0path']) {
       fireEvent(window, new MessageEvent('message', {
         source: iframe.contentWindow,
-        data: { type: 'perga:intent', kind: 'open_file', path: badPath },
+        data: { type: 'perga:intent', kind: 'open_file', path },
       }));
     }
     fireEvent(window, new MessageEvent('message', {
@@ -227,8 +226,10 @@ describe('ReportWidgetBlock', () => {
       data: { type: 'perga:intent', kind: 'open_session', sessionId: 'ses_research_1' },
     }));
 
-    expect(onOpenFile).toHaveBeenCalledTimes(1);
-    expect(onOpenFile).toHaveBeenCalledWith('research-notes.md');
+    expect(onOpenFile.mock.calls).toEqual([
+      [{ path: 'research-notes.md' }], [{ path: '../notes.md' }], [{ path: '/tmp/notes.md' }],
+      [{ path: 'draft:notes.txt' }], [{ path: 'draft\\notes.txt' }],
+    ]);
     expect(onOpenWorker).toHaveBeenCalledWith('ses_research_1');
   });
 

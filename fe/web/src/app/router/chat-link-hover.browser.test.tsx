@@ -1,3 +1,4 @@
+import type { TrackSearch } from './track-search.ts';
 import { fixtureTrack, fixtureSession, fixtureSnapshot } from './session-contract-fixture.ts';
 import { sessionPage, sessionItem, sessionTurn } from './conversation-session-data.ts';
 import '../../styles/entry.css';
@@ -90,9 +91,8 @@ it('shows missing captured sources without ghost requests and previews real Trac
 });
 
 it.each(['history', 'incremental'])('rejects malformed navigation hrefs without losing the %s reply', async mode => {
-  // These pass through the real Astryx parser and sanitizer in Reply. The first
-  // throws in URL parsing; the second would normalize into an application path.
-  const malformed = '\n\n[Invalid authority](/\\[) · [Reinterpreted path](/track\\today)\n\nReply survives.';
+  // Protocol-relative authorities and backslashes pass through the real reply parser.
+  const malformed = '\n\n[Invalid authority](//[) · [Reinterpreted path](/track\\today)\n\nReply survives.';
   const { append, requests, router } = await setup({ streaming: mode === 'incremental',
     historySuffix: mode === 'history' ? malformed : '' });
   if (mode === 'incremental') {
@@ -142,21 +142,20 @@ it('renders incremental links and keeps external loading explicit', async () => 
   await expect.poll(() => document.querySelector('iframe[src="https://example.com/"]')).not.toBeNull();
 });
 
-it.each([['Today', '/']])('preserves application navigation without admitting rejected workspace paths: %s', async (label, path) => {
+it('routes application links and absolute Chat file links through their owners', async () => {
   const { router } = await setup();
   const drawer = page.getByRole('complementary', { name: 'Link chat', exact: true });
-  await expect.element(drawer.getByRole('button', { name: 'Today', exact: true })).toBeVisible();
-  for (const text of ['Outside', 'Escape']) {
-    expect(document.querySelector('[data-nc-thread]')?.textContent).toContain(text);
-    expect(page.getByRole('link', { name: text, exact: true }).query()).toBeNull();
-    expect(page.getByRole('button', { name: text, exact: true }).query()).toBeNull();
-  }
+  await drawer.getByRole('button', { name: 'Outside', exact: true }).click();
+  await expect.poll(() => router.state.location.search as TrackSearch).toMatchObject({ file: '/etc/passwd' });
+  await page.getByRole('button', { name: 'Back to track' }).click();
+  await drawer.getByRole('button', { name: 'Escape', exact: true }).click();
+  await expect.poll(() => router.state.location.search as TrackSearch).toMatchObject({ file: '../../secret.txt' });
+  await page.getByRole('button', { name: 'Back to track' }).click();
   expect(page.getByRole('link', { name: 'Email', exact: true }).element().getAttribute('href')).toBe('mailto:reader@example.com');
   expect(page.getByRole('link', { name: 'Phone', exact: true }).element().getAttribute('href')).toBe('tel:+123');
   expect(page.getByRole('link', { name: 'Section', exact: true }).element().getAttribute('href')).toBe('#part');
-  await drawer.getByRole('button', { name: label, exact: true }).click();
-  await expect.poll(() => router.state.location.pathname).toBe(path);
-  expect(router.history.location.pathname).toBe(`${path}`);
+  await drawer.getByRole('button', { name: 'Today', exact: true }).click();
+  await expect.poll(() => router.state.location.pathname).toBe('/');
 });
 
 it('clears source selection synchronously across same-Track A to B to A', async () => {

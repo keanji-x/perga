@@ -1,5 +1,5 @@
 import { createStorageKey } from '../../../../core/keys/storage.ts';
-import { parseWorkspaceRelativeFilePath } from '../../../../core/domain/report-file.ts';
+import { isFilePath } from '../../../../core/domain/report-file.ts';
 
 const RECENT_FILE_LIMIT = 8;
 const EMPTY_RECENT_FILES = Object.freeze([] as const);
@@ -26,10 +26,8 @@ function decode(value: string | null): readonly string[] {
   if (!Array.isArray(parsed)) return EMPTY_RECENT_FILES;
   const paths: string[] = [];
   for (const value of parsed) {
-    if (typeof value !== 'string') continue;
-    const target = parseWorkspaceRelativeFilePath(value);
-    if (target === null || paths.includes(target.path)) continue;
-    paths.push(target.path);
+    if (typeof value !== 'string' || !isFilePath(value) || paths.includes(value)) continue;
+    paths.push(value);
     if (paths.length === RECENT_FILE_LIMIT) break;
   }
   return Object.freeze(paths);
@@ -56,11 +54,11 @@ export function createRecentFileHistory(storage?: RecentFileStorage): RecentFile
   return Object.freeze({
     read,
     record(trackId: string, path: string): readonly string[] {
-      const target = parseWorkspaceRelativeFilePath(path);
-      if (target === null) return read(trackId);
+      const current = read(trackId);
+      if (!isFilePath(path) || current[0] === path) return current;
       const next = Object.freeze([
-        target.path,
-        ...read(trackId).filter((candidate) => candidate !== target.path),
+        path,
+        ...current.filter((candidate) => candidate !== path),
       ].slice(0, RECENT_FILE_LIMIT));
       memory.set(trackId, next);
       try {

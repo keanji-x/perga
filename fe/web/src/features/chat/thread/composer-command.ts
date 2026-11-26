@@ -30,12 +30,13 @@ function commandDefinitions(): readonly Omit<ComposerCommand, 'execute'>[] {
     { id: 'compact-conversation', name: 'compact', icon: 'compact', hint: 'Compact conversation context', arguments: 'none' },
     { id: 'save-to-memory', name: 'mem', icon: 'notebook-pen', hint: 'Save takeaways to memory', arguments: 'optional' },
     { id: 'terminal-workbench', name: 'terminal', icon: 'terminal', hint: 'Open the track terminal workbench', arguments: 'none', argumentError: TERMINAL_ARGUMENTS_MESSAGE },
+    { id: 'file-open', name: 'open', icon: 'file', hint: 'Open a file', arguments: 'optional' },
     { id: 'track-close', name: 'close', icon: 'status-done', hint: 'Close this Track', arguments: 'none' },
-    { id: 'track-open', name: 'open', icon: 'status-running', hint: 'Reopen this track', arguments: 'none' },
+    { id: 'track-reopen', name: 'reopen', icon: 'status-running', hint: 'Reopen this Track', arguments: 'none' },
   ];
 }
 
-export type CommandName = 'stop' | 'reconnect' | 'reset' | 'new' | 'side' | 'planner' | 'compact' | 'mem' | 'terminal' | 'close' | 'open';
+export type CommandName = 'stop' | 'reconnect' | 'reset' | 'new' | 'side' | 'planner' | 'compact' | 'mem' | 'terminal' | 'close' | 'reopen' | 'open';
 export type CommandBindings = Readonly<Partial<Record<CommandName, CommandBinding>>>;
 
 export function composerCommands(bindings: CommandBindings): readonly ComposerCommand[] {
@@ -55,9 +56,11 @@ export function conversationCommandBindings(options: Readonly<{
   sideUnavailableReason?: string;
   compact?: () => void;
   terminal?: () => void;
+  openFile?: (argument: string) => void;
   compactViewport?: boolean;
 }>): CommandBindings {
   return {
+    open: options.openFile === undefined ? undefined : { execute: options.openFile },
     new: options.newConversation === undefined ? undefined : { execute: options.newConversation },
     side: options.side === undefined ? undefined : { execute: options.side, hidden: options.sideHidden, unavailableReason: options.sideUnavailableReason },
     compact: options.compact === undefined ? undefined : { execute: options.compact },

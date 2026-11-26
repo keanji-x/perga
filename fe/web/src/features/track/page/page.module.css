@@ -122,6 +122,30 @@
     overflow: hidden;
   }
 
+  .pageFile {
+    position: relative;
+  }
+
+  .pageFile::after {
+    position: absolute;
+    inset-block-start: var(--file-scroll-end, 0px);
+    inset-inline-start: 0;
+    block-size: 1px;
+    inline-size: 1px;
+    content: '';
+    pointer-events: none;
+  }
+
+  .headerFilePath {
+    display: block;
+    min-inline-size: 0;
+    overflow: hidden;
+    color: var(--text-2);
+    font: var(--type-code);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   .headerBack {
     display: grid;
     flex: none;

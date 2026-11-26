@@ -123,3 +123,12 @@ describe('event reducer behavior', () => {
     ]);
   });
 });
+
+it('offers only live, compatible file-open intents without changing the replay cursor', () => {
+  const state = initialEventState(3, 123);
+  const request = { trackId: 'w1', sessionId: 's1', path: 'src/file.ts', line: 15, endLine: null };
+  const frame = { type: 'event', event: { ev: 'workspace.file_open_requested', data: request }, meta: { id: 0, eventVersion: 3 } } as const;
+  expect(reduceEventFrame(state, frame)).toEqual({ state, effects: [{ type: 'file-open-requested', request }] });
+  expect(reduceEventFrame(state, { ...frame, meta: { id: 124, eventVersion: 3 } })).toEqual({ state, effects: [] });
+  expect(reduceEventFrame(state, { ...frame, meta: { id: 0, eventVersion: 4 } })).toEqual({ state, effects: [] });
+});

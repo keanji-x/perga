@@ -127,7 +127,7 @@ async function readWithPointerAndKeyboard(reportScroll: number, screenshot: stri
   const parent = within(layer).getByRole('button', { name: 'English README' });
   expectHit(parent);
   await userEvent.click(parent);
-  await expect.element(page.getByRole('region', { name: 'File README.md' })
+  await expect.element(page.getByRole('region', { name: 'File docs/../README.md' })
     .getByRole('heading', { name: 'Why Perga?', exact: true })).toBeVisible();
   expectReportPosition(reportScroll, 'document link click');
 }
@@ -158,11 +158,11 @@ it('reads a cold file with wheel, PageDown, Tab and document links, then closes 
   const reportScroll = trackPage().scrollTop;
   expect(reportScroll).toBe(0);
   await readWithPointerAndKeyboard(reportScroll, 'cold');
-  expect(router.history.location.href).toBe(`${README_TRACK_URL}?file=README.md`);
+  expect(router.history.location.href).toBe(`${README_TRACK_URL}?file=docs%2F..%2FREADME.md`);
   expect(router.history.length).toBe(1);
   await userEvent.keyboard('{Escape}');
   await expect.poll(() => router.history.location.href).toBe(README_TRACK_URL);
-  await expect.element(page.getByRole('region', { name: 'File README.md' })).not.toBeInTheDocument();
+  await expect.element(page.getByRole('region', { name: 'File docs/../README.md' })).not.toBeInTheDocument();
   await scrollSettled(trackPage());
   expectReportPosition(reportScroll, 'cold close');
   expect(router.history.length).toBe(1);
@@ -241,7 +241,7 @@ it('reads from a wheel-scrolled Report with Conversation and restores its positi
   await page.screenshot({ path: './__screenshots__/report-readme-conversation-1280.png' });
 
   await readWithPointerAndKeyboard(reportScroll, 'conversation');
-  expect(router.history.location.href).toBe(`${README_TRACK_URL}?file=README.md`);
+  expect(router.history.location.href).toBe(`${README_TRACK_URL}?file=docs%2F..%2FREADME.md`);
   expect(router.history.length).toBe(2);
   expect(chatScroller.scrollTop).toBe(chatScroll);
   expect(chat.element()).toBe(conversation);
@@ -325,14 +325,14 @@ for (const width of [390, 1000, 1440]) for (const conversation of [false, true])
     }
     const layer = fileLayer();
     const alert = within(layer).getByRole('alert');
-    const name = layer.querySelector('[title="docs/README.md"]')!;
+    const name = page.getByText('docs/README.md', { exact: true }).all()
+      .map(locator => locator.element()).find(element => element.closest('header') !== null)!;
     const message = within(alert).getByText('Could not load this file.');
     const retry = within(alert).getByRole('button', { name: 'Retry' });
     const bounds = layer.getBoundingClientRect();
     const errorBounds = alert.getBoundingClientRect();
     const nameBounds = name.getBoundingClientRect();
-    expect(errorBounds.left, 'error belongs to the filename document column').toBeCloseTo(nameBounds.left, 0);
-    expect(errorBounds.top, 'error occupies the next row').toBeGreaterThanOrEqual(nameBounds.bottom - 1);
+    expect(errorBounds.top, 'error starts below the file header').toBeGreaterThanOrEqual(nameBounds.bottom - 1);
     expect(errorBounds.width, 'error must not collapse into the trailing gutter').toBeGreaterThan(180);
     expect(errorBounds.left).toBeGreaterThanOrEqual(bounds.left - 1);
     expect(errorBounds.right).toBeLessThanOrEqual(bounds.right + 1);

@@ -37,7 +37,7 @@ function Probe() {
       <button type="button" onClick={() => { openPanel(trackId, 'cards'); }}>open cards</button>
       <button type="button" onClick={() => { openPanel(trackId, 'tasks'); }}>open tasks</button>
       <button type="button" onClick={() => { closePanel(trackId); }}>close panel</button>
-      <button type="button" onClick={() => { openFile(trackId, 'docs/a.md'); }}>open file a</button>
+      <button type="button" onClick={() => { openFile(trackId, '/tmp/a.md', { line: 42, endLine: 60, focus: false }); }}>open file a</button>
       <button type="button" onClick={() => { openFile(trackId, 'docs/b.md'); }}>open file b</button>
       <button type="button" onClick={() => { closeFile(trackId); }}>close file</button>
       <button type="button" onClick={() => { goSameTrack(trackId, { card: undefined }, { replace: true }); }}>drop card</button>
@@ -163,12 +163,16 @@ describe('file history', () => {
   it('uses one marked entry across file switches and pops back to the Report', async () => {
     const router = setup(['/', '/track/w1']);
     await userEvent.click(await screen.findByText('open file a'));
-    await waitFor(() => { probe('file', 'docs/a.md'); });
+    await waitFor(() => { probe('file', '/tmp/a.md'); });
     expect(router.history.length).toBe(3);
     expect(router.history.location.state.ncFilePushed).toBe(true);
+    expect(router.history.location.state.ncFileSilent).toBe(true);
+    expect(router.state.location.search).toMatchObject({ line: '42-60' });
 
     await userEvent.click(screen.getByText('open file b'));
     await waitFor(() => { probe('file', 'docs/b.md'); });
+    expect(router.history.location.state.ncFileSilent).toBe(false);
+    expect(router.state.location.search).not.toHaveProperty('line');
     expect(router.history.length).toBe(3);
     expect(router.history.location.state.ncFilePushed).toBe(true);
 
@@ -218,4 +222,26 @@ describe('useGoSameTrack', () => {
     await userEvent.click(screen.getByText('drop from'));
     await waitFor(() => { expect(href(router)).toBe('/track/w1?panel=tasks'); });
   });
+});
+
+it('transfers the Report back entry across a pushed mobile panel and file', async () => {
+  const router = setup(['/', '/track/w1']);
+  await userEvent.click(await screen.findByText('open tasks'));
+  await waitFor(() => { probe('panel', 'tasks'); });
+  expect(router.history.location.state.ncPanelPushed).toBe(true);
+
+  await userEvent.click(screen.getByText('open file b'));
+  await waitFor(() => { probe('file', 'docs/b.md'); });
+  expect(router.history.length).toBe(3);
+  expect(router.history.location.state.ncFilePushed).toBe(true);
+  // Switching back to a panel must keep the same underlying Report entry.
+  await userEvent.click(screen.getByText('open tasks'));
+  await waitFor(() => { probe('panel', 'tasks'); });
+  await userEvent.click(screen.getByText('open file b'));
+  await waitFor(() => { probe('file', 'docs/b.md'); });
+  expect(router.history.length).toBe(3);
+  await userEvent.click(screen.getByText('close file'));
+  await waitFor(() => { expect(href(router)).toBe('/track/w1'); });
+  router.history.back();
+  await waitFor(() => { expect(href(router)).toBe('/'); });
 });

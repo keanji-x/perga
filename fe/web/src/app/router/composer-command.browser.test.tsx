@@ -60,11 +60,11 @@ it('menu Enter only completes and second Enter executes', async () => {
   await page.viewport(1280, 800);
   const fixture = renderCommandFixture({ closed: true });
   await page.getByRole('button', { name: /Conversation Daily Planner conversation/ }).click();
-  await page.getByRole('combobox', { name: 'Message' }).fill('/open');
-  await expect.element(page.getByRole('option', { name: /^open / })).toBeVisible();
+  await page.getByRole('combobox', { name: 'Message' }).fill('/reopen');
+  await expect.element(page.getByRole('option', { name: /^reopen / })).toBeVisible();
   await userEvent.keyboard('{Enter}');
   expect(fixture.requests.filter(request => request.method === 'PATCH')).toHaveLength(0);
-  await expect.element(page.getByRole('combobox', { name: 'Message' })).toHaveTextContent('/open');
+  await expect.element(page.getByRole('combobox', { name: 'Message' })).toHaveTextContent('/reopen');
   await userEvent.keyboard('{Enter}');
   await expect.poll(() => fixture.requests.filter(request => request.method === 'PATCH').map(request => request.body)).toEqual([{ closed: false }]);
 });

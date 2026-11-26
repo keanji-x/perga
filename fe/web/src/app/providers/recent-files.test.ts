@@ -36,8 +36,8 @@ describe('recent file history', () => {
 
     const [key] = [...storage.values.keys()];
     if (key === undefined) throw new Error('recent file key was not persisted');
-    storage.values.set(key, JSON.stringify(['ok.ts', '../escape', '/etc/passwd', 3, 'ok.ts']));
-    expect(createRecentFileHistory(storage).read('w1')).toEqual(['ok.ts']);
+    storage.values.set(key, JSON.stringify(['ok.ts', '../note.txt', '/tmp/log.txt', '~/config', 'draft:notes.txt', 'draft\\notes.txt', './~/notes.txt', 'bad\0path', 3, 'ok.ts']));
+    expect(createRecentFileHistory(storage).read('w1')).toEqual(['ok.ts', '../note.txt', '/tmp/log.txt', '~/config', 'draft:notes.txt', 'draft\\notes.txt', './~/notes.txt']);
   });
 
   it('keeps an in-memory history when browser storage throws', () => {

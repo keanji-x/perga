@@ -14,6 +14,7 @@ function Probe({ trackId }: { trackId: string }) {
     <button type="button" onClick={() => go({ name: 'track', trackId: 'b' })}>resume b</button>
     <button type="button" onClick={() => go({ name: 'track', trackId: 'a', cardId: 'c' })}>target c</button>
     <button type="button" onClick={() => go({ name: 'track', trackId: 'a', blockId: 'paragraph' })}>target paragraph</button>
+    <button type="button" onClick={() => file.openFile('a', '/tmp/widget.html')}>open widget file on a</button>
     <button type="button" onClick={() => file.closeFile(trackId)}>close file</button>
   </>;
 }
@@ -68,11 +69,22 @@ it('distinguishes a same-card explicit target from resume and clears the grid fo
 });
 
 it('closes a resumed file on its own track instead of popping to the previous track', async () => {
-  const router = await setup('/track/a?file=README.md');
+  const router = await setup('/track/a?file=README.md&line=13');
   await click('resume b', 'b');
   await click('resume a', 'a');
-  expect(router.state.location.search).toEqual({ file: 'README.md', from: 'pages' });
+  expect(router.state.location.search).toEqual({ file: 'README.md', line: 13, from: 'pages' });
   await click('close file', 'a');
   await waitFor(() => { expect(router.state.location.search).toEqual({ from: 'pages' }); });
   expect(router.state.location.pathname).toBe('/track/a');
+});
+
+it('preserves an external file path across Track navigation and resume', async () => {
+  const router = await setup('/track/a');
+  await click('resume b', 'b');
+  await click('open widget file on a', 'a');
+  expect(router.state.location.search).toEqual({ file: '/tmp/widget.html' });
+
+  await click('resume b', 'b');
+  await click('resume a', 'a');
+  expect(router.state.location.search).toEqual({ file: '/tmp/widget.html', from: 'pages' });
 });

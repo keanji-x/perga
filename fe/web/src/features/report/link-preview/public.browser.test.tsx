@@ -65,10 +65,14 @@ describe('report preview admission and rendering', () => {
     expect(frame.getAttribute('referrerpolicy')).toBe('no-referrer');
     expect(screen.getByRole('link', { name: /Open in new tab/ }).getAttribute('rel')).toBe('noopener noreferrer');
   });
-  it('rejects unsafe schemes, credentials and root escapes for links and images', () => {
-    mount('[script](javascript:alert) [data](data:text/html,evil) [secret](https://user:password@example.com) [outside](../secret.txt) ![outside image](../secret.png)');
-    expect(screen.queryAllByRole('button')).toHaveLength(0);
-    expect(document.querySelectorAll('img, iframe, a')).toHaveLength(0);
+  it('previews arbitrary file links and images through the Track file port', async () => {
+    vi.mocked(files.readFile).mockClear();
+    mount('[script](javascript:alert) [data](data:text/html,evil) [credentials](https://user:password@example.com) [outside](../outside.txt) ![outside image](/tmp/outside.png)');
+    expect(screen.getAllByRole('button').map(button => button.textContent)).toEqual(['outside', '']);
+    expect(screen.getByRole('img', { name: 'outside image' }).getAttribute('src')).toBe('/workspace//tmp/outside.png');
+    expect(files.readFile).not.toHaveBeenCalled();
+    await hover('outside');
+    expect(files.readFile).toHaveBeenCalledExactlyOnceWith('../outside.txt');
   });
   it('previews an internal prose reference through the existing Markdown renderer', async () => {
     const report: TrackReport = { summary: '', body: '', blocks: [

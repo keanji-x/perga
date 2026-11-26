@@ -26,7 +26,7 @@ async function submit(input: HTMLElement, text: string) {
 afterEach(() => { cleanup(); document.getElementById('root')?.remove(); });
 
 it.each([
-  ['open', { closed: true }, { closed: false }],
+  ['reopen', { closed: true }, { closed: false }],
   ['close', {}, { closed: true }],
 ] as const)('typed /%s uses the Track mutation', async (command, options, body) => {
   const fixture = renderCommandFixture(options);
@@ -35,7 +35,7 @@ it.each([
   expect(fixture.requests.filter(request => request.path.endsWith('/messages'))).toHaveLength(0);
 });
 
-it.each(['open', 'close', 'stop'] as const)('typed unavailable /%s is not sent and retains the draft', async command => {
+it.each(['reopen', 'close', 'stop'] as const)('typed unavailable /%s is not sent and retains the draft', async command => {
   const fixture = renderCommandFixture({ closed: command === 'close' });
   const input = await open();
   await type(input, '/');
@@ -73,7 +73,7 @@ it('shows registry order and filters by command-name prefix', async () => {
   renderCommandFixture(); const input = await open();
   await type(input, '/');
   await waitFor(() => expect(screen.getAllByRole('option').map(option => option.querySelectorAll('span')[1]?.textContent))
-    .toEqual(['reset', 'new', 'side', 'compact', 'mem', 'terminal', 'close']));
+    .toEqual(['reset', 'new', 'side', 'compact', 'mem', 'terminal', 'open', 'close']));
   await type(input, '/cl');
   await waitFor(() => expect(screen.getAllByRole('option').map(option => option.textContent)).toEqual(['closeClose this Track']));
 });
@@ -123,7 +123,7 @@ it('keeps the v1 running composer read-only and interrupts once through Stop', a
 });
 
 it.each([
-  ['open', { closed: true }, { closed: false }],
+  ['reopen', { closed: true }, { closed: false }],
 ] as const)('menu /%s completes before submit invokes the typed mutation', async (command, options, body) => {
   const fixture = renderCommandFixture(options); const input = await open();
   await type(input, '/');
@@ -136,16 +136,16 @@ it.each([
 
 it.each([
   ['close', 'Closing the track is unconfirmed.'],
-  ['open', 'Reopening the track is unconfirmed.'],
+  ['reopen', 'Reopening the track is unconfirmed.'],
 ] as const)('shows /%s mutation failures in the composer and restores the draft', async (command, message) => {
-  renderCommandFixture({ closed: command === 'open',
+  renderCommandFixture({ closed: command === 'reopen',
     patch: () => ({ status: 500, statusText: 'Internal Server Error', body: {} }) });
   const input = await open(); await submit(input, `/${command}`);
   await waitFor(() => expect(input.closest('[data-nc-composer]')?.querySelector('[role="alert"]')?.textContent).toContain(message));
   expect(input.textContent).toBe(`/${command}`);
 });
 
-it('keeps Track commands out of ordinary conversations and new drafts', async () => {
+it('keeps Track lifecycle commands out of ordinary conversations and new drafts', async () => {
   renderCommandFixture();
   await userEvent.click(await screen.findByRole('button', { name: /Conversation Other conversation/ }));
   let input = await screen.findByRole('combobox', { name: 'Message' }); await type(input, '/');

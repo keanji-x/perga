@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import { reportReferenceRepository, reportTextReferences, qualifiedReportFileReference } from './report-references.js';
-import { parseReportFileLink, reportFilePathRelativeToRoot } from './report-file.js';
+import { parseReportFileLink, reportFileNavigationPath } from './report-file.js';
 
 it('derives one repository only from explicit visible Markdown links', () => {
   expect(reportReferenceRepository(['[issue](https://github.com/example/project/issues/1)', '[PR](https://github.com/example/project/pull/2)']))
@@ -28,7 +28,7 @@ it('does not guess repositories or accept invalid issue numbers/context', () => 
   }
 });
 
-it.each(['fe/core/track.ts:12-20', './docs/report.md', '../docs/report.md', '/repo/fe/track.ts:12,20-30'])('recognizes qualified source %s while keeping root admission authoritative', value => {
+it.each(['fe/core/track.ts:12-20', './docs/report.md', '~/docs/report.md#L4-L8', '../docs/report.md', '/repo/fe/track.ts:12,20-30'])('recognizes qualified source %s with its suffix', value => {
   expect(qualifiedReportFileReference(value)).toBe(true);
   const parts = reportTextReferences('查看 ' + value + '。', null);
   expect(parts.map(part => part.text).join('')).toBe('查看 ' + value + '。');
@@ -39,7 +39,8 @@ it('normalizes source line/range suffixes through the file owner', () => {
   expect(parseReportFileLink('fe/core/track.ts:12-20,25:3')).toEqual({ path: 'fe/core/track.ts' });
   const target = parseReportFileLink('../../outside.ts:1-2');
   expect(target).not.toBeNull();
-  expect(target !== null && reportFilePathRelativeToRoot('/repo', target)).toBeNull();
+  expect(target).toEqual({ path: '../../outside.ts', line: 1, endLine: 2 });
+  expect(target !== null && reportFileNavigationPath('/repo', target.path)).toBe('../../outside.ts');
 });
 
 it.each(['_local/2026-11-17/交付-productlist-pl_tianji1116.md', '交付/报告.md', './docs/cafe\u0301.md:12-20'])('recognizes the complete Unicode inline-code file path %s', value => {

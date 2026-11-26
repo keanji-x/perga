@@ -17,13 +17,39 @@ it('retries the same failed report file without leaving the report', async () =>
 });
 
 it('remounts a failed report image for a fresh load', async () => {
-  render(<ReportFileViewer path="/repo/image.png" files={{ readFile: vi.fn(), rawUrl: (path) => path }}
+  const readFile = vi.fn().mockResolvedValue({ path: 'image.png', size: 0, text: '', truncated: false });
+  render(<ReportFileViewer path="/repo/image.png" files={{ readFile, rawUrl: (path) => path }}
     fileRoot="/repo" wide onClose={() => {}} />);
   const image = await screen.findByRole('img');
   fireEvent.error(image);
   expect(screen.getByRole('alert').querySelector('span:not([aria-hidden])')?.textContent).toBe('Could not read this image.');
   await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
   expect(await screen.findByRole('img')).not.toBe(image);
+});
+
+it('reports an image’s canonical path when the raw image loads', async () => {
+  const alias = '/tmp/docs/folder/../image.png';
+  const readFile = vi.fn().mockResolvedValue({ path: 'docs/image.png', size: 0, text: '', truncated: false });
+  const onFileOpened = vi.fn();
+  render(<ReportFileViewer path={alias} files={{ readFile, rawUrl: (path) => `/track-raw?path=${encodeURIComponent(path)}` }}
+    fileRoot="/tmp" wide onFileOpened={onFileOpened} onClose={() => {}} />);
+  const image = await screen.findByRole('img', { name: 'docs/image.png' });
+  expect(image.getAttribute('src')).toBe('/track-raw?path=docs%2Fimage.png');
+  expect(readFile).toHaveBeenCalledWith(alias);
+  expect(onFileOpened).not.toHaveBeenCalled();
+  fireEvent.load(image);
+  expect(onFileOpened).toHaveBeenCalledExactlyOnceWith('docs/image.png');
+});
+
+it('shows the read error when the image path cannot be resolved', async () => {
+  const readFile = vi.fn().mockRejectedValue(new Error('Read failed'));
+  const rawUrl = vi.fn();
+  const onFileOpened = vi.fn();
+  render(<ReportFileViewer path="image.png" files={{ readFile, rawUrl }}
+    fileRoot="/repo" wide onFileOpened={onFileOpened} onClose={() => {}} />);
+  await screen.findByRole('alert');
+  expect(rawUrl).not.toHaveBeenCalled();
+  expect(onFileOpened).not.toHaveBeenCalled();
 });
 
 it('renders Markdown images relative to its file directory through the Track port', async () => {
@@ -35,14 +61,15 @@ it('renders Markdown images relative to its file directory through the Track por
   render(<ReportFileViewer path="docs/note.md" files={files} fileRoot="/repo" wide onClose={() => {}}
     onOpenFileLink={openFile} linkPreview={{ trackId: 'track', report, files }} />);
   const image = await screen.findByRole('img', { name: 'Figure' });
-  expect(image.getAttribute('src')).toBe('/track-raw/images/figure.svg');
+  expect(image.getAttribute('src')).toBe('/track-raw/docs/../images/figure.svg');
   fireEvent.click(image);
-  expect(openFile).toHaveBeenCalledWith({ path: 'images/figure.svg' });
+  expect(openFile).toHaveBeenCalledWith({ path: 'docs/../images/figure.svg' });
   expect(readFile.mock.calls).toEqual([['docs/note.md']]);
 });
 
 it('renders standalone report images inside an interactive inspection button', async () => {
-  render(<ReportFileViewer path="/repo/image.png" files={{ readFile: vi.fn(), rawUrl: (path) => path }}
+  const readFile = vi.fn().mockResolvedValue({ path: 'image.png', size: 0, text: '', truncated: false });
+  render(<ReportFileViewer path="/repo/image.png" files={{ readFile, rawUrl: (path) => path }}
     fileRoot="/repo" wide onClose={() => {}} />);
   const trigger = await screen.findByRole('button', { name: 'Inspect image.png' });
   expect(trigger.getAttribute('aria-haspopup')).toBe('dialog');

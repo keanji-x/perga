@@ -49,13 +49,13 @@ export function reportReferenceRepository(markdown: readonly string[], readMarkd
 
 /** This recognizes qualified paths, not ordinary identifiers, API routes or command fragments. */
 export function qualifiedReportFileReference(value: string): boolean {
-  return value.includes('/') && /^(?:\.{1,2}\/|\/)?[\p{L}\p{M}\p{N}_.-]+(?:\/[\p{L}\p{M}\p{N}_.-]+)*\.[A-Za-z][A-Za-z0-9]*(?::[0-9]+(?:-[0-9]+)?(?:,[0-9]+(?:-[0-9]+)?)*(?::[0-9]+)?)?$/u.test(value)
+  return value.includes('/') && /^(?:(?:\.{1,2}|~)?\/)?[\p{L}\p{M}\p{N}_.-]+(?:\/[\p{L}\p{M}\p{N}_.-]+)*\.[A-Za-z][A-Za-z0-9]*(?::[0-9]+(?:-[0-9]+)?(?:,[0-9]+(?:-[0-9]+)?)*(?::[0-9]+)?|#L[0-9]+(?:-L?[0-9]+)?)?$/u.test(value)
     && parseReportFileLink(value) !== null;
 }
 
 /** Recognition preserves every character. Admission/navigation happens in the report renderer. */
 export function reportTextReferences(text: string, repository: ReferenceRepository | null): readonly ReportTextReference[] {
-  const pattern = /\b(?:issue|pr|pull request)\s*#[0-9]+\b|(?:\.{1,2}\/|\/)?[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*\.[A-Za-z][A-Za-z0-9]*(?::[0-9]+(?:-[0-9]+)?(?:,[0-9]+(?:-[0-9]+)?)*(?::[0-9]+)?)?/gi;
+  const pattern = /\b(?:issue|pr|pull request)\s*#[0-9]+\b|(?:(?:\.{1,2}|~)?\/)?[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*\.[A-Za-z][A-Za-z0-9]*(?::[0-9]+(?:-[0-9]+)?(?:,[0-9]+(?:-[0-9]+)?)*(?::[0-9]+)?|#L[0-9]+(?:-L?[0-9]+)?)?/gi;
   const parts: ReportTextReference[] = [];
   let from = 0;
   for (const match of text.matchAll(pattern)) {

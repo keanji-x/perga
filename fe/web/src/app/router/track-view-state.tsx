@@ -55,8 +55,9 @@ export function useTrackViewState(trackId: string, reportReady: boolean) {
   const hash = useRouterState({ select: (state) => state.location.hash });
   useLayoutEffect(() => {
     if (views !== null) {
-      const { card, file, panel } = search;
-      views.ensure(trackId).search = { card, file, panel };
+      const { card, file, line, panel } = search;
+      const view = views.ensure(trackId);
+      view.search = { card, file, line, panel };
     }
   }, [search, trackId, views]);
   useTrackScrollPorts(views, trackId, reportReady, hash);

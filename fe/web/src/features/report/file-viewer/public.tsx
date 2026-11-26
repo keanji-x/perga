@@ -6,7 +6,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import type { WorkspaceFilePort } from '../../../../../core/domain/fs.ts';
 import type { TrackReport } from '../../../../../core/domain/report.ts';
 import type { ReportSourceLinkTarget } from '../../../../../core/domain/report-source.ts';
-import type { ReportFileLinkTarget } from '../../../../../core/domain/report-file.ts';
+import { fileParentDirectory, type ReportFileLinkTarget } from '../../../../../core/domain/report-file.ts';
 import { FileReadError, useReportFileResource } from '../../../systems/fs-viewers/public.tsx';
 import { useState } from '../../../ui/state/public.ts';
 import type { ReportLinkPreviewResources } from '../link-preview/public.tsx';
@@ -18,11 +18,6 @@ function basename(path: string): string {
   return path.slice(path.lastIndexOf('/') + 1);
 }
 
-function parentDirectory(path: string): string {
-  const separator = path.lastIndexOf('/');
-  return separator <= 0 ? '' : path.slice(0, separator);
-}
-
 /**
  * A file rendered as another document in the Report workspace. It deliberately
  * has no card head, directory tree or Diff mode: following evidence from prose
@@ -30,9 +25,13 @@ function parentDirectory(path: string): string {
  * card board.
  */
 export function ReportFileViewer({
-  path, files, fileRoot, wide, onClose, hasBackFocus, onFileOpened, onOpenFileLink, onOpenSourceLink, linkPreview, sourceInsertion,
+  path, line, endLine, silent = false, openRequest, files, fileRoot, wide, onClose, hasBackFocus, onFileOpened, onOpenFileLink, onOpenSourceLink, linkPreview, sourceInsertion,
 }: Readonly<{
   path: string;
+  line?: number;
+  endLine?: number;
+  silent?: boolean;
+  openRequest?: number;
   files: WorkspaceFilePort;
   fileRoot: string;
   /** Code, text, images and pages may use the panel column when no card owns it. */
@@ -47,19 +46,20 @@ export function ReportFileViewer({
   sourceInsertion?: ReportSourceInsertion;
 }>) {
   const layerRef = useRef<HTMLDivElement | null>(null);
-  const resource = useReportFileResource(path, files, onFileOpened);
-  const markdown = resource.kind === 'loaded' && resource.format === 'markdown';
+  const resource = useReportFileResource(path, files, { onOpened: onFileOpened, resolveImagePath: true });
+  const highlightLines = line === undefined ? undefined : { start: line, end: endLine ?? line };
+  const markdown = resource.kind === 'loaded' && resource.format === 'markdown' && highlightLines === undefined;
   const markdownText = markdown ? resource.text : null;
   const report = useMemo<TrackReport | null>(() => markdownText === null ? null
     : { summary: '', body: markdownText, blocks: null }, [markdownText]);
-  /* A page opens rendered; its source is one toggle away. */
-  const [pageView, setPageView] = useState<'page' | 'source'>('page');
   const imageUrl = resource.kind === 'image' ? resource.url : null;
   const imageAlt = resource.kind === 'image' ? resource.path : '';
   const imageMedia = useMemo(() => (imageUrl === null ? [] : [{ src: imageUrl, alt: imageAlt }]), [imageAlt, imageUrl]);
   const imageLightbox = usePortalLightbox(imageMedia);
 
-  useEffect(() => { layerRef.current?.focus({ preventScroll: true }); }, []);
+  useEffect(() => {
+    if (!silent) layerRef.current?.focus({ preventScroll: true });
+  }, [path, line, endLine, silent, openRequest]);
 
   useLayerDismissal({
     isActive: true,
@@ -73,7 +73,7 @@ export function ReportFileViewer({
   return (
     <LayerDepthProvider><div
       ref={layerRef}
-      className={styles.layer}
+      className={highlightLines === undefined ? styles.layer : `${styles.layer} ${styles.lineJump}`}
       data-nc-report-file-viewer=""
       data-nc-report-file-wide={wide ? '' : undefined}
       data-nc-escape-layer=""
@@ -82,7 +82,6 @@ export function ReportFileViewer({
       tabIndex={-1}
     >
       <div className={`${styles.body} ${markdown ? styles.bodyProse : wide ? styles.bodyWide : ''}`}>
-        <div className={styles.fileName} title={path}>{basename(path)}</div>
         {resource.kind === 'loading' && <p className={styles.state} role="status">Loading file…</p>}
         {resource.kind === 'error' && <div className={styles.error}>
           <FileReadError failure={resource.failure} resource={resource.resource} onRetry={resource.retry} />
@@ -110,18 +109,14 @@ export function ReportFileViewer({
             {imageLightbox.portal}
           </figure>
         )}
-        {resource.kind === 'html' && (
-          <div className={styles.pageWrap}>
-            <div className={styles.views} role="group" aria-label="Page view">
-              <button type="button" className={styles.view} aria-pressed={pageView === 'page'} onClick={() => { setPageView('page'); }}>Page</button>
-              <button type="button" className={styles.view} aria-pressed={pageView === 'source'} onClick={() => { setPageView('source'); }}>Source</button>
-            </div>
-            {pageView === 'page'
-              ? <WorkspaceHtmlPage url={resource.url} title={resource.path} />
-              : <div className={styles.pageSource} data-nc-report-file-source=""><ReadOnlyCode text={resource.text} source={{ kind: 'filename', value: resource.path }} /></div>}
-          </div>
-        )}
-        {resource.kind === 'loaded' && resource.format === 'markdown' && (
+        {resource.kind === 'html' && <HtmlFileView
+          key={JSON.stringify([path, line, endLine, openRequest])}
+          path={resource.path}
+          text={resource.text}
+          url={resource.url}
+          highlightLines={highlightLines}
+        />}
+        {resource.kind === 'loaded' && markdown && (
           <div className={styles.markdown}>
             {resource.truncated && <p className={styles.notice}>Showing the first 2 MiB of this file.</p>}
             <ReportDocument
@@ -129,22 +124,42 @@ export function ReportFileViewer({
               empty={<></>}
               sourceInsertion={sourceInsertion}
               fileRoot={fileRoot}
-              fileBasePath={parentDirectory(resource.path)}
+              fileBasePath={fileParentDirectory(resource.path) ?? ''}
               onOpenFileLink={onOpenFileLink}
               onOpenSourceLink={onOpenSourceLink}
               linkPreview={linkPreview}
             />
           </div>
         )}
-        {resource.kind === 'loaded' && resource.format === 'source' && (
+        {resource.kind === 'loaded' && !markdown && (
           <div className={styles.sourceWrap}>
             {resource.truncated && <p className={styles.notice}>Showing the first 2 MiB of this file.</p>}
-            <div data-nc-report-file-source=""><ReadOnlyCode text={resource.text} source={{ kind: 'filename', value: resource.path }} /></div>
+            <div data-nc-report-file-source=""><ReadOnlyCode text={resource.text} source={{ kind: 'filename', value: resource.path }}
+              highlightLines={highlightLines} highlightRequest={openRequest} /></div>
           </div>
         )}
       </div>
     </div></LayerDepthProvider>
   );
+}
+
+function HtmlFileView({ path, text, url, highlightLines }: Readonly<{
+  path: string;
+  text: string;
+  url: string;
+  highlightLines?: Readonly<{ start: number; end: number }>;
+}>) {
+  const [view, setView] = useState(highlightLines === undefined ? 'page' : 'source');
+  return <div className={styles.pageWrap}>
+    <div className={styles.views} role="group" aria-label="Page view">
+      <button type="button" className={styles.view} aria-pressed={view === 'page'} onClick={() => { setView('page'); }}>Page</button>
+      <button type="button" className={styles.view} aria-pressed={view === 'source'} onClick={() => { setView('source'); }}>Source</button>
+    </div>
+    {view === 'page'
+      ? <WorkspaceHtmlPage url={url} title={path} />
+      : <div className={styles.pageSource} data-nc-report-file-source=""><ReadOnlyCode
+        text={text} source={{ kind: 'filename', value: path }} highlightLines={highlightLines} /></div>}
+  </div>;
 }
 
 // The raw file route applies the same sandbox when a page is opened directly.

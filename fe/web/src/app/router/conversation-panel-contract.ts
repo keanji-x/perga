@@ -1,3 +1,4 @@
+import type { ReportFileLinkTarget } from '../../../../core/domain/report-file.ts';
 import { type CommandBindings } from '../../features/chat/thread/composer-command.ts';
 import { type TerminalWorkbench } from '../../features/track/workbench/public.tsx';
 import type { ConversationCreationSource,PlannerConversationScope } from '../conversations/contracts.ts';
@@ -30,6 +31,8 @@ export type ConversationPanelSource = ConversationCreationSource & Readonly<{
     rememberOn: string;
     /** Known on the Track route; Today resolves the open conversation's Track on demand. */
     workspaceRoot: string | null;
+    openFile?: (target: ReportFileLinkTarget) => void;
+    openFileCommand?: (argument: string) => void;
     scopeOf: (conversationId: string) => PlannerConversationScope | null;
     /** Live execution-scoped approvals for this Track, scoped to each owning sessionId by the pane. */
     pendingApprovals: readonly PendingApproval[];

@@ -2,9 +2,11 @@
 // import `web/src/ui/**`, where the path-joining rule lives; the app-layer adapter injects it.
 
 import { z } from 'zod';
+import type { WorkspaceFileSearchResultDto } from '../api/generated/wire.js';
 
 import { diffSummaryDtoSchema, hostDirListDtoSchema, workspaceFileResultDtoSchema, type DiffSummaryDto } from '../api/perga-v1.js';
-import type { ApiOperation } from '../api/types.js';
+import type { ApiAbortSignal, ApiOperation } from '../api/types.js';
+import { fileParentDirectory } from './report-file.js';
 import type { FailureTable } from './failure-class.js';
 
 const directoryEntryWireSchema = z.object({
@@ -71,7 +73,7 @@ export function readTrackWorkspaceFileOperation(
     method: 'GET',
     path: `/api/v1/tracks/${encodeURIComponent(trackId)}/files?path=${encodeURIComponent(path)}`,
     responseSchema: z.union([
-      workspaceFileResultDtoSchema.transform((dto) => ({
+      workspaceFileResultDtoSchema.refine(dto => !dto.isDirectory, 'Path is a directory.').transform((dto) => ({
         path: dto.relativePath || path,
         size: (dto.content ?? '').length,
         text: dto.content ?? '',
@@ -79,6 +81,19 @@ export function readTrackWorkspaceFileOperation(
       })),
       readFileWireSchema,
     ]),
+  };
+}
+
+const workspaceFileSearchSchema = z.object({ paths: z.array(z.string()), truncated: z.boolean() }) satisfies z.ZodType<WorkspaceFileSearchResultDto>;
+
+export function searchTrackWorkspaceFilesOperation(
+  trackId: string, query: string, signal: ApiAbortSignal,
+): ApiOperation<WorkspaceFileSearchResultDto> {
+  return {
+    method: 'GET',
+    path: `/api/v1/tracks/${encodeURIComponent(trackId)}/files/search?q=${encodeURIComponent(query)}&limit=50`,
+    responseSchema: workspaceFileSearchSchema,
+    signal,
   };
 }
 
@@ -91,13 +106,9 @@ export function listTrackWorkspaceDirectoryOperation(
     method: 'GET',
     path: `/api/v1/tracks/${encodeURIComponent(trackId)}/files${query}`,
     responseSchema: z.union([
-      workspaceFileResultDtoSchema.transform((dto) => ({
+      workspaceFileResultDtoSchema.refine(dto => dto.isDirectory, 'Path is not a directory.').transform((dto) => ({
         path: dto.relativePath,
-        parent: dto.relativePath === ''
-          ? null
-          : dto.relativePath.includes('/')
-            ? dto.relativePath.slice(0, dto.relativePath.lastIndexOf('/'))
-            : '',
+        parent: fileParentDirectory(dto.relativePath),
         entries: (dto.entries ?? []).map((entry) => ({
           name: entry.name,
           is_dir: entry.isDirectory,
@@ -131,11 +142,10 @@ export function trackWorkspaceRawFileUrl(
   trackId: string,
   path: string,
 ): string {
-  const endpoint = 'files/raw';
-  return `/api/v1/tracks/${encodeURIComponent(trackId)}/${endpoint}?path=${encodeURIComponent(path)}`;
+  return `/api/v1/tracks/${encodeURIComponent(trackId)}/files/raw?path=${encodeURIComponent(path)}`;
 }
 
-/** The only filesystem capabilities an agent-authored Report file may use. */
+/** Filesystem reads bound to the Track execution environment. */
 export type WorkspaceFilePort = Readonly<{
   readFile: (path: string) => Promise<ReadFileWire>;
   rawUrl: (path: string) => string;
@@ -197,7 +207,7 @@ export function toDirectoryListing(
  * | 404 `path_not_found`  | the path, or a folder on the way to it, does not exist                | `missing` |
  * | 404 `not_found`       | Track workspace reads only: the Track itself is gone                  | `gone`    |
  * | 400 `bad_request`     | a directory or non-regular file, binary or non-UTF-8 text, a path     | `other`   |
- * |                       | outside the workspace, a path outside any git repository              |           |
+ * |                       | outside any git repository              |           |
  * | anything else         | 5xx, 401, a lost or unreadable answer                                 | `other`   |
  *
  * `missing` and `gone` are told apart because their remedies differ: a path can be restored, a deleted Track cannot.

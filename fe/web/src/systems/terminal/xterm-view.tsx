@@ -218,6 +218,7 @@ export const XtermView = forwardRef<XtermViewHandle, XtermViewProps>(function Xt
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(container);
+    term.element?.setAttribute('data-nc-xterm', '');
     // Suppress xterm.js's OSC 10/11/12 auto-reply: the daemon is the sole responder, and xterm's transparent `clearColor` would race back as pure white.
     term.parser.registerOscHandler(10, () => true);
     term.parser.registerOscHandler(11, () => true);

@@ -6,11 +6,11 @@ import { usePortalLightbox } from '../../../ui/lightbox/public.tsx';
 import { GitHubPreviewLink, useGitHubPreviewsEnabled } from '../../../systems/github-links/public.tsx';
 
 import type { WorkspaceFilePort } from '../../../../../core/domain/fs.ts';
-import { parseReportFileLink, reportFilePathRelativeToRoot } from '../../../../../core/domain/report-file.ts';
+import { parseReportFileLink, reportFileNavigationPath } from '../../../../../core/domain/report-file.ts';
 import { useState } from '../../../ui/state/public.ts';
 import styles from './reply.module.css';
 
-/** Bound by the app to the conversation's own Track. The server owns file containment. */
+/** Bound by the app to the conversation's own Track. The server resolves file paths. */
 export type ReplyLinkRenderer = (props: Readonly<{ href: string; children: ReactNode }>) => ReactNode;
 
 export type ReplyImageFiles = Readonly<{
@@ -26,9 +26,9 @@ function ReplyImage({ src, alt, inLink, imageFiles }: {
   // Preserve network images; local destinations must go through the Track-scoped port.
   const remote = /^(https?:\/\/|\/\/)/i.test(src);
   const target = remote ? null : parseReportFileLink(src);
-  const relative = target === null || imageFiles === null ? null
-    : reportFilePathRelativeToRoot(imageFiles.root, target);
-  const url = remote ? src : relative === null ? null : imageFiles?.files.rawUrl(relative) ?? null;
+  const path = target === null || imageFiles === null ? null
+    : reportFileNavigationPath(imageFiles.root, target.path);
+  const url = remote ? src : path === null ? null : imageFiles?.files.rawUrl(path) ?? null;
   const media = useMemo(() => (url === null || failed || inLink ? [] : [{ src: url, alt }]), [alt, failed, inLink, url]);
   const lightbox = usePortalLightbox(media);
   if (url === null || failed) {

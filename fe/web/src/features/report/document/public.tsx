@@ -283,7 +283,7 @@ function BlockBody({
           renderMarkdown={(markdown, key) => (
             <ProseBlock markdown={markdown} blockId={`${block.id}-${key}`} compact {...textContext} />
           )}
-          onOpenFile={onOpenFileLink === undefined ? undefined : (path) => { onOpenFileLink({ path }); }}
+          onOpenFile={onOpenFileLink}
           onOpenWorker={onOpenWorker}
           onOpenTrack={onOpenTrack}
         />
