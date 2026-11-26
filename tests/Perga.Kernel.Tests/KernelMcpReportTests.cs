@@ -743,27 +743,45 @@ public sealed class KernelMcpReportTests
         Assert.StartsWith("b_", blocks[1].GetProperty("id").GetString(), StringComparison.Ordinal);
     }
 
-    [Fact]
-    public async Task ReportCommitRejectsMultilineNewSectionTitles()
+    [Theory]
+    [InlineData("""{"op":"replace_section","sectionH1":"First\nSecond","markdown":"Body."}""",
+        "'sectionH1' must be a single line.")]
+    [InlineData("""{"op":"replace_section","sectionH1":"Notes","newSectionH1":"First\nSecond"}""",
+        "'newSectionH1' must be a single line.")]
+    [InlineData("""{"op":"edit_block","id":"notes","target":"Missing text","replacement":""}""",
+        "Target text was not found in block 'notes'.")]
+    [InlineData("""{"op":"replace_section","sectionH1":"Other","markdown":"Body.","beforeBlockId":"notes","afterBlockId":"notes"}""",
+        "Specify only one of 'beforeBlockId' and 'afterBlockId'.")]
+    [InlineData("""{"op":"edit_block","id":"missing","target":"Body","replacement":""}""",
+        "Block 'missing' does not exist.")]
+    [InlineData("""{"op":"move","id":"notes","toIndex":-1}""",
+        "MoveBlockOp.ToIndex cannot be negative.")]
+    public async Task ReportCommitReturnsCleanInvalidArgumentForEngineValidationErrors(string op, string expectedMessage)
     {
         await using var ctx = new KernelTestContext();
         var (_, snap) = await ctx.CreateDefaultTrackAsync();
         var caller = await ctx.OpenMcpCallerAsync(snap.Track.LeadSessionId!);
         var read = await Call(ctx, caller, KernelMcpToolNames.ReportRead, new { });
-        var error = await Assert.ThrowsAsync<ArgumentException>(() => Call(ctx, caller, KernelMcpToolNames.ReportCommit, new
+        var seeded = await Call(ctx, caller, KernelMcpToolNames.ReportCommit, new
         {
             anchor = read.GetProperty("anchor"),
-            ops = new[] { new { op = "replace_section", sectionH1 = "Notes", markdown = "Body.", newSectionH1 = "First\nSecond" } }
+            ops = new[] { new { op = "upsert", id = "notes", sectionH1 = "Notes", markdown = "Body." } }
+        });
+        var error = await Assert.ThrowsAsync<KernelException>(() => Call(ctx, caller, KernelMcpToolNames.ReportCommit, new
+        {
+            anchor = seeded.GetProperty("anchor"),
+            ops = new[] { TestJson.Parse(op) }
         }));
 
-        Assert.Equal("newSectionH1", error.ParamName);
-        Assert.Contains("must be a single line", error.Message);
+        Assert.Equal(KernelErrorCode.InvalidArgument, error.Code);
+        Assert.Equal(expectedMessage, error.Message);
     }
 
     [Theory]
     [InlineData("""{"op":"edit_block","id":"notes","target":"old"}""", "replacement")]
     [InlineData("""{"op":"edit_block","id":"notes","target":"old","replacement":null}""", "replacement")]
     [InlineData("""{"op":"edit_block","id":"notes","target":"old","replacement":2}""", "replacement")]
+    [InlineData("""{"op":"edit_block","id":"notes","replacement":""}""", "target")]
     [InlineData("""{"op":"edit_block","id":"notes","target":"","replacement":""}""", "target")]
     [InlineData("""{"op":"edit_block","id":" ","target":"old","replacement":""}""", "id")]
     [InlineData("""{"op":"replace_section","sectionH1":"Notes","markdown":false}""", "markdown")]
