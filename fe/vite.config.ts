@@ -2,11 +2,13 @@ import { markdownRuntimeAliases } from './tools/architecture/markdown-runtime-re
 import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import type { ClientRequest, IncomingMessage } from 'node:http';
+import { fileURLToPath } from 'node:url';
 
 import { defineConfig, type PluginOption } from 'vite';
 import react from '@vitejs/plugin-react';
 
 import { pwaManifestLink } from './tools/pwa/vite-plugin.ts';
+import { cascadeLayerOrderPlugin } from './tools/styles/vite-cascade-order.ts';
 import { OPTIMIZED_DEPENDENCIES } from './tools/vitest/optimized-dependencies.ts';
 
 const apiProxyTarget = process.env.FE_API_PROXY_TARGET ?? 'http://127.0.0.1:4041';
@@ -43,10 +45,11 @@ interface PlatformDelivery {
   readonly target: string | undefined;
   readonly version: () => string;
 }
+const entryCssPath = fileURLToPath(new URL('./web/src/styles/entry.css', import.meta.url));
 const PLATFORMS: Readonly<Record<Platform, PlatformDelivery>> = Object.freeze({
   web: Object.freeze({
     publicDir: 'public',
-    plugins: () => [react(), pwaManifestLink()],
+    plugins: () => [react(), pwaManifestLink(), cascadeLayerOrderPlugin(entryCssPath)],
     target: undefined,
     version: () => version,
   }),
@@ -73,7 +76,13 @@ export default defineConfig(({ mode }) => {
     root: 'web',
     base: '/',
     publicDir: platform.publicDir,
-    build: { target: platform.target },
+    build: {
+      target: platform.target,
+      // Keep all CSS in one bundle to avoid split chunk stylesheets; `cascadeLayerOrderPlugin`
+      // restores and verifies the authoritative `@layer` preamble against LightningCSS elision
+      // and single-bundle concatenation order.
+      cssCodeSplit: false,
+    },
     plugins: platform.plugins(),
     resolve: {
       alias: markdownRuntimeAliases(),
