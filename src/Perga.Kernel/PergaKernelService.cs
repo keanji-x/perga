@@ -652,9 +652,37 @@ public sealed partial class PergaKernelService : IPergaKernel, IFlowTrackSpawner
                 ?? throw KernelException.InvalidArgument("The selected workspace option is unavailable for this folder. Choose an available workspace option.");
         }
         var memoryWorkspace = string.Equals(area.Id, MemoryTrackBinding.SystemAreaId, StringComparison.Ordinal);
+        var explicitDriver = NormalizeWorkspaceDriver(req.WorkspaceDriver);
+        var templateDriver = NormalizeWorkspaceDriver(policy?.Manifest.WorkspaceDriver);
         var driverId = memoryWorkspace
             ? VcsWorkspaceDriver.Id
-            : choice?.DriverId ?? PreferredWorkspaceDriver(req.WorkspaceDriver, policy?.Manifest.WorkspaceDriver);
+            : choice?.DriverId ?? PreferredWorkspaceDriver(explicitDriver, templateDriver);
+        VcsBackendKind? resolvedVcsBackend = null;
+        if (!memoryWorkspace && choice is null && source is not null &&
+            explicitDriver is null && templateDriver is null &&
+            driverId == VcsWorkspaceDriver.Id)
+        {
+            if (!await env.Files.DirectoryExistsAsync(source, ct).ConfigureAwait(false))
+                throw KernelException.InvalidArgument("The source folder is unavailable. Choose an existing folder.");
+
+            var backends = await env.Vcs.ListWorkspaceBackendsAsync(source, ct).ConfigureAwait(false);
+            if (backends.Contains(VcsBackendKind.PlainDirectory))
+            {
+                if (!env.WorkspaceDrivers.RegisteredDrivers.Contains(DirectWorkspaceDriver.Id))
+                    throw KernelException.PreconditionFailed(
+                        $"Workspace driver '{DirectWorkspaceDriver.Id}' is unavailable for this source on target '{env.Descriptor.Id}'.");
+                driverId = DirectWorkspaceDriver.Id;
+            }
+            else if (backends.Count > 0)
+            {
+                resolvedVcsBackend = backends[0];
+            }
+            else
+            {
+                throw KernelException.PreconditionFailed(
+                    $"Workspace driver '{VcsWorkspaceDriver.Id}' has no available VCS backend for this source on target '{env.Descriptor.Id}'.");
+            }
+        }
         var blankWorkspace = source is null;
         // The VCS driver provisions a plain directory for an empty workspace. The
         // source is a logical root in this mode and is never copied or removed.
@@ -674,7 +702,7 @@ public sealed partial class PergaKernelService : IPergaKernel, IFlowTrackSpawner
             throw KernelException.PreconditionFailed($"Workspace driver '{driverId}' is unavailable for this source on target '{env.Descriptor.Id}'.");
         var preparation = new WorkspacePreparation(
             new WorkspaceProvisionRequest(trackId, NormalizeExecutionPath(env, sourcePath), NormalizeExecutionPath(env, targetRootDir),
-                lowerCacheDirs, req.BaseRevision, NewEmptyWorkspace: blankWorkspace, VcsBackend: choice?.Backend),
+                lowerCacheDirs, req.BaseRevision, NewEmptyWorkspace: blankWorkspace, VcsBackend: choice?.Backend ?? resolvedVcsBackend),
             createCommand, RepeatableProvision: workspaceDriver.ProvisionIsRepeatable);
 
         var templateInputs = JsonHelpers.EnsureClonedObject(req.TemplateInputs);

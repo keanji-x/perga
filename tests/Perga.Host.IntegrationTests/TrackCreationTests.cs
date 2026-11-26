@@ -146,7 +146,10 @@ public sealed class TrackCreationTests
             configureExtraServices: services => services.AddSingleton<IVcsService>(vcs));
         var areaId = await CreateAreaAsync(host);
         using var inherited = await host.AuthenticatedClient.GetAsync($"/api/v1/areas/{areaId}/workspace-options");
-        Assert.Equal("copy", (await ReadAsync(inherited)).GetProperty("defaultId").GetString());
+        var inheritedOptions = await ReadAsync(inherited);
+        Assert.Equal("direct", inheritedOptions.GetProperty("defaultId").GetString());
+        Assert.Equal(new[] { "direct", "copy" },
+            inheritedOptions.GetProperty("options").EnumerateArray().Select(option => option.GetProperty("id").GetString()));
         using var cleared = await host.AuthenticatedClient.GetAsync($"/api/v1/areas/{areaId}/workspace-options?cwd=");
         Assert.Equal("managed", (await ReadAsync(cleared)).GetProperty("defaultId").GetString());
         var source = Path.Combine(host.DataDir, "colocated");
@@ -198,6 +201,271 @@ public sealed class TrackCreationTests
         using var managedReady = await host.AuthenticatedClient.GetAsync($"/api/v1/tracks/{managedId}");
         var managedSpec = (await ReadAsync(managedReady)).GetProperty("track").GetProperty("workspaceSpec");
         Assert.True(managedSpec.GetProperty("managedEmptyWorkspace").GetBoolean());
+    }
+
+    [Fact]
+    public async Task PlainDirectoryAllowsExplicitCopyAndRespectsTemplateDriverPriority()
+    {
+        await using var host = new PergaHostTestCluster();
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        kernel.Templates.RegisterTemplate(
+            """
+            export default defineTemplate({
+              id: "copy-template",
+              title: "Copy template",
+              workspace: { driver: "vcs-workspace" }
+            });
+            """);
+
+        var plainDir = Directory.CreateDirectory(Path.Combine(host.DataDir, "plain-source")).FullName;
+        await File.WriteAllTextAsync(Path.Combine(plainDir, "notes.txt"), "plain content");
+        var areaId = await CreateAreaAsync(host);
+
+        using var defaultOptsResp = await host.AuthenticatedClient.GetAsync(
+            $"/api/v1/areas/{areaId}/workspace-options?cwd={Uri.EscapeDataString(plainDir)}");
+        var defaultOpts = await ReadAsync(defaultOptsResp);
+        Assert.Equal("direct", defaultOpts.GetProperty("defaultId").GetString());
+        Assert.Equal(new[] { "direct", "copy" },
+            defaultOpts.GetProperty("options").EnumerateArray().Select(option => option.GetProperty("id").GetString()));
+
+        using var templateOptsResp = await host.AuthenticatedClient.GetAsync(
+            $"/api/v1/areas/{areaId}/workspace-options?cwd={Uri.EscapeDataString(plainDir)}&templateId=copy-template");
+        var templateOpts = await ReadAsync(templateOptsResp);
+        Assert.Equal("copy", templateOpts.GetProperty("defaultId").GetString());
+        Assert.Equal(new[] { "copy", "direct" },
+            templateOpts.GetProperty("options").EnumerateArray().Select(option => option.GetProperty("id").GetString()));
+
+        using var explicitCopyResp = await PostAsync(host, "/api/v1/tracks", "plain-explicit-copy",
+            new { areaId, cwd = plainDir, workspaceOptionId = "copy" });
+        var explicitCopyId = (await ReadAsync(explicitCopyResp)).GetProperty("track").GetProperty("id").GetString()!;
+        await kernel.WaitForTrackIdleAsync(explicitCopyId).WaitAsync(Deadline);
+        var explicitCopy = (await kernel.GetTrackAggregateAsync(explicitCopyId)).Track;
+        Assert.Equal(VcsWorkspaceDriver.Id, explicitCopy.WorkspaceDriver);
+        Assert.NotEqual(plainDir, explicitCopy.Cwd);
+        Assert.Equal("PlainDirectory", explicitCopy.WorkspaceSpec.GetProperty("metadata").GetProperty("Kind").GetString());
+        Assert.Equal("plain content", await File.ReadAllTextAsync(Path.Combine(explicitCopy.Cwd, "notes.txt")));
+    }
+
+    [Fact]
+    public async Task PlainDirectoryDoesNotSilentlyCopyWhenHostDefaultsToVcsWorkspace()
+    {
+        var process = new WorkspaceProcess();
+        var vcs = new VcsService(process, new VcsServiceOptions { DisableJj = true });
+        await using var host = new PergaHostTestCluster(
+            configureHostOptions: options => options.DefaultWorkspaceDriver = VcsWorkspaceDriver.Id,
+            configureExtraServices: services => services.AddSingleton<IVcsService>(vcs));
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        kernel.Templates.RegisterTemplate(
+            """
+            export default defineTemplate({
+              id: "explicit-vcs",
+              title: "Explicit VCS",
+              workspace: { driver: "vcs-workspace" }
+            });
+            """);
+
+        var inheritedPlainDir = Directory.CreateDirectory(Path.Combine(host.DataDir, "inherited-plain")).FullName;
+        await File.WriteAllTextAsync(Path.Combine(inheritedPlainDir, "inherited.txt"), "inherited");
+        var explicitPlainDir = Directory.CreateDirectory(Path.Combine(host.DataDir, "explicit-plain")).FullName;
+        await File.WriteAllTextAsync(Path.Combine(explicitPlainDir, "explicit.txt"), "explicit");
+        var gitDir = Directory.CreateDirectory(Path.Combine(host.DataDir, "git-repo")).FullName;
+        Directory.CreateDirectory(Path.Combine(gitDir, ".git"));
+        await File.WriteAllTextAsync(Path.Combine(gitDir, ".git", "HEAD"), "ref: refs/heads/main\n");
+
+        using var areaResp = await PostAsync(host, "/api/v1/areas", "plain-default-area",
+            new { name = "Plain default", defaultCwd = inheritedPlainDir });
+        var areaId = (await ReadAsync(areaResp)).GetProperty("id").GetString()!;
+
+        using var inheritedResp = await PostAsync(host, "/api/v1/tracks", "plain-inherited", new { areaId });
+        var inheritedId = (await ReadAsync(inheritedResp)).GetProperty("track").GetProperty("id").GetString()!;
+        await kernel.WaitForTrackIdleAsync(inheritedId).WaitAsync(Deadline);
+        var inheritedTrack = (await kernel.GetTrackAggregateAsync(inheritedId)).Track;
+        Assert.Equal((DirectWorkspaceDriver.Id, inheritedPlainDir), (inheritedTrack.WorkspaceDriver, inheritedTrack.Cwd));
+
+        using var explicitCwdResp = await PostAsync(host, "/api/v1/tracks", "plain-explicit-cwd",
+            new { areaId, cwd = explicitPlainDir });
+        var explicitCwdId = (await ReadAsync(explicitCwdResp)).GetProperty("track").GetProperty("id").GetString()!;
+        await kernel.WaitForTrackIdleAsync(explicitCwdId).WaitAsync(Deadline);
+        var explicitCwdTrack = (await kernel.GetTrackAggregateAsync(explicitCwdId)).Track;
+        Assert.Equal((DirectWorkspaceDriver.Id, explicitPlainDir), (explicitCwdTrack.WorkspaceDriver, explicitCwdTrack.Cwd));
+
+        using var explicitDriverResp = await PostAsync(host, "/api/v1/tracks", "plain-explicit-driver",
+            new { areaId, cwd = explicitPlainDir, workspaceDriver = VcsWorkspaceDriver.Id });
+        var explicitDriverId = (await ReadAsync(explicitDriverResp)).GetProperty("track").GetProperty("id").GetString()!;
+        await kernel.WaitForTrackIdleAsync(explicitDriverId).WaitAsync(Deadline);
+        var explicitDriverTrack = (await kernel.GetTrackAggregateAsync(explicitDriverId)).Track;
+        Assert.Equal(VcsWorkspaceDriver.Id, explicitDriverTrack.WorkspaceDriver);
+        Assert.NotEqual(explicitPlainDir, explicitDriverTrack.Cwd);
+        Assert.Equal("explicit", await File.ReadAllTextAsync(Path.Combine(explicitDriverTrack.Cwd, "explicit.txt")));
+
+        using var templateDriverResp = await PostAsync(host, "/api/v1/tracks", "plain-template-driver",
+            new { areaId, cwd = explicitPlainDir, templateId = "explicit-vcs" });
+        var templateDriverId = (await ReadAsync(templateDriverResp)).GetProperty("track").GetProperty("id").GetString()!;
+        await kernel.WaitForTrackIdleAsync(templateDriverId).WaitAsync(Deadline);
+        var templateDriverTrack = (await kernel.GetTrackAggregateAsync(templateDriverId)).Track;
+        Assert.Equal(VcsWorkspaceDriver.Id, templateDriverTrack.WorkspaceDriver);
+        Assert.NotEqual(explicitPlainDir, templateDriverTrack.Cwd);
+        Assert.Equal("explicit", await File.ReadAllTextAsync(Path.Combine(templateDriverTrack.Cwd, "explicit.txt")));
+
+        using var gitResp = await PostAsync(host, "/api/v1/tracks", "git-default-vcs",
+            new { areaId, cwd = gitDir });
+        var gitId = (await ReadAsync(gitResp)).GetProperty("track").GetProperty("id").GetString()!;
+        await kernel.WaitForTrackIdleAsync(gitId).WaitAsync(Deadline);
+        var gitTrack = (await kernel.GetTrackAggregateAsync(gitId)).Track;
+        Assert.Equal(VcsWorkspaceDriver.Id, gitTrack.WorkspaceDriver);
+        Assert.NotEqual(gitDir, gitTrack.Cwd);
+        Assert.Equal("GitWorktree", gitTrack.WorkspaceSpec.GetProperty("metadata").GetProperty("Kind").GetString());
+    }
+
+    [Fact]
+    public async Task PlainDirectoryFailsClosedWhenDirectDriverIsUnregistered()
+    {
+        await using var host = new PergaHostTestCluster(
+            configureHostOptions: options => options.DefaultWorkspaceDriver = VcsWorkspaceDriver.Id,
+            configureExtraServices: services => services.AddSingleton<IWorkspaceDriverRegistry>(sp =>
+                new WorkspaceDriverRegistry([new VcsWorkspaceDriver(sp.GetRequiredService<IVcsService>())])));
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        kernel.Templates.RegisterTemplate(
+            """
+            export default defineTemplate({
+              id: "copy-only-template",
+              title: "Copy only template",
+              workspace: { driver: "vcs-workspace" }
+            });
+            """);
+
+        var plainDir = Directory.CreateDirectory(Path.Combine(host.DataDir, "plain-no-direct")).FullName;
+        var areaId = await CreateAreaAsync(host);
+
+        using var optsResp = await host.AuthenticatedClient.GetAsync(
+            $"/api/v1/areas/{areaId}/workspace-options?cwd={Uri.EscapeDataString(plainDir)}");
+        var opts = await ReadAsync(optsResp);
+        Assert.Equal(JsonValueKind.Null, opts.GetProperty("defaultId").ValueKind);
+        Assert.Equal(new[] { "copy" },
+            opts.GetProperty("options").EnumerateArray().Select(option => option.GetProperty("id").GetString()));
+
+        using var templateOptsResp = await host.AuthenticatedClient.GetAsync(
+            $"/api/v1/areas/{areaId}/workspace-options?cwd={Uri.EscapeDataString(plainDir)}&templateId=copy-only-template");
+        var templateOpts = await ReadAsync(templateOptsResp);
+        Assert.Equal("copy", templateOpts.GetProperty("defaultId").GetString());
+        Assert.Equal(new[] { "copy" },
+            templateOpts.GetProperty("options").EnumerateArray().Select(option => option.GetProperty("id").GetString()));
+
+        using var createResp = await PostAsync(host, "/api/v1/tracks", "plain-no-direct-create",
+            new { areaId, cwd = plainDir });
+        Assert.Equal(HttpStatusCode.Conflict, createResp.StatusCode);
+        using var failure = JsonDocument.Parse(await createResp.Content.ReadAsStringAsync());
+        Assert.Equal("precondition_failed", failure.RootElement.GetProperty("code").GetString());
+    }
+
+    [Fact]
+    public async Task JjOnlyRepoWithoutJjExecutableFailsClosedInsteadOfCopying()
+    {
+        var process = new WorkspaceProcess();
+        var vcs = new VcsService(process, new VcsServiceOptions { DisableJj = true });
+        await using var host = new PergaHostTestCluster(
+            configureHostOptions: options => options.DefaultWorkspaceDriver = VcsWorkspaceDriver.Id,
+            configureExtraServices: services => services.AddSingleton<IVcsService>(vcs));
+
+        var jjOnlyDir = Directory.CreateDirectory(Path.Combine(host.DataDir, "jj-only-repo")).FullName;
+        Directory.CreateDirectory(Path.Combine(jjOnlyDir, ".jj", "repo"));
+        await File.WriteAllTextAsync(Path.Combine(jjOnlyDir, "README.md"), "jj only");
+        var areaId = await CreateAreaAsync(host);
+
+        using var optsResp = await host.AuthenticatedClient.GetAsync(
+            $"/api/v1/areas/{areaId}/workspace-options?cwd={Uri.EscapeDataString(jjOnlyDir)}");
+        var opts = await ReadAsync(optsResp);
+        Assert.Equal(JsonValueKind.Null, opts.GetProperty("defaultId").ValueKind);
+        Assert.Equal(new[] { "direct" },
+            opts.GetProperty("options").EnumerateArray().Select(option => option.GetProperty("id").GetString()));
+
+        using var createResp = await PostAsync(host, "/api/v1/tracks", "jj-only-missing-cli",
+            new { areaId, cwd = jjOnlyDir });
+        Assert.Equal(HttpStatusCode.Conflict, createResp.StatusCode);
+        using var failure = JsonDocument.Parse(await createResp.Content.ReadAsStringAsync());
+        Assert.Equal("precondition_failed", failure.RootElement.GetProperty("code").GetString());
+
+        using var tracks = await host.AuthenticatedClient.GetAsync($"/api/v1/areas/{areaId}/tracks");
+        Assert.Empty((await ReadAsync(tracks)).EnumerateArray());
+        Assert.Empty(process.Calls);
+    }
+
+    [Fact]
+    public async Task ImplicitVcsWorkspacePinsDetectedBackendAndFailsWithoutCopyingIfGitMarkerDisappears()
+    {
+        var process = new WorkspaceProcess();
+        var innerVcs = new VcsService(process, new VcsServiceOptions { DisableJj = true });
+        var observedBackends = new System.Collections.Concurrent.ConcurrentQueue<VcsBackendKind?>();
+        string? gitMarkerToRemove = null;
+        var interceptingVcs = new BeforeCreateWorkspaceVcsService(innerVcs, (_, backend) =>
+        {
+            observedBackends.Enqueue(backend);
+            if (gitMarkerToRemove is not null && Directory.Exists(gitMarkerToRemove))
+                Directory.Delete(gitMarkerToRemove, recursive: true);
+        });
+
+        await using var host = new PergaHostTestCluster(
+            configureHostOptions: options => options.DefaultWorkspaceDriver = VcsWorkspaceDriver.Id,
+            configureExtraServices: services => services.AddSingleton<IVcsService>(interceptingVcs));
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+
+        var gitDir = Directory.CreateDirectory(Path.Combine(host.DataDir, "vanishing-git")).FullName;
+        var gitMarker = Directory.CreateDirectory(Path.Combine(gitDir, ".git")).FullName;
+        await File.WriteAllTextAsync(Path.Combine(gitMarker, "HEAD"), "ref: refs/heads/main\n");
+        await File.WriteAllTextAsync(Path.Combine(gitDir, "secret.txt"), "do not copy");
+        gitMarkerToRemove = gitMarker;
+
+        var areaId = await CreateAreaAsync(host);
+        using var createResp = await PostAsync(host, "/api/v1/tracks", "pinned-git-vanishes",
+            new { areaId, cwd = gitDir });
+        var trackId = (await ReadAsync(createResp)).GetProperty("track").GetProperty("id").GetString()!;
+        await kernel.WaitForTrackIdleAsync(trackId).WaitAsync(Deadline);
+
+        Assert.False(Directory.Exists(gitMarker));
+        Assert.Equal([VcsBackendKind.GitWorktree], observedBackends.ToArray());
+        using var failed = await host.AuthenticatedClient.GetAsync($"/api/v1/tracks/{trackId}");
+        var failedSnapshot = await ReadAsync(failed);
+        Assert.Equal("failed", failedSnapshot.GetProperty("workspacePreparation").GetString());
+        Assert.Equal(string.Empty, failedSnapshot.GetProperty("track").GetProperty("cwd").GetString());
+        var targetWorkspaceDir = Path.Combine(host.DataDir, "workspaces", trackId, trackId);
+        Assert.False(File.Exists(Path.Combine(targetWorkspaceDir, "secret.txt")));
+
+        using var retryResp = await host.AuthenticatedClient.PostAsync($"/api/v1/tracks/{trackId}/workspace/retry", null);
+        Assert.Equal(HttpStatusCode.Accepted, retryResp.StatusCode);
+        await kernel.WaitForTrackIdleAsync(trackId).WaitAsync(Deadline);
+
+        Assert.Equal([VcsBackendKind.GitWorktree, VcsBackendKind.GitWorktree], observedBackends.ToArray());
+        using var retried = await host.AuthenticatedClient.GetAsync($"/api/v1/tracks/{trackId}");
+        Assert.Equal("failed", (await ReadAsync(retried)).GetProperty("workspacePreparation").GetString());
+        Assert.False(File.Exists(Path.Combine(targetWorkspaceDir, "secret.txt")));
+        Assert.Empty(process.Calls);
+    }
+
+    private sealed class BeforeCreateWorkspaceVcsService(
+        IVcsService inner,
+        Action<string, VcsBackendKind?> beforeCreate) : IVcsService
+    {
+        public Task<VcsBackendKind> DetectAsync(string path, CancellationToken ct) => inner.DetectAsync(path, ct);
+        public IReadOnlyList<VcsBackendKind> ListWorkspaceBackends(string path) => inner.ListWorkspaceBackends(path);
+        public Task<IReadOnlyList<VcsBackendKind>> ListWorkspaceBackendsAsync(string path, CancellationToken ct = default) =>
+            inner.ListWorkspaceBackendsAsync(path, ct);
+        public Task<IsolatedWorkspace> CreateWorkspaceAsync(string repoPath, string workspaceName, string targetDir, string? baseRev = null,
+            CancellationToken ct = default, VcsBackendKind? backend = null)
+        {
+            beforeCreate(repoPath, backend);
+            return inner.CreateWorkspaceAsync(repoPath, workspaceName, targetDir, baseRev, ct, backend);
+        }
+        public Task RemoveWorkspaceAsync(IsolatedWorkspace workspace, CancellationToken ct = default) => inner.RemoveWorkspaceAsync(workspace, ct);
+        public Task<RevisionSnapshot> SnapshotWorkingCopyAsync(string workspacePath, string? commitMessageIfGit = null, CancellationToken ct = default, Func<CancellationToken, Task>? authorizeMutation = null) =>
+            inner.SnapshotWorkingCopyAsync(workspacePath, commitMessageIfGit, ct, authorizeMutation);
+        public Task RestoreOperationAsync(string workspacePath, string opId, CancellationToken ct = default, Func<CancellationToken, Task>? authorizeMutation = null) =>
+            inner.RestoreOperationAsync(workspacePath, opId, ct, authorizeMutation);
+        public Task<RevisionSnapshot> RebaseOntoUpstreamAsync(string workspacePath, string upstreamBranch = "main", CancellationToken ct = default, Func<CancellationToken, Task>? authorizeMutation = null) =>
+            inner.RebaseOntoUpstreamAsync(workspacePath, upstreamBranch, ct, authorizeMutation);
+        public Task<DiffSummary> DiffAsync(string workspacePath, string? fromRev = null, string? toRev = null, CancellationToken ct = default, Func<CancellationToken, Task>? authorizeMutation = null) =>
+            inner.DiffAsync(workspacePath, fromRev, toRev, ct, authorizeMutation);
+        public Task<PushResult> PushBookmarkAsync(string workspacePath, string bookmarkOrBranch, string? targetRev = null, CancellationToken ct = default, Func<CancellationToken, Task>? authorizeMutation = null) =>
+            inner.PushBookmarkAsync(workspacePath, bookmarkOrBranch, targetRev, ct, authorizeMutation);
     }
 
     private sealed class WorkspaceProcess : IProcessRunner

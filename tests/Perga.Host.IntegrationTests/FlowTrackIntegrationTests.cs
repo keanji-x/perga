@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using Dapper;
 using Microsoft.Data.Sqlite;
@@ -9,10 +10,12 @@ using Perga.Kernel;
 using Perga.Kernel.Events;
 using Perga.Kernel.Mcp;
 using Perga.Kernel.Ports;
+using Perga.VcsKit;
 using static Perga.Host.IntegrationTests.McpKernelAndVcsIntegrationTests;
 
 namespace Perga.Host.IntegrationTests;
 
+[Collection("Template policy sandbox")]
 public sealed class FlowTrackIntegrationTests
 {
     private const string Prompt = "Investigate the cache design";
@@ -153,20 +156,91 @@ public sealed class FlowTrackIntegrationTests
     }
 
     [Fact]
-    public async Task FlowTrackUsesIsolatedWorkspaceByDefaultAndPreservesExplicitDirect()
+    public async Task FlowTrackUsesDirectByDefaultOnPlainDirectoryAndCopiesOnlyWhenRequested()
     {
-        await using var host = new PergaHostTestCluster(configureHostOptions: options => options.DefaultWorkspaceDriver = "direct");
+        await using var host = new PergaHostTestCluster(configureHostOptions: options => options.DefaultWorkspaceDriver = VcsWorkspaceDriver.Id);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         var ct = timeout.Token;
         var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        kernel.Templates.RegisterTemplate(
+            """
+            export default defineTemplate({
+              id: "copy-plain",
+              title: "Copy plain",
+              workspace: { driver: "vcs-workspace" }
+            });
+            """);
+
         var parent = await CreateParentAsync(host, kernel, ct);
         var source = parent.Track.Cwd;
         await File.WriteAllTextAsync(Path.Combine(source, "baseline.txt"), "source file", ct);
+        var explicitPlainDir = Directory.CreateDirectory(Path.Combine(host.DataDir, "explicit-plain")).FullName;
+        await File.WriteAllTextAsync(Path.Combine(explicitPlainDir, "explicit.txt"), "explicit plain", ct);
+
+        var commit = await kernel.CommitTrackFlowAsync(parent.Track.Id, false, 0, new InteropPrincipal.Human(), ct, content: $$$"""
+            {"rev":0,"nodes":[
+                {"id":"inherited-default","do":{"kind":"track","prompt":"Use inherited plain directory directly"}},
+                {"id":"explicit-cwd-default","do":{"kind":"track","prompt":"Use explicit plain directory directly","cwd":{{{JsonSerializer.Serialize(explicitPlainDir)}}}}},
+                {"id":"explicit-copy","do":{"kind":"track","prompt":"Copy when explicitly requested","workspaceDriver":"vcs-workspace"}},
+                {"id":"template-copy","do":{"kind":"track","prompt":"Copy when template requests vcs-workspace","template":"copy-plain"}}
+            ]}
+            """);
+        Assert.True(commit.Ok, string.Join(Environment.NewLine, commit.Diagnostics));
+        await kernel.WaitForTrackIdleAsync(parent.Track.Id, ct);
+        var archived = (await kernel.GetTrackFlowAsync(parent.Track.Id, ct)).Projection.Archived;
+
+        var inheritedDefault = await ReadChildAsync("inherited-default");
+        Assert.Equal((DirectWorkspaceDriver.Id, source), (inheritedDefault.WorkspaceDriver, inheritedDefault.Cwd));
+
+        var explicitCwdDefault = await ReadChildAsync("explicit-cwd-default");
+        Assert.Equal((DirectWorkspaceDriver.Id, explicitPlainDir), (explicitCwdDefault.WorkspaceDriver, explicitCwdDefault.Cwd));
+
+        var explicitCopy = await ReadChildAsync("explicit-copy");
+        Assert.Equal(VcsWorkspaceDriver.Id, explicitCopy.WorkspaceDriver);
+        Assert.NotEqual(source, explicitCopy.Cwd);
+        Assert.Equal("source file", await File.ReadAllTextAsync(Path.Combine(explicitCopy.Cwd, "baseline.txt"), ct));
+
+        var templateCopy = await ReadChildAsync("template-copy");
+        Assert.Equal(VcsWorkspaceDriver.Id, templateCopy.WorkspaceDriver);
+        Assert.NotEqual(source, templateCopy.Cwd);
+        Assert.Equal("source file", await File.ReadAllTextAsync(Path.Combine(templateCopy.Cwd, "baseline.txt"), ct));
+
+        var blankDriverChild = await ((IFlowTrackSpawner)kernel).SpawnAsync(parent.Track, Assert.Single(parent.Sessions),
+            "blank-driver", 1, new("track", Prompt: "Use direct default on blank driver", WorkspaceDriver: "   "), ct);
+        await kernel.WaitForTrackIdleAsync(blankDriverChild.Id, ct);
+        var blankDriver = (await kernel.GetTrackAggregateAsync(blankDriverChild.Id, ct)).Track;
+        Assert.Equal((DirectWorkspaceDriver.Id, source), (blankDriver.WorkspaceDriver, blankDriver.Cwd));
+
+        async Task<TrackDto> ReadChildAsync(string nodeId)
+        {
+            var node = Assert.Single(archived, candidate => candidate.Id == nodeId);
+            Assert.Equal("ok", node.Outcome);
+            await kernel.WaitForTrackIdleAsync(node.ChildTrackId!, ct);
+            return (await kernel.GetTrackAggregateAsync(node.ChildTrackId!, ct)).Track;
+        }
+    }
+
+    [Fact]
+    public async Task FlowTrackUsesIsolatedGitWorktreeByDefaultAndPreservesExplicitDirect()
+    {
+        await using var host = new PergaHostTestCluster(configureHostOptions: options => options.DefaultWorkspaceDriver = DirectWorkspaceDriver.Id);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var ct = timeout.Token;
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+
+        var repo = Directory.CreateDirectory(Path.Combine(host.DataDir, "git-source")).FullName;
+        await File.WriteAllTextAsync(Path.Combine(repo, "baseline.txt"), "repo file", ct);
+        await InitGitRepositoryAsync(repo, ct);
+
+        var area = await kernel.CreateAreaAsync(new("Git flow source", DefaultCwd: repo), ct);
+        var parent = await kernel.CreateTrackAsync(new(area.Id), ct);
+        await kernel.WaitForTrackIdleAsync(parent.Track.Id, ct);
+        var parentAggregate = await kernel.GetTrackAggregateAsync(parent.Track.Id, ct);
 
         var commit = await kernel.CommitTrackFlowAsync(parent.Track.Id, false, 0, new InteropPrincipal.Human(), ct, content: """
             {"rev":0,"nodes":[
-                {"id":"isolated","do":{"kind":"track","prompt":"Use an isolated copy"}},
-                {"id":"direct","do":{"kind":"track","prompt":"Use the source folder","workspaceDriver":"direct"}}
+                {"id":"isolated","do":{"kind":"track","prompt":"Use an isolated git worktree"}},
+                {"id":"direct","do":{"kind":"track","prompt":"Use the source folder directly","workspaceDriver":"direct"}}
             ]}
             """);
         Assert.True(commit.Ok, string.Join(Environment.NewLine, commit.Diagnostics));
@@ -174,19 +248,21 @@ public sealed class FlowTrackIntegrationTests
         var archived = (await kernel.GetTrackFlowAsync(parent.Track.Id, ct)).Projection.Archived;
 
         var isolated = await ReadChildAsync("isolated");
-        Assert.Equal("vcs-workspace", isolated.WorkspaceDriver);
-        Assert.NotEqual(source, isolated.Cwd);
-        Assert.Equal("source file", await File.ReadAllTextAsync(Path.Combine(isolated.Cwd, "baseline.txt"), ct));
+        Assert.Equal(VcsWorkspaceDriver.Id, isolated.WorkspaceDriver);
+        Assert.NotEqual(repo, isolated.Cwd);
+        Assert.Equal("GitWorktree", isolated.WorkspaceSpec.GetProperty("metadata").GetProperty("Kind").GetString());
+        Assert.Equal("repo file", await File.ReadAllTextAsync(Path.Combine(isolated.Cwd, "baseline.txt"), ct));
 
         var direct = await ReadChildAsync("direct");
-        Assert.Equal(("direct", source), (direct.WorkspaceDriver, direct.Cwd));
+        Assert.Equal((DirectWorkspaceDriver.Id, repo), (direct.WorkspaceDriver, direct.Cwd));
 
-        var blankDriverChild = await ((IFlowTrackSpawner)kernel).SpawnAsync(parent.Track, Assert.Single(parent.Sessions),
-            "blank-driver", 1, new("track", Prompt: "Use isolated default on blank driver", WorkspaceDriver: "   "), ct);
+        var blankDriverChild = await ((IFlowTrackSpawner)kernel).SpawnAsync(parentAggregate.Track, Assert.Single(parentAggregate.Sessions),
+            "blank-driver", 1, new("track", Prompt: "Use isolated git worktree on blank driver", WorkspaceDriver: "   "), ct);
         await kernel.WaitForTrackIdleAsync(blankDriverChild.Id, ct);
         var blankDriver = (await kernel.GetTrackAggregateAsync(blankDriverChild.Id, ct)).Track;
-        Assert.Equal("vcs-workspace", blankDriver.WorkspaceDriver);
-        Assert.NotEqual(source, blankDriver.Cwd);
+        Assert.Equal(VcsWorkspaceDriver.Id, blankDriver.WorkspaceDriver);
+        Assert.NotEqual(repo, blankDriver.Cwd);
+        Assert.Equal("GitWorktree", blankDriver.WorkspaceSpec.GetProperty("metadata").GetProperty("Kind").GetString());
 
         async Task<TrackDto> ReadChildAsync(string nodeId)
         {
@@ -261,6 +337,34 @@ public sealed class FlowTrackIntegrationTests
         var parent = await kernel.CreateTrackAsync(new(area.Id), ct);
         await kernel.WaitForTrackIdleAsync(parent.Track.Id, ct);
         return await kernel.GetTrackAggregateAsync(parent.Track.Id, ct);
+    }
+
+    private static async Task InitGitRepositoryAsync(string directory, CancellationToken ct)
+    {
+        await RunGitAsync(directory, ["init", "-q"], ct);
+        await RunGitAsync(directory, ["add", "."], ct);
+        await RunGitAsync(directory, ["-c", "user.name=Perga Test", "-c", "user.email=test@perga.local", "commit", "-q", "-m", "initial"], ct);
+    }
+
+    private static async Task RunGitAsync(string directory, IReadOnlyList<string> args, CancellationToken ct)
+    {
+        var startInfo = new ProcessStartInfo("git")
+        {
+            WorkingDirectory = directory,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        foreach (var arg in args)
+            startInfo.ArgumentList.Add(arg);
+        using var process = Process.Start(startInfo)
+            ?? throw new InvalidOperationException("Failed to start git.");
+        var stdoutTask = process.StandardOutput.ReadToEndAsync(ct);
+        var stderrTask = process.StandardError.ReadToEndAsync(ct);
+        await process.WaitForExitAsync(ct);
+        var stdout = await stdoutTask;
+        var stderr = await stderrTask;
+        Assert.True(process.ExitCode == 0, $"git {string.Join(' ', args)} failed ({process.ExitCode}): {stderr}{stdout}");
     }
 
     private static SqliteConnection OpenDatabase(string directory) =>
