@@ -92,6 +92,66 @@ public sealed partial class TrackFlowTests
             node => node.GetProperty("id").GetString() == "review");
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task McpFlowCommitOmitsArchivedNodesAndSlimsActiveNodes(bool dryRun)
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
+        var trackId = snapshot.Track.Id;
+        await FlowFixture.AddAsync(ctx.Kernel, trackId, new FlowNodeSpecDto("finished", new("run", Cmd: "once")));
+        await ctx.Kernel.WaitForTrackIdleAsync(trackId).WaitAsync(TimeSpan.FromSeconds(5));
+
+        ctx.CommandRunner.Handler = (_, _) => Task.FromResult(new ShellCommandResult(0, "Gate output", "", false, 20));
+        var worker = await FlowFixture.StartWorkerAsync(ctx.Kernel, trackId,
+            FlowFixture.Worker("review", "Review prompt", gate: "verify"));
+        await FlowFixture.AddAsync(ctx.Kernel, trackId,
+            new("future", new("run", Cmd: "future"), When: new(At: "2099-01-01T00:00:00Z")),
+            new FlowNodeSpecDto("join", new("run", Cmd: "join"), When: new(After: [new("review"), new("future")])));
+        await ctx.Kernel.CompleteTaskDoneAsync(trackId, worker.Session.Id,
+            TestJson.FromObject(new { message = new string('r', 4096) }));
+        var before = await ctx.Kernel.GetTrackFlowAsync(trackId);
+        var archived = Assert.Single(before.Projection.Archived);
+        Assert.Equal("finished", archived.Id);
+        var caller = await ctx.OpenMcpCallerAsync(snapshot.Track.LeadSessionId!);
+
+        var receipt = await KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller, KernelMcpToolNames.FlowCommit,
+            TestJson.FromObject(new { dryRun, expectedFlowRev = before.FlowRev, content = before.Spec.GetRawText() }));
+
+        Assert.True(receipt.GetProperty("ok").GetBoolean());
+        Assert.Equal(dryRun, receipt.GetProperty("dryRun").GetBoolean());
+        var expectedRev = dryRun ? before.FlowRev : before.FlowRev + 1;
+        Assert.Equal(expectedRev, receipt.GetProperty("flowRev").GetInt64());
+        Assert.Empty(receipt.GetProperty("plan").GetProperty("added").EnumerateArray());
+        Assert.Empty(receipt.GetProperty("diagnostics").EnumerateArray());
+        var flow = receipt.GetProperty("flow");
+        Assert.False(flow.TryGetProperty("archived", out _));
+        Assert.Equal(expectedRev, flow.GetProperty("rev").GetInt64());
+        Assert.Equal(before.FilePath, flow.GetProperty("filePath").GetString());
+        var review = Assert.Single(flow.GetProperty("nodes").EnumerateArray(), node => node.GetProperty("id").GetString() == "review");
+        Assert.False(review.TryGetProperty("prompt", out _));
+        Assert.Equal(KernelMcpReportSupport.McpSummaryMaxChars, review.GetProperty("outcomeSummary").GetString()!.Length);
+        Assert.False(Assert.Single(review.GetProperty("gates").EnumerateArray()).TryGetProperty("output", out _));
+
+        var full = await KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller, KernelMcpToolNames.FlowRead,
+            TestJson.FromObject(new { format = "full" }));
+        var fullArchive = Assert.Single(full.GetProperty("projection").GetProperty("archived").EnumerateArray());
+        Assert.Equal(archived.Id, fullArchive.GetProperty("id").GetString());
+        Assert.Equal(archived, Assert.Single((await ctx.Kernel.GetTrackFlowAsync(trackId)).Projection.Archived));
+
+        var rejected = await KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller, KernelMcpToolNames.FlowCommit,
+            TestJson.FromObject(new
+            {
+                dryRun,
+                expectedFlowRev = expectedRev,
+                content = $$$"""{"rev":{{{expectedRev}}},"nodes":[{"id":"finished","do":{"kind":"run","cmd":"dup"}}]}"""
+            }));
+        Assert.False(rejected.GetProperty("ok").GetBoolean());
+        Assert.NotEmpty(rejected.GetProperty("diagnostics").EnumerateArray());
+        Assert.False(rejected.GetProperty("flow").TryGetProperty("archived", out _));
+    }
+
     [Fact]
     public async Task ExplicitLeadWakeStillDeliversTaskSettlementToNonLeadParent()
     {
