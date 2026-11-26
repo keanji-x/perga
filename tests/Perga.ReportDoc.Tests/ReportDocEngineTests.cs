@@ -511,6 +511,135 @@ public sealed partial class ReportDocEngineTests
     }
 
     [Fact]
+    public void UpsertInsertsAtTheEndOfTheTargetSectionUnlessPositionIsSpecified()
+    {
+        var doc = _engine.Parse("""
+            # Notes
+
+            <!-- perga:first -->
+            First.
+
+            <!-- perga:last -->
+            Last.
+
+            # Other
+
+            <!-- perga:other -->
+            Other.
+            """);
+        var result = _engine.ApplyCommit(doc, WholeAnchor(doc),
+        [
+            new BlockOp.UpsertBlockOp("appended", null, "Appended.", null, SectionH1: "Notes"),
+            new BlockOp.UpsertBlockOp("heading", null, "# Notes\n\nFrom heading.", null),
+            new BlockOp.UpsertBlockOp("explicit", null, "Placed first.", null, Position: 0, SectionH1: "Notes"),
+            new BlockOp.UpsertBlockOp("new", null, "New section.", null, SectionH1: "New")
+        ]);
+
+        var rendered = _engine.RenderMarkdown(result.NextDocument, withMarkers: true);
+        Assert.Single(rendered.Split('\n'), line => line == "# Notes");
+        var roundTrip = _engine.Parse(rendered);
+        Assert.Equal(["explicit", "first", "last", "appended", "heading", "other", "new"],
+            roundTrip.Blocks.Select(block => block.Id));
+        Assert.Equal(["Notes", "Notes", "Notes", "Notes", "Notes", "Other", "New"],
+            roundTrip.Blocks.Select(block => block.SectionH1));
+    }
+
+    [Fact]
+    public void UpsertReassignsAnExistingBlockToTheEndOfItsTargetSection()
+    {
+        var doc = _engine.Parse("""
+            # Source
+
+            <!-- perga:moving rev=3 -->
+            Move this paragraph.
+
+            # Target
+
+            <!-- perga:first -->
+            First target paragraph.
+
+            <!-- perga:last -->
+            Last target paragraph.
+
+            # Other
+
+            <!-- perga:other -->
+            Other paragraph.
+            """);
+        var result = _engine.ApplyCommit(doc, WholeAnchor(doc),
+            [new BlockOp.UpsertBlockOp("moving", null, null, null, SectionH1: "Target")]);
+
+        Assert.Equal(["first", "last", "moving", "other"], result.NextDocument.Blocks.Select(block => block.Id));
+        Assert.Equal(doc.Blocks[0] with { SectionH1 = "Target", Rev = 4 }, result.NextDocument.Blocks[2]);
+        Assert.Equal(new BlockChangeRecord("moving", ReportBlockKind.Prose, 3, 4, 2, Moved: true),
+            Assert.Single(result.Changes));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData(" \t\r\n")]
+    public void ReplaceSectionWithBlankMarkdownDeletesEveryBlockInTheSection(string markdown)
+    {
+        var doc = _engine.Parse("""
+            # Notes
+
+            <!-- perga:first rev=3 -->
+            First note.
+
+            # Other
+
+            <!-- perga:other -->
+            Other paragraph.
+
+            # Notes
+
+            <!-- perga:last rev=2 -->
+            Last note.
+            """, docRev: 5);
+        var delete = new BlockOp.ReplaceSectionOp("Notes", markdown);
+        var unread = new ReadAnchor(5, new Dictionary<string, int> { ["first"] = 3 }, WholeDocumentRead: false);
+        var stale = unread with { KnownBlockRevs = new Dictionary<string, int> { ["first"] = 3, ["last"] = 1 } };
+
+        Assert.Equal("unread_block", Assert.Throws<ReportConflictException>(() =>
+            _engine.ApplyCommit(doc, unread, [delete])).Code);
+        Assert.Equal("stale_block_rev", Assert.Throws<ReportConflictException>(() =>
+            _engine.ApplyCommit(doc, stale, [delete])).Code);
+
+        var result = _engine.ApplyCommit(doc, WholeAnchor(doc), [delete]);
+        Assert.Equal(doc.Blocks[1], Assert.Single(result.NextDocument.Blocks));
+        Assert.Equal(
+            [new BlockChangeRecord("first", ReportBlockKind.Prose, 3, null, null, Moved: false),
+             new BlockChangeRecord("last", ReportBlockKind.Prose, 2, null, null, Moved: false)],
+            result.Changes);
+        Assert.DoesNotContain("# Notes", _engine.RenderMarkdown(result.NextDocument, withMarkers: true));
+    }
+
+    [Fact]
+    public void ReplaceSectionWithBlankMarkdownRejectsMissingSectionsAndContradictoryFields()
+    {
+        var doc = _engine.Parse("# Notes\n\nNotes body.", docRev: 5);
+        var anchor = WholeAnchor(doc);
+        var missing = new BlockOp.ReplaceSectionOp("Missing", "");
+
+        Assert.StartsWith("Section 'Missing' does not exist.", Assert.Throws<ArgumentException>(() =>
+            _engine.ApplyCommit(doc, anchor, [missing])).Message);
+        Assert.Equal("stale_doc_rev", Assert.Throws<ReportConflictException>(() =>
+            _engine.ApplyCommit(doc, anchor with { DocRev = 4 }, [missing])).Code);
+
+        var delete = new BlockOp.ReplaceSectionOp("Notes", "");
+        foreach (var op in new[]
+        {
+            delete with { NewSectionH1 = "Renamed" },
+            delete with { BeforeBlockId = "outside" },
+            delete with { AfterBlockId = "outside" }
+        })
+        {
+            Assert.StartsWith("Cannot combine empty 'markdown' (section deletion)", Assert.Throws<ArgumentException>(() =>
+                _engine.ApplyCommit(doc, anchor, [op])).Message);
+        }
+    }
+
+    [Fact]
     public void UpsertSectionAndPositionPreserveContentWhenKindAndContentAreOmitted()
     {
         var doc = _engine.Parse("# Notes\n\n<!-- perga:notes -->\nNotes body.");

@@ -42,8 +42,14 @@ public sealed partial class ReportDocEngine
     private static void ApplyReplaceSection(CommitState state, BlockOp.ReplaceSectionOp op)
     {
         var targetSection = NormalizeSectionTitle(op.SectionH1, "sectionH1");
-        var finalSection = op.NewSectionH1 is { } newTitle ? NormalizeSectionTitle(newTitle, "newSectionH1") : targetSection;
         var placementId = op.BeforeBlockId ?? op.AfterBlockId;
+        var deleteSection = op.Markdown is { } rawMarkdown && string.IsNullOrWhiteSpace(rawMarkdown);
+        if (deleteSection && (op.NewSectionH1 is not null || placementId is not null))
+        {
+            throw new ArgumentException("Cannot combine empty 'markdown' (section deletion) with 'newSectionH1', 'beforeBlockId', or 'afterBlockId'.", OperationsParameterName);
+        }
+
+        var finalSection = op.NewSectionH1 is { } newTitle ? NormalizeSectionTitle(newTitle, "newSectionH1") : targetSection;
         if (op.BeforeBlockId is not null && op.AfterBlockId is not null)
         {
             throw new ArgumentException("Specify only one of 'beforeBlockId' and 'afterBlockId'.", OperationsParameterName);
@@ -71,7 +77,7 @@ public sealed partial class ReportDocEngine
             }
         }
 
-        if (op.Markdown is null && existingIndices.Count == 0)
+        if (existingIndices.Count == 0 && (op.Markdown is null || deleteSection))
         {
             if (state.Anchor.WholeDocumentRead && state.Anchor.DocRev != state.Current.DocRev)
             {
@@ -81,7 +87,19 @@ public sealed partial class ReportDocEngine
                     "Call report_read to fetch the latest report revision before retrying.");
             }
 
-            throw new ArgumentException($"Section '{targetSection}' does not exist. Provide 'markdown' to create it.", OperationsParameterName);
+            var message = $"Section '{targetSection}' does not exist.";
+            throw new ArgumentException(deleteSection ? message : message + " Provide 'markdown' to create it.", OperationsParameterName);
+        }
+
+        if (deleteSection)
+        {
+            for (var i = existingIndices.Count - 1; i >= 0; i--)
+            {
+                var index = existingIndices[i];
+                state.ExplicitlyMovedIds.Remove(blocks[index].Id);
+                blocks.RemoveAt(index);
+            }
+            return;
         }
 
         var replacement = op.Markdown is { } markdown
@@ -183,13 +201,24 @@ public sealed partial class ReportDocEngine
                 "Call report_read to refresh the latest report blocks before retrying.");
         }
 
-        var insertIdx = op.Position is { } position
-            ? Math.Clamp(position, 0, blocks.Count)
-            : existing is null ? blocks.Count : existingIdx;
         var kind = op.Kind ?? existing?.Kind ?? ReportBlockKind.Prose;
         var (extractedSection, markdown) = ExtractOptionalLeadingH1(kind, op.Markdown);
-        var section = explicitSection ?? extractedSection ??
-            (existing is null ? InferSectionForInsert(blocks, insertIdx) : existing.SectionH1);
+        var targetSection = explicitSection ?? extractedSection;
+        var insertIdx = existing is null ? blocks.Count : existingIdx;
+        if (op.Position is { } position)
+        {
+            insertIdx = Math.Clamp(position, 0, blocks.Count);
+        }
+        else if (targetSection is not null && targetSection != existing?.SectionH1)
+        {
+            var lastInSection = blocks.FindLastIndex(block => block.SectionH1 == targetSection);
+            if (lastInSection >= 0)
+            {
+                insertIdx = lastInSection + 1;
+            }
+        }
+
+        var section = targetSection ?? (existing is null ? InferSectionForInsert(blocks, insertIdx) : existing.SectionH1);
         if (existing is null || section != existing.SectionH1 || insertIdx != existingIdx)
         {
             EnsureValidSectionBoundary(blocks, insertIdx, section);

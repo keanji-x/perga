@@ -198,9 +198,9 @@ public static class KernelMcpCatalog
                 Cheatsheet:
                 - anchor: { docRev, knownBlockRevs, wholeDocumentRead } from report_read, the previous report_commit receipt, or the initial anchor in the empty Report prompt.
                 - ops (non-empty array):
-                  - { op: "replace_section", sectionH1, markdown?, newSectionH1?, beforeBlockId?, afterBlockId? } creates, replaces, or renames an H1 section. Supply newSectionH1 without markdown to preserve all existing blocks. Use at most one placement ID to position the section next to a block outside it.
+                  - { op: "replace_section", sectionH1, markdown?, newSectionH1?, beforeBlockId?, afterBlockId? } creates, replaces, renames, or deletes an H1 section. Supply newSectionH1 without markdown to preserve its blocks, or markdown: "" on its own to delete the section. Use at most one placement ID and place the section next to a block outside it.
                   - { op: "edit_block", id, target, replacement } replaces a unique, exact match in a prose block. Use "" as replacement to delete the match.
-                  - { op: "upsert", id?, blockKind?: "prose"|"widget", markdown?, payload?, position?, sectionH1? } defaults to prose on insert. Omit blockKind, markdown and payload on update to preserve the block's kind and content.
+                  - { op: "upsert", id?, blockKind?: "prose"|"widget", markdown?, payload?, position?, sectionH1? } defaults to prose on insert. Omit position to append new blocks to the target section or to the document if the section is new. Reassigning a block to another existing section defaults to appending there. Omit blockKind, markdown and payload on update to preserve kind and content.
                   - { op: "delete", id }
                   - { op: "move", id, toIndex }
                 - Optional: summary, commitMessage, includeDocument. Set includeDocument=true to add renderedMarkdown and blocks to the receipt.
@@ -451,7 +451,7 @@ public static class KernelMcpDispatcher
                 var includeDocument = KernelMcpReportSupport.ParseIncludeDocumentArg(args);
                 var res = await kernel.CommitReportAsync(caller.TrackId, caller.SessionId, commitReq, ct, authorization)
                     .ConfigureAwait(false);
-                return KernelMcpReportSupport.FormatReportCommitResponse(res, includeDocument);
+                return KernelMcpReportSupport.FormatReportCommitResponse(res, commitReq.Anchor, includeDocument);
             }
 
             case KernelMcpToolNames.DataPatch:
@@ -526,8 +526,11 @@ public static class KernelMcpDispatcher
             }
 
             case KernelMcpToolNames.SessionList:
-                return JsonHelpers.ToElement(await kernel.ListSessionsAsync(caller.TrackId,
-                    ParseSessionArgs<SessionListFilter>(args, toolName), authorization, ct).ConfigureAwait(false));
+            {
+                var sessions = await kernel.ListSessionsAsync(caller.TrackId,
+                    ParseSessionArgs<SessionListFilter>(args, toolName), authorization, ct).ConfigureAwait(false);
+                return JsonHelpers.ToElement(SlimSessionList(sessions));
+            }
 
             case KernelMcpToolNames.SessionCreate:
             {
@@ -785,6 +788,17 @@ public static class KernelMcpDispatcher
             throw KernelException.InvalidArgument($"'{name}' must be an integer between {min} and {max}.");
         return number;
     }
+
+    private static IReadOnlyList<SessionSummaryDto> SlimSessionList(IReadOnlyList<SessionSummaryDto> sessions) =>
+        sessions.Select(summary => summary with
+        {
+            Session = summary.Session with { SystemPrompt = null },
+            LastTurn = summary.LastTurn is { } lastTurn ? lastTurn with
+            {
+                Input = JsonHelpers.EmptyObject,
+                ErrorText = KernelMcpReportSupport.BoundMcpSummary(lastTurn.ErrorText)
+            } : null
+        }).ToArray();
 
     private static FlowProjectionDto SlimFlowProjection(FlowProjectionDto projection) => projection with
     {
