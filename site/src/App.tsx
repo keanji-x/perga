@@ -91,9 +91,7 @@ export function App() {
             <a href="#memory">Memory</a>
             <a href="./vision.html">Vision</a>
             <a className="site-nav-repo" href="https://github.com/keanji-x/perga" target="_blank" rel="noreferrer">GitHub ↗</a>
-            {/* DISCORD SLOT: Uncomment when ready
-            <a className="site-nav-repo" href="https://discord.gg/YOUR_INVITE" target="_blank" rel="noreferrer">Discord ↗</a>
-            */}
+            <a className="site-nav-repo" href="https://discord.gg/WfBzhQenQb" target="_blank" rel="noreferrer">Discord ↗</a>
           </nav>
         </div>
       </header>
@@ -316,6 +314,7 @@ export function App() {
             </div>
             <div className="site-closing-actions">
               <a className="site-closing-btn-light" href="https://github.com/keanji-x/perga/releases" target="_blank" rel="noreferrer">Download Release</a>
+              <a className="site-closing-btn-outline" href="https://discord.gg/WfBzhQenQb" target="_blank" rel="noreferrer">Join Discord</a>
               <a className="site-closing-btn-outline" href="https://github.com/keanji-x/perga" target="_blank" rel="noreferrer">GitHub</a>
               <a className="site-closing-btn-outline" href="./vision.html">Vision</a>
             </div>
@@ -328,6 +327,7 @@ export function App() {
           <span>PERGA · APACHE 2.0</span>
           <div className="site-footer-links">
             <a href="https://github.com/keanji-x/perga" target="_blank" rel="noreferrer">GitHub</a>
+            <a href="https://discord.gg/WfBzhQenQb" target="_blank" rel="noreferrer">Discord</a>
             <a href="./vision.html">Vision</a>
             <a href="https://github.com/keanji-x/perga/blob/main/DESIGN.md" target="_blank" rel="noreferrer">Architecture</a>
             <a href="./install.sh">install.sh</a>
