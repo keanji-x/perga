@@ -88,33 +88,83 @@ quote_sh() {
   printf "'%s'" "${s//\'/\'\\\'\'}"
 }
 
-resolve_symlink_target() {
-  local cur="$1"
-  local name="$2"
+assert_outside_install_dir() {
+  local raw="$1"
+  local install_dir="$2"
+  local name="$3"
+  local path="$raw"
+  if [[ "$path" != /* ]]; then
+    path="$(pwd -P)/${path}"
+  fi
   local hops=0
-  local link_target dir_part
-  cur=$(resolve_physical_path "$cur" "$name")
-  while [[ -L "$cur" ]]; do
-    hops=$((hops + 1))
-    if (( hops > 40 )); then
-      echo "error: too many levels of symbolic links while resolving ${name} (${1})." >&2
-      exit 1
-    fi
-    if ! command -v readlink >/dev/null 2>&1; then
-      echo "error: cannot safely resolve symlink for ${name} (${cur}) because 'readlink' is unavailable." >&2
-      exit 1
-    fi
-    link_target=$(readlink "$cur") || {
-      echo "error: failed to read symlink for ${name} (${cur})." >&2
-      exit 1
-    }
-    if [[ "$link_target" != /* ]]; then
-      dir_part=$(dirname "$cur")
-      link_target="${dir_part}/${link_target}"
-    fi
-    cur=$(resolve_physical_path "$link_target" "$name")
+  while :; do
+    local resolved="/"
+    local restarted=0
+    local IFS='/'
+    local -a segments=()
+    read -r -a segments <<< "$path"
+    local idx=0
+    local total=${#segments[@]}
+    while (( idx < total )); do
+      local seg="${segments[$idx]}"
+      idx=$((idx + 1))
+      if [[ -z "$seg" || "$seg" == "." ]]; then
+        continue
+      fi
+      if [[ "$seg" == ".." ]]; then
+        if [[ "$resolved" != "/" ]]; then
+          resolved="${resolved%/*}"
+          [[ -z "$resolved" ]] && resolved="/"
+        fi
+        continue
+      fi
+      local candidate
+      if [[ "$resolved" == "/" ]]; then
+        candidate="/${seg}"
+      else
+        candidate="${resolved}/${seg}"
+      fi
+      if [[ "$candidate" == "$install_dir" || "$candidate" == "${install_dir}/"* ]]; then
+        echo "error: ${name} (${raw} -> ${candidate}) must not reside in or traverse PERGA_INSTALL_DIR (${install_dir}), or upgrades would overwrite or break your data." >&2
+        exit 1
+      fi
+      if [[ -L "$candidate" ]]; then
+        hops=$((hops + 1))
+        if (( hops > 40 )); then
+          echo "error: too many levels of symbolic links while resolving ${name} (${raw})." >&2
+          exit 1
+        fi
+        if ! command -v readlink >/dev/null 2>&1; then
+          echo "error: cannot safely resolve symlink for ${name} (${candidate}) because 'readlink' is unavailable." >&2
+          exit 1
+        fi
+        local link_target
+        link_target=$(readlink "$candidate") || {
+          echo "error: failed to read symlink for ${name} (${candidate})." >&2
+          exit 1
+        }
+        if [[ "$link_target" != /* ]]; then
+          if [[ "$resolved" == "/" ]]; then
+            link_target="/${link_target}"
+          else
+            link_target="${resolved}/${link_target}"
+          fi
+        fi
+        local rest=""
+        while (( idx < total )); do
+          if [[ -n "${segments[$idx]}" ]]; then
+            rest="${rest}/${segments[$idx]}"
+          fi
+          idx=$((idx + 1))
+        done
+        path="${link_target}${rest}"
+        restarted=1
+        break
+      fi
+      resolved="$candidate"
+    done
+    (( restarted == 0 )) && break
   done
-  printf '%s' "$cur"
 }
 
 normalize_link_target() {
@@ -147,18 +197,9 @@ if [[ -n "${PERGA_DB_PATH:-}" ]]; then
   DB_PATH=$(resolve_physical_path "$PERGA_DB_PATH" "PERGA_DB_PATH")
 fi
 EFFECTIVE_DB_RAW="${PERGA_DB_PATH:-${DATA_DIR}/perga.db}"
-EFFECTIVE_DB_LINK=$(resolve_physical_path "$EFFECTIVE_DB_RAW" "PERGA_DB_PATH")
-EFFECTIVE_DB_TARGET=$(resolve_symlink_target "$EFFECTIVE_DB_LINK" "PERGA_DB_PATH")
 
-if [[ "$DATA_DIR" == "$INSTALL_DIR" || "$DATA_DIR" == "${INSTALL_DIR}/"* ]]; then
-  echo "error: PERGA_DATA_DIR (${DATA_DIR}) must not be inside PERGA_INSTALL_DIR (${INSTALL_DIR}), or upgrades would overwrite your data." >&2
-  exit 1
-fi
-
-if [[ "$EFFECTIVE_DB_LINK" == "$INSTALL_DIR" || "$EFFECTIVE_DB_LINK" == "${INSTALL_DIR}/"* || "$EFFECTIVE_DB_TARGET" == "$INSTALL_DIR" || "$EFFECTIVE_DB_TARGET" == "${INSTALL_DIR}/"* ]]; then
-  echo "error: database path (${EFFECTIVE_DB_LINK} -> ${EFFECTIVE_DB_TARGET}) must not be inside PERGA_INSTALL_DIR (${INSTALL_DIR}), or upgrades would overwrite your database." >&2
-  exit 1
-fi
+assert_outside_install_dir "$RAW_DATA_DIR" "$INSTALL_DIR" "PERGA_DATA_DIR"
+assert_outside_install_dir "$EFFECTIVE_DB_RAW" "$INSTALL_DIR" "database path"
 
 if [[ -e "$INSTALL_DIR" && ! -d "$INSTALL_DIR" ]]; then
   echo "error: PERGA_INSTALL_DIR (${INSTALL_DIR}) exists and is not a directory." >&2
@@ -398,33 +439,80 @@ resolve_physical_path() {
   done
   printf '%s' "\$resolved"
 }
-resolve_symlink_target() {
-  local cur="\$1"
-  local name="\$2"
+assert_outside_install_dir() {
+  local raw="\$1"
+  local install_dir="\$2"
+  local name="\$3"
+  local path="\$(abs_from_caller "\$raw")"
   local hops=0
-  local link_target dir_part
-  cur=\$(resolve_physical_path "\$cur" "\$name")
-  while [[ -L "\$cur" ]]; do
-    hops=\$((hops + 1))
-    if (( hops > 40 )); then
-      echo "error: too many levels of symbolic links while resolving \${name} (\${1})." >&2
-      exit 1
-    fi
-    if ! command -v readlink >/dev/null 2>&1; then
-      echo "error: cannot safely resolve symlink for \${name} (\${cur}) because 'readlink' is unavailable." >&2
-      exit 1
-    fi
-    link_target=\$(readlink "\$cur") || {
-      echo "error: failed to read symlink for \${name} (\${cur})." >&2
-      exit 1
-    }
-    if [[ "\$link_target" != /* ]]; then
-      dir_part=\$(dirname "\$cur")
-      link_target="\${dir_part}/\${link_target}"
-    fi
-    cur=\$(resolve_physical_path "\$link_target" "\$name")
+  while :; do
+    local resolved="/"
+    local restarted=0
+    local IFS='/'
+    local -a segments=()
+    read -r -a segments <<< "\$path"
+    local idx=0
+    local total=\${#segments[@]}
+    while (( idx < total )); do
+      local seg="\${segments[\$idx]}"
+      idx=\$((idx + 1))
+      if [[ -z "\$seg" || "\$seg" == "." ]]; then
+        continue
+      fi
+      if [[ "\$seg" == ".." ]]; then
+        if [[ "\$resolved" != "/" ]]; then
+          resolved="\${resolved%/*}"
+          [[ -z "\$resolved" ]] && resolved="/"
+        fi
+        continue
+      fi
+      local candidate
+      if [[ "\$resolved" == "/" ]]; then
+        candidate="/\${seg}"
+      else
+        candidate="\${resolved}/\${seg}"
+      fi
+      if [[ "\$candidate" == "\$install_dir" || "\$candidate" == "\${install_dir}/"* ]]; then
+        echo "error: refusing to remove '\$install_dir' because \${name} ('\$raw' -> '\$candidate') resides in or traverses it." >&2
+        exit 1
+      fi
+      if [[ -L "\$candidate" ]]; then
+        hops=\$((hops + 1))
+        if (( hops > 40 )); then
+          echo "error: too many levels of symbolic links while resolving \${name} (\${raw})." >&2
+          exit 1
+        fi
+        if ! command -v readlink >/dev/null 2>&1; then
+          echo "error: cannot safely resolve symlink for \${name} (\${candidate}) because 'readlink' is unavailable." >&2
+          exit 1
+        fi
+        local link_target
+        link_target=\$(readlink "\$candidate") || {
+          echo "error: failed to read symlink for \${name} (\${candidate})." >&2
+          exit 1
+        }
+        if [[ "\$link_target" != /* ]]; then
+          if [[ "\$resolved" == "/" ]]; then
+            link_target="/\${link_target}"
+          else
+            link_target="\${resolved}/\${link_target}"
+          fi
+        fi
+        local rest=""
+        while (( idx < total )); do
+          if [[ -n "\${segments[\$idx]}" ]]; then
+            rest="\${rest}/\${segments[\$idx]}"
+          fi
+          idx=\$((idx + 1))
+        done
+        path="\${link_target}\${rest}"
+        restarted=1
+        break
+      fi
+      resolved="\$candidate"
+    done
+    (( restarted == 0 )) && break
   done
-  printf '%s' "\$cur"
 }
 DEFAULT_INSTALL_DIR=${q_install_dir}
 DEFAULT_BIN_DIR=${q_bin_dir}
@@ -642,18 +730,8 @@ UNINSTALL_USAGE
     echo "error: this launcher manages '\$real_default_install_dir', not '\$real_install_dir'. Unset PERGA_INSTALL_DIR or run the launcher for '\$real_install_dir'." >&2
     exit 1
   fi
-  local real_data_dir real_db_path real_db_target
-  real_data_dir=\$(resolve_physical_path "\$PERGA_DATA_DIR" "PERGA_DATA_DIR")
-  real_db_path=\$(resolve_physical_path "\$EFFECTIVE_DB_PATH" "PERGA_DB_PATH")
-  real_db_target=\$(resolve_symlink_target "\$real_db_path" "PERGA_DB_PATH")
-  if [[ "\$real_data_dir" == "\$real_install_dir" || "\$real_data_dir" == "\${real_install_dir}/"* ]]; then
-    echo "error: refusing to remove '\$real_install_dir' because PERGA_DATA_DIR ('\$real_data_dir') is inside it." >&2
-    exit 1
-  fi
-  if [[ "\$real_db_path" == "\$real_install_dir" || "\$real_db_path" == "\${real_install_dir}/"* || "\$real_db_target" == "\$real_install_dir" || "\$real_db_target" == "\${real_install_dir}/"* ]]; then
-    echo "error: refusing to remove '\$real_install_dir' because database path ('\$real_db_path' -> '\$real_db_target') is inside it." >&2
-    exit 1
-  fi
+  assert_outside_install_dir "\$PERGA_DATA_DIR" "\$real_install_dir" "PERGA_DATA_DIR"
+  assert_outside_install_dir "\$EFFECTIVE_DB_PATH" "\$real_install_dir" "database path"
   local launcher_path="\$BIN_DIR/perga"
   local remove_launcher=0
   if [[ -e "\$launcher_path" ]]; then
