@@ -206,8 +206,22 @@
       padding-inline-start: var(--space-2);
     }
 
+    .mobilePageList .withActions .row {
+      padding-inline-end: calc(var(--space-2) + var(--rail-w-collapsed));
+    }
+
+    .mobilePageList .withActions .statusSlot {
+      inset-inline-end: calc(var(--rail-w-collapsed) + (var(--control-h-sm) - var(--dot-sm)) / 2);
+    }
+
     .mobilePageList .actions {
       min-block-size: var(--rail-w-collapsed);
+    }
+
+    .mobilePageList .mobileActionButton {
+      min-inline-size: var(--rail-w-collapsed);
+      min-block-size: var(--rail-w-collapsed);
+      padding-inline: var(--space-2);
     }
   }
 

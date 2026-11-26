@@ -88,4 +88,29 @@ describe('a conversation row that names its track', () => {
     expect(row.scrollWidth).toBeLessThanOrEqual(row.clientWidth + 1);
     expect(label.scrollWidth).toBeLessThanOrEqual(label.clientWidth + 1);
   });
+
+  it('preserves 44px mobile touch targets on rows, group disclosures, and archive triggers', async () => {
+    await browserPage.viewport(390, 844);
+    const { getByRole } = render(
+      <ChatList
+        variant="mobile-page"
+        showTrack={false}
+        conversations={[
+          conversation({ id: 'active-1', title: 'Active worker' }),
+          conversation({ id: 'archived-1', title: 'Archived worker', archivedAt: 100 }),
+        ]}
+        cards={{}}
+        onOpen={() => undefined}
+        onArchive={() => Promise.resolve()}
+      />,
+    );
+    const activeHeading = getByRole('button', { name: 'Active conversations' });
+    const archivedHeading = getByRole('button', { name: 'Archived conversations' });
+    const row = getByRole('button', { name: /^Conversation Active worker/ });
+    const archiveTrigger = getByRole('button', { name: 'Actions for conversation: Active worker' });
+    for (const control of [activeHeading, archivedHeading, row, archiveTrigger]) {
+      expect(control.getBoundingClientRect().height).toBeGreaterThanOrEqual(44);
+    }
+    expect(archiveTrigger.getBoundingClientRect().width).toBeGreaterThanOrEqual(44);
+  });
 });

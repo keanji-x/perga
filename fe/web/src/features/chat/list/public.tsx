@@ -41,7 +41,7 @@ export function ChatList({
   const List = context ? ContextList : 'ul';
   const listClassName = variant === 'mobile-page' ? `${styles.list} ${styles.mobilePageList}` : styles.list;
   return (
-    <ConversationGroups enabled={onArchive !== undefined || conversations.some(row => row.archivedAt != null)} conversations={conversations} emptyActive={context ? null : <EmptyState variant="compact" icon={<Icon name="chat" />} title="No active conversations" description="Active conversations appear here." />}>
+    <ConversationGroups variant={variant} enabled={onArchive !== undefined || conversations.some(row => row.archivedAt != null)} conversations={conversations} emptyActive={context ? null : <EmptyState variant="compact" icon={<Icon name="chat" />} title="No active conversations" description="Active conversations appear here." />}>
     {shown => <List className={context ? undefined : listClassName}>
       {deriveConversationList({ conversations: shown, cards, unreadIds, awaitingInputIds }).map(({ conversation, activity, unread, name }) => {
         const description = activity === 'working' ? null : activityLabelOf(activity);
@@ -85,7 +85,7 @@ export function ChatList({
               </span>
             </button>
             {description !== null && <span hidden id={descriptionId}>{description}</span>}
-            {onArchive !== undefined && conversation.kind === 'agent' && conversation.isLead !== true && <ConversationArchiveAction conversation={conversation} onArchive={onArchive} className={styles.actions} />}
+            {onArchive !== undefined && conversation.kind === 'agent' && conversation.isLead !== true && <ConversationArchiveAction conversation={conversation} onArchive={onArchive} className={styles.actions} triggerClassName={variant === 'mobile-page' ? styles.mobileActionButton : undefined} />}
             {activity !== 'quiet' && <span className={styles.statusSlot} aria-hidden="true">
               <ActivityIndicator state={activity} />
             </span>}
@@ -98,10 +98,11 @@ export function ChatList({
 }
 
 /** Failed writes leave the row visible. */
-function ConversationArchiveAction({ conversation, onArchive, className }: Readonly<{
+function ConversationArchiveAction({ conversation, onArchive, className, triggerClassName }: Readonly<{
   conversation: Conversation;
   onArchive: (cardId: string, archived: boolean) => Promise<void>;
   className?: string;
+  triggerClassName?: string;
 }>) {
   const { pending, error, change } = useArchiveAction(conversation, onArchive);
   const archived = conversation.archivedAt != null;
@@ -109,7 +110,7 @@ function ConversationArchiveAction({ conversation, onArchive, className }: Reado
     <div className={className}>
       <DropdownMenu placement="below" alignment="end" button={{
         label: `Actions for conversation: ${conversationName(conversation)}`, icon: <Icon name="more" size="sm" />,
-        isIconOnly: true, variant: 'ghost', size: 'sm', isDisabled: pending,
+        isIconOnly: true, variant: 'ghost', size: 'sm', isDisabled: pending, className: triggerClassName,
       }}>
         <DropdownMenuItem label={archived ? 'Restore conversation' : 'Archive conversation'} onClick={() => { void change(); }} />
       </DropdownMenu>

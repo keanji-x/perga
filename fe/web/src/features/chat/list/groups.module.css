@@ -23,4 +23,11 @@
     place-items: center;
     color: var(--text-3);
   }
+
+  @media (width < 60rem) {
+    .mobileHeading {
+      min-block-size: var(--rail-w-collapsed);
+      padding-inline: var(--space-2);
+    }
+  }
 }

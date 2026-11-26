@@ -7,11 +7,12 @@ import { SpringRotation } from '../../../ui/motion/rotation.tsx';
 import styles from './groups.module.css';
 
 /** Shared archive membership and independent disclosures for every conversation history surface. */
-export function ConversationGroups({ conversations, children, emptyActive, enabled = true }: Readonly<{
+export function ConversationGroups({ conversations, children, emptyActive, enabled = true, variant = 'panel' }: Readonly<{
   conversations: readonly Conversation[];
   children: (rows: readonly Conversation[]) => ReactNode;
   emptyActive: ReactNode;
   enabled?: boolean;
+  variant?: 'panel' | 'mobile-page';
 }>) {
   if (!enabled) return children(conversations);
   const active = conversations.filter(row => row.archivedAt == null);
@@ -21,26 +22,27 @@ export function ConversationGroups({ conversations, children, emptyActive, enabl
     return active.length === 0 ? emptyActive : children(active);
   }
   return <>
-    <ConversationGroup title="Active" label="Active conversations" rows={active} defaultIsOpen>
+    <ConversationGroup title="Active" label="Active conversations" rows={active} defaultIsOpen variant={variant}>
       {active.length === 0 ? emptyActive : children(active)}
     </ConversationGroup>
-    <ConversationGroup title="Archived" label="Archived conversations" rows={archived} defaultIsOpen={false}>
+    <ConversationGroup title="Archived" label="Archived conversations" rows={archived} defaultIsOpen={false} variant={variant}>
       {children(archived)}
     </ConversationGroup>
   </>;
 }
 
-function ConversationGroup({ title, label, rows, defaultIsOpen, children }: Readonly<{
+function ConversationGroup({ title, label, rows, defaultIsOpen, variant, children }: Readonly<{
   title: string;
   label: string;
   rows: readonly Conversation[];
   defaultIsOpen: boolean;
+  variant: 'panel' | 'mobile-page';
   children: ReactNode;
 }>) {
   const contentId = useId();
   const disclosure = useCollapsible({ isCollapsible: { defaultIsOpen } });
   return <section className={styles.group} aria-label={label}>
-    <button type="button" className={styles.heading} aria-label={label}
+    <button type="button" className={`${styles.heading} ${variant === 'mobile-page' ? styles.mobileHeading : ''}`} aria-label={label}
       aria-expanded={disclosure.isOpen} aria-controls={contentId} onClick={disclosure.toggle}>
       <SpringRotation className={styles.chevron} angle={disclosure.isOpen ? 90 : 0}>
         <Icon name="chevron-right" size="sm" />
