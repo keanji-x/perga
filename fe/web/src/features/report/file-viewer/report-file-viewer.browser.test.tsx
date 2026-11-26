@@ -161,3 +161,85 @@ it('opens workspace HTML in the file viewer sandbox and can show its source', as
   expect(await screen.findByRole('textbox', { name: 'Code' })).toBeTruthy();
   expect(document.querySelector('iframe[title="report.html"]')).toBeNull();
 });
+
+it('renders Markdown with a line citation as formatted prose scrolled to the target, with a Source toggle', async () => {
+  await browserPage.viewport(1200, 720);
+  const filler = Array.from({ length: 18 }, (_, i) => `Opening paragraph ${i + 1}.`).join('\n\n');
+  const essay = [
+    '# Deleting AI Slop',
+    '',
+    filler,
+    '',
+    '1. First lesson.',
+    '',
+    '2. Second lesson.',
+    '',
+    '3. **Parallel worktrees** blew up target/.',
+    '',
+    '   ```toml',
+    '   [profile.dev]',
+    '   debug = 1',
+    '   ```',
+    '',
+    '4. **Bad code** became too expensive to delete.',
+    '',
+    '## Picking a backend',
+    '',
+    'Closing summary.',
+  ].join('\n');
+  const targetLine = essay.split('\n').findIndex(line => line.startsWith('3. **Parallel worktrees**')) + 1;
+
+  render(
+    <div style={{ position: 'relative', inlineSize: 960, blockSize: 420, ['--document-measure' as string]: '640px', ['--document-start' as string]: '64px' }}>
+      <ReportFileViewer
+        path="docs/essays/01-rust-to-csharp.md"
+        line={targetLine}
+        openRequest={1}
+        files={files('docs/essays/01-rust-to-csharp.md', essay)}
+        fileRoot="/repo"
+        wide
+        onClose={vi.fn()}
+      />
+    </div>,
+  );
+
+  // Defaults to rendered Markdown prose, highlighting the cited list item and scrolling it into view.
+  await waitFor(() => {
+    expect(document.querySelector('[data-nc-report]')).not.toBeNull();
+  });
+  expect(document.querySelector('[data-nc-report-file-source]')).toBeNull();
+  const previewButton = screen.getByRole('button', { name: /^Preview$/ });
+  const sourceButton = screen.getByRole('button', { name: /^Source$/ });
+  expect(previewButton.getAttribute('aria-pressed')).toBe('true');
+  expect(sourceButton.getAttribute('aria-pressed')).toBe('false');
+
+  const highlighted = document.querySelector<HTMLElement>('[data-nc-markdown-highlight]')!;
+  expect(highlighted).not.toBeNull();
+  expect(highlighted.tagName).toBe('LI');
+  expect(highlighted.textContent).toContain('Parallel worktrees');
+  expect(highlighted.textContent).not.toContain('Bad code');
+
+  const layer = document.querySelector<HTMLElement>('[data-nc-report-file-viewer]')!;
+  await waitFor(() => {
+    const layerRect = layer.getBoundingClientRect();
+    const targetRect = highlighted.getBoundingClientRect();
+    expect(targetRect.top).toBeGreaterThanOrEqual(layerRect.top);
+    expect(targetRect.top).toBeLessThan(layerRect.bottom);
+  });
+
+  // Switching to Source shows wrapped CodeMirror highlighting the exact source line.
+  sourceButton.click();
+  expect(await screen.findByRole('textbox', { name: 'Code' })).toBeTruthy();
+  expect(document.querySelector('[data-nc-report]')).toBeNull();
+  await waitFor(() => {
+    const marked = document.querySelector<HTMLElement>('[data-nc-code-highlight-line]');
+    expect(marked?.textContent).toContain('Parallel worktrees');
+  });
+
+  // Switching back to Preview restores rendered Markdown cleanly.
+  screen.getByRole('button', { name: /^Preview$/ }).click();
+  await waitFor(() => {
+    expect(document.querySelector('[data-nc-report]')).not.toBeNull();
+  });
+  expect(document.querySelector('[data-nc-report-file-source]')).toBeNull();
+});

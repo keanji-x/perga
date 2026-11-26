@@ -1,5 +1,6 @@
 import { cloneElement, isValidElement, useMemo, type ReactNode } from 'react';
 import { prepareProse, preparePreviewProse, type PreparedProse, type PreviewReferenceContext } from './preparation.ts';
+import { selectMarkdownBlocksForLineRange, type LineRange } from '../../../../../core/domain/markdown-line-target.ts';
 import { parseReportLink, type ReportLinkTarget } from '../../../../../core/domain/report.ts';
 import { parseReportFileLink, reportFileNavigationPath, type ReportFileLinkTarget } from '../../../../../core/domain/report-file.ts';
 import { parseReportSourceLink, type ReportSourceLinkTarget } from '../../../../../core/domain/report-source.ts';
@@ -34,9 +35,22 @@ function PreviewProse({ markdown, referenceContext, ...options }: ProseOptions &
 /** The rendered half consumes prepared syntax; admission and live callbacks remain current. */
 export function PreparedProseBlock({
   prepared, onOpenLink, onOpenFileLink, onOpenSourceLink, fileRoot, fileBasePath, linkPreview,
-  referenceRepository = null, compact = false, destinationMode = 'interactive', sourceInsertion,
-}: ProseOptions & Readonly<{ prepared: PreparedProse; sourceInsertion?: ReportSourceInsertion }>) {
+  referenceRepository = null, compact = false, destinationMode = 'interactive', sourceInsertion, highlightLines,
+}: ProseOptions & Readonly<{ prepared: PreparedProse; sourceInsertion?: ReportSourceInsertion; highlightLines?: LineRange }>) {
   const { result } = prepared;
+  const highlightStart = highlightLines?.start;
+  const highlightEnd = highlightLines?.end;
+  const highlightSelection = useMemo(() => {
+    if (result.status !== 'ready' || highlightStart === undefined || highlightEnd === undefined) return null;
+    const selection = selectMarkdownBlocksForLineRange(
+      prepared.source,
+      result.ast.children,
+      { start: highlightStart, end: highlightEnd },
+      result.ast.sourceLines.length,
+    );
+    return selection.blocks.size > 0 || selection.listItems.size > 0 ? selection : null;
+  }, [prepared.source, result, highlightStart, highlightEnd]);
+
   if (result.status === 'failed') return <><pre className={styles.raw}>{prepared.source}</pre>{sourceInsertion?.content}</>;
   const { ast, headingIds } = result;
   if (ast.children.length === 0) return sourceInsertion?.content ?? null;
@@ -44,24 +58,50 @@ export function PreparedProseBlock({
     linkPreview, referenceRepository, destinationMode };
   const last = ast.children.length - 1;
   const selected = Math.min(sourceInsertion?.position?.markdownBlock ?? last, last);
-  const rendered = <MarkdownBlocks blocks={ast.children} decorateBlock={onOpenSourceLink === undefined ? undefined : (content, index) => {
-    const anchor = isValidElement<{ 'data-nc-report-markdown-block'?: number }>(content) && typeof content.type === 'string'
-      ? cloneElement(content, { 'data-nc-report-markdown-block': index })
-      : content;
-    return index === selected && sourceInsertion !== undefined ? <>{anchor}{sourceInsertion.content}</> : anchor;
-  }} presentation={{
-    classes: { paragraph: styles.p, list: styles.list, item: styles.item, check: styles.check,
-      quote: styles.quote, inlineCode: styles.inlineCode, strong: styles.strong,
-      tableWrap: styles.tableWrap, table: styles.table, cell: styles.cell, rule: styles.rule },
-    heading: (depth, offset, children) => depth === 1
-      ? <h2 className={styles.h1} id={headingIds.get(offset)}><span className={styles.headingText}>{children}</span></h2>
-      : <h3 className={styles.h2} id={headingIds.get(offset)}>{children}</h3>,
-    text: (value, inLink) => inLink ? value : <PlainReportText text={value} context={context} />,
-    inlineCode: (value, inLink, body) => inLink || !qualifiedReportFileReference(value) ? body
-      : <Destination destination={value} label={value} body={body} context={context} />,
-    link: (destination, label, body) => <Destination destination={destination} label={label} body={body} context={context} />,
-    image: (destination, alt, inLink) => <ReportImage destination={destination} alt={alt} context={{ ...context, inLink }} />,
-  }} />;
+  const needsBlockDecorator = onOpenSourceLink !== undefined || highlightSelection !== null;
+  const rendered = <MarkdownBlocks
+    blocks={ast.children}
+    decorateBlock={!needsBlockDecorator ? undefined : (content, index) => {
+      const highlighted = highlightSelection?.blocks.has(index) === true;
+      let anchor = content;
+      if (isValidElement<{ className?: string; 'data-nc-report-markdown-block'?: number; 'data-nc-markdown-highlight'?: string }>(content)
+        && typeof content.type === 'string') {
+        const extraProps: { className?: string; 'data-nc-report-markdown-block'?: number; 'data-nc-markdown-highlight'?: string } = {};
+        if (onOpenSourceLink !== undefined) extraProps['data-nc-report-markdown-block'] = index;
+        if (highlighted) {
+          extraProps['data-nc-markdown-highlight'] = '';
+          extraProps.className = content.props.className ? `${content.props.className} ${styles.highlightedBlock}` : styles.highlightedBlock;
+        }
+        anchor = cloneElement(content, extraProps);
+      } else if (highlighted) {
+        anchor = <div className={styles.highlightedBlock} data-nc-markdown-highlight="">{content}</div>;
+      }
+      return index === selected && sourceInsertion !== undefined ? <>{anchor}{sourceInsertion.content}</> : anchor;
+    }}
+    decorateListItem={highlightSelection === null || highlightSelection.listItems.size === 0 ? undefined : (content, blockIndex, itemIndex) => {
+      if (!highlightSelection.listItems.get(blockIndex)?.has(itemIndex)) return content;
+      if (isValidElement<{ className?: string; 'data-nc-markdown-highlight'?: string }>(content)) {
+        return cloneElement(content, {
+          'data-nc-markdown-highlight': '',
+          className: content.props.className ? `${content.props.className} ${styles.highlightedItem}` : styles.highlightedItem,
+        });
+      }
+      return content;
+    }}
+    presentation={{
+      classes: { paragraph: styles.p, list: styles.list, item: styles.item, check: styles.check,
+        quote: styles.quote, inlineCode: styles.inlineCode, strong: styles.strong,
+        tableWrap: styles.tableWrap, table: styles.table, cell: styles.cell, rule: styles.rule },
+      heading: (depth, offset, children) => depth === 1
+        ? <h2 className={styles.h1} id={headingIds.get(offset)}><span className={styles.headingText}>{children}</span></h2>
+        : <h3 className={styles.h2} id={headingIds.get(offset)}>{children}</h3>,
+      text: (value, inLink) => inLink ? value : <PlainReportText text={value} context={context} />,
+      inlineCode: (value, inLink, body) => inLink || !qualifiedReportFileReference(value) ? body
+        : <Destination destination={value} label={value} body={body} context={context} />,
+      link: (destination, label, body) => <Destination destination={destination} label={label} body={body} context={context} />,
+      image: (destination, alt, inLink) => <ReportImage destination={destination} alt={alt} context={{ ...context, inLink }} />,
+    }}
+  />;
   return compact ? <div className={styles.field}>{rendered}</div> : rendered;
 }
 

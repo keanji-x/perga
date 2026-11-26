@@ -7,6 +7,7 @@ import { useEffect, useMemo, type ReactNode } from 'react';
 
 import { PreparedProseBlock, PlainReportText, ProseBlock } from './content.tsx';
 export { ProseBlock, ReportTextLink } from './content.tsx';
+import type { LineRange } from '../../../../../core/domain/markdown-line-target.ts';
 import type { ReferenceRepository } from '../../../../../core/domain/report-references.ts';
 import { type ReportBlock, type ReportLinkTarget, type TrackReport } from '../../../../../core/domain/report.ts';
 import { type ReportTaskRow } from '../../../../../core/domain/track-task-inventory.ts';
@@ -66,6 +67,8 @@ export type ReportDocumentProps = Readonly<{
   allowAutoFlow?: boolean;
   /** Whether this document represents a committed Track report (`data-nc-report`). Defaults to true. */
   authored?: boolean;
+  /** Optional 1-based source line range to highlight in standalone Markdown documents. */
+  highlightLines?: LineRange;
 }>;
 
 function resolveAutoFlow(
@@ -93,7 +96,7 @@ function isTargetSectionProse(slot: PreparedReportBlock | undefined): boolean {
 /** Agent-authored destinations become admitted preview controls. Navigation stays behind typed callbacks or explicit external activation. */
 export function ReportDocument({
   report, preparation, empty, outlineEmpty, rail, byline, sourceInsertion, backlinkCounts, onOpenLink, onOpenFileLink, onOpenWorker, onOpenTrack, onOpenSourceLink, fileRoot, fileBasePath, linkPreview,
-  templateViews, allowAutoFlow = true, authored = true, arrivalAnchorId, taskRows,
+  templateViews, allowAutoFlow = true, authored = true, arrivalAnchorId, taskRows, highlightLines,
 }: ReportDocumentProps) {
   const compactViewport = useCompactViewport();
   const prepared = useMemo(() => preparation ?? prepareReportDocument(report), [preparation, report]);
@@ -151,6 +154,7 @@ export function ReportDocument({
                 <PreparedProseBlock
                   prepared={prepared.prose}
                   sourceInsertion={sourceInsertion}
+                  highlightLines={highlightLines}
                   referenceRepository={referenceRepository} onOpenLink={onOpenLink}
                   onOpenFileLink={onOpenFileLink}
                   onOpenSourceLink={onOpenSourceLink}
