@@ -5,12 +5,17 @@ cd "${1:?usage: bash tools/smoke-package.sh EXTRACTED_PACKAGE_DIR}"
 test -x Perga.Host
 test -x perga-term-bridge
 test -s templates/agents-delivery/template.perga.js
+test -s VERSION
+expected_version=${PERGA_EXPECTED_VERSION:-$(head -n 1 VERSION)}
 echo '{"jsonrpc":"2.0","id":1,"method":"session/close"}' |
   node oar-bridge/perga-oar-bridge.mjs | jq -es '.[0] | .id == 1 and .result.closed == true'
 
 tmp=$(mktemp -d)
 export PERGA_DATA_DIR="$tmp/data"
 export Perga__EagerStartTerminalBridge=true
+env -u PERGA_INSTALL_DIR ./Perga.Host version | tee "$tmp/version.txt"
+grep -Fxq "perga ${expected_version}" "$tmp/version.txt"
+env -u PERGA_INSTALL_DIR ./Perga.Host doctor
 # Unset DOTNET_ROOT and PERGA_STATIC_WEB_DIR to verify the self-contained Host
 # launches without an external .NET runtime and auto-discovers its bundled web/ directory.
 env -u DOTNET_ROOT -u DOTNET_MULTILEVEL_LOOKUP -u ASPNETCORE_URLS -u Kestrel__Endpoints__Http__Url -u PERGA_STATIC_WEB_DIR \

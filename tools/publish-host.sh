@@ -24,3 +24,9 @@ test -x "$output/Perga.Host"
 test -s "$output/oar-bridge/perga-oar-bridge.mjs"
 install -m 755 "$bridge" "$output/perga-term-bridge"
 cp -R templates LICENSE "$output/"
+# `perga version` and the installer report the first line of VERSION.
+version="${PERGA_RELEASE_VERSION:-}"
+if [[ -z "$version" ]]; then
+  version=$(git describe --tags --exact-match 2>/dev/null || printf 'dev-%s' "$(git rev-parse --short=8 HEAD 2>/dev/null || echo unknown)")
+fi
+printf '%s\n' "$version" > "$output/VERSION"

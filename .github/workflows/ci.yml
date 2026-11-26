@@ -5,7 +5,7 @@ on:
     branches: [main]
   push:
     branches: [main]
-    tags: ['v[0-9]+.[0-9]+.[0-9]+']
+    tags: ['v[0-9]+.[0-9]+.[0-9]+', 'v[0-9]+.[0-9]+.[0-9]+-*']
   workflow_dispatch:
 
 permissions:
@@ -201,6 +201,12 @@ jobs:
         with:
           name: perga-web
           path: perga/web/
+      - name: Stamp the package version
+        run: |
+          # `perga version` reports this; branch builds identify their commit.
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then version="$GITHUB_REF_NAME"; else version="dev-${GITHUB_SHA:0:8}"; fi
+          printf '%s\n' "$version" > perga/VERSION
+          echo "PERGA_EXPECTED_VERSION=$version" >> "$GITHUB_ENV"
       - name: Archive and verify the native package
         env:
           PACKAGE: ${{ matrix.package }}
@@ -229,17 +235,70 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          sparse-checkout: install.sh
+          sparse-checkout-cone-mode: false
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: perga-linux-x64
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: perga-darwin-arm64
-      - name: Publish verified packages to the version tag
+      - name: Publish verified packages and the installer to the version tag
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
         run: |
+          ident='(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)'
+          semver="^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-${ident}(\.${ident})*)?\$"
+          if [[ ! "$TAG" =~ $semver ]]; then
+            echo "error: tag '$TAG' is not a strict SemVer tag." >&2
+            exit 1
+          fi
+          test -s install.sh
           sha256sum -c perga-linux-x64.tar.gz.sha256 perga-darwin-arm64.tar.gz.sha256
-          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes \
-            perga-linux-x64.tar.gz perga-linux-x64.tar.gz.sha256 \
-            perga-darwin-arm64.tar.gz perga-darwin-arm64.tar.gz.sha256
+          prerelease=false
+          if [[ "$TAG" == *-* ]]; then prerelease=true; fi
+          assets=(perga-linux-x64.tar.gz perga-linux-x64.tar.gz.sha256 perga-darwin-arm64.tar.gz perga-darwin-arm64.tar.gz.sha256 install.sh)
+          is_draft=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft' 2>/dev/null || true)
+          if [[ "$is_draft" == "false" ]]; then
+            echo "Release $TAG is already published; verifying state and assets without modifying it."
+            actual_prerelease=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isPrerelease --jq '.isPrerelease')
+            test "$actual_prerelease" = "$prerelease"
+            existing_assets=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
+            for asset in "${assets[@]}"; do
+              grep -Fxq "$asset" <<< "$existing_assets" || { echo "error: published release $TAG is missing asset '$asset'." >&2; exit 1; }
+            done
+            exit 0
+          fi
+          repo_env=""
+          if [[ "$GITHUB_REPOSITORY" != keanji-x/perga ]]; then repo_env="PERGA_REPO=$GITHUB_REPOSITORY "; fi
+          {
+            echo '## Install'
+            echo ''
+            echo '```sh'
+            echo '# Latest stable release'
+            echo 'curl -fsSL https://keanji-x.github.io/perga/install.sh | '"${repo_env}"'bash'
+            echo "# Pin this release"
+            echo "curl -fsSL https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/install.sh | ${repo_env}PERGA_VERSION=$TAG bash"
+            echo "# Upgrade an existing installation"
+            echo "perga upgrade $TAG"
+            echo '```'
+            echo ''
+            gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" -f tag_name="$TAG" --jq .body
+          } > release-notes.md
+          # Upload to a draft first so a published release never lacks assets; a rerun resumes only a draft release.
+          if [[ "$is_draft" == "true" ]]; then
+            gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber "${assets[@]}"
+          elif [[ -z "$is_draft" ]]; then
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --draft --title "$TAG" \
+              --prerelease="$prerelease" --notes-file release-notes.md "${assets[@]}"
+          else
+            echo "error: unexpected release draft state '$is_draft' for tag '$TAG'." >&2
+            exit 1
+          fi
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease="$prerelease" --notes-file release-notes.md
+          state=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease --jq '"\(.isDraft):\(.isPrerelease)"')
+          test "$state" = "false:$prerelease"

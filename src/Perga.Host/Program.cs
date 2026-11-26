@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.StaticFiles;
 using Microsoft.Extensions.FileProviders;
 using Perga.Host;
 using Perga.Host.Auth;
+using Perga.Host.Cli;
 using Perga.Host.Configuration;
 using Perga.Host.Http;
 using Perga.Host.Mcp;
@@ -14,6 +15,10 @@ using Perga.Host.SystemUpgrade;
 
 if (args is ["auth", ..])
     return await AuthCliCommand.RunAsync(args, Console.In, Console.Out, Console.Error);
+if (HostCliCommand.Handles(args))
+    return await HostCliCommand.RunAsync(args, HostCliEnvironment.FromProcess());
+if (args is ["start", .. var hostArgs])
+    args = hostArgs;
 
 string? exportPath = null;
 if (args.Contains("--export-openapi", StringComparer.Ordinal))
