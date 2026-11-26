@@ -7,7 +7,7 @@ using Perga.Kernel.Ports;
 
 namespace Perga.Host.Execution;
 
-public sealed class SshExecutionFileSystem : IExecutionFileSystem
+public sealed partial class SshExecutionFileSystem : IExecutionFileSystem
 {
     private const int BinarySniffBytes = 8 * 1024;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
@@ -32,7 +32,7 @@ public sealed class SshExecutionFileSystem : IExecutionFileSystem
                 if trimmed == "~":
                     target = home
                 elif trimmed.startswith("~/"):
-                    target = os.path.join(home, trimmed[2:])
+                    target = home + trimmed[1:]
                 else:
                     target = trimmed
             full = os.path.abspath(target)
@@ -66,6 +66,7 @@ public sealed class SshExecutionFileSystem : IExecutionFileSystem
             print(json.dumps({"path": full, "parent": parent, "entries": entries}))
             """;
 
+        RejectNul(path);
         var remoteScript = BuildPythonCommand(pyScript, path ?? string.Empty);
 
         var (exitCode, stdout, stderr) = await SshCommandBuilder
@@ -136,56 +137,39 @@ public sealed class SshExecutionFileSystem : IExecutionFileSystem
         int maxBytes,
         CancellationToken ct = default)
     {
+        RejectNul(relativePath);
         var limit = Math.Max(1, maxBytes);
         var pyScript = WorkspacePathScript + "\n" + """
             import base64
-            max_bytes = max(1, int(sys.argv[3]))
-            if os.path.isdir(real_cand):
-                try:
-                    names = sorted(os.listdir(real_cand))
-                except PermissionError:
-                    print(json.dumps({"error": "forbidden", "message": f"Access denied reading directory '{rel}'."}))
-                    sys.exit(0)
-                dirs = []
-                files = []
-                for name in names:
-                    child_cand = os.path.join(candidate, name)
-                    child_real = os.path.join(real_cand, name)
-                    child_rel = os.path.relpath(child_cand, root_full).replace("\\", "/")
-                    try:
-                        if os.path.isdir(child_real):
-                            dirs.append({"name": name, "relativePath": child_rel, "isDirectory": True, "sizeBytes": 0})
-                        elif os.path.isfile(child_real):
-                            st = os.stat(child_real)
-                            files.append({"name": name, "relativePath": child_rel, "isDirectory": False, "sizeBytes": st.st_size})
-                    except OSError:
-                        continue
-                print(json.dumps({"relativePath": rel, "isDirectory": True, "entries": dirs + files}))
-                sys.exit(0)
-
+            max_bytes = int(sys.argv[3])
             try:
-                fd = os.open(real_cand, os.O_RDONLY | os.O_NONBLOCK)
-                with os.fdopen(fd, "rb") as f:
-                    info = os.fstat(f.fileno())
-                    if not stat.S_ISREG(info.st_mode):
-                        print(json.dumps({"error": "invalid_argument", "message": "Workspace path is not a regular file."}))
-                        sys.exit(0)
-                    ensure_fd_contained(f.fileno())
-                    total_size = info.st_size
-                    data = f.read(max_bytes)
-            except PermissionError:
-                print(json.dumps({"error": "forbidden", "message": f"Access denied reading file '{rel}'."}))
-                sys.exit(0)
-            except FileNotFoundError:
-                print(json.dumps({"error": "not_found", "message": f"Workspace path '{rel}' not found."}))
-                sys.exit(0)
-
-            print(json.dumps({
-                "relativePath": rel,
-                "isDirectory": False,
-                "totalSize": total_size,
-                "dataB64": base64.b64encode(data).decode("ascii")
-            }))
+                if stat.S_ISDIR(info.st_mode):
+                    dirs = []
+                    files = []
+                    for name in sorted(os.listdir(real_cand)):
+                        child = os.path.join(real_cand, name)
+                        try:
+                            st = os.stat(child)
+                            real_child = os.path.realpath(child)
+                            child_rel = display_path(real_child)
+                        except OSError:
+                            continue
+                        if stat.S_ISDIR(st.st_mode):
+                            dirs.append({"name": name, "relativePath": child_rel, "isDirectory": True, "sizeBytes": 0})
+                        elif stat.S_ISREG(st.st_mode):
+                            files.append({"name": name, "relativePath": child_rel, "isDirectory": False, "sizeBytes": st.st_size})
+                    print(json.dumps({"relativePath": rel, "isDirectory": True, "entries": dirs + files}))
+                else:
+                    with open_regular_file() as f:
+                        data = f.read(max_bytes)
+                        print(json.dumps({
+                            "relativePath": rel,
+                            "isDirectory": False,
+                            "truncated": bool(f.read(1)),
+                            "dataB64": base64.b64encode(data).decode("ascii")
+                        }))
+            except OSError as error:
+                path_error(error)
             """;
 
         var remoteScript = BuildPythonCommand(pyScript, workspaceRoot, relativePath ?? string.Empty,
@@ -220,7 +204,7 @@ public sealed class SshExecutionFileSystem : IExecutionFileSystem
                 IsBinary: false);
         }
 
-        var totalSize = root.GetProperty("totalSize").GetInt64();
+        var truncated = root.GetProperty("truncated").GetBoolean();
         var dataB64 = root.GetProperty("dataB64").GetString() ?? string.Empty;
         var bytes = Convert.FromBase64String(dataB64);
 
@@ -236,7 +220,6 @@ public sealed class SshExecutionFileSystem : IExecutionFileSystem
                 IsBinary: true);
         }
 
-        var truncated = totalSize > bytes.Length;
         var validLen = truncated ? LocalExecutionFileSystem.TrimTrailingIncompleteUtf8(bytes) : bytes.Length;
         var text = Encoding.UTF8.GetString(bytes, 0, validLen);
         return new WorkspaceFileResultDto(
@@ -250,32 +233,11 @@ public sealed class SshExecutionFileSystem : IExecutionFileSystem
 
     public async Task<(string Path, Stream Content)> OpenWorkspaceRawFileAsync(
         string workspaceRoot,
-        string relativePath,
+        string? relativePath,
         CancellationToken ct = default)
     {
-        var pyScript = WorkspacePathScript + "\n" + """
-            import shutil
-            try:
-                f = os.fdopen(os.open(real_cand, os.O_RDONLY | os.O_NONBLOCK), "rb")
-            except PermissionError:
-                print(json.dumps({"error": "forbidden", "message": f"Access denied reading file '{rel}'."}))
-                sys.exit(0)
-            except (FileNotFoundError, IsADirectoryError):
-                print(json.dumps({"error": "not_found", "message": f"Workspace file '{rel}' not found."}))
-                sys.exit(0)
-            with f:
-                mode = os.fstat(f.fileno()).st_mode
-                if stat.S_ISDIR(mode):
-                    print(json.dumps({"error": "not_found", "message": f"Workspace file '{rel}' not found."}))
-                    sys.exit(0)
-                if not stat.S_ISREG(mode):
-                    print(json.dumps({"error": "invalid_argument", "message": "Workspace path is not a regular file."}))
-                    sys.exit(0)
-                ensure_fd_contained(f.fileno())
-                print(json.dumps({"path": real_cand}), flush=True)
-                shutil.copyfileobj(f, sys.stdout.buffer, 65536)
-            """;
-        var script = BuildPythonCommand(pyScript, workspaceRoot, relativePath);
+        RejectNul(relativePath);
+        var script = BuildPythonCommand(OpenFileScript, workspaceRoot, relativePath ?? string.Empty, "raw");
         ct.ThrowIfCancellationRequested();
         var process = new Process
         {
@@ -322,48 +284,94 @@ public sealed class SshExecutionFileSystem : IExecutionFileSystem
         }
     }
 
-    private const string WorkspacePathScript = """
-        import json, os, stat, sys
-        def ensure_fd_contained(fd):
-            fd_link = f"/proc/self/fd/{fd}"
-            if os.path.exists(fd_link) and os.path.commonpath([real_root, os.path.realpath(fd_link)]) != real_root:
-                print(json.dumps({"error": "forbidden", "message": "Path escapes workspace root."}))
-                sys.exit(0)
+    public async Task<string> ValidateWorkspaceFileAsync(string workspaceRoot, string path, CancellationToken ct = default)
+    {
+        RejectNul(path);
+        var script = BuildPythonCommand(OpenFileScript, workspaceRoot, path, "validate");
+        var (exitCode, stdout, stderr) = await SshCommandBuilder.RunTextAsync(_config, script, ct: ct).ConfigureAwait(false);
+        if (exitCode != 0)
+            throw KernelException.PreconditionFailed($"Failed to open file on target '{_config.TargetId}': {stderr.Trim()}");
 
-        root_full = os.path.abspath(sys.argv[1])
-        raw_path = sys.argv[2]
+        using var doc = JsonDocument.Parse(stdout);
+        ThrowIfRemoteError(doc.RootElement);
+        return doc.RootElement.GetProperty("path").GetString()!;
+    }
 
-        root_with_sep = root_full if root_full.endswith(os.sep) else root_full + os.sep
-        if not raw_path or not raw_path.strip():
-            candidate = root_full
-        else:
-            trimmed = raw_path.strip()
-            if os.path.isabs(trimmed):
-                rooted = os.path.abspath(trimmed)
-                if rooted == root_full or rooted.startswith(root_with_sep):
-                    candidate = rooted
-                else:
-                    candidate = os.path.abspath(os.path.join(root_full, trimmed.lstrip("/\\")))
-            else:
-                candidate = os.path.abspath(os.path.join(root_full, trimmed))
+    private const string OpenFileScript = WorkspacePathScript + "\n" + """
+        import shutil
+        raw = sys.argv[3] == "raw"
+        if raw and stat.S_ISDIR(info.st_mode):
+            fail("not_found", f"Path '{real_cand}' is a directory, not a file.")
+        try:
+            f = open_regular_file()
+        except OSError as error:
+            path_error(error)
 
-        if candidate != root_full and not candidate.startswith(root_with_sep):
-            print(json.dumps({"error": "forbidden", "message": "Path escapes workspace root."}))
-            sys.exit(0)
-
-        rel = "" if candidate == root_full else os.path.relpath(candidate, root_full).replace("\\", "/")
-
-        if not os.path.exists(candidate):
-            print(json.dumps({"error": "not_found", "message": f"Workspace path '{rel}' not found."}))
-            sys.exit(0)
-
-        real_root = os.path.realpath(root_full)
-        real_root_sep = real_root if real_root.endswith(os.sep) else real_root + os.sep
-        real_cand = os.path.realpath(candidate)
-        if real_cand != real_root and not real_cand.startswith(real_root_sep):
-            print(json.dumps({"error": "forbidden", "message": "Path escapes workspace root."}))
-            sys.exit(0)
+        with f:
+            print(json.dumps({"path": rel}), flush=True)
+            if raw:
+                shutil.copyfileobj(f, sys.stdout.buffer, 65536)
         """;
+
+    private const string WorkspacePathScript = """
+        import errno, json, os, stat, sys
+
+        def fail(code, message):
+            print(json.dumps({"error": code, "message": message}))
+            sys.exit(0)
+
+        def path_error(error):
+            if error.errno in (errno.EACCES, errno.EPERM):
+                fail("forbidden", f"Access denied to path '{error.filename}'.")
+            if error.errno in (errno.ENOENT, errno.ENOTDIR):
+                fail("not_found", f"Path '{error.filename}' not found.")
+            fail("invalid_argument", str(error))
+
+        def within_workspace(path):
+            return os.path.commonpath([real_root, path]) == real_root
+
+        def display_path(path):
+            if path == real_root:
+                return ""
+            if within_workspace(path):
+                relative = os.path.relpath(path, real_root)
+                return "./" + relative if relative == "~" or relative.startswith("~/") else relative
+            return path
+
+        def open_regular_file():
+            if not stat.S_ISREG(info.st_mode):
+                fail("invalid_argument", "Path is not a regular file.")
+            fd = os.open(real_cand, os.O_RDONLY | os.O_NONBLOCK)
+            try:
+                if not stat.S_ISREG(os.fstat(fd).st_mode):
+                    fail("invalid_argument", "Path is not a regular file.")
+                return os.fdopen(fd, "rb")
+            except BaseException:
+                os.close(fd)
+                raise
+
+        workspace_root = os.path.abspath(sys.argv[1])
+        raw_path = sys.argv[2]
+        try:
+            os.stat(workspace_root)
+            real_root = os.path.realpath(workspace_root)
+            if raw_path == "~":
+                raw_path = os.path.expanduser("~")
+            elif raw_path.startswith("~/"):
+                raw_path = os.path.expanduser("~") + raw_path[1:]
+            candidate = os.path.join(real_root, raw_path)
+            info = os.stat(candidate)
+            real_cand = os.path.realpath(candidate)
+            rel = display_path(real_cand)
+        except OSError as error:
+            path_error(error)
+        """;
+
+    private static void RejectNul(string? path)
+    {
+        if (path?.Contains('\0') == true)
+            throw KernelException.InvalidArgument("Path cannot contain a null character.");
+    }
 
     private static string BuildPythonCommand(string script, params string[] arguments) =>
         "command -v python3 >/dev/null 2>&1 || { echo 'python3 is required for remote filesystem access.' >&2; exit 127; }\n" +

@@ -33,6 +33,8 @@ public static class KernelEventKinds
     public const string SessionRuntimeStatus = "session.runtime_status";
     public const string SessionTaskProgress = "session.task_progress";
 
+    public const string WorkspaceFileOpenRequested = "workspace.file_open_requested";
+
     private static readonly HashSet<string> TransientKinds = new(StringComparer.Ordinal)
     {
         MemoryUpdated,
@@ -44,6 +46,7 @@ public static class KernelEventKinds
         SessionToolProgress,
         SessionRuntimeStatus,
         SessionTaskProgress,
+        WorkspaceFileOpenRequested,
         "system.upgrade_status"
     };
 

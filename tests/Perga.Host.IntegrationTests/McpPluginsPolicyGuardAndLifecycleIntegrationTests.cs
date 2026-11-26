@@ -6,6 +6,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Perga.Contracts;
 using Perga.Host.Configuration;
@@ -220,7 +221,12 @@ public sealed class McpPluginsPolicyGuardAndLifecycleIntegrationTests
         // 1. Start a real loopback Kestrel upstream HTTP MCP server for "http-quote" plugin!
         var httpUpstreamCalls = new ConcurrentQueue<string>();
         var upstreamBuilder = WebApplication.CreateSlimBuilder();
-        upstreamBuilder.WebHost.UseUrls("http://127.0.0.1:0");
+        upstreamBuilder.WebHost.ConfigureKestrel(options =>
+        {
+            // The contract gate can inherit the running Perga Host's configured endpoint.
+            options.Configure(new ConfigurationBuilder().Build());
+            options.Listen(IPAddress.Loopback, 0);
+        });
         await using var upstreamApp = upstreamBuilder.Build();
 
         upstreamApp.MapPost("/mcp", async (HttpContext ctx) =>

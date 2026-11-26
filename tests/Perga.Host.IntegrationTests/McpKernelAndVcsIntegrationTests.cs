@@ -233,6 +233,7 @@ public sealed class McpKernelAndVcsIntegrationTests
         // 1. Lead gets shared, governance and unified session tools.
         var leadTools = await ListToolNamesAsync(cluster, "/mcp/kernel", leadToken, ct);
         Assert.Contains(KernelMcpToolNames.FlowCommit, leadTools);
+        Assert.Contains(KernelMcpToolNames.FileOpen, leadTools);
         Assert.Contains(KernelMcpToolNames.FlowRead, leadTools);
         Assert.Contains(KernelMcpToolNames.ProviderList, leadTools);
         Assert.Contains(KernelMcpToolNames.DataPatch, leadTools);
@@ -309,7 +310,14 @@ public sealed class McpKernelAndVcsIntegrationTests
         Assert.Contains(KernelMcpToolNames.SessionList, subTools);
         Assert.Contains(KernelMcpToolNames.SessionRead, subTools);
         Assert.DoesNotContain(KernelMcpToolNames.TrackClose, subTools);
+        Assert.DoesNotContain(KernelMcpToolNames.FileOpen, subTools);
         await AssertTrackDiscoveryAsync(cluster, contractToken, area.Id, trackBId, ct);
+
+        var (fileOpenReply, fileOpenError) = await CallToolAsync(cluster, "/mcp/kernel", contractToken,
+            KernelMcpToolNames.FileOpen, new { path = "missing.txt" }, ct);
+        Assert.True(fileOpenError);
+        using var fileOpenFailure = JsonDocument.Parse(fileOpenReply);
+        Assert.Equal("forbidden", fileOpenFailure.RootElement.GetProperty("code").GetString());
 
         // Bound Workers cannot invoke governance even when bypassing tools/list.
         foreach (var (govTool, govArgs) in new (string, object)[]

@@ -5,7 +5,7 @@ using Microsoft.Win32.SafeHandles;
 
 namespace Perga.VcsKit;
 
-public static class WorkspaceFileReader
+public static partial class WorkspaceFileReader
 {
     public static string ResolveCanonicalPath(string fullPath)
     {

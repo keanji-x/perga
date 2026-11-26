@@ -6109,6 +6109,24 @@
           "truncated"
         ],
         "type": "object"
+      },
+      "WorkspaceFileSearchResultDto": {
+        "properties": {
+          "paths": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "paths",
+          "truncated"
+        ],
+        "type": "object"
       }
     },
     "securitySchemes": {
@@ -8341,6 +8359,72 @@
               }
             },
             "description": "Binary file (range requests supported)"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Error mapped by Host exception handling or request guards"
+          }
+        }
+      }
+    },
+    "/api/v1/tracks/{trackId}/files/search": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "trackId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceFileSearchResultDto"
+                }
+              }
+            },
+            "description": "HTTP 200"
           },
           "default": {
             "content": {

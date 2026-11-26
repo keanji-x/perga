@@ -151,7 +151,7 @@ public sealed class ApiV1AuditFixesIntegrationTests
             }
         }
 
-        // 2. Initialize a Git repo workspace and test /files (binary detection), /files/raw (headers + containment), and /vcs-diff
+        // 2. Initialize a Git repo workspace and test /files (binary detection), /files/raw (headers + path resolution), and /vcs-diff
         var gitRepo = Path.Combine(cluster.DataDir, "git-diff-ws");
         Directory.CreateDirectory(gitRepo);
         await RunCmdAsync(gitRepo, "git", "init", "-q");
@@ -171,9 +171,10 @@ public sealed class ApiV1AuditFixesIntegrationTests
         await File.WriteAllBytesAsync(Path.Combine(gitRepo, "logo.png"), pngBytes);
         await File.WriteAllTextAsync(Path.Combine(gitRepo, "xss.html"), "<script>alert(1)</script>");
 
-        var secretOutside = Path.Combine(cluster.DataDir, "outside-secret.txt");
-        await File.WriteAllTextAsync(secretOutside, "TOP_SECRET");
-        File.CreateSymbolicLink(Path.Combine(gitRepo, "escape-link.txt"), secretOutside);
+        const string externalHtml = "<p>External file</p>";
+        var externalFile = Path.Combine(cluster.DataDir, "external.html");
+        await File.WriteAllTextAsync(externalFile, externalHtml);
+        File.CreateSymbolicLink(Path.Combine(gitRepo, "external-link.txt"), externalFile);
 
         using var areaResp = await client.PostAsJsonAsync("/api/v1/areas", new { name = "VCS Area", defaultCwd = gitRepo });
         var area = (await areaResp.Content.ReadFromJsonAsync<AreaDto>(PergaJsonDefaults.ApiOptions))!;
@@ -197,7 +198,7 @@ public sealed class ApiV1AuditFixesIntegrationTests
         Assert.False(txtFileDoc.RootElement.GetProperty("isBinary").GetBoolean());
         Assert.Contains("line 2 updated", txtFileDoc.RootElement.GetProperty("content").GetString());
 
-        // Raw file streaming + CSP sandbox + path traversal & external symlink defense!
+        // Raw file streaming with CSP sandbox, including paths outside the workspace.
         using var rawPngResp = await client.GetAsync($"/api/v1/tracks/{trackId}/files/raw?path=logo.png");
         Assert.Equal(HttpStatusCode.OK, rawPngResp.StatusCode);
         Assert.Equal("image/png", rawPngResp.Content.Headers.ContentType?.MediaType);
@@ -209,14 +210,17 @@ public sealed class ApiV1AuditFixesIntegrationTests
         Assert.Equal("nosniff", rawHtmlResp.Headers.GetValues("X-Content-Type-Options").Single());
         Assert.Equal("sandbox", rawHtmlResp.Headers.GetValues("Content-Security-Policy").Single());
 
-        using var escapeDotDotResp = await client.GetAsync($"/api/v1/tracks/{trackId}/files/raw?path={Uri.EscapeDataString("../outside-secret.txt")}");
-        Assert.Equal(HttpStatusCode.Forbidden, escapeDotDotResp.StatusCode);
-
-        using var escapeSymlinkResp = await client.GetAsync($"/api/v1/tracks/{trackId}/files/raw?path=escape-link.txt");
-        Assert.Equal(HttpStatusCode.Forbidden, escapeSymlinkResp.StatusCode);
+        foreach (var path in new[] { "../external.html", externalFile, "external-link.txt" })
+        {
+            using var rawExternal = await client.GetAsync($"/api/v1/tracks/{trackId}/files/raw?path={Uri.EscapeDataString(path)}");
+            Assert.Equal(HttpStatusCode.OK, rawExternal.StatusCode);
+            Assert.Equal("nosniff", Assert.Single(rawExternal.Headers.GetValues("X-Content-Type-Options")));
+            Assert.Equal("sandbox", Assert.Single(rawExternal.Headers.GetValues("Content-Security-Policy")));
+            Assert.Equal(externalHtml, await rawExternal.Content.ReadAsStringAsync());
+        }
 
         using var rawDirResp = await client.GetAsync($"/api/v1/tracks/{trackId}/files/raw");
-        Assert.Equal(HttpStatusCode.BadRequest, rawDirResp.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, rawDirResp.StatusCode);
 
         // Detailed VCS diff on Git repo (+ ?path= filter)
         using var diffResp = await client.GetAsync($"/api/v1/tracks/{trackId}/vcs-diff");
