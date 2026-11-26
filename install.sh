@@ -35,7 +35,7 @@ resolve_physical_path() {
   local missing_tail=0
   local IFS='/'
   local -a segments=()
-  read -r -a segments <<< "$path"
+  read -r -d '' -a segments < <(printf '%s\0' "$path") || true
 
   local seg candidate parent_phys
   for seg in "${segments[@]}"; do
@@ -102,7 +102,7 @@ assert_outside_install_dir() {
     local restarted=0
     local IFS='/'
     local -a segments=()
-    read -r -a segments <<< "$path"
+    read -r -d '' -a segments < <(printf '%s\0' "$path") || true
     local idx=0
     local total=${#segments[@]}
     while (( idx < total )); do
@@ -139,10 +139,12 @@ assert_outside_install_dir() {
           exit 1
         fi
         local link_target
-        link_target=$(readlink "$candidate") || {
+        link_target=$(readlink "$candidate" && printf 'x') || {
           echo "error: failed to read symlink for ${name} (${candidate})." >&2
           exit 1
         }
+        link_target="${link_target%$'\n'x}"
+        link_target="${link_target%x}"
         if [[ "$link_target" != /* ]]; then
           if [[ "$resolved" == "/" ]]; then
             link_target="/${link_target}"
@@ -244,10 +246,14 @@ CHECKSUM="${ARCHIVE}.sha256"
 tmp=$(mktemp -d)
 stage_dir=""
 backup_dir=""
+tmp_launcher=""
 cleanup() {
   rm -rf "$tmp"
   if [[ -n "$stage_dir" && -e "$stage_dir" ]]; then
     rm -rf "$stage_dir"
+  fi
+  if [[ -n "$tmp_launcher" && -e "$tmp_launcher" ]]; then
+    rm -f "$tmp_launcher"
   fi
 }
 trap cleanup EXIT
@@ -365,7 +371,8 @@ q_bin_dir=$(quote_sh "$BIN_DIR")
 q_data_dir=$(quote_sh "$DATA_DIR")
 q_repo=$(quote_sh "$REPO")
 
-cat > "${BIN_DIR}/perga" <<EOF
+tmp_launcher=$(mktemp "${BIN_DIR}/.perga-launcher.XXXXXX")
+cat > "$tmp_launcher" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 CALLER_PWD="\$(pwd -P)"
@@ -400,7 +407,7 @@ resolve_physical_path() {
   local missing_tail=0
   local IFS='/'
   local -a segments=()
-  read -r -a segments <<< "\$path"
+  read -r -d '' -a segments < <(printf '%s\0' "\$path") || true
   local seg candidate parent_phys
   for seg in "\${segments[@]}"; do
     if [[ -z "\$seg" || "\$seg" == "." ]]; then
@@ -450,7 +457,7 @@ assert_outside_install_dir() {
     local restarted=0
     local IFS='/'
     local -a segments=()
-    read -r -a segments <<< "\$path"
+    read -r -d '' -a segments < <(printf '%s\0' "\$path") || true
     local idx=0
     local total=\${#segments[@]}
     while (( idx < total )); do
@@ -487,10 +494,12 @@ assert_outside_install_dir() {
           exit 1
         fi
         local link_target
-        link_target=\$(readlink "\$candidate") || {
+        link_target=\$(readlink "\$candidate" && printf 'x') || {
           echo "error: failed to read symlink for \${name} (\${candidate})." >&2
           exit 1
         }
+        link_target="\${link_target%\$'\\n'x}"
+        link_target="\${link_target%x}"
         if [[ "\$link_target" != /* ]]; then
           if [[ "\$resolved" == "/" ]]; then
             link_target="/\${link_target}"
@@ -810,7 +819,9 @@ USAGE
     ;;
 esac
 EOF
-chmod 755 "${BIN_DIR}/perga"
+chmod 755 "$tmp_launcher"
+mv -f "$tmp_launcher" "${BIN_DIR}/perga"
+tmp_launcher=""
 
 echo ""
 if (( was_upgrade == 1 )) && [[ -n "$previous_version" ]]; then
