@@ -207,7 +207,7 @@
     }
 
     .mobilePageList .withActions .row {
-      padding-inline-end: calc(var(--space-2) + var(--rail-w-collapsed));
+      padding-inline-end: calc(var(--space-2) + var(--control-h-sm) + var(--rail-w-collapsed));
     }
 
     .mobilePageList .withActions .statusSlot {
