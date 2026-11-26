@@ -5,7 +5,7 @@ namespace Perga.Contracts;
 public sealed record WorkspaceFileSearchResultDto(IReadOnlyList<string> Paths, bool Truncated)
 {
     public const int DefaultLimit = 50;
-    public const int MaxLimit = 200;
+    public const int MaxLimit = 20_000;
 }
 
 public sealed record WorkspaceFileOpenRequestedDto(

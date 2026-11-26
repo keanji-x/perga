@@ -191,7 +191,7 @@ public sealed class WorkspaceFileIntegrationTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task FileSearchAdaptersStopAtTheScanCap(bool ssh)
+    public async Task FileSearchAdaptersCapTheIndexAndMatchBeyondIt(bool ssh)
     {
         if (OperatingSystem.IsWindows()) return;
 
@@ -212,6 +212,30 @@ public sealed class WorkspaceFileIntegrationTests
         var capped = await files.SearchWorkspaceFilesAsync(root, "z-marker", 50);
         Assert.Equal(exact.Paths, capped.Paths);
         Assert.True(capped.Truncated);
+
+        await RunAsync(root, "git", "add", "z-marker.txt");
+        var index = await files.SearchWorkspaceFilesAsync(root, null, WorkspaceFileSearchResultDto.MaxLimit);
+        Assert.Empty(index.Paths);
+        Assert.True(index.Truncated);
+        var supplemental = await files.SearchWorkspaceFilesAsync(root, "z marker", 200);
+        Assert.Equal(exact.Paths, supplemental.Paths);
+
+        string[] lateFiles = ["café.md", "src-index.ts", "z-ignore-src.ts", "^literal.ts", "!literal", "'literal"];
+        foreach (var name in lateFiles)
+            await File.WriteAllTextAsync(Path.Combine(root, name), "");
+        Directory.CreateDirectory(Path.Combine(root, "quick-open"));
+        await File.WriteAllTextAsync(Path.Combine(root, "quick-open", "public.tsx"), "");
+        await RunAsync(root, "git", ["add", "--", .. lateFiles, "quick-open/public.tsx"]);
+
+        Assert.Equal(["café.md"], (await files.SearchWorkspaceFilesAsync(root, "cafe", 200)).Paths);
+        Assert.Equal(["src-index.ts"], (await files.SearchWorkspaceFilesAsync(root, "^src", 200)).Paths);
+        Assert.Equal(["quick-open/public.tsx"], (await files.SearchWorkspaceFilesAsync(root, "quick pub", 200)).Paths);
+        Assert.Equal(["src-index.ts"], (await files.SearchWorkspaceFilesAsync(root, "src !ignore", 200)).Paths);
+        Assert.DoesNotContain("z-ignore-src.ts", (await files.SearchWorkspaceFilesAsync(root, "!ignore", 200)).Paths);
+        Assert.Equal(["src-index.ts", "café.md"], (await files.SearchWorkspaceFilesAsync(root, ".md$ | ^src", 200)).Paths);
+        Assert.Equal(["^literal.ts"], (await files.SearchWorkspaceFilesAsync(root, "^literal.ts", 200)).Paths);
+        Assert.Contains("!literal", (await files.SearchWorkspaceFilesAsync(root, "!literal", 200)).Paths);
+        Assert.Contains("'literal", (await files.SearchWorkspaceFilesAsync(root, "'literal", 200)).Paths);
     }
 
     private static async Task AddMissingIndexEntriesAsync(string root, int start, int count)
@@ -262,6 +286,16 @@ public sealed class WorkspaceFileIntegrationTests
         await RunAsync(root, "git", "init", "-q");
         await RunAsync(root, "git", "add", "readme-deleted.txt", "docs/readme");
         File.Delete(Path.Combine(root, "readme-deleted.txt"));
+        var changed = Directory.CreateDirectory(Path.Combine(root, "changed")).FullName;
+        var tracked = Path.Combine(changed, "readme-tracked.txt");
+        await File.WriteAllTextAsync(tracked, "");
+        await File.WriteAllTextAsync(Path.Combine(root, "readme-pipe"), "");
+        await RunAsync(root, "git", "add", "changed/readme-tracked.txt", "readme-pipe");
+        var moved = Path.Combine(fixture.Home, "moved");
+        Directory.Move(changed, moved);
+        Directory.CreateSymbolicLink(changed, moved);
+        File.Delete(Path.Combine(root, "readme-pipe"));
+        await RunAsync(root, "mkfifo", "readme-pipe");
         await File.WriteAllTextAsync(Path.Combine(root, ".gitignore"), "hidden/\nnode_modules/\n");
         var git = await files.SearchWorkspaceFilesAsync(root, "README", 200);
         Assert.Equal(["docs/readme", "readme.txt", "readme-guides/a", "quotes/'readme\nquoted", "my/r-e-a-d-m-e.md"], git.Paths);
@@ -287,7 +321,7 @@ public sealed class WorkspaceFileIntegrationTests
         await File.WriteAllTextAsync(Path.Combine(workspace, ".gitignore"), "needle-ignore\n");
         File.WriteAllText(Path.Combine(workspace, "needle-ignore"), "");
         File.WriteAllText(Path.Combine(workspace, "needle"), "");
-        for (var i = 0; i < 205; i++)
+        for (var i = 0; i < 105; i++)
             File.WriteAllText(Path.Combine(workspace, $"needle-{i:D3}"), "");
 
         var track = await CreateTrackAsync(cluster, workspace);
@@ -297,10 +331,19 @@ public sealed class WorkspaceFileIntegrationTests
         Assert.Equal(50, defaultResults!.Paths.Count);
         Assert.True(defaultResults.Truncated);
         Assert.Equal("needle", defaultResults.Paths[0]);
-        var maximum = await client.GetFromJsonAsync<WorkspaceFileSearchResultDto>(route + "&limit=500", PergaJsonDefaults.ApiOptions);
-        Assert.Equal(200, maximum!.Paths.Count);
-        Assert.True(maximum.Truncated);
-        Assert.DoesNotContain("needle-ignore", maximum.Paths);
+        var explicitLimit = await client.GetFromJsonAsync<WorkspaceFileSearchResultDto>(route + "&limit=100", PergaJsonDefaults.ApiOptions);
+        Assert.Equal(100, explicitLimit!.Paths.Count);
+        Assert.True(explicitLimit.Truncated);
+        var index = await client.GetFromJsonAsync<WorkspaceFileSearchResultDto>(
+            $"/api/v1/tracks/{track.Id}/files/search?q=&limit=20000", PergaJsonDefaults.ApiOptions);
+        Assert.Equal(107, index!.Paths.Count);
+        Assert.False(index.Truncated);
+        Assert.DoesNotContain("needle-ignore", index.Paths);
+        Assert.Equal(WorkspaceFileSearch.ScanLimit, WorkspaceFileSearchResultDto.MaxLimit);
+        var capped = WorkspaceFileSearch.Rank(Enumerable.Range(0, WorkspaceFileSearch.ScanLimit + 1)
+            .Select(i => $"file-{i:D5}"), false, null, int.MaxValue);
+        Assert.Equal(WorkspaceFileSearchResultDto.MaxLimit, capped.Paths.Count);
+        Assert.True(capped.Truncated);
         var noResults = await client.GetFromJsonAsync<WorkspaceFileSearchResultDto>(
             $"/api/v1/tracks/{track.Id}/files/search?q=zzz", PergaJsonDefaults.ApiOptions);
         Assert.Empty(noResults!.Paths);
