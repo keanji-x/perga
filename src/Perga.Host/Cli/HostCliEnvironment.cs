@@ -30,6 +30,9 @@ public sealed record HostCliEnvironment
 
     public Func<string?, IReadOnlyDictionary<string, string>, OarNodeRuntimeStatus> ProbeNode { get; init; } = OarNodeRuntimeProbe.Probe;
 
+    public Func<IReadOnlyDictionary<string, string>, string?, IReadOnlyList<DetectedProviderCli>> DiscoverProviders { get; init; } =
+        ProviderCliProbe.Discover;
+
     public string? Get(string name) => Variables.TryGetValue(name, out var value) && value.Length > 0 ? value : null;
 
     public static HostCliEnvironment FromProcess() => new()

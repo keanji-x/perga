@@ -43,7 +43,7 @@ Perga moves multi-day and multi-week work — maintaining a repository, driving 
 
 - **No .NET runtime required** — release archives are self-contained native binaries for macOS Apple Silicon (`arm64`) and Linux `x64` (including Windows WSL2).
 - **Node.js 24 or later** for the bundled OAR agent bridge.
-- At least one configured provider CLI you already use, such as `claude`, `codex`, Antigravity, `opencode`, `kimi`, `qwen`, `devin`, or `grok`.
+- At least one configured provider CLI you already use, such as `claude`, `codex`, Antigravity (`agy` standalone CLI `>= 1.5.0` via `curl -fsSL https://antigravity.google/cli/install.sh | bash`, not just the IDE app), `opencode`, `kimi`, `qwen`, `devin`, or `grok`.
 
 ### One-line install (macOS Apple Silicon & Linux x64)
 
