@@ -36,7 +36,7 @@ toTrack,trackActivityFromSnapshot,trackDisplayTitle
 } from '../../../../core/domain/track.ts';
 import { parkedWorkerNotices,workbenchTerminalCardIds } from '../../../../core/view/track-page.ts';
 import { ReportEmpty } from '../../features/report/empty/public.tsx';
-import { ReportFileViewer } from '../../features/report/file-viewer/public.tsx';
+import { FileLayoutNav, ReportFileViewer } from '../../features/report/file-viewer/public.tsx';
 import { ReportOutline } from '../../features/report/outline/public.tsx';
 import { RecentFiles } from '../../features/report/recent-files/public.tsx';
 import { reportSourcePosition,type ReportSourcePosition } from '../../features/report/source/placement.ts';
@@ -461,10 +461,21 @@ export function TrackRouteBody({
   let fileViewer: TrackPageProps['fileViewer'];
   if (requestedFilePath !== null) {
     const displayFile = resolvedFile?.requested === requestedFilePath ? resolvedFile.canonical : requestedFilePath;
+    const lineSuffix = requestedFileLine === undefined ? undefined : `:${requestedFileLine}`;
+    const fullPath = isAbsoluteFilePath(track.agentCwd) && !isAbsoluteFilePath(displayFile) && !/^~(?:\/|$)/.test(displayFile)
+      ? joinFilePath(track.agentCwd, displayFile) : displayFile;
     fileViewer = {
-      label: displayFile + (requestedFileLine === undefined ? '' : `:${requestedFileLine}`),
-      fullPath: isAbsoluteFilePath(track.agentCwd) && !isAbsoluteFilePath(displayFile) && !/^~(?:\/|$)/.test(displayFile)
-        ? joinFilePath(track.agentCwd, displayFile) : displayFile,
+      label: displayFile + (lineSuffix ?? ''),
+      fullPath,
+      title: (
+        <FileLayoutNav
+          path={displayFile}
+          fullPath={fullPath}
+          lineSuffix={lineSuffix}
+          fileRoot={track.agentCwd}
+          onOpenQuickOpen={quickOpen.open}
+        />
+      ),
       onClose: closeFile,
       render: hasBackFocus => (
         <ReportFileViewer

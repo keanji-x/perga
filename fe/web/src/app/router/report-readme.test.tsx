@@ -88,7 +88,9 @@ it('suppresses HTTP 500 details and retries the same workspace read into the rea
   const alert = await screen.findByRole('alert');
   const file = screen.getByRole('region', { name: 'File docs/README.md' });
   expect(alert.textContent).toBe('Could not load this file.Retry');
-  expect(screen.getByText('docs/README.md').closest('header')).toBeTruthy();
+  const pathNav = screen.getByRole('navigation', { name: 'File path' });
+  expect(pathNav.closest('header')).toBeTruthy();
+  expect(pathNav.textContent).toBe('docs/README.md');
   expect(file.querySelector('[data-nc-report]')).toBeNull();
   fixture.recoverFileRead();
   fireEvent.click(within(file).getByRole('button', { name: 'Retry' }));

@@ -152,6 +152,7 @@ export function useTrackQuickOpen({ trackId, transport, unauthorized, recent, op
   }, [open, showQuickOpen]);
   return {
     command,
+    open: showQuickOpen,
     dialog: dialog === null ? null : <TrackQuickOpen key={trackId} trackId={trackId} transport={transport}
       unauthorized={unauthorized} initialQuery={dialog.query} recent={recent}
       onClose={() => setDialog(null)} onOpen={target => open(target, true, dialog.opener)} />,

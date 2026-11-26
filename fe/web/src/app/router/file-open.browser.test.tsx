@@ -500,7 +500,7 @@ it.each([1280, 390])('opens a Report citation with its line range and returns wi
   const { router } = fileFixture();
   const link = page.getByRole('button', { name: 'Read report file' });
   await link.click();
-  await expect.element(page.getByText('docs/example.txt:26-28', { exact: true })).toBeVisible();
+  await expect.element(page.getByText(width === 390 ? 'example.txt:26-28' : 'docs/example.txt:26-28', { exact: true })).toBeVisible();
   await expect.poll(markedLines).toEqual(['content on line 26', 'content on line 27', 'content on line 28']);
   await userEvent.keyboard('{Escape}');
   await expect.poll(() => router.state.location.search as TrackSearch).not.toHaveProperty('file');
@@ -831,4 +831,119 @@ it('delivers live file_open for the displayed Track and preserves the focused co
   expect(input.textContent).toBe('draft text');
   await userEvent.keyboard('{Control>}p{/Control}');
   await expect.element(dialog().getByRole('option', { name: '/var/log/example.log' })).toBeVisible();
+});
+
+it('opens Quick Open in literal directory mode or globally from TrackPage header breadcrumbs with layered Escape at 1280px', async () => {
+  await page.viewport(1280, 720);
+  const { router } = fileFixture({
+    reply(request) {
+      if (request.path.endsWith('/files/search?q=&limit=20000')) {
+        return searchReply(['docs/example.txt', 'docs/sibling.txt', 'other/d-o-c-s/outside.txt', '!docs/note.md', 'src/code.ts']);
+      }
+      if (request.path.endsWith('/files?path=.%2Fdocs')) {
+        return {
+          status: 200,
+          statusText: 'OK',
+          body: {
+            relativePath: 'docs',
+            isDirectory: true,
+            entries: [
+              { name: 'example.txt', relativePath: 'docs/example.txt', isDirectory: false },
+              { name: 'sibling.txt', relativePath: 'docs/sibling.txt', isDirectory: false },
+            ],
+          },
+        };
+      }
+      if (request.path.endsWith('/files?path=.%2F!docs')) {
+        return {
+          status: 200,
+          statusText: 'OK',
+          body: {
+            relativePath: '!docs',
+            isDirectory: true,
+            entries: [
+              { name: 'note.md', relativePath: '!docs/note.md', isDirectory: false },
+              { name: 'sibling.md', relativePath: '!docs/sibling.md', isDirectory: false },
+            ],
+          },
+        };
+      }
+      return undefined;
+    },
+  });
+  await page.getByRole('button', { name: 'Read report file' }).click();
+  await expect.element(page.getByText('docs/example.txt:26-28', { exact: true })).toBeVisible();
+
+  const nav = page.getByRole('navigation', { name: 'File path' });
+  const folderDocs = nav.getByRole('button', { name: 'Folder docs' });
+  await folderDocs.click();
+  await expect.element(query()).toHaveFocus();
+  await expect.element(query()).toHaveValue('./docs/');
+  await expect.element(dialog().getByText(/Navigate/)).toBeVisible();
+  await expect.element(dialog().getByRole('option', { name: './docs/sibling.txt', exact: true })).toBeVisible();
+  expect(dialog().getByRole('option', { name: 'other/d-o-c-s/outside.txt', exact: true }).query()).toBeNull();
+  expect(dialog().getByRole('option', { name: 'src/code.ts', exact: true }).query()).toBeNull();
+
+  // First Escape closes only Quick Open and restores focus to `Folder docs`; viewer stays open.
+  await userEvent.keyboard('{Escape}');
+  await expect.element(dialog()).not.toBeInTheDocument();
+  await expect.element(folderDocs).toHaveFocus();
+  await expect.poll(() => router.state.location.search as TrackSearch).toMatchObject({ file: 'docs/example.txt' });
+
+  // Second Escape from the restored header breadcrumb closes ReportFileViewer back to Report.
+  await userEvent.keyboard('{Escape}');
+  await expect.poll(() => router.state.location.search as TrackSearch).not.toHaveProperty('file');
+
+  // Reopen and click the filename breadcrumb to open global Quick Open (`Recent` + `Files`) and switch to a `!docs/` folder file.
+  await page.getByRole('button', { name: 'Read report file' }).click();
+  await nav.getByRole('button', { name: 'Open file switcher for example.txt:26-28' }).click();
+  await expect.element(query()).toHaveValue('');
+  await expect.element(dialog().getByRole('group', { name: 'Recent' }).getByRole('option', { name: 'docs/example.txt', exact: true })).toBeVisible();
+  await expect.element(dialog().getByRole('group', { name: 'Files' }).getByRole('option', { name: '!docs/note.md', exact: true })).toBeVisible();
+  await dialog().getByRole('option', { name: '!docs/note.md', exact: true }).click();
+  await expect.poll(() => router.state.location.search as TrackSearch).toMatchObject({ file: '!docs/note.md' });
+
+  // Clicking a folder whose name starts with `!` stays in literal directory mode rather than fzf negation.
+  await nav.getByRole('button', { name: 'Folder !docs' }).click();
+  await expect.element(query()).toHaveValue('./!docs/');
+  await expect.element(dialog().getByRole('option', { name: './!docs/sibling.md', exact: true })).toBeVisible();
+  expect(dialog().getByRole('option', { name: 'src/code.ts', exact: true }).query()).toBeNull();
+  await dialog().getByRole('option', { name: './!docs/sibling.md', exact: true }).click();
+  await expect.poll(() => router.state.location.search as TrackSearch).toMatchObject({ file: './!docs/sibling.md' });
+  await expect.element(page.getByText('!docs/sibling.md', { exact: true })).toBeVisible();
+});
+
+it('opens global Quick Open from the filename-only mobile header trigger, hides desktop shortcuts, and layers Escape at 390px', async () => {
+  await page.viewport(390, 720);
+  const { router } = fileFixture({
+    reportBody: '# File opening\n\n[Read special folder file](!docs/note.md)',
+    reply(request) {
+      if (request.path.endsWith('/files/search?q=&limit=20000')) {
+        return searchReply(['!docs/note.md', '!docs/sibling.md', 'src/code.ts']);
+      }
+      return undefined;
+    },
+  });
+  await page.getByRole('button', { name: 'Read special folder file' }).click();
+  const trigger = page.getByRole('button', { name: 'File location: !docs/note.md' });
+  await expect.element(trigger).toBeVisible();
+  expect(trigger.element().textContent).toBe('note.md');
+  expect(trigger.element().getBoundingClientRect().height).toBeGreaterThanOrEqual(48);
+
+  await trigger.click();
+  await expect.element(query()).toHaveFocus();
+  await expect.element(query()).toHaveValue('');
+  await expect.element(dialog().getByRole('group', { name: 'Recent' }).getByRole('option', { name: '!docs/note.md', exact: true })).toBeVisible();
+  await expect.element(dialog().getByRole('group', { name: 'Files' }).getByRole('option', { name: 'src/code.ts', exact: true })).toBeVisible();
+  await expect.element(dialog().getByText(/Navigate/)).not.toBeVisible();
+
+  // First Escape closes only Quick Open and restores focus to the mobile trigger; viewer stays open.
+  await userEvent.keyboard('{Escape}');
+  await expect.element(dialog()).not.toBeInTheDocument();
+  await expect.element(trigger).toHaveFocus();
+  await expect.poll(() => router.state.location.search as TrackSearch).toMatchObject({ file: '!docs/note.md' });
+
+  // Second Escape from the restored mobile trigger closes ReportFileViewer back to Report.
+  await userEvent.keyboard('{Escape}');
+  await expect.poll(() => router.state.location.search as TrackSearch).not.toHaveProperty('file');
 });

@@ -14,6 +14,8 @@ import { ReportDocument } from '../document/public.tsx';
 import type { ReportSourceInsertion } from '../source/placement.ts';
 import styles from './report-file-viewer.module.css';
 
+export { FileLayoutNav, type FileLayoutNavProps } from './file-layout-nav.tsx';
+
 function basename(path: string): string {
   return path.slice(path.lastIndexOf('/') + 1);
 }
