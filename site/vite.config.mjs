@@ -123,19 +123,38 @@ function renderVisionMarkdown(markdown) {
   return blocks.join('\n');
 }
 
-function buildVisionPageHtml(markdown, markSvg) {
+function buildEditorialPageHtml(markdown, markSvg, {
+  title,
+  description,
+  canonicalUrl,
+  assetPrefix = './',
+  navLinks = [],
+}) {
   const bodyHtml = renderVisionMarkdown(markdown);
   const inlineMark = markSvg.replace('<svg ', '<svg class="mark" aria-hidden="true" ');
+  const navHtml = navLinks
+    .map(({ href, label, external }) =>
+      `<a href="${href}"${external ? ' target="_blank" rel="noreferrer"' : ''}>${escapeHtml(label)}</a>`)
+    .join('\n        ');
   return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Vision — Perga</title>
-  <meta name="description" content="Perga Vision and Fundamental Tensions: organizing multiple AIs for long-horizon work." />
-  <link rel="icon" type="image/svg+xml" href="./favicon.svg?v=2" />
-  <link rel="icon" type="image/png" sizes="192x192" href="./icon-192.png" />
-  <link rel="apple-touch-icon" href="./icon-192.png" />
+  <title>${escapeHtml(title)}</title>
+  <meta name="description" content="${escapeHtml(description)}" />
+  <meta property="og:type" content="article" />
+  <meta property="og:title" content="${escapeHtml(title)}" />
+  <meta property="og:description" content="${escapeHtml(description)}" />
+  ${canonicalUrl ? `<meta property="og:url" content="${escapeHtml(canonicalUrl)}" />\n  <link rel="canonical" href="${escapeHtml(canonicalUrl)}" />` : ''}
+  <meta property="og:image" content="https://keanji-x.github.io/perga/og-card.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="${escapeHtml(title)}" />
+  <meta name="twitter:description" content="${escapeHtml(description)}" />
+  <meta name="twitter:image" content="https://keanji-x.github.io/perga/og-card.png" />
+  <link rel="icon" type="image/svg+xml" href="${assetPrefix}favicon.svg?v=2" />
+  <link rel="icon" type="image/png" sizes="192x192" href="${assetPrefix}icon-192.png" />
+  <link rel="apple-touch-icon" href="${assetPrefix}icon-192.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&display=swap" rel="stylesheet" />
@@ -258,11 +277,9 @@ function buildVisionPageHtml(markdown, markSvg) {
 <body>
   <div class="frame">
     <header>
-      <a class="brand" href="./">${inlineMark}<span>Perga</span></a>
+      <a class="brand" href="${assetPrefix}">${inlineMark}<span>Perga</span></a>
       <nav class="nav">
-        <a href="./">← Home</a>
-        <a href="https://github.com/keanji-x/perga/blob/main/docs/product/vision.md" target="_blank" rel="noreferrer">中文 ↗</a>
-        <a href="https://github.com/keanji-x/perga" target="_blank" rel="noreferrer">GitHub ↗</a>
+        ${navHtml}
       </nav>
     </header>
     <article>
@@ -274,12 +291,42 @@ function buildVisionPageHtml(markdown, markSvg) {
 `;
 }
 
-function copyCanonicalAssetsAndBuildVision() {
+function copyCanonicalAssetsAndBuildEditorialPages() {
   const assetCopies = [
     ['templates/equity-research/widgets/range-axis.html', 'widgets/range-axis.html'],
     ['src/Perga.Kernel/Templates/Memory/widgets/entries.html', 'widgets/entries.html'],
     ['fe/web/src/ui/brand/perga-app.svg', 'favicon.svg'],
     ['fe/web/public/icons/perga-192.png', 'icon-192.png'],
+  ];
+
+  const editorialPages = [
+    {
+      src: 'docs/product/vision.en.md',
+      dst: 'vision.html',
+      title: 'Vision — Perga',
+      description: 'Perga Vision and Fundamental Tensions: organizing multiple AIs for long-horizon work.',
+      canonicalUrl: 'https://keanji-x.github.io/perga/vision.html',
+      assetPrefix: './',
+      navLinks: [
+        { href: './', label: '← Home' },
+        { href: './essays/rust-to-csharp.html', label: 'Essays' },
+        { href: 'https://github.com/keanji-x/perga/blob/main/docs/product/vision.md', label: '中文 ↗', external: true },
+        { href: 'https://github.com/keanji-x/perga', label: 'GitHub ↗', external: true },
+      ],
+    },
+    {
+      src: 'docs/essays/01-rust-to-csharp-deleting-ai-slop.md',
+      dst: 'essays/rust-to-csharp.html',
+      title: 'Why I Rewrote a 966k-Line AI-Built Rust Codebase in C# — Perga',
+      description: 'After 966k lines of AI-generated Rust stalled on compile times, worktree disk bloat, and defensive review loops, I rewrote the backend in C#.',
+      canonicalUrl: 'https://keanji-x.github.io/perga/essays/rust-to-csharp.html',
+      assetPrefix: '../',
+      navLinks: [
+        { href: '../', label: '← Home' },
+        { href: '../vision.html', label: 'Vision' },
+        { href: 'https://github.com/keanji-x/perga', label: 'GitHub ↗', external: true },
+      ],
+    },
   ];
 
   return {
@@ -292,9 +339,13 @@ function copyCanonicalAssetsAndBuildVision() {
         copyFileSync(resolve(repoRoot, srcRel), dst);
       }
 
-      const visionMd = readFileSync(resolve(repoRoot, 'docs/product/vision.en.md'), 'utf8');
       const markSvg = readFileSync(resolve(repoRoot, 'fe/web/src/ui/brand/perga-mark.svg'), 'utf8');
-      writeFileSync(resolve(outDir, 'vision.html'), buildVisionPageHtml(visionMd, markSvg), 'utf8');
+      for (const page of editorialPages) {
+        const md = readFileSync(resolve(repoRoot, page.src), 'utf8');
+        const dst = resolve(outDir, page.dst);
+        mkdirSync(dirname(dst), { recursive: true });
+        writeFileSync(dst, buildEditorialPageHtml(md, markSvg, page), 'utf8');
+      }
     },
   };
 }
@@ -303,7 +354,7 @@ export default {
   root: siteDir,
   base: './',
   publicDir: resolve(siteDir, 'public'),
-  plugins: [resolveFromFeNodeModules(), react(), copyCanonicalAssetsAndBuildVision()],
+  plugins: [resolveFromFeNodeModules(), react(), copyCanonicalAssetsAndBuildEditorialPages()],
   resolve: {
     dedupe: ['react', 'react-dom'],
   },

@@ -8,8 +8,6 @@ Underneath that speed, the codebase quietly grew nearly 5x in two months, hittin
 
 Then one afternoon, I kicked off a routine feature. A full day later, Opus and GPT were still trading diffs: fix, recompile, fail, fix again. Disk alerts fired, CPU stayed pegged, and spinning up a second `git worktree` choked the box.
 
----
-
 ## Why it stalled
 
 At human speed, Rust's build tax is fine. At agent velocity, four things compounded into a dead stop:
@@ -21,8 +19,6 @@ At human speed, Rust's build tax is fine. At agent velocity, four things compoun
 
 Yes, letting agents bloat a repo to 966k lines was partly on us. Still, is Rust innocent? Even a 3,300-line Rust terminal bridge produces an **805 MB** `target/debug` directory on its own.
 
----
-
 ## Picking a vibe-coding-friendly backend
 
 What I needed was simple: fast builds, tiny artifacts, real types, solid speed, and low memory.
@@ -32,8 +28,6 @@ Everyone recommended Go. Its only flaw was that `if err != nil` doesn't feel lik
 Then I landed on **C# / .NET**. I enjoy its first-class `async`/`await`, strict nullability, pattern matching, fast Roslyn builds, and modest memory. With zero build-cache tuning, our entire ~105k-line C# backend builds into **~300–420 MB**—half the footprint of that tiny Rust bridge.
 
 So I rewrote the orchestrator in C# ([Perga](https://github.com/keanji-x/perga), Apache 2.0). Rust stayed only where it is irreplaceable: our standalone PTY bridge (`perga-term-bridge`). Its `target/` is still nearly double our 460 MB `node_modules`—the biggest disk hog in every worktree. I only live with it because we barely touch it.
-
----
 
 ## Reversibility and three workflow rules
 
