@@ -60,7 +60,7 @@ export function LoginPage({ login, reload }: LoginPageProps) {
       });
     }}>
       <h1 className={styles.brand}>
-        <span className={styles.mark} aria-hidden="true">✳</span>
+        <span className={styles.mark} aria-hidden="true" />
         <span>Perga</span>
       </h1>
 

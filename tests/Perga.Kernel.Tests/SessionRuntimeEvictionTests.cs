@@ -424,8 +424,10 @@ public sealed class SessionRuntimeEvictionTests
         finally { release.TrySetResult(); }
         await compaction;
         await ctx.Kernel.WaitForTrackIdleAsync(trackId, ct);
-        Assert.Equal(1, await ctx.Kernel.Actors.EvictIdleSessionRuntimesAsync(ct));
+        // The track-close job may already have retired the provider before the sweep.
+        await ctx.Kernel.Actors.EvictIdleSessionRuntimesAsync(ct);
         Assert.True(handle.Disposed);
+        Assert.Equal(1, handle.DisposeCalls);
     }
 
     [Theory]
