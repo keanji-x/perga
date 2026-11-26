@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Runtime.Versioning;
 using Perga.AgentKit.Internal;
 
@@ -168,61 +167,42 @@ public sealed class OarNodeRuntimeProbeTests : IDisposable
         Assert.Contains("PERGA_OAR_NODE_BIN", noneStatus.Error);
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task AgentRuntimePassesSystemLocationPolicyToSessionAndProbe(bool controlledEnvironment)
+    [Fact]
+    public async Task AgentRuntimeUsesControlledNodeLocationsForLocalSessionsAndProbes()
     {
-        var transport = new RecordingNodeTransport();
+        var ambientNode = FakeNode("ambient-runtime", "v24.4.1");
+        var controlledNode = FakeNode("controlled-runtime", "v20.11.1");
+        var bridge = Path.Combine(_root.FullName, "bridge.mjs");
+        File.WriteAllText(bridge, "");
         await using var runtime = new AgentRuntime(new AgentRuntimeOptions
         {
-            BaseEnvironment = controlledEnvironment ? Environment() : null,
-            SubprocessTransport = transport
+            BaseEnvironment = Environment(Path.GetDirectoryName(controlledNode)),
+            BridgeScriptPath = bridge,
+            SubprocessTransport = LocalSubprocessTransport.Instance
         });
         var spec = new HarnessLaunchSpec("codex", null, _root.FullName, null, null, new Dictionary<string, McpServerConfig>());
+        var nodeError = $"'{controlledNode}' is v20.11.1";
 
-        var failure = Assert.Throws<InvalidOperationException>(() => runtime.CreateSession(spec));
-        Assert.Equal(RecordingNodeTransport.NodeUnavailable, failure.Message);
-        Assert.Equal(!controlledEnvironment, Assert.Single(transport.SystemLocationRequests));
-
-        var statuses = await runtime.ProbeProvidersAsync(CancellationToken.None);
-        Assert.NotEmpty(statuses);
-        Assert.All(statuses, status => Assert.Equal(RecordingNodeTransport.NodeUnavailable, status.Reason));
-        Assert.Equal(statuses.Count + 1, transport.SystemLocationRequests.Count);
-        Assert.All(transport.SystemLocationRequests, value => Assert.Equal(!controlledEnvironment, value));
-    }
-
-    [Fact]
-    public void LocalTransportHonorsSystemLocationOptOut()
-    {
-        var oldNode = FakeNode("local-path", "v20.11.1");
-        var env = Environment(Path.GetDirectoryName(oldNode));
-
-        var failure = Assert.Throws<InvalidOperationException>(() =>
-            LocalSubprocessTransport.Instance.ResolveNodeExecutable(null, env, includeSystemLocations: false));
-
-        Assert.Contains($"'{oldNode}' is v20.11.1", failure.Message);
-    }
-
-    private sealed class RecordingNodeTransport : ISubprocessTransport
-    {
-        public const string NodeUnavailable = "Node unavailable in test transport.";
-        public ConcurrentQueue<bool> SystemLocationRequests { get; } = new();
-        public bool IsLocal => true;
-
-        public string ResolveNodeExecutable(string? configuredExecutable, IReadOnlyDictionary<string, string>? environment) =>
-            throw new InvalidOperationException("The system-location policy was not provided.");
-
-        public string ResolveNodeExecutable(
-            string? configuredExecutable, IReadOnlyDictionary<string, string>? environment, bool includeSystemLocations)
+        var originalPath = System.Environment.GetEnvironmentVariable("PATH");
+        try
         {
-            SystemLocationRequests.Enqueue(includeSystemLocations);
-            throw new InvalidOperationException(NodeUnavailable);
-        }
+            System.Environment.SetEnvironmentVariable("PATH", Path.GetDirectoryName(ambientNode));
+            Assert.Equal(ambientNode, OarNodeRuntimeProbe.Probe(null, null).ExecutablePath);
+            var failure = Assert.Throws<InvalidOperationException>(() => runtime.CreateSession(spec));
+            Assert.Contains(nodeError, failure.Message);
 
-        public string ResolveBridgeScriptPath(string? configuredBridgeScriptPath) => "bridge.mjs";
-        public bool DirectoryExists(string path) => Directory.Exists(path);
-        public ISubprocessHandle StartInteractive(CommandInvocation invocation) => throw new NotSupportedException();
+            var statuses = await runtime.ProbeProvidersAsync(CancellationToken.None);
+            Assert.NotEmpty(statuses);
+            Assert.All(statuses, status =>
+            {
+                Assert.False(status.Available);
+                Assert.Contains(nodeError, status.Reason);
+            });
+        }
+        finally
+        {
+            System.Environment.SetEnvironmentVariable("PATH", originalPath);
+        }
     }
 
     private string FakeNode(string directory, string version)

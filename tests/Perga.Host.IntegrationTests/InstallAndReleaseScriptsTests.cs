@@ -113,10 +113,10 @@ public sealed class InstallAndReleaseScriptsTests : IDisposable
     }
 
     [Theory]
-    [InlineData("/bin/zsh", ">> ~/.zshrc && source ~/.zshrc")]
-    [InlineData("/bin/bash", ">> ~/.bashrc && source ~/.bashrc")]
-    [InlineData("/usr/local/bin/fish", "fish_add_path")]
-    [InlineData("/bin/sh", "export PATH=")]
+    [InlineData("/bin/zsh", """echo 'export PATH="<bin>:$PATH"' >> ~/.zshrc && source ~/.zshrc""")]
+    [InlineData("/bin/bash", """echo 'export PATH="<bin>:$PATH"' >> ~/.bashrc && source ~/.bashrc""")]
+    [InlineData("/usr/local/bin/fish", "fish_add_path '<bin>'")]
+    [InlineData("/bin/sh", "export PATH=\"<bin>:$PATH\"")]
     public async Task InstallerPrintsShellAwarePathHintWhenBinDirIsNotOnPath(string shell, string expectedHint)
     {
         var package = CreatePackage("v0.1.0");
@@ -129,8 +129,7 @@ public sealed class InstallAndReleaseScriptsTests : IDisposable
 
         Assert.True(install.Code == 0, install.Error);
         Assert.Contains($"Add {customBin} to your PATH:", install.Output);
-        Assert.Contains(expectedHint, install.Output);
-        Assert.Contains(customBin, install.Output);
+        Assert.Contains($"  {expectedHint.Replace("<bin>", customBin, StringComparison.Ordinal)}\n", install.Output);
     }
 
     [Fact]
@@ -149,6 +148,8 @@ public sealed class InstallAndReleaseScriptsTests : IDisposable
             var install = await InstallAsync(package, env);
             Assert.True(install.Code == 0, install.Error);
             var hint = Assert.Single(install.Output.Split('\n'), line => line.StartsWith("  ") && line.Contains("export PATH="));
+            if (rc.Length > 0)
+                Assert.StartsWith("  printf '%s\\n' ", hint);
             var syntax = await RunAsync("bash", ["-n", "-c", hint], env);
             Assert.True(syntax.Code == 0, syntax.Error);
 

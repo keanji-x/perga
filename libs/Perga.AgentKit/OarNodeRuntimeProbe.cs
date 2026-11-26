@@ -16,6 +16,6 @@ public static class OarNodeRuntimeProbe
     public static OarNodeRuntimeStatus Probe(
         string? configuredExecutable,
         IReadOnlyDictionary<string, string>? environment,
-        bool includeSystemLocations = false) =>
+        bool includeSystemLocations) =>
         OarNodeResolver.Probe(configuredExecutable, environment, includeSystemLocations);
 }

@@ -1,9 +1,7 @@
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
-using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Connections;
 using Perga.Host.Auth;
-using Perga.Host.Execution;
 using Perga.Kernel.Ports;
 using Perga.Storage.Sqlite;
 
@@ -66,7 +64,7 @@ public static class HostStartupOnboarding
 
         if (!shouldCreate)
         {
-            var pathArgument = Regex.IsMatch(dbPath, @"\A[A-Za-z0-9_./+:@-]+\z") ? dbPath : SshCommandBuilder.QuotePosix(dbPath);
+            var pathArgument = FormatCliPathArgument(dbPath);
             await output.WriteLineAsync($"Hint: run '{InitOwnerCommand} --db-path {pathArgument}' before signing in.").ConfigureAwait(false);
             return 0;
         }
@@ -84,6 +82,11 @@ public static class HostStartupOnboarding
             error,
             ct).ConfigureAwait(false);
     }
+
+    private static string FormatCliPathArgument(string path) =>
+        path.Length > 0 && path.All(static c => char.IsAsciiLetterOrDigit(c) || c is '_' or '.' or '/' or '+' or ':' or '@' or '-')
+            ? path
+            : $"'{path.Replace("'", "'\\''", StringComparison.Ordinal)}'";
 
     public static string? FormatConfigurationError(Exception exception)
     {
