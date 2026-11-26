@@ -2,7 +2,7 @@
 
 **Move multi-day AI work across Claude Code, Codex, Antigravity, OpenCode, Kimi, Qwen & more out of scrolling chat tabs — living reports, multi-worker flows, enforced cross-model review, and governed local memory.**
 
-[Homepage](https://keanji-x.github.io/perga/) · [Quickstart](#quickstart) · [Built-in Protocols](#built-in-protocols) · [Documentation](#documentation) · [Releases](https://github.com/keanji-x/perga/releases)
+[Homepage](https://keanji-x.github.io/perga/) · [Quickstart](#quickstart) · [Built-in Protocols](#built-in-protocols) · [Documentation](#documentation) · [Releases](https://github.com/keanji-x/perga/releases) · [Discord](https://discord.gg/WfBzhQenQb)
 
 Self-contained native packages for **macOS on Apple Silicon (`arm64`)** and **Linux `x64`** — no .NET runtime installation required. Both packages bundle the Host, native Rust terminal bridge, multi-backend agent bridge, and web interface.
 
