@@ -1,8 +1,11 @@
+using System.Collections.Concurrent;
 using System.Runtime.Versioning;
+using Perga.AgentKit.Internal;
 
 namespace Perga.AgentKit.Tests;
 
 [UnsupportedOSPlatform("windows")]
+[Collection("OAR process environment")]
 public sealed class OarNodeRuntimeProbeTests : IDisposable
 {
     private readonly DirectoryInfo _root = Directory.CreateTempSubdirectory("perga-node-probe-");
@@ -46,9 +49,32 @@ public sealed class OarNodeRuntimeProbeTests : IDisposable
         Assert.False(pathOnly.MeetsMinimum);
         Assert.Equal(new Version(18, 0, 0), pathOnly.Version);
 
-        var none = OarNodeRuntimeProbe.Probe(null, Environment(Path.Combine(_root.FullName, "no-bin"), Path.Combine(_root.FullName, "empty-home")));
+        var none = OarNodeRuntimeProbe.Probe(null, Environment(Path.Combine(_root.FullName, "no-bin")));
         Assert.False(none.Found);
         Assert.Contains("PERGA_OAR_NODE_BIN", none.Error);
+    }
+
+    [Fact]
+    public void EmptyEnvironmentDoesNotProbeAmbientNodeLocations()
+    {
+        var ambientHome = Path.Combine(_root.FullName, "ambient-home");
+        FakeNode(Path.Combine(ambientHome, ".nvm", "versions", "node", "v24.1.0", "bin"), "v24.1.0");
+        var ambientPath = Path.GetDirectoryName(FakeNode("ambient-path", "v24.2.0"))!;
+        var originalHome = System.Environment.GetEnvironmentVariable("HOME");
+        var originalPath = System.Environment.GetEnvironmentVariable("PATH");
+        try
+        {
+            System.Environment.SetEnvironmentVariable("HOME", ambientHome);
+            System.Environment.SetEnvironmentVariable("PATH", ambientPath);
+            Assert.Equal(ambientHome, System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile));
+            Assert.False(OarNodeRuntimeProbe.Probe(null, new Dictionary<string, string>()).Found);
+            Assert.False(OarNodeRuntimeProbe.Probe(null, new Dictionary<string, string> { ["PATH"] = "" }).Found);
+        }
+        finally
+        {
+            System.Environment.SetEnvironmentVariable("HOME", originalHome);
+            System.Environment.SetEnvironmentVariable("PATH", originalPath);
+        }
     }
 
     [Fact]
@@ -71,6 +97,132 @@ public sealed class OarNodeRuntimeProbeTests : IDisposable
         Assert.True(result.MeetsMinimum);
         Assert.Equal(new Version(24, 9, 2), result.Version);
         Assert.Equal(valid, result.ExecutablePath);
+    }
+
+    [Fact]
+    public void WellKnownVoltaFnmAndHomebrewCandidatesAreProbedWhenPathAndNvmLackNode24()
+    {
+        var oldPathDir = Path.GetDirectoryName(FakeNode("wellknown-old-path", "v20.0.0"))!;
+
+        // Volta fallback when PATH has Node 20.
+        var voltaHome = Path.Combine(_root.FullName, "home-volta");
+        var voltaNode = FakeNode(Path.Combine(voltaHome, ".volta", "bin"), "v24.3.0");
+        var volta = OarNodeRuntimeProbe.Probe(null, Environment(oldPathDir, voltaHome));
+        Assert.True(volta.MeetsMinimum);
+        Assert.Equal(new Version(24, 3, 0), volta.Version);
+        Assert.Equal(voltaNode, volta.ExecutablePath);
+
+        // Old Volta is skipped in favor of fnm default alias.
+        var fnmHome = Path.Combine(_root.FullName, "home-fnm");
+        FakeNode(Path.Combine(fnmHome, ".volta", "bin"), "v22.0.0");
+        var fnmNode = FakeNode(Path.Combine(fnmHome, ".local", "share", "fnm", "aliases", "default", "bin"), "v24.5.1");
+        var fnm = OarNodeRuntimeProbe.Probe(null, Environment(oldPathDir, fnmHome));
+        Assert.True(fnm.MeetsMinimum);
+        Assert.Equal(new Version(24, 5, 1), fnm.Version);
+        Assert.Equal(fnmNode, fnm.ExecutablePath);
+
+        // Legacy ~/.fnm fallback when ~/.local/share/fnm is absent.
+        var legacyFnmHome = Path.Combine(_root.FullName, "home-legacy-fnm");
+        var legacyFnmNode = FakeNode(Path.Combine(legacyFnmHome, ".fnm", "aliases", "default", "bin"), "v24.6.0");
+        var legacyFnm = OarNodeRuntimeProbe.Probe(null, Environment(oldPathDir, legacyFnmHome));
+        Assert.True(legacyFnm.MeetsMinimum);
+        Assert.Equal(new Version(24, 6, 0), legacyFnm.Version);
+        Assert.Equal(legacyFnmNode, legacyFnm.ExecutablePath);
+
+        // Simulate the Homebrew search without depending on a system install.
+        var brewOld = FakeNode(Path.Combine("brew-old", "bin"), "v22.14.0");
+        var brew24 = FakeNode(Path.Combine("brew-24", "bin"), "v24.2.0");
+        var env = Environment(oldPathDir);
+        var brewCandidates = new[] { brewOld, brew24 };
+        Assert.False(OarNodeResolver.Probe(null, env, includeSystemLocations: false, brewCandidates).MeetsMinimum);
+        var brew = OarNodeResolver.Probe(null, env, includeSystemLocations: true, brewCandidates);
+        Assert.True(brew.MeetsMinimum);
+        Assert.Equal(new Version(24, 2, 0), brew.Version);
+        Assert.Equal(brew24, brew.ExecutablePath);
+    }
+
+    [Fact]
+    public void NodeErrorsUsePlainEnglishGuidanceWithoutInternalBridgeJargon()
+    {
+        var oldNode = FakeNode("plain-old", "v20.11.1");
+        var oldStatus = OarNodeRuntimeProbe.Probe(oldNode, Environment());
+        Assert.False(oldStatus.MeetsMinimum);
+        Assert.DoesNotContain("perga-oar-bridge", oldStatus.Error!, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Perga requires Node.js >= 24.0.0 to run agent CLIs", oldStatus.Error);
+        Assert.Contains("nvm install 24", oldStatus.Error);
+        Assert.Contains("brew install node@24", oldStatus.Error);
+        Assert.Contains("PERGA_OAR_NODE_BIN", oldStatus.Error);
+
+        var oldEx = Assert.Throws<InvalidOperationException>(() =>
+            OarNodeResolver.ResolveNode24Executable(oldNode, Environment()));
+        Assert.DoesNotContain("perga-oar-bridge", oldEx.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Perga requires Node.js >= 24.0.0 to run agent CLIs", oldEx.Message);
+        Assert.Contains("brew install node@24", oldEx.Message);
+
+        var noneStatus = OarNodeRuntimeProbe.Probe(null, Environment(Path.Combine(_root.FullName, "no-bin")));
+        Assert.False(noneStatus.Found);
+        Assert.DoesNotContain("perga-oar-bridge", noneStatus.Error!, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Perga requires Node.js >= 24.0.0 to run agent CLIs", noneStatus.Error);
+        Assert.Contains("nvm install 24", noneStatus.Error);
+        Assert.Contains("brew install node@24", noneStatus.Error);
+        Assert.Contains("PERGA_OAR_NODE_BIN", noneStatus.Error);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AgentRuntimePassesSystemLocationPolicyToSessionAndProbe(bool controlledEnvironment)
+    {
+        var transport = new RecordingNodeTransport();
+        await using var runtime = new AgentRuntime(new AgentRuntimeOptions
+        {
+            BaseEnvironment = controlledEnvironment ? Environment() : null,
+            SubprocessTransport = transport
+        });
+        var spec = new HarnessLaunchSpec("codex", null, _root.FullName, null, null, new Dictionary<string, McpServerConfig>());
+
+        var failure = Assert.Throws<InvalidOperationException>(() => runtime.CreateSession(spec));
+        Assert.Equal(RecordingNodeTransport.NodeUnavailable, failure.Message);
+        Assert.Equal(!controlledEnvironment, Assert.Single(transport.SystemLocationRequests));
+
+        var statuses = await runtime.ProbeProvidersAsync(CancellationToken.None);
+        Assert.NotEmpty(statuses);
+        Assert.All(statuses, status => Assert.Equal(RecordingNodeTransport.NodeUnavailable, status.Reason));
+        Assert.Equal(statuses.Count + 1, transport.SystemLocationRequests.Count);
+        Assert.All(transport.SystemLocationRequests, value => Assert.Equal(!controlledEnvironment, value));
+    }
+
+    [Fact]
+    public void LocalTransportHonorsSystemLocationOptOut()
+    {
+        var oldNode = FakeNode("local-path", "v20.11.1");
+        var env = Environment(Path.GetDirectoryName(oldNode));
+
+        var failure = Assert.Throws<InvalidOperationException>(() =>
+            LocalSubprocessTransport.Instance.ResolveNodeExecutable(null, env, includeSystemLocations: false));
+
+        Assert.Contains($"'{oldNode}' is v20.11.1", failure.Message);
+    }
+
+    private sealed class RecordingNodeTransport : ISubprocessTransport
+    {
+        public const string NodeUnavailable = "Node unavailable in test transport.";
+        public ConcurrentQueue<bool> SystemLocationRequests { get; } = new();
+        public bool IsLocal => true;
+
+        public string ResolveNodeExecutable(string? configuredExecutable, IReadOnlyDictionary<string, string>? environment) =>
+            throw new InvalidOperationException("The system-location policy was not provided.");
+
+        public string ResolveNodeExecutable(
+            string? configuredExecutable, IReadOnlyDictionary<string, string>? environment, bool includeSystemLocations)
+        {
+            SystemLocationRequests.Enqueue(includeSystemLocations);
+            throw new InvalidOperationException(NodeUnavailable);
+        }
+
+        public string ResolveBridgeScriptPath(string? configuredBridgeScriptPath) => "bridge.mjs";
+        public bool DirectoryExists(string path) => Directory.Exists(path);
+        public ISubprocessHandle StartInteractive(CommandInvocation invocation) => throw new NotSupportedException();
     }
 
     private string FakeNode(string directory, string version)

@@ -118,10 +118,7 @@ public static class PergaHostServiceCollectionExtensions
             {
                 NodeExecutablePath = opts.OarNodeExecutablePath,
                 BridgeScriptPath = opts.OarBridgeScriptPath,
-                ProviderOverrides = opts.ProviderExecutables.ToDictionary(
-                    entry => AgentRuntime.NormalizeProviderName(entry.Key),
-                    entry => new ProviderCommandOverride(entry.Value),
-                    StringComparer.OrdinalIgnoreCase)
+                ProviderOverrides = opts.GetProviderOverrides()
             });
         });
         services.TryAddSingleton<VcsService>();

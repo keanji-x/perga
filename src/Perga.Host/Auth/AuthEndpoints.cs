@@ -114,7 +114,9 @@ internal static class AuthEndpoints
 
         if (owner is null)
             return HttpErrorHandling.Forbidden("auth_not_configured", "Perga has no owner account.",
-                "Run perga-ctl auth init-owner on the Perga host.");
+                string.IsNullOrWhiteSpace(options.InstallationRoot)
+                    ? "Run 'perga auth init-owner --username owner --allow-migrate' on the Perga host."
+                    : "Run 'perga-ctl auth init-owner --username owner --allow-migrate' (with --root <install-root> if using a custom root) on the Perga host.");
         if (verification == PasswordVerificationResult.Failed)
             return InvalidCredentials();
 

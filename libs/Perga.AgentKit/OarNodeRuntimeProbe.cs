@@ -11,5 +11,11 @@ public static class OarNodeRuntimeProbe
     public const int MinimumMajorVersion = OarNodeResolver.MinimumNodeMajorVersion;
 
     public static OarNodeRuntimeStatus Probe(string? configuredExecutable, IReadOnlyDictionary<string, string>? environment) =>
-        OarNodeResolver.Probe(configuredExecutable, environment);
+        Probe(configuredExecutable, environment, includeSystemLocations: environment is null);
+
+    public static OarNodeRuntimeStatus Probe(
+        string? configuredExecutable,
+        IReadOnlyDictionary<string, string>? environment,
+        bool includeSystemLocations = false) =>
+        OarNodeResolver.Probe(configuredExecutable, environment, includeSystemLocations);
 }

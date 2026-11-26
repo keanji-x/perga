@@ -65,6 +65,17 @@ public static class ChildProcessEnvironment
         return result;
     }
 
+    public static Dictionary<string, string> Capture(IReadOnlyDictionary<string, string> source)
+    {
+        var result = new Dictionary<string, string>(NameComparer);
+        foreach (var (name, value) in source)
+        {
+            if (!IsHostReserved(name))
+                result[name] = value;
+        }
+        return result;
+    }
+
     public static void Apply(ProcessStartInfo process, IReadOnlyDictionary<string, string> environment)
     {
         ArgumentNullException.ThrowIfNull(process);

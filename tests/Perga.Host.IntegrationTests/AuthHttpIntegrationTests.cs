@@ -154,13 +154,26 @@ public sealed class AuthHttpIntegrationTests
         await AssertErrorAsync(revoked, 401, "unauthorized");
     }
 
-    [Fact]
-    public async Task UnconfiguredAndMalformedLoginReturnStableErrors()
+    [Theory]
+    [InlineData(null, "Run 'perga auth init-owner --username owner --allow-migrate' on the Perga host.")]
+    [InlineData(" ", "Run 'perga auth init-owner --username owner --allow-migrate' on the Perga host.")]
+    [InlineData("/srv/perga", "Run 'perga-ctl auth init-owner --username owner --allow-migrate' (with --root <install-root> if using a custom root) on the Perga host.")]
+    public async Task UnconfiguredLoginReturnsInstallationSpecificOwnerRecovery(string? installationRoot, string expectedHint)
     {
         await using var host = new PergaHostTestCluster();
+        // Exercise the login hint independently of managed release snapshot validation.
+        host.Services.GetRequiredService<PergaHostOptions>().InstallationRoot = installationRoot;
         using var login = await LoginAsync(host.Client);
         var notConfigured = await AssertErrorAsync(login, 403, "auth_not_configured");
-        Assert.Contains("perga-ctl auth init-owner", notConfigured.NextStep);
+        Assert.Equal(expectedHint, notConfigured.NextStep);
+        if (!string.IsNullOrWhiteSpace(installationRoot))
+            Assert.DoesNotContain(installationRoot, await login.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task MalformedLoginReturnsStableErrors()
+    {
+        await using var host = new PergaHostTestCluster();
 
         using var wrongType = await host.Client.PostAsync("/api/v1/auth/login", new StringContent("data"));
         await AssertErrorAsync(wrongType, 415, "unsupported_media_type");

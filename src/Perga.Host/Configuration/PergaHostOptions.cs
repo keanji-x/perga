@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net;
 using Microsoft.Extensions.Configuration;
+using Perga.AgentKit;
 using Perga.Host.Http;
 using Perga.Kernel;
 
@@ -205,6 +206,14 @@ public sealed class PergaHostOptions
         opts.BridgeBuildId ??= Environment.GetEnvironmentVariable("PERGA_TERM_BRIDGE_BUILD_ID");
         return opts;
     }
+
+    internal Dictionary<string, ProviderCommandOverride> GetProviderOverrides() => ToProviderOverrides(ProviderExecutables);
+
+    internal static Dictionary<string, ProviderCommandOverride> ToProviderOverrides(IReadOnlyDictionary<string, string> providerExecutables) =>
+        providerExecutables.ToDictionary(
+            entry => AgentRuntime.NormalizeProviderName(entry.Key),
+            entry => new ProviderCommandOverride(entry.Value),
+            StringComparer.OrdinalIgnoreCase);
 
     public (string ResolvedDataDir, string ResolvedDbPath, string ResolvedWorkspacesDir, bool IsEphemeral) ResolveStoragePaths()
     {

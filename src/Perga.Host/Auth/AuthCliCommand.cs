@@ -134,7 +134,7 @@ public static class AuthCliCommand
         {
             if (Console.IsInputRedirected)
                 throw new ArgumentException("Use --password-stdin to read a password from redirected input.");
-            password = Prompt("Password", error, ct);
+            password = Prompt("Password (12+ characters)", error, ct);
             if (password != Prompt("Confirm password", error, ct))
                 throw new ArgumentException("Passwords do not match.");
         }
