@@ -27,8 +27,27 @@ public sealed class KernelMcpReportTests
         Assert.True(anchorProps.TryGetProperty("docRev", out _));
         Assert.True(anchorProps.TryGetProperty("knownBlockRevs", out _));
         Assert.True(anchorProps.TryGetProperty("wholeDocumentRead", out _));
-        Assert.Equal(4, commitProps.GetProperty("ops").GetProperty("items").GetProperty("oneOf").GetArrayLength());
+        var opSchemas = commitProps.GetProperty("ops").GetProperty("items").GetProperty("oneOf")
+            .EnumerateArray().ToDictionary(DeclaredOpName, StringComparer.Ordinal);
+        Assert.Equal(["replace_section", "edit_block", "upsert", "delete", "move"], opSchemas.Keys);
+        var section = opSchemas["replace_section"];
+        Assert.Equal(["op", "sectionH1"], RequiredFields(section));
+        var sectionDescription = section.GetProperty("description").GetString();
+        Assert.Contains("Provide markdown, newSectionH1, or both.", sectionDescription, StringComparison.Ordinal);
+        Assert.Contains("Use at most one of beforeBlockId and afterBlockId.", sectionDescription, StringComparison.Ordinal);
+        foreach (var field in new[] { "markdown", "newSectionH1", "beforeBlockId", "afterBlockId" })
+            Assert.Equal("string", section.GetProperty("properties").GetProperty(field).GetProperty("type").GetString());
+        var edit = opSchemas["edit_block"];
+        Assert.Equal(["op", "id", "target", "replacement"], RequiredFields(edit));
+        var editProps = edit.GetProperty("properties");
+        Assert.Equal(1, editProps.GetProperty("target").GetProperty("minLength").GetInt32());
+        Assert.Equal("string", editProps.GetProperty("replacement").GetProperty("type").GetString());
+        Assert.False(editProps.GetProperty("replacement").TryGetProperty("minLength", out _));
+        var upsert = opSchemas["upsert"];
+        Assert.Equal(["op"], RequiredFields(upsert));
+        Assert.Equal("string", upsert.GetProperty("properties").GetProperty("sectionH1").GetProperty("type").GetString());
         Assert.Equal("boolean", commitProps.GetProperty("includeDocument").GetProperty("type").GetString());
+        Assert.Contains("active tasks", commitProps.GetProperty("includeDocument").GetProperty("description").GetString());
 
         var readSchema = tools[KernelMcpToolNames.ReportRead].InputSchema;
         Assert.False(readSchema.GetProperty("additionalProperties").GetBoolean());
@@ -66,13 +85,23 @@ public sealed class KernelMcpReportTests
 
         Assert.Contains("Cheatsheet:", tool.Description, StringComparison.Ordinal);
         Assert.Contains("anchor: { docRev, knownBlockRevs, wholeDocumentRead }", tool.Description, StringComparison.Ordinal);
-        Assert.Contains("""{ op: "replace_section", sectionH1, markdown }""", tool.Description, StringComparison.Ordinal);
-        Assert.Contains("""{ op: "upsert", id?, blockKind?: "prose"|"widget", markdown?, payload?, position? }""", tool.Description, StringComparison.Ordinal);
+        Assert.Contains("""{ op: "replace_section", sectionH1, markdown?, newSectionH1?, beforeBlockId?, afterBlockId? }""", tool.Description, StringComparison.Ordinal);
+        Assert.Contains("""{ op: "edit_block", id, target, replacement }""", tool.Description, StringComparison.Ordinal);
+        Assert.Contains("""{ op: "upsert", id?, blockKind?: "prose"|"widget", markdown?, payload?, position?, sectionH1? }""", tool.Description, StringComparison.Ordinal);
         Assert.Contains("""{ op: "delete", id }""", tool.Description, StringComparison.Ordinal);
         Assert.Contains("""{ op: "move", id, toIndex }""", tool.Description, StringComparison.Ordinal);
         Assert.Contains("summary, commitMessage, includeDocument", tool.Description, StringComparison.Ordinal);
         Assert.Contains("report_read(includeContract: true)", tool.Description, StringComparison.Ordinal);
     }
+
+    private static string DeclaredOpName(JsonElement schema)
+    {
+        var op = schema.GetProperty("properties").GetProperty("op");
+        return (op.TryGetProperty("const", out var name) ? name : op.GetProperty("enum")[0]).GetString()!;
+    }
+
+    private static IEnumerable<string?> RequiredFields(JsonElement schema) =>
+        schema.GetProperty("required").EnumerateArray().Select(field => field.GetString());
 
     [Fact]
     public async Task ReportCommit_AcceptsInitialAnchorWithoutReadAndRejectsStaleReplacement()
@@ -146,6 +175,43 @@ public sealed class KernelMcpReportTests
     }
 
     [Fact]
+    public async Task ReportReceiptsOmitArchivedTasksWhileTaskListIncludesThem()
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
+        var trackId = snapshot.Track.Id;
+        await ctx.Kernel.Actors.RemoveAndDisposeAsync(trackId);
+        var active = new TaskDto("active-task", trackId, "active", "active", 1, "agent", null,
+            AccessMode.ReadOnly, false, [], "Active work", null, null, null, TaskRunStatus.Pending, null,
+            SemanticVerdict.None, null, 1, 1);
+        var archived = active with
+        {
+            Id = "archived-task", BlockId = "archived", TaskKey = "archived",
+            Status = TaskRunStatus.Done, ArchivedAtMs = 2
+        };
+        await ctx.Store.UpsertTaskAsync(active, null, default);
+        await ctx.Store.UpsertTaskAsync(archived, null, default);
+        var caller = await ctx.OpenMcpCallerAsync(snapshot.Track.LeadSessionId!);
+
+        var read = await Call(ctx, caller, KernelMcpToolNames.ReportRead, new { });
+        var receipt = await Call(ctx, caller, KernelMcpToolNames.ReportCommit, new
+        {
+            anchor = read.GetProperty("anchor"),
+            ops = new[] { new { op = "replace_section", sectionH1 = "Overview", markdown = "Progress." } }
+        });
+        foreach (var report in new[] { read, receipt })
+        {
+            var task = Assert.Single(report.GetProperty("tasks").EnumerateArray());
+            Assert.Equal(active.Id, task.GetProperty("id").GetString());
+            Assert.False(task.TryGetProperty("archivedAtMs", out _));
+        }
+        var tasks = await Call(ctx, caller, KernelMcpToolNames.TaskList, new { });
+        Assert.Equal(2, tasks.GetArrayLength());
+        var history = Assert.Single(tasks.EnumerateArray(), task => task.GetProperty("id").GetString() == archived.Id);
+        Assert.Equal(archived.ArchivedAtMs, history.GetProperty("archivedAtMs").GetInt64());
+    }
+
+    [Fact]
     public async Task ReportRead_SupportsFormats_ScopedAnchors_AndOnDemandContract()
     {
         await using var ctx = new KernelTestContext();
@@ -201,6 +267,24 @@ public sealed class KernelMcpReportTests
         Assert.Single(scopedAnchor.GetProperty("knownBlockRevs").EnumerateObject());
 
         var contract = scoped.GetProperty("blockContract");
+        var examples = contract.GetProperty("ops").EnumerateObject()
+            .ToDictionary(entry => entry.Value.GetProperty("op").GetString()!, entry => entry.Value, StringComparer.Ordinal);
+        var commitTool = Assert.Single(KernelMcpCatalog.GetAllTools(), tool => tool.Name == KernelMcpToolNames.ReportCommit);
+        var opSchemas = commitTool.InputSchema.GetProperty("properties").GetProperty("ops")
+            .GetProperty("items").GetProperty("oneOf").EnumerateArray().ToArray();
+        Assert.Equal(opSchemas.Select(DeclaredOpName), examples.Keys);
+        foreach (var schema in opSchemas)
+        {
+            var name = DeclaredOpName(schema);
+            var example = examples[name];
+            Assert.Contains($"op: \"{name}\"", commitTool.Description, StringComparison.Ordinal);
+            Assert.All(RequiredFields(schema), field => Assert.True(example.TryGetProperty(field!, out _)));
+            Assert.All(example.EnumerateObject(), field => Assert.True(schema.GetProperty("properties").TryGetProperty(field.Name, out _)));
+        }
+        Assert.Equal("", examples["edit_block"].GetProperty("replacement").GetString());
+        Assert.True(examples["replace_section"].TryGetProperty("newSectionH1", out _));
+        Assert.True(examples["replace_section"].TryGetProperty("beforeBlockId", out _));
+        Assert.True(examples["upsert"].TryGetProperty("sectionH1", out _));
         Assert.Equal(["prose", "widget"], contract.GetProperty("kinds").EnumerateObject().Select(property => property.Name));
         var widget = contract.GetProperty("kinds").GetProperty("widget");
         var builtins = widget.GetProperty("builtins");
@@ -626,6 +710,87 @@ public sealed class KernelMcpReportTests
             }));
         Assert.Equal(KernelErrorCode.InvalidArgument, badOp.Code);
         Assert.Contains("replace_section", badOp.Message, StringComparison.Ordinal);
+        Assert.Contains("edit_block", badOp.Message, StringComparison.Ordinal);
         Assert.Contains("upsert", badOp.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ReportCommitTreatsExplicitNullOperationFieldsAsOmitted()
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        var caller = await ctx.OpenMcpCallerAsync(snap.Track.LeadSessionId!);
+        var read = await Call(ctx, caller, KernelMcpToolNames.ReportRead, new { });
+        var receipt = await Call(ctx, caller, KernelMcpToolNames.ReportCommit, new
+        {
+            anchor = read.GetProperty("anchor"),
+            includeDocument = true,
+            ops = TestJson.Parse("""
+                [
+                  {"op":"upsert","id":"note","sectionH1":"Notes","markdown":"Original body."},
+                  {"op":"upsert","id":null,"position":null,"sectionH1":null,"blockKind":null,"markdown":"Appended body."},
+                  {"op":"upsert","id":"note","markdown":null,"position":null},
+                  {"op":"replace_section","sectionH1":"Tail","markdown":"Tail body.","newSectionH1":null,"beforeBlockId":null,"afterBlockId":null},
+                  {"op":"replace_section","sectionH1":"Notes","markdown":null,"newSectionH1":"Renamed"}
+                ]
+                """)
+        });
+
+        var blocks = receipt.GetProperty("blocks").EnumerateArray().ToArray();
+        Assert.Equal(["Renamed", "Renamed", "Tail"], blocks.Select(block => block.GetProperty("sectionH1").GetString()));
+        Assert.Equal(["Original body.", "Appended body.", "Tail body."], blocks.Select(block => block.GetProperty("markdown").GetString()));
+        Assert.Equal("note", blocks[0].GetProperty("id").GetString());
+        Assert.StartsWith("b_", blocks[1].GetProperty("id").GetString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ReportCommitRejectsMultilineNewSectionTitles()
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        var caller = await ctx.OpenMcpCallerAsync(snap.Track.LeadSessionId!);
+        var read = await Call(ctx, caller, KernelMcpToolNames.ReportRead, new { });
+        var error = await Assert.ThrowsAsync<ArgumentException>(() => Call(ctx, caller, KernelMcpToolNames.ReportCommit, new
+        {
+            anchor = read.GetProperty("anchor"),
+            ops = new[] { new { op = "replace_section", sectionH1 = "Notes", markdown = "Body.", newSectionH1 = "First\nSecond" } }
+        }));
+
+        Assert.Equal("newSectionH1", error.ParamName);
+        Assert.Contains("must be a single line", error.Message);
+    }
+
+    [Theory]
+    [InlineData("""{"op":"edit_block","id":"notes","target":"old"}""", "replacement")]
+    [InlineData("""{"op":"edit_block","id":"notes","target":"old","replacement":null}""", "replacement")]
+    [InlineData("""{"op":"edit_block","id":"notes","target":"old","replacement":2}""", "replacement")]
+    [InlineData("""{"op":"edit_block","id":"notes","target":"","replacement":""}""", "target")]
+    [InlineData("""{"op":"edit_block","id":" ","target":"old","replacement":""}""", "id")]
+    [InlineData("""{"op":"replace_section","sectionH1":"Notes","markdown":false}""", "markdown")]
+    [InlineData("""{"op":"replace_section","sectionH1":"Notes","newSectionH1":" "}""", "newSectionH1")]
+    [InlineData("""{"op":"replace_section","sectionH1":"Notes","markdown":"","beforeBlockId":0}""", "beforeBlockId")]
+    [InlineData("""{"op":"replace_section","sectionH1":"Notes","markdown":"","afterBlockId":" "}""", "afterBlockId")]
+    [InlineData("""{"op":"upsert","id":"notes","sectionH1":[]}""", "sectionH1")]
+    [InlineData("""{"op":"upsert","id":"notes","sectionH1":" "}""", "sectionH1")]
+    [InlineData("""{"op":"upsert","id":"notes","blockKind":"unknown"}""", "blockKind")]
+    [InlineData("""{"op":"upsert","id":"notes","blockKind":false}""", "blockKind")]
+    [InlineData("""{"op":"upsert","id":"notes","position":-1}""", "position")]
+    [InlineData("""{"op":"upsert","id":"notes","position":1.5}""", "position")]
+    [InlineData("""{"op":"upsert","id":"notes","position":"1"}""", "position")]
+    public async Task ReportCommitRejectsMalformedOperationFields(string op, string field)
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        var caller = await ctx.OpenMcpCallerAsync(snap.Track.LeadSessionId!);
+        var read = await Call(ctx, caller, KernelMcpToolNames.ReportRead, new { });
+
+        var error = await Assert.ThrowsAsync<KernelException>(() => Call(ctx, caller, KernelMcpToolNames.ReportCommit, new
+        {
+            anchor = read.GetProperty("anchor"),
+            ops = new[] { TestJson.Parse(op) }
+        }));
+
+        Assert.Equal(KernelErrorCode.InvalidArgument, error.Code);
+        Assert.Contains($"'{field}'", error.Message, StringComparison.Ordinal);
     }
 }

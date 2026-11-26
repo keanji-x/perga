@@ -88,16 +88,17 @@ public sealed class TrackActorAndHydrationTests
         var trackId = snap.Track.Id;
         var leadId = snap.Track.LeadSessionId!;
 
-        // Fire 15 sequential-anchor commits vs concurrent conflicting commits with the same ReadAnchor
         var initialRead = await ctx.Kernel.ReadReportAsync(trackId, leadId);
+        var seeded = await ctx.Kernel.CommitReportAsync(trackId, leadId,
+            new(initialRead.Anchor, [new BlockOp.UpsertBlockOp("note", ReportBlockKind.Prose, "Initial note", null)]));
 
         var concurrentCommits = Enumerable.Range(1, 10)
             .Select(i => ctx.Kernel.CommitReportAsync(
                 trackId,
                 leadId,
                 new ReportCommitRequest(
-                    Anchor: initialRead.Anchor,
-                    Ops: [new BlockOp.UpsertBlockOp(null, ReportBlockKind.Prose, $"Concurrent note {i}", null)])))
+                    Anchor: seeded.Anchor,
+                    Ops: [new BlockOp.UpsertBlockOp("note", ReportBlockKind.Prose, $"Concurrent note {i}", null)])))
             .ToArray();
 
         var successes = 0;
@@ -109,18 +110,19 @@ public sealed class TrackActorAndHydrationTests
                 await t;
                 successes++;
             }
-            catch (ReportConflictException)
+            catch (ReportConflictException conflict)
             {
+                Assert.Equal("stale_block_rev", conflict.Code);
                 conflicts++;
             }
         }
 
-        // Single-writer actor guarantees exactly 1 succeeds at docRev=0 and the other 9 deterministically get ReportConflictException!
         Assert.Equal(1, successes);
         Assert.Equal(9, conflicts);
 
         var afterRead = await ctx.Kernel.ReadReportAsync(trackId, leadId);
-        Assert.Equal(1, afterRead.DocRev);
+        Assert.Equal(seeded.DocRev + 1, afterRead.DocRev);
+        Assert.Equal(2, Assert.Single(afterRead.Blocks).Rev);
     }
 
     [Fact]

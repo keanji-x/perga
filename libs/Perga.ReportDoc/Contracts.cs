@@ -36,13 +36,20 @@ public sealed record ReadAnchor(
 
 public abstract record BlockOp
 {
-    public sealed record ReplaceSectionOp(string SectionH1, string Markdown) : BlockOp;
+    public sealed record ReplaceSectionOp(
+        string SectionH1,
+        string? Markdown = null,
+        string? NewSectionH1 = null,
+        string? BeforeBlockId = null,
+        string? AfterBlockId = null) : BlockOp;
+    public sealed record EditBlockOp(string Id, string Target, string Replacement) : BlockOp;
     public sealed record UpsertBlockOp(
         string? Id,
-        ReportBlockKind Kind,
+        ReportBlockKind? Kind,
         string? Markdown,
         JsonElement? Payload,
-        int? Position = null) : BlockOp;
+        int? Position = null,
+        string? SectionH1 = null) : BlockOp;
     public sealed record DeleteBlockOp(string Id) : BlockOp;
     public sealed record MoveBlockOp(string Id, int ToIndex) : BlockOp;
 }

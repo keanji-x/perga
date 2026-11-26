@@ -69,11 +69,25 @@ internal static class KernelMcpReportSupport
                 "oneOf": [
                   {
                     "type": "object",
-                    "required": ["op", "sectionH1", "markdown"],
+                    "required": ["op", "sectionH1"],
+                    "description": "Provide markdown, newSectionH1, or both. Use at most one of beforeBlockId and afterBlockId.",
                     "properties": {
                       "op": { "type": "string", "const": "replace_section" },
-                      "sectionH1": { "type": "string", "minLength": 1 },
-                      "markdown": { "type": "string" }
+                      "sectionH1": { "type": "string", "minLength": 1, "description": "Single-line H1 title of the target section." },
+                      "markdown": { "type": "string", "description": "New section body. Omit to rename an existing section while preserving its blocks." },
+                      "newSectionH1": { "type": "string", "minLength": 1, "description": "New single-line H1 title for the section." },
+                      "beforeBlockId": { "type": "string", "minLength": 1, "description": "Place the section before this block, which must be outside the target section." },
+                      "afterBlockId": { "type": "string", "minLength": 1, "description": "Place the section after this block, which must be outside the target section." }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "required": ["op", "id", "target", "replacement"],
+                    "properties": {
+                      "op": { "type": "string", "const": "edit_block" },
+                      "id": { "type": "string", "minLength": 1 },
+                      "target": { "type": "string", "minLength": 1, "description": "Text that occurs exactly once in the prose block." },
+                      "replacement": { "type": "string", "description": "Replacement text. Use an empty string to delete the match." }
                     }
                   },
                   {
@@ -81,11 +95,12 @@ internal static class KernelMcpReportSupport
                     "required": ["op"],
                     "properties": {
                       "op": { "type": "string", "enum": ["upsert", "upsert_block"] },
-                      "id": { "type": "string" },
-                      "blockKind": { "type": "string", "enum": ["prose", "widget"] },
+                      "id": { "type": "string", "minLength": 1 },
+                      "blockKind": { "type": "string", "enum": ["prose", "widget"], "description": "Omit to keep the existing kind on update or default to prose on insert." },
                       "markdown": { "type": "string" },
                       "payload": {},
-                      "position": { "type": "integer", "minimum": 0 }
+                      "position": { "type": "integer", "minimum": 0 },
+                      "sectionH1": { "type": "string", "minLength": 1, "description": "Single-line H1 title to assign to the block." }
                     }
                   },
                   {
@@ -112,7 +127,7 @@ internal static class KernelMcpReportSupport
             "commitMessage": { "type": "string" },
             "includeDocument": {
               "type": "boolean",
-              "description": "Defaults to false (returns a compact commit receipt with docRev, summary, anchor, changes, tasks, diagnostics). Set true to also include renderedMarkdown and blocks."
+              "description": "Defaults to false (returns a compact commit receipt with docRev, summary, anchor, changes, active tasks, diagnostics). Set true to also include renderedMarkdown and blocks."
             }
           }
         }
@@ -240,6 +255,168 @@ internal static class KernelMcpReportSupport
         });
     }
 
+    private static void RequireLocalReportCommit(JsonElement args, string trackId)
+    {
+        if (JsonHelpers.TryGetPropertyIgnoreCase(args, ["trackId"], out var target) &&
+            target.ValueKind != JsonValueKind.Null &&
+            (target.ValueKind != JsonValueKind.String || target.GetString() != trackId))
+        {
+            throw KernelException.InvalidArgument(
+                "report_commit only supports writing the caller's Track. Omit 'trackId' or use the caller's Track ID.");
+        }
+    }
+
+    internal static ReportCommitRequest ParseReportCommitArgs(JsonElement args, string trackId)
+    {
+        RequireLocalReportCommit(args, trackId);
+
+        if (!JsonHelpers.TryGetPropertyIgnoreCase(args, ["anchor"], out var anchorElem) ||
+            anchorElem.ValueKind != JsonValueKind.Object)
+        {
+            throw KernelException.InvalidArgument(
+                "Missing 'anchor' object. Pass the ReadAnchor returned by report_read, e.g. {\"docRev\":0,\"knownBlockRevs\":{\"b_1234\":1},\"wholeDocumentRead\":true}.");
+        }
+
+        var anchor = JsonHelpers.Deserialize<ReadAnchor>(anchorElem)
+                     ?? throw KernelException.InvalidArgument(
+                         "Invalid 'anchor' object. Expected {\"docRev\":0,\"knownBlockRevs\":{\"b_1234\":1},\"wholeDocumentRead\":true}.");
+
+        if (!JsonHelpers.TryGetPropertyIgnoreCase(args, ["ops"], out var opsElem) ||
+            opsElem.ValueKind != JsonValueKind.Array)
+        {
+            throw KernelException.InvalidArgument(
+                "Missing 'ops' array. Example: [{\"op\":\"replace_section\",\"sectionH1\":\"Overview\",\"markdown\":\"...\"}].");
+        }
+
+        var ops = new List<BlockOp>();
+        foreach (var opElem in opsElem.EnumerateArray())
+        {
+            ops.Add(ParseBlockOp(opElem));
+        }
+
+        return new ReportCommitRequest(anchor, ops, OptionalString(["summary"]),
+            OptionalString(["commitMessage", "commit_message", "message"]));
+
+        string? OptionalString(ReadOnlySpan<string> keys) =>
+            JsonHelpers.TryGetPropertyIgnoreCase(args, keys, out var value) && value.ValueKind == JsonValueKind.String
+                ? value.GetString()
+                : null;
+    }
+
+    private static BlockOp ParseBlockOp(JsonElement opElem)
+    {
+        var type = ReadBlockOpString(opElem, ["op", "type", "kind"], required: true)!;
+        var normalized = type.Replace("_", "", StringComparison.Ordinal).ToLowerInvariant();
+
+        switch (normalized)
+        {
+            case "replacesection" or "replacesectionop":
+                return new BlockOp.ReplaceSectionOp(
+                    ReadBlockOpString(opElem, ["sectionH1", "section_h1", "h1"], required: true)!,
+                    ReadBlockOpString(opElem, ["markdown"], allowBlank: true),
+                    ReadBlockOpString(opElem, ["newSectionH1"]),
+                    ReadBlockOpString(opElem, ["beforeBlockId"]),
+                    ReadBlockOpString(opElem, ["afterBlockId"]));
+
+            case "editblock" or "editblockop":
+            {
+                var id = ReadBlockOpString(opElem, ["id", "blockId", "block_id"], required: true)!;
+                var target = ReadBlockOpString(opElem, ["target"], required: true, allowBlank: true)!;
+                if (target.Length == 0)
+                {
+                    throw KernelException.InvalidArgument("BlockOp argument 'target' must be a non-empty string.");
+                }
+
+                return new BlockOp.EditBlockOp(
+                    id, target, ReadBlockOpString(opElem, ["replacement"], required: true, allowBlank: true)!);
+            }
+
+            case "upsert" or "upsertblock" or "upsertblockop":
+            {
+                ReportBlockKind? blockKind = null;
+                if (ReadBlockOpString(opElem, ["blockKind", "block_kind"]) is { } kind)
+                {
+                    if (!Enum.TryParse<ReportBlockKind>(kind, ignoreCase: true, out var parsedKind) ||
+                        !string.Equals(kind, Enum.GetName(parsedKind), StringComparison.OrdinalIgnoreCase))
+                    {
+                        throw KernelException.InvalidArgument("UpsertBlockOp 'blockKind' must be 'prose' or 'widget'.");
+                    }
+
+                    blockKind = parsedKind;
+                }
+
+                int? position = null;
+                if (JsonHelpers.TryGetPropertyIgnoreCase(opElem, ["position"], out var posElem) &&
+                    posElem.ValueKind is not (JsonValueKind.Null or JsonValueKind.Undefined))
+                {
+                    if (posElem.ValueKind != JsonValueKind.Number || !posElem.TryGetInt32(out var posVal) || posVal < 0)
+                    {
+                        throw KernelException.InvalidArgument("UpsertBlockOp 'position' must be a non-negative integer.");
+                    }
+                    position = posVal;
+                }
+
+                JsonElement? payload = null;
+                if (JsonHelpers.TryGetPropertyIgnoreCase(opElem, ["payload"], out var payElem) &&
+                    payElem.ValueKind is not (JsonValueKind.Null or JsonValueKind.Undefined))
+                {
+                    payload = payElem.Clone();
+                }
+
+                return new BlockOp.UpsertBlockOp(
+                    ReadBlockOpString(opElem, ["id", "blockId", "block_id"]),
+                    blockKind,
+                    ReadBlockOpString(opElem, ["markdown"], allowBlank: true),
+                    payload,
+                    position,
+                    ReadBlockOpString(opElem, ["sectionH1"]));
+            }
+
+            case "delete" or "deleteblock" or "deleteblockop":
+                return new BlockOp.DeleteBlockOp(ReadBlockOpString(opElem, ["id", "blockId", "block_id"], required: true)!);
+
+            case "move" or "moveblock" or "moveblockop":
+            {
+                if (!JsonHelpers.TryGetPropertyIgnoreCase(opElem, ["toIndex", "to_index"], out var idxElem) ||
+                    idxElem.ValueKind != JsonValueKind.Number ||
+                    !idxElem.TryGetInt32(out var toIndex))
+                {
+                    throw KernelException.InvalidArgument("MoveBlockOp requires integer 'toIndex'.");
+                }
+
+                return new BlockOp.MoveBlockOp(ReadBlockOpString(opElem, ["id", "blockId", "block_id"], required: true)!, toIndex);
+            }
+
+            default:
+                throw KernelException.InvalidArgument(
+                    $"Unsupported BlockOp type '{type}'. Supported ops: replace_section ({{op,sectionH1,markdown?,newSectionH1?,beforeBlockId?,afterBlockId?}}), edit_block ({{op,id,target,replacement}}), upsert ({{op,id?,blockKind?,markdown?,payload?,position?,sectionH1?}}), delete ({{op,id}}), move ({{op,id,toIndex}}).");
+        }
+    }
+
+    private static string? ReadBlockOpString(JsonElement obj, ReadOnlySpan<string> keys, bool required = false, bool allowBlank = false)
+    {
+        if (!JsonHelpers.TryGetPropertyIgnoreCase(obj, keys, out var elem))
+        {
+            return required
+                ? throw KernelException.InvalidArgument($"Required BlockOp argument '{keys[0]}' was missing.")
+                : null;
+        }
+
+        if (!required && elem.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+        {
+            return null;
+        }
+
+        var value = elem.ValueKind == JsonValueKind.String ? elem.GetString() : null;
+        if (value is null || (!allowBlank && string.IsNullOrWhiteSpace(value)))
+        {
+            var expectation = allowBlank ? "a string" : "a non-blank string";
+            throw KernelException.InvalidArgument($"BlockOp argument '{keys[0]}' must be {expectation}.");
+        }
+
+        return value;
+    }
+
     internal static bool ParseIncludeDocumentArg(JsonElement args) =>
         ParseOptionalBool(args, ["includeDocument", "include_document"]);
 
@@ -273,10 +450,10 @@ internal static class KernelMcpReportSupport
     }
 
     private static McpReportTaskSummary[] SummarizeTasks(IReadOnlyList<TaskDto> tasks) =>
-        tasks.Select(task => new McpReportTaskSummary(
+        tasks.Where(static task => task.ArchivedAtMs is null).Select(task => new McpReportTaskSummary(
             task.Id, task.TaskKey, task.Kind, JsonHelpers.GetStringProperty(task.Context, "title"),
             task.Status, task.Outcome, BoundMcpSummary(task.OutcomeSummary ?? task.StatusDetail), task.RunCount,
-            task.SessionId, task.DependsOn.Count > 0 ? task.DependsOn : null, task.ArchivedAtMs)).ToArray();
+            task.SessionId, task.DependsOn.Count > 0 ? task.DependsOn : null)).ToArray();
 
     private static string ParseReadFormat(JsonElement args)
     {
@@ -384,8 +561,9 @@ internal static class KernelMcpReportSupport
         {
           "fenceSyntax": "```perga-block widget\n<json>\n```",
           "ops": {
-            "replaceSection": { "op": "replace_section", "sectionH1": "Progress", "markdown": "# Progress\n..." },
-            "upsert": { "op": "upsert", "id": "b_1234", "blockKind": "prose", "markdown": "...", "position": 0 },
+            "replaceSection": { "op": "replace_section", "sectionH1": "Progress", "newSectionH1": "Results", "markdown": "The checks passed.", "beforeBlockId": "b_5678" },
+            "editBlock": { "op": "edit_block", "id": "b_1234", "target": "Draft: ", "replacement": "" },
+            "upsert": { "op": "upsert", "id": "b_1234", "sectionH1": "Results", "position": 0 },
             "delete": { "op": "delete", "id": "b_1234" },
             "move": { "op": "move", "id": "b_1234", "toIndex": 0 }
           },
@@ -470,6 +648,5 @@ internal static class KernelMcpReportSupport
         string? OutcomeSummary,
         int RunCount,
         string? SessionId,
-        IReadOnlyList<string>? DependsOn,
-        long? ArchivedAtMs);
+        IReadOnlyList<string>? DependsOn);
 }

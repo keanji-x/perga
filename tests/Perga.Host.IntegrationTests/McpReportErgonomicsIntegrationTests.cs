@@ -130,9 +130,22 @@ public sealed class McpReportErgonomicsIntegrationTests
         using var created = JsonDocument.Parse(await trackResp.Content.ReadAsStringAsync(ct));
         var trackId = created.RootElement.GetProperty("track").GetProperty("id").GetString()!;
         var leadSessionId = created.RootElement.GetProperty("track").GetProperty("leadSessionId").GetString()!;
-        await cluster.Services.GetRequiredService<IPergaKernel>().WaitForTrackIdleAsync(trackId, ct);
+        var kernel = cluster.Services.GetRequiredService<IPergaKernel>();
+        await kernel.WaitForTrackIdleAsync(trackId, ct);
+        await kernel.Actors.RemoveAndDisposeAsync(trackId);
+        var store = cluster.Services.GetRequiredService<ITrackStore>();
+        var now = cluster.TimeProvider.GetUtcNow().ToUnixTimeMilliseconds();
+        var active = new TaskDto("active-task", trackId, "active", "active", 1, "agent", null,
+            AccessMode.ReadOnly, false, [], "Active work", null, null, null, TaskRunStatus.Pending, null,
+            SemanticVerdict.None, null, now, now);
+        await store.UpsertTaskAsync(active, null, ct);
+        await store.UpsertTaskAsync(active with
+        {
+            Id = "archived-task", BlockId = "archived", TaskKey = "archived",
+            Status = TaskRunStatus.Done, ArchivedAtMs = now
+        }, null, ct);
 
-        var leadToken = (await cluster.Services.GetRequiredService<IPergaKernel>().OpenMcpCallerAsync(leadSessionId, ct)).Token;
+        var leadToken = (await kernel.OpenMcpCallerAsync(leadSessionId, ct)).Token;
 
         // 1. Verify tools/list publishes enriched nested schemas over Streamable HTTP
         using var listResp = await cluster.PostMcpAsync(
@@ -152,12 +165,13 @@ public sealed class McpReportErgonomicsIntegrationTests
         var commitSchema = commitTool.GetProperty("inputSchema");
         Assert.Equal(["anchor", "ops"], commitSchema.GetProperty("required").EnumerateArray().Select(key => key.GetString()));
         var commitProperties = commitSchema.GetProperty("properties");
-        Assert.Equal(4, commitProperties.GetProperty("ops").GetProperty("items").GetProperty("oneOf").GetArrayLength());
+        Assert.Equal(5, commitProperties.GetProperty("ops").GetProperty("items").GetProperty("oneOf").GetArrayLength());
+        Assert.Contains("active tasks", commitProperties.GetProperty("includeDocument").GetProperty("description").GetString());
         Assert.Equal(["docRev", "knownBlockRevs", "wholeDocumentRead"],
             commitProperties.GetProperty("anchor").GetProperty("required").EnumerateArray().Select(key => key.GetString()));
         var commitDescription = commitTool.GetProperty("description").GetString();
         Assert.Contains("Cheatsheet:", commitDescription, StringComparison.Ordinal);
-        foreach (var op in new[] { "replace_section", "upsert", "delete", "move" })
+        foreach (var op in new[] { "replace_section", "edit_block", "upsert", "delete", "move" })
             Assert.Contains($"op: \"{op}\"", commitDescription, StringComparison.Ordinal);
         Assert.True(
             toolsByName[KernelMcpToolNames.ReportRead]
@@ -189,6 +203,7 @@ public sealed class McpReportErgonomicsIntegrationTests
         Assert.True(commitDoc.RootElement.GetProperty("changes").GetArrayLength() >= 2);
         Assert.False(commitDoc.RootElement.TryGetProperty("renderedMarkdown", out _));
         Assert.False(commitDoc.RootElement.TryGetProperty("blocks", out _));
+        Assert.Equal("active-task", Assert.Single(commitDoc.RootElement.GetProperty("tasks").EnumerateArray()).GetProperty("id").GetString());
 
         var (staleText, staleErr) = await McpKernelAndVcsIntegrationTests.CallToolAsync(
             cluster, "/mcp/kernel", leadToken, KernelMcpToolNames.ReportCommit,
@@ -209,16 +224,97 @@ public sealed class McpReportErgonomicsIntegrationTests
         using var outlineDoc = JsonDocument.Parse(outlineText);
         Assert.Equal(2, outlineDoc.RootElement.GetProperty("sections").GetArrayLength());
         Assert.False(outlineDoc.RootElement.TryGetProperty("renderedMarkdown", out _));
+        Assert.Equal("active-task", Assert.Single(outlineDoc.RootElement.GetProperty("tasks").EnumerateArray()).GetProperty("id").GetString());
         var widgetContract = outlineDoc.RootElement.GetProperty("blockContract").GetProperty("kinds").GetProperty("widget");
         Assert.Equal(new[] { "use", "view" }, widgetContract.GetProperty("required").EnumerateArray().Select(key => key.GetString()));
         var flowExample = widgetContract.GetProperty("flowExample");
         Assert.Equal("builtin:flow", flowExample.GetProperty("use").GetString());
         Assert.Equal("flow", flowExample.GetProperty("view").GetString());
 
-        // 4. Verify HTTP GET and PUT /api/v1/tracks/{trackId}/report* remain unchanged (no 'changes' field)
+        var (tasksText, tasksErr) = await McpKernelAndVcsIntegrationTests.CallToolAsync(
+            cluster, "/mcp/kernel", leadToken, KernelMcpToolNames.TaskList, new { }, ct);
+        Assert.False(tasksErr, tasksText);
+        using var tasksDoc = JsonDocument.Parse(tasksText);
+        Assert.Equal(2, tasksDoc.RootElement.GetArrayLength());
+        var archived = Assert.Single(tasksDoc.RootElement.EnumerateArray(), task => task.GetProperty("id").GetString() == "archived-task");
+        Assert.Equal(now, archived.GetProperty("archivedAtMs").GetInt64());
+
         var httpReport = await client.GetFromJsonAsync<JsonElement>($"/api/v1/tracks/{trackId}/report", ct);
         Assert.Equal(1, httpReport.GetProperty("docRev").GetInt32());
         Assert.Contains("Notes text.", httpReport.GetProperty("renderedMarkdown").GetString());
         Assert.False(httpReport.TryGetProperty("changes", out _));
+        Assert.Equal(2, httpReport.GetProperty("tasks").GetArrayLength());
+        Assert.Contains(httpReport.GetProperty("tasks").EnumerateArray(), task => task.GetProperty("id").GetString() == "archived-task");
+    }
+
+    [Fact]
+    public async Task McpCommitPersistsTargetedEditsSectionPlacementAndContentPreservingUpserts()
+    {
+        await using var cluster = new PergaHostTestCluster();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var ct = cts.Token;
+        var (trackId, leadId) = await cluster.CreateTrackAsync();
+        var kernel = cluster.Services.GetRequiredService<IPergaKernel>();
+        var token = (await kernel.OpenMcpCallerAsync(leadId, ct)).Token;
+        var widgetPayload = new { use = "builtin:flow", view = "flow" };
+
+        var initialAnchor = JsonSerializer.SerializeToElement(new { docRev = 0, knownBlockRevs = new { }, wholeDocumentRead = true });
+        var initial = await Commit(initialAnchor,
+        [
+            new { op = "upsert", id = "notes", sectionH1 = "Progress", markdown = "Draft: typo. Keep this." },
+            new { op = "upsert", id = "widget", sectionH1 = "Progress", blockKind = "widget", payload = widgetPayload },
+            new { op = "upsert", id = "tail", sectionH1 = "Tail", markdown = "Tail body." }
+        ]);
+        var originalAnchor = initial.GetProperty("anchor");
+        var updated = await Commit(originalAnchor,
+        [
+            new { op = "edit_block", id = "notes", target = "typo", replacement = "ready" },
+            new { op = "edit_block", id = "notes", target = "Draft: ", replacement = "" },
+            new { op = "replace_section", sectionH1 = "Progress", newSectionH1 = "Results", afterBlockId = "tail" },
+            new { op = "replace_section", sectionH1 = "Insert", markdown = "Inserted body.", beforeBlockId = "tail" }
+        ]);
+
+        var blocks = updated.GetProperty("blocks").EnumerateArray().ToArray();
+        Assert.Equal(["Insert", "Tail", "Results", "Results"], blocks.Select(block => block.GetProperty("sectionH1").GetString()));
+        Assert.Equal("ready. Keep this.", blocks[2].GetProperty("markdown").GetString());
+        Assert.Equal(4, blocks[2].GetProperty("rev").GetInt32());
+        Assert.Equal(2, blocks[3].GetProperty("rev").GetInt32());
+        Assert.True(JsonElement.DeepEquals(JsonSerializer.SerializeToElement(widgetPayload), blocks[3].GetProperty("payload")));
+
+        var (conflict, isError) = await McpKernelAndVcsIntegrationTests.CallToolAsync(
+            cluster, "/mcp/kernel", token, KernelMcpToolNames.ReportCommit, new
+            {
+                anchor = originalAnchor,
+                ops = new[] { new { op = "edit_block", id = "notes", target = "ready", replacement = "stale" } }
+            }, ct);
+        Assert.True(isError, conflict);
+        using var conflictDoc = JsonDocument.Parse(conflict);
+        Assert.Equal("stale_block_rev", conflictDoc.RootElement.GetProperty("code").GetString());
+
+        var moved = await Commit(updated.GetProperty("anchor"),
+        [
+            new { op = "upsert", id = "notes", sectionH1 = "Summary" },
+            new { op = "upsert", id = "widget", sectionH1 = "Flow", position = 0 }
+        ]);
+        Assert.Equal(3, moved.GetProperty("docRev").GetInt32());
+        var persisted = await cluster.AuthenticatedClient.GetFromJsonAsync<JsonElement>($"/api/v1/tracks/{trackId}/report", ct);
+        Assert.Equal(moved.GetProperty("renderedMarkdown").GetString(), persisted.GetProperty("renderedMarkdown").GetString());
+        var persistedBlocks = persisted.GetProperty("blocks");
+        var widget = persistedBlocks[0];
+        Assert.Equal("widget", widget.GetProperty("id").GetString());
+        Assert.Equal("Flow", widget.GetProperty("sectionH1").GetString());
+        Assert.True(JsonElement.DeepEquals(JsonSerializer.SerializeToElement(widgetPayload), widget.GetProperty("payload")));
+        var notes = Assert.Single(persistedBlocks.EnumerateArray(), block => block.GetProperty("id").GetString() == "notes");
+        Assert.Equal("Summary", notes.GetProperty("sectionH1").GetString());
+        Assert.Equal("ready. Keep this.", notes.GetProperty("markdown").GetString());
+
+        async Task<JsonElement> Commit(JsonElement anchor, object[] ops)
+        {
+            var (result, error) = await McpKernelAndVcsIntegrationTests.CallToolAsync(cluster, "/mcp/kernel",
+                token, KernelMcpToolNames.ReportCommit, new { anchor, includeDocument = true, ops }, ct);
+            Assert.False(error, result);
+            using var document = JsonDocument.Parse(result);
+            return document.RootElement.Clone();
+        }
     }
 }

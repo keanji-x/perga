@@ -198,8 +198,9 @@ public static class KernelMcpCatalog
                 Cheatsheet:
                 - anchor: { docRev, knownBlockRevs, wholeDocumentRead } from report_read, the previous report_commit receipt, or the initial anchor in the empty Report prompt.
                 - ops (non-empty array):
-                  - { op: "replace_section", sectionH1, markdown } creates or replaces an H1 section.
-                  - { op: "upsert", id?, blockKind?: "prose"|"widget", markdown?, payload?, position? }
+                  - { op: "replace_section", sectionH1, markdown?, newSectionH1?, beforeBlockId?, afterBlockId? } creates, replaces, or renames an H1 section. Supply newSectionH1 without markdown to preserve all existing blocks. Use at most one placement ID to position the section next to a block outside it.
+                  - { op: "edit_block", id, target, replacement } replaces a unique, exact match in a prose block. Use "" as replacement to delete the match.
+                  - { op: "upsert", id?, blockKind?: "prose"|"widget", markdown?, payload?, position?, sectionH1? } defaults to prose on insert. Omit blockKind, markdown and payload on update to preserve the block's kind and content.
                   - { op: "delete", id }
                   - { op: "move", id, toIndex }
                 - Optional: summary, commitMessage, includeDocument. Set includeDocument=true to add renderedMarkdown and blocks to the receipt.
@@ -446,8 +447,7 @@ public static class KernelMcpDispatcher
 
             case KernelMcpToolNames.ReportCommit:
             {
-                RequireLocalReportCommit(args, caller.TrackId);
-                var commitReq = ParseReportCommitArgs(args);
+                var commitReq = KernelMcpReportSupport.ParseReportCommitArgs(args, caller.TrackId);
                 var includeDocument = KernelMcpReportSupport.ParseIncludeDocumentArg(args);
                 var res = await kernel.CommitReportAsync(caller.TrackId, caller.SessionId, commitReq, ct, authorization)
                     .ConfigureAwait(false);
@@ -840,115 +840,6 @@ public static class KernelMcpDispatcher
         if (elem.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(elem.GetString()))
             throw KernelException.InvalidArgument($"Argument '{keys[0]}' must be a non-empty string.");
         return elem.GetString();
-    }
-
-    private static void RequireLocalReportCommit(JsonElement args, string trackId)
-    {
-        if (JsonHelpers.TryGetPropertyIgnoreCase(args, ["trackId"], out var target) &&
-            target.ValueKind != JsonValueKind.Null &&
-            (target.ValueKind != JsonValueKind.String || target.GetString() != trackId))
-        {
-            throw KernelException.InvalidArgument(
-                "report_commit only supports writing the caller's Track. Omit 'trackId' or use the caller's Track ID.");
-        }
-    }
-
-    private static ReportCommitRequest ParseReportCommitArgs(JsonElement args)
-    {
-        if (!JsonHelpers.TryGetPropertyIgnoreCase(args, ["anchor"], out var anchorElem) ||
-            anchorElem.ValueKind != JsonValueKind.Object)
-        {
-            throw KernelException.InvalidArgument(
-                "Missing 'anchor' object. Pass the ReadAnchor returned by report_read, e.g. {\"docRev\":0,\"knownBlockRevs\":{\"b_1234\":1},\"wholeDocumentRead\":true}.");
-        }
-
-        var anchor = JsonHelpers.Deserialize<ReadAnchor>(anchorElem)
-                     ?? throw KernelException.InvalidArgument(
-                         "Invalid 'anchor' object. Expected {\"docRev\":0,\"knownBlockRevs\":{\"b_1234\":1},\"wholeDocumentRead\":true}.");
-
-        if (!JsonHelpers.TryGetPropertyIgnoreCase(args, ["ops"], out var opsElem) ||
-            opsElem.ValueKind != JsonValueKind.Array)
-        {
-            throw KernelException.InvalidArgument(
-                "Missing 'ops' array. Example: [{\"op\":\"replace_section\",\"sectionH1\":\"Overview\",\"markdown\":\"...\"}].");
-        }
-
-        var ops = new List<BlockOp>();
-        foreach (var opElem in opsElem.EnumerateArray())
-        {
-            ops.Add(ParseBlockOp(opElem));
-        }
-
-        var summary = OptionalStringArg(args, ["summary"]);
-        var commitMsg = OptionalStringArg(args, ["commitMessage", "commit_message", "message"]);
-        return new ReportCommitRequest(anchor, ops, summary, commitMsg);
-    }
-
-    private static BlockOp ParseBlockOp(JsonElement opElem)
-    {
-        var type = RequireStringArg(opElem, ["op", "type", "kind"]);
-        var normalized = type.Replace("_", "", StringComparison.Ordinal).ToLowerInvariant();
-
-        switch (normalized)
-        {
-            case "replacesection" or "replacesectionop":
-                return new BlockOp.ReplaceSectionOp(
-                    RequireStringArg(opElem, ["sectionH1", "section_h1", "h1"]),
-                    RequireStringArg(opElem, ["markdown"]));
-
-            case "upsert" or "upsertblock" or "upsertblockop":
-            {
-                var blockKindStr = OptionalStringArg(opElem, ["blockKind", "block_kind"]) ?? "Prose";
-                if (!Enum.TryParse<ReportBlockKind>(blockKindStr, ignoreCase: true, out var blockKind) &&
-                    JsonHelpers.TryGetPropertyIgnoreCase(opElem, ["kind"], out var kElem) &&
-                    kElem.ValueKind == JsonValueKind.String &&
-                    !string.Equals(kElem.GetString(), type, StringComparison.OrdinalIgnoreCase))
-                {
-                    Enum.TryParse(kElem.GetString(), ignoreCase: true, out blockKind);
-                }
-
-                int? position = null;
-                if (JsonHelpers.TryGetPropertyIgnoreCase(opElem, ["position"], out var posElem) &&
-                    posElem.ValueKind == JsonValueKind.Number &&
-                    posElem.TryGetInt32(out var posVal))
-                {
-                    position = posVal;
-                }
-
-                JsonElement? payload = null;
-                if (JsonHelpers.TryGetPropertyIgnoreCase(opElem, ["payload"], out var payElem) &&
-                    payElem.ValueKind is not (JsonValueKind.Null or JsonValueKind.Undefined))
-                {
-                    payload = payElem.Clone();
-                }
-
-                return new BlockOp.UpsertBlockOp(
-                    OptionalStringArg(opElem, ["id", "blockId", "block_id"]),
-                    blockKind,
-                    OptionalStringArg(opElem, ["markdown"]),
-                    payload,
-                    position);
-            }
-
-            case "delete" or "deleteblock" or "deleteblockop":
-                return new BlockOp.DeleteBlockOp(RequireStringArg(opElem, ["id", "blockId", "block_id"]));
-
-            case "move" or "moveblock" or "moveblockop":
-            {
-                if (!JsonHelpers.TryGetPropertyIgnoreCase(opElem, ["toIndex", "to_index"], out var idxElem) ||
-                    idxElem.ValueKind != JsonValueKind.Number ||
-                    !idxElem.TryGetInt32(out var toIndex))
-                {
-                    throw KernelException.InvalidArgument("MoveBlockOp requires integer 'toIndex'.");
-                }
-
-                return new BlockOp.MoveBlockOp(RequireStringArg(opElem, ["id", "blockId", "block_id"]), toIndex);
-            }
-
-            default:
-                throw KernelException.InvalidArgument(
-                    $"Unsupported BlockOp type '{type}'. Supported ops: replace_section ({{op,sectionH1,markdown}}), upsert ({{op,id?,blockKind?,markdown?,payload?,position?}}), delete ({{op,id}}), move ({{op,id,toIndex}}).");
-        }
     }
 
     private static TermObserveRequest ParseTermObserveArgs(JsonElement args)
