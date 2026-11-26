@@ -371,4 +371,45 @@ public sealed class SessionLaunchValidationTests
         Assert.Equal("codex", memoryLead.Provider);
         Assert.Equal("gpt-5", memoryLead.Model);
     }
+
+    [Fact]
+    public async Task ProviderChangeRequiresIdleSessionAndReturnsPreconditionFailed()
+    {
+        await using var ctx = new KernelTestContext();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var ct = deadline.Token;
+        ctx.AgentRuntime.Providers =
+        [
+            new("codex", true, "1", null, ["gpt-5"]),
+            new("claude", true, "1", null, ["sonnet"])
+        ];
+        var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
+        var leadId = snapshot.Track.LeadSessionId!;
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        ctx.AgentRuntime.TurnScript = (_, _, token) => HoldTurnAsync(token);
+        await ctx.Kernel.SendSessionMessageAsync(leadId, new("hold", "hold"), Human, ct);
+        await started.Task.WaitAsync(ct);
+
+        try
+        {
+            var error = await Assert.ThrowsAsync<KernelException>(() =>
+                ctx.Kernel.UpdateSessionAsync(leadId, new(Provider: "claude"), Human, ct));
+            Assert.Equal(KernelErrorCode.PreconditionFailed, error.Code);
+            Assert.Equal("Provider changes require an idle session.", error.Message);
+        }
+        finally
+        {
+            release.TrySetResult();
+            await ctx.Kernel.WaitForTrackIdleAsync(snapshot.Track.Id);
+        }
+
+        async IAsyncEnumerable<UnifiedAgentEvent> HoldTurnAsync(
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken token)
+        {
+            started.TrySetResult();
+            await release.Task.WaitAsync(token);
+            yield return new UnifiedAgentEvent.TurnCompleted(null);
+        }
+    }
 }

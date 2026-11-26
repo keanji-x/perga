@@ -172,3 +172,98 @@ it.each([false, true])('protects a newer confirmed GET from an old ACK across A 
   }
   client.clear();
 });
+
+it.each(['succeeds', 'fails'] as const)('holds a production store send behind an in-flight provider switch (%s)', async outcome => {
+  const write = deferred<ApiTransportResponse>();
+  const events: string[] = [];
+  let session = fixtureSession('a', 't', { provider: 'codex', permissionMode: 'ask' });
+  const transport: ApiTransportPort = { send: async request => {
+    if (request.method === 'PATCH') { events.push('patch'); return write.promise; }
+    if (request.method === 'POST') { events.push('post'); return sessionReply(sessionInput('a')); }
+    if (request.path.includes('/items?')) return sessionReply(sessionPage(session));
+    return sessionReply([]);
+  } };
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const { result } = renderHook(() => ({ store: useConversationStore(transport, unauthorized, {
+    id: 't', cardId: 'a', title: 'Track', provider: 'codex', kind: 'agent', isLead: false, state: 'idle', updatedAt: 1, cardTitle: null,
+  }, { rows: [], rememberOn: 't' }), registry: useConversationCommands() }), { wrapper: wrapper(client) });
+  await waitFor(() => expect(result.current.store.runReady).toBe(true));
+  const images = outcome === 'fails' ? [{ id: 'image', url: '/image', contentType: 'image/png', size: 1 }] : [];
+  let sent: Promise<void> | null = null;
+  act(() => {
+    result.current.store.setModel({ model: 'sonnet', reasoning_effort: null }, 'claude');
+    sent = result.current.store.send('a', 'first on claude', images, true);
+  });
+  await act(async () => { await Promise.resolve(); });
+  expect(events).toEqual(['patch']);
+
+  if (outcome === 'succeeds') {
+    session = fixtureSession('a', 't', { provider: 'claude', model: 'sonnet', permissionMode: 'default' });
+    await act(async () => {
+      write.resolve(sessionReply(session));
+      await sent;
+    });
+    expect(events).toEqual(['patch', 'post']);
+    await waitFor(() => expect(result.current.store.session?.provider).toBe('claude'));
+  } else {
+    await act(async () => {
+      write.resolve({ status: 409, statusText: 'Conflict', body: { code: 'precondition_failed', error: 'Provider changes require an idle session.' } });
+      await sent;
+    });
+    expect(events).toEqual(['patch']);
+    expect(result.current.store.actionError).toBe('Provider changes require an idle session.');
+    expect(result.current.store.failedSend?.delivery).toBe('refused');
+    act(() => { result.current.store.discardFailedSend(result.current.store.failedSend!.key); });
+    expect(result.current.registry.composerOf('a')).toMatchObject({ text: 'first on claude', attachments: images });
+    // A subsequent send after the failed switch must not be blocked by a stale rejected barrier.
+    let retrySent: Promise<void> | null = null;
+    act(() => { retrySent = result.current.store.send('a', 'send on original', [], true); });
+    await act(async () => { await retrySent; });
+    expect(events).toEqual(['patch', 'post']);
+  }
+  client.clear();
+});
+
+it('orders a permission write after an in-flight provider switch', async () => {
+  const patches = [deferred<ApiTransportResponse>(), deferred<ApiTransportResponse>()];
+  const bodies: unknown[] = [];
+  let session = fixtureSession('a', 't', { provider: 'codex', permissionMode: 'ask' });
+  const transport: ApiTransportPort = { send: async request => {
+    if (request.method === 'PATCH') {
+      const index = bodies.length;
+      bodies.push(request.body);
+      return patches[index].promise;
+    }
+    if (request.path.includes('/items?')) return sessionReply(sessionPage(session));
+    return sessionReply([]);
+  } };
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const { result } = renderHook(() => useConversationStore(transport, unauthorized, {
+    id: 't', cardId: 'a', title: 'Track', provider: 'codex', kind: 'agent', isLead: false, state: 'idle', updatedAt: 1, cardTitle: null,
+  }, { rows: [], rememberOn: 't' }), { wrapper: wrapper(client) });
+  await waitFor(() => expect(result.current.runReady).toBe(true));
+
+  act(() => {
+    result.current.setModel({ model: 'sonnet', reasoning_effort: null }, 'claude');
+    void result.current.setPermissionMode('full');
+  });
+  await waitFor(() => expect(bodies).toEqual([{ provider: 'claude', model: 'sonnet', reasoningEffort: null }]));
+
+  session = fixtureSession('a', 't', { provider: 'claude', model: 'sonnet', permissionMode: 'default' });
+  await act(async () => {
+    patches[0].resolve(sessionReply(session));
+    await Promise.resolve();
+  });
+  await waitFor(() => expect(bodies).toEqual([
+    { provider: 'claude', model: 'sonnet', reasoningEffort: null },
+    { permissionMode: 'full' },
+  ]));
+  session = fixtureSession('a', 't', { provider: 'claude', model: 'sonnet', permissionMode: 'full' });
+  await act(async () => {
+    patches[1].resolve(sessionReply(session));
+    await Promise.resolve();
+  });
+  await waitFor(() => expect(result.current.permissionMode).toBe('full'));
+  expect(result.current.session?.provider).toBe('claude');
+  client.clear();
+});

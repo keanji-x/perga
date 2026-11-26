@@ -52,7 +52,7 @@ export function usePlannerMutations(transport: ApiTransportPort, cardId: string,
     if (modelWriter.current === null || modelWriter.current.cardId !== cardId) {
       modelWriter.current = { cardId, write: createSerialWriter((dispatch: () => Promise<ModelSelectionResult>) => dispatch()) };
     }
-    return modelWriter.current.write(() => {
+    const write = modelWriter.current.write(() => {
       const readVersion = client.getQueryState(runKey)?.dataUpdateCount;
       return execute(transport, setPlannerModelOperation(cardId, selection, provider), unauthorized).then((result) => {
         let providerChanged = provider !== undefined;
@@ -78,10 +78,12 @@ export function usePlannerMutations(transport: ApiTransportPort, cardId: string,
         return result;
       });
     });
+    return provider === undefined ? write : permissions.holdProviderWrite(cardId, write);
   };
   // The tab registry owns serialization across A → B → A and actual pane remounts.
   const setPermissionModeWrite = (mode: PlannerPermissionMode): Promise<SetPlannerPermissionModeResponse> => {
-    const previous = permissions.permissionWriteOf(cardId);
+    const ancestors = [permissions.providerWriteOf(cardId), permissions.permissionWriteOf(cardId)]
+      .filter((pending): pending is Promise<unknown> => pending !== undefined);
     const key = runKey;
     const dispatch = () => {
       const readVersion = client.getQueryState(key)?.dataUpdateCount;
@@ -100,7 +102,7 @@ export function usePlannerMutations(transport: ApiTransportPort, cardId: string,
         return result;
       });
     };
-    const write = previous === undefined ? dispatch() : previous.catch(() => undefined).then(dispatch);
+    const write = ancestors.length === 0 ? dispatch() : Promise.allSettled(ancestors).then(dispatch);
     const held = permissions.holdPermissionWrite(cardId, write);
     return held;
   };
