@@ -7,6 +7,7 @@ on:
       - 'site/**'
       - 'install.sh'
       - 'docs/product/vision.en.md'
+      - 'docs/essays/**'
       - 'templates/equity-research/widgets/range-axis.html'
       - 'src/Perga.Kernel/Templates/Memory/widgets/entries.html'
       - 'fe/web/src/ui/brand/**'
@@ -48,6 +49,7 @@ jobs:
           install -m 644 install.sh site/dist/install.sh
           test -s site/dist/index.html
           test -s site/dist/vision.html
+          test -s site/dist/essays/rust-to-csharp.html
           test -s site/dist/favicon.svg
           test -s site/dist/icon-192.png
           test -s site/dist/install.sh
