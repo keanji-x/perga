@@ -149,10 +149,13 @@ public sealed partial class PergaKernelService : IPergaKernel, IFlowTrackSpawner
     private readonly TimeProvider _timeProvider;
     private readonly string _fallbackDatabaseId = Guid.NewGuid().ToString("N");
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _providerProbeLocks = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Task<MemoryPlannerTrackDto>> _inFlightMemoryEnsures = new(StringComparer.Ordinal);
+    private readonly CancellationTokenSource _disposeCts = new();
+    private readonly Lock _memoryEnsureGate = new();
 
     private sealed record ProviderObservation(IReadOnlyList<ProviderStatus> Providers, long ObservedAtMs);
     private readonly ConcurrentDictionary<string, ProviderObservation> _cachedProvidersByTarget = new(StringComparer.Ordinal);
-    private bool _disposed;
+    private volatile bool _disposed;
 
     public PergaKernelService(
         ITrackStore store,
@@ -786,13 +789,21 @@ public sealed partial class PergaKernelService : IPergaKernel, IFlowTrackSpawner
                 MemoryBinding = memoryScopeKey is null ? null : new(memoryScopeKey, memoryAreaId, trackId)
             },
             key, ct).ConfigureAwait(false);
-        var snapshot = await ReadCreatedTrackAsync(id, CancellationToken.None).ConfigureAwait(false);
-        if (id == track.Id)
+        TrackAggregateSnapshot? snapshot = null;
+        try
         {
-            foreach (var evt in events)
-                await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, CancellationToken.None, allowFallback: false).ConfigureAwait(false);
+            snapshot = await ReadCreatedTrackAsync(id, memoryScopeKey is null ? CancellationToken.None : ct).ConfigureAwait(false);
+            return snapshot;
         }
-        return snapshot;
+        finally
+        {
+            // Memory projection can be canceled during shutdown after creation and its events have committed.
+            if (id == track.Id && (snapshot is not null || (memoryScopeKey is not null && ct.IsCancellationRequested)))
+            {
+                foreach (var evt in events)
+                    await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, CancellationToken.None, allowFallback: false).ConfigureAwait(false);
+            }
+        }
     }
 
     private async Task<string> ResolveDefaultProviderAsync(string targetId, CancellationToken ct)
@@ -1217,12 +1228,22 @@ public sealed partial class PergaKernelService : IPergaKernel, IFlowTrackSpawner
 
     public async ValueTask DisposeAsync()
     {
-        if (_disposed)
+        Task[] memoryEnsures;
+        lock (_memoryEnsureGate)
         {
-            return;
+            if (_disposed)
+                return;
+
+            _disposed = true;
+            memoryEnsures = [.. _inFlightMemoryEnsures.Values];
         }
 
-        _disposed = true;
+        using (_disposeCts)
+        {
+            await _disposeCts.CancelAsync().ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            await Task.WhenAll(memoryEnsures).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        }
+
         await Actors.DisposeAsync().ConfigureAwait(false);
         await _executionEnvironments.DisposeAsync().ConfigureAwait(false);
         DispatchAdmission.Changed -= PublishUpgradeStatus;

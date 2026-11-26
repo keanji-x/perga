@@ -21,7 +21,7 @@ public class TemplateHost : ITemplateCatalog
 {
     private readonly IPolicyVm _policyVm;
     private readonly ConcurrentDictionary<string, CompiledPolicy> _policiesById = new(StringComparer.Ordinal);
-    private readonly ConcurrentDictionary<string, CompiledPolicy> _snapshotCacheByHash = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, Lazy<CompiledPolicy>> _snapshotCacheByHash = new(StringComparer.Ordinal);
 
     public TemplateHost(IPolicyVm policyVm, string? initialTemplatesDirectory = null)
     {
@@ -76,7 +76,17 @@ public class TemplateHost : ITemplateCatalog
         }
 
         var hash = ComputeSha256Hex(templateSnapshotSource);
-        return _snapshotCacheByHash.GetOrAdd(hash, _ => ResolveInheritance(_policyVm.Compile(templateSnapshotSource)));
+        var lazy = _snapshotCacheByHash.GetOrAdd(hash, _ => new Lazy<CompiledPolicy>(
+            () => ResolveInheritance(_policyVm.Compile(templateSnapshotSource)), LazyThreadSafetyMode.ExecutionAndPublication));
+        try
+        {
+            return lazy.Value;
+        }
+        catch
+        {
+            _snapshotCacheByHash.TryRemove(new KeyValuePair<string, Lazy<CompiledPolicy>>(hash, lazy));
+            throw;
+        }
     }
 
     private CompiledPolicy ResolveInheritance(CompiledPolicy policy) =>
@@ -92,7 +102,7 @@ public class TemplateHost : ITemplateCatalog
         if (compiled.TemplateId == MemoryTemplate.Id)
             throw KernelException.Forbidden(MemoryTemplate.ReservedMessage);
         _policiesById[compiled.TemplateId] = compiled;
-        _snapshotCacheByHash[ComputeSha256Hex(compiled.JsSource)] = compiled;
+        _snapshotCacheByHash[ComputeSha256Hex(compiled.JsSource)] = new Lazy<CompiledPolicy>(compiled);
         return compiled;
     }
 

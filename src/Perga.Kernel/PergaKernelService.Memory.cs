@@ -24,6 +24,8 @@ public sealed partial class PergaKernelService
 
     public async Task<MemoryPlannerTrackDto> GetOrEnsureMemoryTrackAsync(string? areaId, CancellationToken ct = default)
     {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ct.ThrowIfCancellationRequested();
         AreaDto? area = null;
         if (areaId is not null)
         {
@@ -34,25 +36,28 @@ public sealed partial class PergaKernelService
         }
 
         var scopeKey = MemoryTrackBinding.ScopeKeyFor(areaId);
-        var trackId = await _store.GetMemoryTrackIdAsync(scopeKey, ct).ConfigureAwait(false);
-        var track = trackId is null ? null : await _store.GetTrackAsync(trackId, ct).ConfigureAwait(false);
-        if (track is null)
+        if (await FindMemoryTrackAsync(scopeKey, ct).ConfigureAwait(false) is { } track)
+            return await EnsureExistingMemoryTrackAsync(scopeKey, areaId, track.Id, ct).ConfigureAwait(false);
+
+        TaskCompletionSource<MemoryPlannerTrackDto>? owned = null;
+        Task<MemoryPlannerTrackDto> flight;
+        lock (_memoryEnsureGate)
         {
-            var now = NowMs();
-            var systemArea = new AreaDto(MemoryTrackBinding.SystemAreaId, "Memory", "gray", null, [], 0, now, now);
-            var title = area is null ? "Global Memory" : $"{area.Name} Memory";
-            var provider = await ResolveDefaultProviderAsync(systemArea.ExecutionTargetId, ct).ConfigureAwait(false);
-            var created = await CreateTrackCoreAsync(new(systemArea.Id, Title: title, Provider: provider), ct, null,
-                systemArea: systemArea, memoryScopeKey: scopeKey, memoryAreaId: areaId).ConfigureAwait(false);
-            track = created.Track;
-        }
-        else
-        {
-            track = await Actors.GetOrActivate(track.Id).EnsureMemoryTemplateAsync(ct).ConfigureAwait(false);
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (!_inFlightMemoryEnsures.TryGetValue(scopeKey, out var active))
+            {
+                owned = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                active = owned.Task;
+                _ = active.ContinueWith(static task => { _ = task.Exception; }, CancellationToken.None,
+                    TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+                _inFlightMemoryEnsures.Add(scopeKey, active);
+            }
+            flight = active;
         }
 
-        return new(scopeKey, areaId, track.Id, track.LeadSessionId
-            ?? throw KernelException.PreconditionFailed("The Memory Planner Track needs a Lead conversation."));
+        if (owned is not null)
+            _ = Task.Run(() => RunMemoryEnsureFlightAsync(scopeKey, area, owned));
+        return await flight.WaitAsync(ct).ConfigureAwait(false);
     }
 
     public async Task<MemoryDistillResultDto> DistillTrackToMemoryAsync(string trackId, string? scope = "auto", string? focus = null,
@@ -94,6 +99,62 @@ public sealed partial class PergaKernelService
         return new(target.ScopeKey, target.AreaId, target.TrackId, target.LeadSessionId, stored.Id);
     }
 
+    private async Task<TrackDto?> FindMemoryTrackAsync(string scopeKey, CancellationToken ct)
+    {
+        var trackId = await _store.GetMemoryTrackIdAsync(scopeKey, ct).ConfigureAwait(false);
+        return trackId is null ? null : await _store.GetTrackAsync(trackId, ct).ConfigureAwait(false);
+    }
+
+    private async Task RunMemoryEnsureFlightAsync(string scopeKey, AreaDto? area,
+        TaskCompletionSource<MemoryPlannerTrackDto> completion)
+    {
+        var work = EnsureMemoryTrackAsync(scopeKey, area);
+        try
+        {
+            await ((Task)work).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        }
+        finally
+        {
+            lock (_memoryEnsureGate)
+            {
+                _inFlightMemoryEnsures.Remove(scopeKey);
+                completion.TrySetFromTask(work);
+            }
+        }
+    }
+
+    private async Task<MemoryPlannerTrackDto> EnsureMemoryTrackAsync(string scopeKey, AreaDto? area)
+    {
+        var ct = _disposeCts.Token;
+        ct.ThrowIfCancellationRequested();
+        if (await FindMemoryTrackAsync(scopeKey, ct).ConfigureAwait(false) is { } track)
+            return await EnsureExistingMemoryTrackAsync(scopeKey, area?.Id, track.Id, ct).ConfigureAwait(false);
+
+        var now = NowMs();
+        var systemArea = new AreaDto(MemoryTrackBinding.SystemAreaId, "Memory", "gray", null, [], 0, now, now);
+        var title = area is null ? "Global Memory" : $"{area.Name} Memory";
+        var provider = await ResolveDefaultProviderAsync(systemArea.ExecutionTargetId, ct).ConfigureAwait(false);
+        var created = await CreateTrackCoreAsync(new(systemArea.Id, Title: title, Provider: provider), ct, null,
+            systemArea: systemArea, memoryScopeKey: scopeKey, memoryAreaId: area?.Id).ConfigureAwait(false);
+        return ToMemoryPlannerTrack(scopeKey, area?.Id, created.Track);
+    }
+
+    private async Task<MemoryPlannerTrackDto> EnsureExistingMemoryTrackAsync(string scopeKey, string? areaId,
+        string trackId, CancellationToken ct)
+    {
+        Task<TrackDto> ensuring;
+        lock (_memoryEnsureGate)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            ensuring = Actors.GetOrActivate(trackId).EnsureMemoryTemplateAsync(ct);
+        }
+        var track = await ensuring.ConfigureAwait(false);
+        return ToMemoryPlannerTrack(scopeKey, areaId, track);
+    }
+
+    private static MemoryPlannerTrackDto ToMemoryPlannerTrack(string scopeKey, string? areaId, TrackDto track) =>
+        new(scopeKey, areaId, track.Id, track.LeadSessionId
+            ?? throw KernelException.PreconditionFailed("The Memory Planner Track needs a Lead conversation."));
     public Task<MailDto> DeliverMemoryProposalAsync(string fromTrackId, string? callerSessionId, string scope,
         string summary, string details, bool suggestedPinned, CancellationToken ct = default) =>
         DeliverMemoryProposalCoreAsync(fromTrackId, callerSessionId, scope, summary, details, suggestedPinned, null, ct);
