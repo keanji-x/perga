@@ -642,7 +642,15 @@ public static class KernelMcpDispatcher
                 var res = await kernel.CommitTrackFlowAsync(caller.TrackId, dryRun, expectedFlowRev,
                     authorization, ct, content)
                     .ConfigureAwait(false);
-                return JsonHelpers.ToElement(res with { Flow = SlimFlowProjection(res.Flow) });
+                return JsonHelpers.ToElement(new
+                {
+                    res.Ok,
+                    res.DryRun,
+                    res.FlowRev,
+                    res.Plan,
+                    res.Diagnostics,
+                    Flow = new { res.Flow.Rev, res.Flow.FilePath, Nodes = SlimFlowNodes(res.Flow.Nodes) }
+                });
             }
 
             case KernelMcpToolNames.TaskCancel:
@@ -780,17 +788,20 @@ public static class KernelMcpDispatcher
 
     private static FlowProjectionDto SlimFlowProjection(FlowProjectionDto projection) => projection with
     {
-        Nodes = projection.Nodes.Select(node => node with
-        {
-            Prompt = null,
-            OutcomeSummary = KernelMcpReportSupport.BoundMcpSummary(node.OutcomeSummary),
-            Gates = node.Gates.Select(gate => gate with { Output = null }).ToArray()
-        }).ToArray(),
+        Nodes = SlimFlowNodes(projection.Nodes),
         Archived = projection.Archived.Select(archived => archived with
         {
             OutcomeSummary = KernelMcpReportSupport.BoundMcpSummary(archived.OutcomeSummary)
         }).ToArray()
     };
+
+    private static IReadOnlyList<FlowNodeProjectionDto> SlimFlowNodes(IReadOnlyList<FlowNodeProjectionDto> nodes) =>
+        nodes.Select(node => node with
+        {
+            Prompt = null,
+            OutcomeSummary = KernelMcpReportSupport.BoundMcpSummary(node.OutcomeSummary),
+            Gates = node.Gates.Select(gate => gate with { Output = null }).ToArray()
+        }).ToArray();
 
     private static JsonElement ToolSchema(string toolName) =>
         KernelMcpCatalog.GetAllTools().Single(tool => tool.Name == toolName).InputSchema;
