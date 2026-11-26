@@ -46,20 +46,20 @@
     transform: rotate(180deg);
   }
 
-  /* Floating in-sheet card anchored directly above the composer meta bar — zero 3rd fullscreen scrim. */
+  /* Anchored Popover surface for Scheme A floating card above the composer meta bar. */
+  .popoverSurface {
+    border-radius: calc(var(--radius-lg) + var(--space-1));
+    background: var(--bg);
+    box-shadow: var(--shadow-float);
+    overflow: hidden;
+  }
+
   .floatingCard {
-    position: absolute;
-    inset-inline: calc(var(--space-1) * -1);
-    inset-block-end: calc(100% + var(--space-2));
-    z-index: var(--z-overlay);
     max-block-size: min(58dvh, 26rem);
     display: flex;
     flex-direction: column;
-    border: 1px solid color-mix(in srgb, var(--hairline) 90%, transparent);
-    border-radius: calc(var(--radius-lg) + var(--space-1));
     background: var(--bg);
     color: var(--text);
-    box-shadow: var(--shadow-float);
     overflow: hidden;
   }
 

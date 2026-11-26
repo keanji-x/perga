@@ -1,5 +1,6 @@
 @layer features {
   .bar {
+    --role-slot-w: clamp(4.125rem, 21vw, 4.75rem);
     display: flex;
     align-items: center;
     gap: var(--space-1);
@@ -18,8 +19,8 @@
     align-items: center;
     justify-content: space-between;
     gap: var(--space-half);
-    flex: 0 0 clamp(4.125rem, 21vw, 4.75rem);
-    inline-size: clamp(4.125rem, 21vw, 4.75rem);
+    flex: 0 0 var(--role-slot-w);
+    inline-size: var(--role-slot-w);
     min-block-size: calc(var(--control-h-touch) - var(--space-2));
     padding: 0 var(--space-2) 0 var(--space-3);
     border: 0;

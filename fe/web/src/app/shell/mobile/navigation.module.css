@@ -609,7 +609,7 @@
     color: var(--text);
   }
 
-  /* Retained classes for MobilePages / MobileTrackList / MobileNavigationHeader compatibility. */
+  /* Shared classes used by MobilePages and MobileNavigationHeader. */
   .actionRows { padding-inline: var(--space-4); }
   .actionList { inline-size: 100%; }
   .actionRow { font-size: var(--font-step-3-size); min-block-size: calc(var(--rail-w-collapsed) + var(--space-6)); border-block-end: 1px solid color-mix(in oklab, var(--hairline) 35%, transparent); border-radius: 0; }
@@ -617,17 +617,4 @@
   .floatingAction > button { inline-size: 100%; block-size: 100%; display: grid; place-items: center; }
   .navigationHeader { padding-block-end: 0; }
   .content { padding-inline: var(--space-4); display: flex; flex-direction: column; gap: var(--space-4); }
-  .navigationList { gap: 0; }
-  .trackRow { display: flex; align-items: center; border-block-end: 1px solid color-mix(in oklab, var(--hairline) 35%, transparent); }
-  .trackRow:has([aria-current]) { background: var(--selection-bg); border-radius: var(--radius-highlight); }
-  .trackRow:has([aria-current]):hover { background: var(--selection-hover-bg); }
-  .trackTitle { font-weight: var(--weight-medium); line-height: var(--type-ui-leading); display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
-  .track { font-size: var(--font-step-3-size); line-height: var(--font-step-3-line); display: flex; flex-direction: row; align-items: center; gap: var(--space-3); inline-size: 100%; min-block-size: calc(var(--rail-w-collapsed) + var(--space-6) - var(--space-px)); padding: var(--space-2); border-radius: var(--radius-highlight); text-align: start; overflow-wrap: anywhere; cursor: pointer; }
-  .track[aria-current] { background: transparent; color: var(--accent); }
-  .trackRow .track { min-inline-size: 0; }
-  .trackIcon { display: flex; flex: none; color: var(--text-3); }
-  .trackCopy { display: flex; flex-direction: column; min-inline-size: 0; gap: var(--space-1); }
-  .trackMeta { font-size: var(--font-step-2-size); line-height: var(--font-step-2-line); color: var(--text-3); }
-  .trackArrow { display: flex; flex: none; margin-inline-start: auto; color: var(--text-3); }
-  .trackActivity { display: flex; flex: none; align-items: center; margin-inline-start: auto; }
 }

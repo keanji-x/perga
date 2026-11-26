@@ -1,13 +1,14 @@
 const MINUTE_MS = 60_000;
 const HOUR_MS = 3_600_000;
+const DAY_MS = 86_400_000;
 
-export type FocusTimeFormatters = Readonly<{
+export type RelativeTimeFormatters = Readonly<{
   sameYear: Intl.DateTimeFormat;
   otherYear: Intl.DateTimeFormat;
 }>;
 
-/** Creates reusable date formatters for Focus feed cards so renders avoid per-row Intl allocations. */
-export function createFocusTimeFormatters(timeZone?: string): FocusTimeFormatters {
+/** Creates reusable date formatters so list renders avoid per-row Intl allocations. */
+export function createRelativeTimeFormatters(timeZone?: string): RelativeTimeFormatters {
   return {
     sameYear: new Intl.DateTimeFormat(
       'en-US',
@@ -28,11 +29,11 @@ function localDayStart(ms: number): number {
   return date.getTime();
 }
 
-/** Compact relative timestamp for mobile Focus feed cards. */
-export function formatFocusTimestamp(
+/** Compact relative timestamp (`Just now`, `5m`, `2h`, `Yesterday`, `Nov 24`, `2025-11-24`). */
+export function formatRelativeTimestamp(
   atMs: number,
   nowMs: number,
-  formatters: FocusTimeFormatters,
+  formatters: RelativeTimeFormatters,
 ): string {
   if (!Number.isFinite(atMs) || !Number.isFinite(nowMs) || atMs <= 0) return '';
   const diff = nowMs - atMs;
@@ -52,4 +53,14 @@ export function formatFocusTimestamp(
     return formatters.sameYear.format(date);
   }
   return formatters.otherYear.format(date);
+}
+
+/** Ultra-compact elapsed age (`Just now`, `5m`, `2h`, `3d`) for tight secondary metadata. */
+export function formatCompactAge(atMs: number, nowMs: number): string {
+  if (!Number.isFinite(atMs) || !Number.isFinite(nowMs) || atMs <= 0) return '';
+  const diff = Math.max(0, nowMs - atMs);
+  if (diff < MINUTE_MS) return 'Just now';
+  if (diff < HOUR_MS) return `${Math.floor(diff / MINUTE_MS)}m`;
+  if (diff < DAY_MS) return `${Math.floor(diff / HOUR_MS)}h`;
+  return `${Math.floor(diff / DAY_MS)}d`;
 }

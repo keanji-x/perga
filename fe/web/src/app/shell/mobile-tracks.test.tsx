@@ -66,10 +66,13 @@ describe('MobileTracks', () => {
     expect(onOpenSettings).not.toHaveBeenCalled();
   });
 
-  it('offers only the Area list and New area without workspace filters', async () => {
+  it('offers the Area list, New area, and Library Today/Memory navigation without workspace filters', async () => {
     const onCreateArea = vi.fn();
+    const onOpenToday = vi.fn();
+    const onOpenMemory = vi.fn();
     render(<MobileTracks view="areas" areas={[]} tracksByArea={new Map()} areaId={undefined} currentTrackId={undefined}
       onBack={vi.fn()} onNewTrack={vi.fn()} onOpenSettings={vi.fn()} onCreateArea={onCreateArea} onSelectArea={vi.fn()} onEditArea={vi.fn()} onOpenTrack={vi.fn()}
+      onOpenToday={onOpenToday} onOpenMemory={onOpenMemory}
       isUnread={() => false} readError={null} readLoading={false} onRetryRead={vi.fn()} />);
     expect(screen.getByRole('button', { name: 'New area' }).closest('header')).toBeNull();
     expect(screen.queryByRole('group', { name: 'Workspace actions' })).toBeNull();
@@ -79,6 +82,10 @@ describe('MobileTracks', () => {
     expect(screen.queryByRole('radio', { name: 'Unread' })).toBeNull();
     await userEvent.click(screen.getByRole('button', { name: 'New area' }));
     expect(onCreateArea).toHaveBeenCalledOnce();
+    await userEvent.click(screen.getByRole('button', { name: 'Today' }));
+    expect(onOpenToday).toHaveBeenCalledOnce();
+    await userEvent.click(screen.getByRole('button', { name: 'Memory' }));
+    expect(onOpenMemory).toHaveBeenCalledOnce();
   });
 
   it('preserves read failure recovery instead of displaying a false empty list', async () => {

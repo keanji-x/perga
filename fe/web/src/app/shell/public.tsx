@@ -8,8 +8,6 @@ import {
 
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
-import type { Conversation } from '../../../../core/domain/conversation.ts';
-import type { Track } from '../../../../core/domain/track.ts';
 import type { DialogOrigin } from '../../ui/dialog/public.tsx';
 import type { DrawerResize } from '../../ui/drawer/public.tsx';
 import { mobileFontClassName } from '../../ui/mobile-font/public.ts';
@@ -25,44 +23,21 @@ import { SystemUpgradeBannerHost } from './system-upgrade-banner.tsx';
 import { useMobileNavigation, type OpenMobileSection } from './mobile/use-navigation.ts';
 import { useShellController } from './use-shell-controller.ts';
 
-type Scope = Readonly<{
-  track: Pick<Track, 'id' | 'areaId' | 'title'>;
-  conversations: readonly Conversation[];
-  selectedConversationId: string | null;
-  onNew: () => void;
-  onClose: () => void;
-  onOpen: (conversation: Conversation) => void;
-  conversationOpen: boolean;
-  onArchive?: (cardId: string, archived: boolean) => Promise<void>;
-}>;
-type RegisteredScope = Scope & Readonly<{ owner: object }>;
-const ScopeContext = createContext<Readonly<{ current: RegisteredScope | null; register: (scope: RegisteredScope | null) => void }> | null>(null);
+type ConversationCloser = Readonly<{ onClose: () => void }>;
+const ScopeContext = createContext<Readonly<{ current: ConversationCloser | null; register: (scope: ConversationCloser | null) => void }> | null>(null);
 
 export function MobileConversationProvider({ children }: Readonly<{ children: ReactNode }>) {
-  const [current, setCurrent] = useState<RegisteredScope | null>(null);
-  const register = useCallback((scope: RegisteredScope | null) => { setCurrent(scope); }, []);
+  const [current, setCurrent] = useState<ConversationCloser | null>(null);
+  const register = useCallback((scope: ConversationCloser | null) => { setCurrent(scope); }, []);
   const value = useMemo(() => ({ current, register }), [current, register]);
   return <ScopeContext.Provider value={value}>{children}</ScopeContext.Provider>;
 }
 
-export function useMobileConversationScope() { return useContext(ScopeContext)?.current ?? null; }
-
-/** The rendered route declares its owner; the shell never infers a daily/system Track from the URL. */
-export function useMobileConversationOwner(owner: Scope) {
+/** Registers the active mobile conversation close handler so shell navigation dismisses open chat sheets first. */
+export function useMobileConversationOwner(trackId: string, onClose: () => void) {
   const register = useContext(ScopeContext)?.register;
-  const { track, conversations, selectedConversationId, conversationOpen } = owner;
-  // One registration lifetime, including a fresh mount at the same pathname.
-  const [identity, setIdentity] = useState(() => ({ trackId: track.id, token: {} }));
-  if (identity.trackId !== track.id) setIdentity({ trackId: track.id, token: {} });
-  const onNew = useCommittedCallback(track.id, owner.onNew);
-  const onClose = useCommittedCallback(track.id, owner.onClose);
-  const onOpen = useCommittedCallback(track.id, owner.onOpen);
-  const onArchive = useCommittedCallback(track.id, async (cardId: string, archived: boolean) => { await owner.onArchive?.(cardId, archived); });
-  const canArchive = owner.onArchive !== undefined;
-  const scope = useMemo<RegisteredScope>(() => ({
-    owner: identity.token, track: { id: track.id, areaId: track.areaId, title: track.title }, conversations, selectedConversationId, conversationOpen,
-    onNew, onClose, onOpen, onArchive: canArchive ? onArchive : undefined,
-  }), [identity.token, track.id, track.areaId, track.title, conversations, selectedConversationId, conversationOpen, onNew, onClose, onOpen, canArchive, onArchive]);
+  const committedClose = useCommittedCallback(trackId, onClose);
+  const scope = useMemo<ConversationCloser>(() => ({ onClose: committedClose }), [committedClose]);
   useLayoutEffect(() => {
     register?.(scope);
     return () => { register?.(null); };
@@ -133,7 +108,6 @@ export function AppShell({
 }: AppShellProps) {
   const narrowRail = useCompactViewport();
   const visibleViewport = useVisibleViewport(narrowRail);
-  const [historyOpen, setHistoryOpen] = useState(false);
   const [mobileHeaderActionsHost, setMobileHeaderActionsHost] = useState<HTMLDivElement | null>(null);
   const [mobileHeaderTitleHost, setMobileHeaderTitleHost] = useState<HTMLDivElement | null>(null);
   const [mobileChromeOwner, setMobileChromeOwner] = useState<object | null>(null);
@@ -148,7 +122,7 @@ export function AppShell({
   const setMobileWorkspaceTriggerRef = useCallback((node: HTMLButtonElement | null) => {
     mobileWorkspaceTriggerRef.current = node;
   }, []);
-  const conversationScope = useMobileConversationScope();
+  const conversationScope = useContext(ScopeContext)?.current ?? null;
 
   const resetMobileNavigationRef = useRef<() => void>(() => {});
   const controller = useShellController({
@@ -187,21 +161,16 @@ export function AppShell({
     >
       {narrowRail ? (
         <MobileShellChrome
-          transport={transport}
-          unauthorized={unauthorized}
           workspace={{
             areas: controller.workspace.areas,
             visibleAreas: controller.areas,
             tracks: controller.workspace.tracks,
             tracksByArea: controller.workspace.tracksByArea,
-            trackGroups: controller.trackGroups,
             activeArea: controller.activeArea,
             liveActiveArea: controller.liveActiveArea,
             newTrackArea: controller.newTrackArea,
             readError: controller.readError,
-            activityError: controller.activityError,
             readLoading: controller.readLoading,
-            overlaysLoading: controller.workspace.overlaysLoading,
             retryRead: controller.retryRead,
             isUnread: controller.isUnread,
             areaIdOf: controller.areaIdOf,
@@ -226,9 +195,6 @@ export function AppShell({
             onSignOut,
           }}
           navigation={mobileNavigation}
-          conversationScope={conversationScope}
-          historyOpen={historyOpen}
-          onHistoryOpenChange={setHistoryOpen}
           onActionsHostRef={setMobileHeaderActionsHost}
           onTitleHostRef={setMobileHeaderTitleHost}
           workspaceReturnRef={mobileWorkspaceTriggerRef}

@@ -1,19 +1,16 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, type ReactNode, type Ref } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, type Ref } from 'react';
 
 import { areaOf, visibleAreas, type Area } from '../../../../core/domain/area.ts';
-import {
-  buildFocusFeed, FOCUS_TABS, type FocusTab,
-} from '../../../../core/domain/track-groups.ts';
-import {
-  hasFailed, isClosed, isWorking, trackDisplayTitle, trackRecentAt, type Track,
-} from '../../../../core/domain/track.ts';
+import { createRelativeTimeFormatters } from '../../../../core/domain/relative-time.ts';
+import { buildFocusFeed, FOCUS_TABS, type FocusTab } from '../../../../core/domain/track-groups.ts';
+import type { Track } from '../../../../core/domain/track.ts';
 import { EmptyState } from '../../ui/empty-state/public.tsx';
 import { ErrorBox } from '../../ui/error-box/public.tsx';
 import { Icon } from '../../ui/icon/public.tsx';
 import { LoadingStatus } from '../../ui/loading-status/public.tsx';
 import { useState } from '../../ui/state/public.ts';
-import { createFocusTimeFormatters, formatFocusTimestamp } from './format-time.ts';
 import styles from './focus-home.module.css';
+import { FocusAttentionCard, focusEmptyCopy, FocusTrackRow } from './focus-rows.tsx';
 
 function tabLabel(tab: FocusTab): string {
   switch (tab) {
@@ -23,29 +20,6 @@ function tabLabel(tab: FocusTab): string {
     case 'pinned': return 'Pinned';
     case 'all': return 'All';
   }
-}
-
-function highlightMatch(text: string, query: string): ReactNode {
-  const needle = query.trim();
-  if (needle === '') return text;
-  const lower = text.toLowerCase();
-  const needleLower = needle.toLowerCase();
-  const parts: ReactNode[] = [];
-  let cursor = 0;
-  let matchIndex = lower.indexOf(needleLower, cursor);
-  if (matchIndex === -1) return text;
-  while (matchIndex !== -1) {
-    if (matchIndex > cursor) parts.push(text.slice(cursor, matchIndex));
-    parts.push(
-      <mark key={matchIndex} className={styles.matchMark}>
-        {text.slice(matchIndex, matchIndex + needle.length)}
-      </mark>,
-    );
-    cursor = matchIndex + needle.length;
-    matchIndex = lower.indexOf(needleLower, cursor);
-  }
-  if (cursor < text.length) parts.push(text.slice(cursor));
-  return parts;
 }
 
 export type MobileFocusHomeProps = Readonly<{
@@ -89,7 +63,7 @@ export function MobileFocusHome({
   const searchTriggerRef = useRef<HTMLButtonElement | null>(null);
   const pendingSearchReturnRef = useRef(false);
   const timeFormatters = useMemo(
-    () => createFocusTimeFormatters(Intl.DateTimeFormat().resolvedOptions().timeZone),
+    () => createRelativeTimeFormatters(Intl.DateTimeFormat().resolvedOptions().timeZone),
     [],
   );
   const effectiveAreaId = selectedAreaId !== null && shownAreas.some((area) => area.id === selectedAreaId)
@@ -147,124 +121,15 @@ export function MobileFocusHome({
     setTab('focus');
   };
 
-  const renderTrackRow = (track: Track, mode: 'unread' | 'pinned' | 'open' | 'closed') => {
-    const area = areaOf(track.areaId, shownAreas);
-    const title = trackDisplayTitle(track.title);
-    const time = formatFocusTimestamp(trackRecentAt(track), now, timeFormatters);
-    const unread = isUnread(track);
-    const working = isWorking(track);
-    const failed = hasFailed(track);
-    const subtitle = failed
-      ? 'Needs repair'
-      : track.attention === 'input'
-        ? 'Waiting on you'
-        : working
-          ? 'Running'
-          : isClosed(track)
-            ? 'Closed'
-            : mode === 'unread' || unread
-              ? 'Unread update'
-              : null;
-
-    return (
-      <li key={track.id} className={styles.groupItem}>
-        <button type="button" className={styles.feedRow} onClick={() => onOpenTrack(track.id)}>
-          <span className={styles.feedGutter} aria-hidden="true">
-            {mode === 'pinned' ? (
-              <Icon name="pin" size="sm" />
-            ) : mode === 'unread' || unread ? (
-              <span className={styles.unreadDot} />
-            ) : working ? (
-              <span className={styles.workingDot} />
-            ) : (
-              <Icon name="file" size="sm" />
-            )}
-          </span>
-          <span className={styles.feedBody}>
-            <span className={styles.feedTopRow}>
-              <span className={`${styles.feedTitle} ${mode === 'pinned' || mode === 'closed' ? styles.feedTitleCalm : ''}`}>
-                {highlightMatch(title, query)}
-              </span>
-              {time !== '' && <span className={styles.feedTime}>{time}</span>}
-            </span>
-            <span className={styles.feedTags}>
-              {area !== undefined && <span className={styles.tag}>{highlightMatch(area.name, query)}</span>}
-              {subtitle !== null && <span className={styles.metaSubtle}>· {subtitle}</span>}
-            </span>
-          </span>
-        </button>
-      </li>
-    );
-  };
-
-  const emptyCopy = (() => {
-    if (feed.hasActiveScope) {
-      if (tab !== 'all' && feed.counts.all > 0) {
-        const matchWord = feed.counts.all === 1 ? 'match' : 'matches';
-        return {
-          icon: <Icon name="search" />,
-          title: `No matching tracks in ${tabLabel(tab)}`,
-          description: activeArea !== undefined
-            ? `${feed.counts.all} ${matchWord} available in ${activeArea.name} across all tracks.`
-            : `${feed.counts.all} ${matchWord} available across all tracks.`,
-          action: { label: `Show all ${feed.counts.all} ${matchWord}`, onClick: () => setTab('all') },
-        };
-      }
-      return {
-        icon: <Icon name="search" />,
-        title: 'No matching tracks',
-        description: activeArea !== undefined
-          ? `No tracks matched in ${activeArea.name}.`
-          : 'Try a different keyword or clear active filters.',
-        action: { label: 'Reset filters', onClick: resetFilters },
-      };
-    }
-    if (feed.totalVisibleTracks === 0) {
-      return {
-        icon: <Icon name="folder" />,
-        title: 'No tracks yet',
-        description: 'Start a track to organize your work and updates here.',
-        action: onNewTrack === undefined ? undefined : { label: 'New track', onClick: () => onNewTrack() },
-      };
-    }
-    switch (tab) {
-      case 'focus':
-        return {
-          icon: <Icon name="check" />,
-          title: 'All caught up',
-          description: 'No tracks need attention or have unread updates right now.',
-          action: { label: 'View all tracks', onClick: () => setTab('all') },
-        };
-      case 'unread':
-        return {
-          icon: <Icon name="check" />,
-          title: 'No unread updates',
-          description: 'New replies and updates from your tracks appear here.',
-          action: { label: 'View all tracks', onClick: () => setTab('all') },
-        };
-      case 'attention':
-        return {
-          icon: <Icon name="check" />,
-          title: 'Nothing waiting on you',
-          description: 'Pending asks, approvals, and blocked runs appear here.',
-          action: { label: 'Back to Focus', onClick: () => setTab('focus') },
-        };
-      case 'pinned':
-        return {
-          icon: <Icon name="pin" />,
-          title: 'No pinned tracks',
-          description: 'Pin important tracks to keep them one tap away.',
-          action: { label: 'View all tracks', onClick: () => setTab('all') },
-        };
-      case 'all':
-        return {
-          icon: <Icon name="file" />,
-          title: 'No open tracks',
-          description: 'All visible tracks are currently closed.',
-          action: onNewTrack === undefined ? undefined : { label: 'New track', onClick: () => onNewTrack() },
-        };
-    }
-  })();
+  const emptyCopy = focusEmptyCopy({
+    feed,
+    tab,
+    tabName: tabLabel(tab),
+    activeArea,
+    onSelectTab: setTab,
+    onResetFilters: resetFilters,
+    onNewTrack: onNewTrack === undefined ? undefined : () => onNewTrack(),
+  });
 
   const showAreaFilter = shownAreas.length > 1 && (searchOpen || effectiveAreaId !== null);
   const openSectionTitle = tab === 'focus' ? 'Other matches' : 'Open tracks';
@@ -409,37 +274,17 @@ export function MobileFocusHome({
               <span className={styles.sectionMeta}>{feed.attention.length} waiting</span>
             </div>
             <ul className={styles.attentionList}>
-              {feed.attention.map((track) => {
-                const area = areaOf(track.areaId, shownAreas);
-                const failed = hasFailed(track);
-                const time = formatFocusTimestamp(trackRecentAt(track), now, timeFormatters);
-                return (
-                  <li key={track.id}>
-                    <button
-                      type="button"
-                      className={`${styles.attentionCard} ${failed ? styles.attentionCardFailed : ''}`}
-                      onClick={() => onOpenTrack(track.id)}
-                    >
-                      <span className={styles.feedTopRow}>
-                        <span className={styles.feedTitle}>{highlightMatch(trackDisplayTitle(track.title), query)}</span>
-                        {time !== '' && <span className={styles.feedTime}>{time}</span>}
-                      </span>
-                      <span className={styles.feedMetaRow}>
-                        <span className={styles.feedTags}>
-                          <span className={`${styles.tag} ${failed ? styles.tagError : styles.tagWarn}`}>
-                            {failed ? 'Needs repair' : 'Waiting on you'}
-                          </span>
-                          {area !== undefined && <span className={styles.tag}>{highlightMatch(area.name, query)}</span>}
-                        </span>
-                        <span className={styles.replyCue}>
-                          <span>{failed ? 'Inspect' : 'Reply'}</span>
-                          <Icon name="chevron-right" size="sm" />
-                        </span>
-                      </span>
-                    </button>
-                  </li>
-                );
-              })}
+              {feed.attention.map((track) => (
+                <FocusAttentionCard
+                  key={track.id}
+                  track={track}
+                  areas={shownAreas}
+                  query={query}
+                  now={now}
+                  formatters={timeFormatters}
+                  onOpenTrack={onOpenTrack}
+                />
+              ))}
             </ul>
           </section>
         )}
@@ -459,7 +304,19 @@ export function MobileFocusHome({
               )}
             </div>
             <ul className={styles.groupCard}>
-              {feed.unread.map((track) => renderTrackRow(track, 'unread'))}
+              {feed.unread.map((track) => (
+                <FocusTrackRow
+                  key={track.id}
+                  track={track}
+                  mode="unread"
+                  areas={shownAreas}
+                  query={query}
+                  now={now}
+                  unread={isUnread(track)}
+                  formatters={timeFormatters}
+                  onOpenTrack={onOpenTrack}
+                />
+              ))}
             </ul>
           </section>
         )}
@@ -471,7 +328,19 @@ export function MobileFocusHome({
               <span className={styles.sectionMeta}>{feed.pinned.length}</span>
             </div>
             <ul className={styles.groupCard}>
-              {feed.pinned.map((track) => renderTrackRow(track, 'pinned'))}
+              {feed.pinned.map((track) => (
+                <FocusTrackRow
+                  key={track.id}
+                  track={track}
+                  mode="pinned"
+                  areas={shownAreas}
+                  query={query}
+                  now={now}
+                  unread={isUnread(track)}
+                  formatters={timeFormatters}
+                  onOpenTrack={onOpenTrack}
+                />
+              ))}
             </ul>
           </section>
         )}
@@ -483,7 +352,19 @@ export function MobileFocusHome({
               <span className={styles.sectionMeta}>{feed.open.length}</span>
             </div>
             <ul className={styles.groupCard}>
-              {feed.open.map((track) => renderTrackRow(track, 'open'))}
+              {feed.open.map((track) => (
+                <FocusTrackRow
+                  key={track.id}
+                  track={track}
+                  mode="open"
+                  areas={shownAreas}
+                  query={query}
+                  now={now}
+                  unread={isUnread(track)}
+                  formatters={timeFormatters}
+                  onOpenTrack={onOpenTrack}
+                />
+              ))}
             </ul>
           </section>
         )}
@@ -495,7 +376,19 @@ export function MobileFocusHome({
               <span className={styles.sectionMeta}>{feed.closed.length}</span>
             </div>
             <ul className={styles.groupCard}>
-              {feed.closed.map((track) => renderTrackRow(track, 'closed'))}
+              {feed.closed.map((track) => (
+                <FocusTrackRow
+                  key={track.id}
+                  track={track}
+                  mode="closed"
+                  areas={shownAreas}
+                  query={query}
+                  now={now}
+                  unread={isUnread(track)}
+                  formatters={timeFormatters}
+                  onOpenTrack={onOpenTrack}
+                />
+              ))}
             </ul>
           </section>
         )}

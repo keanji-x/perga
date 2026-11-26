@@ -44,7 +44,8 @@
   }
 
   .vendorComposerWithRole > div:has(.input) {
-    grid-template-columns: clamp(4.125rem, 21vw, 4.75rem) minmax(0, 1fr) var(--rail-w-collapsed);
+    --role-slot-w: clamp(4.125rem, 21vw, 4.75rem);
+    grid-template-columns: var(--role-slot-w) minmax(0, 1fr) var(--rail-w-collapsed);
   }
 
   .vendorComposer > div:has([data-nc-edit-bar]) {
@@ -110,7 +111,7 @@
     align-items: center;
     justify-content: space-between;
     gap: var(--space-half);
-    inline-size: clamp(4.125rem, 21vw, 4.75rem);
+    inline-size: var(--role-slot-w);
     min-block-size: calc(var(--control-h-touch) - var(--space-2));
     padding: 0 var(--space-2) 0 var(--space-3);
     border: 0;

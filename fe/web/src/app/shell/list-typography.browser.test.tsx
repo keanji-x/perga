@@ -10,7 +10,6 @@ import { makeDesktopPainter, paintDesktopPanel } from '../../features/track/page
 import { ChatList } from '../../features/chat/list/public.tsx';
 import { PanelCard } from '../../ui/panel-card/public.tsx';
 import { SidebarFixture as Sidebar } from './sidebar-fixture.tsx';
-import { MobileTrackList } from './mobile/track-list.tsx';
 import { withFontRoleProbe } from '../../../../tools/styles/font-role-fixture.ts';
 import { readReceiptsFixture } from '../providers/read-receipts-fixture.tsx';
 
@@ -123,11 +122,7 @@ it('uses configured sidebar density and uses compact single-line contextual tool
 it.each(['light', 'dark'])('uses opaque elevated selection on the rail and opaque selection tokens on lists (%s)', async theme => {
   document.documentElement.dataset.theme = theme;
   await page.viewport(1280, 900);
-  const { tracks } = draw(true);
-  const mobileView = render(<MobileTrackList tracks={tracks} currentTrackId={tracks[0].id}
-    onOpenTrack={vi.fn()} isUnread={() => false} />);
-  const mobile = element(mobileView.container.querySelector<HTMLElement>('[aria-current="page"]'));
-  const mobileRow = mobile.closest('li')!;
+  draw(true);
   const rail = element(document.querySelector<HTMLElement>('[aria-label^="Track Left first"]'));
   const chat = element(document.querySelector<HTMLElement>('[aria-label="Conversation Chat first"]'));
   const probe = render(<div />).container.firstElementChild as HTMLDivElement;
@@ -138,7 +133,6 @@ it.each(['light', 'dark'])('uses opaque elevated selection on the rail and opaqu
   const selected = expected('var(--selection-bg)');
   await expect.poll(() => paint(rail, '::before')).toBe(railSelected);
   await expect.poll(() => paint(chat)).toBe(selected);
-  expect(paint(mobileRow)).toBe(selected);
   for (const color of [railSelected, selected]) {
     expect(color).not.toBe('rgba(0, 0, 0, 0)');
     expect(color).not.toMatch(/rgba\(|\//);
@@ -150,9 +144,6 @@ it.each(['light', 'dark'])('uses opaque elevated selection on the rail and opaqu
   await page.elementLocator(chat).hover();
   await expect.poll(() => paint(chat)).toBe(selectedHover);
   expect(getComputedStyle(chat).backgroundImage).toBe('none');
-  await page.elementLocator(mobile).hover();
-  await expect.poll(() => paint(mobileRow)).toBe(selectedHover);
-  expect(paint(mobile)).toBe('rgba(0, 0, 0, 0)');
   cleanup();
   draw(false);
   const today = element(document.querySelector<HTMLElement>('[aria-current="page"]'));

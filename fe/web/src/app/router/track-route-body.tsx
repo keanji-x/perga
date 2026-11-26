@@ -68,7 +68,7 @@ type RecentFileHistory
 import { useTrackConversationMutations } from '../providers/track-conversation-mutations.ts';
 import { useTrackMutations } from '../providers/track-mutations.ts';
 import { trackToolsQueryOptions } from '../providers/track-queries.ts';
-import { useWorkspace } from '../providers/workspace-queries.ts';
+import { areaListQueryOptions } from '../providers/workspace-queries.ts';
 import { useUiPreferences } from '../providers/ui-preferences.tsx';
 import { useMobileConversationOwner,useMobileHeaderActionsHost,useMobileHeaderTitleHost,useOpenMobileSection } from '../shell/public.tsx';
 import { TrackSelector } from '../shell/mobile/track-selector.tsx';
@@ -118,8 +118,8 @@ export function TrackRouteBody({
   const canReopenTrack = !isMemoryTrack && snapshot.track.closedAtMs != null;
   const canCloseTrack = !isMemoryTrack && !canReopenTrack;
   const mobileAreaId = isMemoryTrack ? (typeof memoryAreaId === 'string' ? memoryAreaId : null) : track.areaId;
-  const workspace = useWorkspace(transport, unauthorized);
-  const mobileAreaName = mobileAreaId === null ? undefined : workspace.areas.find((area) => area.id === mobileAreaId)?.name;
+  const areasQuery = useQuery({ ...areaListQueryOptions(transport, unauthorized), enabled: mobileAreaId !== null });
+  const mobileAreaName = mobileAreaId === null ? undefined : areasQuery.data?.find((area) => area.id === mobileAreaId)?.name;
   const alias = useMemo(() => trackPath === undefined ? undefined : { trackId: track.id, path: trackPath }, [track.id, trackPath]);
   const toolsQuery = useQuery(trackToolsQueryOptions(transport, snapshot.track.id, unauthorized));
   const rawCards = useMemo(() => (toolsQuery.data ?? []).map((terminal, index) => terminalPanelItem(terminal, 100 + index)), [toolsQuery.data]);
@@ -322,8 +322,7 @@ export function TrackRouteBody({
       items={workbench.ordinaryHost ? [] : panelItems.filter(item => workbench.cardIds.has(item.card.id))} visible={!compactViewport && workbench.open}
       onRemove={(id) => cardDeletion.request(id, { kind: 'surface-center' })} /> }, showTrack: false, reportComposer: { ready: true, returnLabel: routePanel === 'conversations' ? 'Conversations' : 'Report' } },
   );
-  useMobileConversationOwner({ track, conversations: rows, onArchive: conversationMutations.archive, onNew: chat.startConversation,
-    selectedConversationId: chat.selectedConversationId, onClose: chat.close, onOpen: chat.openConversation, conversationOpen: chat.isOpen });
+  useMobileConversationOwner(track.id, chat.close);
   const templateViews = useTrackTemplateViews(transport, track.id, unauthorized);
   /* The cards this route can open, asked of the registry through the list the board
    * draws. A worker card whose kind no entry claims is `unknown` and its `?card=`

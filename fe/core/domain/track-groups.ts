@@ -159,3 +159,23 @@ export function buildFocusFeed({
     hasActiveScope,
   };
 }
+
+export type TrackStatusTag = Readonly<{
+  text: string;
+  tone: 'error' | 'warn' | 'subtle';
+}>;
+
+/** Single authoritative priority status tag for Track rows across Focus and Workspace lists. */
+export function trackStatusTag(
+  track: Track,
+  unread: boolean,
+  options: Readonly<{ includePinned?: boolean }> = {},
+): TrackStatusTag | null {
+  if (hasFailed(track)) return { text: 'Needs repair', tone: 'error' };
+  if (needsUserAttention(track)) return { text: 'Waiting on you', tone: 'warn' };
+  if (isWorking(track)) return { text: 'Running', tone: 'subtle' };
+  if (isClosed(track)) return { text: 'Closed', tone: 'subtle' };
+  if (options.includePinned === true && track.pinnedAt !== null) return { text: 'Pinned', tone: 'subtle' };
+  if (unread) return { text: 'Unread update', tone: 'subtle' };
+  return null;
+}

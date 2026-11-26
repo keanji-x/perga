@@ -1,11 +1,11 @@
-// Floating in-sheet card for mobile session model, reasoning effort, and permission mode.
-// Floats cleanly above the composer inside the Chat Sheet with zero third-layer fullscreen scrim.
+// Anchored floating card for mobile session model, reasoning effort, and permission mode.
+// Built on Astryx Popover (presentation="popover", placement="above") so layer stacking,
+// Escape dismissal, outside light-dismiss, and focus restoration share one runtime contract.
 
-import { useCallback, useEffect, useRef } from 'react';
+import { Popover } from '@astryxdesign/core/Popover';
 import type { PermissionModeOptionDto } from '../../../../../core/api/perga-v1.ts';
 import type { ModelSelection } from '../../../../../core/domain/conversation.ts';
 import type { AgentProvider } from '../../../../../core/domain/presentation-types.ts';
-import { LayerDismissal } from '../../../ui/dialog/public.tsx';
 import { Icon } from '../../../ui/icon/public.tsx';
 import { useState } from '../../../ui/state/public.ts';
 import {
@@ -49,7 +49,7 @@ export type MobileSessionSettingsControlProps<Provider extends string = AgentPro
   }>;
 }>;
 
-/** Whisper-quiet trigger above the mobile Chat composer + floating in-sheet card (Scheme A). */
+/** Whisper-quiet trigger above the mobile Chat composer + anchored Popover card (Scheme A). */
 export function MobileSessionSettingsControl<Provider extends string = AgentProvider>({
   groups,
   provider,
@@ -60,27 +60,6 @@ export function MobileSessionSettingsControl<Provider extends string = AgentProv
   permission,
 }: MobileSessionSettingsControlProps<Provider>) {
   const [open, setOpen] = useState(false);
-  const triggerRef = useRef<HTMLButtonElement | null>(null);
-  const cardRef = useRef<HTMLDivElement | null>(null);
-
-  const closeCard = useCallback(() => {
-    setOpen(false);
-    triggerRef.current?.focus({ preventScroll: true });
-  }, []);
-
-  useEffect(() => {
-    if (!open) return;
-    const onPointerDown = (event: PointerEvent) => {
-      const target = event.target;
-      if (!(target instanceof Node)) return;
-      if (cardRef.current?.contains(target) || triggerRef.current?.contains(target)) return;
-      setOpen(false);
-    };
-    document.addEventListener('pointerdown', onPointerDown, true);
-    return () => {
-      document.removeEventListener('pointerdown', onPointerDown, true);
-    };
-  }, [open]);
 
   const shown = visibleModelGroups(groups, provider);
   const activeGroup = shown.find((group) => group.provider === provider) ?? shown[0];
@@ -157,167 +136,172 @@ export function MobileSessionSettingsControl<Provider extends string = AgentProv
     : null;
   const hasPermissionOptions = permission !== undefined && permission.options.length > 0;
   const hasControls = modelChoices.length > 0 || visibleEfforts.length > 0 || hasPermissionOptions || activeBlockedReason !== null;
+  const triggerDisabled = !hasControls || (modelDisabled && (permission === undefined || permission.disabled === true));
+
+  const cardContent = (
+    <div className={styles.floatingCard}>
+      <header className={styles.header}>
+        <h2 className={styles.title}>Session model &amp; mode</h2>
+        <button
+          type="button"
+          className={styles.closeButton}
+          aria-label="Close session model and mode"
+          onClick={() => setOpen(false)}
+        >
+          <Icon name="close" size="sm" />
+        </button>
+      </header>
+
+      <div className={styles.body}>
+        {modelChoices.length > 0 ? (
+          <section className={styles.section} aria-label="Provider and model">
+            <h3 className={styles.sectionTitle}>Provider &amp; model</h3>
+            <ul className={styles.groupCard} role="radiogroup" aria-label="Models">
+              {modelChoices.map((choice) => (
+                <li
+                  key={choice.key}
+                  className={`${styles.groupItem} ${choice.selected ? styles.groupItemSelected : ''}`}
+                >
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={choice.selected}
+                    disabled={modelDisabled || choice.disabled}
+                    className={styles.modelRow}
+                    onClick={() => {
+                      if (choice.selected) return;
+                      onChangeModel({ model: choice.model, reasoning_effort: null }, choice.provider);
+                    }}
+                  >
+                    <span className={styles.modelIcon} aria-hidden="true">
+                      <Icon name="agent" size="sm" />
+                    </span>
+                    <span className={styles.modelCopy}>
+                      <span className={styles.modelName}>{choice.label}</span>
+                      <span className={styles.modelMeta}>
+                        {choice.providerName}{choice.selected ? ' · Selected' : ''}
+                      </span>
+                    </span>
+                    <span className={styles.modelTrailing} aria-hidden="true">
+                      <Icon name={choice.selected ? 'check' : 'chevron-right'} size="sm" />
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : activeBlockedReason !== null && (
+          <p className={styles.note} role="note">{activeBlockedReason}</p>
+        )}
+
+        {(visibleEfforts.length > 0 || hasPermissionOptions) && (
+          <section className={styles.section} aria-label="Reasoning and permission">
+            <h3 className={styles.sectionTitle}>Reasoning &amp; permission</h3>
+            <div className={styles.groupCard}>
+              {visibleEfforts.length > 0 && (
+                <div className={styles.settingRow}>
+                  <span className={styles.settingLabel}>
+                    <span className={styles.settingIcon} aria-hidden="true">
+                      <Icon name="sliders" size="sm" />
+                    </span>
+                    <span>Effort</span>
+                  </span>
+                  <div className={styles.segmented} role="radiogroup" aria-label="Reasoning effort">
+                    {visibleEfforts.map((entry) => {
+                      const active = effectiveEffort === entry.reasoning_effort;
+                      return (
+                        <button
+                          key={entry.reasoning_effort}
+                          type="button"
+                          role="radio"
+                          aria-checked={active}
+                          disabled={modelDisabled}
+                          className={`${styles.segment} ${active ? styles.segmentActive : ''}`}
+                          onClick={() => onChangeModel(
+                            { model: selection.model, reasoning_effort: entry.reasoning_effort },
+                            provider,
+                          )}
+                        >
+                          {shortEffortLabel(entry.reasoning_effort)}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {hasPermissionOptions && (
+                <div className={`${styles.settingRow} ${visibleEfforts.length > 0 ? styles.settingRowDivided : ''}`}>
+                  <span className={styles.settingLabel}>
+                    <span className={styles.settingIcon} aria-hidden="true">
+                      <Icon name="shield" size="sm" />
+                    </span>
+                    <span>Permission</span>
+                  </span>
+                  <div className={styles.segmented} role="radiogroup" aria-label="Permission mode">
+                    {permission.options.map((opt) => {
+                      const active = effectivePermissionMode === opt.id;
+                      return (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          role="radio"
+                          aria-checked={active}
+                          aria-label={opt.label}
+                          title={opt.label}
+                          disabled={permission.disabled === true}
+                          className={`${styles.segment} ${active ? styles.segmentActive : ''}`}
+                          onClick={() => { if (opt.id !== effectivePermissionMode) permission.onChange(opt.id); }}
+                        >
+                          {shortPermissionLabel(opt)}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          </section>
+        )}
+
+        {appliesNextTurn && (
+          <p className={styles.note} role="note">{PERMISSION_NOTE}</p>
+        )}
+      </div>
+    </div>
+  );
 
   return (
-    <>
-      <LayerDismissal
-        isActive={open}
-        getContainer={() => cardRef.current}
-        onDismiss={closeCard}
-      />
-      <button
-        ref={triggerRef}
-        type="button"
-        className={`${styles.trigger} ${open ? styles.triggerOpen : ''}`}
-        aria-label={`Session model and mode: ${triggerLabel}`}
-        aria-expanded={open}
-        aria-haspopup="dialog"
-        disabled={!hasControls || (modelDisabled && (permission === undefined || permission.disabled === true))}
-        onClick={() => setOpen((current) => !current)}
-      >
-        <span className={styles.triggerText}>{triggerLabel}</span>
-        <span className={styles.triggerChevron} aria-hidden="true">
-          <Icon name="chevron-down" size="sm" />
-        </span>
-      </button>
-
-      {open && (
-        <div
-          ref={cardRef}
-          role="dialog"
-          aria-label="Session model and mode"
-          className={styles.floatingCard}
+    <Popover
+      presentation="popover"
+      placement="above"
+      alignment="start"
+      width="min(calc(100vw - var(--space-6)), 23rem)"
+      padding={0}
+      label="Session model and mode"
+      hasCloseButton={false}
+      className={styles.popoverSurface}
+      isOpen={open && !triggerDisabled}
+      onOpenChange={(next) => setOpen(next && !triggerDisabled)}
+      isEnabled={!triggerDisabled}
+      content={cardContent}
+    >
+      {({ ref, onClick, ...ariaProps }) => (
+        <button
+          ref={ref}
+          type="button"
+          className={`${styles.trigger} ${open ? styles.triggerOpen : ''}`}
+          aria-label={`Session model and mode: ${triggerLabel}`}
+          disabled={triggerDisabled}
+          {...ariaProps}
+          onClick={(event) => onClick(event)}
         >
-          <header className={styles.header}>
-            <h2 className={styles.title}>Session model &amp; mode</h2>
-            <button
-              type="button"
-              className={styles.closeButton}
-              aria-label="Close session model and mode"
-              onClick={closeCard}
-            >
-              <Icon name="close" size="sm" />
-            </button>
-          </header>
-
-          <div className={styles.body}>
-            {modelChoices.length > 0 ? (
-              <section className={styles.section} aria-label="Provider and model">
-                <h3 className={styles.sectionTitle}>Provider &amp; model</h3>
-                <ul className={styles.groupCard} role="radiogroup" aria-label="Models">
-                  {modelChoices.map((choice) => (
-                    <li
-                      key={choice.key}
-                      className={`${styles.groupItem} ${choice.selected ? styles.groupItemSelected : ''}`}
-                    >
-                      <button
-                        type="button"
-                        role="radio"
-                        aria-checked={choice.selected}
-                        disabled={modelDisabled || choice.disabled}
-                        className={styles.modelRow}
-                        onClick={() => {
-                          if (choice.selected) return;
-                          onChangeModel({ model: choice.model, reasoning_effort: null }, choice.provider);
-                        }}
-                      >
-                        <span className={styles.modelIcon} aria-hidden="true">
-                          <Icon name="agent" size="sm" />
-                        </span>
-                        <span className={styles.modelCopy}>
-                          <span className={styles.modelName}>{choice.label}</span>
-                          <span className={styles.modelMeta}>
-                            {choice.providerName}{choice.selected ? ' · Selected' : ''}
-                          </span>
-                        </span>
-                        <span className={styles.modelTrailing} aria-hidden="true">
-                          <Icon name={choice.selected ? 'check' : 'chevron-right'} size="sm" />
-                        </span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            ) : activeBlockedReason !== null && (
-              <p className={styles.note} role="note">{activeBlockedReason}</p>
-            )}
-
-            {(visibleEfforts.length > 0 || hasPermissionOptions) && (
-              <section className={styles.section} aria-label="Reasoning and permission">
-                <h3 className={styles.sectionTitle}>Reasoning &amp; permission</h3>
-                <div className={styles.groupCard}>
-                  {visibleEfforts.length > 0 && (
-                    <div className={styles.settingRow}>
-                      <span className={styles.settingLabel}>
-                        <span className={styles.settingIcon} aria-hidden="true">
-                          <Icon name="sliders" size="sm" />
-                        </span>
-                        <span>Effort</span>
-                      </span>
-                      <div className={styles.segmented} role="radiogroup" aria-label="Reasoning effort">
-                        {visibleEfforts.map((entry) => {
-                          const active = effectiveEffort === entry.reasoning_effort;
-                          return (
-                            <button
-                              key={entry.reasoning_effort}
-                              type="button"
-                              role="radio"
-                              aria-checked={active}
-                              disabled={modelDisabled}
-                              className={`${styles.segment} ${active ? styles.segmentActive : ''}`}
-                              onClick={() => onChangeModel(
-                                { model: selection.model, reasoning_effort: entry.reasoning_effort },
-                                provider,
-                              )}
-                            >
-                              {shortEffortLabel(entry.reasoning_effort)}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-
-                  {hasPermissionOptions && (
-                    <div className={`${styles.settingRow} ${visibleEfforts.length > 0 ? styles.settingRowDivided : ''}`}>
-                      <span className={styles.settingLabel}>
-                        <span className={styles.settingIcon} aria-hidden="true">
-                          <Icon name="shield" size="sm" />
-                        </span>
-                        <span>Permission</span>
-                      </span>
-                      <div className={styles.segmented} role="radiogroup" aria-label="Permission mode">
-                        {permission.options.map((opt) => {
-                          const active = effectivePermissionMode === opt.id;
-                          return (
-                            <button
-                              key={opt.id}
-                              type="button"
-                              role="radio"
-                              aria-checked={active}
-                              aria-label={opt.label}
-                              title={opt.label}
-                              disabled={permission.disabled === true}
-                              className={`${styles.segment} ${active ? styles.segmentActive : ''}`}
-                              onClick={() => { if (opt.id !== effectivePermissionMode) permission.onChange(opt.id); }}
-                            >
-                              {shortPermissionLabel(opt)}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </section>
-            )}
-
-            {appliesNextTurn && (
-              <p className={styles.note} role="note">{PERMISSION_NOTE}</p>
-            )}
-          </div>
-        </div>
+          <span className={styles.triggerText}>{triggerLabel}</span>
+          <span className={styles.triggerChevron} aria-hidden="true">
+            <Icon name="chevron-down" size="sm" />
+          </span>
+        </button>
       )}
-    </>
+    </Popover>
   );
 }

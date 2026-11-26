@@ -55,8 +55,12 @@ import { ConversationSwitcherSheet } from '../../features/chat/dock/conversation
 import { ChatList } from '../../features/chat/list/public.tsx';
 import { ContextRing } from '../../features/chat/thread/context-ring.tsx';
 import { useMentionTrigger } from '../../features/chat/thread/mention-trigger.tsx';
-import { MobileSessionSettingsControl } from '../../features/chat/thread/mobile-session-settings-sheet.tsx';
 import { ModelPill,PermissionModePill } from '../../features/chat/thread/model-pill.tsx';
+import {
+  MobileConversationMetaBar,
+  mobileConversationRoleSlot,
+  mobileConversationSubtitle,
+} from './mobile-conversation-controls.tsx';
 import type { ModelGroup } from '../../features/chat/thread/model-selection.ts';
 import { MessageImages } from '../../features/chat/thread/message-images.tsx';
 import { OutgoingMessage, type MemoryMentionRenderer } from '../../features/chat/thread/outgoing-message.tsx';
@@ -518,46 +522,30 @@ export function useConversationPane(
 
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const activeDockRow = dockRowId === null ? null : rows.find((row) => row.id === dockRowId) ?? null;
-  const activeOpenRow = open ?? activeDockRow;
-  const roleSlotLabel = activeOpenRow === null
-    ? 'Lead'
-    : activeOpenRow.isLead === true
-      ? 'Lead'
-      : conversationName(activeOpenRow);
-  const mobileRoleSlot = useMemo(() => (
-    mobileSheet || compactComposer
-      ? {
-        label: roleSlotLabel,
-        ariaLabel: `Switch conversation, current: ${roleSlotLabel}`,
-        onOpen: () => setSwitcherOpen(true),
-      }
-      : undefined
-  ), [mobileSheet, compactComposer, roleSlotLabel]);
-
+  const mobileRoleSlot = useMemo(
+    () => mobileConversationRoleSlot(mobileSheet || compactComposer, open ?? activeDockRow, () => setSwitcherOpen(true)),
+    [mobileSheet, compactComposer, open, activeDockRow],
+  );
   const mobileMetaBar = useMemo(() => (
     !mobileSheet ? undefined : (
-      <>
-        <MobileSessionSettingsControl
-          key={`mobile-model-${existingId}`}
-          groups={sessionModelGroups}
-          provider={activeProvider}
-          selection={composerView.model}
-          onChangeModel={(next, nextProvider) => composerView.setModel(next, canSwitchProvider ? nextProvider : undefined)}
-          modelDisabled={!composerView.historyReady || composerView.modelChangeDisabled}
-          appliesNextTurn={composerView.working}
-          permission={permissionControl.visible ? {
-            mode: permissionControl.mode,
-            options: permissionControl.options,
-            onChange: (mode) => { void composerView.setPermissionMode(mode); },
-            disabled: permissionControl.isDisabled,
-          } : undefined}
-        />
-        <PlannerAttachButton
-          attachments={composerAttachments}
-          available={composerView.attachmentsSupported}
-          disabled={editingQueue || composerView.sendBlocked || !composerView.historyReady || replacing}
-        />
-      </>
+      <MobileConversationMetaBar
+        sessionKey={existingId ?? 'none'}
+        groups={sessionModelGroups}
+        provider={activeProvider}
+        selection={composerView.model}
+        onChangeModel={(next, nextProvider) => composerView.setModel(next, canSwitchProvider ? nextProvider : undefined)}
+        modelDisabled={!composerView.historyReady || composerView.modelChangeDisabled}
+        appliesNextTurn={composerView.working}
+        permission={permissionControl.visible ? {
+          mode: permissionControl.mode,
+          options: permissionControl.options,
+          onChange: (mode) => { void composerView.setPermissionMode(mode); },
+          disabled: permissionControl.isDisabled,
+        } : undefined}
+        attachments={composerAttachments}
+        attachmentsAvailable={composerView.attachmentsSupported}
+        attachDisabled={editingQueue || composerView.sendBlocked || !composerView.historyReady || replacing}
+      />
     )
   ), [mobileSheet, existingId, sessionModelGroups, activeProvider, canSwitchProvider, composerView, permissionControl, composerAttachments, editingQueue, replacing]);
 
@@ -613,13 +601,7 @@ export function useConversationPane(
 
   const centeredEmpty = options?.embedded?.active === true && open !== null && store.historyReady && openTurns.length === 0 && !hasPendingMessages && !(pendingPresentation?.conversationId === existingId && pendingPresentation.visible) && !store.sending && !store.working && store.failedSend === null;
 
-  const mobileSubtitle = open === null
-    ? (draftOpen ? 'New conversation' : undefined)
-    : open.isLead === true
-      ? 'Lead'
-      : scope?.title !== undefined
-        ? `Collaborator · ${scope.title}`
-        : 'Collaborator';
+  const mobileSubtitle = mobileConversationSubtitle(open, draftOpen, scope?.title);
 
   const renderDrawer = (resizeGroup: PaneResizeGroup | null = null) => (
       <>

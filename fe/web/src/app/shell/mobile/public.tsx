@@ -1,13 +1,9 @@
 import { LayerDepthProvider } from '@astryxdesign/core/Layer';
-import { useLayoutEffect, useMemo, useRef, type RefCallback, type RefObject } from 'react';
+import { useLayoutEffect, useRef, type RefCallback, type RefObject } from 'react';
 
-import type { ApiTransportPort } from '../../../../../core/api/types.ts';
-import type { UnauthorizedChannel } from '../../../../../core/api/unauthorized.ts';
 import type { Area } from '../../../../../core/domain/area.ts';
-import type { Conversation } from '../../../../../core/domain/conversation.ts';
 import { localDailyDate } from '../../../../../core/domain/daily-planner.ts';
 import type { Track } from '../../../../../core/domain/track.ts';
-import { trackDisplayTitle } from '../../../../../core/domain/track.ts';
 import { type TrackActionsProps } from '../../../features/track/row/actions.tsx';
 import { LayerDismissal, type DialogOrigin } from '../../../ui/dialog/public.tsx';
 import { EdgeSwipe } from '../../../ui/edge-swipe/public.tsx';
@@ -15,39 +11,22 @@ import { OperationFeedback, type OperationFeedbackState } from '../../../ui/oper
 import type { NavTarget } from '../../router/navigation.ts';
 import type { NewTrackDraftArea } from '../../router/new-track-drafts.tsx';
 import { MobileWorkspaceHeader } from './header.tsx';
-import { useMobileHistoryData } from './history-data.ts';
-import { MobileHistory } from './history.tsx';
 import { useMobileNavigationPresence } from './navigation-presence.ts';
 import { MobilePages } from './pages.tsx';
 import mobileStyles from './shell.module.css';
 import { MobileTracks } from './tracks.tsx';
-import type { SidebarTrackGroups } from '../sidebar-track-groups.ts';
 import type { MobileNavigationController, MobileReturnIntent } from './use-navigation.ts';
-
-export type MobileConversationScopeSnapshot = Readonly<{
-  owner: object;
-  track: Readonly<{ id: string; areaId: string; title: string }>;
-  selectedConversationId: string | null;
-  conversationOpen: boolean;
-  onNew: () => void;
-  onClose: () => void;
-  onOpen: (conversation: Conversation) => void;
-  onArchive?: (cardId: string, archived: boolean) => Promise<void>;
-}>;
 
 export type MobileShellWorkspace = Readonly<{
   areas: readonly Area[];
   visibleAreas: readonly Area[];
   tracks: readonly Track[];
   tracksByArea: ReadonlyMap<string, readonly Track[]>;
-  trackGroups: Pick<SidebarTrackGroups, 'pinned' | 'unread' | 'waiting'>;
   activeArea: Area | NewTrackDraftArea | undefined;
   liveActiveArea: Area | undefined;
   newTrackArea: NewTrackDraftArea | undefined;
   readError: string | null;
-  activityError: string | null;
   readLoading: boolean;
-  overlaysLoading: boolean;
   retryRead: () => void;
   isUnread: (track: Track) => boolean;
   areaIdOf: (trackId: string) => string | undefined;
@@ -75,15 +54,10 @@ export type MobileShellActions = Readonly<{
 }>;
 
 export type MobileShellChromeProps = Readonly<{
-  transport: ApiTransportPort;
-  unauthorized: UnauthorizedChannel;
   workspace: MobileShellWorkspace;
   route: MobileShellRoute;
   actions: MobileShellActions;
   navigation: MobileNavigationController;
-  conversationScope: MobileConversationScopeSnapshot | null;
-  historyOpen: boolean;
-  onHistoryOpenChange: (open: boolean) => void;
   onActionsHostRef: RefCallback<HTMLDivElement>;
   onTitleHostRef: RefCallback<HTMLDivElement>;
   workspaceReturnRef?: RefObject<HTMLButtonElement | null>;
@@ -92,17 +66,13 @@ export type MobileShellChromeProps = Readonly<{
   userLabel?: string;
 }>;
 
-/** Mobile shell chrome: owns the mobile workspace header, floating opener, edge swipe, history drawer, and modal navigation stack. */
+/** Mobile shell chrome: owns the mobile workspace header, edge swipe, and modal 2-level navigation stack. */
 export function MobileShellChrome({
-  transport, unauthorized, workspace, route, actions, navigation, conversationScope,
-  historyOpen, onHistoryOpenChange, onActionsHostRef, onTitleHostRef, workspaceReturnRef: routeWorkspaceReturnRef,
+  workspace, route, actions, navigation,
+  onActionsHostRef, onTitleHostRef, workspaceReturnRef: routeWorkspaceReturnRef,
   shareScope = null, nowMs, userLabel,
 }: MobileShellChromeProps) {
   const { currentPath, routeOwnsMobileChrome, settingsOpen, mobileOverlayRoute } = route;
-  const scopeOwner = conversationScope?.owner ?? null;
-  const historyOwner = useMemo(() => ({ path: currentPath, scopeOwner, token: {} }), [currentPath, scopeOwner]);
-  const historyTracks = conversationScope === null ? [] : [conversationScope.track];
-  const history = useMobileHistoryData(transport, unauthorized, historyTracks, historyOpen);
   const mobileSectionKind = navigation.section?.kind;
 
   const workspaceReturnRef = useRef<HTMLButtonElement | null>(null);
@@ -219,7 +189,7 @@ export function MobileShellChrome({
           areas={workspace.visibleAreas}
           activeArea={workspace.liveActiveArea ?? (workspace.newTrackArea === undefined ? workspace.visibleAreas[0] : undefined)}
           draftArea={workspace.newTrackArea}
-          navigationOpen={navigation.interactive || historyOpen}
+          navigationOpen={navigation.interactive}
           historyTriggerRef={workspaceReturnRef}
           onBack={route.newTrackBack !== null && route.routeAreaId !== undefined
             ? () => {
@@ -238,36 +208,10 @@ export function MobileShellChrome({
         />
       )}
       <EdgeSwipe
-        enabled={!settingsOpen && !mobileOverlayRoute && !navigation.isOpen && !historyOpen}
+        enabled={!settingsOpen && !mobileOverlayRoute && !navigation.isOpen}
         onSwipe={() => {
           navigation.open({ kind: 'areas', areaId: workspace.activeArea?.id }, 'workspace');
         }}
-      />
-      <MobileHistory
-        owner={historyOwner.token}
-        open={historyOpen}
-        onOpenChange={onHistoryOpenChange}
-        selectedConversationId={conversationScope?.selectedConversationId ?? null}
-        trackGroups={workspace.trackGroups}
-        currentTrackId={conversationScope?.track.id}
-        isUnread={workspace.isUnread}
-        tracksLoading={workspace.readLoading || workspace.overlaysLoading}
-        tracksError={workspace.readError ?? workspace.activityError}
-        onRetryTracks={workspace.retryRead}
-        onOpenTrack={(trackId) => { conversationScope?.onClose(); route.go({ name: 'track', trackId }); }}
-        onArchive={conversationScope?.onArchive}
-        conversations={history.conversations}
-        loading={history.loading}
-        failed={history.failed}
-        onRetry={history.retry}
-        onNew={conversationScope?.onNew ?? null}
-        now={nowMs ?? Date.now()}
-        onSelect={(row) => conversationScope?.onOpen(row)}
-        onOpenSettings={actions.onOpenSettings}
-        scopeLabel={conversationScope === null ? 'Current track' : `Current track · ${trackDisplayTitle(conversationScope.track.title)}`}
-        accountLabel={userLabel ?? 'Account'}
-        accountInitial={userLabel?.slice(0, 1) ?? 'U'}
-        onSignOut={actions.onSignOut === undefined ? undefined : () => { navigation.close(); actions.onSignOut?.(); }}
       />
       <div ref={mobileNavigationFrameRef} className={mobileStyles.navigationFrame}>
         <div

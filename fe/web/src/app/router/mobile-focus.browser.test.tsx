@@ -426,7 +426,7 @@ describe('MobileFocusHome', () => {
   it('supports Workspace focus return, mobile Today navigation, dark theme, shareScope read-only mode, and desktop resize round-trip', async () => {
     await page.viewport(390, 844);
     document.documentElement.setAttribute('data-theme', 'dark');
-    renderFocusFixture();
+    const fixture = renderFocusFixture();
 
     await expect.element(page.getByRole('heading', { name: 'Focus', exact: true })).toBeVisible();
     expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(390);
@@ -448,10 +448,10 @@ describe('MobileFocusHome', () => {
     await expect.element(page.getByRole('heading', { name: 'Focus', exact: true })).toBeVisible();
     expect(document.querySelector('[data-nc-workspace-header]')).toBeNull();
 
-    // Workspace Level 1 -> Level 2 Area drill-down -> Track Report -> Chat Sheet -> Scheme A floating settings card.
+    // Workspace Level 1 -> Level 2 Area drill-down -> Back -> Library Today navigation.
     await page.getByRole('button', { name: 'Open workspace', exact: true }).click();
     await expect.element(page.getByRole('heading', { name: 'Workspace', exact: true })).toBeVisible();
-    expect(page.getByRole('button', { name: 'Today', exact: true }).query()).toBeNull();
+    await expect.element(page.getByRole('button', { name: 'Today', exact: true })).toBeVisible();
     await expect.element(page.getByRole('button', { name: 'Settings', exact: true })).toBeVisible();
     await expect.element(page.getByRole('button', { name: /^Closed tracks/ })).toBeVisible();
 
@@ -461,8 +461,10 @@ describe('MobileFocusHome', () => {
     await expect.element(page.getByRole('button', { name: 'Show', exact: true })).toBeVisible();
 
     await page.getByRole('button', { name: 'Back to Workspace', exact: true }).click();
-    await page.getByRole('button', { name: 'Back to workspace', exact: true }).click();
+    await page.getByRole('button', { name: 'Today', exact: true }).click();
     await expect.poll(() => page.getByRole('dialog', { name: 'Tracks and settings', exact: true }).query()).toBeNull();
+    await expect.poll(() => (fixture.router.state.location.search as { day?: string }).day).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(document.querySelector('[data-nc-mobile-focus]')).toBeNull();
 
     // Share-scoped read-only sessions hide the New track action.
     cleanup();

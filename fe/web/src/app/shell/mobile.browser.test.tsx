@@ -1,6 +1,5 @@
 import '../../styles/entry.css';
 import { setup } from './mobile-browser-fixture.tsx';
-import { observeHistory } from './mobile-history-browser-trace.ts';
 import { withFontRoleProbe } from '../../../../tools/styles/font-role-fixture.ts';
 /*
  * The mobile presentation, rendered on the real `AppShell` over a memory history;
@@ -416,34 +415,23 @@ describe('Track mobile presentation', () => {
   it('keeps workspace creation and settings independently usable across their full touch targets', async () => {
     await page.viewport(390, 844);
     const router = setup('/');
-    const trace = observeHistory(() => router.state.location.href);
-    const unsubscribe = router.subscribe('onResolved', () => { trace.record('route'); });
-    try {
-      await openTrackNavigation();
-      await page.getByRole('button', { name: 'Back to Workspace', exact: true }).click();
-      const settingsControl = page.getByRole('button', { name: 'Settings', exact: true });
-      const settings = await settingsControl.findElement();
-      const box = settings.getBoundingClientRect();
-      expect(box.height).toBeGreaterThanOrEqual(44);
-      trace.record('before-settings-edge-click');
-      await settingsControl.click({ position: { x: 4, y: box.height / 2 } });
-      trace.record('after-settings-edge-click');
-      await expect.poll(() => router.state.location.pathname).toBe('/settings');
-      await page.getByRole('navigation', { name: 'Settings categories' }).findElement();
-      trace.record('settings-ready');
-      await page.getByRole('button', { name: 'Back to workspace' }).click();
-      await expect.poll(() => router.state.location.pathname).toBe('/');
-      await openTrackNavigation();
-      const create = await page.getByRole('button', { name: 'New track', exact: true }).findElement();
-      expect(create.getBoundingClientRect().width).toBeGreaterThanOrEqual(44);
-      expect(create.getBoundingClientRect().height).toBeGreaterThanOrEqual(44);
-      await page.elementLocator(create).click({ position: { x: 4, y: 22 } });
-      await expect.poll(() => router.state.location.pathname).toBe('/area/c1/new');
-    } catch (error) {
-      trace.failure(); throw error;
-    } finally {
-      unsubscribe(); trace.dispose();
-    }
+    await openTrackNavigation();
+    await page.getByRole('button', { name: 'Back to Workspace', exact: true }).click();
+    const settingsControl = page.getByRole('button', { name: 'Settings', exact: true });
+    const settings = await settingsControl.findElement();
+    const box = settings.getBoundingClientRect();
+    expect(box.height).toBeGreaterThanOrEqual(44);
+    await settingsControl.click({ position: { x: 4, y: box.height / 2 } });
+    await expect.poll(() => router.state.location.pathname).toBe('/settings');
+    await page.getByRole('navigation', { name: 'Settings categories' }).findElement();
+    await page.getByRole('button', { name: 'Back to workspace' }).click();
+    await expect.poll(() => router.state.location.pathname).toBe('/');
+    await openTrackNavigation();
+    const create = await page.getByRole('button', { name: 'New track', exact: true }).findElement();
+    expect(create.getBoundingClientRect().width).toBeGreaterThanOrEqual(44);
+    expect(create.getBoundingClientRect().height).toBeGreaterThanOrEqual(44);
+    await page.elementLocator(create).click({ position: { x: 4, y: 22 } });
+    await expect.poll(() => router.state.location.pathname).toBe('/area/c1/new');
   });
 
   it('keeps pressed and keyboard focus feedback on each control contour without native blue tap paint', async () => {
