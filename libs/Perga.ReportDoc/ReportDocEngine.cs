@@ -125,52 +125,136 @@ public sealed partial class ReportDocEngine : IReportDocEngine
 
         var idSeed = 0;
 
+        void EnsureUpsertSectionPlacement(string? sectionH1, int nextIdx)
+        {
+            if (sectionH1 is not null && nextIdx < working.Count && working[nextIdx].SectionH1 is null)
+            {
+                throw new ArgumentException("Cannot assign an H1 section before an untitled preamble block.", nameof(ops));
+            }
+        }
+
         foreach (var op in ops)
         {
             switch (op)
             {
                 case BlockOp.ReplaceSectionOp replaceOp:
                 {
-                    var targetSection = NormalizeSectionTitle(replaceOp.SectionH1);
-                    if (string.IsNullOrEmpty(targetSection))
+                    var targetSection = NormalizeSectionTitle(replaceOp.SectionH1, "sectionH1");
+                    var finalSection = replaceOp.NewSectionH1 is { } newTitle
+                        ? NormalizeSectionTitle(newTitle, "newSectionH1")
+                        : targetSection;
+                    var placementId = replaceOp.BeforeBlockId ?? replaceOp.AfterBlockId;
+                    if (replaceOp.BeforeBlockId is not null && replaceOp.AfterBlockId is not null)
                     {
-                        throw new ArgumentException("ReplaceSectionOp requires a non-empty SectionH1.", nameof(ops));
+                        throw new ArgumentException("Specify only one of 'beforeBlockId' and 'afterBlockId'.", nameof(ops));
+                    }
+                    if (placementId is not null && string.IsNullOrWhiteSpace(placementId))
+                    {
+                        throw new ArgumentException("Section placement requires a non-blank block ID.", nameof(ops));
+                    }
+                    if (replaceOp.Markdown is null && replaceOp.NewSectionH1 is null)
+                    {
+                        throw new ArgumentException("ReplaceSectionOp requires 'markdown' or 'newSectionH1'.", nameof(ops));
                     }
 
                     var existingIndices = new List<int>();
+                    var sectionBlocks = new Dictionary<string, (ReportBlock Block, int Index)>(StringComparer.Ordinal);
                     for (var i = 0; i < working.Count; i++)
                     {
-                        if (string.Equals(working[i].SectionH1, targetSection, StringComparison.Ordinal))
+                        var block = working[i];
+                        if (!string.Equals(block.SectionH1, targetSection, StringComparison.Ordinal))
                         {
-                            existingIndices.Add(i);
+                            continue;
                         }
-                    }
 
-                    foreach (var idx in existingIndices)
-                    {
-                        var existingBlock = working[idx];
-                        if (originalById.TryGetValue(existingBlock.Id, out var orig))
+                        if (originalById.TryGetValue(block.Id, out var orig))
                         {
                             EnsureBlockAuthorized(current, callerAnchor, orig.Block);
                         }
+
+                        existingIndices.Add(i);
+                        sectionBlocks.Add(block.Id, (block, i));
                     }
 
-                    var insertPos = existingIndices.Count > 0 ? existingIndices[0] : working.Count;
-
-                    // Remove old blocks in reverse index order so indices stay valid.
-                    var removedInOp = new Dictionary<string, ReportBlock>(StringComparer.Ordinal);
-                    for (var i = existingIndices.Count - 1; i >= 0; i--)
+                    List<ReportBlock> replacement;
+                    if (replaceOp.Markdown is { } sectionMarkdown)
                     {
-                        var removed = working[existingIndices[i]];
-                        removedInOp[removed.Id] = removed;
-                        working.RemoveAt(existingIndices[i]);
+                        replacement = ParseSectionReplacement(targetSection, finalSection, sectionMarkdown, usedIds, sectionBlocks, ref idSeed);
+                    }
+                    else
+                    {
+                        if (existingIndices.Count == 0)
+                        {
+                            if (callerAnchor.WholeDocumentRead && callerAnchor.DocRev != current.DocRev)
+                            {
+                                throw new ReportConflictException(
+                                    "stale_doc_rev",
+                                    $"Section '{targetSection}' was not found at docRev {current.DocRev}. Caller anchor is at docRev {callerAnchor.DocRev}.",
+                                    "Call report_read to fetch the latest report revision before retrying.");
+                            }
+
+                            throw new ArgumentException($"Section '{targetSection}' does not exist. Provide 'markdown' to create it.", nameof(ops));
+                        }
+
+                        replacement = existingIndices.Select(index =>
+                        {
+                            var block = working[index];
+                            return block.SectionH1 == finalSection
+                                ? block
+                                : block with { SectionH1 = finalSection, Rev = block.Rev + 1 };
+                        }).ToList();
                     }
 
-                    var parsedReplacement = ParseSectionReplacement(targetSection, replaceOp.Markdown, usedIds, removedInOp, ref idSeed);
-                    working.InsertRange(insertPos, parsedReplacement);
+                    if (replaceOp.Markdown is null && placementId is null)
+                    {
+                        for (var i = 0; i < existingIndices.Count; i++)
+                        {
+                            working[existingIndices[i]] = replacement[i];
+                        }
+                    }
+                    else
+                    {
+                        var insertPos = existingIndices.Count > 0 ? existingIndices[0] : working.Count;
+                        for (var i = existingIndices.Count - 1; i >= 0; i--)
+                        {
+                            working.RemoveAt(existingIndices[i]);
+                        }
 
-                    var replacementIds = new HashSet<string>(parsedReplacement.Select(b => b.Id), StringComparer.Ordinal);
-                    foreach (var (removedId, _) in removedInOp)
+                        if (placementId is not null)
+                        {
+                            if (sectionBlocks.ContainsKey(placementId))
+                            {
+                                throw new ArgumentException($"Section placement cannot target block '{placementId}' in section '{targetSection}'.", nameof(ops));
+                            }
+
+                            var placementIndex = working.FindIndex(block => block.Id == placementId);
+                            if (placementIndex < 0)
+                            {
+                                EnsureMissingBlockConflictOrNotFound(current, callerAnchor, placementId);
+                                throw new KeyNotFoundException($"Block '{placementId}' does not exist.");
+                            }
+
+                            insertPos = replaceOp.BeforeBlockId is not null ? placementIndex : placementIndex + 1;
+                            for (var i = 0; i < replacement.Count; i++)
+                            {
+                                var id = replacement[i].Id;
+                                if (sectionBlocks.TryGetValue(id, out var previous) && previous.Index != insertPos + i)
+                                {
+                                    explicitlyMovedIds.Add(id);
+                                }
+                            }
+                        }
+
+                        if (insertPos < working.Count && working[insertPos].SectionH1 is null)
+                        {
+                            throw new ArgumentException("Cannot place an H1 section before an untitled preamble block.", nameof(ops));
+                        }
+
+                        working.InsertRange(insertPos, replacement);
+                    }
+
+                    var replacementIds = new HashSet<string>(replacement.Select(b => b.Id), StringComparer.Ordinal);
+                    foreach (var removedId in sectionBlocks.Keys)
                     {
                         if (!replacementIds.Contains(removedId))
                         {
@@ -184,7 +268,7 @@ public sealed partial class ReportDocEngine : IReportDocEngine
                         }
                     }
 
-                    foreach (var replBlock in parsedReplacement)
+                    foreach (var replBlock in replacement)
                     {
                         deletedIds.Remove(replBlock.Id);
                         if (originalById.TryGetValue(replBlock.Id, out var original))
@@ -201,8 +285,57 @@ public sealed partial class ReportDocEngine : IReportDocEngine
                     break;
                 }
 
+                case BlockOp.EditBlockOp editOp:
+                {
+                    ArgumentException.ThrowIfNullOrWhiteSpace(editOp.Id);
+                    ArgumentException.ThrowIfNullOrEmpty(editOp.Target);
+                    ArgumentNullException.ThrowIfNull(editOp.Replacement);
+                    var target = NormalizeLineEndings(editOp.Target);
+
+                    var idx = working.FindIndex(b => b.Id == editOp.Id);
+                    if (idx < 0)
+                    {
+                        EnsureMissingBlockConflictOrNotFound(current, callerAnchor, editOp.Id);
+                        throw new KeyNotFoundException($"Block '{editOp.Id}' does not exist.");
+                    }
+
+                    var existing = working[idx];
+                    var existedBeforeCommit = originalById.TryGetValue(existing.Id, out var orig);
+                    if (existedBeforeCommit)
+                    {
+                        EnsureBlockAuthorized(current, callerAnchor, orig.Block);
+                    }
+                    if (existing.Kind != ReportBlockKind.Prose)
+                    {
+                        throw new ArgumentException($"Block '{existing.Id}' has kind '{existing.Kind}'. edit_block requires a prose block.", nameof(ops));
+                    }
+
+                    var markdown = existing.Markdown ?? string.Empty;
+                    var firstIdx = markdown.IndexOf(target, StringComparison.Ordinal);
+                    if (firstIdx < 0)
+                    {
+                        throw new ArgumentException($"Target text was not found in block '{existing.Id}'.", nameof(ops));
+                    }
+                    if (markdown.IndexOf(target, firstIdx + 1, StringComparison.Ordinal) >= 0)
+                    {
+                        throw new ArgumentException($"Target text matched multiple locations in block '{existing.Id}'; provide a more specific target.", nameof(ops));
+                    }
+
+                    var nextMarkdown = string.Concat(
+                        markdown.AsSpan(0, firstIdx),
+                        NormalizeLineEndings(editOp.Replacement),
+                        markdown.AsSpan(firstIdx + target.Length));
+                    working[idx] = existing with { Markdown = NormalizeBlockText(nextMarkdown), Rev = existing.Rev + 1 };
+                    if (existedBeforeCommit)
+                    {
+                        updatedIds.Add(existing.Id);
+                    }
+                    break;
+                }
+
                 case BlockOp.UpsertBlockOp upsertOp:
                 {
+                    var explicitSection = upsertOp.SectionH1 is { } title ? NormalizeSectionTitle(title, "sectionH1") : null;
                     var existingIdx = !string.IsNullOrWhiteSpace(upsertOp.Id)
                         ? working.FindIndex(b => string.Equals(b.Id, upsertOp.Id, StringComparison.Ordinal))
                         : -1;
@@ -215,9 +348,16 @@ public sealed partial class ReportDocEngine : IReportDocEngine
                             EnsureBlockAuthorized(current, callerAnchor, orig.Block);
                         }
 
-                        var (extractedSection, normalizedMarkdown) = ExtractOptionalLeadingH1(upsertOp.Kind, upsertOp.Markdown);
-                        var nextSection = extractedSection ?? existing.SectionH1;
-                        var nextPayload = CloneNullableElement(upsertOp.Payload);
+                        var nextKind = upsertOp.Kind ?? existing.Kind;
+                        var (extractedSection, nextMarkdown) = ExtractOptionalLeadingH1(nextKind, upsertOp.Markdown);
+                        var nextSection = explicitSection ?? extractedSection ?? existing.SectionH1;
+                        var payload = upsertOp.Payload;
+                        if (upsertOp.Markdown is null && payload is null && nextKind == existing.Kind)
+                        {
+                            nextMarkdown = existing.Markdown;
+                            payload = existing.Payload;
+                        }
+
                         var nextRev = originalById.TryGetValue(existing.Id, out var origEntry)
                             ? Math.Max(existing.Rev, origEntry.Block.Rev) + 1
                             : existing.Rev + 1;
@@ -225,20 +365,23 @@ public sealed partial class ReportDocEngine : IReportDocEngine
                         var updated = new ReportBlock(
                             existing.Id,
                             nextRev,
-                            upsertOp.Kind,
+                            nextKind,
                             nextSection,
-                            normalizedMarkdown,
-                            nextPayload);
+                            nextMarkdown,
+                            CloneNullableElement(payload));
 
-                        if (upsertOp.Position is { } requestedPos)
+                        var insertIdx = upsertOp.Position is { } requestedPos
+                            ? Math.Clamp(requestedPos, 0, working.Count - 1)
+                            : existingIdx;
+                        // Find the following block in the original list before removing the existing block.
+                        var nextIdx = insertIdx < existingIdx ? insertIdx : insertIdx + 1;
+                        EnsureUpsertSectionPlacement(nextSection, nextIdx);
+
+                        if (insertIdx != existingIdx)
                         {
                             working.RemoveAt(existingIdx);
-                            var clamped = Math.Clamp(requestedPos, 0, working.Count);
-                            working.Insert(clamped, updated);
-                            if (clamped != existingIdx)
-                            {
-                                explicitlyMovedIds.Add(existing.Id);
-                            }
+                            working.Insert(insertIdx, updated);
+                            explicitlyMovedIds.Add(existing.Id);
                         }
                         else
                         {
@@ -263,10 +406,11 @@ public sealed partial class ReportDocEngine : IReportDocEngine
                                 "Call report_read to refresh the latest report blocks before retrying.");
                         }
 
+                        var nextKind = upsertOp.Kind ?? ReportBlockKind.Prose;
                         var newId = !string.IsNullOrWhiteSpace(upsertOp.Id) && usedIds.Add(upsertOp.Id)
                             ? upsertOp.Id
                             : AllocateDeterministicId(
-                                upsertOp.Kind,
+                                nextKind,
                                 null,
                                 upsertOp.Markdown ?? (upsertOp.Payload?.GetRawText() ?? string.Empty),
                                 ++idSeed + current.DocRev,
@@ -276,18 +420,19 @@ public sealed partial class ReportDocEngine : IReportDocEngine
                             ? Math.Clamp(pos, 0, working.Count)
                             : working.Count;
 
-                        var (explicitH1, normalizedMarkdown) = ExtractOptionalLeadingH1(upsertOp.Kind, upsertOp.Markdown);
-                        var inheritedSection = explicitH1 ?? InferSectionForInsert(working, insertIdx);
+                        var (extractedSection, normalizedMarkdown) = ExtractOptionalLeadingH1(nextKind, upsertOp.Markdown);
+                        var inheritedSection = explicitSection ?? extractedSection ?? InferSectionForInsert(working, insertIdx);
                         var clonedPayload = CloneNullableElement(upsertOp.Payload);
 
                         var inserted = new ReportBlock(
                             newId,
                             1,
-                            upsertOp.Kind,
+                            nextKind,
                             inheritedSection,
                             normalizedMarkdown,
                             clonedPayload);
 
+                        EnsureUpsertSectionPlacement(inheritedSection, insertIdx);
                         working.Insert(insertIdx, inserted);
                         deletedIds.Remove(newId);
                         if (originalById.ContainsKey(newId))
@@ -351,7 +496,7 @@ public sealed partial class ReportDocEngine : IReportDocEngine
                     var adjustedSection = AdjustSectionOnMove(working, moving, targetIdx);
                     var placed = adjustedSection == moving.SectionH1
                         ? moving
-                        : moving with { SectionH1 = adjustedSection };
+                        : moving with { SectionH1 = adjustedSection, Rev = moving.Rev + 1 };
 
                     working.Insert(targetIdx, placed);
                     explicitlyMovedIds.Add(moving.Id);
@@ -528,13 +673,14 @@ public sealed partial class ReportDocEngine : IReportDocEngine
     }
 
     private static List<ReportBlock> ParseSectionReplacement(
-        string sectionH1,
+        string targetSection,
+        string finalSection,
         string rawSectionMarkdown,
         HashSet<string> usedIds,
-        Dictionary<string, ReportBlock> removedInSection,
+        Dictionary<string, (ReportBlock Block, int Index)> removedInSection,
         ref int idSeed)
     {
-        var normalized = (rawSectionMarkdown ?? string.Empty).Replace("\r\n", "\n").Replace('\r', '\n');
+        var normalized = NormalizeLineEndings(rawSectionMarkdown);
 
         // Allow callers to pass either body-only markdown or markdown starting with "# SectionH1".
         var lines = normalized.Split('\n');
@@ -547,15 +693,18 @@ public sealed partial class ReportDocEngine : IReportDocEngine
         if (startIdx < lines.Length)
         {
             var h1Match = H1HeadingRegex().Match(lines[startIdx]);
-            if (h1Match.Success && string.Equals(h1Match.Groups[1].Value.Trim(), sectionH1, StringComparison.OrdinalIgnoreCase))
+            var heading = h1Match.Groups[1].Value.Trim();
+            if (h1Match.Success &&
+                (string.Equals(heading, finalSection, StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(heading, targetSection, StringComparison.OrdinalIgnoreCase)))
             {
                 normalized = string.Join("\n", lines.Skip(startIdx + 1));
             }
         }
 
         var fullSectionSource = string.IsNullOrWhiteSpace(normalized)
-            ? $"# {sectionH1}"
-            : $"# {sectionH1}\n\n{normalized.Trim('\n')}";
+            ? $"# {finalSection}"
+            : $"# {finalSection}\n\n{normalized.Trim('\n')}";
 
         // Allow reusing IDs from blocks that belonged to the section being replaced.
         var reservedOutsideSection = new HashSet<string>(usedIds, StringComparer.Ordinal);
@@ -568,11 +717,11 @@ public sealed partial class ReportDocEngine : IReportDocEngine
         var result = new List<ReportBlock>(parsed.Count);
         foreach (var parsedBlock in parsed)
         {
-            var block = parsedBlock with { SectionH1 = sectionH1 };
+            var block = parsedBlock with { SectionH1 = finalSection };
             usedIds.Add(block.Id);
             if (removedInSection.TryGetValue(block.Id, out var previous))
             {
-                result.Add(previous.HasSameContentAs(block) ? previous : block with { Rev = previous.Rev + 1 });
+                result.Add(previous.Block.HasSameContentAs(block) ? previous.Block : block with { Rev = previous.Block.Rev + 1 });
             }
             else
             {
@@ -961,14 +1110,15 @@ public sealed partial class ReportDocEngine : IReportDocEngine
         return moving.SectionH1;
     }
 
-    private static string NormalizeSectionTitle(string sectionH1)
+    private static string NormalizeSectionTitle(string sectionH1, string fieldName)
     {
-        if (string.IsNullOrWhiteSpace(sectionH1))
+        ArgumentException.ThrowIfNullOrWhiteSpace(sectionH1, fieldName);
+        var trimmed = sectionH1.Trim();
+        if (trimmed.AsSpan().IndexOfAny('\r', '\n') >= 0)
         {
-            return string.Empty;
+            throw new ArgumentException($"'{fieldName}' must be a single line.", fieldName);
         }
 
-        var trimmed = sectionH1.Trim();
         var match = H1HeadingRegex().Match(trimmed);
         return match.Success ? match.Groups[1].Value.Trim() : trimmed;
     }
@@ -1023,8 +1173,10 @@ public sealed partial class ReportDocEngine : IReportDocEngine
             return string.Empty;
         }
 
-        return TrimBlankLines(text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n').ToList());
+        return TrimBlankLines(NormalizeLineEndings(text).Split('\n').ToList());
     }
+
+    private static string NormalizeLineEndings(string text) => text.Replace("\r\n", "\n").Replace('\r', '\n');
 
     private static string TrimBlankLines(List<string> lines)
     {

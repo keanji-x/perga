@@ -261,6 +261,7 @@ public sealed partial class ReportDocEngineTests
         Assert.Equal(insertedTask.Id, moveChange.Id);
         Assert.True(moveChange.Moved);
         Assert.Equal(1, moveChange.Position);
+        Assert.Equal(insertedTask.Rev, moveChange.CurrentRev);
 
         // 3. ReplaceSectionOp: replace # Overview with prose + html block, and append new # Conclusion section
         var anchor3 = new ReadAnchor(3, new Dictionary<string, int>(), WholeDocumentRead: true);
@@ -357,6 +358,292 @@ public sealed partial class ReportDocEngineTests
         Assert.Equal(2, concurrentPass.NextDocument.Blocks[1].Rev);
         Assert.Equal("Beta v2 concurrent", concurrentPass.NextDocument.Blocks[1].Markdown);
     }
+
+    [Fact]
+    public void EditBlockMatchesExactNormalizedTextAndChainsEditsUsingOneScopedAnchor()
+    {
+        var doc = _engine.Parse("# Notes\n\n<!-- perga:notes rev=4 -->\nOld\r\nsentence. old sentence. Keep this.", docRev: 2);
+        var anchor = new ReadAnchor(2, new Dictionary<string, int> { ["notes"] = 4 }, WholeDocumentRead: false);
+
+        var result = _engine.ApplyCommit(doc, anchor,
+        [
+            new BlockOp.EditBlockOp("notes", "Old\r\nsentence.", "New\r\nline."),
+            new BlockOp.EditBlockOp("notes", "New\rline. ", "")
+        ]);
+
+        Assert.Equal("old sentence. Keep this.", Assert.Single(result.NextDocument.Blocks).Markdown);
+        Assert.Equal(new BlockChangeRecord("notes", ReportBlockKind.Prose, 4, 6, 0, Moved: false), Assert.Single(result.Changes));
+        Assert.Equal("Old\nsentence. old sentence. Keep this.", Assert.Single(doc.Blocks).Markdown);
+    }
+
+    [Theory]
+    [InlineData("notes", "Banana", "Target text was not found in block 'notes'")]
+    [InlineData("notes", "ana", "Target text matched multiple locations in block 'notes'")]
+    [InlineData("widget", "banana", "Block 'widget' has kind 'Widget'")]
+    public void EditBlockRejectsMissingOrOverlappingMatchesAndNonProse(string id, string target, string message)
+    {
+        var doc = _engine.Parse("""
+            <!-- perga:notes -->
+            banana
+
+            <!-- perga:widget -->
+            ```perga-block widget
+            {"use":"builtin:flow","view":"flow"}
+            ```
+            """);
+
+        var error = Assert.Throws<ArgumentException>(() =>
+            _engine.ApplyCommit(doc, WholeAnchor(doc), [new BlockOp.EditBlockOp(id, target, "")]));
+        Assert.Contains(message, error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void EditBlockUsesTheExistingBlockConflictCodes()
+    {
+        var doc = _engine.Parse("<!-- perga:notes rev=3 -->\nBody", docRev: 5);
+        var edit = new BlockOp.EditBlockOp("notes", "Body", "Updated");
+        var stale = new ReadAnchor(4, new Dictionary<string, int> { ["notes"] = 2 }, WholeDocumentRead: false);
+        var unread = new ReadAnchor(5, new Dictionary<string, int>(), WholeDocumentRead: false);
+
+        Assert.Equal("stale_block_rev", Assert.Throws<ReportConflictException>(() =>
+            _engine.ApplyCommit(doc, stale, [edit])).Code);
+        Assert.Equal("unread_block", Assert.Throws<ReportConflictException>(() =>
+            _engine.ApplyCommit(doc, unread, [edit])).Code);
+        Assert.Equal("block_deleted", Assert.Throws<ReportConflictException>(() =>
+            _engine.ApplyCommit(doc with { Blocks = [] }, stale, [edit])).Code);
+        Assert.Throws<KeyNotFoundException>(() => _engine.ApplyCommit(doc, WholeAnchor(doc), [edit with { Id = "missing" }]));
+    }
+
+    [Fact]
+    public void RenameSectionInPlacePreservesAllBlocksAndTheirPositions()
+    {
+        var doc = _engine.Parse("""
+            # Progress
+
+            <!-- perga:notes rev=3 -->
+            Notes body.
+
+            # Other
+
+            <!-- perga:other -->
+            Other body.
+
+            # Progress
+
+            <!-- perga:widget rev=5 -->
+            ```perga-block widget
+            {"use":"builtin:flow","view":"flow"}
+            ```
+            """, docRev: 8);
+
+        var partial = new ReadAnchor(8, new Dictionary<string, int> { ["notes"] = 3 }, WholeDocumentRead: false);
+        var rename = new BlockOp.ReplaceSectionOp("Progress", NewSectionH1: " # Results ");
+        Assert.Equal("unread_block", Assert.Throws<ReportConflictException>(() =>
+            _engine.ApplyCommit(doc, partial, [rename])).Code);
+
+        var result = _engine.ApplyCommit(doc, WholeAnchor(doc), [rename]);
+        Assert.Equal(
+            [doc.Blocks[0] with { SectionH1 = "Results", Rev = 4 }, doc.Blocks[1], doc.Blocks[2] with { SectionH1 = "Results", Rev = 6 }],
+            result.NextDocument.Blocks);
+        Assert.Equal(
+            [new BlockChangeRecord("notes", ReportBlockKind.Prose, 3, 4, 0, Moved: false),
+             new BlockChangeRecord("widget", ReportBlockKind.Widget, 5, 6, 2, Moved: false)],
+            result.Changes);
+    }
+
+    [Theory]
+    [InlineData("NOTES")]
+    [InlineData("results")]
+    public void ReplaceAndRenameSectionStripsEitherLeadingHeadingAndSupportsPlacement(string leadingHeading)
+    {
+        var doc = _engine.Parse("# Notes\n\n<!-- perga:notes rev=2 -->\nOld body.\n\n# Other\n\n<!-- perga:other -->\nOther body.");
+        var result = _engine.ApplyCommit(doc, WholeAnchor(doc),
+        [
+            new BlockOp.ReplaceSectionOp("Notes", $"# {leadingHeading}\n\n<!-- perga:notes -->\nNew body.",
+                NewSectionH1: "# Results", AfterBlockId: "other"),
+            new BlockOp.ReplaceSectionOp("Inserted", "Inserted body.", BeforeBlockId: "other")
+        ]);
+
+        Assert.Equal(["Inserted", "Other", "Results"], result.NextDocument.Blocks.Select(block => block.SectionH1));
+        Assert.Equal(doc.Blocks[0] with { SectionH1 = "Results", Markdown = "New body.", Rev = 3 }, result.NextDocument.Blocks[2]);
+        Assert.Equal(new BlockChangeRecord("notes", ReportBlockKind.Prose, 2, 3, 2, Moved: true),
+            Assert.Single(result.Changes, change => change.Id == "notes"));
+    }
+
+    [Fact]
+    public void RenameSectionSupportsMovingASingleBlockBeforeAnother()
+    {
+        var doc = _engine.Parse("# First\n\n<!-- perga:first -->\nFirst body.\n\n# Second\n\n<!-- perga:second -->\nSecond body.");
+        var result = _engine.ApplyCommit(doc, WholeAnchor(doc),
+            [new BlockOp.ReplaceSectionOp("Second", NewSectionH1: "Renamed", BeforeBlockId: "first")]);
+
+        Assert.Equal([doc.Blocks[1] with { SectionH1 = "Renamed", Rev = 2 }, doc.Blocks[0]], result.NextDocument.Blocks);
+        Assert.Equal(new BlockChangeRecord("second", ReportBlockKind.Prose, 1, 2, 0, Moved: true), Assert.Single(result.Changes));
+    }
+
+    [Fact]
+    public void ReplaceSectionRejectsInvalidAndStalePlacementAndMissingRename()
+    {
+        var doc = _engine.Parse("# Notes\n\n<!-- perga:notes -->\nBody.", docRev: 2);
+        var whole = WholeAnchor(doc);
+        var rename = new BlockOp.ReplaceSectionOp("Notes", NewSectionH1: "New Notes");
+
+        Assert.Contains("'markdown' or 'newSectionH1'", Assert.Throws<ArgumentException>(() =>
+            _engine.ApplyCommit(doc, whole, [new BlockOp.ReplaceSectionOp("Notes")])).Message);
+        Assert.Contains("newSectionH1", Assert.Throws<ArgumentException>(() =>
+            _engine.ApplyCommit(doc, whole, [rename with { NewSectionH1 = "\t" }])).Message);
+        Assert.Contains("Provide 'markdown'", Assert.Throws<ArgumentException>(() =>
+            _engine.ApplyCommit(doc, whole, [rename with { SectionH1 = "Missing" }])).Message);
+        Assert.Contains("only one", Assert.Throws<ArgumentException>(() =>
+            _engine.ApplyCommit(doc, whole, [rename with { BeforeBlockId = "one", AfterBlockId = "two" }])).Message);
+        Assert.Contains("non-blank", Assert.Throws<ArgumentException>(() =>
+            _engine.ApplyCommit(doc, whole, [rename with { BeforeBlockId = " " }])).Message);
+        Assert.Contains("in section 'Notes'", Assert.Throws<ArgumentException>(() =>
+            _engine.ApplyCommit(doc, whole, [rename with { AfterBlockId = "notes" }])).Message);
+        Assert.Throws<KeyNotFoundException>(() =>
+            _engine.ApplyCommit(doc, whole, [rename with { AfterBlockId = "missing" }]));
+
+        var stale = new ReadAnchor(1, new Dictionary<string, int> { ["notes"] = 1, ["deleted"] = 1 }, WholeDocumentRead: true);
+        Assert.Equal("block_deleted", Assert.Throws<ReportConflictException>(() =>
+            _engine.ApplyCommit(doc, stale, [rename with { BeforeBlockId = "deleted" }])).Code);
+        Assert.Equal("stale_doc_rev", Assert.Throws<ReportConflictException>(() =>
+            _engine.ApplyCommit(doc, stale, [rename with { SectionH1 = "Missing" }])).Code);
+    }
+
+    [Fact]
+    public void UpsertSectionAndPositionPreserveContentWhenKindAndContentAreOmitted()
+    {
+        var doc = _engine.Parse("# Notes\n\n<!-- perga:notes -->\nNotes body.");
+        using var widgetPayload = JsonDocument.Parse("""{"use":"builtin:flow","view":"flow"}""");
+        var inserted = _engine.ApplyCommit(doc, WholeAnchor(doc),
+        [
+            new BlockOp.UpsertBlockOp("widget", ReportBlockKind.Widget, null, widgetPayload.RootElement, SectionH1: "# Widget section"),
+            new BlockOp.UpsertBlockOp("prose", null, "# Ignored heading\n\nProse body.", null, SectionH1: "Prose section")
+        ]).NextDocument;
+        Assert.Equal("Widget section", inserted.Blocks[1].SectionH1);
+        Assert.Equal(ReportBlockKind.Prose, inserted.Blocks[2].Kind);
+        Assert.Equal("Prose section", inserted.Blocks[2].SectionH1);
+        Assert.Equal("Prose body.", inserted.Blocks[2].Markdown);
+
+        var result = _engine.ApplyCommit(inserted, WholeAnchor(inserted),
+        [
+            new BlockOp.UpsertBlockOp("notes", null, null, null, SectionH1: " # New notes "),
+            new BlockOp.UpsertBlockOp("widget", null, null, null, Position: 0, SectionH1: "New widgets"),
+            new BlockOp.UpsertBlockOp("prose", null, null, null, Position: 1)
+        ]);
+        var blocks = result.NextDocument.Blocks;
+        Assert.Equal(["widget", "prose", "notes"], blocks.Select(block => block.Id));
+        Assert.Equal("New widgets", blocks[0].SectionH1);
+        Assert.Equal(ReportBlockKind.Widget, blocks[0].Kind);
+        Assert.True(JsonElement.DeepEquals(widgetPayload.RootElement, blocks[0].Payload!.Value));
+        Assert.Equal("Prose body.", blocks[1].Markdown);
+        Assert.Equal("New notes", blocks[2].SectionH1);
+        Assert.Equal("Notes body.", blocks[2].Markdown);
+    }
+
+    [Theory]
+    [InlineData("\r")]
+    [InlineData("\n")]
+    [InlineData("\r\n")]
+    public void SectionOperationsRejectMultilineTitles(string lineBreak)
+    {
+        var doc = _engine.Parse("# Notes\n\nBody.");
+        var multiline = $" # First{lineBreak}Second ";
+        var cases = new (BlockOp Op, string Field)[]
+        {
+            (new BlockOp.ReplaceSectionOp(multiline, "Body."), "sectionH1"),
+            (new BlockOp.ReplaceSectionOp("Notes", NewSectionH1: multiline), "newSectionH1"),
+            (new BlockOp.UpsertBlockOp(null, null, "Body.", null, SectionH1: multiline), "sectionH1")
+        };
+
+        foreach (var (op, field) in cases)
+        {
+            var error = Assert.Throws<ArgumentException>(() => _engine.ApplyCommit(doc, WholeAnchor(doc), [op]));
+            Assert.Equal(field, error.ParamName);
+            Assert.Contains($"'{field}' must be a single line.", error.Message);
+        }
+    }
+
+    [Fact]
+    public void SectionPlacementAndUpsertKeepUntitledBlocksInThePreamble()
+    {
+        var doc = _engine.Parse("""
+            <!-- perga:first -->
+            First preamble paragraph.
+
+            <!-- perga:last -->
+            Last preamble paragraph.
+
+            # Notes
+
+            <!-- perga:notes -->
+            Notes body.
+            """);
+        var anchor = WholeAnchor(doc);
+        var section = new BlockOp.ReplaceSectionOp("New", "<!-- perga:new -->\nNew body.");
+
+        foreach (var op in new[]
+        {
+            section with { BeforeBlockId = "first" },
+            new BlockOp.ReplaceSectionOp("Notes", NewSectionH1: "Renamed", AfterBlockId: "first")
+        })
+        {
+            Assert.Contains("Cannot place an H1 section before an untitled preamble block.", Assert.Throws<ArgumentException>(
+                () => _engine.ApplyCommit(doc, anchor, [op])).Message);
+        }
+
+        foreach (var op in new[]
+        {
+            new BlockOp.UpsertBlockOp(null, null, "New body.", null, Position: 0, SectionH1: "New"),
+            new BlockOp.UpsertBlockOp("first", null, null, null, SectionH1: "New"),
+            new BlockOp.UpsertBlockOp("notes", null, null, null, Position: 1)
+        })
+        {
+            Assert.Contains("Cannot assign an H1 section before an untitled preamble block.", Assert.Throws<ArgumentException>(
+                () => _engine.ApplyCommit(doc, anchor, [op])).Message);
+        }
+
+        var placed = _engine.ApplyCommit(doc, anchor, [section with { AfterBlockId = "last" }]).NextDocument;
+        var roundTrip = _engine.Parse(_engine.RenderMarkdown(placed, withMarkers: true));
+        Assert.Equal(["first", "last", "new", "notes"], roundTrip.Blocks.Select(block => block.Id));
+        Assert.Equal([null, null, "New", "Notes"], roundTrip.Blocks.Select(block => block.SectionH1));
+        Assert.Equal(placed.Blocks.Select(block => block.Markdown), roundTrip.Blocks.Select(block => block.Markdown));
+
+        var assigned = _engine.ApplyCommit(doc, anchor,
+            [new BlockOp.UpsertBlockOp("first", null, null, null, Position: 1, SectionH1: "New")]).NextDocument;
+        Assert.Equal(["last", "first", "notes"], assigned.Blocks.Select(block => block.Id));
+        Assert.Equal([null, "New", "Notes"], assigned.Blocks.Select(block => block.SectionH1));
+    }
+
+    [Fact]
+    public void CrossSectionMoveRevisesTheMovedBlockAndRejectsAStaleRename()
+    {
+        var doc = _engine.Parse("""
+            # Source
+
+            <!-- perga:moving rev=3 -->
+            Move this paragraph.
+
+            # Target
+
+            <!-- perga:first -->
+            First target paragraph.
+
+            <!-- perga:last -->
+            Last target paragraph.
+            """, docRev: 2);
+        var anchor = new ReadAnchor(doc.DocRev, doc.Blocks.ToDictionary(block => block.Id, block => block.Rev), WholeDocumentRead: true);
+        var moved = _engine.ApplyCommit(doc, anchor, [new BlockOp.MoveBlockOp("moving", 1)]);
+
+        Assert.Equal("Target", moved.NextDocument.Blocks[1].SectionH1);
+        Assert.Equal(new BlockChangeRecord("moving", ReportBlockKind.Prose, 3, 4, 1, Moved: true), Assert.Single(moved.Changes));
+        var conflict = Assert.Throws<ReportConflictException>(() =>
+            _engine.ApplyCommit(moved.NextDocument, anchor, [new BlockOp.ReplaceSectionOp("Target", NewSectionH1: "Renamed")]));
+        Assert.Equal("stale_block_rev", conflict.Code);
+    }
+
+    private static ReadAnchor WholeAnchor(ReportDocument doc) =>
+        new(doc.DocRev, new Dictionary<string, int>(), WholeDocumentRead: true);
 
     [Fact]
     public void DecompressZstd_ReadsHistoricalBlockNamesAndOrdinals()

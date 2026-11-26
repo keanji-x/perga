@@ -198,8 +198,9 @@ public static class KernelMcpCatalog
                 Cheatsheet:
                 - anchor: { docRev, knownBlockRevs, wholeDocumentRead } from report_read, the previous report_commit receipt, or the initial anchor in the empty Report prompt.
                 - ops (non-empty array):
-                  - { op: "replace_section", sectionH1, markdown } creates or replaces an H1 section.
-                  - { op: "upsert", id?, blockKind?: "prose"|"widget", markdown?, payload?, position? }
+                  - { op: "replace_section", sectionH1, markdown?, newSectionH1?, beforeBlockId?, afterBlockId? } creates, replaces, or renames an H1 section. Supply newSectionH1 without markdown to preserve all existing blocks. Use at most one placement ID to position the section next to a block outside it.
+                  - { op: "edit_block", id, target, replacement } replaces a unique, exact match in a prose block. Use "" as replacement to delete the match.
+                  - { op: "upsert", id?, blockKind?: "prose"|"widget", markdown?, payload?, position?, sectionH1? } defaults to prose on insert. Omit blockKind, markdown and payload on update to preserve the block's kind and content.
                   - { op: "delete", id }
                   - { op: "move", id, toIndex }
                 - Optional: summary, commitMessage, includeDocument. Set includeDocument=true to add renderedMarkdown and blocks to the receipt.
@@ -886,32 +887,54 @@ public static class KernelMcpDispatcher
 
     private static BlockOp ParseBlockOp(JsonElement opElem)
     {
-        var type = RequireStringArg(opElem, ["op", "type", "kind"]);
+        var type = ReadBlockOpString(opElem, ["op", "type", "kind"], required: true)!;
         var normalized = type.Replace("_", "", StringComparison.Ordinal).ToLowerInvariant();
 
         switch (normalized)
         {
             case "replacesection" or "replacesectionop":
                 return new BlockOp.ReplaceSectionOp(
-                    RequireStringArg(opElem, ["sectionH1", "section_h1", "h1"]),
-                    RequireStringArg(opElem, ["markdown"]));
+                    ReadBlockOpString(opElem, ["sectionH1", "section_h1", "h1"], required: true)!,
+                    ReadBlockOpString(opElem, ["markdown"], allowBlank: true),
+                    ReadBlockOpString(opElem, ["newSectionH1"]),
+                    ReadBlockOpString(opElem, ["beforeBlockId"]),
+                    ReadBlockOpString(opElem, ["afterBlockId"]));
+
+            case "editblock" or "editblockop":
+            {
+                var id = ReadBlockOpString(opElem, ["id", "blockId", "block_id"], required: true)!;
+                var target = ReadBlockOpString(opElem, ["target"], required: true, allowBlank: true)!;
+                if (target.Length == 0)
+                {
+                    throw KernelException.InvalidArgument("BlockOp argument 'target' must be a non-empty string.");
+                }
+
+                return new BlockOp.EditBlockOp(
+                    id, target, ReadBlockOpString(opElem, ["replacement"], required: true, allowBlank: true)!);
+            }
 
             case "upsert" or "upsertblock" or "upsertblockop":
             {
-                var blockKindStr = OptionalStringArg(opElem, ["blockKind", "block_kind"]) ?? "Prose";
-                if (!Enum.TryParse<ReportBlockKind>(blockKindStr, ignoreCase: true, out var blockKind) &&
-                    JsonHelpers.TryGetPropertyIgnoreCase(opElem, ["kind"], out var kElem) &&
-                    kElem.ValueKind == JsonValueKind.String &&
-                    !string.Equals(kElem.GetString(), type, StringComparison.OrdinalIgnoreCase))
+                ReportBlockKind? blockKind = null;
+                if (ReadBlockOpString(opElem, ["blockKind", "block_kind"]) is { } kind)
                 {
-                    Enum.TryParse(kElem.GetString(), ignoreCase: true, out blockKind);
+                    if (!Enum.TryParse<ReportBlockKind>(kind, ignoreCase: true, out var parsedKind) ||
+                        !string.Equals(kind, Enum.GetName(parsedKind), StringComparison.OrdinalIgnoreCase))
+                    {
+                        throw KernelException.InvalidArgument("UpsertBlockOp 'blockKind' must be 'prose' or 'widget'.");
+                    }
+
+                    blockKind = parsedKind;
                 }
 
                 int? position = null;
                 if (JsonHelpers.TryGetPropertyIgnoreCase(opElem, ["position"], out var posElem) &&
-                    posElem.ValueKind == JsonValueKind.Number &&
-                    posElem.TryGetInt32(out var posVal))
+                    posElem.ValueKind is not (JsonValueKind.Null or JsonValueKind.Undefined))
                 {
+                    if (posElem.ValueKind != JsonValueKind.Number || !posElem.TryGetInt32(out var posVal) || posVal < 0)
+                    {
+                        throw KernelException.InvalidArgument("UpsertBlockOp 'position' must be a non-negative integer.");
+                    }
                     position = posVal;
                 }
 
@@ -923,11 +946,12 @@ public static class KernelMcpDispatcher
                 }
 
                 return new BlockOp.UpsertBlockOp(
-                    OptionalStringArg(opElem, ["id", "blockId", "block_id"]),
+                    ReadBlockOpString(opElem, ["id", "blockId", "block_id"]),
                     blockKind,
-                    OptionalStringArg(opElem, ["markdown"]),
+                    ReadBlockOpString(opElem, ["markdown"], allowBlank: true),
                     payload,
-                    position);
+                    position,
+                    ReadBlockOpString(opElem, ["sectionH1"]));
             }
 
             case "delete" or "deleteblock" or "deleteblockop":
@@ -947,8 +971,32 @@ public static class KernelMcpDispatcher
 
             default:
                 throw KernelException.InvalidArgument(
-                    $"Unsupported BlockOp type '{type}'. Supported ops: replace_section ({{op,sectionH1,markdown}}), upsert ({{op,id?,blockKind?,markdown?,payload?,position?}}), delete ({{op,id}}), move ({{op,id,toIndex}}).");
+                    $"Unsupported BlockOp type '{type}'. Supported ops: replace_section ({{op,sectionH1,markdown?,newSectionH1?,beforeBlockId?,afterBlockId?}}), edit_block ({{op,id,target,replacement}}), upsert ({{op,id?,blockKind?,markdown?,payload?,position?,sectionH1?}}), delete ({{op,id}}), move ({{op,id,toIndex}}).");
         }
+    }
+
+    private static string? ReadBlockOpString(JsonElement obj, ReadOnlySpan<string> keys, bool required = false, bool allowBlank = false)
+    {
+        if (!JsonHelpers.TryGetPropertyIgnoreCase(obj, keys, out var elem))
+        {
+            return required
+                ? throw KernelException.InvalidArgument($"Required BlockOp argument '{keys[0]}' was missing.")
+                : null;
+        }
+
+        if (!required && elem.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+        {
+            return null;
+        }
+
+        var value = elem.ValueKind == JsonValueKind.String ? elem.GetString() : null;
+        if (value is null || (!allowBlank && string.IsNullOrWhiteSpace(value)))
+        {
+            var expectation = allowBlank ? "a string" : "a non-blank string";
+            throw KernelException.InvalidArgument($"BlockOp argument '{keys[0]}' must be {expectation}.");
+        }
+
+        return value;
     }
 
     private static TermObserveRequest ParseTermObserveArgs(JsonElement args)
