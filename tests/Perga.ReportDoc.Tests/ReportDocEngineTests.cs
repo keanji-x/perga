@@ -599,7 +599,7 @@ public sealed partial class ReportDocEngineTests
             new BlockOp.UpsertBlockOp("notes", null, null, null, Position: 1)
         })
         {
-            Assert.Contains("Cannot assign an H1 section before an untitled preamble block.", Assert.Throws<ArgumentException>(
+            Assert.Contains("Cannot place an H1 section before an untitled preamble block.", Assert.Throws<ArgumentException>(
                 () => _engine.ApplyCommit(doc, anchor, [op])).Message);
         }
 
@@ -613,6 +613,35 @@ public sealed partial class ReportDocEngineTests
             [new BlockOp.UpsertBlockOp("first", null, null, null, Position: 1, SectionH1: "New")]).NextDocument;
         Assert.Equal(["last", "first", "notes"], assigned.Blocks.Select(block => block.Id));
         Assert.Equal([null, "New", "Notes"], assigned.Blocks.Select(block => block.SectionH1));
+    }
+
+    [Fact]
+    public void UpsertRejectsMovingAnUntitledBlockAfterAnH1Section()
+    {
+        var doc = _engine.Parse("<!-- perga:intro -->\nIntroduction.\n\n# Notes\n\nNotes body.");
+        var op = new BlockOp.UpsertBlockOp("intro", null, null, null, Position: 1);
+
+        var error = Assert.Throws<ArgumentException>(() => _engine.ApplyCommit(doc, WholeAnchor(doc), [op]));
+
+        Assert.Equal("ops", error.ParamName);
+        Assert.Contains("Cannot place an untitled preamble block after an H1 section.", error.Message);
+        Assert.Null(doc.Blocks[0].SectionH1);
+
+        // Content-only upsert on an already-persisted [H1, null] layout still succeeds without moving or reassigning sections.
+        var reordered = _engine.ApplyCommit(doc, WholeAnchor(doc), [new BlockOp.MoveBlockOp(doc.Blocks[1].Id, 0)]).NextDocument;
+        var edited = _engine.ApplyCommit(reordered, WholeAnchor(reordered),
+            [new BlockOp.UpsertBlockOp("intro", null, "Updated intro.", null)]).NextDocument;
+        Assert.Equal("Updated intro.", edited.Blocks[1].Markdown);
+    }
+
+    [Fact]
+    public void EditBlockNormalizesStoredCrLfMarkdownBeforeMatching()
+    {
+        var doc = new ReportDocument(1, "", "", [new ReportBlock("b_crlf", 1, ReportBlockKind.Prose, "Notes", "Line A\r\nLine B", null)]);
+        var result = _engine.ApplyCommit(doc, WholeAnchor(doc), [new BlockOp.EditBlockOp("b_crlf", "Line A\r\nLine B", "Line A\nLine C")]);
+
+        Assert.Equal("Line A\nLine C", Assert.Single(result.NextDocument.Blocks).Markdown);
+        Assert.Equal(2, Assert.Single(result.NextDocument.Blocks).Rev);
     }
 
     [Fact]
