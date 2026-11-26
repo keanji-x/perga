@@ -24,6 +24,7 @@ export type ChatListProps = Readonly<{
   showTrack?: boolean;
   /** Contextual entries reuse the ordinary list activity fold. */
   context?: boolean;
+  variant?: 'panel' | 'mobile-page';
   unreadIds?: ReadonlySet<string>;
   /** Explicit question ownership from the host, independent of per-card execution activity. */
   awaitingInputIds?: ReadonlySet<string>;
@@ -32,15 +33,16 @@ export type ChatListProps = Readonly<{
 }>;
 
 export function ChatList({
-  conversations, cards, activeId = null, showTrack = true, onOpen, onArchive, unreadIds, awaitingInputIds, context = false,
+  conversations, cards, activeId = null, showTrack = true, onOpen, onArchive, unreadIds, awaitingInputIds, context = false, variant = 'panel',
 }: ChatListProps) {
   const descriptionPrefix = useId();
   if (conversations.length === 0) return context ? null : <EmptyState variant="compact" icon={<Icon name="chat" />} title="No conversations yet" description="Conversations started here appear in this list." />;
 
   const List = context ? ContextList : 'ul';
+  const listClassName = variant === 'mobile-page' ? `${styles.list} ${styles.mobilePageList}` : styles.list;
   return (
-    <ConversationGroups enabled={onArchive !== undefined || conversations.some(row => row.archivedAt != null)} conversations={conversations} emptyActive={context ? null : <EmptyState variant="compact" icon={<Icon name="chat" />} title="No active conversations" description="Active conversations appear here." />}>
-    {shown => <List className={context ? undefined : styles.list}>
+    <ConversationGroups variant={variant} enabled={onArchive !== undefined || conversations.some(row => row.archivedAt != null)} conversations={conversations} emptyActive={context ? null : <EmptyState variant="compact" icon={<Icon name="chat" />} title="No active conversations" description="Active conversations appear here." />}>
+    {shown => <List className={context ? undefined : listClassName}>
       {deriveConversationList({ conversations: shown, cards, unreadIds, awaitingInputIds }).map(({ conversation, activity, unread, name }) => {
         const description = activity === 'working' ? null : activityLabelOf(activity);
         const descriptionId = `${descriptionPrefix}-${encodeURIComponent(conversation.id)}`;
@@ -83,7 +85,7 @@ export function ChatList({
               </span>
             </button>
             {description !== null && <span hidden id={descriptionId}>{description}</span>}
-            {onArchive !== undefined && conversation.kind === 'agent' && conversation.isLead !== true && <ConversationArchiveAction conversation={conversation} onArchive={onArchive} className={styles.actions} />}
+            {onArchive !== undefined && conversation.kind === 'agent' && conversation.isLead !== true && <ConversationArchiveAction conversation={conversation} onArchive={onArchive} className={styles.actions} triggerClassName={variant === 'mobile-page' ? styles.mobileActionButton : undefined} />}
             {activity !== 'quiet' && <span className={styles.statusSlot} aria-hidden="true">
               <ActivityIndicator state={activity} />
             </span>}
@@ -95,11 +97,12 @@ export function ChatList({
   );
 }
 
-/** Shared action for desktop lists and mobile history. Failed writes leave the row visible. */
-export function ConversationArchiveAction({ conversation, onArchive, className }: Readonly<{
+/** Failed writes leave the row visible. */
+function ConversationArchiveAction({ conversation, onArchive, className, triggerClassName }: Readonly<{
   conversation: Conversation;
   onArchive: (cardId: string, archived: boolean) => Promise<void>;
   className?: string;
+  triggerClassName?: string;
 }>) {
   const { pending, error, change } = useArchiveAction(conversation, onArchive);
   const archived = conversation.archivedAt != null;
@@ -107,7 +110,7 @@ export function ConversationArchiveAction({ conversation, onArchive, className }
     <div className={className}>
       <DropdownMenu placement="below" alignment="end" button={{
         label: `Actions for conversation: ${conversationName(conversation)}`, icon: <Icon name="more" size="sm" />,
-        isIconOnly: true, variant: 'ghost', size: 'sm', isDisabled: pending,
+        isIconOnly: true, variant: 'ghost', size: 'sm', isDisabled: pending, className: triggerClassName,
       }}>
         <DropdownMenuItem label={archived ? 'Restore conversation' : 'Archive conversation'} onClick={() => { void change(); }} />
       </DropdownMenu>

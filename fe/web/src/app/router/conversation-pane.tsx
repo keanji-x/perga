@@ -798,7 +798,7 @@ export function useConversationPane(
     conversations: store.conversations, cards: source.cards, unreadIds, activeId: existingId,
     showTrack: options?.showTrack ?? true, onOpen: openConversation, onArchive: options?.onArchive,
   }), [store.conversations, source.cards, unreadIds, existingId, options?.showTrack, options?.onArchive, openConversation]);
-  const listNode = useMemo(() => <ChatList {...listProps} />, [listProps]);
+  const mobileList = useMemo(() => <ChatList {...listProps} variant="mobile-page" />, [listProps]);
   const contextList = useMemo(() => <ChatList {...listProps} context />, [listProps]);
 
   const dockViewId = JSON.stringify([sourceScopeId, dockRowId]);
@@ -829,7 +829,7 @@ export function useConversationPane(
     selectedConversationId: draftOpen ? null : open?.id ?? dockRowId,
     isOpen: open !== null || draftOpen,
     close: closeDrawer,
-    list: listNode,
+    mobileList,
     contextList,
     openConversation,
     startConversation: start,

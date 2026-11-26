@@ -206,7 +206,7 @@ export function TrackRouteBody({
   /* `?from=` is a property of this visit, so every same-track move hands it back
    * explicitly (`go` clears what it is not given); crossing tracks drops it. */
   const routeFrom = useRouteFrom() ?? undefined;
-  const mobileBackToArea = isMemoryTrack ? mobileAreaId !== null : routeFrom === 'area';
+  const mobileBackToArea = mobileAreaId !== null && (isMemoryTrack || routeFrom === 'area');
   const cardRegistry = cardRuntime.registry;
   const trackCardHost = useMemo(
     () => createCardHost(cardRegistry, {
@@ -521,7 +521,7 @@ export function TrackRouteBody({
       mobileAreaName={mobileAreaName}
       mobileTitleReadView={(controls) => <TrackSelector track={track} areaName={mobileAreaName} controls={controls}
         onOpenTracks={() => openMobileSection(mobileAreaId === null
-          ? { kind: 'pages' }
+          ? { kind: 'areas', areaId: undefined }
           : { kind: 'tracks', areaId: mobileAreaId, returnTo: 'report' })} />}
       track={track}
       onOpenOriginTrack={openRelatedTrack}
@@ -570,12 +570,10 @@ export function TrackRouteBody({
       })}
       onOpenPanel={(kind) => { openPanel(track.id, kind); }}
       onClosePanel={() => { closePanel(track.id); }}
-      /* `?from=` is the whole memory of how the reader got here; absent means Pages. */
-      mobileBackLabel={mobileBackToArea ? 'Tracks' : 'Pages'}
-      onMobileBack={() => {
-        if (mobileBackToArea && mobileAreaId !== null) openMobileSection({ kind: 'tracks', areaId: mobileAreaId });
-        else openMobileSection({ kind: 'pages' });
-      }}
+      mobileBackLabel={mobileBackToArea ? 'Tracks' : 'Workspace'}
+      onMobileBack={() => openMobileSection(mobileBackToArea
+        ? { kind: 'tracks', areaId: mobileAreaId }
+        : { kind: 'areas', areaId: undefined })}
       report={<>
         {reportHeader}
         {center !== undefined && <div className={mobileChatStyles.embeddedSlot} hidden={!centerActive}>
@@ -586,7 +584,7 @@ export function TrackRouteBody({
       </>}
       mobileChatComposer={chat.dock}
       conversationContextList={!centerActive || rows.length > 1 ? chat.contextList : undefined}
-      conversationList={!centerActive || rows.length > 1 ? chat.list : undefined}
+      conversationList={!centerActive || rows.length > 1 ? chat.mobileList : undefined}
       onStartConversation={!centerActive || rows.length > 1 ? chat.startConversation : undefined}
       conversationOpen={!centerActive && chat.isOpen}
       unread={trackReceipts.isTrackUnread(track.id, track.notifiableSessions)}

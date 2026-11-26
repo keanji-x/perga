@@ -43,7 +43,7 @@ export function WorkspaceLevelOne({
       <header className={styles.header} data-nc-mobile-header="">
         <div className={styles.headerLeading}>
           <button type="button" className={styles.iconButton} aria-label="Back to workspace" onClick={onBack}>
-            <Icon name="chevron-left" />
+            <Icon name="close" />
           </button>
         </div>
         <div className={styles.headerCenter}>

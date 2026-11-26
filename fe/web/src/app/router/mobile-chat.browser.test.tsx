@@ -358,8 +358,8 @@ it('uses the latest workspace opener declaration while already interactive', asy
     opener.focus();
     expect(document.activeElement).toBe(opener);
     expect(declare).toBeTypeOf('function');
-    act(() => { declare!({ kind: 'pages' }); });
-    await expect.element(page.getByRole('dialog', { name: 'Pages', exact: true })).toBeVisible();
+    act(() => { declare!({ kind: 'areas', areaId: undefined }); });
+    await expect.element(page.getByRole('heading', { name: 'Workspace', exact: true })).toBeVisible();
     await page.getByRole('button', { name: 'Back to workspace', exact: true }).click();
     expect(document.activeElement).toBe(opener);
     const host = document.querySelector<HTMLElement>('#mobile-workspace-navigation')!;

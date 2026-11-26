@@ -220,13 +220,7 @@ describe('workspace header navigation', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Switch area, Product' }));
     await userEvent.click(screen.getByRole('menuitem', { name: 'Second' }));
     await waitFor(() => { expect(href(router)).toBe('/area/c2/new'); });
-    const workspaceOpener = screen.queryByRole('button', { name: 'Open workspace' });
-    if (workspaceOpener !== null) {
-      await userEvent.click(workspaceOpener);
-      await userEvent.click(screen.getByRole('button', { name: 'Second' }));
-    } else {
-      await userEvent.click(screen.getByRole('button', { name: 'Back to Tracks' }));
-    }
+    await userEvent.click(screen.getByRole('button', { name: 'Back to Tracks' }));
     expect(screen.getByRole('heading', { name: 'Second' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Back to Workspace' })).toBeTruthy();
     expect(screen.queryByRole('heading', { name: 'Areas' })).toBeNull();

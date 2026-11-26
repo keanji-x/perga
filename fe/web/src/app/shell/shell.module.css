@@ -123,7 +123,7 @@
   /* The existing compact breakpoint is also the mobile presentation boundary:
      one breakpoint, two stable modes. Desktop keeps the three-column working
      surface; compact/mobile makes Report the page and moves workspace
-     navigation into an explicit right-side layer. */
+     navigation into an explicit left-side layer. */
   @media (width < 60rem) {
     .shell,
     .shellCollapsed,
@@ -146,7 +146,7 @@
     }
 
     .main[aria-hidden='true'] [data-nc-mobile-report-chat] {
-      display: none !important;
+      display: none;
     }
 
     .stage {

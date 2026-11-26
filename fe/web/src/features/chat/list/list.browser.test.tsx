@@ -88,4 +88,36 @@ describe('a conversation row that names its track', () => {
     expect(row.scrollWidth).toBeLessThanOrEqual(row.clientWidth + 1);
     expect(label.scrollWidth).toBeLessThanOrEqual(label.clientWidth + 1);
   });
+
+  it('preserves 44px mobile touch targets on rows, group disclosures, and archive triggers without dot overlap', async () => {
+    await browserPage.viewport(390, 844);
+    const longTitle = 'Investigate mobile workspace touch target spacing and status indicator alignment';
+    const { getByRole, container } = render(
+      <ChatList
+        variant="mobile-page"
+        showTrack={false}
+        conversations={[
+          conversation({ id: 'active-1', title: longTitle }),
+          conversation({ id: 'archived-1', title: 'Archived worker', archivedAt: 100 }),
+        ]}
+        unreadIds={new Set(['active-1'])}
+        cards={{}}
+        onOpen={() => undefined}
+        onArchive={() => Promise.resolve()}
+      />,
+    );
+    const activeHeading = getByRole('button', { name: 'Active conversations' });
+    const archivedHeading = getByRole('button', { name: 'Archived conversations' });
+    const row = getByRole('button', { name: `Conversation ${longTitle}` });
+    const archiveTrigger = getByRole('button', { name: `Actions for conversation: ${longTitle}` });
+    for (const control of [activeHeading, archivedHeading, row, archiveTrigger]) {
+      expect(control.getBoundingClientRect().height).toBeGreaterThanOrEqual(44);
+    }
+    expect(archiveTrigger.getBoundingClientRect().width).toBeGreaterThanOrEqual(44);
+    const label = row.firstElementChild as HTMLElement;
+    const statusDot = container.querySelector<HTMLElement>('[data-nc-activity="unread"]');
+    expect(statusDot).not.toBeNull();
+    expect(label.getBoundingClientRect().right).toBeLessThanOrEqual(statusDot!.getBoundingClientRect().left);
+    expect(statusDot!.getBoundingClientRect().right).toBeLessThanOrEqual(archiveTrigger.getBoundingClientRect().left);
+  });
 });

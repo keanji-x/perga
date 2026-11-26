@@ -11,15 +11,13 @@ import type { NavTarget } from '../../router/navigation.ts';
 import type { NewTrackDraftArea } from '../../router/new-track-drafts.tsx';
 import { MobileWorkspaceHeader } from './header.tsx';
 import { useMobileNavigationPresence } from './navigation-presence.ts';
-import { MobilePages } from './pages.tsx';
 import mobileStyles from './shell.module.css';
 import { MobileTracks } from './tracks.tsx';
 import type { MobileNavigationController, MobileReturnIntent } from './use-navigation.ts';
 
-export type MobileShellWorkspace = Readonly<{
+type MobileShellWorkspace = Readonly<{
   areas: readonly Area[];
   visibleAreas: readonly Area[];
-  tracks: readonly Track[];
   tracksByArea: ReadonlyMap<string, readonly Track[]>;
   activeArea: Area | NewTrackDraftArea | undefined;
   liveActiveArea: Area | undefined;
@@ -31,7 +29,7 @@ export type MobileShellWorkspace = Readonly<{
   areaIdOf: (trackId: string) => string | undefined;
 }>;
 
-export type MobileShellRoute = Readonly<{
+type MobileShellRoute = Readonly<{
   currentPath: string;
   routeOwnsMobileChrome: boolean;
   settingsOpen: boolean;
@@ -42,7 +40,7 @@ export type MobileShellRoute = Readonly<{
   go: (target: NavTarget) => void;
 }>;
 
-export type MobileShellActions = Readonly<{
+type MobileShellActions = Readonly<{
   areaEditorOpen: boolean;
   pinFeedback: OperationFeedbackState;
   mobileTrackActions: (track: Track) => Omit<TrackActionsProps, 'track' | 'className'>;
@@ -52,7 +50,7 @@ export type MobileShellActions = Readonly<{
   onSignOut?: (() => void) | undefined;
 }>;
 
-export type MobileShellChromeProps = Readonly<{
+type MobileShellChromeProps = Readonly<{
   workspace: MobileShellWorkspace;
   route: MobileShellRoute;
   actions: MobileShellActions;
@@ -174,10 +172,8 @@ export function MobileShellChrome({
 
   // Opening while Areas is loading has no id yet. Follow the current Area
   // when the read recovers; an explicitly requested Area still stays exact.
-  const navigationAreaId = navigation.section?.kind === 'tracks' || navigation.section?.kind === 'areas'
-    ? navigation.section.areaId ?? workspace.activeArea?.id : workspace.activeArea?.id;
+  const navigationAreaId = navigation.section?.areaId ?? workspace.activeArea?.id;
   const navigationArea = workspace.visibleAreas.find((area) => area.id === navigationAreaId);
-  const mobileNavigationLabel = navigation.section?.kind === 'pages' ? 'Pages' : 'Tracks and settings';
 
   return (
     <>
@@ -219,7 +215,7 @@ export function MobileShellChrome({
           className={`${mobileStyles.navigation} ${navigation.isOpen && !actions.areaEditorOpen ? mobileStyles.navigationOpen : ''}`}
           role={navigation.dialogActive ? 'dialog' : undefined}
           aria-modal={navigation.dialogActive ? true : undefined}
-          aria-label={mobileNavigationLabel}
+          aria-label="Tracks and settings"
           inert={!navigation.dialogActive}
           aria-hidden={!navigation.dialogActive ? true : undefined}
           data-nc-escape-layer={navigation.dialogActive ? '' : undefined}
@@ -228,29 +224,7 @@ export function MobileShellChrome({
           <div className={mobileStyles.navigationPanel}>
             <div className={mobileStyles.navigationContent}>
               <LayerDepthProvider>
-                {navigation.section?.kind === 'pages' ? (
-                  <MobilePages
-                    areaId={navigationArea?.id}
-                    onEditArea={actions.onRequestEditArea}
-                    onBack={() => navigation.close()}
-                    onNewTrack={openNewTrack}
-                    onCreateArea={actions.onRequestCreateArea}
-                    onOpenSettings={() => { navigation.close(); actions.onOpenSettings(); }}
-                    areas={workspace.areas}
-                    tracks={workspace.tracks}
-                    readError={workspace.readError}
-                    readLoading={workspace.readLoading}
-                    onRetryRead={workspace.retryRead}
-                    onOpenToday={() => navigateAndClose({ name: 'today', view: 'today' })}
-                    onOpenMemory={shareScope === null ? () => navigateAndClose({ name: 'memory' }) : undefined}
-                    shareMode={shareScope !== null}
-                    onOpenTrack={(trackId) => {
-                      navigation.close();
-                      // The sheets are the only writers of `?from=`: the surface the reader returns to.
-                      route.go({ name: 'track', trackId, from: 'pages' });
-                    }}
-                  />
-                ) : navigation.section !== null ? (
+                {navigation.section !== null && (
                   <MobileTracks
                     view={navigation.section.kind === 'tracks' ? 'tracks' : 'areas'}
                     onSelectArea={(areaId) => { navigation.select({ kind: 'tracks', areaId }); }}
@@ -288,7 +262,7 @@ export function MobileShellChrome({
                       });
                     }}
                   />
-                ) : null}
+                )}
               </LayerDepthProvider>
             </div>
             <OperationFeedback feedback={actions.pinFeedback} />

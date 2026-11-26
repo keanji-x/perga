@@ -1,7 +1,7 @@
 import type { Area } from '../../../../../core/domain/area.ts';
 import type { Track } from '../../../../../core/domain/track.ts';
 import type { TrackActionsProps } from '../../../features/track/row/actions.tsx';
-import type { MobileNavigationActions } from './navigation-header.tsx';
+import type { DialogOrigin } from '../../../ui/dialog/public.tsx';
 
 export type MobileTracksProps = Readonly<{
   view: 'areas' | 'tracks';
@@ -12,6 +12,11 @@ export type MobileTracksProps = Readonly<{
   currentTrackId: string | undefined;
   onSelectArea: (areaId: string) => void;
   onOpenTrack: (trackId: string) => void;
+  onBack: () => void;
+  onNewTrack: (areaId: string) => void;
+  onEditArea: (area: Area, origin: DialogOrigin) => void;
+  onOpenSettings: () => void;
+  onCreateArea: (origin: DialogOrigin) => void;
   onOpenToday?: () => void;
   onOpenMemory?: () => void;
   onOpenAreaMemory?: (areaId: string) => void;
@@ -25,4 +30,4 @@ export type MobileTracksProps = Readonly<{
   onSignOut?: () => void;
   shareMode?: boolean;
   nowMs?: number;
-}> & MobileNavigationActions;
+}>;
